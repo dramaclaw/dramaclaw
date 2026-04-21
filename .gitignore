@@ -1,0 +1,97 @@
+# ------------------------------------------------------------
+# Python
+# ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+.cache/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.uv-cache/
+
+# ------------------------------------------------------------
+# Node / Frontend
+# ------------------------------------------------------------
+node_modules/
+.pnp.*
+.yarn/
+dist/
+build/
+.next/
+.nuxt/
+.vite/
+.turbo/
+*.tsbuildinfo
+
+# Package manager lock noise (keep lockfiles, drop temp files)
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ------------------------------------------------------------
+# Environment / secrets
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ------------------------------------------------------------
+# IDE / Editor
+# ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ------------------------------------------------------------
+# OS / misc
+# ------------------------------------------------------------
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+desktop.ini
+
+# ------------------------------------------------------------
+# DramaClaw runtime
+# ------------------------------------------------------------
+# Project workspaces, intermediate pipeline artefacts
+workspace/
+/tmp/
+/logs/
+*.log
+
+# Generated media output
+output/
+exports/
+*.mp4.tmp

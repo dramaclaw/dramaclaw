@@ -1,0 +1,59 @@
+name: Feature request
+description: Suggest an improvement, new capability, or new stage for the pipeline.
+title: "[Feature] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to shape DramaClaw. Good feature requests start
+        with the creator's pain — what are you trying to tell, and what's in the
+        way today?
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues and discussions for a similar request.
+          required: true
+        - label: I've read [ROADMAP.md](../../ROADMAP.md) and confirmed this isn't already on the roadmap.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the creator-facing pain this request addresses. Stay grounded in the story you're trying to tell.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like DramaClaw to behave? A rough sketch is fine.
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - New pipeline stage
+        - Improve an existing stage
+        - New model / provider integration
+        - Web studio / UI
+        - CLI / API surface
+        - Deployment / operations
+        - Documentation
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What have you tried or thought about that wasn't quite right?
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Links to reference projects, mockups, screenshots, or clips.

@@ -1,0 +1,110 @@
+name: Bug report
+description: Report a reproducible problem with DramaClaw.
+title: "[Bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Clear reproduction steps
+        are the single most useful thing you can give us — the rest can usually be
+        inferred from them.
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched the existing issues and didn't find a duplicate.
+          required: true
+        - label: I'm on a recent version of DramaClaw (`main` or the latest release).
+          required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear, concise description of the problem.
+      placeholder: When I run stage X on novel Y, the generated first frame is…
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands, configuration, and inputs. A minimal repro is gold.
+      value: |
+        1. Clone the repo at commit …
+        2. Run `docker run …` with these env vars …
+        3. Open the studio and click …
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What did you think would happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead? Paste full stack traces or logs in a code block.
+      render: shell
+  - type: dropdown
+    id: pipeline-stage
+    attributes:
+      label: Affected pipeline stage
+      description: Which part of the 16-stage pipeline is involved? (leave blank if not sure)
+      options:
+        - 1. Create project
+        - 2. Upload novel
+        - 3. Parse / ingest
+        - 4. Configure
+        - 5. Extract characters
+        - 6. Plan episodes
+        - 7. Portraits
+        - 8. Plan identity
+        - 9. Identity images
+        - 10. Script generation
+        - 11. Staging / manual edits
+        - 12. Sketches
+        - 13. First frames
+        - 14. Voice-over (TTS)
+        - 15. Compose
+        - 16. Export
+        - Cross-stage / infrastructure
+        - Not sure
+  - type: input
+    id: version
+    attributes:
+      label: DramaClaw version / commit
+      placeholder: "v0.x.y or git SHA"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "macOS 15.2 / Ubuntu 22.04 / Windows 11 WSL2"
+    validations:
+      required: true
+  - type: input
+    id: deployment
+    attributes:
+      label: Deployment
+      placeholder: "Docker / local uv / Kubernetes / cloud"
+  - type: textarea
+    id: providers
+    attributes:
+      label: Model / provider configuration
+      description: Which LLM / image / TTS providers are active? (redact API keys)
+      placeholder: |
+        LLM: Anthropic (Claude 4.7)
+        Image: Gemini nanobanana
+        TTS: CosyVoice
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, config files, short clips, anything that gives context.

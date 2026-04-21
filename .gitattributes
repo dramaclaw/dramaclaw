@@ -1,0 +1,37 @@
+# Normalise line endings — auto-detect text, keep binaries untouched.
+* text=auto eol=lf
+
+# Explicit binary types (never treat as text, never line-end normalise).
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.ico    binary
+*.svg    text
+*.mp4    binary
+*.mov    binary
+*.webm   binary
+*.mp3    binary
+*.wav    binary
+*.pdf    binary
+*.zip    binary
+*.gz     binary
+*.tar    binary
+*.ttf    binary
+*.otf    binary
+*.woff   binary
+*.woff2  binary
+
+# Shell + Python + TS are plain text.
+*.sh     text eol=lf
+*.py     text eol=lf
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.js     text eol=lf
+*.jsx    text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.toml   text eol=lf
+*.json   text eol=lf

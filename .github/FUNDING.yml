@@ -1,0 +1,14 @@
+# GitHub Sponsors / funding configuration.
+# Uncomment and fill in the channels DramaClaw accepts support through.
+#
+# github: [dramaclaw]            # GitHub usernames or org names (up to 4)
+# patreon:                        # Patreon username
+# open_collective:                # Open Collective project
+# ko_fi:                          # Ko-fi username
+# tidelift:                       # Tidelift platform-name/package-name
+# community_bridge:               # CommunityBridge project name
+# liberapay:                      # Liberapay username
+# issuehunt:                      # IssueHunt username
+# otechie:                        # Otechie username
+# lfx_crowdfunding:               # LFX Crowdfunding project name
+# custom: ['https://dramaclaw.xxx/sponsor']   # Custom URLs (up to 4)
