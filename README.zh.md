@@ -55,7 +55,7 @@ DramaClaw 要做的事很简单：<br/>
 [![Release](https://img.shields.io/github/v/release/dramaclaw/dramaclaw?include_prereleases&sort=semver)](https://github.com/dramaclaw/dramaclaw/releases)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](#quick-start)
 
-[English](./README.md) &nbsp;|&nbsp; **简体中文** &nbsp;|&nbsp; [文档](#documentation) &nbsp;|&nbsp; [快速开始](#quick-start)
+[English](./README.en.md) &nbsp;|&nbsp; **简体中文** &nbsp;|&nbsp; [文档](#documentation) &nbsp;|&nbsp; [快速开始](#quick-start)
 
 </div>
 

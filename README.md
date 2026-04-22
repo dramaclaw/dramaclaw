@@ -1,51 +1,50 @@
 <div align="center">
 
-<!-- TBD: replace with real logo at assets/logo.svg -->
+<!-- TBD: 替换为正式 logo assets/logo.svg -->
 <h1>DramaClaw</h1>
 
 ## Make Your Own DC Universe.
 
 <p align="left">
 
-They say you're obsolete.<br/>
-Maybe it's the "day job" that's obsolete.<br/>
+他们说你过时了。<br/>
+也许是「打工」这件事过时了。<br/>
 <br/>
-In the age of AI, the real question is not whether machines will replace people.<br/>
-The real question is:<br/>
-Who owns the machines?<br/>
-Who owns the workflow?<br/>
-Who owns industrialized production?<br/>
+AI 时代，真正的问题不是机器会不会替代人。<br/>
+真正的问题是：<br/>
+谁拥有机器？<br/>
+谁拥有流程？<br/>
+谁拥有工业化生产力？<br/>
 <br/>
-If the answer is always big companies,<br/>
-then AI is not democratization.<br/>
-It is just a new wall.<br/>
+如果答案永远是大厂，<br/>
+那 AI 就不是平权。<br/>
+那只是新的高墙。<br/>
 <br/>
-I'm Eric.<br/>
-DramaClaw is about to be open-sourced.<br/>
+我是 Eric。<br/>
+DramaClaw 即将开源。<br/>
 <br/>
-This is not a demo.<br/>
-Not a toy.<br/>
-Not a crippled edition.<br/>
+这不是 demo。<br/>
+不是玩具。<br/>
+不是阉割版。<br/>
 <br/>
-This is the industrialized drama-production line our team runs every day.<br/>
-From scripts to storyboards, from assets to final cuts, end to end.<br/>
+这是一条我们团队自己每天在跑的漫剧工业化生产线。<br/>
+从脚本到分镜，从资产到成片，全链路。<br/>
 <br/>
-We will open-source the whole thing.<br/>
+我们会完整开源。<br/>
 <br/>
-Because people are not workhorses.<br/>
-Because creativity is humanity's last line of defense.<br/>
+因为人不是牛马。<br/>
+因为创造力，是人类最后的防线。<br/>
 <br/>
-What DramaClaw does is simple:<br/>
+DramaClaw 要做的事很简单：<br/>
 <br/>
-<strong>Tear down the wall.</strong><br/>
+<strong>拆墙。</strong><br/>
 <br/>
-Put industrialized drama production,<br/>
-once available only to large studios,<br/>
-into the hands of ordinary creators.<br/>
+把过去只有大厂才有的漫剧工业化能力，<br/>
+交到普通创作者手里。<br/>
 <br/>
-Code is on the way.<br/>
-If this resonates, leave a ⭐.<br/>
-We keep tearing down walls.
+代码在路上。<br/>
+认同的话，留下一颗 ⭐。<br/>
+我们继续拆。
 
 </p>
 
@@ -55,90 +54,88 @@ We keep tearing down walls.
 [![GitHub stars](https://img.shields.io/github/stars/dramaclaw/dramaclaw?style=social)](https://github.com/dramaclaw/dramaclaw/stargazers)
 [![Release](https://img.shields.io/github/v/release/dramaclaw/dramaclaw?include_prereleases&sort=semver)](https://github.com/dramaclaw/dramaclaw/releases)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](#quick-start)
-<!-- TBD: Discord / Discussions / CI badges -->
 
-**English** &nbsp;|&nbsp; [简体中文](./README.zh.md) &nbsp;|&nbsp; [Docs](#documentation) &nbsp;|&nbsp; [Quick Start](#quick-start)
+[English](./README.en.md) &nbsp;|&nbsp; **简体中文** &nbsp;|&nbsp; [文档](#documentation) &nbsp;|&nbsp; [快速开始](#quick-start)
 
 </div>
 
 <br/>
 
-<!-- Hero demo -->
 <p align="center">
-  <img src="./assets/hero.png" alt="DramaClaw &mdash; stories for the ones life held on to" width="820"/>
+  <img src="./assets/hero.png" alt="DramaClaw — 讲故事的人，重新走回镜头前" width="820"/>
 </p>
 
 <!--
-  DEMO VIDEO — paste the user-attachments URL here on its own line after uploading.
-  Upload flow: open github.com → new issue (do NOT submit) → drag the demo mp4 into
-  the issue body → copy the resulting https://github.com/user-attachments/assets/...mp4
-  URL → paste below, cancel the issue draft. GitHub renders a bare URL as an inline player.
+  演示视频 —— 上传完成后，把 user-attachments 链接单独一行粘到下面。
+  上传方式：在 github.com 新建一个 Issue（别提交），把 demo 视频拖进正文，
+  等它上传完会自动生成 https://github.com/user-attachments/assets/...mp4 链接，
+  复制后粘到下面，再把 Issue 取消即可。GitHub 会把独占一行的 URL 渲染成内联播放器。
 
   https://github.com/user-attachments/assets/REPLACE-AFTER-UPLOAD
 -->
 
 <p align="center">
-  <sub>See more: <a href="./SHOWCASE.md">Showcase gallery &rarr;</a></sub>
+  <sub>更多画面：<a href="./SHOWCASE.md">作品画廊 &rarr;</a></sub>
 </p>
 
 <br/>
 
-## What is DramaClaw?
+## DramaClaw 是什么？
 
-DramaClaw is a **soon-to-be-open-sourced industrialized production line for turning novels into short-form dramas**. Drop in a manuscript and DramaClaw handles the heavy lifting end-to-end: extracting characters, planning episodes, writing scripts, generating storyboards and first-frame images, synthesising voice-over, and composing the final cut.
+DramaClaw 是一条**即将开源的漫剧工业化生产线**。丢进一本原稿，DramaClaw 会接管全部繁重工作：抽取角色、规划剧集、生成剧本、绘制分镜与首帧、合成配音、最终剪成成片。
 
-It is built for writers, indie studios, and creative engineers who want to run the entire drama factory on infrastructure they control &mdash; without gluing together a dozen disjoint tools or handing source material to an opaque SaaS.
-
-<br/>
-
-## Key Capabilities
-
-- **Novel ingestion & story graph** &mdash; parse raw manuscripts, build a queryable graph of characters, relationships, and timeline
-- **Character extraction & identity consistency** &mdash; per-character identity anchors that hold up across episodes, with portrait generation and per-episode variants
-- **Episode planning & narrative pacing** &mdash; automatic chapter detection, beat planning, multi-episode arc construction
-- **Script generation** &mdash; multiple modes (adaptive rewrite, literal, staged) with reviewer/fixer loops
-- **Storyboards & first-frame images** &mdash; style-controlled generation per beat, grid cutting, pool selection
-- **Voice-over (TTS)** &mdash; emotional speech synthesis with swappable provider backends
-- **Video composition & export** &mdash; compose episodes, export MP4 + SRT subtitles, per-project asset bundles
+它为创作者、独立工作室以及创意工程师而生 —— 让你在自己的基础设施上跑完整个「漫剧智造工厂」，不必再去拼接十几个割裂的工具，也不必把素材交给一个看不见内部的黑盒云服务。
 
 <br/>
 
-## The Pipeline
+## 核心能力
+
+- **小说解析与故事图谱** &mdash; 解析原稿，构建可查询的角色、关系、时间线图谱
+- **角色抽取与身份一致性** &mdash; 多集之间保持稳定身份，生成角色肖像与单集变体
+- **剧集规划与叙事节奏** &mdash; 自动章节切分、节拍规划、多集叙事弧
+- **剧本生成** &mdash; 多种模式（改编、直译、分镜稿），带审校 / 修复循环
+- **分镜与首帧** &mdash; 按节拍风格化生成图像，网格切分，图像池选优
+- **配音合成** &mdash; 带情绪的语音合成，可切换多家服务商
+- **视频合成与导出** &mdash; 组装剧集，导出视频 + 字幕文件、整套素材包
+
+<br/>
+
+## 全流程一览
 
 ```
-┌─ Ingestion ──────┐   ┌─ Planning ────────┐   ┌─ Production ─────────┐   ┌─ Delivery ──┐
+┌─ 摄取 ───────────┐   ┌─ 规划 ─────────────┐   ┌─ 生产 ──────────────┐   ┌─ 交付 ──────┐
 │                  │   │                    │   │                      │   │              │
-│  1. Create       │   │  5. Extract chars  │   │  9. Identity images  │   │ 15. Compose  │
-│  2. Upload novel │   │  6. Plan episodes  │   │ 10. Script gen       │   │ 16. Export   │
-│  3. Parse/ingest │──▶│  7. Portraits      │──▶│ 11. Staging manual   │──▶│              │
-│  4. Configure    │   │  8. Plan identity  │   │ 12. Sketches         │   │              │
-│                  │   │                    │   │ 13. First frames     │   │              │
-│                  │   │                    │   │ 14. Voice-over (TTS) │   │              │
+│ 1. 创建项目       │   │ 5. 抽取角色        │   │ 9. 角色身份图        │   │ 15. 合成剪辑 │
+│ 2. 上传原稿       │   │ 6. 剧集规划        │   │ 10. 剧本生成         │   │ 16. 导出成片 │
+│ 3. 解析摄取       │──▶│ 7. 角色肖像        │──▶│ 11. 分镜手动调整     │──▶│              │
+│ 4. 配置           │   │ 8. 身份方案        │   │ 12. 草图             │   │              │
+│                  │   │                    │   │ 13. 首帧             │   │              │
+│                  │   │                    │   │ 14. 配音             │   │              │
 └──────────────────┘   └────────────────────┘   └──────────────────────┘   └──────────────┘
 ```
 
-Every stage is addressable through the REST API &mdash; call stages individually, resume from checkpoints, or drive them from your own orchestrator.
+每一步都有独立的接口 —— 可以按顺序跑，可以跳过，也可以从任意检查点续跑，甚至接入你自己的编排器。
 
 <br/>
 
-## Quick Start
+## <a name="quick-start"></a>快速开始
 
-### Docker (recommended)
+### Docker（推荐）
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
 cp .env.example .env
-# edit .env — at minimum set one LLM key and one TTS key
+# 编辑 .env —— 至少填一个大模型密钥和一个语音合成密钥
 
 docker build -t dramaclaw:local .
 docker run --rm -p 7860:7860 --env-file .env dramaclaw:local
 ```
 
-Open <http://localhost:7860> for the web studio.
+打开 <http://localhost:7860> 即可进入 Web 工作台。
 
-### Local development (uv + Python 3.10+)
+### 本地开发（uv + Python 3.10+）
 
 ```bash
 git clone https://github.com/dramaclaw/dramaclaw.git
@@ -147,82 +144,80 @@ cd dramaclaw
 uv sync
 cp .env.example .env && $EDITOR .env
 
-make ray       # start Ray head (async tasks)
-make ui        # start the studio on :7860
+make ray       # 启动 Ray 主节点（异步任务调度）
+make ui        # 启动工作台，端口 :7860
 ```
 
 ### Kubernetes / Helm
 
-<!-- TBD: publish Helm chart once ready. -->
-Coming soon &mdash; [track progress &rarr;](./ROADMAP.md)
+即将发布 &mdash; [查看进度 &rarr;](./ROADMAP.md)
 
 <br/>
 
-## Supported Models & Providers
+## 支持的模型与服务商
 
-DramaClaw is model-agnostic. Swap any component by editing `.env`.
+DramaClaw 对模型侧保持中立。所有组件都能通过 `.env` 切换。
 
-| Role              | Providers                                                           |
+| 角色              | 可选服务商                                                          |
 |-------------------|---------------------------------------------------------------------|
-| **LLM**           | OpenAI · Anthropic · Gemini · OpenRouter · Volcengine (Doubao)      |
-| **Image**         | Gemini nanobanana · Volcengine Seedream 4.5                         |
-| **TTS**           | Edge-TTS · Alibaba DashScope CosyVoice · Fish Audio                 |
-| **Story graph**   | LightRAG · Cognee (experimental)                                    |
-| **Async runtime** | Ray                                                                 |
-| **Storage**       | Local filesystem · S3-compatible (MinIO / AWS / OSS)                |
+| **大模型**        | OpenAI · Anthropic · Gemini · OpenRouter · 火山引擎（豆包）          |
+| **图像**          | Gemini nanobanana · 火山引擎 Seedream 4.5                           |
+| **配音**          | Edge-TTS · 阿里 DashScope CosyVoice · Fish Audio                    |
+| **故事图谱**      | LightRAG · Cognee（实验中）                                         |
+| **异步运行时**    | Ray                                                                 |
+| **存储**          | 本地文件系统 · 兼容 S3 的对象存储（MinIO / AWS / 阿里云 OSS）        |
 
 <br/>
 
-## Why DramaClaw?
+## 为什么是 DramaClaw？
 
-**Purpose-built for novel-to-drama.** General-purpose workflow tools can stitch nodes together, but none of them understand what an *episode beat* is, why identity consistency across scenes matters, or how to keep a chapter's emotional arc intact through image + voice + cut. DramaClaw encodes those assumptions directly into the pipeline.
+**为小说转短剧而生。** 通用的工作流工具确实可以把节点拼起来，但它们不知道「剧集节拍」是什么，不懂为什么角色的跨场景身份一致性那么重要，也不会在图像 + 配音 + 剪辑里去守护一整章节的情绪弧。DramaClaw 把这些判断全部内建到工具里。
 
-**Composable by design.** Every stage is a discrete async task with a REST endpoint. Call them in order, skip the ones you don't need, or resume from an intermediate checkpoint. The pipeline is the product &mdash; there's no hidden magic.
+**每一步皆可拆解。** 每个阶段都是一个独立的异步任务，各有独立接口。你可以顺序跑、跳步跑、中途续跑，这套工具本身就是产品 —— 里面不藏黑箱。
 
-**Self-hosted and model-agnostic.** Your manuscripts, your characters, your models, your infrastructure. Use closed-source LLMs when you want the best quality; switch to open models when you need control. DramaClaw doesn't lock you to any single vendor.
-
-<br/>
-
-## Documentation
-
-- [Architecture overview](./docs/architecture.md) <!-- TBD -->
-- [API reference](./docs/api-reference.md) <!-- TBD -->
-- [Pipeline deep-dive](./docs/pipeline.md) <!-- TBD -->
-- [Configuration & providers](./docs/configuration.md) <!-- TBD -->
+**可自托管，模型中立。** 你的原稿、你的角色、你的模型、你的服务器。需要最好的效果时用闭源大模型；需要完全可控时切到开源模型。DramaClaw 不会把你绑死在任何一家。
 
 <br/>
 
-## Community & Contribute
+## <a name="documentation"></a>文档
 
-- [Report a bug](https://github.com/dramaclaw/dramaclaw/issues/new?template=bug_report.yml)
-- [Request a feature](https://github.com/dramaclaw/dramaclaw/issues/new?template=feature_request.yml)
-- [Join the discussion](https://github.com/dramaclaw/dramaclaw/discussions) <!-- TBD: enable Discussions -->
-- [Contribution guide](./CONTRIBUTING.md) <!-- TBD — arrives with first code drop -->
-- [Security policy](./SECURITY.md)
-
-Good first issues are labelled [`good first issue`](https://github.com/dramaclaw/dramaclaw/labels/good%20first%20issue) &mdash; we actively triage them.
+- [架构概览](./docs/architecture.md) <!-- TBD -->
+- [接口参考](./docs/api-reference.md) <!-- TBD -->
+- [全流程详解](./docs/pipeline.md) <!-- TBD -->
+- [配置与服务商](./docs/configuration.md) <!-- TBD -->
 
 <br/>
 
-## Roadmap
+## 加入社区 / 一起贡献
 
-See [`ROADMAP.md`](./ROADMAP.md) for the milestones ahead. Highlights:
+- [提交 Bug](https://github.com/dramaclaw/dramaclaw/issues/new?template=bug_report.yml)
+- [提功能建议](https://github.com/dramaclaw/dramaclaw/issues/new?template=feature_request.yml)
+- [参与讨论](https://github.com/dramaclaw/dramaclaw/discussions)
+- [贡献指南](./CONTRIBUTING.md) <!-- TBD — 随首批代码一起发布 -->
+- [安全策略](./SECURITY.md)
 
-- **Stage 1 &mdash; Novel-to-drama narration** (current focus): 小说推文解说剧, the category we're opening the engine on
-- **Stage 2 &mdash; Animated shorts (AI 漫剧)**: stylised comic/animation output
-- **Stage 3 &mdash; Live-action shorts (AI 真人短剧)**: character-driven live-action pipelines
-- **Stage 4 &mdash; IP incubation**: virtual character continuity across formats
-
-<br/>
-
-## License
-
-<!-- TBD: license to be finalised before first code drop. -->
-License: TBD &mdash; will be finalised with the first code release.
+我们会持续整理并标记 [`good first issue`](https://github.com/dramaclaw/dramaclaw/labels/good%20first%20issue) —— 欢迎从这里起手。
 
 <br/>
 
-## Star History
+## 路线图
+
+详见 [`ROADMAP.md`](./ROADMAP.md)。主要节点：
+
+- **阶段一 &mdash; 小说推文解说剧**（当前聚焦）：我们打开这个引擎的第一个品类
+- **阶段二 &mdash; AI 漫剧**：风格化漫画 / 动画短剧生产
+- **阶段三 &mdash; AI 真人短剧**：以角色为核心的真人短剧流水线
+- **阶段四 &mdash; IP 孵化**：跨形态延续的虚拟角色与 IP
+
+<br/>
+
+## 许可证
+
+许可证：待定 &mdash; 将在首批代码发布时一同公布。
+
+<br/>
+
+## 星标走势
 
 <a href="https://star-history.com/#dramaclaw/dramaclaw&Date">
   <img src="https://api.star-history.com/svg?repos=dramaclaw/dramaclaw&type=Date" alt="Star history" width="620"/>
@@ -231,5 +226,5 @@ License: TBD &mdash; will be finalised with the first code release.
 <br/><br/>
 
 <div align="center">
-  <sub>Built for storytellers. Open-sourced for everyone.</sub>
+  <sub>为讲故事的人而建。开源给所有人。</sub>
 </div>
