@@ -7,14 +7,45 @@
 
 <p align="left">
 
-Most stories aren't missing because no one wants to tell them.<br/>
-They're missing because life has pushed the storyteller out of frame.
-
-DramaClaw hands the camera back &mdash;<br/>
-to those whom life has held on to too tightly,<br/>
-and to stories that have waited too long to be seen.
-
-They say you're out of date. Maybe it's the *day job* that is.
+They say you're obsolete.<br/>
+Maybe it's the "day job" that's obsolete.<br/>
+<br/>
+In the age of AI, the real question is not whether machines will replace people.<br/>
+The real question is:<br/>
+Who owns the machines?<br/>
+Who owns the workflow?<br/>
+Who owns industrialized production?<br/>
+<br/>
+If the answer is always big companies,<br/>
+then AI is not democratization.<br/>
+It is just a new wall.<br/>
+<br/>
+I'm Eric.<br/>
+DramaClaw is about to be open-sourced.<br/>
+<br/>
+This is not a demo.<br/>
+Not a toy.<br/>
+Not a crippled edition.<br/>
+<br/>
+This is the industrialized drama-production line our team runs every day.<br/>
+From scripts to storyboards, from assets to final cuts, end to end.<br/>
+<br/>
+We will open-source the whole thing.<br/>
+<br/>
+Because people are not workhorses.<br/>
+Because creativity is humanity's last line of defense.<br/>
+<br/>
+What DramaClaw does is simple:<br/>
+<br/>
+<strong>Tear down the wall.</strong><br/>
+<br/>
+Put industrialized drama production,<br/>
+once available only to large studios,<br/>
+into the hands of ordinary creators.<br/>
+<br/>
+Code is on the way.<br/>
+If this resonates, leave a ⭐.<br/>
+We keep tearing down walls.
 
 </p>
 
@@ -54,7 +85,7 @@ They say you're out of date. Maybe it's the *day job* that is.
 
 ## What is DramaClaw?
 
-DramaClaw is an **open-source pipeline for turning novels into short-form dramas**. Drop in a manuscript and DramaClaw handles the heavy lifting end-to-end: extracting characters, planning episodes, writing scripts, generating storyboards and first-frame images, synthesising voice-over, and composing the final cut.
+DramaClaw is a **soon-to-be-open-sourced industrialized production line for turning novels into short-form dramas**. Drop in a manuscript and DramaClaw handles the heavy lifting end-to-end: extracting characters, planning episodes, writing scripts, generating storyboards and first-frame images, synthesising voice-over, and composing the final cut.
 
 It is built for writers, indie studios, and creative engineers who want to run the entire drama factory on infrastructure they control &mdash; without gluing together a dozen disjoint tools or handing source material to an opaque SaaS.
 
