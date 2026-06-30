@@ -221,7 +221,14 @@ def m03_completion_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "username": "alice",
         "role": "owner",
     }
-    return TestClient(app), ctx
+    # Context-manage the client so one anyio portal event loop stays alive for the whole
+    # test. InlineTaskBackend runs each job as a fire-and-forget asyncio.create_task on the
+    # request loop; with a fresh per-request loop, that loop tears down before the job's
+    # executor work and lane-drain done-callback complete, leaving tasks stuck in "queued"
+    # (observed only under load on the Linux CI runner). A persistent loop lets background
+    # jobs finish while the test polls _wait_for_task from the main thread.
+    with TestClient(app) as client:
+        yield client, ctx
 
 
 def _wait_for_task(

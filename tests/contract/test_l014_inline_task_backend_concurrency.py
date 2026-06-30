@@ -190,6 +190,11 @@ async def test_gate2_cancel_kills_registered_process_group_and_unregisters_handl
 
     await _wait_for_status(_task_ports, ctx, task_type, "cancelled")
     assert await _wait_until_dead(child_pid)
+    # Unregistration happens asynchronously in the runner thread after proc.communicate(),
+    # so poll for the handle to drain rather than asserting a single instant.
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and active_subprocess_count(queued.task_state.task_id) != 0:
+        await asyncio.sleep(0.02)
     assert active_subprocess_count(queued.task_state.task_id) == 0
     await _wait_lane_idle(backend, "ffmpeg")
 

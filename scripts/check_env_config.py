@@ -32,6 +32,11 @@ DYNAMIC_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "src/novelvideo/task_backend/limits.py builds per-lane task limit names dynamically.",
     ),
+    (
+        re.compile(r"^EMBEDDING_BATCH_SIZE$"),
+        "Written to os.environ in src/novelvideo/cognee/config.py for Cognee to consume; "
+        "no direct runtime read.",
+    ),
 )
 THIRD_PARTY_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = ()
 COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -106,6 +111,12 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
             r"ST_PROJECT_TASK_TIMEOUT_S|ST_SPLAT_TRANSFORM_BIN)$"
         ),
         "Local runtime/dev override with code default; not required in committed templates.",
+    ),
+    (
+        re.compile(r"^MODEL_GATEWAY_RUNTIME_VERSION$"),
+        "Internal process-memory marker written by refresh_model_gateway_runtime() "
+        "(src/novelvideo/model_gateway_runtime.py) to coordinate credential refresh; "
+        "never operator-set, so absent from templates by design.",
     ),
 )
 CE_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
