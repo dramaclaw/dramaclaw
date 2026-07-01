@@ -3,19 +3,31 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Handle, Position, useReactFlow } from '@xyflow/react';
 import {
+  Download,
   FileText,
   Film,
   History,
   Image as ImageIcon,
   LayoutGrid,
+  ListTree,
   Music,
   Play,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Upload,
+  Wand2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+
+import { compileStoryGroup } from '@/features/canvas/story/compileStoryGroup';
+import { storySaveKey } from '@/features/canvas/story/storySave';
+import { Compiler } from 'inkjs/full';
+import { buildPlayerHtml } from '@/features/canvas/story/export/buildPlayerHtml';
+import { downloadStoryHtml } from '@/features/canvas/story/export/downloadStoryHtml';
+import { StoryCompileError } from '@/features/canvas/story/compileGraphToInk';
+import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 
 import { uploadFreezoneImage } from '@/api/ops';
 import { readUrl } from '@/lib/url-params';
@@ -81,6 +93,45 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
   const reactFlow = useReactFlow();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const isStoryboard = data.storyboardGroup === true;
+  const isStory = data.storyGroup === true;
+
+  const handleStoryGroupPlay = useCallback((groupId: string) => {
+    const { nodes, edges } = useCanvasStore.getState();
+    try {
+      const compiled = compileStoryGroup(groupId, nodes, edges);
+      // 存档按「画布 + 故事组」隔离;有存档时进入会提示续玩。
+      const saveKey = storySaveKey(readUrl().canvas ?? 'default', groupId);
+      useStoryRuntimeStore.getState().enterPlay(compiled, { saveKey });
+    } catch (err) {
+      toast.error(err instanceof StoryCompileError ? err.message : t('canvas.story.error'));
+    }
+  }, [t]);
+
+  const handleStoryGroupExport = useCallback((groupId: string) => {
+    const { nodes, edges } = useCanvasStore.getState();
+    try {
+      const compiled = compileStoryGroup(groupId, nodes, edges);
+      const story = new Compiler(compiled.ink).Compile();
+      const storyJson = story.ToJson();
+      if (!storyJson) throw new Error(t('canvas.story.error'));
+      const title = (data.displayName ?? data.label ?? '').trim();
+      const html = buildPlayerHtml(compiled, storyJson, {
+        title,
+        labels: {
+          defaultChoice: t('canvas.story.defaultChoice'),
+          endingBadge: t('canvas.story.endingBadge', { label: '' }).replace(/[ ·]+$/, '').trim() || '结局',
+          endingFallback: t('canvas.story.endingFallback'),
+          restart: t('canvas.story.restart'),
+          loadError: t('canvas.story.error'),
+        },
+      });
+      downloadStoryHtml(html, title);
+      toast.success(t('canvas.story.exportDone'));
+    } catch (err) {
+      toast.error(err instanceof StoryCompileError ? err.message : t('canvas.story.error'));
+    }
+  }, [t, data]);
+
   const showIndex = isStoryboard && data.storyboardShowIndex === true;
 
   // 只订阅本组自身节点 + 其成员节点(useShallow 逐元素比较)。groupPosition / board /
@@ -420,6 +471,58 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
           displayName: nextTitle,
           label: nextTitle,
         })}
+        rightSlot={isStory ? (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className="nodrag flex items-center gap-1.5 rounded px-2.5 py-1 text-base text-white/85 hover:bg-white/10"
+              title={t('canvas.story.play')}
+              onClick={(e) => { e.stopPropagation(); handleStoryGroupPlay(id); }}
+            >
+              <Play className="h-4 w-4" /> {t('canvas.story.play')}
+            </button>
+            <button
+              type="button"
+              className="nodrag flex items-center gap-1.5 rounded px-2.5 py-1 text-base text-white/85 hover:bg-white/10"
+              title={t('canvas.story.variables')}
+              onClick={(e) => { e.stopPropagation(); useCanvasStore.getState().openStoryVariables(id); }}
+            >
+              {t('canvas.story.variables')}
+            </button>
+            <button
+              type="button"
+              className="nodrag flex items-center gap-1.5 rounded px-2.5 py-1 text-base text-white/85 hover:bg-white/10"
+              title={t('canvas.story.tree.open')}
+              onClick={(e) => { e.stopPropagation(); useCanvasStore.getState().openStoryTree(id); }}
+            >
+              <ListTree className="h-4 w-4" /> {t('canvas.story.tree.open')}
+            </button>
+            <button
+              type="button"
+              className="nodrag flex items-center gap-1.5 rounded px-2.5 py-1 text-base text-white/85 hover:bg-white/10"
+              title={t('canvas.story.lint.open')}
+              onClick={(e) => { e.stopPropagation(); useCanvasStore.getState().openStoryLint(id); }}
+            >
+              <ShieldCheck className="h-4 w-4" /> {t('canvas.story.lint.open')}
+            </button>
+            <button
+              type="button"
+              className="nodrag flex items-center gap-1.5 rounded px-2.5 py-1 text-base text-white/85 hover:bg-white/10"
+              title={t('canvas.story.gen.open')}
+              onClick={(e) => { e.stopPropagation(); useCanvasStore.getState().openStoryGen(id); }}
+            >
+              <Wand2 className="h-4 w-4" /> {t('canvas.story.gen.open')}
+            </button>
+            <button
+              type="button"
+              className="nodrag flex items-center gap-1.5 rounded px-2.5 py-1 text-base text-white/85 hover:bg-white/10"
+              title={t('canvas.story.export')}
+              onClick={(e) => { e.stopPropagation(); handleStoryGroupExport(id); }}
+            >
+              <Download className="h-4 w-4" /> {t('canvas.story.export')}
+            </button>
+          </div>
+        ) : undefined}
       />
 
       {isStoryboard

@@ -21,6 +21,7 @@ import {
   type CanvasNode,
   type ExportImageNodeResultKind,
 } from '@/features/canvas/domain/canvasNodes';
+import { isNodeStoryClip } from '@/features/canvas/story/storySelectors';
 import { NodeActionToolbar } from './NodeActionToolbar';
 import { AssetCommitHandle } from './AssetCommitHandle';
 import { MultiAngleEditorOverlay } from './MultiAngleEditorOverlay';
@@ -407,15 +408,12 @@ export const SelectedNodeOverlay = memo(() => {
       if (
         !isUploadNode(sourceNode)
         && !isImageEditNode(sourceNode)
-        && !isImageGenNode(sourceNode)
         && !isExportImageNode(sourceNode)
       ) {
         return;
       }
-      // 与工具栏 canHandleImage / 其它图片工具一致，用统一 helper 取图源
-      // ——它能识别 imageGen 节点（含 referenceImageUrl 兜底）。此前这里只读
-      // imageUrl||previewImageUrl 且守卫漏了 imageGen，导致在生成图节点上点「高清」无反应。
-      const sourceImageUrl = resolveNodeSourceImageUrl(sourceNode);
+      const sourceImageUrl =
+        sourceNode.data.imageUrl || sourceNode.data.previewImageUrl || null;
       if (!sourceImageUrl) return;
 
       const sourceAspectRatio =
@@ -540,11 +538,20 @@ export const SelectedNodeOverlay = memo(() => {
   const externalOverlayNodeId = useCanvasStore((state) => state.activeOverlayNodeId);
   const effectiveOverlayNodeId = activeOverlayNodeId ?? externalOverlayNodeId;
 
+  // 故事片段「播放器形态」(故事组内视频节点且未进入编辑态):抑制顶部视频工具条
+  // (剪辑/高清/去字幕/...) 与智能素材把手 —— 这些是画布创作能力,故事语境下收起。
+  const storyEditNodeId = useCanvasStore((state) => state.storyEditNodeId);
+  const selectedIsStoryPlayer =
+    selectedNode != null &&
+    isNodeStoryClip(nodes, selectedNodeId) &&
+    storyEditNodeId !== selectedNodeId;
+
   return (
     <>
       {selectedNode
         && !rotateNodeId
         && !effectiveOverlayNodeId
+        && !selectedIsStoryPlayer
         && nodeHasResourceForToolbar(selectedNode) && (
         <NodeActionToolbar
           // 按节点 id 重挂载，确保每次「激活某个节点」都重放顶部菜单的入场动画
@@ -562,7 +569,7 @@ export const SelectedNodeOverlay = memo(() => {
           onOpenRotate={handleOpenRotate}
         />
       )}
-      {selectedNode && !rotateNodeId && !effectiveOverlayNodeId && (
+      {selectedNode && !rotateNodeId && !effectiveOverlayNodeId && !selectedIsStoryPlayer && (
         <AssetCommitHandle node={selectedNode} />
       )}
       {multiAngleNode && multiAngleImageSource && (

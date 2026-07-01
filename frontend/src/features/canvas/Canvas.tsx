@@ -147,6 +147,11 @@ import {
 } from './snap-align/computeSnapAlign';
 import { computeAutoLayout } from './application/autoLayout';
 import { migratePastedNodeAssets } from './application/crossProjectAssets';
+import { StoryPlayerOverlay } from '@/components/canvas/StoryPlayerOverlay';
+import { StoryVariablesPanel } from '@/components/canvas/StoryVariablesPanel';
+import { StoryLintPanel } from '@/components/canvas/StoryLintPanel';
+import { StoryBatchGenPanel } from '@/components/canvas/StoryBatchGenPanel';
+import { StoryTreePanel } from '@/components/canvas/StoryTreePanel';
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 const DEFAULT_EDGE_OPTIONS = { type: 'disconnectableEdge' };
@@ -756,6 +761,15 @@ export function Canvas({
   // useSmoothMinimapPan 的清理函数摘掉 window 监听，拖动直接断在半路。
   const [minimapPanning, setMinimapPanning] = useState(false);
   const minimapVisible = minimapPinned || minimapHovered || minimapPanning;
+
+  const openStoryVariablesGroupId = useCanvasStore((s) => s.openStoryVariablesGroupId);
+  const closeStoryVariables = useCanvasStore((s) => s.closeStoryVariables);
+  const openStoryLintGroupId = useCanvasStore((s) => s.openStoryLintGroupId);
+  const closeStoryLint = useCanvasStore((s) => s.closeStoryLint);
+  const openStoryGenGroupId = useCanvasStore((s) => s.openStoryGenGroupId);
+  const closeStoryGen = useCanvasStore((s) => s.closeStoryGen);
+  const openStoryTreeGroupId = useCanvasStore((s) => s.openStoryTreeGroupId);
+  const closeStoryTree = useCanvasStore((s) => s.closeStoryTree);
   // 小地图弹层（含上方的书签数字行）靠 hover 显示。数字行是小地图上方、隔着间隙的
   // 独立 DOM 子树:鼠标从小地图移到数字按钮的途中会先离开小地图,若立即把
   // minimapHovered 置 false,整个 overlay 会在点到按钮前卸载,导致「点不了」。
@@ -1059,9 +1073,11 @@ export function Canvas({
   const applyNodesChange = useCanvasStore((state) => state.onNodesChange);
   const applyEdgesChange = useCanvasStore((state) => state.onEdgesChange);
   const connectNodes = useCanvasStore((state) => state.onConnect);
+  const addStoryChoiceEdge = useCanvasStore((state) => state.addStoryChoiceEdge);
   const replaceEdges = useCanvasStore((state) => state.replaceEdges);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const addNode = useCanvasStore((state) => state.addNode);
+  const addStoryImport = useCanvasStore((state) => state.addStoryImport);
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const pendingFocusNodeId = useCanvasStore((state) => state.pendingFocusNodeId);
@@ -1819,15 +1835,45 @@ export function Canvas({
     [connectSkillRoleBinding],
   );
 
+  /**
+   * 若连线两端均为 videoNode，弹 prompt 建故事选项边并返回 true（调用方应 return）。
+   * 用于统一所有手动连线路径，避免走自定义落点时绕过 handleConnect。
+   */
+  const maybeCreateStoryChoiceEdge = useCallback(
+    (connection: { source: string | null; target: string | null }): boolean => {
+      if (!connection.source || !connection.target) return false;
+      const sourceNode = nodes.find((n) => n.id === connection.source);
+      const targetNode = nodes.find((n) => n.id === connection.target);
+      if (
+        sourceNode?.type === CANVAS_NODE_TYPES.video &&
+        targetNode?.type === CANVAS_NODE_TYPES.video
+      ) {
+        const newId = addStoryChoiceEdge(connection.source, connection.target, '');
+        if (newId) {
+          // 选中新边 → StoryChoiceEdge 在 selected 时打开编辑器,用户直接填文案/条件/效果。
+          useCanvasStore.setState((s) => ({
+            edges: s.edges.map((e) => ({ ...e, selected: e.id === newId })),
+          }));
+          scheduleCanvasPersist(0);
+        }
+        return true;
+      }
+      return false;
+    },
+    [nodes, addStoryChoiceEdge, scheduleCanvasPersist],
+  );
+
   const handleConnect = useCallback(
     (connection: Connection) => {
       if (!canNodeBeManualConnectionSource(connection.source, nodes, connection.target)) {
         return;
       }
+      // videoNode → videoNode 连线：弹 prompt 建故事选项边
+      if (maybeCreateStoryChoiceEdge(connection)) return;
       connectGraphNodes(connection);
       scheduleCanvasPersist(0);
     },
-    [connectGraphNodes, nodes, scheduleCanvasPersist]
+    [connectGraphNodes, nodes, scheduleCanvasPersist, maybeCreateStoryChoiceEdge]
   );
 
   // 3D 世界节点只用一张上游图生成 —— 入边唯一。已有上游时实时拒绝再连入(连线
@@ -3308,6 +3354,45 @@ export function Canvas({
     [addNode, focusNewNodeIfLowZoom, scheduleCanvasPersist, setSelectedNode, spawnAtViewportCenter],
   );
 
+  const importStoryFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleImportStory = useCallback(() => {
+    importStoryFileInputRef.current?.click();
+  }, []);
+
+  const handleImportStoryFileChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file) return;
+      try {
+        const { parseStory, buildStoryGroupFromImport } = await import(
+          '@/features/canvas/story/import'
+        );
+        const text = await file.text();
+        const imported = parseStory(text, file.name);
+        const { nodes, edges } = buildStoryGroupFromImport(imported, {
+          center: spawnAtViewportCenter(),
+        });
+        addStoryImport(nodes, edges);
+        scheduleCanvasPersist(0);
+        const hasReview =
+          imported.warnings.length > 0 ||
+          nodes.some((node) => (node.data as { importNeedsReview?: boolean }).importNeedsReview) ||
+          edges.some((edge) => (edge.data as { needsReview?: boolean } | undefined)?.needsReview);
+        if (hasReview) {
+          toast.warning(t('canvas.story.importPartial'));
+        } else {
+          toast.success(t('canvas.story.importDone'));
+        }
+      } catch (error) {
+        console.error('[canvas] import story failed', error);
+        toast.error(t('canvas.story.importFailed'));
+      }
+    },
+    [addStoryImport, scheduleCanvasPersist, spawnAtViewportCenter, t],
+  );
+
   const handleQuickAddSkill = useCallback(
     (skill: SkillDefinition) => {
       const newNodeId = addNode(CANVAS_NODE_TYPES.skill, spawnAtViewportCenter(), {
@@ -4099,13 +4184,11 @@ export function Canvas({
                   clientPosition,
                 }) ?? 'target'
               : pendingConnectStart.handleId ?? 'target';
-          connectGraphNodes({
-            source: sourceNode.id,
-            target: targetNode.id,
-            sourceHandle,
-            targetHandle,
-          });
-          scheduleCanvasPersist(0);
+          const conn = { source: sourceNode.id, target: targetNode.id, sourceHandle, targetHandle };
+          if (!maybeCreateStoryChoiceEdge(conn)) {
+            connectGraphNodes(conn);
+            scheduleCanvasPersist(0);
+          }
           setPendingConnectStart(null);
           setPreviewConnectionVisual(null);
           return;
@@ -4184,6 +4267,7 @@ export function Canvas({
     [
       connectGraphNodes,
       manualDropReferenceRejection,
+      maybeCreateStoryChoiceEdge,
       nodes,
       pendingConnectStart,
       reactFlowInstance,
@@ -4472,13 +4556,11 @@ export function Canvas({
                   clientPosition: params.clientPosition,
                 }) ?? 'target'
               : pending.handleId ?? 'target';
-          connectGraphNodes({
-            source: sourceNode.id,
-            target: targetNode.id,
-            sourceHandle,
-            targetHandle,
-          });
-          scheduleCanvasPersist(0);
+          const conn = { source: sourceNode.id, target: targetNode.id, sourceHandle, targetHandle };
+          if (!maybeCreateStoryChoiceEdge(conn)) {
+            connectGraphNodes(conn);
+            scheduleCanvasPersist(0);
+          }
           setPendingConnectStart(null);
           setPreviewConnectionVisual(null);
           return;
@@ -4524,6 +4606,7 @@ export function Canvas({
     [
       connectGraphNodes,
       manualDropReferenceRejection,
+      maybeCreateStoryChoiceEdge,
       nodes,
       reactFlowInstance,
       scheduleCanvasPersist,
@@ -4866,6 +4949,23 @@ export function Canvas({
         )}
         {minimapVisible && <CanvasMinimapBookmarksOverlay onHoverChange={setMinimapHover} />}
 
+        {openStoryVariablesGroupId && (
+          <StoryVariablesPanel groupId={openStoryVariablesGroupId} onClose={closeStoryVariables} />
+        )}
+
+        {openStoryLintGroupId && (
+          <StoryLintPanel groupId={openStoryLintGroupId} onClose={closeStoryLint} />
+        )}
+
+        {openStoryGenGroupId && (
+          <StoryBatchGenPanel groupId={openStoryGenGroupId} onClose={closeStoryGen} />
+        )}
+
+        {openStoryTreeGroupId && (
+          <StoryTreePanel groupId={openStoryTreeGroupId} onClose={closeStoryTree} />
+        )}
+
+        <StoryPlayerOverlay />
         <SelectedNodeOverlay />
         <MultiSelectionToolbar />
         <MultiSelectionConnectButton
@@ -5036,8 +5136,17 @@ export function Canvas({
           onAddSkill={handleQuickAddSkill}
           onUseAsset={handleUseHistoryAsset}
           onDeleteNode={handleDeleteHistoryNode}
+          onImportStory={handleImportStory}
         />
       )}
+
+      <input
+        ref={importStoryFileInputRef}
+        type="file"
+        accept=".ink,.json,text/plain,application/json"
+        className="hidden"
+        onChange={handleImportStoryFileChange}
+      />
 
       {previewConnectionVisual && (
         <svg

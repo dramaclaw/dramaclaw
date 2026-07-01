@@ -3370,6 +3370,91 @@
       "keys": {
         "space": "空格"
       }
+    },
+    "story": {
+      "play": "试玩",
+      "export": "导出",
+      "exportDone": "已导出 HTML,可下载试玩",
+      "restart": "重新开始",
+      "resume": {
+        "title": "上次玩到一半,继续吗?",
+        "continue": "继续",
+        "fresh": "从头开始",
+        "invalid": "存档已失效,已从头开始"
+      },
+      "error": "故事编译失败",
+      "import": "导入互动影游",
+      "importDone": "已导入互动影游",
+      "importPartial": "已导入,部分结构需手动处理(见 ⚠)",
+      "importFailed": "导入失败:文件解析出错",
+      "importClipHint": "待填视频:{{file}}",
+      "importClipPending": "待填视频",
+      "editNarrationHint": "双击编辑旁白",
+      "editNarrationEmpty": "双击添加旁白",
+      "editClip": "编辑(剪辑/高清/重新生成)",
+      "editClipDone": "完成编辑,回到播放器",
+      "setStart": "设为故事起点",
+      "choicePlaceholder": "+ 选项",
+      "choicePrompt": "选项文案(玩家看到的按钮文字)",
+      "choiceEditorTitle": "编辑选项",
+      "choiceDefault": "继续",
+      "defaultChoice": "默认",
+      "endingBadge": "结局 · {{label}}",
+      "endingFallback": "全剧终",
+      "choiceCountdown": "选择倒计时",
+      "choiceTimeLimit": "选择时限",
+      "choiceTimeLimitUnit": "秒(0=不限时)",
+      "defaultChoiceToggle": "默认(超时自动选)",
+      "gen": {
+        "open": "生成缺失片段",
+        "title": "批量生成缺失片段",
+        "missingCount": "缺 {{count}} 个片段",
+        "skippedHint": "{{count}} 个无旁白片段将跳过",
+        "resolution": "清晰度",
+        "duration": "时长(秒)",
+        "generate": "生成 {{count}} 个",
+        "none": "没有缺失片段",
+        "starting": "开始生成 {{count}} 个片段…",
+        "done": "已生成 {{succeeded}} 个片段",
+        "donePartial": "完成:成功 {{succeeded}}、失败 {{failed}}",
+        "failed": "批量生成失败",
+        "noProject": "当前不在项目上下文,无法生成"
+      },
+      "tree": {
+        "open": "剧情树",
+        "title": "剧情树",
+        "orphans": "不可达 / 孤立",
+        "noStart": "未设唯一起点",
+        "empty": "故事组为空",
+        "repeated": "已出现"
+      },
+      "lint": {
+        "open": "检查",
+        "title": "故事校验",
+        "empty": "未发现问题",
+        "codes": {
+          "no_start": "未设故事起点(或起点不唯一)",
+          "unreachable": "从起点无法到达此片段",
+          "missing_video": "片段尚未填入视频",
+          "undefined_variable": "引用了未定义变量「{{detail}}」",
+          "dangling_edge": "选项指向了组外的节点",
+          "dangling_visit": "条件引用了组外/不存在的片段",
+          "leaf_no_ending": "末端片段未标结局(可能未完成)",
+          "needs_review": "导入的结构待人工确认"
+        }
+      },
+      "variables": "故事变量",
+      "newVariablePlaceholder": "变量名(如 林·好感度)",
+      "condition": "条件",
+      "addCondition": "增加条件",
+      "condVar": "变量",
+      "condVisit": "去过片段",
+      "conditionJoinAll": "满足全部",
+      "conditionJoinAny": "满足任一",
+      "effects": "效果",
+      "addEffect": "效果",
+      "makeStory": "组成互动影游",
+      "noVariablesHint": "先在组头「故事变量」添加变量,才能设条件 / 效果"
     }
   },
   "tool": {

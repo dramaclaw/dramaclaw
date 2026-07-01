@@ -95,6 +95,9 @@ importers:
       i18next-http-backend:
         specifier: ^3.0.4
         version: 3.0.6
+      inkjs:
+        specifier: ^2.4.0
+        version: 2.4.0
       konva:
         specifier: ^10.3.0
         version: 10.3.0
@@ -2666,6 +2669,10 @@ packages:
 
   ini@1.3.8:
     resolution: {integrity: sha512-JV/yugV2uzW5iMRSiZAyDtQd+nxtUnjeLt0acNdw98kKLrvuRVyB80tsREOE7yvGVgalhZ6RNXCmEHkUKBKxew==}
+
+  inkjs@2.4.0:
+    resolution: {integrity: sha512-EoPCYESIbMtfI8SqEDZCJwn+A5is0QozMLw250iic1ReJCgZpRKIezWj0VqgRUzAx0f3MmEbsUjY/ILe2815JQ==}
+    hasBin: true
 
   inline-style-parser@0.2.7:
     resolution: {integrity: sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==}
@@ -6546,6 +6553,8 @@ snapshots:
 
   ini@1.3.8:
     optional: true
+
+  inkjs@2.4.0: {}
 
   inline-style-parser@0.2.7: {}
 

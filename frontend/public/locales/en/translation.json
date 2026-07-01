@@ -3370,6 +3370,91 @@
       "keys": {
         "space": "Space"
       }
+    },
+    "story": {
+      "play": "Play",
+      "export": "Export",
+      "exportDone": "Exported playable HTML",
+      "restart": "Restart",
+      "resume": {
+        "title": "You left off midway — continue?",
+        "continue": "Continue",
+        "fresh": "Start over",
+        "invalid": "Save is no longer valid; started over"
+      },
+      "error": "Failed to compile story",
+      "import": "Import interactive story",
+      "importDone": "Interactive story imported",
+      "importPartial": "Imported; some parts need manual review (see ⚠)",
+      "importFailed": "Import failed: could not parse file",
+      "importClipHint": "Awaiting video: {{file}}",
+      "importClipPending": "Awaiting video",
+      "editNarrationHint": "Double-click to edit narration",
+      "editNarrationEmpty": "Double-click to add narration",
+      "editClip": "Edit (clip / upscale / regenerate)",
+      "editClipDone": "Done editing, back to player",
+      "setStart": "Set as story start",
+      "choicePlaceholder": "+ Choice",
+      "choicePrompt": "Choice text (the button players see)",
+      "choiceEditorTitle": "Edit choice",
+      "choiceDefault": "Continue",
+      "defaultChoice": "Default",
+      "endingBadge": "Ending · {{label}}",
+      "endingFallback": "The End",
+      "choiceCountdown": "Choice countdown",
+      "choiceTimeLimit": "Time limit",
+      "choiceTimeLimitUnit": "s (0 = none)",
+      "defaultChoiceToggle": "Default (auto-pick on timeout)",
+      "gen": {
+        "open": "Generate missing",
+        "title": "Generate missing clips",
+        "missingCount": "{{count}} missing clip(s)",
+        "skippedHint": "{{count}} clip(s) without narration will be skipped",
+        "resolution": "Resolution",
+        "duration": "Duration (s)",
+        "generate": "Generate {{count}}",
+        "none": "No missing clips",
+        "starting": "Generating {{count}} clip(s)…",
+        "done": "Generated {{succeeded}} clip(s)",
+        "donePartial": "Done: {{succeeded}} ok, {{failed}} failed",
+        "failed": "Batch generation failed",
+        "noProject": "Not in a project context; cannot generate"
+      },
+      "tree": {
+        "open": "Story tree",
+        "title": "Story tree",
+        "orphans": "Unreachable / orphaned",
+        "noStart": "No unique start",
+        "empty": "Empty story group",
+        "repeated": "seen"
+      },
+      "lint": {
+        "open": "Check",
+        "title": "Story check",
+        "empty": "No issues found",
+        "codes": {
+          "no_start": "No story start set (or start is ambiguous)",
+          "unreachable": "Unreachable from the start clip",
+          "missing_video": "Clip has no video yet",
+          "undefined_variable": "References undefined variable \"{{detail}}\"",
+          "dangling_edge": "Choice points to a node outside the group",
+          "dangling_visit": "Condition references a clip outside this group",
+          "leaf_no_ending": "End clip has no ending label (maybe unfinished)",
+          "needs_review": "Imported structure needs review"
+        }
+      },
+      "variables": "Variables",
+      "newVariablePlaceholder": "Name (e.g. Lin's affinity)",
+      "condition": "Condition",
+      "addCondition": "Add condition",
+      "condVar": "Variable",
+      "condVisit": "Visited clip",
+      "conditionJoinAll": "Match all",
+      "conditionJoinAny": "Match any",
+      "effects": "Effects",
+      "addEffect": "Effect",
+      "makeStory": "Make interactive story",
+      "noVariablesHint": "Add a variable in 'Variables' (group header) first to set conditions / effects"
     }
   },
   "tool": {

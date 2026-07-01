@@ -28,6 +28,9 @@ export const CANVAS_NODE_TYPES = {
   style: 'styleNode',
 } as const;
 
+export { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
+import type { StoryVariable } from '@/features/canvas/story/storyTypes';
+
 export type CanvasNodeType = (typeof CANVAS_NODE_TYPES)[keyof typeof CANVAS_NODE_TYPES];
 
 export const DEFAULT_ASPECT_RATIO = '1:1';
@@ -181,6 +184,20 @@ export interface VideoNodeData extends NodeDisplayData {
   upscaleResolution?: '1080p' | '2k' | '4k';
   /** 降噪强度。 */
   upscaleDenoise?: 'none' | '1x' | '2x';
+  /** 故事模式:被设为分支叙事起点的视频节点。仅 'start',未设则 undefined。 */
+  storyRole?: 'start';
+  /** 互动影游:选项窗口秒数(每源片段一个)。空/0 = 不限时(无限等待)。 */
+  choiceTimeLimitSec?: number;
+  /** 互动影游:结局标(如 GE/NE/BE),仅叶子结局片段。结局页作 badge 显示。 */
+  endingLabel?: string;
+  /** 导入互动影游时的旁白文本(占位片段,无视频时展示)。 */
+  narration?: string;
+  /** 导入时 `# video: x.mp4` 的期望文件名提示。 */
+  videoHint?: string;
+  /** 导入的超模型结构,需创作者手动处理。 */
+  importNeedsReview?: boolean;
+  /** needsReview 的说明文字。 */
+  importReviewNote?: string;
   [key: string]: unknown;
 }
 
@@ -234,6 +251,10 @@ export interface GroupNodeData extends NodeDisplayData {
   /** Largest member content box at merge time — the cell-size floor for re-layout. */
   storyboardBaseWidth?: number;
   storyboardBaseHeight?: number;
+  /** 标记此组为「故事组」(互动影游)。 */
+  storyGroup?: boolean;
+  /** 该故事的数值变量(好感度等),按组独立。 */
+  storyVariables?: StoryVariable[];
   [key: string]: unknown;
 }
 
@@ -788,6 +809,12 @@ export function isStoryboardGroupNode(
   node: CanvasNode | null | undefined
 ): node is Node<GroupNodeData, typeof CANVAS_NODE_TYPES.group> {
   return isGroupNode(node) && node.data.storyboardGroup === true;
+}
+
+export function isStoryGroupNode(
+  node: CanvasNode | null | undefined,
+): node is Node<GroupNodeData, typeof CANVAS_NODE_TYPES.group> {
+  return isGroupNode(node) && node.data.storyGroup === true;
 }
 
 export function isProtectedProjectionGroupNode(

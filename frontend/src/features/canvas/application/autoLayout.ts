@@ -158,7 +158,8 @@ function resolveColumnCenters(
   orderedIds: string[],
   desired: Map<string, number>,
   heights: Map<string, number>,
-  centerY: Map<string, number>
+  centerY: Map<string, number>,
+  rowGap: number
 ): void {
   const n = orderedIds.length;
   if (n === 0) {
@@ -168,7 +169,7 @@ function resolveColumnCenters(
   for (let i = 1; i < n; i += 1) {
     const prevHalf = (heights.get(orderedIds[i - 1]) ?? DEFAULT_NODE_HEIGHT) / 2;
     const currHalf = (heights.get(orderedIds[i]) ?? DEFAULT_NODE_HEIGHT) / 2;
-    const minCenter = centers[i - 1] + prevHalf + ROW_GAP + currHalf;
+    const minCenter = centers[i - 1] + prevHalf + rowGap + currHalf;
     if (centers[i] < minCenter) {
       centers[i] = minCenter;
     }
@@ -213,7 +214,9 @@ function compactVerticalBands(
 
 function layoutComponent(
   componentNodes: CanvasNode[],
-  edgePairs: Array<[string, string]>
+  edgePairs: Array<[string, string]>,
+  columnGap: number,
+  rowGap: number
 ): LayoutComponentResult {
   const ids = componentNodes.map((node) => node.id);
   const idSet = new Set(ids);
@@ -297,7 +300,7 @@ function layoutComponent(
   let xCursor = 0;
   for (const lvl of sortedLevels) {
     columnX.set(lvl, xCursor);
-    xCursor += (columnWidths.get(lvl) ?? 0) + COLUMN_GAP;
+    xCursor += (columnWidths.get(lvl) ?? 0) + columnGap;
   }
 
   // —— 阶段 2：纵向坐标分配（重心法）——
@@ -313,7 +316,7 @@ function layoutComponent(
     for (const id of columns.get(lvl)!) {
       const half = (heights.get(id) ?? DEFAULT_NODE_HEIGHT) / 2;
       centerY.set(id, yCursor + half);
-      yCursor += (heights.get(id) ?? DEFAULT_NODE_HEIGHT) + ROW_GAP;
+      yCursor += (heights.get(id) ?? DEFAULT_NODE_HEIGHT) + rowGap;
     }
   }
   for (let sweep = 0; sweep < COORD_SWEEPS; sweep += 1) {
@@ -333,7 +336,7 @@ function layoutComponent(
           desired.set(id, mean(neighborCenters));
         }
       }
-      resolveColumnCenters(arr, desired, heights, centerY);
+      resolveColumnCenters(arr, desired, heights, centerY, rowGap);
     }
   }
 
@@ -375,6 +378,99 @@ export interface AutoLayoutResult {
   changedCount: number;
 }
 
+export interface GraphLayoutResult {
+  /** 归一化到 (0,0) 原点的局部坐标(左上角)。 */
+  positions: Map<string, { x: number; y: number }>;
+  width: number;
+  height: number;
+}
+
+/**
+ * 把一组节点 + 有向边(edgePairs)按 Sugiyama 分层 + 多连通分量 shelf 打包,
+ * 返回归一化到 (0,0) 的局部坐标与整体 bbox。
+ * 画布「整理」(computeAutoLayout)与导入互动影游(组内布局)共用此引擎。
+ */
+export interface LayoutGraphOptions {
+  /** 列间距(横向);默认 COLUMN_GAP。 */
+  columnGap?: number;
+  /** 行间距(纵向);默认 ROW_GAP。 */
+  rowGap?: number;
+}
+
+export function layoutGraph(
+  nodes: CanvasNode[],
+  edgePairs: Array<[string, string]>,
+  opts: LayoutGraphOptions = {},
+): GraphLayoutResult {
+  if (nodes.length === 0) {
+    return { positions: new Map(), width: 0, height: 0 };
+  }
+  const columnGap = opts.columnGap ?? COLUMN_GAP;
+  const rowGap = opts.rowGap ?? ROW_GAP;
+
+  const components = computeComponents(nodes, edgePairs);
+  // 排序按"原始位置左上 → 右下"，让整理后的相对顺序贴近用户的心智位置。
+  components.sort((a, b) => {
+    const aMin = Math.min(...a.map((node) => node.position.y));
+    const bMin = Math.min(...b.map((node) => node.position.y));
+    if (aMin !== bMin) {
+      return aMin - bMin;
+    }
+    const aX = Math.min(...a.map((node) => node.position.x));
+    const bX = Math.min(...b.map((node) => node.position.x));
+    return aX - bX;
+  });
+
+  // 先对每个连通分量内部做布局，拿到各自的 bbox。
+  const laidOut = components.map((component) => ({
+    component,
+    layout: layoutComponent(component, edgePairs, columnGap, rowGap),
+  }));
+
+  // 估算 shelf 打包的目标条带宽度：按总面积 + 期望宽高比反推，并保证至少
+  // 能容纳最宽的单个分量。
+  const totalArea = laidOut.reduce(
+    (acc, item) => acc + item.layout.width * item.layout.height,
+    0,
+  );
+  const widestComponent = laidOut.reduce(
+    (acc, item) => Math.max(acc, item.layout.width),
+    0,
+  );
+  const idealStripWidth = totalArea > 0
+    ? Math.sqrt(totalArea * TARGET_PAGE_ASPECT)
+    : 0;
+  const stripWidth = Math.max(idealStripWidth, widestComponent);
+
+  // Shelf 打包：从左到右往当前行塞，超出 stripWidth 就换下一行。
+  const sizeById = new Map(nodes.map((n) => [n.id, getNodeSize(n)] as const));
+  const positions = new Map<string, { x: number; y: number }>();
+  let rowXCursor = 0;
+  let rowYCursor = 0;
+  let currentRowMaxHeight = 0;
+  let boundX = 0;
+  let boundY = 0;
+  for (const { layout } of laidOut) {
+    if (rowXCursor > 0 && rowXCursor + layout.width > stripWidth) {
+      rowYCursor += currentRowMaxHeight + COMPONENT_GAP_Y;
+      rowXCursor = 0;
+      currentRowMaxHeight = 0;
+    }
+    for (const [id, pos] of layout.positions) {
+      const x = rowXCursor + pos.x;
+      const y = rowYCursor + pos.y;
+      positions.set(id, { x, y });
+      const size = sizeById.get(id) ?? { width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT };
+      boundX = Math.max(boundX, x + size.width);
+      boundY = Math.max(boundY, y + size.height);
+    }
+    rowXCursor += layout.width + COMPONENT_GAP_X;
+    currentRowMaxHeight = Math.max(currentRowMaxHeight, layout.height);
+  }
+
+  return { positions, width: boundX, height: boundY };
+}
+
 export function computeAutoLayout(
   nodes: CanvasNode[],
   edges: CanvasEdge[]
@@ -403,62 +499,10 @@ export function computeAutoLayout(
   const baseX = Number.isFinite(anchorX) ? anchorX : 0;
   const baseY = Number.isFinite(anchorY) ? anchorY : 0;
 
-  const components = computeComponents(topLevelNodes, edgePairs);
-  // 排序仍按"原始位置左上 → 右下"，让整理后的相对顺序贴近用户的心智位置，
-  // 便于在重排后凭印象快速定位某个节点。
-  components.sort((a, b) => {
-    const aMin = Math.min(...a.map((node) => node.position.y));
-    const bMin = Math.min(...b.map((node) => node.position.y));
-    if (aMin !== bMin) {
-      return aMin - bMin;
-    }
-    const aX = Math.min(...a.map((node) => node.position.x));
-    const bX = Math.min(...b.map((node) => node.position.x));
-    return aX - bX;
-  });
-
-  // 先对每个连通分量内部做布局，拿到各自的 bbox。
-  const laidOut = components.map((component) => ({
-    component,
-    layout: layoutComponent(component, edgePairs),
-  }));
-
-  // 估算 shelf 打包的目标条带宽度：按总面积 + 期望宽高比反推，并保证至少
-  // 能容纳最宽的单个分量。这样既能让一行塞下若干小分量，也避免大分量被
-  // 强行换行截断。
-  const totalArea = laidOut.reduce(
-    (acc, item) => acc + item.layout.width * item.layout.height,
-    0,
-  );
-  const widestComponent = laidOut.reduce(
-    (acc, item) => Math.max(acc, item.layout.width),
-    0,
-  );
-  const idealStripWidth = totalArea > 0
-    ? Math.sqrt(totalArea * TARGET_PAGE_ASPECT)
-    : 0;
-  const stripWidth = Math.max(idealStripWidth, widestComponent);
-
-  // Shelf 打包：从左到右往当前行塞，超出 stripWidth 就换下一行。
-  // 行高 = 当行内分量的最大高度，下一行用 baseY + rowYCursor 起算。
+  const { positions: local } = layoutGraph(topLevelNodes, edgePairs);
   const positions: Record<string, { x: number; y: number }> = {};
-  let rowXCursor = 0;
-  let rowYCursor = 0;
-  let currentRowMaxHeight = 0;
-  for (const { layout } of laidOut) {
-    if (rowXCursor > 0 && rowXCursor + layout.width > stripWidth) {
-      rowYCursor += currentRowMaxHeight + COMPONENT_GAP_Y;
-      rowXCursor = 0;
-      currentRowMaxHeight = 0;
-    }
-    for (const [id, pos] of layout.positions) {
-      positions[id] = {
-        x: baseX + rowXCursor + pos.x,
-        y: baseY + rowYCursor + pos.y,
-      };
-    }
-    rowXCursor += layout.width + COMPONENT_GAP_X;
-    currentRowMaxHeight = Math.max(currentRowMaxHeight, layout.height);
+  for (const [id, pos] of local) {
+    positions[id] = { x: baseX + pos.x, y: baseY + pos.y };
   }
 
   let changedCount = 0;
