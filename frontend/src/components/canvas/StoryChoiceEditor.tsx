@@ -1,9 +1,9 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useCanvasStore } from '@/stores/canvasStore';
-import { isVideoNode } from '@/features/canvas/domain/canvasNodes';
+import { isVideoNode, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import type {
   StoryChoiceCondition,
   StoryChoiceEffect,
@@ -15,6 +15,9 @@ import type {
 import { conditionLeaves, isConditionGroup, isVisitCondition } from '@/features/canvas/story/conditionExpr';
 
 const OPS: StoryChoiceCondition['op'][] = ['>=', '<=', '==', '>', '<'];
+
+/** 稳定的空成员数组引用:无故事组分支回退到它,避免 selector 每次返回新 [] 触发重渲染。 */
+const EMPTY_MEMBER_NODES: CanvasNode[] = [];
 
 const FIELD_CLASS =
   'rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/90 outline-none transition-colors focus:border-accent/50 focus:bg-white/[0.08]';
@@ -53,15 +56,24 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
   const hasVariables = variables.length > 0;
 
   // 同组成员(供「去过片段」选择);含源节点自身(重复进入本片段 N 次合法)。
-  const members = useCanvasStore(
+  // selector 只做 filter(保留原节点引用),useShallow 可逐元素比较、结果引用稳定;
+  // {id,label} 映射放到 useMemo —— 若在 selector 里 map 出新对象,useShallow 每次都判不等 →
+  // useSyncExternalStore 认为快照一直在变 → 无限重渲染("Maximum update depth exceeded")。
+  const memberNodes = useCanvasStore(
     useShallow((s) => {
       const src = s.nodes.find((n) => n.id === sourceNodeId);
       const groupId = src?.parentId;
-      if (!groupId) return [] as { id: string; label: string }[];
-      return s.nodes
-        .filter((n) => n.parentId === groupId && isVideoNode(n))
-        .map((n) => ({ id: n.id, label: (n.data as { displayName?: string }).displayName || n.id }));
+      if (!groupId) return EMPTY_MEMBER_NODES;
+      return s.nodes.filter((n) => n.parentId === groupId && isVideoNode(n));
     }),
+  );
+  const members = useMemo(
+    () =>
+      memberNodes.map((n) => ({
+        id: n.id,
+        label: (n.data as { displayName?: string }).displayName || n.id,
+      })),
+    [memberNodes],
   );
   const firstMember = members[0]?.id ?? '';
   const hasMembers = members.length > 0;
