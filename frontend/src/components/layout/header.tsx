@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "@tanstack/react-router";
@@ -37,6 +37,11 @@ import { useAppStore } from "@/stores/app-store";
 import { authRequired, isCeRuntime } from "@/lib/runtime-config";
 import { resetUserSessionState } from "@/lib/reset-region-state";
 import { useModelGatewayConfig } from "@/lib/queries/model-gateway";
+import { useReleaseNotifications } from "@/lib/queries/release-notifications";
+import {
+  markUpgradeSeen,
+  shouldShowUpgradeNudge,
+} from "@/lib/release-notification-state";
 
 const ACCOUNT_PANEL_TRANSITION_MS = 350;
 
@@ -45,7 +50,7 @@ export function Header({ showBrand: _showBrand = false }: { showBrand?: boolean 
   const [companionOpen, setCompanionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
-  const [hasUnreadNotification, setHasUnreadNotification] = useState(true);
+  const [releaseNotificationStateVersion, setReleaseNotificationStateVersion] = useState(0);
   const [avatarDialogOpen, setAvatarDialogOpen] = useState(false);
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [accountPanelVisible, setAccountPanelVisible] = useState(false);
@@ -83,6 +88,10 @@ export function Header({ showBrand: _showBrand = false }: { showBrand?: boolean 
     ? "zh"
     : "en";
   const modelGatewayConfig = useModelGatewayConfig(ceRuntime);
+  const releaseNotifications = useReleaseNotifications(i18n.resolvedLanguage ?? i18n.language);
+  const releaseFeed = releaseNotifications.data?.data;
+  void releaseNotificationStateVersion;
+  const hasUnreadNotification = shouldShowUpgradeNudge(releaseFeed);
   const gatewayConfig = modelGatewayConfig.data?.data;
   const hasSettingsWarning = Boolean(
     ceRuntime &&
@@ -182,9 +191,14 @@ export function Header({ showBrand: _showBrand = false }: { showBrand?: boolean 
 
   const openNotifications = () => {
     closeAccountPanelNow();
+    markUpgradeSeen(releaseFeed?.latest_tag);
+    setReleaseNotificationStateVersion((version) => version + 1);
     setNotificationOpen(true);
-    setHasUnreadNotification(false);
   };
+
+  const handleUpgradeStateChange = useCallback(() => {
+    setReleaseNotificationStateVersion((version) => version + 1);
+  }, []);
 
   const openAvatarDialog = () => {
     closeAccountPanelNow();
@@ -340,7 +354,11 @@ export function Header({ showBrand: _showBrand = false }: { showBrand?: boolean 
         currentAccessory={pikoAccessory}
         onConfirm={handleCompanionConfirm}
       />
-      <NotificationDrawer open={notificationOpen} onOpenChange={setNotificationOpen} />
+      <NotificationDrawer
+        open={notificationOpen}
+        onOpenChange={setNotificationOpen}
+        onUpgradeStateChange={handleUpgradeStateChange}
+      />
       <AvatarUploadDialog
         avatarInitial={avatarInitial}
         displayName={displayName}

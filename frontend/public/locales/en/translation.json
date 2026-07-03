@@ -18,18 +18,9 @@
       "description": "Refresh the page and try again."
     },
     "versionUpdate": {
-      "brand": "DramClaw",
-      "badge": "New",
-      "heroTitle": "Version Update",
-      "title": "🎉 New features are live",
-      "items": [
-        "Added multi-accessory unlock presentation for two or more newly unlocked items.",
-        "Improved Piko accessory claim feedback so batch rewards enter the companion accessory library together.",
-        "Refined companion and chest animation details to reduce overlap and improve click feedback.",
-        "Added a version update dialog for collecting recent platform changes in one place.",
-        "Improved debug entries for quickly replaying single-accessory, batch-accessory, and update dialog flows."
-      ],
-      "confirm": "Got it"
+      "title": "New features are live",
+      "confirm": "Got it",
+      "empty": "No release notes for this version"
     },
     "logoHomeTooltip": "Click to return to project management center"
   },
@@ -62,32 +53,12 @@
   "notifications": {
     "title": "Notification Center",
     "close": "Close notification center",
-    "items": {
-      "featureRewards": {
-        "title": "Multi-accessory unlocks are live",
-        "body": "Two or more accessories now reveal together in a lightweight array and enter the companion accessory library together.",
-        "time": "Just now"
-      },
-      "versionDialog": {
-        "title": "Version update dialog is in preview",
-        "body": "A new entry-time update dialog collects recent platform changes in one compact notice.",
-        "time": "Today"
-      },
-      "pikoPosition": {
-        "title": "Piko refresh positioning was adjusted",
-        "body": "Dragged positions now apply only within the current session; refresh returns Piko to the default landing spot.",
-        "time": "Today"
-      },
-      "headerUpdate": {
-        "title": "Header actions were refined",
-        "body": "Notifications, companion entry, credits, and account access were tightened into a lighter right-side group.",
-        "time": "Today"
-      },
-      "batchReward": {
-        "title": "Chest debug entry was expanded",
-        "body": "A batch-accessory chest trigger was added for quickly replaying the multi-reveal flow.",
-        "time": "Today"
-      }
+    "empty": "No notifications",
+    "upgrade": {
+      "title": "New version {{version}} available",
+      "body": "A newer upstream release is available. Open the release page to review and upgrade.",
+      "open": "Update",
+      "skip": "Skip this version"
     }
   },
   "myBuddy": {

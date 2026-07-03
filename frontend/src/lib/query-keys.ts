@@ -91,4 +91,5 @@ export const queryKeys = {
   style: (id: string) => ["styles", "detail", id] as const,
   ttsVoices: (p: string) => ["projects", p, "tts", "voices"] as const,
   modelGateway: () => ["model-gateway", "config"] as const,
+  releaseNotifications: (locale: string) => ["release-notifications", locale] as const,
 };

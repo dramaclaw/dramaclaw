@@ -60,6 +60,13 @@ About **30 `*_MODEL` logical model names** (e.g. `HERMES_MODEL=DC-hermes-LLM`) m
 | `PROMPT_EXPORT_PASSWORD` | `change_me` | Prompt-export password; **always override it for deployment**. |
 | `ST_COOKIE_SECURE` | `true` | Whether the admin cookie is Secure. Local HTTP development needs `0`, otherwise the browser drops the cookie. |
 
+## Release Notifications
+
+| Variable | Default | Description |
+|---|---|---|
+| `RELEASE_NOTIFICATIONS_ENABLED` | `true` | Set `false` to fully disable the release feed, including packaged notes parsing and GitHub checks. |
+| `RELEASE_NOTIFICATIONS_GITHUB_TOKEN` | Empty | Optional GitHub token for a higher `releases/latest` rate limit. Anonymous requests are used when empty. |
+
 ## Observability Tracing (optional, off by default)
 
 | Variable | Description |
