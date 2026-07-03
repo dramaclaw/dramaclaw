@@ -178,6 +178,8 @@ export function compileGraphToInk(
   const defaultChoiceIndexByNodeId: Record<string, number> = {};
   // 叶子结局节点 → 结局页标题/标。
   const endingByNodeId: Record<string, { title: string; label?: string }> = {};
+  // 节点 → 占位卡文案(旁白 + 显示名),供无视频时占位试玩。
+  const placeholderByNodeId: Record<string, { text: string; label?: string }> = {};
 
   // 生成 VAR 声明(放在 divert 之前)
   const lines: string[] = [];
@@ -192,6 +194,17 @@ export function compileGraphToInk(
     const knot = knotNameForNodeId(id);
     knotByNodeId[id] = knot;
     clipByNodeId[id] = (node.data as { videoUrl?: string | null }).videoUrl ?? '';
+
+    // 占位卡:旁白(text)+ 显示名(label),视频未生成时供占位试玩。
+    const placeholderData = node.data as { narration?: string; displayName?: string };
+    const placeholderText = (placeholderData.narration ?? '').trim();
+    const placeholderLabel = (placeholderData.displayName ?? '').trim();
+    if (placeholderText || placeholderLabel) {
+      placeholderByNodeId[id] = {
+        text: placeholderText,
+        ...(placeholderLabel ? { label: placeholderLabel } : {}),
+      };
+    }
 
     const limitSec = Number((node.data as { choiceTimeLimitSec?: number }).choiceTimeLimitSec);
     if (Number.isFinite(limitSec) && limitSec > 0) choiceTimeByNodeId[id] = limitSec;
@@ -233,6 +246,7 @@ export function compileGraphToInk(
     choiceTimeByNodeId,
     defaultChoiceIndexByNodeId,
     endingByNodeId,
+    placeholderByNodeId,
     warnings,
     variables,
   };

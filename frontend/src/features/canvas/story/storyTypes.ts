@@ -74,6 +74,8 @@ export interface CompiledStory {
   defaultChoiceIndexByNodeId: Record<string, number>;
   /** 叶子结局节点 id → 结局页标题/标(title=旁白,label=GE/NE/BE)。 */
   endingByNodeId: Record<string, { title: string; label?: string }>;
+  /** 节点 id → 占位卡文案(text=旁白,label=显示名)。视频未生成时播放器据此渲染占位卡,可先跑通结构再生成视频。 */
+  placeholderByNodeId: Record<string, { text: string; label?: string }>;
   /** 编译期非致命警告(如引用了已删变量),供 UI 提示。 */
   warnings: string[];
   /** 本故事声明的变量(供运行时读取/显示当前值)。 */

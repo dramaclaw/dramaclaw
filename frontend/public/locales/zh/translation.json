@@ -3401,6 +3401,18 @@
       "defaultChoice": "默认",
       "endingBadge": "结局 · {{label}}",
       "endingFallback": "全剧终",
+      "placeholderBadge": "占位片段",
+      "placeholderHint": "此片段尚未生成视频,点选下方选项继续试玩",
+      "stats": {
+        "open": "试玩统计",
+        "title": "试玩统计",
+        "totalRuns": "完整通关 {{count}} 次",
+        "endings": "结局达成率",
+        "choicePoints": "选择分布",
+        "choicePoint": "选择点",
+        "empty": "还没有试玩数据,完整通关一次后再看",
+        "clear": "清空统计"
+      },
       "choiceCountdown": "选择倒计时",
       "choiceTimeLimit": "选择时限",
       "choiceTimeLimitUnit": "秒(0=不限时)",

@@ -10,6 +10,7 @@ function baseCompiled(over: Partial<CompiledStory> = {}): CompiledStory {
     choiceTimeByNodeId: {},
     defaultChoiceIndexByNodeId: {},
     endingByNodeId: {},
+    placeholderByNodeId: {},
     warnings: [],
     variables: [{ name: 'fav', label: '好感度', initial: 0 }],
     ...over,

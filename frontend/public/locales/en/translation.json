@@ -3401,6 +3401,18 @@
       "defaultChoice": "Default",
       "endingBadge": "Ending · {{label}}",
       "endingFallback": "The End",
+      "placeholderBadge": "Placeholder clip",
+      "placeholderHint": "This clip has no video yet — pick an option below to keep playtesting",
+      "stats": {
+        "open": "Playtest stats",
+        "title": "Playtest stats",
+        "totalRuns": "{{count}} full playthroughs",
+        "endings": "Ending achievement",
+        "choicePoints": "Choice distribution",
+        "choicePoint": "Choice point",
+        "empty": "No playtest data yet — finish a full run to see stats",
+        "clear": "Clear stats"
+      },
       "choiceCountdown": "Choice countdown",
       "choiceTimeLimit": "Time limit",
       "choiceTimeLimitUnit": "s (0 = none)",

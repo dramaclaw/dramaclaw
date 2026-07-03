@@ -50,6 +50,20 @@ describe('compileGraphToInk', () => {
     expect(result.knotByNodeId.intro).toBe('clip_intro');
   });
 
+  it('placeholderByNodeId 收录每个节点的旁白/显示名(供无视频时占位试玩)', () => {
+    const intro = {
+      id: 'intro',
+      type: CANVAS_NODE_TYPES.video,
+      position: { x: 0, y: 0 },
+      data: { videoUrl: null, aspectRatio: '16:9', storyRole: 'start', narration: '雨夜,门铃响起', displayName: '开场' },
+    } as CanvasNode;
+    const result = compileGraphToInk(
+      [intro, videoNode('meet', 'meet.mp4')],
+      [choiceEdge('intro', 'meet', '开门', 0)],
+    );
+    expect(result.placeholderByNodeId.intro).toEqual({ text: '雨夜,门铃响起', label: '开场' });
+  });
+
   it('选项按 order 升序排列', () => {
     const nodes = [
       videoNode('a', 'a.mp4', 'start'),

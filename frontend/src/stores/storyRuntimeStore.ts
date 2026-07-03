@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { Compiler } from 'inkjs/full';
 import type { CompiledStory, StoryVariable } from '@/features/canvas/story/storyTypes';
 import { readStorySave, writeStorySave, clearStorySave } from '@/features/canvas/story/storySave';
+import { recordChoice, recordEnding, statsKeyFromSaveKey } from '@/features/canvas/story/storyStats';
 
 type InkStory = ReturnType<Compiler['Compile']>;
 
@@ -29,10 +30,14 @@ interface StoryRuntimeState {
   defaultChoiceIndexByNodeId: Record<string, number>;
   /** 叶子结局节点 id → 结局页标题/标。 */
   endingByNodeId: Record<string, { title: string; label?: string }>;
+  /** 节点 id → 占位卡文案(无视频时占位试玩用)。 */
+  placeholderByNodeId: Record<string, { text: string; label?: string }>;
   /** 本故事声明的变量(用于每步读取当前值)。 */
   variables: StoryVariable[];
   currentClipUrl: string | null;
   currentChoices: StoryChoiceView[];
+  /** 当前各选项的后继片段 URL(前瞻所得),供播放器针对性预取「下一跳」分支。 */
+  nextClipUrls: string[];
   /** 各变量的实时值(供 HUD 显示)。 */
   currentVariables: StoryVariableView[];
   /** 当前选项窗口秒数(null = 不限时);超时自动选的默认选项 index(null = 无默认)。 */
@@ -40,10 +45,14 @@ interface StoryRuntimeState {
   currentDefaultChoiceIndex: number | null;
   /** 当前结局(仅 ended 相位的叶子节点);null = 非结局。 */
   currentEnding: { title: string; label?: string } | null;
+  /** 当前占位卡(仅无视频且有选项的 playing 节点);null = 有视频或非占位。 */
+  currentPlaceholder: { text: string; label?: string } | null;
   phase: StoryPhase;
   error: string | null;
   /** 本次试玩的存档 key(localStorage),null = 不存档。 */
   saveKey: string | null;
+  /** 本次试玩的统计 key(localStorage,由 saveKey 派生),null = 不统计。 */
+  statsKey: string | null;
   /** 进入时检测到存档,等玩家决定「继续 / 从头」;true 期间不自动 advance。 */
   resumeAvailable: boolean;
 
@@ -67,6 +76,42 @@ function readVariables(story: InkStory, variables: StoryVariable[]): StoryVariab
   });
 }
 
+/** 从当前 currentTags 解析 `# clip:` 携带的节点 id(无则 null)。 */
+function nodeIdFromTags(story: InkStory): string | null {
+  const tag = story.currentTags?.find((it) => it.startsWith(CLIP_TAG_PREFIX));
+  return tag ? tag.slice(CLIP_TAG_PREFIX.length).trim() : null;
+}
+
+/** 从当前 currentTags 解析 `# clip:` 对应的视频 URL(无则 null)。 */
+function clipUrlFromTags(story: InkStory, clipByNodeId: Record<string, string>): string | null {
+  const nodeId = nodeIdFromTags(story);
+  return nodeId ? (clipByNodeId[nodeId] ?? null) : null;
+}
+
+/**
+ * 前瞻:快照当前运行态,对每个 currentChoice 试走一步读出其后继 `# clip:` 的视频 URL,再恢复。
+ * 用于「针对性下一跳预取」——只预取玩家马上要二选一的那几个后继片段,而非全量预加载。
+ * 用存档同款 toJson/LoadJson 做快照,保证探测后状态原样恢复。
+ */
+function peekNextClipUrls(story: InkStory, clipByNodeId: Record<string, string>): string[] {
+  const choices = story.currentChoices;
+  if (choices.length === 0) return [];
+  const snapshot = story.state.toJson();
+  const urls: string[] = [];
+  try {
+    for (const choice of choices) {
+      story.ChooseChoiceIndex(choice.index);
+      if (story.canContinue) story.Continue();
+      const url = clipUrlFromTags(story, clipByNodeId);
+      if (url) urls.push(url);
+      story.state.LoadJson(snapshot);
+    }
+  } finally {
+    story.state.LoadJson(snapshot);
+  }
+  return Array.from(new Set(urls));
+}
+
 /** 推进 story 到下一段内容，解析 `# clip:` tag 得到视频 URL、当前选项与变量值，返回新状态片段。 */
 function advanceToClip(
   story: InkStory,
@@ -75,13 +120,16 @@ function advanceToClip(
   choiceTimeByNodeId: Record<string, number>,
   defaultChoiceIndexByNodeId: Record<string, number>,
   endingByNodeId: Record<string, { title: string; label?: string }>,
+  placeholderByNodeId: Record<string, { text: string; label?: string }>,
 ): {
   currentClipUrl: string | null;
   currentChoices: StoryChoiceView[];
+  nextClipUrls: string[];
   currentVariables: StoryVariableView[];
   currentChoiceTimeSec: number | null;
   currentDefaultChoiceIndex: number | null;
   currentEnding: { title: string; label?: string } | null;
+  currentPlaceholder: { text: string; label?: string } | null;
   phase: StoryPhase;
 } {
   if (story.canContinue) {
@@ -101,13 +149,20 @@ function advanceToClip(
     currentChoices.length > 0 && typeof defaultIdx === 'number' ? defaultIdx : null;
   // 结局只在叶子(ended)有意义。
   const currentEnding = phase === 'ended' && nodeId ? (endingByNodeId[nodeId] ?? null) : null;
+  // 占位卡:仅当「有选项但无视频」时出现(结局无视频走 currentEnding);无旁白也兜底给空文案卡。
+  const currentPlaceholder =
+    phase === 'playing' && !currentClipUrl
+      ? (nodeId ? (placeholderByNodeId[nodeId] ?? { text: '' }) : { text: '' })
+      : null;
   return {
     currentClipUrl,
     currentChoices,
+    nextClipUrls: peekNextClipUrls(story, clipByNodeId),
     currentVariables: readVariables(story, variables),
     currentChoiceTimeSec,
     currentDefaultChoiceIndex,
     currentEnding,
+    currentPlaceholder,
     phase,
   };
 }
@@ -123,16 +178,20 @@ const INITIAL_RUNTIME = {
   choiceTimeByNodeId: {} as Record<string, number>,
   defaultChoiceIndexByNodeId: {} as Record<string, number>,
   endingByNodeId: {} as Record<string, { title: string; label?: string }>,
+  placeholderByNodeId: {} as Record<string, { text: string; label?: string }>,
   variables: [] as StoryVariable[],
   currentClipUrl: null as string | null,
   currentChoices: [] as StoryChoiceView[],
+  nextClipUrls: [] as string[],
   currentVariables: [] as StoryVariableView[],
   currentChoiceTimeSec: null as number | null,
   currentDefaultChoiceIndex: null as number | null,
   currentEnding: null as { title: string; label?: string } | null,
+  currentPlaceholder: null as { text: string; label?: string } | null,
   phase: 'idle' as StoryPhase,
   error: null as string | null,
   saveKey: null as string | null,
+  statsKey: null as string | null,
   resumeAvailable: false,
 };
 
@@ -144,11 +203,13 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
     try {
       const story = new Compiler(compiled.ink).Compile();
       const saveKey = opts?.saveKey ?? null;
+      const statsKey = statsKeyFromSaveKey(saveKey);
       const tables = {
         clipByNodeId: compiled.clipByNodeId,
         choiceTimeByNodeId: compiled.choiceTimeByNodeId,
         defaultChoiceIndexByNodeId: compiled.defaultChoiceIndexByNodeId,
         endingByNodeId: compiled.endingByNodeId,
+        placeholderByNodeId: compiled.placeholderByNodeId,
         variables: compiled.variables,
       };
       // 有存档:暂不 advance,挂起等玩家选「继续 / 从头」。
@@ -160,12 +221,15 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
           error: null,
           currentClipUrl: null,
           currentChoices: [],
+          nextClipUrls: [],
           currentVariables: [],
           currentChoiceTimeSec: null,
           currentDefaultChoiceIndex: null,
           currentEnding: null,
+          currentPlaceholder: null,
           phase: 'idle',
           saveKey,
+          statsKey,
           resumeAvailable: true,
         });
         return;
@@ -177,6 +241,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         ...tables,
         error: null,
         saveKey,
+        statsKey,
         resumeAvailable: false,
         ...advanceToClip(
           story,
@@ -185,6 +250,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
           compiled.choiceTimeByNodeId,
           compiled.defaultChoiceIndexByNodeId,
           compiled.endingByNodeId,
+          compiled.placeholderByNodeId,
         ),
       });
       persist(saveKey, story);
@@ -196,7 +262,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
   resumeSaved: () => {
     const {
       story, saveKey, clipByNodeId, variables,
-      choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId,
+      choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId,
     } = get();
     if (!story || !saveKey) return false;
     const json = readStorySave(saveKey);
@@ -211,7 +277,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
     }
     set({
       resumeAvailable: false,
-      ...advanceToClip(story, clipByNodeId, variables, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId),
+      ...advanceToClip(story, clipByNodeId, variables, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId),
     });
     persist(saveKey, story);
     return true;
@@ -220,13 +286,13 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
   startFresh: () => {
     const {
       story, saveKey, clipByNodeId, variables,
-      choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId,
+      choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId,
     } = get();
     if (!story) return;
     story.ResetState();
     set({
       resumeAvailable: false,
-      ...advanceToClip(story, clipByNodeId, variables, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId),
+      ...advanceToClip(story, clipByNodeId, variables, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId),
     });
     persist(saveKey, story);
   },
@@ -239,21 +305,45 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       choiceTimeByNodeId,
       defaultChoiceIndexByNodeId,
       endingByNodeId,
+      placeholderByNodeId,
+      currentChoices,
+      statsKey,
       phase,
     } = get();
     if (!story) return;
     if (phase === 'ended') return;
+    // 试玩埋点(选择分布):在推进前抓当前选择点 nodeId 与所选选项文案。
+    if (statsKey) {
+      const pointNodeId = nodeIdFromTags(story);
+      const chosen = currentChoices.find((c) => c.index === index);
+      if (pointNodeId && chosen) {
+        recordChoice(statsKey, {
+          nodeId: pointNodeId,
+          index,
+          text: chosen.text,
+          pointLabel: placeholderByNodeId[pointNodeId]?.label,
+        });
+      }
+    }
     story.ChooseChoiceIndex(index);
-    set(
-      advanceToClip(
-        story,
-        clipByNodeId,
-        variables,
-        choiceTimeByNodeId,
-        defaultChoiceIndexByNodeId,
-        endingByNodeId,
-      ),
+    const next = advanceToClip(
+      story,
+      clipByNodeId,
+      variables,
+      choiceTimeByNodeId,
+      defaultChoiceIndexByNodeId,
+      endingByNodeId,
+      placeholderByNodeId,
     );
+    set(next);
+    // 试玩埋点(结局达成率):推进后若到达结局叶子,记一次通关。
+    if (statsKey && next.phase === 'ended') {
+      const endNodeId = nodeIdFromTags(story);
+      if (endNodeId) {
+        const ending = endingByNodeId[endNodeId] ?? { title: '' };
+        recordEnding(statsKey, { nodeId: endNodeId, title: ending.title, label: ending.label });
+      }
+    }
     persist(get().saveKey, story);
   },
 
@@ -265,6 +355,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       choiceTimeByNodeId,
       defaultChoiceIndexByNodeId,
       endingByNodeId,
+      placeholderByNodeId,
     } = get();
     if (!story) return;
     story.ResetState();
@@ -276,6 +367,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         choiceTimeByNodeId,
         defaultChoiceIndexByNodeId,
         endingByNodeId,
+        placeholderByNodeId,
       ),
     );
     persist(get().saveKey, story);
