@@ -32,6 +32,45 @@ class NoOpUsageMeter:
     ) -> None:
         return None
 
+    async def reserve_feature_start_credits(
+        self,
+        *,
+        user_id: str,
+        feature_key: str,
+        project_id: str = "",
+        resource_kind: str = "",
+        task_id: str = "",
+        task_type: str = "",
+        metadata: Optional[dict[str, Any]] = None,
+        require_price_rule: bool = False,
+        require_positive_cost: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            "id": "",
+            "user_id": user_id,
+            "feature_key": feature_key,
+            "cost": 0,
+            "reserved": False,
+            "balance_after": None,
+            "reason": "feature_reserved",
+        }
+
+    async def confirm_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        return None
+
+    async def refund_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        return None
+
     async def bump_model_call(
         self,
         *,

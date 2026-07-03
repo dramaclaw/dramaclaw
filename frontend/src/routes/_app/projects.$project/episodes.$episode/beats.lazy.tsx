@@ -73,6 +73,10 @@ import { EMPTY_STATE_ACTION_BUTTON_CLASS } from "@/components/ui/empty-state-sty
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { formatCreditCost } from "@/components/credits/credit-visual";
 import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -492,6 +496,12 @@ function BeatsTabContent() {
 
   // Generate script for empty state
   const generateScript = useGenerateScript(project, epNum);
+  const generateScriptCost = useGenerationCreditCost("feature", "script_writer");
+  const generateScriptCostDisplay =
+    generateScriptCost.data?.data.display ??
+    (generateScriptCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const scriptTask = useTaskController({
     key: { taskType: "script_writer", project, episode: epNum },
     alsoReconcile: ["literal_script_writer"],
@@ -509,12 +519,12 @@ function BeatsTabContent() {
     try {
       const res = await generateScript.mutateAsync({});
       if (res.ok === false) {
-        toast.error(res.error || t("episode.beats.genFailed"));
+        toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
       scriptTask.start({ scope: res.scope });
-    } catch {
-      toast.error(t("episode.beats.genFailed"));
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -579,6 +589,7 @@ function BeatsTabContent() {
             <Play className="size-4" />
           )}
           {t("episode.beats.generateBeats")}
+          <CreditCostInline display={generateScriptCostDisplay} />
         </Button>
         <AlertDialog open={genBeatsConfirm} onOpenChange={setGenBeatsConfirm}>
           <AlertDialogContent>

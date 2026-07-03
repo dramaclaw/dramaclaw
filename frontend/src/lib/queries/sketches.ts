@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import type { PanoViewerManifest } from "@/features/viewer-kit/pano/panoManifest";
 import type { DirectorStageManifest } from "@/features/viewer-kit/three-d/directorManifest";
 import { api } from "@/lib/api";
+import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
 import type { ApiResponse, ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
@@ -508,12 +509,15 @@ export function useDetectIdentities(project: string, episode: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      api
-        .post(
+      jsonWithBackendError<ApiResponse<DetectIdentitiesResult>>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/sketches/detect-identities`,
-          { timeout: AI_DETECT_IDENTITIES_TIMEOUT_MS },
-        )
-        .json<ApiResponse<DetectIdentitiesResult>>(),
+          {
+            timeout: AI_DETECT_IDENTITIES_TIMEOUT_MS,
+            throwHttpErrors: false,
+          },
+        ),
+      ),
     onSuccess: (res) => {
       if (!res.ok) return;
       qc.invalidateQueries({ queryKey: queryKeys.beats(project, episode) });

@@ -52,6 +52,8 @@ assets/partners/neoflying-lab.png,Elastic-2.0,2026 SuperTale contributors,REUSE.
 assets/pipeline.excalidraw,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 assets/pipeline.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 ce-allowlist.toml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+deploy/sandbox/linux-amd64/codex-linux-sandbox,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+deploy/sandbox/linux-arm64/codex-linux-sandbox,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/sandbox/seatbelt_base_policy.sbpl,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/sandbox/seatbelt_network_policy.sbpl,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docker-compose.release.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -468,6 +470,7 @@ frontend/src/__tests__/routes/characters.ce.test.tsx,Elastic-2.0,2026 SuperTale 
 frontend/src/__tests__/routes/compose-export-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/routes/episodes-beats-sub-integration.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/routes/episodes-workbench-integration.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/routes/ingest-credit-cost-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/routes/ingest-settings-save.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/routes/script-source-editor-integration.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/routes/script-workflow-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -502,6 +505,7 @@ frontend/src/__tests__/task-center/provider.test.tsx,Elastic-2.0,2026 SuperTale 
 frontend/src/__tests__/task-center/rendering-reactivity.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/task-center/store.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/task-center/stream-client.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/task-center/task-errors.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/task-center/use-task-subscribe.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/api/assets.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/api/backgroundAnchor.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1090,6 +1094,7 @@ frontend/src/task-center/matchers.ts,Elastic-2.0,2026 SuperTale contributors,REU
 frontend/src/task-center/provider.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/task-center/store.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/task-center/stream-client.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/task-center/task-errors.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/task-center/types.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/task-center/use-task-subscribe.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/types/api.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

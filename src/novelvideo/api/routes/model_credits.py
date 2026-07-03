@@ -21,6 +21,7 @@ GenerationCreditCostKind = Literal[
     "freezone_image_reverse_prompt",
     "freezone_story_script",
     "style_analyzer",
+    "feature",
 ]
 GenerationCreditSurface = Literal["supertale", "canvas"]
 
@@ -247,6 +248,10 @@ def _generation_credit_cost_model(kind: str, value: str) -> str:
         from novelvideo.config import get_newapi_text_model_name
 
         return get_newapi_text_model_name("STYLE_ANALYZER_MODEL", "gemini-3.5-flash")
+    if kind == "feature":
+        if not clean_value:
+            raise HTTPException(status_code=400, detail="feature key is required")
+        return clean_value
     raise HTTPException(status_code=400, detail="invalid generation credit cost kind")
 
 
@@ -259,6 +264,8 @@ def _generation_billing_kind(kind: str) -> str:
         return "audio"
     if kind in {"freezone_image_reverse_prompt", "freezone_story_script", "style_analyzer"}:
         return "text"
+    if kind == "feature":
+        return "feature"
     return "model"
 
 

@@ -3,7 +3,10 @@
   "pets": [
     { "slug": "zhizhi", "displayName": "枝枝", "spritesheetUrl": "/petdex/zhizhi.webp" },
     { "slug": "yinyue-2", "displayName": "银月", "spritesheetUrl": "/petdex/yinyue-2.webp", "submittedBy": "is_coward" },
-    { "slug": "gugugaga-2", "displayName": "咕咕嘎嘎", "spritesheetUrl": "/petdex/gugugaga-2.webp", "submittedBy": "c u." },
+    { "slug": "gugugaga-2", "displayName": "咕咕嘎嘎", "spritesheetUrl": "/petdex/gugugaga-2.webp", "submittedBy": "c u." }
+  ],
+  "_hidden_note": "暂时隐藏、后面再打开的宠物。加载器只读 pets，这里的条目不会显示。恢复：把对应条目移回上面的 pets 数组。",
+  "_hidden": [
     { "slug": "lulu-capybara-2", "displayName": "噜噜", "spritesheetUrl": "/petdex/lulu-capybara-2.webp", "submittedBy": "gitcjp" }
   ]
 }

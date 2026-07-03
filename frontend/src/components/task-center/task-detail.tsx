@@ -8,6 +8,7 @@ import { TaskActions } from "./task-actions";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { displayLabel } from "@/task-center/derivations";
+import { taskErrorMessage } from "@/task-center/task-errors";
 import type { TaskState } from "@/task-center/types";
 
 export function formatLocalTaskTime(value?: string | null): string {
@@ -224,7 +225,7 @@ export function TaskDetail() {
           {task.error && (
             <div className="mt-3 rounded bg-destructive/10 p-2 text-destructive">
               <div className="font-medium">{t("taskCenter.detail.error.label")}</div>
-              <div className="mt-1">{task.error}</div>
+              <div className="mt-1">{taskErrorMessage(task, t)}</div>
             </div>
           )}
           {displayResult ? (

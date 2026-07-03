@@ -2,10 +2,14 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import i18n from "@/i18n";
 import { useAuthStore } from "@/stores/auth-store";
-import { humanizeTaskError } from "@/lib/api-errors";
+import {
+  backendErrorToastMessage,
+  errorFromBackendBody,
+  humanizeTaskError,
+} from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import type { TaskStatus, TaskStreamEvent } from "@/types/task";
 
@@ -44,6 +48,7 @@ export function useTaskStream(options: UseTaskStreamOptions): TaskStreamState {
     showCompleteToast = true,
   } = options;
 
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   // Cookie-backed auth: the SPA does not persist a raw credential. Gate
   // on `username` (set once /auth/login succeeds) to know we're logged in;
@@ -76,6 +81,27 @@ export function useTaskStream(options: UseTaskStreamOptions): TaskStreamState {
       eventSourceRef.current = null;
     }
   }, []);
+
+  const taskErrorMessage = useCallback(
+    (data: Pick<TaskStreamEvent, "error" | "error_code">, fallback: string) => {
+      const message = data.error || fallback;
+      const status = data.error_code === "INSUFFICIENT_CREDITS" ? 402 : 409;
+      const parsed = data.error_code
+        ? errorFromBackendBody(
+            status,
+            {
+              ok: false,
+              error: message,
+              data: { error_code: data.error_code },
+            },
+            message,
+          )
+        : null;
+      if (parsed) return backendErrorToastMessage(parsed, t);
+      return humanizeTaskError(message, t);
+    },
+    [t],
+  );
 
   useEffect(() => {
     if (!enabled || !username) {
@@ -118,14 +144,14 @@ export function useTaskStream(options: UseTaskStreamOptions): TaskStreamState {
           onCompleteRef.current?.(data.result);
         } else if (data.status === "failed") {
           cleanup();
-          // Give channel_policy / rate-limit gateway failures a distinct,
-          // readable message instead of the raw "…HTTP 429…body={…}" blob.
-          toast.error(humanizeTaskError(data.error, i18n.t));
-          onErrorRef.current?.(data.error || "Task failed");
+          const message = taskErrorMessage(data, "Task failed");
+          toast.error(message);
+          onErrorRef.current?.(message);
         } else if (data.status === "cancelled") {
           cleanup();
-          toast.error(data.error || "Task cancelled");
-          onErrorRef.current?.(data.error || "Task cancelled");
+          const message = taskErrorMessage(data, "Task cancelled");
+          toast.error(message);
+          onErrorRef.current?.(message);
         }
       } catch {
         // Ignore parse errors
@@ -153,8 +179,12 @@ export function useTaskStream(options: UseTaskStreamOptions): TaskStreamState {
         const msg = data?.error || "Task not found";
         setState((prev) => ({ ...prev, status: "failed", error: msg }));
         cleanup();
-        toast.error(msg);
-        onErrorRef.current?.(msg);
+        const message = taskErrorMessage(
+          { error: msg, error_code: data?.error_code },
+          "Task not found",
+        );
+        toast.error(message);
+        onErrorRef.current?.(message);
       } catch {
         // Not a structured error event — likely just a plain network
         // error. Leave the default auto-reconnect behavior.
@@ -168,7 +198,19 @@ export function useTaskStream(options: UseTaskStreamOptions): TaskStreamState {
     };
 
     return cleanup;
-  }, [enabled, username, taskType, project, episode, beatNum, scope, cleanup, queryClient, showCompleteToast]);
+  }, [
+    enabled,
+    username,
+    taskType,
+    project,
+    episode,
+    beatNum,
+    scope,
+    cleanup,
+    queryClient,
+    showCompleteToast,
+    taskErrorMessage,
+  ]);
 
   // Region-switch teardown: the orchestrator dispatches a window
   // "region-switch" event just before the hard reload. The regionAbortController

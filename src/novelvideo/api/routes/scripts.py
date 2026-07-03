@@ -27,10 +27,24 @@ from novelvideo.api.schemas import (
     ScriptSaveRequest,
 )
 from novelvideo.models import sync_beat_asset_refs
-from novelvideo.ports import get_task_backend
+from novelvideo.ports import get_task_backend, get_usage_meter
 from novelvideo.task_identity import project_task_state_key
 
 router = APIRouter()
+
+SEEDANCE2_PROMPT_FEATURE_KEY = "seedance2_prompt"
+MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED = "feature_included"
+
+
+def _requester_user_id_for_billing(resolved: Any, user: dict) -> str:
+    ctx = getattr(resolved, "ctx", None)
+    return str(
+        getattr(ctx, "requester_user_id", "")
+        or user.get("id")
+        or user.get("user_id")
+        or user.get("username")
+        or ""
+    )
 
 
 async def _audio_duration_seconds(output_dir: str | Path, episode: int, beat_num: int):
@@ -508,7 +522,47 @@ async def generate_seedance2_prompt(
     if mode == "first_last_frame" and next_beat is None:
         return {"ok": False, "error": "这是最后一个 Beat，无法使用首尾帧模式"}
 
+    usage_meter = get_usage_meter()
+    ctx = getattr(resolved, "ctx", None)
+    project_id = str(getattr(ctx, "project_id", "") or "")
+    reservation = await usage_meter.reserve_feature_start_credits(
+        user_id=_requester_user_id_for_billing(resolved, user),
+        feature_key=SEEDANCE2_PROMPT_FEATURE_KEY,
+        project_id=project_id,
+        resource_kind="script",
+        task_type=SEEDANCE2_PROMPT_FEATURE_KEY,
+        metadata={
+            "source": "sync_api",
+            "endpoint": "generate_seedance2_prompt",
+            "episode": episode_num,
+            "beat_num": beat_num,
+            "mode": mode,
+        },
+        require_price_rule=True,
+        require_positive_cost=True,
+    )
+    reservation_id = str(reservation.get("id") or "")
+    billing_metadata: dict[str, Any] = {
+        "model_call_credit_policy": MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED,
+        "feature_key": SEEDANCE2_PROMPT_FEATURE_KEY,
+        "source": "sync_api",
+    }
+    if reservation_id:
+        billing_metadata.update(
+            {
+                "feature_credit_reservation_id": reservation_id,
+                "feature_credit_charge_id": reservation_id,
+                "feature_credit_cost": str(reservation.get("cost") or 0),
+            }
+        )
+
     try:
+        usage_meter.set_llm_usage_context(
+            _requester_user_id_for_billing(resolved, user),
+            project_id=project_id,
+            resource_kind="script",
+            billing_metadata=billing_metadata,
+        )
         from novelvideo.seedance2_i2v.panel_service import generate_seedance2_prompt_for_panel
 
         saved_json = await generate_seedance2_prompt_for_panel(
@@ -522,11 +576,72 @@ async def generate_seedance2_prompt(
             prop_menu=list(script_data.get("prop_menu") or []),
         )
     except ValueError as exc:
+        if reservation_id:
+            await usage_meter.refund_feature_credit_reservation(
+                reservation_id,
+                metadata={
+                    "source": "sync_api",
+                    "endpoint": "generate_seedance2_prompt",
+                    "episode": episode_num,
+                    "beat_num": beat_num,
+                    "error": str(exc),
+                },
+            )
         return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        if reservation_id:
+            try:
+                await usage_meter.refund_feature_credit_reservation(
+                    reservation_id,
+                    metadata={
+                        "source": "sync_api",
+                        "endpoint": "generate_seedance2_prompt",
+                        "episode": episode_num,
+                        "beat_num": beat_num,
+                        "error": str(exc),
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to refund Seedance2 prompt feature credit reservation"
+                )
+        raise
+    finally:
+        usage_meter.clear_llm_usage_context()
 
-    target["seedance2_config_json"] = saved_json
-    sync_beat_asset_refs(target)
-    updated_config = parse_seedance2_config(saved_json)
+    try:
+        target["seedance2_config_json"] = saved_json
+        sync_beat_asset_refs(target)
+        updated_config = parse_seedance2_config(saved_json)
+        if reservation_id:
+            await usage_meter.confirm_feature_credit_reservation(
+                reservation_id,
+                metadata={
+                    "source": "sync_api",
+                    "endpoint": "generate_seedance2_prompt",
+                    "episode": episode_num,
+                    "beat_num": beat_num,
+                    "mode": mode,
+                },
+            )
+    except Exception as exc:
+        if reservation_id:
+            try:
+                await usage_meter.refund_feature_credit_reservation(
+                    reservation_id,
+                    metadata={
+                        "source": "sync_api",
+                        "endpoint": "generate_seedance2_prompt",
+                        "episode": episode_num,
+                        "beat_num": beat_num,
+                        "error": str(exc),
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to refund Seedance2 prompt feature credit reservation"
+                )
+        raise
 
     return {
         "ok": True,

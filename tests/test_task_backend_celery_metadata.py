@@ -110,6 +110,7 @@ def test_project_task_metrics_context_carries_shared_project_billing_metadata(mo
                     "billing_user_id": "requester_user",
                     "requester_user_id": "requester_user",
                     "project_owner_id": "owner_user",
+                    "billing_task_type": "freezone_video_gen",
                 },
             },
         )

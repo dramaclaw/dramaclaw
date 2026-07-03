@@ -26,6 +26,7 @@ beforeAll(async () => {
             confirmExecute: "确认执行",
             error: "错误",
             ok: "OK",
+            billingRuleNotConfiguredShort: "需配置",
           },
           episode: {
             script: { identityRequired: "需要身份规划" },
@@ -604,7 +605,9 @@ describe("BatchBar", () => {
       </I18nextProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "AI 检测" }));
+    const aiDetectButton = screen.getByRole("button", { name: "AI 检测" });
+    expect(aiDetectButton).toHaveTextContent("5");
+    await user.click(aiDetectButton);
 
     expect(detectIdentitiesMock).toHaveBeenCalledTimes(1);
     expect(toastSuccessMock).toHaveBeenCalledWith(

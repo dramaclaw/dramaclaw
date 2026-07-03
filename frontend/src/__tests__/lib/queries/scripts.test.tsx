@@ -13,6 +13,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { useGenerateScript } from "@/lib/queries/scripts";
+import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 
 const server = setupServer();
 
@@ -62,5 +63,34 @@ describe("script generation query", () => {
       code: "identity_plan_required",
       error: "请先规划本集身份",
     });
+  });
+
+  it("surfaces missing feature billing rules as a typed error", async () => {
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/projects/demo/episodes/1/script/generate",
+        () =>
+          HttpResponse.json(
+            {
+              ok: false,
+              error: "计费规则未配置，请联系管理员设置积分规则",
+              data: {
+                error_code: "BILLING_RULE_NOT_CONFIGURED",
+                billing_kind: "feature",
+                billing_key: "script_writer",
+              },
+            },
+            { status: 409 },
+          ),
+      ),
+    );
+
+    const { result } = renderHook(() => useGenerateScript("demo", 1), {
+      wrapper,
+    });
+
+    await expect(result.current.mutateAsync({})).rejects.toBeInstanceOf(
+      BillingRuleNotConfiguredError,
+    );
   });
 });

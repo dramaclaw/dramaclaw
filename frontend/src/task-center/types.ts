@@ -26,6 +26,7 @@ export interface TaskState {
   result: unknown | null;
   metadata?: Record<string, unknown> | null;
   error: string | null;
+  error_code?: string | null;
   logs: string[];
   task_type_label?: string;
   display_name?: string;

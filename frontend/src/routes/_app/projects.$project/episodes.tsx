@@ -43,6 +43,11 @@ import {
 import { deriveEpisodeStats, type EpisodeStats } from "@/lib/episode-stats";
 import { useStageTask } from "@/hooks/use-stage-task";
 import { queryKeys } from "@/lib/query-keys";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
+import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { HealthBar } from "@/components/episode/health-bar";
 import {
   EpisodeActionsSlotProvider,
@@ -55,6 +60,7 @@ import {
   HeaderCollapseProvider,
 } from "@/components/episode/header-collapse";
 import { StageProgressPanel } from "@/components/stage-progress-panel";
+import { CreditCostInline } from "@/components/credit-cost-inline";
 import { EpisodeListSkeleton } from "@/components/skeletons";
 import { Button } from "@/components/ui/button";
 import {
@@ -245,6 +251,7 @@ function TopBar({
   showReplan,
   onPlan,
   planPending,
+  planCostDisplay,
   showRefresh,
   onRefresh,
   refreshPending,
@@ -259,6 +266,7 @@ function TopBar({
   showReplan: boolean;
   onPlan: () => void;
   planPending: boolean;
+  planCostDisplay?: string | null;
   showRefresh: boolean;
   onRefresh: () => void;
   refreshPending: boolean;
@@ -350,6 +358,7 @@ function TopBar({
               <Play className="size-3.5" />
             )}
             {t("episode.list.replanEpisodes")}
+            <CreditCostInline display={planCostDisplay} />
           </Button>
         )}
         {showPlan && (
@@ -365,6 +374,7 @@ function TopBar({
               <Play className="size-3.5" />
             )}
             {t("episode.list.planEpisodes")}
+            <CreditCostInline display={planCostDisplay} />
           </Button>
         )}
         {showBack && (
@@ -467,6 +477,7 @@ function EpisodePlanShortcut({
   icon,
   summary,
   actionLabel,
+  costDisplay,
   pending,
   disabled = false,
   onClick,
@@ -474,6 +485,7 @@ function EpisodePlanShortcut({
   icon: React.ReactNode;
   summary: string;
   actionLabel: string;
+  costDisplay?: string | null;
   pending: boolean;
   disabled?: boolean;
   onClick: () => void;
@@ -505,6 +517,7 @@ function EpisodePlanShortcut({
           <Sparkles className="size-3" />
         )}
         {actionLabel}
+        <CreditCostInline display={costDisplay} />
       </Button>
     </div>
   );
@@ -518,6 +531,7 @@ function EpisodeListItem({
   onSelect,
   onPlanScenes,
   onPlanProps,
+  identityCostDisplay,
   scenePending,
   propPending,
   sceneDisabled,
@@ -528,6 +542,7 @@ function EpisodeListItem({
   onSelect: () => void;
   onPlanScenes: (episodeNum: number) => void;
   onPlanProps: (episodeNum: number) => void;
+  identityCostDisplay?: string | null;
   scenePending: boolean;
   propPending: boolean;
   sceneDisabled: boolean;
@@ -595,12 +610,12 @@ function EpisodeListItem({
     try {
       const res = await planIdentities.mutateAsync(episode.number);
       if (res.ok === false) {
-        toast.error(res.error || t("common.error"));
+        toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
       identityTask.start();
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -653,6 +668,7 @@ function EpisodeListItem({
           }
           pending={identityPending}
           disabled={identityPending}
+          costDisplay={identityCostDisplay}
           onClick={handlePlanIdentities}
         />
         <EpisodePlanShortcut
@@ -771,6 +787,18 @@ function EpisodesPage() {
 
   // Plan-episodes SSE — global task, not per-episode (episode sentinel = 0).
   const planEpisodes = usePlanEpisodes(project);
+  const planEpisodesCost = useGenerationCreditCost("feature", "build_episodes");
+  const planEpisodesCostDisplay =
+    planEpisodesCost.data?.data.display ??
+    (planEpisodesCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
+  const planIdentitiesCost = useGenerationCreditCost("feature", "identity_planner");
+  const planIdentitiesCostDisplay =
+    planIdentitiesCost.data?.data.display ??
+    (planIdentitiesCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const planScenes = usePlanEpisodeScenes(project);
   const planProps = usePlanEpisodeProps(project);
   const planTask = useStageTask({
@@ -785,10 +813,14 @@ function EpisodesPage() {
 
   const handlePlan = async () => {
     try {
-      await planEpisodes.mutateAsync({});
+      const res = await planEpisodes.mutateAsync({});
+      if (res.ok === false) {
+        toast.error(backendErrorToastMessage(res.error, t));
+        return;
+      }
       planTask.start();
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -870,6 +902,7 @@ function EpisodesPage() {
       showReplan={!selectedEpisode && displayEpisodes.length > 0}
       onPlan={handlePlan}
       planPending={planPending}
+      planCostDisplay={planEpisodesCostDisplay}
       showRefresh={!selectedEpisode}
       onRefresh={handleRefresh}
       refreshPending={refreshPending}
@@ -956,6 +989,7 @@ function EpisodesPage() {
                       <Play className="size-3.5" />
                     )}
                     {t("episode.list.planEpisodes")}
+                    <CreditCostInline display={planEpisodesCostDisplay} />
                   </Button>
                 </div>
               ) : (
@@ -968,6 +1002,7 @@ function EpisodesPage() {
                       onSelect={() => handleSelectEpisode(ep.number)}
                       onPlanScenes={handlePlanScenes}
                       onPlanProps={handlePlanProps}
+                      identityCostDisplay={planIdentitiesCostDisplay}
                       scenePending={
                         planScenes.isPending && planScenes.variables === ep.number
                       }

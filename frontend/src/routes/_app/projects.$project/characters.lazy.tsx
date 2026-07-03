@@ -58,7 +58,10 @@ import {
   useUploadIdentityPortrait,
   useUploadPortrait,
 } from "@/lib/queries/characters";
-import { backendErrorToastMessage } from "@/lib/api-errors";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { useCharacterImageSelection } from "@/lib/queries/character-image-selection";
 import { useProject } from "@/lib/queries/projects";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
@@ -528,6 +531,7 @@ function CharacterAvatar({
 function CharactersPageHeader({
   onRebuild,
   rebuildDisabled,
+  buildCharactersCostDisplay,
   onAdd,
   project,
   activeTab,
@@ -535,6 +539,7 @@ function CharactersPageHeader({
 }: {
   onRebuild: () => void;
   rebuildDisabled: boolean;
+  buildCharactersCostDisplay?: string | null;
   onAdd: () => void;
   project: string;
   activeTab: AssetTab;
@@ -597,6 +602,7 @@ function CharactersPageHeader({
             >
               <RefreshCw className="size-3.5" />
               {t("characters.autoExtract")}
+              <CreditCostInline display={buildCharactersCostDisplay} />
             </Button>
           </>
         )}
@@ -2871,6 +2877,7 @@ function CharactersSplit({
   handleAttempt,
   onRebuild,
   rebuildDisabled,
+  buildCharactersCostDisplay,
 }: {
   project: string;
   isDesktop: boolean;
@@ -2890,6 +2897,7 @@ function CharactersSplit({
   handleAttempt: (name: string) => void;
   onRebuild: () => void;
   rebuildDisabled: boolean;
+  buildCharactersCostDisplay?: string | null;
 }) {
   const { t } = useTranslation();
   const isExtracting = buildStarted && taskStream.status !== "idle";
@@ -2971,6 +2979,7 @@ function CharactersSplit({
             >
               <RefreshCw className="size-3.5" />
               {t("characters.autoExtract")}
+              <CreditCostInline display={buildCharactersCostDisplay} />
             </Button>
           </div>
         ) : searchActive && characters.length === 0 ? (
@@ -3053,6 +3062,12 @@ function CharactersPageContent() {
   const { data: imageSelectionRes } = useCharacterImageSelection(project);
   const buildChars = useBuildCharacters(project);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
+  const buildCharactersCost = useGenerationCreditCost("feature", "build_characters");
+  const buildCharactersCostDisplay =
+    buildCharactersCost.data?.data.display ??
+    (buildCharactersCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
 
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [buildStarted, setBuildStarted] = useState(false);
@@ -3147,8 +3162,8 @@ function CharactersPageContent() {
     try {
       await buildChars.mutateAsync();
       setBuildStarted(true);
-    } catch {
-      toast.error(t("common.error"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
 
@@ -3169,6 +3184,7 @@ function CharactersPageContent() {
       <CharactersPageHeader
         onRebuild={() => setRebuildDialogOpen(true)}
         rebuildDisabled={buildChars.isPending || buildStarted}
+        buildCharactersCostDisplay={buildCharactersCostDisplay}
         onAdd={() => setAddDialogOpen(true)}
         project={project}
         activeTab={assetTab}
@@ -3204,6 +3220,7 @@ function CharactersPageContent() {
             handleAttempt={handleAttempt}
             onRebuild={() => setRebuildDialogOpen(true)}
             rebuildDisabled={buildChars.isPending || buildStarted}
+            buildCharactersCostDisplay={buildCharactersCostDisplay}
           />
         </>
       ) : assetTab === "voices" ? (

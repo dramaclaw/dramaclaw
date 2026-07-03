@@ -30,6 +30,28 @@ export class BackendStatusError extends Error {
   }
 }
 
+export class InsufficientCreditsError extends BackendStatusError {
+  constructor(
+    message: string,
+    status: number,
+    body?: unknown,
+  ) {
+    super(message, status, body);
+    this.name = "InsufficientCreditsError";
+  }
+}
+
+export class BillingRuleNotConfiguredError extends BackendStatusError {
+  constructor(
+    message: string,
+    status: number,
+    body?: unknown,
+  ) {
+    super(message, status, body);
+    this.name = "BillingRuleNotConfiguredError";
+  }
+}
+
 function queueLabelForPlainMessage(queueKind: string): string {
   if (queueKind === "default") return "默认";
   if (queueKind === "video") return "视频";
@@ -50,7 +72,24 @@ function projectQueueLimitPlainMessage(
 }
 
 export function errorFromBackendBody(status: number, body: unknown, fallback: string): Error | null {
-  if (!body || typeof body !== "object") return null;
+  if (!body || typeof body !== "object") {
+    if (status === 402) {
+      return new InsufficientCreditsError(fallback, status, body);
+    }
+    return null;
+  }
+
+  const findNestedString = (value: unknown, key: string): string | undefined => {
+    if (!value || typeof value !== "object") return undefined;
+    const record = value as Record<string, unknown>;
+    const direct = record[key];
+    if (typeof direct === "string" && direct.trim()) return direct;
+    for (const nested of Object.values(record)) {
+      const found = findNestedString(nested, key);
+      if (found) return found;
+    }
+    return undefined;
+  };
 
   const data = (body as { data?: unknown }).data;
   const queueKind =
@@ -63,12 +102,30 @@ export function errorFromBackendBody(status: number, body: unknown, fallback: st
       : undefined;
   const apiError = (body as { error?: unknown }).error;
   const detail = (body as { detail?: unknown }).detail;
+  const directErrorCode =
+    data && typeof data === "object"
+      ? (data as { error_code?: unknown }).error_code
+      : undefined;
+  const errorCode =
+    typeof directErrorCode === "string" && directErrorCode.trim()
+      ? directErrorCode
+      : findNestedString(body, "error_code");
   const message =
     typeof apiError === "string" && apiError.trim()
       ? apiError
       : typeof detail === "string" && detail.trim()
         ? detail
-        : fallback;
+        : findNestedString(body, "message") ?? fallback;
+
+  if (errorCode === "INSUFFICIENT_CREDITS") {
+    return new InsufficientCreditsError(message, status, body);
+  }
+  if (status === 402) {
+    return new InsufficientCreditsError(message, status, body);
+  }
+  if (errorCode === "BILLING_RULE_NOT_CONFIGURED") {
+    return new BillingRuleNotConfiguredError(message, status, body);
+  }
 
   if (status === 429 && typeof queueKind === "string" && queueKind.trim()) {
     const normalizedScope = limitScope === "user" ? "user" : "project";
@@ -87,9 +144,21 @@ export function errorFromBackendBody(status: number, body: unknown, fallback: st
   return null;
 }
 
+async function safeJsonFromResponse(response: Response): Promise<unknown> {
+  try {
+    return await response.clone().json();
+  } catch {
+    try {
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
+}
+
 async function backendError(error: unknown): Promise<Error | null> {
   if (!(error instanceof HTTPError)) return null;
-  const body = await error.response.json().catch(() => null);
+  const body = await safeJsonFromResponse(error.response);
   return errorFromBackendBody(error.response.status, body, error.message);
 }
 
@@ -162,6 +231,16 @@ export function humanizeTaskError(
 }
 
 export function backendErrorToastMessage(error: unknown, t: TFunction): string {
+  if (error instanceof InsufficientCreditsError) {
+    return t("common.insufficientCredits", {
+      defaultValue: error.message || t("common.error"),
+    });
+  }
+  if (error instanceof BillingRuleNotConfiguredError) {
+    return t("common.billingRuleNotConfigured", {
+      defaultValue: error.message || t("common.error"),
+    });
+  }
   if (error instanceof ProjectQueueLimitError) {
     const scopeSuffix = error.limitScope === "user" ? "UserFull" : "ProjectFull";
     if (error.queueKind === "default") {

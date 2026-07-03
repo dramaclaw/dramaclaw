@@ -14,6 +14,14 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from novelvideo.api import OPENAPI_TAGS, api_router, register_verification_routes
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.routes.files import preview_project_media_file
+from novelvideo.shared.billing_errors import (
+    BILLING_RULE_NOT_CONFIGURED_MESSAGE,
+    INSUFFICIENT_CREDITS_MESSAGE,
+    BillingRuleNotConfiguredError,
+    InsufficientCreditsError,
+    billing_rule_not_configured_payload,
+    insufficient_credits_payload,
+)
 from novelvideo.shared.api_coverage import mount_api_coverage_middleware
 from novelvideo.task_backend.limits import (
     GlobalLaneQueueLimitExceeded,
@@ -112,7 +120,8 @@ def create_app() -> FastAPI:
             content={
                 "ok": False,
                 "error": (
-                    f"你在当前项目 {exc.queue_kind} 队列任务已满，" "请等待自己的任务完成后再提交"
+                    f"你在当前项目 {exc.queue_kind} 队列任务已满，"
+                    "请等待自己的任务完成后再提交"
                 ),
                 "data": {
                     "project_id": exc.project_id,
@@ -143,6 +152,37 @@ def create_app() -> FastAPI:
                     "queued": exc.queued,
                     "limit_scope": "global_lane_queue",
                 },
+            },
+        )
+
+    @application.exception_handler(InsufficientCreditsError)
+    async def _insufficient_credits(
+        request: Request,
+        exc: InsufficientCreditsError,
+    ) -> JSONResponse:
+        _ = request
+        payload = insufficient_credits_payload(exc)
+        return JSONResponse(
+            status_code=402,
+            content={
+                "ok": False,
+                "error": INSUFFICIENT_CREDITS_MESSAGE,
+                "data": payload,
+            },
+        )
+
+    @application.exception_handler(BillingRuleNotConfiguredError)
+    async def _billing_rule_not_configured(
+        request: Request,
+        exc: BillingRuleNotConfiguredError,
+    ) -> JSONResponse:
+        _ = request
+        return JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": BILLING_RULE_NOT_CONFIGURED_MESSAGE,
+                "data": billing_rule_not_configured_payload(exc),
             },
         )
 
@@ -253,7 +293,9 @@ def create_app() -> FastAPI:
 
     application.include_router(api_router)
 
-    @application.get("/static/projects/{project}/{file_path:path}", include_in_schema=False)
+    @application.get(
+        "/static/projects/{project}/{file_path:path}", include_in_schema=False
+    )
     async def static_project_media(
         project: str,
         file_path: str,

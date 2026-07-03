@@ -34,7 +34,11 @@ import {
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { useAssetFocus } from "@/hooks/use-asset-focus";
 import { useNavigateToAsset } from "@/hooks/use-assets-deep-link";
-import { backendErrorToastMessage } from "@/lib/api-errors";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
+import { CreditCostInline } from "@/components/credit-cost-inline";
 import { Button } from "@/components/ui/button";
 import { EMPTY_STATE_ACTION_BUTTON_CLASS } from "@/components/ui/empty-state-styles";
 import {
@@ -1104,6 +1108,12 @@ export function ScenesPanel({
   const updateScene = useUpdateScene(project, editing?.name ?? "");
   const deleteScene = useDeleteScene(project);
   const buildScenes = useBuildScenes(project);
+  const buildScenesCost = useGenerationCreditCost("feature", "build_scenes");
+  const buildScenesCostDisplay =
+    buildScenesCost.data?.data.display ??
+    (buildScenesCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const refIndex = useAssetReferenceIndex(project);
 
   const allItems = scenes.data?.data ?? [];
@@ -1212,9 +1222,15 @@ export function ScenesPanel({
   }
 
   async function handleBuildScenes() {
-    const res = await buildScenes.mutateAsync();
+    let res;
+    try {
+      res = await buildScenes.mutateAsync();
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
+      return;
+    }
     if (isErrorResponse(res)) {
-      toast.error(res.error);
+      toast.error(backendErrorToastMessage(res.error, t));
       return;
     }
     toast.success(res.message);
@@ -1272,6 +1288,7 @@ export function ScenesPanel({
             <Sparkles className="size-3.5" />
           )}
           {t("assets.scenes.build")}
+          <CreditCostInline display={buildScenesCostDisplay} />
         </Button>
       </AssetHeaderActions>
       {scenes.isLoading ? (

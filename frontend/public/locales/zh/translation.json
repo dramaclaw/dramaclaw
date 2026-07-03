@@ -1240,6 +1240,9 @@
     "loading": "加载中...",
     "back": "返回",
     "error": "出错了",
+    "insufficientCredits": "积分不足，请联系管理员充值",
+    "billingRuleNotConfigured": "计费规则未配置，请联系管理员设置积分规则",
+    "billingRuleNotConfiguredShort": "需配置",
     "projectDefaultQueueFull": "当前项目默认队列已满",
     "projectQueueFull": "当前项目{{queue}}队列已满",
     "projectDefaultQueueUserFull": "你在当前项目默认队列的任务已达个人上限",
@@ -3270,7 +3273,8 @@
       "audio": {
         "title": "生成音频",
         "on": "开启",
-        "off": "关闭"
+        "off": "关闭",
+        "durationExceeded": "音频总时长不能超过 {{max}} 秒，请缩短或替换配乐参考后再试。"
       },
       "count": {
         "format": "{{count}}个"

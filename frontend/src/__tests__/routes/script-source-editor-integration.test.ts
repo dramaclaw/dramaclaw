@@ -52,6 +52,24 @@ describe("script route source editor integration", () => {
     expect(route).toContain("project={project}");
   });
 
+  it("shows feature credit cost on detail identity planning", () => {
+    const route = readFileSync(
+      "src/routes/_app/projects.$project/episodes.$episode/script.lazy.tsx",
+      "utf8",
+    );
+    const picker = readFileSync(
+      "src/components/identity-picker-dialog.tsx",
+      "utf8",
+    );
+
+    expect(route).toContain('useGenerationCreditCost("feature", "identity_planner")');
+    expect(route).toContain(
+      "planIdentitiesCost.error instanceof BillingRuleNotConfiguredError",
+    );
+    expect(route).toContain("planCostDisplay={planIdentitiesCostDisplay}");
+    expect(picker).toContain("<CreditCostInline display={planCostDisplay} />");
+  });
+
   it("wires episode prop promotion labels into the planning area", () => {
     const route = readFileSync(
       "src/routes/_app/projects.$project/episodes.$episode/script.lazy.tsx",

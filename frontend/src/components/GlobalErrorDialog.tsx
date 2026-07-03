@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { UiButton } from '@/components/ui';
-import { AlertCircle, ChevronDown, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { AlertCircle, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -42,6 +50,10 @@ export function GlobalErrorDialog({
     return detailText;
   }, [details, message]);
 
+  // 只有真正有东西可复制（后端技术详情 / 显式 copyText）时才显示「复制报错信息」。
+  // 纯提示类弹窗（如音频时长校验）没有可复制内容，隐藏该按钮避免多余。
+  const canCopy = Boolean(copyText?.trim() || technicalDetails);
+
   useEffect(() => {
     if (isOpen) {
       setCopied(false);
@@ -63,44 +75,38 @@ export function GlobalErrorDialog({
     }
   }, [copyText, details, message]);
 
-  if (!isOpen) {
-    return null;
-  }
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-5">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/62 backdrop-blur-[2px]"
-        aria-label={t('common.close')}
-        onClick={onClose}
-      />
-      <section className="relative w-full max-w-[600px] overflow-hidden rounded-[18px] border border-white/[0.16] bg-[#17191f]/95 shadow-[0_28px_80px_rgba(0,0,0,0.62)]">
-        <div className="flex items-start justify-between gap-4 px-5 pb-4 pt-5">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] text-text-muted">
-              <AlertCircle className="h-4 w-4" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-[17px] font-semibold leading-6 text-text-dark">{displayTitle}</h2>
-              <p className="mt-2 text-[14px] leading-6 text-text-dark/78">{displayMessage}</p>
-            </div>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent
+        showCloseButton
+        overlayClassName="bg-black/62 backdrop-blur-[2px]"
+        closeButtonClassName="top-4 right-4 size-8 rounded-full bg-black/24 text-text-muted hover:bg-white/[0.08] hover:text-text-dark"
+        className="gap-0 overflow-hidden rounded-md border border-white/12 bg-zinc-900/85 p-0 text-text-dark ring-0 backdrop-blur-2xl sm:max-w-[600px]"
+      >
+        <DialogHeader className="flex-row items-start gap-3 px-5 pb-4 pr-14 pt-5">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] text-text-muted">
+            <AlertCircle className="h-4 w-4" aria-hidden="true" />
           </div>
-          <button
-            type="button"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/24 text-text-muted transition-colors hover:bg-white/[0.08] hover:text-text-dark"
-            onClick={onClose}
-            aria-label={t('common.close')}
-          >
-            <X className="h-[18px] w-[18px]" aria-hidden="true" />
-          </button>
-        </div>
+          <div className="min-w-0">
+            <DialogTitle className="text-[17px] font-semibold leading-6 text-text-dark">
+              {displayTitle}
+            </DialogTitle>
+            <DialogDescription className="mt-2 text-[14px] leading-6 text-text-dark/78">
+              {displayMessage}
+            </DialogDescription>
+          </div>
+        </DialogHeader>
 
         {technicalDetails && (
           <div className="border-t border-white/[0.08] px-5 py-3">
             <button
               type="button"
-              className="flex w-full items-center justify-between rounded-[8px] px-1 py-1 text-left text-[12px] font-medium text-text-muted transition-colors hover:text-text-dark"
+              className="flex w-full items-center justify-between rounded-md px-1 py-1 text-left text-[12px] font-medium text-text-muted transition-colors hover:text-text-dark"
               onClick={() => setShowDetails((value) => !value)}
             >
               <span>{t('errorDialog.technicalDetails')}</span>
@@ -110,34 +116,36 @@ export function GlobalErrorDialog({
               />
             </button>
             {showDetails && (
-              <pre className="ui-scrollbar mt-2 max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded-[10px] border border-white/[0.12] bg-[#0f1116]/80 p-3 font-mono text-[12px] leading-5 text-text-dark/82">
+              <pre className="ui-scrollbar mt-2 max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-white/[0.12] bg-[#0b0b0b]/80 p-3 font-mono text-[12px] leading-5 text-text-dark/82">
                 {technicalDetails}
               </pre>
             )}
           </div>
         )}
 
-        <div className="flex justify-end gap-2 border-t border-white/[0.08] px-5 py-4">
-          <UiButton
-            variant="ghost"
+        <DialogFooter className="justify-end gap-2 rounded-none px-5 pb-4 pt-1">
+          {canCopy && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="rounded-md px-3 text-text-dark/82 hover:bg-white/[0.07]"
+              onClick={() => {
+                void handleCopy();
+              }}
+            >
+              {copied ? t('nodeToolbar.copied') : t('errorDialog.copyReport')}
+            </Button>
+          )}
+          <Button
+            variant="outline"
             size="sm"
-            className="rounded-[8px] px-3 text-text-dark/82 hover:bg-white/[0.07]"
-            onClick={() => {
-              void handleCopy();
-            }}
-          >
-            {copied ? t('nodeToolbar.copied') : t('errorDialog.copyReport')}
-          </UiButton>
-          <UiButton
-            variant="primary"
-            size="sm"
-            className="rounded-[8px] bg-cyan-900/70 px-4 text-white hover:bg-cyan-800/80"
+            className="rounded-md px-4"
             onClick={onClose}
           >
             {t('common.close')}
-          </UiButton>
-        </div>
-      </section>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

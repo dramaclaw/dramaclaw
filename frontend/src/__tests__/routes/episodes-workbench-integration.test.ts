@@ -30,6 +30,15 @@ describe("episodes workbench integration", () => {
     expect(routeSource).toContain("episode.list.planProps");
   });
 
+  it("shows feature credit cost on list-card identity planning actions", () => {
+    expect(routeSource).toContain('useGenerationCreditCost("feature", "identity_planner")');
+    expect(routeSource).toContain(
+      "planIdentitiesCost.error instanceof BillingRuleNotConfiguredError",
+    );
+    expect(routeSource).toContain("identityCostDisplay={planIdentitiesCostDisplay}");
+    expect(routeSource).toContain("<CreditCostInline display={costDisplay} />");
+  });
+
   it("scopes list-card planning spinners to the clicked episode", () => {
     expect(routeSource).toContain("planIdentities.isPending || identityTask.started");
     expect(routeSource).toContain('taskType: "identity_planner"');
@@ -42,6 +51,14 @@ describe("episodes workbench integration", () => {
   it("shows only one episode planning action for the list state", () => {
     expect(routeSource).toContain("showPlan={!selectedEpisode && displayEpisodes.length === 0}");
     expect(routeSource).toContain("showReplan={!selectedEpisode && displayEpisodes.length > 0}");
+  });
+
+  it("shows feature credit cost on episode planning actions", () => {
+    expect(routeSource).toContain('useGenerationCreditCost("feature", "build_episodes")');
+    expect(routeSource).toContain("planEpisodesCost.error instanceof BillingRuleNotConfiguredError");
+    expect(routeSource).toContain("planCostDisplay={planEpisodesCostDisplay}");
+    expect(routeSource).toContain("<CreditCostInline display={planCostDisplay} />");
+    expect(routeSource).toContain("<CreditCostInline display={planEpisodesCostDisplay} />");
   });
 
   it("uses localized copy for the episode detail back action", () => {

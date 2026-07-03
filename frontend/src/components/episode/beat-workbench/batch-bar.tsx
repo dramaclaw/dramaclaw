@@ -24,6 +24,10 @@ import { useTaskController } from "@/hooks/use-task-controller";
 import { queryKeys } from "@/lib/query-keys";
 import { TASK_TYPES } from "@/lib/task-types";
 import { cn } from "@/lib/utils";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import type { SketchAspectRatio } from "@/lib/queries/sketch-settings";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { CreditCostInline } from "@/components/credit-cost-inline";
@@ -102,6 +106,7 @@ export function BatchBar({
   const generateAudio = useGenerateAudio(project, episode);
   const globalOptimize = useGlobalOptimize(project, episode);
   const videoBackends = useVideoBackends(project);
+  const detectIdentitiesCost = useGenerationCreditCost("feature", "ai_identity_detection");
   const episodeAudioCost = useGenerationCreditCost("beat_tts");
 
   const [errorDialog, setErrorDialog] = useState<{
@@ -142,6 +147,11 @@ export function BatchBar({
     if (episodeAudioCalls <= 0 || typeof unitCost !== "number") return "";
     return formatCreditCost(unitCost * episodeAudioCalls);
   }, [episodeAudioCost.data?.data.cost, episodeAudioCalls]);
+  const detectIdentitiesCostDisplay =
+    detectIdentitiesCost.data?.data.display ??
+    (detectIdentitiesCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
 
   const [confirm, setConfirm] = useState<{
     title: string;
@@ -218,8 +228,8 @@ export function BatchBar({
         })}\n${reviewMessage}`,
         { id: toastId },
       );
-    } catch {
-      toast.error(t("common.error"), { id: toastId });
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t), { id: toastId });
     }
   };
   const handleReassignColors = async () => {
@@ -290,6 +300,7 @@ export function BatchBar({
               <Wand2 className="size-3.5" />
             )}
             {t("episode.workbench.batch.aiDetect")}
+            <CreditCostInline display={detectIdentitiesCostDisplay} />
           </Button>
           <Button
             size="sm"

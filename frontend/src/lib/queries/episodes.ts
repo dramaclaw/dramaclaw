@@ -108,9 +108,12 @@ export function usePlanEpisodes(project: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (params?: { target_episodes?: number; planning_mode?: string }) =>
-      api
-        .post(p`api/v1/projects/${project}/episodes/plan`, { json: params ?? {} })
-        .json<TaskResponse>(),
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(p`api/v1/projects/${project}/episodes/plan`, {
+          json: params ?? {},
+          throwHttpErrors: false,
+        }),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.episodes(project) });
     },
@@ -171,7 +174,10 @@ export function usePlanIdentities(project: string) {
       jsonWithBackendError<TaskResponse | ErrorResponse>(
         api.post(
           p`api/v1/projects/${project}/episodes/${episodeNum}/identities/plan`,
-          { timeout: LONG_IDENTITY_PLAN_TIMEOUT_MS },
+          {
+            timeout: LONG_IDENTITY_PLAN_TIMEOUT_MS,
+            throwHttpErrors: false,
+          },
         ),
       ),
   });

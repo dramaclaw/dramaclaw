@@ -46,7 +46,62 @@ class DummyCogneeStore:
     pass
 
 
-def _client(monkeypatch, tmp_path, beats: list[dict]):
+class DummyUsageMeter:
+    def __init__(self):
+        self.reserve_calls: list[dict] = []
+        self.confirm_calls: list[tuple[str, dict | None]] = []
+        self.refund_calls: list[tuple[str, dict | None]] = []
+        self.contexts: list[dict] = []
+        self.clear_count = 0
+
+    async def reserve_feature_start_credits(self, **kwargs):
+        self.reserve_calls.append(kwargs)
+        return {"id": "seedance2-prompt-reservation", "cost": 9}
+
+    async def confirm_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        metadata=None,
+    ):
+        self.confirm_calls.append((reservation_id, metadata))
+
+    async def refund_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        metadata=None,
+    ):
+        self.refund_calls.append((reservation_id, metadata))
+
+    def set_llm_usage_context(
+        self,
+        user_id: str,
+        project_id: str = "",
+        resource_kind: str = "",
+        billing_metadata: dict | None = None,
+    ):
+        self.contexts.append(
+            {
+                "user_id": user_id,
+                "project_id": project_id,
+                "resource_kind": resource_kind,
+                "billing_metadata": billing_metadata or {},
+            }
+        )
+
+    def clear_llm_usage_context(self):
+        self.clear_count += 1
+
+
+def _client(
+    monkeypatch,
+    tmp_path,
+    beats: list[dict],
+    *,
+    ctx=None,
+    usage_meter=None,
+):
     from novelvideo.api.routes import scripts
     from novelvideo.api.deps import ProjectResolution
 
@@ -60,7 +115,7 @@ def _client(monkeypatch, tmp_path, beats: list[dict]):
 
     async def fake_resolve_project_scope(project, user, *, required_role="viewer"):
         return ProjectResolution(
-            ctx=None,
+            ctx=ctx,
             username="admin",
             project_name="demo",
             project_dir=tmp_path,
@@ -71,7 +126,14 @@ def _client(monkeypatch, tmp_path, beats: list[dict]):
 
     monkeypatch.setattr(scripts, "resolve_project_scope", fake_resolve_project_scope)
     monkeypatch.setattr(scripts, "make_sqlite_store", _make_sqlite_store)
+    monkeypatch.setattr(
+        scripts,
+        "make_sqlite_store_for_context",
+        lambda _ctx: _make_sqlite_store("admin", "demo"),
+    )
     monkeypatch.setattr(scripts, "make_cognee_store", _make_cognee_store)
+    if usage_meter is not None:
+        monkeypatch.setattr(scripts, "get_usage_meter", lambda: usage_meter)
 
     app = FastAPI()
     app.include_router(scripts.router)
@@ -174,6 +236,129 @@ def test_generate_seedance2_prompt_updates_config_json(monkeypatch, tmp_path):
             "updates": {"seedance2_config_json": saved_json},
         }
     ]
+
+
+def test_generate_seedance2_prompt_reserves_feature_credit_and_confirms(
+    monkeypatch,
+    tmp_path,
+):
+    from novelvideo.seedance2_i2v import panel_service
+
+    saved_json = json.dumps(
+        {
+            "mode": "first_frame",
+            "duration": 5,
+            "resolution": "720p",
+            "ratio": "9:16",
+            "final_prompt": "optimized seedance2 prompt",
+            "prompt_source": "generated",
+        }
+    )
+
+    async def _generate_seedance2_prompt_for_panel(**kwargs):
+        beat = kwargs["beat"]
+        beat["seedance2_config_json"] = saved_json
+        await kwargs["store"].update_beat_asset(
+            episode_number=kwargs["episode"],
+            beat_number=int(beat["beat_number"]),
+            seedance2_config_json=saved_json,
+        )
+        return saved_json
+
+    monkeypatch.setattr(
+        panel_service,
+        "generate_seedance2_prompt_for_panel",
+        _generate_seedance2_prompt_for_panel,
+    )
+    usage_meter = DummyUsageMeter()
+    ctx = _project_ctx(tmp_path)
+    client, _store = _client(
+        monkeypatch,
+        tmp_path,
+        [
+            {
+                "beat_number": 1,
+                "seedance2_config_json": json.dumps(
+                    {
+                        "mode": "first_frame",
+                        "duration": 5,
+                        "resolution": "720p",
+                        "ratio": "9:16",
+                    }
+                ),
+            }
+        ],
+        ctx=ctx,
+        usage_meter=usage_meter,
+    )
+
+    response = client.post(
+        "/projects/demo/episodes/1/beats/1/seedance2-prompt/generate",
+        json={"prompt_guidance": "more camera motion"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert usage_meter.reserve_calls[0]["feature_key"] == "seedance2_prompt"
+    assert usage_meter.reserve_calls[0]["resource_kind"] == "script"
+    assert usage_meter.reserve_calls[0]["require_price_rule"] is True
+    assert usage_meter.reserve_calls[0]["require_positive_cost"] is True
+    assert usage_meter.contexts[0]["billing_metadata"][
+        "model_call_credit_policy"
+    ] == "feature_included"
+    assert usage_meter.contexts[0]["billing_metadata"][
+        "feature_credit_reservation_id"
+    ] == "seedance2-prompt-reservation"
+    assert usage_meter.confirm_calls[0][0] == "seedance2-prompt-reservation"
+    assert usage_meter.refund_calls == []
+    assert usage_meter.clear_count == 1
+
+
+def test_generate_seedance2_prompt_refunds_feature_credit_on_failure(
+    monkeypatch,
+    tmp_path,
+):
+    from novelvideo.seedance2_i2v import panel_service
+
+    async def _generate_seedance2_prompt_for_panel(**kwargs):
+        raise ValueError("seedance2 prompt invalid")
+
+    monkeypatch.setattr(
+        panel_service,
+        "generate_seedance2_prompt_for_panel",
+        _generate_seedance2_prompt_for_panel,
+    )
+    usage_meter = DummyUsageMeter()
+    client, _store = _client(
+        monkeypatch,
+        tmp_path,
+        [
+            {
+                "beat_number": 1,
+                "seedance2_config_json": json.dumps(
+                    {
+                        "mode": "first_frame",
+                        "duration": 5,
+                        "resolution": "720p",
+                        "ratio": "9:16",
+                    }
+                ),
+            }
+        ],
+        ctx=_project_ctx(tmp_path),
+        usage_meter=usage_meter,
+    )
+
+    response = client.post(
+        "/projects/demo/episodes/1/beats/1/seedance2-prompt/generate",
+        json={"prompt_guidance": "more camera motion"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": False, "error": "seedance2 prompt invalid"}
+    assert usage_meter.confirm_calls == []
+    assert usage_meter.refund_calls[0][0] == "seedance2-prompt-reservation"
+    assert usage_meter.clear_count == 1
 
 
 def test_generate_seedance2_prompt_requires_next_beat_for_first_last_mode(

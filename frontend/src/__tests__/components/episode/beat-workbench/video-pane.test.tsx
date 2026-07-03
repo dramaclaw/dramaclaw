@@ -564,8 +564,13 @@ vi.mock("@/lib/queries/scripts", () => ({
 }));
 
 vi.mock("@/lib/queries/generation-credit-cost", () => ({
-  useGenerationCreditCost: () => ({
-    data: { ok: true, data: { cost: 0, display: null } },
+  useGenerationCreditCost: (kind: string, value?: string) => ({
+    data:
+      kind === "feature" && value === "beat_video_prompt"
+        ? { ok: true, data: { cost: 5, display: "5" } }
+        : kind === "feature" && value === "seedance2_prompt"
+          ? { ok: true, data: { cost: 6, display: "6" } }
+        : { ok: true, data: { cost: 0, display: null } },
     isLoading: false,
     isError: false,
   }),
@@ -766,7 +771,11 @@ describe("VideoPane Seedance2 inspector", () => {
       { defaultBackend: "newapi_seedance-1.0-pro-fast" },
     );
 
-    await user.click(screen.getByRole("button", { name: "生成本 Beat 提示词" }));
+    const promptButton = screen.getByRole("button", {
+      name: "生成本 Beat 提示词",
+    });
+    expect(promptButton).toHaveTextContent("5");
+    await user.click(promptButton);
 
     expect(generateBeatVideoPromptMock).toHaveBeenCalledWith({ beatNum: 1 });
     expect(screen.getByLabelText("视频提示词")).toHaveValue(
@@ -1865,7 +1874,9 @@ describe("VideoPane Seedance2 inspector", () => {
     fireEvent.change(screen.getByLabelText("Seedance2.0主体提示词"), {
       target: { value: "manual reference prompt" },
     });
-    await user.click(screen.getByRole("button", { name: "AI 优化" }));
+    const optimizeButton = screen.getByRole("button", { name: "AI 优化" });
+    expect(optimizeButton).toHaveTextContent("6");
+    await user.click(optimizeButton);
 
     expect(generateSeedance2PromptMock).toHaveBeenCalledTimes(1);
     expect(generateSeedance2PromptMock).toHaveBeenCalledWith({

@@ -27,6 +27,7 @@ import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, 
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useParams } from "@tanstack/react-router";
 import { attachBorderBeam, type BorderBeamController } from "border-beam-vanilla";
 import {
@@ -52,6 +53,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { api } from "@/lib/api";
+import { backendErrorToastMessage, jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { useSuperChat } from "@/features/superchat/use-superchat";
 import { useAiAvatarUrl } from "@/features/superchat/ai-avatar";
@@ -2189,9 +2191,9 @@ async function uploadNovelForIngest(
 ): Promise<IngestUploadResult> {
   const formData = new FormData();
   formData.append("file", file.blob, file.filename);
-  const response = await api
-    .post(p`api/v1/projects/${project}/ingest/upload`, { body: formData })
-    .json<OkResponse<IngestUploadResult> | ErrorResponse>();
+  const response = await jsonWithBackendError<OkResponse<IngestUploadResult> | ErrorResponse>(
+    api.post(p`api/v1/projects/${project}/ingest/upload`, { body: formData }),
+  );
   if (!response.ok) {
     const fc = (response as ErrorResponse & { format_check?: FormatCheck }).format_check;
     throw new Error(fc?.summary || response.error);
@@ -2204,7 +2206,7 @@ async function uploadNovelForIngest(
 // the user open the details dialog. Iterate every prepared file, not just the first.
 function surfaceFormatCheckWarnings(
   prepared: PreparedIngestAttachment[],
-  t: (key: string, values?: Record<string, unknown>) => string,
+  t: TFunction,
   onViewDetails: (fc: FormatCheck, filename: string) => void,
 ): void {
   for (const item of prepared) {
@@ -2223,7 +2225,7 @@ function surfaceFormatCheckWarnings(
 async function uploadAttachmentsForIngest(
   project: string,
   attachments: ChatAttachment[],
-  t: (key: string, values?: Record<string, unknown>) => string,
+  t: TFunction,
 ): Promise<PreparedIngestAttachment[]> {
   const prepared: PreparedIngestAttachment[] = [];
 
@@ -2251,7 +2253,7 @@ async function uploadAttachmentsForIngest(
         },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = backendErrorToastMessage(error, t);
       const { content: _content, ...attachmentMetadata } = attachment;
       prepared.push({
         original: attachment,
@@ -2269,14 +2271,14 @@ async function startNovelIngest(
   filename: string,
   options: { rebuild?: boolean } = {},
 ): Promise<TaskResponse> {
-  const response = await api
-    .post(p`api/v1/projects/${project}/ingest/start`, {
+  const response = await jsonWithBackendError<TaskResponse | ErrorResponse>(
+    api.post(p`api/v1/projects/${project}/ingest/start`, {
       json: {
         filename,
         rebuild: options.rebuild ?? false,
       },
-    })
-    .json<TaskResponse | ErrorResponse>();
+    }),
+  );
   if (!response.ok) {
     throw new Error(response.error);
   }
@@ -2698,7 +2700,7 @@ export function SuperChatPanel({
           setReingestConfirmation(null);
           return chat.send(text, [], nextText);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = backendErrorToastMessage(error, t);
           toast.error(t("aiAssistant.ingestAutomationFailed", { message }));
           return false;
         } finally {
@@ -2750,7 +2752,7 @@ export function SuperChatPanel({
           });
           toast.success(t("aiAssistant.ingestAutomationStarted", { filename: uploaded.filename }));
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = backendErrorToastMessage(error, t);
           toast.error(t("aiAssistant.ingestAutomationFailed", { message }));
           return false;
         } finally {
@@ -2789,7 +2791,7 @@ export function SuperChatPanel({
           });
           toast.success(t("aiAssistant.ingestAutomationStarted", { filename: uploaded.filename }));
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = backendErrorToastMessage(error, t);
           toast.error(t("aiAssistant.ingestAutomationFailed", { message }));
           return false;
         } finally {

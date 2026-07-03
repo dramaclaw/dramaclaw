@@ -6,7 +6,6 @@ import asyncio
 from typing import Any
 
 from novelvideo.project_context import ProjectContext
-from novelvideo.ports import get_usage_meter
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_state import get_task_manager
@@ -46,11 +45,6 @@ async def _run_identity_planner(envelope: dict[str, Any], ctx: ProjectContext) -
 
     episode = int(envelope.get("episode") or (envelope.get("payload") or {}).get("episode") or 0)
     manager = get_task_manager()
-    await get_usage_meter().set_project_llm_usage_context(
-        username=ctx.owner_username,
-        project_name=ctx.project_name,
-        resource_kind="portrait",
-    )
 
     def update(
         progress: float | None = None, task: str | None = None, log: str | None = None

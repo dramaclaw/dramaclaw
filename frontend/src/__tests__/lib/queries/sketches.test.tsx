@@ -34,6 +34,7 @@ import {
 } from "@/lib/queries/sketches";
 import { queryKeys } from "@/lib/query-keys";
 import { api } from "@/lib/api";
+import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 
 const server = setupServer();
 
@@ -988,6 +989,36 @@ describe("sketch action queries", () => {
     );
 
     postSpy.mockRestore();
+  });
+
+  it("parses AI detection billing errors from backend responses", async () => {
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/projects/demo/episodes/1/sketches/detect-identities",
+        () =>
+          HttpResponse.json(
+            {
+              ok: false,
+              error: "计费规则未配置，请联系管理员设置积分规则",
+              data: {
+                error_code: "BILLING_RULE_NOT_CONFIGURED",
+                billing_kind: "feature",
+                billing_key: "ai_identity_detection",
+              },
+            },
+            { status: 409 },
+          ),
+      ),
+    );
+
+    const { result } = renderHook(() => useDetectIdentities("demo", 1), {
+      wrapper,
+    });
+
+    result.current.mutate();
+
+    await waitFor(() => expect(result.current.error).toBeDefined());
+    expect(result.current.error).toBeInstanceOf(BillingRuleNotConfiguredError);
   });
 
   it("refreshes beats and script caches after AI detection writes detected identities", async () => {

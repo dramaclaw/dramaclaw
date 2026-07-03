@@ -2,6 +2,7 @@
 
 import json
 import io
+import logging
 import os
 import re
 from pathlib import Path
@@ -69,7 +70,7 @@ from novelvideo.seedance2_i2v.pipeline import (
 from novelvideo.seedance2_i2v.voice_clone import normalize_seedance2_audio_type
 from novelvideo.project_config import load_project_config, save_project_config
 from novelvideo.project_context import ProjectContext
-from novelvideo.ports import get_task_backend
+from novelvideo.ports import get_task_backend, get_usage_meter
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.models import beat_scene_id
 from novelvideo.services.background_anchor_service import (
@@ -83,9 +84,25 @@ from novelvideo.utils.path_resolver import compute_identity_path, compute_portra
 
 router = APIRouter()
 
+logger = logging.getLogger(__name__)
+
+AI_IDENTITY_DETECTION_FEATURE_KEY = "ai_identity_detection"
+MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED = "feature_included"
+
 
 async def _resolve_generation_project(project: str, user: dict, required_role: str = "editor"):
     return await resolve_project_scope(project, user, required_role=required_role)
+
+
+def _requester_user_id_for_billing(resolved: Any, user: dict) -> str:
+    ctx = getattr(resolved, "ctx", None)
+    return str(
+        getattr(ctx, "requester_user_id", "")
+        or user.get("id")
+        or user.get("user_id")
+        or user.get("username")
+        or ""
+    )
 
 
 def _color_assignment_requires_full_sketch_clean(
@@ -5391,8 +5408,47 @@ async def detect_sketch_identities(
     grid_dir = project_dir / "grids" / f"ep{episode_num:03d}" / "sketch"
     grid_dir.mkdir(parents=True, exist_ok=True)
 
+    usage_meter = get_usage_meter()
+    ctx = getattr(resolved, "ctx", None)
+    project_id = str(getattr(ctx, "project_id", "") or "")
+    reservation = await usage_meter.reserve_feature_start_credits(
+        user_id=_requester_user_id_for_billing(resolved, user),
+        feature_key=AI_IDENTITY_DETECTION_FEATURE_KEY,
+        project_id=project_id,
+        resource_kind="sketch",
+        task_type=AI_IDENTITY_DETECTION_FEATURE_KEY,
+        metadata={
+            "source": "sync_api",
+            "endpoint": "detect_sketch_identities",
+            "episode": episode_num,
+            "sketch_count": len(frame_items),
+        },
+        require_price_rule=True,
+        require_positive_cost=True,
+    )
+    reservation_id = str(reservation.get("id") or "")
+    billing_metadata: dict[str, Any] = {
+        "model_call_credit_policy": MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED,
+        "feature_key": AI_IDENTITY_DETECTION_FEATURE_KEY,
+        "source": "sync_api",
+    }
+    if reservation_id:
+        billing_metadata.update(
+            {
+                "feature_credit_reservation_id": reservation_id,
+                "feature_credit_charge_id": reservation_id,
+                "feature_credit_cost": str(reservation.get("cost") or 0),
+            }
+        )
+
     detections: dict[int, list[str]] = {}
     try:
+        usage_meter.set_llm_usage_context(
+            _requester_user_id_for_billing(resolved, user),
+            project_id=project_id,
+            resource_kind="sketch",
+            billing_metadata=billing_metadata,
+        )
         batch_size = 25
         for batch_idx in range(0, len(frame_items), batch_size):
             batch = frame_items[batch_idx : batch_idx + batch_size]
@@ -5415,29 +5471,64 @@ async def detect_sketch_identities(
                 if 1 <= panel_index <= len(ordered_batch):
                     beat_number = ordered_batch[panel_index - 1][0]
                     detections[beat_number] = list(marker_ids or [])
+
+        for beat_number, _path in frame_items:
+            detections.setdefault(beat_number, [])
+
+        characters = store.get_all_characters()
+        identity_detections: dict[int, list[str]] = {}
+        prop_detections: dict[int, list[str]] = {}
+        allowed_prop_ids = set(prop_color_map)
+        for beat_number, keys in detections.items():
+            det_ids, det_props = split_detected_marker_keys(
+                keys,
+                beats,
+                characters,
+                allowed_prop_ids=allowed_prop_ids,
+            )
+            identity_detections[beat_number] = det_ids or [NO_CHARACTER_MARKER]
+            prop_detections[beat_number] = det_props or [NO_PROP_MARKER]
+
+        # 持久化
+        await store.set_beat_detected_identities(episode_num, identity_detections)
+        await store.set_beat_detected_props(episode_num, prop_detections)
+
+        if reservation_id:
+            await usage_meter.confirm_feature_credit_reservation(
+                reservation_id,
+                metadata={
+                    "source": "sync_api",
+                    "endpoint": "detect_sketch_identities",
+                    "episode": episode_num,
+                    "sketch_count": len(frame_items),
+                    "detected_identity_count": sum(
+                        len(real_detected_identities(v))
+                        for v in identity_detections.values()
+                    ),
+                    "detected_prop_count": sum(
+                        len(real_detected_props(v)) for v in prop_detections.values()
+                    ),
+                },
+            )
     except Exception as e:
+        if reservation_id:
+            try:
+                await usage_meter.refund_feature_credit_reservation(
+                    reservation_id,
+                    metadata={
+                        "source": "sync_api",
+                        "endpoint": "detect_sketch_identities",
+                        "episode": episode_num,
+                        "error": str(e),
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to refund AI identity detection feature credit reservation"
+                )
         return {"ok": False, "error": f"AI detection failed: {e}"}
-
-    for beat_number, _path in frame_items:
-        detections.setdefault(beat_number, [])
-
-    characters = store.get_all_characters()
-    identity_detections: dict[int, list[str]] = {}
-    prop_detections: dict[int, list[str]] = {}
-    allowed_prop_ids = set(prop_color_map)
-    for beat_number, keys in detections.items():
-        det_ids, det_props = split_detected_marker_keys(
-            keys,
-            beats,
-            characters,
-            allowed_prop_ids=allowed_prop_ids,
-        )
-        identity_detections[beat_number] = det_ids or [NO_CHARACTER_MARKER]
-        prop_detections[beat_number] = det_props or [NO_PROP_MARKER]
-
-    # 持久化
-    await store.set_beat_detected_identities(episode_num, identity_detections)
-    await store.set_beat_detected_props(episode_num, prop_detections)
+    finally:
+        usage_meter.clear_llm_usage_context()
 
     # 转换 key 为字符串（JSON 兼容）
     str_identity_detections = {str(k): v for k, v in identity_detections.items()}

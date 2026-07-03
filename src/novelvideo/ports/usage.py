@@ -25,6 +25,34 @@ class UsageMeter(Protocol):
         metadata: Optional[dict[str, Any]] = None,
     ) -> None: ...
 
+    async def reserve_feature_start_credits(
+        self,
+        *,
+        user_id: str,
+        feature_key: str,
+        project_id: str = "",
+        resource_kind: str = "",
+        task_id: str = "",
+        task_type: str = "",
+        metadata: Optional[dict[str, Any]] = None,
+        require_price_rule: bool = False,
+        require_positive_cost: bool = False,
+    ) -> dict[str, Any]: ...
+
+    async def confirm_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None: ...
+
+    async def refund_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None: ...
+
     async def bump_model_call(
         self,
         *,

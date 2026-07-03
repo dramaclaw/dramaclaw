@@ -147,6 +147,15 @@ describe("M05 CE generation credit cost gating", () => {
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
       expect.stringContaining("panoCost={panoCost.data?.data.display}"),
     );
+    expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
+      expect.stringContaining('useGenerationCreditCost("feature", "build_scenes")'),
+    );
+    expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
+      expect.stringContaining("buildScenesCost.error instanceof BillingRuleNotConfiguredError"),
+    );
+    expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
+      expect.stringContaining("<CreditCostInline display={buildScenesCostDisplay} />"),
+    );
     expect(source("src/components/episode/beat-workbench/sketch-section.tsx")).toEqual(
       expect.stringContaining("<CreditCostInline display={sketchRegenCost.data?.data.display} />"),
     );

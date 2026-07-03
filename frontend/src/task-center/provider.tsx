@@ -16,6 +16,7 @@ import { createStreamClient } from "./stream-client";
 import { useTaskCenterStore } from "./store";
 import { TASK_TYPES } from "@/lib/task-types";
 import { isTerminal, displayLabel } from "./derivations";
+import { taskErrorMessage } from "./task-errors";
 import type { TaskState } from "./types";
 import type { OkResponse } from "@/types/api";
 
@@ -342,7 +343,7 @@ export function TaskCenterProvider({
             toast.error(
               tRef.current("taskCenter.toast.failed", {
                 label: displayLabel(task, tRef.current),
-                error: task.error ?? "unknown",
+                error: taskErrorMessage(task, tRef.current),
               }),
             );
           }

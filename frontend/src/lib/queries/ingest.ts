@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
@@ -43,9 +44,9 @@ export function useUploadNovel(project: string) {
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append("file", file);
-      const response = await api
-        .post(p`api/v1/projects/${project}/ingest/upload`, { body: formData })
-        .json<OkResponse<UploadResult> | ErrorResponse>();
+      const response = await jsonWithBackendError<OkResponse<UploadResult> | ErrorResponse>(
+        api.post(p`api/v1/projects/${project}/ingest/upload`, { body: formData }),
+      );
       if (!response.ok) {
         throw new Error(response.error);
       }
@@ -94,9 +95,12 @@ export function useStartIngest(project: string) {
       rebuild?: boolean;
       spine_template?: SpineTemplate;
     }) => {
-      const response = await api
-        .post(p`api/v1/projects/${project}/ingest/start`, { json: params })
-        .json<TaskResponse | ErrorResponse>();
+      const response = await jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(p`api/v1/projects/${project}/ingest/start`, {
+          json: params,
+          throwHttpErrors: false,
+        }),
+      );
       if (!response.ok) {
         throw new Error(response.error);
       }

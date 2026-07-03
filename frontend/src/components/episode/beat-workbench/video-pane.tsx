@@ -47,7 +47,10 @@ import {
   type VideoBackendOption,
   type VideoInputCropTarget,
 } from "@/lib/queries/video";
-import { backendErrorToastMessage } from "@/lib/api-errors";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { centerCropBoxForRatio, ratioToCss, zoomCropBox } from "@/lib/aspect-ratio";
 import { useProjectAspectRatio } from "@/stores/aspect-ratio-store";
@@ -279,6 +282,8 @@ export function VideoPane({
   const { data: poolRes } = useVideoPool(project, episode);
   const { data: videoBackendsRes } = useVideoBackends(project);
   const videoBackends = videoBackendsRes?.data ?? [];
+  const beatVideoPromptCost = useGenerationCreditCost("feature", "beat_video_prompt");
+  const seedance2PromptCost = useGenerationCreditCost("feature", "seedance2_prompt");
   const now = useNow();
   const seedance2UploadInputRef = useRef<HTMLInputElement>(null);
   const [regenConfirm, setRegenConfirm] = useState(false);
@@ -507,6 +512,16 @@ export function VideoPane({
         ? sd15Duration
         : 5,
   });
+  const beatVideoPromptCostDisplay =
+    beatVideoPromptCost.data?.data.display ??
+    (beatVideoPromptCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
+  const seedance2PromptCostDisplay =
+    seedance2PromptCost.data?.data.display ??
+    (seedance2PromptCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const seedance2DraftRef = useRef(seedance2Config);
   const normalizedLegacySeedance2ConfigRef = useRef("");
   const lastSavedSeedance2ConfigKeyRef = useRef("");
@@ -825,8 +840,8 @@ export function VideoPane({
           ? "主体提示词已优化"
           : t("episode.workbench.video.seedance2PromptGenerated"),
       );
-    } catch {
-      toast.error(t("episode.workbench.video.seedance2PromptGenerateFailed"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
   const updateSeedance2Draft = <K extends keyof Seedance2ConfigDraft>(
@@ -1232,8 +1247,8 @@ export function VideoPane({
       }
       setLegacyVideoPrompt(res.data.prompt);
       toast.success(t("episode.workbench.video.beatVideoPromptGenerated"));
-    } catch {
-      toast.error(t("episode.workbench.video.beatVideoPromptGenerateFailed"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
 
@@ -1370,6 +1385,7 @@ export function VideoPane({
                 <WandSparkles className="size-3" />
               )}
               {t("episode.workbench.video.generateBeatVideoPrompt")}
+              <CreditCostInline display={beatVideoPromptCostDisplay} />
             </Button>
           </div>
         </div>
@@ -2321,6 +2337,7 @@ export function VideoPane({
                   {showHappyHorseConfig
                     ? "生成主体提示词"
                     : t("episode.workbench.video.seedance2GeneratePrompt")}
+                  <CreditCostInline display={seedance2PromptCostDisplay} />
                 </Button>
                 <Button
                   size="xs"

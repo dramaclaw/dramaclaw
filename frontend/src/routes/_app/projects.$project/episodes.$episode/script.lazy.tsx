@@ -21,13 +21,18 @@ import { useProject } from "@/lib/queries/projects";
 import { useGenerateRewrite, useGenerateScript } from "@/lib/queries/scripts";
 import { useTaskController } from "@/hooks/use-task-controller";
 import { queryKeys } from "@/lib/query-keys";
-import { backendErrorToastMessage } from "@/lib/api-errors";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
+import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { TASK_TYPES } from "@/lib/task-types";
 import {
   getScriptReviewFeedback,
   type ScriptFeedback,
 } from "@/lib/script-feedback";
 import { IdentityPickerDialog } from "@/components/identity-picker-dialog";
+import { CreditCostInline } from "@/components/credit-cost-inline";
 import {
   EpisodeAssetPlanning,
   type AssetPlanningCategory,
@@ -88,9 +93,21 @@ function ScriptTabContent() {
   const { data: charactersRes } = useCharacters(project);
   const updateEpisode = useUpdateEpisode(project);
   const planIdentities = usePlanIdentities(project);
+  const planIdentitiesCost = useGenerationCreditCost("feature", "identity_planner");
+  const planIdentitiesCostDisplay =
+    planIdentitiesCost.data?.data.display ??
+    (planIdentitiesCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const planScenes = usePlanEpisodeScenes(project);
   const planProps = usePlanEpisodeProps(project);
   const generateScript = useGenerateScript(project, epNum);
+  const generateScriptCost = useGenerationCreditCost("feature", "script_writer");
+  const generateScriptCostDisplay =
+    generateScriptCost.data?.data.display ??
+    (generateScriptCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const generateRewrite = useGenerateRewrite(project, epNum);
   const scriptTask = useTaskController({
     key: { taskType: TASK_TYPES.SCRIPT_WRITER, project, episode: epNum },
@@ -310,12 +327,12 @@ function ScriptTabContent() {
       }
       const res = await generateScript.mutateAsync({});
       if (res.ok === false) {
-        toast.error(res.error || t("common.error"));
+        toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
       scriptTask.start({ scope: res.scope });
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -323,7 +340,7 @@ function ScriptTabContent() {
     try {
       const res = await planIdentities.mutateAsync(epNum);
       if (res.ok === false) {
-        toast.error(res.error || t("common.error"));
+        toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
       identityTask.start({ scope: res.scope });
@@ -563,6 +580,9 @@ function ScriptTabContent() {
             ) : (
               t("episode.script.generateScript")
             )}
+            {!scriptTask.started && (
+              <CreditCostInline display={generateScriptCostDisplay} />
+            )}
           </Button>
         </div>
       </div>
@@ -722,6 +742,7 @@ function ScriptTabContent() {
         onChange={handleIdentityChange}
         onPlan={handlePlanIdentities}
         planPending={identityPlanning}
+        planCostDisplay={planIdentitiesCostDisplay}
       />
     </div>
   );

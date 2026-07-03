@@ -5,6 +5,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import ky from "ky";
 import type { ReactNode } from "react";
+import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { server } from "@/__mocks__/msw/server";
@@ -38,6 +39,15 @@ vi.mock("sonner", () => ({
     error: vi.fn(),
     success: vi.fn(),
   },
+}));
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: { defaultValue?: string }) =>
+      key === "common.billingRuleNotConfigured"
+        ? "计费规则未配置，请联系管理员设置积分规则"
+        : (options?.defaultValue ?? key),
+  }),
 }));
 
 class MockEventSource {
@@ -207,6 +217,45 @@ describe("M06 frontend L2 contract", () => {
     expect(result.current.result).toEqual({ chapters: 12 });
     expect(result.current.logs).toEqual(["parsed", "stored"]);
     expect(onComplete).toHaveBeenCalledWith({ chapters: 12 });
+    expect(MockEventSource.instances[0].readyState).toBe(2);
+
+    unmount();
+  });
+
+  it("maps billing rule task stream failures to the unified billing message", async () => {
+    const onError = vi.fn();
+    const { result, unmount } = renderHook(
+      () =>
+        useTaskStream({
+          taskType: "ingest_fast",
+          project: "demo",
+          episode: 1,
+          enabled: true,
+          showCompleteToast: false,
+          onError,
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    await act(async () => {
+      MockEventSource.instances[0].dispatch("failed", {
+        status: "failed",
+        progress: 0,
+        current_task: "功能扣费失败",
+        error: "Request failed with status code 409 Conflict: POST /ingest/start",
+        error_code: "BILLING_RULE_NOT_CONFIGURED",
+        logs: [],
+      });
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("failed"));
+    expect(toast.error).toHaveBeenCalledWith("计费规则未配置，请联系管理员设置积分规则");
+    expect(onError).toHaveBeenCalledWith("计费规则未配置，请联系管理员设置积分规则");
+    expect(toast.error).not.toHaveBeenCalledWith(
+      expect.stringContaining("Request failed with status code 409"),
+    );
     expect(MockEventSource.instances[0].readyState).toBe(2);
 
     unmount();

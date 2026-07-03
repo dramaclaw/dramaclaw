@@ -222,9 +222,12 @@ export function useBuildScenes(project: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      api
-        .post(p`api/v1/projects/${project}/scenes/build`, { json: {} })
-        .json<TaskResponse | ErrorResponse>(),
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(p`api/v1/projects/${project}/scenes/build`, {
+          json: {},
+          throwHttpErrors: false,
+        }),
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tasks(project) }),
   });
 }

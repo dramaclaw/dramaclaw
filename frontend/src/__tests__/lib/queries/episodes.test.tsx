@@ -13,6 +13,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { queryKeys } from "@/lib/query-keys";
+import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 import { deriveEpisodeStats } from "@/lib/episode-stats";
 import {
   derivePipelineEpisodeStatuses,
@@ -21,6 +22,7 @@ import {
   useEpisodeDetail,
   usePlanEpisodeProps,
   usePlanEpisodeScenes,
+  usePlanEpisodes,
   usePlanIdentities,
   useUpdateEpisode,
 } from "@/lib/queries/episodes";
@@ -73,6 +75,60 @@ describe("episode identity planning", () => {
       ok: true,
       task_type: "identity_planner",
     });
+  });
+
+  it("surfaces missing feature billing rules as a typed error", async () => {
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/projects/demo/episodes/1/identities/plan",
+        () =>
+          HttpResponse.json(
+            {
+              ok: false,
+              error: "计费规则未配置，请联系管理员设置积分规则",
+              data: {
+                error_code: "BILLING_RULE_NOT_CONFIGURED",
+                billing_kind: "feature",
+                billing_key: "identity_planner",
+              },
+            },
+            { status: 409 },
+          ),
+      ),
+    );
+
+    const { result } = renderHook(() => usePlanIdentities("demo"), { wrapper });
+
+    await expect(result.current.mutateAsync(1)).rejects.toBeInstanceOf(
+      BillingRuleNotConfiguredError,
+    );
+  });
+});
+
+describe("episode planning", () => {
+  it("surfaces missing feature billing rules as a typed error", async () => {
+    server.use(
+      http.post("http://localhost:3000/api/v1/projects/demo/episodes/plan", () =>
+        HttpResponse.json(
+          {
+            ok: false,
+            error: "计费规则未配置，请联系管理员设置积分规则",
+            data: {
+              error_code: "BILLING_RULE_NOT_CONFIGURED",
+              billing_kind: "feature",
+              billing_key: "build_episodes",
+            },
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const { result } = renderHook(() => usePlanEpisodes("demo"), { wrapper });
+
+    await expect(result.current.mutateAsync({})).rejects.toBeInstanceOf(
+      BillingRuleNotConfiguredError,
+    );
   });
 });
 

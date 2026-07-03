@@ -78,13 +78,78 @@ def _write_sketch(project_dir, beat_num: int, *, padded: bool = True) -> None:
     )
 
 
-def _client(monkeypatch, tmp_path, store: _DetectStore, calls: list[int]):
+class _UsageMeter:
+    def __init__(self):
+        self.reserve_calls: list[dict] = []
+        self.confirm_calls: list[tuple[str, dict | None]] = []
+        self.refund_calls: list[tuple[str, dict | None]] = []
+        self.contexts: list[dict] = []
+        self.clear_count = 0
+
+    async def reserve_feature_start_credits(self, **kwargs):
+        self.reserve_calls.append(kwargs)
+        return {
+            "id": "feature-reservation-1",
+            "cost": 7,
+            "reserved": True,
+            "feature_key": kwargs["feature_key"],
+        }
+
+    async def confirm_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        metadata=None,
+    ):
+        self.confirm_calls.append((reservation_id, metadata))
+
+    async def refund_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        metadata=None,
+    ):
+        self.refund_calls.append((reservation_id, metadata))
+
+    def set_llm_usage_context(
+        self,
+        user_id: str,
+        project_id: str = "",
+        resource_kind: str = "",
+        billing_metadata: dict | None = None,
+    ):
+        self.contexts.append(
+            {
+                "user_id": user_id,
+                "project_id": project_id,
+                "resource_kind": resource_kind,
+                "billing_metadata": billing_metadata or {},
+            }
+        )
+
+    def clear_llm_usage_context(self):
+        self.clear_count += 1
+
+
+def _client(
+    monkeypatch,
+    tmp_path,
+    store: _DetectStore,
+    calls: list[int],
+    *,
+    usage_meter=None,
+    ctx=None,
+):
     from novelvideo.agents import global_video_optimizer
     from novelvideo.api.routes import generation
 
     async def fake_make_sqlite_store(username: str, project: str):
         assert username == "alice"
         assert project == "demo"
+        return store
+
+    async def fake_make_sqlite_store_for_context(context):
+        assert context is ctx
         return store
 
     async def fake_detect_identities_by_ai(
@@ -106,11 +171,18 @@ def _client(monkeypatch, tmp_path, store: _DetectStore, calls: list[int]):
             username="alice",
             project_name="demo",
             project_dir=tmp_path,
-            ctx=None,
+            ctx=ctx,
         )
 
     monkeypatch.setattr(generation, "_resolve_generation_project", fake_resolve_generation_project)
     monkeypatch.setattr(generation, "make_sqlite_store", fake_make_sqlite_store)
+    monkeypatch.setattr(
+        generation,
+        "make_sqlite_store_for_context",
+        fake_make_sqlite_store_for_context,
+    )
+    if usage_meter is not None:
+        monkeypatch.setattr(generation, "get_usage_meter", lambda: usage_meter)
     monkeypatch.setattr(
         global_video_optimizer,
         "detect_identities_by_ai",
@@ -129,7 +201,9 @@ def test_detect_identities_accepts_single_sketch(monkeypatch, tmp_path):
     _write_sketch(tmp_path, 1)
     client = _client(monkeypatch, tmp_path, store, calls)
 
-    response = client.post("/api/v1/projects/demo/episodes/1/sketches/detect-identities")
+    response = client.post(
+        "/api/v1/projects/demo/episodes/1/sketches/detect-identities"
+    )
 
     assert response.status_code == 200
     body = response.json()
@@ -137,6 +211,96 @@ def test_detect_identities_accepts_single_sketch(monkeypatch, tmp_path):
     assert calls == [1]
     assert body["data"]["identity_detections"] == {"1": ["Hero_Main"]}
     assert store.identity_writes == {1: ["Hero_Main"]}
+
+
+def test_detect_identities_reserves_feature_credit_and_marks_model_calls_included(
+    monkeypatch,
+    tmp_path,
+):
+    store = _DetectStore([{"beat_number": 1, "visual_description": "{{Hero_Main}}"}])
+    calls: list[int] = []
+    usage_meter = _UsageMeter()
+    ctx = SimpleNamespace(project_id="project-1", requester_user_id="user-1")
+    _write_sketch(tmp_path, 1)
+    client = _client(
+        monkeypatch,
+        tmp_path,
+        store,
+        calls,
+        usage_meter=usage_meter,
+        ctx=ctx,
+    )
+
+    response = client.post(
+        "/api/v1/projects/demo/episodes/1/sketches/detect-identities"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert usage_meter.reserve_calls == [
+        {
+            "user_id": "user-1",
+            "feature_key": "ai_identity_detection",
+            "project_id": "project-1",
+            "resource_kind": "sketch",
+            "task_type": "ai_identity_detection",
+            "metadata": {
+                "source": "sync_api",
+                "endpoint": "detect_sketch_identities",
+                "episode": 1,
+                "sketch_count": 1,
+            },
+            "require_price_rule": True,
+            "require_positive_cost": True,
+        }
+    ]
+    assert usage_meter.contexts[0]["billing_metadata"][
+        "model_call_credit_policy"
+    ] == "feature_included"
+    assert usage_meter.contexts[0]["billing_metadata"][
+        "feature_credit_reservation_id"
+    ] == "feature-reservation-1"
+    assert usage_meter.confirm_calls[0][0] == "feature-reservation-1"
+    assert usage_meter.refund_calls == []
+    assert usage_meter.clear_count == 1
+
+
+def test_detect_identities_refunds_feature_credit_when_ai_detection_fails(
+    monkeypatch,
+    tmp_path,
+):
+    from novelvideo.agents import global_video_optimizer
+
+    store = _DetectStore([{"beat_number": 1, "visual_description": "{{Hero_Main}}"}])
+    usage_meter = _UsageMeter()
+    _write_sketch(tmp_path, 1)
+    client = _client(
+        monkeypatch,
+        tmp_path,
+        store,
+        [],
+        usage_meter=usage_meter,
+        ctx=SimpleNamespace(project_id="project-1", requester_user_id="user-1"),
+    )
+
+    async def fake_failed_detect_identities_by_ai(**kwargs):
+        raise RuntimeError("vision model failed")
+
+    monkeypatch.setattr(
+        global_video_optimizer,
+        "detect_identities_by_ai",
+        fake_failed_detect_identities_by_ai,
+    )
+
+    response = client.post("/api/v1/projects/demo/episodes/1/sketches/detect-identities")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "vision model failed" in body["error"]
+    assert usage_meter.confirm_calls == []
+    assert usage_meter.refund_calls[0][0] == "feature-reservation-1"
+    assert usage_meter.clear_count == 1
 
 
 def test_detect_identities_accepts_unpadded_nicegui_sketch(monkeypatch, tmp_path):

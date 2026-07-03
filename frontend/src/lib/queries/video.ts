@@ -605,17 +605,18 @@ export function useGenerateSeedance2Prompt(project: string, episode: number) {
       manualPromptReference?: string;
       promptGuidance?: string;
     }) =>
-      api
-        .post(
+      jsonWithBackendError<OkResponse<Seedance2PromptResult> | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/seedance2-prompt/generate`,
           {
             json: {
               manual_prompt_reference: manualPromptReference ?? "",
               prompt_guidance: promptGuidance ?? "",
             },
+            throwHttpErrors: false,
           },
-        )
-        .json<OkResponse<Seedance2PromptResult> | ErrorResponse>(),
+        ),
+      ),
     onSuccess: (res, { beatNum }) => {
       if (!res.ok) return;
       const patched = res.data.beat;
@@ -639,12 +640,15 @@ export function useGenerateBeatVideoPrompt(project: string, episode: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ beatNum }: { beatNum: number }) =>
-      api
-        .post(
+      jsonWithBackendError<OkResponse<BeatVideoPromptResult> | TaskResponse | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/video-prompt/generate`,
-          { json: { language: currentPromptLanguage() } },
-        )
-        .json<OkResponse<BeatVideoPromptResult> | TaskResponse | ErrorResponse>(),
+          {
+            json: { language: currentPromptLanguage() },
+            throwHttpErrors: false,
+          },
+        ),
+      ),
     onSuccess: (res, { beatNum }) => {
       if (!res.ok) return;
       if (!("data" in res)) return;

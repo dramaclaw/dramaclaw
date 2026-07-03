@@ -162,23 +162,87 @@ def _resource_refs_for_task_success(
     return [f"{_episode_ref(episode)}:{task_type}"]
 
 
-def _set_project_task_metrics_context(ctx: Any, task_type: str) -> None:
+def _clean_billing_metadata(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    cleaned: dict[str, Any] = {}
+    for key, item in value.items():
+        clean_key = str(key or "").strip()
+        if not clean_key or item is None:
+            continue
+        if isinstance(item, str):
+            clean_item = item.strip()
+            if not clean_item:
+                continue
+            cleaned[clean_key] = clean_item
+        else:
+            cleaned[clean_key] = item
+    return cleaned
+
+
+def _set_project_task_metrics_context(
+    ctx: Any,
+    task_type: str,
+    billing_metadata: dict[str, Any] | None = None,
+) -> None:
     billing_user_id = _metrics_user_id_for_project_context(ctx)
-    billing_metadata = {
+    context_metadata = {
         "billing_user_id": billing_user_id,
         "requester_user_id": str(getattr(ctx, "requester_user_id", "") or "").strip(),
         "project_owner_id": str(getattr(ctx, "owner_id", "") or "").strip(),
+        "billing_task_type": task_type,
     }
+    context_metadata.update(_clean_billing_metadata(billing_metadata))
     get_usage_meter().set_llm_usage_context(
         billing_user_id,
         project_id=str(getattr(ctx, "project_id", "") or ""),
         resource_kind=_resource_kind_for_task(task_type),
-        billing_metadata={key: value for key, value in billing_metadata.items() if value},
+        billing_metadata={key: value for key, value in context_metadata.items() if value},
     )
 
 
 def _clear_project_task_metrics_context() -> None:
     get_usage_meter().clear_llm_usage_context()
+
+
+def _feature_credit_reservation_id(metadata: dict[str, Any]) -> str:
+    return str(
+        metadata.get("feature_credit_reservation_id")
+        or metadata.get("feature_credit_charge_id")
+        or ""
+    ).strip()
+
+
+async def _confirm_feature_credit_reservation(
+    reservation_id: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    if not reservation_id:
+        return
+    try:
+        await get_usage_meter().confirm_feature_credit_reservation(
+            reservation_id,
+            metadata=metadata,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("feature credit confirmation failed: %s", exc)
+
+
+async def _refund_feature_credit_reservation(
+    reservation_id: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    if not reservation_id:
+        return
+    try:
+        await get_usage_meter().refund_feature_credit_reservation(
+            reservation_id,
+            metadata=metadata,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("feature credit refund failed: %s", exc)
 
 
 async def _emit_project_task_metrics(
@@ -379,7 +443,9 @@ def run_project_task_core_sync(
     episode = int(envelope.get("episode") or 0)
     beat_num = envelope.get("beat_num")
     scope = envelope.get("scope")
-    run_metadata = dict(metadata or {})
+    billing_metadata = _clean_billing_metadata(envelope.get("billing_metadata"))
+    run_metadata = {**dict(metadata or {}), **billing_metadata}
+    feature_reservation_id = _feature_credit_reservation_id(run_metadata)
     timeout_seconds = _project_task_timeout_seconds()
     deadline_monotonic = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
 
@@ -395,6 +461,12 @@ def run_project_task_core_sync(
             scope=scope,
         )
     ):
+        asyncio.run(
+            _refund_feature_credit_reservation(
+                feature_reservation_id,
+                metadata={"source": "task_cancelled_before_start"},
+            )
+        )
         manager.update_progress_for_project(
             ctx,
             task_type,
@@ -420,7 +492,11 @@ def run_project_task_core_sync(
             deadline_monotonic=deadline_monotonic,
             timeout_seconds=timeout_seconds,
         ):
-            _set_project_task_metrics_context(ctx, task_type)
+            _set_project_task_metrics_context(
+                ctx,
+                task_type,
+                billing_metadata=billing_metadata,
+            )
             manager.update_progress_for_project(
                 ctx,
                 task_type,
@@ -436,6 +512,12 @@ def run_project_task_core_sync(
             runner = get_project_task_runner(task_type)
             if runner is None:
                 error = f"No project task runner registered for task_type={task_type}"
+                asyncio.run(
+                    _refund_feature_credit_reservation(
+                        feature_reservation_id,
+                        metadata={"source": "task_runner_missing", "error": error},
+                    )
+                )
                 manager.fail_task_for_project(
                     ctx,
                     task_type,
@@ -456,6 +538,12 @@ def run_project_task_core_sync(
                 result = runner(envelope, ctx)
             except BaseException as exc:
                 if isinstance(exc, TaskCancelled):
+                    asyncio.run(
+                        _refund_feature_credit_reservation(
+                            feature_reservation_id,
+                            metadata={"source": "task_cancelled"},
+                        )
+                    )
                     manager.update_progress_for_project(
                         ctx,
                         task_type,
@@ -470,6 +558,16 @@ def run_project_task_core_sync(
                     )
                     return {"cancelled": True}
                 error, failure_payload, handled = _project_task_failure_for_exception(exc)
+                asyncio.run(
+                    _refund_feature_credit_reservation(
+                        feature_reservation_id,
+                        metadata={
+                            "source": "task_failed",
+                            "error": error,
+                            **failure_payload,
+                        },
+                    )
+                )
                 manager.fail_task_for_project(
                     ctx,
                     task_type,
@@ -502,6 +600,12 @@ def run_project_task_core_sync(
                     beat_num=beat_num,
                     scope=scope,
                     result=result,
+                )
+            )
+            asyncio.run(
+                _confirm_feature_credit_reservation(
+                    feature_reservation_id,
+                    metadata={"source": "task_completed"},
                 )
             )
             manager.complete_task_for_project(

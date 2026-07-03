@@ -35,6 +35,7 @@ export interface TaskStreamEvent {
   current_task?: string;
   result?: unknown;
   error?: string;
+  error_code?: string | null;
   logs?: string[];
 }
 

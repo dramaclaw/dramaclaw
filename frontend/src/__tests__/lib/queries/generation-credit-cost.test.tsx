@@ -13,6 +13,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
+import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 
 const server = setupServer();
 
@@ -87,6 +88,62 @@ describe("generation credit cost query hook", () => {
     expect(requestedKind).toBe("model");
     expect(requestedValue).toBe("gpt-image-2");
     expect(result.current.data?.data.display).toBe("5");
+  });
+
+  it("sends value when querying by feature", async () => {
+    let requestedKind = "";
+    let requestedValue = "";
+    server.use(
+      http.get("http://localhost:3000/api/v1/generation-credit-cost", ({ request }) => {
+        const url = new URL(request.url);
+        requestedKind = url.searchParams.get("kind") ?? "";
+        requestedValue = url.searchParams.get("value") ?? "";
+        return HttpResponse.json({
+          ok: true,
+          data: {
+            cost: 6,
+            display: "6",
+          },
+        });
+      }),
+    );
+
+    const { result } = renderHook(
+      () => useGenerationCreditCost("feature", "ingest_fast"),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(requestedKind).toBe("feature");
+    expect(requestedValue).toBe("ingest_fast");
+    expect(result.current.data?.data.display).toBe("6");
+  });
+
+  it("surfaces missing feature billing rules as a typed error", async () => {
+    server.use(
+      http.get("http://localhost:3000/api/v1/generation-credit-cost", () =>
+        HttpResponse.json(
+          {
+            ok: false,
+            error: "计费规则未配置，请联系管理员设置积分规则",
+            data: {
+              error_code: "BILLING_RULE_NOT_CONFIGURED",
+              billing_kind: "feature",
+              billing_key: "build_characters",
+            },
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const { result } = renderHook(
+      () => useGenerationCreditCost("feature", "build_characters"),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.error).toBeInstanceOf(BillingRuleNotConfiguredError);
   });
 
   it("sends value when querying by image selection", async () => {
