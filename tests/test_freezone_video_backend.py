@@ -157,6 +157,7 @@ def test_video_model_options_and_resolution_work() -> None:
         "newapi_seedance-2.0-fast",
         "newapi_seedance-1.0-pro-fast",
         "newapi_seedance-1.5-pro",
+        "newapi_grok-video-channel",
     }.issubset(names)
     assert ids == set(names)
     assert api_models == set(names)
@@ -165,12 +166,18 @@ def test_video_model_options_and_resolution_work() -> None:
     assert "Seedance1.5 Pro" in labels
     assert "Seedance2.0 Fast" in labels
     assert "HappyHorse 1.0" in labels
+    assert "Grok Video Channel" in labels
     assert normalize_video_resolution("720P") == "720p"
     happyhorse = next(item for item in options if item["id"] == "newapi_happyhorse-1.0")
     assert happyhorse["resolutionOptions"] == ["720p", "1080p"]
     assert happyhorse["minDuration"] == 3
     assert happyhorse["maxDuration"] == 15
     assert normalize_video_resolution_for_backend("newapi_happyhorse-1.0", "480p") == "720p"
+    grok = next(item for item in options if item["id"] == "newapi_grok-video-channel")
+    assert grok["resolutionOptions"] == ["720p", "480p"]
+    assert grok["minDuration"] == 6
+    assert grok["maxDuration"] == 30
+    assert normalize_video_resolution_for_backend("newapi_grok-video-channel", "1080p") == "720p"
 
 
 def test_resolve_freezone_video_backend_accepts_id_and_label() -> None:

@@ -699,6 +699,88 @@ async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_pat
     assert "generate_audio" not in metadata
 
 
+async def test_newapi_grok_video_channel_uses_relayclaw_video_payload(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from novelvideo.generators import video_generator as video_module
+    from novelvideo.generators.video_generator import (
+        NewApiVideoGenerator,
+        ShotReference,
+        VideoGenStatus,
+    )
+
+    captured: dict[str, object] = {}
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="grok-video-channel",
+        resolution="720p",
+        generate_audio=False,
+    )
+
+    async def fake_reserve(*_args, **_kwargs):
+        return "reservation-1"
+
+    async def fake_confirm(*_args, **_kwargs):
+        return None
+
+    async def fake_refund(*_args, **_kwargs):
+        return None
+
+    async def fake_post_json(url: str, payload: dict):
+        captured["url"] = url
+        captured["payload"] = payload
+        return {"id": "task-1", "_newapi_request_id": "req-1"}
+
+    async def fake_get_json(_url: str):
+        return {"status": "completed", "url": "https://example.com/out.mp4"}
+
+    async def fake_download_video(_url: str, output_path: str):
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"video")
+        return b"video"
+
+    monkeypatch.setattr(video_module, "_reserve_video_model_call", fake_reserve)
+    monkeypatch.setattr(video_module, "_confirm_video_model_call", fake_confirm)
+    monkeypatch.setattr(video_module, "_refund_video_model_call", fake_refund)
+    monkeypatch.setattr(generator, "_post_json", fake_post_json)
+    monkeypatch.setattr(generator, "_get_json", fake_get_json)
+    monkeypatch.setattr(generator, "_download_video", fake_download_video)
+
+    result = await generator.generate(
+        image_path="https://example.com/first.png",
+        prompt="一只猫在海滩上漫步",
+        output_path=str(tmp_path / "out.mp4"),
+        duration=6,
+        aspect_ratio="9:16",
+        poll_interval=0,
+        max_polls=1,
+        references=[
+            ShotReference("image", "https://example.com/ref.png", "角色参考"),
+            ShotReference("video", "https://example.com/input.mp4", "视频参考"),
+        ],
+    )
+
+    assert result.status == VideoGenStatus.DONE
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["model"] == "grok-video-channel"
+    assert payload["prompt"] == "一只猫在海滩上漫步"
+    assert payload["duration"] == 6
+    assert payload["seconds"] == "6"
+    assert payload["images"] == ["https://example.com/first.png"]
+    metadata = payload["metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["resolution"] == "720p"
+    assert metadata["ratio"] == "9:16"
+    assert metadata["image_url"] == "https://example.com/first.png"
+    assert metadata["reference_images"] == ["https://example.com/ref.png"]
+    assert "video_url" not in metadata
+    assert "generate_audio" not in metadata
+    assert "watermark" not in metadata
+
+
 async def test_newapi_video_relay_frame_input_normalizes_local_image_refs(
     tmp_path, monkeypatch
 ):

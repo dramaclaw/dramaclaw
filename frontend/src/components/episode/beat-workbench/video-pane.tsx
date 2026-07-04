@@ -169,6 +169,8 @@ const SEEDANCE2_COLLAPSE_TRIGGER_CLASS =
 const SEEDANCE2_DEFAULT_RESOLUTION_OPTIONS = ["480p", "720p"] as const;
 const HAPPYHORSE_RESOLUTION_OPTIONS = ["720p", "1080p"] as const;
 const HAPPYHORSE_RATIO_OPTIONS = ["16:9", "9:16", "1:1", "4:3", "3:4"] as const;
+const GROK_VIDEO_RESOLUTION_OPTIONS = ["720p", "480p"] as const;
+const GROK_VIDEO_RATIO_OPTIONS = ["16:9", "9:16", "1:1", "2:3", "3:2"] as const;
 const SEEDANCE2_RESOLUTION_OPTIONS_BY_MODEL = {
   "seedance-2.0-fast": ["480p", "720p"],
   "seedance-2.0": ["480p", "720p", "1080p"],
@@ -180,6 +182,7 @@ const SEEDANCE2_RESOLUTION_OPTIONS_BY_MODEL = {
 
 type Seedance2Resolution = "480p" | "720p" | "1080p";
 type HappyHorseRatio = (typeof HAPPYHORSE_RATIO_OPTIONS)[number];
+type GrokVideoRatio = (typeof GROK_VIDEO_RATIO_OPTIONS)[number];
 
 interface Seedance2DurationBounds {
   min: number;
@@ -202,7 +205,7 @@ interface Seedance2ConfigDraft {
   mode_user_set: boolean;
   duration: number;
   resolution: Seedance2Resolution;
-  ratio: "9:16" | "16:9" | "1:1" | "4:3" | "3:4" | "21:9";
+  ratio: "9:16" | "16:9" | "1:1" | "4:3" | "3:4" | "21:9" | "2:3" | "3:2";
   generate_audio: boolean;
   generate_audio_user_set: boolean;
   return_last_frame: boolean;
@@ -344,10 +347,13 @@ export function VideoPane({
   const selectedBackend = videoBackends.find((b) => b.value === defaultBackend);
   const showSeedance2Config = selectedBackend?.is_seedance2 === true;
   const showHappyHorseConfig = selectedBackend?.is_happyhorse === true;
-  const showPromptConfig = showSeedance2Config || showHappyHorseConfig;
+  const showGrokVideoConfig = selectedBackend?.is_grok_video === true;
+  const showPromptConfig =
+    showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig;
   const showReferenceDetails =
     showSeedance2Config ||
     showHappyHorseConfig ||
+    showGrokVideoConfig ||
     isSeedanceReferenceCropBackend(defaultBackend);
   const legacyPromptField: "video_prompt" | "keyframe_prompt" =
     beat.video_mode === "keyframe" ? "keyframe_prompt" : "video_prompt";
@@ -377,6 +383,14 @@ export function VideoPane({
   );
   const happyHorseRatioOptions = useMemo(
     () => happyHorseRatioOptionsForBackend(selectedBackend),
+    [selectedBackend],
+  );
+  const grokVideoResolutionOptions = useMemo(
+    () => grokVideoResolutionOptionsForBackend(selectedBackend),
+    [selectedBackend],
+  );
+  const grokVideoRatioOptions = useMemo(
+    () => grokVideoRatioOptionsForBackend(selectedBackend),
     [selectedBackend],
   );
   // seedance-1.5-pro：复用清晰度/时长控件（精品剧+解说剧），但不走 seedance2 多模态那套。
@@ -446,10 +460,10 @@ export function VideoPane({
   const seedance2AssetItems = seedance2StatusData?.assets.items ?? [];
   const modelReferenceAssetItems = useMemo(
     () =>
-      showHappyHorseConfig
+      showHappyHorseConfig || showGrokVideoConfig
         ? seedance2AssetItems.filter((asset) => asset.media_type === "image")
         : seedance2AssetItems,
-    [seedance2AssetItems, showHappyHorseConfig],
+    [seedance2AssetItems, showGrokVideoConfig, showHappyHorseConfig],
   );
   const referenceCropImageItems = useMemo(
     () => {
@@ -459,10 +473,12 @@ export function VideoPane({
           asset.exists !== false &&
           Boolean(asset.url || asset.path),
       );
-      if (showSeedance2Config || showHappyHorseConfig) return imageAssets;
+      if (showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig) {
+        return imageAssets;
+      }
       return imageAssets.filter((asset) => asset.key === "first_frame");
     },
-    [seedance2AssetItems, showHappyHorseConfig, showSeedance2Config],
+    [seedance2AssetItems, showGrokVideoConfig, showHappyHorseConfig, showSeedance2Config],
   );
   const seedance2ReferenceOptions = useMemo(
     () =>
@@ -500,13 +516,13 @@ export function VideoPane({
   const videoCost = useGenerationCreditCost("video_backend", defaultBackend, {
     surface: "supertale",
     params: {
-      resolution: showSeedance2Config || showHappyHorseConfig
+      resolution: showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
         ? seedance2Draft.resolution
         : isSd15ProConfig
           ? sd15Resolution
           : "720p",
     },
-    quantity: showSeedance2Config || showHappyHorseConfig
+    quantity: showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
       ? seedance2Draft.duration
       : isSd15ProConfig
         ? sd15Duration
@@ -534,9 +550,15 @@ export function VideoPane({
     );
   }, [beat.beat_number, seedance2Config]);
   useEffect(() => {
-    if (!showSeedance2Config && !showHappyHorseConfig) return;
+    if (!showSeedance2Config && !showHappyHorseConfig && !showGrokVideoConfig) return;
     const current = seedance2DraftRef.current;
-    const next = showHappyHorseConfig
+    const next = showGrokVideoConfig
+      ? normalizeGrokVideoDraftForBackend(
+          current,
+          grokVideoResolutionOptions,
+          grokVideoRatioOptions,
+        )
+      : showHappyHorseConfig
       ? normalizeHappyHorseDraftForBackend(
           current,
           happyHorseResolutionOptions,
@@ -553,6 +575,9 @@ export function VideoPane({
     setSeedance2Draft(next);
   }, [
     defaultBackend,
+    grokVideoRatioOptions,
+    grokVideoResolutionOptions,
+    showGrokVideoConfig,
     happyHorseRatioOptions,
     happyHorseResolutionOptions,
     showHappyHorseConfig,
@@ -561,7 +586,7 @@ export function VideoPane({
     showSeedance2ValueStyle,
   ]);
   useEffect(() => {
-    if (!showSeedance2Config && !showHappyHorseConfig) return;
+    if (!showSeedance2Config && !showHappyHorseConfig && !showGrokVideoConfig) return;
     const current = seedance2DraftRef.current;
     const nextDuration = clampDuration(current.duration, seedance2DurationBounds);
     if (current.duration === nextDuration) return;
@@ -571,6 +596,7 @@ export function VideoPane({
   }, [
     seedance2DurationBounds.max,
     seedance2DurationBounds.min,
+    showGrokVideoConfig,
     showHappyHorseConfig,
     showSeedance2Config,
   ]);
@@ -675,6 +701,8 @@ export function VideoPane({
     try {
       let happyHorseConfigJson: string | undefined;
       let happyHorseDraft: Seedance2ConfigDraft | undefined;
+      let grokVideoConfigJson: string | undefined;
+      let grokVideoDraft: Seedance2ConfigDraft | undefined;
       if (showSeedance2Config) {
         const normalizedDraft = normalizeSeedance2DraftForBackend(
           seedance2DraftRef.current,
@@ -711,6 +739,21 @@ export function VideoPane({
           serializeHappyHorseConfig(normalizedDraft, seedance2Config),
         );
       }
+      if (showGrokVideoConfig) {
+        const normalizedDraft = normalizeGrokVideoDraftForBackend(
+          seedance2DraftRef.current,
+          grokVideoResolutionOptions,
+          grokVideoRatioOptions,
+        );
+        if (!sameSeedance2Config(normalizedDraft, seedance2DraftRef.current)) {
+          seedance2DraftRef.current = normalizedDraft;
+          setSeedance2Draft(normalizedDraft);
+        }
+        grokVideoDraft = normalizedDraft;
+        grokVideoConfigJson = JSON.stringify(
+          serializeGrokVideoConfig(normalizedDraft, seedance2Config),
+        );
+      }
       const res = await regenerate.mutateAsync({
         beatNum: beat.beat_number,
         videoBackend: defaultBackend,
@@ -721,6 +764,15 @@ export function VideoPane({
               ratio: happyHorseDraft.ratio,
               mode: happyHorseDraft.mode,
               seedance2ConfigJson: happyHorseConfigJson,
+            }
+          : {}),
+        ...(showGrokVideoConfig && grokVideoDraft
+          ? {
+              resolution: grokVideoDraft.resolution,
+              duration: grokVideoDraft.duration,
+              ratio: grokVideoDraft.ratio,
+              mode: grokVideoDraft.mode,
+              seedance2ConfigJson: grokVideoConfigJson,
             }
           : {}),
         ...(isSd15ProConfig
@@ -741,7 +793,9 @@ export function VideoPane({
     draft: Seedance2ConfigDraft,
     options: { silent?: boolean; suppressSuccess?: boolean } = {},
   ) => {
-    const nextConfig = showHappyHorseConfig
+    const nextConfig = showGrokVideoConfig
+      ? serializeGrokVideoConfig(draft, seedance2Config)
+      : showHappyHorseConfig
       ? serializeHappyHorseConfig(draft, seedance2Config)
       : serializeSeedance2Config(draft, seedance2Config);
     const nextConfigJson = JSON.stringify(nextConfig);
@@ -788,7 +842,9 @@ export function VideoPane({
   ]);
   useEffect(() => {
     if (!showPromptConfig || !seedance2Dirty) return;
-    const nextConfig = showHappyHorseConfig
+    const nextConfig = showGrokVideoConfig
+      ? serializeGrokVideoConfig(seedance2Draft, seedance2Config)
+      : showHappyHorseConfig
       ? serializeHappyHorseConfig(seedance2Draft, seedance2Config)
       : serializeSeedance2Config(seedance2Draft, seedance2Config);
     const saveKey = getSeedance2ConfigSaveKey(beat.beat_number, nextConfig);
@@ -805,6 +861,7 @@ export function VideoPane({
     seedance2Dirty,
     seedance2Draft,
     showHappyHorseConfig,
+    showGrokVideoConfig,
     showPromptConfig,
     showSeedance2Config,
   ]);
@@ -825,7 +882,13 @@ export function VideoPane({
         res.data.seedance2_config_json,
         seedance2DefaultRatioForProjectAspect(spec.renderAspect),
       );
-      const nextDraft = showHappyHorseConfig
+      const nextDraft = showGrokVideoConfig
+        ? normalizeGrokVideoDraftForBackend(
+            parsedDraft,
+            grokVideoResolutionOptions,
+            grokVideoRatioOptions,
+          )
+        : showHappyHorseConfig
         ? normalizeHappyHorseDraftForBackend(
             parsedDraft,
             happyHorseResolutionOptions,
@@ -836,7 +899,7 @@ export function VideoPane({
       setSeedance2Draft(nextDraft);
       void seedance2Status.refetch?.();
       toast.success(
-        showHappyHorseConfig
+        showHappyHorseConfig || showGrokVideoConfig
           ? "主体提示词已优化"
           : t("episode.workbench.video.seedance2PromptGenerated"),
       );
@@ -1689,7 +1752,9 @@ export function VideoPane({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <Settings2 className="size-3.5 text-muted-foreground/78" />
             <Label className="text-xs font-medium text-foreground/82">
-              {showHappyHorseConfig
+              {showGrokVideoConfig
+                ? "Grok Video 检视器"
+                : showHappyHorseConfig
                 ? "HappyHorse 检视器"
                 : t("episode.workbench.video.seedance2Inspector")}
             </Label>
@@ -1773,7 +1838,7 @@ export function VideoPane({
                 ref={seedance2UploadInputRef}
                 type="file"
                 className="hidden"
-                accept={showHappyHorseConfig ? "image/*" : "image/*,audio/*"}
+                accept={showHappyHorseConfig || showGrokVideoConfig ? "image/*" : "image/*,audio/*"}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (file) void handleSeedance2AssetUpload(file);
@@ -1971,7 +2036,7 @@ export function VideoPane({
                 value={seedance2Draft.mode}
                 onValueChange={(v) =>
                   updateSeedance2Mode(
-                    showHappyHorseConfig
+                    showHappyHorseConfig || showGrokVideoConfig
                       ? normalizeHappyHorseMode(v)
                       : normalizeSeedance2Mode(v),
                   )
@@ -1989,6 +2054,8 @@ export function VideoPane({
                       `episode.workbench.video.seedance2ModeLabels.${
                         showHappyHorseConfig
                           ? normalizeHappyHorseMode(seedance2Draft.mode)
+                          : showGrokVideoConfig
+                          ? normalizeHappyHorseMode(seedance2Draft.mode)
                           : seedance2Draft.mode
                       }`,
                     )}
@@ -1998,7 +2065,7 @@ export function VideoPane({
                   <SelectItem value="first_frame">
                     {t("episode.workbench.video.seedance2ModeLabels.first_frame")}
                   </SelectItem>
-                  {!showHappyHorseConfig && (
+                  {!showHappyHorseConfig && !showGrokVideoConfig && (
                     <SelectItem value="first_last_frame">
                       {t("episode.workbench.video.seedance2ModeLabels.first_last_frame")}
                     </SelectItem>
@@ -2040,7 +2107,9 @@ export function VideoPane({
                     "resolution",
                     normalizeSeedance2Resolution(
                       v,
-                      showHappyHorseConfig
+                      showGrokVideoConfig
+                        ? grokVideoResolutionOptions[0]
+                        : showHappyHorseConfig
                         ? happyHorseResolutionOptions[0]
                         : seedance2ResolutionOptions[0],
                     ),
@@ -2056,6 +2125,8 @@ export function VideoPane({
                 <SelectContent alignItemWithTrigger={false}>
                   {(showHappyHorseConfig
                     ? happyHorseResolutionOptions
+                    : showGrokVideoConfig
+                    ? grokVideoResolutionOptions
                     : seedance2ResolutionOptions
                   ).map((resolution) => (
                     <SelectItem key={resolution} value={resolution}>
@@ -2074,7 +2145,9 @@ export function VideoPane({
                 onValueChange={(v) =>
                   updateSeedance2Draft(
                     "ratio",
-                    showHappyHorseConfig
+                    showGrokVideoConfig
+                      ? normalizeGrokVideoRatio(v)
+                      : showHappyHorseConfig
                       ? normalizeHappyHorseRatio(v)
                       : normalizeSeedance2Ratio(v),
                   )
@@ -2089,6 +2162,8 @@ export function VideoPane({
                 <SelectContent alignItemWithTrigger={false}>
                   {(showHappyHorseConfig
                     ? happyHorseRatioOptions
+                    : showGrokVideoConfig
+                    ? grokVideoRatioOptions
                     : (["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"] as const)
                   ).map((ratio) => (
                     <SelectItem key={ratio} value={ratio}>
@@ -2271,7 +2346,9 @@ export function VideoPane({
                     htmlFor={`${seedance2Id}-prompt`}
                     className="text-[11px] text-muted-foreground/78"
                   >
-                    {showHappyHorseConfig
+                    {showGrokVideoConfig
+                      ? "Grok 提示词"
+                      : showHappyHorseConfig
                       ? "主体提示词"
                       : t("episode.workbench.video.seedance2Prompt")}
                   </Label>
@@ -2334,7 +2411,9 @@ export function VideoPane({
                   ) : (
                     <WandSparkles className="size-3" />
                   )}
-                  {showHappyHorseConfig
+                  {showGrokVideoConfig
+                    ? "生成 Grok 提示词"
+                    : showHappyHorseConfig
                     ? "生成主体提示词"
                     : t("episode.workbench.video.seedance2GeneratePrompt")}
                   <CreditCostInline display={seedance2PromptCostDisplay} />
@@ -3091,6 +3170,29 @@ function happyHorseRatioOptionsForBackend(
   return options?.length ? options : HAPPYHORSE_RATIO_OPTIONS;
 }
 
+function grokVideoResolutionOptionsForBackend(
+  backend: VideoBackendOption | null | undefined,
+): readonly Seedance2Resolution[] {
+  const options = backend?.resolution_options?.filter(
+    (value): value is Seedance2Resolution => value === "720p" || value === "480p",
+  );
+  return options?.length ? options : GROK_VIDEO_RESOLUTION_OPTIONS;
+}
+
+function grokVideoRatioOptionsForBackend(
+  backend: VideoBackendOption | null | undefined,
+): readonly GrokVideoRatio[] {
+  const options = backend?.ratio_options?.filter(
+    (value): value is GrokVideoRatio =>
+      value === "16:9" ||
+      value === "9:16" ||
+      value === "1:1" ||
+      value === "2:3" ||
+      value === "3:2",
+  );
+  return options?.length ? options : GROK_VIDEO_RATIO_OPTIONS;
+}
+
 function normalizeHappyHorseMode(value: unknown): Seedance2ConfigDraft["mode"] {
   return value === "first_frame" ? "first_frame" : "multimodal_reference";
 }
@@ -3101,6 +3203,15 @@ function normalizeHappyHorseRatio(
 ): HappyHorseRatio {
   return HAPPYHORSE_RATIO_OPTIONS.includes(value as HappyHorseRatio)
     ? (value as HappyHorseRatio)
+    : fallback;
+}
+
+function normalizeGrokVideoRatio(
+  value: unknown,
+  fallback: GrokVideoRatio = "16:9",
+): GrokVideoRatio {
+  return GROK_VIDEO_RATIO_OPTIONS.includes(value as GrokVideoRatio)
+    ? (value as GrokVideoRatio)
     : fallback;
 }
 
@@ -3117,6 +3228,48 @@ function normalizeHappyHorseDraftForBackend(
     : fallbackResolution;
   const fallbackRatio = ratioOptions[0] || "16:9";
   const ratio = ratioOptions.includes(draft.ratio as HappyHorseRatio)
+    ? draft.ratio
+    : fallbackRatio;
+  const mode = normalizeHappyHorseMode(draft.mode);
+  if (
+    draft.mode === mode &&
+    draft.resolution === resolution &&
+    draft.ratio === ratio &&
+    draft.generate_audio === false &&
+    draft.return_last_frame === false &&
+    draft.scene_optimize === "" &&
+    draft.human_review === false
+  ) {
+    return draft;
+  }
+  return {
+    ...draft,
+    mode,
+    mode_user_set: true,
+    resolution,
+    ratio,
+    generate_audio: false,
+    generate_audio_user_set: false,
+    return_last_frame: false,
+    scene_optimize: "",
+    human_review: false,
+    human_review_user_set: false,
+  };
+}
+
+function normalizeGrokVideoDraftForBackend(
+  draft: Seedance2ConfigDraft,
+  resolutionOptions: readonly Seedance2Resolution[],
+  ratioOptions: readonly GrokVideoRatio[],
+): Seedance2ConfigDraft {
+  const fallbackResolution = resolutionOptions.includes("720p")
+    ? "720p"
+    : resolutionOptions[0] || "720p";
+  const resolution = resolutionOptions.includes(draft.resolution)
+    ? draft.resolution
+    : fallbackResolution;
+  const fallbackRatio = ratioOptions[0] || "16:9";
+  const ratio = ratioOptions.includes(draft.ratio as GrokVideoRatio)
     ? draft.ratio
     : fallbackRatio;
   const mode = normalizeHappyHorseMode(draft.mode);
@@ -3228,7 +3381,9 @@ function normalizeSeedance2Ratio(
     value === "1:1" ||
     value === "4:3" ||
     value === "3:4" ||
-    value === "21:9"
+    value === "21:9" ||
+    value === "2:3" ||
+    value === "3:2"
   ) {
     return value;
   }
@@ -3322,6 +3477,26 @@ function serializeHappyHorseConfig(
     mode_user_set: true,
     resolution: draft.resolution === "720p" ? "720p" : "1080p",
     ratio: normalizeHappyHorseRatio(draft.ratio),
+    generate_audio: false,
+    generate_audio_user_set: false,
+    return_last_frame: false,
+    scene_optimize: "",
+    human_review: false,
+    human_review_user_set: false,
+  };
+}
+
+function serializeGrokVideoConfig(
+  draft: Seedance2ConfigDraft,
+  previous: Seedance2ConfigDraft,
+): Record<string, unknown> {
+  const config = serializeSeedance2Config(draft, previous);
+  return {
+    ...config,
+    mode: normalizeHappyHorseMode(draft.mode),
+    mode_user_set: true,
+    resolution: draft.resolution === "480p" ? "480p" : "720p",
+    ratio: normalizeGrokVideoRatio(draft.ratio),
     generate_audio: false,
     generate_audio_user_set: false,
     return_last_frame: false,

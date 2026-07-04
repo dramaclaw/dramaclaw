@@ -377,6 +377,34 @@ function isSeedance1xModel(modelId: string | null | undefined): boolean {
   return /seedance1\d/.test(normalized);
 }
 
+function isGrokVideoChannelModel(modelId: string | null | undefined): boolean {
+  const normalized = String(modelId ?? "")
+    .replace(/[\s._-]/g, "")
+    .toLowerCase();
+  return normalized.includes("grokvideochannel");
+}
+
+function videoModelReferenceDisabledReason(
+  modelId: string | null | undefined,
+  counts: { images: number; videos: number; audios: number },
+): string | null {
+  if (isGrokVideoChannelModel(modelId)) {
+    if (counts.videos > 0 || counts.audios > 0) {
+      return "Grok Video Channel 仅支持图片素材";
+    }
+    if (counts.images > 8) {
+      return "Grok Video Channel 最多支持 1 张首帧和 7 张参考图";
+    }
+    return null;
+  }
+  if (isSeedance1xModel(modelId)) {
+    if (counts.images > 0 || counts.videos > 0 || counts.audios > 0) {
+      return "该模型不支持当前接入的素材";
+    }
+  }
+  return null;
+}
+
 function sceneOptimizeOptionsForModel(
   model: {
     id?: string;
@@ -1105,12 +1133,6 @@ export const VideoNode = memo(
       }
       return { images, videos, audios };
     }, [upstreamNodes]);
-    // 节点是否接入了任意参考素材(图片 / 视频 / 音频)。Seedance 1.0 全系列
-    // 不支持接入素材,故此时在模型选择器里禁用它们。
-    const hasReferenceMedia =
-      upstreamCounts.images > 0 ||
-      upstreamCounts.videos > 0 ||
-      upstreamCounts.audios > 0;
     const isClipMode = Boolean(data.isClipMode);
     const clipStartMs =
       typeof data.clipStartMs === "number" ? data.clipStartMs : null;
@@ -2925,13 +2947,8 @@ export const VideoNode = memo(
                     }
                     domain="video"
                     popoverPlacement="top"
-                    getOptionDisabledReason={
-                      hasReferenceMedia
-                        ? (model) =>
-                            isSeedance1xModel(model.apiModel ?? model.id)
-                              ? "该模型不支持当前接入的素材"
-                              : null
-                        : undefined
+                    getOptionDisabledReason={(model) =>
+                      videoModelReferenceDisabledReason(model.apiModel ?? model.id, upstreamCounts)
                     }
                   />
                   <VideoConfigChip

@@ -1971,6 +1971,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
     def _is_happyhorse_model(self) -> bool:
         return self.model.strip().lower() == "happyhorse-1.0"
 
+    def _is_grok_video_channel_model(self) -> bool:
+        return self.model.strip().lower() == "grok-video-channel"
+
     @staticmethod
     def _happyhorse_ratio(value: str | None) -> str:
         text = str(value or "").strip()
@@ -2274,6 +2277,48 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     metadata["image_url"] = first_frame_url
                     payload["images"] = [first_frame_url]
 
+                if relayed_references:
+                    metadata["reference_images"] = relayed_references
+            except Exception as exc:
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error=f"media relay upload failed: {exc}",
+                )
+
+        elif self._is_grok_video_channel_model():
+            metadata.pop("generate_audio", None)
+            metadata.pop("watermark", None)
+            duration_int = int(math.ceil(duration))
+            payload["duration"] = duration_int
+            payload["seconds"] = str(duration_int)
+            first_frame_path = image_path
+            reference_image_paths: list[str] = []
+            for ref in kwargs.get("references") or []:
+                ref_type = str(getattr(ref, "type", "") or "image").strip().lower()
+                path = str(getattr(ref, "path", "") or "").strip()
+                if not path or ref_type != "image":
+                    continue
+                role = str(getattr(ref, "role", "") or "").strip()
+                if not first_frame_path and "首帧" in role:
+                    first_frame_path = path
+                    continue
+                if path != first_frame_path:
+                    reference_image_paths.append(path)
+
+            try:
+                if first_frame_path:
+                    first_frame_url = await self._relay_frame_input(first_frame_path)
+                    if not first_frame_path.startswith(("http://", "https://")):
+                        log("首帧已上传到媒体中转")
+                    metadata["image_url"] = first_frame_url
+                    payload["images"] = [first_frame_url]
+
+                relayed_references: list[str] = []
+                for path in reference_image_paths[:7]:
+                    url = await self._relay_frame_input(path)
+                    if not path.startswith(("http://", "https://")):
+                        log("参考图片已上传到媒体中转")
+                    relayed_references.append(url)
                 if relayed_references:
                     metadata["reference_images"] = relayed_references
             except Exception as exc:
@@ -3473,6 +3518,7 @@ NEWAPI_VIDEO_DISPLAY_LABELS = {
     "seedance-2.0-value": "Seedance2.0 Value",
     "seedance-2.0-fast-value": "Seedance2.0 Fast Value",
     "happyhorse-1.0": "HappyHorse 1.0",
+    "grok-video-channel": "Grok Video Channel",
 }
 NEWAPI_MAINLINE_SEEDANCE2_MODELS = (
     "seedance-2.0",

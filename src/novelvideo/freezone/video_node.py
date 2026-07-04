@@ -112,6 +112,7 @@ FREEZONE_NEWAPI_VIDEO_BACKENDS = {
     "newapi_seedance-1.0-pro-fast",
     "newapi_seedance-1.5-pro",
     "newapi_happyhorse-1.0",
+    "newapi_grok-video-channel",
 }
 
 
@@ -151,6 +152,7 @@ FREEZONE_SEEDANCE2_RESOLUTION_OPTIONS_BY_MODEL: dict[str, tuple[str, ...]] = {
 FREEZONE_DEFAULT_VIDEO_RESOLUTION_OPTIONS = ("480p", "720p", "1080p")
 FREEZONE_DEFAULT_SEEDANCE2_RESOLUTION_OPTIONS = ("480p", "720p")
 FREEZONE_HAPPYHORSE_RESOLUTION_OPTIONS = ("720p", "1080p")
+FREEZONE_GROK_VIDEO_CHANNEL_RESOLUTION_OPTIONS = ("720p", "480p")
 
 
 def _freezone_video_model_from_backend(backend: str | None) -> str:
@@ -163,6 +165,8 @@ def _freezone_video_model_from_backend(backend: str | None) -> str:
 
 def freezone_video_resolution_options(backend: str | None) -> tuple[str, ...]:
     model = _freezone_video_model_from_backend(backend)
+    if model == "grok-video-channel":
+        return FREEZONE_GROK_VIDEO_CHANNEL_RESOLUTION_OPTIONS
     if model == "happyhorse-1.0":
         return FREEZONE_HAPPYHORSE_RESOLUTION_OPTIONS
     if model.startswith("seedance-2.0"):
@@ -218,6 +222,8 @@ def freezone_video_duration_bounds(backend: str | None) -> tuple[int | None, int
     )
     if bounds:
         return bounds
+    if model == "grok-video-channel":
+        return (6, 30)
     if model == "happyhorse-1.0":
         return (3, 15)
     return (None, None)
@@ -246,6 +252,7 @@ def _freezone_newapi_video_options() -> dict[str, str]:
         if key in FREEZONE_NEWAPI_VIDEO_BACKENDS
     }
     options.setdefault("newapi_happyhorse-1.0", "HappyHorse 1.0")
+    options.setdefault("newapi_grok-video-channel", "Grok Video Channel")
     if FREEZONE_DEFAULT_VIDEO_BACKEND not in options:
         return options
     ordered = {FREEZONE_DEFAULT_VIDEO_BACKEND: options[FREEZONE_DEFAULT_VIDEO_BACKEND]}

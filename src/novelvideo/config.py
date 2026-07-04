@@ -806,7 +806,7 @@ def _csv_env(name: str, default: str) -> list[str]:
 # newAPI 视频网关。VIDEO_BACKEND 使用 newapi_<model> 时会通过 NEWAPI_BASE_URL 调用。
 NEWAPI_VIDEO_MODELS = _csv_env(
     "NEWAPI_VIDEO_MODELS",
-    "seedance-1.0-pro-fast,seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,happyhorse-1.0",
+    "seedance-1.0-pro-fast,seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,happyhorse-1.0,grok-video-channel",
 )
 DEFAULT_VIDEO_MODEL = os.environ.get(
     "DEFAULT_VIDEO_MODEL",
@@ -820,7 +820,7 @@ NEWAPI_VIDEO_AUDIO_MODELS = _csv_env(
 )
 NEWAPI_VIDEO_DURATION_BOUNDS = os.environ.get(
     "NEWAPI_VIDEO_DURATION_BOUNDS",
-    "seedance-1.0-pro-fast:2-12,seedance-1.5-pro:4-12,seedance-2.0:4-15,seedance-2.0-fast:4-15,seedance-2.0-value:4-15,seedance-2.0-fast-value:4-15,happyhorse-1.0:3-15",
+    "seedance-1.0-pro-fast:2-12,seedance-1.5-pro:4-12,seedance-2.0:4-15,seedance-2.0-fast:4-15,seedance-2.0-value:4-15,seedance-2.0-fast-value:4-15,happyhorse-1.0:3-15,grok-video-channel:6-30",
 ).strip()
 
 # 视频生成后端: newapi_seedance-1.0-pro-fast (默认), newapi_seedance-2.0-fast,

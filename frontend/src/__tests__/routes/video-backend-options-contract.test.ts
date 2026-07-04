@@ -21,6 +21,16 @@ describe("video backend options alignment", () => {
     expect(videoPane).toContain("dialogue_only");
   });
 
+  it("supports the Grok Video inspector from backend capabilities", () => {
+    const videoPane = read("src/components/episode/beat-workbench/video-pane.tsx");
+    const videoQueries = read("src/lib/queries/video.ts");
+
+    expect(videoQueries).toContain("is_grok_video");
+    expect(videoPane).toContain("showGrokVideoConfig");
+    expect(videoPane).toContain("Grok Video 检视器");
+    expect(videoPane).toContain("3:2");
+  });
+
   it("defaults to the ST2 canonical video backend instead of legacy comfyui", () => {
     const beatsRoute = read("src/routes/_app/projects.$project/episodes.$episode/beats.lazy.tsx");
     const videoQueries = read("src/lib/queries/video.ts");

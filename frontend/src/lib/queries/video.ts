@@ -21,6 +21,7 @@ export interface VideoBackendOption {
   is_default: boolean;
   is_seedance2: boolean;
   is_happyhorse?: boolean;
+  is_grok_video?: boolean;
   dialogue_only: boolean;
   min_duration?: number | null;
   max_duration?: number | null;

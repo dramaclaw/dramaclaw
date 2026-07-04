@@ -46,7 +46,7 @@ export interface ModelOption {
 }
 
 export const SHARED_PROVIDERS: ProviderOption[] = [
-  { id: 'huimeng', label: '惠盟 / HuiMeng' },
+  { id: 'huimeng', label: '绘梦 / HuiMeng' },
   { id: 'openrouter', label: 'OpenRouter' },
   { id: 'openai', label: 'OpenAI' },
 ];
@@ -78,7 +78,7 @@ export const DEFAULT_SHARED_MODEL_ID = 'huimeng/gpt-image-2';
 // /freezone/video/gen so we don't need a separate apiModel mapping.
 export const VIDEO_PROVIDERS: ProviderOption[] = [
   { id: 'seedance', label: 'Seedance' },
-  { id: 'huimeng', label: '惠盟 / HuiMeng' },
+  { id: 'huimeng', label: '绘梦 / HuiMeng' },
 ];
 
 export const VIDEO_MODELS: ModelOption[] = [
@@ -137,6 +137,15 @@ export const VIDEO_MODELS: ModelOption[] = [
     label: 'Seedance1.0 Pro Fast',
     minDuration: 2,
     maxDuration: 12,
+  },
+  {
+    id: 'newapi_grok-video-channel',
+    providerId: 'huimeng',
+    apiModel: 'newapi_grok-video-channel',
+    label: 'Grok Video Channel',
+    resolutionOptions: ['720p', '480p'],
+    minDuration: 6,
+    maxDuration: 30,
   },
 ];
 
