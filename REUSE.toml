@@ -2,6 +2,23 @@ version = 1
 
 [[annotations]]
 path = [
+    "LICENSES/Apache-2.0.txt",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Apache Software Foundation"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
+    "deploy/sandbox/linux-amd64/codex-linux-sandbox",
+    "deploy/sandbox/linux-arm64/codex-linux-sandbox",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 OpenAI"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
     "**",
 ]
 precedence = "aggregate"

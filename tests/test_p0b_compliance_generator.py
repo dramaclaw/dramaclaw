@@ -175,6 +175,29 @@ def test_third_party_dirs_with_license_file_not_marked_project_license() -> None
     )
 
 
+def test_codex_sandbox_binaries_are_not_marked_project_license() -> None:
+    rows = {
+        row["path"]: row
+        for row in csv.DictReader(Path("license-inventory.csv").open(encoding="utf-8"))
+        if row["path"].startswith("deploy/sandbox/linux-")
+    }
+
+    assert (
+        rows["deploy/sandbox/linux-amd64/codex-linux-sandbox"]["license_expression"]
+        == "Apache-2.0"
+    )
+    assert (
+        rows["deploy/sandbox/linux-arm64/codex-linux-sandbox"]["license_expression"]
+        == "Apache-2.0"
+    )
+    assert (
+        generator._inventory_row("deploy/sandbox/linux-amd64/codex-linux-sandbox")[
+            "license_expression"
+        ]
+        == "Apache-2.0"
+    )
+
+
 def test_write_sbom_is_idempotent_for_same_inputs(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(generator, "ROOT", tmp_path)
     (tmp_path / "pyproject.toml").write_text(

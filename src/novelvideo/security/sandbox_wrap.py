@@ -13,6 +13,7 @@ macOS:  /usr/bin/sandbox-exec + dynamically composed sbpl profile
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import platform
@@ -113,12 +114,33 @@ def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
     if not Path(binary).exists():
         return _fallback_or_raise(cmd, "codex-linux-sandbox not found on PATH")
 
-    args = [binary, "--sandbox", "workspace-write"]
-    # Only HERMES_HOME is writable. read defaults to filesystem-wide in
-    # workspace-write mode; codex-linux-sandbox does not have fine-grained
-    # read-deny per path, so unix permission + L1 toolset whitelist cover
-    # read-side defense on Linux. (macOS Seatbelt is stricter; see _wrap_macos.)
-    args.extend(["--writable-root", str(spec.resolved_hermes_home())])
+    hermes_home = spec.resolved_hermes_home()
+    permission_profile = {
+        "type": "managed",
+        "file_system": {
+            "type": "restricted",
+            "entries": [
+                {
+                    "path": {"type": "special", "value": {"kind": "root"}},
+                    "access": "read",
+                },
+                {
+                    "path": {"type": "path", "path": str(hermes_home)},
+                    "access": "write",
+                },
+            ],
+        },
+        "network": "restricted",
+    }
+    args = [
+        binary,
+        "--sandbox-policy-cwd",
+        str(hermes_home),
+        "--command-cwd",
+        str(hermes_home),
+        "--permission-profile",
+        json.dumps(permission_profile, separators=(",", ":")),
+    ]
     args.append("--")
     return args + cmd
 

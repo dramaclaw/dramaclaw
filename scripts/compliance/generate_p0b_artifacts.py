@@ -26,6 +26,24 @@ SBOM_CREATED = "2026-06-25T00:00:00Z"
 # prefix (relative to repo root). Keep in sync with frontend/REUSE.toml.
 THIRD_PARTY_PATH_OVERRIDES: tuple[tuple[str, str, str, str], ...] = (
     (
+        "LICENSES/Apache-2.0.txt",
+        "Apache-2.0",
+        "Apache Software Foundation",
+        "Apache License 2.0 text",
+    ),
+    (
+        "deploy/sandbox/linux-amd64/codex-linux-sandbox",
+        "Apache-2.0",
+        "2026 OpenAI",
+        "built from openai/codex codex-rs/linux-sandbox commit da4c8ca57d40b074bdc1b5b1218851100150c56b",
+    ),
+    (
+        "deploy/sandbox/linux-arm64/codex-linux-sandbox",
+        "Apache-2.0",
+        "2026 OpenAI",
+        "built from openai/codex codex-rs/linux-sandbox commit da4c8ca57d40b074bdc1b5b1218851100150c56b",
+    ),
+    (
         "frontend/public/viewer-kit/quaternius/",
         "CC0-1.0",
         "Quaternius",
@@ -302,6 +320,23 @@ def write_reuse_toml() -> None:
 
 [[annotations]]
 path = [
+    "LICENSES/Apache-2.0.txt",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Apache Software Foundation"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
+    "deploy/sandbox/linux-amd64/codex-linux-sandbox",
+    "deploy/sandbox/linux-arm64/codex-linux-sandbox",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 OpenAI"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
     "**",
 ]
 precedence = "aggregate"
@@ -338,6 +373,7 @@ def write_license_inventory(files: list[str]) -> None:
         _inventory_row(path)
         for path in sorted(set(files + [
             "REUSE.toml",
+            "LICENSES/Apache-2.0.txt",
             "LICENSES/Elastic-2.0.txt",
             "license-inventory.csv",
             "NOTICE",

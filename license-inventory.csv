@@ -39,6 +39,7 @@ CONTRIBUTING.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate ann
 DCO,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 Dockerfile,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 GOVERNANCE.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+LICENSES/Apache-2.0.txt,Apache-2.0,Apache Software Foundation,Apache License 2.0 text
 LICENSES/Elastic-2.0.txt,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 NOTICE,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -52,8 +53,8 @@ assets/partners/neoflying-lab.png,Elastic-2.0,2026 SuperTale contributors,REUSE.
 assets/pipeline.excalidraw,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 assets/pipeline.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 ce-allowlist.toml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-deploy/sandbox/linux-amd64/codex-linux-sandbox,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-deploy/sandbox/linux-arm64/codex-linux-sandbox,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+deploy/sandbox/linux-amd64/codex-linux-sandbox,Apache-2.0,2026 OpenAI,built from openai/codex codex-rs/linux-sandbox commit da4c8ca57d40b074bdc1b5b1218851100150c56b
+deploy/sandbox/linux-arm64/codex-linux-sandbox,Apache-2.0,2026 OpenAI,built from openai/codex codex-rs/linux-sandbox commit da4c8ca57d40b074bdc1b5b1218851100150c56b
 deploy/sandbox/seatbelt_base_policy.sbpl,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/sandbox/seatbelt_network_policy.sbpl,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docker-compose.release.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
