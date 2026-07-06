@@ -52,7 +52,7 @@ server {
         # /assets/* 不受影响，仍走下面 1 年 immutable 缓存。
         add_header Cache-Control "no-cache" always;
 
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-LvxLzCeWBZ/DC3ejUm4WcZpQNZXYDUz4p/53gA+dzKk='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com; media-src 'self' blob: https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com; font-src 'self' data:; connect-src 'self' https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com https://api.github.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'${csp_upgrade}" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-LvxLzCeWBZ/DC3ejUm4WcZpQNZXYDUz4p/53gA+dzKk='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com https://nfg-web.oss-cn-chengdu.aliyuncs.com; media-src 'self' blob: https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com; font-src 'self' data:; connect-src 'self' https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com https://api.github.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'${csp_upgrade}" always;
         add_header Strict-Transport-Security $hsts_value always;
         add_header X-Frame-Options "DENY" always;
         add_header X-Content-Type-Options "nosniff" always;
