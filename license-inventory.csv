@@ -406,6 +406,7 @@ frontend/src/__tests__/lib/chunk-load-recovery.test.ts,Elastic-2.0,2026 SuperTal
 frontend/src/__tests__/lib/cluster-config.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/derive-beat-states.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/dev-backend-watch.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/lib/dom-reconciliation-guard.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/freezone-url.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/gateway-error-classify.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/literal-source-text.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -980,6 +981,7 @@ frontend/src/lib/cluster-config.ts,Elastic-2.0,2026 SuperTale contributors,REUSE
 frontend/src/lib/derive-beat-states.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/dev-backend-watch.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/dialog-styles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/dom-reconciliation-guard.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/episode-nav.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/episode-stage-registry.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/episode-stats.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

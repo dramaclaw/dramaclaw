@@ -16,6 +16,7 @@ import {
   useChunkLoadRecoveryRequired,
 } from "@/lib/chunk-load-recovery";
 import { installVersionUpdateWatch } from "@/lib/version-update-watch";
+import { installDomReconciliationGuard } from "@/lib/dom-reconciliation-guard";
 import { AppUpdateRequired } from "@/components/app-update-required";
 import { AppUpdateAvailable } from "@/components/app-update-available";
 import "@fontsource-variable/inter";
@@ -82,6 +83,9 @@ function ThemedToaster() {
 // handler can fan out a full cache purge via resetRegionState().
 setApiQueryClient(queryClient);
 installChunkLoadRecovery();
+// 抵御浏览器/webview 翻译插件改写 DOM 导致的 React removeChild 崩溃(整页「页面加载失败」)。
+// 必须在任何 React 渲染前打上补丁。见 dom-reconciliation-guard.ts。
+installDomReconciliationGuard();
 
 function AppRouterShell() {
   const updateRequired = useChunkLoadRecoveryRequired();
