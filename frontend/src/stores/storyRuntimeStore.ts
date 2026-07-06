@@ -55,10 +55,12 @@ interface StoryRuntimeState {
   saveKey: string | null;
   /** 本次试玩的统计 key(localStorage,由 saveKey 派生),null = 不统计。 */
   statsKey: string | null;
+  /** 本次试玩的故事组 id;播放器据此从画布派生剧情树,叠加统计画「路径回顾图」。null = 无(如导入的独立故事)。 */
+  groupId: string | null;
   /** 进入时检测到存档,等玩家决定「继续 / 从头」;true 期间不自动 advance。 */
   resumeAvailable: boolean;
 
-  enterPlay: (compiled: CompiledStory, opts?: { saveKey?: string }) => void;
+  enterPlay: (compiled: CompiledStory, opts?: { saveKey?: string; groupId?: string }) => void;
   /** 续玩:把存档灌回 story 并定位。返回 true=成功;false=存档损坏,已清档并回到起点。 */
   resumeSaved: () => boolean;
   /** 忽略存档,从头开始并覆盖存档为新起点。 */
@@ -197,6 +199,7 @@ const INITIAL_RUNTIME = {
   error: null as string | null,
   saveKey: null as string | null,
   statsKey: null as string | null,
+  groupId: null as string | null,
   resumeAvailable: false,
 };
 
@@ -209,6 +212,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       const story = new Compiler(compiled.ink).Compile();
       const saveKey = opts?.saveKey ?? null;
       const statsKey = statsKeyFromSaveKey(saveKey);
+      const groupId = opts?.groupId ?? null;
       const tables = {
         clipByNodeId: compiled.clipByNodeId,
         choiceTimeByNodeId: compiled.choiceTimeByNodeId,
@@ -236,6 +240,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
           phase: 'idle',
           saveKey,
           statsKey,
+          groupId,
           resumeAvailable: true,
         });
         return;
@@ -248,6 +253,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         error: null,
         saveKey,
         statsKey,
+        groupId,
         resumeAvailable: false,
         ...advanceToClip(
           story,

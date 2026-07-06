@@ -3432,6 +3432,13 @@
         "failed": "批量生成失败",
         "noProject": "当前不在项目上下文,无法生成"
       },
+      "map": {
+        "open": "路径回顾图",
+        "title": "路径回顾",
+        "explored": "已探索节点",
+        "endings": "已达成结局",
+        "totalRuns": "累计通关 {{count}} 次"
+      },
       "tree": {
         "open": "剧情树",
         "title": "剧情树",

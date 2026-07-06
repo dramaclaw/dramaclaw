@@ -3432,6 +3432,13 @@
         "failed": "Batch generation failed",
         "noProject": "Not in a project context; cannot generate"
       },
+      "map": {
+        "open": "Path map",
+        "title": "Path review",
+        "explored": "Nodes explored",
+        "endings": "Endings reached",
+        "totalRuns": "{{count}} runs so far"
+      },
       "tree": {
         "open": "Story tree",
         "title": "Story tree",

@@ -101,7 +101,7 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
       const compiled = compileStoryGroup(groupId, nodes, edges);
       // 存档按「画布 + 故事组」隔离;有存档时进入会提示续玩。
       const saveKey = storySaveKey(readUrl().canvas ?? 'default', groupId);
-      useStoryRuntimeStore.getState().enterPlay(compiled, { saveKey });
+      useStoryRuntimeStore.getState().enterPlay(compiled, { saveKey, groupId });
     } catch (err) {
       toast.error(err instanceof StoryCompileError ? err.message : t('canvas.story.error'));
     }

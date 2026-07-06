@@ -1,13 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { BarChart3, X } from 'lucide-react';
+import { BarChart3, Map, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import { resolveMediaUrl } from '@/lib/media-url';
 import { useChoicePointMachine } from './useChoicePointMachine';
 import { StoryStatsPanel } from './StoryStatsPanel';
+import { StoryPathMap } from './StoryPathMap';
 
 /**
  * 全屏 FMV 播放器。play 模式下接管整屏:播当前片段视频,onEnded 后淡入选项按钮,
@@ -31,6 +32,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const currentPlaceholder = useStoryRuntimeStore((s) => s.currentPlaceholder);
   const nextClipUrls = useStoryRuntimeStore((s) => s.nextClipUrls);
   const statsKey = useStoryRuntimeStore((s) => s.statsKey);
+  const groupId = useStoryRuntimeStore((s) => s.groupId);
   const error = useStoryRuntimeStore((s) => s.error);
   const resumeAvailable = useStoryRuntimeStore((s) => s.resumeAvailable);
   const choose = useStoryRuntimeStore((s) => s.choose);
@@ -42,6 +44,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [videoEnded, setVideoEnded] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
   // 黑场过渡:切片段时淡出到黑,新片段可播或到结局时淡入。
   const [coverOpacity, setCoverOpacity] = useState(0);
 
@@ -108,10 +111,31 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
         <X className="h-5 w-5" />
       </button>
 
+      {/* 路径回顾图入口:有故事组上下文(画布试玩)时可用;叠加统计画「走了多少、还有什么没看」。 */}
+      {phase !== 'error' && groupId && (
+        <button
+          onClick={() => {
+            setMapOpen((v) => !v);
+            setStatsOpen(false);
+          }}
+          aria-pressed={mapOpen}
+          className={`absolute right-[6.75rem] top-5 z-40 rounded-full border border-white/15 bg-black/50 p-2 backdrop-blur transition-colors hover:text-white ${
+            mapOpen ? 'text-white' : 'text-white/80'
+          }`}
+          aria-label={t('canvas.story.map.open')}
+          title={t('canvas.story.map.open')}
+        >
+          <Map className="h-5 w-5" />
+        </button>
+      )}
+
       {/* 试玩统计入口:仅在本次试玩持久化(有 statsKey)时可用;创作者据此看选择分布/结局达成率。 */}
       {phase !== 'error' && statsKey && (
         <button
-          onClick={() => setStatsOpen((v) => !v)}
+          onClick={() => {
+            setStatsOpen((v) => !v);
+            setMapOpen(false);
+          }}
           aria-pressed={statsOpen}
           className={`absolute right-16 top-5 z-40 rounded-full border border-white/15 bg-black/50 p-2 backdrop-blur transition-colors hover:text-white ${
             statsOpen ? 'text-white' : 'text-white/80'
@@ -125,6 +149,10 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
 
       {statsOpen && statsKey && (
         <StoryStatsPanel statsKey={statsKey} onClose={() => setStatsOpen(false)} />
+      )}
+
+      {mapOpen && groupId && (
+        <StoryPathMap groupId={groupId} statsKey={statsKey} onClose={() => setMapOpen(false)} />
       )}
 
       {/* 变量 HUD:试玩时实时显示每个故事变量的当前值,方便验证效果是否生效。 */}
