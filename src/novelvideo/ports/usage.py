@@ -92,6 +92,7 @@ class UsageMeter(Protocol):
         username: Optional[str],
         project_name: Optional[str],
         resource_kind: str = "",
+        billing_metadata: Optional[dict[str, Any]] = None,
     ) -> None: ...
 
     async def get_user_credit_balance(self, user_id: str) -> int | None: ...

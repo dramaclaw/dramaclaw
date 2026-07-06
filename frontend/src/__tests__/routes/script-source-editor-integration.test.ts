@@ -52,6 +52,39 @@ describe("script route source editor integration", () => {
     expect(route).toContain("project={project}");
   });
 
+  it("shows feature credit cost on detail scene and prop planning", () => {
+    const route = readFileSync(
+      "src/routes/_app/projects.$project/episodes.$episode/script.lazy.tsx",
+      "utf8",
+    );
+    const planning = readFileSync(
+      "src/components/episode/episode-asset-planning.tsx",
+      "utf8",
+    );
+
+    expect(route).toContain(
+      'useGenerationCreditCost("feature", "episode_scene_planner")',
+    );
+    expect(route).toContain(
+      'useGenerationCreditCost("feature", "episode_prop_planner")',
+    );
+    expect(route).toContain(
+      "planScenesCost.error instanceof BillingRuleNotConfiguredError",
+    );
+    expect(route).toContain(
+      "planPropsCost.error instanceof BillingRuleNotConfiguredError",
+    );
+    expect(route).toContain("sceneCostDisplay={planScenesCostDisplay}");
+    expect(route).toContain("propCostDisplay={planPropsCostDisplay}");
+    expect(route).toMatch(
+      /const handlePlanScenes[\s\S]*toast\.error\(backendErrorToastMessage\(res\.error, t\)\)[\s\S]*catch \(err\)[\s\S]*toast\.error\(backendErrorToastMessage\(err, t\)\)/,
+    );
+    expect(route).toMatch(
+      /const handlePlanProps[\s\S]*toast\.error\(backendErrorToastMessage\(res\.error, t\)\)[\s\S]*catch \(err\)[\s\S]*toast\.error\(backendErrorToastMessage\(err, t\)\)/,
+    );
+    expect(planning).toContain("<CreditCostInline display={costDisplay} />");
+  });
+
   it("shows feature credit cost on detail identity planning", () => {
     const route = readFileSync(
       "src/routes/_app/projects.$project/episodes.$episode/script.lazy.tsx",

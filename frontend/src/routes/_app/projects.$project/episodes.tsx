@@ -532,6 +532,8 @@ function EpisodeListItem({
   onPlanScenes,
   onPlanProps,
   identityCostDisplay,
+  sceneCostDisplay,
+  propCostDisplay,
   scenePending,
   propPending,
   sceneDisabled,
@@ -543,6 +545,8 @@ function EpisodeListItem({
   onPlanScenes: (episodeNum: number) => void;
   onPlanProps: (episodeNum: number) => void;
   identityCostDisplay?: string | null;
+  sceneCostDisplay?: string | null;
+  propCostDisplay?: string | null;
   scenePending: boolean;
   propPending: boolean;
   sceneDisabled: boolean;
@@ -681,6 +685,7 @@ function EpisodeListItem({
           }
           pending={scenePending}
           disabled={sceneDisabled}
+          costDisplay={sceneCostDisplay}
           onClick={() => onPlanScenes(episode.number)}
         />
         <EpisodePlanShortcut
@@ -693,6 +698,7 @@ function EpisodeListItem({
           }
           pending={propPending}
           disabled={propDisabled}
+          costDisplay={propCostDisplay}
           onClick={() => onPlanProps(episode.number)}
         />
       </div>
@@ -799,6 +805,18 @@ function EpisodesPage() {
     (planIdentitiesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
+  const planScenesCost = useGenerationCreditCost("feature", "episode_scene_planner");
+  const planScenesCostDisplay =
+    planScenesCost.data?.data.display ??
+    (planScenesCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
+  const planPropsCost = useGenerationCreditCost("feature", "episode_prop_planner");
+  const planPropsCostDisplay =
+    planPropsCost.data?.data.display ??
+    (planPropsCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const planScenes = usePlanEpisodeScenes(project);
   const planProps = usePlanEpisodeProps(project);
   const planTask = useStageTask({
@@ -850,7 +868,7 @@ function EpisodesPage() {
     try {
       const res = await planScenes.mutateAsync(episodeNum);
       if (res.ok === false) {
-        toast.error(res.error || t("common.error"));
+        toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
       toast.success(
@@ -860,8 +878,8 @@ function EpisodesPage() {
             })
           : res.message,
       );
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -869,7 +887,7 @@ function EpisodesPage() {
     try {
       const res = await planProps.mutateAsync(episodeNum);
       if (res.ok === false) {
-        toast.error(res.error || t("common.error"));
+        toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
       toast.success(
@@ -879,8 +897,8 @@ function EpisodesPage() {
             })
           : res.message,
       );
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -1003,6 +1021,8 @@ function EpisodesPage() {
                       onPlanScenes={handlePlanScenes}
                       onPlanProps={handlePlanProps}
                       identityCostDisplay={planIdentitiesCostDisplay}
+                      sceneCostDisplay={planScenesCostDisplay}
+                      propCostDisplay={planPropsCostDisplay}
                       scenePending={
                         planScenes.isPending && planScenes.variables === ep.number
                       }

@@ -130,6 +130,39 @@ describe("episode planning", () => {
       BillingRuleNotConfiguredError,
     );
   });
+
+  it.each([
+    ["scene", "episode_scene_planner", usePlanEpisodeScenes],
+    ["prop", "episode_prop_planner", usePlanEpisodeProps],
+  ] as const)(
+    "surfaces missing %s planning billing rules as a typed error",
+    async (kind, billingKey, useHook) => {
+      server.use(
+        http.post(
+          `http://localhost:3000/api/v1/projects/demo/episodes/1/${kind === "scene" ? "scenes" : "props"}/plan`,
+          () =>
+            HttpResponse.json(
+              {
+                ok: false,
+                error: "计费规则未配置，请联系管理员设置积分规则",
+                data: {
+                  error_code: "BILLING_RULE_NOT_CONFIGURED",
+                  billing_kind: "feature",
+                  billing_key: billingKey,
+                },
+              },
+              { status: 409 },
+            ),
+        ),
+      );
+
+      const { result } = renderHook(() => useHook("demo"), { wrapper });
+
+      await expect(result.current.mutateAsync(1)).rejects.toBeInstanceOf(
+        BillingRuleNotConfiguredError,
+      );
+    },
+  );
 });
 
 describe("pipeline status contract", () => {

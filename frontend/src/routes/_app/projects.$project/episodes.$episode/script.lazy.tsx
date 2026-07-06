@@ -100,7 +100,19 @@ function ScriptTabContent() {
       ? t("common.billingRuleNotConfiguredShort")
       : null);
   const planScenes = usePlanEpisodeScenes(project);
+  const planScenesCost = useGenerationCreditCost("feature", "episode_scene_planner");
+  const planScenesCostDisplay =
+    planScenesCost.data?.data.display ??
+    (planScenesCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const planProps = usePlanEpisodeProps(project);
+  const planPropsCost = useGenerationCreditCost("feature", "episode_prop_planner");
+  const planPropsCostDisplay =
+    planPropsCost.data?.data.display ??
+    (planPropsCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const generateScript = useGenerateScript(project, epNum);
   const generateScriptCost = useGenerationCreditCost("feature", "script_writer");
   const generateScriptCostDisplay =
@@ -353,7 +365,7 @@ function ScriptTabContent() {
     try {
       const res = await planScenes.mutateAsync(epNum);
       if (res.ok === false) {
-        toast.error(res.error || t("common.error"));
+        toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
       toast.success(
@@ -372,7 +384,7 @@ function ScriptTabContent() {
     try {
       const res = await planProps.mutateAsync(epNum);
       if (res.ok === false) {
-        toast.error(res.error || t("common.error"));
+        toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
       toast.success(
@@ -641,6 +653,8 @@ function ScriptTabContent() {
                 identityPending={identityPlanning}
                 scenePending={planScenes.isPending}
                 propPending={planProps.isPending}
+                sceneCostDisplay={planScenesCostDisplay}
+                propCostDisplay={planPropsCostDisplay}
                 onPlanIdentities={() => setPickerOpen(true)}
                 onIdentityChange={handleIdentityChange}
                 onPlanScenes={handlePlanScenes}

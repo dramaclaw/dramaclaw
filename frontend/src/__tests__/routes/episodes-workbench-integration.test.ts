@@ -39,6 +39,31 @@ describe("episodes workbench integration", () => {
     expect(routeSource).toContain("<CreditCostInline display={costDisplay} />");
   });
 
+  it("shows feature credit cost on list-card scene and prop planning actions", () => {
+    expect(routeSource).toContain(
+      'useGenerationCreditCost("feature", "episode_scene_planner")',
+    );
+    expect(routeSource).toContain(
+      'useGenerationCreditCost("feature", "episode_prop_planner")',
+    );
+    expect(routeSource).toContain(
+      "planScenesCost.error instanceof BillingRuleNotConfiguredError",
+    );
+    expect(routeSource).toContain(
+      "planPropsCost.error instanceof BillingRuleNotConfiguredError",
+    );
+    expect(routeSource).toContain("sceneCostDisplay={planScenesCostDisplay}");
+    expect(routeSource).toContain("propCostDisplay={planPropsCostDisplay}");
+    expect(routeSource).toContain("costDisplay={sceneCostDisplay}");
+    expect(routeSource).toContain("costDisplay={propCostDisplay}");
+    expect(routeSource).toMatch(
+      /const handlePlanScenes[\s\S]*toast\.error\(backendErrorToastMessage\(res\.error, t\)\)[\s\S]*catch \(err\)[\s\S]*toast\.error\(backendErrorToastMessage\(err, t\)\)/,
+    );
+    expect(routeSource).toMatch(
+      /const handlePlanProps[\s\S]*toast\.error\(backendErrorToastMessage\(res\.error, t\)\)[\s\S]*catch \(err\)[\s\S]*toast\.error\(backendErrorToastMessage\(err, t\)\)/,
+    );
+  });
+
   it("scopes list-card planning spinners to the clicked episode", () => {
     expect(routeSource).toContain("planIdentities.isPending || identityTask.started");
     expect(routeSource).toContain('taskType: "identity_planner"');

@@ -125,6 +125,7 @@ class NoOpUsageMeter:
         username: Optional[str],
         project_name: Optional[str],
         resource_kind: str = "",
+        billing_metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         return None
 

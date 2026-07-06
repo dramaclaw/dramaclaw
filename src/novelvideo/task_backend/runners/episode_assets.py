@@ -52,6 +52,7 @@ async def _run_episode_asset_planner(
     task_type = str(envelope.get("task_type") or "")
     scope = envelope.get("scope")
     payload = envelope.get("payload") or {}
+    billing_metadata = envelope.get("billing_metadata") or {}
     asset_kind = str(payload.get("asset_kind") or _TASK_ASSET_KIND.get(task_type, ""))
     expected_kind = _TASK_ASSET_KIND.get(task_type)
     if asset_kind not in {"scene", "prop"} or (expected_kind and asset_kind != expected_kind):
@@ -66,6 +67,7 @@ async def _run_episode_asset_planner(
         username=ctx.owner_username,
         project_name=ctx.project_name,
         resource_kind="script",
+        billing_metadata=billing_metadata if isinstance(billing_metadata, dict) else None,
     )
 
     label = "场景" if asset_kind == "scene" else "道具"

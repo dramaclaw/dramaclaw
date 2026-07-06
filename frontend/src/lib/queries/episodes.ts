@@ -223,6 +223,9 @@ function usePlanEpisodeAssets(project: string, kind: "scene" | "prop") {
       jsonWithBackendError<PlanEpisodeAssetsResponse>(
         api.post(
           p`api/v1/projects/${project}/episodes/${episodeNum}/${kind === "scene" ? "scenes" : "props"}/plan`,
+          {
+            throwHttpErrors: false,
+          },
         ),
       ),
     onSuccess: (res, episodeNum) => {
