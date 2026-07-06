@@ -55,6 +55,23 @@ class NoOpUsageMeter:
             "reason": "feature_reserved",
         }
 
+    async def require_feature_credit_balance(
+        self,
+        *,
+        user_id: str,
+        feature_key: str,
+        project_id: str = "",
+        resource_kind: str = "",
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        return {
+            "user_id": user_id,
+            "feature_key": feature_key,
+            "required_balance": 0,
+            "balance": None,
+            "allowed": True,
+        }
+
     async def confirm_feature_credit_reservation(
         self,
         reservation_id: str,
