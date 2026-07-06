@@ -381,7 +381,7 @@ async def get_generation_credit_cost(
     surface: GenerationCreditSurface = Query("supertale"),
     value: str = Query("", max_length=256),
     params: str = Query("", max_length=2048),
-    quantity: int = Query(1, ge=0, le=1_000_000),
+    quantity: int = Query(1, ge=0, le=50_000_000),
     mode_key: str = Query("", max_length=128),
     image_role: str = Query("", max_length=64),
     user: dict = Depends(get_api_user),
@@ -406,10 +406,17 @@ async def get_generation_credit_cost(
         ),
         quantity=_clean_quantity(quantity),
     )
-    return {
-        "ok": True,
-        "data": {
-            "cost": quote.total_cost,
-            "display": _display_credit_cost(quote.total_cost),
-        },
+    data = {
+        "cost": quote.total_cost,
+        "display": _display_credit_cost(quote.total_cost),
     }
+    if getattr(quote, "unit", "call") == "character":
+        data.update(
+            {
+                "unit": "character",
+                "unit_cost": getattr(quote, "unit_cost", 0),
+                "quantity": getattr(quote, "quantity", quantity),
+                "params": getattr(quote, "params", None) or {},
+            }
+        )
+    return {"ok": True, "data": data}

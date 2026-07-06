@@ -129,6 +129,7 @@ async def test_upload_novel_returns_nicegui_chapter_preview(tmp_path, monkeypatc
     assert data["filename"] == "novel.txt"
     assert data["size"] == len(raw)
     assert data["total_chars"] == len(NOVEL_TEXT)
+    assert data["billable_chars"] == len("".join(NOVEL_TEXT.split()))
     assert data["count"] == 2
     assert data["chapters"][0]["number"] == 1
     assert data["chapters"][0]["title"] == "第一章 启程"

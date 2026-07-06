@@ -6,6 +6,7 @@ from pathlib import Path
 
 from novelvideo.cognee.chapter_detector import ChapterDetector
 from novelvideo.utils.document_parsers import (
+    count_billable_novel_chars as _count_billable_novel_chars,
     decode_novel_bytes as _decode_novel_bytes,
 )
 from novelvideo.utils.document_parsers import (
@@ -19,6 +20,10 @@ def decode_novel_bytes(raw: bytes) -> str:
 
 def load_novel_text(path: str | Path) -> str:
     return _load_novel_text(path)
+
+
+def count_billable_novel_chars(text: str) -> int:
+    return _count_billable_novel_chars(text)
 
 
 def build_chapter_preview(novel_text: str) -> dict:
@@ -43,6 +48,7 @@ def build_chapter_preview(novel_text: str) -> dict:
 
     return {
         "total_chars": len(novel_text),
+        "billable_chars": count_billable_novel_chars(novel_text),
         "count": len(chapters),
         "chapters": payload,
     }

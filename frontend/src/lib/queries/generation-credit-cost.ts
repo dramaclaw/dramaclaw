@@ -12,6 +12,10 @@ import type { OkResponse } from "@/types/api";
 export type GenerationCreditCost = {
   cost: number;
   display: string;
+  unit?: "call" | "item" | "second" | "token" | "character" | string;
+  unit_cost?: number;
+  quantity?: number;
+  params?: Record<string, unknown>;
 };
 
 export type GenerationCreditCostOptions = {

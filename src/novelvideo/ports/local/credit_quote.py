@@ -14,4 +14,4 @@ class LocalCreditQuote:
         params: dict,
         quantity: int,
     ) -> CreditQuote:
-        return CreditQuote(total_cost=0, display="0")
+        return CreditQuote(total_cost=0, display="0", unit="call", unit_cost=0, quantity=1, params={})
