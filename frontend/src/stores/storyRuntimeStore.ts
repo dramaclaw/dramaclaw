@@ -34,6 +34,8 @@ interface StoryRuntimeState {
   placeholderByNodeId: Record<string, { text: string; label?: string }>;
   /** 本故事声明的变量(用于每步读取当前值)。 */
   variables: StoryVariable[];
+  /** 当前选择点/片段所属的节点 id(`# clip:` 解析所得);null = 无 tag。播放器据此判定「换了一跳」以重置选择点状态机。 */
+  currentNodeId: string | null;
   currentClipUrl: string | null;
   currentChoices: StoryChoiceView[];
   /** 当前各选项的后继片段 URL(前瞻所得),供播放器针对性预取「下一跳」分支。 */
@@ -122,6 +124,7 @@ function advanceToClip(
   endingByNodeId: Record<string, { title: string; label?: string }>,
   placeholderByNodeId: Record<string, { text: string; label?: string }>,
 ): {
+  currentNodeId: string | null;
   currentClipUrl: string | null;
   currentChoices: StoryChoiceView[];
   nextClipUrls: string[];
@@ -155,6 +158,7 @@ function advanceToClip(
       ? (nodeId ? (placeholderByNodeId[nodeId] ?? { text: '' }) : { text: '' })
       : null;
   return {
+    currentNodeId: nodeId,
     currentClipUrl,
     currentChoices,
     nextClipUrls: peekNextClipUrls(story, clipByNodeId),
@@ -180,6 +184,7 @@ const INITIAL_RUNTIME = {
   endingByNodeId: {} as Record<string, { title: string; label?: string }>,
   placeholderByNodeId: {} as Record<string, { text: string; label?: string }>,
   variables: [] as StoryVariable[],
+  currentNodeId: null as string | null,
   currentClipUrl: null as string | null,
   currentChoices: [] as StoryChoiceView[],
   nextClipUrls: [] as string[],
@@ -219,6 +224,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
           story,
           ...tables,
           error: null,
+          currentNodeId: null,
           currentClipUrl: null,
           currentChoices: [],
           nextClipUrls: [],

@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import { resolveMediaUrl } from '@/lib/media-url';
-import { useChoiceCountdown } from './useChoiceCountdown';
+import { useChoicePointMachine } from './useChoicePointMachine';
 import { StoryStatsPanel } from './StoryStatsPanel';
 
 /**
@@ -21,6 +21,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const { t } = useTranslation();
   const mode = useStoryRuntimeStore((s) => s.mode);
   const phase = useStoryRuntimeStore((s) => s.phase);
+  const currentNodeId = useStoryRuntimeStore((s) => s.currentNodeId);
   const currentClipUrl = useStoryRuntimeStore((s) => s.currentClipUrl);
   const currentChoices = useStoryRuntimeStore((s) => s.currentChoices);
   const currentVariables = useStoryRuntimeStore((s) => s.currentVariables);
@@ -74,22 +75,21 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
     [nextClipUrls, resolvedUrl],
   );
 
-  // 限时选项:选项可见且本片段有时限时启动倒计时,归零自动选默认项(无默认回退第一条)。
-  const countdownActive =
-    mode === 'play' &&
-    showChoices &&
-    phase !== 'error' &&
-    currentChoiceTimeSec != null &&
-    currentChoices.length > 0;
-  const handleTimeout = useCallback(() => {
-    const idx = currentDefaultChoiceIndex ?? currentChoices[0]?.index ?? 0;
-    choose(idx);
-  }, [choose, currentDefaultChoiceIndex, currentChoices]);
-  const { fraction } = useChoiceCountdown({
+  // 选择点四阶段状态机:Init(进入动画)→ Select(可交互 + 限时倒计时)→ Timeout(超时选默认)/ Hide(点选确认),
+  // 停留确认后再 choose 推进。resetKey 用节点 id,连续占位卡换跳时也能正确重置。
+  const choicesActive =
+    mode === 'play' && phase !== 'error' && showChoices && currentChoices.length > 0;
+  const { stage, selectedIndex, fraction, select } = useChoicePointMachine({
+    active: choicesActive,
+    resetKey: currentNodeId ?? currentClipUrl,
     seconds: currentChoiceTimeSec,
-    active: countdownActive,
-    onTimeout: handleTimeout,
+    defaultIndex: currentDefaultChoiceIndex,
+    firstIndex: currentChoices[0]?.index ?? 0,
+    onCommit: choose,
   });
+  const choiceEntered = stage === 'select';
+  const choiceExiting = stage === 'hide' || stage === 'timeout';
+  const showCountdown = stage === 'select' && currentChoiceTimeSec != null;
 
   // 续玩:存档失效时 resumeSaved 返回 false(已自动从头开始),提示玩家。
   const handleResume = useCallback(() => {
@@ -215,8 +215,17 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
       )}
 
       {phase !== 'error' && showChoices && currentChoices.length > 0 && (
-        <div className="absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-2 bg-gradient-to-t from-black/85 via-black/35 to-transparent px-6 pb-16 pt-28">
-          {countdownActive && (
+        <div
+          data-choice-stage={stage}
+          className={`absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-2 bg-gradient-to-t from-black/85 via-black/35 to-transparent px-6 pb-16 pt-28 transition-all duration-300 ease-out motion-reduce:transition-none ${
+            choiceEntered
+              ? 'translate-y-0 opacity-100'
+              : choiceExiting
+                ? 'translate-y-1 opacity-0'
+                : 'translate-y-4 opacity-0'
+          }`}
+        >
+          {showCountdown && (
             <div
               className="mb-2 h-1 w-full max-w-xl overflow-hidden rounded-full bg-white/15"
               role="timer"
@@ -232,11 +241,21 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
           )}
           {currentChoices.map((choice) => {
             const isDefault = choice.index === currentDefaultChoiceIndex;
+            const isSelected = selectedIndex === choice.index;
+            const dimmed = selectedIndex != null && !isSelected;
             return (
               <button
                 key={choice.index}
-                onClick={() => choose(choice.index)}
-                className="w-full max-w-xl rounded-lg border border-transparent bg-transparent px-6 py-2.5 text-center text-lg font-medium text-white/95 [text-shadow:0_1px_12px_rgba(0,0,0,0.9)] transition-all duration-200 hover:border-white/25 hover:bg-white/10 hover:backdrop-blur-sm hover:[text-shadow:none]"
+                onClick={() => select(choice.index)}
+                disabled={choiceExiting}
+                aria-pressed={isSelected}
+                className={`w-full max-w-xl rounded-lg border px-6 py-2.5 text-center text-lg font-medium text-white/95 [text-shadow:0_1px_12px_rgba(0,0,0,0.9)] transition-all duration-200 motion-reduce:transition-none ${
+                  isSelected
+                    ? 'scale-[1.03] border-white/60 bg-white/15 backdrop-blur-sm [text-shadow:none]'
+                    : dimmed
+                      ? 'border-transparent bg-transparent opacity-30'
+                      : 'border-transparent bg-transparent hover:border-white/25 hover:bg-white/10 hover:backdrop-blur-sm hover:[text-shadow:none]'
+                }`}
               >
                 {choice.text}
                 {isDefault && (
