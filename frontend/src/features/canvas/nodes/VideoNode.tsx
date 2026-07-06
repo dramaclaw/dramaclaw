@@ -194,6 +194,7 @@ import {
   DEFAULT_VIDEO_MODEL_ID,
   ProviderModelPicker,
 } from "@/features/canvas/ui/ProviderModelPicker";
+import { writeLastVideoModel } from "@/features/canvas/domain/lastVideoModel";
 import {
   CreditCostPill,
   formatCreditCost,
@@ -2942,9 +2943,11 @@ export const VideoNode = memo(
                 <div className="flex min-w-0 items-center gap-2">
                   <ProviderModelPicker
                     selectedModelId={modelId}
-                    onChange={(nextModelId) =>
-                      updateNodeData(id, { model: nextModelId })
-                    }
+                    onChange={(nextModelId) => {
+                      updateNodeData(id, { model: nextModelId });
+                      // 记住这次选择，后续新建的视频节点将继承它。
+                      writeLastVideoModel(nextModelId);
+                    }}
                     domain="video"
                     popoverPlacement="top"
                     getOptionDisabledReason={(model) =>

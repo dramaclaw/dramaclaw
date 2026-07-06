@@ -151,8 +151,9 @@ export const VIDEO_MODELS: ModelOption[] = [
 
 // Matches the backend `FreezoneVideoGenRequest.model` default. The picker
 // hydrates the live list via /freezone/video/models, but this id is what the
-// canvas store uses on first node creation before that fetch resolves.
-export const DEFAULT_VIDEO_MODEL_ID = 'newapi_seedance-2.0-fast';
+// canvas store uses on first node creation before that fetch resolves (and
+// when no previously-picked model has been remembered).
+export const DEFAULT_VIDEO_MODEL_ID = 'newapi_seedance-2.0';
 
 export type ProviderModelDomain = 'image' | 'video';
 
