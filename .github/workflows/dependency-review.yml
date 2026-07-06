@@ -1,0 +1,47 @@
+name: dependency-review
+
+# DEP-11：依赖许可证准入门，两层互补——
+# 1) dependency-review job：GitHub 官方增量审查。对 PR diff 出的**新增依赖**
+#    按 deny-licenses 拦强 copyleft，覆盖 Dependency Graph 能索引的清单
+#    （前端 pnpm-lock.yaml 等）。只在 PR 语义下有意义。
+# 2) python-deps job：兜底全量门。按 uv.lock 装满环境后扫描全部已装发行版的
+#    许可证元数据（scripts/check_dependency_licenses.py），不依赖 GitHub 索引，
+#    push / PR 均跑。规则与豁免冻结在脚本内，改动必须走 PR。
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Review new dependencies' licenses
+        uses: actions/dependency-review-action@v4
+        with:
+          # 本门只管许可证（DEP-11）；漏洞告警阈值另行决策，避免一门两职
+          vulnerability-check: false
+          license-check: true
+          deny-licenses: >-
+            AGPL-1.0-only, AGPL-1.0-or-later, AGPL-3.0-only, AGPL-3.0-or-later,
+            GPL-1.0-only, GPL-1.0-or-later, GPL-2.0-only, GPL-2.0-or-later,
+            GPL-3.0-only, GPL-3.0-or-later, SSPL-1.0
+
+  python-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv (with cache)
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Install dependencies (frozen)
+        run: uv sync --frozen
+      - name: Check dependency licenses
+        run: uv run python scripts/check_dependency_licenses.py
