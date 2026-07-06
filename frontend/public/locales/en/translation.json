@@ -1340,6 +1340,8 @@
     "restoredFilename": "Imported novel",
     "statFilename": "Filename",
     "statTotalChars": "Total chars",
+    "statBillableChars": "Billable chars",
+    "creditPerChars": "{{credits}} per {{chars}} chars",
     "statChaptersDetected": "Chapters detected",
     "statEpisodesEstimated": "Estimated episodes",
     "episodesUnit": "eps",

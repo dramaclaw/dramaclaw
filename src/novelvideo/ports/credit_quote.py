@@ -10,6 +10,10 @@ from typing import Protocol
 class CreditQuote:
     total_cost: int
     display: str
+    unit: str = "call"
+    unit_cost: int = 0
+    quantity: int = 1
+    params: dict | None = None
 
 
 class CreditQuotePort(Protocol):

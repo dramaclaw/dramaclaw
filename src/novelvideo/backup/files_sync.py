@@ -10,6 +10,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Per-user .hermes dirs hold agent runtime state: keep only config/memory —
+# never sync .env (secrets), caches, logs or tmp to the backup bucket.
 RCLONE_FILTER = """\
 - *.db
 - *.db-*
@@ -18,6 +20,12 @@ RCLONE_FILTER = """\
 - *-litestream/**
 - *.snapshot
 - *.snapshot.tmp
+- .hermes/.env
+- .hermes/*_cache/**
+- .hermes/logs/**
+- .hermes/tmp/**
+- .hermes/.cache/**
+- .hermes/.local/**
 + **
 """
 
@@ -50,6 +58,12 @@ def build_sync_cmd(*, src: str, dst: str, history_dst: str, filter_file: Path) -
         "--transfers",
         "8",
         "--skip-links",
+        # Hot files (freezone canvas json / _canvas_events jsonl / idempotency json)
+        # keep being written during the sync; without this flag rclone flags them as
+        # "corrupted on transfer: md5/size differ" and the whole job exits 1. They are
+        # normal live-data churn, not corruption — skip the post-transfer recheck and
+        # let the next sync round pick up the latest content.
+        "--local-no-check-updated",
         "--log-level",
         "INFO",
     ]

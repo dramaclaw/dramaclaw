@@ -13,6 +13,12 @@ def test_filter_excludes_all_sqlite_and_litestream_state():
         "- *-litestream/**",
         "- *.snapshot",
         "- *.snapshot.tmp",
+        "- .hermes/.env",
+        "- .hermes/*_cache/**",
+        "- .hermes/logs/**",
+        "- .hermes/tmp/**",
+        "- .hermes/.cache/**",
+        "- .hermes/.local/**",
         "+ **",
     ):
         assert required in lines
@@ -31,6 +37,8 @@ def test_build_sync_cmd_shape(tmp_path):
     assert cmd[:3] == ["rclone", "sync", "/data/state"]
     assert "--filter-from" in cmd and str(filter_file) in cmd
     assert "--backup-dir" in cmd and "--fast-list" in cmd
+    # Hot live files (freezone canvas/idempotency json) must not fail the job.
+    assert "--local-no-check-updated" in cmd
 
 
 def test_build_rclone_env(monkeypatch):

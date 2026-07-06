@@ -8,7 +8,7 @@ INSUFFICIENT_CREDITS_CODE = "INSUFFICIENT_CREDITS"
 INSUFFICIENT_CREDITS_MESSAGE = "积分不足，请联系管理员充值"
 BILLING_RULE_NOT_CONFIGURED_CODE = "BILLING_RULE_NOT_CONFIGURED"
 BILLING_RULE_NOT_CONFIGURED_MESSAGE = "计费规则未配置，请联系管理员设置积分规则"
-GENERATION_BILLING_UNITS = {"call", "item", "second", "token"}
+GENERATION_BILLING_UNITS = {"call", "item", "second", "token", "character"}
 
 
 class InsufficientCreditsError(RuntimeError):

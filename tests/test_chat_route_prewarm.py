@@ -32,3 +32,26 @@ def test_ws_connect_does_not_prewarm_default_home_scope() -> None:
 
 def test_ws_connect_can_prewarm_non_home_scope() -> None:
     assert chat_route._should_prewarm_on_ws_connect(ChatScope(kind="project", id="project_a")) is True
+
+
+@pytest.mark.anyio
+async def test_ai_assistant_access_check_uses_chat_feature_key(monkeypatch) -> None:
+    seen = {}
+
+    class FakeUsageMeter:
+        async def require_feature_credit_balance(self, **kwargs):
+            seen.update(kwargs)
+            return {"allowed": True}
+
+    monkeypatch.setattr(chat_route, "get_usage_meter", lambda: FakeUsageMeter())
+
+    await chat_route._require_ai_assistant_access(
+        user={"id": "usr_1", "username": "alice"},
+        scope=ChatScope(kind="home"),
+    )
+
+    assert seen["user_id"] == "usr_1"
+    assert seen["feature_key"] == "ai_assistant_chat"
+    assert seen["project_id"] == ""
+    assert seen["resource_kind"] == "chat"
+    assert seen["metadata"]["scope"] == {"kind": "home", "id": None}

@@ -28,6 +28,7 @@ import {
   useStartIngest,
   useUploadNovel,
   type FormatCheck,
+  type UploadResult,
 } from "@/lib/queries/ingest";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import { useStyles } from "@/lib/queries/styles";
@@ -231,6 +232,10 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function countBillableNovelChars(text: string): number {
+  return text ? text.replace(/[\s\u3000]+/g, "").length : 0;
 }
 
 function hiddenImportedPreviewKey(project: string): string {
@@ -664,10 +669,7 @@ export function IngestPageContent({ project }: { project: string }) {
   const queryClient = useQueryClient();
 
   // Upload state
-  const [uploadedFile, setUploadedFile] = useState<{
-    filename: string;
-    size: number;
-  } | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<UploadResult | null>(null);
   const [uploadedFileSource, setUploadedFileSource] =
     useState<UploadedFileSource | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>("upload");
@@ -705,9 +707,26 @@ export function IngestPageContent({ project }: { project: string }) {
   // Re-import warning if characters already exist
   const { data: charactersRes } = useCharacters(project);
   const hasCharacters = (charactersRes?.data?.length ?? 0) > 0;
-  const ingestFeatureCost = useGenerationCreditCost("feature", "ingest_fast");
+  const pastedBillableChars = useMemo(
+    () => countBillableNovelChars(pastedText.trim()),
+    [pastedText],
+  );
+  const billingBillableChars =
+    inputMode === "paste" && pastedBillableChars > 0
+      ? pastedBillableChars
+      : typeof uploadedFile?.billable_chars === "number"
+        ? uploadedFile.billable_chars
+        : typeof chaptersData?.billable_chars === "number"
+          ? chaptersData.billable_chars
+          : null;
+  const ingestFeatureCost = useGenerationCreditCost("feature", "ingest_fast", {
+    quantity: billingBillableChars && billingBillableChars > 0
+      ? billingBillableChars
+      : undefined,
+  });
+  const ingestFeatureCostData = ingestFeatureCost.data?.data;
   const ingestFeatureCostDisplay =
-    ingestFeatureCost.data?.data.display ??
+    ingestFeatureCostData?.display ??
     (ingestFeatureCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
@@ -997,6 +1016,12 @@ export function IngestPageContent({ project }: { project: string }) {
             sum + (ch.word_count ?? ch.char_count ?? ch.content?.length ?? 0),
           0,
         );
+  const billableChars =
+    typeof uploadedFile?.billable_chars === "number"
+      ? uploadedFile.billable_chars
+      : typeof chaptersData?.billable_chars === "number"
+        ? chaptersData.billable_chars
+        : totalChars;
   const totalCharsUnknown = totalChars === 0 && !chaptersData?.total_chars;
   const isStarting = updateProject.isPending || startIngestMutation.isPending;
 
@@ -1374,7 +1399,7 @@ export function IngestPageContent({ project }: { project: string }) {
                   </h2>
 
                   {/* Stat cards */}
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                     <StatCard
                       label={t("ingest.statFilename")}
                       value={
@@ -1393,6 +1418,14 @@ export function IngestPageContent({ project }: { project: string }) {
                         totalCharsUnknown
                           ? <span className="text-muted-foreground/60">—</span>
                           : totalChars.toLocaleString()
+                      }
+                    />
+                    <StatCard
+                      label={t("ingest.statBillableChars")}
+                      value={
+                        totalCharsUnknown
+                          ? <span className="text-muted-foreground/60">—</span>
+                          : billableChars.toLocaleString()
                       }
                     />
                     <StatCard

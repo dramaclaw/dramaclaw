@@ -1340,6 +1340,8 @@
     "restoredFilename": "已导入小说",
     "statFilename": "文件名",
     "statTotalChars": "总字数",
+    "statBillableChars": "计费字数",
+    "creditPerChars": "每 {{chars}} 字 {{credits}}",
     "statChaptersDetected": "检测章节",
     "statEpisodesEstimated": "预计生成",
     "episodesUnit": "集",

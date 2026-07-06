@@ -27,6 +27,7 @@ export interface UploadResult {
   filename: string;
   size: number;
   total_chars?: number;
+  billable_chars?: number;
   count?: number;
   chapters?: Chapter[];
   format_check?: FormatCheck;
@@ -35,6 +36,7 @@ export interface UploadResult {
 interface ChaptersResult {
   chapters: Chapter[];
   total_chars: number;
+  billable_chars?: number;
   count?: number;
 }
 
@@ -65,6 +67,7 @@ export function useUploadNovel(project: string) {
             data: {
               chapters: preview.chapters,
               total_chars: preview.total_chars,
+              billable_chars: preview.billable_chars,
               count: preview.count,
             },
           },

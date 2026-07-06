@@ -124,7 +124,7 @@ export function LoginStageContent({
               >
                 <div className={styles.businessWechatPanel}>
                   <img
-                    src="/contact/business-wechat-qr.png"
+                    src="https://nfg-web.oss-cn-chengdu.aliyuncs.com/dramaclaw/contact/wechat.png"
                     alt={t("auth.businessWechat.qrAlt")}
                     draggable={false}
                   />

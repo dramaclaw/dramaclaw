@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 TEXT_NOVEL_EXTENSIONS = {".txt", ".md"}
 SUPPORTED_NOVEL_EXTENSIONS = TEXT_NOVEL_EXTENSIONS | {".docx"}
 SUPPORTED_NOVEL_EXTENSION_ORDER = (".txt", ".md", ".docx")
+_BILLABLE_WHITESPACE_RE = re.compile(r"[\s\u3000]+")
 
 
 @dataclass
@@ -29,6 +31,18 @@ def supported_novel_extensions_label() -> str:
 
 def is_supported_novel_path(path: str | Path) -> bool:
     return Path(path).suffix.lower() in SUPPORTED_NOVEL_EXTENSIONS
+
+
+def count_billable_novel_chars(text: str) -> int:
+    """Count parsed novel text characters used for import billing.
+
+    The import pipeline works on decoded/extracted plain text, so billing uses
+    that same text and ignores layout whitespace. Punctuation remains billable
+    because it is still model-visible input.
+    """
+    if not text:
+        return 0
+    return len(_BILLABLE_WHITESPACE_RE.sub("", text))
 
 
 def decode_novel_bytes(raw: bytes) -> str:
