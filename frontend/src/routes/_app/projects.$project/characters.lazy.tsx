@@ -977,7 +977,9 @@ function PortraitBlock({
           ) : (
             <Sparkles className="size-3" />
           )}
-          {t("characters.summary.generateNew")}
+          {character.portrait_url
+            ? t("characters.portrait.regenerate")
+            : t("characters.summary.generateNew")}
           <CreditCostInline display={portraitCost} />
         </Button>
         <Button
