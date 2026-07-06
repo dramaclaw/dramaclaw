@@ -474,7 +474,9 @@ export function RenderSection({
                 className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
               >
                 {regenerate.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
-                {t("common.regenerate")}
+                {previewUrl
+                  ? t("common.regenerate")
+                  : t("episode.workbench.render.generateNew")}
                 <CreditCostInline display={renderRegenCost.data?.data.display} />
               </Button>
               {renderPlatePreview ? (
