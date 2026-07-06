@@ -11,6 +11,7 @@ path,license_expression,copyright,evidence
 .github/workflows/banned-words.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/ce-import-lint.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/ci.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+.github/workflows/dependency-review.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/dco.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/ee-terms.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/frontend.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1131,6 +1132,7 @@ scripts/acceptance/foss_only_e2e.sh,Elastic-2.0,2026 SuperTale contributors,REUS
 scripts/acceptance/run.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/ce_allowlist.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_ce_port_closure.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/check_dependency_licenses.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_dco.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_env_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/compliance/generate_p0b_artifacts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1573,6 +1575,7 @@ tests/test_compose_episode_audio_source.py,Elastic-2.0,2026 SuperTale contributo
 tests/test_content_adapter.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_control_frame_to_sketch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_detected_empty_markers.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_dependency_license_gate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_director_staging_shape_presets.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_director_world_service.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_director_world_staging_prop_ai.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

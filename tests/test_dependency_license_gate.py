@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
@@ -46,3 +48,17 @@ def test_dependency_tree_has_no_license_violations() -> None:
     violations, _notices, rotten = audit()
     assert violations == [], "依赖许可证违规：\n" + "\n".join(violations)
     assert rotten == [], "腐烂豁免：\n" + "\n".join(rotten)
+
+
+def test_dependency_review_action_requires_dependency_graph_guard() -> None:
+    workflow_path = REPO_ROOT / ".github/workflows/dependency-review.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["dependency-review"]["steps"]
+
+    guard_step = next(step for step in steps if step.get("id") == "dependency-graph")
+    assert "/dependency-graph/compare/" in guard_step["run"]
+
+    review_step = next(
+        step for step in steps if step.get("uses") == "actions/dependency-review-action@v4"
+    )
+    assert review_step["if"] == "steps.dependency-graph.outputs.enabled == 'true'"
