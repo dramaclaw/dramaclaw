@@ -62,7 +62,7 @@ docker compose logs -f api       # logs
 docker compose down              # stop (keeps the data volume)
 ```
 
-## 5. Where the data lives / Backups
+## 5. Where the data lives / Backup, restore & migrate
 
 - Project data lives in the named volume `ce-data` (`/data` inside the container); output is in `NOVELVIDEO_OUTPUT_DIR` (default `output`).
 - Back up the data volume:
@@ -73,6 +73,15 @@ docker run --rm -v dramaclaw-ce_ce-data:/data -v "$PWD":/backup alpine \
 ```
 
 (The volume name is prefixed with the compose project name; run `docker volume ls` to confirm the actual name.)
+
+- Restore, or move to a new machine — copy `ce-data-backup.tar.gz` to the target host, then unpack it back into the data volume (the `-v` mount creates the volume if it does not exist yet):
+
+```bash
+docker run --rm -v dramaclaw-ce_ce-data:/data -v "$PWD":/backup alpine \
+  tar xzf /backup/ce-data-backup.tar.gz -C /data
+```
+
+Then bring the stack up as usual (`docker compose -f docker-compose.selfhosted.yml up -d`). Copy the `output` directory (`NOVELVIDEO_OUTPUT_DIR`) and your `.env` across too if you want generated media and settings to carry over.
 
 ## 6. Upgrades
 
