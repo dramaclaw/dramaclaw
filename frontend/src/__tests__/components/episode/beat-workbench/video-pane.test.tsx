@@ -127,6 +127,7 @@ beforeAll(async () => {
                 },
                 seedance2GeneratePrompt: "AI 优化",
                 seedance2PromptGenerated: "Seedance2 Prompt 已优化",
+                seedance2PromptGeneratedOtherBeat: "主体提示词已优化，已写回镜头 #{{n}}",
                 seedance2PromptGenerateFailed: "Seedance2 Prompt 生成失败",
                 videoPrompt: "视频提示词",
                 keyframePrompt: "单个 Beat 视频提示词",
@@ -1887,6 +1888,87 @@ describe("VideoPane Seedance2 inspector", () => {
     expect(screen.getByLabelText("Seedance2.0主体提示词")).toHaveValue(
       "optimized seedance2 prompt",
     );
+  });
+
+  it("does not write an AI-optimized prompt onto the beat switched to mid-flight", async () => {
+    const user = userEvent.setup();
+    // Hold the optimize request open so we can switch beats before it resolves.
+    let resolveOptimize: (value: unknown) => void = () => {};
+    const deferred = new Promise((resolve) => {
+      resolveOptimize = resolve;
+    });
+    generateSeedance2PromptMock.mockReturnValueOnce(deferred);
+
+    const beatA = makeBeat({ beat_number: 1 });
+    const beatB = makeBeat({
+      beat_number: 2,
+      seedance2_config_json: JSON.stringify({
+        mode: "multimodal_reference",
+        duration: 5,
+        resolution: "720p",
+        ratio: "9:16",
+        final_prompt: "beat two prompt",
+      }),
+    });
+    const view = renderPane(beatA);
+
+    // Trigger AI optimize on Beat A (request now pending).
+    await user.click(screen.getByRole("button", { name: "AI 优化" }));
+    expect(generateSeedance2PromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({ beatNum: 1 }),
+    );
+
+    // User switches to Beat B while the optimize request is still in flight.
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <VideoPane
+          beat={beatB}
+          project="demo"
+          episode={1}
+          state="ready"
+          defaultBackend="huimeng_seedance-2.0-fast"
+        />
+      </I18nextProvider>,
+    );
+    expect(screen.getByLabelText("Seedance2.0主体提示词")).toHaveValue(
+      "beat two prompt",
+    );
+
+    // The optimize result for Beat A returns *after* the switch.
+    resolveOptimize({
+      ok: true,
+      data: {
+        final_prompt: "optimized seedance2 prompt",
+        seedance2_config_json: JSON.stringify({
+          mode: "multimodal_reference",
+          duration: 5,
+          resolution: "720p",
+          ratio: "9:16",
+          prompt_source: "generated",
+          final_prompt: "optimized seedance2 prompt",
+        }),
+        beat: makeBeat({ beat_number: 1 }),
+      },
+    });
+
+    // Result is attributed back to Beat A, not the now-mounted Beat B.
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("主体提示词已优化，已写回镜头 #1"),
+    );
+    expect(screen.getByLabelText("Seedance2.0主体提示词")).toHaveValue(
+      "beat two prompt",
+    );
+    const leakedToBeatB = updateBeatMock.mock.calls.some((call) => {
+      try {
+        return (
+          JSON.parse(call[0].data.seedance2_config_json).final_prompt ===
+          "optimized seedance2 prompt"
+        );
+      } catch {
+        return false;
+      }
+    });
+    expect(leakedToBeatB).toBe(false);
   });
 
   it("opens reference mention candidates from the custom prompt field", async () => {
