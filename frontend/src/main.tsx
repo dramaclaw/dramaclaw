@@ -10,6 +10,7 @@ import { loadClusterConfig } from "@/lib/cluster-config";
 import { loadRuntimeConfig } from "@/lib/runtime-config";
 import { initDevBackendWatch } from "@/lib/dev-backend-watch";
 import { setApiQueryClient } from "@/lib/api";
+import { setAppRouter } from "@/lib/app-router";
 import { getOrCreateReactRoot } from "@/lib/react-root";
 import {
   installChunkLoadRecovery,
@@ -51,6 +52,12 @@ const router = createRouter({
   // do instant nav; match them. If we ever want a transition on a specific
   // <Link>, opt in per-link with viewTransition={true}.
 });
+
+// Register the singleton so plain (non-hook) modules — url-params,
+// openPresetProjection — route navigations through the router instead of
+// mutating window.history directly (which races with tanstack's throttled
+// history queue). See @/lib/app-router.
+setAppRouter(router);
 
 declare module "@tanstack/react-router" {
   interface Register {

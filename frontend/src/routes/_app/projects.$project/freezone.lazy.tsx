@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { createLazyFileRoute } from "@tanstack/react-router";
+import { createLazyFileRoute, useRouterState } from "@tanstack/react-router";
 import { ReactFlowProvider } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -13,21 +13,26 @@ import {
 import { FreezoneShell } from "@/features/freezone/FreezoneShell";
 import { canvasIdForFreezoneEntry } from "@/features/freezone/projections";
 import { useAllProjectSummaries } from "@/lib/queries/projects";
-import { readLastCanvas, readUrl, writeUrl } from "@/lib/url-params";
+import { readLastCanvas, writeUrl } from "@/lib/url-params";
 import { useAuthStore } from "@/stores/auth-store";
 
 function FreezoneProjectRoute() {
   const { project } = Route.useParams();
-  const [, setTick] = useState(0);
   const username = useAuthStore((state) => state.username);
   const { data: projects, isLoading } = useAllProjectSummaries();
   const [globalError, setGlobalError] = useState<GlobalErrorDialogDetail | null>(null);
 
-  useEffect(() => {
-    const handler = () => setTick((n) => n + 1);
-    window.addEventListener("popstate", handler);
-    return () => window.removeEventListener("popstate", handler);
-  }, []);
+  // Read `?canvas` from the router's location so it stays consistent with an
+  // in-flight navigation (tanstack throttles history onto a microtask, so
+  // window.location — and any raw readUrl() — lags a queued canvas switch).
+  // This subscription also re-renders the route when the canvas param changes,
+  // replacing the old raw popstate listener.
+  const canvasParam = useRouterState({
+    select: (s) => {
+      const canvas = (s.location.search as { canvas?: unknown }).canvas;
+      return typeof canvas === "string" && canvas.length > 0 ? canvas : null;
+    },
+  });
 
   useEffect(() => subscribeOpenGlobalErrorDialog(setGlobalError), []);
 
@@ -79,7 +84,7 @@ function FreezoneProjectRoute() {
   }
 
   const canvasId = canvasIdForFreezoneEntry({
-    explicitCanvasId: readUrl().canvas ?? readLastCanvas(matchedProject.id),
+    explicitCanvasId: canvasParam ?? readLastCanvas(matchedProject.id),
     username,
   });
 

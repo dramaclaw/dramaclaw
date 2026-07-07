@@ -20,7 +20,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useMediaQuery } from "@/hooks/use-media-query";
-import { readUrl, rememberLastCanvas, writeUrl } from "@/lib/url-params";
+import { currentCanvasParam } from "@/lib/app-router";
+import { rememberLastCanvas, writeUrl } from "@/lib/url-params";
 import { isCeRuntime } from "@/lib/runtime-config";
 import { cn } from "@/lib/utils";
 import { SuperChatPanel } from "@/features/superchat/superchat-panel";
@@ -411,7 +412,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
 
   useEffect(() => {
     rememberLastCanvas(projectId, canvasId);
-    if (canvasId !== "default" && readUrl().canvas !== canvasId) {
+    if (canvasId !== "default" && currentCanvasParam() !== canvasId) {
       writeUrl({ canvas: canvasId }, { replace: true, notify: false });
     }
   }, [canvasId, projectId]);
