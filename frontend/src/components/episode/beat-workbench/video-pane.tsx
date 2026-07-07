@@ -562,6 +562,12 @@ export function VideoPane({
   const seedance2DraftRef = useRef(seedance2Config);
   const normalizedLegacySeedance2ConfigRef = useRef("");
   const lastSavedSeedance2ConfigKeyRef = useRef("");
+  // Always mirrors the currently-mounted beat so async handlers (e.g. AI prompt
+  // optimize) can tell whether the user switched beats while a request was in
+  // flight. `beat` captured in a handler closure is frozen at trigger time, so a
+  // ref is the only way to read the *live* beat after an await. See issue #39.
+  const currentBeatNumberRef = useRef(beat.beat_number);
+  currentBeatNumberRef.current = beat.beat_number;
   useEffect(() => {
     setSeedance2Draft(seedance2Config);
     seedance2DraftRef.current = seedance2Config;
@@ -887,15 +893,32 @@ export function VideoPane({
     showSeedance2Config,
   ]);
   const handleGenerateSeedance2Prompt = async () => {
+    // Bind the result to the beat that triggered the optimize. The request is
+    // async; if the user switches beats before it returns, applying the result
+    // to the now-mounted beat's draft would autosave it onto the WRONG beat
+    // (issue #39). The backend persists the optimized prompt to this beat and
+    // onSuccess patches it into the beats cache, so a switched-away result is
+    // safe to drop locally — it will show when the user returns to this beat.
+    const triggeredBeatNumber = beat.beat_number;
     try {
       const res = await generateSeedance2Prompt.mutateAsync({
-        beatNum: beat.beat_number,
+        beatNum: triggeredBeatNumber,
         manualPromptReference: seedance2Draft.final_prompt,
         promptGuidance: seedance2Draft.prompt_guidance,
       });
       if (!res.ok) {
         toast.error(
           res.error || t("episode.workbench.video.seedance2PromptGenerateFailed"),
+        );
+        return;
+      }
+      if (currentBeatNumberRef.current !== triggeredBeatNumber) {
+        // User moved to another beat while optimizing. Do NOT touch the current
+        // draft — the triggering beat is already updated server-side + in cache.
+        toast.success(
+          t("episode.workbench.video.seedance2PromptGeneratedOtherBeat", {
+            n: triggeredBeatNumber,
+          }),
         );
         return;
       }
