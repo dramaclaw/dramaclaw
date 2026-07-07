@@ -6,7 +6,7 @@
 
 按顺序执行：
 
-1. **Bump 版本**：改 `pyproject.toml` 的 `version = "X.Y.Z"`（版本唯一真源，SSOT），并同步 `tests/test_release_feed.py::test_project_version_is_single_source_of_truth` 中钉死的版本字面量。
+1. **Bump 版本**：改 `pyproject.toml` 的 `version = "X.Y.Z"`（版本唯一真源，SSOT），并同步 `tests/test_release_feed.py::test_project_version_is_single_source_of_truth` 中钉死的版本字面量；第 3 步重装后 `uv.lock` 会随之更新，记得一并提交。
 2. **重写包内 release notes**：整体替换 `src/novelvideo/release-notes.md` 为新版本内容（用下方模板）。front-matter 的 `version:` 必须与 `pyproject.toml` 一致，否则解析门断言失败（F8）。
 3. **本地验证**：
    ```bash
