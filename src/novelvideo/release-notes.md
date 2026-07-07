@@ -1,15 +1,23 @@
 ---
-version: 1.0.2
+version: 1.0.3
 attention: low
 ---
-# v1.0.2
+# v1.0.3
 
 ## User-facing Highlights (zh)
 
-- **版本更新通知接入 Release Feed**: 进入平台后按当前版本展示更新内容,并在上游有新版时于通知中心提示升级。
-- **通知中心改为发版内容源**: 原有硬编码功能通知改为由包内 release notes 驱动,离线部署也能查看当前版本亮点。
+- **画布与视频生成体验修复**: 图片节点 21:9 不再被误吸附成 16:9,删除节点后其生成产物随历史记录同步清理,新建视频节点默认 Seedance 2.0 并继承上次所选模型。
+- **界面稳定性修复合集**: 修复从虾画切换菜单被拽回、浏览器翻译插件引发的页面崩溃、按钮加载状态刷新后丢失等问题;右上角积分改为完整数值展示。
+- **速写格子入口上线**: 界面新增速写格子入口,可直接进入速写模式。
+- **积分计费覆盖更多能力**: 助手聊天与剧集素材生成现按积分计费。
 
 ## User-facing Highlights (en)
 
-- **Release Feed powers version updates**: The app now shows highlights for the running version and can surface an upstream upgrade in the notification center.
-- **Notification Center uses release content**: Hardcoded feature notices are replaced with packaged release notes so offline self-hosted deployments still show current-version highlights.
+- **Canvas & video generation fixes**: Image nodes keep their 21:9 ratio, deleting a node now clears its generated assets from history, and new video nodes default to Seedance 2.0 while inheriting your last-used model.
+- **UI stability fixes**: Fixed navigation being pulled back when leaving the drawing page, crashes triggered by browser translation extensions, and button loading states lost after refresh; the credit balance now shows its full value.
+- **Sketch grid entry**: A new entry point opens the sketch grid directly from the UI.
+- **Credits cover more features**: Assistant chat and episode asset generation are now billed with credits.
+
+## Fixes
+
+- 其余修复与内部改动见 GitHub Release 页的 Bug Fixes 与 What's Changed。
