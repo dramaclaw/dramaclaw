@@ -2,7 +2,7 @@ name: ci
 
 # INFRA-01：CI 地基。安装 uv（启用依赖缓存，按 uv.lock 取键）、校验锁文件一致性、
 # 按锁文件安装依赖。依赖含 torch/cuda（约 1GB）：首跑写满缓存，之后 run 命中缓存。
-# 在同一 job 内复用已装好的依赖，跑 ruff lint（非阻断）+ 端口闭合守栏 + pytest。
+# 在同一 job 内复用已装好的依赖，跑 ruff lint（必过门，存量走基线豁免）+ 端口闭合守栏 + pytest。
 
 on:
   push:
@@ -29,11 +29,11 @@ jobs:
       # novelvideo.ports.local.* 满足、无外部适配器。需装好依赖故挂在 deps job。
       - name: Check port closure
         run: uv run python scripts/check_ce_port_closure.py
-      # Lint：项目尚未引入 ruff 配置，先以非阻断（报告 GitHub 注解）方式接入。
-      # 待存量问题清零后，去掉 continue-on-error 即转为合入必过门。
-      - name: Lint (ruff, non-blocking)
-        continue-on-error: true
-        run: uvx ruff check --output-format=github .
+      # Lint：合入必过门，只管新增代码——存量以 per-file-ignores 基线豁免（见
+      # pyproject [tool.ruff.lint.per-file-ignores]），逐文件治理、修完删条目。
+      # 规则集冻结在 pyproject，ruff 版本锁定于 dev 依赖组，CI 与本地同版。
+      - name: Lint (ruff)
+        run: uv run ruff check --output-format=github .
       # 单元测试：pytest 默认 addopts 已排除 ee/e2e；-n auto 走 xdist 并行。
       - name: Run tests
         run: uv run pytest -n auto

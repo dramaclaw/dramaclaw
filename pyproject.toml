@@ -83,7 +83,83 @@ dev = [
     "pytest-xdist>=3.5.0",
     "fakeredis>=2.20.0",
     "respx>=0.22.0",
+    "ruff==0.15.20",
 ]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# 显式冻结规则集为 ruff 默认（pycodestyle 错误 + pyflakes），
+# 避免 ruff 升级引入新规则时门禁漂移。扩规则需单独 PR。
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# wsgi 必须先执行 load_project_dotenv() 再导入 app，属有意的导入顺序依赖（永久豁免）
+"src/novelvideo/api/wsgi.py" = ["E402"]
+# ―――― 以下为存量豁免基线（2026-07-07 快照：196 处 / 61 文件）――――
+# 门禁只管新增代码：新文件、以及下列文件中新增的其他规则违例会被拦截。
+# 治理旧账时：修完某文件的某规则后删除对应条目，防止回潮。
+"src/novelvideo/agents/episode_fixer.py" = ["E402"]
+"src/novelvideo/agents/episode_planner.py" = ["F401"]
+"src/novelvideo/agents/episode_reviewer.py" = ["E402", "F401", "F541"]
+"src/novelvideo/agents/global_video_optimizer.py" = ["F541"]
+"src/novelvideo/agents/keyframe_prompt_builder.py" = ["F541"]
+"src/novelvideo/agents/video_prompt_builder.py" = ["F541"]
+"src/novelvideo/api/routes/characters.py" = ["E402"]
+"src/novelvideo/api/routes/files.py" = ["E402"]
+"src/novelvideo/api/routes/freezone.py" = ["F401"]
+"src/novelvideo/api/routes/scripts.py" = ["E402"]
+"src/novelvideo/api/routes/styles.py" = ["E402"]
+"src/novelvideo/chat/hermes_sdk.py" = ["F401", "F841"]
+"src/novelvideo/claymore/style_extractor.py" = ["F401", "F541"]
+"src/novelvideo/cognee/pipeline.py" = ["F401", "F541", "F811"]
+"src/novelvideo/cognee/store.py" = ["E402", "F541", "F811"]
+"src/novelvideo/cognee/tools.py" = ["F401"]
+"src/novelvideo/config.py" = ["F401"]
+"src/novelvideo/director_world/scene_overlap_analyzer.py" = ["F401"]
+"src/novelvideo/director_world/sync_global_props.py" = ["F401"]
+"src/novelvideo/freezone/presets.py" = ["F841"]
+"src/novelvideo/generators/episode_optimizer.py" = ["F401"]
+"src/novelvideo/generators/grid_splitter.py" = ["F401"]
+"src/novelvideo/generators/image_generator.py" = ["F401", "F541"]
+"src/novelvideo/generators/nanobanana_character.py" = ["F401", "F541"]
+"src/novelvideo/generators/nanobanana_grid.py" = ["E722", "F401", "F541", "F811", "F841"]
+"src/novelvideo/generators/nanobanana_prop.py" = ["F401", "F541"]
+"src/novelvideo/generators/pool_indexer.py" = ["F401", "F541"]
+"src/novelvideo/generators/prompt_builder.py" = ["F522", "F541", "F841"]
+"src/novelvideo/generators/scene_reference_images.py" = ["F401"]
+"src/novelvideo/generators/sketch_color_detector.py" = ["F401", "F841"]
+"src/novelvideo/generators/tts_generator.py" = ["F401", "F541"]
+"src/novelvideo/generators/video_composer.py" = ["F401", "F841"]
+"src/novelvideo/generators/video_generator.py" = ["F401", "F841"]
+"src/novelvideo/models.py" = ["F401"]
+"src/novelvideo/task_backend/cancel.py" = ["F401"]
+"src/novelvideo/utils/identity_resolver.py" = ["F401"]
+"src/novelvideo/utils/logging.py" = ["F541", "F841"]
+"src/novelvideo/verification/cli/run_gate.py" = ["F841"]
+"src/novelvideo/verification/consistency_verifier.py" = ["E402"]
+"src/novelvideo/verification/replay_capture.py" = ["F401"]
+"src/novelvideo/verification/routes.py" = ["E402"]
+"src/novelvideo/verification/sketch_selector.py" = ["F401"]
+"src/novelvideo/verification/sketch_visual_gate.py" = ["F401"]
+"src/novelvideo/verification/training_db.py" = ["F401"]
+"src/novelvideo/verification/version_hash.py" = ["F401"]
+"tests/contract/test_l014_inline_task_backend_concurrency.py" = ["F401"]
+"tests/test_api_assets.py" = ["F401"]
+"tests/test_api_freezone_canvas_from_preset.py" = ["F401"]
+"tests/test_api_render_settings.py" = ["F841"]
+"tests/test_director_staging_shape_presets.py" = ["F401"]
+"tests/test_env_config_ratchet.py" = ["F401"]
+"tests/test_freezone_asset_library_backend.py" = ["F841"]
+"tests/test_freezone_text_backend.py" = ["F401"]
+"tests/test_indextts2_fal_smoke.py" = ["F401"]
+"tests/test_openresty_upload_limit.py" = ["F401"]
+"tests/test_seedance2_voice_audio_records.py" = ["F401"]
+"tests/test_sqlite_store.py" = ["F811"]
+"tests/test_storyboard_prompt_visual_authority.py" = ["F541"]
+"tests/test_wysiwyg_consistency.py" = ["F401", "F841"]
+"tests/test_wysiwyg_neo4j.py" = ["F401"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

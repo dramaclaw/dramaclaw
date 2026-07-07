@@ -7,7 +7,7 @@
     ]
   },
   "dataLicense": "CC0-1.0",
-  "documentNamespace": "https://supertale.local/spdx/supertale-ce/b23313348b9ad4e7",
+  "documentNamespace": "https://supertale.local/spdx/supertale-ce/6c2ba5bf67b4bd6c",
   "name": "supertale-ce-p0b-sbom",
   "packages": [
     {
@@ -1941,6 +1941,16 @@
       "versionInfo": "2026.5.1"
     },
     {
+      "SPDXID": "SPDXRef-Package-ruff",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "name": "ruff",
+      "versionInfo": "0.15.20"
+    },
+    {
       "SPDXID": "SPDXRef-Package-safetensors",
       "copyrightText": "NOASSERTION",
       "downloadLocation": "NOASSERTION",
@@ -3329,6 +3339,11 @@
     },
     {
       "relatedSpdxElement": "SPDXRef-Package-rpds-py",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-supertale-ce"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-ruff",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Package-supertale-ce"
     },
