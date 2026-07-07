@@ -5,6 +5,7 @@ import {
   type FreezonePresetCanvasRequest,
 } from "@/api/canvas";
 import { useAuthStore } from "@/stores/auth-store";
+import { getAppRouter } from "@/lib/app-router";
 import { writeUrl } from "@/lib/url-params";
 import {
   consumeQueuedLocalFreezoneProjections,
@@ -22,8 +23,15 @@ export async function openPresetProjectionInMyCanvas(
   projectId: string,
   request: Omit<FreezonePresetCanvasRequest, "canvas_id" | "overwrite_existing" | "base_revision">,
 ): Promise<string> {
+  // Read the pathname from the router when available: tanstack throttles its
+  // navigations onto a microtask, so window.location lags a pending navigation
+  // (e.g. the user clicking away to /ingest while this request is in-flight).
+  // Reading window.location here would miss that and wrongly pull the SPA back
+  // to Freezone below.
+  const router = getAppRouter();
   const startPathname =
-    typeof window !== "undefined" ? window.location.pathname : null;
+    router?.state.location.pathname ??
+    (typeof window !== "undefined" ? window.location.pathname : null);
   const username = useAuthStore.getState().username?.trim();
   if (!username) {
     throw new Error("Missing current user");
@@ -51,18 +59,32 @@ export async function openPresetProjectionInMyCanvas(
   consumeQueuedLocalFreezoneProjections(projectId, canvasId);
 
   const freezonePath = `/projects/${encodeURIComponent(projectId)}/freezone`;
-  if (typeof window !== "undefined" && window.location.pathname !== startPathname) {
+  // Same source as startPathname: use the router's location so an in-flight
+  // navigation (queued but not yet flushed to window.location) is respected.
+  const currentPathname =
+    router?.state.location.pathname ??
+    (typeof window !== "undefined" ? window.location.pathname : null);
+  if (currentPathname !== startPathname) {
     // The user navigated elsewhere while the projection request was in-flight.
     // Do not pull the SPA back to Freezone after their explicit navigation.
     return canvasId;
   }
-  if (typeof window !== "undefined" && window.location.pathname !== freezonePath) {
-    window.history.pushState(
-      {},
-      "",
-      `${freezonePath}?canvas=${encodeURIComponent(canvasId)}`,
-    );
-    window.dispatchEvent(new PopStateEvent("popstate"));
+  if (currentPathname !== freezonePath) {
+    if (router) {
+      router.navigate({
+        to: "/projects/$project/freezone",
+        params: { project: projectId },
+        search: { canvas: canvasId },
+        resetScroll: false,
+      });
+    } else if (typeof window !== "undefined") {
+      window.history.pushState(
+        {},
+        "",
+        `${freezonePath}?canvas=${encodeURIComponent(canvasId)}`,
+      );
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }
   } else {
     writeUrl({ canvas: canvasId });
   }

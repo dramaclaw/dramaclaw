@@ -970,6 +970,7 @@ frontend/src/index.css,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggreg
 frontend/src/lib/api-errors.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/api-path.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/api.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/app-router.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/app-update-available.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/app-version.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/aspect-ratio.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
