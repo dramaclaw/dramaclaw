@@ -197,10 +197,8 @@ def cognee_ingest(
 @app.command()
 def cognee_profile(
     project: str = typer.Option(..., "--project", "-p", help="项目名称"),
-    auto_filter: bool = typer.Option(True, "--auto-filter/--no-filter", help="自动过滤泛指角色"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="只显示分类结果，不实际过滤"),
 ):
-    """查看和过滤图谱中的角色（从图谱查询，无需指定小说）。"""
+    """查看图谱中的角色（从图谱查询，无需指定小说）。"""
     _ensure_nest_asyncio()
     console.print(f"[bold blue]Cognee 角色管理[/bold blue]: {project}")
 
@@ -208,11 +206,10 @@ def cognee_profile(
         store = CogneeStore(project)
         await store.initialize()
         # 从图谱查询角色
-        characters = await store.list_characters()
-        return store, characters
+        return await store.list_characters()
 
     try:
-        store, characters = asyncio.run(do_profile())
+        characters = asyncio.run(do_profile())
     except Exception as e:
         console.print(f"[red]❌ 加载角色失败: {e}[/red]")
         raise typer.Exit(1)
@@ -222,112 +219,7 @@ def cognee_profile(
         raise typer.Exit(1)
 
     console.print(f"[cyan]图谱中有 {len(characters)} 个角色[/cyan]")
-
-    if auto_filter:
-        console.print("\n[bold yellow]智能角色分类中...[/bold yellow]")
-
-        async def do_filter():
-            # 使用简化版分类（不需要图谱工具）
-            return await filter_characters_simple(characters)
-
-        try:
-            classification = asyncio.run(do_filter())
-        except Exception as e:
-            console.print(f"[red]❌ 角色分类失败: {e}[/red]")
-            raise typer.Exit(1)
-
-        # 显示分类结果
-        console.print(
-            f"\n[bold green]主要角色 ({len(classification.main_characters)})[/bold green]"
-        )
-        for c in classification.main_characters:
-            console.print(f"  ✓ {c.name}: {c.reason}")
-
-        console.print(
-            f"\n[bold cyan]次要角色 ({len(classification.secondary_characters)})[/bold cyan]"
-        )
-        for c in classification.secondary_characters:
-            console.print(f"  ○ {c.name}: {c.reason}")
-
-        console.print(f"\n[bold red]排除 ({len(classification.exclude)})[/bold red]")
-        for c in classification.exclude:
-            console.print(f"  ✗ {c.name}: {c.reason}")
-
-        if dry_run:
-            console.print("\n[yellow]--dry-run 模式，不执行实际过滤[/yellow]")
-        else:
-            # 只保留 main + secondary
-            keep_names = {c.name for c in classification.main_characters}
-            keep_names.update(c.name for c in classification.secondary_characters)
-
-            filtered_chars = [c for c in characters if c.name in keep_names]
-
-            console.print(f"\n[green]✅ 保留 {len(filtered_chars)} 个角色[/green]")
-    else:
-        console.print(f"[green]✅ 提取 {len(characters)} 个角色（未过滤）[/green]")
-
-
-@app.command()
-def cognee_filter(
-    project: str = typer.Option(..., "--project", "-p", help="项目名称"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="只显示分类结果，不实际过滤"),
-):
-    """对已提取的角色进行智能过滤。"""
-    _ensure_nest_asyncio()
-    console.print(f"[bold blue]Cognee 角色过滤[/bold blue]: {project}")
-
-    async def load_characters():
-        store = CogneeStore(project)
-        await store.initialize()
-        await store.load_graph_state()
-        characters = list(store._characters.values())
-        return store, characters
-
-    try:
-        store, characters = asyncio.run(load_characters())
-    except Exception as e:
-        console.print(f"[red]❌ 加载角色失败: {e}[/red]")
-        raise typer.Exit(1)
-
-    if not characters:
-        console.print("[yellow]⚠️ 未找到已提取的角色，请先运行 cognee-profile[/yellow]")
-        raise typer.Exit(1)
-
-    console.print(f"[cyan]已加载 {len(characters)} 个角色[/cyan]")
-    console.print("\n[bold yellow]智能角色分类中...[/bold yellow]")
-
-    async def do_filter():
-        return await filter_characters_simple(characters)
-
-    try:
-        classification = asyncio.run(do_filter())
-    except Exception as e:
-        console.print(f"[red]❌ 角色分类失败: {e}[/red]")
-        raise typer.Exit(1)
-
-    # 显示分类结果
-    console.print(f"\n[bold green]主要角色 ({len(classification.main_characters)})[/bold green]")
-    for c in classification.main_characters:
-        console.print(f"  ✓ {c.name}: {c.reason}")
-
-    console.print(f"\n[bold cyan]次要角色 ({len(classification.secondary_characters)})[/bold cyan]")
-    for c in classification.secondary_characters:
-        console.print(f"  ○ {c.name}: {c.reason}")
-
-    console.print(f"\n[bold red]排除 ({len(classification.exclude)})[/bold red]")
-    for c in classification.exclude:
-        console.print(f"  ✗ {c.name}: {c.reason}")
-
-    if dry_run:
-        console.print("\n[yellow]--dry-run 模式，不执行实际过滤[/yellow]")
-    else:
-        # 只保留 main + secondary
-        keep_names = {c.name for c in classification.main_characters}
-        keep_names.update(c.name for c in classification.secondary_characters)
-
-        filtered_chars = [c for c in characters if c.name in keep_names]
-
-        console.print(f"\n[green]✅ 保留 {len(filtered_chars)} 个角色[/green]")
+    console.print(f"[green]✅ 提取 {len(characters)} 个角色（未过滤）[/green]")
 
 
 @app.command()
