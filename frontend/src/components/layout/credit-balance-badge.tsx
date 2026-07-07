@@ -3,18 +3,16 @@
 import { useTranslation } from "react-i18next";
 
 import { CREDIT_VALUE_CLASS, CreditSparkIcon } from "@/components/credits/credit-visual";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useCurrentUser } from "@/lib/queries/auth";
 import { isCeRuntime } from "@/lib/runtime-config";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
-
-function formatCredits(value: number, language: string): string {
-  return new Intl.NumberFormat(language, {
-    compactDisplay: "short",
-    maximumFractionDigits: value >= 10_000 ? 1 : 0,
-    notation: "compact",
-  }).format(value);
-}
 
 function formatFullCredits(value: number, language: string): string {
   return new Intl.NumberFormat(language, { maximumFractionDigits: 0 }).format(value);
@@ -32,22 +30,38 @@ export function CreditBalanceBadge() {
 
   if (ce || !username || isError) return null;
 
+  const tooltipLabel =
+    balance === undefined
+      ? t("credits.balance")
+      : `${t("credits.balance")}: ${formatFullCredits(balance, language)}`;
+
   return (
-    <div
-      className="group/credits ml-1 flex h-9 min-w-0 items-center gap-1 px-0.5 text-sm font-medium text-muted-foreground"
-      title={
-        balance === undefined
-          ? t("credits.balance")
-          : `${t("credits.balance")}: ${formatFullCredits(balance, language)}`
-      }
-      aria-label={t("credits.balance")}
-    >
-      <span className="flex shrink-0 items-center">
-        <CreditSparkIcon className="size-[17px]" withHoverMotion />
-      </span>
-      <span className={cn("max-w-20 truncate text-[12px] leading-none", CREDIT_VALUE_CLASS)}>
-        {isLoading || balance === undefined ? "--" : formatCredits(balance, language)}
-      </span>
-    </div>
+    <TooltipProvider delay={80}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <div
+              className="group/credits ml-1 flex h-9 min-w-0 cursor-default items-center gap-1 px-0.5 text-sm font-medium text-muted-foreground"
+              aria-label={t("credits.balance")}
+            />
+          }
+        >
+          <span className="flex shrink-0 items-center">
+            <CreditSparkIcon className="size-[17px]" withHoverMotion />
+          </span>
+          <span className={cn("shrink-0 whitespace-nowrap text-[12px] leading-none tabular-nums", CREDIT_VALUE_CLASS)}>
+            {isLoading || balance === undefined ? "--" : formatFullCredits(balance, language)}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent
+          side="bottom"
+          sideOffset={10}
+          showArrow={false}
+          className="border border-white/10 bg-background/95 text-foreground shadow-none"
+        >
+          {tooltipLabel}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

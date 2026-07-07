@@ -45,6 +45,15 @@ vi.mock("@/lib/queries/auth", () => ({
   }),
 }));
 
+// The badge now uses the shadcn/base-ui Tooltip; mock it so the content always
+// renders (base-ui only mounts the portal on hover). Mirrors the header test.
+vi.mock("@/components/ui/tooltip", () => ({
+  TooltipProvider: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  Tooltip: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  TooltipTrigger: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  TooltipContent: ({ children }: React.PropsWithChildren) => <>{children}</>,
+}));
+
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) =>
@@ -78,8 +87,8 @@ describe("CreditBalanceBadge", () => {
   it("renders the current credit balance", async () => {
     renderBadge();
 
-    expect(screen.getByText("1K")).toBeInTheDocument();
-    expect(screen.getByLabelText("当前积分余额")).toHaveAttribute("title", "当前积分余额: 1,234");
+    expect(screen.getByText("1,234")).toBeInTheDocument();
+    expect(screen.getByText("当前积分余额: 1,234")).toBeInTheDocument();
   });
 
   it("renders nothing when logged out", () => {
