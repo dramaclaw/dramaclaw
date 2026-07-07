@@ -109,14 +109,7 @@ def append_generation_history(
     return normalized
 
 
-def read_generation_history(
-    *,
-    project_dir: Path,
-    canvas_id: str,
-    node_id: str,
-    limit: int = _DEFAULT_LIMIT,
-) -> list[dict[str, Any]]:
-    path = generation_history_path(project_dir, canvas_id, node_id)
+def _read_history_file(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     records: list[dict[str, Any]] = []
@@ -129,6 +122,46 @@ def read_generation_history(
             continue
         if isinstance(value, dict):
             records.append(value)
+    return records
+
+
+def read_generation_history(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    node_id: str,
+    limit: int = _DEFAULT_LIMIT,
+) -> list[dict[str, Any]]:
+    records = _read_history_file(generation_history_path(project_dir, canvas_id, node_id))
     if limit <= 0:
         return records
     return records[-limit:]
+
+
+def read_canvas_generation_history(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    limit: int = _DEFAULT_LIMIT,
+) -> list[dict[str, Any]]:
+    """Aggregate every node's generation history for a whole canvas.
+
+    Reads all per-node JSONL files under the canvas history dir and merges them,
+    newest first. Unlike the per-node read, this is *not* scoped to nodes still
+    present on the canvas — a node deleted from the canvas keeps its history file,
+    so its past attempts stay recoverable here. Malformed lines/files are skipped.
+    """
+    canvas = (canvas_id or "").strip() or "default"
+    if not CANVAS_ID_RE.match(canvas):
+        raise ValueError(f"invalid canvas_id: {canvas_id!r}")
+    canvas_dir = generation_history_dir(project_dir) / canvas
+    if not canvas_dir.is_dir():
+        return []
+    records: list[dict[str, Any]] = []
+    for path in canvas_dir.glob("*.jsonl"):
+        records.extend(_read_history_file(path))
+    # Newest first; records without a usable timestamp sort last (empty string).
+    records.sort(key=lambda record: str(record.get("recorded_at") or ""), reverse=True)
+    if limit <= 0:
+        return records
+    return records[:limit]

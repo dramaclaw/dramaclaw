@@ -23,7 +23,6 @@ import {
   type CanvasAssetBuckets,
   type CanvasAssetKind,
 } from '@/features/canvas/domain/canvasAssets';
-import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasGenerationHistory } from '@/features/canvas/hooks/useCanvasGenerationHistory';
 import {
   historyRecordOutputUrl,
@@ -44,25 +43,8 @@ import { ThreeDDirectorDialog } from '@/features/viewer-kit/three-d/ThreeDDirect
 import { ImageViewerModal } from './ImageViewerModal';
 import { VideoViewerModal } from './VideoViewerModal';
 
-// Node types that record backend generation history — used only to scope the
-// per-node fan-out fallback (the aggregate endpoint ignores this list). Pure
-// reference / annotation / layout nodes never have history, so we skip them.
-const GENERATIVE_HISTORY_NODE_TYPES = new Set<string>([
-  CANVAS_NODE_TYPES.imageGen,
-  CANVAS_NODE_TYPES.imageEdit,
-  CANVAS_NODE_TYPES.exportImage,
-  CANVAS_NODE_TYPES.storyboardSplit,
-  CANVAS_NODE_TYPES.storyboardGen,
-  CANVAS_NODE_TYPES.video,
-  CANVAS_NODE_TYPES.videoStory,
-  CANVAS_NODE_TYPES.videoCompose,
-  CANVAS_NODE_TYPES.audio,
-  CANVAS_NODE_TYPES.script,
-  CANVAS_NODE_TYPES.threeDWorld,
-]);
-
 // Cap how many recent records each tab shows. Records arrive newest-first
-// (aggregatePerNode sorts by recorded_at desc), so slicing keeps the latest.
+// (backend sorts by recorded_at desc), so slicing keeps the latest.
 const HISTORY_DISPLAY_CAP = 20;
 
 /**
@@ -193,15 +175,11 @@ export function CanvasHistoryAssetsModal({
   const nodes = useCanvasStore((state) => state.nodes);
   const useHistory = assetSource === 'generation-history';
 
-  // Scope the per-node fallback fan-out to nodes that can actually have history.
-  const historyNodeIds = useMemo(
-    () =>
-      nodes
-        .filter((node) => GENERATIVE_HISTORY_NODE_TYPES.has(node.type))
-        .map((node) => node.id),
-    [nodes],
-  );
-  const { records, isLoading } = useCanvasGenerationHistory(historyNodeIds, {
+  // History is aggregated backend-side across every node that ever recorded on
+  // this canvas — including nodes since deleted — so we no longer scope the
+  // fetch to live node ids. `nodes` is still used below to enrich records with
+  // live-node metadata (covers/names) and for the non-history asset tab.
+  const { records, isLoading } = useCanvasGenerationHistory({
     enabled: useHistory,
   });
 
