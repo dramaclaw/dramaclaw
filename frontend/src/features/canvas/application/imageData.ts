@@ -45,6 +45,9 @@ export const IMAGE_GENERATION_ASPECT_RATIOS = [
   '2:3',
   '4:5',
   '5:4',
+  // 后端 FREEZONE_PRESET_IMAGE_ASPECT_RATIOS 支持 21:9，节点下拉也提供该选项；
+  // 若这里缺失，提交时 snap 会把用户选的 21:9 错吸附成最接近的 16:9（issue #52）。
+  '21:9',
 ] as const;
 
 export const VIDEO_GENERATION_ASPECT_RATIOS = [

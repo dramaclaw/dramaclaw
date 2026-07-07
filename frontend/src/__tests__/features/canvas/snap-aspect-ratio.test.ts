@@ -28,8 +28,11 @@ describe("snapToAllowedAspectRatio (image set)", () => {
     }
   });
 
-  it("21:9 (not in the image set) snaps to the closest allowed (16:9)", () => {
-    expect(snapToAllowedAspectRatio("21:9", IMG, "1:1")).toBe("16:9");
+  it("keeps 21:9 for images (issue #52: was wrongly snapped to 16:9)", () => {
+    // The image node dropdown offers 21:9 and the backend preset set supports it,
+    // so a user-picked 21:9 must survive submit untouched — not snap to 16:9.
+    expect(IMG).toContain("21:9");
+    expect(snapToAllowedAspectRatio("21:9", IMG, "1:1")).toBe("21:9");
   });
 
   it("resolves 'auto' / non-ratio input to the fallback", () => {
