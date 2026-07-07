@@ -96,6 +96,7 @@ from novelvideo.freezone.canvas_static_urls import (
 from novelvideo.freezone.history import (
     append_generation_history,
     build_node_history_record,
+    read_canvas_generation_history,
     read_generation_history,
 )
 from novelvideo.freezone.image_node import (
@@ -9959,6 +9960,56 @@ async def get_node_generation_history(
             project_dir=project_dir,
             canvas_id=canvas_id,
             node_id=node_id,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    records = [
+        sanitize_project_local_paths_in_memory(
+            migrate_canvas_static_urls_in_memory(
+                record,
+                project_id=ctx.project_id,
+                owner_username=ctx.owner_username,
+                project_name=ctx.project_name,
+                project_dir=project_dir,
+            )
+            or record,
+            project_id=ctx.project_id,
+            project_dir=project_dir,
+        )
+        or record
+        for record in records
+    ]
+    return {"ok": True, "data": {"records": records}}
+
+
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}/generation-history",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_canvas_generation_history(
+    project: str,
+    canvas_id: str,
+    limit: int = Query(500, ge=1, le=2000),
+    user: dict = Depends(get_api_user),
+):
+    """Return every node's recorded generation attempts for a whole canvas.
+
+    Aggregates across all nodes (newest first), including nodes that were deleted
+    from the canvas — their history files persist, so their past attempts stay
+    recoverable in the history browser.
+    """
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project,
+        user,
+        required_role="viewer",
+    )
+    try:
+        records = read_canvas_generation_history(
+            project_dir=project_dir,
+            canvas_id=canvas_id,
             limit=limit,
         )
     except ValueError as exc:

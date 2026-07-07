@@ -90,14 +90,18 @@ describe("beats workbench v2-storage sketch-studio contract", () => {
     expect(deepLinkEffect).toContain("appliedDeepLinkRef");
   });
 
-  it("shows sketch and render grid gallery buttons only for narrated projects", () => {
+  it("shows the sketch grid gallery for all projects while render grids stay narrated-only", () => {
     const route = read(
       "src/routes/_app/projects.$project/episodes.$episode/beats.lazy.tsx",
     );
     const actions = read("src/components/episode/beat-workbench/sketch-studio-actions.tsx");
 
     expect(route).toContain('spine_template === "narrated"');
-    expect(route).toContain("showGridGalleryActions={isNarratedProject}");
+    expect(route).not.toContain("showGridGalleryActions={isNarratedProject}");
+    expect(route).toContain("onOpenGridGallery={() => setGridGalleryOpen(true)}");
+    expect(route).toContain("onOpenRenderGridGallery={");
+    expect(route).toContain("isNarratedProject");
+    expect(route).toContain(": undefined");
     expect(actions).toContain("showGridGalleryActions");
     expect(actions).toContain("showGridGalleryActions &&");
   });

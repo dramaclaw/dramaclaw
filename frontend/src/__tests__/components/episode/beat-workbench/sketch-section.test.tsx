@@ -22,6 +22,7 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, vars?: Record<string, string | number>) => {
       if (key === "episode.beat.noSketch") return "无草图";
+      if (key === "common.generateNew") return "生成新图";
       if (key === "common.regenerate") return "重新生成";
       if (key === "episode.workbench.sketch.generateNow") return "立即生成";
       if (key === "episode.workbench.sketch.regenDesc") return `重生第 ${vars?.n} 个 beat`;
@@ -522,7 +523,7 @@ describe("SketchSection", () => {
     });
   });
 
-  it("shows generate now when the beat has no sketch", async () => {
+  it("shows generate new for the current beat when the beat has no sketch", async () => {
     render(
       <SketchSection
         beat={makeBeat({ sketch_url: "" })}
@@ -534,7 +535,7 @@ describe("SketchSection", () => {
     );
 
     expect(screen.queryByRole("button", { name: /重新生成/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /立即生成/ }));
+    fireEvent.click(screen.getByRole("button", { name: /生成新图/ }));
     fireEvent.click(screen.getByRole("button", { name: "common.confirm" }));
 
     await waitFor(() => expect(regenerateSketchMock).toHaveBeenCalledWith({

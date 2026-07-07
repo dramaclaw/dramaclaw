@@ -67,6 +67,26 @@ export async function fetchNodeGenerationHistory(
   return data?.records ?? [];
 }
 
+/**
+ * Read the whole canvas's generation history in one request (most recent
+ * first). Unlike {@link fetchNodeGenerationHistory} this is not scoped to a
+ * single node, and the backend aggregates across every node that ever recorded
+ * history on this canvas — including nodes since deleted from the canvas — so
+ * their past attempts stay visible in the history browser.
+ */
+export async function fetchCanvasGenerationHistory(
+  project: string,
+  canvasId: string,
+  limit = 500,
+): Promise<FreezoneGenerationHistoryRecord[]> {
+  const data = await apiCall<{ records?: FreezoneGenerationHistoryRecord[] }>(
+    `projects/${encodeURIComponent(project)}/freezone/canvases/${encodeURIComponent(
+      canvasId,
+    )}/generation-history?limit=${limit}`,
+  );
+  return data?.records ?? [];
+}
+
 // /freezone/gen ----------------------------------------------------------- //
 
 export type FreezoneProvider =

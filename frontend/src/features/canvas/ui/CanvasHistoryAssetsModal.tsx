@@ -44,9 +44,10 @@ import { ThreeDDirectorDialog } from '@/features/viewer-kit/three-d/ThreeDDirect
 import { ImageViewerModal } from './ImageViewerModal';
 import { VideoViewerModal } from './VideoViewerModal';
 
-// Node types that record backend generation history — used only to scope the
-// per-node fan-out fallback (the aggregate endpoint ignores this list). Pure
-// reference / annotation / layout nodes never have history, so we skip them.
+// Node types that record backend generation history. Used only to scope the
+// per-node fallback fan-out (see useCanvasGenerationHistory); the canvas-level
+// aggregate endpoint ignores this list. Pure reference / annotation / layout
+// nodes never have history, so we skip them.
 const GENERATIVE_HISTORY_NODE_TYPES = new Set<string>([
   CANVAS_NODE_TYPES.imageGen,
   CANVAS_NODE_TYPES.imageEdit,
@@ -62,7 +63,7 @@ const GENERATIVE_HISTORY_NODE_TYPES = new Set<string>([
 ]);
 
 // Cap how many recent records each tab shows. Records arrive newest-first
-// (aggregatePerNode sorts by recorded_at desc), so slicing keeps the latest.
+// (backend sorts by recorded_at desc), so slicing keeps the latest.
 const HISTORY_DISPLAY_CAP = 20;
 
 /**
@@ -193,15 +194,17 @@ export function CanvasHistoryAssetsModal({
   const nodes = useCanvasStore((state) => state.nodes);
   const useHistory = assetSource === 'generation-history';
 
-  // Scope the per-node fallback fan-out to nodes that can actually have history.
-  const historyNodeIds = useMemo(
+  // Live-node ids feed the per-node fallback fan-out for backends that don't yet
+  // expose the canvas-level aggregate endpoint. When the aggregate route is
+  // present it ignores these and returns history for deleted nodes too.
+  const fallbackNodeIds = useMemo(
     () =>
       nodes
         .filter((node) => GENERATIVE_HISTORY_NODE_TYPES.has(node.type))
         .map((node) => node.id),
     [nodes],
   );
-  const { records, isLoading } = useCanvasGenerationHistory(historyNodeIds, {
+  const { records, isLoading } = useCanvasGenerationHistory(fallbackNodeIds, {
     enabled: useHistory,
   });
 

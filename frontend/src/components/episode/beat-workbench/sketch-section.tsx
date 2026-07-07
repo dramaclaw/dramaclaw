@@ -680,7 +680,7 @@ export function SketchSection({
               {regenerate.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
               {hasSketch
                 ? t("common.regenerate")
-                : t("episode.workbench.sketch.generateNow")}
+                : t("common.generateNew")}
               <CreditCostInline display={sketchRegenCost.data?.data.display} />
             </Button>
           )}

@@ -742,8 +742,11 @@ function BeatsTabContent() {
                     project={project}
                     episode={epNum}
                     onOpenGridGallery={() => setGridGalleryOpen(true)}
-                    onOpenRenderGridGallery={() => setRenderGridGalleryOpen(true)}
-                    showGridGalleryActions={isNarratedProject}
+                    onOpenRenderGridGallery={
+                      isNarratedProject
+                        ? () => setRenderGridGalleryOpen(true)
+                        : undefined
+                    }
                     showLegend={false}
                     showDetectionSummary={false}
                   />
