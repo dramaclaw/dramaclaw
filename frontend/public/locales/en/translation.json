@@ -2012,6 +2012,7 @@
         },
         "seedance2GeneratePrompt": "AI optimize",
         "seedance2PromptGenerated": "Seedance2 prompt optimized",
+        "seedance2PromptGeneratedOtherBeat": "Subject prompt optimized and saved back to beat #{{n}}",
         "seedance2PromptGenerateFailed": "Seedance2 prompt generation failed",
         "videoPrompt": "Video prompt",
         "keyframePrompt": "Single-beat video prompt",

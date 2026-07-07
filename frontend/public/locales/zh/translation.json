@@ -2012,6 +2012,7 @@
         },
         "seedance2GeneratePrompt": "AI 优化",
         "seedance2PromptGenerated": "Seedance2 提示词 已优化",
+        "seedance2PromptGeneratedOtherBeat": "主体提示词已优化，已写回镜头 #{{n}}",
         "seedance2PromptGenerateFailed": "Seedance2 提示词 生成失败",
         "videoPrompt": "视频提示词",
         "keyframePrompt": "单个 Beat 视频提示词",

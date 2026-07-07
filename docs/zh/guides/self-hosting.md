@@ -62,7 +62,7 @@ docker compose logs -f api       # 日志
 docker compose down              # 停止（保留数据卷）
 ```
 
-## 5. 数据在哪 / 备份
+## 5. 数据在哪 / 备份、恢复与迁移
 
 - 项目数据在命名卷 `ce-data`（容器内 `/data`），输出在 `NOVELVIDEO_OUTPUT_DIR`（默认 `output`）。
 - 备份数据卷：
@@ -73,6 +73,15 @@ docker run --rm -v dramaclaw-ce_ce-data:/data -v "$PWD":/backup alpine \
 ```
 
 （卷名前缀随 compose 项目名，`docker volume ls` 确认实际名。）
+
+- 恢复 / 搬到新机 —— 把 `ce-data-backup.tar.gz` 拷到目标机，反向解回数据卷（`-v` 挂载会在卷不存在时自动创建）：
+
+```bash
+docker run --rm -v dramaclaw-ce_ce-data:/data -v "$PWD":/backup alpine \
+  tar xzf /backup/ce-data-backup.tar.gz -C /data
+```
+
+然后照常起服务（`docker compose -f docker-compose.selfhosted.yml up -d`）。若要一并带上已生成的媒体与配置，把 `output` 目录（`NOVELVIDEO_OUTPUT_DIR`）和 `.env` 也拷过去。
 
 ## 6. 升级
 
