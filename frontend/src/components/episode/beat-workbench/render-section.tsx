@@ -18,6 +18,7 @@ import {
   Lock,
   Loader2,
   RefreshCw,
+  Square,
   SunMedium,
   Upload,
   X,
@@ -203,6 +204,14 @@ export function RenderSection({
     : null;
   const detailRender = assignedRender ?? candidates[0] ?? null;
   const previewUrl = beat.frame_url ?? detailRender?.cell_url ?? null;
+  // Live loading state for the preview card while a render regen runs. Progress
+  // comes from the active task's SSE stream (0–1) and survives refresh because
+  // the controller reconciles against the persisted task row.
+  const renderActive = regenTask.started;
+  const renderPercent = Math.max(
+    0,
+    Math.min(100, Math.round((regenTask.stream?.progress ?? 0) * 100)),
+  );
   const backgroundData =
     backgroundAnchors.data?.ok === true ? backgroundAnchors.data.data : null;
   const currentBackgroundSource =
@@ -387,30 +396,55 @@ export function RenderSection({
     <div className="flex flex-col gap-3">
       <section className="rounded-[10px] border border-white/[0.055] bg-white/[0.016] p-3">
         <div className={RENDER_GRID_CLASS}>
-          {/* Left: preview image */}
-          {previewUrl ? (
-            <button
-              type="button"
-              onClick={() => {
-                const safe = resolveMediaUrl(previewUrl);
-                if (safe) onPreview?.(safe);
-              }}
-              className={RENDER_PREVIEW_CLASS}
-              style={{ aspectRatio: ratioToCss(aspectSpec.renderAspect) }}
-            >
-              <img
-                src={resolveMediaUrl(previewUrl) ?? ""}
-                alt={`Beat ${beat.beat_number} render`}
-                className={RENDER_PREVIEW_IMAGE_CLASS}
-                loading="lazy"
-                decoding="async"
-              />
-            </button>
-          ) : (
-            <div className={RENDER_EMPTY_CLASS} style={{ aspectRatio: ratioToCss(aspectSpec.renderAspect) }}>
-              {t("episode.beat.noRender")}
-            </div>
-          )}
+          {/* Left: preview image (with a live progress overlay while generating) */}
+          <div className="relative justify-self-start">
+            {previewUrl ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const safe = resolveMediaUrl(previewUrl);
+                  if (safe) onPreview?.(safe);
+                }}
+                className={RENDER_PREVIEW_CLASS}
+                style={{ aspectRatio: ratioToCss(aspectSpec.renderAspect) }}
+              >
+                <img
+                  src={resolveMediaUrl(previewUrl) ?? ""}
+                  alt={`Beat ${beat.beat_number} render`}
+                  className={RENDER_PREVIEW_IMAGE_CLASS}
+                  loading="lazy"
+                  decoding="async"
+                />
+              </button>
+            ) : (
+              <div className={RENDER_EMPTY_CLASS} style={{ aspectRatio: ratioToCss(aspectSpec.renderAspect) }}>
+                {t("episode.beat.noRender")}
+              </div>
+            )}
+            {renderActive && (
+              <div
+                className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-[10px] bg-black/55 backdrop-blur-[1px]"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={renderPercent}
+              >
+                <Loader2 aria-hidden className="size-5 animate-spin text-white/90" />
+                <div className="flex items-baseline leading-none text-white">
+                  <span className="text-2xl font-semibold tabular-nums tracking-tight">
+                    {renderPercent}
+                  </span>
+                  <span className="ml-0.5 text-xs font-medium text-white/70">%</span>
+                </div>
+                <div className="h-1 w-24 overflow-hidden rounded-full bg-white/20">
+                  <div
+                    className="h-full rounded-full bg-white/85 transition-[width] duration-300 ease-out"
+                    style={{ width: `${renderPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Right: candidates + actions */}
           <div className="flex min-h-0 flex-col gap-2.5">
@@ -466,19 +500,36 @@ export function RenderSection({
           {/* Actions — full width row below both columns */}
           <div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-2 pt-1">
             <div className="flex items-center gap-1.5">
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => setRegenConfirm(true)}
-                disabled={regenerate.isPending}
-                className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
-              >
-                {regenerate.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
-                {previewUrl
-                  ? t("common.regenerate")
-                  : t("episode.workbench.render.generateNew")}
-                <CreditCostInline display={renderRegenCost.data?.data.display} />
-              </Button>
+              {regenTask.started ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => void regenTask.stop()}
+                  disabled={regenTask.stopping}
+                  className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
+                >
+                  {regenTask.stopping ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Square className="size-3" />
+                  )}
+                  {t("common.stop")}
+                </Button>
+              ) : (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setRegenConfirm(true)}
+                  disabled={regenerate.isPending}
+                  className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
+                >
+                  {regenerate.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+                  {previewUrl
+                    ? t("common.regenerate")
+                    : t("episode.workbench.render.generateNew")}
+                  <CreditCostInline display={renderRegenCost.data?.data.display} />
+                </Button>
+              )}
               {renderPlatePreview ? (
                 <RenderRelightBadge
                   relight={renderPlatePreview.relight}

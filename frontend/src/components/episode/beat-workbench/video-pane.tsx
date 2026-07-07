@@ -25,6 +25,7 @@ import {
   RefreshCw,
   Scissors,
   Settings2,
+  Square,
   Trash2,
   Upload,
   WandSparkles,
@@ -281,6 +282,18 @@ export function VideoPane({
       queryKeys.videoPool(project, episode),
     ],
   });
+  // Beat 视频提示词生成在 EE 下是后台任务（同步分支仅 CE 单机命中），mutateAsync
+  // 只拿到入队 ack，isPending 一闪而过。用任务控制器让 loading 覆盖真实生成过程，
+  // 并在刷新后仍能恢复；完成后 invalidate beats 会把提示词回填到文本框。
+  const beatVideoPromptTask = useTaskController({
+    key: {
+      taskType: "beat_video_prompt",
+      project,
+      episode,
+      beatNum: beat.beat_number,
+    },
+    invalidateKeys: [queryKeys.beats(project, episode)],
+  });
   const poolSelect = useVideoPoolSelect(project, episode);
   const { data: poolRes } = useVideoPool(project, episode);
   const { data: videoBackendsRes } = useVideoBackends(project);
@@ -449,6 +462,14 @@ export function VideoPane({
     legacyPromptField,
   ]);
   const previewAspectCss = "16 / 9";
+  // Live loading state for the video preview while a single-shot regen runs.
+  // Progress comes from the active task's SSE stream (0–1) and survives refresh
+  // because the controller reconciles against the persisted task row.
+  const videoActive = regenTask.started;
+  const videoPercent = Math.max(
+    0,
+    Math.min(100, Math.round((regenTask.stream?.progress ?? 0) * 100)),
+  );
   const seedance2Status = useSeedance2BeatStatus(
     project,
     episode,
@@ -1305,6 +1326,7 @@ export function VideoPane({
         return;
       }
       if (!("data" in res)) {
+        beatVideoPromptTask.start();
         toast.success(t("episode.workbench.video.beatVideoPromptGenerateStarted"));
         return;
       }
@@ -1352,6 +1374,29 @@ export function VideoPane({
           >
             <Download className="size-3.5" />
           </a>
+        )}
+        {videoActive && (
+          <div
+            className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 rounded-[10px] bg-black/55 backdrop-blur-[1px]"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={videoPercent}
+          >
+            <Loader2 aria-hidden className="size-5 animate-spin text-white/90" />
+            <div className="flex items-baseline leading-none text-white">
+              <span className="text-2xl font-semibold tabular-nums tracking-tight">
+                {videoPercent}
+              </span>
+              <span className="ml-0.5 text-xs font-medium text-white/70">%</span>
+            </div>
+            <div className="h-1 w-24 overflow-hidden rounded-full bg-white/20">
+              <div
+                className="h-full rounded-full bg-white/85 transition-[width] duration-300 ease-out"
+                style={{ width: `${videoPercent}%` }}
+              />
+            </div>
+          </div>
         )}
       </div>
 
@@ -1438,11 +1483,14 @@ export function VideoPane({
             <Button
               size="xs"
               variant="outline"
-              disabled={generateBeatVideoPrompt.isPending}
+              disabled={
+                generateBeatVideoPrompt.isPending || beatVideoPromptTask.started
+              }
               onClick={() => void handleGenerateBeatVideoPrompt()}
               className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
             >
-              {generateBeatVideoPrompt.isPending ? (
+              {generateBeatVideoPrompt.isPending ||
+              beatVideoPromptTask.started ? (
                 <Loader2 className="size-3 animate-spin" />
               ) : (
                 <WandSparkles className="size-3" />
@@ -1628,23 +1676,40 @@ export function VideoPane({
             </>
           )}
           <VideoParamField label="" hiddenLabel>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={openRegenConfirm}
-              disabled={regenerate.isPending}
-              className={VIDEO_PARAM_ACTION_CLASS}
-            >
-              {regenerate.isPending ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : hasGeneratedVideo ? (
-                <RefreshCw className="size-3" />
-              ) : (
-                <Film className="size-3" />
-              )}
-              {videoActionLabel}
-              <CreditCostInline display={videoCost.data?.data.display} />
-            </Button>
+            {regenTask.started ? (
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => void regenTask.stop()}
+                disabled={regenTask.stopping}
+                className={VIDEO_PARAM_ACTION_CLASS}
+              >
+                {regenTask.stopping ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Square className="size-3" />
+                )}
+                {t("common.stop")}
+              </Button>
+            ) : (
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={openRegenConfirm}
+                disabled={regenerate.isPending}
+                className={VIDEO_PARAM_ACTION_CLASS}
+              >
+                {regenerate.isPending ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : hasGeneratedVideo ? (
+                  <RefreshCw className="size-3" />
+                ) : (
+                  <Film className="size-3" />
+                )}
+                {videoActionLabel}
+                <CreditCostInline display={videoCost.data?.data.display} />
+              </Button>
+            )}
           </VideoParamField>
         </div>
       )}
@@ -2418,23 +2483,40 @@ export function VideoPane({
                     : t("episode.workbench.video.seedance2GeneratePrompt")}
                   <CreditCostInline display={seedance2PromptCostDisplay} />
                 </Button>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={openRegenConfirm}
-                  disabled={regenerate.isPending}
-                  className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
-                >
-                  {regenerate.isPending ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : hasGeneratedVideo ? (
-                    <RefreshCw className="size-3" />
-                  ) : (
-                    <Film className="size-3" />
-                  )}
-                  {videoActionLabel}
-                  <CreditCostInline display={videoCost.data?.data.display} />
-                </Button>
+                {regenTask.started ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => void regenTask.stop()}
+                    disabled={regenTask.stopping}
+                    className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
+                  >
+                    {regenTask.stopping ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <Square className="size-3" />
+                    )}
+                    {t("common.stop")}
+                  </Button>
+                ) : (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={openRegenConfirm}
+                    disabled={regenerate.isPending}
+                    className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
+                  >
+                    {regenerate.isPending ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : hasGeneratedVideo ? (
+                      <RefreshCw className="size-3" />
+                    ) : (
+                      <Film className="size-3" />
+                    )}
+                    {videoActionLabel}
+                    <CreditCostInline display={videoCost.data?.data.display} />
+                  </Button>
+                )}
               </div>
             </div>
           </div>

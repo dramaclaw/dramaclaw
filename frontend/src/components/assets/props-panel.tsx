@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useTaskController } from "@/hooks/use-task-controller";
+import { propReferenceAssetScope } from "@/lib/task-scope";
 import { backendErrorToastMessage } from "@/lib/api-errors";
 import {
   useBatchGeneratePropReferences,
@@ -256,7 +257,9 @@ function PropAssetCardController({
       taskType: "prop_reference_asset",
       project,
       episode: 0,
-      scope: `prop:${prop.name}:reference`,
+      // Must match the BE-hashed scope (see task-scope.ts), else the button
+      // loses its loading state after a refresh.
+      scope: propReferenceAssetScope(prop.name),
     },
     invalidateKeys: [queryKeys.props(project)],
   });

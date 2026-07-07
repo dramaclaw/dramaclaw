@@ -1046,6 +1046,8 @@ frontend/src/lib/script-feedback.ts,Elastic-2.0,2026 SuperTale contributors,REUS
 frontend/src/lib/sketch-colors.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/sketch-pose-editor-model.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/style-preview-url.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/task-scope.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/task-scope.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/task-types.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/time-of-day.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/url-params.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

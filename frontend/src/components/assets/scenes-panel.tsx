@@ -65,6 +65,10 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useTaskController } from "@/hooks/use-task-controller";
+import {
+  sceneReferenceAssetScope,
+  stageAssetScope,
+} from "@/lib/task-scope";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { sceneTypeLabel, sceneTypeOptions } from "@/lib/scene-type";
 import { timeOfDayLabel, timeOfDayOptions } from "@/lib/time-of-day";
@@ -611,12 +615,20 @@ function SceneAssetCardController({
   const generateStagePly = useGenerateScene3gsPlyAsync(project, scene.name);
   const saveDirectorWorld = useSaveSceneDirectorWorld(project, scene.name);
   const clearDirectorWorld = useClearSceneDirectorWorld(project, scene.name);
+  // Reconcile keys must reproduce the BE-hashed task scope exactly (see
+  // task-scope.ts) — a human-readable placeholder never matches the row stored
+  // on `/tasks`, so loading state is silently dropped after a refresh.
+  // Pano runs are keyed by source: when a master exists the BE step is
+  // `pano_from_master`, otherwise `pano_from_text` (mirrors the card's
+  // `panoSource = hasMaster ? "master" : "text"`).
+  const hasMaster = Boolean(resolveMediaUrl(scene.master_url));
+  const panoStep = hasMaster ? "pano_from_master" : "pano_from_text";
   const masterTask = useTaskController({
     key: {
       taskType: "scene_reference_asset",
       project,
       episode: 0,
-      scope: `scene:${scene.name}:master`,
+      scope: sceneReferenceAssetScope(scene.name, "master"),
     },
     invalidateKeys: [queryKeys.scenes(project)],
   });
@@ -625,7 +637,7 @@ function SceneAssetCardController({
       taskType: "stage_asset",
       project,
       episode: 0,
-      scope: `scene:${scene.name}:pano`,
+      scope: stageAssetScope(scene.name, panoStep),
     },
     invalidateKeys: [queryKeys.scenes(project)],
   });
@@ -634,7 +646,7 @@ function SceneAssetCardController({
       taskType: "scene_reference_asset",
       project,
       episode: 0,
-      scope: `scene:${scene.name}:reverse`,
+      scope: sceneReferenceAssetScope(scene.name, "reverse_master"),
     },
     invalidateKeys: [queryKeys.scenes(project)],
   });
@@ -643,7 +655,7 @@ function SceneAssetCardController({
       taskType: "stage_asset",
       project,
       episode: 0,
-      scope: `scene:${scene.name}:single_face_sharp`,
+      scope: stageAssetScope(scene.name, "single_face_sharp"),
     },
     invalidateKeys: [queryKeys.scenes(project)],
     onComplete: () => setStagePlySource(null),
@@ -654,7 +666,7 @@ function SceneAssetCardController({
       taskType: "stage_asset",
       project,
       episode: 0,
-      scope: `scene:${scene.name}:pano_sharp`,
+      scope: stageAssetScope(scene.name, "pano_sharp"),
     },
     invalidateKeys: [queryKeys.scenes(project)],
     onComplete: () => setStagePlySource(null),
