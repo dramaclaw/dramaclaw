@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useState } from "react";
 import { MessageCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CommunityShowcase } from "./community-showcase";
 import LightRays from "./light-rays";
 import SplitText from "@/components/react-bits/split-text";
+import { useGithubStars } from "@/hooks/use-github-stars";
 import { PRODUCT_MANUAL_URL } from "@/lib/product-manual";
 import styles from "./login.module.css";
 
@@ -14,42 +14,10 @@ const GITHUB_URL = "https://github.com/dramaclaw/dramaclaw";
 // 从 GITHUB_URL 推导出 owner/repo，用于拉取 star 数。
 const GITHUB_REPO = "dramaclaw/dramaclaw";
 
-// 进程内缓存，避免重复访问匿名 API（未鉴权限速 60 次/小时/IP）。
-let cachedStars: number | null = null;
-
 function formatStars(count: number): string {
   if (count < 1000) return String(count);
   // 146.5k 形式：保留一位小数，整千去掉 .0。
   return `${(count / 1000).toFixed(1).replace(/\.0$/, "")}k`;
-}
-
-// 拉取目标仓库的 star 数；失败/限速时返回 null（界面隐藏星标）。
-function useGithubStars(repo: string): number | null {
-  const [stars, setStars] = useState<number | null>(cachedStars);
-
-  useEffect(() => {
-    if (cachedStars !== null) return;
-    let active = true;
-    fetch(`https://api.github.com/repos/${repo}`, {
-      headers: { Accept: "application/vnd.github+json" },
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const count = data?.stargazers_count;
-        if (active && typeof count === "number") {
-          cachedStars = count;
-          setStars(count);
-        }
-      })
-      .catch(() => {
-        /* 静默失败：登录页 star 数仅为锦上添花 */
-      });
-    return () => {
-      active = false;
-    };
-  }, [repo]);
-
-  return stars;
 }
 
 // lucide-react 当前版本已移除品牌图标（无 Github 导出），用官方 GitHub mark 内联 SVG。
