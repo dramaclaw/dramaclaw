@@ -135,6 +135,9 @@ export function LoginStageContent({
                     <p className={styles.businessWechatSubtitle}>
                       {t("auth.businessWechat.subtitle")}
                     </p>
+                    <p className={styles.businessWechatNote}>
+                      {t("auth.businessWechat.note")}
+                    </p>
                   </div>
                 </div>
               </div>

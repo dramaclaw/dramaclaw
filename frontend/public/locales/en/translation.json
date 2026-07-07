@@ -867,7 +867,8 @@
       "open": "View business WeChat QR code",
       "qrAlt": "Business WeChat QR code",
       "title": "Add Business WeChat",
-      "subtitle": "Account access / User guide"
+      "subtitle": "Account access / User guide",
+      "note": "For partnerships, please add a note — we'll prioritize your request"
     },
     "stage": {
       "eyebrow": "Drama creation platform",

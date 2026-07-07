@@ -183,6 +183,15 @@
   letter-spacing: 0;
 }
 
+.businessWechatNote {
+  margin: 6px 0 0;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  font-weight: 390;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
 .githubLink {
   display: inline-flex;
   align-items: center;
