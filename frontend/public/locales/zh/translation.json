@@ -1357,6 +1357,7 @@
       "confirm": "确认重新导入"
     },
     "logsPanel": "导入日志",
+    "logCompleted": "导入完成",
     "fileDeleted": "文件已删除",
     "buildHint": "构建语义图谱，然后在角色 / 剧集页面分别构建",
     "emptyPreview": "上传文件后，这里会显示小说结构预览",

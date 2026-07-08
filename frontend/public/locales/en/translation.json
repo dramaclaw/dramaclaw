@@ -1357,6 +1357,7 @@
       "confirm": "Confirm re-import"
     },
     "logsPanel": "Import log",
+    "logCompleted": "Import complete",
     "fileDeleted": "File removed",
     "buildHint": "Build the semantic graph, then construct characters and episodes on their respective pages.",
     "emptyPreview": "No content to preview yet. Upload a file to see the structure.",
