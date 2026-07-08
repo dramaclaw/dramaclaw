@@ -743,6 +743,13 @@ export function IngestPageContent({ project }: { project: string }) {
     enabled: ingestStarted,
     invalidateKeys: [queryKeys.chapters(project)],
     onComplete: async () => {
+      // 显式补一条收尾日志：SSE 的最终「完成」行会被 ingestStarted 门控 + 标量
+      // currentTask 覆盖的竞态吞掉（见下方日志收集 effect），导致面板定格在
+      // 「Step 3/3…」像卡住。这里不依赖那条会丢的 SSE 行，主动收尾。 (#72)
+      setIngestLogs((prev) => {
+        const done = t("ingest.logCompleted");
+        return prev[prev.length - 1] === done ? prev : [...prev, done];
+      });
       setIngestStarted(false);
       setIngestFileStatus("completed");
       setIngestError(null);
