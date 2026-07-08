@@ -2721,7 +2721,12 @@
       "pause": "暂停",
       "use": "使用",
       "delete": "删除",
-      "promptTitle": "提示词"
+      "promptTitle": "提示词",
+      "batchDownload": "批量下载",
+      "batchUse": "批量使用",
+      "selectAll": "全选",
+      "deselectAll": "取消全选",
+      "downloading": "下载中…"
     },
     "shortcuts": {
       "title": "快捷键",
