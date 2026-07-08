@@ -26,6 +26,6 @@ jobs:
 
       - name: Push to Gitee
         run: |
-          git remote add gitee git@gitee.com:claymorelab/dramaclaw.git
+          git remote add gitee git@gitee.com:dramaclaw/dramaclaw.git
           git push gitee --all --force
           git push gitee --tags --force
