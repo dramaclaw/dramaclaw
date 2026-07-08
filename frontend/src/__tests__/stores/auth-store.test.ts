@@ -204,6 +204,18 @@ describe("auth-store", () => {
     expect(useAuthStore.getState().username).toBeNull();
   });
 
+  it("keeps state when /auth/me returns a transient 5xx (backend mid-rollout)", async () => {
+    // A 502 during a backend rolling restart must NOT log the user out, even on
+    // the strict route-guard default: the cookie is still valid and the next
+    // poll recovers on 200.
+    useAuthStore.setState({ username: "admin", role: "admin" });
+    global.fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 502 });
+    const result = await useAuthStore.getState().validateSession();
+    expect(result).toBe(false);
+    expect(useAuthStore.getState().username).toBe("admin");
+    expect(useAuthStore.getState().role).toBe("admin");
+  });
+
   it("validateSession clears state on network failure", async () => {
     useAuthStore.setState({ username: "admin", role: "admin" });
     global.fetch = vi.fn().mockRejectedValueOnce(new Error("offline"));

@@ -136,7 +136,18 @@ export const useAuthStore = create<AuthState>()(
                 signal: regionAbortController().signal,
               });
               if (!res.ok) {
-                return { user: null, authFailure: true, networkFailure: false };
+                // A 401/403 is the ONLY response that means the session cookie
+                // is missing or stale — the sole case that should tear auth
+                // down. Any other non-2xx (500/502/503 while the backend pod is
+                // mid-rollout, gateway errors) carries no auth signal: leave the
+                // session intact so a routine backend restart doesn't log every
+                // user out. We surface it as neither authFailure nor
+                // networkFailure so no caller — not even the strict route-guard
+                // default — clears local auth; the next poll recovers on 200.
+                if (res.status === 401 || res.status === 403) {
+                  return { user: null, authFailure: true, networkFailure: false };
+                }
+                return { user: null, authFailure: false, networkFailure: false };
               }
               const body = (await res.json()) as OkResponse<CurrentUser>;
               cachedCurrentUser = body.data;
