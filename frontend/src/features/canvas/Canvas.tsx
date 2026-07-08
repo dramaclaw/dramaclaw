@@ -3089,8 +3089,9 @@ export function Canvas({
   );
 
   // 历史资产弹窗「使用」：把该资产作为新节点生成到视口中心（复用素材落点的 spawnAssetNode）。
+  // 批量使用时传 placement，把多个新节点在视口中心附近铺成网格，避免全部叠在同一点。
   const handleUseHistoryAsset = useCallback(
-    (asset: CanvasAsset) => {
+    (asset: CanvasAsset, placement?: { index: number; total: number }) => {
       const payload: CanvasAssetDragPayload = {
         kind: asset.kind,
         label: asset.label ?? '',
@@ -3104,11 +3105,23 @@ export function Canvas({
         restoreAsGeneratedImage: true,
         source: {},
       };
-      const newNodeId = spawnAssetNode(
-        useCanvasStore.getState(),
-        payload,
-        spawnAtViewportCenter(),
-      );
+      const origin = spawnAtViewportCenter();
+      // 网格铺开：每行最多 4 个，格间距 320，整体大致以视口中心为中心。
+      const position =
+        placement && placement.total > 1
+          ? (() => {
+              const perRow = Math.min(4, placement.total);
+              const gap = 320;
+              const col = placement.index % perRow;
+              const row = Math.floor(placement.index / perRow);
+              const rows = Math.ceil(placement.total / perRow);
+              return {
+                x: origin.x + (col - (perRow - 1) / 2) * gap,
+                y: origin.y + (row - (rows - 1) / 2) * gap,
+              };
+            })()
+          : origin;
+      const newNodeId = spawnAssetNode(useCanvasStore.getState(), payload, position);
       setSelectedNode(newNodeId);
       scheduleCanvasPersist(0);
     },

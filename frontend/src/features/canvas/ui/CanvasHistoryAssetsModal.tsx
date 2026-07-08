@@ -6,6 +6,8 @@ import {
   ArrowDownUp,
   Box as BoxIcon,
   Check,
+  Download,
+  Loader2,
   Minus,
   Pause,
   Play,
@@ -16,6 +18,7 @@ import {
 } from 'lucide-react';
 
 import { useCanvasStore } from '@/stores/canvasStore';
+import { downloadUrlAsFile } from '@/lib/browserDownload';
 import {
   extractCanvasAssets,
   groupAssetsByDate,
@@ -171,8 +174,11 @@ const THUMB_BASE_PX = 256;
 
 interface CanvasHistoryAssetsModalProps {
   onClose: () => void;
-  /** 「使用」：把该资产作为一个新节点加入画布（落在视口中心）。 */
-  onUseAsset: (asset: CanvasAsset) => void;
+  /**
+   * 「使用」：把该资产作为一个新节点加入画布（落在视口中心）。批量使用时传 placement，
+   * 由外层把多个节点在视口中心附近铺成网格。
+   */
+  onUseAsset: (asset: CanvasAsset, placement?: { index: number; total: number }) => void;
   /** 「删除」：从画布移除该资产对应的源节点。 */
   onDeleteNode: (nodeId: string) => void;
   /** 仅展示图片 tab（用于分镜组只接受图片的取图场景）。 */
@@ -326,6 +332,49 @@ export function CanvasHistoryAssetsModal({
     onClose();
   };
 
+  // 批量操作：当前 tab 里被选中的资产（保持展示顺序）。切 tab 会清空 selectedIds，
+  // 所以只需在 activeAssets 里过滤即可，不会跨类型串味。
+  const selectedAssets = useMemo(
+    () => activeAssets.filter((asset) => selectedIds.has(asset.id)),
+    [activeAssets, selectedIds],
+  );
+  const allSelected =
+    activeAssets.length > 0 && selectedAssets.length === activeAssets.length;
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleToggleSelectAll = () => {
+    setSelectedIds((current) =>
+      current.size === activeAssets.length
+        ? new Set()
+        : new Set(activeAssets.map((asset) => asset.id)),
+    );
+  };
+
+  // 批量下载：逐个触发浏览器下载，之间留一点间隔，避免浏览器把并发下载判为弹窗滥用而拦截。
+  const handleBatchDownload = async () => {
+    if (isDownloading || selectedAssets.length === 0) return;
+    setIsDownloading(true);
+    try {
+      for (const asset of selectedAssets) {
+        // 不用 label 当文件名：图片/视频的 label 是整段提示词，做文件名很糟；
+        // 交给 downloadUrlAsFile 从 url 推断更合适。
+        await downloadUrlAsFile(asset.url);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  // 批量使用：把选中的资产逐个作为新节点加入画布（网格铺开），完成后关闭弹窗。
+  const handleBatchUse = () => {
+    if (selectedAssets.length === 0) return;
+    selectedAssets.forEach((asset, index) => {
+      onUseAsset(asset, { index, total: selectedAssets.length });
+    });
+    onClose();
+  };
+
   const thumbPx = Math.round((THUMB_BASE_PX * zoom) / 100);
 
   return (
@@ -402,6 +451,15 @@ export function CanvasHistoryAssetsModal({
             <ArrowDownUp className="h-3.5 w-3.5" />
             {t(direction === 'desc' ? 'canvas.history.sortDesc' : 'canvas.history.sortAsc')}
           </button>
+          {selectionMode && activeAssets.length > 0 && (
+            <button
+              type="button"
+              onClick={handleToggleSelectAll}
+              className="text-[13px] text-white/60 transition-colors hover:text-white"
+            >
+              {t(allSelected ? 'canvas.history.deselectAll' : 'canvas.history.selectAll')}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -458,6 +516,39 @@ export function CanvasHistoryAssetsModal({
           ))
         )}
       </div>
+
+      {/* 批量操作栏：进入选择模式且至少选中一项时，从底部浮出。下载 / 使用 / 删除。 */}
+      {selectionMode && selectedAssets.length > 0 && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-5">
+          <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/[0.12] bg-[#161922]/95 px-2.5 py-2 shadow-2xl backdrop-blur">
+            <span className="px-2 text-[13px] text-white/70">
+              {t('canvas.history.selectedCount', { n: selectedAssets.length })}
+            </span>
+            <span className="h-4 w-px bg-white/15" aria-hidden />
+            <button
+              type="button"
+              onClick={handleBatchDownload}
+              disabled={isDownloading}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium text-white/85 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isDownloading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              {t(isDownloading ? 'canvas.history.downloading' : 'canvas.history.batchDownload')}
+            </button>
+            <button
+              type="button"
+              onClick={handleBatchUse}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t('canvas.history.batchUse')}
+            </button>
+          </div>
+        </div>
+      )}
       </div>
 
       {/* Viewers */}

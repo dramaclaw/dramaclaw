@@ -2721,7 +2721,12 @@
       "pause": "Pause",
       "use": "Use",
       "delete": "Delete",
-      "promptTitle": "Prompt"
+      "promptTitle": "Prompt",
+      "batchDownload": "Download",
+      "batchUse": "Use",
+      "selectAll": "Select all",
+      "deselectAll": "Deselect all",
+      "downloading": "Downloading…"
     },
     "shortcuts": {
       "title": "Shortcuts",
