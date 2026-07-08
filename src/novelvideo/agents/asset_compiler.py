@@ -5,8 +5,9 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Optional
 
-from pydantic import BaseModel, Field, ValidationInfo, model_validator
+from pydantic import BaseModel, Field, ValidationError, ValidationInfo, model_validator
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from novelvideo.config import (
     get_newapi_text_pydantic_model,
@@ -37,8 +38,16 @@ class DerivedSceneRequirement(BaseModel):
     atmosphere: str = Field(default="", description="派生场景特有的氛围/天气/空气感；没有就留空")
 
 
+PROP_OUTPUT_SCHEMA_HINT = (
+    "道具规划结构化输出校验失败: requirements 必须是对象数组，每项必须包含 "
+    "prop_name 和 visual_prompt；不能是字符串数组；prop_name 必须逐字来自当前场景块文本或候选道具"
+)
+
+
 class PropRequirement(BaseModel):
-    prop_name: str = Field(description="道具名称，如 '七星剑'、'玉佩'")
+    prop_name: str = Field(
+        description="道具名称，必须逐字复制自当前场景块文本或候选道具，如 '七星剑'、'玉佩'；不要改写或同义词替换"
+    )
     prop_type: str = Field(
         default="",
         description="道具类型: weapon / accessory / artifact / document / furniture",
@@ -46,7 +55,7 @@ class PropRequirement(BaseModel):
     owner: str = Field(default="", description="所属角色名（如有）")
     visual_prompt: str = Field(
         default="",
-        description="用于生成参考图的视觉提示词，写清形状、材质、颜色、可识别细节，80字内",
+        description="用于生成参考图的视觉提示词，必须写清形状、材质、颜色、可识别细节，80字内",
     )
     description: str = Field(default="", description="一句话叙述描述（用途/剧情关系，50字内）")
 
@@ -61,7 +70,7 @@ class BlockDerivedSceneOutput(BaseModel):
 class BlockPropRequirements(BaseModel):
     requirements: list[PropRequirement] = Field(
         default_factory=list,
-        description="当前场景块中有情节意义的道具",
+        description="当前场景块中有情节意义的道具对象数组；每项必须是对象，不能是字符串列表",
     )
 
     @model_validator(mode="after")
@@ -217,8 +226,23 @@ BLOCK_PROP_PROMPT = """# 你是场景块关键道具分析师
 - 道具名必须来自当前场景块文本或给定的候选道具列表
 
 ## 输出规则
+- requirements 必须是对象数组，每个元素必须包含 prop_name / visual_prompt；不能是字符串数组
+- 禁止输出 `{{"requirements":["强光手电"]}}`
+- 正确输出示例：
+  `{{
+    "requirements": [
+      {{
+        "prop_name": "强光手电",
+        "prop_type": "object",
+        "owner": "陆辰",
+        "visual_prompt": "黑色金属强光手电，冷白光束，筒身有磨损划痕",
+        "description": "陆辰在地下室照明并寻找暗格"
+      }}
+    ]
+  }}`
 - 每个道具必须给出 visual_prompt；不要只写用途，要写可画出来的外观
 - description 写剧情用途；如果没有明确用途，可以留空
+- prop_name 必须从当前场景块文本或候选道具中逐字复制；不要改写、泛化、补同义词。原文是“强光手电”，不要写“手电筒”
 """
 
 
@@ -963,11 +987,19 @@ class AssetCompiler:
                 continue
 
             preselected = self._preselect_existing_props(block_text, existing_props)
-            requirements = await self._analyze_block_props(
-                block,
-                preselected,
-                sorted(set(episode_selected_props.values())),
-            )
+            prior_reuse = self._prior_selected_props_in_block(block, episode_selected_props)
+            if prior_reuse and self._is_short_prior_prop_reuse_block(block, preselected):
+                requirements = prior_reuse
+            else:
+                try:
+                    requirements = await self._analyze_block_props(
+                        block,
+                        preselected,
+                        sorted(set(episode_selected_props.values())),
+                    )
+                except ValueError as exc:
+                    log(f"  道具[{block_index + 1}]: {exc}")
+                    raise
             requirements = self._filter_background_props(requirements, block_text)
             for req in requirements:
                 existing = await self._find_matching_prop(req.prop_name)
@@ -986,6 +1018,37 @@ class AssetCompiler:
                 log(f"  道具[{block_index + 1}]: {prop_id} [{source}]")
 
         return prop_menu
+
+    @classmethod
+    def _prior_selected_props_in_block(
+        cls,
+        block: SceneBlock,
+        episode_selected_props: dict[str, str],
+    ) -> list[PropRequirement]:
+        block_text = "\n".join(
+            item for item in [block.header_line, *block.lines] if str(item or "").strip()
+        )
+        result: list[PropRequirement] = []
+        seen: set[str] = set()
+        prior_ids = sorted(
+            {value for value in episode_selected_props.values() if str(value or "").strip()}
+        )
+        for prop_id in prior_ids:
+            if prop_id in seen:
+                continue
+            if cls._contains_text(block_text, prop_id) or cls._contains_text(prop_id, block_text):
+                seen.add(prop_id)
+                result.append(PropRequirement(prop_name=prop_id))
+        return result
+
+    @staticmethod
+    def _is_short_prior_prop_reuse_block(
+        block: SceneBlock,
+        preselected: list[NovelProp],
+    ) -> bool:
+        content_lines = [line for line in block.lines if str(line or "").strip()]
+        has_env_desc = any(str(line or "").strip().startswith("△") for line in content_lines)
+        return len(content_lines) <= 3 and not has_env_desc and not preselected
 
     def _preselect_existing_props(
         self,
@@ -1071,7 +1134,10 @@ class AssetCompiler:
             },
             name="场景块道具分析师",
         )
-        result = await agent.run(task)
+        try:
+            result = await agent.run(task)
+        except (UnexpectedModelBehavior, ValidationError) as exc:
+            raise ValueError(f"{PROP_OUTPUT_SCHEMA_HINT}；原始错误: {exc}") from exc
         return result.output.requirements
 
     @classmethod
