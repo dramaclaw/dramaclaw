@@ -23,6 +23,7 @@ describe("dev-backend-watch", () => {
     vi.resetModules();
     vi.useFakeTimers();
     vi.stubEnv("DEV", true);
+    window.history.replaceState(null, "", "/projects/demo");
   });
 
   afterEach(() => {
@@ -95,6 +96,29 @@ describe("dev-backend-watch", () => {
     await vi.runOnlyPendingTimersAsync();
 
     expect(assign).not.toHaveBeenCalled();
+
+    teardown();
+  });
+
+  it("does not hard-refresh preauth pages when the backend instance changes", async () => {
+    window.history.replaceState(null, "", "/login");
+    const assign = vi.fn();
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(configResponse("ee", "instance-a"))
+      .mockResolvedValueOnce(configResponse("ee", "instance-b"))
+      .mockResolvedValueOnce(configResponse("ee", "instance-b"));
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("location", { ...window.location, assign });
+
+    const { initDevBackendWatch } = await import("@/lib/dev-backend-watch");
+    const teardown = initDevBackendWatch();
+    await vi.runOnlyPendingTimersAsync();
+    await vi.runOnlyPendingTimersAsync();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(assign).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(3);
 
     teardown();
   });

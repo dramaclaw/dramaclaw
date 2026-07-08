@@ -1,0 +1,238 @@
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  overflow: hidden;
+  color: rgba(248, 250, 255, 0.94);
+  background:
+    radial-gradient(circle at 74% 28%, rgba(120, 229, 239, 0.1), transparent 30%),
+    linear-gradient(90deg, rgba(5, 5, 5, 0.99), rgba(8, 9, 10, 0.94) 58%, rgba(5, 5, 5, 0.99)),
+    #050505;
+  opacity: var(--eighth-opacity, 0);
+  filter: blur(var(--eighth-blur, 0px));
+  transform: translateY(var(--eighth-offset, 34px));
+  pointer-events: none;
+}
+
+.layer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.12;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.034) 1px, transparent 1px);
+  background-size: 72px 72px;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14%, #000 76%, transparent);
+  mask-image: linear-gradient(180deg, transparent, #000 14%, #000 76%, transparent);
+}
+
+.header {
+  position: absolute;
+  left: clamp(40px, 6vw, 118px);
+  top: clamp(148px, 20vh, 218px);
+  z-index: 2;
+  width: min(700px, 37vw);
+}
+
+.header p {
+  margin: 0 0 22px;
+  color: rgba(120, 229, 239, 0.72);
+  font-size: 13px;
+  font-weight: 640;
+  line-height: 1;
+  letter-spacing: 0.22em;
+}
+
+.header h2 {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.96);
+  font-size: clamp(50px, 4.7vw, 88px);
+  font-weight: 520;
+  line-height: 1.03;
+  letter-spacing: 0.01em;
+}
+
+.header span {
+  display: block;
+  max-width: 640px;
+  margin-top: clamp(26px, 3.2vh, 40px);
+  color: rgba(248, 250, 255, 0.64);
+  font-size: clamp(17px, 1.22vw, 23px);
+  font-weight: 500;
+  line-height: 1.58;
+  letter-spacing: 0.01em;
+}
+
+.rail {
+  position: absolute;
+  left: clamp(40px, 6vw, 118px);
+  right: clamp(40px, 6vw, 118px);
+  bottom: clamp(68px, 10vh, 112px);
+  z-index: 1;
+  height: 1px;
+  background: rgba(248, 250, 255, 0.12);
+}
+
+.rail span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    rgba(120, 229, 239, 0.76),
+    rgba(120, 229, 239, 0.5) 72%,
+    rgba(120, 229, 239, 0)
+  );
+  box-shadow: 0 0 22px rgba(120, 229, 239, 0.28);
+  transform: scaleX(var(--rail-progress, 0));
+  transform-origin: left center;
+}
+
+.console {
+  position: absolute;
+  right: clamp(40px, 6vw, 118px);
+  top: clamp(72px, 10vh, 118px);
+  z-index: 2;
+  width: min(900px, 47vw);
+  min-height: min(660px, 70vh);
+  border: 1px solid rgba(248, 250, 255, 0.14);
+  background:
+    linear-gradient(145deg, rgba(19, 23, 24, 0.78), rgba(7, 8, 9, 0.9)),
+    rgba(12, 13, 14, 0.86);
+  box-shadow:
+    0 34px 110px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  opacity: var(--panel-progress, 0);
+  transform: translateY(calc((1 - var(--panel-progress, 0)) * 28px));
+}
+
+.consoleHeader {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 24px;
+  align-items: center;
+  min-height: 68px;
+  padding: 0 28px;
+  border-bottom: 1px solid rgba(248, 250, 255, 0.11);
+  color: rgba(248, 250, 255, 0.46);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0.2em;
+}
+
+.consoleHeader strong {
+  color: rgba(248, 250, 255, 0.8);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.consoleHeader em {
+  color: rgba(120, 229, 239, 0.78);
+  font-style: normal;
+}
+
+.consoleBody {
+  padding: 30px 28px 28px;
+}
+
+.statement {
+  min-height: 142px;
+  padding: 2px 0 30px;
+  border-bottom: 1px solid rgba(248, 250, 255, 0.1);
+}
+
+.statement small {
+  display: block;
+  margin-bottom: 18px;
+  color: rgba(120, 229, 239, 0.62);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0.2em;
+}
+
+.statement strong {
+  display: block;
+  color: rgba(255, 255, 255, 0.94);
+  font-size: clamp(32px, 2.55vw, 50px);
+  font-weight: 520;
+  line-height: 1.08;
+  letter-spacing: 0.01em;
+}
+
+.statement p {
+  max-width: 680px;
+  margin: 20px 0 0;
+  color: rgba(248, 250, 255, 0.58);
+  font-size: clamp(16px, 1.15vw, 20px);
+  font-weight: 430;
+  line-height: 1.6;
+}
+
+.decisionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 26px;
+  background: rgba(248, 250, 255, 0.1);
+}
+
+.decision {
+  min-height: 176px;
+  padding: 26px 26px 24px;
+  background: rgba(13, 14, 15, 0.96);
+  opacity: calc(0.38 + var(--item-progress, 0) * 0.62);
+}
+
+.decision div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.decision span {
+  color: rgba(248, 250, 255, 0.36);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.2em;
+}
+
+.decision h3 {
+  margin: 0;
+  color: rgba(248, 250, 255, calc(0.58 + var(--item-progress, 0) * 0.36));
+  font-size: clamp(25px, 1.7vw, 34px);
+  font-weight: 520;
+  line-height: 1.1;
+}
+
+.decision p {
+  margin: 30px 0 0;
+  color: rgba(248, 250, 255, calc(0.36 + var(--item-progress, 0) * 0.28));
+  font-size: clamp(14px, 0.95vw, 17px);
+  font-weight: 390;
+  line-height: 1.68;
+}
+
+.decisionActive {
+  background:
+    linear-gradient(135deg, rgba(120, 229, 239, 0.08), transparent 46%),
+    rgba(14, 15, 16, 0.98);
+}
+
+@media (max-width: 1100px) {
+  .header,
+  .console {
+    width: calc(100vw - 80px);
+  }
+
+  .console {
+    left: 40px;
+    right: 40px;
+    top: 42vh;
+  }
+}

@@ -16,6 +16,10 @@ function hasChanged(previous: BackendIdentity, next: BackendIdentity): boolean {
   return previous.edition !== next.edition || previous.instanceId !== next.instanceId;
 }
 
+function isPreauthPath(pathname: string): boolean {
+  return pathname === "/login" || pathname.startsWith("/watch/");
+}
+
 async function fetchBackendIdentity(): Promise<BackendIdentity | null> {
   try {
     const response = await fetch("/api/v1/config", {
@@ -52,6 +56,10 @@ export function initDevBackendWatch(): () => void {
         return;
       }
       if (hasChanged(current, next)) {
+        current = next;
+        if (isPreauthPath(window.location.pathname)) {
+          return;
+        }
         window.clearInterval(interval);
         window.location.assign("/");
         return;
