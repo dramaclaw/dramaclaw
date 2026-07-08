@@ -131,7 +131,8 @@ export function recordsToAssetBuckets(
     // always matches the video. Legacy records that never stored a prompt show
     // nothing (no node-prompt fallback — it misattributed the node's current
     // prompt to old versions). 世界记录例外:无提示词时回退到上游源图节点的名字。
-    const label = historyRecordPrompt(record) ?? nodeMeta?.name ?? null;
+    const prompt = historyRecordPrompt(record);
+    const label = prompt ?? nodeMeta?.name ?? null;
     buckets[kind].push({
       id: record.id,
       kind,
@@ -141,6 +142,9 @@ export function recordsToAssetBuckets(
       ),
       nodeId: record.node_id,
       label,
+      // 用「使用」建节点时把这条记录原始提示词灌进新节点的提示词框；label 对世界
+      // 记录可能回退成节点名,所以这里单独存 prompt（仅后端存过提示词时才有值）。
+      prompt: prompt ?? null,
       timestamp: Number.isNaN(ts) ? null : ts,
     });
   }
