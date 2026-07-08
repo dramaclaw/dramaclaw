@@ -17,6 +17,13 @@ export interface CanvasAsset {
   nodeId: string;
   /** Display name from the node, falls back to a kind label upstream. */
   label: string | null;
+  /**
+   * Generation prompt recorded on this asset. Only populated in the
+   * generation-history source (where each record carries the exact prompt that
+   * produced it); left undefined for live-canvas assets whose `label` is a node
+   * display name, not a prompt. Used to seed a new node's prompt box on 使用.
+   */
+  prompt?: string | null;
   /** Best-effort creation time in ms epoch; null when the node carries none. */
   timestamp: number | null;
 }

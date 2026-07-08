@@ -3094,6 +3094,8 @@ export function Canvas({
       const payload: CanvasAssetDragPayload = {
         kind: asset.kind,
         label: asset.label ?? '',
+        // 历史记录里存的原始提示词，回填到新建视频节点的提示词框（见 spawnAssetNode）。
+        prompt: asset.prompt ?? undefined,
         url: asset.url,
         // 世界模型节点用 coverUrl 当封面（previewImageUrl）；其余类型无封面。
         coverUrl: asset.kind === 'model' ? asset.previewUrl : null,

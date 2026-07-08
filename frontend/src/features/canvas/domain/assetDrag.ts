@@ -21,6 +21,11 @@ export type CanvasAssetDragKind = "image" | "video" | "audio" | "model";
 export interface CanvasAssetDragPayload {
   kind: CanvasAssetDragKind;
   label: string;
+  /**
+   * 生成型节点(目前仅视频)的提示词。历史「使用」流程从对应记录带过来,用于回填
+   * 新节点的提示词框;侧栏拖拽 / live-canvas 复制不带此字段(label 是显示名非提示词)。
+   */
+  prompt?: string;
   url: string;
   aspectRatio?: string;
   /** 3GS 借用同 scene 的封面图;其余类型为空。 */
@@ -113,6 +118,9 @@ export function spawnAssetNode(
           previewImageUrl: null,
           aspectRatio: payload.aspectRatio,
           sourceFileName: payload.label,
+          // 历史「使用」带来了该记录的原始提示词时,回填到视频节点的提示词框;
+          // 无提示词(拖拽/live-canvas)则不写,保持占位符。
+          ...(payload.prompt ? { prompt: payload.prompt } : {}),
           __freezone_source: sourceMeta,
           ...candidateData,
           ...directorControlBundle,
