@@ -3099,6 +3099,9 @@ export function Canvas({
         url: asset.url,
         // 世界模型节点用 coverUrl 当封面（previewImageUrl）；其余类型无封面。
         coverUrl: asset.kind === 'model' ? asset.previewUrl : null,
+        // 历史「使用」还原的是生成产物：图片应还原成成品「图片节点」(imageGen)——
+        // 带回提示词、展开操作区、按图自适应比例，而非只读的上传参考图节点（见 spawnAssetNode）。
+        restoreAsGeneratedImage: true,
         source: {},
       };
       const newNodeId = spawnAssetNode(

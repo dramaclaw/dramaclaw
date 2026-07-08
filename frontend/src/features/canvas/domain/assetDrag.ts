@@ -22,10 +22,16 @@ export interface CanvasAssetDragPayload {
   kind: CanvasAssetDragKind;
   label: string;
   /**
-   * 生成型节点(目前仅视频)的提示词。历史「使用」流程从对应记录带过来,用于回填
+   * 生成型节点(视频 / 图片)的提示词。历史「使用」流程从对应记录带过来,用于回填
    * 新节点的提示词框;侧栏拖拽 / live-canvas 复制不带此字段(label 是显示名非提示词)。
    */
   prompt?: string;
+  /**
+   * 仅历史「使用」置真:表示这是一张「生成产物」而非上传参考图。图片据此还原成
+   * 成品「图片节点」(imageGen)——带回提示词、按图自适应比例、显示分辨率角标;
+   * 不置(普通拖拽 / 素材库参考图)则仍建 upload 节点(替换素材)。
+   */
+  restoreAsGeneratedImage?: boolean;
   url: string;
   aspectRatio?: string;
   /** 3GS 借用同 scene 的封面图;其余类型为空。 */
@@ -145,6 +151,29 @@ export function spawnAssetNode(
       );
     case "image":
     default:
+      // 历史「使用」还原生成产物 → 建成品「图片节点」(imageGen):带回提示词与操作区,
+      // onLoad 按图片自然尺寸自适应比例并显示分辨率角标(见 ImageGenNode)。写入
+      // committed_* 使其与生成完成后落地的节点字段一致(成品图直接展示、可继续再生成)。
+      // 普通拖拽 / 素材库参考图(无此标记)仍建 upload 节点(替换素材)。
+      if (payload.restoreAsGeneratedImage) {
+        return store.addNode(
+          CANVAS_NODE_TYPES.imageGen,
+          position,
+          {
+            displayName: payload.label,
+            imageUrl: payload.url,
+            previewImageUrl: payload.url,
+            committed_at: new Date().toISOString(),
+            committed_slot_url: payload.url,
+            ...(payload.prompt ? { prompt: payload.prompt } : {}),
+            __freezone_source: sourceMeta,
+            ...candidateData,
+            ...directorControlBundle,
+            ...mainlineData,
+            ...slotData,
+          } as Record<string, unknown> as Partial<CanvasNodeData>,
+        );
+      }
       return store.addNode(
         CANVAS_NODE_TYPES.upload,
         position,
