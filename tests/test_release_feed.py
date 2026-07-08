@@ -114,7 +114,7 @@ def test_built_wheel_contains_parseable_release_notes_artifact(tmp_path: Path) -
 def test_project_version_is_single_source_of_truth() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
-    assert pyproject["project"]["version"] == "1.0.3"
+    assert pyproject["project"]["version"] == "1.0.4"
     assert importlib.metadata.version("supertale-ce") == pyproject["project"]["version"]
     assert "__version__" not in Path("src/novelvideo/__init__.py").read_text(encoding="utf-8")
 
