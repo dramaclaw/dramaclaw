@@ -784,18 +784,21 @@ function AssetCard({
       )}
       </div>
 
-      {/* 提示词：非音频卡片在缩略图下方以卡片形式常显该版本提示词（最多三行，title
-          看全文）。视频历史里即「视频 + 提示词」一张卡片。 */}
-      {/* 提示词只在视频卡片显示（图片历史不需要）；双击看全文。 */}
-      {asset.kind === 'video' && !selectionMode && asset.label && (
-        <div
-          title={asset.label}
-          onDoubleClick={onOpenPrompt}
-          className="line-clamp-[6] flex-none cursor-pointer select-none px-2.5 py-2 text-[12px] leading-snug text-white/75 transition-colors hover:text-white/90"
-        >
-          {asset.label}
-        </div>
-      )}
+      {/* 提示词：图片 / 视频卡片在缩略图下方以卡片形式常显该版本提示词（多行截断，
+          title 悬停看全文，双击开完整弹窗）。历史资产里即「产物 + 提示词」一张卡片。
+          用 asset.prompt 作为显示条件（仅生成历史记录才有值）：分镜取图（live-canvas）
+          的 label 是文件名而非提示词、prompt 为空，故那里不会误显文件名。 */}
+      {(asset.kind === 'image' || asset.kind === 'video') &&
+        !selectionMode &&
+        asset.prompt && (
+          <div
+            title={asset.prompt}
+            onDoubleClick={onOpenPrompt}
+            className="line-clamp-[6] flex-none cursor-pointer select-none px-2.5 py-2 text-[12px] leading-snug text-white/75 transition-colors hover:text-white/90"
+          >
+            {asset.prompt}
+          </div>
+        )}
 
       {/* 世界模型：缩略图下方常显名字（提示词缺失时回退到「导演世界」默认名），
           让没有封面的世界卡片至少能认出是什么。双击看全文（有提示词时）。 */}

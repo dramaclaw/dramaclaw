@@ -96,6 +96,18 @@ describe("recordsToAssetBuckets — world history", () => {
     expect(buckets.model).toHaveLength(0);
   });
 
+  it("carries the record's prompt onto image assets (drives the image prompt caption)", () => {
+    const buckets = recordsToAssetBuckets([
+      record({
+        id: "img-2",
+        media_type: "image",
+        result: { image_url: "/static/p/y.png", prompt: "一只在雨中的猫" },
+      }),
+    ]);
+    expect(buckets.image[0]?.prompt).toBe("一只在雨中的猫");
+    expect(buckets.image[0]?.label).toBe("一只在雨中的猫");
+  });
+
   it("falls back to the host node's cover/name when the record carries neither", () => {
     const buckets = recordsToAssetBuckets(
       [
