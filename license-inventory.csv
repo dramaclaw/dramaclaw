@@ -1555,6 +1555,7 @@ tests/test_api_sketch_ai_detection.py,Elastic-2.0,2026 SuperTale contributors,RE
 tests/test_api_sketch_pose_editor.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_sketch_regenerate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_styles.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_asset_compiler_prop_planning.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_asset_compiler_scene_enrichment.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_asset_resolver.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_auth_contract_snapshot.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
