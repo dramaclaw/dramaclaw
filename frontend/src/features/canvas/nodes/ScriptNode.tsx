@@ -37,7 +37,7 @@ import {
   type ScriptGenAction,
   type ScriptNodeData,
 } from '@/features/canvas/domain/canvasNodes';
-import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
+import { isRenderableImageSrc, resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import {
   NodeHeader,
@@ -314,16 +314,19 @@ function useScriptStorySubmit(
         name: ref.displayName?.trim() || undefined,
       }));
 
-    const hasMaterial =
-      upstreamText.length > 0 || Boolean(videoRef) || characterRefs.length > 0;
-    // 文本框内容：有素材时当 steering prompt；否则作为 source_text 主输入。
-    const sourceText =
-      upstreamText.length > 0 ? upstreamText : hasMaterial ? undefined : trimmedPrompt;
-    const steeringPrompt = hasMaterial ? trimmedPrompt || undefined : undefined;
+    // 后端 story-script 接口目前只消费文本(source_text/source_url):视频 / 角色图片
+    // 参考仅作为画布上的视觉参考，模型并不直接读取它们。因此真正驱动生成的是用户手动
+    // 输入的提示词(参考 libtv:素材做参考、提示词驱动生成)。优先用上游文本节点内容，
+    // 否则把输入框里用户写的提示词作为 source_text 主输入 —— 而不是塞进 steering 后
+    // 让后端因缺 source_text 报 400(#65 视频参考、#66 图片参考失败的根因)。
+    const sourceText = upstreamText.length > 0 ? upstreamText : trimmedPrompt;
+    // 有上游文本节点时输入框内容退居 steering prompt；否则它已是主输入，不再重复下发。
+    const steeringPrompt =
+      upstreamText.length > 0 ? trimmedPrompt || undefined : undefined;
 
-    if (!hasMaterial && (!sourceText || sourceText.length === 0)) {
+    if (!sourceText || sourceText.length === 0) {
       updateNodeData(nodeId, {
-        generationError: '请输入剧情或连接文本 / 视频 / 角色图片节点',
+        generationError: '请输入提示词描述剧情（视频 / 角色图片仅作参考）',
       });
       return;
     }
@@ -890,7 +893,10 @@ function ScriptResultCell({ row, col, onCommit }: ScriptResultCellProps) {
   if (col.render === 'image') {
     // 图片列暂不支持 inline 编辑 —— 替换图需要走文件选择器 / URL 输入，
     // 是另一条交互，等用户后续提。
-    const url = typeof raw === 'string' && raw.length > 0 ? raw : null;
+    // 角色图/参考是后端占位字符串字段：模型经常写入 `无` 之类的非 URL 文本，
+    // 只有真正的图片来源才渲染 <img>，否则一律回退到空占位（避免 404 裂图）。
+    const url =
+      typeof raw === 'string' && isRenderableImageSrc(raw) ? raw : null;
     if (!url) {
       return (
         <div className="flex h-14 w-14 items-center justify-center rounded border border-dashed border-[rgba(255,255,255,0.14)] text-text-muted/50">

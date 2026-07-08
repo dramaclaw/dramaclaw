@@ -166,6 +166,27 @@ export function resolveImageDisplayUrl(imageUrl: string): string {
   return imageUrl;
 }
 
+// 判断字符串是否是可作为 <img src> 渲染的真实图片来源（协议 URL 或本地图片路径）。
+// 脚本表格的「角色图/参考」是后端占位字符串字段，模型常填入 `无` 之类的非 URL 文本，
+// 直接塞进 <img> 会 404 变成裂图；渲染前用它过滤。
+export function isRenderableImageSrc(value: string): boolean {
+  if (!value) {
+    return false;
+  }
+  const lower = value.toLowerCase();
+  if (
+    lower.startsWith('data:') ||
+    lower.startsWith('http://') ||
+    lower.startsWith('https://') ||
+    lower.startsWith('blob:') ||
+    lower.startsWith('asset:') ||
+    lower.startsWith('file://')
+  ) {
+    return true;
+  }
+  return isLikelyLocalImagePath(value);
+}
+
 // Cross-origin CDN media (absolute http(s)/asset: URL) must be fetched with CORS
 // so the decoded pixels can be drawn to a <canvas> and exported (toBlob /
 // toDataURL) without tainting it. Same-origin / relative `/static/*` paths (the

@@ -200,6 +200,11 @@ def create_freezone_story_script_agent(model: str | None = None) -> Agent:
         llm_model,
         system_prompt=FREEZONE_STORY_SCRIPT_SYSTEM_PROMPT,
         output_type=FreezoneStoryScriptGenerateData,
+        # 结构化脚本表字段多、且 shot_no/duration 是严格 int，模型偶尔会把时长写成
+        # "2-5"/"3秒" 之类而过不了校验。默认 output_retries=1 只给一次纠正机会不够，
+        # 抛 "Exceeded maximum output retries (1)"。对齐本仓其它复杂结构化 agent
+        # (episode_planner / content_rewriter)提到 3，让模型按回喂的校验错误自我修正。
+        output_retries=3,
         name="Freezone Story Script Generator",
     )
 
