@@ -870,25 +870,25 @@ function EpisodesPage() {
 
   // Plan-episodes SSE — global task, not per-episode (episode sentinel = 0).
   const planEpisodes = usePlanEpisodes(project);
-  const planEpisodesCost = useGenerationCreditCost("feature", "build_episodes");
+  const planEpisodesCost = useGenerationCreditCost("feature", "mainline.build_episodes");
   const planEpisodesCostDisplay =
     planEpisodesCost.data?.data.display ??
     (planEpisodesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
-  const planIdentitiesCost = useGenerationCreditCost("feature", "identity_planner");
+  const planIdentitiesCost = useGenerationCreditCost("feature", "mainline.identity_planner");
   const planIdentitiesCostDisplay =
     planIdentitiesCost.data?.data.display ??
     (planIdentitiesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
-  const planScenesCost = useGenerationCreditCost("feature", "episode_scene_planner");
+  const planScenesCost = useGenerationCreditCost("feature", "mainline.episode_scene_planner");
   const planScenesCostDisplay =
     planScenesCost.data?.data.display ??
     (planScenesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
-  const planPropsCost = useGenerationCreditCost("feature", "episode_prop_planner");
+  const planPropsCost = useGenerationCreditCost("feature", "mainline.episode_prop_planner");
   const planPropsCostDisplay =
     planPropsCost.data?.data.display ??
     (planPropsCost.error instanceof BillingRuleNotConfiguredError

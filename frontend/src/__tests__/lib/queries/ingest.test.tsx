@@ -67,7 +67,7 @@ describe("ingest query error contract", () => {
             data: {
               error_code: "BILLING_RULE_NOT_CONFIGURED",
               billing_kind: "feature",
-              billing_key: "ingest_fast",
+              billing_key: "mainline.ingest_fast",
             },
           },
           { status: 409 },

@@ -93,28 +93,28 @@ function ScriptTabContent() {
   const { data: charactersRes } = useCharacters(project);
   const updateEpisode = useUpdateEpisode(project);
   const planIdentities = usePlanIdentities(project);
-  const planIdentitiesCost = useGenerationCreditCost("feature", "identity_planner");
+  const planIdentitiesCost = useGenerationCreditCost("feature", "mainline.identity_planner");
   const planIdentitiesCostDisplay =
     planIdentitiesCost.data?.data.display ??
     (planIdentitiesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
   const planScenes = usePlanEpisodeScenes(project);
-  const planScenesCost = useGenerationCreditCost("feature", "episode_scene_planner");
+  const planScenesCost = useGenerationCreditCost("feature", "mainline.episode_scene_planner");
   const planScenesCostDisplay =
     planScenesCost.data?.data.display ??
     (planScenesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
   const planProps = usePlanEpisodeProps(project);
-  const planPropsCost = useGenerationCreditCost("feature", "episode_prop_planner");
+  const planPropsCost = useGenerationCreditCost("feature", "mainline.episode_prop_planner");
   const planPropsCostDisplay =
     planPropsCost.data?.data.display ??
     (planPropsCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
   const generateScript = useGenerateScript(project, epNum);
-  const generateScriptCost = useGenerationCreditCost("feature", "script_writer");
+  const generateScriptCost = useGenerationCreditCost("feature", "mainline.script_writer");
   const generateScriptCostDisplay =
     generateScriptCost.data?.data.display ??
     (generateScriptCost.error instanceof BillingRuleNotConfiguredError

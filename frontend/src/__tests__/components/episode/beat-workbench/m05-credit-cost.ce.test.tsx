@@ -148,7 +148,7 @@ describe("M05 CE generation credit cost gating", () => {
       expect.stringContaining("panoCost={panoCost.data?.data.display}"),
     );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
-      expect.stringContaining('useGenerationCreditCost("feature", "build_scenes")'),
+      expect.stringContaining('useGenerationCreditCost("feature", "mainline.build_scenes")'),
     );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
       expect.stringContaining("buildScenesCost.error instanceof BillingRuleNotConfiguredError"),

@@ -298,8 +298,8 @@ export function VideoPane({
   const { data: poolRes } = useVideoPool(project, episode);
   const { data: videoBackendsRes } = useVideoBackends(project);
   const videoBackends = videoBackendsRes?.data ?? [];
-  const beatVideoPromptCost = useGenerationCreditCost("feature", "beat_video_prompt");
-  const seedance2PromptCost = useGenerationCreditCost("feature", "seedance2_prompt");
+  const beatVideoPromptCost = useGenerationCreditCost("feature", "mainline.beat_video_prompt");
+  const seedance2PromptCost = useGenerationCreditCost("feature", "mainline.seedance2_prompt");
   const now = useNow();
   const seedance2UploadInputRef = useRef<HTMLInputElement>(null);
   const [regenConfirm, setRegenConfirm] = useState(false);

@@ -213,7 +213,7 @@ describe("apiCall backend errors", () => {
         data: {
           error_code: "BILLING_RULE_NOT_CONFIGURED",
           billing_kind: "feature",
-          billing_key: "build_characters",
+          billing_key: "mainline.build_characters",
         },
       },
       "Conflict",
@@ -247,7 +247,7 @@ describe("apiCall backend errors", () => {
           metadata: {
             error_code: "BILLING_RULE_NOT_CONFIGURED",
             billing_kind: "feature",
-            billing_key: "ingest_fast",
+            billing_key: "mainline.ingest_fast",
           },
         },
       },
@@ -266,7 +266,7 @@ describe("apiCall backend errors", () => {
           error_code: "BILLING_RULE_NOT_CONFIGURED",
           message: "计费规则未配置，请联系管理员设置积分规则",
           billing_kind: "feature",
-          billing_key: "ingest_fast",
+          billing_key: "mainline.ingest_fast",
         },
       },
       "Request failed with status code 409 Conflict",

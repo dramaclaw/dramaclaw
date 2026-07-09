@@ -3069,7 +3069,7 @@ function CharactersPageContent() {
   const { data: imageSelectionRes } = useCharacterImageSelection(project);
   const buildChars = useBuildCharacters(project);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
-  const buildCharactersCost = useGenerationCreditCost("feature", "build_characters");
+  const buildCharactersCost = useGenerationCreditCost("feature", "mainline.build_characters");
   const buildCharactersCostDisplay =
     buildCharactersCost.data?.data.display ??
     (buildCharactersCost.error instanceof BillingRuleNotConfiguredError

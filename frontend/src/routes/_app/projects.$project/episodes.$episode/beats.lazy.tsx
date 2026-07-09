@@ -496,7 +496,7 @@ function BeatsTabContent() {
 
   // Generate script for empty state
   const generateScript = useGenerateScript(project, epNum);
-  const generateScriptCost = useGenerationCreditCost("feature", "script_writer");
+  const generateScriptCost = useGenerationCreditCost("feature", "mainline.script_writer");
   const generateScriptCostDisplay =
     generateScriptCost.data?.data.display ??
     (generateScriptCost.error instanceof BillingRuleNotConfiguredError

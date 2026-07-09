@@ -1128,7 +1128,7 @@ export function ScenesPanel({
   const buildScenes = useBuildScenes(project);
   const imageSourceQuery = useAssetImageSourceSelection(project, "scene");
   const imageSourceSelection = imageSourceQuery.data?.data.image_source_selection ?? "";
-  const buildScenesCost = useGenerationCreditCost("feature", "build_scenes");
+  const buildScenesCost = useGenerationCreditCost("feature", "mainline.build_scenes");
   const buildScenesCostDisplay =
     buildScenesCost.data?.data.display ??
     (buildScenesCost.error instanceof BillingRuleNotConfiguredError

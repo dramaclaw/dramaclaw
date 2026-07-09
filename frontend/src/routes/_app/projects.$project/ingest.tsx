@@ -913,7 +913,7 @@ export function IngestPageContent({ project }: { project: string }) {
   const hasBillableInput = inputMode === "paste"
     ? pastedBillableChars > 0
     : (billingBillableChars ?? 0) > 0;
-  const ingestFeatureCost = useGenerationCreditCost("feature", "ingest_fast", {
+  const ingestFeatureCost = useGenerationCreditCost("feature", "mainline.ingest_fast", {
     quantity: billingBillableChars && billingBillableChars > 0
       ? billingBillableChars
       : undefined,

@@ -106,7 +106,7 @@ export function BatchBar({
   const generateAudio = useGenerateAudio(project, episode);
   const globalOptimize = useGlobalOptimize(project, episode);
   const videoBackends = useVideoBackends(project);
-  const detectIdentitiesCost = useGenerationCreditCost("feature", "ai_identity_detection");
+  const detectIdentitiesCost = useGenerationCreditCost("feature", "mainline.ai_identity_detection");
   const episodeAudioCost = useGenerationCreditCost("beat_tts");
 
   const [errorDialog, setErrorDialog] = useState<{

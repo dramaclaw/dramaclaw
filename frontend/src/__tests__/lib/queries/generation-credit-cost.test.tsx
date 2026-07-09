@@ -109,13 +109,13 @@ describe("generation credit cost query hook", () => {
     );
 
     const { result } = renderHook(
-      () => useGenerationCreditCost("feature", "ingest_fast"),
+      () => useGenerationCreditCost("feature", "mainline.ingest_fast"),
       { wrapper },
     );
 
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(requestedKind).toBe("feature");
-    expect(requestedValue).toBe("ingest_fast");
+    expect(requestedValue).toBe("mainline.ingest_fast");
     expect(result.current.data?.data.display).toBe("6");
   });
 
@@ -129,7 +129,7 @@ describe("generation credit cost query hook", () => {
             data: {
               error_code: "BILLING_RULE_NOT_CONFIGURED",
               billing_kind: "feature",
-              billing_key: "build_characters",
+              billing_key: "mainline.build_characters",
             },
           },
           { status: 409 },
@@ -138,7 +138,7 @@ describe("generation credit cost query hook", () => {
     );
 
     const { result } = renderHook(
-      () => useGenerationCreditCost("feature", "build_characters"),
+      () => useGenerationCreditCost("feature", "mainline.build_characters"),
       { wrapper },
     );
 

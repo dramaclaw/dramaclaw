@@ -1003,7 +1003,7 @@ describe("sketch action queries", () => {
               data: {
                 error_code: "BILLING_RULE_NOT_CONFIGURED",
                 billing_kind: "feature",
-                billing_key: "ai_identity_detection",
+                billing_key: "mainline.ai_identity_detection",
               },
             },
             { status: 409 },

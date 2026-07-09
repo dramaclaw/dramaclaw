@@ -63,10 +63,10 @@ describe("script route source editor integration", () => {
     );
 
     expect(route).toContain(
-      'useGenerationCreditCost("feature", "episode_scene_planner")',
+      'useGenerationCreditCost("feature", "mainline.episode_scene_planner")',
     );
     expect(route).toContain(
-      'useGenerationCreditCost("feature", "episode_prop_planner")',
+      'useGenerationCreditCost("feature", "mainline.episode_prop_planner")',
     );
     expect(route).toContain(
       "planScenesCost.error instanceof BillingRuleNotConfiguredError",
@@ -95,7 +95,7 @@ describe("script route source editor integration", () => {
       "utf8",
     );
 
-    expect(route).toContain('useGenerationCreditCost("feature", "identity_planner")');
+    expect(route).toContain('useGenerationCreditCost("feature", "mainline.identity_planner")');
     expect(route).toContain(
       "planIdentitiesCost.error instanceof BillingRuleNotConfiguredError",
     );
