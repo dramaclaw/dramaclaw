@@ -318,15 +318,22 @@ def create_app() -> FastAPI:
     frontend_dist = os.environ.get("DRAMACLAW_FRONTEND_DIST", "").strip()
     if frontend_dist and Path(frontend_dist).is_dir():
         from fastapi.staticfiles import StaticFiles
+        from starlette.exceptions import HTTPException as _StarletteHTTPException
 
         class _SpaStaticFiles(StaticFiles):
-            """SPA fallback: unknown extensionless paths serve index.html."""
+            """SPA fallback: unknown extensionless paths serve index.html.
+
+            StaticFiles 未命中时 raise HTTPException(404)(仅 dist 含 404.html
+            时才返回 404 响应),回落必须捕获异常;带扩展名的缺失资产照常 404。
+            """
 
             async def get_response(self, path: str, scope):  # type: ignore[override]
-                response = await super().get_response(path, scope)
-                if response.status_code == 404 and "." not in Path(path).name:
-                    return await super().get_response("index.html", scope)
-                return response
+                try:
+                    return await super().get_response(path, scope)
+                except _StarletteHTTPException as exc:
+                    if exc.status_code == 404 and "." not in Path(path).name:
+                        return await super().get_response("index.html", scope)
+                    raise
 
         application.mount(
             "/", _SpaStaticFiles(directory=frontend_dist, html=True), name="spa"
