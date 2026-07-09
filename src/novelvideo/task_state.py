@@ -134,6 +134,11 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# inline 后端的 worker 与 API 同进程:早于本进程启动仍标记 ACTIVE 的
+# inline 任务必然已中断(见 _sweep_interrupted_inline_tasks)。
+_PROCESS_STARTED_AT = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def parse_task_timestamp(value: str | None) -> datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -1115,6 +1120,31 @@ class TaskStateManager:
             return None
         return self._row_to_state(row)
 
+    def _sweep_interrupted_inline_tasks(self, conn) -> None:
+        """把进程启动前遗留的 ACTIVE inline 任务落为 failed(僵尸回收)。
+
+        inline worker 随 API 进程消亡,这类任务不可能仍在执行;不回收会永久
+        挡住去重守卫与并发限额。Celery/EE worker 独立于本进程,按 backend
+        标记排除。时间戳按字符串比较:两侧均为本模块 utc_now_iso 产物,
+        字典序即时间序(legacy 无 Z 后缀值仅在秒级同刻才有歧义,可忽略)。
+        """
+        now = utc_now_iso()
+        conn.execute(
+            "UPDATE task_states SET status = 'failed', "
+            "error = COALESCE(NULLIF(error, ''), ?), "
+            "completed_at = ?, updated_at = ?, expires_at = ? "
+            "WHERE status IN ('submitting', 'queued', 'running') "
+            "AND updated_at < ? "
+            "AND json_extract(result_json, '$.task_metadata.backend') = 'inline'",
+            (
+                "服务重启,任务已中断,请重新发起",
+                now,
+                now,
+                compute_expiry(self.COMPLETED_TTL),
+                _PROCESS_STARTED_AT,
+            ),
+        )
+
     def get_task_for_project(
         self,
         ctx: ProjectContext,
@@ -1125,6 +1155,7 @@ class TaskStateManager:
     ) -> Optional[TaskState]:
         key = self._project_key(task_type, ctx.project_id, episode, beat_num, scope)
         with self._connect_context(ctx) as conn:
+            self._sweep_interrupted_inline_tasks(conn)
             row = conn.execute(
                 "SELECT * FROM task_states WHERE task_key = ? AND project_id = ?",
                 (key, ctx.project_id),
@@ -1183,6 +1214,7 @@ class TaskStateManager:
         tasks: list[TaskState] = []
         expired_keys: list[str] = []
         with self._connect_context(ctx) as conn:
+            self._sweep_interrupted_inline_tasks(conn)
             rows = conn.execute(
                 "SELECT * FROM task_states WHERE project_id = ? ORDER BY updated_at DESC",
                 (ctx.project_id,),
@@ -1213,6 +1245,7 @@ class TaskStateManager:
     def count_active_tasks_for_project(self, ctx: ProjectContext) -> int:
         try:
             with self._connect_context(ctx) as conn:
+                self._sweep_interrupted_inline_tasks(conn)
                 return self._count_active_project_tasks_on_connection(
                     conn,
                     project_id=ctx.project_id,
