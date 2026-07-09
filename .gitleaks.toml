@@ -12,9 +12,10 @@ useDefault = true
 # 全局放行（覆盖所有规则，含默认 generic-api-key）：确认的误报。
 # "3gs_combined" 是 freezone「3GS 导演合成图」输入项的 UI 标识符（key: "3gs_combined"），
 # 非密钥；generic-api-key 因低熵 key:"..." 模式误判。详见 verification-ledger 2026-06-29。
+# "clarify-ws-key" 是 chat route prewarm 测试夹具的 bridge_key 桩值，非密钥。
 [allowlist]
 description = "全局放行：确认的 generic-api-key 误报（前端 UI 输入项标识符，非密钥）"
-stopwords = ["3gs_combined"]
+stopwords = ["3gs_combined", "clarify-ws-key"]
 
 [[rules]]
 id = "env-credential-real-value"

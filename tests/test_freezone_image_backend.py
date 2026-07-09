@@ -287,6 +287,27 @@ async def test_freezone_reverse_prompt_limit_exception_bubbles_to_global_handler
 
 
 @pytest.mark.asyncio
+async def test_freezone_video_omni_gen_rejects_happyhorse_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="newapi_happyhorse-1.0",
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 400
+    assert "HappyHorse video does not support omni reference mode" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_freezone_video_start_runtime_error_is_logged(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

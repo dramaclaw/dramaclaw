@@ -3657,7 +3657,7 @@
     "modelConfig": {
       "title": "Model Config",
       "description": "Choose a model gateway channel: the platform official gateway, or your own local NewAPI.",
-      "baseUrlHint": "The server can also pin this value via the NEWAPI_BASE_URL environment variable.",
+      "baseUrlHint": "Custom NewAPI can use NEWAPI_BASE_URL as its default address.",
       "effectiveBadge": "Active: {{channel}}",
       "loading": "Loading…",
       "requestFailed": "Request failed, please retry.",
@@ -3679,12 +3679,12 @@
         "adminUsername": "Admin Username"
       },
       "official": {
-        "description": "Enter the platform official gateway URL and API Key, then save. You may enter the root domain or the full /v1 URL.",
+        "description": "Enter the platform official channel API Key, then save.",
         "save": "Save & Enable",
         "enable": "Switch to Official",
         "saved": "Saved and switched to the official channel.",
         "enabled": "Switched to the official channel.",
-        "missingFields": "Please fill in the gateway URL and API Key.",
+        "missingFields": "Please fill in the API Key.",
         "registerLink": "Register at RelayClaw"
       },
       "custom": {

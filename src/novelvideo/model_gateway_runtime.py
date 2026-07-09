@@ -79,7 +79,7 @@ def refresh_model_gateway_runtime() -> dict[str, Any]:
     from novelvideo import config as app_config
 
     gateway = get_effective_newapi_config(
-        official_base_url=app_config.NEWAPI_BASE_URL,
+        official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
         official_api_key=app_config.NEWAPI_API_KEY,
     )
     api_key = str(gateway.api_key or "").strip()

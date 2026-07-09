@@ -11,6 +11,7 @@ from httpx import Response
 
 from novelvideo import config
 from novelvideo.api.routes import model_gateway
+from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
 from novelvideo.model_gateway_settings import (
     MODE_CUSTOM,
     MODE_OFFICIAL,
@@ -19,7 +20,7 @@ from novelvideo.model_gateway_settings import (
     get_effective_cognee_embedding_config,
     get_effective_newapi_config,
     normalize_relay_base_url,
-    save_official_newapi_gateway,
+    save_official_newapi_key,
     save_custom_newapi_gateway,
     save_newapi_embedding_model_config,
     save_media_relay_config,
@@ -145,7 +146,7 @@ def test_model_gateway_can_switch_back_to_official(monkeypatch, tmp_path):
         official_api_key="sk-official-secret",
     )
     assert effective.mode == MODE_OFFICIAL
-    assert effective.base_url == "https://official.example/v1"
+    assert effective.base_url == OFFICIAL_NEWAPI_BASE_URL
     assert effective.api_key == "sk-official-secret"
 
     status = build_model_gateway_status(
@@ -161,8 +162,7 @@ def test_model_gateway_status_keeps_official_section_when_custom_is_active(
     tmp_path,
 ):
     _isolate_settings_db(monkeypatch, tmp_path)
-    save_official_newapi_gateway(
-        base_url="https://official.example/v1",
+    save_official_newapi_key(
         api_key="sk-official-secret",
         activate=True,
     )
@@ -180,14 +180,13 @@ def test_model_gateway_status_keeps_official_section_when_custom_is_active(
     assert status["mode"] == MODE_CUSTOM
     assert status["effective"]["source"] == "custom"
     assert status["effective"]["baseUrl"] == "http://new-api:3000/v1"
-    assert status["official"]["baseUrl"] == "https://official.example/v1"
+    assert status["official"]["baseUrl"] == OFFICIAL_NEWAPI_BASE_URL
     assert status["official"]["source"] == "database"
 
 
-def test_model_gateway_official_database_config_overrides_env(monkeypatch, tmp_path):
+def test_model_gateway_official_database_key_overrides_env(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
-    save_official_newapi_gateway(
-        base_url="https://user-official.example/v1",
+    save_official_newapi_key(
         api_key="sk-user-official-secret",
         activate=True,
     )
@@ -197,7 +196,7 @@ def test_model_gateway_official_database_config_overrides_env(monkeypatch, tmp_p
         official_api_key="sk-env-official-secret",
     )
     assert effective.mode == MODE_OFFICIAL
-    assert effective.base_url == "https://user-official.example/v1"
+    assert effective.base_url == OFFICIAL_NEWAPI_BASE_URL
     assert effective.api_key == "sk-user-official-secret"
 
     status = build_model_gateway_status(
@@ -206,6 +205,19 @@ def test_model_gateway_official_database_config_overrides_env(monkeypatch, tmp_p
     )
     assert status["official"]["source"] == "database"
     assert status["official"]["environment"]["configured"] is True
+
+
+def test_model_gateway_official_url_ignores_newapi_base_url_env(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("MODEL_GATEWAY_MODE", MODE_OFFICIAL)
+    monkeypatch.setenv("NEWAPI_BASE_URL", "https://malicious.example/v1")
+    monkeypatch.setenv("NEWAPI_API_KEY", "sk-env-secret")
+
+    effective = get_effective_newapi_config()
+
+    assert effective.mode == MODE_OFFICIAL
+    assert effective.base_url == OFFICIAL_NEWAPI_BASE_URL
+    assert effective.api_key == "sk-env-secret"
 
 
 def test_newapi_base_url_normalizers_keep_admin_and_relay_urls_separate():
@@ -997,7 +1009,6 @@ def test_save_official_gateway_route_persists_user_registered_key(
     response = client.post(
         "/model-gateway/official/config",
         json={
-            "newApiBaseUrl": "https://official-user.example/v1",
             "newApiApiKey": "sk-user-registered-secret",
         },
     )
@@ -1005,7 +1016,7 @@ def test_save_official_gateway_route_persists_user_registered_key(
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["mode"] == MODE_OFFICIAL
-    assert data["official"]["baseUrl"] == "https://official-user.example/v1"
+    assert data["official"]["baseUrl"] == OFFICIAL_NEWAPI_BASE_URL
     assert data["official"]["source"] == "database"
     assert data["official"]["apiKeyPreview"] == "sk-u...cret"
     assert "sk-user-registered-secret" not in response.text
@@ -1014,13 +1025,19 @@ def test_save_official_gateway_route_persists_user_registered_key(
         official_base_url="https://env.example/v1",
         official_api_key="sk-env-secret",
     )
-    assert effective.base_url == "https://official-user.example/v1"
+    assert effective.base_url == OFFICIAL_NEWAPI_BASE_URL
     assert effective.api_key == "sk-user-registered-secret"
 
 
-def test_save_official_gateway_route_accepts_root_gateway_url(monkeypatch, tmp_path):
+def test_save_official_gateway_route_ignores_submitted_gateway_url(
+    monkeypatch, tmp_path
+):
     _isolate_settings_db(monkeypatch, tmp_path)
     monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    monkeypatch.setattr(
+        model_gateway.app_config, "NEWAPI_BASE_URL", "https://env.example/v1"
+    )
+    monkeypatch.setattr(model_gateway.app_config, "NEWAPI_API_KEY", "sk-env-secret")
 
     app = FastAPI()
     app.include_router(model_gateway.router)
@@ -1035,12 +1052,13 @@ def test_save_official_gateway_route_accepts_root_gateway_url(monkeypatch, tmp_p
     )
 
     assert response.status_code == 200
-    assert (
-        response.json()["data"]["official"]["baseUrl"]
-        == "https://official-user.example/v1"
+    assert response.json()["data"]["official"]["baseUrl"] == OFFICIAL_NEWAPI_BASE_URL
+    effective = get_effective_newapi_config(
+        official_base_url="https://env.example/v1",
+        official_api_key="sk-env-secret",
     )
-    effective = get_effective_newapi_config()
-    assert effective.base_url == "https://official-user.example/v1"
+    assert effective.base_url == OFFICIAL_NEWAPI_BASE_URL
+    assert effective.api_key == "sk-user-registered-secret"
 
 
 def test_custom_newapi_init_route_accepts_empty_body(monkeypatch, tmp_path):

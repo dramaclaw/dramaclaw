@@ -13,6 +13,7 @@ def _isolate_settings_db(monkeypatch, tmp_path):
     import novelvideo.config as config
 
     state_dir = str(tmp_path / "state")
+    monkeypatch.delenv("MODEL_GATEWAY_MODE", raising=False)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", state_dir)
     monkeypatch.setattr(config, "STATE_DIR", state_dir)
 

@@ -3657,7 +3657,7 @@
     "modelConfig": {
       "title": "模型配置",
       "description": "选择模型网关渠道：使用平台官方网关，或自配本地 NewAPI。",
-      "baseUrlHint": "服务端也可以通过环境变量 NEWAPI_BASE_URL 固定该值。",
+      "baseUrlHint": "自定义 NewAPI 可通过环境变量 NEWAPI_BASE_URL 提供默认地址。",
       "effectiveBadge": "当前生效：{{channel}}",
       "loading": "加载中…",
       "requestFailed": "请求失败，请重试。",
@@ -3679,12 +3679,12 @@
         "adminUsername": "管理员用户名"
       },
       "official": {
-        "description": "填入平台官方网关地址与 API Key 并保存，保存后自动切换为官方渠道；地址可填根域名或完整 /v1 地址。",
+        "description": "填入平台官方渠道 API Key 并保存，保存后自动切换为官方渠道。",
         "save": "保存并启用",
         "enable": "切换到官方",
         "saved": "已保存并切换为官方渠道。",
         "enabled": "已切换为官方渠道。",
-        "missingFields": "请填写网关地址与 API Key。",
+        "missingFields": "请填写 API Key。",
         "registerLink": "请前往 RelayClaw 进行注册"
       },
       "custom": {

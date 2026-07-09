@@ -109,7 +109,6 @@ export interface ModelGatewayConfig {
 }
 
 export interface SaveOfficialConfigInput {
-  newApiBaseUrl: string;
   newApiApiKey: string;
 }
 

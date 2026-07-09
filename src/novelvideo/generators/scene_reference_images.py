@@ -664,10 +664,12 @@ async def generate_scene_reference_image(
             image_config=_scene_image_config(selected_model),
         )
     elif provider == "newapi":
-        from novelvideo.config import get_effective_newapi_gateway_config
+        from novelvideo.config import get_newapi_runtime_credentials
 
-        gateway = get_effective_newapi_gateway_config()
-        api_key = gateway.api_key or ""
+        api_key, base_url = get_newapi_runtime_credentials(
+            api_key_override=NEWAPI_API_KEY,
+            base_url_override=NEWAPI_BASE_URL,
+        )
         selected_model = _scene_image_model(kind, provider, model)
         image_bytes, _text, error = await _call_newapi_image_api(
             api_key=api_key,
@@ -675,7 +677,7 @@ async def generate_scene_reference_image(
             prompt=prompt,
             reference_images=references or None,
             image_config=_scene_image_config(selected_model),
-            base_url=gateway.base_url,
+            base_url=base_url,
         )
     elif provider in {"huimeng", "huimengi"}:
         api_key = HUIMENGI_API_KEY or ""

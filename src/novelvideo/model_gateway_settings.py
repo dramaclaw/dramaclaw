@@ -1,9 +1,9 @@
 """CE runtime model gateway settings.
 
-The CE build can run with an official/default NewAPI gateway from env vars, or
-with a user-provisioned local NewAPI instance saved in a local SQLite settings
-database. The selected mode is explicit so stale custom settings do not silently
-override the official gateway.
+The CE build can run with the built-in official NewAPI gateway, or with a
+user-provisioned/custom NewAPI instance saved in local settings or provided via
+environment variables. The selected mode is explicit so stale custom settings do
+not silently override the official gateway.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from novelvideo.official_defaults import (
     DEFAULT_COGNEE_EMBEDDING_MODEL,
     DEFAULT_COGNEE_EMBEDDING_PROVIDER,
     DEFAULT_EMBEDDING_BATCH_SIZE,
+    OFFICIAL_NEWAPI_BASE_URL,
 )
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
@@ -188,14 +189,12 @@ def set_model_gateway_mode(mode: str) -> None:
     _write_many({"model_gateway_mode": normalize_gateway_mode(mode)})
 
 
-def save_official_newapi_gateway(
+def save_official_newapi_key(
     *,
-    base_url: str,
     api_key: str,
     activate: bool = True,
 ) -> None:
     values = {
-        "official_newapi_base_url": normalize_relay_base_url(base_url),
         "official_newapi_api_key": str(api_key or "").strip(),
     }
     if activate:
@@ -511,6 +510,8 @@ def get_model_gateway_settings() -> dict[str, str]:
     env_mode = os.environ.get("MODEL_GATEWAY_MODE")
     if "model_gateway_mode" not in data and env_mode:
         data["model_gateway_mode"] = normalize_gateway_mode(env_mode)
+    if "model_gateway_mode" not in data and os.environ.get("NEWAPI_BASE_URL", "").strip():
+        data["model_gateway_mode"] = MODE_CUSTOM
     data.setdefault("model_gateway_mode", MODE_OFFICIAL)
     return data
 
@@ -528,21 +529,18 @@ def get_effective_newapi_config(
             source="custom",
             base_url=normalize_relay_base_url(
                 settings.get("custom_newapi_base_url", "")
+                or os.environ.get("NEWAPI_BASE_URL", "")
             ),
-            api_key=normalize_api_key(settings.get("custom_newapi_api_key", "")),
+            api_key=normalize_api_key(
+                settings.get("custom_newapi_api_key", "")
+                or os.environ.get("NEWAPI_API_KEY", "")
+            ),
         )
-    db_official_base_url = normalize_relay_base_url(
-        settings.get("official_newapi_base_url", "")
-    )
     db_official_api_key = normalize_api_key(settings.get("official_newapi_api_key", ""))
     return EffectiveNewApiConfig(
         mode=MODE_OFFICIAL,
         source="official",
-        base_url=normalize_relay_base_url(
-            db_official_base_url
-            or official_base_url
-            or os.environ.get("NEWAPI_BASE_URL", "")
-        ),
+        base_url=normalize_relay_base_url(OFFICIAL_NEWAPI_BASE_URL),
         api_key=normalize_api_key(
             db_official_api_key
             or (
@@ -735,19 +733,13 @@ def build_model_gateway_status(
     official_api_key: str | None = None,
 ) -> dict[str, Any]:
     settings = get_model_gateway_settings()
-    env_official_base_url = normalize_relay_base_url(
-        official_base_url or os.environ.get("NEWAPI_BASE_URL", "")
-    )
+    official_base_url_value = normalize_relay_base_url(OFFICIAL_NEWAPI_BASE_URL)
     env_official_api_key = normalize_api_key(
         official_api_key
         if official_api_key is not None
         else os.environ.get("NEWAPI_API_KEY", "")
     )
-    db_official_base_url = normalize_relay_base_url(
-        settings.get("official_newapi_base_url", "")
-    )
     db_official_api_key = normalize_api_key(settings.get("official_newapi_api_key", ""))
-    official_base_url_value = db_official_base_url or env_official_base_url
     official_api_key_value = db_official_api_key or env_official_api_key
     custom_base_url = normalize_relay_base_url(
         settings.get("custom_newapi_base_url", "")
@@ -769,15 +761,11 @@ def build_model_gateway_status(
             "baseUrl": official_base_url_value,
             "apiKeyPreview": mask_secret(official_api_key_value),
             "configured": bool(official_base_url_value and official_api_key_value),
-            "source": (
-                "database"
-                if db_official_base_url or db_official_api_key
-                else "environment"
-            ),
+            "source": "database" if db_official_api_key else "environment",
             "environment": {
-                "baseUrl": env_official_base_url,
+                "baseUrl": official_base_url_value,
                 "apiKeyPreview": mask_secret(env_official_api_key),
-                "configured": bool(env_official_base_url and env_official_api_key),
+                "configured": bool(official_base_url_value and env_official_api_key),
             },
         },
         "custom": {

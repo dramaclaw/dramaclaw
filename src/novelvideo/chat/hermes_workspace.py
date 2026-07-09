@@ -133,15 +133,25 @@ def _root_value(*names: str) -> str:
 def _effective_newapi_gateway() -> tuple[str, str]:
     """Return effective NewAPI ``(api_key, base_url)`` for Hermes.
 
-    Root .env values are passed as the official fallback, but settings.db wins
-    when the UI selected a custom NewAPI channel.
+    The official gateway URL is fixed in code. Root .env values are only used
+    as key/custom-gateway fallback, and settings.db wins when the UI selected a
+    custom NewAPI channel.
     """
     from novelvideo.model_gateway_settings import get_effective_newapi_config
+    from novelvideo.model_gateway_settings import MODE_CUSTOM
+    from novelvideo.model_gateway_settings import normalize_relay_base_url
+    from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
 
+    root_base_url = _root_value("NEWAPI_BASE_URL")
+    root_api_key = _root_value("NEWAPI_API_KEY")
     gateway = get_effective_newapi_config(
-        official_base_url=_root_value("NEWAPI_BASE_URL"),
-        official_api_key=_root_value("NEWAPI_API_KEY"),
+        official_base_url=OFFICIAL_NEWAPI_BASE_URL,
+        official_api_key=root_api_key,
     )
+    if gateway.mode == MODE_CUSTOM and gateway.base_url:
+        return gateway.api_key, gateway.base_url
+    if root_base_url:
+        return root_api_key, normalize_relay_base_url(root_base_url)
     return gateway.api_key, gateway.base_url
 
 

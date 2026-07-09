@@ -111,8 +111,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
 const GATEWAY_MODES: GatewayMode[] = ["official", "custom"];
 
-// 官方网关地址默认值（服务端未返回时的回退）。
-const DEFAULT_OFFICIAL_GATEWAY_URL = "https://relayclaw.cdnfg.com/v1";
 const DEFAULT_CUSTOM_NEWAPI_URL = "http://127.0.0.1:3000";
 
 async function getRequestErrorMessage(error: unknown, fallback: string): Promise<string> {
@@ -338,29 +336,14 @@ function OfficialGatewayPanel({
   const enableOfficial = useEnableOfficial();
   const saveOfficial = useSaveOfficialConfig();
 
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_OFFICIAL_GATEWAY_URL);
   const [apiKey, setApiKey] = useState("");
   const [revealKey, setRevealKey] = useState(false);
 
-  // 初值跟随服务端：优先已保存的官方 baseUrl，回退 .env 默认，再回退内置默认。
-  const seededBaseUrl =
-    official?.baseUrl || official?.environment.baseUrl || DEFAULT_OFFICIAL_GATEWAY_URL;
-  useEffect(() => {
-    setBaseUrl((current) => (current === seededBaseUrl ? current : seededBaseUrl));
-  }, [seededBaseUrl]);
-
   const handleSave = async () => {
-    const trimmedBaseUrl = baseUrl.trim();
     const trimmedApiKey = apiKey.trim();
-    const savedOfficialBaseUrl = official?.baseUrl?.trim() || official?.environment.baseUrl?.trim() || "";
-    const targetBaseUrl = trimmedBaseUrl || savedOfficialBaseUrl;
-    if (!targetBaseUrl) {
-      toast.error(t("settings.modelConfig.official.missingFields"));
-      return;
-    }
     try {
       if (!trimmedApiKey) {
-        if (!official?.configured || targetBaseUrl !== savedOfficialBaseUrl) {
+        if (!official?.configured) {
           toast.error(t("settings.modelConfig.official.missingFields"));
           return;
         }
@@ -373,14 +356,12 @@ function OfficialGatewayPanel({
         return;
       }
       const response = await saveOfficial.mutateAsync({
-        newApiBaseUrl: targetBaseUrl,
         newApiApiKey: trimmedApiKey,
       });
       if (!response.ok) {
         toast.error(getResponseErrorMessage(response, t("settings.modelConfig.requestFailed")));
         return;
       }
-      setBaseUrl(targetBaseUrl);
       setApiKey("");
       toast.success(t("settings.modelConfig.official.saved"));
     } catch (error) {
@@ -403,12 +384,6 @@ function OfficialGatewayPanel({
       </p>
 
       <div className="space-y-2.5">
-        <FieldRow
-          label={t("settings.modelConfig.fields.gatewayBaseUrl")}
-          value={baseUrl}
-          onChange={setBaseUrl}
-          placeholder={DEFAULT_OFFICIAL_GATEWAY_URL}
-        />
         <div className="grid grid-cols-[120px_1fr] items-center gap-3">
           <Label className="justify-start text-[11px] font-normal tracking-wide text-muted-foreground uppercase">
             {t("settings.modelConfig.fields.apiKey")}

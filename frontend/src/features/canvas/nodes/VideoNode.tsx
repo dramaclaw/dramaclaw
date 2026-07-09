@@ -385,6 +385,13 @@ function isGrokVideoChannelModel(modelId: string | null | undefined): boolean {
   return normalized.includes("grokvideochannel");
 }
 
+function isHappyHorseVideoModel(modelId: string | null | undefined): boolean {
+  const normalized = String(modelId ?? "")
+    .replace(/[\s._-]/g, "")
+    .toLowerCase();
+  return normalized.includes("happyhorse10");
+}
+
 function videoModelReferenceDisabledReason(
   modelId: string | null | undefined,
   counts: { images: number; videos: number; audios: number },
@@ -724,6 +731,8 @@ export const VideoNode = memo(
       );
     }, [availableVideoModels, data.model]);
     const modelId = selectedVideoModel?.id ?? DEFAULT_VIDEO_MODEL_ID;
+    const selectedVideoModelId = selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId;
+    const isHappyHorseModel = isHappyHorseVideoModel(selectedVideoModelId);
     // aspectRatio 只认合法的比例预设（含 "auto"）；历史上曾被写成像素串(如
     // "1248:704")的旧节点在这里吸附到最接近的合法视频比例，保证 chip 显示干净。
     const aspectRatio: FreezoneVideoAspectRatio = (
@@ -1558,8 +1567,13 @@ export const VideoNode = memo(
     useEffect(() => {
       if (data.genMode != null) return;
       if (referenceImages.length === 0) return;
-      updateNodeData(id, { genMode: "allReference" });
-    }, [data.genMode, id, referenceImages.length, updateNodeData]);
+      updateNodeData(id, { genMode: isHappyHorseModel ? "imageToVideo" : "allReference" });
+    }, [data.genMode, id, isHappyHorseModel, referenceImages.length, updateNodeData]);
+
+    useEffect(() => {
+      if (!isHappyHorseModel || genMode !== "allReference") return;
+      updateNodeData(id, { genMode: upstreamCounts.images > 0 ? "imageToVideo" : "textToVideo" });
+    }, [genMode, id, isHappyHorseModel, upstreamCounts.images, updateNodeData]);
 
     // Audio refs only carry meaning under the omni-gen (allReference) path —
     // textToVideo / firstLastFrame / imageToVideo discard them. So when an
@@ -1574,10 +1588,10 @@ export const VideoNode = memo(
     useEffect(() => {
       const prev = prevHasAudioRef.current;
       prevHasAudioRef.current = hasAudioUpstream;
-      if (!prev && hasAudioUpstream && data.genMode !== "allReference") {
+      if (!prev && hasAudioUpstream && data.genMode !== "allReference" && !isHappyHorseModel) {
         updateNodeData(id, { genMode: "allReference" });
       }
-    }, [data.genMode, hasAudioUpstream, id, updateNodeData]);
+    }, [data.genMode, hasAudioUpstream, id, isHappyHorseModel, updateNodeData]);
 
     // 上游接入视频素材时，只有「全能参考」能消费视频；其它模式（文生 / 图生 /
     // 首尾帧 / 图片参考）都会把视频丢弃。所以只要上游存在视频就强制切到
@@ -1585,9 +1599,10 @@ export const VideoNode = memo(
     // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
     useEffect(() => {
       if (upstreamCounts.videos === 0) return;
+      if (isHappyHorseModel) return;
       if (genMode === "allReference") return;
       updateNodeData(id, { genMode: "allReference" });
-    }, [upstreamCounts.videos, genMode, id, updateNodeData]);
+    }, [upstreamCounts.videos, genMode, id, isHappyHorseModel, updateNodeData]);
 
     // 文生视频不接受任何素材引用。即便用户先手动选了 textToVideo 再接入
     // 图片/音频（此时上面两个自动切换 effect 都因 genMode 已显式而 bail），
@@ -1596,9 +1611,10 @@ export const VideoNode = memo(
     useEffect(() => {
       if (genMode !== "textToVideo") return;
       if (upstreamCounts.images === 0 && upstreamCounts.audios === 0) return;
-      updateNodeData(id, { genMode: "allReference" });
+      updateNodeData(id, { genMode: isHappyHorseModel ? "imageToVideo" : "allReference" });
     }, [
       genMode,
+      isHappyHorseModel,
       upstreamCounts.images,
       upstreamCounts.audios,
       id,
@@ -1612,8 +1628,8 @@ export const VideoNode = memo(
     useEffect(() => {
       if (genMode !== "firstLastFrame") return;
       if (upstreamCounts.images <= 2) return;
-      updateNodeData(id, { genMode: "allReference" });
-    }, [genMode, upstreamCounts.images, id, updateNodeData]);
+      updateNodeData(id, { genMode: isHappyHorseModel ? "imageToVideo" : "allReference" });
+    }, [genMode, isHappyHorseModel, upstreamCounts.images, id, updateNodeData]);
 
     useEffect(
       () => () => {
@@ -1948,6 +1964,17 @@ export const VideoNode = memo(
               nodeId: targetId,
             });
         } else if (genMode === "allReference") {
+          if (isHappyHorseModel) {
+            void showErrorDialog(
+              "HappyHorse 不支持全能参考模式，请切换为文生视频或图生视频。",
+              t("common.error"),
+            );
+            updateNodeData(id, {
+              isGenerating: false,
+              generationStartedAt: null,
+            });
+            return;
+          }
           // Omni-gen: classify each upstream node by its media type.
           // backend caps: image≤9, video≤3, audio≤3, total≤12.
           const upstream = collectUpstream();
@@ -2894,6 +2921,7 @@ export const VideoNode = memo(
                 <div className="ml-3 flex shrink-0 items-center gap-3">
                   <GenModeSelect
                     value={genMode}
+                    modelId={selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId}
                     upstreamCounts={upstreamCounts}
                     onChange={(nextMode) => updateNodeData(id, { genMode: nextMode })}
                   />
@@ -3148,14 +3176,19 @@ VideoNode.displayName = "VideoNode";
 
 interface GenModeSelectProps {
   value: VideoGenMode;
+  modelId: string | null | undefined;
   upstreamCounts: { videos: number; images: number; audios: number };
   onChange: (next: VideoGenMode) => void;
 }
 
 function videoModeDisabledReason(
   mode: VideoGenMode,
+  modelId: string | null | undefined,
   upstreamCounts: { videos: number; images: number; audios: number },
 ): string | null {
+  if (mode === "allReference" && isHappyHorseVideoModel(modelId)) {
+    return "HappyHorse 不支持全能参考模式";
+  }
   if (upstreamCounts.videos > 0 && mode !== "allReference") {
     return "上游含视频素材时只能用「全能参考」";
   }
@@ -3174,7 +3207,7 @@ function videoModeDisabledReason(
   return null;
 }
 
-function GenModeSelect({ value, upstreamCounts, onChange }: GenModeSelectProps) {
+function GenModeSelect({ value, modelId, upstreamCounts, onChange }: GenModeSelectProps) {
   const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -3246,7 +3279,7 @@ function GenModeSelect({ value, upstreamCounts, onChange }: GenModeSelectProps) 
         >
           {MODE_TABS.map((tab) => {
             const isActive = tab.key === value;
-            const disabledReason = videoModeDisabledReason(tab.key, upstreamCounts);
+            const disabledReason = videoModeDisabledReason(tab.key, modelId, upstreamCounts);
             const isDisabled = disabledReason != null && !isActive;
             return (
               <button

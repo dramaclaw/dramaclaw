@@ -511,7 +511,7 @@ INDEXTTS2_FAL_ENDPOINT = os.environ.get(
 )
 INDEXTTS2_TIMEOUT_SECONDS = float(os.environ.get("INDEXTTS2_TIMEOUT_SECONDS", "1800"))
 
-NEWAPI_BASE_URL = os.environ.get("NEWAPI_BASE_URL", OFFICIAL_NEWAPI_BASE_URL)
+NEWAPI_BASE_URL = os.environ.get("NEWAPI_BASE_URL", "")
 NEWAPI_API_KEY = os.environ.get("NEWAPI_API_KEY", "")
 
 
@@ -520,7 +520,7 @@ def get_effective_newapi_gateway_config():
     from novelvideo.model_gateway_settings import get_effective_newapi_config
 
     return get_effective_newapi_config(
-        official_base_url=NEWAPI_BASE_URL,
+        official_base_url=OFFICIAL_NEWAPI_BASE_URL,
         official_api_key=NEWAPI_API_KEY,
     )
 

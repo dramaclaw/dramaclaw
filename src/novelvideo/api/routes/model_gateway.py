@@ -15,7 +15,7 @@ from novelvideo.model_gateway_settings import (
     normalize_relay_base_url,
     normalize_api_key,
     save_media_relay_config,
-    save_official_newapi_gateway,
+    save_official_newapi_key,
     save_custom_newapi_gateway,
     save_newapi_database_config,
     save_newapi_embedding_model_config,
@@ -60,7 +60,6 @@ OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
 
 
 class OfficialGatewayBody(BaseModel):
-    new_api_base_url: str = Field(alias="newApiBaseUrl")
     new_api_api_key: str = Field(alias="newApiApiKey")
 
 
@@ -327,7 +326,7 @@ async def get_model_gateway_config() -> dict[str, Any]:
         "ok": True,
         "data": {
             **build_model_gateway_status(
-                official_base_url=app_config.NEWAPI_BASE_URL,
+                official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
                 official_api_key=app_config.NEWAPI_API_KEY,
             ),
             "provisioner": build_provisioner_status(),
@@ -343,7 +342,7 @@ async def enable_official_gateway() -> dict[str, Any]:
     except PermissionError as exc:
         raise _permission_error(exc) from exc
     status = build_model_gateway_status(
-        official_base_url=app_config.NEWAPI_BASE_URL,
+        official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
         official_api_key=app_config.NEWAPI_API_KEY,
     )
     if not status["official"]["configured"]:
@@ -356,7 +355,7 @@ async def enable_official_gateway() -> dict[str, Any]:
     return {
         "ok": True,
         "data": build_model_gateway_status(
-            official_base_url=app_config.NEWAPI_BASE_URL,
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
             official_api_key=app_config.NEWAPI_API_KEY,
         ),
         "runtime": runtime,
@@ -369,18 +368,15 @@ async def save_official_gateway_config(body: OfficialGatewayBody) -> dict[str, A
         require_provisioner_enabled()
     except PermissionError as exc:
         raise _permission_error(exc) from exc
-    base_url = normalize_relay_base_url(body.new_api_base_url)
     api_key = normalize_api_key(body.new_api_api_key)
-    if not base_url:
-        raise HTTPException(status_code=400, detail="newApiBaseUrl is required")
     if not api_key:
         raise HTTPException(status_code=400, detail="newApiApiKey is required")
-    save_official_newapi_gateway(base_url=base_url, api_key=api_key, activate=True)
+    save_official_newapi_key(api_key=api_key, activate=True)
     runtime = refresh_model_gateway_runtime()
     return {
         "ok": True,
         "data": build_model_gateway_status(
-            official_base_url=app_config.NEWAPI_BASE_URL,
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
             official_api_key=app_config.NEWAPI_API_KEY,
         ),
         "runtime": runtime,
@@ -502,7 +498,7 @@ async def init_custom_newapi(body: NewApiInitBody = NewApiInitBody()) -> dict[st
             },
             "database": build_provisioner_status()["database"],
             "effective": build_model_gateway_status(
-                official_base_url=app_config.NEWAPI_BASE_URL,
+                official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
                 official_api_key=app_config.NEWAPI_API_KEY,
             )["effective"],
             "runtime": runtime,

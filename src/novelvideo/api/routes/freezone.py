@@ -6987,9 +6987,11 @@ async def freezone_video_omni_gen(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     is_happyhorse = is_freezone_happyhorse_backend(backend)
-    if not is_freezone_seedance2_backend(backend) and not is_happyhorse:
+    if is_happyhorse:
+        raise HTTPException(400, "HappyHorse video does not support omni reference mode")
+    if not is_freezone_seedance2_backend(backend):
         raise HTTPException(
-            400, "omni video currently only supports Seedance 2.0 or HappyHorse models"
+            400, "omni video currently only supports Seedance 2.0 models"
         )
 
     raw_reference_items = [item.model_dump() for item in body.references]
@@ -6997,17 +6999,6 @@ async def freezone_video_omni_gen(
         validate_omni_reference_limits(raw_reference_items)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    if is_happyhorse:
-        image_count = sum(1 for item in raw_reference_items if item.get("type") == "image")
-        video_count = sum(1 for item in raw_reference_items if item.get("type") == "video")
-        audio_count = sum(1 for item in raw_reference_items if item.get("type") == "audio")
-        if audio_count:
-            raise HTTPException(400, "HappyHorse video does not support audio references")
-        if video_count > 1:
-            raise HTTPException(400, "HappyHorse video edit supports at most one video reference")
-        if video_count and image_count > 5:
-            raise HTTPException(400, "HappyHorse video edit supports at most 5 reference images")
-
     reference_items: list[dict[str, str]] = []
     for item in raw_reference_items:
         path_list = _resolve_url_list(project_dir, [str(item.get("url") or "")])
