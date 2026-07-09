@@ -695,6 +695,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     const regenerationPayload = {
       prompt,
       model: requestResolution.requestModel,
+      modelId: selectedModel.id,
+      generationMode: data.generationMode,
       size: selectedResolution.value,
       aspectRatio: resolvedRequestAspectRatio,
       referenceImages: mergedReferenceImages,

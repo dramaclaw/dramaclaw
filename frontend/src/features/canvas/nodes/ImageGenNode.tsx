@@ -832,6 +832,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       quality: isImage2 ? quality : null,
       referenceUrls,
       model: apiModel,
+      modelId,
       camera: hasCamera
         ? {
             cameraBodyId: cameraSelection?.cameraBodyId ?? null,

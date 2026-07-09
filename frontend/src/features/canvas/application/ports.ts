@@ -59,6 +59,10 @@ export interface GraphContentResolver {
 export interface GenerateImagePayload {
   prompt: string;
   model: string;
+  /** 注册表模型 id（还原用），与后端请求模型串区分。 */
+  modelId?: string;
+  /** 生成模式（还原用）。 */
+  generationMode?: string;
   size: string;
   aspectRatio: string;
   referenceImages?: string[];

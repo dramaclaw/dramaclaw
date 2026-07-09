@@ -123,6 +123,10 @@ export interface FreezoneGenPayload extends FreezoneNodeContext {
   provider?: FreezoneProvider | null;
   /** Override the provider's default model (e.g. "gpt-image-2"). */
   model?: string | null;
+  /** 注册表模型 id（还原用；与 provider 拆分后的 model 串不同）。 */
+  modelId?: string | null;
+  /** 生成模式（还原用）：text_to_image / image_to_image / all_reference / image_reference。 */
+  genMode?: string | null;
   /** Only honored by openai gpt-image-2 (low / medium / high / auto). */
   quality?: string | null;
 }
@@ -507,6 +511,8 @@ export async function submitFreezoneGen(
         style,
         provider: payload.provider ?? null,
         model: payload.model ?? null,
+        ...(payload.modelId ? { model_id: payload.modelId } : {}),
+        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
         quality: payload.quality ?? null,
         ...nodeContextBody(payload),
       },
@@ -1129,6 +1135,10 @@ export interface FreezoneEditPayload extends FreezoneNodeContext {
   imageSize?: string;
   provider?: FreezoneProvider | null;
   model?: string | null;
+  /** 注册表模型 id（还原用；与 provider 拆分后的 model 串不同）。 */
+  modelId?: string | null;
+  /** 生成模式（还原用）：text_to_image / image_to_image / all_reference / image_reference。 */
+  genMode?: string | null;
   quality?: string | null;
 }
 
@@ -1154,6 +1164,8 @@ export async function submitFreezoneEdit(
         image_size: payload.imageSize ?? "2K",
         provider: payload.provider ?? null,
         model: payload.model ?? null,
+        ...(payload.modelId ? { model_id: payload.modelId } : {}),
+        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
         quality: payload.quality ?? null,
         ...nodeContextBody(payload),
       },
