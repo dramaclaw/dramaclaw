@@ -75,8 +75,9 @@ jobs:
           uv pip install --python "$pkg\runtime\python\python.exe" --target "$pkg\runtime\env" --no-deps -r world-reqs.txt
           uv pip install --python "$pkg\runtime\python\python.exe" --target "$pkg\runtime\env" --no-deps $wheel
 
-          # 3. hermes 独立环境
+          # 3. hermes 独立环境(bin\ 入口 shebang 写死打包机路径不可用,用入库 shim)
           uv pip install --python "$pkg\runtime\python\python.exe" --target "$pkg\runtime\hermes" "hermes-agent[acp]"
+          Copy-Item deploy\portable\windows\hermes.bat "$pkg\runtime\hermes\" -Force
 
           # 4. ffmpeg(BtbN LGPL win64)
           Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip" -OutFile ffmpeg.zip
@@ -111,6 +112,9 @@ jobs:
             if ($proc.HasExited) { throw "api process exited early" }
           }
           if (-not $ok) { throw "api not healthy" }
+          # Hermes shim 必须能在包内自举(虾导/ACP 链路的最小门)
+          $hv = cmd /c "$pkg\runtime\hermes\hermes.bat --version 2>&1"
+          if ($LASTEXITCODE -ne 0 -or ($hv -join ' ') -notmatch 'Hermes') { throw "hermes shim failed: $hv" }
           $spa = Invoke-WebRequest -Uri http://127.0.0.1:8780/ -UseBasicParsing
           if ($spa.StatusCode -ne 200) { throw "spa root failed" }
           # SPA 深链接回落(评审修复的契约)
@@ -167,6 +171,9 @@ jobs:
           uv pip install --python "$pkg/runtime/python/bin/python3" --target "$pkg/runtime/env" --no-deps dist-wheel/*.whl
 
           uv pip install --python "$pkg/runtime/python/bin/python3" --target "$pkg/runtime/hermes" "hermes-agent[acp]"
+          # bin/ 入口 shebang 写死打包机路径不可用,用入库 shim
+          cp deploy/portable/macos/hermes.sh "$pkg/runtime/hermes/hermes.sh"
+          chmod +x "$pkg/runtime/hermes/hermes.sh"
 
           mkdir -p "$pkg/runtime/ffmpeg"
           curl -sL -o ffmpeg.zip "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip"
@@ -199,6 +206,8 @@ jobs:
             sleep 3
           done
           curl -fsS http://127.0.0.1:8780/api/v1/config >/dev/null
+          # Hermes shim 必须能在包内自举(虾导/ACP 链路的最小门)
+          "$pkg/runtime/hermes/hermes.sh" --version | grep -q "Hermes"
           [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8780/)" = "200" ]
           [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8780/projects/smoke)" = "200" ]
           kill "$server"
