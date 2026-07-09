@@ -892,6 +892,10 @@ export const VideoNode = memo(
     // Subscribe to ONLY this node's one-hop upstream (not the whole nodes array)
     // so dragging unrelated nodes doesn't re-render this node. See useUpstreamGraph.
     const upstreamNodes = useUpstreamNodes(id);
+    // 节点被连线（存在入边）后：隐藏「试试」CTA，只在节点中间显示一个图标（对齐 libtv）。
+    const isConnected = useCanvasStore((state) =>
+      state.edges.some((edge) => edge.target === id)
+    );
     const referenceImages = useMemo(() => {
       const upstream = sortUpstreamByReferenceOrder(
         upstreamNodes,
@@ -2599,6 +2603,11 @@ export const VideoNode = memo(
               <span className="text-center text-sm font-medium text-text-dark/78">
                 {t("node.videoUpscale.placeholder")}
               </span>
+            </div>
+          ) : isConnected ? (
+            // 已连线：不再显示文字 CTA，只在节点中间放一个图标（对齐 libtv）。
+            <div className="flex h-full w-full items-center justify-center">
+              <Play className="h-9 w-9 text-text-muted/46" />
             </div>
           ) : (
             <div className="flex h-full w-full items-center px-8">

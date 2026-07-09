@@ -9,6 +9,10 @@ const ROW_GAP = 48;
 const COMPONENT_GAP_X = 120;
 // 不同行之间的纵向间距。
 const COMPONENT_GAP_Y = 96;
+// 重心法分配纵坐标后，允许保留的最大「全宽空白带」高度。超过它的空白带会被压缩到
+// 这个值——空白带指某段 Y 区间内组件里没有任何节点覆盖，压缩纯粹是把带下方所有节点
+// 统一上移，相对几何与连线走向不变，只删掉视觉上的大片空隙。
+const MAX_VERTICAL_GAP = 120;
 // 整理后画布的目标宽高比（屏幕通常 16:9 略宽于 1，这里取 1.6:1）。
 // 用来根据总面积估算 shelf 打包的条带宽度，避免所有连通分量被堆成一条
 // 几千像素长的纵向带子（旧版行为）。
@@ -176,6 +180,37 @@ function resolveColumnCenters(
   }
 }
 
+/**
+ * 压缩组件内的「全宽纵向空白带」。重心法可能把稀疏区域拉得很开，导致某段 Y 区间里
+ * 所有列都没有节点——一条横贯的空白带。这里按节点纵向区间的并集找出这些空白带，把
+ * 超过 MAX_VERTICAL_GAP 的部分整体压掉：对空白带下方的所有节点做统一上移，因此保留了
+ * 相对顺序、不产生重叠、连线走向也不变，只是删掉空隙。就地修改 centerY。
+ */
+function compactVerticalBands(
+  ids: string[],
+  heights: Map<string, number>,
+  centerY: Map<string, number>
+): void {
+  const intervals = ids
+    .map((id) => {
+      const half = (heights.get(id) ?? DEFAULT_NODE_HEIGHT) / 2;
+      const c = centerY.get(id) ?? 0;
+      return { id, top: c - half, bottom: c + half };
+    })
+    .sort((a, b) => a.top - b.top);
+  let maxBottom = Number.NEGATIVE_INFINITY;
+  let cumulativeShift = 0;
+  for (const interval of intervals) {
+    if (maxBottom !== Number.NEGATIVE_INFINITY && interval.top - maxBottom > MAX_VERTICAL_GAP) {
+      cumulativeShift += interval.top - maxBottom - MAX_VERTICAL_GAP;
+    }
+    if (cumulativeShift > 0) {
+      centerY.set(interval.id, (centerY.get(interval.id) ?? 0) - cumulativeShift);
+    }
+    maxBottom = Math.max(maxBottom, interval.bottom);
+  }
+}
+
 function layoutComponent(
   componentNodes: CanvasNode[],
   edgePairs: Array<[string, string]>
@@ -301,6 +336,9 @@ function layoutComponent(
       resolveColumnCenters(arr, desired, heights, centerY);
     }
   }
+
+  // —— 阶段 3：压缩全宽纵向空白带，去掉重心法留下的大片中间空白 ——
+  compactVerticalBands(ids, heights, centerY);
 
   // —— 收尾：把中心坐标换算成左上角坐标，并归一化到组件局部 (0,0) ——
   const positions = new Map<string, { x: number; y: number }>();

@@ -7,7 +7,7 @@ import {
 } from '@xyflow/react';
 import {
   LayoutGrid,
-  Grid2x2,
+  Workflow,
   StretchHorizontal,
   StretchVertical,
   Copy,
@@ -25,6 +25,7 @@ import {
   DEFAULT_NODE_WIDTH,
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
+import { computeAutoLayout } from '@/features/canvas/application/autoLayout';
 import { collectBatchDeletableIds } from '@/features/canvas/domain/groupSelectionDelete';
 
 // 合并分镜组只接受图片类节点。
@@ -49,7 +50,7 @@ const MULTI_TOOLBAR_SEPARATOR_CLASS =
 const MULTI_TOOLBAR_MENU_ITEM_CLASS =
   'flex h-11 w-full items-center gap-2.5 rounded-[10px] px-3 text-left text-sm text-text-dark transition-colors hover:bg-[rgba(255,255,255,0.075)]';
 
-type ArrangeMode = 'grid' | 'horizontal' | 'vertical';
+type ArrangeMode = 'graph' | 'horizontal' | 'vertical';
 
 function getNodeSize(node: CanvasNode): { width: number; height: number } {
   return {
@@ -70,6 +71,7 @@ function getNodeSize(node: CanvasNode): { width: number; height: number } {
 
 export const MultiSelectionToolbar = memo(() => {
   const nodes = useCanvasStore((state) => state.nodes);
+  const edges = useCanvasStore((state) => state.edges);
   const setNodePositions = useCanvasStore((state) => state.setNodePositions);
   const duplicateNodesAsSiblings = useCanvasStore(
     (state) => state.duplicateNodesAsSiblings
@@ -173,17 +175,26 @@ export const MultiSelectionToolbar = memo(() => {
           cursorY += item.size.height + ARRANGE_GAP;
         }
       } else {
-        const cols = Math.ceil(Math.sqrt(items.length));
-        const cellW = Math.max(...items.map((item) => item.size.width)) + ARRANGE_GAP;
-        const cellH = Math.max(...items.map((item) => item.size.height)) + ARRANGE_GAP;
-        items.forEach((item, index) => {
-          const row = Math.floor(index / cols);
-          const col = index % cols;
-          targets.set(item.node.id, {
-            x: minX + col * cellW,
-            y: minY + row * cellH,
-          });
-        });
+        // 按连线排列：复用画布「整理」用的 Sugiyama 分层算法（computeAutoLayout），
+        // 但只喂选中的这批节点 + 它们之间的连线，让父→子沿边方向左→右分层、纵向
+        // 按重心对齐。喂进去的是「绝对坐标 + 清空 parentId」的克隆，这样即便选区
+        // 跨越不同分组也能在同一坐标系里布局；computeAutoLayout 会把结果锚定在选区
+        // 左上角（min 绝对坐标 = minX/minY），与其它模式一致、选区不会整体漂走。
+        const selectedIdSet = new Set(items.map((item) => item.node.id));
+        const layoutNodes = items.map((item) => ({
+          ...item.node,
+          position: { x: item.abs.x, y: item.abs.y },
+          parentId: undefined,
+        }));
+        const layoutEdges = edges.filter(
+          (edge) => selectedIdSet.has(edge.source) && selectedIdSet.has(edge.target)
+        );
+        const { positions: absPositions } = computeAutoLayout(layoutNodes, layoutEdges);
+        for (const item of items) {
+          const abs = absPositions[item.node.id];
+          if (!abs) continue;
+          targets.set(item.node.id, abs);
+        }
       }
 
       // Convert the computed absolute targets back into each node's own
@@ -203,7 +214,7 @@ export const MultiSelectionToolbar = memo(() => {
 
       setNodePositions(positions);
     },
-    [nodeById, resolveAbsolute, selectedNodes, setNodePositions]
+    [edges, nodeById, resolveAbsolute, selectedNodes, setNodePositions]
   );
 
   const cancelArrangeMenuClose = useCallback(() => {
@@ -336,7 +347,10 @@ export const MultiSelectionToolbar = memo(() => {
       align="start"
       offset={32}
     >
-      <ZoomScaledToolbar origin="bottom left">
+      {/* counter 模式：抵消画布缩放，让批量菜单保持恒定的屏幕尺寸——画布缩得越小，
+          菜单相对越大越清晰，不再像 follow 模式那样跟着一起缩到看不清。counterMax
+          与通用节点工具栏(NodeActionToolbar)一致封在 1，避免放大画布时反而变大。 */}
+      <ZoomScaledToolbar origin="bottom left" mode="counter" counterMax={1}>
       <div ref={arrangeMenuRef} className="relative" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-center gap-1.5 rounded-[18px] border border-white/10 bg-[#242426]/95 px-2 py-1.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl [&_svg]:h-4 [&_svg]:w-4">
           <button
@@ -454,9 +468,9 @@ export const MultiSelectionToolbar = memo(() => {
             <button
               type="button"
               className={MULTI_TOOLBAR_MENU_ITEM_CLASS}
-              onClick={() => handleArrange('grid')}
+              onClick={() => handleArrange('graph')}
             >
-              <Grid2x2 className="h-4 w-4 text-text-muted" />
+              <Workflow className="h-4 w-4 text-text-muted" />
               <span>宫格排列</span>
             </button>
             <button

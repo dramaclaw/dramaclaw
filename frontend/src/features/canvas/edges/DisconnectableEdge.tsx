@@ -32,6 +32,25 @@ function recordValue(value: unknown): Record<string, unknown> {
 const NO_ROUTING_NODES: CanvasNode[] = [];
 
 const EDGE_ACTIVE_TRANSITION_MS = 300;
+// 连接端点圆点半径，以及沿 port 方向朝节点外的偏移量（>=半径 → 整颗圆点落在节点外、贴边）。
+const PORT_DOT_RADIUS = 4;
+const PORT_DOT_OFFSET = 4;
+
+// 端点圆点的外移向量：按 handle 所在边朝节点外偏移，避免被上层节点挡掉一半。
+function portDotOffset(position: Position | undefined): { dx: number; dy: number } {
+  switch (position) {
+    case Position.Left:
+      return { dx: -PORT_DOT_OFFSET, dy: 0 };
+    case Position.Right:
+      return { dx: PORT_DOT_OFFSET, dy: 0 };
+    case Position.Top:
+      return { dx: 0, dy: -PORT_DOT_OFFSET };
+    case Position.Bottom:
+      return { dx: 0, dy: PORT_DOT_OFFSET };
+    default:
+      return { dx: 0, dy: 0 };
+  }
+}
 const EDGE_DISCONNECT_HOVER_DELAY_MS = 500;
 const EDGE_DISCONNECT_LEAVE_GRACE_MS = 160;
 const EDGE_DISCONNECT_ACTION_SIZE = 40;
@@ -215,6 +234,9 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
   const flowGradientId = `canvas-data-flow-gradient-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   const flowGlowId = `canvas-data-flow-glow-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
+  const sourceDotOffset = portDotOffset(sourcePosition ?? Position.Right);
+  const targetDotOffset = portDotOffset(targetPosition ?? Position.Left);
+
   return (
     <>
       {isProcessingEdge && (
@@ -240,6 +262,32 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
           transition: `stroke ${EDGE_ACTIVE_TRANSITION_MS}ms ease, stroke-width ${EDGE_ACTIVE_TRANSITION_MS}ms ease`,
         }}
       />
+      {/* 连接端点小圆点（对标 libtv）：连线建立后，在两端节点的连接口各画一个连接点，
+          让「已连线」状态在节点上可见——过去节点的 handle 被全局 opacity:0 藏起，连上
+          之后节点看起来和没连一样。画在边上（而非各节点的 Handle）天然覆盖所有节点类型
+          （图片/视频/…），且随节点移动、随边高亮一起变色。深色描边保证压在亮图上也看得清。
+          端点正好压在节点边沿，而边图层在节点之下，直接画会被节点挡掉一半——沿各自 port
+          方向朝外偏移 PORT_DOT_OFFSET，让圆点整颗落在节点外、贴着边、正好压在连线上。 */}
+      <g style={{ pointerEvents: 'none' }}>
+        <circle
+          cx={sourceX + sourceDotOffset.dx}
+          cy={sourceY + sourceDotOffset.dy}
+          r={PORT_DOT_RADIUS}
+          fill={resolvedStroke}
+          stroke="rgba(9, 9, 9, 0.55)"
+          strokeWidth={1}
+          style={{ transition: `fill ${EDGE_ACTIVE_TRANSITION_MS}ms ease` }}
+        />
+        <circle
+          cx={targetX + targetDotOffset.dx}
+          cy={targetY + targetDotOffset.dy}
+          r={PORT_DOT_RADIUS}
+          fill={resolvedStroke}
+          stroke="rgba(9, 9, 9, 0.55)"
+          strokeWidth={1}
+          style={{ transition: `fill ${EDGE_ACTIVE_TRANSITION_MS}ms ease` }}
+        />
+      </g>
       {!isProcessingEdge && (
         <path
           className="nodrag nopan"

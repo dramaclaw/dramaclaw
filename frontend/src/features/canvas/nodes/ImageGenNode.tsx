@@ -469,6 +469,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     () => collectCandidateBindingsForNode(connectedEdges, id).map((binding) => binding.role),
     [connectedEdges, id],
   );
+  // 节点被连线（存在入边）后：隐藏「试试」CTA，只在节点中间显示一个图标（对齐 libtv）。
+  const isConnected = useMemo(
+    () => connectedEdges.some((edge) => edge.target === id),
+    [connectedEdges, id],
+  );
 
   // 候选按 orderedReferenceUrls 编号（自身参考图在场时就是图片1），保证 @ 出来的
   // 缩略图与后端解析到的 图片N 是同一张。key 优先用上游 nodeId；自身参考图没有
@@ -1365,6 +1370,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               <div className="flex w-full flex-col items-center justify-center gap-2">
                 <Loader2 className="h-7 w-7 animate-spin opacity-70" />
                 <span className="text-[12px] leading-6">上传中…</span>
+              </div>
+            ) : isConnected ? (
+              // 已连线：不再显示文字 CTA，只在节点中间放一个图标（对齐 libtv）。
+              <div className="flex w-full items-center justify-center">
+                <ImageIcon className="h-9 w-9 text-text-muted/46" aria-hidden />
               </div>
             ) : (
               <>

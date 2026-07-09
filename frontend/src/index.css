@@ -649,6 +649,104 @@
   box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.35), 0 0 14px rgba(96, 165, 250, 0.65);
 }
 
+/* 拖连线落点反馈（对标 libtv）：把连线从节点 A 拖到节点 B，当连线进入 B 的可接受
+   区域时，B 要有两段动画——① 节点整体轻微「顶出/放大」的偏移；② 边框跑一圈流动光线，
+   明确提示「松手即可连到这里」。过去普通节点的 handle 被全局 opacity:0 隐藏，React Flow
+   的 connectingto 高亮根本看不见，落点毫无反馈显得很僵硬。
+
+   两条触发路径都命中：
+   - `.canvas-node-drop-target`：手动「+」自绘连线，落点由 Canvas.tsx 在 dragMove 时
+     命中合法目标后直接给节点 wrapper 加/摘这个类（手动连线不走 RF 原生连线，拿不到
+     connectingto/valid）。
+   - `:has(.connectingto.valid)`：技能节点等 pointer-events 可交互的 handle 走 RF 原生
+     连线，RF 会给目标 handle 挂 connectingto+valid（valid = 吸附中且 isValidConnection
+     通过），用 :has() 把它提升到节点层。
+
+   注意不要在 .react-flow__node wrapper 上直接改 transform——RF 用 inline
+   transform:translate 给节点定位，会被覆盖；偏移只作用在子节点 `> *`，流动边框走 ::after。 */
+@property --canvas-node-flow-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.react-flow__node.canvas-node-drop-target,
+.react-flow__node:has(.react-flow__handle.connectingto.valid) {
+  overflow: visible;
+  z-index: 20;
+}
+
+/* ① 偏移动画：顶出 + 轻微放大，settle 后保持（forwards），松开摘类即复位。 */
+.react-flow__node.canvas-node-drop-target > *,
+.react-flow__node:has(.react-flow__handle.connectingto.valid) > * {
+  animation: canvas-node-droptarget-nudge 240ms var(--ease-out-quint) forwards;
+  transform-origin: center;
+}
+
+/* ② 流动光线：conic 渐变裁成一圈边框（mask 抠掉中心只留描边），角度无限旋转，
+   一道亮光沿边框跑。外面再叠一层柔和外发光坐实「激活」。 */
+.react-flow__node.canvas-node-drop-target::after,
+.react-flow__node:has(.react-flow__handle.connectingto.valid)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  /* 光线颜色与自绘连线一致，用白色（连线 stroke = rgba(255,255,255,0.9)）。 */
+  background: conic-gradient(
+    from var(--canvas-node-flow-angle),
+    rgba(255, 255, 255, 0) 0deg,
+    rgba(255, 255, 255, 0) 180deg,
+    rgba(255, 255, 255, 0.85) 260deg,
+    rgba(255, 255, 255, 1) 300deg,
+    rgba(255, 255, 255, 0.85) 340deg,
+    rgba(255, 255, 255, 0) 360deg
+  );
+  /* 把 conic 渐变裁成一圈「描边」：content-box 层与整框层做差集（exclude/xor），
+     只留 padding 那 1.5px 的边环，其余镂空。必须同时给 -webkit- 和标准两套：
+     只写标准 mask-composite 却用 -webkit-mask 图层，Chromium 会因标准层缺失而
+     不做裁剪，::after 直接铺成一整块彩色发光块（光线就「不在边框上」了）。 */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+  transform-origin: center;
+  /* 边框环与卡片本体 `> *` 跑同一份 nudge，确保放大时两者始终重合、描边贴边不漂移。 */
+  animation:
+    canvas-node-border-flow 1.4s linear infinite,
+    canvas-node-droptarget-nudge 240ms var(--ease-out-quint) forwards;
+}
+
+@keyframes canvas-node-droptarget-nudge {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.022);
+  }
+}
+
+@keyframes canvas-node-border-flow {
+  to {
+    --canvas-node-flow-angle: 360deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__node.canvas-node-drop-target > *,
+  .react-flow__node.canvas-node-drop-target::after,
+  .react-flow__node:has(.react-flow__handle.connectingto.valid) > *,
+  .react-flow__node:has(.react-flow__handle.connectingto.valid)::after {
+    animation: none;
+  }
+}
+
 .canvas-minimap {
   border-radius: 12px;
   overflow: hidden;

@@ -318,6 +318,13 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const addPanoCaptureGroup = useCanvasStore((state) => state.addPanoCaptureGroup);
+  const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
+
+  // 组合选中 / 多选时 React Flow 也会把组内子节点标记为 selected，但此时不应唤醒
+  // 全景交互（拖拽 / 滚轮）或弹出截图工具栏 —— 那属于「误激活 360 节点」。仅当本节点
+  // 是画布上唯一选中项（selectedNodeId === id）时才算真正激活；节点边框高亮仍走
+  // 原始 selected，组合选中时依旧能看到子节点被框选。
+  const isActive = Boolean(selected) && selectedNodeId === id;
 
   const resolvedWidth = Math.max(900, resolveNodeDimension(width, 900));
   const resolvedHeight = Math.max(540, resolveNodeDimension(height, 540));
@@ -366,8 +373,8 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
   const viewerRef = useRef<Viewer | null>(null);
   const dataRef = useRef(data);
   dataRef.current = data;
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
+  const selectedRef = useRef(isActive);
+  selectedRef.current = isActive;
   // PSV 自己的全屏状态（跨浏览器可靠，不依赖 document.fullscreenElement —— 后者在
   // Safari/WebKit/模拟全屏下可能为 null，导致全屏内拖拽判定直接失败）。
   const isFsRef = useRef(false);
@@ -460,8 +467,8 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
           maxFov: FOV_MAX,
           // 拖拽旋转 / 滚轮缩放都走 PSV 原生：窗口内随节点选中开关，全屏时由 PSV 的
           // fullscreen 事件强制打开（见下方 v.addEventListener('fullscreen')）。
-          mousemove: selected,
-          mousewheel: selected,
+          mousemove: isActive,
+          mousewheel: isActive,
           // 全屏下用方向键 / WASD 转视野、+- 缩放（C 方案）。
           keyboard: 'fullscreen',
           // 覆写默认映射，补上 WASD（含 shift 大写形态）。
@@ -582,10 +589,10 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
-    const on = isFsRef.current || selected;
+    const on = isFsRef.current || isActive;
     viewer.setOption('mousemove', on);
     viewer.setOption('mousewheel', on);
-  }, [selected, displayUrl]);
+  }, [isActive, displayUrl]);
 
   // 「无限拖拽」叠加层（不替换 PSV 原生拖拽，只是叠在上面）：
   //   按下左键 → 请求 Pointer Lock（隐藏并锁定光标）。
@@ -1007,7 +1014,7 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
       {/* 截图工具栏：放在节点正上方（删除 pill 已隐藏，可贴近节点）。 */}
       <ReactFlowNodeToolbar
         nodeId={id}
-        isVisible={selected && Boolean(data.imageUrl)}
+        isVisible={isActive && Boolean(data.imageUrl)}
         position={Position.Top}
         align="center"
         offset={16}
@@ -1065,9 +1072,9 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
               header 的 status 文本是唯一加载状态来源。 */}
           <div
             ref={viewerHostRef}
-            className={`pano360-viewer-host absolute inset-0 bg-black [&_.psv-loader-container]:!hidden [&_.psv-container]:[background:transparent_!important] ${selected ? 'nopan nowheel' : ''}`}
-            onPointerDown={selected ? (event) => event.stopPropagation() : undefined}
-            onWheel={selected ? (event) => event.stopPropagation() : undefined}
+            className={`pano360-viewer-host absolute inset-0 bg-black [&_.psv-loader-container]:!hidden [&_.psv-container]:[background:transparent_!important] ${isActive ? 'nopan nowheel' : ''}`}
+            onPointerDown={isActive ? (event) => event.stopPropagation() : undefined}
+            onWheel={isActive ? (event) => event.stopPropagation() : undefined}
           />
           {!data.imageUrl ? (
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted/85">
