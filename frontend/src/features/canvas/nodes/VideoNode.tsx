@@ -1547,12 +1547,14 @@ export const VideoNode = memo(
     }, [id, processFile]);
 
     // First time an upstream image becomes available, flip the gen mode so the
-    // video actually consumes it. Only fires while data.genMode is undefined —
-    // once the user picks any tab (including textToVideo) we respect that.
+    // video actually consumes it. Default to `allReference`（全能参考）—— it
+    // accepts 1-9 images and is the more general entry point; the 首尾帧 keyframe
+    // workflow stays reachable via the explicit empty-state CTA. Only fires while
+    // data.genMode is undefined — once the user picks any tab we respect that.
     useEffect(() => {
       if (data.genMode != null) return;
       if (referenceImages.length === 0) return;
-      updateNodeData(id, { genMode: "firstLastFrame" });
+      updateNodeData(id, { genMode: "allReference" });
     }, [data.genMode, id, referenceImages.length, updateNodeData]);
 
     // Audio refs only carry meaning under the omni-gen (allReference) path —
@@ -1585,14 +1587,12 @@ export const VideoNode = memo(
 
     // 文生视频不接受任何素材引用。即便用户先手动选了 textToVideo 再接入
     // 图片/音频（此时上面两个自动切换 effect 都因 genMode 已显式而 bail），
-    // 也要强制切走，否则会停在 textToVideo 把已连素材丢弃。音频优先走
-    // allReference，否则按图片走 firstLastFrame。
+    // 也要强制切走，否则会停在 textToVideo 把已连素材丢弃。图片/音频统一走
+    // allReference（全能参考），与「首次接入图片」的默认保持一致。
     useEffect(() => {
       if (genMode !== "textToVideo") return;
       if (upstreamCounts.images === 0 && upstreamCounts.audios === 0) return;
-      updateNodeData(id, {
-        genMode: upstreamCounts.audios > 0 ? "allReference" : "firstLastFrame",
-      });
+      updateNodeData(id, { genMode: "allReference" });
     }, [
       genMode,
       upstreamCounts.images,
