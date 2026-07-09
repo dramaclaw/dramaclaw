@@ -1073,7 +1073,7 @@ def _seedance2_returned_last_frame_status_payload(
     if not path.exists():
         return None
     try:
-        rel_path = str(path.relative_to(output_dir))
+        rel_path = path.relative_to(output_dir).as_posix()
     except ValueError:
         rel_path = str(path)
     return {
@@ -3076,7 +3076,7 @@ def _director_overlay_status_payload(
         return {
             "status": "current",
             "overlay": current,
-            "path": str(path),
+            "path": path.as_posix(),
             "same_scene_beats": same_scene,
         }
 
@@ -3094,14 +3094,14 @@ def _director_overlay_status_payload(
         return {
             "status": "inherited",
             "overlay": inherited,
-            "path": str(path),
+            "path": path.as_posix(),
             "inherited_from_beat": inherited_from,
             "same_scene_beats": same_scene,
         }
     return {
         "status": "missing",
         "overlay": None,
-        "path": str(path),
+        "path": path.as_posix(),
         "same_scene_beats": same_scene,
     }
 
@@ -3156,7 +3156,7 @@ def _director_control_frame_export_payload(
             continue
         path = target_dir / filename
         path.write_bytes(_decode_png_data_url(data_url))
-        paths[kind] = str(path)
+        paths[kind] = path.as_posix()
         rel_paths[kind] = path.relative_to(project_dir).as_posix()
         urls[kind] = make_static_url_for_context(ctx, rel_paths[kind], local_path=path)
 
@@ -3180,10 +3180,10 @@ def _director_control_frame_export_payload(
     meta["paths"] = rel_paths
     meta_path = target_dir / "frame_meta.json"
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    paths["frame_meta"] = str(meta_path)
+    paths["frame_meta"] = meta_path.as_posix()
     rel_paths["frame_meta"] = meta_path.relative_to(project_dir).as_posix()
     urls["frame_meta"] = make_static_url_for_context(ctx, rel_paths["frame_meta"], local_path=meta_path)
-    return {"dir": str(target_dir), "paths": paths, "rel_paths": rel_paths, "urls": urls, "meta": meta}
+    return {"dir": target_dir.as_posix(), "paths": paths, "rel_paths": rel_paths, "urls": urls, "meta": meta}
 
 
 async def _episode_beat_from_resolution(
@@ -3427,7 +3427,7 @@ async def save_beat_director_stage_overlay(
             "data": {
                 "status": "saved",
                 "overlay": payload,
-                "path": str(path),
+                "path": path.as_posix(),
                 "same_scene_beats": _director_same_scene_beats(list(beats), scene_name),
             },
         }
@@ -5015,7 +5015,7 @@ async def upload_grid(
     filename = _uploaded_grid_filename(grid_type, mode_key, parsed_beats, suffix)
     grid_path = upload_dir / filename
     grid_path.write_bytes(content)
-    grid_rel = str(grid_path.relative_to(grids_dir))
+    grid_rel = grid_path.relative_to(grids_dir).as_posix()
 
     pool = load_pool_index(grids_dir) or build_pool_index(grids_dir, episode_num)
     entry = pool.find_grid(grid_type, mode_key, parsed_beats) if parsed_beats else None
@@ -5120,7 +5120,7 @@ async def export_grid_prompt(
                     "mode_key": entry.mode_key,
                     "beat_numbers": list(entry.beat_nums),
                     "prompt": prompt_path.read_text(encoding="utf-8"),
-                    "prompt_path": str(prompt_path.relative_to(grids_dir)),
+                    "prompt_path": prompt_path.relative_to(grids_dir).as_posix(),
                 },
             }
 

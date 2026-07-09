@@ -77,7 +77,7 @@ def _asset_url(ctx: ProjectContext, project_dir: Path, abs_path: str | Path) -> 
     if not path.exists():
         return ""
     try:
-        rel_path = str(path.relative_to(project_dir))
+        rel_path = path.relative_to(project_dir).as_posix()
     except ValueError:
         return ""
     return make_static_url_for_context(ctx, rel_path, local_path=path)
@@ -950,7 +950,7 @@ async def upload_scene_master(
     master_path = canonical_scene_master_path(project_dir, scene.name)
     master_path.parent.mkdir(parents=True, exist_ok=True)
     if master_path.exists():
-        master_path.rename(master_path.parent / f"master_{int(time.time())}.png")
+        master_path.replace(master_path.parent / f"master_{int(time.time())}.png")
     img.save(master_path, format="PNG")
 
     return {
@@ -1095,7 +1095,7 @@ async def upload_scene_pano(
     out_dir.mkdir(parents=True, exist_ok=True)
     pano_path = out_dir / "pano_360.png"
     if pano_path.exists():
-        pano_path.rename(out_dir / f"pano_360_{int(time.time())}.png")
+        pano_path.replace(out_dir / f"pano_360_{int(time.time())}.png")
     img.save(pano_path, format="PNG")
     stage_manifest.update_manifest(
         project_dir,

@@ -277,7 +277,7 @@ def _persist_narrator_voice_content(
     for ext in VOICE_SAMPLE_EXTENSIONS:
         existing = target.with_suffix(ext)
         if existing.exists():
-            existing.rename(
+            existing.replace(
                 existing.with_name(f"{existing.stem}_{int(time.time())}{existing.suffix}")
             )
     target.write_bytes(content)
@@ -327,7 +327,7 @@ def _trim_narrator_voice_content(
     for ext in VOICE_SAMPLE_EXTENSIONS:
         sibling = target.with_suffix(ext)
         if sibling.exists():
-            sibling.rename(sibling.with_name(f"{sibling.stem}_{int(time.time())}{sibling.suffix}"))
+            sibling.replace(sibling.with_name(f"{sibling.stem}_{int(time.time())}{sibling.suffix}"))
     target.write_bytes(content)
     set_narrator_reference_audio(
         username,
@@ -721,7 +721,7 @@ async def delete_narrator_voice(
         if not target.is_absolute():
             target = ctx.output_dir / target
         if target.exists():
-            target.rename(target.with_name(f"{target.stem}_{int(time.time())}{target.suffix}"))
+            target.replace(target.with_name(f"{target.stem}_{int(time.time())}{target.suffix}"))
     set_narrator_reference_audio(ctx.owner_username, ctx.project_name, relative_path="", sha256="")
     return {
         "ok": True,

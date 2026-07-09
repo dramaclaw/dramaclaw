@@ -284,7 +284,7 @@ def resolve_url_list(project_dir: Path, urls: list[str]) -> list[str]:
         if not u:
             continue
         try:
-            out.append(str(resolve_static_url_to_path(u, project_dir)))
+            out.append(resolve_static_url_to_path(u, project_dir).as_posix())
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
     return out

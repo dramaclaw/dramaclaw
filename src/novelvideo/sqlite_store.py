@@ -684,7 +684,7 @@ class SQLiteStore:
         old_dir = Path(self.project_dir) / "assets" / "characters" / old_name
         new_dir = Path(self.project_dir) / "assets" / "characters" / new_name
         if old_dir.exists() and not new_dir.exists():
-            old_dir.rename(new_dir)
+            old_dir.replace(new_dir)
         console.print(f"[green]已重命名角色: {old_name} → {new_name}[/green]")
 
     async def delete_character(self, name: str) -> None:
@@ -1053,7 +1053,7 @@ class SQLiteStore:
                 / f"{new_safe}.png"
             )
             if old_img.exists() and not new_img.exists():
-                old_img.rename(new_img)
+                old_img.replace(new_img)
         char.identities = identities
         if "identity_name" in updates:
             old_id = identity_id

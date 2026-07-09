@@ -38,7 +38,7 @@ def _asset_url(ctx, project_dir: Path, abs_path: str | Path) -> str:
     if not path.exists():
         return ""
     try:
-        rel_path = str(path.relative_to(project_dir))
+        rel_path = path.relative_to(project_dir).as_posix()
     except ValueError:
         return ""
     return make_static_url_for_context(ctx, rel_path, local_path=path)

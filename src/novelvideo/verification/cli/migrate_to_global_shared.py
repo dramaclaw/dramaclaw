@@ -246,7 +246,7 @@ async def main_async() -> int:
 
                 ts = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
                 deprecated = src.with_name(f"_shared.deprecated.{ts}")
-            src.rename(deprecated)
+            src.replace(deprecated)
             summary["moved_to"] = str(deprecated)
 
     print(json.dumps({

@@ -7,7 +7,7 @@ import os
 from collections.abc import Callable
 from datetime import datetime
 from json import JSONDecodeError
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 from novelvideo.generators.grid_splitter import combine_to_grid
@@ -38,6 +38,11 @@ _STICK_FIGURE_STYLE_LOCK = (
     "- Preserve the original minimal line-art rendering of every retained panel; do NOT upgrade any panel to illustrated / rendered / shaded style even if that panel's specific instruction is silent on style.\n"
     "- If the current input panel already looks illustrated, correct it back to the stick-figure storyboard style while preserving the requested identities and staging."
 )
+
+
+def _rel_posix(path: Any, base: Path) -> str:
+    """Contract-facing relative path: always posix separators."""
+    return PurePath(os.path.relpath(str(path), base)).as_posix()
 
 
 def _ensure_empty_cell_png(edit_dir: Path, reference_sketch_path: str) -> Path:
@@ -594,10 +599,10 @@ def execute_sketch_edit_batches(
         if submitted_prompt_file is None and prompt_text:
             submitted_prompt_file = episode_grids_dir / _derive_saved_prompt_relpath(mode_key, beat_numbers)
 
-        rel_path = os.path.relpath(save_result["grid_path"], project_dir)
+        rel_path = _rel_posix(save_result["grid_path"], project_dir)
         cell_paths_abs = [Path(str(cell_path)) for cell_path in (save_result.get("cell_paths") or [])]
         rel_cell_paths = [
-            os.path.relpath(str(cell_path), project_dir) for cell_path in cell_paths_abs
+            _rel_posix(str(cell_path), project_dir) for cell_path in cell_paths_abs
         ]
         batch_logs.append(f"完成 batch {batch_index}: {rel_path}")
         _log(log_callback, batch_logs[-1])
@@ -624,12 +629,12 @@ def execute_sketch_edit_batches(
             "beat_numbers": beat_numbers,
             "submitted_prompt_text": prompt_text,
             "submitted_prompt_file": (
-                os.path.relpath(str(submitted_prompt_file), project_dir)
+                _rel_posix(str(submitted_prompt_file), project_dir)
                 if submitted_prompt_file and submitted_prompt_file.exists()
                 else None
             ),
             "submitted_reference_images": [
-                os.path.relpath(path, project_dir) for path in reference_images
+                _rel_posix(path, project_dir) for path in reference_images
             ],
             "image_provider": edit_generator_config.get("provider"),
             "image_model": edit_generator_config.get("model"),
@@ -656,9 +661,9 @@ def execute_sketch_edit_batches(
                 "mode_key": mode_key,
                 "beat_nums": beat_numbers,
                 "input_grid_path": (
-                    os.path.relpath(str(input_grid_path), project_dir) if input_grid_path else None
+                    _rel_posix(str(input_grid_path), project_dir) if input_grid_path else None
                 ),
-                "output_grid_path": os.path.relpath(str(output_grid_path), project_dir),
+                "output_grid_path": _rel_posix(str(output_grid_path), project_dir),
                 "submitted_prompt_text": prompt_text,
                 "submitted_prompt_file": audit_payload["submitted_prompt_file"],
                 "submitted_reference_images": audit_payload["submitted_reference_images"],
@@ -667,7 +672,7 @@ def execute_sketch_edit_batches(
                 "image_size": audit_payload["image_size"],
                 "image_quality": audit_payload["image_quality"],
                 "batch_logs": batch_logs,
-                "audit_json": os.path.relpath(str(audit_path), project_dir),
+                "audit_json": _rel_posix(str(audit_path), project_dir),
                 "saved_grid_path": rel_path,
                 "candidate_cell_paths": rel_cell_paths,
             }

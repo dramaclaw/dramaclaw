@@ -156,14 +156,14 @@ async def verify_beat(
         **result.model_dump(),
         "beat_number": beat_num,
         "verify_type": body.type,
-        "image_path": str(image_path.relative_to(project_dir)),
+        "image_path": image_path.relative_to(project_dir).as_posix(),
         "description_used": beat.get("visual_description", ""),
     }
 
     # 6. 格式化可读报告 + 持久化
     data["report_text"] = format_verification_report(result.model_dump(), beat_num, body.type)
     report_path = save_verify_report(project_dir, episode_num, beat_num, body.type, data)
-    data["report_path"] = str(report_path.relative_to(project_dir))
+    data["report_path"] = report_path.relative_to(project_dir).as_posix()
 
     return {"ok": True, "data": data}
 
@@ -219,7 +219,7 @@ async def start_sketch_edit_execute(
             "ok": True,
             "task_type": "sketch_edit_execute",
             "scope": scope,
-            "labels_jsonl": str(labels_path.relative_to(project_dir)),
+            "labels_jsonl": labels_path.relative_to(project_dir).as_posix(),
             "labels_validation": validation,
             "task_id": queued.task_state.task_id,
             "task_key": project_task_state_key(
@@ -238,7 +238,7 @@ async def start_sketch_edit_execute(
         "error": "sketch edit execute 需要 project context",
         "task_type": "sketch_edit_execute",
         "scope": scope,
-        "labels_jsonl": str(labels_path.relative_to(project_dir)),
+        "labels_jsonl": labels_path.relative_to(project_dir).as_posix(),
         "labels_validation": validation,
     }
 
@@ -269,7 +269,7 @@ async def verify_consistency(
     report_type = "frame_consistency" if body.verify_type == "frame" else "consistency"
     data["report_text"] = format_consistency_report(data, episode_num)
     report_path = save_verify_report(project_dir, episode_num, None, report_type, data)
-    data["report_path"] = str(report_path.relative_to(project_dir))
+    data["report_path"] = report_path.relative_to(project_dir).as_posix()
 
     return {"ok": True, "data": data}
 
@@ -338,15 +338,15 @@ async def verify_frame(
         **result.model_dump(),
         "beat_number": beat_num,
         "verify_type": "frame",
-        "frame_path": str(frame_path.relative_to(project_dir)),
-        "sketch_path": str(sketch_path.relative_to(project_dir)),
+        "frame_path": frame_path.relative_to(project_dir).as_posix(),
+        "sketch_path": sketch_path.relative_to(project_dir).as_posix(),
         "description_used": visual_desc,
     }
 
     # 6. 格式化可读报告 + 持久化
     data["report_text"] = format_verification_report(result.model_dump(), beat_num, "frame")
     report_path = save_verify_report(project_dir, episode_num, beat_num, "frame", data)
-    data["report_path"] = str(report_path.relative_to(project_dir))
+    data["report_path"] = report_path.relative_to(project_dir).as_posix()
 
     return {"ok": True, "data": data}
 
@@ -423,7 +423,7 @@ async def score_beat(
     }
 
     report_path = save_verify_report(project_dir, episode_num, beat_num, "score", data)
-    data["report_path"] = str(report_path.relative_to(project_dir))
+    data["report_path"] = report_path.relative_to(project_dir).as_posix()
 
     return {"ok": True, "data": data}
 
@@ -476,7 +476,7 @@ async def score_batch(
             candidates = []
             sketch_path = find_sketch_for_beat(project_dir, episode_num, beat_num)
             if sketch_path:
-                candidates = [type("Img", (), {"id": "latest", "cell_path": str(sketch_path.relative_to(grids_dir))})()]
+                candidates = [type("Img", (), {"id": "latest", "cell_path": sketch_path.relative_to(grids_dir).as_posix()})()]
 
         scored = []
         for img in candidates:
@@ -616,7 +616,7 @@ async def verify_continuity(
         return {"ok": False, "error": str(e)}
 
     report_path = save_verify_report(project_dir, episode_num, None, "continuity", data)
-    data["report_path"] = str(report_path.relative_to(project_dir))
+    data["report_path"] = report_path.relative_to(project_dir).as_posix()
 
     return {"ok": True, "data": data}
 
@@ -646,7 +646,7 @@ async def verify_similarity(
 
     data = result.model_dump()
     report_path = save_verify_report(project_dir, episode_num, None, "similarity", data)
-    data["report_path"] = str(report_path.relative_to(project_dir))
+    data["report_path"] = report_path.relative_to(project_dir).as_posix()
 
     return {"ok": True, "data": data}
 
@@ -732,7 +732,7 @@ async def sketch_select(
     data["promoted_count"] = promoted
 
     report_path = save_verify_report(project_dir, episode_num, None, "sketch_select", data)
-    data["report_path"] = str(report_path.relative_to(project_dir))
+    data["report_path"] = report_path.relative_to(project_dir).as_posix()
 
     return {"ok": True, "data": data}
 
@@ -765,7 +765,7 @@ async def verify_episode_overview(
 
     data["report_text"] = format_episode_overview_report(data, episode_num)
     report_path = save_verify_report(project_dir, episode_num, None, "episode_overview", data)
-    data["report_path"] = str(report_path.relative_to(project_dir))
+    data["report_path"] = report_path.relative_to(project_dir).as_posix()
 
     return {"ok": True, "data": data}
 
@@ -820,6 +820,6 @@ async def verify_sketch_colors(
     data = result.model_dump()
     data["report_text"] = format_color_verify_report(data, episode_num)
     report_path = save_verify_report(project_dir, episode_num, None, "sketch_colors", data)
-    data["report_path"] = str(report_path.relative_to(project_dir))
+    data["report_path"] = report_path.relative_to(project_dir).as_posix()
 
     return {"ok": True, "data": data}

@@ -37,9 +37,18 @@ class HuimengTaskFailed(RuntimeError):
     """HuiMeng reported a terminal failed status."""
 
 
+# mimetypes 在 Windows 上读注册表(.wav -> audio/wav),与 POSIX 内置表
+# (audio/x-wav)不一致;上游契约按 POSIX 值固定。
+_MIME_BY_EXT = {".wav": "audio/x-wav"}
+
+
 def local_file_to_data_url(path: str | Path) -> str:
     file_path = Path(path)
-    mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    mime_type = (
+        _MIME_BY_EXT.get(file_path.suffix.lower())
+        or mimetypes.guess_type(file_path.name)[0]
+        or "application/octet-stream"
+    )
     encoded = base64.b64encode(file_path.read_bytes()).decode("utf-8")
     return f"data:{mime_type};base64,{encoded}"
 

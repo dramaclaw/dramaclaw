@@ -57,7 +57,9 @@ def load_novel_text(path: str | Path) -> str:
     suffix = novel_path.suffix.lower()
     if suffix in TEXT_NOVEL_EXTENSIONS:
         try:
-            return decode_novel_bytes(novel_path.read_bytes())
+            text = decode_novel_bytes(novel_path.read_bytes())
+            # CRLF/CR novels (typical Windows txt) must not leak \r downstream.
+            return text.replace("\r\n", "\n").replace("\r", "\n")
         except UnicodeDecodeError as exc:
             raise DocumentParseError(
                 source_format=suffix.lstrip(".") or "unknown",
