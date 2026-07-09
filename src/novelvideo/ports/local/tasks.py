@@ -274,7 +274,10 @@ class InlineTaskBackend:
             status="cancelled",
             expected_task_id=task_state.task_id,
         )
-        kill_task_processes(task_state.task_id)
+        # taskkill/killpg 是阻塞调用(Windows 上可达秒级),不得占事件循环
+        await asyncio.get_running_loop().run_in_executor(
+            None, kill_task_processes, task_state.task_id
+        )
         return True
 
 

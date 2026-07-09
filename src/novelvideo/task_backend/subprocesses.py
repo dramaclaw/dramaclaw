@@ -111,6 +111,7 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
                 ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                 capture_output=True,
                 check=False,
+                timeout=15,
             )
         if proc.poll() is None:
             with contextlib.suppress(Exception):
