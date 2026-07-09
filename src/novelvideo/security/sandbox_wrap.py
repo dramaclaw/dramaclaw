@@ -95,9 +95,9 @@ def wrap_command(cmd: list[str], spec: SandboxSpec) -> list[str]:
 
     Linux:  prefixes with codex-linux-sandbox CLI (bwrap-based).
     macOS:  prefixes with /usr/bin/sandbox-exec -p '<profile>' -- ...
-    Other:  raises RuntimeError.
+    Other (e.g. Windows): no sandbox backend → fallback path below.
 
-    Fallback (sandbox binary missing):
+    Fallback (sandbox binary missing or no backend for this OS):
     - SUPERTALE_ENV=production → raise (must sandbox in prod).
     - Otherwise → warn and return raw cmd (dev convenience).
     """
@@ -106,7 +106,7 @@ def wrap_command(cmd: list[str], spec: SandboxSpec) -> list[str]:
         return _wrap_linux(cmd, spec)
     if system == "Darwin":
         return _wrap_macos(cmd, spec)
-    raise RuntimeError(f"sandbox not supported on {system}")
+    return _fallback_or_raise(cmd, f"no sandbox backend on {system}")
 
 
 def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
