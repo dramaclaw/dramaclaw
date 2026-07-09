@@ -46,6 +46,10 @@ export interface FreezoneGenerationHistoryRecord {
   media_type: string;
   /** Raw task result payload; shape varies by task_type. */
   result: Record<string, unknown>;
+  /** 注册表模型 id（还原时回填 data.model）。旧记录无此字段。 */
+  model?: string;
+  /** 生成模式（视频 genMode / 图片 generationMode）。旧记录无此字段。 */
+  gen_mode?: string;
 }
 
 /**
@@ -191,6 +195,8 @@ export interface FreezoneVideoGenPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** Backend model id, e.g. huimeng_seedance20_fast / seedance_pro. */
   model?: string;
+  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
+  genMode?: string;
   /**
    * Real-person material review. Set `true` when the input contains real
    * human faces so the backend routes the job through the human-review path
@@ -227,7 +233,8 @@ export async function submitFreezoneVideoGen(
         resolution: payload.resolution ?? "720p",
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
-        ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
+        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -284,6 +291,8 @@ export interface FreezoneVideoKeyframesPayload extends FreezoneNodeContext {
   durationSeconds?: number;
   generateAudio?: boolean;
   model?: string;
+  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
+  genMode?: string;
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -317,7 +326,8 @@ export async function submitFreezoneVideoKeyframes(
         resolution: payload.resolution ?? "720p",
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
-        ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
+        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -344,6 +354,8 @@ export interface FreezoneVideoI2vPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** default huimeng_seedance10_fast (matches keyframes); multi-image prefers seedance 2.0. */
   model?: string;
+  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
+  genMode?: string;
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -376,7 +388,8 @@ export async function submitFreezoneVideoI2v(
         resolution: payload.resolution ?? "720p",
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
-        ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
+        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -409,6 +422,8 @@ export interface FreezoneVideoOmniGenPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** default huimeng_seedance20_fast per backend default. */
   model?: string;
+  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
+  genMode?: string;
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -447,7 +462,8 @@ export async function submitFreezoneVideoOmniGen(
         resolution: payload.resolution ?? "720p",
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
-        ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
+        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
