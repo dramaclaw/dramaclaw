@@ -52,6 +52,7 @@ dependencies = [
     "python-ulid>=2.2.0",
     "asyncpg>=0.30.0",
     "packaging>=24.0",
+    "portalocker>=3.2.0",
 ]
 
 [project.scripts]
