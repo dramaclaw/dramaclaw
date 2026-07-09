@@ -73,7 +73,7 @@ def collect_targets(argv: list[str]) -> list[Path]:
     return [
         p
         for p in paths
-        if p.is_file() and is_scan_target(p) and str(p) not in SKIP_PATHS
+        if p.is_file() and is_scan_target(p) and p.as_posix() not in SKIP_PATHS
     ]
 
 
