@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -248,13 +250,19 @@ def sanitize_project_local_paths_in_memory(
 
     static_prefix = f"/static/projects/{quote(project_id, safe='')}"
 
+    # 只归一紧随替换前缀的路径 token(至引号/空白/分隔符止),
+    # 不碰同一字符串里的无关反斜杠(用户文本、其他盘符路径)。
+    tail_re = re.compile(re.escape(static_prefix) + r"[^\s\"'|?#]*")
+
+    def _posixify_token(match: "re.Match[str]") -> str:
+        return match.group(0).replace("\\\\", "/").replace("\\", "/")
+
     def replace_text(text: str) -> str:
         sanitized = text
         for prefix in prefixes:
             sanitized = sanitized.replace(prefix, static_prefix)
         if sanitized != text and "\\" in sanitized:
-            # 命中替换的字符串是路径载体:把 Windows 分隔符(含 JSON 转义形态)归一。
-            sanitized = sanitized.replace("\\\\", "/").replace("\\", "/")
+            sanitized = tail_re.sub(_posixify_token, sanitized)
         return sanitized
 
     def visit(value):
