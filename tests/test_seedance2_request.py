@@ -310,7 +310,7 @@ async def test_huimeng_seedance2_generator_downloads_returned_last_frame(tmp_pat
     )
     assert result.status == VideoGenStatus.DONE
     assert result.last_frame_url == "https://example.com/last-frame.png"
-    assert result.last_frame_path == str(expected_path)
+    assert result.last_frame_path == expected_path.as_posix()
     assert expected_path.exists()
     assert client.downloaded_images == [
         ("https://example.com/last-frame.png", str(expected_path))
@@ -370,7 +370,7 @@ async def test_huimeng_seedance2_generator_reads_returned_last_frame_from_task_p
     )
     assert result.status == VideoGenStatus.DONE
     assert result.last_frame_url == "https://example.com/top-level-last-frame.png"
-    assert result.last_frame_path == str(expected_path)
+    assert result.last_frame_path == expected_path.as_posix()
     assert expected_path.exists()
     assert client.downloaded_images == [
         ("https://example.com/top-level-last-frame.png", str(expected_path))

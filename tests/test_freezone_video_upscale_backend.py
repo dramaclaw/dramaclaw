@@ -82,7 +82,7 @@ async def test_freezone_video_upscale_route_starts_task(
     assert captured["queue_kind"] == "ffmpeg"
     assert captured["episode"] == 0
     assert captured["scope"] == "upscale_job"
-    assert captured["payload"]["source_path"] == str(video_path)
+    assert captured["payload"]["source_path"] == video_path.as_posix()
     assert captured["payload"]["resolution"] == "2k"
     assert captured["payload"]["frame_interpolation"] == "none"
     assert captured["payload"]["denoise_strength"] == "2x"

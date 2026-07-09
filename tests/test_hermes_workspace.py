@@ -386,9 +386,14 @@ def test_user_skill_dir_not_clobbered(isolated_workspace, repo_skills, repo_plug
 
 
 def test_chmod_700(isolated_workspace, repo_skills, repo_plugins):
+    import os
     import stat
 
     home = hw.ensure_user_hermes_workspace("admin")
     mode = stat.S_IMODE(home.stat().st_mode)
-    # On filesystems that support chmod, should be 0o700
-    assert mode in (0o700, 0o755, 0o775), f"unexpected mode {oct(mode)}"
+    if os.name == "nt":
+        # Windows has no POSIX permission bits; directories report 0o777.
+        assert mode & stat.S_IRWXU == stat.S_IRWXU, f"unexpected mode {oct(mode)}"
+    else:
+        # On filesystems that support chmod, should be 0o700
+        assert mode in (0o700, 0o755, 0o775), f"unexpected mode {oct(mode)}"

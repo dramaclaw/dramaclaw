@@ -357,7 +357,8 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
 def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     overrides = chat_service._codex_mcp_config_overrides(chat_service._dramaclaw_mcp_servers())
 
-    assert f'mcp_servers.dramaclaw.command="{__import__("sys").executable}"' in overrides
+    expected_command = json.dumps(__import__("sys").executable, ensure_ascii=False)
+    assert f"mcp_servers.dramaclaw.command={expected_command}" in overrides
     assert 'mcp_servers.dramaclaw.args=["-m","novelvideo.chat.dramaclaw_mcp"]' in overrides
 
     client = backend_sdk.CodexClient(

@@ -1,3 +1,4 @@
+import json
 import struct
 from pathlib import Path
 
@@ -55,7 +56,9 @@ def test_drama_narration_panel_sends_audio_only_when_prompt_references_it(
             "audio_type": "narration",
             "scene_ref": {"scene_id": "旧书店"},
             "narration_segment": "画外音响起。",
-            "seedance2_config_json": f'{{"reference_audio_paths": ["{uploaded_audio}"]}}',
+            "seedance2_config_json": json.dumps(
+                {"reference_audio_paths": [str(uploaded_audio)]}
+            ),
         },
     )
 
@@ -77,9 +80,11 @@ def test_drama_narration_panel_sends_audio_only_when_prompt_references_it(
             "audio_type": "narration",
             "scene_ref": {"scene_id": "旧书店"},
             "narration_segment": "画外音响起。",
-            "seedance2_config_json": (
-                '{"final_prompt": "参考@音频2声线。", '
-                f'"reference_audio_paths": ["{uploaded_audio}"]}}'
+            "seedance2_config_json": json.dumps(
+                {
+                    "final_prompt": "参考@音频2声线。",
+                    "reference_audio_paths": [str(uploaded_audio)],
+                }
             ),
         },
     )
