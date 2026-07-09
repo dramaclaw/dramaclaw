@@ -1618,6 +1618,7 @@ tests/test_global_prop_marker_colors.py,Elastic-2.0,2026 SuperTale contributors,
 tests/test_hermes_dramaclaw_plugin.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_pool_session_resume.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_workspace.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_history_asset_model_mode.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_identity_planner_character_promotion.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_identity_runner_result.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_image_credit_reservation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
