@@ -35,6 +35,9 @@ class UsageMeter(Protocol):
         task_id: str = "",
         task_type: str = "",
         metadata: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
+        quantity: int | float | str | None = 1,
+        idempotency_key: str = "",
         require_price_rule: bool = False,
         require_positive_cost: bool = False,
     ) -> dict[str, Any]: ...
