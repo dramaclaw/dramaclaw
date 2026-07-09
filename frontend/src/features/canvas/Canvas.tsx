@@ -3103,6 +3103,10 @@ export function Canvas({
         // 历史「使用」还原的是生成产物：图片应还原成成品「图片节点」(imageGen)——
         // 带回提示词、展开操作区、按图自适应比例，而非只读的上传参考图节点（见 spawnAssetNode）。
         restoreAsGeneratedImage: true,
+        // 原始生成的注册表模型 id / 生成模式,透传给还原节点以复现原次生成配置
+        // （视频写回 data.model+data.genMode；图片写回 data.model）。旧记录为 undefined。
+        model: asset.model ?? undefined,
+        genMode: asset.genMode ?? undefined,
         source: {},
       };
       const origin = spawnAtViewportCenter();

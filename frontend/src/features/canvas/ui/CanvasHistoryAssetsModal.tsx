@@ -148,6 +148,9 @@ export function recordsToAssetBuckets(
       // 用「使用」建节点时把这条记录原始提示词灌进新节点的提示词框；label 对世界
       // 记录可能回退成节点名,所以这里单独存 prompt（仅后端存过提示词时才有值）。
       prompt: prompt ?? null,
+      // 原始生成的注册表模型 id / 生成模式，透传给「使用」还原节点（旧记录为 undefined）。
+      model: record.model,
+      genMode: record.gen_mode,
       timestamp: Number.isNaN(ts) ? null : ts,
     });
   }

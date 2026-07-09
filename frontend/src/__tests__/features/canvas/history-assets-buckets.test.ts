@@ -148,3 +148,32 @@ describe("recordsToAssetBuckets — world history", () => {
     expect(buckets.model[0]?.previewUrl).toContain("record-src.png");
   });
 });
+
+describe("recordsToAssetBuckets — model/genMode 记忆", () => {
+  it("从带 model/gen_mode 的记录提取到 asset", () => {
+    const buckets = recordsToAssetBuckets([
+      record({
+        media_type: "video",
+        model: "happyhouse_1_0",
+        gen_mode: "firstLastFrame",
+        result: { output_url: "/static/p/v.mp4" },
+      }),
+    ]);
+    const asset = Object.values(buckets)
+      .flat()
+      .find((a) => a.url === "/static/p/v.mp4");
+    expect(asset?.model).toBe("happyhouse_1_0");
+    expect(asset?.genMode).toBe("firstLastFrame");
+  });
+
+  it("旧记录无字段时得到 undefined", () => {
+    const buckets = recordsToAssetBuckets([
+      record({ media_type: "image", result: { output_url: "/static/p/i.png" } }),
+    ]);
+    const asset = Object.values(buckets)
+      .flat()
+      .find((a) => a.url === "/static/p/i.png");
+    expect(asset?.model).toBeUndefined();
+    expect(asset?.genMode).toBeUndefined();
+  });
+});

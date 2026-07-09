@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getSceneDirectorStageManifest } from "@/api/viewerManifests";
 import { hydrateAssetDragPayload } from "@/features/canvas/domain/assetDragHydrate";
+import { spawnAssetNode } from "@/features/canvas/domain/assetDrag";
 import type { CanvasAssetDragPayload } from "@/features/canvas/domain/assetDrag";
+import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import type { ThreeDSceneSnapshot } from "@/features/viewer-kit/three-d/engine/viewerApp";
 import type { DirectorStageManifest } from "@/features/viewer-kit/three-d/directorManifest";
 
@@ -116,5 +118,77 @@ describe("hydrateAssetDragPayload", () => {
 
     await expect(hydrateAssetDragPayload(payload)).resolves.toBe(payload);
     expect(getSceneDirectorStageManifest).not.toHaveBeenCalled();
+  });
+});
+
+describe("spawnAssetNode — 还原链路 model/genMode", () => {
+  // 最小假 store：捕获每次 addNode(type, position, data)，返回稳定 id。spawnAssetNode
+  // 只用到 store.addNode，其余方法用不到。
+  function fakeStore() {
+    const created: Array<{ type: string; data: Record<string, unknown> }> = [];
+    const store = {
+      addNode: (
+        type: string,
+        _position: { x: number; y: number },
+        data: Record<string, unknown>,
+      ) => {
+        created.push({ type, data });
+        return `node-${created.length}`;
+      },
+    } as unknown as Parameters<typeof spawnAssetNode>[0];
+    return { store, created };
+  }
+
+  it("视频：payload 带 model/genMode → 节点 data.model / data.genMode 写回", () => {
+    const { store, created } = fakeStore();
+    const payload = {
+      kind: "video",
+      label: "v",
+      url: "/static/p/v.mp4",
+      model: "happyhouse_1_0",
+      genMode: "firstLastFrame",
+      source: {},
+    } satisfies CanvasAssetDragPayload;
+
+    spawnAssetNode(store, payload, { x: 0, y: 0 });
+
+    expect(created[0]?.type).toBe(CANVAS_NODE_TYPES.video);
+    expect(created[0]?.data.model).toBe("happyhouse_1_0");
+    expect(created[0]?.data.genMode).toBe("firstLastFrame");
+  });
+
+  it("视频：payload 无 model → data.model 不写(undefined)", () => {
+    const { store, created } = fakeStore();
+    const payload = {
+      kind: "video",
+      label: "v",
+      url: "/static/p/v.mp4",
+      source: {},
+    } satisfies CanvasAssetDragPayload;
+
+    spawnAssetNode(store, payload, { x: 0, y: 0 });
+
+    expect(created[0]?.data.model).toBeUndefined();
+    expect(created[0]?.data.genMode).toBeUndefined();
+  });
+
+  it("图片：restoreAsGeneratedImage + model → 还原成成品图片节点(imageGen)且带回底图与 model", () => {
+    const { store, created } = fakeStore();
+    const payload = {
+      kind: "image",
+      label: "i",
+      url: "/static/p/i.png",
+      restoreAsGeneratedImage: true,
+      model: "seedream_4_0",
+      source: {},
+    } satisfies CanvasAssetDragPayload;
+
+    spawnAssetNode(store, payload, { x: 0, y: 0 });
+
+    // imageEdit('imageNode') 是纯生成编辑器,不渲染 data.imageUrl,还原会空白 —— 故成品图
+    // 还原走 imageGen('imageGenNode'):它读 data.imageUrl 直接展示、可编辑、带 data.model。
+    expect(created[0]?.type).toBe(CANVAS_NODE_TYPES.imageGen);
+    expect(created[0]?.data.imageUrl).toBe("/static/p/i.png");
+    expect(created[0]?.data.model).toBe("seedream_4_0");
   });
 });
