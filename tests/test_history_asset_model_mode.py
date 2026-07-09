@@ -10,6 +10,10 @@ from pathlib import Path
 
 from novelvideo.freezone.history import read_generation_history
 from novelvideo.project_context import ProjectContext
+from novelvideo.task_backend.runners.freezone import (
+    _append_node_history,
+    _history_model_mode_extra,
+)
 from novelvideo.task_backend.runners.video import _append_freezone_video_node_history
 
 
@@ -70,6 +74,64 @@ def test_video_history_omits_model_keys_when_absent(tmp_path: Path) -> None:
         payload=payload,
         job_id="job_v2",
         result={"output_url": "/static/y.mp4"},
+    )
+    assert rec is not None
+    assert "model" not in rec
+    assert "gen_mode" not in rec
+
+
+def test_history_model_mode_extra_maps_and_omits() -> None:
+    assert _history_model_mode_extra(
+        {"model_id": "seedream_4_0", "gen_mode": "image_to_image"}
+    ) == {"model": "seedream_4_0", "gen_mode": "image_to_image"}
+    # 缺省 → 省略（向后兼容）
+    assert _history_model_mode_extra({"prompt": "x"}) == {}
+    # 仅其一
+    assert _history_model_mode_extra({"model_id": "m"}) == {"model": "m"}
+
+
+def test_image_history_persists_model_and_gen_mode(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    project_dir = tmp_path / "proj"
+    payload = {
+        "node_id": "img_1",
+        "canvas_id": "default",
+        "prompt": "赛博夜景",
+    }
+    rec = _append_node_history(
+        ctx=ctx,
+        project_dir=project_dir,
+        payload=payload,
+        task_type="freezone_gen",
+        job_id="job_i1",
+        media_type="image",
+        result={"output_url": "/static/a.png"},
+        model="seedream_4_0",
+        gen_mode="image_to_image",
+    )
+    assert rec is not None
+    assert rec["model"] == "seedream_4_0"
+    assert rec["gen_mode"] == "image_to_image"
+
+    stored = read_generation_history(
+        project_dir=project_dir, canvas_id="default", node_id="img_1"
+    )
+    assert stored[-1]["model"] == "seedream_4_0"
+    assert stored[-1]["gen_mode"] == "image_to_image"
+
+
+def test_image_history_omits_model_keys_when_absent(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    project_dir = tmp_path / "proj"
+    payload = {"node_id": "img_2", "canvas_id": "default", "prompt": "x"}
+    rec = _append_node_history(
+        ctx=ctx,
+        project_dir=project_dir,
+        payload=payload,
+        task_type="freezone_gen",
+        job_id="job_i2",
+        media_type="image",
+        result={"output_url": "/static/b.png"},
     )
     assert rec is not None
     assert "model" not in rec
