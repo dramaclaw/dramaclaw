@@ -16,7 +16,6 @@ path,license_expression,copyright,evidence
 .github/workflows/ee-terms.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/frontend.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/release-images.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-.github/workflows/release-packages.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/secret-scan.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/spike-windows-native.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/sync-to-gitee.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
