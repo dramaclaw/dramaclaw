@@ -101,6 +101,21 @@ def _append_node_history(
     )
 
 
+def _history_model_mode_extra(payload: dict) -> dict:
+    """记忆包：把生成请求里的注册表 model id / 生成模式映射到历史记录顶层字段。
+
+    仅非空时写入，缺省省略（向后兼容，还原时回退默认）。
+    """
+    extra: dict[str, str] = {}
+    model_id = payload.get("model_id")
+    if model_id:
+        extra["model"] = str(model_id)
+    gen_mode = payload.get("gen_mode")
+    if gen_mode:
+        extra["gen_mode"] = str(gen_mode)
+    return extra
+
+
 async def _run_freezone_gen_async(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
     from novelvideo.api.deps import make_static_url_for_context
     from novelvideo.freezone.jobs import ensure_freezone_dirs, run_freezone_gen
@@ -144,6 +159,7 @@ async def _run_freezone_gen_async(envelope: dict[str, Any], ctx: ProjectContext)
         job_id=job_id,
         media_type="image",
         result=result,
+        **_history_model_mode_extra(payload),
     )
     if history_record:
         result["generation_history_record"] = history_record
@@ -197,6 +213,7 @@ async def _run_freezone_edit_async(
         job_id=job_id,
         media_type="image",
         result=result,
+        **_history_model_mode_extra(payload),
     )
     if history_record:
         result["generation_history_record"] = history_record

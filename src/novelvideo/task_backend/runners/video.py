@@ -49,6 +49,12 @@ def _append_freezone_video_node_history(
         build_node_history_record,
     )
 
+    extra: dict[str, Any] = {}
+    if payload.get("model_id"):
+        extra["model"] = str(payload["model_id"])
+    if payload.get("gen_mode"):
+        extra["gen_mode"] = str(payload["gen_mode"])
+
     record = build_node_history_record(
         task_type="freezone_video_gen",
         job_id=job_id,
@@ -60,6 +66,7 @@ def _append_freezone_video_node_history(
         result=result,
         error=error,
         prompt=payload.get("prompt"),
+        extra=extra or None,
     )
 
     return append_generation_history(

@@ -449,6 +449,10 @@ class FreezoneGenRequest(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     quality: Optional[str] = Field(default="medium", description="图片画质档位，默认 medium")
+    model_id: Optional[str] = Field(
+        default=None, description="可选：注册表模型 id，用于还原节点时回填 model"
+    )
+    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
 
 
 class FreezoneEditRequest(BaseModel):
@@ -476,6 +480,10 @@ class FreezoneEditRequest(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     quality: Optional[str] = Field(default="medium", description="图片画质档位，默认 medium")
+    model_id: Optional[str] = Field(
+        default=None, description="可选：注册表模型 id，用于还原节点时回填 model"
+    )
+    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
 
 
 class FreezoneSketchFromContextRequest(BaseModel):
@@ -1011,6 +1019,7 @@ class FreezoneVideoGenRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
 
 
 class FreezoneImageToVideoRequest(BaseModel):
@@ -1062,6 +1071,7 @@ class FreezoneImageToVideoRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
 
 
 class FreezoneKeyframeVideoRequest(BaseModel):
@@ -1115,6 +1125,7 @@ class FreezoneKeyframeVideoRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
 
 
 class FreezoneVideoReferenceItem(BaseModel):
@@ -1274,6 +1285,7 @@ class FreezoneVideoOmniGenRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
 
 
 class FreezoneVideoEraseRequest(BaseModel):

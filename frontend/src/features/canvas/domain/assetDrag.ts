@@ -32,6 +32,10 @@ export interface CanvasAssetDragPayload {
    * 不置(普通拖拽 / 素材库参考图)则仍建 upload 节点(替换素材)。
    */
   restoreAsGeneratedImage?: boolean;
+  /** 原始生成注册表模型 id（还原用）。 */
+  model?: string;
+  /** 原始生成模式（还原用）。 */
+  genMode?: string;
   url: string;
   aspectRatio?: string;
   /** 3GS 借用同 scene 的封面图;其余类型为空。 */
@@ -127,6 +131,10 @@ export function spawnAssetNode(
           // 历史「使用」带来了该记录的原始提示词时,回填到视频节点的提示词框;
           // 无提示词(拖拽/live-canvas)则不写,保持占位符。
           ...(payload.prompt ? { prompt: payload.prompt } : {}),
+          // 历史「使用」带来了原始注册表模型 / 生成模式时回填,让还原的视频节点与原次
+          // 生成一致(VideoNode 读 data.model / data.genMode);缺省则不写,走节点默认。
+          ...(payload.model ? { model: payload.model } : {}),
+          ...(payload.genMode ? { genMode: payload.genMode } : {}),
           __freezone_source: sourceMeta,
           ...candidateData,
           ...directorControlBundle,
@@ -166,6 +174,9 @@ export function spawnAssetNode(
             committed_at: new Date().toISOString(),
             committed_slot_url: payload.url,
             ...(payload.prompt ? { prompt: payload.prompt } : {}),
+            // 历史「使用」带来原始注册表模型 id 时回填,让还原的成品图片节点与原次生成
+            // 同模型(ImageGenNode 读 data.model);缺省则不写,节点自行 seed 默认模型。
+            ...(payload.model ? { model: payload.model } : {}),
             __freezone_source: sourceMeta,
             ...candidateData,
             ...directorControlBundle,

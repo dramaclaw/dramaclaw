@@ -24,6 +24,10 @@ export interface CanvasAsset {
    * display name, not a prompt. Used to seed a new node's prompt box on 使用.
    */
   prompt?: string | null;
+  /** 原始生成的注册表模型 id（还原用）。旧记录为 undefined。 */
+  model?: string | null;
+  /** 原始生成模式（还原用）。旧记录为 undefined。 */
+  genMode?: string | null;
   /** Best-effort creation time in ms epoch; null when the node carries none. */
   timestamp: number | null;
 }

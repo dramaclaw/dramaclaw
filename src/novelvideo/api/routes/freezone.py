@@ -324,11 +324,15 @@ async def _start_or_enqueue_freezone_video_gen(
     last_frame_path: str | None = None,
     canvas_id: str | None = None,
     node_id: str | None = None,
+    model_id: str | None = None,
+    gen_mode: str | None = None,
 ) -> dict:
     payload = {
         "job_id": job_id,
         "canvas_id": canvas_id or "",
         "node_id": node_id or "",
+        "model_id": model_id or "",
+        "gen_mode": gen_mode or "",
         "prompt": prompt,
         "reference_items": reference_items,
         "aspect_ratio": aspect_ratio,
@@ -429,6 +433,8 @@ async def _start_or_enqueue_freezone_gen_job(
     quality: str | None,
     canvas_id: str | None = None,
     node_id: str | None = None,
+    model_id: str | None = None,
+    gen_mode: str | None = None,
     task_display: dict[str, str] | None = None,
 ) -> dict:
     reference_paths = _resolve_url_list(project_dir, reference_urls)
@@ -464,6 +470,8 @@ async def _start_or_enqueue_freezone_gen_job(
                 "quality": quality,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
+                "model_id": model_id or "",
+                "gen_mode": gen_mode or "",
                 **display_payload,
             },
         )
@@ -1820,6 +1828,8 @@ async def _start_or_enqueue_freezone_edit_job(
     quality: str | None,
     canvas_id: str | None = None,
     node_id: str | None = None,
+    model_id: str | None = None,
+    gen_mode: str | None = None,
     task_display: dict[str, str] | None = None,
 ) -> dict:
     base_paths = _resolve_url_list(project_dir, [base_url])
@@ -1867,6 +1877,8 @@ async def _start_or_enqueue_freezone_edit_job(
                 "quality": quality,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
+                "model_id": model_id or "",
+                "gen_mode": gen_mode or "",
                 **display_payload,
             },
         )
@@ -4000,6 +4012,8 @@ async def freezone_gen(
         quality=body.quality,
         canvas_id=body.canvas_id or None,
         node_id=body.node_id or None,
+        model_id=body.model_id or None,
+        gen_mode=body.gen_mode or None,
     )
 
 
@@ -6783,6 +6797,8 @@ async def freezone_video_gen(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            model_id=body.model,
+            gen_mode=body.gen_mode,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error("failed to start freezone video gen task", exc)
@@ -6863,6 +6879,8 @@ async def freezone_video_i2v(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            model_id=body.model,
+            gen_mode=body.gen_mode,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error("failed to start freezone image-to-video task", exc)
@@ -6938,6 +6956,8 @@ async def freezone_video_keyframes(
             last_frame_path=last_path or None,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            model_id=body.model,
+            gen_mode=body.gen_mode,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error("failed to start freezone keyframe video task", exc)
@@ -7028,6 +7048,8 @@ async def freezone_video_omni_gen(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            model_id=body.model,
+            gen_mode=body.gen_mode,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error("failed to start freezone omni video gen task", exc)
@@ -7492,6 +7514,8 @@ async def freezone_edit(
         quality=body.quality,
         canvas_id=body.canvas_id or None,
         node_id=body.node_id or None,
+        model_id=body.model_id or None,
+        gen_mode=body.gen_mode or None,
     )
 
 
