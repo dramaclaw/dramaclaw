@@ -151,7 +151,7 @@ async def test_freezone_analyze_video_story_route_starts_single_video_task(
     assert result["data"]["task_type"] == "freezone_video_story"
     assert result["data"]["job_id"] == "video_story_job"
     assert "freezone_video_story" in result["data"]["task_key"]
-    assert captured["video_path"] == str(video_path)
+    assert captured["video_path"] == video_path.as_posix()
     assert captured["max_frames"] == 12
     assert captured["scene_threshold"] == 0.25
     assert captured["duration_sec"] == 15.0

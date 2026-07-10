@@ -208,6 +208,20 @@ def _clear_cognee_embedding_config_cache() -> None:
         pass
 
 
+def _clear_cognee_llm_config_cache() -> None:
+    """清 Cognee get_llm_config 的 lru_cache;不清则换 key 后仍用旧凭据。"""
+    try:
+        mod = sys.modules.get("cognee.infrastructure.llm.config")
+        if mod is None:
+            return
+        getter = getattr(mod, "get_llm_config", None)
+        cache_clear = getattr(getter, "cache_clear", None)
+        if callable(cache_clear):
+            cache_clear()
+    except Exception:
+        pass
+
+
 def _apply_cognee_runtime_defaults() -> None:
     """Apply NovelVideo's Cognee runtime defaults."""
     os.environ.setdefault("ENABLE_BACKEND_ACCESS_CONTROL", "True")
@@ -675,6 +689,7 @@ def _apply_llm_env(provider: str, model: str, api_key: str) -> None:
 
     _set_or_clear_env("LLM_ENDPOINT", llm_endpoint)
     _set_or_clear_env("LLM_API_VERSION", llm_api_version)
+    _clear_cognee_llm_config_cache()
 
 
 def _apply_embedding_env(llm_provider: str, api_key: str) -> tuple[str, str, str, str]:

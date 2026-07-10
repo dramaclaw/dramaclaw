@@ -45,7 +45,7 @@ def _archive_existing(path: Path) -> None:
     if not path.exists():
         return
     ts = int(time.time())
-    path.rename(path.with_name(f"{path.stem}_{ts}{path.suffix}"))
+    path.replace(path.with_name(f"{path.stem}_{ts}{path.suffix}"))
 
 
 def _scene_context(scene: NovelScene, base_scene: NovelScene | None = None) -> str:

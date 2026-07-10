@@ -52,7 +52,7 @@ async def test_single_video_runner_includes_returned_last_frame_in_task_result(
                 status=VideoGenStatus.DONE,
                 error=None,
                 provider_task_id="provider-task-1",
-                last_frame_path=str(last_frame_path),
+                last_frame_path=last_frame_path.as_posix(),
                 last_frame_url="https://example.com/last-frame.png",
             )
 

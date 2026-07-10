@@ -46,7 +46,7 @@ def _archive_existing_asset(path: Path) -> Path | None:
     if not path.exists():
         return None
     archived = path.with_name(f"{path.stem}_{_asset_suffix()}{path.suffix}")
-    path.rename(archived)
+    path.replace(archived)
     return archived
 
 
@@ -59,7 +59,7 @@ def _replace_canonical_asset(source_path: Path, target_path: Path) -> Path:
         shutil.move(str(source_path), str(target_path))
     except Exception:
         if archived is not None and archived.exists() and not target_path.exists():
-            archived.rename(target_path)
+            archived.replace(target_path)
         raise
     return target_path
 

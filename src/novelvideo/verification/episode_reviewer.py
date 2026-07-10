@@ -164,6 +164,6 @@ class EpisodeReviewer:
         data["total"] = total
         data["overall_passed"] = overall_passed
         data["scene_distribution"] = dict(scene_distribution)
-        data["grid_path"] = str(grid_path.relative_to(project_dir))
+        data["grid_path"] = grid_path.relative_to(project_dir).as_posix()
         data["beats_reviewed"] = [beat_num for beat_num, _, _ in image_entries]
         return data

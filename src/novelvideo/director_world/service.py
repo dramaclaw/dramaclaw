@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
 from novelvideo.utils.path_resolver import PathResolver
+from novelvideo.director_world.paths import fs_url
 
 from .paths import (
     actor_state_registry_path,
@@ -99,7 +100,7 @@ def _add_scene_3gs_ply_params(params: dict[str, str], project_dir: Path, scene_i
     ):
         kind_ply = stage_manifest.resolve_ply_path(project_dir, scene_id, ply_kind=kind)
         if kind_ply is not None:
-            params[param_name] = f"/@fs{kind_ply.resolve()}"
+            params[param_name] = fs_url(kind_ply)
 
 
 class DirectorWorldService:
@@ -161,21 +162,21 @@ class DirectorWorldService:
                 episode=episode,
                 scene_id=scene_id,
             ),
-            "save_fs": f"/@fs{world.resolve()}",
-            "world_fs": f"/@fs{world.resolve()}",
-            "regen_world_fs": f"/@fs{world.resolve()}",
-            "blockings_dir_fs": f"/@fs{blockings.resolve()}",
-            "control_frames_dir_fs": f"/@fs{control_frames_dir.resolve()}",
+            "save_fs": fs_url(world),
+            "world_fs": fs_url(world),
+            "regen_world_fs": fs_url(world),
+            "blockings_dir_fs": fs_url(blockings),
+            "control_frames_dir_fs": fs_url(control_frames_dir),
             "sketch_mode_key": "1x1_2-3_sketch",
             "sketch_aspect_ratio": "2:3",
-            "shape_hint_registry_fs": f"/@fs{shape_hint_registry_path().resolve()}",
-            "shape_hints_dir_fs": f"/@fs{shape_hints_dir().resolve()}",
-            "actor_state_registry_fs": f"/@fs{actor_state_registry_path().resolve()}",
-            "actor_states_dir_fs": f"/@fs{states_dir().resolve()}",
+            "shape_hint_registry_fs": fs_url(shape_hint_registry_path()),
+            "shape_hints_dir_fs": fs_url(shape_hints_dir()),
+            "actor_state_registry_fs": fs_url(actor_state_registry_path()),
+            "actor_states_dir_fs": fs_url(states_dir()),
         }
         scene_3gs_ply = scene_gaussian_splat_ply_path(self.project_dir, scene_id)
         if scene_3gs_ply:
-            params["scene_3gs_ply_fs"] = f"/@fs{scene_3gs_ply.resolve()}"
+            params["scene_3gs_ply_fs"] = fs_url(scene_3gs_ply)
         _add_scene_3gs_ply_params(params, self.project_dir, scene_id)
         scene_collision_glb = scene_gaussian_splat_collision_glb_path(
             self.project_dir,
@@ -183,7 +184,7 @@ class DirectorWorldService:
             scene_3gs_ply,
         )
         if scene_collision_glb:
-            params["scene_collision_glb_fs"] = f"/@fs{scene_collision_glb.resolve()}"
+            params["scene_collision_glb_fs"] = fs_url(scene_collision_glb)
         if slate_beat is not None:
             params["slate_beat"] = str(int(slate_beat))
         beats = _scene_beat_numbers(user, project, episode, scene_id)
@@ -239,29 +240,29 @@ class DirectorWorldService:
             "user": user,
             "project": project,
             # 资产
-            "scene_3gs_ply_fs": f"/@fs{ply_path.resolve()}",
+            "scene_3gs_ply_fs": fs_url(ply_path),
             "ply_source": "master",
             # beat 级状态：让 PlayCanvas 能 load/save 当前 beat
-            "blockings_dir_fs": f"/@fs{blockings.resolve()}",
+            "blockings_dir_fs": fs_url(blockings),
             # 控制图保存目标（Sprint C 用，PlayCanvas 拼具体 .png 文件名）
-            "control_frames_dir_fs": f"/@fs{control_frames_dir.resolve()}",
+            "control_frames_dir_fs": fs_url(control_frames_dir),
             "sketch_mode_key": "1x1_2-3_sketch",
             "sketch_aspect_ratio": "2:3",
             # 给 stage 用：shape_hint / actor_state registry 沿用 voxel stage 的位置
-            "shape_hint_registry_fs": f"/@fs{shape_hint_registry_path().resolve()}",
-            "shape_hints_dir_fs": f"/@fs{shape_hints_dir().resolve()}",
-            "actor_state_registry_fs": f"/@fs{actor_state_registry_path().resolve()}",
-            "actor_states_dir_fs": f"/@fs{states_dir().resolve()}",
+            "shape_hint_registry_fs": fs_url(shape_hint_registry_path()),
+            "shape_hints_dir_fs": fs_url(shape_hints_dir()),
+            "actor_state_registry_fs": fs_url(actor_state_registry_path()),
+            "actor_states_dir_fs": fs_url(states_dir()),
         }
         _add_scene_3gs_ply_params(params, self.project_dir, scene_id)
         if collision_path is not None:
-            params["scene_collision_glb_fs"] = f"/@fs{collision_path.resolve()}"
+            params["scene_collision_glb_fs"] = fs_url(collision_path)
         if slate_beat is not None:
             params["slate_beat"] = str(int(slate_beat))
             params["beat"] = str(int(slate_beat))  # 兼容 PlayCanvas 已有 beat 参数
             sketch_ref = PathResolver(str(self.project_dir), int(episode)).sketch(int(slate_beat))
             if sketch_ref.exists():
-                params["beat_sketch_ref_fs"] = f"/@fs{sketch_ref.resolve()}"
+                params["beat_sketch_ref_fs"] = fs_url(sketch_ref)
                 params["beat_sketch_ref_label"] = f"Beat {int(slate_beat)} 自由草图"
         beats = _scene_beat_numbers(user, project, episode, scene_id)
         if beats:

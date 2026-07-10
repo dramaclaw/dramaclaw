@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import Counter
@@ -309,6 +310,33 @@ def create_app() -> FastAPI:
         return PlainTextResponse(
             "legacy static path; use /static/projects/<project_id>/...\n",
             status_code=410,
+        )
+
+    # 原生/便携部署(无 nginx)时由后端直接伺服 SPA:设 DRAMACLAW_FRONTEND_DIST
+    # 指向前端构建产物目录才挂载;Docker/EE 路径不设该变量,行为不变。
+    # 挂在所有路由之后,/api、/healthz、/static 仍然优先命中。
+    frontend_dist = os.environ.get("DRAMACLAW_FRONTEND_DIST", "").strip()
+    if frontend_dist and Path(frontend_dist).is_dir():
+        from fastapi.staticfiles import StaticFiles
+        from starlette.exceptions import HTTPException as _StarletteHTTPException
+
+        class _SpaStaticFiles(StaticFiles):
+            """SPA fallback: unknown extensionless paths serve index.html.
+
+            StaticFiles 未命中时 raise HTTPException(404)(仅 dist 含 404.html
+            时才返回 404 响应),回落必须捕获异常;带扩展名的缺失资产照常 404。
+            """
+
+            async def get_response(self, path: str, scope):  # type: ignore[override]
+                try:
+                    return await super().get_response(path, scope)
+                except _StarletteHTTPException as exc:
+                    if exc.status_code == 404 and "." not in Path(path).name:
+                        return await super().get_response("index.html", scope)
+                    raise
+
+        application.mount(
+            "/", _SpaStaticFiles(directory=frontend_dist, html=True), name="spa"
         )
 
     return application

@@ -277,7 +277,7 @@ async def _run_batch_render_async(
     frames_dir = paths.frames_dir()
     frames_dir.mkdir(parents=True, exist_ok=True)
     sketch_dir = paths.sketch_dir()
-    sketch_dir_str = str(sketch_dir) if sketch_dir.exists() else ""
+    sketch_dir_str = sketch_dir.as_posix() if sketch_dir.exists() else ""
 
     all_beat_nums = [beat.get("beat_number", idx + 1) for idx, beat in enumerate(beats)]
     beat_sketch_paths = build_beat_sketch_paths(str(episode_grids_dir), all_beat_nums)
@@ -557,13 +557,13 @@ async def _run_selected_regen_async(
         promote_dir.mkdir(parents=True, exist_ok=True)
         grid_type = "render"
         render_sketch_dir = (
-            str(paths.sketch_dir())
+            paths.sketch_dir().as_posix()
             if paths.has_sketch() or bool(beat_sketch_paths_override)
             else ""
         )
         force_kwargs = {
             "sketch_dir": render_sketch_dir,
-            "episode_grids_dir": str(episode_grids_dir),
+            "episode_grids_dir": episode_grids_dir.as_posix(),
             "sketch_aspect_padding": config.get("sketch_aspect_padding", False),
             "force_image_size": "0.5K" if config.get("force_half_k") else None,
             "beat_sketch_paths_override": beat_sketch_paths_override,
@@ -663,7 +663,7 @@ async def _run_selected_regen_async(
 
         save_kwargs = {
             "grid_image_path": result.grid_image_path,
-            "episode_grids_dir": str(episode_grids_dir),
+            "episode_grids_dir": episode_grids_dir.as_posix(),
             "grid_type": grid_type,
             "mode_key": mode_key,
             "beat_nums": grid_beat_nums,

@@ -20,7 +20,7 @@ from novelvideo.api.schemas import (
     PanoViewerSource,
     ViewerBeatContextManifest,
 )
-from novelvideo.director_world.paths import blockings_dir
+from novelvideo.director_world.paths import fs_url, blockings_dir
 from novelvideo.director_world import stage_manifest
 from novelvideo.generators.episode_optimizer import (
     BRIDGMAN_CHARACTER_PALETTE,
@@ -52,7 +52,7 @@ def asset_url(
     if path is None or not path.exists():
         return ""
     try:
-        rel_path = str(path.relative_to(project_dir))
+        rel_path = path.relative_to(project_dir).as_posix()
     except ValueError:
         return ""
     return make_static_url_for_context(ctx, rel_path, local_path=path)
@@ -124,7 +124,7 @@ def build_pano_viewer_manifest(
         source=PanoViewerSource(
             slot_kind="scene_director_pano_360",
             url=pano_url,
-            fs=f"/@fs{pano_path.resolve()}",
+            fs=fs_url(pano_path),
         ),
         correction=_pano_correction(project_dir, scene_name),
         beat_context=_beat_context(episode_num=episode_num, beat_num=beat_num, beat=beat),
@@ -181,7 +181,7 @@ def _director_source_options(
                 ply_url=url,
                 splat_url=url,
                 splat_format=_splat_format(path),
-                fs=f"/@fs{path.resolve()}",
+                fs=fs_url(path),
                 current=current or path.resolve() == active_path.resolve(),
             )
         )
@@ -213,7 +213,7 @@ def _director_source_options(
                 source_type="pano360",
                 pano_url=pano_url,
                 slot_kind="scene_director_pano_360",
-                fs=f"/@fs{pano_path.resolve()}",
+                fs=fs_url(pano_path),
             )
         )
     return options
@@ -349,12 +349,12 @@ def build_director_stage_manifest(
                 source_options=[],
                 source_orientation_mode="supersplat_auto",
                 blockings_dir_fs=(
-                    f"/@fs{blockings_dir(project_dir, beat_episode).resolve()}"
+                    fs_url(blockings_dir(project_dir, beat_episode))
                     if beat_episode is not None
                     else None
                 ),
                 control_frames_dir_fs=(
-                    f"/@fs{(project_dir / 'director_control_frames').resolve()}"
+                    fs_url((project_dir / 'director_control_frames'))
                     if beat_episode is not None
                     else None
                 ),
@@ -386,18 +386,18 @@ def build_director_stage_manifest(
                     source_type="pano360",
                     pano_url=pano_url,
                     slot_kind="scene_director_pano_360",
-                    fs=f"/@fs{pano_path.resolve()}",
+                    fs=fs_url(pano_path),
                     current=True,
                 )
             ],
             source_orientation_mode="supersplat_auto",
             blockings_dir_fs=(
-                f"/@fs{blockings_dir(project_dir, beat_episode).resolve()}"
+                fs_url(blockings_dir(project_dir, beat_episode))
                 if beat_episode is not None
                 else None
             ),
             control_frames_dir_fs=(
-                f"/@fs{(project_dir / 'director_control_frames').resolve()}"
+                fs_url((project_dir / 'director_control_frames'))
                 if beat_episode is not None
                 else None
             ),
@@ -435,12 +435,12 @@ def build_director_stage_manifest(
         ),
         source_orientation_mode="supersplat_auto",
         blockings_dir_fs=(
-            f"/@fs{blockings_dir(project_dir, beat_episode).resolve()}"
+            fs_url(blockings_dir(project_dir, beat_episode))
             if beat_episode is not None
             else None
         ),
         control_frames_dir_fs=(
-            f"/@fs{(project_dir / 'director_control_frames').resolve()}"
+            fs_url((project_dir / 'director_control_frames'))
             if beat_episode is not None
             else None
         ),

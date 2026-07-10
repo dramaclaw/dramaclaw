@@ -134,3 +134,11 @@ def session_id(user: str, project: str, episode: int, scene_id: str) -> str:
 
 def session_target_name(value: str) -> str:
     return f"ai_director_{safe_token(value)}"
+
+
+def fs_url(path: Path) -> str:
+    """Vite /@fs URL:posix 化并保证根斜杠(Windows 盘符 C:/ 前需补 /)。"""
+    posix = Path(path).resolve().as_posix()
+    if not posix.startswith("/"):
+        posix = "/" + posix
+    return f"/@fs{posix}"

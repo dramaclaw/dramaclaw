@@ -86,6 +86,7 @@ LOCKED_LICENSE_OVERRIDES = {
     "cycler": ("BSD-3-Clause", "package metadata recorded for locked optional dependency"),
     "einops": ("MIT", "package metadata recorded for locked optional dependency"),
     "fonttools": ("MIT", "package metadata recorded for locked optional dependency"),
+    "hf-xet": ("Apache-2.0", "package metadata published for locked dependency"),
     "imageio": ("BSD-2-Clause", "package metadata recorded for locked optional dependency"),
     "jaxtyping": ("MIT", "package metadata recorded for locked optional dependency"),
     "kiwisolver": ("BSD-3-Clause", "package metadata recorded for locked optional dependency"),
@@ -122,6 +123,7 @@ LOCKED_LICENSE_OVERRIDES = {
     "torchvision": ("BSD-3-Clause", "package metadata recorded for locked optional dependency"),
     "triton": ("MIT", "package metadata published for locked dependency"),
     "transformers": ("Apache-2.0", "package metadata recorded for locked optional dependency"),
+    "uvloop": ("MIT", "package metadata published for locked dependency"),
     "wadler-lindig": ("Apache-2.0", "package metadata recorded for locked optional dependency"),
 }
 

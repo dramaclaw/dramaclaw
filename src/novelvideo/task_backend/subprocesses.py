@@ -103,6 +103,20 @@ def _consume_cancel_killed(proc: subprocess.Popen) -> bool:
 def _kill_process_group(proc: subprocess.Popen) -> None:
     if proc.poll() is not None:
         return
+    if os.name == "nt":
+        # Windows 没有 killpg;taskkill /T 按父子关系终止整棵进程树,
+        # 对齐 POSIX 进程组语义(cancel/deadline 必须连孙进程一起杀)。
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+                timeout=15,
+            )
+        if proc.poll() is None:
+            with contextlib.suppress(Exception):
+                proc.kill()
+        return
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:

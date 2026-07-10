@@ -154,7 +154,7 @@ def verify_episode_sketch_colors(
                 detected=sorted(all_detected_ids),
                 missing=missing_items,
                 extra=extra_items,
-                sketch_path=str(sketch_path.relative_to(project_dir)),
+                sketch_path=sketch_path.relative_to(project_dir).as_posix(),
             )
         )
 

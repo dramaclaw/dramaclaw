@@ -389,7 +389,7 @@ async def _start_or_enqueue_freezone_image_to_3gs(
     payload = {
         "job_id": job_id,
         "scene_id": scene_id,
-        "source_path": str(source_path),
+        "source_path": source_path.as_posix(),
         "source_kind": source_kind,
         "params": params,
         "project_dir": str(project_dir),
@@ -1614,7 +1614,7 @@ async def _start_or_enqueue_mainline_director_control_sketch_job(
             "beat_num": int(beat),
             "project_dir": str(project_dir),
             "state_dir": str(ctx.state_dir),
-            "control_frame_path": str(source_path),
+            "control_frame_path": source_path.as_posix(),
             "mode_key": _mainline_mode_key_for_aspect(aspect_ratio, is_sketch=True),
             "aspect_ratio": _normalize_mainline_skill_aspect_ratio(aspect_ratio),
             "canvas_id": canvas_id or "",
@@ -1963,7 +1963,7 @@ async def _start_or_enqueue_freezone_edit_path(
                 "job_id": job_id,
                 "project_dir": str(project_dir),
                 "prompt": prompt,
-                "base_path": str(base_path),
+                "base_path": base_path.as_posix(),
                 "extra_reference_paths": extra_reference_paths,
                 "aspect_ratio": aspect_ratio,
                 "image_size": image_size,
@@ -2012,8 +2012,8 @@ async def _start_or_enqueue_freezone_mask_edit_path(
             payload={
                 "job_id": job_id,
                 "project_dir": str(project_dir),
-                "base_path": str(base_path),
-                "mask_path": str(mask_path),
+                "base_path": base_path.as_posix(),
+                "mask_path": mask_path.as_posix(),
                 "prompt": prompt,
                 "aspect_ratio": aspect_ratio,
                 "image_size": image_size,
@@ -3246,7 +3246,7 @@ def _copy_director_control_bundle_to_mainline(
         if source_path.resolve() != target_path.resolve():
             shutil.copyfile(source_path, target_path)
         rel = target_path.relative_to(project_dir).as_posix()
-        paths[kind] = str(target_path)
+        paths[kind] = target_path.as_posix()
         next_rel_paths[kind] = rel
         urls[kind] = make_static_url_for_context(ctx, rel, local_path=target_path)
 
@@ -3773,7 +3773,7 @@ async def _finalize_skill_run_outputs(
                 item["pushable"] = False
                 item["committed"] = True
                 item["committed_slot_url"] = target_url
-                item["target_path"] = str(target_path)
+                item["target_path"] = target_path.as_posix()
                 item["backup"] = str(backup) if backup else None
                 item["image_adaptation"] = image_adaptation
                 changed = True
@@ -4791,7 +4791,7 @@ async def freezone_image_to_3gs(
     job_id = _new_job_id()
     if source_kind == "pano":
         params = {
-            "pano_path": str(source_path),
+            "pano_path": source_path.as_posix(),
             "depth_source": "da2",
             "depth_device": "auto",
             "device": "auto",
@@ -4803,7 +4803,7 @@ async def freezone_image_to_3gs(
         }
     else:
         params = {
-            "image_path": str(source_path),
+            "image_path": source_path.as_posix(),
             "source_kind": source_kind,
             "face_name": "front",
             "depth_meters": 8.0,
@@ -5090,7 +5090,7 @@ async def freezone_extract_frames(
         task_type="freezone_extract",
         job_id=job_id,
         payload={
-            "video_path": str(video_path),
+            "video_path": video_path.as_posix(),
             "max_frames": body.max_frames,
             "scene_threshold": body.scene_threshold,
         },
@@ -5168,7 +5168,7 @@ async def freezone_analyze_video_story(
         task_type="freezone_video_story",
         job_id=job_id,
         payload={
-            "video_path": str(video_path),
+            "video_path": video_path.as_posix(),
             "max_frames": body.max_frames,
             "scene_threshold": body.scene_threshold,
             "duration_sec": body.duration_sec,
@@ -6419,7 +6419,7 @@ def _start_freezone_image_reverse_prompt_task(
         "job_id": job_id,
         "canvas_id": canvas_id or "",
         "node_id": node_id or "",
-        "source_path": str(source_path),
+        "source_path": source_path.as_posix(),
     }
     task_manager.create_task(
         task_type,
@@ -6644,7 +6644,7 @@ async def freezone_image_reverse_prompt(
                 task_type="freezone_image_reverse_prompt",
                 job_id=job_id,
                 payload={
-                    "source_path": str(source_path),
+                    "source_path": source_path.as_posix(),
                     "canvas_id": body.canvas_id or "",
                     "node_id": body.node_id or "",
                 },
@@ -7093,7 +7093,7 @@ async def freezone_video_erase(
                 task_type="freezone_video_erase",
                 job_id=job_id,
                 payload={
-                    "source_path": str(source_path),
+                    "source_path": source_path.as_posix(),
                     "mode": body.mode,
                     "box_x": body.box_x,
                     "box_y": body.box_y,
@@ -7160,7 +7160,7 @@ async def freezone_video_upscale(
                 task_type="freezone_video_upscale",
                 job_id=job_id,
                 payload={
-                    "source_path": str(source_path),
+                    "source_path": source_path.as_posix(),
                     "resolution": body.resolution,
                     "frame_interpolation": body.frame_interpolation,
                     "denoise_strength": body.denoise_strength,
@@ -7228,7 +7228,7 @@ async def freezone_audio_separate(
                 task_type="freezone_audio_separate",
                 job_id=job_id,
                 payload={
-                    "source_path": str(source_path),
+                    "source_path": source_path.as_posix(),
                     "target_episode": body.target_episode,
                     "target_beat": body.target_beat,
                 },

@@ -506,7 +506,7 @@ def scan_render_dir(episode_grids_dir: Union[str, Path]) -> list[dict]:
         if beat_num is not None:
             results.append(
                 {
-                    "path": str(f.relative_to(grids_dir)),
+                    "path": f.relative_to(grids_dir).as_posix(),
                     "beat_number": beat_num,
                     "timestamp": ts,
                     "type": "render",
@@ -536,7 +536,7 @@ def scan_sketch_dir(episode_grids_dir: Union[str, Path]) -> list[dict]:
             if beat_num is not None:
                 results.append(
                     {
-                        "path": str(f.relative_to(grids_dir)),
+                        "path": f.relative_to(grids_dir).as_posix(),
                         "beat_number": beat_num,
                         "timestamp": ts,
                         "type": "sketch",
@@ -664,7 +664,7 @@ def save_grid_and_split(
         prompt_filename = f"{grid_type}_{mode_key}_{beats_str}_prompt.txt"
         prompt_file = preset_dir / prompt_filename
         prompt_file.write_text(prompt_text, encoding="utf-8")
-        prompt_path = str(prompt_file.relative_to(grids_dir))
+        prompt_path = prompt_file.relative_to(grids_dir).as_posix()
 
     # 3. 注册整图
     if pool is None:
@@ -677,7 +677,7 @@ def save_grid_and_split(
         _episode = int(_m.group(1)) if _m else 1
         pool = build_pool_index(grids_dir, _episode)
 
-    grid_rel = str(dst_grid.relative_to(grids_dir))
+    grid_rel = dst_grid.relative_to(grids_dir).as_posix()
     register_grid_entry(
         pool=pool,
         grid_type=grid_type,
@@ -723,7 +723,7 @@ def save_grid_and_split(
         beat_num = beat_nums[i]
         cell_name = f"beat_{beat_num:02d}_t{ts}.png"
         cell_path = target_dir / cell_name
-        raw_path.rename(cell_path)
+        raw_path.replace(cell_path)
 
         result = add_cell_with_dedup(
             pool=pool,
@@ -882,7 +882,7 @@ def add_cell_with_dedup(
         print(f"[PoolIndexer] 去重：Beat {beat_num} 已存在内容相同的图片，跳过")
         return None
 
-    rel_path = str(cell_path.relative_to(episode_grids_dir))
+    rel_path = cell_path.relative_to(episode_grids_dir).as_posix()
     pool_id = f"beat_{beat_num:02d}_t{ts}_{img_type}"
 
     pool_image = PoolImage(
@@ -971,7 +971,7 @@ def scan_preset_dirs(episode_grids_dir: Union[str, Path]) -> list[dict]:
                     ts = None
                 results.append(
                     {
-                        "path": str(f.relative_to(grids_dir)),
+                        "path": f.relative_to(grids_dir).as_posix(),
                         "type": grid_type,
                         "mode_key": mode_key,
                         "beat_nums": beat_nums,

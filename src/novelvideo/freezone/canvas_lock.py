@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import fcntl
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+
+import portalocker
 
 from novelvideo.freezone.paths import CANVAS_ID_RE, canvases_dir
 
@@ -50,13 +51,15 @@ def canvas_write_lock(
     with path.open("a+", encoding="utf-8") as fh:
         while True:
             try:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                portalocker.lock(fh, portalocker.LOCK_EX | portalocker.LOCK_NB)
                 break
-            except BlockingIOError as exc:
+            except portalocker.exceptions.AlreadyLocked as exc:
+                # 仅竞争(EAGAIN/ERROR_LOCK_VIOLATION)重试;其余锁故障
+                # (如不支持锁的挂载)立即上抛,不得伪装成 CanvasLockBusy。
                 if time.monotonic() >= deadline:
                     raise CanvasLockBusy(canvas_id) from exc
                 time.sleep(retry_interval_seconds)
         try:
             yield
         finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            portalocker.unlock(fh)

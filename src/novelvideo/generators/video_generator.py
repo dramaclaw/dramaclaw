@@ -1705,7 +1705,7 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                         last_frame_url,
                         str(last_frame_output_path),
                     )
-                    last_frame_path = str(last_frame_output_path)
+                    last_frame_path = last_frame_output_path.as_posix()
                     log("已保存 HuiMeng 返回尾帧")
             progress(1.0)
             update_request_status(task_id, "completed")
@@ -2526,7 +2526,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                 last_frame_url,
                                 str(last_frame_output_path),
                             )
-                            last_frame_path = str(last_frame_output_path)
+                            last_frame_path = last_frame_output_path.as_posix()
                             log("已保存 DramaClawAPI 返回尾帧")
                     progress(1.0)
                     update_request_status(task_id, "completed")

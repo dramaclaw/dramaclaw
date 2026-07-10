@@ -344,7 +344,7 @@ def _archive_narrator_voice_siblings(target: Path) -> None:
     for ext in VOICE_SAMPLE_EXTENSIONS:
         sibling = target.with_suffix(ext)
         if sibling.exists():
-            sibling.rename(sibling.with_name(f"{sibling.stem}_{stamp}{sibling.suffix}"))
+            sibling.replace(sibling.with_name(f"{sibling.stem}_{stamp}{sibling.suffix}"))
 
 
 def _resolve_project_audio_source(project_dir: Path, source_path: str | Path) -> Path:

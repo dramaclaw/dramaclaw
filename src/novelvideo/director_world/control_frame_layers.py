@@ -87,10 +87,10 @@ def _update_meta_paths(
     if not isinstance(paths, dict):
         paths = {}
         meta["paths"] = paths
-    paths["env_actor_only"] = str(env_actor_only_path.resolve())
-    paths["env_actor_only_ref"] = str(env_actor_only_ref_path.resolve())
-    paths["prop_staging_mask"] = str(prop_mask_path.resolve())
-    paths["prop_staging_overlay"] = str(prop_overlay_path.resolve())
+    paths["env_actor_only"] = env_actor_only_path.resolve().as_posix()
+    paths["env_actor_only_ref"] = env_actor_only_ref_path.resolve().as_posix()
+    paths["prop_staging_mask"] = prop_mask_path.resolve().as_posix()
+    paths["prop_staging_overlay"] = prop_overlay_path.resolve().as_posix()
     meta["prop_staging_overlay"] = {
         "mode": "visible_marker_pixels",
         "source": "actor_overlay_black",
@@ -219,8 +219,8 @@ def create_control_frame_layers(target_dir: Path) -> dict[str, str | int | bool]
 
     return {
         "ok": True,
-        "env_actor_only": str(env_actor_only_path),
-        "env_actor_only_ref": str(env_actor_only_ref_path),
+        "env_actor_only": env_actor_only_path.as_posix(),
+        "env_actor_only_ref": env_actor_only_ref_path.as_posix(),
         "prop_staging_mask": str(prop_mask_path),
         "prop_staging_overlay": str(prop_overlay_path),
         "prop_color_count": len(prop_colors),

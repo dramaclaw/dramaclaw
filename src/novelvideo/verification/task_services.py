@@ -143,7 +143,7 @@ async def run_sketch_select_episode(
 
     _notify(progress_callback, 0.96, "保存验证报告")
     report_path = save_verify_report(project_dir, episode_num, None, "sketch_select", data)
-    data["report_path"] = str(report_path.relative_to(project_dir))
+    data["report_path"] = report_path.relative_to(project_dir).as_posix()
     _log(log_callback, f"草图择优完成，报告已保存: {data['report_path']}")
 
     _notify(progress_callback, 1.0, "完成")

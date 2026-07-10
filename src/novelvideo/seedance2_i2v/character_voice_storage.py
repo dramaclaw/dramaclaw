@@ -341,7 +341,7 @@ def persist_character_voice_file(
         sibling = target.with_suffix(ext)
         if sibling.exists():
             backup_name = f"{sibling.stem}_{ts}{sibling.suffix}"
-            sibling.rename(sibling.with_name(backup_name))
+            sibling.replace(sibling.with_name(backup_name))
     target.write_bytes(content)
 
     rel_path = project_relative_path(project_dir, target)
@@ -399,6 +399,6 @@ def clear_character_voice_file(
     for ext in VOICE_SAMPLE_EXTENSIONS:
         candidate = voices_dir / f"{stem}{ext}"
         if candidate.exists():
-            candidate.rename(candidate.with_name(f"{candidate.stem}_{ts}{candidate.suffix}"))
+            candidate.replace(candidate.with_name(f"{candidate.stem}_{ts}{candidate.suffix}"))
             removed = True
     return removed

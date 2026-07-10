@@ -685,7 +685,9 @@ async def test_scene_viewer_manifests_return_typed_contracts(tmp_path, monkeypat
         pano["source"]["url"]
         == "/static/projects/proj_demo/director_worlds/Hall/v1/pano_360.png"
     )
-    assert pano["source"]["fs"] == f"/@fs{(pano_dir / 'pano_360.png').resolve()}"
+    from novelvideo.director_world.paths import fs_url
+
+    assert pano["source"]["fs"] == fs_url(pano_dir / "pano_360.png")
     assert pano["correction"]["front_yaw_deg"] == 45
     assert pano["correction"]["sphere_correction_deg"] == {
         "roll": 3.0,

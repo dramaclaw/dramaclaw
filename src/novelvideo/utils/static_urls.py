@@ -17,7 +17,7 @@ def _prefer_sog_static_package(
     The browser should load the compressed SOG sidecar whenever it exists so
     PlayCanvas uses the lightweight gsplat package instead of raw PLY.
     """
-    rel = str(relative_path).lstrip("/")
+    rel = str(relative_path).replace("\\", "/").lstrip("/")
     if not local_path:
         return rel, None
 

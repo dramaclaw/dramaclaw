@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -227,20 +229,40 @@ def sanitize_project_local_paths_in_memory(
         return payload
 
     try:
-        project_resolved = str(project_dir.resolve())
+        project_resolved = project_dir.resolve()
     except (OSError, RuntimeError):
-        project_resolved = str(project_dir)
-    project_text = str(project_dir)
-    prefixes = [value.rstrip("/") for value in {project_text, project_resolved} if value]
+        project_resolved = project_dir
+    # Windows 上同一个目录会以 `C:\x` 与 `C:/x` 两种写法出现在历史数据里,
+    # 前缀集合必须同时覆盖,否则只替换得掉其中一种。
+    prefix_candidates = {
+        str(project_dir),
+        str(project_resolved),
+        project_dir.as_posix(),
+        project_resolved.as_posix(),
+    }
+    prefixes = sorted(
+        (value.rstrip("/\\") for value in prefix_candidates if value),
+        key=len,
+        reverse=True,
+    )
     if not prefixes:
         return deepcopy(payload)
 
     static_prefix = f"/static/projects/{quote(project_id, safe='')}"
 
+    # 只归一紧随替换前缀的路径 token(至引号/空白/分隔符止),
+    # 不碰同一字符串里的无关反斜杠(用户文本、其他盘符路径)。
+    tail_re = re.compile(re.escape(static_prefix) + r"[^\s\"'|?#]*")
+
+    def _posixify_token(match: "re.Match[str]") -> str:
+        return match.group(0).replace("\\\\", "/").replace("\\", "/")
+
     def replace_text(text: str) -> str:
         sanitized = text
         for prefix in prefixes:
             sanitized = sanitized.replace(prefix, static_prefix)
+        if sanitized != text and "\\" in sanitized:
+            sanitized = tail_re.sub(_posixify_token, sanitized)
         return sanitized
 
     def visit(value):

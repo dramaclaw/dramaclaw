@@ -345,7 +345,7 @@ def _archive_existing(path: Path, timestamp: str) -> Path | None:
     if not path.exists():
         return None
     archived = path.with_name(f"{path.stem}_{timestamp}{path.suffix}")
-    path.rename(archived)
+    path.replace(archived)
     return archived
 
 
@@ -469,14 +469,14 @@ def run_splat_collision(
         for original, archived in archived_glbs:
             if archived.exists() and not original.exists():
                 try:
-                    archived.rename(original)
+                    archived.replace(original)
                 except OSError:
                     logger.warning("failed to restore archived collision GLB: %s", archived)
         if archived_voxel is not None:
             original, archived = archived_voxel
             if archived.exists() and not original.exists():
                 try:
-                    archived.rename(original)
+                    archived.replace(original)
                 except OSError:
                     logger.warning("failed to restore archived voxel JSON: %s", archived)
 
@@ -509,7 +509,7 @@ def run_splat_collision(
     for stale in out_dir.glob("*.collision.glb"):
         try:
             archived = stale.with_name(f"{stale.name}.{timestamp}.bak")
-            stale.rename(archived)
+            stale.replace(archived)
             archived_glbs.append((stale, archived))
         except OSError:
             pass
@@ -517,7 +517,7 @@ def run_splat_collision(
     if voxel_out.exists():
         try:
             archived = voxel_out.with_name(f"{voxel_out.name}.{timestamp}.bak")
-            voxel_out.rename(archived)
+            voxel_out.replace(archived)
             archived_voxel = (voxel_out, archived)
         except OSError:
             pass
@@ -795,7 +795,7 @@ def run_pano_sharp(
     except Exception:
         dest_sog.unlink(missing_ok=True)
         if archived_sog is not None and archived_sog.exists():
-            archived_sog.rename(dest_sog)
+            archived_sog.replace(dest_sog)
         raise
 
     if _keep_raw_3gs_ply():
@@ -995,7 +995,7 @@ def run_single_face_sharp(
     except Exception:
         dest_sog.unlink(missing_ok=True)
         if archived_sog is not None and archived_sog.exists():
-            archived_sog.rename(dest_sog)
+            archived_sog.replace(dest_sog)
         raise
 
     if _keep_raw_3gs_ply():
@@ -1338,7 +1338,7 @@ def run_scene_360(
     generated = generation_dir / "scene_panorama_2to1.png"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     if generated.exists():
-        generated.rename(generation_dir / f"scene_panorama_2to1_{timestamp}.png")
+        generated.replace(generation_dir / f"scene_panorama_2to1_{timestamp}.png")
 
     report(0.20, f"启动 {provider} 生成 {image_size}/{quality} 360 全景...")
     logger.info(
@@ -1382,7 +1382,7 @@ def run_scene_360(
         archived: Path | None = None
         if update_manifest and pano_path.exists():
             archived = pano_path.with_name(f"pano_360_{timestamp}.png")
-            pano_path.rename(archived)
+            pano_path.replace(archived)
         shutil.copy2(generated, pano_path)
 
         report(
@@ -1539,7 +1539,7 @@ def run_voxel_world_from_360(
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     if scene_world_path.exists():
         archived = scene_world_path.with_name(f"world_{timestamp}.json")
-        scene_world_path.rename(archived)
+        scene_world_path.replace(archived)
 
     report(0.55, "正在生成 voxel world.json...")
     logger.info("running voxel world generator: %s", " ".join(cmd[:2] + ["..."]))
@@ -1554,9 +1554,9 @@ def run_voxel_world_from_360(
         failed_path: Path | None = None
         if scene_world_path.exists():
             failed_path = scene_world_path.with_name(f"world_failed_{timestamp}.json")
-            scene_world_path.rename(failed_path)
+            scene_world_path.replace(failed_path)
         if archived is not None and archived.exists() and not scene_world_path.exists():
-            archived.rename(scene_world_path)
+            archived.replace(scene_world_path)
         message = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(
             "DirectorWorld 生成失败: "
@@ -1565,7 +1565,7 @@ def run_voxel_world_from_360(
 
     if not scene_world_path.exists():
         if archived is not None and archived.exists():
-            archived.rename(scene_world_path)
+            archived.replace(scene_world_path)
         raise RuntimeError(
             "DirectorWorld 生成器成功退出，但没有写出 world.json: " f"{scene_world_path}"
         )
