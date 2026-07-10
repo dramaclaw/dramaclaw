@@ -105,6 +105,80 @@ def test_chapter_preview_ignores_embedded_chapter_references():
     assert "原书第十八章" in data["chapters"][1]["content"]
 
 
+def test_chapter_preview_does_not_split_episode_end_sentence():
+    from novelvideo.api.chapter_preview import build_chapter_preview
+
+    text = "\n".join(
+        [
+            "# 第一集",
+            "开场就是高潮。",
+            "第一集结束。",
+            "第一集 结束。",
+            "第一集 已经结束。",
+            "第一集 至此结束。",
+            "---",
+            "# 第二集",
+            "林远回家。",
+        ]
+    )
+
+    data = build_chapter_preview(text)
+
+    assert data["count"] == 2
+    assert [chapter["number"] for chapter in data["chapters"]] == [1, 2]
+    assert "第一集结束。" in data["chapters"][0]["content"]
+    assert "第一集 已经结束。" in data["chapters"][0]["content"]
+    assert "第一集 至此结束。" in data["chapters"][0]["content"]
+
+
+def test_chapter_preview_does_not_split_english_episode_end_sentence():
+    from novelvideo.api.chapter_preview import build_chapter_preview
+
+    text = "\n".join(
+        [
+            "Episode 1: The Reset",
+            "The opening is a shock.",
+            "Episode 1 ends here.",
+            "Episode 1 Ends here.",
+            "---",
+            "Episode 2 - Aftermath",
+            "He returns home.",
+        ]
+    )
+
+    data = build_chapter_preview(text)
+
+    assert data["count"] == 2
+    assert [chapter["number"] for chapter in data["chapters"]] == [1, 2]
+    assert "Episode 1 ends here." in data["chapters"][0]["content"]
+    assert "Episode 1 Ends here." in data["chapters"][0]["content"]
+
+
+def test_chapter_preview_keeps_valid_titles_after_marker():
+    from novelvideo.api.chapter_preview import build_chapter_preview
+
+    text = "\n".join(
+        [
+            "第一集 完美计划",
+            "林远开始布局。",
+            "第二集 完整线索",
+            "线索浮出水面。",
+            "Episode 3 the reset",
+            "The reset begins.",
+            "Chapter4 The Return",
+            "He returns home.",
+        ]
+    )
+
+    data = build_chapter_preview(text)
+
+    assert data["count"] == 4
+    assert [chapter["number"] for chapter in data["chapters"]] == [1, 2, 3, 4]
+    assert data["chapters"][0]["title"] == "第一集 完美计划"
+    assert data["chapters"][2]["title"] == "Episode 3 the reset"
+    assert data["chapters"][3]["title"] == "Chapter4 The Return"
+
+
 @pytest.mark.asyncio
 async def test_upload_novel_returns_nicegui_chapter_preview(tmp_path, monkeypatch):
     from novelvideo.api.routes import ingest

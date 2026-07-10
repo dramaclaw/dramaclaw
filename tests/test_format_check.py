@@ -97,6 +97,23 @@ def test_no_chapters_is_blocking():
     assert "未检测到有效章节" in result["summary"]
 
 
+def test_duplicate_chapter_numbers_warn():
+    result = build_import_format_check(
+        "第一集\n正文\n第一集 已经结束。\n第二集\n正文",
+        has_chapters=True,
+        chapters=[
+            {"number": 1, "title": "第一集", "start_line": 0},
+            {"number": 1, "title": "第一集 已经结束。", "start_line": 2},
+            {"number": 2, "title": "第二集", "start_line": 3},
+        ],
+    )
+
+    assert result["level"] == "warning"
+    assert "duplicate_chapter_number" in _codes(result)
+    assert "non_increasing_chapter_number" in _codes(result)
+    assert _issue(result, "duplicate_chapter_number")["line"] == 3
+
+
 def test_missing_interior_exterior_suppresses_legacy_missing_time():
     result = build_import_format_check("地点：人类城池，日\n", has_chapters=True)
 
