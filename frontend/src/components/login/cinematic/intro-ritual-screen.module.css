@@ -1,0 +1,413 @@
+.layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  overflow: hidden;
+  background: #181818;
+  cursor: pointer;
+  animation: introExit 640ms cubic-bezier(0.22, 1, 0.36, 1) 4800ms forwards;
+}
+
+.layer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='.72'/%3E%3C/svg%3E");
+}
+
+.aperture {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      circle at 50% 48%,
+      rgba(248, 250, 255, 0.035) 0%,
+      rgba(24, 24, 24, 0.24) 24%,
+      rgba(10, 10, 10, 0.72) 64%,
+      rgba(0, 0, 0, 0.94) 100%
+    ),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 34%);
+  opacity: 0;
+  filter: blur(18px);
+  transform: scale(1.08);
+  animation:
+    apertureFocus 2550ms cubic-bezier(0.22, 1, 0.36, 1) 160ms forwards,
+    apertureRelease 780ms ease 4220ms forwards;
+}
+
+.scanline {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(1120px, 84vw);
+  height: 12px;
+  opacity: 1;
+  transform: translate(-50%, -50%) scaleX(0.06);
+  transform-origin: center center;
+  animation: scanGrow 2100ms cubic-bezier(0.18, 0.82, 0.2, 1) 300ms forwards;
+}
+
+.scanline::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(112, 229, 239, 0.055) 18%,
+    rgba(248, 250, 255, 0.54) 50%,
+    rgba(176, 133, 255, 0.055) 82%,
+    transparent
+  );
+  opacity: 0;
+  filter: drop-shadow(0 0 10px rgba(248, 250, 255, 0.1));
+  transform: translateY(-50%);
+  animation: scanLight 2100ms linear 300ms forwards;
+}
+
+.focusFrame {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(1160px, 72vw);
+  height: min(580px, 56vh);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0;
+  filter: none;
+  transform: translate(-50%, -50%) scale(0.94);
+  animation:
+    frameFocus 900ms cubic-bezier(0.22, 1, 0.36, 1) 2580ms forwards,
+    frameBreathe 680ms ease-in-out 3520ms forwards,
+    frameRelease 620ms ease 4220ms forwards;
+}
+
+.focusFrame::before,
+.focusFrame::after {
+  content: "";
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.focusFrame::before {
+  inset: 0;
+  background:
+    linear-gradient(rgba(238, 245, 255, 0.68), rgba(238, 245, 255, 0.68)) left top / 32px 1px no-repeat,
+    linear-gradient(rgba(238, 245, 255, 0.68), rgba(238, 245, 255, 0.68)) left top / 1px 32px no-repeat,
+    linear-gradient(rgba(238, 245, 255, 0.68), rgba(238, 245, 255, 0.68)) right top / 32px 1px no-repeat,
+    linear-gradient(rgba(238, 245, 255, 0.68), rgba(238, 245, 255, 0.68)) right top / 1px 32px no-repeat,
+    linear-gradient(rgba(238, 245, 255, 0.68), rgba(238, 245, 255, 0.68)) left bottom / 32px 1px no-repeat,
+    linear-gradient(rgba(238, 245, 255, 0.68), rgba(238, 245, 255, 0.68)) left bottom / 1px 32px no-repeat,
+    linear-gradient(rgba(238, 245, 255, 0.68), rgba(238, 245, 255, 0.68)) right bottom / 32px 1px no-repeat,
+    linear-gradient(rgba(238, 245, 255, 0.68), rgba(238, 245, 255, 0.68)) right bottom / 1px 32px no-repeat;
+}
+
+.focusFrame::after {
+  display: none;
+}
+
+.hudTopLeft,
+.hudTopRight,
+.hudBottomLeft,
+.hudBottomRight {
+  position: absolute;
+  z-index: 1;
+  color: rgba(238, 245, 255, 0.58);
+  font-family: "SFMono-Regular", "Roboto Mono", "Menlo", monospace;
+  font-size: clamp(12px, 1.05vw, 18px);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.28em;
+  text-shadow: 0 0 16px rgba(238, 245, 255, 0.1);
+  white-space: nowrap;
+}
+
+.hudTopLeft {
+  left: 24px;
+  top: -34px;
+}
+
+.hudTopRight {
+  right: 24px;
+  top: -34px;
+}
+
+.hudBottomLeft {
+  left: 24px;
+  bottom: -34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.hudBottomRight {
+  right: 24px;
+  bottom: -34px;
+}
+
+.recDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #ff9faa;
+  box-shadow: 0 0 12px rgba(255, 159, 170, 0.42);
+}
+
+.focusCore {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(248, 250, 255, 0.86);
+  box-shadow:
+    0 0 16px rgba(6, 182, 212, 0.44),
+    0 0 34px rgba(168, 85, 247, 0.18);
+  opacity: 0;
+  filter: blur(6px);
+  transform: translate(-50%, -50%) scale(0.5);
+  animation:
+    coreFocus 760ms cubic-bezier(0.22, 1, 0.36, 1) 2740ms forwards,
+    coreFadeForMark 420ms ease 3240ms forwards,
+    coreRelease 520ms ease 4300ms forwards;
+}
+
+.brandMark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  display: block;
+  width: clamp(58px, 4.8vw, 86px);
+  height: auto;
+  pointer-events: none;
+  opacity: 0;
+  background: transparent;
+  filter: none;
+  transform: translate(-50%, -50%) scale(0.88);
+  transform-origin: center center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: opacity, transform;
+  animation:
+    markReveal 780ms cubic-bezier(0.22, 1, 0.36, 1) 3040ms forwards,
+    markRelease 520ms ease 4300ms forwards;
+}
+
+.shutter {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0.72),
+      transparent 18%,
+      transparent 82%,
+      rgba(0, 0, 0, 0.72)
+    ),
+    radial-gradient(
+      circle at 50% 50%,
+      transparent 0%,
+      transparent 36%,
+      rgba(0, 0, 0, 0.42) 100%
+    );
+  animation: shutterRelease 760ms cubic-bezier(0.22, 1, 0.36, 1) 4320ms forwards;
+}
+
+@keyframes apertureFocus {
+  0% {
+    opacity: 0;
+    filter: blur(24px);
+    transform: scale(1.12);
+  }
+
+  46% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.82;
+    filter: blur(0);
+    transform: scale(1);
+  }
+}
+
+@keyframes scanGrow {
+  0% {
+    transform: translate(-50%, -50%) scaleX(0.06);
+  }
+
+  100% {
+    transform: translate(-50%, -50%) scaleX(1.04);
+  }
+}
+
+@keyframes scanLight {
+  0% {
+    opacity: 0;
+  }
+
+  12% {
+    opacity: 1;
+  }
+
+  58% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes frameFocus {
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+    box-shadow: none;
+  }
+}
+
+@keyframes frameBreathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  50% {
+    opacity: 0.82;
+    transform: translate(-50%, -50%) scale(1.018);
+  }
+}
+
+@keyframes coreFocus {
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes coreFadeForMark {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translate(-50%, -50%) scale(0.72);
+  }
+}
+
+@keyframes markReveal {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.88);
+  }
+
+  100% {
+    opacity: 0.86;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes apertureRelease {
+  to {
+    opacity: 0;
+    filter: blur(14px);
+    transform: scale(1.04);
+  }
+}
+
+@keyframes frameRelease {
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.04);
+  }
+}
+
+@keyframes coreRelease {
+  to {
+    opacity: 0;
+    filter: blur(10px);
+    transform: translate(-50%, -50%) scale(1.8);
+  }
+}
+
+@keyframes markRelease {
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.18);
+  }
+}
+
+@keyframes shutterRelease {
+  0% {
+    opacity: 0;
+  }
+
+  42% {
+    opacity: 0.68;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes introExit {
+  to {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    filter: blur(8px);
+  }
+}
+
+@media (max-width: 640px) {
+  .scanline {
+    width: min(560px, 86vw);
+  }
+
+  .focusFrame {
+    width: min(360px, 78vw);
+    height: min(520px, 66vh);
+  }
+
+  .brandMark {
+    width: 56px;
+  }
+
+  .hudTopLeft,
+  .hudTopRight,
+  .hudBottomLeft,
+  .hudBottomRight {
+    font-size: 10px;
+    letter-spacing: 0.18em;
+  }
+
+  .hudTopLeft,
+  .hudTopRight {
+    top: -28px;
+  }
+
+  .hudBottomLeft,
+  .hudBottomRight {
+    bottom: -28px;
+  }
+}

@@ -346,11 +346,10 @@ function TopBar({
         )}
         {showReplan && (
           <Button
-            variant="outline"
             size="sm"
             onClick={onPlan}
             disabled={planPending}
-            className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none hover:bg-white/[0.04] dark:bg-transparent"
+            className="h-8 gap-1.5 rounded-[8px] bg-primary px-3 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
           >
             {planPending ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -366,7 +365,7 @@ function TopBar({
             size="sm"
             onClick={onPlan}
             disabled={planPending}
-            className="h-8 gap-1.5 rounded-[8px] px-3 text-xs font-normal shadow-none"
+            className="h-8 gap-1.5 rounded-[8px] bg-primary px-3 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
           >
             {planPending ? (
               <Loader2 className="size-3.5 animate-spin" />

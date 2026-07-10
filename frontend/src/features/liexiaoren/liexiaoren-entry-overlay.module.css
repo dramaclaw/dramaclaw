@@ -1,0 +1,98 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 36%, rgba(173, 118, 48, 0.1), transparent 38%),
+    rgba(0, 0, 0, 0.92);
+  opacity: 1;
+  transform: translateZ(0);
+  transition:
+    opacity 420ms ease,
+    filter 420ms ease;
+}
+
+.overlay:focus {
+  outline: none;
+}
+
+.overlayClosing {
+  opacity: 0;
+  filter: blur(8px);
+  pointer-events: none;
+}
+
+.stage {
+  position: relative;
+  width: 90vw;
+  height: 90vh;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 34%, rgba(173, 118, 48, 0.11), transparent 36%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.008)),
+    rgba(3, 5, 6, 0.58);
+  box-shadow:
+    0 28px 90px rgba(0, 0, 0, 0.58),
+    inset 0 0 70px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(14px) saturate(0.82);
+  -webkit-backdrop-filter: blur(14px) saturate(0.82);
+}
+
+.video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+  opacity: 1;
+  transition:
+    opacity 720ms ease,
+    filter 720ms ease;
+}
+
+.videoDimmed {
+  opacity: 0;
+  filter: brightness(0.72);
+}
+
+.loopVideo {
+  opacity: 0;
+}
+
+.loopVideoVisible {
+  opacity: 1;
+}
+
+.enterButton {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(54px, 8.8vh, 104px);
+  z-index: 3;
+  width: clamp(180px, 18vw, 360px);
+  height: clamp(52px, 6.4vh, 86px);
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: transparent;
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+
+.enterButton:focus-visible {
+  outline: 1px solid rgba(234, 179, 8, 0.72);
+  outline-offset: 6px;
+  box-shadow: 0 0 26px rgba(234, 179, 8, 0.28);
+}
+
+@media (max-width: 640px) {
+  .enterButton {
+    bottom: clamp(42px, 7vh, 82px);
+    width: clamp(168px, 42vw, 260px);
+    height: clamp(48px, 5.8vh, 70px);
+  }
+}

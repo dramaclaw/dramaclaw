@@ -51,20 +51,26 @@
   padding: 28px 42px 16px 32px;
   background: rgba(3, 5, 10, 0);
   border-bottom: 1px solid rgba(255, 255, 255, 0);
+  opacity: var(--stage-header-opacity, 1);
+  filter: blur(var(--stage-header-blur, 0px));
   backdrop-filter: blur(0) saturate(100%);
   -webkit-backdrop-filter: blur(0) saturate(100%);
+  transform: translateY(var(--stage-header-offset, 0px));
   transition:
     background-color 260ms ease,
     border-color 260ms ease,
+    opacity 160ms ease,
+    filter 160ms ease,
+    transform 160ms ease,
     backdrop-filter 260ms ease,
     -webkit-backdrop-filter 260ms ease;
 }
 
 .pageScrolled .stageTopBar {
   background: transparent;
-  border-bottom-color: rgba(255, 255, 255, 0.045);
-  backdrop-filter: blur(18px) saturate(126%);
-  -webkit-backdrop-filter: blur(18px) saturate(126%);
+  border-bottom-color: rgba(255, 255, 255, 0);
+  backdrop-filter: blur(0) saturate(100%);
+  -webkit-backdrop-filter: blur(0) saturate(100%);
 }
 
 .stageActions {
@@ -122,7 +128,7 @@
   top: calc(100% + 18px);
   right: 50%;
   z-index: 40;
-  width: min(280px, calc(100vw - 48px));
+  width: min(232px, calc(100vw - 48px));
   padding: 0;
   opacity: 0;
   visibility: hidden;
@@ -144,40 +150,41 @@
 
 .businessWechatPopover img {
   display: block;
-  width: 70%;
+  width: 68%;
   height: auto;
   margin: 0 auto;
-  border-radius: 10px;
+  border-radius: 8px;
   user-select: none;
 }
 
 .businessWechatPanel {
   overflow: hidden;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: #282828;
-  padding: 14px 14px 18px;
-  filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.36));
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(32, 34, 38, 0.38);
+  padding: 12px 12px 14px;
+  backdrop-filter: blur(22px) saturate(135%);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
 }
 
 .businessWechatText {
-  margin-top: 12px;
+  margin-top: 10px;
   text-align: center;
 }
 
 .businessWechatTitle {
   margin: 0;
   color: rgba(255, 255, 255, 0.92);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 400;
   line-height: 1.35;
   letter-spacing: 0;
 }
 
 .businessWechatSubtitle {
-  margin: 7px 0 0;
+  margin: 6px 0 0;
   color: rgba(255, 255, 255, 0.78);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 390;
   line-height: 1.35;
   letter-spacing: 0;
@@ -304,7 +311,7 @@
 }
 
 .heroSubtitleBrand {
-  margin-left: 0.28em;
+  margin-left: 0.42em;
   color: rgba(21, 215, 232, 0.78);
   text-shadow: 0 0 20px rgba(21, 215, 232, 0.12);
 }
@@ -689,7 +696,7 @@
 
 .input:focus,
 .input:focus-visible {
-  border-color: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.28);
   background-color: rgba(255, 255, 255, 0.05);
   box-shadow: none;
 }
@@ -839,7 +846,7 @@
 
   .businessWechatPopover {
     right: 0;
-    width: min(240px, calc(100vw - 40px));
+    width: min(216px, calc(100vw - 40px));
     transform: translate(0, -6px);
   }
 
@@ -984,32 +991,30 @@
   z-index: 12;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 28px 32px;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px 42px 16px 32px;
   pointer-events: none;
 }
 
-.watchBack {
+.watchBrandGroup {
   pointer-events: auto;
   display: inline-flex;
+  min-width: 0;
   align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0;
-  color: rgba(255, 255, 255, 0.86);
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 460;
-  transition: color 160ms ease;
+  gap: 30px;
 }
 
-.watchBack:hover {
-  color: #ffffff;
+.watchBrand {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
 }
 
-.watchBack svg {
-  width: 18px;
-  height: 18px;
+.watchBrand .brandLogo {
+  width: 120px;
+  height: auto;
+  display: block;
 }
 
 .watchMeta {
@@ -1021,39 +1026,57 @@
 
 .watchMeta h1 {
   margin: 0;
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 13px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 15px;
   font-weight: 540;
   letter-spacing: 0;
   white-space: nowrap;
 }
 
-.watchCreateCta {
-  appearance: none;
-  -webkit-appearance: none;
+.watchActions {
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  height: 34px;
-  margin-left: auto;
-  padding: 0 16px;
-  border-radius: 999px;
-  border: 0;
-  background: rgba(22, 24, 30, 0.34);
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 13px;
-  font-weight: 520;
-  text-decoration: none;
-  cursor: pointer;
-  backdrop-filter: blur(18px) saturate(126%);
-  -webkit-backdrop-filter: blur(18px) saturate(126%);
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+  gap: 12px;
+  flex: 0 0 auto;
 }
 
-.watchCreateCta:hover {
-  background: rgba(26, 28, 34, 0.46);
+.watchCreateCta,
+.watchPlayCta {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(18, 20, 26, 0.42);
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 13px;
+  font-weight: 520;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+  backdrop-filter: blur(16px) saturate(120%);
+  box-shadow: none;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.watchCreateCta:hover,
+.watchPlayCta:hover {
+  background: rgba(28, 30, 38, 0.58);
+  border-color: rgba(255, 255, 255, 0.28);
   color: #ffffff;
+  transform: scale(1.03);
+}
+
+.watchCreateCta:active,
+.watchPlayCta:active {
+  transform: scale(0.98);
 }
 
 .watchStage {
@@ -1083,49 +1106,6 @@
   object-fit: contain;
   border: 0;
   background: transparent;
-}
-
-/* "Watch now" CTA over the full-bleed preview: horizontally centered, sitting
-   just above the bottom rail (not vertically centered). */
-.watchPlayCta {
-  appearance: none;
-  -webkit-appearance: none;
-  position: fixed;
-  left: 50%;
-  bottom: 190px;
-  transform: translateX(-50%);
-  z-index: 12;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  height: 46px;
-  padding: 0 22px 0 20px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(18, 20, 26, 0.42);
-  color: #ffffff;
-  font-size: 15px;
-  font-weight: 560;
-  line-height: 1;
-  cursor: pointer;
-  -webkit-backdrop-filter: blur(16px) saturate(120%);
-  backdrop-filter: blur(16px) saturate(120%);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.34);
-  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
-}
-
-.watchPlayCta:hover {
-  background: rgba(28, 30, 38, 0.58);
-  border-color: rgba(255, 255, 255, 0.5);
-  transform: translateX(-50%) scale(1.03);
-}
-
-.watchPlayCta:active {
-  transform: translateX(-50%) scale(0.98);
-}
-
-.watchPlayCta svg {
-  fill: currentColor;
 }
 
 .watchRailWrap {
@@ -1291,15 +1271,30 @@
 @media (max-width: 760px) {
   .watchHeader {
     padding: 22px 24px;
+    gap: 14px;
   }
 
+  .watchBrandGroup {
+    gap: 14px;
+  }
+
+  .watchBrand .brandLogo {
+    width: 104px;
+  }
+
+  .watchMeta h1 {
+    font-size: 13px;
+  }
+
+  .watchActions {
+    gap: 8px;
+  }
+
+  .watchCreateCta,
   .watchPlayCta {
-    bottom: 150px;
-  }
-
-  .watchCreateCta {
-    height: 32px;
-    padding: 0 12px;
+    width: 88px;
+    height: 30px;
+    padding: 0 9px;
     font-size: 12px;
   }
 

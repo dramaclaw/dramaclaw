@@ -1,0 +1,212 @@
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  isolation: isolate;
+  background: transparent;
+  transform: translateZ(0);
+}
+
+.layer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: #050505;
+  opacity: var(--layer-backdrop-opacity, 0);
+}
+
+.video {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: var(--video-opacity, 0);
+  filter:
+    brightness(var(--video-filter-brightness, 0.88))
+    contrast(1.04)
+    saturate(var(--video-filter-saturate, 0.94))
+    blur(var(--video-blur, 0px));
+  transform: scale(var(--video-exit-scale, 1));
+  transform-origin: center center;
+  pointer-events: none;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: var(--video-opacity, 0);
+  background:
+    radial-gradient(
+      circle at 23% 72%,
+      rgba(0, 0, 0, 0.46) 0%,
+      rgba(0, 0, 0, 0.28) 22%,
+      rgba(0, 0, 0, 0.08) 42%,
+      rgba(0, 0, 0, 0) 62%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0.18) 0%,
+      rgba(0, 0, 0, 0.02) 34%,
+      rgba(0, 0, 0, 0.04) 64%,
+      rgba(0, 0, 0, 0.2) 100%
+    ),
+    rgba(0, 0, 0, 0.03);
+}
+
+.scrimRight {
+  background:
+    radial-gradient(
+      circle at 77% 72%,
+      rgba(0, 0, 0, 0.46) 0%,
+      rgba(0, 0, 0, 0.28) 22%,
+      rgba(0, 0, 0, 0.08) 42%,
+      rgba(0, 0, 0, 0) 62%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0.18) 0%,
+      rgba(0, 0, 0, 0.02) 34%,
+      rgba(0, 0, 0, 0.04) 64%,
+      rgba(0, 0, 0, 0.2) 100%
+    ),
+    rgba(0, 0, 0, 0.03);
+}
+
+.watchButton {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 104px;
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.82);
+  text-decoration: none;
+  background: rgba(28, 24, 22, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0);
+  font-size: clamp(12px, 0.82vw, 14px);
+  font-weight: 460;
+  letter-spacing: 0.02em;
+  opacity: calc(var(--video-opacity, 0) * 0.88);
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  pointer-events: inherit;
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+
+.watchButton:hover {
+  border-color: rgba(255, 255, 255, 0.34);
+  color: rgba(255, 255, 255, 0.98);
+  background: rgba(52, 46, 42, 0.5);
+  transform: translate(-50%, -50%) scale(1.05);
+}
+
+.copy {
+  position: absolute;
+  left: clamp(24px, 7vw, 128px);
+  bottom: clamp(72px, 12vh, 148px);
+  z-index: 4;
+  width: min(760px, calc(100vw - 48px));
+  color: rgba(248, 250, 255, 0.94);
+  opacity: var(--copy-opacity, 0);
+  filter: blur(var(--copy-blur, 0px));
+  text-shadow:
+    0 16px 36px rgba(0, 0, 0, 0.42),
+    0 2px 14px rgba(0, 0, 0, 0.34);
+  transform: translateY(var(--copy-offset, 26px));
+  pointer-events: none;
+}
+
+.copyRight {
+  right: clamp(24px, 7vw, 128px);
+  left: auto;
+  text-align: right;
+}
+
+.kicker {
+  margin: 0 0 22px;
+  color: rgba(248, 250, 255, 0.86);
+  font-size: clamp(12px, 0.95vw, 16px);
+  font-weight: 620;
+  line-height: 1;
+  letter-spacing: 0.16em;
+}
+
+.title {
+  margin: 0;
+  color: rgba(248, 250, 255, 0.98);
+  font-size: clamp(38px, 5.4vw, 104px);
+  font-weight: 520;
+  line-height: 1.04;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.subtitle {
+  width: min(100%, 560px);
+  margin: 28px 0 0;
+  color: rgba(248, 250, 255, 0.78);
+  font-size: clamp(16px, 1.3vw, 24px);
+  font-weight: 430;
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+}
+
+.copyRight .subtitle {
+  width: min(100%, 720px);
+  margin-left: auto;
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .copy,
+  .copyRight {
+    right: 24px;
+    bottom: 76px;
+    left: 24px;
+    width: auto;
+    text-align: left;
+  }
+
+  .kicker {
+    margin-bottom: 18px;
+  }
+
+  .subtitle {
+    margin-top: 22px;
+    line-height: 1.65;
+  }
+
+  .copyRight .subtitle {
+    width: min(100%, 560px);
+    white-space: normal;
+  }
+
+  .title {
+    white-space: normal;
+  }
+
+  .watchButton {
+    min-width: 96px;
+    height: 36px;
+    padding: 0 13px;
+    font-size: 12px;
+  }
+}

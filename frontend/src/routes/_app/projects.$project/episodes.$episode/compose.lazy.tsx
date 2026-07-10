@@ -447,7 +447,7 @@ function ComposeTabContent() {
                     size="sm"
                     onClick={() => setComposeConfirm(true)}
                     disabled={!canCompose || isComposing}
-                    className="gap-1.5 rounded-lg"
+                    className="gap-1.5 rounded-lg bg-primary text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
                   >
                     {isComposing ? (
                       <Loader2 className="size-3.5 animate-spin" />

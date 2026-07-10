@@ -1,23 +1,20 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { createFileRoute, Link, Navigate, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, Play } from "lucide-react";
+import { createFileRoute, Navigate, useNavigate } from "@tanstack/react-router";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { Brand } from "@/components/login/login-stage";
 import { LoginModal } from "@/components/login/login-modal";
 import { WatchPlayer } from "@/components/login/watch-player";
 import { loginCommunityWorks } from "@/lib/login-community";
 import styles from "@/components/login/login.module.css";
 
-const WATCH_RAIL_REPEAT_COUNT = 1;
-const WATCH_RAIL_CANONICAL_GROUP_INDEX = 0;
 const WATCH_RAIL_DRAG_THRESHOLD_PX = 8;
-const watchRailEntries = Array.from({ length: WATCH_RAIL_REPEAT_COUNT }, (_, groupIndex) =>
-  loginCommunityWorks.map((work) => ({
-    railId: groupIndex === WATCH_RAIL_CANONICAL_GROUP_INDEX ? work.id : `${work.id}-rail-${groupIndex}`,
-    work,
-  })),
-).flat();
+const watchRailEntries = loginCommunityWorks.map((work) => ({
+  railId: work.id,
+  work,
+}));
 
 function findWatchRailEntry(id: string) {
   return watchRailEntries.find((entry) => entry.railId === id);
@@ -152,20 +149,28 @@ function WatchPage() {
       </div>
 
       <header className={styles.watchHeader}>
-        <Link className={styles.watchBack} to="/login">
-          <ChevronLeft strokeWidth={1.8} aria-hidden="true" />
-          <span>{t("common.back")}</span>
-        </Link>
-        <div className={styles.watchMeta}>
-          <h1>{activeWork.title}</h1>
+        <div className={styles.watchBrandGroup}>
+          <Brand className={styles.watchBrand} />
+          <div className={styles.watchMeta}>
+            <h1>{activeWork.title}</h1>
+          </div>
         </div>
-        <button
-          type="button"
-          className={styles.watchCreateCta}
-          onClick={() => setLoginOpen(true)}
-        >
-          {t("auth.watch.createNow")}
-        </button>
+        <div className={styles.watchActions}>
+          <button
+            type="button"
+            className={styles.watchPlayCta}
+            onClick={() => setPlayerOpen(true)}
+          >
+            <span>{t("auth.watch.watchNow")}</span>
+          </button>
+          <button
+            type="button"
+            className={styles.watchCreateCta}
+            onClick={() => setLoginOpen(true)}
+          >
+            {t("auth.watch.createNow")}
+          </button>
+        </div>
       </header>
 
       <section className={styles.watchStage} aria-label={activeWork.title}>
@@ -186,14 +191,6 @@ function WatchPage() {
             setVideoFit(video.videoHeight > video.videoWidth ? "contain" : "cover");
           }}
         />
-        <button
-          type="button"
-          className={styles.watchPlayCta}
-          onClick={() => setPlayerOpen(true)}
-        >
-          <Play size={18} strokeWidth={2.2} aria-hidden="true" />
-          <span>{t("auth.watch.watchNow")}</span>
-        </button>
       </section>
 
       <div className={styles.watchRailWrap}>

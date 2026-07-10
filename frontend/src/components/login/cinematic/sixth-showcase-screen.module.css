@@ -1,0 +1,236 @@
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  overflow: hidden;
+  color: rgba(248, 250, 255, 0.94);
+  background:
+    radial-gradient(circle at 78% 18%, rgba(118, 158, 180, 0.16), transparent 30%),
+    linear-gradient(180deg, rgba(5, 5, 5, 0.96), #050505 38%, #030303);
+  opacity: var(--sixth-opacity, 0);
+  filter: blur(var(--sixth-blur, 0px));
+  transform: translateY(var(--sixth-offset, 42px));
+}
+
+.header {
+  position: absolute;
+  left: clamp(40px, 6vw, 118px);
+  top: clamp(50px, 7.4vh, 88px);
+  z-index: 3;
+  width: min(1080px, calc(100vw - clamp(80px, 12vw, 236px)));
+  text-align: left;
+  pointer-events: none;
+}
+
+.header p {
+  margin: 0 0 22px;
+  color: rgba(120, 229, 239, 0.72);
+  font-size: 13px;
+  font-weight: 640;
+  letter-spacing: 0.22em;
+}
+
+.header h2 {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.96);
+  font-size: clamp(54px, 5.8vw, 112px);
+  font-weight: 520;
+  line-height: 1.02;
+  letter-spacing: 0.01em;
+}
+
+.header span {
+  display: block;
+  max-width: 920px;
+  margin-top: clamp(26px, 3.2vh, 38px);
+  color: rgba(248, 250, 255, 0.66);
+  font-size: clamp(18px, 1.55vw, 30px);
+  font-weight: 520;
+  line-height: 1.48;
+  letter-spacing: 0.01em;
+}
+
+.filmStage {
+  position: absolute;
+  inset: 43vh 0 7vh;
+  display: flex;
+  align-items: center;
+  overflow: visible;
+}
+
+.filmRail {
+  display: flex;
+  gap: 34px;
+  padding-left: 44vw;
+  transform: translate3d(var(--film-shift, 0), 0, 0);
+  will-change: transform;
+}
+
+.filmCard {
+  position: relative;
+  flex: 0 0 min(430px, 28vw);
+  height: min(510px, 50vh);
+  overflow: hidden;
+  background: #050505;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
+  transform: translateZ(0);
+  transition:
+    box-shadow 220ms ease,
+    transform 220ms ease;
+}
+
+.filmCard:hover {
+  box-shadow: 0 26px 66px rgba(0, 0, 0, 0.4);
+  transform: translateY(-5px) scale(1.01);
+}
+
+.filmMedia {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #050505;
+}
+
+.filmCard video,
+.cardScrim {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.filmCard video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.018);
+  transition: transform 260ms ease;
+}
+
+.filmCard::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  pointer-events: none;
+  transition: box-shadow 220ms ease;
+}
+
+.filmCard:hover video {
+  transform: scale(1.035);
+}
+
+.filmCard:hover::after {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32);
+}
+
+.cardScrim {
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.76)),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.5), transparent 55%),
+    rgba(5, 5, 5, 0.22);
+  opacity: 1;
+  transition: opacity 220ms ease;
+}
+
+.filmCard:hover .cardScrim {
+  opacity: 0.28;
+}
+
+.filmMeta {
+  position: absolute;
+  left: 24px;
+  top: 22px;
+  right: 24px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+}
+
+.filmCopy {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 26px;
+  height: 134px;
+}
+
+.filmCopy h3 {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.94);
+  font-size: clamp(24px, 2.2vw, 38px);
+  font-weight: 520;
+  line-height: 1.08;
+}
+
+.filmCopy p {
+  position: absolute;
+  top: 74px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.watchButton {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 86px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.82);
+  text-decoration: none;
+  background: rgba(28, 24, 22, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0);
+  font-size: 12px;
+  font-weight: 460;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.96);
+  cursor: pointer;
+  pointer-events: none;
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.filmCard:hover .watchButton {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  pointer-events: auto;
+}
+
+.watchButton:hover {
+  border-color: rgba(255, 255, 255, 0.34);
+  color: rgba(255, 255, 255, 0.98);
+  background: rgba(52, 46, 42, 0.5);
+  transform: translate(-50%, -50%) scale(1.05);
+}
+
+@media (max-width: 900px) {
+  .header {
+    width: calc(100vw - 48px);
+  }
+}
