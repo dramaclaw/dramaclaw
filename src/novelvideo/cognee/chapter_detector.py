@@ -40,10 +40,10 @@ class ChapterDetector:
     # 空白后接正文句子时再用标题尾部形态排除，避免把“第一集 已经结束。”
     # /“Episode 1 Ends here.” 这类正文句子误切成新章节。
     PATTERNS = [
-        r"^(?:#{1,6}\s*)?(?:《[^》\n]{1,40}》\s*)?第\s*([一二三四五六七八九十百千\d]+)\s*章(?=$|[\s:：《（(【\[\-—–、])",
-        r"^(?:#{1,6}\s*)?(?:《[^》\n]{1,40}》\s*)?第\s*([一二三四五六七八九十百千\d]+)\s*集(?=$|[\s:：《（(【\[\-—–、])",
-        r"^(?:#{1,6}\s*)?Chapter\s*(\d+)(?=$|[\s:：(\[\-—–])",
-        r"^(?:#{1,6}\s*)?Episode\s*(\d+)(?=$|[\s:：(\[\-—–])",
+        r"^(?:#{1,6}\s*)?(?:《[^》\n]{1,40}》\s*)?第\s*([一二三四五六七八九十百千\d]+)\s*章(?=$|[\s:：《（(【\[\-—–、.。．])",
+        r"^(?:#{1,6}\s*)?(?:《[^》\n]{1,40}》\s*)?第\s*([一二三四五六七八九十百千\d]+)\s*集(?=$|[\s:：《（(【\[\-—–、.。．])",
+        r"^(?:#{1,6}\s*)?Chapter\s*(\d+)(?=$|[\s:：(\[\-—–.。．])",
+        r"^(?:#{1,6}\s*)?Episode\s*(\d+)(?=$|[\s:：(\[\-—–.。．])",
     ]
 
     # 中文数字到阿拉伯数字的映射
@@ -160,6 +160,8 @@ class ChapterDetector:
         stripped = tail.strip()
         if not stripped:
             return True
+        if stripped[0] in ".。．":
+            return not self._looks_like_sentence_tail(stripped[1:].strip())
         if stripped[0] in ":：《（(【[-—–、":
             return True
         return not self._looks_like_sentence_tail(stripped)

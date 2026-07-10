@@ -140,6 +140,7 @@ def test_chapter_preview_does_not_split_english_episode_end_sentence():
             "The opening is a shock.",
             "Episode 1 ends here.",
             "Episode 1 Ends here.",
+            "Episode 1. Ends here.",
             "---",
             "Episode 2 - Aftermath",
             "He returns home.",
@@ -152,6 +153,27 @@ def test_chapter_preview_does_not_split_english_episode_end_sentence():
     assert [chapter["number"] for chapter in data["chapters"]] == [1, 2]
     assert "Episode 1 ends here." in data["chapters"][0]["content"]
     assert "Episode 1 Ends here." in data["chapters"][0]["content"]
+    assert "Episode 1. Ends here." in data["chapters"][0]["content"]
+
+
+def test_chapter_preview_accepts_dot_after_english_marker_number():
+    from novelvideo.api.chapter_preview import build_chapter_preview
+
+    text = "\n".join(
+        [
+            "Chapter 1. Introduction",
+            "The story starts.",
+            "Episode 2. Aftermath",
+            "The aftermath unfolds.",
+        ]
+    )
+
+    data = build_chapter_preview(text)
+
+    assert data["count"] == 2
+    assert [chapter["number"] for chapter in data["chapters"]] == [1, 2]
+    assert data["chapters"][0]["title"] == "Chapter 1. Introduction"
+    assert data["chapters"][1]["title"] == "Episode 2. Aftermath"
 
 
 def test_chapter_preview_keeps_valid_titles_after_marker():
