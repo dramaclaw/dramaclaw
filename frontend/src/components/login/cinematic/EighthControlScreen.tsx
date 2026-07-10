@@ -56,9 +56,9 @@ export function EighthControlScreen({
     <section className={styles.layer} style={style}>
       <div className={styles.header}>
         <p>CONTROL 08</p>
-        <h2>不是等结果，是接管方向</h2>
+        <h2>只为创作完整的作品企划</h2>
         <span>
-          每一次生成之后，你都可以保留、重写、延展或推翻，让故事继续沿着你的判断前进。
+          DramaClaw 关注的是一部剧如何持续生产：文本入项，角色一致性，场景复用，镜头推进，团队协作交付。
         </span>
       </div>
 

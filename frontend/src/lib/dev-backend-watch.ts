@@ -20,6 +20,20 @@ function isPreauthPath(pathname: string): boolean {
   return pathname === "/login" || pathname.startsWith("/watch/");
 }
 
+export function shouldWatchDevBackend(apiUrl: string | undefined): boolean {
+  if (!apiUrl) return true;
+  try {
+    const parsed = new URL(apiUrl, window.location.origin);
+    return (
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "::1"
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function fetchBackendIdentity(): Promise<BackendIdentity | null> {
   try {
     const response = await fetch("/api/v1/config", {
@@ -41,6 +55,7 @@ async function fetchBackendIdentity(): Promise<BackendIdentity | null> {
 
 export function initDevBackendWatch(): () => void {
   if (!import.meta.env.DEV) return () => {};
+  if (!shouldWatchDevBackend(import.meta.env.VITE_API_URL)) return () => {};
 
   let current: BackendIdentity | null = null;
   let inFlight = false;

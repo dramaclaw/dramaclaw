@@ -172,7 +172,7 @@
 .copyRight .subtitle {
   width: min(100%, 720px);
   margin-left: auto;
-  white-space: nowrap;
+  text-align: right;
 }
 
 @media (max-width: 640px) {

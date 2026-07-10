@@ -103,13 +103,8 @@ export function NinthWorkflowScreen({
                   <div className={styles.previewFrame}>
                     <video src={cinematicVideos.pk} muted loop playsInline autoPlay preload="metadata" />
                     <div className={styles.previewScrim} />
-                    <div className={styles.previewTop}>
-                      <span>GENERATED CLIP</span>
-                      <strong>42 SEC</strong>
-                    </div>
                     <div className={styles.previewTitle}>
-                      <small>雪线回声</small>
-                      <strong>倒计时开始后，城市第一次重新发光。</strong>
+                      <strong>鲁班秘术</strong>
                     </div>
                     <a
                       className={styles.watchButton}

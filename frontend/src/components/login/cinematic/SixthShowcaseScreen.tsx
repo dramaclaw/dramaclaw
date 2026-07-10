@@ -64,8 +64,8 @@ export function SixthShowcaseScreen({
     <section className={styles.layer} style={style}>
       <div className={styles.header}>
         <p>SHOWCASE 06</p>
-        <h2>让每一帧继续失控</h2>
-        <span>滚轮推开时间线，角色、冲突和镜头被逐格接管，直到片段长成新的世界。</span>
+        <h2>按剧集推进到成片</h2>
+        <span>无限画布支持多参、多节点、多版本探索，并在确认后把结果写回主流程，保留自由创作空间</span>
       </div>
 
       <FilmShowcase sequenceProgress={sequenceProgress} />

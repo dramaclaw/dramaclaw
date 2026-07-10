@@ -75,9 +75,9 @@ export function SeventhPipelineScreen({
 
       <div className={styles.header}>
         <p>PIPELINE 07</p>
-        <h2>不是灵感堆叠，是生产线</h2>
+        <h2>让短剧生成从抽卡走向流程</h2>
         <span>
-          从一句设定开始，DramaClaw 把角色、冲突、场景、镜头和片段压进同一条可继续推进的结构。
+          DramaClaw 把 AI 视频创作中的不确定性拆解到文本、资产、镜头和任务流程中
         </span>
       </div>
 

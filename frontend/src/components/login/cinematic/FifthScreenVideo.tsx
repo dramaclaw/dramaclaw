@@ -61,12 +61,10 @@ export function FifthScreenVideo({
       />
       <div className={styles.scrim} aria-hidden="true" />
       <div className={styles.copy}>
-        <h2>别让灵感停在第一帧</h2>
+        <h2>把万千灵感沉淀为资产</h2>
         <p className={styles.body}>
-          角色入场，秩序坍塌。
-          <br />
-          DramaClaw 把冲突、镜头和命运压进同一条时间线，
-          直到一个世界开始自己运转。
+          DramaClaw 把它们整理成项目资产库，
+          让后续镜头生成可以持续引用、统一维护、必要时回滚版本。
         </p>
       </div>
     </section>
