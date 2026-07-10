@@ -187,19 +187,19 @@ export function isRenderableImageSrc(value: string): boolean {
   return isLikelyLocalImagePath(value);
 }
 
-// Cross-origin CDN media (absolute http(s)/asset: URL) must be fetched with CORS
-// so the decoded pixels can be drawn to a <canvas> and exported (toBlob /
-// toDataURL) without tainting it. Same-origin / relative `/static/*` paths (the
-// dev vite proxy) deliberately skip it: that origin doesn't echo
-// Access-Control-Allow-Origin, and a same-origin draw is never tainted anyway.
+// Media drawn to a <canvas> that gets exported (toBlob / toDataURL) must be
+// fetched with CORS, otherwise the canvas taints and export throws. This
+// includes relative `/projects/.../media/*` paths: in production the backend
+// 302-redirects them to a presigned OSS URL (see _serve_or_redirect_to_oss),
+// so a no-cors load ends up cross-origin and taints anyway — that only
+// surfaced online, never against the dev vite proxy which streams the bytes
+// same-origin. CORS mode is harmless for true same-origin responses (no
+// Access-Control-Allow-Origin required) and the OSS bucket allows the site
+// origin. Only data:/blob: skip it — they can never taint a canvas.
 // Shared by the <img> loader and the offscreen <video> frame-capture paths.
 export function mediaNeedsCrossOrigin(url: string): boolean {
   const lower = url.toLowerCase();
-  return (
-    lower.startsWith('http://') ||
-    lower.startsWith('https://') ||
-    lower.startsWith('asset:')
-  );
+  return !lower.startsWith('data:') && !lower.startsWith('blob:');
 }
 
 // Cache-busting convention:
