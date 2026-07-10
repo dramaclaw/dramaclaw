@@ -20,10 +20,17 @@ import { installVersionUpdateWatch } from "@/lib/version-update-watch";
 import { installDomReconciliationGuard } from "@/lib/dom-reconciliation-guard";
 import { AppUpdateRequired } from "@/components/app-update-required";
 import { AppUpdateAvailable } from "@/components/app-update-available";
+import { config as zodConfig } from "zod/v4/core";
 import "@fontsource-variable/inter";
 import "dramaclaw-spec-render/style.css";
 import "./i18n";
 import "./index.css";
+
+// Our CSP has no 'unsafe-eval', so zod's JIT probe (`new Function("")`)
+// throws and gets reported as a securitypolicyviolation in DevTools even
+// though zod swallows it. jitless skips the probe; zod always uses the
+// non-JIT parser under this CSP anyway, so behavior is unchanged.
+zodConfig({ jitless: true });
 
 const queryClient = new QueryClient({
   defaultOptions: {
