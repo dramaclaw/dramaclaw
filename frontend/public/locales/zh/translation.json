@@ -58,7 +58,8 @@
       "title": "有新版本 {{version}} 可用",
       "body": "上游已发布新版本，可打开发布页查看并升级。",
       "open": "去更新",
-      "skip": "跳过此版本"
+      "skip": "跳过此版本",
+      "updateNow": "立即更新"
     }
   },
   "myBuddy": {
@@ -4077,5 +4078,16 @@
     "zoom": "缩放",
     "zoomIn": "放大",
     "zoomOut": "缩小"
+  },
+  "appUpdate": {
+    "title": "正在更新到 {{tag}}",
+    "starting": "正在准备更新…",
+    "downloading": "正在下载安装包… {{percent}}%",
+    "installing": "正在安装，应用将自动重启…",
+    "restarting": "正在重启服务…",
+    "done": "更新完成，即将刷新页面…",
+    "keepOpen": "请勿关闭此窗口或电脑；更新失败不会影响当前版本。",
+    "failedTitle": "更新失败",
+    "close": "关闭"
   }
 }

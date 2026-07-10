@@ -41,6 +41,7 @@ except Exception:
     pass
 
 from novelvideo.api.routes import (  # noqa: E402
+    app_update,
     assets,
     auth,
     characters,
@@ -115,6 +116,7 @@ api_router.include_router(model_gateway.router, tags=["model-gateway"])
 api_router.include_router(model_credits.router, tags=["model-credits"])
 api_router.include_router(freezone.router)
 api_router.include_router(release_notifications.router, tags=["release-notifications"])
+api_router.include_router(app_update.router, tags=["app-update"])
 _verification_routes_registered = False
 
 

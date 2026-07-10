@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Megaphone, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { beginAppSelfUpdate } from "@/features/app-update/app-update-events";
+import { useAppUpdateStatus } from "@/lib/queries/app-update";
 import { useReleaseNotifications } from "@/lib/queries/release-notifications";
 import type { ReleaseItem } from "@/lib/queries/release-notifications";
 import {
@@ -38,6 +40,11 @@ export function NotificationDrawer({
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const releaseNotifications = useReleaseNotifications(locale);
   const feed = releaseNotifications.data?.data;
+  // 仅在确有新版本时才探测自更新能力(原生便携/安装形态才会返回 self_update)
+  const appUpdate = useAppUpdateStatus(feed?.update_available === true);
+  const appUpdateStatus = appUpdate.data?.data;
+  const selfUpdateReady =
+    appUpdateStatus?.mode === "self_update" && appUpdateStatus.update_available === true;
   const [shouldRender, setShouldRender] = useState(open);
   const [visible, setVisible] = useState(false);
   const notifications = buildNotifications({
@@ -48,6 +55,14 @@ export function NotificationDrawer({
     publishedAt: feed?.latest_published_at ?? null,
     locale,
     t,
+    selfUpdateReady,
+    onSelfUpdate: () => {
+      if (!feed?.latest_tag) return;
+      markUpgradeSeen(feed.latest_tag);
+      onUpgradeStateChange?.();
+      onOpenChange(false);
+      beginAppSelfUpdate(feed.latest_tag);
+    },
     onSkip: () => {
       markUpgradeSkipped(feed?.latest_tag);
       onUpgradeStateChange?.();
@@ -177,6 +192,8 @@ function buildNotifications({
   publishedAt,
   locale,
   t,
+  selfUpdateReady,
+  onSelfUpdate,
   onSkip,
   onOpenRelease,
 }: {
@@ -187,6 +204,8 @@ function buildNotifications({
   publishedAt: string | null;
   locale: string;
   t: (key: string, options?: Record<string, string>) => string;
+  selfUpdateReady: boolean;
+  onSelfUpdate: () => void;
   onSkip: () => void;
   onOpenRelease: () => void;
 }): NotificationItem[] {
@@ -200,6 +219,15 @@ function buildNotifications({
       time: formatReleaseTime(publishedAt, locale),
       actions: (
         <>
+          {selfUpdateReady ? (
+            <button
+              type="button"
+              className="rounded-[6px] bg-cyan-500/90 px-2 py-1 text-[11px] font-medium leading-none text-slate-950 transition-colors hover:bg-cyan-400"
+              onClick={onSelfUpdate}
+            >
+              {t("notifications.upgrade.updateNow")}
+            </button>
+          ) : null}
           {releaseUrl ? (
             <a
               className="rounded-[6px] border border-white/10 px-2 py-1 text-[11px] font-medium leading-none text-cyan-100 transition-colors hover:bg-white/[0.06]"

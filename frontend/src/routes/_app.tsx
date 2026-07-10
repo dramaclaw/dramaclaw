@@ -30,6 +30,7 @@ import { TaskPanel } from "@/components/task-center/panel";
 import { MyBuddyCompanion } from "@/features/companion/MyBuddyCompanion";
 import { AccessoryUnlockPrompt } from "@/features/rewards/AccessoryUnlockPrompt";
 import { VersionUpdateDialog } from "@/features/version-update/VersionUpdateDialog";
+import { AppUpdateOverlay } from "@/features/app-update/AppUpdateOverlay";
 import { PikoInspirationStation } from "@/features/piko-mini-game/PikoInspirationStation";
 import { LiexiaorenEntryOverlay } from "@/features/liexiaoren/LiexiaorenEntryOverlay";
 import {
@@ -188,6 +189,7 @@ function AppLayout() {
             <MyBuddyCompanion />
             <AccessoryUnlockPrompt />
             <VersionUpdateDialog />
+            <AppUpdateOverlay />
             <PikoInspirationStation
               open={pikoStationOpen}
               onClose={() => setPikoStationOpen(false)}

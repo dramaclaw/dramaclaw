@@ -58,7 +58,8 @@
       "title": "New version {{version}} available",
       "body": "A newer upstream release is available. Open the release page to review and upgrade.",
       "open": "Update",
-      "skip": "Skip this version"
+      "skip": "Skip this version",
+      "updateNow": "Update now"
     }
   },
   "myBuddy": {
@@ -4077,5 +4078,16 @@
     "zoom": "Zoom",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out"
+  },
+  "appUpdate": {
+    "title": "Updating to {{tag}}",
+    "starting": "Preparing update…",
+    "downloading": "Downloading package… {{percent}}%",
+    "installing": "Installing — the app will restart automatically…",
+    "restarting": "Restarting…",
+    "done": "Update complete, reloading…",
+    "keepOpen": "Keep this window open; a failed update never touches the current install.",
+    "failedTitle": "Update failed",
+    "close": "Close"
   }
 }

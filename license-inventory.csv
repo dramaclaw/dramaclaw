@@ -1760,3 +1760,10 @@ tests/test_video_pool_static_urls.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_wysiwyg_consistency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_wysiwyg_neo4j.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 uv.lock,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/app_update.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/api/routes/app_update.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_app_update.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/queries/app-update.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/app-update/app-update-events.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/app-update/AppUpdateOverlay.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/app-update/app-update-overlay-state.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

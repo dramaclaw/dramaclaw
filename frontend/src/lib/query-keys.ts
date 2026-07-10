@@ -92,4 +92,5 @@ export const queryKeys = {
   ttsVoices: (p: string) => ["projects", p, "tts", "voices"] as const,
   modelGateway: () => ["model-gateway", "config"] as const,
   releaseNotifications: (locale: string) => ["release-notifications", locale] as const,
+  appUpdateStatus: () => ["app-update-status"] as const,
 };
