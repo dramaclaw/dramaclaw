@@ -4,7 +4,7 @@
 const BASE_PATH = "/liexiaoren";
 const CDN_LOGIN_PATH = "https://nfg-web-assets.cdnfg.com/dramaclaw/login";
 const LUBAN_EPISODE_VIDEO_URL =
-  "https://nfg-web.oss-cn-chengdu.aliyuncs.com/dramaclaw/luban/luban-ep01.mp4";
+  "https://nfg-web-assets.cdnfg.com/dramaclaw/luban/luban-ep01.mp4";
 
 export const liexiaorenAssets = {
   entry: {
