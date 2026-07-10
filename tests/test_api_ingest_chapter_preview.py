@@ -163,20 +163,29 @@ def test_chapter_preview_keeps_valid_titles_after_marker():
             "林远开始布局。",
             "第二集 完整线索",
             "线索浮出水面。",
-            "Episode 3 the reset",
+            "第三集 谁是凶手？",
+            "疑问浮出水面。",
+            "第四集 他回来了！",
+            "门被推开。",
+            "Episode 5 the reset",
             "The reset begins.",
-            "Chapter4 The Return",
+            "Chapter6 What Happens Next?",
+            "The question remains.",
+            "Chapter7 The Return!",
             "He returns home.",
         ]
     )
 
     data = build_chapter_preview(text)
 
-    assert data["count"] == 4
-    assert [chapter["number"] for chapter in data["chapters"]] == [1, 2, 3, 4]
+    assert data["count"] == 7
+    assert [chapter["number"] for chapter in data["chapters"]] == [1, 2, 3, 4, 5, 6, 7]
     assert data["chapters"][0]["title"] == "第一集 完美计划"
-    assert data["chapters"][2]["title"] == "Episode 3 the reset"
-    assert data["chapters"][3]["title"] == "Chapter4 The Return"
+    assert data["chapters"][2]["title"] == "第三集 谁是凶手？"
+    assert data["chapters"][3]["title"] == "第四集 他回来了！"
+    assert data["chapters"][4]["title"] == "Episode 5 the reset"
+    assert data["chapters"][5]["title"] == "Chapter6 What Happens Next?"
+    assert data["chapters"][6]["title"] == "Chapter7 The Return!"
 
 
 @pytest.mark.asyncio

@@ -165,7 +165,7 @@ class ChapterDetector:
         return not self._looks_like_sentence_tail(stripped)
 
     def _looks_like_sentence_tail(self, tail: str) -> bool:
-        return bool(re.search(r"[。！？!?\.…]\s*$", tail))
+        return bool(re.search(r"[。\.…]\s*$", tail))
 
     def _parse_number(self, s: str) -> int:
         """解析数字（支持中文数字）。
