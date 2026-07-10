@@ -1319,13 +1319,17 @@ export function IngestPageContent({ project }: { project: string }) {
                     isStarting ||
                     ingestStarted
                   }
-                  className="h-8 gap-1.5 rounded-[8px] px-4 text-xs font-normal shadow-none transition-colors hover:bg-primary/85 active:bg-primary/75"
+                  className="h-8 gap-1.5 rounded-[8px] bg-primary px-4 text-xs font-normal text-primary-foreground shadow-none transition-colors hover:bg-primary/85 active:bg-primary/75"
                 >
                   <Play className="size-3 fill-current" />
                   {isStarting || ingestStarted
                     ? t("ingest.processing")
                     : t("ingest.startIngest")}
-                  <CreditCostInline display={ingestFeatureCostDisplay} />
+                  <CreditCostInline
+                    display={ingestFeatureCostDisplay}
+                    className="text-primary-foreground"
+                    iconClassName="text-primary-foreground drop-shadow-none [&_path]:fill-current"
+                  />
                 </Button>
               </div>
             </motion.section>

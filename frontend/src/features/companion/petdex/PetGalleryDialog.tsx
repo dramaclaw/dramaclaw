@@ -82,6 +82,8 @@ const PIKO_ACCESSORY_FEEDBACK_KEYS: Record<PikoAccessoryDisplayId, string> = {
   "piko-accessory-asgard-horns": "myBuddy.debug.accessoryFeedback.asgardHorns",
   "piko-accessory-gary-snail": "myBuddy.debug.accessoryFeedback.garySnail",
   "piko-accessory-captain-shield": "myBuddy.debug.accessoryFeedback.captainShield",
+  "piko-accessory-luban-compass": "myBuddy.debug.accessoryFeedback.lubanCompass",
+  "piko-accessory-luban-talisman": "myBuddy.debug.accessoryFeedback.lubanTalisman",
   "piko-accessory-red-cape": "myBuddy.debug.accessoryFeedback.redCape",
   "piko-accessory-ufo-pet": "myBuddy.debug.accessoryFeedback.ufoPet",
   "piko-accessory-ghost-pet": "myBuddy.debug.accessoryFeedback.ghostPet",
@@ -126,6 +128,8 @@ const PIKO_ACCESSORY_MENU_GROUPS = [
     "piko-accessory-asgard-horns",
     "piko-accessory-gary-snail",
     "piko-accessory-captain-shield",
+    "piko-accessory-luban-compass",
+    "piko-accessory-luban-talisman",
     "piko-accessory-red-cape",
   ],
 ] as const satisfies readonly (readonly PikoAccessoryDisplayId[])[];

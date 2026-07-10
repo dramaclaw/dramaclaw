@@ -36,6 +36,7 @@ deploy/compose/windows/users.json
 *.skill
 /scripts/output
 node_modules/
+/.pnpm-store/
 /docs/issues
 scripts/incident_drills/.drill.local.env
 .obsidian/

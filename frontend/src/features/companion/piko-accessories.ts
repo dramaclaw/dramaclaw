@@ -32,6 +32,8 @@ export type PikoAccessoryId =
   | "piko-accessory-asgard-horns"
   | "piko-accessory-gary-snail"
   | "piko-accessory-captain-shield"
+  | "piko-accessory-luban-compass"
+  | "piko-accessory-luban-talisman"
   | "piko-accessory-red-cape"
   | "piko-accessory-ufo-pet"
   | "piko-accessory-ghost-pet";
@@ -131,6 +133,14 @@ export const PIKO_ACCESSORY_DISPLAY_OPTIONS = [
   {
     id: "piko-accessory-captain-shield",
     labelKey: "myBuddy.debug.accessories.captainShield",
+  },
+  {
+    id: "piko-accessory-luban-compass",
+    labelKey: "myBuddy.debug.accessories.lubanCompass",
+  },
+  {
+    id: "piko-accessory-luban-talisman",
+    labelKey: "myBuddy.debug.accessories.lubanTalisman",
   },
   { id: "piko-accessory-red-cape", labelKey: "myBuddy.debug.accessories.redCape" },
   {
@@ -415,6 +425,24 @@ export const PIKO_ACCESSORIES = {
   },
   "piko-accessory-captain-shield": {
     src: "/piko/accessories/shield-captain.png",
+    slot: "body",
+    x: -3,
+    y: 16,
+    size: 24,
+    rotate: -8,
+    disabledActions: ["sleep", "carry-box", "read-map", "typing"],
+  },
+  "piko-accessory-luban-compass": {
+    src: "/piko/accessories/luban-compass.png",
+    slot: "body",
+    x: -3,
+    y: 16,
+    size: 24,
+    rotate: -8,
+    disabledActions: ["sleep", "carry-box", "read-map", "typing"],
+  },
+  "piko-accessory-luban-talisman": {
+    src: "/piko/accessories/luban-talisman.png",
     slot: "body",
     x: -3,
     y: 16,

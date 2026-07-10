@@ -574,7 +574,7 @@ function ScriptTabContent() {
                 ? t("episode.script.identityRequired")
                 : undefined
             }
-            className="h-7 gap-1.5 rounded-[7px] px-2.5 text-xs font-normal shadow-none [&_svg]:size-3.5"
+            className="h-7 gap-1.5 rounded-[7px] bg-primary px-2.5 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75 [&_svg]:size-3.5"
           >
             {scriptTask.started ? (
               scriptTask.stopping ? (

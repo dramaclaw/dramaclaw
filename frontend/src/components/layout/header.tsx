@@ -42,6 +42,7 @@ import {
   markUpgradeSeen,
   shouldShowUpgradeNudge,
 } from "@/lib/release-notification-state";
+import { LiexiaorenSkinPreview } from "@/features/liexiaoren/LiexiaorenSkinPreview";
 
 const ACCOUNT_PANEL_TRANSITION_MS = 350;
 
@@ -236,6 +237,7 @@ export function Header({ showBrand: _showBrand = false }: { showBrand?: boolean 
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
+        <LiexiaorenSkinPreview />
       </div>
 
       {/* Actions */}

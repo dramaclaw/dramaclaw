@@ -34,6 +34,7 @@ type SplitTextProps = {
   threshold?: number;
   rootMargin?: string;
   textAlign?: CSSProperties["textAlign"];
+  initiallyHidden?: boolean;
   onLetterAnimationComplete?: () => void;
 };
 
@@ -53,6 +54,7 @@ export default function SplitText({
   threshold = 0.1,
   rootMargin = "-100px",
   textAlign = "center",
+  initiallyHidden = false,
   tag = "p",
   onLetterAnimationComplete,
 }: SplitTextProps) {
@@ -120,6 +122,9 @@ export default function SplitText({
         reduceWhiteSpace: false,
         onSplit: (self) => {
           assignTargets(self);
+          if (initiallyHidden) {
+            el.style.visibility = "visible";
+          }
           const tween = gsap.fromTo(
             targets ?? [],
             { ...from },
@@ -173,6 +178,7 @@ export default function SplitText({
         threshold,
         rootMargin,
         fontsLoaded,
+        initiallyHidden,
       ],
       scope: ref,
     },
@@ -182,6 +188,7 @@ export default function SplitText({
     textAlign,
     overflow: "hidden",
     display: "inline-block",
+    visibility: initiallyHidden ? "hidden" : undefined,
     whiteSpace: "normal",
     wordWrap: "break-word",
     willChange: "transform, opacity",
