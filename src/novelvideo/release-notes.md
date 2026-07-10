@@ -1,20 +1,20 @@
 ---
-version: 1.0.5
+version: 1.0.6
 attention: low
 ---
-# v1.0.5
+# v1.0.6
 
 ## User-facing Highlights (zh)
 
-- **历史资产批量操作**: 画布历史弹窗现在支持批量下载和批量使用,处理多张图或多段视频时更省步骤。
-- **镜头详情更易扫读**: 镜头详情默认展开文案区,并强化四个核心区块标题,检查分镜内容更直接。
-- **生成与导入更稳**: 修复参考节点生成分镜脚本失败、占位图裂图和导入日志卡在 Step 3/3 的问题。
+- **原生桌面运行更完整**: Windows 和 macOS 原生运行路径补齐,自部署不再只依赖 Docker 场景。
+- **画布创作更顺手**: 连线拖拽反馈、多选按连线排列和历史资产模型/模式记忆让图像与视频节点编排更稳定。
+- **登录页和站点呈现升级**: 猎魈人主题入口、主行动按钮和搜索分享信息完成收口,公开站点展示更统一。
 
 ## User-facing Highlights (en)
 
-- **Batch history asset actions**: The canvas history dialog now supports batch download and batch use, reducing clicks when working with multiple images or videos.
-- **More scannable shot details**: Shot details now open the copy section by default and use clearer titles for the four core sections.
-- **More reliable generation and import**: Fixed reference-node storyboard generation, broken placeholder images, and import logs that could appear stuck at Step 3/3.
+- **More complete native desktop support**: Windows and macOS native runtime paths are now covered, so self-hosting is no longer limited to Docker-first workflows.
+- **Smoother canvas creation**: Connection feedback, connection-aware multi-selection layout, and history asset model/mode memory make image and video node workflows more predictable.
+- **Refined login and site presentation**: The Liexiaoren themed entry, primary action buttons, and search/social metadata now present a more consistent public experience.
 
 ## Fixes
 
