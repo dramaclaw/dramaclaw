@@ -50,3 +50,6 @@ docs/changes/
 docs/adr/
 docs/compliance/
 docs/superpowers/
+
+# git worktree 统一目录(主目录永远 main)
+/.worktrees/
