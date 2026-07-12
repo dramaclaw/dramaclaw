@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -41,6 +42,8 @@ RELEASE_URL_ENV = "DRAMACLAW_UPDATE_RELEASE_URL"
 RELEASE_CACHE_TTL_SECONDS = 5 * 60
 RELEASE_FAILURE_CACHE_TTL_SECONDS = 60
 DOWNLOAD_TIMEOUT_SECONDS = 30 * 60
+# 空间预检倍数:zip 本体 + 解压产物 + stage 副本的保守估算
+DISK_SPACE_HEADROOM_MULTIPLIER = 3
 # Inno 安装器 AppId(packaging 仓 dramaclaw.iss),HKCU 卸载键名 = {GUID}_is1
 INNO_APP_ID = "{70C990CA-F409-4DC6-9136-7C1B516E4384}"
 
@@ -263,6 +266,23 @@ async def status(*, fetcher: Fetcher | None = None) -> dict[str, Any]:
     return result
 
 
+def _ensure_disk_space(asset: UpdateAsset, root: Path) -> None:
+    """下载前的空间预检(fail-closed):GB 级包白下一趟比误拦更伤。"""
+    if asset.size <= 0:
+        return
+    needed = asset.size * DISK_SPACE_HEADROOM_MULTIPLIER
+    for label, path in (("temp", Path(tempfile.gettempdir())), ("install", root)):
+        try:
+            free = shutil.disk_usage(path).free
+        except OSError:  # pragma: no cover - 查不出来不硬拦,替换阶段有 stage+swap 兜底
+            continue
+        if free < needed:
+            raise UpdateError(
+                f"insufficient disk space on {label} volume: "
+                f"need ~{needed // 1024 // 1024} MB free, have {free // 1024 // 1024} MB"
+            )
+
+
 async def _download(asset: UpdateAsset, dest: Path) -> None:
     digest = hashlib.sha256()
     received = 0
@@ -307,25 +327,48 @@ def _launch_windows_installer(setup_path: Path) -> None:
 
 
 _MACOS_UPDATER = """#!/bin/sh
-# DramaClaw self-update helper (generated; applies zip then relaunches)
+# DramaClaw self-update helper (generated; applies zip then relaunches).
+# 重拷贝全部先落到同卷 stage,最后只做 mv 交换:替换阶段不存在
+# "旧的已删、新的拷不进"的窗口,任何一步失败都保得住现有安装。
 set -e
-PID="$1"; ZIP="$2"; ROOT="$3"; LOG="$4"
+PID="$1"; ZIP="$2"; ROOT="$3"; LOG="$4"; WAIT_LIMIT="${5:-120}"
 exec >>"$LOG" 2>&1
 echo "waiting for pid $PID to exit"
 i=0
-while kill -0 "$PID" 2>/dev/null && [ "$i" -lt 120 ]; do sleep 1; i=$((i+1)); done
+while kill -0 "$PID" 2>/dev/null && [ "$i" -lt "$WAIT_LIMIT" ]; do sleep 1; i=$((i+1)); done
+if kill -0 "$PID" 2>/dev/null; then
+  echo "pid $PID still alive after ${WAIT_LIMIT}s, aborting without touching the install"
+  exit 1
+fi
 TMP=$(mktemp -d)
 unzip -q "$ZIP" -d "$TMP"
 SRC=$(find "$TMP" -mindepth 1 -maxdepth 1 -type d | head -1)
-test -d "$SRC/runtime" && test -d "$SRC/frontend"
-rm -rf "$ROOT/runtime" "$ROOT/frontend"
-cp -R "$SRC/runtime" "$ROOT/runtime"
-cp -R "$SRC/frontend" "$ROOT/frontend"
+# 注意:不能写 test A && test B——set -e 对 && 左侧失败不生效,校验会形同虚设
+if [ ! -d "$SRC/runtime" ] || [ ! -d "$SRC/frontend" ]; then
+  echo "unexpected zip layout under $TMP, aborting"
+  exit 1
+fi
+STAGE="$ROOT/.update-stage"
+BAK="$ROOT/.update-bak"
+rm -rf "$STAGE" "$BAK"
+mkdir "$STAGE"
+cp -R "$SRC/runtime" "$STAGE/runtime"
+cp -R "$SRC/frontend" "$STAGE/frontend"
 for f in DramaClaw-Start.command DramaClaw-Stop.command README-macOS.txt; do
-  if [ -f "$SRC/$f" ]; then cp "$SRC/$f" "$ROOT/$f"; fi
+  if [ -f "$SRC/$f" ]; then cp "$SRC/$f" "$STAGE/$f"; fi
 done
-chmod +x "$ROOT/DramaClaw-Start.command" "$ROOT/DramaClaw-Stop.command" 2>/dev/null || true
-rm -rf "$TMP" "$ZIP"
+chmod +x "$STAGE/DramaClaw-Start.command" "$STAGE/DramaClaw-Stop.command" 2>/dev/null || true
+# 交换窗口只剩同卷 mv(纯 rename,不受磁盘满影响);万一断电,旧件还在 .update-bak 可手工恢复
+echo "staged, swapping in new version"
+mkdir "$BAK"
+mv "$ROOT/runtime" "$BAK/runtime"
+mv "$ROOT/frontend" "$BAK/frontend"
+mv "$STAGE/runtime" "$ROOT/runtime"
+mv "$STAGE/frontend" "$ROOT/frontend"
+for f in DramaClaw-Start.command DramaClaw-Stop.command README-macOS.txt; do
+  if [ -f "$STAGE/$f" ]; then mv -f "$STAGE/$f" "$ROOT/$f"; fi
+done
+rm -rf "$STAGE" "$BAK" "$TMP" "$ZIP"
 echo "update applied, relaunching"
 open "$ROOT/DramaClaw-Start.command"
 """
@@ -373,6 +416,7 @@ async def apply(*, fetcher: Fetcher | None = None) -> dict[str, Any]:
         if not _is_newer(_version_from_tag(tag), _current_version()):
             raise UpdateError("already up to date")
         asset = pick_asset(payload, tag)
+        _ensure_disk_space(asset, root)
         _set_progress(phase="downloading", percent=0, error=None, target_tag=tag)
         workdir = Path(tempfile.mkdtemp(prefix="dramaclaw-update-"))
         dest = workdir / asset.name
