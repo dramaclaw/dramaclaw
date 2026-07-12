@@ -53,6 +53,21 @@ About **30 `*_MODEL` logical model names** (e.g. `HERMES_MODEL=DC-hermes-LLM`) m
 |---|---|---|
 | `FFMPEG_PATH` | `ffmpeg` (from PATH) | Path to the ffmpeg executable; specify explicitly when installed in a non-standard location. |
 
+## Episode Soundtrack (optional, off by default)
+
+Optional post-compose step: the assembled episode is sent to a soundtrack model, which generates one original track that runs through the whole episode with automatically matched length, laid over or replacing the native audio.
+
+| Variable | Default | Description |
+|---|---|---|
+| `EPISODE_SOUNDTRACK_PROVIDER` | Empty (off) | Set to `sonilo` to enable Sonilo video-to-music. |
+| `SONILO_API_KEY` | Empty | User-supplied Sonilo API key. The step is skipped automatically when unset. Output is licensed and safe for commercial use (terms apply). |
+| `EPISODE_SOUNDTRACK_MODE` | `mix` | `mix` lays the lowered soundtrack over the native audio, keeping native dialogue/SFX; `replace` swaps the audio track entirely, for dialogue-free content. |
+| `EPISODE_SOUNDTRACK_MUSIC_VOLUME` | `0.35` | Soundtrack volume factor (0-1) in `mix` mode. |
+| `EPISODE_SOUNDTRACK_PROMPT` | Empty | Optional style hint passed through to the soundtrack model. |
+| `SONILO_API_BASE_URL` / `SONILO_TIMEOUT_SECONDS` | `https://api.sonilo.com` / `600` | API endpoint and HTTP timeout in seconds; normally no need to change. |
+
+Note: the soundtrack endpoint currently supports episodes up to 6 minutes — longer ones are logged and skipped. A failed generation keeps the original audio and never fails the compose task.
+
 ## Security
 
 | Variable | Default | Description |

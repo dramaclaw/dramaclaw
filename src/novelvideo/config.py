@@ -583,6 +583,37 @@ PROP_REF_IMAGE_MODEL = os.environ.get("PROP_REF_IMAGE_MODEL", "")
 
 
 # =============================================================================
+# 整集配乐配置（可选，默认关闭）
+# =============================================================================
+
+# 成片合成后的整集配乐提供方。留空 = 关闭；"sonilo" = 使用 Sonilo video-to-music
+# 为拼好的成片生成一条贯穿整集的配乐。
+EPISODE_SOUNDTRACK_PROVIDER = (
+    os.environ.get("EPISODE_SOUNDTRACK_PROVIDER", "").strip().lower()
+)
+
+# 配乐与原生音轨的合成方式：
+# "mix"（默认）压低配乐后叠加到原音轨上，保留视频模型原生的对白/音效；
+# "replace" 用配乐整体替换原音轨，适合无对白的内容。
+EPISODE_SOUNDTRACK_MODE = (
+    os.environ.get("EPISODE_SOUNDTRACK_MODE", "").strip().lower() or "mix"
+)
+
+# mix 模式下配乐叠加的音量系数（0-1）。
+EPISODE_SOUNDTRACK_MUSIC_VOLUME = float(
+    os.environ.get("EPISODE_SOUNDTRACK_MUSIC_VOLUME", "0.35")
+)
+
+# 可选的整集配乐风格提示词，原样透传给配乐模型。
+EPISODE_SOUNDTRACK_PROMPT = os.environ.get("EPISODE_SOUNDTRACK_PROMPT", "")
+
+# Sonilo API 凭据与端点。key 由用户自备，本项目不内置、不打印。
+SONILO_API_KEY = os.environ.get("SONILO_API_KEY", "")
+SONILO_API_BASE_URL = os.environ.get("SONILO_API_BASE_URL", "https://api.sonilo.com")
+SONILO_TIMEOUT_SECONDS = float(os.environ.get("SONILO_TIMEOUT_SECONDS", "600"))
+
+
+# =============================================================================
 # 火山引擎图像生成配置
 # =============================================================================
 

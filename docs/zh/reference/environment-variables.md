@@ -53,6 +53,21 @@
 |---|---|---|
 | `FFMPEG_PATH` | `ffmpeg`(从 PATH) | ffmpeg 可执行路径,装在非标准位置时显式指定。 |
 
+## 整集配乐(可选,默认关闭)
+
+成片合成后的可选步骤:把拼好的成片交给配乐模型,生成一条贯穿整集、长度自动匹配的原创配乐,叠加或替换原生音轨。
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `EPISODE_SOUNDTRACK_PROVIDER` | 空(关闭) | 设为 `sonilo` 启用 Sonilo video-to-music。 |
+| `SONILO_API_KEY` | 空 | Sonilo API key,用户自备。未配置时该步骤自动跳过。产出已获授权、可商用(以 Sonilo 条款为准)。 |
+| `EPISODE_SOUNDTRACK_MODE` | `mix` | `mix` 压低配乐叠加,保留原生对白/音效;`replace` 整体替换原音轨,适合无对白内容。 |
+| `EPISODE_SOUNDTRACK_MUSIC_VOLUME` | `0.35` | mix 模式下配乐音量系数(0-1)。 |
+| `EPISODE_SOUNDTRACK_PROMPT` | 空 | 可选的配乐风格提示词,原样透传。 |
+| `SONILO_API_BASE_URL` / `SONILO_TIMEOUT_SECONDS` | `https://api.sonilo.com` / `600` | API 地址与 HTTP 超时(秒),一般无需修改。 |
+
+注:配乐接口目前最长支持 6 分钟成片,超长会记录日志并跳过;生成失败只保留原音轨,不影响成片合成。
+
 ## 安全
 
 | 变量 | 默认 | 说明 |
