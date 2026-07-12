@@ -614,6 +614,23 @@ SONILO_TIMEOUT_SECONDS = float(os.environ.get("SONILO_TIMEOUT_SECONDS", "600"))
 
 
 # =============================================================================
+# 整集音效配置（可选，默认关闭）
+# =============================================================================
+
+# 成片合成后的整集音效提供方。留空 = 关闭；"sonilo" = 使用 Sonilo video-to-sfx
+# 根据成片画面生成贴合视频的音效。复用上方的 SONILO_API_KEY /
+# SONILO_API_BASE_URL / SONILO_TIMEOUT_SECONDS。
+EPISODE_SFX_PROVIDER = os.environ.get("EPISODE_SFX_PROVIDER", "").strip().lower()
+
+# 音效叠加到原音轨时的音量系数（0-1）。音效始终压低后 mix 叠加，
+# 不提供 replace：每个 clip 的原生音轨带对白，整体替换会把对白一起丢掉。
+EPISODE_SFX_VOLUME = float(os.environ.get("EPISODE_SFX_VOLUME", "0.5"))
+
+# 可选的整集音效风格提示词，原样透传给音效模型。
+EPISODE_SFX_PROMPT = os.environ.get("EPISODE_SFX_PROMPT", "")
+
+
+# =============================================================================
 # 火山引擎图像生成配置
 # =============================================================================
 

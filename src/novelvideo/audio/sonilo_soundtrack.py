@@ -1,11 +1,16 @@
-"""Sonilo video-to-music 整集配乐客户端。
+"""Sonilo 整集音频客户端：video-to-music 配乐 + video-to-sfx 音效。
 
-成片合成完成后，把整集视频交给 Sonilo 的 ``/v1/video-to-music`` 接口，
-生成一条长度与成片匹配的整集配乐（AAC，.m4a 容器）。
+成片合成完成后，把整集视频交给 Sonilo 生成整集音频素材：
 
-接口返回 NDJSON 事件流：``audio_chunk``（base64 音频分片，按 stream_index
-聚合）、``title``、``complete``（成功终态）、``error``（失败终态）；
-``stage_start`` 等进度事件与无法解析的行一律忽略。
+- ``/v1/video-to-music``（配乐）：单次请求内的 NDJSON 事件流——``audio_chunk``
+  （base64 音频分片，按 stream_index 聚合）、``title``、``complete``
+  （成功终态）、``error``（失败终态）；``stage_start`` 等进度事件与
+  无法解析的行一律忽略。
+- ``/v1/video-to-sfx``（音效）：异步任务管线——POST 提交后返回 202 +
+  ``task_id``，轮询 ``/v1/tasks/{task_id}`` 直到终态（succeeded/failed），
+  成功后从预签名 URL 下载音频产物（AAC，.m4a 容器）。
+
+两条路径共用鉴权（Bearer SONILO_API_KEY）与错误消息映射。
 """
 
 from __future__ import annotations
@@ -14,15 +19,26 @@ import base64
 import binascii
 import json
 import mimetypes
+import time
 from pathlib import Path
 from typing import Iterable
 
 import httpx
 
 SONILO_VIDEO_TO_MUSIC_PATH = "/v1/video-to-music"
+SONILO_VIDEO_TO_SFX_PATH = "/v1/video-to-sfx"
+SONILO_TASKS_PATH = "/v1/tasks"
 
-# 接口拒绝超过 6 分钟的视频；调用方应先本地校验，避免白传一次成片。
+# 配乐接口拒绝超过 6 分钟的视频；调用方应先本地校验，避免白传一次成片。
 SONILO_MAX_VIDEO_DURATION_SECONDS = 360
+
+# 音效接口的上限更严：3 分钟（配乐是 6 分钟）。两个上限各自独立校验——
+# 成片在 3~6 分钟之间时，配乐照常进行、音效跳过。
+SONILO_MAX_SFX_VIDEO_DURATION_SECONDS = 180
+
+# 音效任务的轮询间隔；``_sfx_poll_sleep`` 是测试接缝，避免测试真等 5 秒。
+SFX_POLL_INTERVAL_SECONDS = 5.0
+_sfx_poll_sleep = time.sleep
 
 
 class SoniloSoundtrackError(RuntimeError):
@@ -162,3 +178,150 @@ class SoniloSoundtrackClient:
             raise SoniloSoundtrackError("配乐流完成但未返回音频数据")
         first_index = sorted(streams)[0]
         return bytes(streams[first_index])
+
+
+class SoniloSfxError(RuntimeError):
+    """整集音效生成失败。"""
+
+
+class SoniloSfxClient:
+    """极简 video-to-sfx 客户端，只覆盖整集音效这一条调用路径。
+
+    与配乐的 NDJSON 流式接口不同，音效走异步任务管线：提交（202 +
+    task_id）→ 轮询 ``/v1/tasks/{task_id}`` → 从预签名 URL 下载产物。
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ):
+        from novelvideo.config import (
+            SONILO_API_BASE_URL,
+            SONILO_API_KEY,
+            SONILO_TIMEOUT_SECONDS,
+        )
+
+        self.api_key = str(api_key if api_key is not None else SONILO_API_KEY).strip()
+        self.base_url = str(base_url or SONILO_API_BASE_URL).rstrip("/")
+        self.timeout_seconds = float(timeout_seconds or SONILO_TIMEOUT_SECONDS)
+
+    def generate_sfx(
+        self,
+        video_path: Path,
+        output_path: Path,
+        *,
+        prompt: str = "",
+    ) -> Path:
+        """上传成片并把生成的整集音效音轨写入 ``output_path``（.m4a）。"""
+        if not self.api_key:
+            raise SoniloSfxError("未配置 SONILO_API_KEY")
+        if not video_path.exists():
+            raise SoniloSfxError(f"成片不存在: {video_path}")
+
+        try:
+            with httpx.Client(timeout=self.timeout_seconds) as client:
+                task_id = self._submit(client, video_path, prompt)
+                body = self._poll(client, task_id)
+                audio = self._download_audio(client, body, task_id)
+        except httpx.TimeoutException as exc:
+            raise SoniloSfxError(
+                f"音效生成超时（{self.timeout_seconds:.0f}s）"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise SoniloSfxError(f"请求 Sonilo 失败: {exc}") from exc
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(audio)
+        return output_path
+
+    def _submit(self, client: httpx.Client, video_path: Path, prompt: str) -> str:
+        """POST /v1/video-to-sfx，返回 202 + task_id。
+
+        提交被接受即计费（非幂等），与配乐接口同一策略：失败不重试。
+        """
+        data = {"prompt": prompt.strip()} if prompt.strip() else None
+        mime, _ = mimetypes.guess_type(video_path.name)
+        with open(video_path, "rb") as fh:
+            files = {"video": (video_path.name, fh, mime or "video/mp4")}
+            response = client.post(
+                f"{self.base_url}{SONILO_VIDEO_TO_SFX_PATH}",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                data=data,
+                files=files,
+            )
+        if response.status_code >= 400:
+            raise SoniloSfxError(
+                _http_error_message(response.status_code, response.text)
+            )
+        try:
+            parsed = response.json()
+        except json.JSONDecodeError:
+            parsed = None
+        task_id = parsed.get("task_id") if isinstance(parsed, dict) else None
+        if not task_id:
+            raise SoniloSfxError("音效任务已受理但未返回 task_id")
+        return str(task_id)
+
+    def _poll(self, client: httpx.Client, task_id: str) -> dict:
+        """轮询 /v1/tasks/{task_id} 直到终态（succeeded/failed）或超时。
+
+        404 表示 task_id 无效或不是音效任务（/v1/tasks 仅覆盖音效），
+        重试不可能改变结果，立即失败；其余错误（5xx、限流、网络抖动）
+        视为暂时性，任务仍在后端继续，留在轮询循环里等下一轮。
+        """
+        deadline = time.monotonic() + self.timeout_seconds
+        while True:
+            response = client.get(
+                f"{self.base_url}{SONILO_TASKS_PATH}/{task_id}",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+            )
+            if response.status_code == 404:
+                raise SoniloSfxError(
+                    f"音效任务不存在或不是音效任务: {task_id}"
+                )
+            if response.status_code < 400:
+                try:
+                    body = response.json()
+                except json.JSONDecodeError:
+                    body = None
+                if isinstance(body, dict) and body.get("status") in (
+                    "succeeded",
+                    "failed",
+                ):
+                    return body
+            if time.monotonic() >= deadline:
+                raise SoniloSfxError(
+                    f"等待音效任务超时（{self.timeout_seconds:.0f}s）: {task_id}"
+                )
+            _sfx_poll_sleep(SFX_POLL_INTERVAL_SECONDS)
+
+    def _download_audio(
+        self, client: httpx.Client, body: dict, task_id: str
+    ) -> bytes:
+        """从终态任务体里取音频产物并下载。
+
+        产物 URL 是预签名的，自带鉴权——下载请求不携带 Authorization，
+        API key 绝不能发给存储域名。
+        """
+        if body.get("status") == "failed":
+            error = body.get("error")
+            if isinstance(error, dict):
+                message = error.get("message") or error.get("code") or "任务失败"
+            elif isinstance(error, str) and error:
+                message = error
+            else:
+                message = "任务失败"
+            raise SoniloSfxError(f"音效生成失败: {message}")
+        audio = body.get("audio")
+        url = audio.get("url") if isinstance(audio, dict) else None
+        if not url:
+            raise SoniloSfxError(f"音效任务成功但未返回音频产物: {task_id}")
+        response = client.get(str(url))
+        if response.status_code >= 400:
+            raise SoniloSfxError(
+                f"音效产物下载失败 ({response.status_code}): {task_id}"
+            )
+        return response.content
