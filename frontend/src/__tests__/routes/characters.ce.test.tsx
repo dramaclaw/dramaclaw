@@ -84,9 +84,22 @@ vi.mock("@/lib/queries/projects", () => ({
 }));
 
 vi.mock("@/lib/queries/character-image-selection", () => ({
+  useAssetImageSourceSelection: () => ({
+    data: {
+      ok: true,
+      data: {
+        asset_kind: "character",
+        image_source_selection: "newapi_gpt_image2",
+        options: { newapi_gpt_image2: "DC-Image-2" },
+      },
+    },
+    isLoading: false,
+    isFetching: false,
+  }),
   useCharacterImageSelection: () => ({
     data: { ok: true, data: { character_image_selection: "seedream" } },
   }),
+  useUpdateAssetImageSourceSelection: mutation,
   useUpdateCharacterImageSelection: mutation,
   useCharacterImageUsage: () => ({ data: { ok: true, data: {} } }),
 }));
