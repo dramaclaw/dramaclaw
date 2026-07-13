@@ -201,6 +201,8 @@ const CHARACTER_DIALOG_CANCEL_BUTTON_CLASS =
   "h-10 w-18 rounded-md border-white/18 bg-white/[0.06] px-0 text-sm font-normal text-foreground/80 hover:border-white/28 hover:bg-white/[0.1] hover:text-foreground";
 const CHARACTER_DIALOG_ACTION_BUTTON_CLASS =
   "h-10 w-18 rounded-md bg-primary px-0 text-sm font-normal text-primary-foreground shadow-lg shadow-primary/15 hover:bg-primary/90";
+const CHARACTER_PORTRAIT_FEATURE_KEY = "mainline.character_portrait";
+const IDENTITY_IMAGE_FEATURE_KEY = "mainline.identity_image";
 
 // ─── form schema ─────────────────────────────────────────────────────────────
 
@@ -912,10 +914,11 @@ function PortraitBlock({
   const { t } = useTranslation();
   const genPortrait = useGeneratePortraitAsync(project, character.name);
   const uploadPortrait = useUploadPortrait(project, character.name);
-  const portraitCostRes = useGenerationCreditCost("image_selection", imageModel, {
-    surface: "supertale",
-    imageRole: "character",
-  });
+  const portraitCostRes = useGenerationCreditCost(
+    "feature",
+    CHARACTER_PORTRAIT_FEATURE_KEY,
+    imageModel ? { params: { image_selection: imageModel } } : {},
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [genConfirm, setGenConfirm] = useState(false);
 
@@ -944,7 +947,7 @@ function PortraitBlock({
         toast.error(res.error || t("common.error"));
         return;
       }
-      portraitTask.start({ scope: res.scope });
+      portraitTask.start({ scope: res.scope, taskId: res.task_id });
       toast.success(t("characters.toasts.imageGenerating"));
     } catch (err) {
       toast.error(backendErrorToastMessage(err, t));
@@ -954,7 +957,9 @@ function PortraitBlock({
   const genBusy = genPortrait.isPending || portraitTask.started;
   const portraitCost = isOkResponse<{ display: string }>(portraitCostRes.data)
     ? portraitCostRes.data.data.display
-    : "";
+    : portraitCostRes.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null;
 
   return (
     <div className="flex w-full flex-col items-start gap-2">
@@ -1330,10 +1335,16 @@ function IdentityCard({
   const uploadCostume = useUploadCostumeImage(project, characterName);
   const uploadPortrait = useUploadIdentityPortrait(project, characterName);
   const genPortrait = useGenerateIdentityPortraitAsync(project, characterName);
-  const identityCostRes = useGenerationCreditCost("image_selection", imageModel, {
-    surface: "supertale",
-    imageRole: "identity",
-  });
+  const identityImageCostRes = useGenerationCreditCost(
+    "feature",
+    IDENTITY_IMAGE_FEATURE_KEY,
+    imageModel ? { params: { image_selection: imageModel } } : {},
+  );
+  const identityPortraitCostRes = useGenerationCreditCost(
+    "feature",
+    CHARACTER_PORTRAIT_FEATURE_KEY,
+    imageModel ? { params: { image_selection: imageModel } } : {},
+  );
   const identityImageScope = `character:${characterName}:identity:${identity.identity_name}`;
   const identityPortraitScope = `character:${characterName}:identity_portrait:${identity.identity_name}`;
   const identityImageTask = useTaskController({
@@ -1387,9 +1398,20 @@ function IdentityCard({
     : undefined;
   const imageAttempts = identityAttempts?.image_attempts ?? 0;
   const portraitAttempts = identityAttempts?.portrait_attempts ?? 0;
-  const identityCost = isOkResponse<{ display: string }>(identityCostRes.data)
-    ? identityCostRes.data.data.display
-    : "";
+  const identityImageCost = isOkResponse<{ display: string }>(
+    identityImageCostRes.data,
+  )
+    ? identityImageCostRes.data.data.display
+    : identityImageCostRes.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null;
+  const identityPortraitCost = isOkResponse<{ display: string }>(
+    identityPortraitCostRes.data,
+  )
+    ? identityPortraitCostRes.data.data.display
+    : identityPortraitCostRes.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null;
   const identityCreditButtonClass =
     isCeRuntime()
       ? "h-7 gap-1 rounded-[8px] px-2 text-xs transition-transform active:scale-95"
@@ -1484,7 +1506,7 @@ function IdentityCard({
         toast.error(res.error || t("common.error"));
         return;
       }
-      identityImageTask.start({ scope: res.scope });
+      identityImageTask.start({ scope: res.scope, taskId: res.task_id });
       toast.success(t("characters.toasts.imageGenerating"));
     } catch (err) {
       toast.error(backendErrorToastMessage(err, t));
@@ -1507,7 +1529,7 @@ function IdentityCard({
         toast.error(res.error || t("common.error"));
         return;
       }
-      identityPortraitTask.start({ scope: res.scope });
+      identityPortraitTask.start({ scope: res.scope, taskId: res.task_id });
       toast.success(t("characters.toasts.imageGenerating"));
     } catch (err) {
       toast.error(backendErrorToastMessage(err, t));
@@ -1712,7 +1734,7 @@ function IdentityCard({
               {identity.image_url
                 ? t("characters.identities.regenerate")
                 : t("characters.identities.generate")}
-              <CreditCostInline display={identityCost} />
+              <CreditCostInline display={identityImageCost} />
             </Button>
             <Button
               size="sm"
@@ -1992,7 +2014,7 @@ function IdentityCard({
                                 {identity.portrait_image_url
                                   ? t("characters.identities.regenerate")
                                   : t("characters.identities.generate")}
-                                <CreditCostInline display={identityCost} />
+                                <CreditCostInline display={identityPortraitCost} />
                               </Button>
                             }
                           />
@@ -2187,7 +2209,7 @@ function IdentityCard({
               className={identityCreditDialogActionClass}
             >
               {t("characters.identities.generate")}
-              <CreditCostInline display={identityCost} />
+              <CreditCostInline display={identityImageCost} />
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2220,7 +2242,7 @@ function IdentityCard({
               className={identityCreditDialogActionClass}
             >
               {t("characters.identities.generate")}
-              <CreditCostInline display={identityCost} />
+              <CreditCostInline display={identityPortraitCost} />
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

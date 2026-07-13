@@ -90,34 +90,50 @@ def _merge_billing_params(defaults: dict, explicit: dict) -> dict:
     return merged
 
 
-def _resolve_labeled_value(value: str, options: dict[str, str], *, label_name: str) -> str:
+def _resolve_labeled_value(
+    value: str, options: dict[str, str], *, label_name: str
+) -> str:
     clean_value = value.strip()
     if clean_value in options:
         return clean_value
 
-    label_matches = [key for key, label in options.items() if label.strip() == clean_value]
+    label_matches = [
+        key for key, label in options.items() if label.strip() == clean_value
+    ]
     if not label_matches:
         normalized_label = clean_value.casefold()
         label_matches = [
-            key for key, label in options.items() if label.strip().casefold() == normalized_label
+            key
+            for key, label in options.items()
+            if label.strip().casefold() == normalized_label
         ]
     if len(label_matches) != 1:
-        detail = f"ambiguous {label_name} label" if label_matches else f"invalid {label_name}"
+        detail = (
+            f"ambiguous {label_name} label"
+            if label_matches
+            else f"invalid {label_name}"
+        )
         raise HTTPException(status_code=400, detail=detail)
     return label_matches[0]
 
 
 def _fixed_image_cost_model(kind: str) -> str:
     if kind == "prop_reference":
-        from novelvideo.generators.nanobanana_prop import resolve_prop_reference_image_model
+        from novelvideo.generators.nanobanana_prop import (
+            resolve_prop_reference_image_model,
+        )
 
         return resolve_prop_reference_image_model()
     if kind == "scene_master":
-        from novelvideo.generators.scene_reference_images import resolve_scene_reference_image_model
+        from novelvideo.generators.scene_reference_images import (
+            resolve_scene_reference_image_model,
+        )
 
         return resolve_scene_reference_image_model("master")
     if kind == "scene_reverse_master":
-        from novelvideo.generators.scene_reference_images import resolve_scene_reference_image_model
+        from novelvideo.generators.scene_reference_images import (
+            resolve_scene_reference_image_model,
+        )
 
         return resolve_scene_reference_image_model("reverse_master")
     if kind == "scene_pano":
@@ -132,7 +148,10 @@ def _image_selection_cost_model(selection: str) -> str:
     if not clean_selection:
         raise HTTPException(status_code=400, detail="selection is required")
 
-    from novelvideo.config import IMAGE_GENERATION_SELECTIONS, character_image_selection_options
+    from novelvideo.config import (
+        IMAGE_GENERATION_SELECTIONS,
+        character_image_selection_options,
+    )
 
     options = character_image_selection_options()
     clean_selection = _resolve_labeled_value(
@@ -187,7 +206,9 @@ def _video_backend_cost_model(backend: str) -> str:
         try:
             backend_enum = VideoBackend(clean_backend)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="invalid video backend") from exc
+            raise HTTPException(
+                status_code=400, detail="invalid video backend"
+            ) from exc
 
     if backend_enum == VideoBackend.SEEDANCE_FAST:
         from novelvideo.config import SEEDANCE_FAST_MODEL
@@ -259,7 +280,11 @@ def _generation_billing_kind(kind: str) -> str:
         return "video"
     if kind in {"beat_tts", "freezone_audio_music"}:
         return "audio"
-    if kind in {"freezone_image_reverse_prompt", "freezone_story_script", "style_analyzer"}:
+    if kind in {
+        "freezone_image_reverse_prompt",
+        "freezone_story_script",
+        "style_analyzer",
+    }:
         return "text"
     if kind == "feature":
         return "feature"
@@ -275,7 +300,9 @@ def _fixed_image_billing_params(value: str, *, model: str) -> dict:
             or os.environ.get("HUIMENG_IMAGE_QUALITY")
             or "medium"
         ).strip()
-        return _image_billing_params(model=model, image_size=image_size, quality=quality)
+        return _image_billing_params(
+            model=model, image_size=image_size, quality=quality
+        )
     if clean_value in {"scene_master", "scene_reverse_master"}:
         return _image_billing_params(model=model, image_size="1K", quality="low")
     if clean_value == "prop_reference":
@@ -307,7 +334,9 @@ def _image_selection_billing_params(
         mode_cfg = REGEN_MODE_CONFIGS.get(clean_mode_key)
         if mode_cfg is None:
             raise HTTPException(status_code=400, detail="invalid image mode key")
-        params["size"] = normalize_image_size(str(mode_cfg.get("image_size") or ""), "newapi")
+        params["size"] = normalize_image_size(
+            str(mode_cfg.get("image_size") or ""), "newapi"
+        )
 
     clean_role = image_role.strip().lower()
     if clean_role == "sketch":
@@ -336,6 +365,45 @@ def _image_selection_billing_params(
 def _video_backend_billing_params(params: dict) -> dict:
     resolution = str(params.get("resolution") or "").strip()
     return {"resolution": resolution} if resolution else {}
+
+
+def _feature_billing_params(value: str, params: dict) -> dict:
+    feature_key = str(value or "").strip()
+    feature_image_role = {
+        "mainline.character_portrait": "character",
+        "mainline.identity_image": "identity",
+    }.get(feature_key)
+    if not feature_image_role:
+        return params
+    if str(params.get("pricing_model") or "").strip():
+        return params
+    image_selection = str(
+        params.get("image_selection") or params.get("character_image_selection") or ""
+    ).strip()
+    if not image_selection:
+        return params
+    from novelvideo.config import (
+        IMAGE_GENERATION_SELECTIONS,
+        normalize_character_image_selection,
+    )
+
+    selection = normalize_character_image_selection(image_selection)
+    model_cfg = IMAGE_GENERATION_SELECTIONS.get(selection) or {}
+    pricing_model = str(model_cfg.get("model") or "").strip()
+    if not pricing_model:
+        return params
+    pricing_params = _image_selection_billing_params(
+        model=pricing_model,
+        image_role=feature_image_role,
+    )
+    return {
+        **params,
+        "pricing_kind": "image",
+        "pricing_model": pricing_model,
+        "pricing_params": pricing_params,
+        "pricing_model_selection": selection,
+        "pricing_model_label": str(model_cfg.get("label") or selection),
+    }
 
 
 def _default_billing_params(
@@ -369,6 +437,8 @@ def _default_billing_params(
         )
     if kind == "video_backend":
         return _video_backend_billing_params(explicit_params)
+    if kind == "feature":
+        return _feature_billing_params(value, explicit_params)
     return explicit_params
 
 
@@ -387,7 +457,9 @@ async def get_generation_credit_cost(
     del user
     model = _generation_credit_cost_model(kind, value)
     if not model:
-        raise HTTPException(status_code=400, detail="generation model is not configured")
+        raise HTTPException(
+            status_code=400, detail="generation model is not configured"
+        )
     parsed_params = _parse_billing_params(params)
     quote = await get_credit_quote().generation_credit_quote(
         kind=_generation_billing_kind(kind),

@@ -14,9 +14,10 @@ export interface TaskResponse {
   /**
    * Server-computed scope for tasks where the FE can't derive it itself
    * (e.g. `selection_scope(mode_key, beat_indices)` for sketch_regen).
-   * Pass into `useTaskController.start({ scope })` so the SSE stream URL
-   * can filter to the exact task row on first open, instead of racing
-   * reconcile to discover it via `/tasks` poll.
+   * Pass scope plus task_id into `useTaskController.start({ scope, taskId })`
+   * so the SSE stream URL can filter to the exact task row on first open, and
+   * terminal reconciliation does not confuse a previous run with the same
+   * scope for the current task.
    */
   scope?: string;
 }
