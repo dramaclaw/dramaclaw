@@ -1,6 +1,7 @@
 import base64
 import importlib
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +17,21 @@ def _isolate_settings_db(monkeypatch, tmp_path):
     monkeypatch.delenv("MODEL_GATEWAY_MODE", raising=False)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", state_dir)
     monkeypatch.setattr(config, "STATE_DIR", state_dir)
+
+
+def _patch_scene_newapi_gateway(
+    monkeypatch,
+    *,
+    api_key: str = "newapi-token",
+    base_url: str = "http://newapi.test/v1",
+) -> None:
+    import novelvideo.config as config
+
+    monkeypatch.setattr(
+        config,
+        "get_effective_newapi_gateway_config",
+        lambda: SimpleNamespace(api_key=api_key, base_url=base_url),
+    )
 
 
 def test_dc_image_2_selection_maps_to_newapi_gpt_image2(monkeypatch, tmp_path):
@@ -852,13 +868,12 @@ def test_newapi_scene_master_uses_text_only_nanobanana2(monkeypatch, tmp_path):
     monkeypatch.setenv("NEWAPI_BASE_URL", "http://newapi.test/v1")
     monkeypatch.setenv("SCENE_MASTER_IMAGE_PROVIDER", "newapi")
     monkeypatch.setenv("SCENE_MASTER_IMAGE_MODEL", "nano-banana-2")
+    _patch_scene_newapi_gateway(monkeypatch)
     monkeypatch.setattr(
         scene_reference_images,
         "_call_newapi_image_api",
         fake_call_newapi_image_api,
     )
-    monkeypatch.setattr(scene_reference_images, "NEWAPI_API_KEY", "newapi-token")
-    monkeypatch.setattr(scene_reference_images, "NEWAPI_BASE_URL", "http://newapi.test/v1")
     monkeypatch.setattr(scene_reference_images, "SCENE_MASTER_IMAGE_PROVIDER", "newapi")
     monkeypatch.setattr(scene_reference_images, "SCENE_MASTER_IMAGE_MODEL", "nano-banana-2")
 
@@ -913,8 +928,7 @@ def test_newapi_scene_time_plate_master_injects_time_and_base_reference(monkeypa
         "_call_newapi_image_api",
         fake_call_newapi_image_api,
     )
-    monkeypatch.setattr(scene_reference_images, "NEWAPI_API_KEY", "newapi-token")
-    monkeypatch.setattr(scene_reference_images, "NEWAPI_BASE_URL", "http://newapi.test/v1")
+    _patch_scene_newapi_gateway(monkeypatch)
     monkeypatch.setattr(scene_reference_images, "SCENE_MASTER_IMAGE_PROVIDER", "newapi")
     monkeypatch.setattr(scene_reference_images, "SCENE_MASTER_IMAGE_MODEL", "nano-banana-2")
 
@@ -963,8 +977,7 @@ def test_newapi_scene_variant_plate_master_keeps_described_lighting(monkeypatch,
         "_call_newapi_image_api",
         fake_call_newapi_image_api,
     )
-    monkeypatch.setattr(scene_reference_images, "NEWAPI_API_KEY", "newapi-token")
-    monkeypatch.setattr(scene_reference_images, "NEWAPI_BASE_URL", "http://newapi.test/v1")
+    _patch_scene_newapi_gateway(monkeypatch)
     monkeypatch.setattr(scene_reference_images, "SCENE_MASTER_IMAGE_PROVIDER", "newapi")
     monkeypatch.setattr(scene_reference_images, "SCENE_MASTER_IMAGE_MODEL", "nano-banana-2")
 
@@ -1015,8 +1028,7 @@ def test_newapi_reverse_master_uses_master_reference_nanobanana2(monkeypatch, tm
         "_call_newapi_image_api",
         fake_call_newapi_image_api,
     )
-    monkeypatch.setattr(scene_reference_images, "NEWAPI_API_KEY", "newapi-token")
-    monkeypatch.setattr(scene_reference_images, "NEWAPI_BASE_URL", "http://newapi.test/v1")
+    _patch_scene_newapi_gateway(monkeypatch)
     monkeypatch.setattr(scene_reference_images, "SCENE_REVERSE_MASTER_IMAGE_PROVIDER", "newapi")
     monkeypatch.setattr(
         scene_reference_images,
@@ -1077,8 +1089,7 @@ def test_newapi_reverse_master_can_use_gpt_image2_quality_low(monkeypatch, tmp_p
         "_call_newapi_image_api",
         fake_call_newapi_image_api,
     )
-    monkeypatch.setattr(scene_reference_images, "NEWAPI_API_KEY", "newapi-token")
-    monkeypatch.setattr(scene_reference_images, "NEWAPI_BASE_URL", "http://newapi.test/v1")
+    _patch_scene_newapi_gateway(monkeypatch)
     monkeypatch.setattr(scene_reference_images, "SCENE_REVERSE_MASTER_IMAGE_PROVIDER", "newapi")
     monkeypatch.setattr(
         scene_reference_images,
