@@ -13,7 +13,11 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
-import { useBuildScenes, useSceneDirectorStageManifest } from "@/lib/queries/scenes";
+import {
+  useBuildScenes,
+  useGenerateSceneMasterAsync,
+  useSceneDirectorStageManifest,
+} from "@/lib/queries/scenes";
 
 const server = setupServer();
 
@@ -116,5 +120,32 @@ describe("build scenes mutation", () => {
     await expect(result.current.mutateAsync()).rejects.toBeInstanceOf(
       BillingRuleNotConfiguredError,
     );
+  });
+});
+
+describe("scene reference generation mutation", () => {
+  it("passes the selected image source model when generating a master image", async () => {
+    let requestBody: unknown = null;
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/projects/demo/scenes/Hall/master/generate-async",
+        async ({ request }) => {
+          requestBody = await request.clone().json();
+          return HttpResponse.json({
+            ok: true,
+            task_type: "scene_reference_asset",
+            task_id: "task-1",
+          });
+        },
+      ),
+    );
+
+    const { result } = renderHook(() => useGenerateSceneMasterAsync("demo", "Hall"), {
+      wrapper: makeWrapperWithMainDefaults(),
+    });
+
+    await result.current.mutateAsync({ model: "newapi_gpt_image2" });
+
+    expect(requestBody).toEqual({ model: "newapi_gpt_image2" });
   });
 });

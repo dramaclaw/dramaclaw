@@ -55,3 +55,33 @@ def test_scene_reference_prompt_keeps_variant_delta_out_of_scene_description():
     assert "正面：深灰色双向车道" in scene_description
     assert "下着小雨" not in scene_description
     assert "地面湿润有积水" not in scene_description
+
+
+async def test_scene_reference_newapi_uses_normalized_gateway_base_url(monkeypatch, tmp_path):
+    from novelvideo.generators import scene_reference_images
+
+    captured: dict[str, str | None] = {}
+
+    async def fake_call_newapi_image_api(**kwargs):
+        captured["base_url"] = kwargs.get("base_url")
+        return b"image-bytes", "", ""
+
+    monkeypatch.setattr(
+        scene_reference_images,
+        "NEWAPI_BASE_URL",
+        "https://relayclaw.cdnfg.com/",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        scene_reference_images,
+        "_call_newapi_image_api",
+        fake_call_newapi_image_api,
+    )
+
+    await scene_reference_images.generate_scene_reference_image(
+        project_dir=tmp_path,
+        scene=NovelScene(name="Hall", environment_prompt="wide hall"),
+        kind="master",
+    )
+
+    assert captured["base_url"] == "https://relayclaw.cdnfg.com/v1"

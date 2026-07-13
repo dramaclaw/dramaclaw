@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { AssetHeaderActions } from "@/components/assets/asset-header-actions-slot";
+import { CharacterImageSourceSelect } from "@/components/assets/character-image-source-select";
 import { PropAssetCard } from "@/components/assets/prop-asset-card";
 import { AssetBeatReferences } from "@/components/assets/asset-beat-references";
 import { CreditCostInline } from "@/components/credit-cost-inline";
@@ -22,6 +23,7 @@ import {
   type BeatReference,
 } from "@/lib/queries/asset-references";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
+import { useAssetImageSourceSelection } from "@/lib/queries/character-image-selection";
 import { useAssetFocus } from "@/hooks/use-asset-focus";
 import { StageProgressPanel } from "@/components/stage-progress-panel";
 import { Button } from "@/components/ui/button";
@@ -237,12 +239,14 @@ function PropDialog({
 function PropAssetCardController({
   project,
   prop,
+  imageSourceSelection,
   referenceCount,
   onEdit,
   onDelete,
 }: {
   project: string;
   prop: PropAsset;
+  imageSourceSelection: string;
   referenceCount: number;
   onEdit: () => void;
   onDelete: () => void;
@@ -266,7 +270,7 @@ function PropAssetCardController({
 
   async function handleGenerate() {
     try {
-      const res = await generateReference.mutateAsync();
+      const res = await generateReference.mutateAsync({ model: imageSourceSelection });
       if (isErrorResponse(res)) {
         toast.error(res.error);
         return;
@@ -332,6 +336,8 @@ export function PropsPanel({
   const refIndex = useAssetReferenceIndex(project);
   const referenceCost = useGenerationCreditCost("fixed_image", "prop_reference");
   const batchGenerate = useBatchGeneratePropReferences(project);
+  const imageSourceQuery = useAssetImageSourceSelection(project, "prop");
+  const imageSourceSelection = imageSourceQuery.data?.data.image_source_selection ?? "";
   const batchTask = useTaskController({
     key: { taskType: "batch_prop_ref", project, episode: 0 },
     invalidateKeys: [queryKeys.props(project)],
@@ -387,7 +393,7 @@ export function PropsPanel({
   }
 
   async function handleBatchGenerate() {
-    const res = await batchGenerate.mutateAsync();
+    const res = await batchGenerate.mutateAsync({ model: imageSourceSelection });
     if (isErrorResponse(res)) {
       toast.error(res.error);
       return;
@@ -413,6 +419,7 @@ export function PropsPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <AssetHeaderActions>
+        <CharacterImageSourceSelect project={project} kind="prop" />
         <Button
           size="sm"
           variant="outline"
@@ -536,6 +543,7 @@ export function PropsPanel({
                 <PropAssetCardController
                   project={project}
                   prop={prop}
+                  imageSourceSelection={imageSourceSelection}
                   referenceCount={refIndex.countFor("prop", prop.name)}
                   onEdit={() => {
                     setEditing(prop);

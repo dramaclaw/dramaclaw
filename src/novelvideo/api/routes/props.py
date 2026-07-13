@@ -278,6 +278,7 @@ async def generate_prop_reference(
         else await make_sqlite_store(username, project_name)
     )
     style = (body.style if body else "") or _project_style(username, project_name)
+    model = str(body.model if body else "").strip()
     prop = await _require_prop(store, name)
     if prop is None:
         return {"ok": False, "error": f"Prop '{name}' not found"}
@@ -292,7 +293,12 @@ async def generate_prop_reference(
             queue_kind="default",
             episode=0,
             scope=scope,
-            payload={"prop_name": prop.name, "style": style, "output_dir": output_dir},
+            payload={
+                "prop_name": prop.name,
+                "style": style,
+                "model": model,
+                "output_dir": output_dir,
+            },
         )
         return {
             "ok": True,
@@ -322,6 +328,7 @@ async def batch_generate_prop_references(
     project_name = resolved.project_name
     output_dir = resolved.output_dir
     style = (body.style if body else "") or _project_style(username, project_name)
+    model = str(body.model if body else "").strip()
 
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
@@ -329,7 +336,7 @@ async def batch_generate_prop_references(
             task_type="batch_prop_ref",
             queue_kind="default",
             episode=0,
-            payload={"style": style, "output_dir": output_dir},
+            payload={"style": style, "model": model, "output_dir": output_dir},
         )
         return {
             "ok": True,

@@ -365,6 +365,23 @@ def _assert_task_shape(payload: dict, *, backend: str, task_type: str):
     assert payload["queue"] == ("inline" if backend == "inline" else "default")
 
 
+def test_prop_reference_generation_accepts_image_source_model(m04_client_factory):
+    client, task_backend, _project_dir = m04_client_factory("inline")
+
+    payload = client.post(
+        f"/api/v1/projects/{_PROJECT}/props/{_PROP}/reference/generate-async",
+        json={"model": "newapi_nanobanana2"},
+    ).json()
+    _assert_task_shape(
+        payload,
+        backend="inline",
+        task_type="prop_reference_asset",
+    )
+
+    assert payload["ok"] is True
+    assert task_backend.calls[-1]["payload"]["model"] == "newapi_nanobanana2"
+
+
 def test_m04_l2_exercises_all_57_endpoint_contracts(m04_client_factory):
     client, _backend, project_dir = m04_client_factory("inline")
     png = _png_bytes()

@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { AssetHeaderActions } from "@/components/assets/asset-header-actions-slot";
+import { CharacterImageSourceSelect } from "@/components/assets/character-image-source-select";
 import { SceneAssetCard } from "@/components/assets/scene-asset-card";
 import { AssetBeatReferences } from "@/components/assets/asset-beat-references";
 import {
@@ -32,6 +33,7 @@ import {
   type SceneCoOccurrence,
 } from "@/lib/queries/asset-references";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
+import { useAssetImageSourceSelection } from "@/lib/queries/character-image-selection";
 import { useAssetFocus } from "@/hooks/use-asset-focus";
 import { useNavigateToAsset } from "@/hooks/use-assets-deep-link";
 import {
@@ -563,12 +565,14 @@ function CoOccurrenceRow({
 function SceneAssetCardController({
   project,
   scene,
+  imageSourceSelection,
   referenceCount,
   onEdit,
   onDelete,
 }: {
   project: string;
   scene: SceneAsset;
+  imageSourceSelection: string;
   referenceCount: number;
   onEdit: () => void;
   onDelete: () => void;
@@ -705,7 +709,7 @@ function SceneAssetCardController({
 
   async function handleGenerateMaster() {
     try {
-      const res = await generateMaster.mutateAsync();
+      const res = await generateMaster.mutateAsync({ model: imageSourceSelection });
       if (isErrorResponse(res)) {
         toast.error(res.error);
         return;
@@ -733,7 +737,7 @@ function SceneAssetCardController({
 
   async function handleGenerateReverse() {
     try {
-      const res = await generateReverse.mutateAsync();
+      const res = await generateReverse.mutateAsync({ model: imageSourceSelection });
       if (isErrorResponse(res)) {
         toast.error(res.error);
         return;
@@ -1120,6 +1124,8 @@ export function ScenesPanel({
   const updateScene = useUpdateScene(project, editing?.name ?? "");
   const deleteScene = useDeleteScene(project);
   const buildScenes = useBuildScenes(project);
+  const imageSourceQuery = useAssetImageSourceSelection(project, "scene");
+  const imageSourceSelection = imageSourceQuery.data?.data.image_source_selection ?? "";
   const buildScenesCost = useGenerationCreditCost("feature", "build_scenes");
   const buildScenesCostDisplay =
     buildScenesCost.data?.data.display ??
@@ -1262,6 +1268,7 @@ export function ScenesPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <AssetHeaderActions>
+        <CharacterImageSourceSelect project={project} kind="scene" />
         <Button
           size="sm"
           variant="outline"
@@ -1449,6 +1456,7 @@ export function ScenesPanel({
                       <SceneAssetCardController
                         project={project}
                         scene={scene}
+                        imageSourceSelection={imageSourceSelection}
                         referenceCount={refIndex.countFor("scene", scene.name)}
                         onEdit={() => {
                           setEditing(scene);

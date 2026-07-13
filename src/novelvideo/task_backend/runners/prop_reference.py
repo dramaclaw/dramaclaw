@@ -35,6 +35,7 @@ async def _run_prop_reference_asset(
     payload = envelope.get("payload") or {}
     prop_name = str(payload["prop_name"])
     style = str(payload.get("style") or "")
+    model = str(payload.get("model") or "")
     output_dir = Path(str(payload.get("output_dir") or ctx.output_dir))
     scope = envelope.get("scope")
     manager = get_task_manager()
@@ -62,6 +63,7 @@ async def _run_prop_reference_asset(
             output_path=str(output_path),
             style=style,
             project_dir=str(output_dir),
+            model=model,
         )
         if not result_path:
             raise RuntimeError("图像 API 未返回有效图像")
@@ -86,6 +88,7 @@ async def _run_batch_prop_ref(envelope: dict[str, Any], ctx: ProjectContext) -> 
 
     payload = envelope.get("payload") or {}
     style = str(payload.get("style") or "")
+    model = str(payload.get("model") or "")
     output_dir = Path(str(payload.get("output_dir") or ctx.output_dir))
     manager = get_task_manager()
 
@@ -120,6 +123,7 @@ async def _run_batch_prop_ref(envelope: dict[str, Any], ctx: ProjectContext) -> 
                 output_path=str(prop_dir / "reference_3view.png"),
                 style=style,
                 project_dir=str(output_dir),
+                model=model,
             )
             if result:
                 generated += 1

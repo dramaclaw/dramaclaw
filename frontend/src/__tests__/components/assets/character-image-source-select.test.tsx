@@ -58,12 +58,13 @@ describe("CharacterImageSourceSelect", () => {
     const user = userEvent.setup();
     server.use(
       http.get(
-        "http://localhost:3000/api/v1/projects/demo/character-image-selection",
+        "http://localhost:3000/api/v1/projects/demo/image-source-selection/character",
         () =>
           HttpResponse.json({
             ok: true,
             data: {
-              character_image_selection: "identity",
+              asset_kind: "character",
+              image_source_selection: "identity",
               options: {
                 portrait: "Character portrait",
                 identity: "Identity image",
@@ -99,12 +100,13 @@ describe("CharacterImageSourceSelect", () => {
     let patchBody: unknown = null;
     server.use(
       http.get(
-        "http://localhost:3000/api/v1/projects/demo/character-image-selection",
+        "http://localhost:3000/api/v1/projects/demo/image-source-selection/character",
         () =>
           HttpResponse.json({
             ok: true,
             data: {
-              character_image_selection: currentSelection,
+              asset_kind: "character",
+              image_source_selection: currentSelection,
               options: {
                 portrait: "Character portrait",
                 identity: "Identity image",
@@ -113,7 +115,7 @@ describe("CharacterImageSourceSelect", () => {
           }),
       ),
       http.patch(
-        "http://localhost:3000/api/v1/projects/demo/character-image-selection",
+        "http://localhost:3000/api/v1/projects/demo/image-source-selection/character",
         async ({ request }) => {
           requestedPath = new URL(request.url).pathname;
           patchBody = await request.json();
@@ -121,7 +123,8 @@ describe("CharacterImageSourceSelect", () => {
           return HttpResponse.json({
             ok: true,
             data: {
-              character_image_selection: currentSelection,
+              asset_kind: "character",
+              image_source_selection: currentSelection,
               options: {
                 portrait: "Character portrait",
                 identity: "Identity image",
@@ -149,8 +152,10 @@ describe("CharacterImageSourceSelect", () => {
     );
 
     await waitFor(() => expect(patchBody).not.toBeNull());
-    expect(requestedPath).toBe("/api/v1/projects/demo/character-image-selection");
-    expect(patchBody).toEqual({ character_image_selection: "portrait" });
+    expect(requestedPath).toBe(
+      "/api/v1/projects/demo/image-source-selection/character",
+    );
+    expect(patchBody).toEqual({ image_source_selection: "portrait" });
     expect(onSelectionChange).toHaveBeenCalledWith("portrait");
   });
 });

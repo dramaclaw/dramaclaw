@@ -21,6 +21,7 @@ from novelvideo.api.schemas import (
     PanoViewerCorrection,
     SceneCreate,
     ScenePanoGenerateRequest,
+    SceneReferenceGenerateRequest,
     SceneUpdate,
 )
 from novelvideo.api.viewer_manifests import (
@@ -987,12 +988,14 @@ async def delete_scene_master(
 async def generate_scene_master(
     project: str,
     name: str,
+    body: SceneReferenceGenerateRequest | None = None,
     user: dict = Depends(get_api_user),
 ):
     return await _start_scene_reference_task(
         project=project,
         name=name,
         kind="master",
+        model=body.model if body else None,
         user=user,
     )
 
@@ -1001,12 +1004,14 @@ async def generate_scene_master(
 async def generate_scene_reverse_master(
     project: str,
     name: str,
+    body: SceneReferenceGenerateRequest | None = None,
     user: dict = Depends(get_api_user),
 ):
     return await _start_scene_reference_task(
         project=project,
         name=name,
         kind="reverse_master",
+        model=body.model if body else None,
         user=user,
     )
 
@@ -1016,6 +1021,7 @@ async def _start_scene_reference_task(
     project: str,
     name: str,
     kind: str,
+    model: str | None = None,
     user: dict,
     store: SQLiteStore | None = None,
 ):
@@ -1043,6 +1049,7 @@ async def _start_scene_reference_task(
             payload={
                 "scene_name": scene.name,
                 "kind": kind,
+                "model": str(model or "").strip(),
                 "style": _project_style(username, project_name),
                 "output_dir": output_dir,
             },

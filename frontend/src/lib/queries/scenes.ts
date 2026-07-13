@@ -249,11 +249,11 @@ export function useUploadSceneMaster(project: string, name: string) {
 }
 
 export function useGenerateSceneMasterAsync(project: string, name: string) {
-  return useMutation({
-    mutationFn: () =>
+  return useMutation<TaskResponse | ErrorResponse, Error, { model?: string } | void>({
+    mutationFn: (data: { model?: string } | void) =>
       jsonWithBackendError<TaskResponse | ErrorResponse>(
         api.post(p`api/v1/projects/${project}/scenes/${name}/master/generate-async`, {
-          json: {},
+          json: data ?? {},
           throwHttpErrors: false,
         }),
       ),
@@ -272,11 +272,11 @@ export function useDeleteSceneMaster(project: string, name: string) {
 }
 
 export function useGenerateSceneReverseAsync(project: string, name: string) {
-  return useMutation({
-    mutationFn: () =>
+  return useMutation<TaskResponse | ErrorResponse, Error, { model?: string } | void>({
+    mutationFn: (data: { model?: string } | void) =>
       jsonWithBackendError<TaskResponse | ErrorResponse>(
         api.post(p`api/v1/projects/${project}/scenes/${name}/reverse/generate-async`, {
-          json: {},
+          json: data ?? {},
           throwHttpErrors: false,
         }),
       ),

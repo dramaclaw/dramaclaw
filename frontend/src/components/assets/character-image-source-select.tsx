@@ -11,13 +11,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  useCharacterImageSelection,
-  useUpdateCharacterImageSelection,
+  type AssetImageSourceKind,
+  useAssetImageSourceSelection,
+  useUpdateAssetImageSourceSelection,
 } from "@/lib/queries/character-image-selection";
 import { cn } from "@/lib/utils";
 
 export type CharacterImageSourceSelectProps = {
   project: string;
+  kind?: AssetImageSourceKind;
   className?: string;
   disabled?: boolean;
   onSelectionChange?: (selection: string) => void;
@@ -25,14 +27,15 @@ export type CharacterImageSourceSelectProps = {
 
 export function CharacterImageSourceSelect({
   project,
+  kind = "character",
   className,
   disabled,
   onSelectionChange,
 }: CharacterImageSourceSelectProps) {
   const { t } = useTranslation();
-  const selectionQuery = useCharacterImageSelection(project);
-  const updateSelection = useUpdateCharacterImageSelection(project);
-  const selection = selectionQuery.data?.data.character_image_selection ?? "";
+  const selectionQuery = useAssetImageSourceSelection(project, kind);
+  const updateSelection = useUpdateAssetImageSourceSelection(project, kind);
+  const selection = selectionQuery.data?.data.image_source_selection ?? "";
   const options = selectionQuery.data?.data.options ?? {};
   const optionEntries = Object.entries(options);
   const selectedLabel = options[selection] ?? selection;

@@ -1795,6 +1795,10 @@ class ScenePanoGenerateRequest(BaseModel):
     timeout_seconds: int = 1800
 
 
+class SceneReferenceGenerateRequest(BaseModel):
+    model: Optional[str] = None
+
+
 # ── 道具资产 ─────────────────────────────────────────────────────────────────
 
 
@@ -1820,6 +1824,7 @@ class PropUpdate(BaseModel):
 
 class PropReferenceGenerateRequest(BaseModel):
     style: Optional[str] = None
+    model: Optional[str] = None
 
 
 # ── 身份 CRUD ────────────────────────────────────────────────────────────────
@@ -1847,6 +1852,10 @@ class CharacterAssetRestoreRequest(BaseModel):
 
 class CharacterImageSelectionRequest(BaseModel):
     character_image_selection: str
+
+
+class AssetImageSourceSelectionRequest(BaseModel):
+    image_source_selection: str
 
 
 class CharacterVoiceRecordRequest(BaseModel):

@@ -30,13 +30,19 @@ async def _run_scene_reference_asset(
     ctx: ProjectContext,
 ) -> dict[str, Any] | None:
     from novelvideo.cognee import CogneeStore
-    from novelvideo.config import IMAGE_DEFAULT_STYLE, get_style_preset
+    from novelvideo.config import (
+        IMAGE_DEFAULT_STYLE,
+        IMAGE_GENERATION_SELECTIONS,
+        get_style_preset,
+        normalize_image_generation_selection,
+    )
     from novelvideo.generators.scene_reference_images import generate_scene_reference_image
 
     payload = envelope.get("payload") or {}
     scene_name = str(payload["scene_name"])
     kind = str(payload["kind"])
     style = str(payload.get("style") or "")
+    model_selection = str(payload.get("model") or "").strip()
     scope = envelope.get("scope")
     output_dir = Path(str(payload.get("output_dir") or ctx.output_dir))
     manager = get_task_manager()
@@ -80,10 +86,19 @@ async def _run_scene_reference_asset(
         style_name = f"{style_label} ({style_id})"
 
         update(0.40, f"调用图像模型生成 {kind}...")
+        provider = None
+        model = None
+        if model_selection:
+            normalized_selection = normalize_image_generation_selection(model_selection)
+            selected_image_source = IMAGE_GENERATION_SELECTIONS[normalized_selection]
+            provider = selected_image_source["provider"]
+            model = selected_image_source["model"]
         output_path = await generate_scene_reference_image(
             project_dir=output_dir,
             scene=scene,
             kind=kind,  # type: ignore[arg-type]
+            provider=provider,
+            model=model,
             style_name=style_name,
             style_prompt=style_prompt,
             avoid_instructions=avoid_instructions,

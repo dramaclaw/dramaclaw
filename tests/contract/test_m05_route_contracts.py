@@ -498,6 +498,23 @@ def test_m05_contract_requires_promoted_world_and_sketch_candidate_routes() -> N
     ) in M05_EXPECTED_OPERATIONS
 
 
+def test_scene_reference_generation_accepts_image_source_model(m05_client_factory):
+    client, task_backend, _project_dir, _store = m05_client_factory("inline")
+
+    payload = client.post(
+        f"/api/v1/projects/{_PROJECT}/scenes/{_SCENE}/master/generate-async",
+        json={"model": "newapi_gpt_image2"},
+    ).json()
+    _assert_task_shape(
+        payload,
+        backend="inline",
+        task_type="scene_reference_asset",
+    )
+
+    assert payload["ok"] is True
+    assert task_backend.calls[-1]["payload"]["model"] == "newapi_gpt_image2"
+
+
 def test_m05_l2_exercises_happy_path_route_contracts(m05_client_factory):
     client, _backend, project_dir, _store = m05_client_factory("inline")
     _seed_stage_files(project_dir)

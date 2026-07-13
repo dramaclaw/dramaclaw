@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from novelvideo.config import (
+    IMAGE_GENERATION_SELECTIONS,
     get_grid_generation_config,
     get_style_preset,
     IMAGE_DEFAULT_STYLE,
@@ -27,6 +28,7 @@ from novelvideo.config import (
     NEWAPI_IMAGE_MODEL,
     PROP_REF_IMAGE_MODEL,
     PROP_REF_IMAGE_PROVIDER,
+    normalize_image_generation_selection,
 )
 from novelvideo.shared.billing_errors import is_insufficient_credits_error
 from novelvideo.generators.nanobanana_grid import (
@@ -50,6 +52,15 @@ def resolve_prop_reference_image_model() -> str:
     if provider == "newapi":
         return (PROP_REF_IMAGE_MODEL or NEWAPI_IMAGE_MODEL).strip()
     return str(config.get("model") or "").strip()
+
+
+def _prop_reference_image_source(selection: str | None) -> tuple[str | None, str | None]:
+    selection = str(selection or "").strip()
+    if not selection:
+        return None, None
+    normalized = normalize_image_generation_selection(selection)
+    image_source = IMAGE_GENERATION_SELECTIONS[normalized]
+    return image_source["provider"], image_source["model"]
 
 
 def build_prop_reference_prompt(
@@ -118,6 +129,7 @@ async def generate_prop_reference(
     style_keywords: str = "",
     style: str = None,
     project_dir: str = "",
+    model: str | None = None,
 ) -> Optional[str]:
     """生成道具三视图参考图。
 
@@ -139,18 +151,23 @@ async def generate_prop_reference(
         style = IMAGE_DEFAULT_STYLE
 
     config = get_grid_generation_config()
+    selected_provider, selected_model = _prop_reference_image_source(model)
     prop_provider = (PROP_REF_IMAGE_PROVIDER or "").strip().lower()
-    provider = prop_provider or str(config.get("provider") or "google").strip().lower()
+    provider = (
+        selected_provider
+        or prop_provider
+        or str(config.get("provider") or "google").strip().lower()
+    )
     if provider == "newapi":
         from novelvideo.config import get_effective_newapi_gateway_config
 
         gateway = get_effective_newapi_gateway_config()
         api_key = gateway.api_key
-        model = resolve_prop_reference_image_model()
+        model = selected_model or resolve_prop_reference_image_model()
         base_url = gateway.base_url
     else:
         api_key = config.get("api_key")
-        model = resolve_prop_reference_image_model()
+        model = selected_model or resolve_prop_reference_image_model()
         base_url = ""
 
     if not api_key:

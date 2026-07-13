@@ -25,6 +25,7 @@ from novelvideo.project_context import ProjectContext
 from novelvideo.ports import get_task_backend
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.api.schemas import (
+    AssetImageSourceSelectionRequest,
     PortraitGenRequest,
     CharacterCreate,
     CharacterUpdate,
@@ -37,8 +38,10 @@ from novelvideo.api.schemas import (
     CharacterVoiceTrimRequest,
 )
 from novelvideo.config import (
+    image_generation_selection_options,
     character_image_selection_options,
     get_character_image_selection,
+    normalize_image_generation_selection,
     normalize_character_image_selection,
 )
 from novelvideo.image_request_usage import get_image_usage_summary
@@ -71,6 +74,11 @@ from novelvideo.sqlite_store import SQLiteStore
 router = APIRouter()
 
 CHARACTER_IMAGE_SELECTION_CONFIG_KEY = "character_image_selection"
+ASSET_IMAGE_SELECTION_CONFIG_KEYS = {
+    "character": CHARACTER_IMAGE_SELECTION_CONFIG_KEY,
+    "scene": "scene_image_selection",
+    "prop": "prop_image_selection",
+}
 CHARACTER_IMAGE_USAGE_TASK_TYPES = ("character_portrait", "identity_image")
 CHARACTER_ASSET_KINDS = {"portrait", "identity", "identity_costume", "identity_portrait"}
 
@@ -116,6 +124,28 @@ def _character_image_selection_payload(username: str, project: str) -> dict:
         if selection not in options:
             selection = get_character_image_selection()
     return {"character_image_selection": selection, "options": options}
+
+
+def _asset_image_source_selection_payload(username: str, project: str, asset_kind: str) -> dict:
+    options = image_generation_selection_options()
+    config_key = ASSET_IMAGE_SELECTION_CONFIG_KEYS[asset_kind]
+    if asset_kind == "character":
+        selection = _character_image_selection_payload(username, project)["character_image_selection"]
+    else:
+        saved_selection = str(load_project_config_file(username, project).get(config_key) or "")
+        selection = normalize_image_generation_selection(saved_selection)
+    return {
+        "asset_kind": asset_kind,
+        "image_source_selection": selection,
+        "options": options,
+    }
+
+
+def _validate_asset_image_source_kind(asset_kind: str) -> str | None:
+    normalized = str(asset_kind or "").strip().lower()
+    if normalized in ASSET_IMAGE_SELECTION_CONFIG_KEYS:
+        return normalized
+    return None
 
 
 def _resolve_character_image_model(username: str, project: str, requested_model: str | None) -> str:
@@ -624,6 +654,64 @@ async def update_project_character_image_selection(
 
     update_project_config_file(username, project_name, _apply)
     return {"ok": True, "data": _character_image_selection_payload(username, project_name)}
+
+
+@router.get("/projects/{project}/image-source-selection/{asset_kind}")
+async def get_project_asset_image_source_selection(
+    project: str,
+    asset_kind: str,
+    user: dict = Depends(get_api_user),
+):
+    """获取项目级素材图源选择。"""
+    normalized_kind = _validate_asset_image_source_kind(asset_kind)
+    if normalized_kind is None:
+        return JSONResponse(
+            status_code=404,
+            content={"ok": False, "error": f"Unsupported image source kind: {asset_kind}"},
+        )
+    _ctx, username, project_name, _project_dir, _output_dir, _store = (
+        await _resolve_character_project(project, user, required_role="viewer")
+    )
+    return {
+        "ok": True,
+        "data": _asset_image_source_selection_payload(username, project_name, normalized_kind),
+    }
+
+
+@router.patch("/projects/{project}/image-source-selection/{asset_kind}")
+async def update_project_asset_image_source_selection(
+    project: str,
+    asset_kind: str,
+    body: AssetImageSourceSelectionRequest,
+    user: dict = Depends(get_api_user),
+):
+    """保存项目级素材图源选择。"""
+    normalized_kind = _validate_asset_image_source_kind(asset_kind)
+    if normalized_kind is None:
+        return JSONResponse(
+            status_code=404,
+            content={"ok": False, "error": f"Unsupported image source kind: {asset_kind}"},
+        )
+    _ctx, username, project_name, _project_dir, _output_dir, _store = (
+        await _resolve_character_project(project, user)
+    )
+    selection = str(body.image_source_selection or "").strip()
+    options = image_generation_selection_options()
+    if selection not in options:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": f"Invalid image_source_selection: {selection}"},
+        )
+    config_key = ASSET_IMAGE_SELECTION_CONFIG_KEYS[normalized_kind]
+
+    def _apply(config: dict) -> None:
+        config[config_key] = selection
+
+    update_project_config_file(username, project_name, _apply)
+    return {
+        "ok": True,
+        "data": _asset_image_source_selection_payload(username, project_name, normalized_kind),
+    }
 
 
 @router.get("/projects/{project}/character-image-usage")
