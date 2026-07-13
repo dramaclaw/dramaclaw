@@ -10,7 +10,6 @@ import {
 } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useAppStore } from "@/stores/app-store";
@@ -32,10 +31,7 @@ import { AccessoryUnlockPrompt } from "@/features/rewards/AccessoryUnlockPrompt"
 import { VersionUpdateDialog } from "@/features/version-update/VersionUpdateDialog";
 import { PikoInspirationStation } from "@/features/piko-mini-game/PikoInspirationStation";
 import { LiexiaorenEntryOverlay } from "@/features/liexiaoren/LiexiaorenEntryOverlay";
-import {
-  LIEXIAOREN_ENTRY_PENDING_KEY,
-  LIEXIAOREN_OPEN_SKIN_EVENT,
-} from "@/features/liexiaoren/liexiaoren-events";
+import { LIEXIAOREN_ENTRY_PENDING_KEY } from "@/features/liexiaoren/liexiaoren-events";
 
 export function shouldRedirectMissingUsernameToLogin(): boolean {
   return authRequired();
@@ -54,7 +50,6 @@ function AppLayout() {
   const validatedUsernameRef = useRef<string | null>(null);
   const params = useParams({ strict: false }) as { project?: string };
   const routeProject = params.project ?? null;
-  const hasProject = !!routeProject;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const projectSummaries = useAllProjectSummaries();
   const canonicalProject = routeProject
@@ -182,9 +177,8 @@ function AppLayout() {
     <TaskCenterProvider projectId={canonicalProject}>
       <div className="flex h-dvh flex-col overflow-hidden">
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          {hasProject && <Sidebar />}
           <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-            <Header showBrand={!hasProject} />
+            <Header />
             <MyBuddyCompanion />
             <AccessoryUnlockPrompt />
             <VersionUpdateDialog />
@@ -223,10 +217,7 @@ function AppLayout() {
       </div>
       {liexiaorenPreviewOpen ? (
         <LiexiaorenEntryOverlay
-          onClose={() => {
-            setLiexiaorenPreviewOpen(false);
-            window.dispatchEvent(new Event(LIEXIAOREN_OPEN_SKIN_EVENT));
-          }}
+          onClose={() => setLiexiaorenPreviewOpen(false)}
         />
       ) : null}
     </TaskCenterProvider>

@@ -116,7 +116,7 @@ export function AvatarUploadDialog({
 
         <div className="px-5 pb-5">
           <div className="flex items-center gap-4 rounded-[14px] border border-white/[0.07] bg-white/[0.035] p-4">
-            <div className="flex size-[84px] shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-slate-200 to-slate-500 text-[26px] font-semibold text-slate-950 ring-1 ring-white/15">
+            <div className="flex size-[84px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/[0.10] bg-white/[0.07] text-[26px] font-normal text-white/72">
               {previewUrl ? (
                 <img
                   src={previewUrl}
@@ -153,9 +153,9 @@ export function AvatarUploadDialog({
             onClick={() => inputRef.current?.click()}
           >
             {previewUrl ? (
-              <Upload className="size-5 text-cyan-200/85" />
+              <Upload className="size-5 text-white" />
             ) : (
-              <ImagePlus className="size-5 text-cyan-200/85" />
+              <ImagePlus className="size-5 text-white" />
             )}
             <span className="mt-2 text-[13px] font-medium text-slate-100">
               {previewUrl

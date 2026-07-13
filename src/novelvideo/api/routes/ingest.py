@@ -92,7 +92,11 @@ async def upload_novel(
         return {"ok": False, "error": "解析章节失败"}
 
     has_chapters = bool(preview.get("chapters"))
-    format_check = build_import_format_check(content, has_chapters=has_chapters)
+    format_check = build_import_format_check(
+        content,
+        has_chapters=has_chapters,
+        chapters=preview.get("chapters"),
+    )
     if not has_chapters:
         return {
             "ok": False,

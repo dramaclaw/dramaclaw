@@ -25,6 +25,10 @@ vi.mock("@/lib/queries/model-gateway", () => ({
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, ...props }: React.ComponentProps<"a">) => <a {...props}>{children}</a>,
+  useNavigate: () => vi.fn(),
+  useParams: () => ({}),
+  useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => string }) =>
+    select({ location: { pathname: "/" } }),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -83,6 +87,8 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuTrigger: ({ children }: React.PropsWithChildren) => <>{children}</>,
   DropdownMenuContent: ({ children }: React.PropsWithChildren) => <>{children}</>,
   DropdownMenuGroup: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  DropdownMenuLabel: ({ children }: React.PropsWithChildren) => <div>{children}</div>,
+  DropdownMenuSeparator: () => <hr />,
   DropdownMenuItem: ({ children, ...props }: React.ComponentProps<"button">) => (
     <button type="button" {...props}>
       {children}
@@ -112,6 +118,22 @@ describe("Header runtime gating", () => {
     fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
 
     expect(await screen.findByText("Log out")).toBeInTheDocument();
+  });
+
+  it("keeps the Liexiaoren archive entry visible on the project dashboard", () => {
+    renderHeader();
+
+    expect(screen.getByRole("button", { name: "打开猎魈档案" })).toBeInTheDocument();
+  });
+
+  it("opens the Liexiaoren archive only after an explicit user click", () => {
+    renderHeader();
+
+    window.dispatchEvent(new Event("liexiaoren:open-skin"));
+    expect(screen.queryByRole("dialog", { name: "鲁班秘术猎魈人档案" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开猎魈档案" }));
+    expect(screen.getByRole("dialog", { name: "鲁班秘术猎魈人档案" })).toBeInTheDocument();
   });
 
   it("hides logout when runtime does not require auth while keeping the local identity", async () => {

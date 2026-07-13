@@ -7,7 +7,7 @@
     ]
   },
   "dataLicense": "CC0-1.0",
-  "documentNamespace": "https://supertale.local/spdx/supertale-ce/6c2ba5bf67b4bd6c",
+  "documentNamespace": "https://supertale.local/spdx/supertale-ce/d9183bc256d69dfb",
   "name": "supertale-ce-p0b-sbom",
   "packages": [
     {
@@ -18,7 +18,7 @@
       "licenseConcluded": "Elastic-2.0",
       "licenseDeclared": "Elastic-2.0",
       "name": "supertale-ce",
-      "versionInfo": "1.0.2"
+      "versionInfo": "1.0.7"
     },
     {
       "SPDXID": "SPDXRef-Package-aiofiles",
@@ -1509,6 +1509,16 @@
       "licenseDeclared": "GPL-3.0-or-later",
       "name": "plyfile",
       "versionInfo": "1.1.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-portalocker",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "portalocker",
+      "versionInfo": "3.2.0"
     },
     {
       "SPDXID": "SPDXRef-Package-prompt-toolkit",
@@ -3124,6 +3134,11 @@
     },
     {
       "relatedSpdxElement": "SPDXRef-Package-plyfile",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-supertale-ce"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-portalocker",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Package-supertale-ce"
     },

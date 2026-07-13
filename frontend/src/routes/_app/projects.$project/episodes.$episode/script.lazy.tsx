@@ -593,7 +593,11 @@ function ScriptTabContent() {
               t("episode.script.generateScript")
             )}
             {!scriptTask.started && (
-              <CreditCostInline display={generateScriptCostDisplay} />
+              <CreditCostInline
+                display={generateScriptCostDisplay}
+                className="text-black"
+                iconClassName="text-black drop-shadow-none [&_path]:fill-current"
+              />
             )}
           </Button>
         </div>

@@ -4,7 +4,7 @@
  * app-store: cross-region UX chrome.
  *
  * This store is NOT purged on region switch. Keep it strictly region-agnostic:
- * sidebar state, theme, language, dashboard filter, etc. Do NOT add region IDs,
+ * theme, language, dashboard filters, etc. Do NOT add region IDs,
  * project IDs, episode IDs, or any region-specific content here — it will bleed
  * across region switches and cause data confusion. For region-scoped state, add
  * a new store and include it in `src/lib/reset-region-state.ts`.
@@ -14,10 +14,6 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { quotaSafeStateStorage } from "@/lib/localStorageQuota";
 import type { PikoAccessoryDisplayId } from "@/features/companion/piko-accessories";
 import type { ProjectStatus } from "@/types/project";
-
-export const SIDEBAR_WIDTH_COLLAPSED = 48;
-export const SIDEBAR_WIDTH_EXPANDED = 184;
-export const SIDEBAR_WIDTH_DEFAULT = SIDEBAR_WIDTH_EXPANDED;
 
 export const TASK_PANEL_HEIGHT_MIN = 200;
 export const TASK_PANEL_HEIGHT_DEFAULT = 400;
@@ -30,9 +26,6 @@ export type Theme = "light" | "dark" | "system";
 export type DashboardView = "card" | "list";
 
 interface AppState {
-  sidebarCollapsed: boolean;
-  /** Retained for persisted-state/test compatibility. Sidebar is no longer resizable. */
-  sidebarWidth: number;
   language: string;
   theme: Theme;
   dashboardTab: ProjectStatus;
@@ -70,10 +63,7 @@ interface AppState {
   companionYPercent: number | null;
   /** 是否隐藏陪伴形象（workbuddy）。true = 全局隐藏。属全局 UI 偏好，持久化。 */
   companionHidden: boolean;
-  toggleSidebar: () => void;
   toggleAiAssistant: () => void;
-  /** Compatibility no-op: sidebar now has fixed expanded/collapsed widths. */
-  setSidebarWidth: (w: number) => void;
   setLanguage: (lang: string) => void;
   setTheme: (theme: Theme) => void;
   setDashboardTab: (tab: ProjectStatus) => void;
@@ -133,8 +123,6 @@ function persistedCompanionPet(pet: AppState["companionPet"]): AppState["compani
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
-      sidebarCollapsed: true,
-      sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
       language: "zh",
       theme: "dark",
       dashboardTab: "active",
@@ -147,11 +135,8 @@ export const useAppStore = create<AppState>()(
       companionXPercent: null,
       companionYPercent: null,
       companionHidden: false,
-      toggleSidebar: () =>
-        set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
       toggleAiAssistant: () =>
         set((s) => ({ aiAssistantOpen: !s.aiAssistantOpen })),
-      setSidebarWidth: () => set({ sidebarWidth: SIDEBAR_WIDTH_DEFAULT }),
       setLanguage: (lang) => set({ language: lang }),
       setTheme: (theme) => set({ theme }),
       setDashboardTab: (tab) => set({ dashboardTab: tab }),
@@ -183,9 +168,11 @@ export const useAppStore = create<AppState>()(
     {
       name: "supertale-app",
       storage: createJSONStorage(() => quotaSafeStateStorage),
-      version: 6,
+      version: 7,
       migrate: (persisted: unknown, fromVersion: number) => {
         const base = (persisted ?? {}) as Record<string, unknown>;
+        delete base.sidebarCollapsed;
+        delete base.sidebarWidth;
         if (fromVersion < 6) {
           base.companionXPercent = null;
           base.companionYPercent = null;

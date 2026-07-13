@@ -79,6 +79,7 @@ import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
 import type { DashboardView } from "@/stores/app-store";
 import type { ProjectStatus, ProjectSummary } from "@/types/project";
+import { PROJECT_SECTION_ROUTES } from "@/components/layout/project-navigation-routes";
 
 type PendingAction =
   | { kind: "archive"; project: string; name: string }
@@ -1181,11 +1182,11 @@ function ProjectDashboard() {
   };
 
   const openProject = (project: string) =>
-    navigate({ to: "/projects/$project/ingest", params: { project } });
+    navigate({ to: PROJECT_SECTION_ROUTES.freezone, params: { project } });
   const preloadProject = useCallback(
     (project: string) => {
       void router
-        .preloadRoute({ to: "/projects/$project/ingest", params: { project } })
+        .preloadRoute({ to: PROJECT_SECTION_ROUTES.freezone, params: { project } })
         .catch(() => undefined);
     },
     [router],

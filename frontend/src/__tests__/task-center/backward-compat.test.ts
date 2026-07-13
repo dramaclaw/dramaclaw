@@ -22,16 +22,12 @@ describe("backward compatibility (AC-6)", () => {
     expect(mod.Route).toBeDefined();
   });
 
-  it("app-store retains existing state fields untouched", async () => {
+  it("app-store retains active cross-region state and task panel fields", async () => {
     const { useAppStore } = await import("@/stores/app-store");
     const state = useAppStore.getState();
-    // Pre-task-center fields unchanged:
-    expect(typeof state.sidebarCollapsed).toBe("boolean");
-    expect(typeof state.sidebarWidth).toBe("number");
     expect(typeof state.language).toBe("string");
     expect(typeof state.theme).toBe("string");
     expect(typeof state.dashboardTab).toBe("string");
-    expect(typeof state.toggleSidebar).toBe("function");
     expect(typeof state.setLanguage).toBe("function");
     expect(typeof state.setTheme).toBe("function");
     // Task-center fields added:

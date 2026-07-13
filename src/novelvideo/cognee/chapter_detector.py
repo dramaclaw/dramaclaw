@@ -36,11 +36,14 @@ class ChapterDetector:
 
     # 支持的章节标题模式（优先级从高到低）
     # 只匹配标题行开头，避免把对白/旁白里的“原著第X章”误切成新章节。
+    # 标题编号后面必须是行尾、空白或常见标题分隔符；
+    # 空白后接正文句子时再用标题尾部形态排除，避免把“第一集 已经结束。”
+    # /“Episode 1 Ends here.” 这类正文句子误切成新章节。
     PATTERNS = [
-        r"^(?:#{1,6}\s*)?(?:《[^》\n]{1,40}》\s*)?第\s*([一二三四五六七八九十百千\d]+)\s*章",
-        r"^(?:#{1,6}\s*)?(?:《[^》\n]{1,40}》\s*)?第\s*([一二三四五六七八九十百千\d]+)\s*集",
-        r"^(?:#{1,6}\s*)?Chapter\s*(\d+)",
-        r"^(?:#{1,6}\s*)?Episode\s*(\d+)",
+        r"^(?:#{1,6}\s*)?(?:《[^》\n]{1,40}》\s*)?第\s*([一二三四五六七八九十百千\d]+)\s*章(?=$|[\s:：《（(【\[\-—–、.。．])",
+        r"^(?:#{1,6}\s*)?(?:《[^》\n]{1,40}》\s*)?第\s*([一二三四五六七八九十百千\d]+)\s*集(?=$|[\s:：《（(【\[\-—–、.。．])",
+        r"^(?:#{1,6}\s*)?Chapter\s*(\d+)(?=$|[\s:：(\[\-—–.。．])",
+        r"^(?:#{1,6}\s*)?Episode\s*(\d+)(?=$|[\s:：(\[\-—–.。．])",
     ]
 
     # 中文数字到阿拉伯数字的映射
@@ -148,9 +151,23 @@ class ChapterDetector:
         """
         for pattern in self.PATTERNS:
             match = re.search(pattern, line, re.IGNORECASE)
-            if match:
+            if match and self._is_valid_title_tail(line[match.end():]):
                 return self._parse_number(match.group(1))
         return None
+
+    def _is_valid_title_tail(self, tail: str) -> bool:
+        """Return whether text after the chapter marker still looks like a title."""
+        stripped = tail.strip()
+        if not stripped:
+            return True
+        if stripped[0] in ".。．":
+            return not self._looks_like_sentence_tail(stripped[1:].strip())
+        if stripped[0] in ":：《（(【[-—–、":
+            return True
+        return not self._looks_like_sentence_tail(stripped)
+
+    def _looks_like_sentence_tail(self, tail: str) -> bool:
+        return bool(re.search(r"[。\.…]\s*$", tail))
 
     def _parse_number(self, s: str) -> int:
         """解析数字（支持中文数字）。

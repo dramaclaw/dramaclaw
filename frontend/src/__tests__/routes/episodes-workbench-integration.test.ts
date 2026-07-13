@@ -82,8 +82,8 @@ describe("episodes workbench integration", () => {
     expect(routeSource).toContain('useGenerationCreditCost("feature", "build_episodes")');
     expect(routeSource).toContain("planEpisodesCost.error instanceof BillingRuleNotConfiguredError");
     expect(routeSource).toContain("planCostDisplay={planEpisodesCostDisplay}");
-    expect(routeSource).toContain("<CreditCostInline display={planCostDisplay} />");
-    expect(routeSource).toContain("<CreditCostInline display={planEpisodesCostDisplay} />");
+    expect(routeSource).toMatch(/<CreditCostInline\s+display=\{planCostDisplay\}/);
+    expect(routeSource).toMatch(/<CreditCostInline\s+display=\{planEpisodesCostDisplay\}/);
   });
 
   it("uses localized copy for the episode detail back action", () => {

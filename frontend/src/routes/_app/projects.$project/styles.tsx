@@ -977,7 +977,7 @@ function StylesPage() {
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* LEFT: list */}
-        <div className="flex max-h-[45vh] w-full shrink-0 flex-col overflow-hidden border-b border-border/30 lg:max-h-none lg:w-[320px] lg:border-b-0 lg:border-r lg:border-border/30">
+        <div className="flex max-h-[45vh] w-full shrink-0 flex-col overflow-hidden border-b border-border/30 lg:max-h-none lg:w-[360px] lg:border-b-0 lg:border-r lg:border-border/30">
           <div className="flex-1 overflow-y-auto p-3">
             {isLoading ? (
               <SidebarListSkeleton label={t("common.loading")} />

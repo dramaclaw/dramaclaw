@@ -3,7 +3,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -42,11 +42,14 @@ import {
   BillingRuleNotConfiguredError,
 } from "@/lib/api-errors";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import { useCreditDisplayHidden } from "@/components/credits/credit-visual";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isCeRuntime } from "@/lib/runtime-config";
 import {
   Select,
   SelectContent,
@@ -340,6 +343,63 @@ function UploadZone({
   );
 }
 
+// 格式风险常驻警告：文件在则警告在，替代一闪而过的 toast.warning。
+// boxed = 富卡片里的琥珀色警告条；plain = 上传表单提示行里的一行轻量文字。
+function FormatCheckWarning({
+  formatCheck,
+  onViewDetails,
+  variant = "boxed",
+  className,
+}: {
+  formatCheck: FormatCheck;
+  onViewDetails?: () => void;
+  variant?: "boxed" | "plain";
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  const detailsButton = onViewDetails && (
+    <button
+      type="button"
+      onClick={onViewDetails}
+      className={cn(
+        "ml-1.5 whitespace-nowrap font-medium underline underline-offset-2 transition-colors",
+        variant === "boxed"
+          ? "text-amber-300 hover:text-amber-200"
+          : "text-foreground/80 hover:text-foreground",
+      )}
+    >
+      {t("aiAssistant.formatCheck.viewDetails")}
+    </button>
+  );
+
+  if (variant === "plain") {
+    return (
+      <div className={cn("flex items-start gap-1.5", className)}>
+        <AlertTriangle className="mt-px size-3.5 shrink-0 text-amber-400" />
+        <div className="min-w-0">
+          <span>{formatCheck.summary || t("aiAssistant.formatCheck.title")}</span>
+          {detailsButton}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2",
+        className,
+      )}
+    >
+      <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-400" />
+      <div className="min-w-0 text-xs leading-5 text-amber-200/90">
+        <span>{formatCheck.summary || t("aiAssistant.formatCheck.title")}</span>
+        {detailsButton}
+      </div>
+    </div>
+  );
+}
+
 function UploadedFileCard({
   filename,
   size,
@@ -347,6 +407,8 @@ function UploadedFileCard({
   progress,
   currentTask,
   error,
+  formatCheck,
+  onViewFormatCheck,
   isIngesting,
   canStart,
   isStarting,
@@ -363,6 +425,8 @@ function UploadedFileCard({
   progress: number;
   currentTask: string;
   error: string | null;
+  formatCheck?: FormatCheck | null;
+  onViewFormatCheck?: () => void;
   isIngesting: boolean;
   canStart: boolean;
   isStarting: boolean;
@@ -375,6 +439,9 @@ function UploadedFileCard({
 }) {
   const { t } = useTranslation();
   const percent = Math.round(progress * 100);
+  // 导入完成后风险提示已无行动价值，只在导入前/失败/中止时常驻展示。
+  const showFormatWarning =
+    formatCheck?.level === "warning" && status !== "completed";
   const statusStyles: Record<IngestFileStatus, string> = {
     uploaded: "border-primary/30 bg-primary/10 text-primary",
     importing: "border-primary/30 bg-primary/10 text-primary",
@@ -423,6 +490,13 @@ function UploadedFileCard({
             <p className="mt-2 text-xs leading-5 text-destructive">
               {error}
             </p>
+          )}
+          {showFormatWarning && formatCheck && (
+            <FormatCheckWarning
+              formatCheck={formatCheck}
+              onViewDetails={onViewFormatCheck}
+              className="mt-2"
+            />
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -515,7 +589,7 @@ function SelectedFileCard({
   const { name, extension } = splitFilename(filename);
 
   return (
-    <div className="flex h-full items-center justify-center px-4">
+    <div className="flex h-full flex-col items-center justify-center px-4">
       <div className="relative w-full max-w-[320px] rounded-lg bg-sky-500/20 px-5 py-4 pr-12 text-left">
         <button
           type="button"
@@ -589,6 +663,77 @@ function InputModeToggle({
     </div>
   );
 }
+
+function IngestStartButton({
+  disabled,
+  isBusy,
+  costDisplay,
+  onClick,
+}: {
+  disabled: boolean;
+  isBusy: boolean;
+  costDisplay?: string | null;
+  onClick: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="h-8 w-[124px] rounded-[8px] bg-primary px-0 text-xs font-normal text-primary-foreground shadow-none transition-colors hover:bg-primary/85 active:bg-primary/75"
+    >
+      <span className="grid w-full grid-cols-[12px_52px_26px] items-center justify-center gap-1.5">
+        <Play className="size-3 fill-current" />
+        <span className="text-center">
+          {isBusy ? t("ingest.processing") : t("ingest.startIngest")}
+        </span>
+        <IngestCreditCostSlot display={costDisplay} />
+      </span>
+    </Button>
+  );
+}
+
+const IngestCreditCostSlot = memo(function IngestCreditCostSlot({
+  display,
+}: {
+  display?: string | null;
+}) {
+  const hidden = useCreditDisplayHidden() || isCeRuntime() || !display;
+  return (
+    <span className="flex h-4 w-[26px] items-center justify-center overflow-hidden">
+      <span
+        aria-hidden="true"
+        className={cn(
+          "inline-flex w-[26px] items-center justify-center gap-0.5 text-[11px] font-medium leading-none tabular-nums text-primary-foreground",
+          hidden && "invisible",
+        )}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="size-3 shrink-0 text-primary-foreground"
+          aria-hidden="true"
+        >
+          <path
+            d="M12 2.6l2.16 6.28L20.4 11l-6.24 2.12L12 19.4l-2.16-6.28L3.6 11l6.24-2.12L12 2.6Z"
+            fill="currentColor"
+          />
+          <path
+            d="M18.1 16.2l.72 1.98 1.98.72-1.98.72-.72 1.98-.72-1.98-1.98-.72 1.98-.72.72-1.98Z"
+            fill="currentColor"
+            opacity="0.78"
+          />
+          <path
+            d="M7.2 3.3l.44 1.18 1.18.44-1.18.44-.44 1.18-.44-1.18-1.18-.44 1.18-.44.44-1.18Z"
+            fill="currentColor"
+            opacity="0.72"
+          />
+        </svg>
+        <span className="min-w-[8px] text-center">{display ?? "0"}</span>
+      </span>
+    </span>
+  );
+});
 
 function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -711,25 +856,42 @@ export function IngestPageContent({ project }: { project: string }) {
     () => countBillableNovelChars(pastedText.trim()),
     [pastedText],
   );
+  const debouncedPastedBillableChars = useDebouncedValue(pastedBillableChars, 450);
   const billingBillableChars =
-    inputMode === "paste" && pastedBillableChars > 0
-      ? pastedBillableChars
+    inputMode === "paste" && debouncedPastedBillableChars > 0
+      ? debouncedPastedBillableChars
       : typeof uploadedFile?.billable_chars === "number"
         ? uploadedFile.billable_chars
         : typeof chaptersData?.billable_chars === "number"
           ? chaptersData.billable_chars
           : null;
+  const hasBillableInput = inputMode === "paste"
+    ? pastedBillableChars > 0
+    : (billingBillableChars ?? 0) > 0;
   const ingestFeatureCost = useGenerationCreditCost("feature", "ingest_fast", {
     quantity: billingBillableChars && billingBillableChars > 0
       ? billingBillableChars
       : undefined,
   });
   const ingestFeatureCostData = ingestFeatureCost.data?.data;
-  const ingestFeatureCostDisplay =
+  const queriedIngestFeatureCostDisplay =
     ingestFeatureCostData?.display ??
     (ingestFeatureCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
+  const lastStableIngestCostDisplayRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!hasBillableInput) {
+      lastStableIngestCostDisplayRef.current = null;
+      return;
+    }
+    if (queriedIngestFeatureCostDisplay) {
+      lastStableIngestCostDisplayRef.current = queriedIngestFeatureCostDisplay;
+    }
+  }, [hasBillableInput, queriedIngestFeatureCostDisplay]);
+  const ingestFeatureCostDisplay = hasBillableInput
+    ? queriedIngestFeatureCostDisplay ?? lastStableIngestCostDisplayRef.current
+    : null;
 
   // SSE task streaming
   const [ingestStarted, setIngestStarted] = useState(false);
@@ -847,12 +1009,16 @@ export function IngestPageContent({ project }: { project: string }) {
     [setValue],
   );
 
-  // Surface a non-blocking format warning as a success+risk toast with a
-  // "view details" affordance. warning never blocks — upload already succeeded.
+  // Surface a non-blocking format warning as a toast with a "view details"
+  // affordance. warning never blocks — upload already succeeded. Only used by
+  // the paste flow: the upload flow shows a persistent banner inside
+  // SelectedFileCard instead, so the warning stays visible after the toast
+  // would have expired.
   const warnFormatCheck = useCallback(
     (formatCheck: FormatCheck | undefined, filename: string) => {
       if (!formatCheck || formatCheck.level !== "warning") return;
       toast.warning(formatCheck.summary || t("aiAssistant.formatCheck.title"), {
+        duration: 10000,
         action: {
           label: t("aiAssistant.formatCheck.viewDetails"),
           onClick: () => setFormatCheckDetails({ formatCheck, filename }),
@@ -872,12 +1038,12 @@ export function IngestPageContent({ project }: { project: string }) {
         setIngestFileStatus("uploaded");
         setIngestError(null);
         toast.success(`${t("common.upload")} ✓ — ${result.data.filename}`);
-        warnFormatCheck(result.data.format_check, result.data.filename);
+        // 格式风险不再走 toast：SelectedFileCard 内有常驻警告条,文件在则警告在。
       } catch (error) {
         toast.error(backendErrorToastMessage(error, t));
       }
     },
-    [uploadMutation, t, warnFormatCheck],
+    [uploadMutation, t],
   );
 
   const handleReupload = useCallback(() => {
@@ -1142,8 +1308,23 @@ export function IngestPageContent({ project }: { project: string }) {
                 </div>
               </div>
               {inputMode === "upload" && (
-                <div className="mt-1.5 h-4 px-1 text-xs leading-4 text-muted-foreground/70">
-                  {sourceHint}
+                <div className="mt-1.5 min-h-4 px-1 text-xs leading-4 text-muted-foreground/70">
+                  {uploadedFile?.format_check?.level === "warning" ? (
+                    // 格式风险常驻在提示行（紧邻「开始导入」决策区），替代一闪而过的 toast。
+                    <FormatCheckWarning
+                      formatCheck={uploadedFile.format_check}
+                      variant="plain"
+                      onViewDetails={() => {
+                        if (!uploadedFile.format_check) return;
+                        setFormatCheckDetails({
+                          formatCheck: uploadedFile.format_check,
+                          filename: uploadedFile.filename,
+                        });
+                      }}
+                    />
+                  ) : (
+                    sourceHint
+                  )}
                 </div>
               )}
               <div className="mt-2.5 grid grid-cols-2 gap-2.5 px-1 md:flex md:items-center md:gap-3">
@@ -1294,43 +1475,36 @@ export function IngestPageContent({ project }: { project: string }) {
                   </SelectContent>
                 </Select>
 
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSaveSettings}
-                  disabled={!settingsChanged || updateProject.isPending || ingestStarted}
-                  className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none transition-colors hover:bg-white/8 md:ml-auto"
-                >
-                  {updateProject.isPending && !startIngestMutation.isPending ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="size-3" />
-                  )}
-                  {updateProject.isPending && !startIngestMutation.isPending
-                    ? t("ingest.processing")
-                    : t("ingest.saveSettings")}
-                </Button>
+                <div className="col-span-2 flex w-full shrink-0 items-center justify-end gap-3 md:ml-auto md:w-auto">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleSaveSettings}
+                    disabled={!settingsChanged || updateProject.isPending || ingestStarted}
+                    className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none transition-colors hover:bg-white/8"
+                  >
+                    {updateProject.isPending && !startIngestMutation.isPending ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="size-3" />
+                    )}
+                    {updateProject.isPending && !startIngestMutation.isPending
+                      ? t("ingest.processing")
+                      : t("ingest.saveSettings")}
+                  </Button>
 
-                <Button
-                  onClick={handleStartIngest}
-                  disabled={
-                    !canStartFromCurrentInput ||
-                    uploadMutation.isPending ||
-                    isStarting ||
-                    ingestStarted
-                  }
-                  className="h-8 gap-1.5 rounded-[8px] bg-primary px-4 text-xs font-normal text-primary-foreground shadow-none transition-colors hover:bg-primary/85 active:bg-primary/75"
-                >
-                  <Play className="size-3 fill-current" />
-                  {isStarting || ingestStarted
-                    ? t("ingest.processing")
-                    : t("ingest.startIngest")}
-                  <CreditCostInline
-                    display={ingestFeatureCostDisplay}
-                    className="text-primary-foreground"
-                    iconClassName="text-primary-foreground drop-shadow-none [&_path]:fill-current"
+                  <IngestStartButton
+                    onClick={handleStartIngest}
+                    disabled={
+                      !canStartFromCurrentInput ||
+                      uploadMutation.isPending ||
+                      isStarting ||
+                      ingestStarted
+                    }
+                    isBusy={isStarting || ingestStarted}
+                    costDisplay={ingestFeatureCostDisplay}
                   />
-                </Button>
+                </div>
               </div>
             </motion.section>
           ) : (
@@ -1344,6 +1518,14 @@ export function IngestPageContent({ project }: { project: string }) {
                   progress={taskStream.progress}
                   currentTask={taskStream.currentTask}
                   error={ingestError}
+                  formatCheck={uploadedFile?.format_check ?? null}
+                  onViewFormatCheck={() => {
+                    if (!uploadedFile?.format_check) return;
+                    setFormatCheckDetails({
+                      formatCheck: uploadedFile.format_check,
+                      filename: uploadedFile.filename,
+                    });
+                  }}
                   isIngesting={ingestStarted}
                   canStart={!!uploadedFile && !ingestSubmitted}
                   isStarting={isStarting}

@@ -147,12 +147,12 @@
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  color: rgba(245, 247, 255, 0.42);
+  color: rgba(245, 247, 255, 0.56);
   font-size: 11px;
   font-weight: 390;
   line-height: 1;
-  letter-spacing: 0.42em;
-  text-indent: 0.42em;
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
   pointer-events: none;
   transform: translateX(-50%);
   opacity: 0;
