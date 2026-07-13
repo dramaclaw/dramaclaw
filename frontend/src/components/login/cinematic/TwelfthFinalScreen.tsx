@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import LightRays from "@/components/login/light-rays";
 import { LoginCinematicHeader } from "./LoginCinematicHero";
+import { businessWechatQrUrl } from "./media";
 import styles from "./twelfth-final-screen.module.css";
 
 export function TwelfthFinalScreen({
@@ -60,7 +61,7 @@ export function TwelfthFinalScreen({
             >
               <div className={styles.businessPanel}>
                 <img
-                  src="/contact/business-wechat-qr.png"
+                  src={businessWechatQrUrl}
                   alt="商务微信二维码"
                   draggable={false}
                 />

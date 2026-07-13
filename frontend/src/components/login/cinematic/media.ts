@@ -2,6 +2,8 @@ const CDN_BASE = "https://nfg-web-assets.cdnfg.com/dramaclaw";
 
 const cdn = (path: string) => encodeURI(`${CDN_BASE}/${path}`);
 
+export const businessWechatQrUrl = cdn("contact/wechat.png");
+
 export const cinematicVideoLibrary = [
   {
     id: "luban",
