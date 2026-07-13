@@ -1,20 +1,20 @@
 ---
-version: 1.0.7
+version: 1.0.8
 attention: low
 ---
-# v1.0.7
+# v1.0.8
 
 ## User-facing Highlights (zh)
 
-- **剧本导入更准确**: 章节标题边界识别更严格,减少正文里的“第一集/Chapter 1”被误切成新章节的情况。
-- **虾画视频节点更稳定**: 修复首尾帧和画布上下文串用导致的视频节点报错,跨画布编辑更可靠。
-- **登录与公开页面更可靠**: 登录页视频、商务微信二维码和浏览器 CSP 兼容性完成收口,减少黑屏、花屏和控制台告警。
+- **导入风险更清晰**: 剧本格式风险会常驻展示在导入页面,不再依赖容易错过的瞬时提示。
+- **项目工作流更顺畅**: 项目入口和导航经过收敛,更容易在剧本、角色、剧集和制作流程间切换。
+- **制作数据更可靠**: 修复身份外貌数据被污染时的校验与恢复,场景和道具规划按钮会持续反映异步任务状态。
 
 ## User-facing Highlights (en)
 
-- **More accurate script imports**: Chapter title boundary detection is stricter, reducing accidental splits when text mentions “Episode 1” or “Chapter 1” inside body copy.
-- **More stable Xiahua video nodes**: Video nodes now avoid first/last-frame and canvas-context leakage that could break cross-canvas editing.
-- **More reliable login and public pages**: Login video assets, business WeCom QR assets, and browser CSP compatibility were tightened to reduce black screens, visual glitches, and console warnings.
+- **Clearer import risks**: Script-format risks now remain visible on the import page instead of relying on easy-to-miss transient notices.
+- **Smoother project workflow**: Project entry points and navigation are streamlined, making it easier to move between script, character, episode, and production flows.
+- **More reliable production data**: Identity appearance data now validates and recovers from polluted values, while scene and prop planning buttons stay in sync with asynchronous task state.
 
 ## Fixes
 
