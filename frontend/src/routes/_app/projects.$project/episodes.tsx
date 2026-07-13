@@ -42,6 +42,8 @@ import {
 } from "@/lib/queries/episodes";
 import { deriveEpisodeStats, type EpisodeStats } from "@/lib/episode-stats";
 import { useStageTask } from "@/hooks/use-stage-task";
+import { useTaskController } from "@/hooks/use-task-controller";
+import { TASK_TYPES } from "@/lib/task-types";
 import { queryKeys } from "@/lib/query-keys";
 import {
   backendErrorToastMessage,
@@ -536,28 +538,16 @@ function EpisodeListItem({
   project,
   episode,
   onSelect,
-  onPlanScenes,
-  onPlanProps,
   identityCostDisplay,
   sceneCostDisplay,
   propCostDisplay,
-  scenePending,
-  propPending,
-  sceneDisabled,
-  propDisabled,
 }: {
   project: string;
   episode: Episode;
   onSelect: () => void;
-  onPlanScenes: (episodeNum: number) => void;
-  onPlanProps: (episodeNum: number) => void;
   identityCostDisplay?: string | null;
   sceneCostDisplay?: string | null;
   propCostDisplay?: string | null;
-  scenePending: boolean;
-  propPending: boolean;
-  sceneDisabled: boolean;
-  propDisabled: boolean;
 }) {
   const { t } = useTranslation();
   // 镜头数量 = 该集 beats 数。复用既有的 beats 查询（无需后端新增字段）；react-query
@@ -593,6 +583,51 @@ function EpisodeListItem({
       } else {
         toast.warning(t("episode.script.planIdentitiesNone"));
       }
+    },
+  });
+  const planScenes = usePlanEpisodeScenes(project);
+  const planProps = usePlanEpisodeProps(project);
+  // 场景/道具规划走异步任务：POST 只是入队，请求返回时任务才刚开始。用任务控制器
+  // 接管进行中状态（含刷新页面后的重连），否则按钮转圈会在入队瞬间就停，和底部
+  // 任务中心的「生成中」对不上。
+  const sceneTask = useTaskController({
+    key: {
+      taskType: TASK_TYPES.EPISODE_SCENE_PLANNER,
+      project,
+      episode: episode.number,
+    },
+    invalidateKeys: [
+      queryKeys.episodes(project),
+      queryKeys.episodeDetail(project, episode.number),
+      queryKeys.scenes(project),
+      queryKeys.pipelineStatus(project),
+    ],
+    showCompleteToast: false,
+    onComplete: (result) => {
+      const data = (result ?? {}) as { total_count?: number };
+      toast.success(
+        t("episode.script.scenePlanComplete", { count: data.total_count ?? 0 }),
+      );
+    },
+  });
+  const propTask = useTaskController({
+    key: {
+      taskType: TASK_TYPES.EPISODE_PROP_PLANNER,
+      project,
+      episode: episode.number,
+    },
+    invalidateKeys: [
+      queryKeys.episodes(project),
+      queryKeys.episodeDetail(project, episode.number),
+      queryKeys.props(project),
+      queryKeys.pipelineStatus(project),
+    ],
+    showCompleteToast: false,
+    onComplete: (result) => {
+      const data = (result ?? {}) as { total_count?: number };
+      toast.success(
+        t("episode.script.propPlanComplete", { count: data.total_count ?? 0 }),
+      );
     },
   });
   const title =
@@ -631,6 +666,49 @@ function EpisodeListItem({
   };
 
   const identityPending = planIdentities.isPending || identityTask.started;
+
+  // CE(无控制面)下后端同步跑完并直接返回结果，没有任务可订阅；EE 走队列，
+  // 返回的是 TaskResponse，此时才接上 SSE 流。
+  const handlePlanScenes = async () => {
+    try {
+      const res = await planScenes.mutateAsync(episode.number);
+      if (res.ok === false) {
+        toast.error(backendErrorToastMessage(res.error, t));
+        return;
+      }
+      if (isPlanEpisodeAssetsResult(res)) {
+        toast.success(
+          t("episode.script.scenePlanComplete", { count: res.data.total_count }),
+        );
+        return;
+      }
+      sceneTask.start({ scope: res.scope });
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
+    }
+  };
+
+  const handlePlanProps = async () => {
+    try {
+      const res = await planProps.mutateAsync(episode.number);
+      if (res.ok === false) {
+        toast.error(backendErrorToastMessage(res.error, t));
+        return;
+      }
+      if (isPlanEpisodeAssetsResult(res)) {
+        toast.success(
+          t("episode.script.propPlanComplete", { count: res.data.total_count }),
+        );
+        return;
+      }
+      propTask.start({ scope: res.scope });
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
+    }
+  };
+
+  const scenePending = planScenes.isPending || sceneTask.started;
+  const propPending = planProps.isPending || propTask.started;
 
   return (
     <div
@@ -691,9 +769,9 @@ function EpisodeListItem({
               : t("episode.list.planScenes")
           }
           pending={scenePending}
-          disabled={sceneDisabled}
+          disabled={scenePending}
           costDisplay={sceneCostDisplay}
-          onClick={() => onPlanScenes(episode.number)}
+          onClick={handlePlanScenes}
         />
         <EpisodePlanShortcut
           icon={<Package className="size-3.5 shrink-0 text-amber-400" />}
@@ -704,9 +782,9 @@ function EpisodeListItem({
               : t("episode.list.planProps")
           }
           pending={propPending}
-          disabled={propDisabled}
+          disabled={propPending}
           costDisplay={propCostDisplay}
-          onClick={() => onPlanProps(episode.number)}
+          onClick={handlePlanProps}
         />
       </div>
 
@@ -824,8 +902,6 @@ function EpisodesPage() {
     (planPropsCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
-  const planScenes = usePlanEpisodeScenes(project);
-  const planProps = usePlanEpisodeProps(project);
   const planTask = useStageTask({
     taskType: "build_episodes",
     project,
@@ -868,44 +944,6 @@ function EpisodesPage() {
       toast.success(t("episode.list.refreshed"));
     } catch {
       toast.error(t("common.error"));
-    }
-  };
-
-  const handlePlanScenes = async (episodeNum: number) => {
-    try {
-      const res = await planScenes.mutateAsync(episodeNum);
-      if (res.ok === false) {
-        toast.error(backendErrorToastMessage(res.error, t));
-        return;
-      }
-      toast.success(
-        isPlanEpisodeAssetsResult(res)
-          ? t("episode.script.scenePlanComplete", {
-              count: res.data.total_count,
-            })
-          : res.message,
-      );
-    } catch (err) {
-      toast.error(backendErrorToastMessage(err, t));
-    }
-  };
-
-  const handlePlanProps = async (episodeNum: number) => {
-    try {
-      const res = await planProps.mutateAsync(episodeNum);
-      if (res.ok === false) {
-        toast.error(backendErrorToastMessage(res.error, t));
-        return;
-      }
-      toast.success(
-        isPlanEpisodeAssetsResult(res)
-          ? t("episode.script.propPlanComplete", {
-              count: res.data.total_count,
-            })
-          : res.message,
-      );
-    } catch (err) {
-      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -1018,29 +1056,24 @@ function EpisodesPage() {
                   </Button>
                 </div>
               ) : (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
-                  {displayEpisodes.map((ep) => (
-                    <EpisodeListItem
-                      project={project}
-                      key={ep.number}
-                      episode={ep}
-                      onSelect={() => handleSelectEpisode(ep.number)}
-                      onPlanScenes={handlePlanScenes}
-                      onPlanProps={handlePlanProps}
-                      identityCostDisplay={planIdentitiesCostDisplay}
-                      sceneCostDisplay={planScenesCostDisplay}
-                      propCostDisplay={planPropsCostDisplay}
-                      scenePending={
-                        planScenes.isPending && planScenes.variables === ep.number
-                      }
-                      propPending={
-                        planProps.isPending && planProps.variables === ep.number
-                      }
-                      sceneDisabled={planScenes.isPending}
-                      propDisabled={planProps.isPending}
-                    />
-                  ))}
-                </div>
+                // 卡片内的场景/道具规划用 useTaskController 订阅任务，需要一个
+                // 注册表宿主。列表不绑定单集，用 episode=0 作为宿主 scope；每张卡
+                // 片的 key 里带自己的集数，彼此互不干扰。
+                <TaskControllerProvider project={project} episode={0}>
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
+                    {displayEpisodes.map((ep) => (
+                      <EpisodeListItem
+                        project={project}
+                        key={ep.number}
+                        episode={ep}
+                        onSelect={() => handleSelectEpisode(ep.number)}
+                        identityCostDisplay={planIdentitiesCostDisplay}
+                        sceneCostDisplay={planScenesCostDisplay}
+                        propCostDisplay={planPropsCostDisplay}
+                      />
+                    ))}
+                  </div>
+                </TaskControllerProvider>
               )}
             </div>
           </div>

@@ -26,6 +26,8 @@ export const TASK_TYPES = {
   // task_type so the task stream and cancel endpoint target the same task.
   DIRECTOR_NOTES: "director_notes",
   IDENTITY_PLANNER: "identity_planner",
+  EPISODE_SCENE_PLANNER: "episode_scene_planner",
+  EPISODE_PROP_PLANNER: "episode_prop_planner",
   // Sketch
   SKETCH_GENERATION: "sketch_generation",
   BATCH_SKETCH: "batch_sketch",

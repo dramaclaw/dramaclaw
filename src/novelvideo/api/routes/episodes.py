@@ -182,6 +182,7 @@ async def _enqueue_episode_asset_planner(
     return {
         "ok": True,
         "task_type": task_type,
+        "scope": task_scope,
         "task_id": queued.task_state.task_id,
         "task_key": project_task_state_key(
             task_type,

@@ -239,6 +239,43 @@ function ScriptTabContent() {
     },
   });
 
+  // 场景/道具规划在 EE 下是异步任务：POST 只负责入队，请求返回时任务才刚开始。
+  // 按钮的转圈必须跟着任务流走（含刷新页面后的重连），否则会在入队瞬间就停下，
+  // 和任务中心的「生成中」对不上。
+  const sceneTask = useTaskController({
+    key: { taskType: TASK_TYPES.EPISODE_SCENE_PLANNER, project, episode: epNum },
+    invalidateKeys: [
+      queryKeys.episodes(project),
+      queryKeys.episodeDetail(project, epNum),
+      queryKeys.scenes(project),
+      queryKeys.pipelineStatus(project),
+    ],
+    showCompleteToast: false,
+    onComplete: (result) => {
+      const data = (result ?? {}) as { total_count?: number };
+      toast.success(
+        t("episode.script.scenePlanComplete", { count: data.total_count ?? 0 }),
+      );
+    },
+  });
+
+  const propTask = useTaskController({
+    key: { taskType: TASK_TYPES.EPISODE_PROP_PLANNER, project, episode: epNum },
+    invalidateKeys: [
+      queryKeys.episodes(project),
+      queryKeys.episodeDetail(project, epNum),
+      queryKeys.props(project),
+      queryKeys.pipelineStatus(project),
+    ],
+    showCompleteToast: false,
+    onComplete: (result) => {
+      const data = (result ?? {}) as { total_count?: number };
+      toast.success(
+        t("episode.script.propPlanComplete", { count: data.total_count ?? 0 }),
+      );
+    },
+  });
+
   const saveField = async (
     data: Parameters<typeof updateEpisode.mutateAsync>[0]["data"],
   ) => {
@@ -368,13 +405,14 @@ function ScriptTabContent() {
         toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
-      toast.success(
-        isPlanEpisodeAssetsResult(res)
-          ? t("episode.script.scenePlanComplete", {
-              count: res.data.total_count,
-            })
-          : res.message,
-      );
+      // CE 走同步规划，直接返回结果；EE 只是入队，交给任务控制器跟进行中状态。
+      if (isPlanEpisodeAssetsResult(res)) {
+        toast.success(
+          t("episode.script.scenePlanComplete", { count: res.data.total_count }),
+        );
+        return;
+      }
+      sceneTask.start({ scope: res.scope });
     } catch (err) {
       toast.error(backendErrorToastMessage(err, t));
     }
@@ -387,13 +425,13 @@ function ScriptTabContent() {
         toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
-      toast.success(
-        isPlanEpisodeAssetsResult(res)
-          ? t("episode.script.propPlanComplete", {
-              count: res.data.total_count,
-            })
-          : res.message,
-      );
+      if (isPlanEpisodeAssetsResult(res)) {
+        toast.success(
+          t("episode.script.propPlanComplete", { count: res.data.total_count }),
+        );
+        return;
+      }
+      propTask.start({ scope: res.scope });
     } catch (err) {
       toast.error(backendErrorToastMessage(err, t));
     }
@@ -655,8 +693,8 @@ function ScriptTabContent() {
                 sceneMenu={sceneMenu}
                 propMenu={propMenu}
                 identityPending={identityPlanning}
-                scenePending={planScenes.isPending}
-                propPending={planProps.isPending}
+                scenePending={planScenes.isPending || sceneTask.started}
+                propPending={planProps.isPending || propTask.started}
                 sceneCostDisplay={planScenesCostDisplay}
                 propCostDisplay={planPropsCostDisplay}
                 onPlanIdentities={() => setPickerOpen(true)}
