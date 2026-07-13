@@ -8,6 +8,7 @@ import SplitText from "@/components/react-bits/split-text";
 import { PRODUCT_MANUAL_URL } from "@/lib/product-manual";
 import styles from "@/components/login/login.module.css";
 import layout from "./hero-layout.module.css";
+import { businessWechatQrUrl } from "./media";
 
 const GITHUB_URL = "https://github.com/dramaclaw/dramaclaw";
 const GITHUB_REPO = "dramaclaw/dramaclaw";
@@ -89,7 +90,7 @@ export function LoginCinematicHeader({
           >
             <div className={styles.businessWechatPanel}>
               <img
-                src="/contact/business-wechat-qr.png"
+                src={businessWechatQrUrl}
                 alt={t("auth.businessWechat.qrAlt")}
                 draggable={false}
               />
