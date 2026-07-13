@@ -48,8 +48,9 @@ describe("app-store task panel state", () => {
       taskPanelOpen: false,
       taskPanelHeight: TASK_PANEL_HEIGHT_DEFAULT,
     });
-    // preserves existing fields
-    expect(migrated).toMatchObject({ sidebarWidth: 100, language: "zh", theme: "system" });
+    expect(migrated).toMatchObject({ language: "zh", theme: "system" });
+    expect(migrated).not.toHaveProperty("sidebarCollapsed");
+    expect(migrated).not.toHaveProperty("sidebarWidth");
   });
 });
 

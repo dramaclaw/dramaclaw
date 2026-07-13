@@ -3,7 +3,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -42,11 +42,14 @@ import {
   BillingRuleNotConfiguredError,
 } from "@/lib/api-errors";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import { useCreditDisplayHidden } from "@/components/credits/credit-visual";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isCeRuntime } from "@/lib/runtime-config";
 import {
   Select,
   SelectContent,
@@ -661,6 +664,77 @@ function InputModeToggle({
   );
 }
 
+function IngestStartButton({
+  disabled,
+  isBusy,
+  costDisplay,
+  onClick,
+}: {
+  disabled: boolean;
+  isBusy: boolean;
+  costDisplay?: string | null;
+  onClick: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="h-8 w-[124px] rounded-[8px] bg-primary px-0 text-xs font-normal text-primary-foreground shadow-none transition-colors hover:bg-primary/85 active:bg-primary/75"
+    >
+      <span className="grid w-full grid-cols-[12px_52px_26px] items-center justify-center gap-1.5">
+        <Play className="size-3 fill-current" />
+        <span className="text-center">
+          {isBusy ? t("ingest.processing") : t("ingest.startIngest")}
+        </span>
+        <IngestCreditCostSlot display={costDisplay} />
+      </span>
+    </Button>
+  );
+}
+
+const IngestCreditCostSlot = memo(function IngestCreditCostSlot({
+  display,
+}: {
+  display?: string | null;
+}) {
+  const hidden = useCreditDisplayHidden() || isCeRuntime() || !display;
+  return (
+    <span className="flex h-4 w-[26px] items-center justify-center overflow-hidden">
+      <span
+        aria-hidden="true"
+        className={cn(
+          "inline-flex w-[26px] items-center justify-center gap-0.5 text-[11px] font-medium leading-none tabular-nums text-primary-foreground",
+          hidden && "invisible",
+        )}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="size-3 shrink-0 text-primary-foreground"
+          aria-hidden="true"
+        >
+          <path
+            d="M12 2.6l2.16 6.28L20.4 11l-6.24 2.12L12 19.4l-2.16-6.28L3.6 11l6.24-2.12L12 2.6Z"
+            fill="currentColor"
+          />
+          <path
+            d="M18.1 16.2l.72 1.98 1.98.72-1.98.72-.72 1.98-.72-1.98-1.98-.72 1.98-.72.72-1.98Z"
+            fill="currentColor"
+            opacity="0.78"
+          />
+          <path
+            d="M7.2 3.3l.44 1.18 1.18.44-1.18.44-.44 1.18-.44-1.18-1.18-.44 1.18-.44.44-1.18Z"
+            fill="currentColor"
+            opacity="0.72"
+          />
+        </svg>
+        <span className="min-w-[8px] text-center">{display ?? "0"}</span>
+      </span>
+    </span>
+  );
+});
+
 function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className={cn("rounded-lg border p-4", INGEST_SURFACE_CLASS)}>
@@ -782,25 +856,42 @@ export function IngestPageContent({ project }: { project: string }) {
     () => countBillableNovelChars(pastedText.trim()),
     [pastedText],
   );
+  const debouncedPastedBillableChars = useDebouncedValue(pastedBillableChars, 450);
   const billingBillableChars =
-    inputMode === "paste" && pastedBillableChars > 0
-      ? pastedBillableChars
+    inputMode === "paste" && debouncedPastedBillableChars > 0
+      ? debouncedPastedBillableChars
       : typeof uploadedFile?.billable_chars === "number"
         ? uploadedFile.billable_chars
         : typeof chaptersData?.billable_chars === "number"
           ? chaptersData.billable_chars
           : null;
+  const hasBillableInput = inputMode === "paste"
+    ? pastedBillableChars > 0
+    : (billingBillableChars ?? 0) > 0;
   const ingestFeatureCost = useGenerationCreditCost("feature", "ingest_fast", {
     quantity: billingBillableChars && billingBillableChars > 0
       ? billingBillableChars
       : undefined,
   });
   const ingestFeatureCostData = ingestFeatureCost.data?.data;
-  const ingestFeatureCostDisplay =
+  const queriedIngestFeatureCostDisplay =
     ingestFeatureCostData?.display ??
     (ingestFeatureCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
+  const lastStableIngestCostDisplayRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!hasBillableInput) {
+      lastStableIngestCostDisplayRef.current = null;
+      return;
+    }
+    if (queriedIngestFeatureCostDisplay) {
+      lastStableIngestCostDisplayRef.current = queriedIngestFeatureCostDisplay;
+    }
+  }, [hasBillableInput, queriedIngestFeatureCostDisplay]);
+  const ingestFeatureCostDisplay = hasBillableInput
+    ? queriedIngestFeatureCostDisplay ?? lastStableIngestCostDisplayRef.current
+    : null;
 
   // SSE task streaming
   const [ingestStarted, setIngestStarted] = useState(false);
@@ -1384,43 +1475,36 @@ export function IngestPageContent({ project }: { project: string }) {
                   </SelectContent>
                 </Select>
 
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSaveSettings}
-                  disabled={!settingsChanged || updateProject.isPending || ingestStarted}
-                  className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none transition-colors hover:bg-white/8 md:ml-auto"
-                >
-                  {updateProject.isPending && !startIngestMutation.isPending ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="size-3" />
-                  )}
-                  {updateProject.isPending && !startIngestMutation.isPending
-                    ? t("ingest.processing")
-                    : t("ingest.saveSettings")}
-                </Button>
+                <div className="col-span-2 flex w-full shrink-0 items-center justify-end gap-3 md:ml-auto md:w-auto">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleSaveSettings}
+                    disabled={!settingsChanged || updateProject.isPending || ingestStarted}
+                    className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none transition-colors hover:bg-white/8"
+                  >
+                    {updateProject.isPending && !startIngestMutation.isPending ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="size-3" />
+                    )}
+                    {updateProject.isPending && !startIngestMutation.isPending
+                      ? t("ingest.processing")
+                      : t("ingest.saveSettings")}
+                  </Button>
 
-                <Button
-                  onClick={handleStartIngest}
-                  disabled={
-                    !canStartFromCurrentInput ||
-                    uploadMutation.isPending ||
-                    isStarting ||
-                    ingestStarted
-                  }
-                  className="h-8 gap-1.5 rounded-[8px] bg-primary px-4 text-xs font-normal text-primary-foreground shadow-none transition-colors hover:bg-primary/85 active:bg-primary/75"
-                >
-                  <Play className="size-3 fill-current" />
-                  {isStarting || ingestStarted
-                    ? t("ingest.processing")
-                    : t("ingest.startIngest")}
-                  <CreditCostInline
-                    display={ingestFeatureCostDisplay}
-                    className="text-primary-foreground"
-                    iconClassName="text-primary-foreground drop-shadow-none [&_path]:fill-current"
+                  <IngestStartButton
+                    onClick={handleStartIngest}
+                    disabled={
+                      !canStartFromCurrentInput ||
+                      uploadMutation.isPending ||
+                      isStarting ||
+                      ingestStarted
+                    }
+                    isBusy={isStarting || ingestStarted}
+                    costDisplay={ingestFeatureCostDisplay}
                   />
-                </Button>
+                </div>
               </div>
             </motion.section>
           ) : (

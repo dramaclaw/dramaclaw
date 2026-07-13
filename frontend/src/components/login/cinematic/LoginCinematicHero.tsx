@@ -215,7 +215,7 @@ export function LoginCinematicHero({
         >
           <div className={layout.scrollCueInner}>
             <Mouse className={layout.scrollMouseIcon} />
-            <span>SCROLL</span>
+            <span>向下滑动</span>
             <ChevronDown className={layout.scrollArrowIcon} />
           </div>
         </div>

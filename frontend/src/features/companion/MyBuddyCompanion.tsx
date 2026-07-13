@@ -81,6 +81,13 @@ function currentViewportSize(): ViewportSize {
   return { width: window.innerWidth, height: window.innerHeight };
 }
 
+function randomCompanionHomeXPercent() {
+  const leftRange = [18, 40] as const;
+  const rightRange = [60, 82] as const;
+  const [min, max] = Math.random() < 0.5 ? leftRange : rightRange;
+  return min + Math.random() * (max - min);
+}
+
 export function MyBuddyCompanion() {
   const { t } = useTranslation();
   const {
@@ -95,7 +102,7 @@ export function MyBuddyCompanion() {
   } = useMyBuddyCompanionController();
   const [importRefreshKey, setImportRefreshKey] = useState(0);
   const [importedPets, setImportedPets] = useState<ImportedPetEntry[]>([]);
-  const [homeXPercent] = useState(() => 18 + Math.random() * 64);
+  const [homeXPercent] = useState(randomCompanionHomeXPercent);
   // 宠物的手动状态覆盖（null = 跟随系统/任务）。「状态模拟」下拉选择 + 点击宠物循环共用。
   const [petStateName, setPetStateName] = useState<PetdexStateName | null>(null);
   const [companionResetNonce, setCompanionResetNonce] = useState(0);

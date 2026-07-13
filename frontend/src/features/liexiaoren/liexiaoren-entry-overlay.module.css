@@ -25,6 +25,54 @@
   pointer-events: none;
 }
 
+.skipHint {
+  position: fixed;
+  top: clamp(22px, 3.2vh, 42px);
+  right: clamp(24px, 3.2vw, 56px);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(5, 5, 5, 0.72);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.skipHint kbd {
+  min-width: 34px;
+  padding: 5px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.skipHint:hover,
+.skipHint:focus-visible {
+  border-color: rgba(226, 178, 92, 0.7);
+  background: rgba(18, 14, 9, 0.88);
+  color: #fff;
+  outline: none;
+}
+
 .stage {
   position: relative;
   width: 90vw;
@@ -90,6 +138,11 @@
 }
 
 @media (max-width: 640px) {
+  .skipHint {
+    top: 16px;
+    right: 16px;
+  }
+
   .enterButton {
     bottom: clamp(42px, 7vh, 82px);
     width: clamp(168px, 42vw, 260px);

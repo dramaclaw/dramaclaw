@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, Download, PauseIcon, X } from "lucide-react";
 import { liexiaorenAssets } from "@/features/liexiaoren/liexiaoren-assets";
-import { LIEXIAOREN_OPEN_SKIN_EVENT } from "@/features/liexiaoren/liexiaoren-events";
 import styles from "./liexiaoren-skin-preview.module.css";
 
 const ENTRY_CYCLE_MS = 3000;
@@ -52,10 +51,7 @@ export function LiexiaorenSkinPreview() {
   }, [open]);
 
   useEffect(() => {
-    const handleOpenSkin = () => setOpen(true);
-    window.addEventListener(LIEXIAOREN_OPEN_SKIN_EVENT, handleOpenSkin);
     return () => {
-      window.removeEventListener(LIEXIAOREN_OPEN_SKIN_EVENT, handleOpenSkin);
       if (entryCycleTimerRef.current !== null) {
         window.clearTimeout(entryCycleTimerRef.current);
       }

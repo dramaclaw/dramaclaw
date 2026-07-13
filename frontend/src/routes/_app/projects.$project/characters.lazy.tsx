@@ -3050,7 +3050,7 @@ function CharactersSplit({
 
   return (
     <div className="min-h-0 flex-1 flex overflow-hidden bg-background">
-      <div className="flex flex-col w-72 shrink-0 overflow-hidden border-r border-border/30 bg-background">
+      <div className="flex w-80 shrink-0 flex-col overflow-hidden border-r border-border/30 bg-background">
         {listPane}
       </div>
       <div className="min-w-0 flex-1 overflow-hidden bg-background">

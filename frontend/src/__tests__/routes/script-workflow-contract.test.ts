@@ -21,7 +21,7 @@ describe("script workflow canonical contract", () => {
     expect(route).toContain(
       "generateScriptCost.error instanceof BillingRuleNotConfiguredError",
     );
-    expect(route).toContain("<CreditCostInline display={generateScriptCostDisplay} />");
+    expect(route).toMatch(/<CreditCostInline\s+display=\{generateScriptCostDisplay\}/);
     expect(route).toContain("backendErrorToastMessage(err, t)");
     expect(route).toContain('taskType: "script_writer"');
     expect(route).toContain('alsoReconcile: ["literal_script_writer"]');
@@ -42,7 +42,7 @@ describe("script workflow canonical contract", () => {
     expect(route).toContain(
       "generateScriptCost.error instanceof BillingRuleNotConfiguredError",
     );
-    expect(route).toContain("<CreditCostInline display={generateScriptCostDisplay} />");
+    expect(route).toMatch(/<CreditCostInline\s+display=\{generateScriptCostDisplay\}/);
     expect(route).toContain("useGenerateRewrite");
     expect(route).toContain('spine_template === "narrated"');
     expect(route).toContain("initializedSourceRef");

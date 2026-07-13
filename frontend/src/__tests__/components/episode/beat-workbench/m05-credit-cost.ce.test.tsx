@@ -154,7 +154,7 @@ describe("M05 CE generation credit cost gating", () => {
       expect.stringContaining("buildScenesCost.error instanceof BillingRuleNotConfiguredError"),
     );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
-      expect.stringContaining("<CreditCostInline display={buildScenesCostDisplay} />"),
+      expect.stringMatching(/<CreditCostInline\s+display=\{buildScenesCostDisplay\}/),
     );
     expect(source("src/components/episode/beat-workbench/sketch-section.tsx")).toEqual(
       expect.stringContaining("<CreditCostInline display={sketchRegenCost.data?.data.display} />"),
