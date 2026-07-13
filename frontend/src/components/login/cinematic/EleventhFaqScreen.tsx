@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import loginStyles from "@/components/login/login.module.css";
 import SideRays from "@/components/react-bits/side-rays";
 import styles from "./eleventh-faq-screen.module.css";
+import { businessWechatQrUrl } from "./media";
 
 const faqs = [
   {
@@ -144,7 +145,7 @@ export function EleventhFaqScreen({
               <div className={`${loginStyles.businessWechatPanel} ${styles.contactPanel}`}>
                 <img
                   className={styles.contactQr}
-                  src="/contact/business-wechat-qr.png"
+                  src={businessWechatQrUrl}
                   alt="商务微信二维码"
                   draggable={false}
                 />
