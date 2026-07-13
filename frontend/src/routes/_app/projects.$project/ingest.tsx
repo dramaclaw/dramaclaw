@@ -340,6 +340,63 @@ function UploadZone({
   );
 }
 
+// 格式风险常驻警告：文件在则警告在，替代一闪而过的 toast.warning。
+// boxed = 富卡片里的琥珀色警告条；plain = 上传表单提示行里的一行轻量文字。
+function FormatCheckWarning({
+  formatCheck,
+  onViewDetails,
+  variant = "boxed",
+  className,
+}: {
+  formatCheck: FormatCheck;
+  onViewDetails?: () => void;
+  variant?: "boxed" | "plain";
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  const detailsButton = onViewDetails && (
+    <button
+      type="button"
+      onClick={onViewDetails}
+      className={cn(
+        "ml-1.5 whitespace-nowrap font-medium underline underline-offset-2 transition-colors",
+        variant === "boxed"
+          ? "text-amber-300 hover:text-amber-200"
+          : "text-foreground/80 hover:text-foreground",
+      )}
+    >
+      {t("aiAssistant.formatCheck.viewDetails")}
+    </button>
+  );
+
+  if (variant === "plain") {
+    return (
+      <div className={cn("flex items-start gap-1.5", className)}>
+        <AlertTriangle className="mt-px size-3.5 shrink-0 text-amber-400" />
+        <div className="min-w-0">
+          <span>{formatCheck.summary || t("aiAssistant.formatCheck.title")}</span>
+          {detailsButton}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2",
+        className,
+      )}
+    >
+      <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-400" />
+      <div className="min-w-0 text-xs leading-5 text-amber-200/90">
+        <span>{formatCheck.summary || t("aiAssistant.formatCheck.title")}</span>
+        {detailsButton}
+      </div>
+    </div>
+  );
+}
+
 function UploadedFileCard({
   filename,
   size,
@@ -347,6 +404,8 @@ function UploadedFileCard({
   progress,
   currentTask,
   error,
+  formatCheck,
+  onViewFormatCheck,
   isIngesting,
   canStart,
   isStarting,
@@ -363,6 +422,8 @@ function UploadedFileCard({
   progress: number;
   currentTask: string;
   error: string | null;
+  formatCheck?: FormatCheck | null;
+  onViewFormatCheck?: () => void;
   isIngesting: boolean;
   canStart: boolean;
   isStarting: boolean;
@@ -375,6 +436,9 @@ function UploadedFileCard({
 }) {
   const { t } = useTranslation();
   const percent = Math.round(progress * 100);
+  // 导入完成后风险提示已无行动价值，只在导入前/失败/中止时常驻展示。
+  const showFormatWarning =
+    formatCheck?.level === "warning" && status !== "completed";
   const statusStyles: Record<IngestFileStatus, string> = {
     uploaded: "border-primary/30 bg-primary/10 text-primary",
     importing: "border-primary/30 bg-primary/10 text-primary",
@@ -423,6 +487,13 @@ function UploadedFileCard({
             <p className="mt-2 text-xs leading-5 text-destructive">
               {error}
             </p>
+          )}
+          {showFormatWarning && formatCheck && (
+            <FormatCheckWarning
+              formatCheck={formatCheck}
+              onViewDetails={onViewFormatCheck}
+              className="mt-2"
+            />
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -515,7 +586,7 @@ function SelectedFileCard({
   const { name, extension } = splitFilename(filename);
 
   return (
-    <div className="flex h-full items-center justify-center px-4">
+    <div className="flex h-full flex-col items-center justify-center px-4">
       <div className="relative w-full max-w-[320px] rounded-lg bg-sky-500/20 px-5 py-4 pr-12 text-left">
         <button
           type="button"
@@ -847,12 +918,16 @@ export function IngestPageContent({ project }: { project: string }) {
     [setValue],
   );
 
-  // Surface a non-blocking format warning as a success+risk toast with a
-  // "view details" affordance. warning never blocks — upload already succeeded.
+  // Surface a non-blocking format warning as a toast with a "view details"
+  // affordance. warning never blocks — upload already succeeded. Only used by
+  // the paste flow: the upload flow shows a persistent banner inside
+  // SelectedFileCard instead, so the warning stays visible after the toast
+  // would have expired.
   const warnFormatCheck = useCallback(
     (formatCheck: FormatCheck | undefined, filename: string) => {
       if (!formatCheck || formatCheck.level !== "warning") return;
       toast.warning(formatCheck.summary || t("aiAssistant.formatCheck.title"), {
+        duration: 10000,
         action: {
           label: t("aiAssistant.formatCheck.viewDetails"),
           onClick: () => setFormatCheckDetails({ formatCheck, filename }),
@@ -872,12 +947,12 @@ export function IngestPageContent({ project }: { project: string }) {
         setIngestFileStatus("uploaded");
         setIngestError(null);
         toast.success(`${t("common.upload")} ✓ — ${result.data.filename}`);
-        warnFormatCheck(result.data.format_check, result.data.filename);
+        // 格式风险不再走 toast：SelectedFileCard 内有常驻警告条,文件在则警告在。
       } catch (error) {
         toast.error(backendErrorToastMessage(error, t));
       }
     },
-    [uploadMutation, t, warnFormatCheck],
+    [uploadMutation, t],
   );
 
   const handleReupload = useCallback(() => {
@@ -1142,8 +1217,23 @@ export function IngestPageContent({ project }: { project: string }) {
                 </div>
               </div>
               {inputMode === "upload" && (
-                <div className="mt-1.5 h-4 px-1 text-xs leading-4 text-muted-foreground/70">
-                  {sourceHint}
+                <div className="mt-1.5 min-h-4 px-1 text-xs leading-4 text-muted-foreground/70">
+                  {uploadedFile?.format_check?.level === "warning" ? (
+                    // 格式风险常驻在提示行（紧邻「开始导入」决策区），替代一闪而过的 toast。
+                    <FormatCheckWarning
+                      formatCheck={uploadedFile.format_check}
+                      variant="plain"
+                      onViewDetails={() => {
+                        if (!uploadedFile.format_check) return;
+                        setFormatCheckDetails({
+                          formatCheck: uploadedFile.format_check,
+                          filename: uploadedFile.filename,
+                        });
+                      }}
+                    />
+                  ) : (
+                    sourceHint
+                  )}
                 </div>
               )}
               <div className="mt-2.5 grid grid-cols-2 gap-2.5 px-1 md:flex md:items-center md:gap-3">
@@ -1344,6 +1434,14 @@ export function IngestPageContent({ project }: { project: string }) {
                   progress={taskStream.progress}
                   currentTask={taskStream.currentTask}
                   error={ingestError}
+                  formatCheck={uploadedFile?.format_check ?? null}
+                  onViewFormatCheck={() => {
+                    if (!uploadedFile?.format_check) return;
+                    setFormatCheckDetails({
+                      formatCheck: uploadedFile.format_check,
+                      filename: uploadedFile.filename,
+                    });
+                  }}
                   isIngesting={ingestStarted}
                   canStart={!!uploadedFile && !ingestSubmitted}
                   isStarting={isStarting}
