@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "supertale-ce"
-version = "1.0.7"
+version = "1.0.8"
 description = "SuperTale Community Edition API and video pipeline"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
