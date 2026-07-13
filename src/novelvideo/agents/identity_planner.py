@@ -9,9 +9,10 @@
 4. resolve / create 并写回 episode.identity_ids + episode.identity_default_map
 """
 
+import re
 from typing import Optional, Callable, TYPE_CHECKING
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from pydantic_ai import Agent
 from novelvideo.config import (
@@ -103,6 +104,40 @@ class EpisodeIdentityRequirements(BaseModel):
     )
 
 
+_APPEARANCE_SCHEMA_TOKENS = (
+    "appearance_details",
+    "face_description",
+    "age_group",
+    "body_type",
+)
+_APPEARANCE_REASONING_RE = re.compile(
+    r"(?:\blet(?:'s| us)\b|\breason(?:ing)?\b|step by step|\banalysis\s*:|"
+    r"\bthinking\s*:|\bcount\s*:|check (?:the )?length|that's about|\bperfect\s*\.)",
+    re.IGNORECASE,
+)
+
+
+def _appearance_corruption_reason(value: object, field_name: str) -> str | None:
+    """Return a high-confidence reason when an appearance string is polluted."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    lowered = text.casefold()
+    if "\ufffd" in text:
+        return "包含 Unicode replacement character"
+    if any(token in lowered for token in _APPEARANCE_SCHEMA_TOKENS):
+        return "包含结构化输出字段名"
+    if lowered == "/* empty */":
+        return "包含模型空值哨兵"
+    if "```" in text or "<tool" in lowered or "</tool" in lowered or "@returns" in lowered:
+        return "包含工具调用框架"
+    if field_name in {"face_description", "body_type"} and ("\n" in text or "\r" in text):
+        return "短描述包含多行内容"
+    if _APPEARANCE_REASONING_RE.search(text):
+        return "包含模型推理文本"
+    return None
+
+
 class AppearanceDescription(BaseModel):
     """AI 生成的身份外观描述。"""
     appearance_details: str = Field(
@@ -121,10 +156,51 @@ class AppearanceDescription(BaseModel):
         description="仅当身份涉及年龄变化时填写体型描述（如'矮小圆润的幼童体型'、'佝偻消瘦的老人体型'），普通换装不填",
     )
 
+    @field_validator("appearance_details", "face_description", "body_type", mode="before")
+    @classmethod
+    def strip_description(cls, value: object) -> object:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("appearance_details", "face_description", "body_type")
+    @classmethod
+    def validate_description(cls, value: str, info) -> str:
+        field_name = info.field_name
+        if reason := _appearance_corruption_reason(value, field_name):
+            raise ValueError(f"{field_name} {reason}")
+        if field_name == "appearance_details":
+            if not 10 <= len(value) <= 200:
+                raise ValueError("appearance_details 长度必须为 10–200 字符")
+        elif field_name == "face_description" and value and not 10 <= len(value) <= 100:
+            raise ValueError("face_description 长度必须为 10–100 字符")
+        elif field_name == "body_type" and value and not 2 <= len(value) <= 80:
+            raise ValueError("body_type 长度必须为 2–80 字符")
+        return value
+
     @field_validator("age_group", mode="before")
     @classmethod
     def normalize_age_group(cls, v: str) -> str:
         return _normalize_age_group_value(v)
+
+    @model_validator(mode="after")
+    def validate_age_variant_fields(self, info: ValidationInfo):
+        variant_fields = (self.face_description, self.age_group, self.body_type)
+        if any(variant_fields) and not all(variant_fields):
+            raise ValueError(
+                "face_description、age_group、body_type 必须同时为空或同时填写"
+            )
+        context = info.context if isinstance(info.context, dict) else {}
+        planned_age_group = _normalize_age_group_value(
+            context.get("planned_age_group", "")
+        )
+        if planned_age_group and self.age_group != planned_age_group:
+            raise ValueError(
+                f"已规划 age_group={planned_age_group}，外观输出必须填写匹配的年龄变体字段"
+            )
+        return self
 
 
 class EpisodeCastList(BaseModel):
@@ -849,6 +925,193 @@ class IdentityPlanner:
                 on_log(f"[EP{episode.number:03d}] Pass B 其他身份分析失败: {e}")
             return EpisodeIdentityRequirements()
 
+    @staticmethod
+    def _is_pending_planner_identity(identity: CharacterIdentity) -> bool:
+        return (
+            identity.source == "identity_planner"
+            and not str(identity.appearance_details or "").strip()
+            and not str(identity.face_prompt or "").strip()
+            and not str(identity.body_type or "").strip()
+        )
+
+    @staticmethod
+    def _corrupted_identity_fields(identity: CharacterIdentity) -> dict[str, str]:
+        if identity.source != "identity_planner":
+            return {}
+        field_specs = {
+            "appearance_details": (identity.appearance_details, "appearance_details"),
+            "face_prompt": (identity.face_prompt, "face_description"),
+            "body_type": (identity.body_type, "body_type"),
+        }
+        return {
+            storage_field: reason
+            for storage_field, (value, schema_field) in field_specs.items()
+            if (reason := _appearance_corruption_reason(value, schema_field))
+        }
+
+    async def _generate_identity_appearance_updates(
+        self,
+        char,
+        visual_state: str,
+        resolved_age_group: str,
+        explicit_age_group: str,
+        inferred_fish_voice: str,
+        reason: str,
+        on_log: Optional[Callable] = None,
+    ) -> dict[str, str]:
+        appearance_result = await self._generate_appearance(
+            char.name,
+            visual_state,
+            resolved_age_group,
+            reason,
+            on_log,
+        )
+
+        if isinstance(appearance_result, str):
+            appearance = appearance_result.strip()
+            face_description = ""
+            voice_age_group = resolved_age_group
+            identity_body_type = ""
+        else:
+            appearance = appearance_result.appearance_details
+            face_description = appearance_result.face_description or ""
+            appearance_age_group = _normalize_age_group_value(appearance_result.age_group)
+            if (
+                resolved_age_group
+                and appearance_age_group
+                and appearance_age_group != resolved_age_group
+            ):
+                if on_log:
+                    on_log(
+                        f"  ⚠ {char.name}_{visual_state}: 外观阶段 age_group={appearance_age_group} "
+                        f"与身份规划 age_group={resolved_age_group} 冲突，采用身份规划值"
+                    )
+                appearance_age_group = resolved_age_group
+            voice_age_group = appearance_age_group or resolved_age_group
+            identity_body_type = appearance_result.body_type or ""
+
+        identity_fish_voice = inferred_fish_voice
+        if voice_age_group:
+            from novelvideo.config import get_fish_voice_id
+
+            identity_fish_voice = get_fish_voice_id(voice_age_group, char.gender)
+        else:
+            identity_body_type = ""
+
+        if voice_age_group and voice_age_group == char.age_group and not explicit_age_group:
+            if on_log:
+                on_log(
+                    f"  ⚠ {char.name}_{visual_state}: age_group={voice_age_group} "
+                    "与角色相同，清空年龄变体字段"
+                )
+            face_description = ""
+            voice_age_group = ""
+            identity_body_type = ""
+            identity_fish_voice = ""
+
+        reconciled = AppearanceDescription(
+            appearance_details=appearance,
+            face_description=face_description,
+            age_group=voice_age_group,
+            body_type=identity_body_type,
+        )
+        return {
+            "appearance_details": reconciled.appearance_details,
+            "face_prompt": reconciled.face_description,
+            "age_group": reconciled.age_group,
+            "body_type": reconciled.body_type,
+            "fish_voice_id": identity_fish_voice,
+        }
+
+    async def _recover_identity_appearance(
+        self,
+        *,
+        char,
+        identity: CharacterIdentity,
+        visual_state: str,
+        resolved_age_group: str,
+        explicit_age_group: str,
+        inferred_fish_voice: str,
+        reason: str,
+        pending: bool,
+        corrupted_fields: dict[str, str],
+        on_log: Optional[Callable] = None,
+    ) -> bool:
+        try:
+            generated = await self._generate_identity_appearance_updates(
+                char,
+                visual_state,
+                resolved_age_group,
+                explicit_age_group,
+                inferred_fish_voice,
+                reason,
+                on_log,
+            )
+        except Exception:
+            if corrupted_fields:
+                sanitized = {field: "" for field in corrupted_fields}
+                await self.cognee_store.update_character_identity(
+                    char.name,
+                    identity.identity_id,
+                    **sanitized,
+                )
+                if on_log:
+                    on_log(
+                        f"  ⚠ 修复失败，已清空污染字段: {identity.identity_id} "
+                        f"({', '.join(sorted(corrupted_fields))})"
+                    )
+            elif on_log:
+                on_log(f"  保留: {identity.identity_id} 已创建，外观待补")
+            return False
+
+        if pending:
+            await self.cognee_store.update_character_identity(
+                char.name,
+                identity.identity_id,
+                **generated,
+            )
+            if on_log:
+                on_log(
+                    f"  补全: {identity.identity_id} — "
+                    f"{generated['appearance_details'][:40]}..."
+                )
+            return True
+
+        repair_updates = {
+            field: generated[field]
+            for field in corrupted_fields
+        }
+        merged_age_group = str(identity.age_group or "").strip()
+        merged = {
+            "appearance_details": repair_updates.get(
+                "appearance_details", identity.appearance_details
+            ),
+            "face_description": repair_updates.get("face_prompt", identity.face_prompt),
+            "age_group": merged_age_group,
+            "body_type": repair_updates.get("body_type", identity.body_type),
+        }
+        try:
+            AppearanceDescription(**merged)
+        except ValueError:
+            repair_updates = {field: "" for field in corrupted_fields}
+            if on_log:
+                on_log(
+                    f"  ⚠ 无法在保留有效字段的前提下修复 {identity.identity_id}，"
+                    "已清空污染字段并使用角色级回退"
+                )
+
+        await self.cognee_store.update_character_identity(
+            char.name,
+            identity.identity_id,
+            **repair_updates,
+        )
+        if on_log:
+            on_log(
+                f"  修复: {identity.identity_id} "
+                f"({', '.join(sorted(corrupted_fields))})"
+            )
+        return True
+
     async def _resolve_requirements(
         self,
         episode_number: int,
@@ -894,31 +1157,51 @@ class IdentityPlanner:
             if matched:
                 resolved_ids.append(matched.identity_id)
                 resolved_identity_map[(char.name, vs)] = matched.identity_id
-                updates = {}
-                existing_age_group = getattr(matched, "age_group", "")
-                if existing_age_group != resolved_age_group:
-                    updates["age_group"] = resolved_age_group
-                if inferred_fish_voice and not getattr(matched, "fish_voice_id", ""):
-                    updates["fish_voice_id"] = inferred_fish_voice
-                if updates:
-                    try:
-                        await self.cognee_store.update_character_identity(
-                            char.name,
-                            matched.identity_id,
-                            **updates,
-                        )
-                        if on_log:
-                            on_log(
-                                f"  回填结构字段: {matched.identity_id}"
-                                f" age_group={updates.get('age_group', getattr(matched, 'age_group', ''))}"
-                            )
-                    except Exception as e:
-                        if on_log:
-                            on_log(f"  回填结构字段失败({matched.identity_id}): {e}")
-                if on_log:
-                    on_log(
-                        f"  复用: {matched.identity_id} (ep{episode_number})"
+                pending = self._is_pending_planner_identity(matched)
+                corrupted_fields = self._corrupted_identity_fields(matched)
+                if pending or corrupted_fields:
+                    repair_age_group = (
+                        _normalize_age_group_value(getattr(matched, "age_group", ""))
+                        or resolved_age_group
                     )
+                    await self._recover_identity_appearance(
+                        char=char,
+                        identity=matched,
+                        visual_state=vs,
+                        resolved_age_group=repair_age_group,
+                        explicit_age_group=explicit_age_group,
+                        inferred_fish_voice=inferred_fish_voice,
+                        reason=req.reason,
+                        pending=pending,
+                        corrupted_fields=corrupted_fields,
+                        on_log=on_log,
+                    )
+                else:
+                    updates = {}
+                    existing_age_group = getattr(matched, "age_group", "")
+                    if existing_age_group != resolved_age_group:
+                        updates["age_group"] = resolved_age_group
+                    if inferred_fish_voice and not getattr(matched, "fish_voice_id", ""):
+                        updates["fish_voice_id"] = inferred_fish_voice
+                    if updates:
+                        try:
+                            await self.cognee_store.update_character_identity(
+                                char.name,
+                                matched.identity_id,
+                                **updates,
+                            )
+                            if on_log:
+                                on_log(
+                                    f"  回填结构字段: {matched.identity_id}"
+                                    f" age_group={updates.get('age_group', getattr(matched, 'age_group', ''))}"
+                                )
+                        except Exception as e:
+                            if on_log:
+                                on_log(f"  回填结构字段失败({matched.identity_id}): {e}")
+                    if on_log:
+                        on_log(
+                            f"  复用: {matched.identity_id} (ep{episode_number})"
+                        )
             else:
                 from novelvideo.utils.identity_resolver import compute_char_tag
                 identity = CharacterIdentity(
@@ -953,65 +1236,18 @@ class IdentityPlanner:
                         continue
 
                 try:
-                    appearance_result = await self._generate_appearance(
-                        char.name, vs, resolved_age_group, req.reason, on_log
+                    await self._recover_identity_appearance(
+                        char=char,
+                        identity=identity,
+                        visual_state=vs,
+                        resolved_age_group=resolved_age_group,
+                        explicit_age_group=explicit_age_group,
+                        inferred_fish_voice=inferred_fish_voice,
+                        reason=req.reason,
+                        pending=True,
+                        corrupted_fields={},
+                        on_log=on_log,
                     )
-                except Exception:
-                    if on_log:
-                        on_log(f"  保留: {candidate_id} 已创建，外观待补")
-                    continue
-
-                # 支持返回 str（旧格式）或 AppearanceDescription（新格式）
-                if isinstance(appearance_result, str):
-                    appearance = appearance_result
-                    face_description = ""
-                    voice_age_group = resolved_age_group
-                    identity_body_type = ""
-                else:
-                    appearance = appearance_result.appearance_details
-                    face_description = appearance_result.face_description or ""
-                    appearance_age_group = _normalize_age_group_value(appearance_result.age_group)
-                    if resolved_age_group and appearance_age_group and appearance_age_group != resolved_age_group:
-                        if on_log:
-                            on_log(
-                                f"  ⚠ {candidate_id}: 外观阶段 age_group={appearance_age_group} "
-                                f"与身份规划 age_group={resolved_age_group} 冲突，采用身份规划值"
-                            )
-                        appearance_age_group = resolved_age_group
-                    voice_age_group = appearance_age_group or resolved_age_group
-                    identity_body_type = appearance_result.body_type or ""
-
-                # 年龄变体自动映射声音
-                identity_fish_voice = inferred_fish_voice
-                if voice_age_group:
-                    from novelvideo.config import get_fish_voice_id
-                    identity_fish_voice = get_fish_voice_id(voice_age_group, char.gender)
-                else:
-                    identity_body_type = ""
-
-                # 软校验：如果身份年龄段与角色相同，说明 AI 误填，清空年龄变体相关字段
-                if voice_age_group and voice_age_group == char.age_group and not explicit_age_group:
-                    if on_log:
-                        on_log(
-                            f"  ⚠ {candidate_id}: age_group={voice_age_group} 与角色相同，清空年龄变体字段"
-                        )
-                    face_description = ""
-                    voice_age_group = ""
-                    identity_body_type = ""
-                    identity_fish_voice = ""
-
-                try:
-                    await self.cognee_store.update_character_identity(
-                        char.name,
-                        candidate_id,
-                        appearance_details=appearance,
-                        face_prompt=face_description,
-                        age_group=voice_age_group,
-                        body_type=identity_body_type,
-                        fish_voice_id=identity_fish_voice,
-                    )
-                    if on_log:
-                        on_log(f"  补全: {candidate_id} — {appearance[:40]}...")
                 except Exception as e:
                     if on_log:
                         on_log(f"  外观保存失败({candidate_id}): {e}，身份已保留")
@@ -1107,6 +1343,8 @@ class IdentityPlanner:
                     "high",
                 ),
                 output_type=AppearanceDescription,
+                retries={"output": 2},
+                validation_context={"planned_age_group": planned_age_group},
             )
             ai_result = await appearance_agent.run(task)
             return ai_result.output
