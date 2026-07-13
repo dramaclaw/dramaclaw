@@ -1152,6 +1152,7 @@ frontend/src/stores/assetDropStore.ts,Elastic-2.0,2026 SuperTale contributors,RE
 frontend/src/stores/auth-store.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/stores/canvasStore.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/stores/episode-workbench-store.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/stores/project-nav-store.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/stores/region-store.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/stores/save-status-store.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/stores/seen-pool-store.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1675,8 +1676,8 @@ tests/test_hermes_dramaclaw_plugin.py,Elastic-2.0,2026 SuperTale contributors,RE
 tests/test_hermes_pool_session_resume.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_workspace.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_history_asset_model_mode.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-tests/test_identity_planner_character_promotion.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_identity_planner_appearance_validation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_identity_planner_character_promotion.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_identity_runner_result.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_image_credit_reservation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_image_generation_selection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

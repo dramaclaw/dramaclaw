@@ -80,6 +80,11 @@ import { cn } from "@/lib/utils";
 import type { DashboardView } from "@/stores/app-store";
 import type { ProjectStatus, ProjectSummary } from "@/types/project";
 import { PROJECT_SECTION_ROUTES } from "@/components/layout/project-navigation-routes";
+import {
+  normalizeLastEpisodeLocation,
+  useEpisodeWorkbenchStore,
+} from "@/stores/episode-workbench-store";
+import { useProjectNavStore } from "@/stores/project-nav-store";
 
 type PendingAction =
   | { kind: "archive"; project: string; name: string }
@@ -1181,15 +1186,31 @@ function ProjectDashboard() {
     }
   };
 
+  // 进项目恢复上次停留的区块（虾画 / 虾集子页，默认虾画）；上次在虾镜且
+  // 有剧集深链则直达该集。
+  const resolveProjectEntry = useCallback((project: string): string => {
+    const section =
+      useProjectNavStore.getState().lastSectionByProject[project] ?? "freezone";
+    if (section === "episodes") {
+      const remembered =
+        useEpisodeWorkbenchStore.getState().lastEpisodeLocationByProject[project];
+      if (remembered) {
+        const normalized = normalizeLastEpisodeLocation(project, remembered);
+        if (normalized) return normalized;
+      }
+    }
+    return PROJECT_SECTION_ROUTES[section] ?? PROJECT_SECTION_ROUTES.freezone;
+  }, []);
+
   const openProject = (project: string) =>
-    navigate({ to: PROJECT_SECTION_ROUTES.freezone, params: { project } });
+    navigate({ to: resolveProjectEntry(project), params: { project } });
   const preloadProject = useCallback(
     (project: string) => {
       void router
-        .preloadRoute({ to: PROJECT_SECTION_ROUTES.freezone, params: { project } })
+        .preloadRoute({ to: resolveProjectEntry(project), params: { project } })
         .catch(() => undefined);
     },
-    [router],
+    [resolveProjectEntry, router],
   );
 
   const runWithUndo = (

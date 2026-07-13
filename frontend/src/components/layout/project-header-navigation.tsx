@@ -21,6 +21,7 @@ import {
   projectSectionFromPath,
 } from "@/components/layout/project-navigation-routes";
 import { normalizeLastEpisodeLocation, useEpisodeWorkbenchStore } from "@/stores/episode-workbench-store";
+import { isRememberedSection, useProjectNavStore } from "@/stores/project-nav-store";
 import { useAllProjectSummaries } from "@/lib/queries/projects";
 import { getProjectCover } from "@/lib/project-cover";
 import { cn } from "@/lib/utils";
@@ -162,6 +163,18 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
   );
   const setLastEpisodeLocation = useEpisodeWorkbenchStore((state) => state.setLastEpisodeLocation);
   const clearLastEpisodeLocation = useEpisodeWorkbenchStore((state) => state.clearLastEpisodeLocation);
+  const rememberSection = useProjectNavStore((state) => state.rememberSection);
+  const lastXiajiSection = useProjectNavStore(
+    (state) => state.lastXiajiSectionByProject[project],
+  );
+
+  // 记住当前停留的区块（虾画 / 虾集子页），进项目和切「虾集」时按此恢复。
+  useEffect(() => {
+    const section = projectSectionFromPath(pathname);
+    if (isRememberedSection(section)) {
+      rememberSection(project, section);
+    }
+  }, [pathname, project, rememberSection]);
 
   useEffect(() => {
     const episodesRoot = `/projects/${encodeURIComponent(project)}/episodes`;
@@ -213,10 +226,19 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
 
   const changeMode = (mode: "xiahua" | "xiaji") => {
     if (mode === activeMode) return;
-    navigate({
-      to: mode === "xiahua" ? PROJECT_SECTION_ROUTES.freezone : XIAJI_DEFAULT_ROUTE,
-      params: { project },
-    });
+    if (mode === "xiahua") {
+      navigate({ to: PROJECT_SECTION_ROUTES.freezone, params: { project } });
+      return;
+    }
+    // 切「虾集」时回到上次停留的子页（默认虾料）；上次在虾镜且有剧集深链则直达。
+    let target: string = lastXiajiSection
+      ? PROJECT_SECTION_ROUTES[lastXiajiSection]
+      : XIAJI_DEFAULT_ROUTE;
+    if (lastXiajiSection === "episodes" && rememberedEpisodeLocation) {
+      target =
+        normalizeLastEpisodeLocation(project, rememberedEpisodeLocation) ?? target;
+    }
+    navigate({ to: target, params: { project } });
   };
 
   const menu = menuPosition && typeof document !== "undefined"
