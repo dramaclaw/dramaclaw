@@ -53,7 +53,7 @@ describe("resetRegionState", () => {
   });
 
   it("localStorage sweep preserves supertale-app and i18nextLng", () => {
-    localStorage.setItem("supertale-app", JSON.stringify({ state: { sidebarWidth: 200 } }));
+    localStorage.setItem("supertale-app", JSON.stringify({ state: { language: "zh" } }));
     localStorage.setItem("i18nextLng", "zh");
     resetRegionState({ queryClient: new QueryClient() });
     expect(localStorage.getItem("supertale-app")).not.toBeNull();

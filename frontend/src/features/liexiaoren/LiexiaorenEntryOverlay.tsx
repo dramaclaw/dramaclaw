@@ -69,6 +69,15 @@ export function LiexiaorenEntryOverlay({
       aria-modal="true"
       aria-label="鲁班秘术猎魈人入场动画"
     >
+      <button
+        type="button"
+        className={styles.skipHint}
+        aria-label="取消入场动画"
+        onClick={close}
+      >
+        <kbd>ESC</kbd>
+        <span>取消动画</span>
+      </button>
       <div className={styles.stage}>
         <video
           ref={mainVideoRef}

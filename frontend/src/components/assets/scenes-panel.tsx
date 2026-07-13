@@ -1300,7 +1300,11 @@ export function ScenesPanel({
             <Sparkles className="size-3.5" />
           )}
           {t("assets.scenes.build")}
-          <CreditCostInline display={buildScenesCostDisplay} />
+          <CreditCostInline
+            display={buildScenesCostDisplay}
+            className="text-black"
+            iconClassName="text-black drop-shadow-none [&_path]:fill-current"
+          />
         </Button>
       </AssetHeaderActions>
       {scenes.isLoading ? (

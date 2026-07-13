@@ -357,7 +357,11 @@ function TopBar({
               <Play className="size-3.5" />
             )}
             {t("episode.list.replanEpisodes")}
-            <CreditCostInline display={planCostDisplay} />
+            <CreditCostInline
+              display={planCostDisplay}
+              className="text-black"
+              iconClassName="text-black drop-shadow-none [&_path]:fill-current"
+            />
           </Button>
         )}
         {showPlan && (
@@ -373,7 +377,11 @@ function TopBar({
               <Play className="size-3.5" />
             )}
             {t("episode.list.planEpisodes")}
-            <CreditCostInline display={planCostDisplay} />
+            <CreditCostInline
+              display={planCostDisplay}
+              className="text-black"
+              iconClassName="text-black drop-shadow-none [&_path]:fill-current"
+            />
           </Button>
         )}
         {showBack && (
