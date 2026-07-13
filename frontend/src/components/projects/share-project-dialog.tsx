@@ -133,7 +133,7 @@ export function ShareProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(42rem,calc(100vh-2rem))] overflow-hidden rounded-2xl border border-white/8 bg-background/82 p-0 shadow-2xl backdrop-blur-3xl sm:max-w-2xl">
+      <DialogContent className="flex max-h-[min(42rem,calc(100vh-2rem))] flex-col overflow-hidden rounded-2xl border border-white/8 bg-background/82 p-0 shadow-2xl backdrop-blur-3xl sm:max-w-2xl">
         <DialogHeader className="px-6 pb-2 pt-5">
           <DialogTitle className="flex items-center gap-2 text-lg">
             <Users className="size-5 text-primary" />
@@ -144,7 +144,7 @@ export function ShareProjectDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-5 overflow-y-auto px-6 pb-5 pt-2">
+        <div className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto px-6 pb-5 pt-2">
           <section className="rounded-xl border border-border/70 bg-card/45 p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
@@ -198,7 +198,7 @@ export function ShareProjectDialog({
                     {(value: string) => projectRoleLabel(value as ProjectRole)}
                   </SelectValue>
                 </SelectTrigger>
-                <SelectContent alignItemWithTrigger>
+                <SelectContent alignItemWithTrigger={false}>
                   {GRANT_ROLES.map((item) => (
                     <SelectItem key={item} value={item}>
                       {projectRoleLabel(item)}
@@ -249,7 +249,7 @@ export function ShareProjectDialog({
                         {(value: string) => projectRoleLabel(value as ProjectRole)}
                       </SelectValue>
                     </SelectTrigger>
-                    <SelectContent alignItemWithTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
                       {GRANT_ROLES.map((item) => (
                         <SelectItem key={item} value={item}>
                           {projectRoleLabel(item)}
