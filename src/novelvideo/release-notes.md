@@ -1,20 +1,20 @@
 ---
-version: 1.0.6
+version: 1.0.7
 attention: low
 ---
-# v1.0.6
+# v1.0.7
 
 ## User-facing Highlights (zh)
 
-- **原生桌面运行更完整**: Windows 和 macOS 原生运行路径补齐,自部署不再只依赖 Docker 场景。
-- **画布创作更顺手**: 连线拖拽反馈、多选按连线排列和历史资产模型/模式记忆让图像与视频节点编排更稳定。
-- **登录页和站点呈现升级**: 猎魈人主题入口、主行动按钮和搜索分享信息完成收口,公开站点展示更统一。
+- **剧本导入更准确**: 章节标题边界识别更严格,减少正文里的“第一集/Chapter 1”被误切成新章节的情况。
+- **虾画视频节点更稳定**: 修复首尾帧和画布上下文串用导致的视频节点报错,跨画布编辑更可靠。
+- **登录与公开页面更可靠**: 登录页视频、商务微信二维码和浏览器 CSP 兼容性完成收口,减少黑屏、花屏和控制台告警。
 
 ## User-facing Highlights (en)
 
-- **More complete native desktop support**: Windows and macOS native runtime paths are now covered, so self-hosting is no longer limited to Docker-first workflows.
-- **Smoother canvas creation**: Connection feedback, connection-aware multi-selection layout, and history asset model/mode memory make image and video node workflows more predictable.
-- **Refined login and site presentation**: The Liexiaoren themed entry, primary action buttons, and search/social metadata now present a more consistent public experience.
+- **More accurate script imports**: Chapter title boundary detection is stricter, reducing accidental splits when text mentions “Episode 1” or “Chapter 1” inside body copy.
+- **More stable Xiahua video nodes**: Video nodes now avoid first/last-frame and canvas-context leakage that could break cross-canvas editing.
+- **More reliable login and public pages**: Login video assets, business WeCom QR assets, and browser CSP compatibility were tightened to reduce black screens, visual glitches, and console warnings.
 
 ## Fixes
 
