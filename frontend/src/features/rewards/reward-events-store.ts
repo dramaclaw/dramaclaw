@@ -20,7 +20,6 @@ export type AccessoryRewardEvent = {
 type RewardEventsState = {
   events: AccessoryRewardEvent[];
   upsertEvents: (events: AccessoryRewardEvent[]) => void;
-  seedMockAccessoryUnlock: () => void;
   triggerMockAccessoryUnlock: () => void;
   triggerMockAccessoryBatchUnlock: () => void;
   markSeen: (id: string) => void;
@@ -85,23 +84,6 @@ export const useRewardEventsStore = create<RewardEventsState>()(
           });
           return { events: Array.from(byId.values()) };
         }),
-      seedMockAccessoryUnlock: () =>
-        set((state) => {
-          if (state.events.some((event) => event.id === MOCK_EVENT_ID)) return state;
-          return {
-            events: [
-              ...state.events,
-              {
-                id: MOCK_EVENT_ID,
-                type: "accessory",
-                rewardId: "piko-accessory-founder-medal",
-                source: "system",
-                status: "pending",
-                createdAt: new Date().toISOString(),
-              },
-            ],
-          };
-        }),
       triggerMockAccessoryUnlock: () => {
         const event: AccessoryRewardEvent = {
           id: `mock-accessory-unlock-${Date.now()}`,
@@ -165,8 +147,20 @@ export const useRewardEventsStore = create<RewardEventsState>()(
     }),
     {
       name: "supertale-reward-events",
+      version: 1,
       storage: createJSONStorage(() => quotaSafeStateStorage),
       partialize: (state) => ({ events: capPersistedRewardEvents(state.events) }),
+      // v0 时代 DEV 会自动注入一个「创始勋章」mock 奖励，不领取就一直弹
+      // Piko 气泡。迁移时把这个未领取的种子事件清掉；已领取的保留（饰品
+      // 已经归属用户）。
+      migrate: (persisted: unknown) => {
+        const base = (persisted ?? {}) as { events?: AccessoryRewardEvent[] };
+        return {
+          events: (base.events ?? []).filter(
+            (event) => event.id !== MOCK_EVENT_ID || event.status === "claimed",
+          ),
+        };
+      },
     },
   ),
 );

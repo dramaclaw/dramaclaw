@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import {
   PIKO_ACCESSORIES,
@@ -35,7 +35,6 @@ export function AccessoryUnlockPrompt() {
   const [rewardFlights, setRewardFlights] = useState<RewardFlight[]>([]);
   const [isClaiming, setIsClaiming] = useState(false);
   const events = useRewardEventsStore((state) => state.events);
-  const seedMockAccessoryUnlock = useRewardEventsStore((state) => state.seedMockAccessoryUnlock);
   const markSeen = useRewardEventsStore((state) => state.markSeen);
   const markSeenBatch = useRewardEventsStore((state) => state.markSeenBatch);
   const claim = useRewardEventsStore((state) => state.claim);
@@ -55,12 +54,6 @@ export function AccessoryUnlockPrompt() {
   const seenRewardItems = seenEvents
     .map((event) => resolveRewardItem(event))
     .filter((item): item is RewardItem => item !== null);
-
-  useEffect(() => {
-    if (import.meta.env.DEV) {
-      seedMockAccessoryUnlock();
-    }
-  }, [seedMockAccessoryUnlock]);
 
   const completeClaim = () => {
     if (!seenEvent) return;
