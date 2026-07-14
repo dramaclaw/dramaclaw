@@ -1368,6 +1368,12 @@
     "buildHint": "构建语义图谱，然后在角色 / 剧集页面分别构建",
     "emptyPreview": "上传文件后，这里会显示小说结构预览",
     "chapterTitleFallback": "第 {{n}} 章",
+    "novelFormat": {
+      "button": "小说格式",
+      "title": "精品剧格式",
+      "specLabel": "标准格式",
+      "exampleLabel": "示例片段"
+    },
     "projectType": "项目类型",
     "projectTypeLocked": "项目类型已锁定，如需切换请重新导入",
     "projectTypes": {

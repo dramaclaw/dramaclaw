@@ -337,6 +337,10 @@ function stringOrUndefined(value: unknown): string | undefined {
  * so this shell omits the back button, project picker, import/extract/
  * video-ref/3GS triggers, and the top-right Beat Workbench task entry.
  */
+const canvasKey = (projectId: string, canvasId: string) => `${projectId}::${canvasId}`;
+/** 上一次真正画出来的画布；跨挂载保留，用来判断重进时能否直接复用 store 里的内容。 */
+let lastRenderedCanvasKey: string | null = null;
+
 export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -365,7 +369,15 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   // there is no UI bound to a syncing/removing value, so no state is kept.
   const syncingProjectionRef = useRef<string | null>(null);
   const removingProjectionRef = useRef<string | null>(null);
-  const [hasRenderedCanvas, setHasRenderedCanvas] = useState(false);
+  // 顶栏在「虾画 / 虾集」之间切换会整体卸载再挂载本组件，但画布数据留在全局 store 里。
+  // 如果这里从 false 起步，回到虾画就会先把画面换成「正在加载画布…」，等 hydrate 回来
+  // 才重新画出来 —— 看着就是卡。同一个画布重进时直接渲染 store 里的既有内容，
+  // hydrate 期间只叠一层轻量 overlay。
+  const [hasRenderedCanvas, setHasRenderedCanvas] = useState(
+    () =>
+      lastRenderedCanvasKey === canvasKey(projectId, canvasId) &&
+      useCanvasStore.getState().nodes.length > 0,
+  );
   const [projectionStatusRefreshToken, setProjectionStatusRefreshToken] = useState(0);
   const lastProjectionStatusRevisionRef = useRef<{
     canvasId: string;
@@ -419,9 +431,10 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
 
   useEffect(() => {
     if (sync.status === "ready" && sync.hydratedCanvasId === canvasId) {
+      lastRenderedCanvasKey = canvasKey(projectId, canvasId);
       setHasRenderedCanvas(true);
     }
-  }, [canvasId, sync.hydratedCanvasId, sync.status]);
+  }, [canvasId, projectId, sync.hydratedCanvasId, sync.status]);
 
   const projectionKeys = useMemo(
     () => projectionKeysFromMetadata(sync.metadata),
@@ -1492,9 +1505,11 @@ function CanvasLoadingScreen() {
 }
 
 function CanvasLoadingOverlay() {
+  // hydrate 还在飞时画布上的编辑既不会入队保存，也会被随后的 setCanvasData(remote)
+  // 整个盖掉。所以这层遮罩必须真的吃掉指针事件，不能只是视觉上蒙一层。
   return (
     <div
-      className="pointer-events-none absolute inset-0 z-20 bg-bg-dark/10 backdrop-blur-[1px]"
+      className="absolute inset-0 z-20 cursor-wait bg-bg-dark/10 backdrop-blur-[1px]"
       aria-hidden="true"
     />
   );

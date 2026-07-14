@@ -46,6 +46,7 @@ import { LiexiaorenSkinPreview } from "@/features/liexiaoren/LiexiaorenSkinPrevi
 import {
   ProjectHeaderNavigation,
   ProjectSwitcher,
+  ProjectXiajiMenu,
 } from "@/components/layout/project-header-navigation";
 const ACCOUNT_PANEL_TRANSITION_MS = 350;
 
@@ -342,6 +343,7 @@ export function Header() {
           </div>
         </div>
       </header>
+      {project ? <ProjectXiajiMenu project={project} /> : null}
       {accountPanelOpen
         ? createPortal(
             <AccountPanel

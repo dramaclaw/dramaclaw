@@ -65,7 +65,9 @@ function SelectContent({
   sideOffset = 4,
   align = "center",
   alignOffset = 0,
-  alignItemWithTrigger = true,
+  // 下拉面板挂在触发器下方，而不是 base-ui 默认的「选中项对齐触发器」——
+  // 后者会让面板整个压在触发器上，看着像错位。
+  alignItemWithTrigger = false,
   ...props
 }: SelectPrimitive.Popup.Props &
   Pick<

@@ -61,7 +61,32 @@ const DRAFT_DEBOUNCE_MS = 300;
 /** Extra app-level retry attempts when ky surfaces a 503 canvas_lock_busy. */
 const LOCK_BUSY_MAX_RETRIES = 1;
 export const FREEZONE_HYDRATE_RELEASE_GRACE_MS = 50;
-export const FREEZONE_HYDRATE_SETTLED_REUSE_MS = 5_000;
+/**
+ * 已结算的 hydrate 结果保留多久可复用。顶栏在「虾画 / 虾集」之间来回切时会整体
+ * 卸载再挂载画布，复用能省掉一趟往返的全量拉取。仅在期间没有任何本地编辑
+ * （userEditsSinceHydrate === 0）时复用。
+ *
+ * 窗口刻意压得很短：复用的 payload 连同它的 revision 一起被当成最新的，期间别的
+ * 标签页或协作者改了同一张画布，我们既画的是旧内容，之后保存还会撞 409。10 秒够
+ * 覆盖「切过去又立刻切回来」，再长就是拿正确性换手感了。
+ */
+export const FREEZONE_HYDRATE_SETTLED_REUSE_MS = 10_000;
+
+let prunePending = false;
+
+/** 整页生命周期内只调度一次旧草稿清理，且一旦排上队就让它跑完。 */
+function schedulePruneOnce(): void {
+  if (prunePending) return;
+  prunePending = true;
+  const run = () => {
+    pruneOldCanvasDrafts();
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(run, { timeout: 2_000 });
+    return;
+  }
+  window.setTimeout(run, 300);
+}
 
 type HydrateFlight = {
   controller: AbortController;
@@ -229,11 +254,19 @@ function statusFromError(err: unknown): number | null {
  * viewport resize, selection, hover, focus, tool dialogs, image preview) never
  * touch it, so they no longer trigger a full PUT.
  */
-function canvasContentSignature(
-  nodes: CanvasNode[],
-  edges: CanvasEdge[],
-): string {
-  const nodeShapes = nodes.map((node) => ({
+/**
+ * 逐节点/逐边的指纹缓存。store 的更新是不可变的：一次选中、一次拖拽只会替换受影响的
+ * 那几个节点对象，其余节点对象的引用不变。按对象身份缓存分片后，签名的代价就从
+ * 「每次变更都 stringify 整张图」降到「只 stringify 真正变了的那几个节点」——画布里
+ * 有几十个图片/视频节点时，这是切页那一帧卡死的主要来源。
+ */
+const nodeSignatureCache = new WeakMap<object, string>();
+const edgeSignatureCache = new WeakMap<object, string>();
+
+function nodeSignature(node: CanvasNode): string {
+  const cached = nodeSignatureCache.get(node);
+  if (cached !== undefined) return cached;
+  const signature = JSON.stringify({
     id: node.id,
     type: node.type,
     position: node.position,
@@ -243,8 +276,15 @@ function canvasContentSignature(
     parentId: node.parentId,
     extent: node.extent,
     data: node.data,
-  }));
-  const edgeShapes = edges.map((edge) => ({
+  });
+  nodeSignatureCache.set(node, signature);
+  return signature;
+}
+
+function edgeSignature(edge: CanvasEdge): string {
+  const cached = edgeSignatureCache.get(edge);
+  if (cached !== undefined) return cached;
+  const signature = JSON.stringify({
     id: edge.id,
     source: edge.source,
     target: edge.target,
@@ -252,8 +292,18 @@ function canvasContentSignature(
     targetHandle: edge.targetHandle,
     type: edge.type,
     data: edge.data,
-  }));
-  return JSON.stringify({ nodes: nodeShapes, edges: edgeShapes });
+  });
+  edgeSignatureCache.set(edge, signature);
+  return signature;
+}
+
+function canvasContentSignature(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+): string {
+  return `${nodes.map(nodeSignature).join("")}${edges
+    .map(edgeSignature)
+    .join("")}`;
 }
 
 type HydrateDraftDecision =
@@ -906,7 +956,10 @@ export function useCanvasSync(
   // ---- 1. Hydrate ---- //
   useEffect(() => {
     let cancelled = false;
-    pruneOldCanvasDrafts();
+    // 清理旧草稿要遍历并解析整个 localStorage（草稿动辄几 MB），放在挂载的关键路径上
+    // 会直接卡住切页那一帧；挪到空闲期做，它跟本次 hydrate 没有先后依赖。整页只跑一次，
+    // 且不随卸载取消 —— 否则「进画布不到两秒就切走」这种最常见的路径永远清理不到。
+    schedulePruneOnce();
     const hydrateFlight = acquireHydrateFlight(project, canvasId, reloadKey);
     setSyncStatus("loading");
     setError(null);
@@ -1189,6 +1242,15 @@ export function useCanvasSync(
     const unsubscribeCanvas = useCanvasStore.subscribe((state, prev) => {
       if (state.viewportBookmarks !== prev.viewportBookmarks) {
         triggerSave();
+      }
+      // store 里还住着视口、选中、弹窗等纯视图状态，它们的变更不可能改到 nodes/edges。
+      // 数组引用没变就直接放行，连签名都不用算 —— 切页时这里是热点。
+      if (state.nodes === prev.nodes && state.edges === prev.edges) {
+        // 抑制标志总是紧挨着 applyCanvasDataEdit 设的（同步，中间插不进别的变更），
+        // 所以这里必须顺手消费掉：万一那次程序化改写产出的数组原样未变，标志留到
+        // 下一次就会把用户真正的编辑连保存带草稿一起吞了。
+        suppressNextCanvasAutosaveRef.current = false;
+        return;
       }
       const nextSignature = canvasContentSignature(state.nodes, state.edges);
       if (suppressNextCanvasAutosaveRef.current) {

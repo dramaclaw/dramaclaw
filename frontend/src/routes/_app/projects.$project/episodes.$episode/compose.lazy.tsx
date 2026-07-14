@@ -403,7 +403,7 @@ function ComposeTabContent() {
                   variant="outline"
                   size="sm"
                   onClick={() => void handleExport("srt")}
-                  className="gap-1.5 rounded-lg"
+                  className="gap-1.5"
                 >
                   <FileText className="size-3.5" />
                   {t("episode.compose.exportSrt")}
@@ -412,7 +412,7 @@ function ComposeTabContent() {
                   variant="outline"
                   size="sm"
                   onClick={() => void handleExport("zip")}
-                  className="gap-1.5 rounded-lg"
+                  className="gap-1.5"
                 >
                   <Download className="size-3.5" />
                   {t("episode.compose.exportZip")}
@@ -422,7 +422,7 @@ function ComposeTabContent() {
                     <Button
                       size="sm"
                       onClick={() => void handleDownloadVideo()}
-                      className="gap-1.5 rounded-lg"
+                      className="gap-1.5"
                     >
                       <Download className="size-3.5" />
                       {t("episode.compose.downloadVideo")}
@@ -432,7 +432,7 @@ function ComposeTabContent() {
                       size="sm"
                       onClick={() => setComposeConfirm(true)}
                       disabled={!canCompose || isComposing}
-                      className="gap-1.5 rounded-lg"
+                      className="gap-1.5"
                     >
                       {isComposing ? (
                         <Loader2 className="size-3.5 animate-spin" />
@@ -447,7 +447,7 @@ function ComposeTabContent() {
                     size="sm"
                     onClick={() => setComposeConfirm(true)}
                     disabled={!canCompose || isComposing}
-                    className="gap-1.5 rounded-lg bg-primary text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
+                    className="gap-1.5 bg-primary text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
                   >
                     {isComposing ? (
                       <Loader2 className="size-3.5 animate-spin" />
@@ -479,8 +479,8 @@ function ComposeTabContent() {
                 <div className="flex items-center gap-1.5">
                   <span className="text-[12px] text-muted-foreground">{t("episode.compose.resolution")}:</span>
                   <Select value={resolution} onValueChange={handleResolutionChange}>
-                    <SelectTrigger className="!h-7 w-28 rounded-lg border border-white/10 bg-transparent py-0 text-[12px] font-medium text-foreground/85">
-                      <SelectValue />
+                    <SelectTrigger className="!h-7 w-28 rounded-[6px] border border-white/10 bg-transparent py-0 text-[12px] font-medium text-foreground/85">
+                      <SelectValue>{() => resolutionLabel(resolution)}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {resolutionOptions(orientation).map((value) => (
@@ -584,7 +584,7 @@ function BeatBlockerGrid({
           key={beatNum}
           type="button"
           onClick={() => jump(beatNum)}
-          className="group relative flex min-h-[92px] flex-col rounded-[12px] border border-white/10 bg-white/[0.03] px-6 py-3.5 text-left transition-all duration-[350ms] hover:scale-[1.015] hover:border-primary/30 hover:bg-primary/[0.06]"
+          className="group relative flex min-h-[92px] flex-col rounded-[8px] border border-white/10 bg-white/[0.03] px-6 py-3.5 text-left transition-all duration-[350ms] hover:scale-[1.015] hover:border-primary/30 hover:bg-primary/[0.06]"
         >
           <ArrowUpRight className="absolute right-3 top-3 size-3.5 text-muted-foreground opacity-0 transition-opacity duration-[350ms] group-hover:opacity-100" />
           <div className="space-y-2.5">

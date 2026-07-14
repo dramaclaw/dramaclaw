@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   FileText,
   FishSymbol,
+  Info,
   Loader2,
   Play,
   Plus,
@@ -31,6 +32,7 @@ import {
   type UploadResult,
 } from "@/lib/queries/ingest";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
+import { NovelFormatDialog } from "@/components/ingest/NovelFormatDialog";
 import { useStyles } from "@/lib/queries/styles";
 import { useCharacters } from "@/lib/queries/characters";
 import { useCancelTask } from "@/lib/queries/tasks";
@@ -818,6 +820,7 @@ export function IngestPageContent({ project }: { project: string }) {
   const [uploadedFileSource, setUploadedFileSource] =
     useState<UploadedFileSource | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>("upload");
+  const [novelFormatOpen, setNovelFormatOpen] = useState(false);
   const [pastedText, setPastedText] = useState("");
   const [ingestSubmitted, setIngestSubmitted] = useState(false);
   const [hideImportedPreview, setHideImportedPreview] = useState(() =>
@@ -1475,6 +1478,18 @@ export function IngestPageContent({ project }: { project: string }) {
                   </SelectContent>
                 </Select>
 
+                {/* 导入标准格式只对精品剧成立，解说剧走的是另一套解析。 */}
+                {settingsValues.spine_template === "drama" && (
+                  <button
+                    type="button"
+                    onClick={() => setNovelFormatOpen(true)}
+                    className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[13px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground [&:hover>span]:underline"
+                  >
+                    <Info className="size-3.5 shrink-0" />
+                    <span>{t("ingest.novelFormat.button")}</span>
+                  </button>
+                )}
+
                 <div className="col-span-2 flex w-full shrink-0 items-center justify-end gap-3 md:ml-auto md:w-auto">
                   <Button
                     type="button"
@@ -1772,6 +1787,7 @@ export function IngestPageContent({ project }: { project: string }) {
           if (!next) setFormatCheckDetails(null);
         }}
       />
+      <NovelFormatDialog open={novelFormatOpen} onOpenChange={setNovelFormatOpen} />
     </div>
   );
 }

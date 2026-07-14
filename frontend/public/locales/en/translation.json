@@ -1368,6 +1368,12 @@
     "buildHint": "Build the semantic graph, then construct characters and episodes on their respective pages.",
     "emptyPreview": "No content to preview yet. Upload a file to see the structure.",
     "chapterTitleFallback": "Chapter {{n}}",
+    "novelFormat": {
+      "button": "Novel format",
+      "title": "Premium drama format",
+      "specLabel": "Standard format",
+      "exampleLabel": "Example excerpt"
+    },
     "projectType": "Project type",
     "projectTypeLocked": "Project type is locked after import. Re-import to switch.",
     "projectTypes": {

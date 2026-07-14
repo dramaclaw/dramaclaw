@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ArrowLeft, Check, ChevronDown, Clapperboard, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -27,7 +26,6 @@ import { getProjectCover } from "@/lib/project-cover";
 import { cn } from "@/lib/utils";
 
 const XIAJI_DEFAULT_ROUTE = PROJECT_SECTION_ROUTES.ingest;
-const XIAJI_MENU_OFFSET_Y = 10;
 
 const xiajiMenuItems = [
   { labelKey: "nav.ingest", to: PROJECT_SECTION_ROUTES.ingest },
@@ -150,14 +148,59 @@ export function ProjectSwitcher({ current }: { current: string }) {
   );
 }
 
+/**
+ * 「虾集」子页菜单，作为 header 的第二行渲染 —— 它必须在文档流里占真实高度，
+ * 而不是浮在内容之上：内容区是独立滚动容器，任何浮层都会被滚上来的内容穿过。
+ */
+export function ProjectXiajiMenu({ project }: { project: string }) {
+  const { t } = useTranslation();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const rememberedEpisodeLocation = useEpisodeWorkbenchStore(
+    (state) => state.lastEpisodeLocationByProject[project],
+  );
+
+  if (projectModeFromPath(pathname) !== "xiaji") return null;
+
+  return (
+    <div className="flex justify-center px-4 pb-2">
+      <nav
+        aria-label={t("nav.xiajiMenu")}
+        className="flex items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-white/[0.04] px-3.5 py-[3px] text-sidebar-foreground"
+      >
+        {xiajiMenuItems.map((item) => {
+          const target =
+            "rememberKey" in item && rememberedEpisodeLocation
+              ? normalizeLastEpisodeLocation(project, rememberedEpisodeLocation) ?? item.to
+              : item.to;
+          // 高亮按栏目自身的路由判断：target 可能是带 ?query 的剧集深链，
+          // 拿它比 pathname 永远不相等（虾镜里就不会高亮）。
+          const sectionPath = item.to.replace("$project", encodeURIComponent(project));
+          const active = pathname === sectionPath || pathname.startsWith(`${sectionPath}/`);
+          return (
+            <Link
+              key={item.labelKey}
+              to={target}
+              params={{ project }}
+              className={cn(
+                "flex h-7 items-center px-1.5 text-xs font-semibold transition-colors duration-150 ease-[var(--ease-out-quint)]",
+                active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+              aria-current={active ? "page" : undefined}
+            >
+              {t(item.labelKey)}
+            </Link>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
 export function ProjectHeaderNavigation({ project }: { project: string }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const activeMode = projectModeFromPath(pathname);
-  const navRef = useRef<HTMLElement | null>(null);
-  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
-  const [menuVisible, setMenuVisible] = useState(false);
   const rememberedEpisodeLocation = useEpisodeWorkbenchStore(
     (state) => state.lastEpisodeLocationByProject[project],
   );
@@ -187,43 +230,6 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
     setLastEpisodeLocation(project, `${pathname}${window.location.search}`);
   }, [clearLastEpisodeLocation, pathname, project, setLastEpisodeLocation]);
 
-  useEffect(() => {
-    if (activeMode !== "xiaji") {
-      setMenuVisible(false);
-      setMenuPosition(null);
-      return undefined;
-    }
-    let frame = 0;
-    const updatePosition = () => {
-      const rect = navRef.current?.getBoundingClientRect();
-      setMenuPosition(
-        rect
-          ? {
-              left: Math.round(rect.left + rect.width / 2),
-              top: Math.round(rect.bottom + XIAJI_MENU_OFFSET_Y),
-            }
-          : null,
-      );
-    };
-    const scheduleUpdate = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(updatePosition);
-    };
-    updatePosition();
-    setMenuVisible(false);
-    frame = requestAnimationFrame(() => {
-      updatePosition();
-      setMenuVisible(true);
-    });
-    window.addEventListener("resize", scheduleUpdate);
-    window.addEventListener("scroll", scheduleUpdate, true);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.removeEventListener("resize", scheduleUpdate);
-      window.removeEventListener("scroll", scheduleUpdate, true);
-    };
-  }, [activeMode]);
-
   const changeMode = (mode: "xiahua" | "xiaji") => {
     if (mode === activeMode) return;
     if (mode === "xiahua") {
@@ -241,91 +247,48 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
     navigate({ to: target, params: { project } });
   };
 
-  const menu = menuPosition && typeof document !== "undefined"
-    ? createPortal(
-        <nav
-          aria-label={t("nav.xiajiMenu")}
-          className={cn(
-            "fixed z-[1000] flex -translate-x-1/2 items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-black/[0.30] px-3.5 py-[3px] text-sidebar-foreground backdrop-blur-[18px] transition-[opacity,transform,filter] duration-[220ms] ease-[var(--ease-out-quint)] will-change-[opacity,transform,filter]",
-            menuVisible
-              ? "translate-y-0 opacity-100 blur-0"
-              : "pointer-events-none -translate-y-1 opacity-0 blur-[2px]",
-          )}
-          style={{ left: menuPosition.left, top: menuPosition.top }}
-        >
-          {xiajiMenuItems.map((item) => {
-            const target =
-              "rememberKey" in item && rememberedEpisodeLocation
-                ? normalizeLastEpisodeLocation(project, rememberedEpisodeLocation) ?? item.to
-                : item.to;
-            const targetPath = target.replace("$project", encodeURIComponent(project));
-            const active = pathname === targetPath || pathname.startsWith(`${targetPath}/`);
-            return (
-              <Link
-                key={item.labelKey}
-                to={target}
-                params={{ project }}
-                className={cn(
-                  "flex h-7 items-center px-1.5 text-xs font-semibold transition-colors duration-150 ease-[var(--ease-out-quint)]",
-                  active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-                aria-current={active ? "page" : undefined}
-              >
-                {t(item.labelKey)}
-              </Link>
-            );
-          })}
-        </nav>,
-        document.body,
-      )
-    : null;
-
   return (
-    <>
-      <nav
-        ref={navRef}
-        aria-label={t("nav.creationMode")}
-        className="absolute left-1/2 top-1/2 z-30 flex -translate-x-1/2 translate-y-[calc(-50%+4px)] items-center"
-      >
-        <div className="relative flex h-8 items-center rounded-full bg-white/[0.07]">
-          <span
-            aria-hidden="true"
-            className={cn(
-              "absolute left-0 top-1/2 h-7 w-[74px] -translate-y-1/2 rounded-full bg-foreground transition-transform duration-300 ease-[var(--ease-out-quint)]",
-              activeMode === "xiaji" && "translate-x-[74px]",
-            )}
-          />
-          <button
-            type="button"
-            onClick={() => changeMode("xiahua")}
-            className={cn(
-              "relative z-10 inline-flex h-8 w-[74px] items-center justify-center gap-1.5 rounded-full text-xs font-semibold transition-colors",
-              activeMode === "xiahua"
-                ? "text-background"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-            aria-pressed={activeMode === "xiahua"}
-          >
-            <Sparkles className="size-3.5" />
-            {t("nav.freezone")}
-          </button>
-          <button
-            type="button"
-            onClick={() => changeMode("xiaji")}
-            className={cn(
-              "relative z-10 inline-flex h-8 w-[74px] items-center justify-center gap-1.5 rounded-full text-xs font-semibold transition-colors",
-              activeMode === "xiaji"
-                ? "text-background"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-            aria-pressed={activeMode === "xiaji"}
-          >
-            <Clapperboard className="size-3.5" />
-            {t("nav.xiaji")}
-          </button>
-        </div>
-      </nav>
-      {menu}
-    </>
+    <nav
+      aria-label={t("nav.creationMode")}
+      className="absolute left-1/2 top-1/2 z-30 flex -translate-x-1/2 translate-y-[calc(-50%+4px)] items-center"
+    >
+      <div className="relative flex h-8 items-center rounded-full bg-white/[0.07]">
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute left-0 top-1/2 h-7 w-[74px] -translate-y-1/2 rounded-full bg-foreground transition-transform duration-300 ease-[var(--ease-out-quint)]",
+            activeMode === "xiaji" && "translate-x-[74px]",
+          )}
+        />
+        <button
+          type="button"
+          onClick={() => changeMode("xiahua")}
+          className={cn(
+            "relative z-10 inline-flex h-8 w-[74px] items-center justify-center gap-1.5 rounded-full text-xs font-semibold transition-colors",
+            activeMode === "xiahua"
+              ? "text-background"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+          aria-pressed={activeMode === "xiahua"}
+        >
+          <Sparkles className="size-3.5" />
+          {t("nav.freezone")}
+        </button>
+        <button
+          type="button"
+          onClick={() => changeMode("xiaji")}
+          className={cn(
+            "relative z-10 inline-flex h-8 w-[74px] items-center justify-center gap-1.5 rounded-full text-xs font-semibold transition-colors",
+            activeMode === "xiaji"
+              ? "text-background"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+          aria-pressed={activeMode === "xiaji"}
+        >
+          <Clapperboard className="size-3.5" />
+          {t("nav.xiaji")}
+        </button>
+      </div>
+    </nav>
   );
 }
