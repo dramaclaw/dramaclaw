@@ -618,18 +618,23 @@ export function useRegenerateSketches(project: string, episode: number) {
     mutationFn: (params: {
       beatIndices: number[];
       modeKey?: string;
+      imageGenerationSelection?: string;
     }) =>
-      api
-        .post(
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/sketches/regenerate`,
           {
             json: {
               beat_indices: params.beatIndices,
               mode_key: params.modeKey ?? "1x1_2-3_sketch",
+              ...(params.imageGenerationSelection
+                ? { image_generation_selection: params.imageGenerationSelection }
+                : {}),
             },
+            throwHttpErrors: false,
           },
-        )
-        .json<TaskResponse | ErrorResponse>(),
+        ),
+      ),
   });
 }
 

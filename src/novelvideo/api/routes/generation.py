@@ -186,6 +186,33 @@ def _resolve_sketch_image_selection(
     )
 
 
+def _sketch_regen_billing_metadata(image_selection: str, mode_key: str) -> dict:
+    from novelvideo.config import (
+        IMAGE_GENERATION_SELECTIONS,
+        normalize_image_generation_selection,
+    )
+    from novelvideo.api.routes.model_credits import _image_selection_billing_params
+
+    selection = normalize_image_generation_selection(image_selection)
+    model_cfg = IMAGE_GENERATION_SELECTIONS.get(selection) or {}
+    pricing_model = str(model_cfg.get("model") or "").strip()
+    if not pricing_model:
+        return {}
+    pricing_params = _image_selection_billing_params(
+        model=pricing_model,
+        mode_key=mode_key,
+        image_role="sketch",
+    )
+    return {
+        "image_selection": selection,
+        "pricing_kind": "image",
+        "pricing_model": pricing_model,
+        "pricing_params": pricing_params,
+        "pricing_model_selection": selection,
+        "pricing_model_label": str(model_cfg.get("label") or selection),
+    }
+
+
 def _resolve_render_bool_setting(
     project_config: dict,
     key: str,
@@ -2892,6 +2919,7 @@ async def regenerate_sketches(
         proj_config,
         body.image_generation_selection,
     )
+    billing = _sketch_regen_billing_metadata(sketch_image_selection, mode_key)
     config = {
         "beats": beats,
         "character_map": character_map,
@@ -2919,6 +2947,7 @@ async def regenerate_sketches(
                 "mode_key": mode_key,
                 "output_dir": output_dir,
                 "config": {**config, "mode_key": mode_key},
+                "billing": billing,
             },
         )
         return {

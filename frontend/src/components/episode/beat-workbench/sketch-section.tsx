@@ -8,6 +8,10 @@ import { Accessibility, Box, Crop, Download, ExternalLink, ImageIcon, Loader2, P
 import { isNoReferenceMarker } from "@/lib/beat-markers";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
+import {
   useBeatBackgroundAnchors,
   useBeatDirectorStageManifest,
   useDirectorControlFrameStatus,
@@ -86,6 +90,7 @@ const SKETCH_EMPTY_CLASS =
 const SKETCH_CANDIDATES_CLASS =
   "flex max-h-[220px] flex-wrap content-start gap-2 overflow-y-auto pr-1";
 const BACKGROUND_ANCHOR_PREVIEW_ASPECT = "16 / 9";
+const SKETCH_REGEN_FEATURE_KEY = "mainline.sketch_regen";
 
 interface SketchSectionProps {
   beat: Beat;
@@ -114,10 +119,16 @@ export function SketchSection({
   const sketchSettings = useSketchSettings(project);
   const singleSketchModeKey =
     spec.sketchAspect === "16:9" ? "1x1_16-9_sketch" : "1x1_2-3_sketch";
+  const sketchImageSelection = sketchSettings.data?.data.sketch_image_selection;
   const sketchRegenCost = useGenerationCreditCost(
-    "image_selection",
-    sketchSettings.data?.data.sketch_image_selection,
-    { surface: "supertale", imageRole: "sketch", modeKey: singleSketchModeKey },
+    "feature",
+    SKETCH_REGEN_FEATURE_KEY,
+    {
+      surface: "supertale",
+      imageRole: "sketch",
+      modeKey: singleSketchModeKey,
+      params: sketchImageSelection ? { image_selection: sketchImageSelection } : null,
+    },
   );
   const uploadSketch = useUploadBeatImage(project, episode, "sketch");
   const [stageDialogOpen, setStageDialogOpen] = useState(false);
@@ -311,6 +322,7 @@ export function SketchSection({
       const res = await regenerate.mutateAsync({
         beatIndices: [beat.beat_number],
         modeKey: singleSketchModeKey,
+        imageGenerationSelection: sketchImageSelection,
       });
       if (res.ok === false) {
         toast.error(res.error || t("episode.workbench.sketch.regenFailed"));
@@ -318,8 +330,8 @@ export function SketchSection({
       }
       regenTask.start({ scope: res.scope });
       toast.success(t("episode.workbench.sketch.regenStarted"));
-    } catch {
-      toast.error(t("episode.workbench.sketch.regenFailed"));
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -688,8 +700,15 @@ export function SketchSection({
               {regenerate.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
               {hasSketch
                 ? t("common.regenerate")
-                : t("common.generateNew")}
-              <CreditCostInline display={sketchRegenCost.data?.data.display} />
+                : t("episode.workbench.sketch.generateNow")}
+              <CreditCostInline
+                display={
+                  sketchRegenCost.data?.data.display ??
+                  (sketchRegenCost.error instanceof BillingRuleNotConfiguredError
+                    ? t("common.billingRuleNotConfiguredShort")
+                    : null)
+                }
+              />
             </Button>
           )}
         </div>

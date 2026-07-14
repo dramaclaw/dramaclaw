@@ -367,11 +367,12 @@ def _video_backend_billing_params(params: dict) -> dict:
     return {"resolution": resolution} if resolution else {}
 
 
-def _feature_billing_params(value: str, params: dict) -> dict:
+def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> dict:
     feature_key = str(value or "").strip()
     feature_image_role = {
         "mainline.character_portrait": "character",
         "mainline.identity_image": "identity",
+        "mainline.sketch_regen": "sketch",
     }.get(feature_key)
     if not feature_image_role:
         return params
@@ -385,15 +386,21 @@ def _feature_billing_params(value: str, params: dict) -> dict:
     from novelvideo.config import (
         IMAGE_GENERATION_SELECTIONS,
         normalize_character_image_selection,
+        normalize_image_generation_selection,
     )
 
-    selection = normalize_character_image_selection(image_selection)
+    selection = (
+        normalize_image_generation_selection(image_selection)
+        if feature_image_role == "sketch"
+        else normalize_character_image_selection(image_selection)
+    )
     model_cfg = IMAGE_GENERATION_SELECTIONS.get(selection) or {}
     pricing_model = str(model_cfg.get("model") or "").strip()
     if not pricing_model:
         return params
     pricing_params = _image_selection_billing_params(
         model=pricing_model,
+        mode_key=mode_key,
         image_role=feature_image_role,
     )
     return {
@@ -438,7 +445,7 @@ def _default_billing_params(
     if kind == "video_backend":
         return _video_backend_billing_params(explicit_params)
     if kind == "feature":
-        return _feature_billing_params(value, explicit_params)
+        return _feature_billing_params(value, explicit_params, mode_key=mode_key)
     return explicit_params
 
 
