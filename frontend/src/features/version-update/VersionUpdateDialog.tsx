@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -50,13 +49,21 @@ export function VersionUpdateDialog() {
       <DialogContent
         showCloseButton={false}
         overlayClassName="bg-black/56 backdrop-blur-md supports-backdrop-filter:backdrop-blur-md"
-        className="max-h-[min(84dvh,560px)] w-[min(calc(100vw-32px),400px)] gap-0 overflow-hidden rounded-[14px] border-0 bg-white p-0 text-slate-950 shadow-[0_16px_48px_rgba(0,0,0,0.26)] ring-0 sm:max-w-[400px]"
+        className="max-h-[min(84dvh,560px)] w-[min(calc(100vw-32px),360px)] gap-0 overflow-hidden rounded-[14px] border-0 bg-white p-0 text-slate-950 shadow-[0_16px_48px_rgba(0,0,0,0.26)] ring-0 sm:max-w-[360px]"
       >
         <div className="p-2">
-          <div className="relative flex aspect-[2/1] items-center justify-center overflow-hidden rounded-[12px] bg-[#e7f8ff] text-slate-950">
-            <div className="flex size-16 items-center justify-center rounded-full border border-slate-950/10 bg-white/72 shadow-[0_10px_30px_rgba(15,23,42,0.16)]">
-              <Sparkles className="size-8 text-cyan-600" aria-hidden="true" />
-            </div>
+          <div className="relative flex aspect-[2/1] overflow-hidden rounded-[12px] bg-[#b9e7ff]">
+            <video
+              className="absolute inset-0 h-full w-full object-cover"
+              src="/video/version-update-2026-06-22.mp4"
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              aria-hidden="true"
+            />
+            <div className="absolute inset-0 bg-white/[0.02]" />
           </div>
         </div>
 
@@ -78,7 +85,7 @@ export function VersionUpdateDialog() {
           </div>
           <Button
             type="button"
-            className="mt-7 h-10 w-full rounded-[8px] bg-neutral-950 text-[14px] font-medium text-white shadow-none transition-[background,box-shadow,filter] duration-200 ease-out hover:bg-[#171717] hover:shadow-[0_0_0_1px_rgba(255,255,255,0.08)_inset,0_7px_18px_rgba(0,0,0,0.16)] hover:brightness-110 active:bg-neutral-950 active:shadow-[0_0_0_1px_rgba(255,255,255,0.05)_inset]"
+            className="mt-7 h-10 w-full rounded-[8px] bg-neutral-950 text-[14px] font-medium text-white shadow-none transition-[background,box-shadow,filter] duration-200 ease-out hover:bg-[#171717] hover:shadow-[0_0_0_1px_rgba(255,255,255,0.08)_inset,0_7px_18px_rgba(0,0,0,0.16)] hover:brightness-110 focus-visible:border-transparent focus-visible:ring-0 active:bg-neutral-950 active:shadow-[0_0_0_1px_rgba(255,255,255,0.05)_inset]"
             onClick={() => setOpen(false)}
           >
             {t("app.versionUpdate.confirm")}

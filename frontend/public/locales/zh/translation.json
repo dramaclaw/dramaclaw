@@ -18,7 +18,7 @@
       "description": "请刷新页面后重试。"
     },
     "versionUpdate": {
-      "title": "新功能已上线",
+      "title": "🎉 新功能已上线",
       "confirm": "我知道了",
       "empty": "当前版本暂无更新说明"
     },
@@ -314,11 +314,14 @@
     "waiting": "等待聊天服务连接...",
     "waitingResponse": "等待虾导回复",
     "waitingResponses": [
-      "正在思考…",
-      "组织语言中…",
-      "让我想想…",
-      "马上就好…"
+      "正在理解你想推进的内容",
+      "正在核对当前对话上下文",
+      "正在提取这次需求的重点",
+      "正在梳理相关信息",
+      "正在组织更清楚的回答"
     ],
+    "waitingLongResponse": "这次处理比平时久，仍在继续",
+    "waitingVeryLongResponse": "仍在等待响应，你可以继续等待或停止",
     "send": "发送",
     "queueMessage": "加入发送队列",
     "queuedCount": "待发送 {{count}} 条",

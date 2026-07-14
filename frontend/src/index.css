@@ -1544,6 +1544,18 @@ button:hover .st-keyframe-video-play {
     }
   }
 
+  @keyframes superchat-thinking-wave {
+    0%,
+    100% {
+      opacity: 0.38;
+      transform: scaleY(0.52);
+    }
+    50% {
+      opacity: 0.72;
+      transform: scaleY(0.92);
+    }
+  }
+
   /* Accessibility: honour OS-level reduced-motion preference.
      MotionConfig / JS libraries opt-in via matchMedia; this rule covers
      CSS keyframes (tw-animate-css, animate-spin, custom transitions) that

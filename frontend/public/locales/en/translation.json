@@ -314,11 +314,14 @@
     "waiting": "Waiting for chat service...",
     "waitingResponse": "Waiting for Xia Director",
     "waitingResponses": [
-      "Thinking…",
-      "Putting it into words…",
-      "Let me think…",
-      "Almost there…"
+      "Understanding what you want to move forward",
+      "Reviewing the current conversation context",
+      "Identifying the key points in your request",
+      "Organizing the relevant information",
+      "Structuring a clearer response"
     ],
+    "waitingLongResponse": "This is taking longer than usual, but it is still in progress",
+    "waitingVeryLongResponse": "Still waiting for a response. You can keep waiting or stop",
     "send": "Send",
     "queueMessage": "Queue message",
     "queuedCount": "{{count}} queued",

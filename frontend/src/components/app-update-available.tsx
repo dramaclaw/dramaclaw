@@ -17,36 +17,29 @@ export function AppUpdateAvailable() {
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-12 z-[1000] flex justify-center px-4">
-      <div className="pointer-events-auto w-full max-w-md rounded-md border border-white/10 bg-neutral-900/90 p-4 shadow-2xl shadow-black/50 backdrop-blur-sm">
-        <div className="flex items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/70">
-            <RefreshCw className="size-4" aria-hidden="true" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-white">
-              {t("app.updateAvailable.title")}
-            </p>
-            <p className="mt-0.5 text-xs leading-5 text-white/60">
-              {t("app.updateAvailable.description")}
-            </p>
-          </div>
-          <button
-            type="button"
-            aria-label={t("app.updateAvailable.dismiss")}
-            onClick={dismissUpdateAvailable}
-            className="shrink-0 rounded-md p-1 text-white/50 transition hover:bg-white/10 hover:text-white"
-          >
-            <X className="size-4" aria-hidden="true" />
-          </button>
+      <div className="pointer-events-auto flex h-[54px] w-fit max-w-[calc(100vw-32px)] items-center gap-[22px] rounded-[13px] border border-white/[0.08] bg-[#232328]/94 px-[11px] shadow-[0_11px_27px_rgba(0,0,0,0.34)] backdrop-blur-xl">
+        <div className="flex min-w-0 items-center gap-[7px]">
+          <RefreshCw className="size-[13px] shrink-0 text-white/35" aria-hidden="true" />
+          <p className="min-w-0 max-w-[151px] truncate text-[12px] font-semibold text-white">
+            {t("app.updateAvailable.title")}
+          </p>
         </div>
-        <div className="mt-3 flex justify-center">
+        <div className="flex shrink-0 items-center gap-[7px]">
           <Button
             type="button"
-            size="sm"
+            className="h-[31px] min-w-[68px] rounded-[8px] bg-primary px-[11px] text-[12px] font-medium text-primary-foreground shadow-none hover:bg-primary/90 active:bg-primary/80"
             onClick={() => window.location.reload()}
           >
             {t("app.updateAvailable.refresh")}
           </Button>
+          <button
+            type="button"
+            aria-label={t("app.updateAvailable.dismiss")}
+            onClick={dismissUpdateAvailable}
+            className="flex size-6 shrink-0 items-center justify-center rounded-[6px] text-white/45 transition-colors hover:bg-white/[0.08] hover:text-white/85"
+          >
+            <X className="size-3" aria-hidden="true" />
+          </button>
         </div>
       </div>
     </div>

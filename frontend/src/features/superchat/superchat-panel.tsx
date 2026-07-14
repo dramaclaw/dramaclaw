@@ -58,6 +58,8 @@ import { p } from "@/lib/api-path";
 import { useSuperChat } from "@/features/superchat/use-superchat";
 import { useAiAvatarUrl } from "@/features/superchat/ai-avatar";
 import { buildChatTaskLabel } from "@/features/superchat/task-notification-label";
+import { ComposerWaitingStatus } from "@/features/superchat/composer-waiting-status";
+import { calculateTimelineContextDelta } from "@/features/superchat/timeline-scroll";
 import { useEventBus } from "@/task-center/event-bus-context";
 import {
   extractStructuredBlocks,
@@ -1200,7 +1202,7 @@ const MessageBubble = memo(function MessageBubble({
     <div
       className={cn(
         isUser
-          ? "pointer-events-none absolute right-1.5 top-1.5 z-10 flex translate-y-0.5 items-center gap-0.5 rounded-full border border-border/70 bg-background/85 px-1 py-0.5 text-foreground/75 opacity-0 shadow-sm backdrop-blur transition-opacity group-hover/message-actions:pointer-events-auto group-hover/message-actions:opacity-100 group-focus-within/message-actions:pointer-events-auto group-focus-within/message-actions:opacity-100"
+          ? "pointer-events-none absolute right-[calc(100%+8px)] top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 whitespace-nowrap rounded-full border border-border/70 bg-background/85 px-1 py-0.5 text-foreground/75 opacity-0 shadow-sm backdrop-blur transition-opacity after:absolute after:-right-2 after:top-0 after:h-full after:w-2 after:content-[''] group-hover/message-actions:pointer-events-auto group-hover/message-actions:opacity-100 group-focus-within/message-actions:pointer-events-auto group-focus-within/message-actions:opacity-100"
           : "mt-2 flex items-center gap-1 text-muted-foreground/70",
       )}
     >
@@ -1388,47 +1390,6 @@ const MessageBubble = memo(function MessageBubble({
   );
 });
 
-function ComposerWaitingStatus({
-  label,
-  visible,
-  variant = "default",
-}: {
-  label: string;
-  visible: boolean;
-  variant?: SuperChatPanelVariant;
-}) {
-  const { t } = useTranslation();
-  const waitingResponseOptions = t("aiAssistant.waitingResponses", { returnObjects: true });
-  const randomLabels = Array.isArray(waitingResponseOptions)
-    ? waitingResponseOptions.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-    : [];
-  const randomLabelsKey = randomLabels.join("\u0000");
-  const [selectedLabel, setSelectedLabel] = useState(label);
-
-  useEffect(() => {
-    if (!visible) return;
-    const options = randomLabels.length > 0 ? randomLabels : [label];
-    setSelectedLabel(options[Math.floor(Math.random() * options.length)] ?? label);
-  }, [label, randomLabelsKey, visible]);
-
-  const displayLabel = selectedLabel.replace(/[.。…\s]+$/u, "");
-  return (
-    <div
-      className={cn(
-        "flex h-7 w-full items-center gap-2 px-1 text-xs text-foreground/72 transition-opacity duration-150",
-        variant === "freezone" && "max-w-none",
-        visible ? "opacity-100" : "pointer-events-none opacity-0",
-      )}
-      aria-live="polite"
-      aria-hidden={!visible}
-      aria-label={visible ? displayLabel : undefined}
-    >
-      {visible && <span>{displayLabel}</span>}
-      <DotsIndicator label={visible ? displayLabel : undefined} dotClassName="size-1" />
-    </div>
-  );
-}
-
 type TimelineTurn = {
   id: string;
   index: number;
@@ -1472,6 +1433,18 @@ function ChatTimeline({
     right: number;
   } | null>(null);
   const activeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const timelineListRef = useRef<HTMLDivElement | null>(null);
+  const [scrollEdges, setScrollEdges] = useState({ up: false, down: false });
+
+  const updateScrollEdges = useCallback(() => {
+    const list = timelineListRef.current;
+    if (!list) return;
+    const next = {
+      up: list.scrollTop > 1,
+      down: list.scrollTop + list.clientHeight < list.scrollHeight - 1,
+    };
+    setScrollEdges((current) => current.up === next.up && current.down === next.down ? current : next);
+  }, []);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -1502,8 +1475,33 @@ function ChatTimeline({
   }, [scrollRef, turns]);
 
   useEffect(() => {
-    activeButtonRef.current?.scrollIntoView({ block: "nearest" });
+    const list = timelineListRef.current;
+    const button = activeButtonRef.current;
+    if (!list || !button) return;
+    const listRect = list.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    const edgePadding = 8;
+    if (buttonRect.top < listRect.top + edgePadding) {
+      list.scrollBy({ top: buttonRect.top - listRect.top - edgePadding, behavior: "auto" });
+    } else if (buttonRect.bottom > listRect.bottom - edgePadding) {
+      list.scrollBy({ top: buttonRect.bottom - listRect.bottom + edgePadding, behavior: "auto" });
+    }
   }, [activeIndex]);
+
+  useEffect(() => {
+    const list = timelineListRef.current;
+    if (!list) return;
+    updateScrollEdges();
+    list.addEventListener("scroll", updateScrollEdges, { passive: true });
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(updateScrollEdges);
+    resizeObserver?.observe(list);
+    return () => {
+      list.removeEventListener("scroll", updateScrollEdges);
+      resizeObserver?.disconnect();
+    };
+  }, [turns.length, updateScrollEdges]);
 
   const scrollToTurn = useCallback((turn: TimelineTurn) => {
     const container = scrollRef.current;
@@ -1512,40 +1510,85 @@ function ChatTimeline({
     element?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [scrollRef]);
 
+  const revealTimelineContext = useCallback((button: HTMLButtonElement) => {
+    const list = timelineListRef.current;
+    if (!list) return;
+    const listRect = list.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    const delta = calculateTimelineContextDelta({
+      viewportHeight: list.clientHeight,
+      nodeCenter: buttonRect.top - listRect.top + buttonRect.height / 2,
+      scrollTop: list.scrollTop,
+      scrollHeight: list.scrollHeight,
+    });
+    if (Math.abs(delta) < 1) return;
+    list.scrollTo({ top: list.scrollTop + delta, behavior: "smooth" });
+  }, []);
+
   if (turns.length < 2) return null;
 
   return (
     <div className="pointer-events-none absolute bottom-4 right-1 top-4 z-20 hidden w-9 select-none lg:flex">
       <div className="pointer-events-auto relative flex h-full w-full justify-center">
         <div className="absolute inset-y-2 left-1/2 w-px -translate-x-1/2 bg-border/70" />
-        <div className="flex max-h-full flex-col items-center gap-2 overflow-y-auto px-2 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div
+          ref={timelineListRef}
+          className="flex max-h-full flex-col items-center gap-2 overflow-y-auto px-2 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {turns.map((turn, index) => (
-            <div key={turn.id} className="relative">
-              <button
-                ref={index === activeIndex ? activeButtonRef : null}
-                type="button"
+            <button
+              key={turn.id}
+              ref={index === activeIndex ? activeButtonRef : null}
+              type="button"
+              className="group/timeline-dot relative z-10 flex h-6 w-4 shrink-0 items-center justify-center"
+              onClick={(event) => {
+                revealTimelineContext(event.currentTarget);
+                scrollToTurn(turn);
+              }}
+              onMouseEnter={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                setHoveredTurn({
+                  index,
+                  top: rect.top + rect.height / 2,
+                  right: window.innerWidth - rect.left + 12,
+                });
+              }}
+              onMouseLeave={() => setHoveredTurn(null)}
+              aria-label={`Turn ${index + 1}: ${turn.preview}`}
+            >
+              <span
+                aria-hidden="true"
                 className={cn(
-                  "relative z-10 rounded-full border transition-all duration-150",
-                  turns.length > 80 ? "size-1.5" : turns.length > 40 ? "size-2" : "size-2.5",
+                  "rounded-full border transition-[width,height,background-color,border-color] duration-150",
                   index === activeIndex
-                    ? "scale-125 border-primary bg-primary"
-                    : "border-muted-foreground/40 bg-background hover:border-primary hover:bg-primary/20",
+                    ? turns.length > 80
+                      ? "size-2 border-primary bg-primary"
+                      : turns.length > 40
+                        ? "size-2.5 border-primary bg-primary"
+                        : "size-3 border-primary bg-primary"
+                    : cn(
+                        "border-muted-foreground/40 bg-background group-hover/timeline-dot:border-primary group-hover/timeline-dot:bg-primary/20",
+                        turns.length > 80 ? "size-1.5" : turns.length > 40 ? "size-2" : "size-2.5",
+                      ),
                 )}
-                onClick={() => scrollToTurn(turn)}
-                onMouseEnter={(event) => {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  setHoveredTurn({
-                    index,
-                    top: rect.top + rect.height / 2,
-                    right: window.innerWidth - rect.left + 12,
-                  });
-                }}
-                onMouseLeave={() => setHoveredTurn(null)}
-                aria-label={`Turn ${index + 1}: ${turn.preview}`}
               />
-            </div>
+            </button>
           ))}
         </div>
+        <div
+          className={cn(
+            "pointer-events-none absolute inset-x-0 top-0 z-20 h-10 bg-gradient-to-b from-background via-background/55 to-transparent transition-opacity duration-200",
+            scrollEdges.up ? "opacity-75" : "opacity-0",
+          )}
+          aria-hidden="true"
+        />
+        <div
+          className={cn(
+            "pointer-events-none absolute inset-x-0 bottom-0 z-20 h-10 bg-gradient-to-t from-background via-background/55 to-transparent transition-opacity duration-200",
+            scrollEdges.down ? "opacity-75" : "opacity-0",
+          )}
+          aria-hidden="true"
+        />
       </div>
       {hoveredTurn && turns[hoveredTurn.index] && createPortal(
         <div
@@ -2413,6 +2456,7 @@ export function SuperChatPanel({
   const [selectedQueuedMessageId, setSelectedQueuedMessageId] = useState<string | null>(null);
   const [selectedHistoryMessageIndex, setSelectedHistoryMessageIndex] = useState<number | null>(null);
   const [preparingSend, setPreparingSend] = useState(false);
+  const [composerInputFocused, setComposerInputFocused] = useState(false);
   const [recording, setRecording] = useState(false);
   const [dragFileState, setDragFileState] = useState<"valid" | "invalid" | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -2438,6 +2482,12 @@ export function SuperChatPanel({
   const hasSendableContent = draft.trim().length > 0 || attachments.length > 0;
   const canSend = hasSendableContent && chat.connected && !preparingSend;
   const composerWaiting = chat.busy && (!hasSendableContent || !chat.connected || preparingSend);
+  const composerBeamActive =
+    composerInputFocused
+    && chat.connected
+    && !chat.busy
+    && !preparingSend
+    && queuedMessages.length === 0;
   const activeMessages = useMemo(
     () =>
       chat.messages.filter(
@@ -2850,6 +2900,10 @@ export function SuperChatPanel({
   }, []);
 
   useEffect(() => {
+    composerBeamRef.current?.setActive(composerBeamActive);
+  }, [composerBeamActive]);
+
+  useEffect(() => {
     if (chat.busy || !chat.connected || preparingSend || queuedMessages.length === 0) return;
     const selectedIndex = selectedQueuedMessageId
       ? queuedMessages.findIndex((message) => message.id === selectedQueuedMessageId)
@@ -3258,7 +3312,6 @@ export function SuperChatPanel({
             <ComposerWaitingStatus
               label={t("aiAssistant.waitingResponse")}
               visible={showWaitingIndicator}
-              variant={variant}
             />
           </div>
           <div
@@ -3274,12 +3327,6 @@ export function SuperChatPanel({
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
             onKeyDown={handleComposerKeyDown}
-            onFocus={() => composerBeamRef.current?.setActive(true)}
-            onBlur={(event) => {
-              const next = event.relatedTarget;
-              if (next instanceof Node && event.currentTarget.contains(next)) return;
-              composerBeamRef.current?.setActive(false);
-            }}
           >
             {ENABLE_SUPERCHAT_FILE_UPLOAD && (
               <input
@@ -3323,50 +3370,48 @@ export function SuperChatPanel({
               </div>
             )}
             {queuedMessages.length > 0 && (
-              <div className="border-t border-border/60 px-4 py-2">
-                <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+              <div className="border-t border-white/[0.05] px-4 py-2">
+                <div className="mb-1.5 text-xs font-normal text-foreground/40">
                   {t("aiAssistant.queuedCount", { count: queuedMessages.length })}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {queuedMessages.map((message) => (
-                    <span
-                      key={message.id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setSelectedQueuedMessageId(message.id)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") return;
-                        event.preventDefault();
-                        setSelectedQueuedMessageId(message.id);
-                      }}
-                      className={cn(
-                        "inline-flex max-w-full cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-left text-xs transition-colors",
-                        selectedQueuedMessageId === message.id
-                          ? "border-primary/70 bg-primary/10 text-foreground"
-                          : "border-border bg-muted/35 text-foreground/85 hover:bg-muted/60",
-                      )}
-                      aria-label={t("aiAssistant.selectQueuedMessage")}
-                      aria-selected={selectedQueuedMessageId === message.id}
-                    >
-                      <span className="max-w-56 truncate">{message.text}</span>
-                      {message.attachments.length > 0 && (
-                        <span className="text-muted-foreground">
-                          {t("aiAssistant.queuedAttachments", { count: message.attachments.length })}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setQueuedMessages((current) => current.filter((item) => item.id !== message.id));
-                        }}
-                        className="text-muted-foreground hover:text-foreground"
-                        aria-label={t("aiAssistant.removeQueuedMessage")}
+                  {queuedMessages.map((message) => {
+                    const showSelectedState = queuedMessages.length > 1 && selectedQueuedMessageId === message.id;
+                    return (
+                      <div
+                        key={message.id}
+                        className={cn(
+                          "inline-flex max-w-full items-center overflow-hidden rounded-[6px] border border-white/[0.08] bg-white/[0.035] text-xs text-foreground/70 transition-colors hover:bg-white/[0.055] focus-within:border-white/[0.18]",
+                          showSelectedState && "border-primary/35 bg-primary/[0.07] text-foreground/90 focus-within:border-primary/45",
+                        )}
                       >
-                        <X className="size-3" />
-                      </button>
-                    </span>
-                  ))}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedQueuedMessageId(message.id)}
+                          className="flex min-w-0 items-center gap-1.5 px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
+                          aria-label={t("aiAssistant.selectQueuedMessage")}
+                          aria-pressed={showSelectedState}
+                        >
+                          <span className="max-w-56 truncate">{message.text}</span>
+                          {message.attachments.length > 0 && (
+                            <span className="shrink-0 text-foreground/45">
+                              {t("aiAssistant.queuedAttachments", { count: message.attachments.length })}
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQueuedMessages((current) => current.filter((item) => item.id !== message.id));
+                          }}
+                          className="mr-0.5 flex size-5 shrink-0 items-center justify-center rounded-[4px] text-foreground/35 transition-colors hover:bg-white/[0.06] hover:text-foreground/75 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
+                          aria-label={t("aiAssistant.removeQueuedMessage")}
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -3377,6 +3422,8 @@ export function SuperChatPanel({
                 setSelectedHistoryMessageIndex(null);
                 setDraft(event.target.value);
               }}
+              onFocus={() => setComposerInputFocused(true)}
+              onBlur={() => setComposerInputFocused(false)}
               onKeyDown={(event) => {
                 if (
                   queuedMessages.length > 0
