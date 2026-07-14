@@ -4,7 +4,7 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import HttpBackend from "i18next-http-backend";
 import { useAppStore } from "@/stores/app-store";
-import { APP_VERSION } from "@/lib/app-version";
+import { BUILD_ID } from "@/lib/app-version";
 
 const SUPPORTED = ["zh", "en"] as const;
 type Supported = (typeof SUPPORTED)[number];
@@ -38,8 +38,10 @@ i18n
     backend: {
       // 翻译 JSON 是静态文件、会被浏览器/CDN 长期缓存。不带版本号时，发版后新增的
       // key 在老用户那里仍读旧缓存 → 直接显示成原始 key（如 ingest.reuploadConfirm.*）。
-      // 按构建版本加 query 破缓存：每次发版 URL 变化拉到新文件，同版本内仍走缓存。
-      loadPath: `/locales/{{lng}}/{{ns}}.json?v=${encodeURIComponent(APP_VERSION)}`,
+      // 按 BUILD_ID 加 query 破缓存：每次构建 URL 变化拉到新文件，同一构建内仍走缓存。
+      // 用 BUILD_ID 而非 APP_VERSION —— 后者在 CI 不注入时是个固定默认值，两次发版
+      // 长得一样，缓存就破不掉了。
+      loadPath: `/locales/{{lng}}/{{ns}}.json?v=${encodeURIComponent(BUILD_ID)}`,
     },
     interpolation: {
       escapeValue: false,

@@ -314,26 +314,10 @@
     "waiting": "等待聊天服务连接...",
     "waitingResponse": "等待虾导回复",
     "waitingResponses": [
-      "虾导正在看分镜",
-      "虾导正在捋剧情",
-      "虾导正在检查节奏",
-      "虾导正在对齐设定",
-      "虾导正在整理灵感",
-      "虾导正在翻看任务",
-      "虾导正在推敲镜头",
-      "虾导正在盘角色动机",
-      "虾导正在补齐上下文",
-      "虾导正在找关键线索",
-      "虾导正在压缩废话",
-      "虾导正在校准创作方向",
-      "虾导正在拆解你的需求",
-      "虾导正在组织回答",
-      "虾导正在确认项目状态",
-      "虾导正在处理创作现场",
-      "虾导正在把想法落地",
-      "虾导正在看这场戏怎么走",
-      "虾导正在挑重点",
-      "虾导正在接住这段灵感"
+      "正在思考…",
+      "组织语言中…",
+      "让我想想…",
+      "马上就好…"
     ],
     "send": "发送",
     "queueMessage": "加入发送队列",
@@ -948,6 +932,14 @@
       "unmute": "取消静音",
       "fullscreen": "全屏",
       "exitFullscreen": "退出全屏"
+    },
+    "download": {
+      "label": "桌面端",
+      "primary": {
+        "mac": "macOS",
+        "windows": "Windows"
+      },
+      "aria": "下载桌面端"
     }
   },
   "project": {
@@ -1274,6 +1266,7 @@
     "stop": "停止",
     "reupload": "重新上传",
     "regenerate": "重新生成",
+    "generateNew": "生成新图",
     "regenerateSelected": "重新生成选中",
     "preview": "试听",
     "cutToPool": "切割入池",
@@ -1868,7 +1861,8 @@
         "identitiesNotPlanned": "本集身份未规划，请先到「脚本」页配置本集身份。",
         "propsNotPlanned": "本集道具未规划，请先到「脚本」页配置本集道具。",
         "more": "更多",
-        "saveFailed": "保存失败"
+        "saveFailed": "保存失败",
+        "noSceneVariant": "无变体"
       },
       "insertManual": {
         "titleBeforeFirst": "在首个 Beat 前插入手工镜头",
@@ -1902,7 +1896,12 @@
         "identitiesPlaceholder": "逗号分隔，如 {{example}}；留空自动从画面描述提取",
         "identitiesPlaceholderEmpty": "逗号分隔身份ID；留空自动从画面描述提取",
         "submit": "插入",
-        "success": "已插入手工镜头"
+        "success": "已插入手工镜头",
+        "sceneVariant": "变体",
+        "noSceneVariant": "无变体",
+        "props": "出场道具",
+        "propsPlaceholder": "逗号分隔，如 {{example}}；留空自动从画面描述提取",
+        "propsPlaceholderEmpty": "逗号分隔道具ID；留空自动从画面描述提取"
       },
       "audio": {
         "narrationEmpty": "旁白为空，此 beat 无法生成音频。请先到「文案」填写。",
@@ -2218,7 +2217,8 @@
         "backgroundUploaded": "渲染 背景参考已上传",
         "backgroundUploadFailed": "上传 渲染 背景参考失败",
         "backgroundSaved": "渲染 背景参考已切换",
-        "backgroundSaveFailed": "保存 渲染 背景参考失败"
+        "backgroundSaveFailed": "保存 渲染 背景参考失败",
+        "backgroundCropSave": "保存截图"
       },
       "renderGrid": {
         "title": "渲染网格",
@@ -2371,6 +2371,12 @@
         "faceScore": "面部 {{score}}",
         "clothingScore": "服装 {{score}}",
         "jumpBeat": "跳 beat {{n}}"
+      },
+      "actionPanel": {
+        "episodeFreezone": "本集虾画",
+        "episodeFreezoneTooltip": "在虾画中打开本集素材",
+        "episodeFreezoneOpened": "已打开本集虾画",
+        "episodeFreezoneOpenFailed": "打开本集虾画失败"
       }
     },
     "state": {
@@ -2581,7 +2587,8 @@
     "noStylesAvailable": "没有可用的风格。点击右上角创建。",
     "paramsExtracted": "风格参数已提取",
     "idNameRequired": "请输入 ID 和名称",
-    "styleCreated": "风格已创建"
+    "styleCreated": "风格已创建",
+    "renameTitle": "重命名风格"
   },
   "identityPicker": {
     "title": "选择角色身份",
@@ -3320,6 +3327,12 @@
           "redo": "重做",
           "reset": "重置"
         }
+      },
+      "player": {
+        "play": "播放",
+        "pause": "暂停",
+        "mute": "静音",
+        "unmute": "取消静音"
       }
     }
   },
@@ -3645,7 +3658,8 @@
         "actor": "人物",
         "prop": "道具",
         "staging": "占位"
-      }
+      },
+      "actorColor": "人物颜色"
     }
   },
   "split": {

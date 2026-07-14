@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Accessibility, Box, Crop, Download, ExternalLink, ImageIcon, Loader2, Package, RefreshCw, Sparkles, Square, Upload } from "lucide-react";
 
+import { isNoReferenceMarker } from "@/lib/beat-markers";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import {
   useBeatBackgroundAnchors,
@@ -208,6 +209,7 @@ export function SketchSection({
     const sketchColors = scriptRes?.data?.sketch_colors ?? {};
     const characterNames = new Set((charsRes?.data ?? []).map((c) => c.name));
     return (beat.detected_identities ?? [])
+      .filter((identityId) => !isNoReferenceMarker(identityId))
       .map((identityId) => {
         const { hex } = parseColorValue(sketchColors[identityId] ?? "");
         if (!hex) return null;
@@ -220,15 +222,21 @@ export function SketchSection({
     const propById = new Map(
       (episodeRes?.data?.prop_menu ?? []).map((prop) => [prop.prop_id, prop]),
     );
-    return (beat.detected_props ?? []).map((propId) => {
-      const prop = propById.get(propId);
-      const { hex } = parseColorValue(prop?.marker_color ?? "");
-      return { propId, hex };
-    });
+    // __NO_PROP__ 是「本镜无道具」的哨兵，不是道具 id —— 过滤掉，否则会当成一个
+    // 名叫 __NO_PROP__ 的道具渲染成 chip。
+    return (beat.detected_props ?? [])
+      .filter((propId) => !isNoReferenceMarker(propId))
+      .map((propId) => {
+        const prop = propById.get(propId);
+        const { hex } = parseColorValue(prop?.marker_color ?? "");
+        return { propId, hex };
+      });
   }, [beat.detected_props, episodeRes]);
   const markedPropEntries = useMemo(() => {
     const detected = new Set(beat.detected_props ?? []);
-    return extractMarkedProps(beat.visual_description ?? "").filter((propId) => !detected.has(propId));
+    return extractMarkedProps(beat.visual_description ?? "").filter(
+      (propId) => !detected.has(propId) && !isNoReferenceMarker(propId),
+    );
   }, [beat.detected_props, beat.visual_description]);
   const directorControl =
     directorStatus.data?.ok === true ? directorStatus.data.data : null;

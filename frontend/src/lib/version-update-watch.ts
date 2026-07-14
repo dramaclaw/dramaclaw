@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { markUpdateAvailable } from "@/lib/app-update-available";
-import { APP_VERSION } from "@/lib/app-version";
+import { BUILD_ID } from "@/lib/app-version";
 
 // Poll a tiny build-emitted manifest (/version.json) and compare the deployed
-// version against APP_VERSION — the compile-time constant baked into THIS
-// running bundle (see the emit-version-json plugin in vite.config.ts). Because
-// the baseline is the running code's own version (not a fetched-then-remembered
+// buildId against BUILD_ID — the compile-time constant baked into THIS running
+// bundle (see the emit-version-json plugin in vite.config.ts). Because the
+// baseline is the running code's own fingerprint (not a fetched-then-remembered
 // value), there is no seed race: a deploy that lands between page load and the
 // first poll is still caught. It's also independent of the backend, so CDN-only
 // frontend deploys are detected even when the API never restarts.
+//
+// This deliberately keys off buildId, NOT the display version: APP_VERSION
+// falls back to a hardcoded default when CI doesn't inject one, so comparing it
+// would make two different deploys look identical and silently never prompt.
 const POLL_INTERVAL_MS = 120_000;
 
 export function deployedVersionDiffers(
@@ -19,7 +23,7 @@ export function deployedVersionDiffers(
   return deployed !== null && deployed !== running;
 }
 
-async function fetchDeployedVersion(): Promise<string | null> {
+async function fetchDeployedBuildId(): Promise<string | null> {
   try {
     // Cache-bust + no-store so a CDN/proxy can't hand back a stale manifest.
     const response = await fetch(`/version.json?_v=${Date.now()}`, {
@@ -28,8 +32,8 @@ async function fetchDeployedVersion(): Promise<string | null> {
     });
     if (!response.ok) return null;
     const data: unknown = await response.json();
-    const version = (data as { version?: unknown } | null)?.version;
-    return typeof version === "string" && version.length > 0 ? version : null;
+    const buildId = (data as { buildId?: unknown } | null)?.buildId;
+    return typeof buildId === "string" && buildId.length > 0 ? buildId : null;
   } catch {
     return null;
   }
@@ -58,10 +62,10 @@ export function installVersionUpdateWatch(): () => void {
     // hitting the origin. onVisible re-checks promptly the moment it refocuses.
     if (inFlight || stopped || document.visibilityState !== "visible") return;
     inFlight = true;
-    const deployed = await fetchDeployedVersion();
+    const deployed = await fetchDeployedBuildId();
     inFlight = false;
     if (stopped) return;
-    if (deployedVersionDiffers(deployed, APP_VERSION)) {
+    if (deployedVersionDiffers(deployed, BUILD_ID)) {
       markUpdateAvailable();
       // The signal is sticky; no reason to keep polling once we've nudged.
       stop();

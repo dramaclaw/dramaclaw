@@ -1427,7 +1427,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           <div className="nodrag absolute inset-x-5 top-1/2 z-10 flex -translate-y-1/2 flex-col items-center text-center">
             <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-red-200">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-300/90" />
-              <span>{t("canvas.imageNode.generationFailed")}</span>
+              <span>{t("node.imageNode.generationFailed")}</span>
             </div>
             <div
               className="mt-1 max-h-12 max-w-full overflow-y-auto break-words text-[11px] leading-4 text-red-100/76 [overflow-wrap:anywhere]"
@@ -1437,13 +1437,13 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             </div>
             {generationErrorRequestId && (
               <div className="mt-1 flex max-w-full items-center justify-center gap-1.5 text-[10px] text-text-muted/58">
-                <span className="shrink-0">{t("canvas.imageNode.requestId")}</span>
+                <span className="shrink-0">{t("node.imageNode.requestId")}</span>
                 <code className="min-w-0 max-w-[160px] truncate font-mono" title={generationErrorRequestId}>
                   {generationErrorRequestId}
                 </code>
                 <button
                   type="button"
-                  title={requestIdCopied ? t("canvas.imageNode.requestIdCopied") : t("canvas.imageNode.copyRequestId")}
+                  title={requestIdCopied ? t("node.imageNode.requestIdCopied") : t("node.imageNode.copyRequestId")}
                   onClick={(event) => {
                     event.stopPropagation();
                     void handleCopyRequestId();

@@ -12,6 +12,7 @@ import {
 import { useAppStore } from "@/stores/app-store";
 import { displayLabel } from "@/task-center/derivations";
 import { RegionBadge } from "@/components/layout/region-badge";
+import { APP_VERSION } from "@/lib/app-version";
 import { cn } from "@/lib/utils";
 import type { StreamHealth, TaskState } from "@/task-center/types";
 
@@ -109,6 +110,15 @@ export function TaskStatusBar({ onOpenPikoStation }: TaskStatusBarProps) {
       onKeyDown={onBarKeyDown}
     >
       <div className="flex min-w-0 items-center gap-1.5">
+        <span
+          className="shrink-0 bg-gradient-to-r from-cyan-200 via-violet-200 to-rose-200 bg-clip-text font-medium tabular-nums text-transparent opacity-90"
+          title={APP_VERSION}
+        >
+          {APP_VERSION}
+        </span>
+        <span className="shrink-0 text-muted-foreground/45" aria-hidden>
+          ·
+        </span>
         <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground/90">
           <ChevronUp
             className={cn(

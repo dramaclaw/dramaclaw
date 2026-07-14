@@ -9,6 +9,7 @@ export default defineConfig({
   // don't care about the real value — a stable placeholder is plenty.
   define: {
     __APP_VERSION__: JSON.stringify("test"),
+    __BUILD_ID__: JSON.stringify("test-build"),
   },
   test: {
     environment: "jsdom",

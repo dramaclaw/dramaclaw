@@ -79,6 +79,122 @@
   gap: 28px;
 }
 
+/* 安装包下载：与「商务联系」同一套 hover 浮层结构，只是面板里换成两个平台条目。
+   ::after 是悬停缓冲区，鼠标从触发器移到面板的路上不会穿帮收起。 */
+.desktopDownload {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.desktopDownload::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: -12px;
+  right: -12px;
+  height: 18px;
+}
+
+.desktopDownloadTrigger {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(246, 248, 255, 0.72);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 440;
+  transition: color 200ms ease;
+}
+
+.desktopDownloadTrigger svg {
+  width: 15px;
+  height: 15px;
+}
+
+.desktopDownloadCaret {
+  transition: transform 200ms ease;
+}
+
+.desktopDownloadTrigger:hover,
+.desktopDownload:focus-within .desktopDownloadTrigger {
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.desktopDownload:hover .desktopDownloadCaret,
+.desktopDownload:focus-within .desktopDownloadCaret {
+  transform: rotate(180deg);
+}
+
+.desktopDownloadPopover {
+  position: absolute;
+  top: calc(100% + 18px);
+  right: 50%;
+  z-index: 40;
+  width: max-content;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(50%, -6px);
+  transition:
+    opacity 160ms ease,
+    transform 180ms ease,
+    visibility 160ms ease;
+}
+
+.desktopDownload:hover .desktopDownloadPopover,
+.desktopDownload:focus-within .desktopDownloadPopover {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translate(50%, 0);
+}
+
+.desktopDownloadPanel {
+  overflow: hidden;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(32, 34, 38, 0.38);
+  padding: 6px;
+  backdrop-filter: blur(22px) saturate(135%);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
+}
+
+.desktopDownloadItem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12.5px;
+  font-weight: 400;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    background 180ms ease,
+    color 180ms ease;
+}
+
+.desktopDownloadItem:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.desktopDownloadItem svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
 .businessWechat {
   position: relative;
   display: inline-flex;

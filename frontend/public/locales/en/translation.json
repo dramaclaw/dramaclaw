@@ -314,26 +314,10 @@
     "waiting": "Waiting for chat service...",
     "waitingResponse": "Waiting for Xia Director",
     "waitingResponses": [
-      "Xia Director is checking the storyboard",
-      "Xia Director is tracing the plot",
-      "Xia Director is tuning the rhythm",
-      "Xia Director is aligning the setup",
-      "Xia Director is sorting the ideas",
-      "Xia Director is reviewing the task",
-      "Xia Director is shaping the shot",
-      "Xia Director is reading character motives",
-      "Xia Director is filling the context",
-      "Xia Director is finding the key clue",
-      "Xia Director is cutting the noise",
-      "Xia Director is calibrating the direction",
-      "Xia Director is breaking down the request",
-      "Xia Director is composing the reply",
-      "Xia Director is checking project state",
-      "Xia Director is handling the creative room",
-      "Xia Director is turning ideas into steps",
-      "Xia Director is blocking the scene",
-      "Xia Director is picking the essentials",
-      "Xia Director is catching the spark"
+      "Thinking…",
+      "Putting it into words…",
+      "Let me think…",
+      "Almost there…"
     ],
     "send": "Send",
     "queueMessage": "Queue message",
@@ -948,6 +932,14 @@
       "unmute": "Unmute",
       "fullscreen": "Fullscreen",
       "exitFullscreen": "Exit fullscreen"
+    },
+    "download": {
+      "label": "Desktop",
+      "primary": {
+        "mac": "macOS",
+        "windows": "Windows"
+      },
+      "aria": "Download the desktop app"
     }
   },
   "project": {
@@ -1274,6 +1266,7 @@
     "stop": "Stop",
     "reupload": "Re-upload",
     "regenerate": "Regenerate",
+    "generateNew": "Generate new",
     "regenerateSelected": "Regenerate Selected",
     "preview": "Preview",
     "cutToPool": "Cut to Pool",
@@ -1868,7 +1861,8 @@
         "identitiesNotPlanned": "Episode identities not planned. Go to Script page to configure.",
         "propsNotPlanned": "Episode props not planned. Go to Script page to configure.",
         "more": "More",
-        "saveFailed": "Save failed"
+        "saveFailed": "Save failed",
+        "noSceneVariant": "No variant"
       },
       "insertManual": {
         "titleBeforeFirst": "Insert manual shot before first beat",
@@ -1902,7 +1896,12 @@
         "identitiesPlaceholder": "Comma-separated (e.g. {{example}}); leave blank to auto-detect from visual description",
         "identitiesPlaceholderEmpty": "Comma-separated identity IDs; leave blank to auto-detect",
         "submit": "Insert",
-        "success": "Manual shot inserted"
+        "success": "Manual shot inserted",
+        "sceneVariant": "Variant",
+        "noSceneVariant": "No variant",
+        "props": "Props",
+        "propsPlaceholder": "Comma-separated (e.g. {{example}}); leave blank to auto-detect from visual description",
+        "propsPlaceholderEmpty": "Comma-separated prop IDs; leave blank to auto-detect"
       },
       "audio": {
         "narrationEmpty": "Narration is empty — this beat cannot generate audio. Fill in text first.",
@@ -2218,7 +2217,8 @@
         "backgroundUploaded": "Render background reference uploaded",
         "backgroundUploadFailed": "Failed to upload render background reference",
         "backgroundSaved": "Render background reference switched",
-        "backgroundSaveFailed": "Failed to save render background reference"
+        "backgroundSaveFailed": "Failed to save render background reference",
+        "backgroundCropSave": "Save crop"
       },
       "renderGrid": {
         "title": "Render Grid",
@@ -2371,6 +2371,12 @@
         "faceScore": "Face {{score}}",
         "clothingScore": "Clothing {{score}}",
         "jumpBeat": "Jump to beat {{n}}"
+      },
+      "actionPanel": {
+        "episodeFreezone": "Episode canvas",
+        "episodeFreezoneTooltip": "Open this episode's assets in the canvas",
+        "episodeFreezoneOpened": "Episode canvas opened",
+        "episodeFreezoneOpenFailed": "Failed to open the episode canvas"
       }
     },
     "state": {
@@ -2581,7 +2587,8 @@
     "noStylesAvailable": "No styles available. Click top-right to create.",
     "paramsExtracted": "Style params extracted",
     "idNameRequired": "Enter ID and name",
-    "styleCreated": "Style created"
+    "styleCreated": "Style created",
+    "renameTitle": "Rename Style"
   },
   "identityPicker": {
     "title": "Select Character Identities",
@@ -3320,6 +3327,12 @@
           "redo": "Redo",
           "reset": "Reset"
         }
+      },
+      "player": {
+        "play": "Play",
+        "pause": "Pause",
+        "mute": "Mute",
+        "unmute": "Unmute"
       }
     }
   },
@@ -3645,7 +3658,8 @@
         "actor": "Actor",
         "prop": "Prop",
         "staging": "Staging"
-      }
+      },
+      "actorColor": "Actor color"
     }
   },
   "split": {
