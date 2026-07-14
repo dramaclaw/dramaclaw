@@ -16,6 +16,10 @@ import {
   shouldAutoShowCurrentRelease,
 } from "@/lib/release-notification-state";
 
+/** 更新弹窗顶部的头图视频。走 CDN 域名（OSS 默认域名会强制下载，播不了）。 */
+const UPDATE_HERO_VIDEO_URL =
+  "https://nfg-web-assets.cdnfg.com/dramaclaw/update/version-update-2026-06-22.mp4";
+
 export function VersionUpdateDialog() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -55,7 +59,7 @@ export function VersionUpdateDialog() {
           <div className="relative flex aspect-[2/1] overflow-hidden rounded-[12px] bg-[#b9e7ff]">
             <video
               className="absolute inset-0 h-full w-full object-cover"
-              src="/video/version-update-2026-06-22.mp4"
+              src={UPDATE_HERO_VIDEO_URL}
               autoPlay
               muted
               loop
