@@ -237,7 +237,7 @@ const IMAGE_PARAM_ROW_CLASS = 'mb-4 flex gap-2';
 const NODE_COUNT_OPTION_BASE_CLASS =
   'flex w-full items-center justify-center rounded-[6px] px-3 py-1.5 text-xs transition-colors';
 
-// 「画质」选项只对 image2 系模型（DC-Image-2 / gpt-image-2 等）生效，
+// 「画质」选项只对 image2 系模型（LingShan-G2 / gpt-image-2 等）生效，
 // 后端也只在 gpt-image-2 上识别该字段。其余模型隐藏该选择器。
 function isImage2Model(apiModel: string | null | undefined): boolean {
   return /image[-_]?2/i.test(apiModel ?? '');
@@ -382,7 +382,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   // `DEFAULT_SHARED_MODEL_ID` (`huimeng/gpt-image-2`), which is normally NOT in
   // the live `/freezone/image/models` list. Trusting it blindly is the bug:
   // ProviderModelPicker silently falls back to showing `availableModels[0]`
-  // (e.g. DC-Image-2) when the id isn't found, while submit resolves the stale
+  // (e.g. LingShan-G2) when the id isn't found, while submit resolves the stale
   // id through SHARED_MODELS to `huimeng_gpt_image2` — display ≠ value sent.
   // Reconciling here keeps them in lockstep: an unknown persisted id falls back
   // to the first live model (exactly what the picker shows).

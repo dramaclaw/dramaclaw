@@ -559,11 +559,11 @@ def get_newapi_runtime_credentials(
     return api_key, base_url
 
 
-INDEXTTS2_NEWAPI_MODEL = os.environ.get("INDEXTTS2_NEWAPI_MODEL", "index-tts-2")
+INDEXTTS2_NEWAPI_MODEL = os.environ.get("INDEXTTS2_NEWAPI_MODEL", "LingShan-TTS-2")
 INDEXTTS2_RECORD_PROVIDER = "newapi" if INDEXTTS2_PROVIDER == "newapi" else "fal.ai"
 INDEXTTS2_RECORD_MODEL = INDEXTTS2_NEWAPI_MODEL if INDEXTTS2_PROVIDER == "newapi" else "IndexTTS2"
-NEWAPI_IMAGE_MODEL = os.environ.get("NEWAPI_IMAGE_MODEL", "gpt-image-2")
-NEWAPI_NANOBANANA2_MODEL = os.environ.get("NEWAPI_NANOBANANA2_MODEL", "nano-banana-2")
+NEWAPI_IMAGE_MODEL = os.environ.get("NEWAPI_IMAGE_MODEL", "LingShan-G2")
+NEWAPI_NANOBANANA2_MODEL = os.environ.get("NEWAPI_NANOBANANA2_MODEL", "LingShan-NB-2")
 SCENE_MASTER_IMAGE_PROVIDER = (
     os.environ.get("SCENE_MASTER_IMAGE_PROVIDER", "").strip().lower() or "newapi"
 )
@@ -806,7 +806,7 @@ def _csv_env(name: str, default: str) -> list[str]:
 # newAPI 视频网关。VIDEO_BACKEND 使用 newapi_<model> 时会通过 NEWAPI_BASE_URL 调用。
 NEWAPI_VIDEO_MODELS = _csv_env(
     "NEWAPI_VIDEO_MODELS",
-    "seedance-1.0-pro-fast,seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,happyhorse-1.0,grok-video-channel",
+    "seedance-1.0-pro-fast,seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,happyhorse-1.0",
 )
 DEFAULT_VIDEO_MODEL = os.environ.get(
     "DEFAULT_VIDEO_MODEL",
@@ -820,7 +820,7 @@ NEWAPI_VIDEO_AUDIO_MODELS = _csv_env(
 )
 NEWAPI_VIDEO_DURATION_BOUNDS = os.environ.get(
     "NEWAPI_VIDEO_DURATION_BOUNDS",
-    "seedance-1.0-pro-fast:2-12,seedance-1.5-pro:4-12,seedance-2.0:4-15,seedance-2.0-fast:4-15,seedance-2.0-value:4-15,seedance-2.0-fast-value:4-15,happyhorse-1.0:3-15,grok-video-channel:6-30",
+    "seedance-1.0-pro-fast:2-12,seedance-1.5-pro:4-12,seedance-2.0:4-15,seedance-2.0-fast:4-15,seedance-2.0-value:4-15,seedance-2.0-fast-value:4-15,happyhorse-1.0:3-15",
 ).strip()
 
 # 视频生成后端: newapi_seedance-1.0-pro-fast (默认), newapi_seedance-2.0-fast,
@@ -973,12 +973,12 @@ IMAGE_GENERATION_SELECTIONS: dict[str, dict[str, str]] = {
         "model": OPENROUTER_NANOBANANA2_MODEL,
     },
     "newapi_gpt_image2": {
-        "label": "DC-Image-2",
+        "label": "LingShan-G2",
         "provider": "newapi",
         "model": NEWAPI_IMAGE_MODEL,
     },
     "newapi_nanobanana2": {
-        "label": "DC-Banana-2",
+        "label": "LingShan-NB-2",
         "provider": "newapi",
         "model": NEWAPI_NANOBANANA2_MODEL,
     },

@@ -23,6 +23,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { UsageCountBadge } from "@/components/assets/usage-count-badge";
+import { ASSET_CARD_META_BADGE_CLASS } from "@/components/assets/asset-card-styles";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { resolveMediaUrl } from "@/lib/media-url";
@@ -224,24 +225,29 @@ export function SceneAssetCard({
               {/* Compact status chips inline with title */}
               <div className="flex shrink-0 flex-wrap items-center gap-1">
                 {scene.scene_type && (
-                  <span className="rounded-[4px] border border-border bg-background/40 px-1 py-0 text-[10px] text-muted-foreground">
+                  <span className={ASSET_CARD_META_BADGE_CLASS}>
                     {sceneTypeLabel(scene.scene_type)}
                   </span>
                 )}
                 {derivedBase && (
-                  <span className="rounded-[4px] border border-sky-500/30 bg-sky-500/10 px-1 py-0 text-[10px] text-sky-700 dark:text-sky-300">
+                  <span
+                    className={cn(
+                      ASSET_CARD_META_BADGE_CLASS,
+                      "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+                    )}
+                  >
                     {t("assets.scenes.derivedFrom", { base: derivedBase })}
                   </span>
                 )}
-                <span className="rounded-[4px] border border-border bg-background/40 px-1 py-0 text-[10px] text-muted-foreground">
+                <span className={ASSET_CARD_META_BADGE_CLASS}>
                   {t("assets.scenes.master")}{" "}
                   {hasMaster ? t("assets.common.generated") : t("assets.common.missing")}
                 </span>
-                <span className="rounded-[4px] border border-border bg-background/40 px-1 py-0 text-[10px] text-muted-foreground">
+                <span className={ASSET_CARD_META_BADGE_CLASS}>
                   {t("assets.scenes.reverse")}{" "}
                   {hasReverse ? t("assets.common.generated") : t("assets.common.missing")}
                 </span>
-                <span className="rounded-[4px] border border-border bg-background/40 px-1 py-0 text-[10px] text-muted-foreground">
+                <span className={ASSET_CARD_META_BADGE_CLASS}>
                   {t("assets.scenes.pano")}{" "}
                   {hasPano ? t("assets.common.generated") : t("assets.common.missing")}
                 </span>

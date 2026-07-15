@@ -138,15 +138,6 @@ export const VIDEO_MODELS: ModelOption[] = [
     minDuration: 2,
     maxDuration: 12,
   },
-  {
-    id: 'newapi_grok-video-channel',
-    providerId: 'huimeng',
-    apiModel: 'newapi_grok-video-channel',
-    label: 'Grok Video Channel',
-    resolutionOptions: ['720p', '480p'],
-    minDuration: 6,
-    maxDuration: 30,
-  },
 ];
 
 // Matches the backend `FreezoneVideoGenRequest.model` default. The picker

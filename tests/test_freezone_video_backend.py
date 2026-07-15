@@ -9,6 +9,7 @@ from novelvideo.generators.video_generator import (
     HuimengVideoGenerator,
     Seedance2VideoGenerator,
     ShotReference,
+    newapi_video_backend_options,
 )
 from novelvideo.generators.video_generator import VideoGenResult, VideoGenStatus
 from novelvideo.freezone.video_node import (
@@ -157,8 +158,8 @@ def test_video_model_options_and_resolution_work() -> None:
         "newapi_seedance-2.0-fast",
         "newapi_seedance-1.0-pro-fast",
         "newapi_seedance-1.5-pro",
-        "newapi_grok-video-channel",
     }.issubset(names)
+    assert "newapi_grok-video-channel" not in names
     assert ids == set(names)
     assert api_models == set(names)
     assert all(item["providerId"] == "newapi" for item in options)
@@ -166,18 +167,28 @@ def test_video_model_options_and_resolution_work() -> None:
     assert "Seedance1.5 Pro" in labels
     assert "Seedance2.0 Fast" in labels
     assert "HappyHorse 1.0" in labels
-    assert "Grok Video Channel" in labels
+    assert "Grok Video Channel" not in labels
     assert normalize_video_resolution("720P") == "720p"
     happyhorse = next(item for item in options if item["id"] == "newapi_happyhorse-1.0")
     assert happyhorse["resolutionOptions"] == ["720p", "1080p"]
     assert happyhorse["minDuration"] == 3
     assert happyhorse["maxDuration"] == 15
     assert normalize_video_resolution_for_backend("newapi_happyhorse-1.0", "480p") == "720p"
-    grok = next(item for item in options if item["id"] == "newapi_grok-video-channel")
-    assert grok["resolutionOptions"] == ["720p", "480p"]
-    assert grok["minDuration"] == 6
-    assert grok["maxDuration"] == 30
-    assert normalize_video_resolution_for_backend("newapi_grok-video-channel", "1080p") == "720p"
+
+
+def test_grok_video_channel_is_not_exposed_even_if_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    from novelvideo import config
+
+    monkeypatch.setattr(
+        config,
+        "NEWAPI_VIDEO_MODELS",
+        ["seedance-2.0-fast", "grok-video-channel"],
+    )
+
+    assert "newapi_grok-video-channel" not in newapi_video_backend_options()
+    assert "newapi_grok-video-channel" not in get_freezone_video_model_names()
+    with pytest.raises(ValueError, match="unknown video model"):
+        resolve_freezone_video_backend("newapi_grok-video-channel")
 
 
 def test_resolve_freezone_video_backend_accepts_id_and_label() -> None:

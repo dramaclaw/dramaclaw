@@ -95,8 +95,8 @@ def test_render_settings_returns_current_selection_and_options(monkeypatch, tmp_
     assert body["ok"] is True
     assert body["data"]["render_image_selection"] == "newapi_nanobanana2"
     assert body["data"]["options"] == {
-        "newapi_gpt_image2": "DC-Image-2",
-        "newapi_nanobanana2": "DC-Banana-2",
+        "newapi_gpt_image2": "LingShan-G2",
+        "newapi_nanobanana2": "LingShan-NB-2",
     }
     assert body["data"]["sketch_aspect_padding"] is True
     assert "force_half_k" not in body["data"]
@@ -173,8 +173,8 @@ def test_sketch_settings_returns_current_selection_and_options(monkeypatch, tmp_
     assert body["ok"] is True
     assert body["data"]["sketch_image_selection"] == "newapi_nanobanana2"
     assert body["data"]["options"] == {
-        "newapi_gpt_image2": "DC-Image-2",
-        "newapi_nanobanana2": "DC-Banana-2",
+        "newapi_gpt_image2": "LingShan-G2",
+        "newapi_nanobanana2": "LingShan-NB-2",
     }
 
 
