@@ -853,6 +853,7 @@ frontend/src/features/canvas/tools/registry.ts,Elastic-2.0,2026 SuperTale contri
 frontend/src/features/canvas/tools/types.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/trackpad-pan/trackpadPanStore.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/AssetCommitHandle.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/ui/AssetLibraryModal.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/AudioWaveformPlayer.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/BackToNodesHint.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/BackgroundCropperDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -869,7 +870,6 @@ frontend/src/features/canvas/ui/CanvasQuickActionBar.tsx,Elastic-2.0,2026 SuperT
 frontend/src/features/canvas/ui/CanvasShortcutsPanel.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/CanvasViewportBookmarks.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/CanvasZoomControl.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/src/features/canvas/ui/CharacterLibraryModal.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/CommitTargetHint.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/DirectorControlBundleBadge.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/EditableTableCell.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

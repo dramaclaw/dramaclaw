@@ -17,7 +17,7 @@ import re
 import shutil
 import uuid
 from pathlib import Path
-from typing import Annotated, Awaitable, Callable, Literal, Optional
+from typing import Annotated, Any, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, unquote, urlencode, urlsplit
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
@@ -227,6 +227,7 @@ from novelvideo.freezone.video_node import (
     is_freezone_happyhorse_backend,
     is_freezone_seedance2_backend,
     load_video_character_library,
+    sync_mainline_assets_into_library,
     normalize_freezone_seedance2_scene_optimize,
     normalize_video_aspect_ratio,
     normalize_video_duration_for_backend,
@@ -6688,30 +6689,146 @@ async def freezone_add_video_character_library_item(
     body: FreezoneVideoCharacterLibraryItemRequest,
     user: dict = Depends(get_api_user),
 ):
-    """视频处理：把上传好的角色参考图登记到视频角色库。"""
+    """视频处理：把上传好的素材登记到资产库（图片/视频/音频）。"""
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user
     )
 
     if not body.name.strip():
         raise HTTPException(400, "name is required")
-    if not body.image_urls:
-        raise HTTPException(400, "image_urls is required (non-empty)")
 
-    for url in body.image_urls:
+    def _require_local(url: str, label: str) -> None:
         try:
             path = resolve_static_url_to_path(url, project_dir)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if not path.exists():
-            raise HTTPException(404, f"character image not found: {path}")
+            raise HTTPException(404, f"{label} not found: {path}")
+
+    if body.media == "video":
+        if not body.video_url:
+            raise HTTPException(400, "video_url is required when media=video")
+        _require_local(body.video_url, "video")
+    elif body.media == "audio":
+        if not body.audio_url:
+            raise HTTPException(400, "audio_url is required when media=audio")
+        _require_local(body.audio_url, "audio")
+    else:
+        if not body.image_urls:
+            raise HTTPException(400, "image_urls is required (non-empty)")
+        for url in body.image_urls:
+            _require_local(url, "image")
 
     item = add_video_character_library_item(
         project_dir,
         name=body.name,
+        media=body.media,
         image_urls=body.image_urls,
+        video_url=body.video_url,
+        audio_url=body.audio_url,
     )
     return {"ok": True, "data": item}
+
+
+@router.post(
+    "/projects/{project}/freezone/video/asset-library/sync-from-mainline",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_sync_asset_library_from_mainline(
+    project: str,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：把主线的人物/场景/道具参考图与人物语音幂等同步进资产库。
+
+    走稳定合成 id（``mainline:<kind>:<name>``），重复同步只更新 URL、不产生重复。
+    """
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    store = await make_sqlite_store_for_context(ctx)
+
+    def _static_url(abs_path: Path) -> str:
+        if not abs_path.exists():
+            return ""
+        try:
+            rel = abs_path.relative_to(project_dir).as_posix()
+        except ValueError:
+            return ""
+        return make_static_url_for_context(ctx, rel, local_path=abs_path)
+
+    assets: list[dict[str, Any]] = []
+
+    # 人物：肖像 → 图片；参考语音 → 音频
+    for character in store.get_all_characters():
+        name = getattr(character, "name", "") or ""
+        if not name:
+            continue
+        portrait_url = _static_url(canonical_portrait_path(project_dir, name))
+        if portrait_url:
+            assets.append(
+                {
+                    "id": f"mainline:character:{name}",
+                    "name": name,
+                    "media": "image",
+                    "source": "character",
+                    "url": portrait_url,
+                }
+            )
+        # 走全站统一的三级声线级联（身份覆盖 → 年龄段预设 → 角色默认），并让
+        # resolve_character_voice 负责把项目相对/绝对路径解析成真实存在的绝对路径，
+        # 避免这里手拼 project_dir / rel 时对绝对路径拼错、静默丢音。
+        voice = resolve_character_voice(project_dir=project_dir, character=character)
+        if voice.audio_path is not None:
+            voice_url = _static_url(voice.audio_path)
+            if voice_url:
+                assets.append(
+                    {
+                        "id": f"mainline:voice:{name}",
+                        "name": name,
+                        "media": "audio",
+                        "source": "character",
+                        "url": voice_url,
+                    }
+                )
+
+    # 场景：master → 图片
+    scenes = await store.list_scenes()
+    for scene in scenes:
+        name = getattr(scene, "name", "") or ""
+        if not name:
+            continue
+        master_url = _static_url(canonical_scene_master_path(project_dir, name))
+        if master_url:
+            assets.append(
+                {
+                    "id": f"mainline:scene:{name}",
+                    "name": name,
+                    "media": "image",
+                    "source": "scene",
+                    "url": master_url,
+                }
+            )
+
+    # 道具：reference → 图片
+    props = await store.list_props()
+    for prop in props:
+        name = getattr(prop, "name", "") or ""
+        if not name:
+            continue
+        ref_url = _static_url(canonical_prop_reference_path(project_dir, name))
+        if ref_url:
+            assets.append(
+                {
+                    "id": f"mainline:prop:{name}",
+                    "name": name,
+                    "media": "image",
+                    "source": "prop",
+                    "url": ref_url,
+                }
+            )
+
+    library = sync_mainline_assets_into_library(project_dir, assets=assets)
+    return {"ok": True, "data": library, "synced": len(assets)}
 
 
 @router.delete(

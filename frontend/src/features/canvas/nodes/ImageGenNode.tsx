@@ -17,6 +17,7 @@ import {
   Download,
   Image as ImageIcon,
   Languages,
+  Library,
   Loader2,
   Palette,
   Upload,
@@ -110,6 +111,10 @@ import { extractRequestId } from '@/features/canvas/application/generationErrorR
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { useNodeGenerationHistory } from '@/features/canvas/hooks/useNodeGenerationHistory';
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';
+import {
+  AssetLibraryModal,
+  type AssetLibrarySelection,
+} from '@/features/canvas/ui/AssetLibraryModal';
 import {
   NodeGenerationHistory,
   hasCompletedHistoryRecords,
@@ -531,6 +536,48 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         .forEach((edge) => deleteEdge(edge.id));
     },
     [id, deleteEdge],
+  );
+
+  const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
+
+  // Spawn upload reference nodes from selected asset-library images — one per
+  // selection, stacked to the left of this node, then wired as upstream refs so
+  // they feed the multi-reference generation. Image-only here (the modal is
+  // opened with allowedMedia=['image']), but we still guard on media.
+  const spawnAssetLibraryReferences = useCallback(
+    (selections: ReadonlyArray<AssetLibrarySelection>) => {
+      const imageSelections = selections.filter((sel) => sel.media === 'image');
+      if (imageSelections.length === 0) return;
+      const state = useCanvasStore.getState();
+      const self = state.nodes.find((n) => n.id === id);
+      if (!self) return;
+      const UPLOAD_WIDTH = 320;
+      const UPLOAD_HEIGHT = 240;
+      const GAP_X = 40;
+      const GAP_Y = 24;
+      const baseX = self.position.x - UPLOAD_WIDTH - GAP_X;
+      const totalH =
+        UPLOAD_HEIGHT * imageSelections.length + GAP_Y * (imageSelections.length - 1);
+      const startY =
+        self.position.y + ((self.height ?? DEFAULT_HEIGHT) - totalH) / 2;
+      const newIds: string[] = [];
+      imageSelections.forEach((sel, idx) => {
+        const y = startY + idx * (UPLOAD_HEIGHT + GAP_Y);
+        const newId = addNodeAction(
+          CANVAS_NODE_TYPES.upload,
+          { x: baseX, y },
+          {
+            imageUrl: sel.url,
+            previewImageUrl: sel.url,
+            displayName: sel.name || undefined,
+          },
+        );
+        addEdgeAction(newId, id);
+        newIds.push(newId);
+      });
+      state.autoGroupSpawn(id, newIds, { label: '资产参考组' });
+    },
+    [addEdgeAction, addNodeAction, id],
   );
 
   // Hover preview state for the upstream image thumbnails in the OpsPanel
@@ -1650,6 +1697,18 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               nodeId={id}
               onInsert={insertContextPaletteEntry}
             />
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsAssetLibraryOpen(true);
+              }}
+              className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} group/asset px-1.5`}
+              title="从资产库选择参考图（人物 / 场景 / 道具）"
+            >
+              <Library className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/asset:text-text-dark`} />
+              <span>资产库</span>
+            </button>
             {upstreamTextContents.map((content) => (
               <ReferenceTextChip
                 key={content.nodeId}
@@ -1891,6 +1950,13 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           onSubmitDirectorCombined={handleDirectorCaptureCombined}
         />
       )}
+      <AssetLibraryModal
+        open={isAssetLibraryOpen}
+        project={readUrl().project ?? null}
+        allowedMedia={['image']}
+        onClose={() => setIsAssetLibraryOpen(false)}
+        onConfirm={(selections) => spawnAssetLibraryReferences(selections)}
+      />
     </div>
   );
 });

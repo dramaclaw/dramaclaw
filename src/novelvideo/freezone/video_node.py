@@ -559,23 +559,80 @@ def save_video_character_library(project_dir: Path, items: list[dict[str, Any]])
     path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _upsert_library_item(
+    items: list[dict[str, Any]],
+    *,
+    name: str,
+    image_urls: list[str] | None,
+    media: str,
+    source: str,
+    video_url: str | None,
+    audio_url: str | None,
+    item_id: str | None,
+) -> dict[str, Any]:
+    """纯内存 upsert：按 id 就地更新或追加 ``items``，返回写入的条目。
+
+    不做任何磁盘 IO，供单条登记与批量同步复用（后者一次读、一次写即可）。
+    """
+    now = datetime.now().isoformat()
+    urls = list(image_urls or [])
+    if media == "video":
+        cover = video_url
+    elif media == "audio":
+        cover = None
+    else:
+        cover = urls[0] if urls else None
+    resolved_id = item_id or uuid.uuid4().hex[:12]
+    existing_idx = next(
+        (i for i, it in enumerate(items) if it.get("id") == resolved_id), None
+    )
+    existing = items[existing_idx] if existing_idx is not None else None
+    item = {
+        "id": resolved_id,
+        "name": name.strip(),
+        "media": media,
+        "source": source,
+        "image_urls": urls,
+        "video_url": video_url,
+        "audio_url": audio_url,
+        "cover_url": cover,
+        "created_at": existing.get("created_at") if existing else now,
+        "updated_at": now,
+    }
+    if existing_idx is not None:
+        items[existing_idx] = item
+    else:
+        items.append(item)
+    return item
+
+
 def add_video_character_library_item(
     project_dir: Path,
     *,
     name: str,
-    image_urls: list[str],
+    image_urls: list[str] | None = None,
+    media: str = "image",
+    source: str = "upload",
+    video_url: str | None = None,
+    audio_url: str | None = None,
+    item_id: str | None = None,
 ) -> dict[str, Any]:
+    """把一条素材登记到资产库。
+
+    图片走 ``image_urls``，视频/音频走 ``video_url`` / ``audio_url``。``item_id``
+    非空时按 id upsert（主线同步用稳定合成 id，重复同步是更新而非新增）。
+    """
     items = load_video_character_library(project_dir)
-    now = datetime.now().isoformat()
-    item = {
-        "id": uuid.uuid4().hex[:12],
-        "name": name.strip(),
-        "image_urls": list(image_urls),
-        "cover_url": image_urls[0] if image_urls else None,
-        "created_at": now,
-        "updated_at": now,
-    }
-    items.append(item)
+    item = _upsert_library_item(
+        items,
+        name=name,
+        image_urls=image_urls,
+        media=media,
+        source=source,
+        video_url=video_url,
+        audio_url=audio_url,
+        item_id=item_id,
+    )
     save_video_character_library(project_dir, items)
     return item
 
@@ -587,3 +644,39 @@ def delete_video_character_library_item(project_dir: Path, item_id: str) -> bool
         return False
     save_video_character_library(project_dir, kept)
     return True
+
+
+def sync_mainline_assets_into_library(
+    project_dir: Path,
+    *,
+    assets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """把主线资产（已解析好 name/url/media/source/id）幂等写进资产库。
+
+    ``assets`` 每项形如 ``{"id","name","media","source","url"}``。用稳定合成 id
+    upsert，因此重复同步只更新 URL、不产生重复条目。返回同步后的完整库。
+
+    整个批次只读一次、写一次库文件（内存里逐条 upsert），避免 N 条资产触发
+    N 次全量 load+save 的 O(N²) IO。
+    """
+    items = load_video_character_library(project_dir)
+    changed = False
+    for asset in assets:
+        media = str(asset.get("media") or "image")
+        url = asset.get("url") or ""
+        if not url:
+            continue
+        _upsert_library_item(
+            items,
+            name=str(asset.get("name") or ""),
+            media=media,
+            source=str(asset.get("source") or "upload"),
+            item_id=str(asset.get("id") or "") or None,
+            image_urls=[url] if media == "image" else None,
+            video_url=url if media == "video" else None,
+            audio_url=url if media == "audio" else None,
+        )
+        changed = True
+    if changed:
+        save_video_character_library(project_dir, items)
+    return items

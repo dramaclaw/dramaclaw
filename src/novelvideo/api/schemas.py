@@ -960,15 +960,28 @@ class FreezoneRelightRequest(BaseModel):
 
 
 class FreezoneVideoCharacterLibraryItemRequest(BaseModel):
-    """视频节点角色库录入请求。
+    """视频节点资产库录入请求。
 
-    角色图片先通过通用 upload 上传，再把静态地址登记到视频角色库。
+    素材先通过通用 upload 上传，再把静态地址登记到资产库。图片走 image_urls，
+    视频/音频走对应的单地址字段。
     """
 
-    name: str = Field(description="角色名称，用于前端角色库展示")
+    name: str = Field(description="资产名称，用于前端资产库展示")
+    media: Literal["image", "video", "audio"] = Field(
+        default="image",
+        description="素材类型：图片 / 视频 / 音频",
+    )
     image_urls: list[str] = Field(
         default_factory=list,
-        description="角色参考图静态地址列表，至少一张",
+        description="图片参考图静态地址列表（media=image 时至少一张）",
+    )
+    video_url: str | None = Field(
+        default=None,
+        description="视频静态地址（media=video 时必填）",
+    )
+    audio_url: str | None = Field(
+        default=None,
+        description="音频静态地址（media=audio 时必填）",
     )
 
 

@@ -29,6 +29,11 @@ import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canv
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { ReferenceDetachButton } from '@/features/canvas/nodes/shared/ReferenceDetachButton';
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';
+import {
+  AssetLibraryModal,
+  type AssetLibrarySelection,
+} from '@/features/canvas/ui/AssetLibraryModal';
+import { readUrl } from '@/lib/url-params';
 import { useDetachUpstream } from '@/features/canvas/hooks/useDetachUpstream';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
 import { canvasAiGateway } from '@/features/canvas/application/canvasServices';
@@ -895,6 +900,48 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     });
   }, [commitPromptDraft]);
 
+  const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
+
+  // Spawn upload reference nodes from selected asset-library images — stacked to
+  // the left of this node and wired upstream so they become @-mention references
+  // for the edit. Image-only (modal opened with allowedMedia=['image']).
+  const spawnAssetLibraryReferences = useCallback(
+    (selections: ReadonlyArray<AssetLibrarySelection>) => {
+      const imageSelections = selections.filter((sel) => sel.media === 'image');
+      if (imageSelections.length === 0) return;
+      const state = useCanvasStore.getState();
+      const self = state.nodes.find((n) => n.id === id);
+      if (!self) return;
+      const UPLOAD_WIDTH = 320;
+      const UPLOAD_HEIGHT = 240;
+      const GAP_X = 40;
+      const GAP_Y = 24;
+      const baseX = self.position.x - UPLOAD_WIDTH - GAP_X;
+      const totalH =
+        UPLOAD_HEIGHT * imageSelections.length + GAP_Y * (imageSelections.length - 1);
+      const startY =
+        self.position.y +
+        ((self.height ?? IMAGE_EDIT_NODE_DEFAULT_HEIGHT) - totalH) / 2;
+      const newIds: string[] = [];
+      imageSelections.forEach((sel, idx) => {
+        const y = startY + idx * (UPLOAD_HEIGHT + GAP_Y);
+        const newId = addNode(
+          CANVAS_NODE_TYPES.upload,
+          { x: baseX, y },
+          {
+            imageUrl: sel.url,
+            previewImageUrl: sel.url,
+            displayName: sel.name || undefined,
+          },
+        );
+        addEdge(newId, id);
+        newIds.push(newId);
+      });
+      state.autoGroupSpawn(id, newIds, { label: '资产参考组' });
+    },
+    [addEdge, addNode, id],
+  );
+
   const handlePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Backspace' || event.key === 'Delete') {
       const currentPrompt = promptDraftRef.current;
@@ -1242,10 +1289,11 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
               onMouseDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation();
-                applyPromptSuggestion(`${promptDraft}${promptDraft ? '\n' : ''}保持角色身份一致，面部结构、年龄段和发型不要漂移。`);
+                setIsAssetLibraryOpen(true);
               }}
+              title="从资产库选择参考图（人物 / 场景 / 道具）"
             >
-              角色库
+              资产库
             </button>
             {upstreamTextContents.map((content) => (
               <ReferenceTextChip
@@ -1443,6 +1491,13 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         maxWidth={IMAGE_EDIT_NODE_MAX_WIDTH}
         maxHeight={IMAGE_EDIT_NODE_MAX_HEIGHT}
         keepAspectRatio
+      />
+      <AssetLibraryModal
+        open={isAssetLibraryOpen}
+        project={readUrl().project ?? null}
+        allowedMedia={['image']}
+        onClose={() => setIsAssetLibraryOpen(false)}
+        onConfirm={(selections) => spawnAssetLibraryReferences(selections)}
       />
     </div>
   );

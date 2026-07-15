@@ -2318,10 +2318,22 @@ export async function submitFreezoneAnalyzeVideoStory(
 
 // /freezone/video/character-library -------------------------------------- //
 
+export type FreezoneAssetLibraryMedia = "image" | "video" | "audio";
+export type FreezoneAssetLibrarySource =
+  | "upload"
+  | "character"
+  | "scene"
+  | "prop";
+
 export interface FreezoneVideoCharacterLibraryItem {
   id?: string;
   name: string;
+  media?: FreezoneAssetLibraryMedia;
+  source?: FreezoneAssetLibrarySource;
   image_urls?: string[];
+  video_url?: string | null;
+  audio_url?: string | null;
+  cover_url?: string | null;
   created_at?: string;
   updated_at?: string;
   [key: string]: unknown;
@@ -2329,7 +2341,10 @@ export interface FreezoneVideoCharacterLibraryItem {
 
 export interface FreezoneAddVideoCharacterLibraryItemPayload {
   name: string;
+  media?: FreezoneAssetLibraryMedia;
   imageUrls?: string[];
+  videoUrl?: string;
+  audioUrl?: string;
 }
 
 export async function fetchFreezoneVideoCharacterLibrary(
@@ -2344,13 +2359,31 @@ export async function submitFreezoneAddVideoCharacterLibraryItem(
   project: string,
   payload: FreezoneAddVideoCharacterLibraryItemPayload,
 ): Promise<unknown> {
-  const body: Record<string, unknown> = { name: payload.name };
+  const body: Record<string, unknown> = {
+    name: payload.name,
+    media: payload.media ?? "image",
+  };
   if (payload.imageUrls && payload.imageUrls.length > 0) {
     body.image_urls = payload.imageUrls;
   }
+  if (payload.videoUrl) body.video_url = payload.videoUrl;
+  if (payload.audioUrl) body.audio_url = payload.audioUrl;
   return await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/video/character-library`,
     { method: "POST", json: body },
+  );
+}
+
+/**
+ * 把主线的人物/场景/道具参考图与人物语音幂等同步进资产库。后端按稳定合成 id
+ * upsert,重复同步只更新不重复。返回同步后的完整库(apiCall 会解包 data)。
+ */
+export async function syncFreezoneAssetLibraryFromMainline(
+  project: string,
+): Promise<FreezoneVideoCharacterLibraryItem[]> {
+  return await apiCall<FreezoneVideoCharacterLibraryItem[]>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/sync-from-mainline`,
+    { method: "POST" },
   );
 }
 
