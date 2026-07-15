@@ -5744,7 +5744,7 @@ async def test_freezone_image_models_returns_selection_keys(
             "provider": "newapi",
             "apiModel": "newapi_gpt_image2",
             "api_model": "newapi_gpt_image2",
-            "label": "DC-Image-2",
+            "label": "LingShan-G2",
         },
         {
             "id": "newapi_nanobanana2",
@@ -5752,7 +5752,7 @@ async def test_freezone_image_models_returns_selection_keys(
             "provider": "newapi",
             "apiModel": "newapi_nanobanana2",
             "api_model": "newapi_nanobanana2",
-            "label": "DC-Banana-2",
+            "label": "LingShan-NB-2",
         },
     ]
 

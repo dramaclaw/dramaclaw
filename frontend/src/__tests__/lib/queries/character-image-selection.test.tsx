@@ -144,8 +144,8 @@ describe("character image selection query hooks", () => {
               asset_kind: "scene",
               image_source_selection: "newapi_gpt_image2",
               options: {
-                newapi_gpt_image2: "DC-Image-2",
-                newapi_nanobanana2: "DC-Banana-2",
+                newapi_gpt_image2: "LingShan-G2",
+                newapi_nanobanana2: "LingShan-NB-2",
               },
             },
           });
@@ -182,8 +182,8 @@ describe("character image selection query hooks", () => {
               asset_kind: "prop",
               image_source_selection: "newapi_nanobanana2",
               options: {
-                newapi_gpt_image2: "DC-Image-2",
-                newapi_nanobanana2: "DC-Banana-2",
+                newapi_gpt_image2: "LingShan-G2",
+                newapi_nanobanana2: "LingShan-NB-2",
               },
             },
           });

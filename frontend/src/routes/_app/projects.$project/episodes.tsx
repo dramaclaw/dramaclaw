@@ -21,7 +21,6 @@ import {
   MapPinned,
   Package,
   Play,
-  RefreshCw,
   Sparkles,
   Users,
   type LucideIcon,
@@ -65,6 +64,8 @@ import { StageProgressPanel } from "@/components/stage-progress-panel";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { EpisodeListSkeleton } from "@/components/skeletons";
 import { Button } from "@/components/ui/button";
+import { SUBTLE_HEADER_ACTION_BUTTON_CLASS } from "@/components/ui/header-action-styles";
+import { HeaderRefreshButton } from "@/components/ui/header-refresh-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -270,7 +271,7 @@ function TopBar({
   planPending: boolean;
   planCostDisplay?: string | null;
   showRefresh: boolean;
-  onRefresh: () => void;
+  onRefresh: () => Promise<boolean>;
   refreshPending: boolean;
   selectedEpisode: Episode | null;
   episodes: Episode[];
@@ -331,20 +332,11 @@ function TopBar({
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
         {showRefresh && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onRefresh}
-            disabled={refreshPending}
-            className="h-8 gap-1.5 rounded-[8px] px-3 text-xs font-normal shadow-none hover:bg-white/[0.04]"
-          >
-            {refreshPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="size-3.5" />
-            )}
-            {t("episode.list.refresh")}
-          </Button>
+          <HeaderRefreshButton
+            label={t("episode.list.refresh")}
+            onRefresh={onRefresh}
+            refreshing={refreshPending}
+          />
         )}
         {showReplan && (
           <Button
@@ -391,7 +383,7 @@ function TopBar({
             variant="outline"
             size="sm"
             onClick={onBack}
-            className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none hover:bg-white/[0.04] dark:bg-transparent"
+            className={SUBTLE_HEADER_ACTION_BUTTON_CLASS}
           >
             <ArrowLeft className="size-3.5" />
             {t("episode.list.backToEpisodes")}
@@ -941,9 +933,10 @@ function EpisodesPage() {
         );
       }
       await Promise.all(invalidations);
-      toast.success(t("episode.list.refreshed"));
+      return true;
     } catch {
       toast.error(t("common.error"));
+      return false;
     }
   };
 

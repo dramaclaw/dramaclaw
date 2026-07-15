@@ -14,6 +14,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { LightboxImage } from "@/components/lightbox-image";
+import { ASSET_CARD_META_BADGE_CLASS } from "@/components/assets/asset-card-styles";
 import { UsageCountBadge } from "@/components/assets/usage-count-badge";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { CreditCostInline } from "@/components/credit-cost-inline";
@@ -79,11 +80,11 @@ export function PropAssetCard({
             <CardTitle className="truncate">{prop.name}</CardTitle>
             <div className="flex shrink-0 flex-wrap items-center gap-1">
               {propTypeLabel && (
-                <span className="rounded-[4px] border border-border bg-background/40 px-1 py-0 text-[10px] text-muted-foreground">
+                <span className={ASSET_CARD_META_BADGE_CLASS}>
                   {propTypeLabel}
                 </span>
               )}
-              <span className="rounded-[4px] border border-border bg-background/40 px-1 py-0 text-[10px] text-muted-foreground">
+              <span className={ASSET_CARD_META_BADGE_CLASS}>
                 {t("assets.props.reference")}{" "}
                 {referenceUrl ? t("assets.common.generated") : t("assets.common.missing")}
               </span>

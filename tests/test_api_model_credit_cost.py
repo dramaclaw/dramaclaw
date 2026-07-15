@@ -168,9 +168,9 @@ async def test_generation_credit_cost_route_resolves_beat_tts(monkeypatch):
     from novelvideo import config
     from novelvideo.api.routes import model_credits
 
-    monkeypatch.setattr(config, "INDEXTTS2_RECORD_MODEL", "index-tts-2")
+    monkeypatch.setattr(config, "INDEXTTS2_RECORD_MODEL", "LingShan-TTS-2")
 
-    patch_quote(monkeypatch, model_credits, expected_model="index-tts-2", cost=3)
+    patch_quote(monkeypatch, model_credits, expected_model="LingShan-TTS-2", cost=3)
 
     result = await model_credits.get_generation_credit_cost(
         kind="beat_tts",
@@ -189,7 +189,7 @@ async def test_generation_credit_cost_route_resolves_freezone_audio_music(monkey
         monkeypatch,
         model_credits,
         expected_kind="audio",
-        expected_model="eleven-music",
+        expected_model="LingShan-MU-11",
         expected_params={},
         expected_quantity=30,
         cost=90,

@@ -57,14 +57,14 @@ async def test_reserve_tts_model_call_uses_audio_billing_kind(monkeypatch):
     monkeypatch.setattr(indextts2_fal, "get_usage_meter", lambda: FakeUsageMeter())
 
     reservation_id = await indextts2_fal._reserve_tts_model_call(
-        "index-tts-2",
+        "LingShan-TTS-2",
         source="indextts2_newapi",
     )
 
     assert reservation_id == "reservation_1"
     assert calls == [
         {
-            "model": "index-tts-2",
+            "model": "LingShan-TTS-2",
             "billing_kind": "audio",
             "metadata": {"source": "indextts2_newapi"},
         }
@@ -114,7 +114,7 @@ async def test_indextts2_newapi_posts_audio_speech_schema(monkeypatch, tmp_path)
         provider="newapi",
         api_key="newapi-test-key",
         endpoint="http://newapi.test/v1",
-        model="index-tts-2",
+        model="LingShan-TTS-2",
         timeout_seconds=12,
     )
     result = await client.generate(
@@ -126,10 +126,10 @@ async def test_indextts2_newapi_posts_audio_speech_schema(monkeypatch, tmp_path)
 
     assert result.success is True
     assert output_path.read_bytes() == b"generated-wav"
-    assert reserved == [{"model": "index-tts-2", "source": "indextts2_newapi"}]
+    assert reserved == [{"model": "LingShan-TTS-2", "source": "indextts2_newapi"}]
     assert confirmed == [
         {
-            "model": "index-tts-2",
+            "model": "LingShan-TTS-2",
             "reservation_id": "reservation_1",
             "provider_request_id": "req_tts_1",
             "response_id": "",
@@ -145,7 +145,7 @@ async def test_indextts2_newapi_posts_audio_speech_schema(monkeypatch, tmp_path)
                 "Content-Type": "application/json",
             },
             {
-                "model": "index-tts-2",
+                "model": "LingShan-TTS-2",
                 "input": "你终于来了。",
                 "metadata": {
                     "audio_url": "data:audio/wav;base64,abc",
@@ -270,7 +270,7 @@ async def test_indextts2_refunds_reserved_credit_on_generation_failure(monkeypat
         provider="newapi",
         api_key="newapi-test-key",
         endpoint="http://newapi.test/v1",
-        model="index-tts-2",
+        model="LingShan-TTS-2",
         timeout_seconds=12,
     )
     result = await client.generate(
@@ -305,7 +305,7 @@ async def test_indextts2_reraises_insufficient_credit(monkeypatch, tmp_path):
         provider="newapi",
         api_key="newapi-test-key",
         endpoint="http://newapi.test/v1",
-        model="index-tts-2",
+        model="LingShan-TTS-2",
         timeout_seconds=12,
     )
 

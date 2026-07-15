@@ -106,6 +106,7 @@ import {
 } from "@/lib/character-main-copy";
 import type { FreezonePresetCanvasRequest } from "@/api/canvas";
 import { Button } from "@/components/ui/button";
+import { SUBTLE_HEADER_ACTION_BUTTON_CLASS } from "@/components/ui/header-action-styles";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -589,7 +590,7 @@ function CharactersPageHeader({
               variant="outline"
               size="sm"
               onClick={onAdd}
-              className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none hover:bg-white/[0.04] dark:bg-transparent"
+              className={SUBTLE_HEADER_ACTION_BUTTON_CLASS}
             >
               <Plus className="size-3.5" />
               {t("characters.addCharacter")}
