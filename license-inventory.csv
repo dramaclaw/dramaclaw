@@ -911,6 +911,7 @@ frontend/src/features/canvas/ui/ZoomScaledToolbar.tsx,Elastic-2.0,2026 SuperTale
 frontend/src/features/canvas/ui/canvas-node-menu-shared.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/canvasControlStyles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/closeButtonStyles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/ui/edgeVisibilityStore.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/multi-angle-sphere.css,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/nodeControlStyles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/ui/nodeFrameStyles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
