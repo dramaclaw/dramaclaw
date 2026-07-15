@@ -112,6 +112,7 @@ import { NodeToolDialog } from './ui/NodeToolDialog';
 import { ImageViewerModal } from './ui/ImageViewerModal';
 import { VideoViewerModal } from './ui/VideoViewerModal';
 import { CanvasZoomControl } from './ui/CanvasZoomControl';
+import { useEdgeVisibilityStore } from './ui/edgeVisibilityStore';
 import { CanvasQuickActionBar } from './ui/CanvasQuickActionBar';
 import { BackToNodesHint } from './ui/BackToNodesHint';
 import { CanvasMinimapButton } from './ui/CanvasMinimapButton';
@@ -976,6 +977,9 @@ export function Canvas({
 
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
+  // 连线可见性：隐藏时只给 ReactFlow 的边打 `hidden`，真实 edges 一动不动（见
+  // edgeVisibilityStore）。持久化/自动布局/导出全部照用 store 里的真实连线。
+  const edgesHidden = useEdgeVisibilityStore((state) => state.hidden);
 
   // 预取 beat-context 节点引用到的剧集 beats/episode-detail,焐热缓存。配合 BeatContextNode
   // 里「仅选中时才查询」的门控,避免视口虚拟化下节点挂载即请求、卸载即被取消的 499 循环。
@@ -1093,6 +1097,13 @@ export function Canvas({
       };
     });
   }, [nodes, placementConfirmNodeId]);
+
+  // 隐藏连线时给每条边补 `hidden: true`——ReactFlow 会跳过渲染但边仍在图里，
+  // 连接、reconnect、持久化都不受影响。显示时直接透传真实 edges，零额外分配。
+  const renderedEdges = useMemo(() => {
+    if (!edgesHidden) return edges;
+    return edges.map((edge) => (edge.hidden ? edge : { ...edge, hidden: true }));
+  }, [edges, edgesHidden]);
 
   const clearMarqueeSelection = useCallback(() => {
     marqueeSelectionRef.current = null;
@@ -4507,7 +4518,7 @@ export function Canvas({
     >
       <ReactFlow
         nodes={renderedNodes}
-        edges={edges}
+        edges={renderedEdges}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onEdgeClick={handleEdgeClick}

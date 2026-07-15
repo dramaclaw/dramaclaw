@@ -2709,7 +2709,9 @@
       "lock": "Lock Canvas",
       "unlock": "Unlock Canvas",
       "organize": "Organize / Locate Canvas",
-      "organizeShortcut": "⌥⇧F"
+      "organizeShortcut": "⌥⇧F",
+      "hideEdges": "Hide connections",
+      "showEdges": "Show connections"
     },
     "quickbar": {
       "addNode": "Add Node",

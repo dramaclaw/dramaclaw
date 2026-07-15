@@ -2709,7 +2709,9 @@
       "lock": "锁定画布",
       "unlock": "解锁画布",
       "organize": "整理 / 定位画布",
-      "organizeShortcut": "⌥⇧F"
+      "organizeShortcut": "⌥⇧F",
+      "hideEdges": "隐藏连线",
+      "showEdges": "显示连线"
     },
     "quickbar": {
       "addNode": "添加节点",
