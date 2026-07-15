@@ -73,7 +73,14 @@
 }
 
 .item {
-  overflow: hidden;
+  /* clip (not hidden): still clips content to the rounded border, but does NOT
+     make the card a scroll container. overflow:hidden would, and a grid item
+     that is a scroll container gets an automatic minimum size of 0 — so when the
+     viewport is short (e.g. 125% zoom) the .list grid crushes every row to an
+     equal fraction of its fixed height (below the 62px question), clipping the
+     card and letting an expanded answer overlap the next item. clip keeps the
+     rows content-sized so the list scrolls instead of crushing. */
+  overflow: clip;
   border: 1px solid rgba(248, 250, 255, 0.08);
   border-radius: 16px;
   background: rgba(18, 18, 19, 0.74);
