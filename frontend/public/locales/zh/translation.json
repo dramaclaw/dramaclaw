@@ -3748,8 +3748,8 @@
         "setupPasswordMismatch": "两次输入的初始化密码不一致。"
       },
       "featureModels": {
-        "title": "文本模型映射",
-        "description": "为文本 / LLM 功能指定上游模型；未设置则使用后端默认。",
+        "title": "业务模型映射",
+        "description": "为文本理解、内容生成和视觉理解功能指定上游模型；未设置则使用后端默认。",
         "channelsTitle": "供应商渠道",
         "channelsDescription": "先添加要使用的供应商渠道，并配置上游 Key 和可选 Base URL 覆盖；每个供应商只能添加一次。",
         "addChannel": "新增渠道",
@@ -3785,22 +3785,23 @@
         "noMappings": "请先为功能填写上游模型名。",
         "missingBaseUrl": "请先填写 New API 地址。",
         "missingKeys": "以下供应商缺少上游 Key：{{providers}}",
-        "textModelsTitle": "纯文本模型",
-        "multimodalModelsTitle": "多模态模型",
+        "textModelsTitle": "文本理解与生成",
+        "multimodalModelsTitle": "视觉理解模型",
         "visionRequiredHint": "该功能会把图片发送给上游模型，请选择支持图片输入/视觉理解的多模态模型；纯文本模型可能运行失败。",
+        "cogneeDescription": "小说导入和知识检索需要同时配置理解模型与向量模型，两者共同构成 Cognee 小说知识库。",
         "groups": {
           "chat": "虾导",
-          "shot": "镜头视频提示词",
-          "sketch": "草图视觉识别",
-          "episode": "剧集规划",
-          "sceneLibrary": "场景解析",
+          "shot": "视频生成提示词",
+          "sketch": "草图内容识别",
+          "episode": "剧集脚本与资产规划",
+          "sceneLibrary": "场景库构建",
           "freezone": "虾画",
           "style": "风格分析",
           "contentRewrite": "内容改写",
           "screenplay": "剧本解析与规范化",
           "assetCompile": "剧集场景资产",
           "directorWorld": "导演世界",
-          "novelImport": "小说理解与知识库"
+          "novelImport": "小说知识库（Cognee）"
         },
         "features": {
           "HERMES": "虾导聊天模型",
@@ -3822,13 +3823,13 @@
           "EPISODE_SCENE_RECONCILE": "校对并补充基础场景资产",
           "NARRATED_SCENE_ASSET": "规划解说剧场景资产",
           "STAGING_PROP": "规划导演世界临时道具",
-          "COGNEE": "小说理解与知识检索"
+          "COGNEE": "① 内容理解与知识抽取（LLM）"
         }
       },
       "embeddingModel": {
-        "title": "Embedding 模型配置",
-        "description": "导入小说 / Cognee 向量检索使用的 embedding 模型。内部模型名固定为 DC-cognee-embedding，用户只需要选择渠道、填写上游模型名、向量维度和可选批量大小。",
-        "colInternalModel": "内部模型名",
+        "title": "② 向量化与语义检索（Embedding）",
+        "description": "负责文本向量化和知识库语义检索。请选择渠道和上游 Embedding 模型，维度必须与实际上游输出一致。",
+        "colInternalModel": "系统模型名（固定）",
         "colProvider": "已配置渠道",
         "colUpstreamModel": "上游模型名",
         "colDimension": "维度",
@@ -3848,7 +3849,7 @@
         "invalidBatchSize": "请填写有效的 embedding 批量大小。"
       },
       "mediaModels": {
-        "title": "图片 / 视频 / 音频模型配置",
+        "title": "图片 / 视频 / 音频生成模型",
         "description": "这些模型已经由后端适配，固定模型名不能改；用户可以选择渠道，并填写 NewAPI model_mapping 的上游模型名，不填则使用固定模型名自身。-value 后缀为官方渠道专用模型。",
         "colType": "类型",
         "colModel": "固定模型",

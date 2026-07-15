@@ -679,7 +679,10 @@ function FeatureModelsBlock({
     [providerChannels],
   );
   const textFeatureGroups = useMemo(
-    () => splitFeatureModelGroups((feature) => !feature.requiresVision),
+    () =>
+      splitFeatureModelGroups(
+        (feature) => !feature.requiresVision && feature.id !== "COGNEE",
+      ),
     [],
   );
   const visionFeatureGroups = useMemo(
@@ -842,10 +845,11 @@ function FeatureModelsBlock({
         </Button>
       </div>
 
-      <EmbeddingModelBlock
+      <CogneeModelsBlock
         configuredProviders={configuredProviders}
         newApiBaseUrl={newApiBaseUrl}
         database={database}
+        providerChannels={providerChannels}
         savedChannelByProvider={savedChannelByProvider}
         savedEmbeddingModel={savedEmbeddingModel}
       />
@@ -858,6 +862,65 @@ function FeatureModelsBlock({
         savedMediaModels={savedMediaModels}
       />
     </>
+  );
+}
+
+function CogneeModelsBlock({
+  configuredProviders,
+  newApiBaseUrl,
+  database,
+  providerChannels,
+  savedChannelByProvider,
+  savedEmbeddingModel,
+}: {
+  configuredProviders: readonly FeatureModelProvider[];
+  newApiBaseUrl: string;
+  database: NewApiDatabaseConfigInput | undefined;
+  providerChannels: Record<string, { upstreamKey: string; baseUrl: string }>;
+  savedChannelByProvider: Map<string, SavedProviderChannelConfig>;
+  savedEmbeddingModel: SavedEmbeddingModelConfig | undefined;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <div className="mt-6 rounded-md border border-border/70 px-3 py-3">
+      <h4 className="text-xs font-medium text-foreground">
+        {t("settings.modelConfig.featureModels.groups.novelImport")}
+      </h4>
+      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+        {t("settings.modelConfig.featureModels.cogneeDescription")}
+      </p>
+
+      <div
+        className={cn(
+          FEATURE_ROW_GRID,
+          "mt-3 text-[11px] font-medium tracking-wide text-muted-foreground uppercase",
+        )}
+      >
+        <span>{t("settings.modelConfig.featureModels.colFeature")}</span>
+        <span>{t("settings.modelConfig.featureModels.colProvider")}</span>
+        <span>{t("settings.modelConfig.featureModels.colModel")}</span>
+      </div>
+      <div className="mt-2">
+        <FeatureModelRow
+          featureId="COGNEE"
+          defaultModel="DC-cognee-LLM"
+          newApiBaseUrl={newApiBaseUrl}
+          database={database}
+          configuredProviders={configuredProviders}
+          providerChannels={providerChannels}
+          savedChannelByProvider={savedChannelByProvider}
+        />
+      </div>
+
+      <EmbeddingModelBlock
+        configuredProviders={configuredProviders}
+        newApiBaseUrl={newApiBaseUrl}
+        database={database}
+        savedChannelByProvider={savedChannelByProvider}
+        savedEmbeddingModel={savedEmbeddingModel}
+      />
+    </div>
   );
 }
 

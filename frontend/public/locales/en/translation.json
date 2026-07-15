@@ -3748,8 +3748,8 @@
         "setupPasswordMismatch": "The setup passwords do not match."
       },
       "featureModels": {
-        "title": "Text Model Mapping",
-        "description": "Assign upstream models to text / LLM features; falls back to the backend default when unset.",
+        "title": "Business Model Mapping",
+        "description": "Assign upstream models to text understanding, content generation, and vision understanding features. Unset features use backend defaults.",
         "channelsTitle": "Provider Channels",
         "channelsDescription": "Add only the providers you need, then configure the upstream key and optional Base URL override. Each provider can be added once.",
         "addChannel": "Add Channel",
@@ -3785,22 +3785,23 @@
         "noMappings": "Fill in an upstream model name for at least one feature first.",
         "missingBaseUrl": "Fill in the New API URL first.",
         "missingKeys": "Missing upstream key for: {{providers}}",
-        "textModelsTitle": "Text-only Models",
-        "multimodalModelsTitle": "Multimodal Models",
+        "textModelsTitle": "Text Understanding & Generation",
+        "multimodalModelsTitle": "Vision Understanding Models",
         "visionRequiredHint": "This feature sends images to the upstream model. Choose a multimodal model that supports image input / vision understanding; text-only models may fail at runtime.",
+        "cogneeDescription": "Novel import and knowledge retrieval require both an understanding model and an embedding model; together they form the Cognee novel knowledge base.",
         "groups": {
           "chat": "AI Director",
-          "shot": "Shot Video Prompts",
-          "sketch": "Sketch Vision Analysis",
-          "episode": "Episode Planning",
-          "sceneLibrary": "Scene Analysis",
+          "shot": "Video Generation Prompts",
+          "sketch": "Sketch Content Analysis",
+          "episode": "Episode Script & Asset Planning",
+          "sceneLibrary": "Scene Library Construction",
           "freezone": "XiaCanvas",
           "style": "Style Analysis",
           "contentRewrite": "Content Rewrite",
           "screenplay": "Screenplay Analysis & Normalize",
           "assetCompile": "Episode Scene Assets",
           "directorWorld": "Director World",
-          "novelImport": "Novel Understanding & Knowledge Base"
+          "novelImport": "Novel Knowledge Base (Cognee)"
         },
         "features": {
           "HERMES": "AI Director chat model",
@@ -3822,13 +3823,13 @@
           "EPISODE_SCENE_RECONCILE": "Reconcile and complete base scene assets",
           "NARRATED_SCENE_ASSET": "Plan narrated-drama scene assets",
           "STAGING_PROP": "Plan temporary Director World props",
-          "COGNEE": "Novel understanding and knowledge retrieval"
+          "COGNEE": "① Content Understanding & Knowledge Extraction (LLM)"
         }
       },
       "embeddingModel": {
-        "title": "Embedding Model",
-        "description": "Embedding model used by novel import / Cognee vector search. The internal model name is fixed as DC-cognee-embedding; choose a channel, enter the upstream model, vector dimension, and optional batch size.",
-        "colInternalModel": "Internal Model",
+        "title": "② Vectorization & Semantic Search (Embedding)",
+        "description": "Vectorizes text for semantic knowledge-base search. Choose a channel and upstream Embedding model; the dimension must match the actual upstream output.",
+        "colInternalModel": "System Model (Fixed)",
         "colProvider": "Configured Channel",
         "colUpstreamModel": "Upstream Model",
         "colDimension": "Dimension",
@@ -3848,7 +3849,7 @@
         "invalidBatchSize": "Enter a valid embedding batch size."
       },
       "mediaModels": {
-        "title": "Image / Video / Audio Models",
+        "title": "Image / Video / Audio Generation Models",
         "description": "These models are already adapted by the backend. Fixed model names cannot be changed; choose a channel and optionally fill the upstream model used as the NewAPI model_mapping value. Empty values default to the fixed model name. Models ending in -value are official-channel only.",
         "colType": "Type",
         "colModel": "Fixed Model",
