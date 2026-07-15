@@ -50,7 +50,7 @@ CUSTOM_MEDIA_MODEL_NAMES = {
     "seedance-2.0",
     "seedance-2.0-fast",
     "happyhorse-1.0",
-    "LingShan-TTS-2",
+    "index-tts-2",
     "LingShan-MU-11",
 }
 OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {

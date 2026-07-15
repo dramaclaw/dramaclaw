@@ -122,6 +122,13 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
 CE_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
+            r"^NEWAPI_(?:SQL_DSN|SQLITE_PATH|ADMIN_USERNAME)$"
+        ),
+        "Advanced NewAPI provisioner overrides; CE launchers and the self-hosted compose "
+        "supply managed SQLite values, so these are intentionally absent from the public template.",
+    ),
+    (
+        re.compile(
             r"^(?:ST_CONTROL_PLANE_DSN|ST_REDIS_URL|ST_TASK_BACKEND|ST_COOKIE_SECURE|ST_WORKER_.*)$"
         ),
         "EE/control-plane env read by shared CE code but intentionally absent from CE template.",

@@ -305,6 +305,13 @@ def _first_non_empty(*values: str | None) -> str:
     return ""
 
 
+def _ce_sqlite_path() -> str:
+    """Return the managed CE NewAPI SQLite database path."""
+    from novelvideo.config import STATE_DIR
+
+    return str(Path(STATE_DIR) / "newapi" / "one-api.db")
+
+
 def get_provisioner_config(
     admin_base_url: str | None = None,
     *,
@@ -325,14 +332,18 @@ def get_provisioner_config(
             settings.get("custom_newapi_db_sqlite_path", "")
         ).strip()
     else:
-        resolved_sql_dsn = env_sql_dsn
-        resolved_sqlite_path = str(os.environ.get("NEWAPI_SQLITE_PATH", "")).strip()
+        resolved_sql_dsn = env_sql_dsn or "local"
+        resolved_sqlite_path = (
+            str(os.environ.get("NEWAPI_SQLITE_PATH", "")).strip()
+            or _ce_sqlite_path()
+        )
     return NewApiProvisionerConfig(
         admin_base_url=normalize_admin_base_url(
             _first_non_empty(
                 admin_base_url,
                 settings.get("custom_newapi_admin_base_url"),
                 os.environ.get("NEWAPI_ADMIN_BASE_URL", ""),
+                "http://127.0.0.1:3000",
             )
         ),
         sql_dsn=resolved_sql_dsn,

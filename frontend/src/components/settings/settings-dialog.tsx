@@ -185,13 +185,13 @@ function ModelConfigSection({ open }: { open: boolean }) {
     }
   }, [serverMode]);
 
-  // 自定义 NewAPI 地址上提到此处：自定义面板的输入框与下方「保存映射」
-  // 写入渠道时共用同一个 newApiBaseUrl。
+  // CE 运行环境提供本地 NewAPI 管理地址；初始化与下方模型映射共用该地址。
   const [customBaseUrl, setCustomBaseUrl] = useState(DEFAULT_CUSTOM_NEWAPI_URL);
-  const [dbSqlDsn, setDbSqlDsn] = useState("");
-  const [dbSqlitePath, setDbSqlitePath] = useState("");
-  const [dbAdminUsername, setDbAdminUsername] = useState("root");
-  const seededCustomBaseUrl = config?.custom?.adminBaseUrl || config?.custom?.baseUrl || "";
+  const seededCustomBaseUrl =
+    config?.custom?.adminBaseUrl ||
+    config?.provisioner?.adminBaseUrl ||
+    config?.custom?.baseUrl ||
+    "";
   useEffect(() => {
     if (seededCustomBaseUrl) {
       setCustomBaseUrl((current) =>
@@ -200,42 +200,9 @@ function ModelConfigSection({ open }: { open: boolean }) {
     }
   }, [seededCustomBaseUrl]);
 
-  const databaseStatus = config?.provisioner?.database;
-  const databaseStatusKey = JSON.stringify(databaseStatus ?? {});
-  useEffect(() => {
-    if (!databaseStatus) return;
-    const preview = databaseStatus.sqlDsnPreview || "";
-    if (preview) {
-      setDbSqlDsn((current) => {
-        if (preview.includes("***")) return "";
-        return current === preview ? current : preview;
-      });
-    }
-    if (databaseStatus.sqlitePath) {
-      setDbSqlitePath((current) =>
-        current === databaseStatus.sqlitePath ? current : databaseStatus.sqlitePath,
-      );
-    }
-    if (databaseStatus.adminUsername) {
-      setDbAdminUsername((current) =>
-        current === databaseStatus.adminUsername ? current : databaseStatus.adminUsername,
-      );
-    }
-  }, [databaseStatusKey]);
-
-  const customDatabase = useMemo<NewApiDatabaseConfigInput | undefined>(() => {
-    const sqlDsn = dbSqlDsn.trim();
-    const sqlitePath = dbSqlitePath.trim();
-    const adminUsername = dbAdminUsername.trim();
-    if (!sqlDsn && !sqlitePath && (!adminUsername || adminUsername === "root")) {
-      return undefined;
-    }
-    return {
-      ...(sqlDsn ? { sqlDsn } : {}),
-      ...(sqlitePath ? { sqlitePath } : {}),
-      ...(adminUsername ? { adminUsername } : {}),
-    };
-  }, [dbSqlDsn, dbSqlitePath, dbAdminUsername]);
+  // CE owns one local SQLite-backed NewAPI instance. Database paths and the
+  // root username are deployment details, not user-editable model settings.
+  const customDatabase: NewApiDatabaseConfigInput | undefined = undefined;
 
   return (
     <section className="px-5 py-5">
@@ -298,14 +265,6 @@ function ModelConfigSection({ open }: { open: boolean }) {
             config={config}
             loading={loading}
             baseUrl={customBaseUrl}
-            onBaseUrlChange={setCustomBaseUrl}
-            dbSqlDsn={dbSqlDsn}
-            onDbSqlDsnChange={setDbSqlDsn}
-            dbSqlitePath={dbSqlitePath}
-            onDbSqlitePathChange={setDbSqlitePath}
-            dbAdminUsername={dbAdminUsername}
-            onDbAdminUsernameChange={setDbAdminUsername}
-            database={customDatabase}
           />
         )}
       </div>
@@ -433,26 +392,10 @@ function CustomGatewayPanel({
   config,
   loading,
   baseUrl,
-  onBaseUrlChange,
-  dbSqlDsn,
-  onDbSqlDsnChange,
-  dbSqlitePath,
-  onDbSqlitePathChange,
-  dbAdminUsername,
-  onDbAdminUsernameChange,
-  database,
 }: {
   config: ModelGatewayConfig | undefined;
   loading: boolean;
   baseUrl: string;
-  onBaseUrlChange: (value: string) => void;
-  dbSqlDsn: string;
-  onDbSqlDsnChange: (value: string) => void;
-  dbSqlitePath: string;
-  onDbSqlitePathChange: (value: string) => void;
-  dbAdminUsername: string;
-  onDbAdminUsernameChange: (value: string) => void;
-  database: NewApiDatabaseConfigInput | undefined;
 }) {
   const { t } = useTranslation();
   const initCustom = useInitCustomNewApi();
@@ -481,11 +424,6 @@ function CustomGatewayPanel({
     const trimmedSetupPassword = setupPassword.trim();
     const trimmedSetupConfirmPassword = setupConfirmPassword.trim();
     const hasSetupPassword = Boolean(trimmedSetupPassword || trimmedSetupConfirmPassword);
-    const setupUsername = dbAdminUsername.trim();
-    if (hasSetupPassword && !setupUsername) {
-      showInitError(t("settings.modelConfig.custom.setupPasswordMissingUsername"));
-      return;
-    }
     if (hasSetupPassword && (!trimmedSetupPassword || !trimmedSetupConfirmPassword)) {
       showInitError(t("settings.modelConfig.custom.setupPasswordIncomplete"));
       return;
@@ -503,10 +441,9 @@ function CustomGatewayPanel({
       const response = await initCustom.mutateAsync(
         {
           ...(baseUrl.trim() ? { newApiBaseUrl: baseUrl.trim() } : {}),
-          ...(database ? { database } : {}),
           ...(hasSetupPassword
             ? {
-                setupUsername,
+                setupUsername: "root",
                 setupPassword: trimmedSetupPassword,
                 setupConfirmPassword: trimmedSetupConfirmPassword,
               }
@@ -534,9 +471,8 @@ function CustomGatewayPanel({
   };
 
   const databaseStatus = config?.provisioner?.database;
-  const databaseConfigured = Boolean(databaseStatus?.configured);
-  const sqlDsnPreview = databaseStatus?.sqlDsnPreview || "";
-  const sqlDsnPlaceholder = sqlDsnPreview || "local";
+  const databaseReady = Boolean(databaseStatus?.available);
+  const customConfigured = Boolean(config?.custom?.configured);
 
   return (
     <div className="space-y-3">
@@ -544,104 +480,81 @@ function CustomGatewayPanel({
         {t("settings.modelConfig.custom.description")}
       </p>
 
-      <div className="space-y-2.5">
-        <FieldRow
-          label={t("settings.modelConfig.fields.baseUrl")}
-          value={baseUrl}
-          onChange={onBaseUrlChange}
-          placeholder={DEFAULT_CUSTOM_NEWAPI_URL}
-        />
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          {t("settings.modelConfig.baseUrlHint")}
-        </p>
-      </div>
-
       <div className="rounded-md border border-border/70 p-3">
         <div className="flex items-center justify-between gap-3">
           <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            {t("settings.modelConfig.custom.databaseTitle")}
+            {t("settings.modelConfig.custom.localStatusTitle")}
           </p>
-          <span className={cn("text-[11px]", databaseConfigured ? "text-emerald-400" : "text-muted-foreground")}>
-            {databaseConfigured
-              ? t("settings.modelConfig.custom.databaseConfigured")
-              : t("settings.modelConfig.custom.databaseNotConfigured")}
+          <span className={cn("text-[11px]", customConfigured ? "text-emerald-400" : "text-amber-300")}>
+            {customConfigured
+              ? t("settings.modelConfig.custom.localReady")
+              : t("settings.modelConfig.custom.localNeedsInit")}
           </span>
         </div>
         <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-          {t("settings.modelConfig.custom.databaseDescription")}
+          {databaseReady
+            ? t("settings.modelConfig.custom.sqliteReady")
+            : t("settings.modelConfig.custom.sqliteWaiting")}
         </p>
-        <div className="mt-3 space-y-2.5">
-          <FieldRow
-            label={t("settings.modelConfig.fields.sqlDsn")}
-            value={dbSqlDsn}
-            onChange={onDbSqlDsnChange}
-            placeholder={sqlDsnPlaceholder}
-          />
-          <FieldRow
-            label={t("settings.modelConfig.fields.sqlitePath")}
-            value={dbSqlitePath}
-            onChange={onDbSqlitePathChange}
-            placeholder="/path/to/new-api/one-api.db"
-          />
-          <FieldRow
-            label={t("settings.modelConfig.fields.adminUsername")}
-            value={dbAdminUsername}
-            onChange={onDbAdminUsernameChange}
-            placeholder="root"
-          />
-        </div>
       </div>
 
-      <div className="rounded-md border border-border/70 p-3">
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-          {t("settings.modelConfig.custom.setupAdminTitle")}
-        </p>
-        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-          {t("settings.modelConfig.custom.setupAdminDescription")}
-        </p>
-        <div className="mt-3 space-y-2.5">
-          <FieldRow
-            secret
-            label={t("settings.modelConfig.custom.setupPassword")}
-            value={setupPassword}
-            onChange={setSetupPassword}
-            placeholder={t("settings.modelConfig.custom.setupPasswordPlaceholder")}
-          />
-          <FieldRow
-            secret
-            label={t("settings.modelConfig.custom.setupConfirmPassword")}
-            value={setupConfirmPassword}
-            onChange={setSetupConfirmPassword}
-            placeholder={t("settings.modelConfig.custom.setupConfirmPasswordPlaceholder")}
-          />
+      {!customConfigured ? (
+        <div className="rounded-md border border-border/70 p-3">
+          <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            {t("settings.modelConfig.custom.setupAdminTitle")}
+          </p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            {t("settings.modelConfig.custom.setupAdminDescription")}
+          </p>
+          <div className="mt-3 space-y-2.5">
+            <FieldRow
+              secret
+              label={t("settings.modelConfig.custom.setupPassword")}
+              value={setupPassword}
+              onChange={setSetupPassword}
+              placeholder={t("settings.modelConfig.custom.setupPasswordPlaceholder")}
+            />
+            <FieldRow
+              secret
+              label={t("settings.modelConfig.custom.setupConfirmPassword")}
+              value={setupConfirmPassword}
+              onChange={setSetupConfirmPassword}
+              placeholder={t("settings.modelConfig.custom.setupConfirmPasswordPlaceholder")}
+            />
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            {t("settings.modelConfig.custom.setupPasswordOnlyOnce")}
+          </p>
         </div>
-        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          {t("settings.modelConfig.custom.setupPasswordOnlyOnce")}
+      ) : null}
+
+      {initError ? (
+        <p
+          role="alert"
+          aria-live="polite"
+          className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] leading-relaxed text-destructive"
+        >
+          {initError}
         </p>
-        {initError ? (
-          <p
-            role="alert"
-            aria-live="polite"
-            className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] leading-relaxed text-destructive"
-          >
-            {initError}
-          </p>
-        ) : null}
-        {!initError && initNotice ? (
-          <p
-            role="status"
-            aria-live="polite"
-            className="mt-2 rounded-md border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200"
-          >
-            {initNotice}
-          </p>
-        ) : null}
-      </div>
+      ) : null}
+      {!initError && initNotice ? (
+        <p
+          role="status"
+          aria-live="polite"
+          className="rounded-md border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200"
+        >
+          {initNotice}
+        </p>
+      ) : null}
 
       <div className="flex justify-end">
         <Button type="button" size="sm" onClick={handleInit} disabled={loading || initCustom.isPending}>
           {initCustom.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
-          {t("settings.modelConfig.custom.init")}
+          {t(
+            customConfigured
+              ? "settings.modelConfig.custom.repair"
+              : "settings.modelConfig.custom.init",
+          )}
         </Button>
       </div>
     </div>
@@ -671,7 +584,7 @@ const MEDIA_MODEL_ROWS: readonly {
   { model: "seedance-2.0", kind: "video" },
   { model: "seedance-2.0-fast", kind: "video" },
   { model: "happyhorse-1.0", kind: "video" },
-  { model: "LingShan-TTS-2", kind: "audio" },
+  { model: "index-tts-2", kind: "audio" },
   { model: "LingShan-MU-11", kind: "audio" },
   { model: "seedance-2.0-value", kind: "video", officialOnly: true },
   { model: "seedance-2.0-fast-value", kind: "video", officialOnly: true },

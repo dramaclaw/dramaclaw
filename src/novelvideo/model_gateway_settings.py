@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 from novelvideo.official_defaults import (
     DEFAULT_COGNEE_EMBEDDING_DIM,
@@ -90,25 +89,6 @@ def normalize_api_key(value: str | None) -> str:
     if lowered.startswith("your_") or lowered.startswith("<your_"):
         return ""
     return clean
-
-
-def mask_database_dsn(value: str) -> str:
-    clean = str(value or "").strip()
-    if not clean:
-        return ""
-    parsed = urlsplit(clean)
-    if parsed.scheme and parsed.netloc:
-        host = parsed.hostname or ""
-        port = f":{parsed.port}" if parsed.port else ""
-        if parsed.username:
-            password = ":***" if parsed.password is not None else ""
-            netloc = f"{parsed.username}{password}@{host}{port}"
-        else:
-            netloc = f"{host}{port}"
-        return urlunsplit(
-            (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
-        )
-    return mask_secret(clean)
 
 
 def normalize_gateway_mode(value: str | None) -> str:
@@ -798,39 +778,35 @@ def build_newapi_database_status(
         if sqlite_path is not None
         else os.environ.get("NEWAPI_SQLITE_PATH", "")
     ).strip()
-    env_admin_username = (
-        str(
-            admin_username
-            if admin_username is not None
-            else os.environ.get("NEWAPI_ADMIN_USERNAME", "root")
-        ).strip()
-        or "root"
-    )
+    if not db_sql_dsn and not env_sql_dsn:
+        from novelvideo.config import STATE_DIR
+
+        env_sql_dsn = "local"
+        env_sqlite_path = env_sqlite_path or str(
+            Path(STATE_DIR) / "newapi" / "one-api.db"
+        )
     effective_sql_dsn = db_sql_dsn or env_sql_dsn
     effective_sqlite_path = db_sqlite_path or env_sqlite_path
-    effective_admin_username = db_admin_username or env_admin_username
     source = (
         "database"
         if any([db_sql_dsn, db_sqlite_path, db_admin_username])
         else "environment"
     )
+    configured = bool(
+        effective_sql_dsn
+        and (effective_sql_dsn != "local" or effective_sqlite_path)
+    )
+    available = configured
+    if effective_sql_dsn == "local":
+        available = bool(
+            effective_sqlite_path
+            and Path(effective_sqlite_path).expanduser().is_file()
+        )
     return {
-        "configured": bool(
-            effective_sql_dsn
-            and (effective_sql_dsn != "local" or effective_sqlite_path)
-        ),
+        "configured": configured,
+        "available": available,
         "source": source,
-        "sqlDsnPreview": mask_database_dsn(effective_sql_dsn),
-        "sqlitePath": effective_sqlite_path if effective_sql_dsn == "local" else "",
-        "adminUsername": effective_admin_username,
-        "environment": {
-            "configured": bool(
-                env_sql_dsn and (env_sql_dsn != "local" or env_sqlite_path)
-            ),
-            "sqlDsnPreview": mask_database_dsn(env_sql_dsn),
-            "sqlitePath": env_sqlite_path if env_sql_dsn == "local" else "",
-            "adminUsername": env_admin_username,
-        },
+        "databaseType": "sqlite" if effective_sql_dsn == "local" else "external",
     }
 
 

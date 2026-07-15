@@ -38,16 +38,9 @@ export interface EffectiveGatewayConfig {
 
 export interface NewApiDatabaseStatus {
   configured: boolean;
+  available?: boolean;
   source: string;
-  sqlDsnPreview: string;
-  sqlitePath: string;
-  adminUsername: string;
-  environment?: {
-    configured: boolean;
-    sqlDsnPreview: string;
-    sqlitePath: string;
-    adminUsername: string;
-  };
+  databaseType?: "sqlite" | "external";
 }
 
 export interface SavedProviderChannelConfig {

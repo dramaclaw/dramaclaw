@@ -56,7 +56,7 @@ export const SHARED_MODELS: ModelOption[] = [
     id: 'huimeng/gpt-image-2',
     providerId: 'huimeng',
     apiModel: 'huimeng_gpt_image2',
-    label: 'HuiMeng GPT Image 2',
+    label: 'LingShan-G2',
   },
   {
     id: 'openrouter/gemini-2.5-flash-image',

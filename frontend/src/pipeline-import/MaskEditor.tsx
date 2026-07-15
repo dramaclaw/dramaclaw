@@ -354,7 +354,7 @@ export function MaskEditor({
               ) : error ? (
                 <span className="text-red-400">{error}</span>
               ) : (
-                <>红色 = 待编辑区域 · OpenAI gpt-image-2 · 可能 30-60 秒</>
+                <>红色 = 待编辑区域 · LingShan-G2 · 可能 30-60 秒</>
               )}
             </div>
             <div className="flex gap-2">

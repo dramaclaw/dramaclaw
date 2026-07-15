@@ -1,7 +1,7 @@
 # DramaClaw CE — 内置 newapi 自建网关版(无需 DC key)。
 # 跑法:docker compose -f docker-compose.selfhosted.yml up -d --build
-# 三服务:api + 内置 newapi 网关(:3000)+ web(:8080)。首启后到 http://localhost:3000
-# 注册管理员、配上游渠道与令牌,再把令牌填回 .env 的 NEWAPI_API_KEY 并重启 api。
+# 三服务:api + 内置 newapi 网关(:3000)+ web(:8080)。api 与 newapi 共享 SQLite
+# 数据卷，首次启动可直接在 DramaClaw 的“本地 NewAPI”页完成初始化。
 # 想改用「官方 DC key」路径(更简单、填一个 key 即用):改用默认 docker-compose.yml。
 services:
   api:
@@ -32,27 +32,28 @@ services:
       # 改在 .env 里填 NEWAPI_BASE_URL / NEWAPI_API_KEY。
       NEWAPI_BASE_URL: http://newapi:3000/v1
       NEWAPI_ADMIN_BASE_URL: http://newapi:3000
-      # 最小模式：不跑前端自动初始化向导，newapi 到 http://localhost:3000 手动配渠道/令牌。
-      # 想要前端一键初始化（provisioner）需让 api 能读 newapi 的库，属更重的接法，见 README。
-      NEWAPI_PROVISIONER_ENABLED: "false"
+      NEWAPI_SQL_DSN: local
+      NEWAPI_SQLITE_PATH: /newapi-data/one-api.db
+      NEWAPI_ADMIN_USERNAME: root
+      NEWAPI_PROVISIONER_ENABLED: "true"
     # 宿主发布端口可配，便于一机多套（每套换 ST_API_PORT + 换 -p 项目名）。
     # 冒号右侧 8780 是容器内端口，固定不变（web 经内部网络访问它）。
     ports:
       - "${ST_API_PORT:-8780}:8780"
     volumes:
       - ce-data:/data
+      - newapi-data:/newapi-data
     depends_on:
       - newapi
 
-  # 内置 newAPI 网关（OpenAI 兼容）。首启后到 http://localhost:3000 注册管理员、配上游
-  # 渠道与令牌，再把令牌填回 .env 的 NEWAPI_API_KEY，`docker compose up -d` 重启 api 即可调通。
-  # 默认用内置 SQLite（落在 newapi-data 卷），单机够用，无需 MySQL/Redis。
+  # 内置 newAPI 网关（OpenAI 兼容）。默认使用 newapi-data 卷里的 SQLite；DramaClaw
+  # 通过共享卷自动初始化管理员、运行令牌、渠道与模型映射。
   newapi:
     image: calciumion/new-api:v1.0.0-rc.15
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
-      # 留空 = 内置 SQLite（/data/one-api.db）。要接 MySQL：改成 user:pass@tcp(host:3306)/db。
+      # CE 固定使用内置 SQLite（/data/one-api.db）。
       SQL_DSN: ""
     # 一机多套时换 ST_NEWAPI_PORT；冒号右侧 3000 是容器内端口，固定不变。
     ports:
