@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Map, Plus, RefreshCw, Sparkles } from "lucide-react";
+import { Loader2, Map, Plus, Sparkles } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -42,6 +42,8 @@ import {
 } from "@/lib/api-errors";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { Button } from "@/components/ui/button";
+import { SUBTLE_HEADER_ACTION_BUTTON_CLASS } from "@/components/ui/header-action-styles";
+import { HeaderRefreshButton } from "@/components/ui/header-refresh-button";
 import { EMPTY_STATE_ACTION_BUTTON_CLASS } from "@/components/ui/empty-state-styles";
 import {
   Dialog,
@@ -1269,19 +1271,19 @@ export function ScenesPanel({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <AssetHeaderActions>
         <CharacterImageSourceSelect project={project} kind="scene" />
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={async () => {
-            await scenes.refetch();
-            toast.success(t("common.refreshed"));
+        <HeaderRefreshButton
+          label={t("common.refresh")}
+          onRefresh={async () => {
+            const result = await scenes.refetch();
+            if (result.isError) {
+              toast.error(t("common.error"));
+              return false;
+            }
+            return true;
           }}
+          refreshing={scenes.isRefetching}
           data-scenes-refresh
-          className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none transition-transform hover:bg-white/[0.04] active:scale-95 dark:bg-transparent"
-        >
-          <RefreshCw className="size-3.5" />
-          {t("common.refresh")}
-        </Button>
+        />
         <Button
           variant="outline"
           size="sm"
@@ -1290,7 +1292,7 @@ export function ScenesPanel({
             setDraftSeed(null);
             setDialogOpen(true);
           }}
-          className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none hover:bg-white/[0.04] dark:bg-transparent"
+          className={SUBTLE_HEADER_ACTION_BUTTON_CLASS}
         >
           <Plus className="size-3.5" />
           {t("assets.scenes.newScene")}

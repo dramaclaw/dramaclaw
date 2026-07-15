@@ -589,7 +589,12 @@ def _scene_image_config(model: str) -> dict[str, str]:
         "image_size": "1K",
         "output_format": "png",
     }
-    if str(model or "").strip().lower() in {"gpt-image-2", "image-2", "image-2-official"}:
+    if str(model or "").strip().lower() in {
+        "lingshan-g2",
+        "gpt-image-2",
+        "image-2",
+        "image-2-official",
+    }:
         image_config["quality"] = "low"
     return image_config
 

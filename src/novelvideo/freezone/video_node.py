@@ -112,8 +112,8 @@ FREEZONE_NEWAPI_VIDEO_BACKENDS = {
     "newapi_seedance-1.0-pro-fast",
     "newapi_seedance-1.5-pro",
     "newapi_happyhorse-1.0",
-    "newapi_grok-video-channel",
 }
+FREEZONE_DISABLED_VIDEO_BACKENDS = {"newapi_grok-video-channel"}
 
 
 def get_video_camera_templates() -> list[dict[str, str]]:
@@ -252,7 +252,6 @@ def _freezone_newapi_video_options() -> dict[str, str]:
         if key in FREEZONE_NEWAPI_VIDEO_BACKENDS
     }
     options.setdefault("newapi_happyhorse-1.0", "HappyHorse 1.0")
-    options.setdefault("newapi_grok-video-channel", "Grok Video Channel")
     if FREEZONE_DEFAULT_VIDEO_BACKEND not in options:
         return options
     ordered = {FREEZONE_DEFAULT_VIDEO_BACKEND: options[FREEZONE_DEFAULT_VIDEO_BACKEND]}
@@ -309,6 +308,8 @@ def resolve_freezone_video_backend(model: str | None) -> str:
         )
     if text in options:
         return text
+    if text in FREEZONE_DISABLED_VIDEO_BACKENDS:
+        raise ValueError(f"unknown video model: {text}")
 
     folded = text.casefold()
     for backend, label in options.items():
@@ -324,7 +325,7 @@ def resolve_freezone_video_backend(model: str | None) -> str:
 
     from novelvideo.generators.video_generator import parse_newapi_video_backend
 
-    if parse_newapi_video_backend(text):
+    if parse_newapi_video_backend(text) and text not in FREEZONE_DISABLED_VIDEO_BACKENDS:
         return text
     raise ValueError(f"unknown video model: {text}")
 

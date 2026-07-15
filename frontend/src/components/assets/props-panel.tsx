@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Package, Plus, RefreshCw, Sparkles } from "lucide-react";
+import { Loader2, Package, Plus, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -27,6 +27,8 @@ import { useAssetImageSourceSelection } from "@/lib/queries/character-image-sele
 import { useAssetFocus } from "@/hooks/use-asset-focus";
 import { StageProgressPanel } from "@/components/stage-progress-panel";
 import { Button } from "@/components/ui/button";
+import { SUBTLE_HEADER_ACTION_BUTTON_CLASS } from "@/components/ui/header-action-styles";
+import { HeaderRefreshButton } from "@/components/ui/header-refresh-button";
 import {
   Tooltip,
   TooltipContent,
@@ -54,6 +56,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTaskController } from "@/hooks/use-task-controller";
 import { propReferenceAssetScope } from "@/lib/task-scope";
 import { backendErrorToastMessage } from "@/lib/api-errors";
+import { cn } from "@/lib/utils";
 import {
   useBatchGeneratePropReferences,
   useCreateProp,
@@ -420,22 +423,25 @@ export function PropsPanel({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <AssetHeaderActions>
         <CharacterImageSourceSelect project={project} kind="prop" />
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={async () => { await props.refetch(); toast.success(t("common.refreshed")); }}
+        <HeaderRefreshButton
+          label={t("common.refresh")}
+          onRefresh={async () => {
+            const result = await props.refetch();
+            if (result.isError) {
+              toast.error(t("common.error"));
+              return false;
+            }
+            return true;
+          }}
+          refreshing={props.isRefetching}
           data-props-refresh
-          className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none transition-transform hover:bg-white/[0.04] active:scale-95 dark:bg-transparent"
-        >
-          <RefreshCw className="size-3.5" />
-          {t("common.refresh")}
-        </Button>
+        />
         <Button
           variant="outline"
           size="sm"
           onClick={handleBatchGenerate}
           disabled={batchGenerate.isPending}
-          className="relative h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none hover:bg-white/[0.04] dark:bg-transparent"
+          className={cn(SUBTLE_HEADER_ACTION_BUTTON_CLASS, "relative")}
         >
           {batchGenerate.isPending ? (
             <Loader2 className="size-3.5 animate-spin" />
