@@ -3380,15 +3380,30 @@ function VideoConfigChip({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
-  // Local draft for the direct-entry duration box. A raw controlled input bound
-  // to durationSec would clamp on every keystroke — typing "12" would clamp the
-  // interim "1" up to the min and strand the user there. So keep the field as
-  // free text while editing and only clamp/commit on blur or Enter; the slider
-  // and external changes re-sync the draft via the effect below.
+  // Local draft for the direct-entry duration box. The field stays free text
+  // while editing so a half-typed value isn't fought by clamping, but we still
+  // want the slider and bottom chip to track the box live — so on each keystroke
+  // we commit as soon as the draft is a *complete integer already inside* the
+  // model's bounds. An out-of-range interim (the "1" of "12" when min is 5) is
+  // held as draft only and NOT committed, so the user is never stranded at the
+  // min mid-typing; blur/Enter clamps anything still out of range on the way out.
   const [durationDraft, setDurationDraft] = useState<string>(String(durationSec));
   useEffect(() => {
     setDurationDraft(String(durationSec));
   }, [durationSec]);
+  const handleDurationInput = (raw: string) => {
+    setDurationDraft(raw);
+    const parsed = Number(raw);
+    if (
+      raw.trim() !== "" &&
+      Number.isInteger(parsed) &&
+      parsed >= durationBounds.min &&
+      parsed <= durationBounds.max &&
+      parsed !== durationSec
+    ) {
+      onChange({ durationSec: parsed });
+    }
+  };
   const commitDuration = () => {
     const parsed = Number(durationDraft);
     if (durationDraft.trim() === "" || !Number.isFinite(parsed)) {
@@ -3520,7 +3535,7 @@ function VideoConfigChip({
                 max={durationBounds.max}
                 step={1}
                 value={durationDraft}
-                onChange={(event) => setDurationDraft(event.target.value)}
+                onChange={(event) => handleDurationInput(event.target.value)}
                 onBlur={commitDuration}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
