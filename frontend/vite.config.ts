@@ -17,14 +17,29 @@ function datePrefix(d: Date = new Date()): string {
   return `${yy}${mm}${dd}-`;
 }
 
-// The human-facing version, shown in the status bar. CI sets VITE_APP_VERSION
-// from the release tag; every other build shows the default. It is display-only
-// — never compare it across deploys (two builds can legitimately carry the same
+// The human-facing version, shown in the status bar. It is display-only —
+// never compare it across deploys (two builds can legitimately carry the same
 // version string), that's what BUILD_ID below is for.
-const DEFAULT_APP_VERSION = "v1.0.9";
+// Resolution order:
+//   1. VITE_APP_VERSION — set by release CI from the tag.
+//   2. the nearest git tag (`git describe --tags --abbrev=0`) — so a local
+//      checkout shows the SAME version the release stamped, automatically,
+//      once you pull the code that carries the new tag. No manual bump needed.
+//   3. DEFAULT_APP_VERSION — last resort for a git-less build (source tarball).
+const DEFAULT_APP_VERSION = "v1.1.0";
 
 function resolveAppVersion(): string {
-  return process.env.VITE_APP_VERSION || DEFAULT_APP_VERSION;
+  if (process.env.VITE_APP_VERSION) return process.env.VITE_APP_VERSION;
+  try {
+    const tag = execSync("git describe --tags --abbrev=0", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (tag) return tag;
+  } catch {
+    // not a git checkout, or no tags — fall through to the constant
+  }
+  return DEFAULT_APP_VERSION;
 }
 
 // The deploy fingerprint. MUST differ between any two builds, because the
