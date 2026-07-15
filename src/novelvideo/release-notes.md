@@ -1,20 +1,20 @@
 ---
-version: 1.0.9
+version: 1.1.0
 attention: low
 ---
-# v1.0.9
+# v1.1.0
 
 ## User-facing Highlights (zh)
 
-- **桌面端已发布**: 现已提供 Windows 版本与 macOS 桌面端。
-- **素材图源更灵活**: 场景和道具可单独选择图片生成来源,更便于控制素材一致性。
-- **项目操作更连续**: 返回项目时会记住上次所在的工作区,并优化共享项目与 Piko 弹窗体验。
+- **虾画与虾集切换更流畅**: 优化项目导航和画布同步,减少在创作工作区之间切换时的卡顿。
+- **虾导反馈更清楚**: 等待状态分级展示,更新提示体验同步优化,减少长任务中的不确定感。
+- **导入与登录更可靠**: 增加小说格式说明,登录头图视频改为 CDN 加载,提升首次访问稳定性。
 
 ## User-facing Highlights (en)
 
-- **Desktop apps released**: Desktop builds are now available for Windows and macOS.
-- **More flexible asset image sources**: Scenes and props can select their image-generation source independently for better asset consistency control.
-- **More continuous project work**: Returning to a project restores the last workspace, with improved shared-project and Piko dialog behavior.
+- **Smoother Xiahua and Xiajie switching**: Project navigation and canvas synchronization are optimized to reduce lag while moving between creative workspaces.
+- **Clearer Xiaodao feedback**: Waiting states are presented by stage, with improved update notices to reduce uncertainty during longer tasks.
+- **More reliable import and login**: Novel-format guidance is added, and the login hero video now loads from a CDN for a more stable first visit.
 
 ## Fixes
 
