@@ -110,15 +110,6 @@ export function TaskStatusBar({ onOpenPikoStation }: TaskStatusBarProps) {
       onKeyDown={onBarKeyDown}
     >
       <div className="flex min-w-0 items-center gap-1.5">
-        <span
-          className="shrink-0 bg-gradient-to-r from-cyan-200 via-violet-200 to-rose-200 bg-clip-text font-medium tabular-nums text-transparent opacity-90"
-          title={APP_VERSION}
-        >
-          {APP_VERSION}
-        </span>
-        <span className="shrink-0 text-muted-foreground/45" aria-hidden>
-          ·
-        </span>
         <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground/90">
           <ChevronUp
             className={cn(
@@ -211,6 +202,12 @@ export function TaskStatusBar({ onOpenPikoStation }: TaskStatusBarProps) {
             {t(`taskCenter.statusBar.${health}`)}
           </span>
           <span aria-hidden="true">{t(`taskCenter.statusBar.${health}`)}</span>
+        </span>
+        <span
+          className="shrink-0 font-normal tabular-nums text-muted-foreground"
+          title={APP_VERSION}
+        >
+          {APP_VERSION}
         </span>
         <RegionBadge />
       </div>

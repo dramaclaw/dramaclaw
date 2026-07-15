@@ -1283,6 +1283,7 @@
     "use": "使用",
     "confirmExecute": "确认执行",
     "refresh": "刷新",
+    "refreshDone": "已刷新",
     "preparing": "准备中...",
     "removed": "（已移除）",
     "new": "新",

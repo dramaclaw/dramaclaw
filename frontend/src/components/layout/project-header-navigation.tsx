@@ -165,7 +165,7 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
     <div className="flex justify-center px-4 pb-2">
       <nav
         aria-label={t("nav.xiajiMenu")}
-        className="flex items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-white/[0.04] px-3.5 py-[3px] text-sidebar-foreground"
+        className="flex items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-white/[0.04] px-3.5 py-0.5 text-sidebar-foreground"
       >
         {xiajiMenuItems.map((item) => {
           const target =
@@ -250,7 +250,7 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
   return (
     <nav
       aria-label={t("nav.creationMode")}
-      className="absolute left-1/2 top-1/2 z-30 flex -translate-x-1/2 translate-y-[calc(-50%+4px)] items-center"
+      className="absolute left-1/2 top-1/2 z-30 flex -translate-x-1/2 -translate-y-1/2 items-center"
     >
       <div className="relative flex h-8 items-center rounded-full bg-white/[0.07]">
         <span

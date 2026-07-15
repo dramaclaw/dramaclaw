@@ -277,7 +277,7 @@ const VIDEO_PARAM_POPOVER_CLASS =
 const VIDEO_PARAM_LABEL_CLASS =
   "mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-dark/72";
 const VIDEO_PARAM_BUTTON_BASE_CLASS =
-  "inline-flex items-center justify-center rounded-md px-2 py-2 text-xs transition-colors";
+  "inline-flex items-center justify-center rounded px-2 py-2 text-xs transition-colors";
 const VIDEO_PARAM_ACTIVE_BUTTON_CLASS =
   "bg-white/[0.13] text-text-dark ring-1 ring-white/24";
 const VIDEO_PARAM_IDLE_BUTTON_CLASS =
@@ -3380,6 +3380,40 @@ function VideoConfigChip({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
+  // Local draft for the direct-entry duration box. The field stays free text
+  // while editing so a half-typed value isn't fought by clamping, but we still
+  // want the slider and bottom chip to track the box live — so on each keystroke
+  // we commit as soon as the draft is a *complete integer already inside* the
+  // model's bounds. An out-of-range interim (the "1" of "12" when min is 5) is
+  // held as draft only and NOT committed, so the user is never stranded at the
+  // min mid-typing; blur/Enter clamps anything still out of range on the way out.
+  const [durationDraft, setDurationDraft] = useState<string>(String(durationSec));
+  useEffect(() => {
+    setDurationDraft(String(durationSec));
+  }, [durationSec]);
+  const handleDurationInput = (raw: string) => {
+    setDurationDraft(raw);
+    const parsed = Number(raw);
+    if (
+      raw.trim() !== "" &&
+      Number.isInteger(parsed) &&
+      parsed >= durationBounds.min &&
+      parsed <= durationBounds.max &&
+      parsed !== durationSec
+    ) {
+      onChange({ durationSec: parsed });
+    }
+  };
+  const commitDuration = () => {
+    const parsed = Number(durationDraft);
+    if (durationDraft.trim() === "" || !Number.isFinite(parsed)) {
+      setDurationDraft(String(durationSec)); // revert empty/garbage to current
+      return;
+    }
+    const clamped = clampVideoDuration(parsed, durationBounds);
+    setDurationDraft(String(clamped));
+    if (clamped !== durationSec) onChange({ durationSec: clamped });
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -3476,23 +3510,46 @@ function VideoConfigChip({
             })}
           </div>
 
-          <div className="mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-text-dark/72">
-            <span>{t("node.videoNode.duration.title")}</span>
-            <span className="normal-case text-text-dark">{durationSec}s</span>
+          <div className={VIDEO_PARAM_LABEL_CLASS}>
+            {t("node.videoNode.duration.title")}
           </div>
-          <input
-            type="range"
-            min={durationBounds.min}
-            max={durationBounds.max}
-            step={1}
-            value={durationSec}
-            onChange={(event) =>
-              onChange({
-                durationSec: clampVideoDuration(Number(event.target.value), durationBounds),
-              })
-            }
-            className="video-duration-slider mb-4 w-full"
-          />
+          <div className="mb-4 flex items-center gap-3">
+            <input
+              type="range"
+              min={durationBounds.min}
+              max={durationBounds.max}
+              step={1}
+              value={durationSec}
+              onChange={(event) =>
+                onChange({
+                  durationSec: clampVideoDuration(Number(event.target.value), durationBounds),
+                })
+              }
+              className="video-duration-slider min-w-0 flex-1"
+            />
+            <div className="flex shrink-0 items-center gap-1">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={durationBounds.min}
+                max={durationBounds.max}
+                step={1}
+                value={durationDraft}
+                onChange={(event) => handleDurationInput(event.target.value)}
+                onBlur={commitDuration}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitDuration();
+                    event.currentTarget.blur();
+                  }
+                }}
+                aria-label={t("node.videoNode.duration.title")}
+                className="h-7 w-12 rounded border border-white/12 bg-white/[0.07] px-1.5 text-center text-xs tabular-nums text-text-dark outline-none transition-colors focus:border-white/28 focus:bg-white/[0.11] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+              <span className="text-[11px] text-text-muted/80">s</span>
+            </div>
+          </div>
 
           {sceneOptimizeOptions.length > 0 && (
             <>
@@ -3524,7 +3581,7 @@ function VideoConfigChip({
           <div className={VIDEO_PARAM_LABEL_CLASS}>
             {t("node.videoNode.audio.title")}
           </div>
-          <div className="flex items-center justify-between rounded-[8px] bg-white/[0.045] px-2.5 py-1.5">
+          <div className="flex items-center justify-between rounded-md bg-white/[0.045] px-2.5 py-1.5">
             <span className="text-xs font-medium text-text-dark/88">
               {generateAudio
                 ? t("node.videoNode.audio.on")

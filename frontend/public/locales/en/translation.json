@@ -1283,6 +1283,7 @@
     "use": "Use",
     "confirmExecute": "Confirm",
     "refresh": "Refresh",
+    "refreshDone": "Done",
     "preparing": "Preparing...",
     "removed": "(removed)",
     "new": "NEW",

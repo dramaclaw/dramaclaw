@@ -61,7 +61,7 @@ def _clean_quantity(value: object) -> int:
 def _image_model_supports_quality(model: str) -> bool:
     model_name = str(model or "").strip().lower()
     return (
-        model_name in {"gpt-image-2", "image-2", "image-2-official"}
+        model_name in {"lingshan-g2", "gpt-image-2", "image-2", "image-2-official"}
         or "gpt-image" in model_name
     )
 
@@ -232,7 +232,7 @@ def _generation_credit_cost_model(kind: str, value: str) -> str:
 
         return INDEXTTS2_RECORD_MODEL.strip()
     if kind == "freezone_audio_music":
-        return "eleven-music"
+        return "LingShan-MU-11"
     if kind == "freezone_image_reverse_prompt":
         from novelvideo.config import get_newapi_text_model_name
 

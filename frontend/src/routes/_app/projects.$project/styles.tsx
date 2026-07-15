@@ -15,7 +15,6 @@ import {
   Pencil,
   Paintbrush,
   Plus,
-  RefreshCw,
   Save,
   Sparkles,
   Trash2,
@@ -31,6 +30,7 @@ import {
 } from "@/lib/queries/styles";
 import { useProject, useUpdateProject } from "@/lib/queries/projects";
 import { Button } from "@/components/ui/button";
+import { HeaderRefreshButton } from "@/components/ui/header-refresh-button";
 import {
   Dialog,
   DialogContent,
@@ -209,7 +209,7 @@ function Section({
 
 // ─── Top bar ────────────────────────────────────────────────────────────────
 
-function TopBar({ onCreate, onRefresh, refreshing }: { onCreate: () => void; onRefresh: () => Promise<void>; refreshing: boolean }) {
+function TopBar({ onCreate, onRefresh, refreshing }: { onCreate: () => void; onRefresh: () => Promise<boolean>; refreshing: boolean }) {
   const { t } = useTranslation();
 
   return (
@@ -229,20 +229,11 @@ function TopBar({ onCreate, onRefresh, refreshing }: { onCreate: () => void; onR
       </div>
 
       <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onRefresh}
-          disabled={refreshing}
-          className="h-8 gap-1.5 rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none transition-transform hover:bg-white/[0.04] active:scale-95 dark:bg-transparent"
-        >
-          {refreshing ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="size-3.5" />
-          )}
-          {t("common.refresh")}
-        </Button>
+        <HeaderRefreshButton
+          label={t("common.refresh")}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+        />
         <Button
           size="sm"
           onClick={onCreate}
@@ -973,7 +964,16 @@ function StylesPage() {
 
   return (
     <div className="-m-6 flex h-[calc(100%+3rem)] flex-col overflow-hidden">
-      <TopBar onCreate={() => setCreateOpen(true)} onRefresh={async () => { await refetch(); toast.success(t("common.refreshed")); }} refreshing={isRefetching} />
+      <TopBar
+        onCreate={() => setCreateOpen(true)}
+        onRefresh={async () => {
+          const result = await refetch();
+          if (!result.isError) return true;
+          toast.error(t("common.error"));
+          return false;
+        }}
+        refreshing={isRefetching}
+      />
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* LEFT: list */}

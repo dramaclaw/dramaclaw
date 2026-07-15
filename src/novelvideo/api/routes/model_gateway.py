@@ -43,15 +43,15 @@ router = APIRouter(prefix="/model-gateway")
 
 
 CUSTOM_MEDIA_MODEL_NAMES = {
-    "gpt-image-2",
-    "nano-banana-2",
+    "LingShan-G2",
+    "LingShan-NB-2",
     "seedance-1.0-pro-fast",
     "seedance-1.5-pro",
     "seedance-2.0",
     "seedance-2.0-fast",
     "happyhorse-1.0",
-    "index-tts-2",
-    "eleven-music",
+    "LingShan-TTS-2",
+    "LingShan-MU-11",
 }
 OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
     "seedance-2.0-value",
