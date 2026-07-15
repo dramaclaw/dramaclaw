@@ -206,7 +206,7 @@ async def test_indextts2_selected_runner_generates_narration_and_dialogue(tmp_pa
     assert rows == [
         (
             "newapi",
-            "index-tts-2",
+            "LingShan-TTS-2",
             "audio_generation_indextts2",
             "ep001:beat_01:__narrator__",
             1,
@@ -214,7 +214,7 @@ async def test_indextts2_selected_runner_generates_narration_and_dialogue(tmp_pa
         ),
         (
             "newapi",
-            "index-tts-2",
+            "LingShan-TTS-2",
             "audio_generation_indextts2",
             "ep001:beat_02:谢铮_青年时期",
             1,

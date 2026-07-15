@@ -135,7 +135,7 @@ async def test_newapi_audio_uses_saved_custom_gateway_before_env(
         output_path = tmp_path / "audio.mp3"
         await audio_node._write_newapi_audio_speech(
             output_path=output_path,
-            model="eleven-music",
+            model="LingShan-MU-11",
             input_text="quiet piano",
         )
 
@@ -381,13 +381,13 @@ async def test_freezone_audio_eleven_music_uses_newapi_music_metadata(
         output_format="mp3_44100_128",
     )
 
-    assert result.model == "eleven-music"
+    assert result.model == "LingShan-MU-11"
     assert result.duration_ms == 30_000
-    assert result.voice_source == "eleven-music"
+    assert result.voice_source == "LingShan-MU-11"
     assert calls == [
         {
             "output_path": freezone_audio_eleven_music_output_path(tmp_path, "music-1"),
-            "model": "eleven-music",
+            "model": "LingShan-MU-11",
             "input_text": "Mysterious original soundtrack, rainforest.",
             "response_format": "mp3",
             "metadata": {

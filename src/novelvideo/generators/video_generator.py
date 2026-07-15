@@ -3526,6 +3526,7 @@ NEWAPI_MAINLINE_SEEDANCE2_MODELS = (
     "seedance-2.0-value",
     "seedance-2.0-fast-value",
 )
+NEWAPI_DISABLED_VIDEO_MODELS = {"grok-video-channel"}
 
 
 def parse_newapi_video_backend(backend: str | None) -> str | None:
@@ -3543,7 +3544,7 @@ def parse_newapi_video_backend(backend: str | None) -> str | None:
 def newapi_video_backend_options(*, include_seedance2_variants: bool = False) -> dict[str, str]:
     from novelvideo.config import NEWAPI_VIDEO_MODELS
 
-    models = list(NEWAPI_VIDEO_MODELS)
+    models = [model for model in NEWAPI_VIDEO_MODELS if model not in NEWAPI_DISABLED_VIDEO_MODELS]
     if include_seedance2_variants:
         for model in NEWAPI_MAINLINE_SEEDANCE2_MODELS:
             if model not in models:

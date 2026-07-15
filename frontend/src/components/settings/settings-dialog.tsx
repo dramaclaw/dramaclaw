@@ -664,16 +664,15 @@ const MEDIA_MODEL_ROWS: readonly {
   kind: "image" | "video" | "audio";
   officialOnly?: boolean;
 }[] = [
-  { model: "gpt-image-2", kind: "image" },
-  { model: "nano-banana-2", kind: "image" },
+  { model: "LingShan-G2", kind: "image" },
+  { model: "LingShan-NB-2", kind: "image" },
   { model: "seedance-1.0-pro-fast", kind: "video" },
   { model: "seedance-1.5-pro", kind: "video" },
   { model: "seedance-2.0", kind: "video" },
   { model: "seedance-2.0-fast", kind: "video" },
   { model: "happyhorse-1.0", kind: "video" },
-  { model: "grok-video-channel", kind: "video" },
-  { model: "index-tts-2", kind: "audio" },
-  { model: "eleven-music", kind: "audio" },
+  { model: "LingShan-TTS-2", kind: "audio" },
+  { model: "LingShan-MU-11", kind: "audio" },
   { model: "seedance-2.0-value", kind: "video", officialOnly: true },
   { model: "seedance-2.0-fast-value", kind: "video", officialOnly: true },
 ];
