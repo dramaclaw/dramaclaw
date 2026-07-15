@@ -1747,7 +1747,7 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
         json={
             "newApiBaseUrl": "http://new-api:3000",
             "models": {
-                "gpt-image-2": {
+                "LingShan-G2": {
                     "provider": "openai",
                     "upstreamModel": "gpt-image-upstream",
                 },
@@ -1759,13 +1759,13 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
                     "provider": "volcengine",
                     "upstreamModel": "",
                 },
-                "index-tts-2": {
+                "LingShan-TTS-2": {
                     "provider": "volcengine",
-                    "upstreamModel": "index-tts-2-upstream",
+                    "upstreamModel": "lingshan-tts-upstream",
                 },
-                "eleven-music": {
+                "LingShan-MU-11": {
                     "provider": "volcengine",
-                    "upstreamModel": "eleven-music-upstream",
+                    "upstreamModel": "lingshan-mu-upstream",
                 },
             },
         },
@@ -1778,13 +1778,13 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
     assert len(payloads) == 2
     by_name = {payload["channel"]["name"]: payload["channel"] for payload in payloads}
     assert json.loads(by_name["DC-openai"]["model_mapping"]) == {
-        "gpt-image-2": "gpt-image-upstream",
+        "LingShan-G2": "gpt-image-upstream",
     }
     assert json.loads(by_name["DC-volcengine"]["model_mapping"]) == {
         "seedance-1.5-pro": "doubao-seedance-1-5",
         "seedance-2.0-fast": "seedance-2.0-fast",
-        "index-tts-2": "index-tts-2-upstream",
-        "eleven-music": "eleven-music-upstream",
+        "LingShan-TTS-2": "lingshan-tts-upstream",
+        "LingShan-MU-11": "lingshan-mu-upstream",
     }
     assert by_name["DC-openai"]["key"] == "sk-openai-upstream-secret"
     assert by_name["DC-volcengine"]["base_url"] == "https://ark.example.com"
@@ -1794,7 +1794,7 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
     config_response = client.get("/model-gateway/config")
     media_models = config_response.json()["data"]["provisioner"]["mediaModels"]
     assert media_models == {
-        "gpt-image-2": {
+        "LingShan-G2": {
             "provider": "openai",
             "upstreamModel": "gpt-image-upstream",
         },
@@ -1806,13 +1806,13 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
             "provider": "volcengine",
             "upstreamModel": "",
         },
-        "index-tts-2": {
+        "LingShan-TTS-2": {
             "provider": "volcengine",
-            "upstreamModel": "index-tts-2-upstream",
+            "upstreamModel": "lingshan-tts-upstream",
         },
-        "eleven-music": {
+        "LingShan-MU-11": {
             "provider": "volcengine",
-            "upstreamModel": "eleven-music-upstream",
+            "upstreamModel": "lingshan-mu-upstream",
         },
     }
 
