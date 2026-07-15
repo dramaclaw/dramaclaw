@@ -7,8 +7,9 @@ import Aurora from "@/components/react-bits/aurora";
 import SplitText from "@/components/react-bits/split-text";
 import { PRODUCT_MANUAL_URL } from "@/lib/product-manual";
 import {
-  DESKTOP_DOWNLOAD_URL,
+  FALLBACK_DOWNLOAD_URL,
   detectDesktopPlatform,
+  resolveDesktopDownloadUrl,
   type DesktopPlatform,
 } from "@/lib/desktop-download";
 import styles from "@/components/login/login.module.css";
@@ -54,6 +55,47 @@ function useGithubStars(repo: string): number {
   return stars;
 }
 
+let cachedDownloadUrls: Record<DesktopPlatform, string> | null = null;
+
+/**
+ * 按钮初始指向 GitHub Releases 兜底(永远可点),挂载后解析 CDN 上的版本
+ * 指针(latest*.yml)原地替换成当前安装包直链;解析失败保持兜底。模块级
+ * 缓存与 useGithubStars 同款:同一次会话只解析一遍。
+ */
+function useDesktopDownloadUrls(): Record<DesktopPlatform, string> {
+  const [urls, setUrls] = useState<Record<DesktopPlatform, string>>(
+    cachedDownloadUrls ?? {
+      mac: FALLBACK_DOWNLOAD_URL,
+      windows: FALLBACK_DOWNLOAD_URL,
+    },
+  );
+
+  useEffect(() => {
+    if (cachedDownloadUrls !== null) return;
+    let active = true;
+    Promise.all(
+      (["mac", "windows"] as const).map(
+        async (os) => [os, await resolveDesktopDownloadUrl(os)] as const,
+      ),
+    ).then((entries) => {
+      const next: Record<DesktopPlatform, string> = {
+        mac: FALLBACK_DOWNLOAD_URL,
+        windows: FALLBACK_DOWNLOAD_URL,
+      };
+      for (const [os, url] of entries) {
+        if (url) next[os] = url;
+      }
+      cachedDownloadUrls = next;
+      if (active) setUrls(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return urls;
+}
+
 function GithubMark() {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -86,6 +128,7 @@ function WindowsMark() {
 function DesktopDownload() {
   const { t } = useTranslation();
   const [platform, setPlatform] = useState<DesktopPlatform>("mac");
+  const downloadUrls = useDesktopDownloadUrls();
 
   // Detect after mount so a cached/prerendered shell can't bake in the wrong
   // platform's ordering.
@@ -119,7 +162,7 @@ function DesktopDownload() {
               <a
                 key={os}
                 className={styles.desktopDownloadItem}
-                href={DESKTOP_DOWNLOAD_URL[os]}
+                href={downloadUrls[os]}
                 download
               >
                 <Mark />
