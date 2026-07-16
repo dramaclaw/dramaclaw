@@ -38,6 +38,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
   FEATURE_MODEL_GROUPS,
+  FEATURE_MODEL_PRODUCT_GROUPS,
   type FeatureModelDef,
   type FeatureModelGroup,
 } from "@/lib/feature-models";
@@ -594,8 +595,11 @@ function CustomGatewayPanel({
 const FEATURE_ROW_GRID =
   "grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] items-center gap-3";
 
-function splitFeatureModelGroups(predicate: (feature: FeatureModelDef) => boolean): FeatureModelGroup[] {
-  return FEATURE_MODEL_GROUPS.map((group) => ({
+function splitFeatureModelGroups(
+  groups: readonly FeatureModelGroup[],
+  predicate: (feature: FeatureModelDef) => boolean,
+): FeatureModelGroup[] {
+  return groups.map((group) => ({
     ...group,
     features: group.features.filter(predicate),
   })).filter((group) => group.features.length > 0);
@@ -710,12 +714,17 @@ function FeatureModelsBlock({
   const textFeatureGroups = useMemo(
     () =>
       splitFeatureModelGroups(
+        FEATURE_MODEL_PRODUCT_GROUPS,
         (feature) => !feature.requiresVision && feature.id !== "COGNEE",
       ),
     [],
   );
   const visionFeatureGroups = useMemo(
-    () => splitFeatureModelGroups((feature) => Boolean(feature.requiresVision)),
+    () =>
+      splitFeatureModelGroups(
+        FEATURE_MODEL_PRODUCT_GROUPS,
+        (feature) => Boolean(feature.requiresVision),
+      ),
     [],
   );
   const savedChannelByProvider = useMemo(() => {

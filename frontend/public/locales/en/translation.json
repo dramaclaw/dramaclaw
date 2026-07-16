@@ -3820,7 +3820,7 @@
           "FREEZONE_STORY_SCRIPT": "Story script generation",
           "STYLE_ANALYZER": "Analyze a custom style from reference images",
           "CONTENT_REWRITER": "Rewrite source text as short-video voiceover",
-          "SCREENPLAY_NORMALIZER": "Analyze and normalize screenplay structure",
+          "SCREENPLAY_NORMALIZER": "Parse scene structure during screenplay import",
           "EPISODE_SCENE_RECONCILE": "Reconcile and complete base scene assets",
           "NARRATED_SCENE_ASSET": "Plan narrated-drama scene assets",
           "STAGING_PROP": "Plan temporary Director World props",

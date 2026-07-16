@@ -21,26 +21,11 @@ export interface FeatureModelGroup {
 
 export const FEATURE_MODEL_GROUPS: readonly FeatureModelGroup[] = [
   {
-    key: "xiahua",
-    features: [
-      { id: "FREEZONE_TRANSLATION", defaultModel: "DC-freezone-translator-LLM" },
-      { id: "FREEZONE_STORY_SCRIPT", defaultModel: "DC-freezone-story-script-writer-LLM" },
-      { id: "STAGING_PROP", defaultModel: "DC-staging-prop-planner-LLM" },
-    ],
+    key: "chat",
+    features: [{ id: "HERMES", defaultModel: "DC-hermes-LLM" }],
   },
   {
-    key: "xialiao",
-    features: [
-      { id: "CONTENT_REWRITER", defaultModel: "DC-content-rewriter-LLM" },
-      { id: "SCREENPLAY_NORMALIZER", defaultModel: "DC-screenplay-normalizer-LLM" },
-    ],
-  },
-  {
-    key: "xiatan",
-    features: [{ id: "SCENE_BUILD", defaultModel: "DC-scene-builder-LLM" }],
-  },
-  {
-    key: "xiajing",
+    key: "shot",
     features: [
       {
         id: "GLOBAL_VIDEO_OPTIMIZER",
@@ -48,27 +33,42 @@ export const FEATURE_MODEL_GROUPS: readonly FeatureModelGroup[] = [
         requiresVision: true,
       },
       { id: "SEEDANCE2_PROMPT_COMPOSER", defaultModel: "DC-seedance2-prompt-composer-LLM" },
+    ],
+  },
+  {
+    key: "sketch",
+    features: [
       {
         id: "GLOBAL_VIDEO_IDENTITY_DETECTOR",
         defaultModel: "DC-video-identity-detector-LLM",
         requiresVision: true,
       },
+    ],
+  },
+  {
+    key: "episode",
+    features: [
       { id: "IDENTITY_PLANNER_CAST", defaultModel: "DC-identity-cast-planner-LLM" },
       { id: "IDENTITY_PLANNER_ANALYSIS", defaultModel: "DC-identity-analysis-planner-LLM" },
       { id: "IDENTITY_PLANNER_APPEARANCE", defaultModel: "DC-identity-appearance-writer-LLM" },
       { id: "LITERAL_BEAT_META", defaultModel: "DC-literal-beat-meta-LLM" },
       { id: "EPISODE_SCENE_PLANNER", defaultModel: "DC-episode-scene-planner-LLM" },
       { id: "EPISODE_PROP_PLANNER", defaultModel: "DC-episode-prop-planner-LLM" },
-      { id: "EPISODE_SCENE_RECONCILE", defaultModel: "DC-episode-scene-reconciler-LLM" },
-      { id: "NARRATED_SCENE_ASSET", defaultModel: "DC-narrated-scene-asset-planner-LLM" },
     ],
   },
   {
-    key: "xiadao",
-    features: [{ id: "HERMES", defaultModel: "DC-hermes-LLM" }],
+    key: "sceneLibrary",
+    features: [{ id: "SCENE_BUILD", defaultModel: "DC-scene-builder-LLM" }],
   },
   {
-    key: "xiage",
+    key: "freezone",
+    features: [
+      { id: "FREEZONE_TRANSLATION", defaultModel: "DC-freezone-translator-LLM" },
+      { id: "FREEZONE_STORY_SCRIPT", defaultModel: "DC-freezone-story-script-writer-LLM" },
+    ],
+  },
+  {
+    key: "style",
     features: [
       {
         id: "STYLE_ANALYZER",
@@ -78,9 +78,76 @@ export const FEATURE_MODEL_GROUPS: readonly FeatureModelGroup[] = [
     ],
   },
   {
+    key: "contentRewrite",
+    features: [{ id: "CONTENT_REWRITER", defaultModel: "DC-content-rewriter-LLM" }],
+  },
+  {
+    key: "screenplay",
+    features: [{ id: "SCREENPLAY_NORMALIZER", defaultModel: "DC-screenplay-normalizer-LLM" }],
+  },
+  {
+    key: "assetCompile",
+    features: [
+      { id: "EPISODE_SCENE_RECONCILE", defaultModel: "DC-episode-scene-reconciler-LLM" },
+      { id: "NARRATED_SCENE_ASSET", defaultModel: "DC-narrated-scene-asset-planner-LLM" },
+    ],
+  },
+  {
+    key: "directorWorld",
+    features: [{ id: "STAGING_PROP", defaultModel: "DC-staging-prop-planner-LLM" }],
+  },
+  {
     key: "novelImport",
     features: [{ id: "COGNEE", defaultModel: "DC-cognee-LLM" }],
   },
+];
+
+const FEATURE_MODEL_BY_ID = new Map(
+  FEATURE_MODEL_GROUPS.flatMap((group) => group.features.map((feature) => [feature.id, feature])),
+);
+
+function productFeature(id: string): FeatureModelDef {
+  const feature = FEATURE_MODEL_BY_ID.get(id);
+  if (!feature) throw new Error(`Unknown feature model id: ${id}`);
+  return feature;
+}
+
+/**
+ * 设置界面的产品入口分组。这里只决定展示位置；系统默认模型顺序、渠道映射
+ * 和后端环境变量仍由 FEATURE_MODEL_GROUPS 决定，避免界面改名影响运行逻辑。
+ */
+export const FEATURE_MODEL_PRODUCT_GROUPS: readonly FeatureModelGroup[] = [
+  {
+    key: "xiahua",
+    features: [
+      productFeature("FREEZONE_TRANSLATION"),
+      productFeature("FREEZONE_STORY_SCRIPT"),
+      productFeature("STAGING_PROP"),
+    ],
+  },
+  {
+    key: "xialiao",
+    features: [productFeature("CONTENT_REWRITER"), productFeature("SCREENPLAY_NORMALIZER")],
+  },
+  { key: "xiatan", features: [productFeature("SCENE_BUILD")] },
+  {
+    key: "xiajing",
+    features: [
+      productFeature("GLOBAL_VIDEO_OPTIMIZER"),
+      productFeature("SEEDANCE2_PROMPT_COMPOSER"),
+      productFeature("GLOBAL_VIDEO_IDENTITY_DETECTOR"),
+      productFeature("IDENTITY_PLANNER_CAST"),
+      productFeature("IDENTITY_PLANNER_ANALYSIS"),
+      productFeature("IDENTITY_PLANNER_APPEARANCE"),
+      productFeature("LITERAL_BEAT_META"),
+      productFeature("EPISODE_SCENE_PLANNER"),
+      productFeature("EPISODE_PROP_PLANNER"),
+      productFeature("EPISODE_SCENE_RECONCILE"),
+      productFeature("NARRATED_SCENE_ASSET"),
+    ],
+  },
+  { key: "xiadao", features: [productFeature("HERMES")] },
+  { key: "xiage", features: [productFeature("STYLE_ANALYZER")] },
 ];
 
 /** 所有功能的默认模型（去重），用作「可用模型」池的预填值。 */
