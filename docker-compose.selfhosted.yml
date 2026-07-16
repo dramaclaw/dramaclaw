@@ -49,7 +49,7 @@ services:
   # 内置 newAPI 网关（OpenAI 兼容）。默认使用 newapi-data 卷里的 SQLite；DramaClaw
   # 通过共享卷自动初始化管理员、运行令牌、渠道与模型映射。
   newapi:
-    image: calciumion/new-api:v1.0.0-rc.15
+    image: calciumion/new-api:v1.0.0-rc.21
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
