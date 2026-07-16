@@ -20,6 +20,9 @@ const GITHUB_URL = "https://github.com/dramaclaw/dramaclaw";
 const GITHUB_REPO = "dramaclaw/dramaclaw";
 const FALLBACK_GITHUB_STARS = 574;
 
+// 桌面端下载入口暂时隐藏；组件与样式全部保留，改回 true 即可恢复。
+const SHOW_DESKTOP_DOWNLOAD = false;
+
 let cachedStars: number | null = null;
 
 function formatStars(count: number): string {
@@ -193,7 +196,8 @@ export function LoginCinematicHeader({
     >
       <Brand />
       <div className={styles.stageActions}>
-        <DesktopDownload />
+        {/* 桌面端下载入口暂时隐藏，改回 true 即可恢复（组件代码保留）。 */}
+        {SHOW_DESKTOP_DOWNLOAD && <DesktopDownload />}
         <div className={styles.businessWechat}>
           <button
             type="button"
