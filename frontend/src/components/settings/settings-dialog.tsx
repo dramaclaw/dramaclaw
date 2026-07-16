@@ -653,7 +653,6 @@ const MEDIA_MODEL_ROWS: readonly {
 const MEDIA_ROW_GRID =
   "grid grid-cols-[90px_minmax(0,1fr)_150px_minmax(0,1fr)] items-center gap-3";
 
-const EMBEDDING_INTERNAL_MODEL = "DC-cognee-embedding";
 const DEFAULT_EMBEDDING_DIMENSION = 1024;
 const DEFAULT_EMBEDDING_BATCH_SIZE = 10;
 
@@ -1131,17 +1130,13 @@ function EmbeddingModelBlock({
       </p>
 
       <div className="mt-3 rounded-md border border-border/70 px-3 py-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_140px_minmax(0,1fr)_100px_110px] items-center gap-3 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-          <span>{t("settings.modelConfig.embeddingModel.colInternalModel")}</span>
+        <div className="grid grid-cols-[140px_minmax(0,1fr)_100px_110px] items-center gap-3 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
           <span>{t("settings.modelConfig.embeddingModel.colProvider")}</span>
           <span>{t("settings.modelConfig.embeddingModel.colUpstreamModel")}</span>
           <span>{t("settings.modelConfig.embeddingModel.colDimension")}</span>
           <span>{t("settings.modelConfig.embeddingModel.colBatchSize")}</span>
         </div>
-        <div className="mt-2 grid grid-cols-[minmax(0,1fr)_140px_minmax(0,1fr)_100px_110px] items-center gap-3">
-          <code className="truncate rounded border border-border/60 bg-white/[0.03] px-2 py-1.5 text-[11px] text-muted-foreground">
-            {EMBEDDING_INTERNAL_MODEL}
-          </code>
+        <div className="mt-2 grid grid-cols-[140px_minmax(0,1fr)_100px_110px] items-center gap-3">
           <Select
             value={selectedProvider}
             onValueChange={(provider) => updateLocal({ provider: provider as FeatureModelProvider })}

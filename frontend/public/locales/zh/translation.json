@@ -3830,7 +3830,6 @@
       "embeddingModel": {
         "title": "② 向量化与语义检索（Embedding）",
         "description": "负责文本向量化和知识库语义检索。请选择渠道和上游 Embedding 模型，维度必须与实际上游输出一致。",
-        "colInternalModel": "系统模型名（固定）",
         "colProvider": "已配置渠道",
         "colUpstreamModel": "上游模型名",
         "colDimension": "维度",

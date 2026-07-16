@@ -3830,7 +3830,6 @@
       "embeddingModel": {
         "title": "② Vectorization & Semantic Search (Embedding)",
         "description": "Vectorizes text for semantic knowledge-base search. Choose a channel and upstream Embedding model; the dimension must match the actual upstream output.",
-        "colInternalModel": "System Model (Fixed)",
         "colProvider": "Configured Channel",
         "colUpstreamModel": "Upstream Model",
         "colDimension": "Dimension",
