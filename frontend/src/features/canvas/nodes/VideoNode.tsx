@@ -1173,6 +1173,30 @@ export const VideoNode = memo(
       }
       return { images, videos, audios };
     }, [upstreamNodes]);
+    // HappyHorse 的模式可用性由「上游节点类型」决定，而非素材是否已填。空的图片
+    // 节点（尚未生成/上传图）也应让「首帧 / 图片参考」可选——用户先连节点、后填图
+    // 是正常顺序。所以这里按节点类型统计，区别于 upstreamCounts 的「已解析 URL」口径。
+    const upstreamTypeCounts = useMemo(() => {
+      let images = 0;
+      let videos = 0;
+      let audios = 0;
+      for (const node of upstreamNodes) {
+        if (isVideoNode(node)) {
+          videos += 1;
+        } else if (isAudioNode(node)) {
+          audios += 1;
+        } else if (
+          isImageGenNode(node) ||
+          isUploadNode(node) ||
+          isImageEditNode(node) ||
+          isExportImageNode(node) ||
+          isStoryboardGenNode(node)
+        ) {
+          images += 1;
+        }
+      }
+      return { images, videos, audios };
+    }, [upstreamNodes]);
     const isClipMode = Boolean(data.isClipMode);
     const clipStartMs =
       typeof data.clipStartMs === "number" ? data.clipStartMs : null;
@@ -1641,7 +1665,7 @@ export const VideoNode = memo(
     // 静默截断 / 触发上游互斥报错）。
     useEffect(() => {
       if (!isHappyHorseModel) return;
-      const { images, videos } = upstreamCounts;
+      const { images, videos } = upstreamTypeCounts;
       let target: VideoGenMode;
       if (videos > 0) {
         target = "videoEdit";
@@ -1659,8 +1683,8 @@ export const VideoNode = memo(
       genMode,
       id,
       isHappyHorseModel,
-      upstreamCounts.images,
-      upstreamCounts.videos,
+      upstreamTypeCounts.images,
+      upstreamTypeCounts.videos,
       updateNodeData,
     ]);
 
@@ -3049,7 +3073,11 @@ export const VideoNode = memo(
                   <GenModeSelect
                     value={genMode}
                     modelId={selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId}
-                    upstreamCounts={upstreamCounts}
+                    // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
+                    // 其余模型仍按已解析素材 URL 计数。
+                    upstreamCounts={
+                      isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
+                    }
                     onChange={(nextMode) => updateNodeData(id, { genMode: nextMode })}
                   />
                   <NodeContextPromptPaletteButton
