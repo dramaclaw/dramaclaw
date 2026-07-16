@@ -1057,6 +1057,7 @@ frontend/src/lib/character-main-copy.ts,Elastic-2.0,2026 SuperTale contributors,
 frontend/src/lib/chunk-load-recovery.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/cluster-config.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/derive-beat-states.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/desktop-download.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/desktop-download.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/dev-backend-watch.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/dialog-styles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
