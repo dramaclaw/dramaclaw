@@ -1355,7 +1355,6 @@
     "tableTitle": "Title",
     "tableCharCount": "Words",
     "moreChapters": "… and {{count}} more chapter(s)",
-    "reimportWarning": "Re-importing will clear the existing graph and rebuild.",
     "reuploadConfirm": {
       "title": "Confirm re-import",
       "description": "Re-importing will rebuild the graph and may affect downstream pipeline results such as characters, episodes, scripts, and videos. Are you sure you want to re-import the novel/script?",

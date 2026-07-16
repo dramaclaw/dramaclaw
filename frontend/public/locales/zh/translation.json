@@ -1355,7 +1355,6 @@
     "tableTitle": "标题",
     "tableCharCount": "字数",
     "moreChapters": "… 还有 {{count}} 个章节",
-    "reimportWarning": "重新导入将清空图谱并重建",
     "reuploadConfirm": {
       "title": "确认重新导入",
       "description": "重新导入会重建图谱，可能影响后续角色、剧集、脚本、视频等流水线结果，是否确认重新导入小说/剧本？",
