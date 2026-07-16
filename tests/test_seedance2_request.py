@@ -688,13 +688,19 @@ async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_pat
     assert payload["model"] == "happyhorse-1.0"
     assert payload["duration"] == 6
     assert payload["seconds"] == "6"
-    assert payload["images"] == ["https://example.com/first.png"]
-    assert metadata["ratio"] == "9:16"
+    # 参考优先：一旦带了参考图/参考视频，首帧(image_url/i2v)与 reference_images/video_url
+    # 互斥（同时下发会触发上游 INVALID_PARAMS）。首帧降级为 reference_images 首位，
+    # 不再单独发 images/image_url；画幅由输入媒体决定，故 ratio 也被移除。
+    assert "images" not in payload
+    assert "image_url" not in metadata
+    assert "ratio" not in metadata
     assert metadata["resolution"] == "1080P"
-    assert metadata["image_url"] == "https://example.com/first.png"
     assert metadata["video_url"] == "https://example.com/input.mp4"
     assert metadata["audio_setting"] == "origin"
-    assert metadata["reference_images"] == ["https://example.com/ref.png"]
+    assert metadata["reference_images"] == [
+        "https://example.com/first.png",
+        "https://example.com/ref.png",
+    ]
     assert metadata["watermark"] is False
     assert "generate_audio" not in metadata
 

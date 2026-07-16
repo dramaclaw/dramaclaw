@@ -1368,6 +1368,9 @@ class HuimengVideoGenerator(VideoGeneratorBase):
     def _is_seedance2_model(self) -> bool:
         return self.model.startswith("seedance-2.0")
 
+    def _is_happyhorse_model(self) -> bool:
+        return self.model.strip().lower() == "happyhorse-1.0"
+
     def _to_upload_url(
         self,
         value: str | None,
