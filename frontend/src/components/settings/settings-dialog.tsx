@@ -26,7 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -95,39 +95,56 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <DialogTitle>{t("settings.title")}</DialogTitle>
         </DialogHeader>
 
-        <Tabs
-          orientation="vertical"
-          value={page}
-          onValueChange={(value) => setPage(value as "models" | "storage")}
-          className="min-h-0 flex-1 gap-0"
-        >
-          <TabsList
-            variant="line"
+        <div className="flex min-h-0 flex-1">
+          <nav
             aria-label={t("settings.navigationLabel")}
-            className="w-14 shrink-0 justify-start rounded-none border-r border-border px-2 py-4 sm:w-44 sm:px-3"
+            className="flex w-14 shrink-0 flex-col gap-1 border-r border-border px-2 py-4 sm:w-44 sm:px-3"
           >
-            <TabsTrigger value="models" className="h-10 px-2 sm:px-3">
+            <button
+              type="button"
+              aria-current={page === "models" ? "page" : undefined}
+              onClick={() => setPage("models")}
+              className={cn(
+                "flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
+                page === "models"
+                  ? "bg-white/[0.09] text-foreground"
+                  : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
+              )}
+            >
               <Cpu className="size-4" aria-hidden />
               <span className="hidden sm:inline">{t("settings.pages.models")}</span>
-            </TabsTrigger>
-            <TabsTrigger value="storage" className="h-10 px-2 sm:px-3">
+            </button>
+            <button
+              type="button"
+              aria-current={page === "storage" ? "page" : undefined}
+              onClick={() => setPage("storage")}
+              className={cn(
+                "flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
+                page === "storage"
+                  ? "bg-white/[0.09] text-foreground"
+                  : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
+              )}
+            >
               <HardDrive className="size-4" aria-hidden />
               <span className="hidden sm:inline">{t("settings.pages.storage")}</span>
-            </TabsTrigger>
-          </TabsList>
+            </button>
+          </nav>
 
-          <TabsContent value="models" className="min-w-0">
+          {page === "models" ? (
+            <div className="min-w-0 flex-1">
             <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
               <ModelConfigSection open={open && page === "models"} />
               {SHOW_CODEX_BRIDGE && <CodexBridgeSection />}
             </ScrollArea>
-          </TabsContent>
-          <TabsContent value="storage" className="min-w-0">
+            </div>
+          ) : (
+            <div className="min-w-0 flex-1">
             <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
               <MediaStorageSection />
             </ScrollArea>
-          </TabsContent>
-        </Tabs>
+            </div>
+          )}
+        </div>
 
         <div className="flex justify-end border-t border-border px-5 py-3.5">
           <DialogClose render={<Button variant="outline" size="sm" />}>
@@ -379,10 +396,16 @@ function OfficialGatewayPanel({
           </Label>
           <div className="relative">
             <Input
+              name="relayclaw-official-api-key"
+              autoComplete="new-password"
+              data-1p-ignore="true"
+              data-lpignore="true"
               type={revealKey ? "text" : "password"}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={official?.configured ? official.apiKeyPreview : "sk-..."}
+              autoCapitalize="none"
+              spellCheck={false}
               className="h-9 rounded-md border-input/80 pr-9 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
             />
             <button
@@ -539,6 +562,8 @@ function CustomGatewayPanel({
           <div className="mt-3 space-y-2.5">
             <FieldRow
               secret
+              name="newapi-setup-password"
+              autoComplete="new-password"
               label={t("settings.modelConfig.custom.setupPassword")}
               value={setupPassword}
               onChange={setSetupPassword}
@@ -546,6 +571,8 @@ function CustomGatewayPanel({
             />
             <FieldRow
               secret
+              name="newapi-setup-password-confirmation"
+              autoComplete="new-password"
               label={t("settings.modelConfig.custom.setupConfirmPassword")}
               value={setupConfirmPassword}
               onChange={setSetupConfirmPassword}
@@ -838,6 +865,15 @@ function FeatureModelsBlock({
         database={database}
       />
 
+      <CogneeModelsBlock
+        configuredProviders={configuredProviders}
+        newApiBaseUrl={newApiBaseUrl}
+        database={database}
+        providerChannels={providerChannels}
+        savedChannelByProvider={savedChannelByProvider}
+        savedEmbeddingModel={savedEmbeddingModel}
+      />
+
       {/* 功能模型映射 */}
       <h4 className="mt-5 text-xs font-medium text-foreground">
         {t("settings.modelConfig.featureModels.title")}
@@ -882,15 +918,6 @@ function FeatureModelsBlock({
           {t("settings.modelConfig.featureModels.save")}
         </Button>
       </div>
-
-      <CogneeModelsBlock
-        configuredProviders={configuredProviders}
-        newApiBaseUrl={newApiBaseUrl}
-        database={database}
-        providerChannels={providerChannels}
-        savedChannelByProvider={savedChannelByProvider}
-        savedEmbeddingModel={savedEmbeddingModel}
-      />
 
       <MediaModelsBlock
         configuredProviders={configuredProviders}
@@ -2385,6 +2412,8 @@ function FieldRow({
   secret = false,
   allowReveal = true,
   placeholder,
+  name,
+  autoComplete,
 }: {
   label: string;
   value: string;
@@ -2392,6 +2421,8 @@ function FieldRow({
   secret?: boolean;
   allowReveal?: boolean;
   placeholder?: string;
+  name?: string;
+  autoComplete?: string;
 }) {
   const { t } = useTranslation();
   const [revealed, setRevealed] = useState(false);
@@ -2402,6 +2433,8 @@ function FieldRow({
       </Label>
       <div className="relative">
         <Input
+          name={name}
+          autoComplete={autoComplete ?? (secret ? "new-password" : undefined)}
           type={secret && !revealed ? "password" : "text"}
           value={value}
           placeholder={placeholder}
