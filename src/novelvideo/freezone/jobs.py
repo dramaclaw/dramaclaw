@@ -1134,6 +1134,7 @@ async def run_freezone_video_gen(
     scene_optimize: str | None = None,
     backend: str = "huimeng_seedance-2.0-fast",
     last_frame_path: Optional[str] = None,
+    audio_setting: Optional[str] = None,
 ) -> Path:
     """Freezone 文生视频。
 
@@ -1188,6 +1189,9 @@ async def run_freezone_video_gen(
             and not is_freezone_seedance2_backend(backend)
         ):
             raise RuntimeError(f"backend {backend} requires a first-frame image reference")
+        extra_kwargs: dict[str, object] = {}
+        if audio_setting:
+            extra_kwargs["audio_setting"] = audio_setting
         result = await video_gen.generate(
             image_path=first_image_ref.path if first_image_ref and first_image_ref.path else None,
             prompt=prompt,
@@ -1198,6 +1202,7 @@ async def run_freezone_video_gen(
             references=references,
             human_review=bool(human_review),
             seedance2_config={"scene_optimize": scene_optimize} if scene_optimize else None,
+            **extra_kwargs,
         )
     if not result or result.status.value != "done":
         err = result.error if result else "unknown error"

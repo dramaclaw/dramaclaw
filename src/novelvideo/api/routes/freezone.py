@@ -65,6 +65,7 @@ from novelvideo.api.schemas import (
     FreezoneUpscaleRequest,
     FreezoneVideoCharacterLibraryItemRequest,
     FreezoneVideoComposeRequest,
+    FreezoneVideoEditRequest,
     FreezoneVideoEraseRequest,
     FreezoneVideoGenRequest,
     FreezoneVideoOmniGenRequest,
@@ -323,6 +324,7 @@ async def _start_or_enqueue_freezone_video_gen(
     scene_optimize: str | None,
     backend: str,
     last_frame_path: str | None = None,
+    audio_setting: str | None = None,
     canvas_id: str | None = None,
     node_id: str | None = None,
     model_id: str | None = None,
@@ -344,6 +346,7 @@ async def _start_or_enqueue_freezone_video_gen(
         "scene_optimize": normalize_freezone_seedance2_scene_optimize(backend, scene_optimize),
         "backend": backend,
         "last_frame_path": last_frame_path,
+        "audio_setting": audio_setting or "",
         "project_dir": str(project_dir),
     }
     if ctx is not None:
@@ -6965,9 +6968,18 @@ async def freezone_video_i2v(
             "multiple image references currently only support Seedance 2.0 or HappyHorse models",
         )
 
+    # HappyHorse 的「图片参考」(r2v) 与「图生视频」(首帧 i2v) 是两种上游模式，
+    # 唯一能区分单图走哪条的信号就是 gen_mode。参考模式下所有图（含第 1 张）都当
+    # reference_images，绝不打「首帧」——否则单张参考图会被误当 image_url 走 i2v。
+    happyhorse_reference_mode = (
+        is_freezone_happyhorse_backend(backend) and body.gen_mode == "imageReference"
+    )
     reference_items = []
     for idx, path in enumerate(source_paths):
-        role = "首帧" if idx == 0 else "图片参考"
+        if happyhorse_reference_mode:
+            role = "图片参考"
+        else:
+            role = "首帧" if idx == 0 else "图片参考"
         reference_items.append({"type": "image", "path": path, "role": role})
     final_prompt = build_freezone_image_to_video_prompt(
         user_prompt=body.prompt,
@@ -7168,6 +7180,83 @@ async def freezone_video_omni_gen(
         **response,
         "meta": counts,
     }
+
+
+@router.post("/projects/{project}/freezone/video/video-edit", tags=[TAG_FREEZONE_VIDEO])
+async def freezone_video_edit(
+    project: str,
+    body: FreezoneVideoEditRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：视频编辑（HappyHorse 视频编辑功能）。
+
+    输入 1 个源视频 + 0-5 张参考图，走上游 video_url + reference_images。
+    """
+    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
+        project, user
+    )
+
+    if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
+        raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
+    try:
+        backend = resolve_freezone_video_backend(body.model)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not is_freezone_happyhorse_backend(backend):
+        raise HTTPException(400, "video edit currently only supports HappyHorse models")
+
+    if not body.video_url.strip():
+        raise HTTPException(400, "video_url is required")
+    video_paths = _resolve_url_list(project_dir, [body.video_url])
+    if not video_paths:
+        raise HTTPException(400, "video_url could not be resolved")
+
+    image_paths = _resolve_url_list(project_dir, list(body.image_urls))
+    if len(image_paths) != len(body.image_urls):
+        raise HTTPException(400, "some image_urls could not be resolved")
+    if len(image_paths) > 5:
+        raise HTTPException(400, "image_urls count must be <= 5")
+
+    reference_items: list[dict[str, str]] = [
+        {"type": "video", "path": video_paths[0], "role": "视频编辑源"}
+    ]
+    for path in image_paths:
+        reference_items.append({"type": "image", "path": path, "role": "图片参考"})
+
+    final_prompt = build_freezone_image_to_video_prompt(
+        user_prompt=body.prompt,
+        camera_template_id=body.camera_template_id,
+        marks=[item.model_dump() for item in body.marks],
+        reference_image_count=len(image_paths),
+    )
+    job_id = _new_job_id()
+
+    try:
+        return await _start_or_enqueue_freezone_video_gen(
+            ctx=ctx,
+            username=username,
+            project=project_name,
+            project_dir=project_dir,
+            output_dir=output_dir,
+            job_id=job_id,
+            prompt=final_prompt,
+            reference_items=reference_items,
+            aspect_ratio=normalize_video_aspect_ratio(body.aspect_ratio),
+            resolution=normalize_video_resolution_for_backend(backend, body.resolution),
+            duration_seconds=normalize_video_duration_for_backend(backend, body.duration_seconds),
+            generate_audio=body.generate_audio,
+            human_review=body.human_review,
+            scene_optimize=None,
+            backend=backend,
+            audio_setting=body.audio_setting,
+            canvas_id=body.canvas_id or None,
+            node_id=body.node_id or None,
+            model_id=body.model,
+            gen_mode=body.gen_mode,
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("failed to start freezone video edit task", exc)
+        raise HTTPException(503, f"failed to start freezone video edit task: {exc}") from exc
 
 
 @router.post(

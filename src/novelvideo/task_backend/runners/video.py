@@ -791,6 +791,9 @@ async def _run_freezone_video_gen_async(
             scene_optimize=str(payload.get("scene_optimize") or ""),
             backend=str(payload.get("backend") or ""),
             last_frame_path=payload.get("last_frame_path"),
+            audio_setting=(str(payload.get("audio_setting")) or None)
+            if payload.get("audio_setting")
+            else None,
         )
     except Exception as exc:
         _append_freezone_video_node_history(

@@ -1354,6 +1354,8 @@ class HuimengVideoGenerator(VideoGeneratorBase):
         self.client = client or HuimengiTaskClient(api_key=api_key, base_url=endpoint)
 
     def _duration_bounds(self) -> tuple[int, int]:
+        if self._is_happyhorse_model():
+            return 3, 15
         if self.model.startswith("seedance-2.0"):
             return 4, 15
         if self.model == "seedance-1.5-pro":
@@ -2245,10 +2247,31 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 else:
                     reference_image_paths.append(path)
 
-            if not first_frame_path and image_path:
+            # image_path 是 run_freezone_video_gen 无条件传进来的「首张图」。仅当它
+            # 还没作为参考图存在时，才把它被动提升为首帧——否则参考模式(所有图都在
+            # reference_image_paths 里)会把首张图重复算一次（首帧位 + 参考位）。
+            if not first_frame_path and image_path and image_path not in reference_image_paths:
                 first_frame_path = image_path
+
+            # HappyHorse 没有尾帧能力，且把尾帧混进 reference_images 会误触发 r2v，
+            # 与首帧的 image_url 冲突（上游 INVALID_PARAMS）。这里直接忽略尾帧。
             if last_frame_path:
-                reference_image_paths.append(str(last_frame_path))
+                log("HappyHorse 不支持尾帧，已忽略尾帧输入")
+
+            # HappyHorse 的 image_url(i2v) 与 reference_images(r2v/视频编辑) 互斥，
+            # 不能出现在同一次请求里。策略：参考优先——只要带了参考图或参考视频，就走
+            # r2v/视频编辑。此时首帧不能再走 image_url，但它的画面仍是有效参考，
+            # 应降级为 reference_images 的首位（保持身份优先），而不是整张丢弃，
+            # 否则「2 张图」会只发出去 1 张。纯首帧（无其它参考）才走 i2v。
+            if (video_reference_paths or reference_image_paths) and first_frame_path:
+                log("HappyHorse 参考/视频编辑模式不支持首帧，已将首帧降级为参考图")
+                reference_image_paths.insert(0, first_frame_path)
+                first_frame_path = ""
+
+            # 文档：ratio 仅 t2v/r2v 生效。首帧(i2v, image_url)与视频编辑(video_url)
+            # 的画幅由输入媒体决定，不接受 ratio，误带会触发上游 INVALID_PARAMS。
+            if first_frame_path or video_reference_paths:
+                metadata.pop("ratio", None)
 
             try:
                 if video_reference_paths:
@@ -2461,6 +2484,15 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             request_resolution = str(metadata.get("resolution") or self.resolution or "").strip()
             log(f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})...")
             progress(0.1)
+            if self._is_happyhorse_model():
+                _md = payload.get("metadata") or {}
+                log(
+                    "[诊断] HappyHorse 提交字段自检: "
+                    f"image_url={'有' if _md.get('image_url') else '无'}, "
+                    f"payload.images={'有' if payload.get('images') else '无'}, "
+                    f"reference_images={len(_md.get('reference_images') or [])}, "
+                    f"video_url={'有' if _md.get('video_url') else '无'}"
+                )
             reservation_id = await _reserve_video_model_call(
                 self.model,
                 source="newapi_video_generation",

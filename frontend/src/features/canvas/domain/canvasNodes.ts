@@ -86,7 +86,8 @@ export type VideoGenMode =
   | 'allReference'
   | 'imageToVideo'
   | 'firstLastFrame'
-  | 'imageReference';
+  | 'imageReference'
+  | 'videoEdit';
 
 export type VideoGenQuality = '480P' | '720P' | '1080P';
 export type VideoGenCount = 1 | 2 | 4;

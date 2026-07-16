@@ -402,6 +402,69 @@ export async function submitFreezoneVideoI2v(
   );
 }
 
+// /freezone/video/video-edit ---------------------------------------------- //
+//
+// HappyHorse 视频编辑：1 个源视频 + 0-5 张参考图 → 上游 video_url + reference_images。
+
+export interface FreezoneVideoEditPayload extends FreezoneNodeContext {
+  /** 源视频静态地址，必填。 */
+  videoUrl: string;
+  /** 0-5 张参考图静态地址。 */
+  imageUrls?: string[];
+  prompt?: string;
+  cameraTemplateId?: string | null;
+  marks?: FreezoneVideoMark[];
+  aspectRatio?: FreezoneVideoAspectRatio;
+  resolution?: FreezoneVideoResolution;
+  durationSeconds?: number;
+  /** 视频编辑音频策略：auto 自动 / origin 保留原声。 */
+  audioSetting?: "auto" | "origin";
+  generateAudio?: boolean;
+  /** default newapi_happyhorse-1.0. */
+  model?: string;
+  /** 生成模式（还原用）：videoEdit。 */
+  genMode?: string;
+  humanReview?: boolean;
+}
+
+export async function submitFreezoneVideoEdit(
+  project: string,
+  payload: FreezoneVideoEditPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video/video-edit`,
+    {
+      method: "POST",
+      json: {
+        video_url: payload.videoUrl,
+        image_urls: (payload.imageUrls ?? []).slice(0, 5),
+        prompt: payload.prompt ?? "",
+        camera_template_id: payload.cameraTemplateId ?? null,
+        marks: (payload.marks ?? []).map((m) => ({
+          label: m.label,
+          source_url: m.sourceUrl ?? "",
+          point_x: m.pointX ?? null,
+          point_y: m.pointY ?? null,
+          box_x: m.boxX ?? null,
+          box_y: m.boxY ?? null,
+          box_width: m.boxWidth ?? null,
+          box_height: m.boxHeight ?? null,
+          note: m.note ?? "",
+        })),
+        aspect_ratio: payload.aspectRatio ?? "16:9",
+        resolution: payload.resolution ?? "720p",
+        duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
+        audio_setting: payload.audioSetting ?? "auto",
+        generate_audio: payload.generateAudio ?? false,
+        ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
+        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        human_review: payload.humanReview ?? false,
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
 // /freezone/video/omni-gen ------------------------------------------------ //
 
 export type FreezoneVideoReferenceType = "image" | "video" | "audio";

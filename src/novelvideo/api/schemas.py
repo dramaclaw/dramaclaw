@@ -1141,6 +1141,57 @@ class FreezoneKeyframeVideoRequest(BaseModel):
     gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
 
 
+class FreezoneVideoEditRequest(BaseModel):
+    """视频编辑请求（HappyHorse 视频编辑功能）。
+
+    输入 1 个源视频 + 0-5 张参考图，对视频进行编辑改写。
+    """
+
+    video_url: str = Field(description="源视频静态地址，必填")
+    image_urls: list[str] = Field(
+        default_factory=list,
+        description="参考图静态地址列表，0-5 张，单张 <= 10MB",
+    )
+    prompt: str = Field(default="", description="用户编辑指令/视频描述，可为空")
+    camera_template_id: Optional[str] = Field(
+        default=None,
+        description="运镜模板 id，例如 locked_off / follow_tracking / pedestal_up",
+    )
+    marks: list["FreezoneVideoMark"] = Field(
+        default_factory=list,
+        description="局部元素标记列表",
+    )
+    aspect_ratio: Literal["auto", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"] = Field(
+        default="16:9",
+        description="视频比例；视频编辑画幅由源视频决定，此字段仅占位",
+    )
+    resolution: Literal["480p", "720p", "1080p"] = Field(
+        default="720p",
+        description="输出清晰度档位",
+    )
+    duration_seconds: int = Field(
+        default=5,
+        ge=1,
+        description="视频时长，至少 1 秒；不同模型支持的时长范围可能不同",
+    )
+    audio_setting: Literal["auto", "origin"] = Field(
+        default="auto",
+        description="视频编辑音频策略：auto 自动 / origin 保留原声",
+    )
+    generate_audio: bool = Field(default=False, description="是否生成原生音频")
+    human_review: bool = Field(
+        default=False,
+        description="是否开启真人素材审核/加白流程",
+    )
+    model: str = Field(
+        default="newapi_happyhorse-1.0",
+        description="视频模型或模型选项 id。请传 /freezone/video/models 返回值之一",
+    )
+    canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
+    node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+
+
 class FreezoneVideoReferenceItem(BaseModel):
     """全能参考单条素材。"""
 

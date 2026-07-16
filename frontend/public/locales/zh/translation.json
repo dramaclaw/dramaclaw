@@ -3283,8 +3283,10 @@
         "textToVideo": "文生视频",
         "allReference": "全能参考",
         "imageToVideo": "图生视频",
+        "firstFrame": "首帧",
         "firstLastFrame": "首尾帧",
-        "imageReference": "图片参考"
+        "imageReference": "图片参考",
+        "videoEdit": "视频编辑"
       },
       "placeholder": "根据文字描述生成视频。",
       "submit": "提交",

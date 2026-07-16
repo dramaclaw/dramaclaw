@@ -3283,8 +3283,10 @@
         "textToVideo": "Text to Video",
         "allReference": "All Reference",
         "imageToVideo": "Image to Video",
+        "firstFrame": "First Frame",
         "firstLastFrame": "First/Last Frame",
-        "imageReference": "Image Reference"
+        "imageReference": "Image Reference",
+        "videoEdit": "Video Edit"
       },
       "placeholder": "Describe the video to generate.",
       "submit": "Submit",
