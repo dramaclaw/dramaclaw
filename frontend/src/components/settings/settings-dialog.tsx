@@ -84,6 +84,36 @@ const SHOW_CODEX_BRIDGE = false;
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { t } = useTranslation();
   const [page, setPage] = useState<"models" | "storage">("models");
+  const statusQuery = useModelGatewayConfig(open);
+  const settingsStatus = statusQuery.data?.data;
+  const modelConfigured = Boolean(settingsStatus?.effective.configured);
+  const mediaStorageConfigured = Boolean(settingsStatus?.mediaRelay?.configured);
+
+  const pageStatus = (configured: boolean, label: string) => {
+    if (statusQuery.isLoading) {
+      return (
+        <Loader2
+          className="absolute top-1 right-1 size-3 animate-spin text-muted-foreground sm:static sm:ml-auto sm:size-3.5"
+          aria-hidden
+        />
+      );
+    }
+    if (configured) {
+      return (
+        <span
+          className="absolute top-1 right-1 size-2 shrink-0 rounded-full bg-emerald-400 sm:static sm:ml-auto"
+          aria-label={t("settings.statusConfigured", { page: label })}
+          title={t("settings.statusConfigured", { page: label })}
+        />
+      );
+    }
+    return (
+      <AlertTriangle
+        className="absolute top-1 right-1 size-3.5 shrink-0 text-amber-400 sm:static sm:ml-auto sm:size-4"
+        aria-label={t("settings.statusNotConfigured", { page: label })}
+      />
+    );
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -105,7 +135,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               aria-current={page === "models" ? "page" : undefined}
               onClick={() => setPage("models")}
               className={cn(
-                "flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
+                "relative flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
                 page === "models"
                   ? "bg-white/[0.09] text-foreground"
                   : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
@@ -113,13 +143,14 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             >
               <Cpu className="size-4" aria-hidden />
               <span className="hidden sm:inline">{t("settings.pages.models")}</span>
+              {pageStatus(modelConfigured, t("settings.pages.models"))}
             </button>
             <button
               type="button"
               aria-current={page === "storage" ? "page" : undefined}
               onClick={() => setPage("storage")}
               className={cn(
-                "flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
+                "relative flex h-10 items-center justify-center gap-2 rounded-md px-2 text-sm font-medium transition-colors sm:justify-start sm:px-3",
                 page === "storage"
                   ? "bg-white/[0.09] text-foreground"
                   : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground",
@@ -127,6 +158,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             >
               <HardDrive className="size-4" aria-hidden />
               <span className="hidden sm:inline">{t("settings.pages.storage")}</span>
+              {pageStatus(mediaStorageConfigured, t("settings.pages.storage"))}
             </button>
           </nav>
 
@@ -344,6 +376,7 @@ function OfficialGatewayPanel({
 
   const [apiKey, setApiKey] = useState("");
   const [revealKey, setRevealKey] = useState(false);
+  const savedApiKeyPreview = official?.configured ? official.apiKeyPreview : "";
 
   const handleSave = async () => {
     const trimmedApiKey = apiKey.trim();
@@ -369,6 +402,7 @@ function OfficialGatewayPanel({
         return;
       }
       setApiKey("");
+      setRevealKey(false);
       toast.success(t("settings.modelConfig.official.saved"));
     } catch (error) {
       toast.error(await getRequestErrorMessage(error, t("settings.modelConfig.requestFailed")));
@@ -402,24 +436,40 @@ function OfficialGatewayPanel({
               data-lpignore="true"
               type={revealKey ? "text" : "password"}
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={official?.configured ? official.apiKeyPreview : "sk-..."}
+              onChange={(e) => {
+                setApiKey(e.target.value);
+                if (!e.target.value) setRevealKey(false);
+              }}
+              placeholder={
+                savedApiKeyPreview
+                  ? t("settings.secretSavedPlaceholder", { preview: savedApiKeyPreview })
+                  : "sk-..."
+              }
               autoCapitalize="none"
               spellCheck={false}
-              className="h-9 rounded-md border-input/80 pr-9 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
+              className={cn(
+                "h-9 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30",
+                apiKey ? "pr-9" : savedApiKeyPreview ? "pr-16" : "",
+              )}
             />
-            <button
-              type="button"
-              onClick={() => setRevealKey((r) => !r)}
-              aria-label={
-                revealKey
-                  ? t("settings.mediaStorage.hideSecret")
-                  : t("settings.mediaStorage.showSecret")
-              }
-              className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-            >
-              {revealKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-            </button>
+            {apiKey ? (
+              <button
+                type="button"
+                onClick={() => setRevealKey((r) => !r)}
+                aria-label={
+                  revealKey
+                    ? t("settings.mediaStorage.hideSecret")
+                    : t("settings.mediaStorage.showSecret")
+                }
+                className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {revealKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            ) : savedApiKeyPreview ? (
+              <span className="absolute top-1/2 right-2 -translate-y-1/2 rounded bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                {t("settings.secretSavedBadge")}
+              </span>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1650,6 +1700,9 @@ function ProviderChannelRow({
   const upstreamKeyValue = channel?.upstreamKey ?? "";
   const savedKeyPreview = savedChannel?.configured ? savedChannel.upstreamKeyPreview : "";
   const upstreamPlaceholder = savedKeyPreview || "sk-...";
+  useEffect(() => {
+    if (!upstreamKeyValue) setRevealed(false);
+  }, [upstreamKeyValue]);
   const handleSync = async () => {
     if (!newApiBaseUrl.trim()) {
       toast.error(t("settings.modelConfig.featureModels.missingBaseUrl"));
@@ -1678,6 +1731,7 @@ function ProviderChannelRow({
       }
       if (upstreamKey) {
         clearFeatureProviderUpstreamKey(provider);
+        setRevealed(false);
       }
       toast.success(t("settings.modelConfig.featureModels.channelSynced"));
     } catch (error) {
@@ -1701,24 +1755,43 @@ function ProviderChannelRow({
         </Label>
         <div className="relative mt-1.5">
           <Input
+            name={`provider-${provider}-upstream-api-key`}
+            autoComplete="new-password"
+            data-1p-ignore="true"
+            data-lpignore="true"
             type={revealed ? "text" : "password"}
             value={upstreamKeyValue}
             onChange={(e) => updateFeatureProviderChannel(provider, { upstreamKey: e.target.value })}
-            placeholder={upstreamPlaceholder}
-            className="h-9 rounded-md border-input/80 pr-9 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
-          />
-          <button
-            type="button"
-            onClick={() => setRevealed((r) => !r)}
-            aria-label={
-              revealed
-                ? t("settings.mediaStorage.hideSecret")
-                : t("settings.mediaStorage.showSecret")
+            placeholder={
+              savedKeyPreview
+                ? t("settings.secretSavedPlaceholder", { preview: savedKeyPreview })
+                : upstreamPlaceholder
             }
-            className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-          >
-            {revealed ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-          </button>
+            autoCapitalize="none"
+            spellCheck={false}
+            className={cn(
+              "h-9 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30",
+              upstreamKeyValue ? "pr-9" : savedKeyPreview ? "pr-16" : "",
+            )}
+          />
+          {upstreamKeyValue ? (
+            <button
+              type="button"
+              onClick={() => setRevealed((r) => !r)}
+              aria-label={
+                revealed
+                  ? t("settings.mediaStorage.hideSecret")
+                  : t("settings.mediaStorage.showSecret")
+              }
+              className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {revealed ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
+          ) : savedKeyPreview ? (
+            <span className="absolute top-1/2 right-2 -translate-y-1/2 rounded bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+              {t("settings.secretSavedBadge")}
+            </span>
+          ) : null}
         </div>
       </div>
       <div>
@@ -2327,18 +2400,22 @@ function CloudinaryFields({
         onChange={(v) => onChange({ cloudName: v })}
       />
       <FieldRow
+        secret
+        name="cloudinary-api-key"
         label={t("settings.mediaStorage.fields.apiKey")}
         value={config.apiKey}
         onChange={(v) => onChange({ apiKey: v })}
         placeholder={apiKeyPreview || undefined}
+        savedPreview={apiKeyPreview}
       />
       <FieldRow
         secret
-        allowReveal={false}
+        name="cloudinary-api-secret"
         label={t("settings.mediaStorage.fields.apiSecret")}
         value={config.apiSecret}
         onChange={(v) => onChange({ apiSecret: v })}
         placeholder={apiSecretPreview || undefined}
+        savedPreview={apiSecretPreview}
       />
       <FieldRow
         label={t("settings.mediaStorage.fields.apiFolder")}
@@ -2368,18 +2445,21 @@ function AliyunOssFields({
   return (
     <>
       <FieldRow
+        name="aliyun-oss-access-key-id"
         label={t("settings.mediaStorage.fields.accessKeyId")}
         value={config.accessKeyId}
         onChange={(v) => onChange({ accessKeyId: v })}
         placeholder={accessKeyIdPreview || undefined}
+        savedPreview={accessKeyIdPreview}
       />
       <FieldRow
         secret
-        allowReveal={false}
+        name="aliyun-oss-access-key-secret"
         label={t("settings.mediaStorage.fields.accessKeySecret")}
         value={config.accessKeySecret}
         onChange={(v) => onChange({ accessKeySecret: v })}
         placeholder={accessKeySecretPreview || undefined}
+        savedPreview={accessKeySecretPreview}
       />
       <FieldRow
         label={t("settings.mediaStorage.fields.bucket")}
@@ -2405,22 +2485,26 @@ function FieldRow({
   value,
   onChange,
   secret = false,
-  allowReveal = true,
   placeholder,
   name,
   autoComplete,
+  savedPreview,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   secret?: boolean;
-  allowReveal?: boolean;
   placeholder?: string;
   name?: string;
   autoComplete?: string;
+  savedPreview?: string;
 }) {
   const { t } = useTranslation();
   const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    if (!value) setRevealed(false);
+  }, [value]);
+  const hasSavedSecret = Boolean(savedPreview && !value);
   return (
     <div className="grid grid-cols-[120px_1fr] items-center gap-3">
       <Label className="justify-start text-[11px] font-normal tracking-wide text-muted-foreground uppercase">
@@ -2432,14 +2516,19 @@ function FieldRow({
           autoComplete={autoComplete ?? (secret ? "new-password" : undefined)}
           type={secret && !revealed ? "password" : "text"}
           value={value}
-          placeholder={placeholder}
+          placeholder={
+            hasSavedSecret
+              ? t("settings.secretSavedPlaceholder", { preview: savedPreview })
+              : placeholder
+          }
           onChange={(e) => onChange(e.target.value)}
           className={cn(
             "h-9 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30",
-            secret && "pr-9",
+            secret && value && "pr-9",
+            hasSavedSecret && "pr-16",
           )}
         />
-        {secret && allowReveal ? (
+        {secret && value ? (
           <button
             type="button"
             onClick={() => setRevealed((r) => !r)}
@@ -2452,6 +2541,10 @@ function FieldRow({
           >
             {revealed ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
           </button>
+        ) : hasSavedSecret ? (
+          <span className="absolute top-1/2 right-2 -translate-y-1/2 rounded bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+            {t("settings.secretSavedBadge")}
+          </span>
         ) : null}
       </div>
     </div>

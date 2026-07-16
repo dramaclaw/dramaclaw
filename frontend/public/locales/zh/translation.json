@@ -3687,6 +3687,10 @@
     "title": "设置",
     "close": "关闭",
     "navigationLabel": "设置分类",
+    "statusConfigured": "{{page}}已配置",
+    "statusNotConfigured": "{{page}}未配置",
+    "secretSavedBadge": "已保存",
+    "secretSavedPlaceholder": "已保存 · {{preview}}（重新输入可替换）",
     "pages": {
       "models": "模型与渠道",
       "storage": "媒体存储"

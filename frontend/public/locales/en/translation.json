@@ -3687,6 +3687,10 @@
     "title": "Settings",
     "close": "Close",
     "navigationLabel": "Settings categories",
+    "statusConfigured": "{{page}} is configured",
+    "statusNotConfigured": "{{page}} is not configured",
+    "secretSavedBadge": "Saved",
+    "secretSavedPlaceholder": "Saved · {{preview}} (enter a new value to replace)",
     "pages": {
       "models": "Models & Channels",
       "storage": "Media Storage"
