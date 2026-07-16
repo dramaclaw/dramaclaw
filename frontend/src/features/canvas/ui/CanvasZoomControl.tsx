@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Wand2 } from 'lucide-react';
+import { Waypoints, Wand2 } from 'lucide-react';
 import { useReactFlow, useViewport } from '@xyflow/react';
 import { useTranslation } from 'react-i18next';
 
 import { isImmersiveViewerActive } from '@/features/viewer-kit/useViewerImmersiveBody';
 import { MOD_KEY_LABEL } from '@/lib/platform';
 import { CANVAS_CONTROL_GLASS_CLASS } from './canvasControlStyles';
+import { useEdgeVisibilityStore } from './edgeVisibilityStore';
 
 const ZOOM_STEP = 1.2;
 const ZOOM_MIN = 0.1;
@@ -39,6 +40,9 @@ export function CanvasZoomControl({
   const { zoomTo, getZoom, fitView } = useReactFlow();
   const { zoom } = useViewport();
   const { t } = useTranslation();
+
+  const edgesHidden = useEdgeVisibilityStore((state) => state.hidden);
+  const toggleEdgesHidden = useEdgeVisibilityStore((state) => state.toggle);
 
   const percent = Math.round(zoom * 100);
 
@@ -119,6 +123,9 @@ export function CanvasZoomControl({
   };
 
   const organizeTitle = `${t('canvas.toolbar.organize')} ${t('canvas.toolbar.organizeShortcut')}`;
+  const edgesToggleTitle = edgesHidden
+    ? t('canvas.toolbar.showEdges')
+    : t('canvas.toolbar.hideEdges');
   const isTop = placement === 'top-right';
 
   const menuItemClass =
@@ -135,6 +142,29 @@ export function CanvasZoomControl({
       <div
         className={`flex items-center gap-0.5 rounded-full px-1 py-0.5 text-text ${CANVAS_CONTROL_GLASS_CLASS}`}
       >
+        <span className="group relative inline-flex">
+          <button
+            type="button"
+            onClick={toggleEdgesHidden}
+            className={`flex h-5 w-5 items-center justify-center rounded-full transition ${
+              edgesHidden
+                ? 'bg-white/[0.16] text-text'
+                : 'text-text-muted hover:bg-white/10 hover:text-text'
+            }`}
+            aria-label={edgesToggleTitle}
+            aria-pressed={edgesHidden}
+          >
+            <Waypoints className="h-3 w-3" />
+          </button>
+          <span
+            className={`pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md border border-[rgba(255,255,255,0.12)] bg-bg-dark/95 px-2 py-1 text-[11px] text-text-dark opacity-0 shadow-lg transition-opacity duration-100 group-hover:opacity-100 ${
+              isTop ? 'top-full mt-1.5' : 'bottom-full mb-1.5'
+            }`}
+          >
+            {edgesToggleTitle}
+          </span>
+        </span>
+        <span className="mx-0.5 h-3 w-px bg-white/10" aria-hidden />
         <span className="group relative inline-flex">
           <button
             type="button"

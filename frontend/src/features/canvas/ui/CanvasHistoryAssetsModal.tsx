@@ -65,17 +65,14 @@ const GENERATIVE_HISTORY_NODE_TYPES = new Set<string>([
   CANVAS_NODE_TYPES.threeDWorld,
 ]);
 
-// Cap how many recent records each tab shows. Records arrive newest-first
-// (backend sorts by recorded_at desc), so slicing keeps the latest.
-const HISTORY_DISPLAY_CAP = 20;
-
 /**
  * Map backend generation-history records into the asset-card shape the modal
  * already renders. Only completed records that carry a usable output url for an
  * image/video/audio surface; `recorded_at` drives date grouping (fixing the
  * old "未知日期" bucketing that the live-canvas scrape produced). Deduped by
- * (kind,url) so a restored/duplicated output shows once, then each kind is
- * capped to the {@link HISTORY_DISPLAY_CAP} most recent.
+ * (kind,url) so a restored/duplicated output shows once. No per-tab display cap
+ * — every record the backend returns (up to its own fetch limit) is shown, so
+ * the history browser never silently hides older assets.
  */
 /**
  * 可选的「节点元信息」解析器:用一条记录的 `node_id` 回到 live 画布,取该(世界)节点
@@ -154,12 +151,7 @@ export function recordsToAssetBuckets(
       timestamp: Number.isNaN(ts) ? null : ts,
     });
   }
-  return {
-    image: buckets.image.slice(0, HISTORY_DISPLAY_CAP),
-    video: buckets.video.slice(0, HISTORY_DISPLAY_CAP),
-    audio: buckets.audio.slice(0, HISTORY_DISPLAY_CAP),
-    model: buckets.model.slice(0, HISTORY_DISPLAY_CAP),
-  };
+  return buckets;
 }
 
 const TAB_ORDER: CanvasAssetKind[] = ['image', 'video', 'audio', 'model'];

@@ -592,7 +592,7 @@ async def generate_freezone_audio_eleven_music(
     respect_sections_durations: bool = True,
     output_format: str = "mp3_44100_128",
     response_format: str = "mp3",
-    model: str = "eleven-music",
+    model: str = "LingShan-MU-11",
 ) -> FreezoneAudioSpeechResult:
     """Generate standalone Freezone music through NewAPI's audio/speech endpoint."""
     clean_prompt = str(prompt or "").strip()
@@ -614,7 +614,7 @@ async def generate_freezone_audio_eleven_music(
         "output_format": str(output_format or "mp3_44100_128").strip() or "mp3_44100_128",
     }
 
-    model_name = str(model or "eleven-music").strip() or "eleven-music"
+    model_name = str(model or "LingShan-MU-11").strip() or "LingShan-MU-11"
     reservation_id = ""
     try:
         reservation_id = await _reserve_music_model_call(
@@ -645,6 +645,6 @@ async def generate_freezone_audio_eleven_music(
         duration_ms=_duration_ms(output_path) or length,
         mime_type=_audio_mime_type(fmt),
         model=model_name,
-        voice_source="eleven-music",
+        voice_source=model_name,
         voice_sha256="",
     )
