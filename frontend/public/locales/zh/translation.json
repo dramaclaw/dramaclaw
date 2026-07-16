@@ -3686,6 +3686,11 @@
   "settings": {
     "title": "设置",
     "close": "关闭",
+    "navigationLabel": "设置分类",
+    "pages": {
+      "models": "模型与渠道",
+      "storage": "媒体存储"
+    },
     "modelConfig": {
       "title": "模型配置",
       "description": "选择模型网关渠道：使用平台官方网关，或自配本地 NewAPI。",
@@ -3788,20 +3793,16 @@
         "textModelsTitle": "文本理解与生成",
         "multimodalModelsTitle": "视觉理解模型",
         "visionRequiredHint": "该功能会把图片发送给上游模型，请选择支持图片输入/视觉理解的多模态模型；纯文本模型可能运行失败。",
+        "multimodalRequiredBadge": "需要多模态",
         "cogneeDescription": "小说导入和知识检索需要同时配置理解模型与向量模型，两者共同构成 Cognee 小说知识库。",
         "groups": {
-          "chat": "虾导",
-          "shot": "视频生成提示词",
-          "sketch": "草图内容识别",
-          "episode": "剧集脚本与资产规划",
-          "sceneLibrary": "场景库构建",
-          "freezone": "虾画",
-          "style": "风格分析",
-          "contentRewrite": "内容改写",
-          "screenplay": "剧本解析与规范化",
-          "assetCompile": "剧集场景资产",
-          "directorWorld": "导演世界",
-          "novelImport": "小说知识库（Cognee）"
+          "xiahua": "虾画",
+          "xialiao": "虾料",
+          "xiatan": "虾塘",
+          "xiajing": "虾镜",
+          "xiadao": "虾导",
+          "xiage": "虾格",
+          "novelImport": "虾料 · 小说知识库（Cognee）"
         },
         "features": {
           "HERMES": "虾导聊天模型",

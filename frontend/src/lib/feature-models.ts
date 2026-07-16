@@ -21,11 +21,26 @@ export interface FeatureModelGroup {
 
 export const FEATURE_MODEL_GROUPS: readonly FeatureModelGroup[] = [
   {
-    key: "chat",
-    features: [{ id: "HERMES", defaultModel: "DC-hermes-LLM" }],
+    key: "xiahua",
+    features: [
+      { id: "FREEZONE_TRANSLATION", defaultModel: "DC-freezone-translator-LLM" },
+      { id: "FREEZONE_STORY_SCRIPT", defaultModel: "DC-freezone-story-script-writer-LLM" },
+      { id: "STAGING_PROP", defaultModel: "DC-staging-prop-planner-LLM" },
+    ],
   },
   {
-    key: "shot",
+    key: "xialiao",
+    features: [
+      { id: "CONTENT_REWRITER", defaultModel: "DC-content-rewriter-LLM" },
+      { id: "SCREENPLAY_NORMALIZER", defaultModel: "DC-screenplay-normalizer-LLM" },
+    ],
+  },
+  {
+    key: "xiatan",
+    features: [{ id: "SCENE_BUILD", defaultModel: "DC-scene-builder-LLM" }],
+  },
+  {
+    key: "xiajing",
     features: [
       {
         id: "GLOBAL_VIDEO_OPTIMIZER",
@@ -33,42 +48,27 @@ export const FEATURE_MODEL_GROUPS: readonly FeatureModelGroup[] = [
         requiresVision: true,
       },
       { id: "SEEDANCE2_PROMPT_COMPOSER", defaultModel: "DC-seedance2-prompt-composer-LLM" },
-    ],
-  },
-  {
-    key: "sketch",
-    features: [
       {
         id: "GLOBAL_VIDEO_IDENTITY_DETECTOR",
         defaultModel: "DC-video-identity-detector-LLM",
         requiresVision: true,
       },
-    ],
-  },
-  {
-    key: "episode",
-    features: [
       { id: "IDENTITY_PLANNER_CAST", defaultModel: "DC-identity-cast-planner-LLM" },
       { id: "IDENTITY_PLANNER_ANALYSIS", defaultModel: "DC-identity-analysis-planner-LLM" },
       { id: "IDENTITY_PLANNER_APPEARANCE", defaultModel: "DC-identity-appearance-writer-LLM" },
       { id: "LITERAL_BEAT_META", defaultModel: "DC-literal-beat-meta-LLM" },
       { id: "EPISODE_SCENE_PLANNER", defaultModel: "DC-episode-scene-planner-LLM" },
       { id: "EPISODE_PROP_PLANNER", defaultModel: "DC-episode-prop-planner-LLM" },
+      { id: "EPISODE_SCENE_RECONCILE", defaultModel: "DC-episode-scene-reconciler-LLM" },
+      { id: "NARRATED_SCENE_ASSET", defaultModel: "DC-narrated-scene-asset-planner-LLM" },
     ],
   },
   {
-    key: "sceneLibrary",
-    features: [{ id: "SCENE_BUILD", defaultModel: "DC-scene-builder-LLM" }],
+    key: "xiadao",
+    features: [{ id: "HERMES", defaultModel: "DC-hermes-LLM" }],
   },
   {
-    key: "freezone",
-    features: [
-      { id: "FREEZONE_TRANSLATION", defaultModel: "DC-freezone-translator-LLM" },
-      { id: "FREEZONE_STORY_SCRIPT", defaultModel: "DC-freezone-story-script-writer-LLM" },
-    ],
-  },
-  {
-    key: "style",
+    key: "xiage",
     features: [
       {
         id: "STYLE_ANALYZER",
@@ -76,25 +76,6 @@ export const FEATURE_MODEL_GROUPS: readonly FeatureModelGroup[] = [
         requiresVision: true,
       },
     ],
-  },
-  {
-    key: "contentRewrite",
-    features: [{ id: "CONTENT_REWRITER", defaultModel: "DC-content-rewriter-LLM" }],
-  },
-  {
-    key: "screenplay",
-    features: [{ id: "SCREENPLAY_NORMALIZER", defaultModel: "DC-screenplay-normalizer-LLM" }],
-  },
-  {
-    key: "assetCompile",
-    features: [
-      { id: "EPISODE_SCENE_RECONCILE", defaultModel: "DC-episode-scene-reconciler-LLM" },
-      { id: "NARRATED_SCENE_ASSET", defaultModel: "DC-narrated-scene-asset-planner-LLM" },
-    ],
-  },
-  {
-    key: "directorWorld",
-    features: [{ id: "STAGING_PROP", defaultModel: "DC-staging-prop-planner-LLM" }],
   },
   {
     key: "novelImport",

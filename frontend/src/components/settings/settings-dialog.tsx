@@ -6,8 +6,10 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   ChevronDown,
+  Cpu,
   Eye,
   EyeOff,
+  HardDrive,
   Loader2,
   Plus,
   RotateCw,
@@ -24,7 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -80,24 +82,51 @@ const SHOW_CODEX_BRIDGE = false;
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { t } = useTranslation();
+  const [page, setPage] = useState<"models" | "storage">("models");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton
-        className="max-w-[calc(100%-2rem)] gap-0 rounded-lg border border-border bg-black p-0 ring-0 sm:max-w-[860px]"
+        className="flex h-[min(82vh,760px)] max-w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-lg border border-border bg-black p-0 ring-0 sm:max-w-[1120px]"
       >
         <DialogHeader className="border-b border-border px-5 py-4">
           <DialogTitle>{t("settings.title")}</DialogTitle>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[min(72vh,640px)] [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
-          <div className="divide-y divide-border">
-            <ModelConfigSection open={open} />
-            <MediaStorageSection />
-            {SHOW_CODEX_BRIDGE && <CodexBridgeSection />}
-          </div>
-        </ScrollArea>
+        <Tabs
+          orientation="vertical"
+          value={page}
+          onValueChange={(value) => setPage(value as "models" | "storage")}
+          className="min-h-0 flex-1 gap-0"
+        >
+          <TabsList
+            variant="line"
+            aria-label={t("settings.navigationLabel")}
+            className="w-14 shrink-0 justify-start rounded-none border-r border-border px-2 py-4 sm:w-44 sm:px-3"
+          >
+            <TabsTrigger value="models" className="h-10 px-2 sm:px-3">
+              <Cpu className="size-4" aria-hidden />
+              <span className="hidden sm:inline">{t("settings.pages.models")}</span>
+            </TabsTrigger>
+            <TabsTrigger value="storage" className="h-10 px-2 sm:px-3">
+              <HardDrive className="size-4" aria-hidden />
+              <span className="hidden sm:inline">{t("settings.pages.storage")}</span>
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="models" className="min-w-0">
+            <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
+              <ModelConfigSection open={open && page === "models"} />
+              {SHOW_CODEX_BRIDGE && <CodexBridgeSection />}
+            </ScrollArea>
+          </TabsContent>
+          <TabsContent value="storage" className="min-w-0">
+            <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
+              <MediaStorageSection />
+            </ScrollArea>
+          </TabsContent>
+        </Tabs>
 
         <div className="flex justify-end border-t border-border px-5 py-3.5">
           <DialogClose render={<Button variant="outline" size="sm" />}>
@@ -905,6 +934,7 @@ function CogneeModelsBlock({
         <FeatureModelRow
           featureId="COGNEE"
           defaultModel="DC-cognee-LLM"
+          requiresVision={false}
           newApiBaseUrl={newApiBaseUrl}
           database={database}
           configuredProviders={configuredProviders}
@@ -1877,6 +1907,7 @@ function FeatureModelGroupBlock({
               key={feature.id}
               featureId={feature.id}
               defaultModel={feature.defaultModel}
+              requiresVision={Boolean(feature.requiresVision)}
               newApiBaseUrl={newApiBaseUrl}
               database={database}
               configuredProviders={configuredProviders}
@@ -1893,6 +1924,7 @@ function FeatureModelGroupBlock({
 function FeatureModelRow({
   featureId,
   defaultModel,
+  requiresVision,
   newApiBaseUrl,
   database,
   configuredProviders,
@@ -1901,6 +1933,7 @@ function FeatureModelRow({
 }: {
   featureId: string;
   defaultModel: string;
+  requiresVision: boolean;
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
   configuredProviders: readonly FeatureModelProvider[];
@@ -1966,8 +1999,13 @@ function FeatureModelRow({
 
   return (
     <div className={FEATURE_ROW_GRID}>
-      <span className="text-xs text-foreground">
-        {t(`settings.modelConfig.featureModels.features.${featureId}`)}
+      <span className="flex flex-wrap items-center gap-1.5 text-xs text-foreground">
+        <span>{t(`settings.modelConfig.featureModels.features.${featureId}`)}</span>
+        {requiresVision ? (
+          <span className="rounded border border-amber-400/40 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+            {t("settings.modelConfig.featureModels.multimodalRequiredBadge")}
+          </span>
+        ) : null}
       </span>
       <Select
         value={provider ?? ""}

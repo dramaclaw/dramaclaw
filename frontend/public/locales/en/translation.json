@@ -3686,6 +3686,11 @@
   "settings": {
     "title": "Settings",
     "close": "Close",
+    "navigationLabel": "Settings categories",
+    "pages": {
+      "models": "Models & Channels",
+      "storage": "Media Storage"
+    },
     "modelConfig": {
       "title": "Model Config",
       "description": "Choose a model gateway channel: the platform official gateway, or your own local NewAPI.",
@@ -3788,20 +3793,16 @@
         "textModelsTitle": "Text Understanding & Generation",
         "multimodalModelsTitle": "Vision Understanding Models",
         "visionRequiredHint": "This feature sends images to the upstream model. Choose a multimodal model that supports image input / vision understanding; text-only models may fail at runtime.",
+        "multimodalRequiredBadge": "Multimodal required",
         "cogneeDescription": "Novel import and knowledge retrieval require both an understanding model and an embedding model; together they form the Cognee novel knowledge base.",
         "groups": {
-          "chat": "AI Director",
-          "shot": "Video Generation Prompts",
-          "sketch": "Sketch Content Analysis",
-          "episode": "Episode Script & Asset Planning",
-          "sceneLibrary": "Scene Library Construction",
-          "freezone": "XiaCanvas",
-          "style": "Style Analysis",
-          "contentRewrite": "Content Rewrite",
-          "screenplay": "Screenplay Analysis & Normalize",
-          "assetCompile": "Episode Scene Assets",
-          "directorWorld": "Director World",
-          "novelImport": "Novel Knowledge Base (Cognee)"
+          "xiahua": "XiaHua",
+          "xialiao": "XiaLiao",
+          "xiatan": "XiaTang",
+          "xiajing": "XiaJing",
+          "xiadao": "XiaDao",
+          "xiage": "XiaGe",
+          "novelImport": "XiaLiao · Novel Knowledge Base (Cognee)"
         },
         "features": {
           "HERMES": "AI Director chat model",
