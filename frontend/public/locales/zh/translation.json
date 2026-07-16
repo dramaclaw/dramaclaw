@@ -1303,6 +1303,8 @@
     "subtitle": "上传剧本，开启你的创意之旅",
     "dropzoneHint": "点击或拖拽上传小说文件",
     "supportedFormats": "支持 .txt / .md / .docx，建议不超过 10MB",
+    "uploadingTitle": "正在上传小说…",
+    "uploadingHint": "上传完成前请勿离开本页面，网络较慢时可能需要多等一会儿。",
     "inputMode": {
       "upload": "上传小说",
       "paste": "粘贴文本"
