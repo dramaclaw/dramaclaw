@@ -34,8 +34,7 @@ import {
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import { NovelFormatDialog } from "@/components/ingest/NovelFormatDialog";
 import { useStyles } from "@/lib/queries/styles";
-import { useCharacters } from "@/lib/queries/characters";
-import { useCancelTask } from "@/lib/queries/tasks";
+import { useCancelTask, useTasks } from "@/lib/queries/tasks";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { useTaskStream } from "@/hooks/use-task-stream";
 import { queryKeys } from "@/lib/query-keys";
@@ -209,6 +208,15 @@ type IngestFileStatus =
   | "completed"
   | "stopped"
   | "failed";
+
+// 一个 ingest_fast 任务处于这些状态 = 导入尚在进行，切走再回来要恢复进度视图。
+const ACTIVE_INGEST_STATUSES = new Set([
+  "submitting",
+  "queued",
+  "pending",
+  "starting",
+  "running",
+]);
 
 const PASTE_TEXT_MAX_LENGTH = 1000;
 const HIDDEN_IMPORTED_PREVIEW_KEY_PREFIX =
@@ -889,9 +897,6 @@ export function IngestPageContent({ project }: { project: string }) {
   const chaptersData = chaptersRes?.data;
   const hasImportedContent = (chaptersData?.chapters?.length ?? 0) > 0;
 
-  // Re-import warning if characters already exist
-  const { data: charactersRes } = useCharacters(project);
-  const hasCharacters = (charactersRes?.data?.length ?? 0) > 0;
   const pastedBillableChars = useMemo(
     () => countBillableNovelChars(pastedText.trim()),
     [pastedText],
@@ -967,6 +972,30 @@ export function IngestPageContent({ project }: { project: string }) {
       setIngestError(error);
     },
   });
+
+  // Mount reconcile：导入实际在服务端(celery)跑。用户导入中切走再回来，本地
+  // 的 ingestStarted/ingestSubmitted 全部重置、SSE 也不重连，而此时章节尚未
+  // 持久化(chapters 为空)，页面便退回空上传页——「导入中的虾料不见了」。
+  // 挂载时与服务端任务列表对账一次：若 ingest_fast 仍活跃，就重开进度视图，
+  // 让 useTaskStream 重连(后端会在连接时补发运行进度)。
+  const { data: ingestTasksRes } = useTasks({ project, episode: 0 });
+  const ingestReconciledRef = useRef(false);
+  useEffect(() => {
+    if (ingestReconciledRef.current) return;
+    if (ingestTasksRes === undefined) return;
+    ingestReconciledRef.current = true;
+    const running = (ingestTasksRes.data ?? []).some(
+      (task) =>
+        task.task_type === "ingest_fast" &&
+        ACTIVE_INGEST_STATUSES.has(task.status),
+    );
+    if (running) {
+      setIngestSubmitted(true);
+      setIngestStarted(true);
+      setIngestFileStatus("importing");
+      setHideImportedPreview(false);
+    }
+  }, [ingestTasksRes, project]);
 
   const handleCancelIngest = useCallback(async () => {
     setIngestStarted(false);
@@ -1216,7 +1245,7 @@ export function IngestPageContent({ project }: { project: string }) {
   const shouldShowPreview = ingestSubmitted || shouldRestoreImportedPreview;
   const previewFile =
     uploadedFile ??
-    (shouldRestoreImportedPreview
+    (shouldRestoreImportedPreview || ingestSubmitted
       ? { filename: t("ingest.restoredFilename"), size: null }
       : null);
   const previewStatus: IngestFileStatus =
@@ -1618,14 +1647,6 @@ export function IngestPageContent({ project }: { project: string }) {
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
-
-              {/* Re-import warning */}
-              {previewFile && hasCharacters && (
-                <div className="flex items-center gap-2 rounded-md bg-amber-300/[0.04] px-3 py-2.5 text-xs text-amber-200/75">
-                  <AlertTriangle className="size-4 shrink-0 text-amber-200/70" />
-                  <span>{t("ingest.reimportWarning")}</span>
-                </div>
-              )}
 
               {/* Preview — loading placeholder */}
               {!chaptersData && chaptersFetching && <ChapterPreviewSkeleton />}

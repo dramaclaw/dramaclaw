@@ -38,6 +38,8 @@ beforeAll(async () => {
             subtitle: "Upload your novel file.",
             dropzoneHint: "Click or drop your novel file here",
             supportedFormats: "Supports .txt / .md / .docx",
+            restoredFilename: "Imported novel",
+            previewHeading: "Novel Structure Preview",
             inputMode: { upload: "Upload Novel", paste: "Paste Text" },
             sourceHint: {
               uploadActive: "Uploaded file active",
@@ -115,6 +117,7 @@ const mocks = vi.hoisted(() => ({
     | undefined,
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
+  ingestTasks: [] as { task_type: string; episode: number; status: string }[],
 }));
 
 vi.mock("@/components/ui/select", async () => {
@@ -204,6 +207,7 @@ vi.mock("@/lib/queries/characters", () => ({
 
 vi.mock("@/lib/queries/tasks", () => ({
   useCancelTask: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useTasks: () => ({ data: { ok: true, data: mocks.ingestTasks } }),
 }));
 
 vi.mock("@/hooks/use-task-stream", () => ({
@@ -252,6 +256,7 @@ beforeEach(() => {
   mocks.chaptersData = undefined;
   mocks.toastSuccess.mockReset();
   mocks.toastError.mockReset();
+  mocks.ingestTasks = [];
 });
 
 describe("IngestPage settings save", () => {
@@ -500,5 +505,50 @@ describe("IngestPage settings save", () => {
       await screen.findByText("知识图谱构建失败: provider error"),
     ).toBeInTheDocument();
     expect(mocks.toastError).toHaveBeenCalledWith("知识图谱构建失败: provider error");
+  });
+
+  it("restores the import progress view on mount when an ingest_fast task is still running", async () => {
+    // Bug: navigating away mid-import and back reset the local flags, so the
+    // page fell back to the empty upload zone even though the server task was
+    // still running (chapters not yet durably imported). Mount reconcile must
+    // re-open the progress view.
+    mocks.ingestTasks = [
+      { task_type: "ingest_fast", episode: 0, status: "running" },
+    ];
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    // Progress view: restored file card with the "Importing" status badge.
+    // (Chapters aren't durably imported yet mid-import, so the structure
+    // preview section stays empty — the point is we don't fall back to the
+    // upload zone.)
+    expect(await screen.findByText("Importing")).toBeInTheDocument();
+    expect(screen.getByText("Imported novel")).toBeInTheDocument();
+    // The empty upload zone must be gone.
+    expect(
+      screen.queryByText("Supports .txt / .md / .docx"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not restore the import view when no ingest task is active", () => {
+    mocks.ingestTasks = [
+      { task_type: "ingest_fast", episode: 0, status: "completed" },
+    ];
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    // Completed (not active) → stays on the normal upload zone.
+    expect(
+      screen.getByText("Supports .txt / .md / .docx"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Importing")).not.toBeInTheDocument();
   });
 });
