@@ -538,6 +538,16 @@ function referenceImageUrl(node: CanvasNode | undefined | null): string | null {
   return null;
 }
 
+// 上游「视频引用」：视频节点自带 videoUrl，但从资产库选入的视频是 upload 节点，
+// 地址同样写在 data.videoUrl。所以「是不是视频上游」应按「存在非空 data.videoUrl」
+// 判定，而非节点类型——否则资产库视频会被漏认（HappyHorse 不自动切 videoEdit、
+// 提交找不到 videoUrl），还会被 referenceImageUrl / isUploadNode 误当图片。
+function referenceVideoUrl(node: CanvasNode | undefined | null): string | null {
+  if (!node) return null;
+  const url = (node.data as { videoUrl?: unknown }).videoUrl;
+  return typeof url === "string" && url.length > 0 ? url : null;
+}
+
 function submittableImageUrl(
   node: CanvasNode | undefined | null,
 ): string | null {
@@ -975,24 +985,23 @@ export const VideoNode = memo(
       );
       const items: ReferenceMediaItem[] = [];
       for (const node of upstream) {
-        if (isVideoNode(node)) {
-          const videoUrl =
-            typeof node.data.videoUrl === "string" &&
-            node.data.videoUrl.length > 0
-              ? node.data.videoUrl
-              : null;
-          if (!videoUrl) continue;
+        const videoUrl = referenceVideoUrl(node);
+        if (videoUrl) {
+          const vdata = node.data as {
+            previewImageUrl?: string | null;
+            displayName?: string | null;
+          };
           const thumbUrl =
-            typeof node.data.previewImageUrl === "string" &&
-            node.data.previewImageUrl.length > 0
-              ? node.data.previewImageUrl
+            typeof vdata.previewImageUrl === "string" &&
+            vdata.previewImageUrl.length > 0
+              ? vdata.previewImageUrl
               : null;
           items.push({
             kind: "video",
             nodeId: node.id,
             videoUrl,
             thumbUrl,
-            displayName: node.data.displayName ?? null,
+            displayName: vdata.displayName ?? null,
           });
           continue;
         }
@@ -1171,13 +1180,9 @@ export const VideoNode = memo(
       let videos = 0;
       let audios = 0;
       for (const node of upstreamNodes) {
-        if (isVideoNode(node)) {
-          if (
-            typeof node.data.videoUrl === "string" &&
-            node.data.videoUrl.length > 0
-          ) {
-            videos += 1;
-          }
+        if (referenceVideoUrl(node)) {
+          // 视频节点或携带 videoUrl 的 upload 节点（资产库选入的视频）都算视频。
+          videos += 1;
         } else if (isAudioNode(node)) {
           if (
             typeof node.data.audioUrl === "string" &&
@@ -1199,7 +1204,9 @@ export const VideoNode = memo(
       let videos = 0;
       let audios = 0;
       for (const node of upstreamNodes) {
-        if (isVideoNode(node)) {
+        // 携带 videoUrl 的 upload 节点（资产库视频）先判为视频，避免落到下面
+        // 的 isUploadNode 分支被误算成图片。空的 video 节点（尚未生成）仍按类型算视频。
+        if (isVideoNode(node) || referenceVideoUrl(node)) {
           videos += 1;
         } else if (isAudioNode(node)) {
           audios += 1;
@@ -1586,10 +1593,18 @@ export const VideoNode = memo(
               { audioUrl: sel.url, displayName },
             );
           } else if (sel.media === "video") {
+            // 资产库视频作为「上游视频引用素材」：建 referenceOnly 的 video 节点，
+            // 它能播放视频本体、被 isVideoNode 识别、下游自动切 videoEdit。之前建的是
+            // 只渲染图片的 upload 节点——即便塞了 videoUrl 也不显示、也不被识别成视频。
             newId = addNode(
-              CANVAS_NODE_TYPES.upload,
+              CANVAS_NODE_TYPES.video,
               { x: baseX, y },
-              { videoUrl: sel.url, displayName },
+              {
+                videoUrl: sel.url,
+                aspectRatio: data.aspectRatio,
+                displayName,
+                referenceOnly: true,
+              } as Partial<VideoNodeData>,
             );
           } else {
             newId = addNode(
@@ -1607,7 +1622,7 @@ export const VideoNode = memo(
         });
         state.autoGroupSpawn(id, newIds, { label: '资产参考组' });
       },
-      [addEdge, addNode, id],
+      [addEdge, addNode, data.aspectRatio, id],
     );
 
     const handleTranslatePrompt = useCallback(async () => {
@@ -2101,11 +2116,7 @@ export const VideoNode = memo(
           const upstream = collectUpstream();
           const videoUrl =
             upstream
-              .map((node) =>
-                isVideoNode(node) && typeof node.data.videoUrl === "string"
-                  ? node.data.videoUrl
-                  : "",
-              )
+              .map((node) => referenceVideoUrl(node) ?? "")
               .find((url) => url.length > 0) ?? "";
           if (!videoUrl) {
             console.warn("[video-node] videoEdit submit without upstream video");
@@ -2162,13 +2173,11 @@ export const VideoNode = memo(
           let audioCount = 0;
           for (const node of upstream) {
             if (references.length >= 12) break;
-            if (isVideoNode(node)) {
-              const url =
-                typeof node.data.videoUrl === "string"
-                  ? node.data.videoUrl
-                  : "";
-              if (url && videoCount < 3) {
-                references.push({ type: "video", url });
+            const videoRefUrl = referenceVideoUrl(node);
+            if (videoRefUrl) {
+              // 视频节点或携带 videoUrl 的 upload 节点（资产库视频）统一收集。
+              if (videoCount < 3) {
+                references.push({ type: "video", url: videoRefUrl });
                 videoCount += 1;
               }
             } else if (isAudioNode(node)) {
