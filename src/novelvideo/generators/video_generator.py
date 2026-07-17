@@ -2487,15 +2487,6 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             request_resolution = str(metadata.get("resolution") or self.resolution or "").strip()
             log(f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})...")
             progress(0.1)
-            if self._is_happyhorse_model():
-                _md = payload.get("metadata") or {}
-                log(
-                    "[诊断] HappyHorse 提交字段自检: "
-                    f"image_url={'有' if _md.get('image_url') else '无'}, "
-                    f"payload.images={'有' if payload.get('images') else '无'}, "
-                    f"reference_images={len(_md.get('reference_images') or [])}, "
-                    f"video_url={'有' if _md.get('video_url') else '无'}"
-                )
             reservation_id = await _reserve_video_model_call(
                 self.model,
                 source="newapi_video_generation",

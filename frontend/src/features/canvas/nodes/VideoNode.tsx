@@ -418,6 +418,24 @@ function isHappyHorseVideoModel(modelId: string | null | undefined): boolean {
   return normalized.includes("happyhorse10");
 }
 
+// 某 genMode 是否被指定模型支持（与 GenModeSelect 的可见 tab 口径一致）：
+// videoEdit 是 HappyHorse 专属；firstLastFrame / allReference 是非 HappyHorse 专属。
+// 切换模型时用它判断是否要重置残留 genMode，避免提交打到不支持的端点。
+function isVideoModeSupportedByModel(
+  mode: VideoGenMode,
+  modelId: string | null | undefined,
+): boolean {
+  if (isHappyHorseVideoModel(modelId)) {
+    return (
+      mode === "textToVideo" ||
+      mode === "imageToVideo" ||
+      mode === "imageReference" ||
+      mode === "videoEdit"
+    );
+  }
+  return mode !== "videoEdit";
+}
+
 function videoModelReferenceDisabledReason(
   modelId: string | null | undefined,
   counts: { images: number; videos: number; audios: number },
@@ -3140,7 +3158,19 @@ export const VideoNode = memo(
                   <ProviderModelPicker
                     selectedModelId={modelId}
                     onChange={(nextModelId) => {
-                      updateNodeData(id, { model: nextModelId });
+                      // 切换模型后，若当前 genMode 不被新模型支持（如 HappyHorse
+                      // 专属的 videoEdit 切到普通模型），重置为通用安全值 textToVideo，
+                      // 让状态机按新模型 + 上游重新推导；否则残留模式会在提交时打到
+                      // 不支持的端点被后端 400（界面还停在错误的 tab）。
+                      const resetGenMode =
+                        data.genMode != null &&
+                        !isVideoModeSupportedByModel(data.genMode, nextModelId);
+                      updateNodeData(id, {
+                        model: nextModelId,
+                        ...(resetGenMode
+                          ? { genMode: "textToVideo" as VideoGenMode }
+                          : {}),
+                      });
                       // 记住这次选择，后续新建的视频节点将继承它。
                       writeLastVideoModel(nextModelId);
                     }}
