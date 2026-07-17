@@ -2115,7 +2115,14 @@ export const VideoNode = memo(
             });
             return;
           }
-          const imageUrls = collectUpstreamImageUrls().slice(0, 5);
+          const allImageUrls = collectUpstreamImageUrls();
+          if (allImageUrls.length > 5) {
+            // 视频编辑上游硬上限 5 张参考图；超出的静默截断会让用户以为全用上了。
+            toast.warning(
+              `视频编辑最多支持 5 张参考图，已使用前 5 张（忽略其余 ${allImageUrls.length - 5} 张）`,
+            );
+          }
+          const imageUrls = allImageUrls.slice(0, 5);
           doSubmit = (targetId) =>
             submitFreezoneVideoEdit(projectId, {
               videoUrl,
