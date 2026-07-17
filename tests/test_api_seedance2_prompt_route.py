@@ -299,7 +299,8 @@ def test_generate_seedance2_prompt_reserves_feature_credit_and_confirms(
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert usage_meter.reserve_calls[0]["feature_key"] == "seedance2_prompt"
+    assert usage_meter.reserve_calls[0]["feature_key"] == "mainline.seedance2_prompt"
+    assert usage_meter.reserve_calls[0]["task_type"] == "seedance2_prompt"
     assert usage_meter.reserve_calls[0]["resource_kind"] == "script"
     assert usage_meter.reserve_calls[0]["require_price_rule"] is True
     assert usage_meter.reserve_calls[0]["require_positive_cost"] is True

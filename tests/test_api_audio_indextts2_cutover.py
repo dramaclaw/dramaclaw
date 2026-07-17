@@ -390,6 +390,15 @@ async def test_seedance2_single_video_passes_prepared_config_and_duration(monkey
     assert config["prompt"] == "configured prompt"
     assert config["video_duration"] == 11
     assert config["seedance2_config"] == '{"duration": 11, "final_prompt": "configured prompt"}'
+    assert calls[0]["payload"]["billing"] == {
+        "pricing_kind": "video",
+        "pricing_model": "seedance-2.0-fast",
+        "pricing_model_selection": "huimeng_seedance-2.0-fast",
+        "pricing_params": {"resolution": "720p"},
+        "pricing_quantity": 11,
+        "resolution": "720p",
+        "video_backend": "huimeng_seedance-2.0-fast",
+    }
 
 
 @pytest.mark.asyncio

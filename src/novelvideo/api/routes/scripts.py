@@ -32,7 +32,8 @@ from novelvideo.task_identity import project_task_state_key
 
 router = APIRouter()
 
-SEEDANCE2_PROMPT_FEATURE_KEY = "seedance2_prompt"
+SEEDANCE2_PROMPT_FEATURE_KEY = "mainline.seedance2_prompt"
+SEEDANCE2_PROMPT_TASK_TYPE = "seedance2_prompt"
 MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED = "feature_included"
 
 
@@ -530,7 +531,7 @@ async def generate_seedance2_prompt(
         feature_key=SEEDANCE2_PROMPT_FEATURE_KEY,
         project_id=project_id,
         resource_kind="script",
-        task_type=SEEDANCE2_PROMPT_FEATURE_KEY,
+        task_type=SEEDANCE2_PROMPT_TASK_TYPE,
         metadata={
             "source": "sync_api",
             "endpoint": "generate_seedance2_prompt",

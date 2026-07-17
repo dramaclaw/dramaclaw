@@ -571,6 +571,8 @@ vi.mock("@/lib/queries/generation-credit-cost", () => ({
         ? { ok: true, data: { cost: 5, display: "5" } }
         : kind === "feature" && value === "mainline.seedance2_prompt"
           ? { ok: true, data: { cost: 6, display: "6" } }
+        : kind === "feature" && value === "mainline.beat_video_generation"
+          ? { ok: true, data: { cost: 10, display: "10" } }
         : { ok: true, data: { cost: 0, display: null } },
     isLoading: false,
     isError: false,

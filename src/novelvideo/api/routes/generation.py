@@ -234,6 +234,31 @@ def _render_regen_billing_metadata(image_selection: str, mode_key: str) -> dict:
     )
 
 
+def _single_video_billing_metadata(
+    video_backend: str,
+    *,
+    resolution: str | None,
+    duration: int | float | str | None,
+) -> dict:
+    import math
+
+    from novelvideo.api.routes.model_credits import (
+        _video_backend_feature_billing_params,
+    )
+
+    try:
+        pricing_quantity = max(int(math.ceil(float(duration or 1))), 1)
+    except (TypeError, ValueError):
+        pricing_quantity = 1
+    return _video_backend_feature_billing_params(
+        {
+            "video_backend": video_backend,
+            "resolution": str(resolution or "").strip(),
+            "pricing_quantity": pricing_quantity,
+        }
+    )
+
+
 def _resolve_render_bool_setting(
     project_config: dict,
     key: str,
@@ -4239,6 +4264,11 @@ async def generate_single_video(
         frame_path = Path(prepared.image_path) if prepared.image_path else frame_path
         last_frame_path = prepared.last_frame_path
         seedance2_config_json = prepared.seedance2_config_json
+        from novelvideo.seedance2_i2v.models import parse_seedance2_config
+
+        single_video_resolution = parse_seedance2_config(
+            seedance2_config_json
+        ).resolution
         video_mode = "keyframe" if prepared.last_frame_path else "first_frame"
     elif is_happyhorse:
         try:
@@ -4376,6 +4406,16 @@ async def generate_single_video(
         config["ratio"] = _grok_video_ratio_for_backend(grok_video_ratio)
         config["references"] = grok_video_references
 
+    billing_resolution = single_video_resolution or _seedance2_resolution_for_backend(
+        body.video_backend,
+        body.resolution,
+    )
+    billing = _single_video_billing_metadata(
+        body.video_backend,
+        resolution=billing_resolution,
+        duration=video_duration,
+    )
+
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -4383,7 +4423,7 @@ async def generate_single_video(
             queue_kind="video",
             episode=episode_num,
             beat_num=beat_num,
-            payload={"config": config, "output_dir": output_dir},
+            payload={"config": config, "output_dir": output_dir, "billing": billing},
         )
         return {
             "ok": True,

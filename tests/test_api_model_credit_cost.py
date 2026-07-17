@@ -482,6 +482,43 @@ async def test_generation_credit_cost_route_keeps_video_params_and_quantity(monk
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_video_feature_by_backend_and_seconds(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="mainline.beat_video_generation",
+        expected_params={
+            "pricing_kind": "video",
+            "pricing_model": "seedance-1.0-pro-fast",
+            "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
+            "pricing_params": {"resolution": "720p"},
+            "pricing_quantity": 5,
+            "resolution": "720p",
+            "video_backend": "newapi_seedance-1.0-pro-fast",
+        },
+        expected_quantity=1,
+        cost=25,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        value="mainline.beat_video_generation",
+        params=(
+            '{"video_backend":"newapi_seedance-1.0-pro-fast",'
+            '"resolution":"720p","pricing_quantity":5}'
+        ),
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 25, "display": "25"}}
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_resolves_newapi_video_backend(monkeypatch):
     from novelvideo.api.routes import model_credits
 

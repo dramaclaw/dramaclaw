@@ -367,8 +367,31 @@ def _video_backend_billing_params(params: dict) -> dict:
     return {"resolution": resolution} if resolution else {}
 
 
+def _video_backend_feature_billing_params(params: dict) -> dict:
+    if str(params.get("pricing_model") or "").strip():
+        return params
+    video_backend = str(params.get("video_backend") or "").strip()
+    if not video_backend:
+        return params
+    pricing_model = _video_backend_cost_model(video_backend)
+    try:
+        pricing_quantity = max(int(params.get("pricing_quantity") or 1), 1)
+    except (TypeError, ValueError):
+        pricing_quantity = 1
+    return {
+        **params,
+        "pricing_kind": "video",
+        "pricing_model": pricing_model,
+        "pricing_params": _video_backend_billing_params(params),
+        "pricing_quantity": pricing_quantity,
+        "pricing_model_selection": video_backend,
+    }
+
+
 def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> dict:
     feature_key = str(value or "").strip()
+    if feature_key == "mainline.beat_video_generation":
+        return _video_backend_feature_billing_params(params)
     feature_image_role = {
         "mainline.character_portrait": "character",
         "mainline.identity_image": "identity",

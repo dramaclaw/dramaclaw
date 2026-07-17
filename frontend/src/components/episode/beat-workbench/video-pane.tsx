@@ -113,6 +113,7 @@ import {
 
 const SEEDANCE2_REFERENCE_DRAG_TYPE =
   "application/x-supertale-seedance2-reference";
+const BEAT_VIDEO_GENERATION_FEATURE_KEY = "mainline.beat_video_generation";
 const SEEDANCE2_PROMPT_GUIDANCE_TEMPLATES = [
   {
     key: "subject",
@@ -534,21 +535,34 @@ export function VideoPane({
     [beat.seedance2_config_json, spec.renderAspect],
   );
   const [seedance2Draft, setSeedance2Draft] = useState(seedance2Config);
-  const videoCost = useGenerationCreditCost("video_backend", defaultBackend, {
-    surface: "supertale",
-    params: {
-      resolution: showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
-        ? seedance2Draft.resolution
-        : isSd15ProConfig
-          ? sd15Resolution
-          : "720p",
-    },
-    quantity: showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
+  const videoPricingResolution =
+    showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
+      ? seedance2Draft.resolution
+      : isSd15ProConfig
+        ? sd15Resolution
+        : "720p";
+  const configuredVideoPricingQuantity =
+    showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
       ? seedance2Draft.duration
       : isSd15ProConfig
         ? sd15Duration
-        : 5,
-  });
+        : 5;
+  const videoPricingQuantity = Math.max(
+    configuredVideoPricingQuantity,
+    audioFloorSeconds ?? 0,
+  );
+  const videoCost = useGenerationCreditCost(
+    "feature",
+    BEAT_VIDEO_GENERATION_FEATURE_KEY,
+    {
+      surface: "supertale",
+      params: {
+        video_backend: defaultBackend,
+        resolution: videoPricingResolution,
+        pricing_quantity: videoPricingQuantity,
+      },
+    },
+  );
   const beatVideoPromptCostDisplay =
     beatVideoPromptCost.data?.data.display ??
     (beatVideoPromptCost.error instanceof BillingRuleNotConfiguredError
@@ -557,6 +571,11 @@ export function VideoPane({
   const seedance2PromptCostDisplay =
     seedance2PromptCost.data?.data.display ??
     (seedance2PromptCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
+  const videoCostDisplay =
+    videoCost.data?.data.display ??
+    (videoCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
   const seedance2DraftRef = useRef(seedance2Config);
@@ -1730,7 +1749,7 @@ export function VideoPane({
                   <Film className="size-3" />
                 )}
                 {videoActionLabel}
-                <CreditCostInline display={videoCost.data?.data.display} />
+                <CreditCostInline display={videoCostDisplay} />
               </Button>
             )}
           </VideoParamField>
@@ -2537,7 +2556,7 @@ export function VideoPane({
                       <Film className="size-3" />
                     )}
                     {videoActionLabel}
-                    <CreditCostInline display={videoCost.data?.data.display} />
+                    <CreditCostInline display={videoCostDisplay} />
                   </Button>
                 )}
               </div>
