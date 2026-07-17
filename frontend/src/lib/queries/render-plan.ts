@@ -3,6 +3,7 @@
 import { useMutation } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import type { ErrorResponse, OkResponse } from "@/types/api";
 import type {
@@ -48,11 +49,11 @@ export interface RenderExecuteParams {
 export function useRenderExecute(project: string, episode: number) {
   return useMutation({
     mutationFn: (params: RenderExecuteParams) =>
-      api
-        .post(
+      jsonWithBackendError<OkResponse<RenderExecuteResult> | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/render/execute`,
-          { json: params },
-        )
-        .json<OkResponse<RenderExecuteResult> | ErrorResponse>(),
+          { json: params, throwHttpErrors: false },
+        ),
+      ),
   });
 }

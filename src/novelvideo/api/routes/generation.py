@@ -186,7 +186,12 @@ def _resolve_sketch_image_selection(
     )
 
 
-def _sketch_regen_billing_metadata(image_selection: str, mode_key: str) -> dict:
+def _image_selection_billing_metadata(
+    image_selection: str,
+    mode_key: str,
+    *,
+    image_role: str,
+) -> dict:
     from novelvideo.config import (
         IMAGE_GENERATION_SELECTIONS,
         normalize_image_generation_selection,
@@ -201,7 +206,7 @@ def _sketch_regen_billing_metadata(image_selection: str, mode_key: str) -> dict:
     pricing_params = _image_selection_billing_params(
         model=pricing_model,
         mode_key=mode_key,
-        image_role="sketch",
+        image_role=image_role,
     )
     return {
         "image_selection": selection,
@@ -211,6 +216,22 @@ def _sketch_regen_billing_metadata(image_selection: str, mode_key: str) -> dict:
         "pricing_model_selection": selection,
         "pricing_model_label": str(model_cfg.get("label") or selection),
     }
+
+
+def _sketch_regen_billing_metadata(image_selection: str, mode_key: str) -> dict:
+    return _image_selection_billing_metadata(
+        image_selection,
+        mode_key,
+        image_role="sketch",
+    )
+
+
+def _render_regen_billing_metadata(image_selection: str, mode_key: str) -> dict:
+    return _image_selection_billing_metadata(
+        image_selection,
+        mode_key,
+        image_role="render",
+    )
 
 
 def _resolve_render_bool_setting(
@@ -2715,6 +2736,10 @@ async def render_execute(
         for entry in execution_plan:
             entry_beats = [int(beat) for beat in entry.beat_numbers]
             entry_scope = selection_scope(entry.mode_key, entry_beats)
+            billing = _render_regen_billing_metadata(
+                render_image_selection,
+                entry.mode_key,
+            )
             queued = await get_task_backend().enqueue_project_task(
                 ctx,
                 task_type="selected_regen",
@@ -2730,6 +2755,7 @@ async def render_execute(
                         "mode_key": entry.mode_key,
                         "selected_beat_numbers": entry_beats,
                     },
+                    "billing": billing,
                 },
             )
             dispatched_task_ids.append(queued.task_state.task_id)
@@ -2815,6 +2841,7 @@ async def regenerate_beats(
     mode_key = body.mode_key
     episode_obj = _episode_from_store_or_none(store, episode_num)
     prop_menu = await _runtime_prop_menu_with_global_props(store, episode_obj, beats)
+    billing = _render_regen_billing_metadata(render_image_selection, mode_key)
     config = {
         "beats": beats,
         "character_map": character_map,
@@ -2848,6 +2875,7 @@ async def regenerate_beats(
                 "mode_key": mode_key,
                 "output_dir": output_dir,
                 "config": {**config, "mode_key": mode_key},
+                "billing": billing,
             },
         )
         return {

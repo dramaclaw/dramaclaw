@@ -196,6 +196,11 @@ def test_render_selected_regen_returns_scope_and_passes_render_settings(
     assert calls[0]["payload"]["config"]["image_generation_selection"] == "newapi_nanobanana2"
     assert calls[0]["payload"]["config"]["sketch_aspect_padding"] is True
     assert "force_half_k" not in calls[0]["payload"]["config"]
+    billing = calls[0]["payload"]["billing"]
+    assert billing["image_selection"] == "newapi_nanobanana2"
+    assert billing["pricing_kind"] == "image"
+    assert billing["pricing_model"]
+    assert billing["pricing_params"]
 
 
 def test_render_selected_regen_checks_only_selected_beat_detection(monkeypatch, tmp_path):
@@ -267,6 +272,11 @@ def test_render_plan_execute_checks_only_selected_beat_detection(monkeypatch, tm
     execute_body = execute_response.json()
     assert execute_body["ok"] is True
     assert calls[0]["payload"]["config"]["selected_beat_numbers"] == [2]
+    billing = calls[0]["payload"]["billing"]
+    assert billing["image_selection"]
+    assert billing["pricing_kind"] == "image"
+    assert billing["pricing_model"]
+    assert billing["pricing_params"]
     assert seen_character_map_beats == [[2], [2]]
 
 

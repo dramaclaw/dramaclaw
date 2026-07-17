@@ -373,6 +373,7 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
         "mainline.character_portrait": "character",
         "mainline.identity_image": "identity",
         "mainline.sketch_regen": "sketch",
+        "mainline.render_regen": "render",
     }.get(feature_key)
     if not feature_image_role:
         return params
@@ -391,7 +392,7 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
 
     selection = (
         normalize_image_generation_selection(image_selection)
-        if feature_image_role == "sketch"
+        if feature_image_role in {"sketch", "render"}
         else normalize_character_image_selection(image_selection)
     )
     model_cfg = IMAGE_GENERATION_SELECTIONS.get(selection) or {}

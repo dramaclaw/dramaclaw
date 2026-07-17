@@ -495,6 +495,7 @@ describe("RenderSection", () => {
     expect(updateBackgroundAnchorMock).toHaveBeenCalledWith({ anchorId: "master" });
     expect(regenerateMock).toHaveBeenCalledWith({
       beatIndices: [5],
+      imageGenerationSelection: "doubao_seedream-3.0-t2i",
       modeKey: "1x1_2-3",
     });
     expect(

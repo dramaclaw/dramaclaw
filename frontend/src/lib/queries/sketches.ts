@@ -644,8 +644,8 @@ export function useRegenerateRenderBeats(project: string, episode: number) {
       beatIndices: number[];
       modeKey?: string;
     } & RenderGenerationSettings) =>
-      api
-        .post(
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/regenerate`,
           {
             json: {
@@ -653,9 +653,10 @@ export function useRegenerateRenderBeats(project: string, episode: number) {
               mode_key: params.modeKey ?? "1x1_2-3",
               ...renderGenerationSettingsJson(params),
             },
+            throwHttpErrors: false,
           },
-        )
-        .json<TaskResponse | ErrorResponse>(),
+        ),
+      ),
   });
 }
 

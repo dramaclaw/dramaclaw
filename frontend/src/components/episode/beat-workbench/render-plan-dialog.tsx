@@ -8,6 +8,12 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { api } from "@/lib/api";
 import {
+  backendErrorToastMessage,
+  BackendStatusError,
+  BillingRuleNotConfiguredError,
+  jsonWithBackendError,
+} from "@/lib/api-errors";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -32,6 +38,8 @@ import {
 import { useRenderSettings } from "@/lib/queries/render-settings";
 import type { OkResponse } from "@/types/api";
 import type { PlanEntry, RenderPlan } from "@/types/render-plan";
+
+const RENDER_REGEN_FEATURE_KEY = "mainline.render_regen";
 
 interface RenderPlanDialogProps {
   open: boolean;
@@ -72,23 +80,28 @@ export function RenderPlanDialog({
   );
   const renderCostQueries = useQueries({
     queries: renderCostModeKeys.map((modeKey) => ({
-      queryKey: generationCreditCostQueryKey("image_selection", renderImageSelection, {
+      queryKey: generationCreditCostQueryKey("feature", RENDER_REGEN_FEATURE_KEY, {
         surface: "supertale",
         modeKey,
         imageRole: "render",
+        params: renderImageSelection ? { image_selection: renderImageSelection } : null,
       }),
       queryFn: () =>
-        api
-          .get("api/v1/generation-credit-cost", {
+        jsonWithBackendError<OkResponse<GenerationCreditCost>>(
+          api.get("api/v1/generation-credit-cost", {
             searchParams: {
-              kind: "image_selection",
+              kind: "feature",
               surface: "supertale",
-              value: renderImageSelection ?? "",
+              value: RENDER_REGEN_FEATURE_KEY,
               mode_key: modeKey,
               image_role: "render",
+              ...(renderImageSelection
+                ? { params: JSON.stringify({ image_selection: renderImageSelection }) }
+                : {}),
             },
-          })
-          .json<OkResponse<GenerationCreditCost>>(),
+            throwHttpErrors: false,
+          }),
+        ),
       enabled: !!renderImageSelection,
       staleTime: 60_000,
     })),
@@ -167,6 +180,7 @@ export function RenderPlanDialog({
         aspect_mode: aspectMode,
         beat_indices: beatIndices,
         force_one_by_one: defaultForceOneByOne,
+        image_generation_selection: renderImageSelection ?? undefined,
       });
       if (!res.ok) {
         toast.error(t("common.error"));
@@ -176,25 +190,40 @@ export function RenderPlanDialog({
       onOpenChange(false);
     } catch (err) {
       const anyErr = err as { response?: { status?: number; json?: () => Promise<unknown> } };
-      if (anyErr?.response?.status === 409 && anyErr.response.json) {
-        const body = (await anyErr.response.json()) as {
+      const status = err instanceof BackendStatusError
+        ? err.status
+        : anyErr?.response?.status;
+      const body = err instanceof BackendStatusError
+        ? err.body
+        : anyErr?.response?.json
+          ? await anyErr.response.json()
+          : null;
+      if (status === 409 && body && typeof body === "object") {
+        const staleBody = body as {
           error: "input_stale" | "plan_stale";
           data: { new_plan: PlanEntry[]; new_plan_hash: string; new_input_fingerprint: string };
         };
-        setStaleBanner(body.error === "input_stale" ? "input" : "plan");
-        setPlan({
-          plan: body.data.new_plan,
-          plan_hash: body.data.new_plan_hash,
-          input_fingerprint: body.data.new_input_fingerprint,
-          strategy: "location",
-          total_beats: beatIndices.length,
-          total_grids: body.data.new_plan.length,
-        });
-      } else if (anyErr?.response?.status === 503) {
+        if (
+          (staleBody.error === "input_stale" || staleBody.error === "plan_stale") &&
+          staleBody.data?.new_plan
+        ) {
+          setStaleBanner(staleBody.error === "input_stale" ? "input" : "plan");
+          setPlan({
+            plan: staleBody.data.new_plan,
+            plan_hash: staleBody.data.new_plan_hash,
+            input_fingerprint: staleBody.data.new_input_fingerprint,
+            strategy: "location",
+            total_beats: beatIndices.length,
+            total_grids: staleBody.data.new_plan.length,
+          });
+          return;
+        }
+        toast.error(backendErrorToastMessage(err, t));
+      } else if (status === 503) {
         toast.error(t("episode.renderPlan.featureDisabled"));
         onOpenChange(false);
       } else {
-        toast.error(t("common.error"));
+        toast.error(backendErrorToastMessage(err, t));
       }
     }
   };
@@ -208,17 +237,27 @@ export function RenderPlanDialog({
   let renderPlanCostDisplay: string | null = null;
   if (plan) {
     let complete = true;
+    let missingRule = false;
     let totalCost = 0;
     for (const entry of plan.plan) {
       const queryIndex = renderCostModeKeys.indexOf(entry.mode_key);
-      const cost = renderCostQueries[queryIndex]?.data?.data.cost;
+      const query = renderCostQueries[queryIndex];
+      if (query?.error instanceof BillingRuleNotConfiguredError) {
+        missingRule = true;
+        break;
+      }
+      const cost = query?.data?.data.cost;
       if (typeof cost !== "number") {
         complete = false;
         break;
       }
       totalCost += cost;
     }
-    renderPlanCostDisplay = complete ? formatCreditCost(totalCost) : null;
+    renderPlanCostDisplay = missingRule
+      ? t("common.billingRuleNotConfiguredShort")
+      : complete
+        ? formatCreditCost(totalCost)
+        : null;
   }
 
   return (
