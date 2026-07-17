@@ -143,13 +143,9 @@ async def test_ingest_novel_reuses_graph_based_build_steps(tmp_project, tmp_path
         await tmp_project.add_episodes([episode])
         return [episode]
 
-    async def fake_extract_and_save_style(content):
-        calls.append(f"style:{content}")
-
     monkeypatch.setattr(tmp_project, "ingest_novel_fast", fake_ingest_novel_fast)
     monkeypatch.setattr(tmp_project, "build_characters_from_graph", fake_build_characters_from_graph)
     monkeypatch.setattr(tmp_project, "build_episodes", fake_build_episodes)
-    monkeypatch.setattr(tmp_project, "_extract_and_save_style", fake_extract_and_save_style)
 
     result = await tmp_project.ingest_novel(
         str(novel_path),
@@ -157,7 +153,7 @@ async def test_ingest_novel_reuses_graph_based_build_steps(tmp_project, tmp_path
         target_episodes=1,
     )
 
-    assert calls == ["fast:novel.txt:True", "characters", "episodes:1", "style:林昭走进钟楼。"]
+    assert calls == ["fast:novel.txt:True", "characters", "episodes:1"]
     assert result == {
         "char_count": 7,
         "dataset": tmp_project.dataset_name,

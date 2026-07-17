@@ -10,7 +10,6 @@ from typing import Literal
 from novelvideo.config import (
     HUIMENGI_API_KEY,
     HUIMENG_IMAGE_MODEL,
-    NEWAPI_API_KEY,
     NEWAPI_IMAGE_MODEL,
     NEWAPI_NANOBANANA2_MODEL,
     OPENAI_API_KEY,
@@ -671,7 +670,7 @@ async def generate_scene_reference_image(
         from novelvideo.config import get_effective_newapi_gateway_config
 
         gateway = get_effective_newapi_gateway_config()
-        api_key = gateway.api_key or NEWAPI_API_KEY
+        api_key = gateway.api_key
         base_url = gateway.base_url
         selected_model = _scene_image_model(kind, provider, model)
         image_bytes, _text, error = await _call_newapi_image_api(

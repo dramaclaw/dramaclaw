@@ -2,32 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
-import base64
 import json
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-import httpx
 from PIL import Image
 
-from novelvideo.config import GOOGLE_AI_API_KEY, OPENROUTER_API_KEY
+from novelvideo.freezone.vision_gateway import (
+    VisionInput,
+    call_freezone_vision_model,
+    image_media_type,
+)
 
 
-FREEZONE_MARK_PROVIDER = "openrouter"
-FREEZONE_MARK_MODEL = "gemini-3.5-flash"
-
-
-def _encode_image_to_data_url(path: Path) -> str:
-    suffix = path.suffix.lower()
-    mime = "image/png"
-    if suffix in {".jpg", ".jpeg"}:
-        mime = "image/jpeg"
-    elif suffix == ".webp":
-        mime = "image/webp"
-    b64 = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{b64}"
+FREEZONE_MARK_PROVIDER = "newapi"
 
 
 def build_mark_detection_task(
@@ -127,7 +116,7 @@ async def detect_freezone_mark(
     box_width: float | None = None,
     box_height: float | None = None,
     provider: str = FREEZONE_MARK_PROVIDER,
-    model: str = FREEZONE_MARK_MODEL,
+    model: str | None = None,
 ) -> dict[str, Any]:
     prompt = build_mark_detection_task(
         point_x=point_x,
@@ -137,7 +126,6 @@ async def detect_freezone_mark(
         box_width=box_width,
         box_height=box_height,
     )
-    full_image_data_url = _encode_image_to_data_url(image_path)
     crop_bytes = crop_mark_focus_image(
         image_path,
         point_x=point_x,
@@ -147,67 +135,21 @@ async def detect_freezone_mark(
         box_width=box_width,
         box_height=box_height,
     )
-    crop_data_url = f"data:image/png;base64,{base64.b64encode(crop_bytes).decode('ascii')}"
-
     chosen = (provider or FREEZONE_MARK_PROVIDER).lower()
-    used_model = model or FREEZONE_MARK_MODEL
-
-    async def call_openrouter() -> str:
-        if not OPENROUTER_API_KEY:
-            raise RuntimeError("OPENROUTER_API_KEY not set")
-        body = {
-            "model": used_model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": full_image_data_url}},
-                        {"type": "image_url", "image_url": {"url": crop_data_url}},
-                    ],
-                }
-            ],
-        }
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://supertale.local/freezone",
-            "X-Title": "SuperTale Mark Detector",
-        }
-        async with httpx.AsyncClient(timeout=90) as client:
-            resp = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                json=body,
-                headers=headers,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        return str(data["choices"][0]["message"]["content"])
-
-    async def call_google() -> str:
-        from google import genai
-        from google.genai import types
-
-        if not GOOGLE_AI_API_KEY:
-            raise RuntimeError("GOOGLE_AI_API_KEY not set")
-        client = genai.Client(api_key=GOOGLE_AI_API_KEY)
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=used_model,
-            contents=[
-                prompt,
-                types.Part.from_bytes(data=image_path.read_bytes(), mime_type="image/png"),
-                types.Part.from_bytes(data=crop_bytes, mime_type="image/png"),
-            ],
-        )
-        text = ""
-        if response and response.candidates:
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, "text") and part.text:
-                    text += part.text
-        return text
-
-    text = await (call_openrouter() if chosen == "openrouter" else call_google())
+    if chosen != "newapi":
+        raise ValueError("Freezone mark detection only supports the NewAPI gateway")
+    used_model, text = await call_freezone_vision_model(
+        prompt=prompt,
+        images=[
+            VisionInput(
+                data=image_path.read_bytes(),
+                media_type=image_media_type(image_path.name),
+            ),
+            VisionInput(data=crop_bytes, media_type="image/png"),
+        ],
+        model_override=model or None,
+        timeout_seconds=90.0,
+    )
     payload = _extract_json_object(text)
     label = str(payload.get("label") or "").strip()
     note = str(payload.get("note") or "").strip()

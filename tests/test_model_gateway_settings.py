@@ -28,6 +28,7 @@ from novelvideo.model_gateway_settings import (
     save_newapi_provider_channels,
     set_model_gateway_mode,
 )
+from novelvideo.model_gateway_runtime import refresh_model_gateway_runtime
 from novelvideo.newapi_provisioner import (
     AdminToken,
     build_channel_payload,
@@ -45,7 +46,15 @@ from novelvideo.newapi_provisioner import (
 
 def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(config, "STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.delenv("MODEL_GATEWAY_MODE", raising=False)
+    monkeypatch.setenv("ST_EDITION", "ce")
+    for key in (
+        "ST_CONTROL_PLANE_DSN",
+        "MODEL_GATEWAY_MODE",
+        "MODEL_GATEWAY_RUNTIME_VERSION",
+        "NEWAPI_API_KEY",
+        "NEWAPI_BASE_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
 
 def test_model_gateway_uses_explicit_custom_mode(monkeypatch, tmp_path):
@@ -106,6 +115,70 @@ def test_newapi_runtime_credentials_allow_explicit_override(monkeypatch, tmp_pat
     assert base_url == "https://request.example/v1"
 
 
+def test_legacy_pydantic_factory_uses_ce_gateway_settings(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("MODEL_API_KEY", "sk-stale-env-secret")
+    monkeypatch.setenv("MODEL_BASE_URL", "https://stale-env.example/v1")
+    save_custom_newapi_gateway(
+        base_url="http://new-api:3000",
+        api_key="sk-database-secret",
+        activate=True,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_model(model_name, **kwargs):
+        captured.update(model_name=model_name, **kwargs)
+        return "newapi-model"
+
+    monkeypatch.setattr(config, "_newapi_text_openai_model", fake_model)
+
+    result = config.get_pydantic_model(
+        provider_override="openrouter",
+        model_name_override="openrouter/DC-legacy-agent-LLM",
+    )
+
+    assert result == "newapi-model"
+    assert captured["model_name"] == "DC-legacy-agent-LLM"
+    assert captured["api_key"] == "sk-database-secret"
+    assert captured["base_url"] == "http://new-api:3000/v1"
+    assert captured["timeout_seconds"] == 300.0
+
+
+def test_legacy_pydantic_factory_uses_ee_deployment_gateway(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("ST_EDITION", "ee")
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://control-plane")
+    monkeypatch.setenv("NEWAPI_API_KEY", "sk-ee-secret")
+    monkeypatch.setenv("NEWAPI_BASE_URL", "https://ee-gateway.example/v1")
+    monkeypatch.setattr(config, "NEWAPI_API_KEY", "sk-ee-secret")
+    monkeypatch.setattr(config, "NEWAPI_BASE_URL", "https://ee-gateway.example/v1")
+    captured: dict[str, object] = {}
+
+    def fake_model(model_name, **kwargs):
+        captured.update(model_name=model_name, **kwargs)
+        return "newapi-model"
+
+    monkeypatch.setattr(config, "_newapi_text_openai_model", fake_model)
+
+    result = config.get_pydantic_model(model_name_override="DC-legacy-agent-LLM")
+
+    assert result == "newapi-model"
+    assert captured["model_name"] == "DC-legacy-agent-LLM"
+    assert captured["api_key"] == "sk-ee-secret"
+    assert captured["base_url"] == "https://ee-gateway.example/v1"
+
+
+def test_legacy_pydantic_model_settings_match_newapi_transport(monkeypatch):
+    monkeypatch.setenv("MODEL_PROVIDER", "openrouter")
+
+    settings = config.get_pydantic_model_settings(
+        provider_override="openrouter",
+        thinking_level_override="low",
+    )
+
+    assert settings == {"openai_reasoning_effort": "low"}
+
+
 def test_cognee_newapi_resolution_prefers_saved_gateway(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
     monkeypatch.delenv("COGNEE_LLM_PROVIDER", raising=False)
@@ -132,8 +205,62 @@ def test_cognee_newapi_resolution_prefers_saved_gateway(monkeypatch, tmp_path):
     )
 
 
+def test_cognee_provider_env_cannot_bypass_newapi(monkeypatch):
+    from novelvideo.cognee import config as cognee_config
+
+    monkeypatch.setenv("COGNEE_LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("COGNEE_LLM_API_KEY", "direct-secret")
+    monkeypatch.setattr(
+        cognee_config,
+        "_effective_newapi_gateway",
+        lambda: ("gateway-secret", "https://gateway.example/v1"),
+    )
+
+    assert cognee_config._resolve_llm_provider() == "newapi"
+    assert (
+        cognee_config._resolve_llm_api_key("newapi", "DC-cognee-LLM")
+        == "gateway-secret"
+    )
+
+
+def test_cognee_embedding_provider_env_cannot_bypass_newapi(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("COGNEE_EMBEDDING_PROVIDER", "gemini")
+    monkeypatch.setenv("COGNEE_EMBEDDING_MODEL", "DC-cognee-embedding")
+
+    effective = get_effective_cognee_embedding_config(llm_provider="gemini")
+
+    assert effective.provider == "newapi"
+    assert effective.model == "DC-cognee-embedding"
+
+
+def test_ee_cognee_embedding_ignores_ce_database_config(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_embedding_model_config(
+        provider="openai",
+        upstream_model="stale-ce-embedding",
+        dimension=3072,
+    )
+    monkeypatch.setenv("ST_EDITION", "ee")
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://control-plane")
+    monkeypatch.setenv("COGNEE_EMBEDDING_MODEL", "DC-ee-embedding")
+    monkeypatch.setenv("COGNEE_EMBEDDING_DIM", "1536")
+
+    effective = get_effective_cognee_embedding_config()
+
+    assert effective.source == "environment"
+    assert effective.provider == "newapi"
+    assert effective.model == "DC-ee-embedding"
+    assert effective.dimensions == "1536"
+    assert effective.upstream_model == ""
+
+
 def test_model_gateway_can_switch_back_to_official(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
+    save_official_newapi_key(
+        api_key="sk-official-secret",
+        activate=True,
+    )
     save_custom_newapi_gateway(
         base_url="http://127.0.0.1:3000/v1",
         api_key="sk-custom-secret",
@@ -204,11 +331,12 @@ def test_model_gateway_official_database_key_overrides_env(monkeypatch, tmp_path
         official_api_key="sk-env-official-secret",
     )
     assert status["official"]["source"] == "database"
-    assert status["official"]["environment"]["configured"] is True
+    assert status["official"]["environment"]["configured"] is False
 
 
 def test_model_gateway_official_url_ignores_newapi_base_url_env(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
+    save_official_newapi_key(api_key="sk-database-secret", activate=True)
     monkeypatch.setenv("MODEL_GATEWAY_MODE", MODE_OFFICIAL)
     monkeypatch.setenv("NEWAPI_BASE_URL", "https://malicious.example/v1")
     monkeypatch.setenv("NEWAPI_API_KEY", "sk-env-secret")
@@ -217,7 +345,90 @@ def test_model_gateway_official_url_ignores_newapi_base_url_env(monkeypatch, tmp
 
     assert effective.mode == MODE_OFFICIAL
     assert effective.base_url == OFFICIAL_NEWAPI_BASE_URL
-    assert effective.api_key == "sk-env-secret"
+    assert effective.api_key == "sk-database-secret"
+
+
+def test_ce_gateway_does_not_fall_back_to_env_after_database_is_initialized(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    set_model_gateway_mode(MODE_OFFICIAL)
+    monkeypatch.setenv("NEWAPI_API_KEY", "sk-later-secret")
+
+    effective = get_effective_newapi_config()
+    api_key, base_url = config.get_newapi_runtime_credentials()
+
+    assert effective.api_key == ""
+    assert api_key == ""
+    assert base_url == OFFICIAL_NEWAPI_BASE_URL
+
+
+def test_ee_gateway_uses_environment_and_ignores_ce_settings(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_official_newapi_key(api_key="sk-ce-secret", activate=True)
+    monkeypatch.setenv("ST_EDITION", "ee")
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://control-plane")
+    monkeypatch.setenv("NEWAPI_API_KEY", "sk-ee-secret")
+    monkeypatch.setenv("NEWAPI_BASE_URL", "https://ee-gateway.example/v1")
+
+    effective = get_effective_newapi_config()
+
+    assert effective.mode == MODE_OFFICIAL
+    assert effective.source == "environment"
+    assert effective.base_url == "https://ee-gateway.example/v1"
+    assert effective.api_key == "sk-ee-secret"
+
+    status = build_model_gateway_status()
+    assert status["effective"]["baseUrl"] == "https://ee-gateway.example/v1"
+    assert status["official"]["source"] == "environment"
+
+
+def test_ee_cannot_mutate_ce_model_gateway_settings(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("ST_EDITION", "ee")
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://control-plane")
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    response = TestClient(app).post(
+        "/model-gateway/official/config",
+        json={"newApiApiKey": "sk-should-not-be-saved"},
+    )
+
+    assert response.status_code == 403
+    assert "only available in CE" in response.json()["detail"]
+
+
+def test_ce_runtime_refresh_never_mutates_process_environment(monkeypatch, tmp_path):
+    from novelvideo.agents import global_video_optimizer
+
+    _isolate_settings_db(monkeypatch, tmp_path)
+    tracked = {
+        "MODEL_GATEWAY_RUNTIME_VERSION": "startup-version",
+        "NEWAPI_API_KEY": "startup-newapi-key",
+        "NEWAPI_BASE_URL": "https://startup.example/v1",
+        "OPENAI_API_KEY": "startup-openai-key",
+        "OPENAI_BASE_URL": "https://startup-openai.example/v1",
+        "LLM_API_KEY": "startup-llm-key",
+        "LLM_ENDPOINT": "https://startup-llm.example/v1",
+        "EMBEDDING_API_KEY": "startup-embedding-key",
+        "EMBEDDING_ENDPOINT": "https://startup-embedding.example/v1",
+    }
+    for key, value in tracked.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(global_video_optimizer, "_global_video_optimizer", object())
+    save_official_newapi_key(api_key="sk-database-secret", activate=True)
+
+    runtime = refresh_model_gateway_runtime()
+
+    assert runtime["configured"] is True
+    assert {key: os.environ.get(key) for key in tracked} == tracked
+    assert global_video_optimizer._global_video_optimizer is None
+    assert (
+        "novelvideo.agents.global_video_optimizer._global_video_optimizer"
+        in runtime["clearedCaches"]
+    )
 
 
 def test_newapi_base_url_normalizers_keep_admin_and_relay_urls_separate():
@@ -807,6 +1018,8 @@ def test_upsert_channel_removes_same_dc_model_from_other_provider_channels():
 
 
 def test_provisioner_enabled_by_default_and_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     monkeypatch.delenv("NEWAPI_PROVISIONER_ENABLED", raising=False)
     require_provisioner_enabled()
 
@@ -816,6 +1029,15 @@ def test_provisioner_enabled_by_default_and_can_be_disabled(monkeypatch):
 
     monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
     require_provisioner_enabled()
+
+
+def test_provisioner_is_always_disabled_in_ee(monkeypatch):
+    monkeypatch.setenv("ST_EDITION", "ee")
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://control-plane")
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+
+    with pytest.raises(PermissionError, match="not enabled"):
+        require_provisioner_enabled()
 
 
 def test_newapi_db_defaults_to_managed_ce_sqlite_and_does_not_create_empty_file(
@@ -927,6 +1149,10 @@ def test_model_gateway_config_route_masks_effective_key(monkeypatch, tmp_path):
     monkeypatch.setattr(
         model_gateway.app_config, "NEWAPI_API_KEY", "sk-official-secret"
     )
+    save_official_newapi_key(
+        api_key="sk-official-secret",
+        activate=True,
+    )
 
     app = FastAPI()
     app.include_router(model_gateway.router)
@@ -976,6 +1202,10 @@ def test_enable_official_gateway_route_switches_mode_when_enabled(
     )
     monkeypatch.setattr(
         model_gateway.app_config, "NEWAPI_API_KEY", "sk-official-secret"
+    )
+    save_official_newapi_key(
+        api_key="sk-official-secret",
+        activate=True,
     )
     save_custom_newapi_gateway(
         base_url="http://new-api:3000",
@@ -2180,4 +2410,29 @@ def test_media_relay_status_prefers_database_config(monkeypatch, tmp_path):
     assert status["ttlSeconds"] == 600
     assert status["endpoint"] == "db.endpoint"
     assert status["bucket"] == "db-bucket"
+    assert status["configured"] is True
+
+
+def test_ee_media_relay_ignores_ce_database_config(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_media_relay_config(
+        provider="aliyun_oss",
+        ttl_seconds=600,
+        endpoint="stale-ce.endpoint",
+        bucket="stale-ce-bucket",
+        access_key_id="stale-ce-ak",
+        access_key_secret="stale-ce-sk",
+    )
+    monkeypatch.setenv("ST_EDITION", "ee")
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://control-plane")
+    monkeypatch.setattr(config, "OSS_RELAY_ENDPOINT", "ee.endpoint")
+    monkeypatch.setattr(config, "OSS_RELAY_BUCKET", "ee-bucket")
+    monkeypatch.setattr(config, "OSS_RELAY_AK", "ee-ak")
+    monkeypatch.setattr(config, "OSS_RELAY_SK", "ee-sk")
+
+    status = model_gateway._media_relay_status()
+
+    assert status["source"] == "environment"
+    assert status["endpoint"] == "ee.endpoint"
+    assert status["bucket"] == "ee-bucket"
     assert status["configured"] is True

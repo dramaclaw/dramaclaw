@@ -1289,8 +1289,6 @@ src/novelvideo/chat/hermes_sdk.py,Elastic-2.0,2026 SuperTale contributors,REUSE.
 src/novelvideo/chat/hermes_workspace.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/service.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/store.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-src/novelvideo/claymore/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-src/novelvideo/claymore/style_extractor.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/cli.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/cognee/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/cognee/chapter_detector.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1354,6 +1352,7 @@ src/novelvideo/freezone/slots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.t
 src/novelvideo/freezone/stale.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/text_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/video_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/vision_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/generators/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/generators/episode_optimizer.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/generators/grid_splitter.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1686,6 +1685,7 @@ tests/test_freezone_text_backend.py,Elastic-2.0,2026 SuperTale contributors,REUS
 tests/test_freezone_video_backend.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_video_story_backend.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_video_upscale_backend.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_freezone_vision_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_global_prop_marker_colors.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_dramaclaw_plugin.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_pool_session_resume.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

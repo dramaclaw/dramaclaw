@@ -234,12 +234,9 @@ def _generation_credit_cost_model(kind: str, value: str) -> str:
     if kind == "freezone_audio_music":
         return "LingShan-MU-11"
     if kind == "freezone_image_reverse_prompt":
-        from novelvideo.config import get_newapi_text_model_name
+        from novelvideo.freezone.vision_gateway import resolve_freezone_vision_model
 
-        return get_newapi_text_model_name(
-            "FREEZONE_IMAGE_REVERSE_PROMPT_MODEL",
-            "gemini-3.5-flash",
-        )
+        return resolve_freezone_vision_model()
     if kind == "freezone_story_script":
         from novelvideo.freezone.text_node import resolve_freezone_story_script_model
 

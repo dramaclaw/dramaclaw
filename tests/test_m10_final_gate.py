@@ -28,17 +28,17 @@ def test_foss_only_e2e_script_encodes_locked_cli_sequence_and_assertions() -> No
     assert "-s" in script
     assert "run_step" in script
     assert "timeout" in script
-    assert "MODEL_PROVIDER" in script
-    assert "MODEL_API_KEY" in script
-    assert "NEWAPI_API_KEY" in script
-    assert "NEWAPI_BASE_URL" in script
-    assert "OPENAI_API_KEY" in script
+    assert "get_effective_newapi_gateway_config" in script
+    assert "gateway_configured" in script
+    assert "gateway=$gateway_source" in script
+    assert "provider=$PROVIDER" not in script
+    assert "Settings → Model Configuration" in script
 
 
-def test_env_example_exposes_generic_model_api_key_for_foss_e2e() -> None:
+def test_env_example_does_not_expose_legacy_direct_model_api_key() -> None:
     env_example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
 
-    assert "MODEL_API_KEY=" in env_example
+    assert "MODEL_API_KEY=" not in env_example
 
 
 def test_foss_only_fixture_is_short_txt_for_low_cost_llm_gate() -> None:

@@ -32,7 +32,6 @@ from pydantic import BaseModel, Field
 
 from novelvideo.config import (
     IMAGE_DEFAULT_STYLE,
-    NEWAPI_BASE_URL,
     get_grid_generation_config,
     get_style_preset,
 )
@@ -3332,7 +3331,7 @@ async def _call_newapi_image_api(
     else:
         from novelvideo.config import get_effective_newapi_gateway_config
 
-        endpoint = (get_effective_newapi_gateway_config().base_url or NEWAPI_BASE_URL).rstrip("/")
+        endpoint = get_effective_newapi_gateway_config().base_url.rstrip("/")
     request_context = _newapi_safe_request_context(
         endpoint=endpoint,
         model=model,

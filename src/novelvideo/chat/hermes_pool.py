@@ -27,7 +27,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from novelvideo.chat.hermes_sdk import HermesSdkClient, HermesSdkThread
-from novelvideo.chat.hermes_workspace import ensure_user_hermes_workspace
+from novelvideo.chat.hermes_workspace import (
+    effective_gateway_credentials,
+    effective_gateway_fingerprint,
+    ensure_user_hermes_workspace,
+)
 from novelvideo.ports import get_auth_session_port
 from novelvideo.ports.auth_contract import AgentSessionToken
 
@@ -100,6 +104,7 @@ class _WorkerSlot:
     model: str | None = None
     scope_kind: str = "home"
     project_id: str | None = None
+    gateway_fingerprint: str = ""
     last_used: float = field(default_factory=time.time)
 
 
@@ -152,6 +157,14 @@ class HermesPool:
                         scope_kind=scope_kind,
                         project_id=project_id,
                         reason="thread-closed",
+                    )
+                elif slot.gateway_fingerprint != effective_gateway_fingerprint():
+                    slot = await self._rotate_slot_locked(
+                        slot,
+                        model=model,
+                        scope_kind=scope_kind,
+                        project_id=project_id,
+                        reason="model-gateway-change",
                     )
                 elif self._token_needs_renewal(slot):
                     slot = await self._rotate_slot_locked(
@@ -238,6 +251,7 @@ class HermesPool:
             model=model,
             scope_kind=scope_kind,
             project_id=project_id,
+            gateway_fingerprint=effective_gateway_fingerprint(),
         )
 
     def _token_needs_renewal(self, slot: _WorkerSlot) -> bool:
@@ -355,12 +369,7 @@ class HermesPool:
         project_id: str | None,
         project_env: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        """Strict env whitelist — host LLM keys are NOT inherited.
-
-        See plan: hermes prompt-injection could leak host credentials.
-        Provider keys must live in $HERMES_HOME/.env (managed by user, file is
-        readable to the sandboxed process but not exfiltratable via env).
-        """
+        """Build the strict environment passed only to this Hermes worker."""
         env = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "LANG": os.environ.get("LANG", "C.UTF-8"),
@@ -389,6 +398,9 @@ class HermesPool:
             env["SUPERTALE_PROJECT"] = project_id
         if project_env:
             env.update(project_env)
+        api_key, _base_url = effective_gateway_credentials()
+        if api_key:
+            env["NEWAPI_API_KEY"] = api_key
         return env
 
     async def _evict_lru_if_full(self) -> None:

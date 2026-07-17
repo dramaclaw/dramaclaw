@@ -118,6 +118,9 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
   ingestTasks: [] as { task_type: string; episode: number; status: string }[],
+  // 模拟 React Query 的 isFetchedAfterMount：默认 true（已挂载后刷到新数据）；
+  // stale-cache 竞态用例把它设为 false，表示当前 data 还是挂载前的旧缓存。
+  ingestTasksFetchedAfterMount: true,
 }));
 
 vi.mock("@/components/ui/select", async () => {
@@ -207,7 +210,10 @@ vi.mock("@/lib/queries/characters", () => ({
 
 vi.mock("@/lib/queries/tasks", () => ({
   useCancelTask: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useTasks: () => ({ data: { ok: true, data: mocks.ingestTasks } }),
+  useTasks: () => ({
+    data: { ok: true, data: mocks.ingestTasks },
+    isFetchedAfterMount: mocks.ingestTasksFetchedAfterMount,
+  }),
 }));
 
 vi.mock("@/hooks/use-task-stream", () => ({
@@ -257,6 +263,7 @@ beforeEach(() => {
   mocks.toastSuccess.mockReset();
   mocks.toastError.mockReset();
   mocks.ingestTasks = [];
+  mocks.ingestTasksFetchedAfterMount = true;
 });
 
 describe("IngestPage settings save", () => {
@@ -548,6 +555,96 @@ describe("IngestPage settings save", () => {
     // Completed (not active) → stays on the normal upload zone.
     expect(
       screen.getByText("Supports .txt / .md / .docx"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Importing")).not.toBeInTheDocument();
+  });
+
+  it("waits for tasks fetched after mount before reconciling (ignores stale cache)", async () => {
+    // Stale-cache 竞态：tasks(project) 缓存全局共享(不含 episode、staleTime=0)，
+    // 挂载时 React Query 会先同步吐旧缓存再后台 refetch。若拿挂载前的旧数据对账
+    // 一次就把状态锁死，等真数据回来时已早退 → 恢复被永久错过。修复用
+    // isFetchedAfterMount 只认本次挂载后刷到的新数据。
+    mocks.ingestTasks = [
+      { task_type: "ingest_fast", episode: 0, status: "running" },
+    ];
+    mocks.ingestTasksFetchedAfterMount = false;
+
+    const { rerender } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    // 数据还是挂载前旧缓存 → 不得对账，仍停在上传区。
+    expect(
+      screen.getByText("Supports .txt / .md / .docx"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Importing")).not.toBeInTheDocument();
+
+    // 挂载后的新鲜数据到位 → 这时才允许对账并恢复进度视图。
+    mocks.ingestTasksFetchedAfterMount = true;
+    rerender(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    expect(await screen.findByText("Importing")).toBeInTheDocument();
+  });
+
+  it("re-reconciles when the project changes (per-project reconcile state)", async () => {
+    // reconcile 状态按 project 记账：组件跨项目复用时，切到有活跃导入的新项目要
+    // 重新对账，不能被上一个项目的「已对账」布尔状态卡死。
+    mocks.ingestTasks = []; // demo：无活跃任务
+
+    const { rerender } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    expect(
+      screen.getByText("Supports .txt / .md / .docx"),
+    ).toBeInTheDocument();
+
+    // 切到 other 项目，且它有活跃 ingest_fast。
+    mocks.ingestTasks = [
+      { task_type: "ingest_fast", episode: 0, status: "running" },
+    ];
+    rerender(
+      <Wrapper>
+        <IngestPageContent project="other" />
+      </Wrapper>,
+    );
+    expect(await screen.findByText("Importing")).toBeInTheDocument();
+  });
+
+  it("clears leaked progress state when switching to a project without active ingest", async () => {
+    // 反方向对账：组件跨项目复用时，A(活跃导入)→B(无活跃 ingest_fast) 必须清掉
+    // A 残留的进度视图状态，否则 B 会错显「Importing」卡片并让 useTaskStream 去
+    // 连一个不存在的 SSE。正常路由下父级会按 project remount 兜底，这里直接换
+    // project prop 复现「被复用」的场景，验证 else 分支的防御性清理。
+    mocks.ingestTasks = [
+      { task_type: "ingest_fast", episode: 0, status: "running" },
+    ];
+
+    const { rerender } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    // demo：活跃导入 → 进度视图恢复。
+    expect(await screen.findByText("Importing")).toBeInTheDocument();
+
+    // 切到 other 项目，且它没有活跃任务。
+    mocks.ingestTasks = [];
+    rerender(
+      <Wrapper>
+        <IngestPageContent project="other" />
+      </Wrapper>,
+    );
+
+    // 残留的「Importing」必须被清掉，退回上传区。
+    expect(
+      await screen.findByText("Supports .txt / .md / .docx"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Importing")).not.toBeInTheDocument();
   });

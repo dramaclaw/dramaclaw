@@ -19,6 +19,14 @@ def _isolate_settings_db(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "STATE_DIR", state_dir)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_model_gateway(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    # This module tests low-level environment-driven gateway adapters. CE
+    # database precedence is covered in test_model_gateway_settings.py.
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://test-control-plane")
+
+
 def _patch_scene_newapi_gateway(
     monkeypatch,
     *,

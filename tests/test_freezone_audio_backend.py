@@ -43,6 +43,8 @@ class FakeTTSGenerator:
 
 def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     monkeypatch.delenv("MODEL_GATEWAY_MODE", raising=False)
 
 

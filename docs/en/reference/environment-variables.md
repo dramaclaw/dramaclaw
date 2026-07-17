@@ -16,18 +16,19 @@
 | `NOVELVIDEO_RUNTIME_DIR` | `$DATA_ROOT/runtime` | Runtime temporary directory. |
 | `ST_CONTROL_PLANE_DSN` / `ST_REDIS_URL` / `ST_CELERY_BROKER_URL` / `ST_CELERY_RESULT_BACKEND` | Empty (forced empty in CE) | Used only by EE/distributed; CE runs tasks inline in-process, so leave empty. |
 
-## Model Gateway (default official RelayClaw)
+## Model Gateway
+
+In CE, the selected channel, gateway address, and token are written by
+**Settings → Model Configuration** to the local `settings.db`; they are not
+configured through environment variables. The official channel has a fixed
+address, while the local channel uses the NewAPI bundled with CE.
 
 | Variable | Default | Description |
 |---|---|---|
-| `NEWAPI_BASE_URL` | `https://relayclaw.cdnfg.com/v1` | The default official gateway (RelayClaw). For BYO, change it to your own gateway, keeping the trailing `/v1`. |
-| `NEWAPI_API_KEY` | Empty | DC key / gateway token. Recommended to paste it on the web page under "Model Config → Official Channel," or fill it in here. Get a DC key at <https://relayclaw.cdnfg.com>. |
-| `MODEL_GATEWAY_MODE` | `official` | `official` uses the NEWAPI_* values above; `custom` uses the self-configured gateway written by the frontend into local SQLite. |
-| `MODEL_API_KEY` | `your_model_api_key` | Key for the general text model (read by the OpenAI-compatible adapter). |
 | `NEWAPI_TEXT_TIMEOUT_SECONDS` | `120` | HTTP timeout for text models (seconds). |
 | `NEWAPI_TEXT_TRUST_ENV` | `true` | Whether the text client reads the system proxy; set `false` when an internal gateway is being blocked by a proxy. |
 
-About **30 `*_MODEL` logical model names** (e.g. `HERMES_MODEL=DC-hermes-LLM`) map to the real models behind the gateway. A BYO gateway must provide models under the same names or rename each one — see [Configuring Model Providers](../getting-started/configuring-models.md).
+About **30 `*_MODEL` logical model names** (e.g. `HERMES_MODEL=DC-hermes-LLM`) map to real upstream models. Configure Local NewAPI mappings in the web UI—see [Configuring Model Providers](../getting-started/configuring-models.md).
 
 ## Reference Media Relay (optional)
 

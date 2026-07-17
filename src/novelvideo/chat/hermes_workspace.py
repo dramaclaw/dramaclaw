@@ -2,7 +2,7 @@
 
 Owns one job: idempotently materialize ``state/{user}/.hermes/`` to be a
 working HERMES_HOME — with sandbox-friendly tmpdir, repo-pinned skill
-softlinks, a starter config.yaml, and a .env template for LLM credentials.
+softlinks, a starter config.yaml, and an empty compatibility .env file.
 
 Kept separate from chat_service.py so the latter stays small. Designed to be
 safe to call on every HermesPool.spawn() (cheap when already initialized).
@@ -10,6 +10,7 @@ safe to call on every HermesPool.spawn() (cheap when already initialized).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -27,8 +28,10 @@ DEFAULT_HERMES_TOOLSETS = {"hermes-acp"}
 _warned_repo_state_fallback = False
 
 
-_DEFAULT_HERMES_MODEL = "qwen-plus"
-_DEFAULT_HERMES_MODEL_PROVIDER = "custom"
+_DEFAULT_HERMES_MODEL = "DC-hermes-LLM"
+_DRAMACLAW_HERMES_PROVIDER_NAME = "dramaclaw"
+_DRAMACLAW_HERMES_PROVIDER = f"custom:{_DRAMACLAW_HERMES_PROVIDER_NAME}"
+_DRAMACLAW_HERMES_KEY_ENV = "NEWAPI_API_KEY"
 _DEFAULT_HERMES_MODEL_API_MODE = "chat_completions"
 _DEFAULT_HERMES_MODEL_CONTEXT_LENGTH = "131072"
 
@@ -38,16 +41,18 @@ _CONFIG_YAML_TEMPLATE = """# DramaClaw-managed hermes config.
 # Edit with care; this file may be regenerated.
 #
 # Model routes through the selected NewAPI gateway (OpenAI-compatible), unified
-# with the video/image generators. The `custom` provider reads its endpoint from
-# `base_url` and its key from `api_key` below. Both are sourced from the CE
-# effective model gateway config: settings.db first, root .env as fallback.
+# with the video/image generators. The endpoint is non-secret workspace config;
+# DramaClaw injects the key into the worker process as NEWAPI_API_KEY.
+
+custom_providers:
+  - name: dramaclaw
+    base_url: {base_url}
+    key_env: NEWAPI_API_KEY
+    api_mode: {api_mode}
 
 model:
   default: {model}
-  provider: {provider}
-  base_url: {base_url}
-  api_key: {api_key}
-  api_mode: {api_mode}
+  provider: custom:dramaclaw
   context_length: {context_length}   # skip the slow cold-start context-length probe
 
 enabled_toolsets:
@@ -78,28 +83,10 @@ disabled_toolsets:
 """
 
 
-_DEFAULT_ENV_TEMPLATE = """# LLM provider credentials for this user's hermes worker.
-# Hermes reads these on startup.  Host environment variables are NOT inherited
-# (HermesSdkClient strictly whitelists env), so put your keys here.
-#
-# Unified on the new-api gateway: OPENAI_API_KEY here is filled from the CE
-# effective model gateway config so sandboxed Hermes sees the same selected
-# credentials as the UI and video/image generators.
-
-# OPENAI_API_KEY=
-# OPENROUTER_API_KEY=
-# ANTHROPIC_API_KEY=
-# NOUS_PORTAL_KEY=
+_DEFAULT_ENV_TEMPLATE = """# DramaClaw-managed Hermes workspace.
+# Model credentials are injected into the worker process and are never written
+# here. Do not duplicate model keys in this file.
 """
-
-# Per-user hermes .env var  ->  ordered root-.env var names to source it from.
-# We re-expose the root NEWAPI_API_KEY as OPENAI_API_KEY because the hermes
-# `custom` provider only reads OPENAI_API_KEY (it has no NEWAPI_* awareness).
-# The sandboxed worker never inherits the host env, so this rename is local to
-# the workspace .env and cannot collide with the host's real OPENAI_API_KEY.
-_ROOT_ENV_KEYS_FOR_HERMES = {
-    "OPENAI_API_KEY": ("NEWAPI_API_KEY",),
-}
 
 
 def _state_root() -> Path:
@@ -133,30 +120,34 @@ def _root_value(*names: str) -> str:
 def _effective_newapi_gateway() -> tuple[str, str]:
     """Return effective NewAPI ``(api_key, base_url)`` for Hermes.
 
-    The official gateway URL is fixed in code. Root .env values are only used
-    as key/custom-gateway fallback, and settings.db wins when the UI selected a
-    custom NewAPI channel.
+    CE resolves the UI-selected gateway from settings.db. EE has no CE settings
+    database and therefore resolves its deployment-level NEWAPI_API_KEY and the
+    fixed official gateway URL.
     """
     from novelvideo.model_gateway_settings import get_effective_newapi_config
-    from novelvideo.model_gateway_settings import MODE_CUSTOM
-    from novelvideo.model_gateway_settings import normalize_relay_base_url
     from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
 
-    root_base_url = _root_value("NEWAPI_BASE_URL")
-    root_api_key = _root_value("NEWAPI_API_KEY")
     gateway = get_effective_newapi_config(
         official_base_url=OFFICIAL_NEWAPI_BASE_URL,
-        official_api_key=root_api_key,
+        official_api_key=os.environ.get("NEWAPI_API_KEY", ""),
     )
-    if gateway.mode == MODE_CUSTOM and gateway.base_url:
-        return gateway.api_key, gateway.base_url
-    if root_base_url:
-        return root_api_key, normalize_relay_base_url(root_base_url)
     return gateway.api_key, gateway.base_url
 
 
 def _newapi_base_url() -> str:
-    return _root_value("HERMES_MODEL_BASE_URL") or _effective_newapi_gateway()[1]
+    return _effective_newapi_gateway()[1]
+
+
+def effective_gateway_fingerprint() -> str:
+    """Return a non-secret fingerprint of the gateway used by new Hermes workers."""
+    api_key, base_url = _effective_newapi_gateway()
+    material = f"{base_url}\n{api_key}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
+def effective_gateway_credentials() -> tuple[str, str]:
+    """Return the NewAPI credentials injected into a newly spawned worker."""
+    return _effective_newapi_gateway()
 
 
 def _hermes_model_default() -> str:
@@ -165,10 +156,6 @@ def _hermes_model_default() -> str:
         "HERMES_MODEL_DEFAULT",
         "DRAMACLAW_HERMES_MODEL",
     ) or _DEFAULT_HERMES_MODEL
-
-
-def _hermes_model_provider() -> str:
-    return _root_value("HERMES_MODEL_PROVIDER") or _DEFAULT_HERMES_MODEL_PROVIDER
 
 
 def _hermes_model_api_mode() -> str:
@@ -188,12 +175,9 @@ def _hermes_model_context_length() -> str:
 
 
 def _default_config_yaml() -> str:
-    api_key, _base_url = _effective_newapi_gateway()
     return _CONFIG_YAML_TEMPLATE.format(
         model=_hermes_model_default(),
-        provider=_hermes_model_provider(),
         base_url=_newapi_base_url(),
-        api_key=api_key,
         api_mode=_hermes_model_api_mode(),
         context_length=_hermes_model_context_length(),
     )
@@ -258,7 +242,7 @@ def ensure_user_hermes_workspace(username: str) -> Path:
 
     Layout under ``state/{username}/.hermes/``:
         config.yaml         L1 toolset whitelist (overwritten only if missing)
-        .env                LLM provider credentials template (user-managed)
+        .env                compatibility file (model credentials are not stored)
         tmp/                per-user TMPDIR (sandbox writable)
         skills/
             _user/          per-user / hermes-learned skills (writable)
@@ -299,19 +283,18 @@ def ensure_user_hermes_workspace(username: str) -> Path:
     _ensure_default_plugin_enabled(config_yaml)
     _ensure_default_toolsets_enabled(config_yaml)
     _ensure_model_config_from_env(config_yaml)
-    _ensure_model_api_key(config_yaml)
+    _ensure_model_gateway_config(config_yaml)
     _ensure_identity_context(home)
 
-    # .env template (only write if missing — never overwrite user's keys)
+    # Keep an empty compatibility file for Hermes. Model credentials are
+    # injected only into each worker process.
     env_file = home / ".env"
     if not env_file.exists():
-        env_file.write_text(_env_template_with_root_defaults(), encoding="utf-8")
+        env_file.write_text(_DEFAULT_ENV_TEMPLATE, encoding="utf-8")
         try:
             env_file.chmod(0o600)
         except OSError:
             pass
-    else:
-        _ensure_root_env_defaults(env_file)
 
     return home
 
@@ -329,60 +312,6 @@ def _parse_env_assignments(text: str) -> dict[str, str]:
         if key:
             values[key] = value.strip().strip('"').strip("'")
     return values
-
-
-def _root_env_defaults() -> dict[str, str]:
-    """Map root-.env credentials into per-user hermes .env names.
-
-    Returns ``{hermes_env_var: value}`` so the worker .env carries the keys the
-    hermes provider expects, while the secret of record stays in the root .env.
-    """
-    defaults: dict[str, str] = {}
-    api_key, _base_url = _effective_newapi_gateway()
-    if api_key:
-        defaults["OPENAI_API_KEY"] = api_key
-    return defaults
-
-
-def _env_template_with_root_defaults() -> str:
-    defaults = _root_env_defaults()
-    if not defaults:
-        return _DEFAULT_ENV_TEMPLATE
-    lines = _DEFAULT_ENV_TEMPLATE.rstrip().splitlines()
-    for key, value in defaults.items():
-        commented = f"# {key}="
-        plain = f"{key}="
-        for index, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith(commented) or stripped.startswith(plain):
-                lines[index] = f"{key}={value}"
-                break
-        else:
-            lines.append(f"{key}={value}")
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _ensure_root_env_defaults(env_file: Path) -> None:
-    defaults = _root_env_defaults()
-    if not defaults:
-        return
-    try:
-        text = env_file.read_text(encoding="utf-8")
-    except OSError:
-        return
-    current = _parse_env_assignments(text)
-    missing = {key: value for key, value in defaults.items() if not current.get(key)}
-    if not missing:
-        return
-    suffix = "\n" if text.endswith("\n") else "\n\n"
-    additions = "\n".join(f"{key}={value}" for key, value in missing.items())
-    try:
-        env_file.write_text(
-            text.rstrip() + suffix + "# Filled from DramaClaw root .env\n" + additions + "\n",
-            encoding="utf-8",
-        )
-    except OSError:
-        _log.warning("failed to fill hermes .env defaults at %s", env_file)
 
 
 def _ensure_identity_context(home: Path) -> None:
@@ -577,13 +506,12 @@ def _migrate_acp_toolsets(text: str) -> str:
     return "\n".join(out)
 
 
-def _ensure_model_api_key(config_yaml: Path) -> None:
-    """Sync server-owned custom-provider endpoint/key into existing configs.
+def _ensure_model_gateway_config(config_yaml: Path) -> None:
+    """Reconcile the managed NewAPI provider without persisting its secret.
 
-    Hermes >=0.15 reads the ``custom`` provider's key from ``model.api_key`` in
-    config.yaml, NOT from the workspace .env. These endpoint/key fields are
-    server-owned and sourced from the effective NewAPI gateway, so existing user
-    workspaces must follow UI channel changes, key rotation, and gateway moves.
+    Hermes 0.18 resolves ``custom_providers[].key_env`` from the subprocess
+    environment. Existing workspaces are normalized lazily on their next spawn,
+    so releases need no separate workspace migration.
     """
     try:
         text = config_yaml.read_text(encoding="utf-8")
@@ -598,24 +526,62 @@ def _ensure_model_api_key(config_yaml: Path) -> None:
         return
     model = config.get("model")
     if not isinstance(model, dict):
-        return
-    if str(model.get("provider") or "").strip() != "custom":
-        return
+        model = {}
+        config["model"] = model
     changed = False
-    api_key, _base_url = _effective_newapi_gateway()
-    if api_key and model.get("api_key") != api_key:
-        model["api_key"] = api_key
+    desired_model = {
+        "default": _hermes_model_default(),
+        "provider": _DRAMACLAW_HERMES_PROVIDER,
+        "context_length": int(_hermes_model_context_length()),
+    }
+    for key, value in desired_model.items():
+        if model.get(key) != value:
+            model[key] = value
+            changed = True
+    for secret_or_legacy_key in ("api_key", "api", "base_url"):
+        if secret_or_legacy_key in model:
+            model.pop(secret_or_legacy_key, None)
+            changed = True
+
+    providers = config.get("custom_providers")
+    if not isinstance(providers, list):
+        providers = []
+        config["custom_providers"] = providers
         changed = True
-    base_url = _newapi_base_url()
-    if base_url and model.get("base_url") != base_url:
-        model["base_url"] = base_url
+    managed_provider = next(
+        (
+            item
+            for item in providers
+            if isinstance(item, dict)
+            and str(item.get("name") or "").strip().lower()
+            == _DRAMACLAW_HERMES_PROVIDER_NAME
+        ),
+        None,
+    )
+    if managed_provider is None:
+        managed_provider = {"name": _DRAMACLAW_HERMES_PROVIDER_NAME}
+        providers.append(managed_provider)
         changed = True
+    desired_provider = {
+        "name": _DRAMACLAW_HERMES_PROVIDER_NAME,
+        "base_url": _newapi_base_url(),
+        "key_env": _DRAMACLAW_HERMES_KEY_ENV,
+        "api_mode": _hermes_model_api_mode(),
+    }
+    for key, value in desired_provider.items():
+        if managed_provider.get(key) != value:
+            managed_provider[key] = value
+            changed = True
+    for secret_key in ("api_key", "api"):
+        if secret_key in managed_provider:
+            managed_provider.pop(secret_key, None)
+            changed = True
     if not changed:
         return
     try:
         config_yaml.write_text(_dump_hermes_config_yaml(config), encoding="utf-8")
     except OSError:
-        _log.warning("failed to sync model endpoint/key into %s", config_yaml)
+        _log.warning("failed to sync managed model gateway into %s", config_yaml)
 
 
 class _IndentedSafeDumper(yaml.SafeDumper):
@@ -638,12 +604,6 @@ def _ensure_model_config_from_env(config_yaml: Path) -> None:
     model = _root_value("HERMES_MODEL", "HERMES_MODEL_DEFAULT", "DRAMACLAW_HERMES_MODEL")
     if model:
         overrides["default"] = model
-    provider = _root_value("HERMES_MODEL_PROVIDER")
-    if provider:
-        overrides["provider"] = provider
-    base_url = _root_value("HERMES_MODEL_BASE_URL")
-    if base_url:
-        overrides["base_url"] = base_url
     api_mode = _root_value("HERMES_MODEL_API_MODE")
     if api_mode:
         overrides["api_mode"] = api_mode
@@ -736,4 +696,8 @@ def _materialize_plugin_links(plugins_dir: Path) -> None:
                 pass
 
 
-__all__ = ["ensure_user_hermes_workspace"]
+__all__ = [
+    "effective_gateway_credentials",
+    "effective_gateway_fingerprint",
+    "ensure_user_hermes_workspace",
+]

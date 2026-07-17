@@ -25,6 +25,7 @@ from novelvideo.model_gateway_settings import (
     set_model_gateway_mode,
 )
 from novelvideo.model_gateway_runtime import refresh_model_gateway_runtime
+from novelvideo.shared.runtime_env import is_ce_effective
 from novelvideo.newapi_provisioner import (
     build_channel_payload,
     build_provisioner_status,
@@ -57,6 +58,13 @@ OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
     "seedance-2.0-value",
     "seedance-2.0-fast-value",
 }
+
+
+def require_ce_gateway_management() -> None:
+    """Reject CE-local gateway mutations from an EE-composed process."""
+    if not is_ce_effective():
+        raise PermissionError("model gateway management is only available in CE")
+    require_provisioner_enabled()
 
 
 class OfficialGatewayBody(BaseModel):
@@ -338,7 +346,7 @@ async def get_model_gateway_config() -> dict[str, Any]:
 @router.post("/official/enable")
 async def enable_official_gateway() -> dict[str, Any]:
     try:
-        require_provisioner_enabled()
+        require_ce_gateway_management()
     except PermissionError as exc:
         raise _permission_error(exc) from exc
     status = build_model_gateway_status(
@@ -365,7 +373,7 @@ async def enable_official_gateway() -> dict[str, Any]:
 @router.post("/official/config")
 async def save_official_gateway_config(body: OfficialGatewayBody) -> dict[str, Any]:
     try:
-        require_provisioner_enabled()
+        require_ce_gateway_management()
     except PermissionError as exc:
         raise _permission_error(exc) from exc
     api_key = normalize_api_key(body.new_api_api_key)
@@ -386,7 +394,7 @@ async def save_official_gateway_config(body: OfficialGatewayBody) -> dict[str, A
 @router.post("/media-relay/config")
 async def save_media_relay_settings(body: MediaRelayConfigBody) -> dict[str, Any]:
     try:
-        require_provisioner_enabled()
+        require_ce_gateway_management()
     except PermissionError as exc:
         raise _permission_error(exc) from exc
     provider = body.provider.strip().lower()
@@ -438,7 +446,7 @@ async def save_media_relay_settings(body: MediaRelayConfigBody) -> dict[str, Any
 @router.post("/custom/newapi/init")
 async def init_custom_newapi(body: NewApiInitBody = NewApiInitBody()) -> dict[str, Any]:
     try:
-        require_provisioner_enabled()
+        require_ce_gateway_management()
         cfg = _get_provisioner_config_from_request(body.new_api_base_url, body.database)
         setup_status = ensure_newapi_setup(cfg, _setup_credentials_from_request(body))
         admin = ensure_admin_access_token(cfg)
@@ -511,7 +519,7 @@ async def save_custom_newapi_provider_channels(
     body: SaveProviderChannelsBody,
 ) -> dict[str, Any]:
     try:
-        require_provisioner_enabled()
+        require_ce_gateway_management()
         saved = save_newapi_provider_channels(
             [
                 {
@@ -553,7 +561,7 @@ async def sync_custom_newapi_provider_channel(
     if not provider:
         raise HTTPException(status_code=400, detail="provider is required")
     try:
-        require_provisioner_enabled()
+        require_ce_gateway_management()
         saved_channel = get_newapi_provider_channel(provider) or {}
         upstream_key = (body.upstream_key or "").strip() or saved_channel.get(
             "upstreamKey", ""
@@ -627,7 +635,7 @@ async def sync_custom_newapi_provider_channel(
 @router.post("/custom/newapi/channels")
 async def create_custom_newapi_channel(body: CreateChannelBody) -> dict[str, Any]:
     try:
-        require_provisioner_enabled()
+        require_ce_gateway_management()
         cfg = _get_provisioner_config_from_request(body.new_api_base_url, body.database)
         admin = ensure_admin_access_token(cfg)
         payload = _build_channel_payload_from_spec(body)
@@ -659,7 +667,7 @@ async def create_custom_newapi_channels_batch(
     body: CreateChannelsBatchBody,
 ) -> dict[str, Any]:
     try:
-        require_provisioner_enabled()
+        require_ce_gateway_management()
         cfg = _get_provisioner_config_from_request(body.new_api_base_url, body.database)
         admin = ensure_admin_access_token(cfg)
     except PermissionError as exc:
@@ -716,7 +724,7 @@ async def save_custom_newapi_embedding_model(
     body: SaveEmbeddingModelBody,
 ) -> dict[str, Any]:
     try:
-        require_provisioner_enabled()
+        require_ce_gateway_management()
         spec, normalized_model = _build_embedding_model_channel_spec(body)
         cfg = _get_provisioner_config_from_request(body.new_api_base_url, body.database)
         admin = ensure_admin_access_token(cfg)
@@ -774,7 +782,7 @@ async def save_custom_newapi_embedding_model(
 @router.post("/custom/newapi/media-models")
 async def save_custom_newapi_media_models(body: SaveMediaModelsBody) -> dict[str, Any]:
     try:
-        require_provisioner_enabled()
+        require_ce_gateway_management()
         specs, normalized_models = _build_media_model_channel_specs(body.models)
         cfg = _get_provisioner_config_from_request(body.new_api_base_url, body.database)
         admin = ensure_admin_access_token(cfg)

@@ -9,7 +9,7 @@
 
 | 现象 | 排查 |
 |---|---|
-| **容器起不来 / 立即退出** | `docker compose logs api`。绝大多数是 `.env` 网关地址/Key 未改默认值或网关不可达。 |
+| **容器起不来 / 立即退出** | 查看 `docker compose logs api`，按启动日志定位配置、端口或数据卷问题。 |
 | **`8780` 端口被占用** | 改 compose `ports` 左值,如 `8888:8780`;或停掉占用进程(`lsof -i :8780`)。 |
 | **健康检查一直 unhealthy** | 探活打 `/api/v1/config`;若 API 自身报错,看启动日志定位真正异常。 |
 | **本地开发起不来:Python 版本** | 需 **3.11–3.12**(`>=3.11,<3.13`)。`uv python pin 3.12` 或装对应版本后 `uv sync`。 |
@@ -18,8 +18,8 @@
 
 | 现象 | 排查 |
 |---|---|
-| **模型调用全报错** | 确认网关可达;`NEWAPI_BASE_URL` 末尾保留 `/v1`;`NEWAPI_API_KEY` 有效。 |
-| **某个环节报"模型不存在"** | BYO 网关后台需配齐对应 `*_MODEL` 逻辑名;否则把该 `*_MODEL` 改成你网关实际的模型名。详见 [配置模型供应商](../getting-started/configuring-models.md)。 |
+| **模型调用全报错** | 在「设置 → 模型配置」确认当前渠道已配置；官方渠道检查 DC key，本地 NewAPI 检查服务、runtime token 和上游渠道。 |
+| **某个环节报"模型不存在"** | 本地 NewAPI 中没有对应逻辑模型映射，或目标渠道未启用。详见[配置模型供应商](../getting-started/configuring-models.md)。 |
 | **文本模型超时** | 调大 `NEWAPI_TEXT_TIMEOUT_SECONDS`(默认 120);内网网关被系统代理拦截时设 `NEWAPI_TEXT_TRUST_ENV=false`。 |
 | **参考图功能不可用** | 需配 `OSS_RELAY_AK/SK`;纯文本→成片流程可不配。 |
 

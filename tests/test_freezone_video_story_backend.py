@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 
 from novelvideo.api.routes import freezone as freezone_routes
+from novelvideo.freezone import vision_gateway
 from novelvideo.freezone.jobs import build_video_story_analysis_prompt
+from novelvideo.freezone.jobs import run_freezone_analyze_shots
 
 
 def _patch_project_resolution(
@@ -39,6 +41,38 @@ def test_freezone_analyze_request_defaults_to_shots_mode() -> None:
 
     assert body.analysis_mode == "shots"
     assert body.duration_sec is None
+
+
+@pytest.mark.asyncio
+async def test_video_story_analysis_uses_shared_freezone_vision_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"png")
+    captured: dict[str, object] = {}
+
+    async def fake_call_freezone_vision_model(**kwargs):
+        captured.update(kwargs)
+        return "DC-freezone-vision-LLM", '{"shots":[]}'
+
+    monkeypatch.setattr(
+        vision_gateway,
+        "call_freezone_vision_model",
+        fake_call_freezone_vision_model,
+    )
+
+    result = await run_freezone_analyze_shots(
+        project_dir=tmp_path,
+        job_id="vision-job",
+        frame_paths=[str(frame)],
+        analysis_mode="video_story",
+    )
+
+    assert result["provider"] == "newapi"
+    assert result["model"] == "DC-freezone-vision-LLM"
+    assert result["video_story"] == {"shots": []}
+    assert len(captured["images"]) == 1
 
 
 @pytest.mark.asyncio
@@ -94,8 +128,8 @@ async def test_freezone_analyze_route_passes_video_story_options(
     assert result["data"]["task_type"] == "freezone_analyze"
     assert captured["analysis_mode"] == "video_story"
     assert captured["duration_sec"] == 15.0
-    assert captured["provider"] == "openrouter"
-    assert captured["model"] == "gemini-3.5-flash"
+    assert "provider" not in captured
+    assert "model" not in captured
     assert captured["frame_paths"] == [str(frame_path)]
 
 

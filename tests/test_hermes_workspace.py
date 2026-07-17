@@ -8,7 +8,10 @@ import yaml
 from novelvideo import config as app_config
 from novelvideo.chat import hermes_sdk
 from novelvideo.chat import hermes_workspace as hw
-from novelvideo.model_gateway_settings import save_custom_newapi_gateway
+from novelvideo.model_gateway_settings import (
+    save_custom_newapi_gateway,
+    save_official_newapi_key,
+)
 
 
 def _enabled_toolsets(config: str) -> list[str]:
@@ -28,6 +31,14 @@ def _enabled_toolsets(config: str) -> list[str]:
     return values
 
 
+def _dramaclaw_provider(config: dict) -> dict:
+    return next(
+        item
+        for item in config["custom_providers"]
+        if item.get("name") == "dramaclaw"
+    )
+
+
 @pytest.fixture
 def isolated_workspace(tmp_path, monkeypatch):
     """Redirect DRAMACLAW_ROOT/state and repo-pinned skills to a tmp tree."""
@@ -36,7 +47,18 @@ def isolated_workspace(tmp_path, monkeypatch):
     state_root.mkdir(parents=True)
     monkeypatch.setattr(hw, "DRAMACLAW_ROOT", repo_root)
     monkeypatch.setattr(app_config, "STATE_DIR", str(state_root))
+    monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_root))
+    for key in (
+        "NEWAPI_API_KEY",
+        "NEWAPI_BASE_URL",
+        "MODEL_GATEWAY_RUNTIME_VERSION",
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE",
+        "OPENAI_BASE_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("MODEL_GATEWAY_MODE", raising=False)
     monkeypatch.delenv("ST_HERMES_SKILLS", raising=False)
     monkeypatch.delenv("HERMES_MODEL", raising=False)
@@ -176,13 +198,16 @@ def test_state_root_falls_back_to_repo(monkeypatch, tmp_path):
     assert hw._state_root() == tmp_path / "repo" / "state"
 
 
-def test_fresh_config_uses_hermes_model_env(isolated_workspace, repo_skills, repo_plugins):
+def test_fresh_config_uses_model_env_but_keeps_newapi_transport(
+    isolated_workspace, repo_skills, repo_plugins, monkeypatch
+):
+    save_official_newapi_key(api_key="root-key", activate=True)
     (isolated_workspace / ".env").write_text(
         "\n".join(
             [
                 "NEWAPI_API_KEY=root-key",
                 "HERMES_MODEL=gemini-3.5-flash",
-                "HERMES_MODEL_PROVIDER=custom",
+                "HERMES_MODEL_PROVIDER=openrouter",
                 "HERMES_MODEL_BASE_URL=http://newapi.local/v1",
                 "HERMES_MODEL_API_MODE=responses",
                 "HERMES_MODEL_CONTEXT_LENGTH=65536",
@@ -196,40 +221,50 @@ def test_fresh_config_uses_hermes_model_env(isolated_workspace, repo_skills, rep
     config = (home / "config.yaml").read_text(encoding="utf-8")
 
     assert "  default: gemini-3.5-flash" in config
-    assert "  provider: custom" in config
-    assert "  base_url: http://newapi.local/v1" in config
-    assert "  api_key: root-key" in config
-    assert "  api_mode: responses" in config
-    assert "  context_length: 65536" in config
     parsed = yaml.safe_load(config)
+    assert parsed["model"]["provider"] == "custom:dramaclaw"
+    assert parsed["model"]["default"] == "gemini-3.5-flash"
     assert parsed["model"]["context_length"] == 65536
+    assert "api_key" not in parsed["model"]
+    provider = _dramaclaw_provider(parsed)
+    assert provider == {
+        "name": "dramaclaw",
+        "base_url": app_config.OFFICIAL_NEWAPI_BASE_URL,
+        "key_env": "NEWAPI_API_KEY",
+        "api_mode": "responses",
+    }
 
 
-def test_existing_config_syncs_rotated_newapi_endpoint_and_key(
+def test_existing_config_syncs_endpoint_without_persisting_rotated_key(
     isolated_workspace, repo_skills, repo_plugins
 ):
-    (isolated_workspace / ".env").write_text(
-        "NEWAPI_API_KEY=old-key\nNEWAPI_BASE_URL=http://old-gateway/v1\n",
-        encoding="utf-8",
+    save_custom_newapi_gateway(
+        base_url="http://old-gateway/v1",
+        api_key="old-key",
+        activate=True,
     )
     home = hw.ensure_user_hermes_workspace("admin")
     config_path = home / "config.yaml"
     first = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    assert first["model"]["api_key"] == "old-key"
-    assert first["model"]["base_url"] == "http://old-gateway/v1"
+    assert "api_key" not in first["model"]
+    assert _dramaclaw_provider(first)["base_url"] == "http://old-gateway/v1"
+    assert "old-key" not in config_path.read_text(encoding="utf-8")
 
     config = config_path.read_text(encoding="utf-8") + "\ncustom_block:\n  keep: true\n"
     config_path.write_text(config, encoding="utf-8")
-    (isolated_workspace / ".env").write_text(
-        "NEWAPI_API_KEY=rotated-key\nNEWAPI_BASE_URL=http://new-gateway/v1\n",
-        encoding="utf-8",
+    save_custom_newapi_gateway(
+        base_url="http://new-gateway/v1",
+        api_key="rotated-key",
+        activate=True,
     )
 
     hw.ensure_user_hermes_workspace("admin")
     parsed = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
-    assert parsed["model"]["api_key"] == "rotated-key"
-    assert parsed["model"]["base_url"] == "http://new-gateway/v1"
+    assert "api_key" not in parsed["model"]
+    assert _dramaclaw_provider(parsed)["base_url"] == "http://new-gateway/v1"
+    assert _dramaclaw_provider(parsed)["key_env"] == "NEWAPI_API_KEY"
+    assert "rotated-key" not in config_path.read_text(encoding="utf-8")
     assert parsed["custom_block"]["keep"] is True
     assert _enabled_toolsets(config_path.read_text(encoding="utf-8")) == [
         "hermes-acp",
@@ -258,9 +293,11 @@ def test_hermes_uses_settings_db_newapi_before_root_env(
     parsed = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
     env_text = (home / ".env").read_text(encoding="utf-8")
 
-    assert parsed["model"]["api_key"] == "custom-key"
-    assert parsed["model"]["base_url"] == "http://custom-gateway/v1"
-    assert "OPENAI_API_KEY=custom-key" in env_text
+    assert "api_key" not in parsed["model"]
+    assert _dramaclaw_provider(parsed)["base_url"] == "http://custom-gateway/v1"
+    assert _dramaclaw_provider(parsed)["key_env"] == "NEWAPI_API_KEY"
+    assert "custom-key" not in (home / "config.yaml").read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY" not in env_text
     assert "root-key" not in env_text
 
 
@@ -278,29 +315,67 @@ def test_idempotent_rerun(isolated_workspace, repo_skills, repo_plugins):
     assert "OPENROUTER_API_KEY=secret" in (home1 / ".env").read_text()
 
 
-def test_fresh_env_copies_root_newapi_key_as_openai_key(
-    isolated_workspace, repo_skills, repo_plugins
+def test_fresh_workspace_does_not_persist_newapi_key(
+    isolated_workspace, repo_skills, repo_plugins, monkeypatch
 ):
-    # The root NEWAPI_API_KEY is re-exposed in the per-user hermes .env as
-    # OPENAI_API_KEY (the `custom` provider only reads OPENAI_API_KEY).
     (isolated_workspace / ".env").write_text(
         "NEWAPI_API_KEY=test-newapi-key\n",
         encoding="utf-8",
     )
+    save_official_newapi_key(api_key="test-newapi-key", activate=True)
 
     home = hw.ensure_user_hermes_workspace("admin")
     env_text = (home / ".env").read_text(encoding="utf-8")
+    config = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
 
-    assert "OPENAI_API_KEY=test-newapi-key" in env_text
+    assert "api_key" not in config["model"]
+    assert _dramaclaw_provider(config)["key_env"] == "NEWAPI_API_KEY"
+    assert "test-newapi-key" not in (home / "config.yaml").read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY" not in env_text
 
 
-def test_existing_env_gets_missing_newapi_default_without_overwrite(
+def test_existing_inline_key_is_removed_automatically(
     isolated_workspace, repo_skills, repo_plugins
+):
+    save_official_newapi_key(api_key="current-key", activate=True)
+    home = isolated_workspace / "state" / "admin" / ".hermes"
+    home.mkdir(parents=True)
+    (home / "config.yaml").write_text(
+        """model:
+  default: legacy-model
+  provider: custom
+  base_url: https://legacy.example/v1
+  api_key: legacy-key
+custom_providers:
+  - name: user-provider
+    base_url: https://user.example/v1
+    key_env: USER_PROVIDER_KEY
+""",
+        encoding="utf-8",
+    )
+
+    hw.ensure_user_hermes_workspace("admin")
+    text = (home / "config.yaml").read_text(encoding="utf-8")
+    config = yaml.safe_load(text)
+
+    assert config["model"]["provider"] == "custom:dramaclaw"
+    assert "api_key" not in config["model"]
+    assert "legacy-key" not in text
+    assert any(
+        item.get("name") == "user-provider"
+        for item in config["custom_providers"]
+    )
+    assert _dramaclaw_provider(config)["key_env"] == "NEWAPI_API_KEY"
+
+
+def test_existing_env_is_preserved(
+    isolated_workspace, repo_skills, repo_plugins, monkeypatch
 ):
     (isolated_workspace / ".env").write_text(
         "NEWAPI_API_KEY=root-key\n",
         encoding="utf-8",
     )
+    monkeypatch.setenv("NEWAPI_API_KEY", "root-key")
     home = isolated_workspace / "state" / "admin" / ".hermes"
     home.mkdir(parents=True)
     (home / ".env").write_text("OPENAI_API_KEY=user-key\n", encoding="utf-8")
@@ -308,10 +383,7 @@ def test_existing_env_gets_missing_newapi_default_without_overwrite(
     hw.ensure_user_hermes_workspace("admin")
     env_text = (home / ".env").read_text(encoding="utf-8")
 
-    # Existing user-supplied OPENAI_API_KEY must be preserved, not overwritten
-    # with the root NEWAPI_API_KEY value.
     assert "OPENAI_API_KEY=user-key" in env_text
-    assert "OPENAI_API_KEY=root-key" not in env_text
 
 
 def test_legacy_config_gets_default_plugin_block(isolated_workspace, repo_skills, repo_plugins):
@@ -322,8 +394,12 @@ def test_legacy_config_gets_default_plugin_block(isolated_workspace, repo_skills
     hw.ensure_user_hermes_workspace("admin")
 
     config = (home / "config.yaml").read_text()
+    parsed = yaml.safe_load(config)
     assert _enabled_toolsets(config) == ["hermes-acp"]
     assert "plugins:\n  enabled:\n    - dramaclaw" in config
+    assert parsed["model"]["default"] == "DC-hermes-LLM"
+    assert parsed["model"]["provider"] == "custom:dramaclaw"
+    assert _dramaclaw_provider(parsed)["key_env"] == "NEWAPI_API_KEY"
 
 
 def test_legacy_identity_context_is_migrated(isolated_workspace, repo_skills, repo_plugins):

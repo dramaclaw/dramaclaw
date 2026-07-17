@@ -239,7 +239,9 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 
 def provisioner_enabled() -> bool:
-    return env_bool("NEWAPI_PROVISIONER_ENABLED", True)
+    from novelvideo.shared.runtime_env import is_ce_effective
+
+    return is_ce_effective() and env_bool("NEWAPI_PROVISIONER_ENABLED", True)
 
 
 def require_provisioner_enabled() -> None:
