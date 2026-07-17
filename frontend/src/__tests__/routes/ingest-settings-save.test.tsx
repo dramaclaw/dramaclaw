@@ -616,4 +616,36 @@ describe("IngestPage settings save", () => {
     );
     expect(await screen.findByText("Importing")).toBeInTheDocument();
   });
+
+  it("clears leaked progress state when switching to a project without active ingest", async () => {
+    // 反方向对账：组件跨项目复用时，A(活跃导入)→B(无活跃 ingest_fast) 必须清掉
+    // A 残留的进度视图状态，否则 B 会错显「Importing」卡片并让 useTaskStream 去
+    // 连一个不存在的 SSE。正常路由下父级会按 project remount 兜底，这里直接换
+    // project prop 复现「被复用」的场景，验证 else 分支的防御性清理。
+    mocks.ingestTasks = [
+      { task_type: "ingest_fast", episode: 0, status: "running" },
+    ];
+
+    const { rerender } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    // demo：活跃导入 → 进度视图恢复。
+    expect(await screen.findByText("Importing")).toBeInTheDocument();
+
+    // 切到 other 项目，且它没有活跃任务。
+    mocks.ingestTasks = [];
+    rerender(
+      <Wrapper>
+        <IngestPageContent project="other" />
+      </Wrapper>,
+    );
+
+    // 残留的「Importing」必须被清掉，退回上传区。
+    expect(
+      await screen.findByText("Supports .txt / .md / .docx"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Importing")).not.toBeInTheDocument();
+  });
 });
