@@ -1138,7 +1138,7 @@ class CogneeStore:
         if not Path(novel_path).exists():
             raise FileNotFoundError(f"文件不存在: {novel_path}")
 
-        console.print("[bold]Step 1/4: 导入原文并构建 Cognee 图谱...[/bold]")
+        console.print("[bold]Step 1/3: 导入原文并构建 Cognee 图谱...[/bold]")
         fast_result = await self.ingest_novel_fast(
             novel_path,
             rebuild=rebuild,
@@ -1146,22 +1146,17 @@ class CogneeStore:
         )
 
         report(0.3, "提取角色...")
-        console.print("[bold]Step 2/4: 从图谱提取角色...[/bold]")
+        console.print("[bold]Step 2/3: 从图谱提取角色...[/bold]")
         characters = await self.build_characters_from_graph(
             on_progress=lambda p, t: report(0.3 + p * 0.3, t),
         )
 
         report(0.6, "规划剧集...")
-        console.print("[bold]Step 3/4: 规划剧集...[/bold]")
+        console.print("[bold]Step 3/3: 规划剧集...[/bold]")
         episodes = await self.build_episodes(
             target_episodes=target_episodes,
-            on_progress=lambda p, t: report(0.6 + p * 0.2, t),
+            on_progress=lambda p, t: report(0.6 + p * 0.4, t),
         )
-
-        report(0.8, "提取风格...")
-        console.print("[bold]Step 4/4: 提取风格...[/bold]")
-        content = self.load_novel_content() or load_novel_text(novel_path)
-        await self._extract_and_save_style(content)
 
         report(1.0, "导入完成")
 
@@ -1171,29 +1166,6 @@ class CogneeStore:
             "characters": len(characters),
             "episodes": len(episodes),
         }
-
-    async def _extract_and_save_style(self, content: str) -> None:
-        """从小说原文提取风格并保存。"""
-        from pathlib import Path
-        from novelvideo.claymore import (
-            extract_style_from_novel,
-            format_style_as_markdown,
-        )
-
-        try:
-            style = await extract_style_from_novel(content)
-            claymore_dir = Path(self.project_dir) / "claymore"
-            claymore_dir.mkdir(parents=True, exist_ok=True)
-            style_path = claymore_dir / "project_style.md"
-            style_content = format_style_as_markdown(style)
-            style_path.write_text(style_content, encoding="utf-8")
-
-            console.print(f"[green]  ✅ 风格已提取并保存[/green]")
-            console.print(f"[dim]    - 人称: {style.narrative_person}[/dim]")
-            console.print(f"[dim]    - 语调: {style.tone}[/dim]")
-            console.print(f"[dim]    - 画面: {style.visual_style}[/dim]")
-        except Exception as e:
-            console.print(f"[yellow]  ⚠️ 风格提取失败: {e}，将使用默认风格[/yellow]")
 
     # ============================================================
     # 查询
