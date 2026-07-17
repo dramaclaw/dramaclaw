@@ -42,6 +42,8 @@ class FakeBucket:
 
 @pytest.fixture(autouse=True)
 def fake_oss2(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     FakeBucket.instances.clear()
     fake_module = types.SimpleNamespace(Auth=FakeAuth, Bucket=FakeBucket)
     monkeypatch.setitem(sys.modules, "oss2", fake_module)

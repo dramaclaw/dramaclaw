@@ -34,24 +34,16 @@ Key points in `docker-compose.yml` (already set for you, no changes needed):
 
 > ⚠️ **Secret-type defaults (such as `PROMPT_EXPORT_PASSWORD=change_me`) must be changed.** For the model gateway, see [Model Configuration](#model-configuration).
 
-Groups (each item is commented inline in `.env.example`): gateway (NEWAPI_*), reference-media OSS relay (OSS_RELAY_*), Cognee knowledge graph, the text/image/video/audio models, image and video base parameters, UI, and output directories.
+Groups (each item is commented inline in `.env.example`): local NewAPI provisioner, reference-media OSS relay (OSS_RELAY_*), Cognee knowledge graph, text/image/video/audio models, image and video base parameters, UI, and output directories. Channel selection, gateway address, and token are saved from the web UI to `settings.db`.
 
 ### Model Configuration
 
 Recommended and alternative options (see [Configuring Model Providers](../getting-started/configuring-models.md) for details):
 
 - **A. DC official key (recommended)**: the default compose already uses the official gateway. After bringing the stack up, open `http://localhost:8080` → Settings → Model Configuration → Official Channel → paste your DC key and save to start using it, **no model mapping required**. Get a key at <https://relayclaw.cdnfg.com>.
-- **B. Bring your own gateway (BYO)**: enter your own gateway in the official-channel panel or in `.env`:
+- **B. Local NewAPI**: switch to `docker compose -f docker-compose.selfhosted.yml up`, then initialize it and configure upstream channels and model mappings from the Local NewAPI page.
 
-```bash
-NEWAPI_BASE_URL=https://your-gateway/v1
-NEWAPI_API_KEY=...
-PROMPT_EXPORT_PASSWORD=...        # defaults to change_me; always override for deployment
-```
-
-- **C. Fully local, bundled newapi**: switch to `docker compose -f docker-compose.selfhosted.yml up`, then configure the upstream at `:3000`.
-
-B/C require configuring all ~30 `*_MODEL` logical names in the gateway backend or renaming them individually. The reference-image feature needs `OSS_RELAY_AK/SK` (you can skip it for a text-only workflow).
+Local NewAPI must map DramaClaw's logical models to real upstream models. The reference-image feature needs `OSS_RELAY_AK/SK` (you can skip it for a text-only workflow).
 
 ## 4. Start / Stop
 

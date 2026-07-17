@@ -7,6 +7,7 @@
 """
 
 import contextvars
+import hashlib
 import importlib
 import logging
 import os
@@ -33,6 +34,7 @@ from novelvideo.shared.billing_errors import (
     find_insufficient_credits_stop,
 )
 from novelvideo.shared.env_guard import preserve_st_env
+from novelvideo.shared.runtime_env import is_ce_effective
 
 # 抑制 cognee/litellm 内部的 Pydantic 序列化警告
 # （豆包等非 OpenAI provider 的 Message 字段数与 cognee 期望不同，不影响功能）
@@ -54,18 +56,14 @@ _embedding_headers_capture: contextvars.ContextVar[dict[str, str] | None] = (
 # 在导入 cognee 之前设置环境变量（Cognee 在导入时会读取）
 # 从 .env 读取配置并设置环境变量
 def _resolve_llm_provider(default: str = DEFAULT_COGNEE_LLM_PROVIDER) -> str:
-    provider = os.getenv("COGNEE_LLM_PROVIDER", "").strip()
-    model = os.getenv("COGNEE_LLM_MODEL", "").strip()
-    if provider:
-        return provider
-    gateway_key, gateway_base_url = _effective_newapi_gateway()
-    if gateway_key and gateway_base_url:
-        return "newapi"
-    if os.getenv("NEWAPI_BASE_URL", "").strip():
-        return "newapi"
-    if model.startswith("gemini-") or model.startswith("gemini/"):
-        return "gemini"
-    return default
+    """Return the product transport provider.
+
+    CE and EE both use newAPI as the compatibility boundary. The argument and
+    legacy provider helpers remain for extension compatibility, but deployment
+    environment variables cannot make the product runtime bypass the gateway.
+    """
+    del default
+    return "newapi"
 
 
 def _is_newapi_provider(provider: str) -> bool:
@@ -159,20 +157,41 @@ def _effective_newapi_gateway() -> tuple[str, str]:
 
         return get_newapi_runtime_credentials()
     except Exception:
+        if is_ce_effective():
+            # CE credentials are never allowed to fall back to deployment env.
+            return "", OFFICIAL_NEWAPI_BASE_URL
         return (
             os.getenv("NEWAPI_API_KEY", "").strip(),
             os.getenv("NEWAPI_BASE_URL", "").strip() or OFFICIAL_NEWAPI_BASE_URL,
         )
 
 
+def _current_gateway_fingerprint() -> str:
+    api_key, base_url = _effective_newapi_gateway()
+    material = f"{base_url}\n{api_key}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
+_active_gateway_fingerprint: str | None = None
+
+
+def cognee_gateway_restart_required() -> bool:
+    """Return whether CE settings changed after Cognee was initialized."""
+    return bool(
+        is_ce_effective()
+        and _active_gateway_fingerprint
+        and _active_gateway_fingerprint != _current_gateway_fingerprint()
+    )
+
+
 def _resolve_llm_api_key(llm_provider: str, llm_model: str) -> str:
+    if _is_newapi_provider(llm_provider):
+        return _effective_newapi_gateway()[0]
     api_key = os.getenv("COGNEE_LLM_API_KEY", "")
     if api_key:
         return api_key
     if llm_provider == "gemini":
         return os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
-    if _is_newapi_provider(llm_provider):
-        return _effective_newapi_gateway()[0]
     if _is_openrouter_config(
         llm_provider,
         llm_model,
@@ -706,7 +725,9 @@ def _apply_embedding_env(llm_provider: str, api_key: str) -> tuple[str, str, str
     )
     embedding_provider = _to_cognee_provider(embedding_provider)
 
-    embedding_api_key = os.getenv("COGNEE_EMBEDDING_API_KEY", "")
+    embedding_api_key = ""
+    if not _uses_newapi_gateway(raw_embedding_provider):
+        embedding_api_key = os.getenv("COGNEE_EMBEDDING_API_KEY", "")
     if not embedding_api_key:
         if embedding_provider == "gemini":
             embedding_api_key = (
@@ -720,6 +741,8 @@ def _apply_embedding_env(llm_provider: str, api_key: str) -> tuple[str, str, str
             _get_scoped_env("COGNEE_EMBEDDING_ENDPOINT", "EMBEDDING_ENDPOINT"),
         ):
             embedding_api_key = os.getenv("OPENROUTER_API_KEY", "")
+        elif _uses_newapi_gateway(raw_embedding_provider):
+            embedding_api_key = _effective_newapi_gateway()[0]
         else:
             embedding_api_key = (
                 _effective_newapi_gateway()[0]
@@ -793,24 +816,33 @@ try:
 except ImportError:
     COGNEE_AVAILABLE = False
 
+if COGNEE_AVAILABLE and is_ce_effective() and api_key:
+    _active_gateway_fingerprint = _current_gateway_fingerprint()
+
 
 def init_cognee() -> None:
     """初始化 Cognee 配置。
 
-    从 .env 文件或环境变量读取配置，设置 LLM 和 Embedding。
+    CE 从 settings.db 解析网关，EE 从启动环境解析网关。Cognee 本身要求
+    通过进程环境初始化第三方客户端，因此该桥接只允许在进程启动配置未变化
+    时重复执行；CE 配置变化后必须重启。
 
     重要：必须在导入 cognee 之前设置环境变量，因为 Cognee 在导入时会读取环境变量。
 
-    需要的环境变量（在 .env 文件中）:
-        COGNEE_LLM_PROVIDER=newapi (或 gemini/openai/custom)
+    EE 可使用的部署环境变量:
         COGNEE_LLM_MODEL=DC-cognee-LLM
-        NEWAPI_API_KEY=your_key (或 GEMINI_API_KEY/OPENAI_API_KEY)
+        NEWAPI_API_KEY=your_key
         NEWAPI_BASE_URL=https://relayclaw.cdnfg.com/v1
-        COGNEE_LLM_ENDPOINT=https://openrouter.ai/api/v1  # custom provider 时可选
-        COGNEE_EMBEDDING_ENDPOINT=...                    # custom embedding 时可选
     """
+    global _active_gateway_fingerprint
+
     if not COGNEE_AVAILABLE:
         raise ImportError("cognee is not installed. Run: pip install cognee")
+    if cognee_gateway_restart_required():
+        raise RuntimeError(
+            "模型网关配置已更新，Cognee 仍持有启动时的旧配置；"
+            "请重启 DramaClaw 后再使用小说知识库。"
+        )
 
     llm_provider = _resolve_llm_provider()
 
@@ -820,11 +852,8 @@ def init_cognee() -> None:
     )
     if not api_key:
         raise ValueError(
-            "未设置 Cognee LLM Key。请在 .env 文件中添加:\n"
-            "  COGNEE_LLM_API_KEY=your_key_here\n"
-            "  或 DramaClawAPI API key\n"
-            "  或 (Gemini) GEMINI_API_KEY=your_key_here\n"
-            "  或 OPENAI_API_KEY=your_key_here"
+            "未设置 Cognee LLM Key。请配置 DramaClaw 模型网关；"
+            "CE 在设置页配置，EE 通过 NEWAPI_API_KEY 配置。"
         )
 
     llm_model = _normalize_llm_model(
@@ -870,6 +899,8 @@ def init_cognee() -> None:
     _patch_cognee_embedding_timeout()
     _install_insufficient_credits_log_filter()
     _patch_cognee_embedding_gateway()
+    if is_ce_effective():
+        _active_gateway_fingerprint = _current_gateway_fingerprint()
 
 
 def configure_cognee(

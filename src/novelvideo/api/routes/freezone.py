@@ -4210,6 +4210,12 @@ async def freezone_ai_staging_prop(
     user: dict = Depends(get_api_user),
 ):
     await _resolve_freezone_project(project, user, required_role="editor")
+    # Product requests always use the edition's effective NewAPI gateway.
+    # Keep low-level overrides available to offline helpers, but never accept
+    # credentials or an endpoint from an HTTP payload.
+    request = dict(request)
+    request.pop("api_key", None)
+    request.pop("base_url", None)
     try:
         result = await _run_ai_staging_prop(request)
     except RuntimeError as exc:
@@ -5133,8 +5139,6 @@ async def freezone_analyze_shots(
         job_id=job_id,
         payload={
             "frame_paths": frame_paths,
-            "provider": body.provider,
-            "model": body.model,
             "analysis_mode": body.analysis_mode,
             "duration_sec": body.duration_sec,
         },

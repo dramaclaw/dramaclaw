@@ -89,13 +89,17 @@ def get_pydantic_model(
     provider_override: str | None = None,
     model_name_override: str | None = None,
 ):
-    """根据环境变量获取 PydanticAI Model 实例。
+    """Return a PydanticAI model routed through the effective NewAPI gateway.
 
-    用于 novelvideo 模块的所有 Agent 调用。
+    This is the compatibility factory used by older Agent call sites. Provider
+    settings still select their legacy default model when no model name is
+    supplied, but they no longer select a direct-provider transport. CE reads
+    credentials from settings.db; EE reads its deployment-level NewAPI env.
 
     Args:
-        provider_override: 覆盖环境变量中的 provider
-        model_name_override: 覆盖环境变量中的 model name
+        provider_override: Select the legacy provider preset used for a default
+            model name. The request transport remains NewAPI.
+        model_name_override: Override the model name sent to NewAPI.
     """
     provider = (provider_override or os.environ.get("MODEL_PROVIDER", "volcengine")).lower()
     provider = PROVIDER_ALIASES.get(provider, provider)
@@ -106,50 +110,19 @@ def get_pydantic_model(
 
     preset = PROVIDER_PRESETS[provider]
     model_name = model_name_override or os.environ.get("MODEL_NAME", preset["default_model"])
-    api_key = os.environ.get("MODEL_API_KEY") or os.environ.get(preset["api_key_env"])
-
-    if not api_key:
-        raise ValueError(
-            f"API key not set. "
-            f"Set MODEL_API_KEY or {preset['api_key_env']} environment variable."
-        )
-
-    base_url = os.environ.get("MODEL_BASE_URL", preset["base_url"])
 
     if provider == "openrouter" and model_name.startswith("openrouter/"):
         model_name = model_name[len("openrouter/") :]
 
-    if provider == "anthropic":
-        from pydantic_ai.models.anthropic import AnthropicModel
-        from pydantic_ai.providers.anthropic import AnthropicProvider
-
-        return AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_key))
-    elif provider == "gemini":
-        from pydantic_ai.models.google import GoogleModel
-        from pydantic_ai.providers.google import GoogleProvider
-
-        return GoogleModel(model_name, provider=GoogleProvider(api_key=api_key))
-    elif provider == "openrouter":
-        from pydantic_ai.models.openrouter import OpenRouterModel
-        from pydantic_ai.providers.openrouter import OpenRouterProvider
-
-        provider_kwargs = {"api_key": api_key}
-        app_url = os.environ.get("OPENROUTER_APP_URL", "").strip()
-        app_title = os.environ.get("OPENROUTER_APP_TITLE", "").strip()
-        if app_url:
-            provider_kwargs["app_url"] = app_url
-        if app_title:
-            provider_kwargs["app_title"] = app_title
-        return OpenRouterModel(model_name, provider=OpenRouterProvider(**provider_kwargs))
-    else:
-        # OpenAI 兼容 (openai, volcengine, openrouter 等)
-        from pydantic_ai.models.openai import OpenAIChatModel
-        from pydantic_ai.providers.openai import OpenAIProvider
-
-        provider_kwargs = {"api_key": api_key}
-        if base_url:
-            provider_kwargs["base_url"] = base_url
-        return OpenAIChatModel(model_name, provider=OpenAIProvider(**provider_kwargs))
+    return get_newapi_text_pydantic_model(
+        "MODEL_NAME",
+        preset["default_model"],
+        model_name_override=model_name,
+        timeout_seconds_override=_env_float(
+            "MODEL_TIMEOUT",
+            float(preset.get("timeout", 120)),
+        ),
+    )
 
 
 def _clean_env_value(name: str | None) -> str | None:
@@ -261,18 +234,30 @@ def _newapi_text_openai_model(
     )
 
 
-def get_newapi_text_pydantic_model(model_env: str, default_model: str):
+def get_newapi_text_pydantic_model(
+    model_env: str,
+    default_model: str,
+    *,
+    model_name_override: str | None = None,
+    timeout_seconds_override: float | None = None,
+):
     """Create a PydanticAI OpenAI-compatible model that routes through newAPI."""
-    model_name = get_newapi_text_model_name(model_env, default_model)
+    model_name = str(model_name_override or "").strip() or get_newapi_text_model_name(
+        model_env, default_model
+    )
     api_key, base_url = get_newapi_runtime_credentials(
         env_api_key="MODEL_API_KEY",
         env_base_url="MODEL_BASE_URL",
     )
     if not api_key:
         raise ValueError("API key not set. Configure DramaClawAPI credentials.")
-    timeout_seconds = _env_float(
-        f"{model_env}_TIMEOUT_SECONDS",
-        _env_float("NEWAPI_TEXT_TIMEOUT_SECONDS", 120.0),
+    timeout_seconds = (
+        float(timeout_seconds_override)
+        if timeout_seconds_override is not None
+        else _env_float(
+            f"{model_env}_TIMEOUT_SECONDS",
+            _env_float("NEWAPI_TEXT_TIMEOUT_SECONDS", 120.0),
+        )
     )
     return _newapi_text_openai_model(
         model_name,
@@ -332,18 +317,14 @@ def get_pydantic_model_settings(
     max_tokens: int | None = None,
     thinking_level_override: str | None = None,
 ) -> dict | None:
-    """获取 PydanticAI 的通用 model_settings。"""
-    provider = (provider_override or os.environ.get("MODEL_PROVIDER", "volcengine")).lower()
-    provider = PROVIDER_ALIASES.get(provider, provider)
+    """Build settings for the legacy factory's NewAPI transport.
 
-    preset = PROVIDER_PRESETS.get(provider, {})
-    _model_name = model_name_override or os.environ.get(
-        "MODEL_NAME", preset.get("default_model", "")
-    )
+    Provider/model arguments remain in the signature for existing callers; the
+    transport is always OpenAI-compatible NewAPI.
+    """
     thinking_level = (
         thinking_level_override
         or os.environ.get("MODEL_THINKING_LEVEL")
-        or preset.get("thinking_level")
         or "low"
     )
 
@@ -352,13 +333,9 @@ def get_pydantic_model_settings(
         settings["max_tokens"] = max_tokens
 
     if thinking_level:
-        normalized = str(thinking_level).strip().lower()
-        if provider == "gemini":
-            settings["google_thinking_config"] = {"thinking_level": normalized}
-        elif provider == "openai" and normalized in {"low", "medium", "high"}:
-            settings["openai_reasoning_effort"] = normalized
-        elif provider == "openrouter" and normalized in {"low", "medium", "high"}:
-            settings["openrouter_reasoning"] = {"effort": normalized}
+        reasoning_effort = _normalize_openai_compat_reasoning_effort(thinking_level)
+        if reasoning_effort:
+            settings["openai_reasoning_effort"] = reasoning_effort
 
     return settings or None
 
@@ -384,7 +361,6 @@ def _is_openai_compatible_runtime() -> bool:
     provider = (
         (
             os.environ.get("LLM_PROVIDER")
-            or os.environ.get("COGNEE_LLM_PROVIDER")
             or os.environ.get("MODEL_PROVIDER")
             or ""
         )
@@ -532,29 +508,38 @@ def get_newapi_runtime_credentials(
     env_api_key: str = "NEWAPI_API_KEY",
     env_base_url: str = "NEWAPI_BASE_URL",
 ) -> tuple[str, str]:
-    """Resolve NewAPI credentials with UI settings before env vars.
+    """Resolve NewAPI credentials from the edition's effective gateway.
 
-    Precedence:
-    explicit call overrides > settings.db > requested env vars > NEWAPI env vars
-    > legacy OpenAI-compatible env vars > defaults.
+    CE reads dynamic credentials from settings.db and never falls back to the
+    process environment. EE's deployment-time gateway remains environment
+    backed. Explicit per-call overrides remain available for isolated tools.
     """
 
     gateway = get_effective_newapi_gateway_config()
+    environment_backed = gateway.source == "environment"
     api_key = (
         str(api_key_override or "").strip()
         or str(gateway.api_key or "").strip()
-        or os.environ.get(env_api_key, "").strip()
-        or NEWAPI_API_KEY
-        or os.environ.get("MODEL_API_KEY", "").strip()
-        or os.environ.get("OPENAI_API_KEY", "").strip()
+        or (
+            os.environ.get(env_api_key, "").strip()
+            or NEWAPI_API_KEY
+            or os.environ.get("MODEL_API_KEY", "").strip()
+            or os.environ.get("OPENAI_API_KEY", "").strip()
+            if environment_backed
+            else ""
+        )
     )
     base_url = (
         str(base_url_override or "").strip().rstrip("/")
         or str(gateway.base_url or "").strip()
-        or os.environ.get(env_base_url, "").strip().rstrip("/")
-        or str(NEWAPI_BASE_URL or "").strip().rstrip("/")
-        or os.environ.get("MODEL_BASE_URL", "").strip().rstrip("/")
-        or OFFICIAL_NEWAPI_BASE_URL
+        or (
+            os.environ.get(env_base_url, "").strip().rstrip("/")
+            or str(NEWAPI_BASE_URL or "").strip().rstrip("/")
+            or os.environ.get("MODEL_BASE_URL", "").strip().rstrip("/")
+            or OFFICIAL_NEWAPI_BASE_URL
+            if environment_backed
+            else ""
+        )
     )
     return api_key, base_url
 

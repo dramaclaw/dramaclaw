@@ -10,7 +10,7 @@ DramaClaw 是社区版(CE),单机运行、无需 PostgreSQL / Redis。默认 `do
 ## 前置
 
 - Docker(Desktop 或 Engine),支持 `docker compose`。
-- 一个 **DC key** —— 到 <https://relayclaw.cdnfg.com> 注册 / 购买。(或用自己的 OpenAI 兼容网关,见末尾 BYO。)
+- 一个 **DC key** —— 到 <https://relayclaw.cdnfg.com> 注册 / 购买；也可以改用 CE 随附的本地 NewAPI。
 
 ## 步骤
 
@@ -22,7 +22,7 @@ cd dramaclaw
 # 2. 准备配置
 cp .env.example .env
 #    打开 .env,至少把 PROMPT_EXPORT_PASSWORD 改成非默认值。
-#    NEWAPI_BASE_URL 已默认指向官方网关 relayclaw/v1;DC key 可在 .env 填,或下一步在网页里粘贴。
+#    模型渠道和 key 在下一步通过网页配置，不写入 .env。
 
 # 3. 启动(首次构建镜像,稍慢)—— 起 api / web 两个服务
 docker compose up -d --build
@@ -39,17 +39,9 @@ docker compose ps   # api、web 均应 running
 
 > CE 默认免登录、单本地用户(`ST_EDITION=ce`,compose 已强制)。REST API 在 `http://localhost:8780`(浏览器只与 `web` 通信,它再反代到 `api`)。
 
-## 想用自己的网关(BYO)?
+## 想使用自己的模型渠道？
 
-在同一个「官方渠道」面板把地址换成你的网关,或在 `.env` 填:
-
-```bash
-NEWAPI_BASE_URL=https://你的网关/v1
-NEWAPI_API_KEY=你的_token
-```
-
-BYO 需映射约 30 个 `*_MODEL` 逻辑名 —— 详见 [配置模型供应商](configuring-models.md)。
-想完全本地、不依赖外部网关?见 [配置模型供应商 · C 纯本地内置 newapi](configuring-models.md)(用 `docker-compose.selfhosted.yml`)。
+使用 `docker-compose.selfhosted.yml` 启动 CE 随附的本地 NewAPI，然后在「设置 → 模型配置 → 本地 NewAPI」中初始化渠道、填写上游 key 并保存模型映射。地址和 runtime token 会写入本机 `settings.db`，不写入 `.env`。详见[配置模型供应商](configuring-models.md)。
 
 ## 下一步
 

@@ -25,6 +25,7 @@ from novelvideo.api.routes.freezone import (
 )
 from novelvideo.api.schemas import CanvasPayload, PresetCanvasRequest, PushRequest
 from novelvideo.config import NEWAPI_IMAGE_MODEL, OPENAI_IMAGE_MODEL
+from novelvideo.freezone import image_node
 from novelvideo.freezone.presets import (
     build_canvas_payload_from_context,
     canvas_id_for_preset,
@@ -374,12 +375,16 @@ def test_freezone_ai_staging_prop_endpoint_returns_ai_prop(monkeypatch, tmp_path
             "scene_id": "面馆",
             "user_hint": "让男青年骑一匹马",
             "crosshair_target": {"position": [1, 0, 2]},
+            "api_key": "must-not-reach-runtime",
+            "base_url": "https://bypass.example/v1",
         },
     )
 
     assert response.status_code == 200
     assert response.json()["data"]["prop"]["shape_hint"] == "quadruped_mount"
     assert captured["user_hint"] == "让男青年骑一匹马"
+    assert "api_key" not in captured
+    assert "base_url" not in captured
 
 
 def test_episode_preset_key_uses_episode_scope() -> None:
@@ -6985,3 +6990,27 @@ def test_merge_preserves_pre_release_scene_source_nodes_without_explicit_flag() 
     assert "ref_scene_director_pano_360_1" in node_ids
     assert "ref_scene_3gs_pano_ply_1" in node_ids
     assert "edge_old_scene_to_user" in edge_ids
+
+
+@pytest.mark.asyncio
+async def test_reverse_prompt_uses_shared_freezone_vision_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_path = tmp_path / "source.png"
+    Image.new("RGB", (16, 16), color="white").save(image_path)
+    captured: dict[str, object] = {}
+
+    async def fake_call_freezone_vision_model(**kwargs):
+        captured.update(kwargs)
+        return "DC-freezone-vision-LLM", "白色方形主体，极简构图"
+
+    monkeypatch.setattr(
+        image_node,
+        "call_freezone_vision_model",
+        fake_call_freezone_vision_model,
+    )
+
+    prompt = await image_node.reverse_prompt_from_image(image_path=image_path)
+
+    assert prompt == "白色方形主体，极简构图"
+    assert len(captured["images"]) == 1

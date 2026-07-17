@@ -23,8 +23,6 @@ from novelvideo.config import (
     get_grid_generation_config,
     get_style_preset,
     IMAGE_DEFAULT_STYLE,
-    NEWAPI_API_KEY,
-    NEWAPI_BASE_URL,
     NEWAPI_IMAGE_MODEL,
     PROP_REF_IMAGE_MODEL,
     PROP_REF_IMAGE_PROVIDER,

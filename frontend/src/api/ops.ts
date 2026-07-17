@@ -2266,8 +2266,6 @@ export async function submitFreezoneExtractFrames(
 
 export interface FreezoneAnalyzeShotsPayload {
   frameUrls: string[];
-  provider?: string;
-  model?: string;
 }
 
 export async function submitFreezoneAnalyzeShots(
@@ -2280,8 +2278,6 @@ export async function submitFreezoneAnalyzeShots(
       method: "POST",
       json: {
         frame_urls: payload.frameUrls,
-        provider: payload.provider ?? null,
-        model: payload.model ?? null,
       },
     },
   );

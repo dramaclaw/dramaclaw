@@ -3823,6 +3823,7 @@
           "SCENE_BUILD": "Analyze and enrich scene descriptions",
           "FREEZONE_TRANSLATION": "Prompt zh/en translation",
           "FREEZONE_STORY_SCRIPT": "Story script generation",
+          "FREEZONE_VISION": "Image and video content analysis",
           "STYLE_ANALYZER": "Analyze a custom style from reference images",
           "CONTENT_REWRITER": "Rewrite source text as short-video voiceover",
           "SCREENPLAY_NORMALIZER": "Parse scene structure during screenplay import",

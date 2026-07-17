@@ -16,18 +16,18 @@
 | `NOVELVIDEO_RUNTIME_DIR` | `$DATA_ROOT/runtime` | 运行时临时目录。 |
 | `ST_CONTROL_PLANE_DSN` / `ST_REDIS_URL` / `ST_CELERY_BROKER_URL` / `ST_CELERY_RESULT_BACKEND` | 空(CE 强制清空) | EE/分布式才用;CE 任务进程内 inline 执行,留空。 |
 
-## 模型网关(默认官方 RelayClaw)
+## 模型网关
+
+CE 的渠道选择、网关地址和 token 由网页「设置 → 模型配置」写入本机
+`settings.db`，不通过环境变量配置。官方渠道地址固定；本地渠道使用 CE
+随附的 NewAPI。
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `NEWAPI_BASE_URL` | `https://relayclaw.cdnfg.com/v1` | 默认官方网关(RelayClaw)。BYO 改成你的网关,末尾保留 `/v1`。 |
-| `NEWAPI_API_KEY` | 空 | DC key / 网关 token。推荐在网页「模型配置 → 官方渠道」粘贴,或在此填。到 <https://relayclaw.cdnfg.com> 取 DC key。 |
-| `MODEL_GATEWAY_MODE` | `official` | `official` 用上面的 NEWAPI_*;`custom` 用前端写入本地 SQLite 的自配网关。 |
-| `MODEL_API_KEY` | `your_model_api_key` | 通用文本模型 key(兼容 OpenAI 适配器读取)。 |
 | `NEWAPI_TEXT_TIMEOUT_SECONDS` | `120` | 文本模型 HTTP 超时(秒)。 |
 | `NEWAPI_TEXT_TRUST_ENV` | `true` | 是否让文本客户端读系统代理;内网网关被代理拦截时设 `false`。 |
 
-约 **30 个 `*_MODEL` 逻辑模型名**(如 `HERMES_MODEL=DC-hermes-LLM`)映射到网关后台的真实模型。BYO 网关需配齐同名模型或逐项改名 —— 详见 [配置模型供应商](../getting-started/configuring-models.md)。
+约 **30 个 `*_MODEL` 逻辑模型名**（如 `HERMES_MODEL=DC-hermes-LLM`）映射到网关后台的真实模型。本地 NewAPI 的映射在网页配置——详见[配置模型供应商](../getting-started/configuring-models.md)。
 
 ## 参考媒体 relay(可选)
 

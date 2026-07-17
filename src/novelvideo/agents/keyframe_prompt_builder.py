@@ -65,11 +65,12 @@ Output ONLY the transition prompt in Chinese. 4–6 句, ~50–90 字.
 
 def create_keyframe_prompt_builder_agent(language: str = "en") -> Agent:
     """创建首尾帧过渡提示词生成 Agent。"""
-    from novelvideo.config import get_superpower_pydantic_model
+    from novelvideo.config import get_newapi_text_pydantic_model
+    from novelvideo.official_defaults import DEFAULT_VIDEO_PROMPT_OPTIMIZER_MODEL
 
-    model = get_superpower_pydantic_model(
-        feature_provider_env="KEYFRAME_PROMPT_PROVIDER",
-        feature_model_env="KEYFRAME_PROMPT_MODEL",
+    model = get_newapi_text_pydantic_model(
+        "KEYFRAME_PROMPT_MODEL",
+        DEFAULT_VIDEO_PROMPT_OPTIMIZER_MODEL,
     )
     return Agent(model, system_prompt=KEYFRAME_PROMPT_BUILDER_INSTRUCTIONS_EN, output_type=str, name="Keyframe Prompt Builder")
 

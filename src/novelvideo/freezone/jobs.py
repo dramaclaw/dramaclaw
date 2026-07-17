@@ -1370,16 +1370,16 @@ async def run_freezone_analyze_shots(
 ) -> dict:
     """Send N frames to a Vision model and parse a structured JSON response.
 
-    `provider`:
-      - "openrouter" (default) → OpenRouter chat completions (Gemini via OpenAI-compat)
-      - "google"               → legacy Google AI Studio direct path
-
-    The Freezone UI only uses the OpenRouter route. The Google path remains as
-    a legacy explicit override for old scripts/canvases.
+    Product requests always use the effective NewAPI gateway. ``provider`` is
+    retained only for payload compatibility with older saved canvases.
     """
-    import asyncio
     import json
-    import os
+
+    from novelvideo.freezone.vision_gateway import (
+        VisionInput,
+        call_freezone_vision_model,
+        image_media_type,
+    )
 
     if not frame_paths:
         raise ValueError("no frames to analyze")
@@ -1387,7 +1387,7 @@ async def run_freezone_analyze_shots(
     out_dir = outputs_dir(project_dir, "freezone_analyze") / job_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    chosen = (provider or "openrouter").lower()
+    del provider
     mode = (analysis_mode or "shots").strip().lower()
     if mode not in {"shots", "video_story"}:
         raise ValueError(f"unsupported analysis_mode: {analysis_mode}")
@@ -1400,107 +1400,20 @@ async def run_freezone_analyze_shots(
         else SHOT_ANALYSIS_PROMPT
     )
 
-    async def call_google() -> tuple[str, str]:
-        from google import genai
-        from google.genai import types
-
-        from novelvideo.config import GOOGLE_AI_API_KEY
-
-        key = api_key or GOOGLE_AI_API_KEY
-        if not key:
-            raise RuntimeError("GOOGLE_AI_API_KEY not set")
-        vision_model = model or os.environ.get("GEMINI_VISION_MODEL", "gemini-3.5-flash")
-        client = genai.Client(api_key=key)
-        contents: list = [prompt]
-        for path_str in frame_paths:
-            p = Path(path_str)
-            if not p.exists():
-                continue
-            contents.append(types.Part.from_bytes(data=p.read_bytes(), mime_type="image/png"))
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=vision_model,
-            contents=contents,
-        )
-        text = ""
-        if response and response.candidates:
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, "text") and part.text:
-                    text += part.text
-        return vision_model, text
-
-    async def call_openrouter() -> tuple[str, str]:
-        import base64
-        import httpx
-
-        from novelvideo.config import OPENROUTER_API_KEY
-
-        key = api_key or OPENROUTER_API_KEY
-        if not key:
-            raise RuntimeError("OPENROUTER_API_KEY not set")
-        # OpenRouter exposes Gemini via /chat/completions (OpenAI-compat).
-        # We default to the same Gemini family as the Google direct path.
-        vision_model = model or os.environ.get("OPENROUTER_VISION_MODEL", "gemini-3.5-flash")
-        # Build OpenAI-compat content array: text + image_url(data:base64) parts.
-        content_parts: list[dict] = [{"type": "text", "text": prompt}]
-        for path_str in frame_paths:
-            p = Path(path_str)
-            if not p.exists():
-                continue
-            b64 = base64.b64encode(p.read_bytes()).decode("ascii")
-            content_parts.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64}"},
-                }
+    del api_key
+    vision_model, text = await call_freezone_vision_model(
+        prompt=prompt,
+        images=[
+            VisionInput(
+                data=Path(path).read_bytes(),
+                media_type=image_media_type(path),
             )
-        body = {
-            "model": vision_model,
-            "messages": [{"role": "user", "content": content_parts}],
-        }
-        headers = {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://supertale.local/freezone",
-            "X-Title": "SuperTale Image Freezone",
-        }
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                json=body,
-                headers=headers,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        text = ""
-        try:
-            text = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError):
-            pass
-        return vision_model, text
-
-    used_provider = chosen
-    vision_model: str
-    text: str
-    try:
-        if chosen == "openrouter":
-            vision_model, text = await call_openrouter()
-        else:
-            vision_model, text = await call_google()
-    except Exception as primary_err:
-        # Legacy fallback: explicit/old Google analysis requests may still fall
-        # through to OpenRouter. The default path is already OpenRouter.
-        if provider in ("google", "auto"):
-            try:
-                vision_model, text = await call_openrouter()
-                used_provider = "openrouter"
-                logger.warning("Google Vision failed (%s); falling back to OpenRouter", primary_err)
-            except Exception as secondary_err:
-                raise RuntimeError(
-                    f"Google failed: {primary_err}; OpenRouter fallback failed: {secondary_err}"
-                ) from primary_err
-        else:
-            raise
+            for path in frame_paths
+            if Path(path).exists()
+        ],
+        model_override=model,
+    )
+    used_provider = "newapi"
 
     if not text:
         raise RuntimeError(f"{used_provider} Vision returned no text")

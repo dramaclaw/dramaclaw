@@ -9,7 +9,7 @@
 
 | Symptom | Diagnosis |
 |---|---|
-| **Container won't start / exits immediately** | `docker compose logs api`. In the vast majority of cases the gateway address/key in `.env` is still at its default, or the gateway is unreachable. |
+| **Container won't start / exits immediately** | Check `docker compose logs api` and follow the startup error to the configuration, port, or data-volume problem. |
 | **Port `8780` already in use** | Change the left-hand value of `ports` in compose, e.g. `8888:8780`; or stop the process holding it (`lsof -i :8780`). |
 | **Health check stays unhealthy** | The probe hits `/api/v1/config`; if the API itself errors, check the startup logs to pinpoint the real exception. |
 | **Local dev won't start: Python version** | Requires **3.11–3.12** (`>=3.11,<3.13`). Run `uv python pin 3.12` or install the matching version, then `uv sync`. |
@@ -18,8 +18,8 @@
 
 | Symptom | Diagnosis |
 |---|---|
-| **Every model call errors** | Confirm the gateway is reachable; keep the trailing `/v1` on `NEWAPI_BASE_URL`; verify `NEWAPI_API_KEY` is valid. |
-| **A stage reports "model does not exist"** | Your BYO gateway backend must have the corresponding `*_MODEL` logical names configured; otherwise change that `*_MODEL` to the actual model name on your gateway. See [Configuring model providers](../getting-started/configuring-models.md). |
+| **Every model call errors** | Under Settings → Model Configuration, confirm the active channel is configured. Check the DC key for the official channel, or the service, runtime token, and upstream channels for Local NewAPI. |
+| **A stage reports "model does not exist"** | Local NewAPI is missing the corresponding logical model mapping, or the target channel is disabled. See [Configuring model providers](../getting-started/configuring-models.md). |
 | **Text model times out** | Increase `NEWAPI_TEXT_TIMEOUT_SECONDS` (default 120); if a system proxy is intercepting an internal gateway, set `NEWAPI_TEXT_TRUST_ENV=false`. |
 | **Reference-image feature unavailable** | Requires `OSS_RELAY_AK/SK`; the plain text→video pipeline can run without it. |
 
