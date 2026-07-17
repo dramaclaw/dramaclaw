@@ -47,12 +47,6 @@ def _capture_model_calls(monkeypatch):
             "VIDEO_PROMPT_PROVIDER",
             "VIDEO_PROMPT_MODEL",
         ),
-        (
-            "novelvideo.agents.keyframe_prompt_builder",
-            "create_keyframe_prompt_builder_agent",
-            "KEYFRAME_PROMPT_PROVIDER",
-            "KEYFRAME_PROMPT_MODEL",
-        ),
     ],
 )
 def test_superpower_prompt_agents_use_default_model_provider_unless_overridden(
@@ -95,4 +89,28 @@ def test_global_video_reviewer_superpower_can_use_feature_specific_model_overrid
             "provider_override": "openrouter",
             "model_name_override": "gemini-3.5-flash",
         }
+    ]
+
+
+def test_keyframe_prompt_builder_uses_video_optimizer_model(monkeypatch):
+    from novelvideo import config
+    from novelvideo.agents import keyframe_prompt_builder
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_get_newapi_text_pydantic_model(model_env: str, default_model: str):
+        calls.append((model_env, default_model))
+        return object()
+
+    monkeypatch.setattr(
+        config,
+        "get_newapi_text_pydantic_model",
+        fake_get_newapi_text_pydantic_model,
+    )
+    monkeypatch.setattr(keyframe_prompt_builder, "Agent", FakeAgent)
+
+    keyframe_prompt_builder.create_keyframe_prompt_builder_agent()
+
+    assert calls == [
+        ("KEYFRAME_PROMPT_MODEL", "DC-video-prompt-optimizer-LLM")
     ]
