@@ -1478,7 +1478,8 @@
       "single_video": "单镜视频",
       "global_optimize_video": "全局优化",
       "selected_regen": "选中重生成",
-      "compose_episode": "视频合成"
+      "compose_episode": "视频合成",
+      "freezone_image_reverse_prompt": "图片反推提示词"
     }
   },
   "taskCenter": {
