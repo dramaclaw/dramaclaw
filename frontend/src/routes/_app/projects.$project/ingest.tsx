@@ -978,12 +978,22 @@ export function IngestPageContent({ project }: { project: string }) {
   // 持久化(chapters 为空)，页面便退回空上传页——「导入中的虾料不见了」。
   // 挂载时与服务端任务列表对账一次：若 ingest_fast 仍活跃，就重开进度视图，
   // 让 useTaskStream 重连(后端会在连接时补发运行进度)。
-  const { data: ingestTasksRes } = useTasks({ project, episode: 0 });
-  const ingestReconciledRef = useRef(false);
+  //
+  // 两个坑：
+  //  1. tasks(project) 缓存是全局共享的(不含 episode、staleTime=0)，挂载时
+  //     React Query 会先同步吐旧缓存(可能是导入前的空列表)再后台 refetch。
+  //     必须用 isFetchedAfterMount 只认「本次挂载后刷到的新数据」，否则会拿旧
+  //     空列表对账一次就把 ref 锁死，等真数据回来时已早退，恢复被永久错过。
+  //  2. 按 project 记账(而非布尔 ref)，这样跨项目复用组件时切到新项目会重新
+  //     对账，不会被上一个项目的「已对账」状态卡住。
+  const { data: ingestTasksRes, isFetchedAfterMount: ingestTasksFetchedAfterMount } =
+    useTasks({ project, episode: 0 });
+  const ingestReconciledProjectRef = useRef<string | null>(null);
   useEffect(() => {
-    if (ingestReconciledRef.current) return;
+    if (ingestReconciledProjectRef.current === project) return;
+    if (!ingestTasksFetchedAfterMount) return;
     if (ingestTasksRes === undefined) return;
-    ingestReconciledRef.current = true;
+    ingestReconciledProjectRef.current = project;
     const running = (ingestTasksRes.data ?? []).some(
       (task) =>
         task.task_type === "ingest_fast" &&
@@ -995,7 +1005,7 @@ export function IngestPageContent({ project }: { project: string }) {
       setIngestFileStatus("importing");
       setHideImportedPreview(false);
     }
-  }, [ingestTasksRes, project]);
+  }, [ingestTasksRes, ingestTasksFetchedAfterMount, project]);
 
   const handleCancelIngest = useCallback(async () => {
     setIngestStarted(false);
