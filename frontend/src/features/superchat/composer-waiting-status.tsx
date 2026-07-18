@@ -9,10 +9,12 @@ type WaitingPhase = "hidden" | "entering" | "idle" | "switching";
 
 export function ComposerWaitingStatus({
   label,
+  activityLabel,
   visible,
   variant = "default",
 }: {
   label: string;
+  activityLabel?: string | null;
   visible: boolean;
   variant?: "default" | "freezone";
 }) {
@@ -38,7 +40,10 @@ export function ComposerWaitingStatus({
       return;
     }
 
-    const options = waitingLabels.length > 0 ? waitingLabels : [label];
+    const liveActivityLabel = activityLabel?.trim() || "";
+    const options = liveActivityLabel
+      ? [liveActivityLabel]
+      : waitingLabels.length > 0 ? waitingLabels : [label];
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const timers = new Set<number>();
     const schedule = (callback: () => void, delay: number) => {
@@ -74,15 +79,17 @@ export function ComposerWaitingStatus({
       }, 440);
     };
 
-    const timeline = [
-      { label: options[0] ?? label, delay: 350 },
-      ...options.slice(1).map((option, index) => ({
-        label: option,
-        delay: index < 3 ? 3200 : 5000,
-      })),
-      { label: longWaitingLabel, delay: 5000 },
-      { label: veryLongWaitingLabel, delay: 32000 },
-    ];
+    const timeline = liveActivityLabel
+      ? [{ label: liveActivityLabel, delay: 0 }]
+      : [
+        { label: options[0] ?? label, delay: 350 },
+        ...options.slice(1).map((option, index) => ({
+          label: option,
+          delay: index < 3 ? 3200 : 5000,
+        })),
+        { label: longWaitingLabel, delay: 5000 },
+        { label: veryLongWaitingLabel, delay: 32000 },
+      ];
     let timelineIndex = 0;
 
     const advanceTimeline = () => {
@@ -119,7 +126,7 @@ export function ComposerWaitingStatus({
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [label, longWaitingLabel, veryLongWaitingLabel, waitingLabelsKey, visible]);
+  }, [activityLabel, label, longWaitingLabel, veryLongWaitingLabel, waitingLabelsKey, visible]);
 
   const displayLabels = slotLabels.map((item) => item.replace(/[.。…\s]+$/u, "")) as [string, string];
   const shown = visible && phase !== "hidden";

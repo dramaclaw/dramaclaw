@@ -6,6 +6,7 @@ import { normalizeMessage } from "@/features/superchat/message";
 import { buildCanvasCommandToolResultPayloadForTest } from "@/features/freezone/canvasCommandToolResult";
 import {
   SUPERCHAT_CANVAS_COMMAND_EVENT,
+  approvalOptionIdForTest,
   canvasContextToolResultFrameForTest,
   dispatchCanvasCommandFrameForTest,
   mergeHistorySnapshot,
@@ -17,7 +18,9 @@ import {
   shouldRenderToolStatusPart,
   scopeForProjectForTest,
   scopeSessionKeyForTest,
+  toolStatusPartForTest,
   updateAssistantUiEventsForTest,
+  upsertRuntimePartInMessagesForTest,
   upsertAssistantMessageForTest,
   upsertAssistantUiEventForTest,
   upsertServerAssistantMessageForTest,
@@ -873,6 +876,29 @@ describe("normalizeMessageForScope", () => {
 });
 
 describe("upsertServerAssistantMessage", () => {
+  it("keeps live agent details visible when the final assistant message arrives", () => {
+    const current = upsertRuntimePartInMessagesForTest([], "turn-agent", {
+      id: "agent_thought:turn-agent",
+      type: "agent_thought",
+      event: { text: "正在检查素材" },
+    });
+
+    const merged = upsertServerAssistantMessageForTest(
+      current,
+      {
+        id: 7,
+        role: "assistant",
+        content: "素材检查完成",
+        turn_id: "turn-agent",
+        created_at: "2026-07-19T00:00:00+00:00",
+      },
+      "turn-agent",
+    );
+
+    const assistant = merged.find((item) => item.role === "assistant");
+    expect(assistant?.parts?.map((part) => part.type)).toEqual(["agent_thought", "text"]);
+  });
+
   it("preserves transient ui events when the final assistant message arrives", () => {
     const uiEvent = {
       type: "skill_studio.questions",
@@ -3197,6 +3223,57 @@ describe("canvas command bridge events", () => {
 });
 
 describe("tool status parts", () => {
+  it("uses the ACP call id to update one tool lifecycle card", () => {
+    const started = toolStatusPartForTest("agent.tool.started", {
+      type: "agent.tool.started",
+      turn_id: "turn-a",
+      call_id: "call-1",
+      name: "read_file",
+      status: "pending",
+    }, "turn-a");
+    const completed = toolStatusPartForTest("agent.tool.updated", {
+      type: "agent.tool.updated",
+      turn_id: "turn-a",
+      call_id: "call-1",
+      name: "read_file",
+      status: "completed",
+    }, "turn-a");
+
+    expect(started.id).toBe("tool_status:turn-a:call-1");
+    expect(completed.id).toBe(started.id);
+
+    const messages = upsertRuntimePartInMessagesForTest([], "turn-a", started);
+    const updated = upsertRuntimePartInMessagesForTest(messages, "turn-a", completed);
+    expect(updated).toHaveLength(1);
+    expect(updated[0]?.parts).toHaveLength(1);
+    expect(updated[0]?.parts?.[0]).toEqual(completed);
+  });
+
+  it("keeps repeated calls to the same tool separate", () => {
+    const first = toolStatusPartForTest("agent.tool.started", {
+      type: "agent.tool.started",
+      turn_id: "turn-a",
+      call_id: "call-1",
+      name: "read_file",
+    }, "turn-a");
+    const second = toolStatusPartForTest("agent.tool.started", {
+      type: "agent.tool.started",
+      turn_id: "turn-a",
+      call_id: "call-2",
+      name: "read_file",
+    }, "turn-a");
+
+    const messages = upsertRuntimePartInMessagesForTest(
+      upsertRuntimePartInMessagesForTest([], "turn-a", first),
+      "turn-a",
+      second,
+    );
+    expect(messages[0]?.parts?.map((part) => part.id)).toEqual([
+      "tool_status:turn-a:call-1",
+      "tool_status:turn-a:call-2",
+    ]);
+  });
+
   it("does not render hidden canvas write tool calls as assistant status parts", () => {
     expect(shouldRenderToolStatusPart({
       type: "tool.call",
@@ -3224,6 +3301,26 @@ describe("tool status parts", () => {
         envelope: { schema_version: "canvas_chat_commands.v1", commands: [] },
       }),
     })).toBe(false);
+  });
+});
+
+describe("agent permission options", () => {
+  const approval = {
+    id: "permission-a",
+    kind: "agent" as const,
+    title: "运行命令",
+    options: [
+      { optionId: "allow_once", kind: "allow_once", name: "Allow once" },
+      { optionId: "allow_session", kind: "allow_always", name: "Allow for session" },
+      { optionId: "allow_always", kind: "allow_always", name: "Allow always" },
+      { optionId: "deny", kind: "reject_once", name: "Deny" },
+    ],
+  };
+
+  it("does not confuse session access with permanent access", () => {
+    expect(approvalOptionIdForTest(approval, "allow-always")).toBe("allow_always");
+    expect(approvalOptionIdForTest(approval, { optionId: "allow_session" })).toBe("allow_session");
+    expect(approvalOptionIdForTest(approval, { optionId: "unknown" })).toBe("");
   });
 });
 
@@ -3283,6 +3380,44 @@ describe("sanitizeMessagesForCache", () => {
   it("leaves messages without attachments or raw untouched", () => {
     const original: ChatMessage = { id: "m1", role: "user", text: "hi", timestamp: 1 };
     expect(sanitizeMessagesForCache([original])[0]).toBe(original);
+  });
+
+  it("does not persist transient agent runtime details in the recovery cache", () => {
+    const original: ChatMessage = {
+      id: "assistant-turn-a",
+      role: "assistant",
+      text: "完成",
+      timestamp: 1,
+      parts: [
+        { id: "plan", type: "agent_plan", event: { entries: [] } },
+        { id: "thought", type: "agent_thought", event: { text: "private reasoning" } },
+        { id: "usage", type: "agent_usage", event: { usage: { used: 10 } } },
+        {
+          id: "tool",
+          type: "tool_status",
+          event: { raw: { output: { large: "payload" } } },
+        },
+      ],
+    };
+
+    const [sanitized] = sanitizeMessagesForCache([original]);
+
+    expect(sanitized.parts?.map((part) => part.type)).toEqual(["agent_plan"]);
+  });
+
+  it("drops raw ACP tool payloads from the recovery cache", () => {
+    const original: ChatMessage = {
+      id: "agent-tool-call-1",
+      role: "tool",
+      text: "读取完成",
+      timestamp: 1,
+      raw: { output: { large: "payload" } },
+    };
+
+    const [sanitized] = sanitizeMessagesForCache([original]);
+
+    expect(sanitized.raw).toBeUndefined();
+    expect(sanitized.text).toBe("读取完成");
   });
 
   it("de-nests raw so it can't grow across load→save cycles", () => {

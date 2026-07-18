@@ -3982,7 +3982,37 @@ async def _stream_assistant_reply_hermes(
                     },
                 )
                 continue
-            if event.type == "tool_update":
+            if event.type == "thought_delta":
+                await _emit_chat_event_best_effort(
+                    on_event,
+                    {"type": "thought_delta", "text": str(event.text or "")},
+                )
+                continue
+            if event.type == "plan_update":
+                await _emit_chat_event_best_effort(
+                    on_event,
+                    {"type": "plan_update", "entries": event.entries or []},
+                )
+                continue
+            if event.type == "usage_update":
+                await _emit_chat_event_best_effort(
+                    on_event,
+                    {"type": "usage_update", "usage": event.usage or {}},
+                )
+                continue
+            if event.type == "permission_requested":
+                await _emit_chat_event_best_effort(
+                    on_event,
+                    {
+                        "type": "permission_requested",
+                        "request_id": event.request_id,
+                        "text": str(event.text or "需要操作授权"),
+                        "options": event.options or [],
+                        "tool_call": event.raw,
+                    },
+                )
+                continue
+            if event.type in {"tool_started", "tool_updated", "tool_update"}:
                 if event.raw is not None:
                     tool_chat_error = None
                     raw = event.raw
@@ -4058,9 +4088,20 @@ async def _stream_assistant_reply_hermes(
                     await _emit_chat_event_best_effort(
                         on_event,
                         {
-                            "type": "tool_update",
-                            "text": display_tool_text,
+                            "type": (
+                                event.type
+                                if event.type in {"tool_started", "tool_updated"}
+                                else "tool_updated"
+                            ),
+                            "text": str(event.text or "").strip(),
                             "name": current_tool_name,
+                            "call_id": event.call_id,
+                            "status": event.status or (
+                                "pending" if event.type == "tool_started" else "completed"
+                            ),
+                            "input": event.input,
+                            "output": event.output,
+                            "error": event.error,
                         },
                     )
                 continue

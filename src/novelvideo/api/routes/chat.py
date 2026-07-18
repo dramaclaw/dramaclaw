@@ -122,6 +122,12 @@ class ChatUiEventIn(BaseModel):
     event: dict[str, Any]
 
 
+class AgentPermissionResultIn(BaseModel):
+    scope: ChatScopePayload | None = None
+    request_id: str | int
+    option_id: str
+
+
 class FreezoneCanvasAgentsIn(BaseModel):
     project_id: str
     canvas_id: str
@@ -257,6 +263,31 @@ async def append_chat_ui_event(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "data": event}
+
+
+@router.post("/chat/permission-result")
+async def resolve_agent_permission(
+    payload: AgentPermissionResultIn,
+    user: dict = Depends(get_api_user),
+) -> dict[str, Any]:
+    scope = _scope_from_model(payload.scope)
+    if scope.kind in {"project", "freezone"}:
+        await _project_context_for_scope(user, scope)
+    option_id = payload.option_id.strip()
+    if not option_id:
+        raise HTTPException(status_code=400, detail="option_id is required")
+    from novelvideo.chat.hermes_pool import pool as hermes_pool
+
+    agent_profile = _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
+    resolved = await hermes_pool.resolve_permission(
+        str(user["username"]),
+        agent_profile,
+        payload.request_id,
+        option_id,
+    )
+    if not resolved:
+        raise HTTPException(status_code=404, detail="permission request is no longer pending")
+    return {"ok": True, "data": {"resolved": True}}
 
 
 @router.post("/chat/freezone-canvas-agents")
@@ -1888,18 +1919,75 @@ async def _stream_project_turn(
                 },
                 send_lock,
             )
-        elif event_type == "tool_update":
-            tool_name, tool_body = _tool_display_payload(event.get("text"), event.get("name"))
+        elif event_type == "thought_delta":
             await _send_json_best_effort(
                 websocket,
                 {
-                    "type": "tool.result",
+                    "type": "agent.thought.delta",
                     "scope": scope.to_dict(),
                     "turn_id": turn_id,
+                    "text": str(event.get("text") or ""),
+                },
+                send_lock,
+            )
+        elif event_type == "plan_update":
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "agent.plan.update",
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    "entries": event.get("entries") or [],
+                },
+                send_lock,
+            )
+        elif event_type == "usage_update":
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "agent.usage.update",
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    "usage": event.get("usage") or {},
+                },
+                send_lock,
+            )
+        elif event_type == "permission_requested":
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "agent.permission.requested",
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    "request_id": event.get("request_id"),
+                    "text": str(event.get("text") or "需要操作授权"),
+                    "options": event.get("options") or [],
+                    "tool_call": event.get("tool_call") or {},
+                },
+                send_lock,
+            )
+        elif event_type in {"tool_started", "tool_updated", "tool_update"}:
+            tool_name, tool_body = _tool_display_payload(event.get("text"), event.get("name"))
+            status = str(event.get("status") or (
+                "pending" if event_type == "tool_started" else "completed"
+            ))
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": (
+                        "agent.tool.started"
+                        if event_type == "tool_started"
+                        else "agent.tool.updated"
+                    ),
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    "call_id": event.get("call_id"),
                     "name": tool_name,
-                    "success": True,
-                    "result": {"text": tool_body},
-                    "error": None,
+                    "status": status,
+                    "text": tool_body,
+                    "input": event.get("input"),
+                    "output": event.get("output"),
+                    "error": event.get("error"),
                 },
                 send_lock,
             )
@@ -2113,7 +2201,54 @@ async def _stream_home_turn(
                     },
                     send_lock,
                 )
-            elif event.type == "tool_update":
+            elif event.type == "thought_delta":
+                await _send_json_best_effort(
+                    websocket,
+                    {
+                        "type": "agent.thought.delta",
+                        "scope": scope.to_dict(),
+                        "turn_id": turn_id,
+                        "text": str(event.text or ""),
+                    },
+                    send_lock,
+                )
+            elif event.type == "plan_update":
+                await _send_json_best_effort(
+                    websocket,
+                    {
+                        "type": "agent.plan.update",
+                        "scope": scope.to_dict(),
+                        "turn_id": turn_id,
+                        "entries": event.entries or [],
+                    },
+                    send_lock,
+                )
+            elif event.type == "usage_update":
+                await _send_json_best_effort(
+                    websocket,
+                    {
+                        "type": "agent.usage.update",
+                        "scope": scope.to_dict(),
+                        "turn_id": turn_id,
+                        "usage": event.usage or {},
+                    },
+                    send_lock,
+                )
+            elif event.type == "permission_requested":
+                await _send_json_best_effort(
+                    websocket,
+                    {
+                        "type": "agent.permission.requested",
+                        "scope": scope.to_dict(),
+                        "turn_id": turn_id,
+                        "request_id": event.request_id,
+                        "text": str(event.text or "需要操作授权"),
+                        "options": event.options or [],
+                        "tool_call": event.raw or {},
+                    },
+                    send_lock,
+                )
+            elif event.type in {"tool_started", "tool_updated", "tool_update"}:
                 if event.name:
                     tool_name = event.name
                 tool_text += str(event.text or "") + "\n"
@@ -2121,13 +2256,22 @@ async def _stream_home_turn(
                 await _send_json_best_effort(
                     websocket,
                     {
-                        "type": "tool.result",
+                        "type": (
+                            "agent.tool.started"
+                            if event.type == "tool_started"
+                            else "agent.tool.updated"
+                        ),
                         "scope": scope.to_dict(),
                         "turn_id": turn_id,
+                        "call_id": event.call_id,
                         "name": display_name,
-                        "success": True,
-                        "result": {"text": display_body},
-                        "error": None,
+                        "status": event.status or (
+                            "pending" if event.type == "tool_started" else "completed"
+                        ),
+                        "text": display_body,
+                        "input": event.input,
+                        "output": event.output,
+                        "error": event.error,
                     },
                     send_lock,
                 )

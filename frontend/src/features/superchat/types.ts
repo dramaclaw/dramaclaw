@@ -116,6 +116,22 @@ export type ModelEntry = {
   reasoning?: boolean;
 };
 
+export type AgentPlanEntry = {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  priority?: "low" | "medium" | "high" | string;
+};
+
+export type AgentToolStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "canceled"
+  | "error"
+  | string;
+
 export type SessionControlCommand =
   | "agents"
   | "compact"
@@ -164,6 +180,46 @@ export type ServerFrame =
       scope?: ChatScope;
       message?: unknown;
       turn_id?: string;
+    }
+  | {
+      type: "agent.thought.delta";
+      scope?: ChatScope;
+      turn_id?: string;
+      text?: string;
+    }
+  | {
+      type: "agent.plan.update";
+      scope?: ChatScope;
+      turn_id?: string;
+      entries?: AgentPlanEntry[];
+    }
+  | {
+      type: "agent.usage.update";
+      scope?: ChatScope;
+      turn_id?: string;
+      usage?: Record<string, unknown>;
+    }
+  | {
+      type: "agent.permission.requested";
+      scope?: ChatScope;
+      turn_id?: string;
+      request_id?: string | number;
+      text?: string;
+      options?: AgentPermissionOption[];
+      tool_call?: unknown;
+    }
+  | {
+      type: "agent.tool.started" | "agent.tool.updated";
+      scope?: ChatScope;
+      turn_id?: string;
+      call_id?: string | null;
+      name?: string;
+      status?: AgentToolStatus;
+      text?: string;
+      input?: unknown;
+      output?: unknown;
+      error?: unknown;
+      raw?: unknown;
     }
   | {
       type: "tool.result";
@@ -276,7 +332,10 @@ export type ChatMessagePart =
         | "canvas_approval"
         | "canvas_feedback"
         | "canvas_context"
-        | "tool_status";
+        | "tool_status"
+        | "agent_plan"
+        | "agent_thought"
+        | "agent_usage";
       event: unknown;
       seq?: number;
     };
@@ -309,7 +368,7 @@ export type ChatMessage = {
 
 export type ApprovalRequest = {
   id: string;
-  kind: "exec" | "plugin";
+  kind: "exec" | "plugin" | "agent";
   title: string;
   command?: string;
   description?: string;
@@ -319,6 +378,23 @@ export type ApprovalRequest = {
   agentId?: string | null;
   sessionKey?: string | null;
   expiresAtMs?: number;
+  requestId?: string | number;
+  turnId?: string;
+  scope?: ChatScope;
+  options?: AgentPermissionOption[];
+};
+
+export type ApprovalDecision =
+  | "allow-once"
+  | "allow-always"
+  | "deny"
+  | { optionId: string };
+
+export type AgentPermissionOption = {
+  optionId?: string;
+  option_id?: string;
+  kind?: string;
+  name?: string;
 };
 
 export type SuperChatSettings = {

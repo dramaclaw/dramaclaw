@@ -88,7 +88,7 @@ import {
   type UiSpec,
 } from "@/features/superchat/spec-extract";
 import type { ChatMessage, ChatMessagePart } from "@/features/superchat/types";
-import type { ApprovalRequest, ChatAttachment } from "@/features/superchat/types";
+import type { ApprovalDecision, ApprovalRequest, ChatAttachment } from "@/features/superchat/types";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import type { FormatCheck, UploadResult } from "@/lib/queries/ingest";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
@@ -401,9 +401,16 @@ function freezoneToolDisplay(message: ChatMessage): { title: string; description
 
 function freezoneToolStatus(message: ChatMessage): "running" | "done" | "failed" {
   const raw = toolRawRecord(message);
-  if (raw?.type === "tool.call") return "running";
+  const status = typeof raw?.status === "string" ? raw.status.toLowerCase() : "";
+  if (
+    raw?.type === "tool.call"
+    || raw?.type === "agent.tool.started"
+    || status === "pending"
+    || status === "in_progress"
+  ) return "running";
+  if (["failed", "error", "cancelled", "canceled"].includes(status)) return "failed";
   if (raw?.success === false || raw?.error) return "failed";
-  const result = raw?.result;
+  const result = raw?.result ?? raw?.output;
   if (result && typeof result === "object" && (result as Record<string, unknown>).ok === false) return "failed";
   return "done";
 }
@@ -1515,6 +1522,144 @@ function FreezoneToolActivityCard({ message }: { message: ChatMessage }) {
       )}
     </div>
   );
+}
+
+function genericToolTitle(message: ChatMessage): string {
+  const raw = toolRawRecord(message);
+  const name = typeof raw?.name === "string" ? raw.name.trim() : "";
+  if (!name) return "执行工具";
+  return name
+    .replace(/^freezone_/u, "")
+    .replace(/[_-]+/gu, " ")
+    .replace(/\b\w/gu, (value) => value.toUpperCase());
+}
+
+function AgentToolActivityCard({ message }: { message: ChatMessage }) {
+  if (freezoneToolDisplay(message)) return <FreezoneToolActivityCard message={message} />;
+  const raw = toolRawRecord(message);
+  const status = freezoneToolStatus(message);
+  const error = typeof raw?.error === "string"
+    ? raw.error.trim()
+    : raw?.error ? JSON.stringify(raw.error) : "";
+  const detail = error || (typeof raw?.text === "string" ? raw.text.trim() : "");
+  return (
+    <div
+      className={cn(
+        "w-full max-w-[86%] rounded-xl border px-3 py-2 text-sm",
+        status === "failed"
+          ? "border-red-400/20 bg-red-500/8 text-red-100"
+          : "border-white/[0.08] bg-white/[0.035] text-foreground",
+      )}
+    >
+      <div className="flex items-center gap-2">
+        {status === "running" ? (
+          <span className="text-muted-foreground"><DotsIndicator /></span>
+        ) : status === "failed" ? (
+          <AlertCircle className="size-3.5 text-red-400" />
+        ) : (
+          <CheckCircle2 className="size-3.5 text-emerald-400" />
+        )}
+        <span className="font-medium">{genericToolTitle(message)}</span>
+        <span className="text-xs text-muted-foreground">
+          {status === "running" ? "进行中" : status === "failed" ? "失败" : "完成"}
+        </span>
+      </div>
+      {detail && <div className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</div>}
+    </div>
+  );
+}
+
+function AgentPlanCard({ event }: { event: unknown }) {
+  const record = event && typeof event === "object" && !Array.isArray(event)
+    ? event as Record<string, unknown>
+    : {};
+  const entries = Array.isArray(record.entries)
+    ? record.entries.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)))
+    : [];
+  if (entries.length === 0) return null;
+  const completed = entries.filter((entry) => entry.status === "completed").length;
+  return (
+    <div className="w-full max-w-[86%] rounded-xl border border-white/[0.08] bg-white/[0.025] px-3 py-2.5 text-sm">
+      <div className="mb-2 flex items-center gap-2">
+        <ListTree className="size-3.5 text-primary" />
+        <span className="font-medium">执行计划</span>
+        <span className="ml-auto text-xs text-muted-foreground">{completed}/{entries.length}</span>
+      </div>
+      <div className="space-y-1.5">
+        {entries.map((entry, index) => {
+          const status = typeof entry.status === "string" ? entry.status : "pending";
+          const content = typeof entry.content === "string" ? entry.content : `步骤 ${index + 1}`;
+          return (
+            <div key={`${index}-${content}`} className="flex items-start gap-2 text-xs leading-5">
+              {status === "completed" ? (
+                <CheckCircle2 className="mt-1 size-3 shrink-0 text-emerald-400" />
+              ) : status === "in_progress" ? (
+                <span className="mt-1.5 size-2 shrink-0 animate-pulse rounded-full bg-primary" />
+              ) : (
+                <span className="mt-1.5 size-2 shrink-0 rounded-full border border-muted-foreground/50" />
+              )}
+              <span className={status === "completed" ? "text-muted-foreground" : "text-foreground/90"}>{content}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AgentThoughtCard({ event }: { event: unknown }) {
+  const text = event && typeof event === "object" && !Array.isArray(event)
+    && typeof (event as Record<string, unknown>).text === "string"
+    ? String((event as Record<string, unknown>).text).trim()
+    : "";
+  if (!text) return null;
+  return (
+    <details className="w-full max-w-[86%] rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-xs text-muted-foreground">
+      <summary className="cursor-pointer select-none font-medium">思考过程</summary>
+      <div className="mt-2 whitespace-pre-wrap break-words leading-5">{text}</div>
+    </details>
+  );
+}
+
+function AgentUsageCard({ event }: { event: unknown }) {
+  const usage = event && typeof event === "object" && !Array.isArray(event)
+    ? (event as Record<string, unknown>).usage
+    : null;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+  const values = Object.entries(usage as Record<string, unknown>)
+    .filter(([, value]) => typeof value === "string" || typeof value === "number")
+    .slice(0, 6);
+  if (values.length === 0) return null;
+  return (
+    <details className="w-full max-w-[86%] text-[11px] text-muted-foreground/75">
+      <summary className="cursor-pointer select-none">上下文用量</summary>
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+        {values.map(([key, value]) => <span key={key}>{key}: {String(value)}</span>)}
+      </div>
+    </details>
+  );
+}
+
+function agentActivityLabelFromMessage(message: ChatMessage | undefined): string | null {
+  if (!message?.parts?.length) return null;
+  for (const part of [...message.parts].reverse()) {
+    if (part.type === "tool_status") {
+      const toolMessage = part.event as ChatMessage;
+      if (freezoneToolStatus(toolMessage) !== "running") continue;
+      return `正在${freezoneToolDisplay(toolMessage)?.title ?? genericToolTitle(toolMessage)}`;
+    }
+    if (part.type === "agent_plan" && part.event && typeof part.event === "object" && !Array.isArray(part.event)) {
+      const entries = (part.event as Record<string, unknown>).entries;
+      if (!Array.isArray(entries)) continue;
+      const active = entries.find((entry) =>
+        Boolean(entry && typeof entry === "object" && !Array.isArray(entry) && (entry as Record<string, unknown>).status === "in_progress"),
+      );
+      if (active && typeof (active as Record<string, unknown>).content === "string") {
+        return `正在${String((active as Record<string, unknown>).content)}`;
+      }
+    }
+  }
+  return null;
 }
 
 function CanvasCommandPlanList({ plans }: { plans: CanvasCommandPlan[] | undefined }) {
@@ -5476,7 +5621,7 @@ const MessageBubble = memo(function MessageBubble({
           streaming={freezoneToolStatus(message) === "running"}
         />
         <div className="flex min-w-0 flex-1 justify-start">
-          <FreezoneToolActivityCard message={message} />
+          <AgentToolActivityCard message={message} />
         </div>
       </div>
     );
@@ -5682,7 +5827,16 @@ const MessageBubble = memo(function MessageBubble({
                   }
                   if (part.type === "tool_status") {
                     const toolMessage = part.event as ChatMessage;
-                    return <FreezoneToolActivityCard key={part.id} message={toolMessage} />;
+                    return <AgentToolActivityCard key={part.id} message={toolMessage} />;
+                  }
+                  if (part.type === "agent_plan") {
+                    return <AgentPlanCard key={part.id} event={part.event} />;
+                  }
+                  if (part.type === "agent_thought") {
+                    return <AgentThoughtCard key={part.id} event={part.event} />;
+                  }
+                  if (part.type === "agent_usage") {
+                    return <AgentUsageCard key={part.id} event={part.event} />;
                   }
                   return null;
                 })}
@@ -6204,12 +6358,18 @@ function ApprovalCard({
   onResolve,
 }: {
   approval: ApprovalRequest;
-  onResolve: (decision: "allow-once" | "allow-always" | "deny") => void;
+  onResolve: (decision: ApprovalDecision) => void;
 }) {
   const { t } = useTranslation();
   const remaining = approval.expiresAtMs
     ? Math.max(0, Math.ceil((approval.expiresAtMs - Date.now()) / 1000))
     : null;
+  const agentOptions = approval.kind === "agent"
+    ? (approval.options ?? []).flatMap((option) => {
+      const optionId = option.optionId ?? option.option_id;
+      return optionId ? [{ ...option, optionId }] : [];
+    })
+    : [];
 
   return (
     <div className="border-b border-amber-500/20 bg-amber-500/8 px-3 py-3">
@@ -6241,15 +6401,31 @@ function ApprovalCard({
         {approval.security && <div className="truncate">Security: {approval.security}</div>}
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button size="xs" onClick={() => onResolve("allow-once")}>
-          {t("aiAssistant.allowOnce")}
-        </Button>
-        <Button size="xs" variant="outline" onClick={() => onResolve("allow-always")}>
-          {t("aiAssistant.allowAlways")}
-        </Button>
-        <Button size="xs" variant="destructive" onClick={() => onResolve("deny")}>
-          {t("aiAssistant.deny")}
-        </Button>
+        {approval.kind === "agent" ? agentOptions.map((option) => {
+          const kind = String(option.kind ?? "").toLowerCase();
+          const destructive = kind.includes("reject") || kind.includes("deny");
+          const persistent = kind.includes("always");
+          return (
+            <Button
+              key={option.optionId}
+              size="xs"
+              variant={destructive ? "destructive" : persistent ? "outline" : "default"}
+              onClick={() => onResolve({ optionId: option.optionId })}
+            >
+              {option.name || option.optionId}
+            </Button>
+          );
+        }) : (<>
+          <Button size="xs" onClick={() => onResolve("allow-once")}>
+            {t("aiAssistant.allowOnce")}
+          </Button>
+          <Button size="xs" variant="outline" onClick={() => onResolve("allow-always")}>
+            {t("aiAssistant.allowAlways")}
+          </Button>
+          <Button size="xs" variant="destructive" onClick={() => onResolve("deny")}>
+            {t("aiAssistant.deny")}
+          </Button>
+        </>)}
       </div>
     </div>
   );
@@ -9819,6 +9995,13 @@ export function SuperChatPanel({
         && message.text.trim().length > 0,
     ),
   );
+  const activeAgentActivityLabel = agentActivityLabelFromMessage(
+    chat.activeTurnId
+      ? activeMessages.find(
+        (message) => message.role === "assistant" && message.turnId === chat.activeTurnId,
+      )
+      : undefined,
+  );
   const lastUserHasAssistantReply = Boolean(
     lastUserMessage?.turnId
     && activeMessages.some(
@@ -9859,6 +10042,17 @@ export function SuperChatPanel({
         messageHasSkillStudioUiEvent(message),
     );
     if (hasSkillStudioStatus) return null;
+    const hasAgentRuntimeActivity = activeMessages.some(
+      (message) =>
+        message.role === "assistant"
+        && message.turnId === turnId
+        && message.parts?.some((part) =>
+          part.type === "agent_plan"
+          || part.type === "agent_thought"
+          || part.type === "tool_status"
+        ),
+    );
+    if (hasAgentRuntimeActivity) return null;
     const hasContextActivity = (canvasContextActivitiesByMessageId[turnId]?.length ?? 0) > 0;
     const hasFeedback =
       (canvasCommandFeedbackByMessageId[turnId]?.length ?? 0) > 0 ||
@@ -11155,6 +11349,7 @@ export function SuperChatPanel({
           <div className={cn("relative mx-auto mb-2.5 h-7 w-full max-w-[760px]", isFreezoneLayout && "max-w-none")}>
             <ComposerWaitingStatus
               label={isFreezoneLayout ? t("aiAssistant.freezoneWaitingResponse") : t("aiAssistant.waitingResponse")}
+              activityLabel={activeAgentActivityLabel}
               visible={showWaitingIndicator}
               variant={isFreezoneLayout ? "freezone" : "default"}
             />

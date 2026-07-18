@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  ApprovalDecision,
   ApprovalRequest,
   ChatAttachment,
   ChatMessage,
@@ -308,7 +309,9 @@ export function sanitizeMessagesForCache(
   options: MessageCacheSanitizeOptions = {},
 ): ChatMessage[] {
   return messages.map((message) => {
-    const denestedRaw = denestRaw(message.raw);
+    const denestedRaw = message.role === "tool" && message.id.startsWith("agent-tool-")
+      ? undefined
+      : denestRaw(message.raw);
     const attachments = message.attachments?.length
       ? message.attachments.map((attachment) => {
           if (attachment.content === undefined) return attachment;
@@ -322,10 +325,21 @@ export function sanitizeMessagesForCache(
           return rest;
         })
       : message.attachments;
-    if (denestedRaw === message.raw && attachments === message.attachments) {
+    const parts = message.parts?.filter(
+      (part) =>
+        part.type !== "agent_thought"
+        && part.type !== "agent_usage"
+        && part.type !== "tool_status",
+    );
+    const sanitizedParts = parts?.length === message.parts?.length ? message.parts : parts;
+    if (
+      denestedRaw === message.raw
+      && attachments === message.attachments
+      && sanitizedParts === message.parts
+    ) {
       return message;
     }
-    return { ...message, raw: denestedRaw, attachments };
+    return { ...message, raw: denestedRaw, attachments, parts: sanitizedParts };
   });
 }
 
@@ -1076,9 +1090,21 @@ function buildToolMessage(kind: string, payload: unknown): ChatMessage {
       : typeof data.message === "string"
         ? data.message
         : kind;
-  const body = "result" in data ? resultText(data.result) : JSON.stringify(payload, null, 2);
+  const body =
+    typeof data.text === "string"
+      ? data.text
+      : "output" in data
+        ? resultText(data.output)
+        : "result" in data
+          ? resultText(data.result)
+          : JSON.stringify(payload, null, 2);
+  const callId = typeof data.call_id === "string" && data.call_id.trim()
+    ? data.call_id.trim()
+    : null;
   return {
-    id: `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: callId
+      ? `agent-tool-${callId}`
+      : `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     role: "tool",
     text: body ? `${label}\n\n${body}` : label,
     turnId: typeof data.turn_id === "string" ? data.turn_id : undefined,
@@ -1135,7 +1161,10 @@ function upsertToolMessage(messages: ChatMessage[], kind: string, payload: unkno
   if (!nextMessage.turnId) return sortMessages([...messages, nextMessage]);
 
   const existingIndex = messages.findIndex(
-    (message) => message.role === "tool" && message.turnId === nextMessage.turnId,
+    (message) => message.role === "tool" && (
+      message.id === nextMessage.id
+      || (!nextMessage.id.startsWith("agent-tool-") && message.turnId === nextMessage.turnId)
+    ),
   );
   if (existingIndex < 0) return sortMessages([...messages, nextMessage]);
 
@@ -1154,6 +1183,10 @@ function upsertToolMessage(messages: ChatMessage[], kind: string, payload: unkno
 }
 
 function toolStatusPartId(kind: string, payload: ServerFrame, turnId: string): string {
+  const callId = "call_id" in payload && typeof payload.call_id === "string"
+    ? payload.call_id.trim()
+    : "";
+  if (callId) return `tool_status:${turnId}:${callId}`;
   const name = "name" in payload && typeof payload.name === "string" ? payload.name : kind;
   return `tool_status:${turnId}:${kind}:${name}`;
 }
@@ -1165,6 +1198,101 @@ function toolStatusPart(kind: string, payload: ServerFrame, turnId: string): Cha
     event: buildToolMessage(kind, payload),
   };
 }
+
+function agentPlanPart(payload: ServerFrame, turnId: string): ChatMessagePart {
+  return {
+    id: `agent_plan:${turnId}`,
+    type: "agent_plan",
+    event: payload,
+  };
+}
+
+function agentThoughtPart(payload: ServerFrame, turnId: string): ChatMessagePart {
+  return {
+    id: `agent_thought:${turnId}`,
+    type: "agent_thought",
+    event: payload,
+  };
+}
+
+function agentUsagePart(payload: ServerFrame, turnId: string): ChatMessagePart {
+  return {
+    id: `agent_usage:${turnId}`,
+    type: "agent_usage",
+    event: payload,
+  };
+}
+
+function upsertRuntimePartInMessages(
+  messages: ChatMessage[],
+  turnId: string,
+  part: ChatMessagePart,
+): ChatMessage[] {
+  const existingIndex = messages.findIndex(
+    (message) => message.role === "assistant" && message.turnId === turnId,
+  );
+  if (existingIndex >= 0) {
+    return sortMessages(messages.map((message, index) =>
+      index === existingIndex
+        ? {
+          ...message,
+          parts: assistantPartsWithPart(message.parts, part),
+          timestamp: Date.now(),
+        }
+        : message,
+    ));
+  }
+  return sortMessages([
+    ...messages,
+    {
+      id: `assistant-${turnId}`,
+      role: "assistant",
+      text: "",
+      parts: [part],
+      turnId,
+      timestamp: Date.now(),
+    },
+  ]);
+}
+
+export const toolStatusPartForTest = toolStatusPart;
+export const upsertRuntimePartInMessagesForTest = upsertRuntimePartInMessages;
+
+function approvalOptionId(
+  approval: ApprovalRequest,
+  decision: ApprovalDecision,
+): string {
+  const explicitlySelectedId = typeof decision === "object" ? decision.optionId.trim() : "";
+  const options = approval.options ?? [];
+  const optionIdFor = (option: (typeof options)[number]) => option.optionId ?? option.option_id ?? "";
+  if (typeof decision === "object") {
+    return options.some((option) => optionIdFor(option) === explicitlySelectedId)
+      ? explicitlySelectedId
+      : "";
+  }
+  const preferredIds = decision === "allow-once"
+    ? ["allow_once", "allow-once"]
+    : decision === "allow-always"
+      ? ["allow_always", "allow-always"]
+      : decision === "deny"
+        ? ["deny", "reject_once", "reject-once", "deny_always", "reject_always", "reject-always"]
+        : [];
+  const preferredKinds = decision === "allow-once"
+    ? ["allow_once", "allow-once"]
+    : decision === "allow-always"
+      ? ["allow_always", "allow-always", "allow_session", "allow-session"]
+      : decision === "deny"
+        ? ["reject_once", "reject-once", "deny", "reject_always", "reject-always"]
+        : [];
+  const selected = options.find((option) => preferredIds.includes(optionIdFor(option)))
+    ?? options.find((option) => preferredKinds.includes(String(option.kind ?? "")))
+    ?? (decision === "deny"
+      ? options.find((option) => /reject|deny/i.test(String(option.kind ?? option.name ?? "")))
+      : options.find((option) => /allow/i.test(String(option.kind ?? option.name ?? ""))));
+  return selected ? optionIdFor(selected) : "";
+}
+
+export const approvalOptionIdForTest = approvalOptionId;
 
 function dispatchCanvasCommandFrame(payload: ServerFrame, anchorTextPrefix?: string | null): void {
   if (typeof window === "undefined" || payload.type !== "canvas.command") return;
@@ -1266,7 +1394,11 @@ function canvasContextRequestFromToolCall(payload: ServerFrame): {
   };
   canvasId?: string | null;
 } | null {
-  if (payload.type !== "tool.call" || typeof payload.name !== "string") return null;
+  if (
+    payload.type !== "tool.call"
+    && payload.type !== "agent.tool.started"
+  ) return null;
+  if (typeof payload.name !== "string") return null;
   const requestType = FREEZONE_CANVAS_CONTEXT_TOOL_REQUEST_TYPES[payload.name];
   if (!requestType) return null;
 
@@ -1389,6 +1521,7 @@ export function useSuperChat({
   const [busy, setBusy] = useState(() => Boolean(initialScopeSnapshot.activeTurnId));
   const [activeTurnId, setActiveTurnId] = useState<string | null>(initialScopeSnapshot.activeTurnId);
   const streamTextRef = useRef("");
+  const thoughtTextByTurnRef = useRef<Map<string, string>>(new Map());
   const messagesRef = useRef<ChatMessage[]>(initialScopeSnapshot.cachedMessages);
   const activeTurnIdRef = useRef<string | null>(initialScopeSnapshot.activeTurnId);
   const pendingClientTurnIdRef = useRef<string | null>(null);
@@ -1478,7 +1611,14 @@ export function useSuperChat({
     parts: ChatMessagePart[] | undefined,
     text?: string,
   ) => {
-    const persistableParts = assistantPartsForPersistence(parts, text);
+    const persistableParts = assistantPartsForPersistence(
+      parts?.filter((part) =>
+        part.type !== "agent_thought"
+        && part.type !== "agent_usage"
+        && part.type !== "tool_status",
+      ),
+      text,
+    );
     if (!persistableParts?.some((part) => part.type !== "text")) return;
     void api.post("api/v1/chat/ui-events", {
       json: {
@@ -1598,6 +1738,21 @@ export function useSuperChat({
   }, [markTurnInactive, persistAssistantMessageParts]);
 
   const handleFrame = useCallback((frame: ServerFrame) => {
+    const placeRuntimePart = (turnId: string, part: ChatMessagePart) => {
+      if (!frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
+        const remoteScopeKey = frameScopeSessionKey(frame);
+        if (remoteScopeKey) {
+          saveActiveTurn(remoteScopeKey, turnId);
+          updateCachedMessagesForScope(remoteScopeKey, (current) =>
+            upsertRuntimePartInMessages(current, turnId, part),
+          );
+        }
+        return;
+      }
+      markTurnActive(turnId);
+      upsertAssistantMessagePart({ turnId }, part);
+    };
+
     switch (frame.type) {
       case "scope.changed": {
         setConnected(true);
@@ -1779,6 +1934,107 @@ export function useSuperChat({
         });
         break;
       }
+      case "agent.thought.delta": {
+        const turnId = typeof frame.turn_id === "string" && frame.turn_id.trim()
+          ? frame.turn_id
+          : activeTurnIdRef.current;
+        const next = typeof frame.text === "string" ? frame.text : "";
+        if (!turnId || !next) break;
+        const eventScopeKey = frameScopeSessionKey(frame) ?? scopeKey;
+        const thoughtKey = `${eventScopeKey}:${turnId}`;
+        const accumulated = `${thoughtTextByTurnRef.current.get(thoughtKey) ?? ""}${next}`;
+        thoughtTextByTurnRef.current.set(thoughtKey, accumulated);
+        placeRuntimePart(
+          turnId,
+          agentThoughtPart({ ...frame, text: accumulated }, turnId),
+        );
+        break;
+      }
+      case "agent.plan.update": {
+        const turnId = typeof frame.turn_id === "string" && frame.turn_id.trim()
+          ? frame.turn_id
+          : activeTurnIdRef.current;
+        if (!turnId) break;
+        placeRuntimePart(turnId, agentPlanPart(frame, turnId));
+        break;
+      }
+      case "agent.usage.update": {
+        const turnId = typeof frame.turn_id === "string" && frame.turn_id.trim()
+          ? frame.turn_id
+          : activeTurnIdRef.current;
+        if (!turnId) break;
+        placeRuntimePart(turnId, agentUsagePart(frame, turnId));
+        break;
+      }
+      case "agent.permission.requested": {
+        const requestId = typeof frame.request_id === "string" || typeof frame.request_id === "number"
+          ? frame.request_id
+          : undefined;
+        if (requestId === undefined) break;
+        const requestScope = frameScope(frame) ?? desiredScopeRef.current;
+        const toolCall = recordValue(frame.tool_call) ?? {};
+        const rawInput = recordValue(toolCall.rawInput) ?? recordValue(toolCall.input);
+        const command = typeof toolCall.rawInput === "string"
+          ? toolCall.rawInput
+          : typeof toolCall.input === "string"
+            ? toolCall.input
+            : typeof rawInput?.command === "string"
+              ? rawInput.command
+              : undefined;
+        const description = typeof toolCall.description === "string"
+          ? toolCall.description
+          : typeof rawInput?.description === "string"
+            ? rawInput.description
+            : undefined;
+        const approvalId = `agent-permission:${scopeSessionKey(requestScope)}:${String(requestId)}`;
+        const approval: ApprovalRequest = {
+          id: approvalId,
+          kind: "agent",
+          title: typeof frame.text === "string" && frame.text.trim()
+            ? frame.text
+            : typeof toolCall.title === "string" && toolCall.title.trim()
+              ? toolCall.title
+              : "需要操作授权",
+          command,
+          description,
+          requestId,
+          turnId: typeof frame.turn_id === "string" ? frame.turn_id : undefined,
+          scope: requestScope,
+          options: Array.isArray(frame.options) ? frame.options : [],
+          expiresAtMs: Date.now() + 60_000,
+        };
+        setApprovals((current) => [
+          ...current.filter((item) => item.id !== approvalId),
+          approval,
+        ]);
+        break;
+      }
+      case "agent.tool.started":
+      case "agent.tool.updated": {
+        const turnId = typeof frame.turn_id === "string" && frame.turn_id.trim()
+          ? frame.turn_id
+          : activeTurnIdRef.current;
+        if (!turnId || cancelledTurnIdsRef.current.has(turnId)) break;
+        if (frame.type === "agent.tool.started") {
+          dispatchCanvasContextRequestFrame(frame);
+        }
+        if (settings.showToolEvents) {
+          if (frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
+            setMessages((current) => upsertToolMessage(current, frame.type, frame));
+          } else {
+            const remoteScopeKey = frameScopeSessionKey(frame);
+            if (remoteScopeKey) {
+              updateCachedMessagesForScope(remoteScopeKey, (current) =>
+                upsertToolMessage(current, frame.type, frame),
+              );
+            }
+          }
+        }
+        if (!(typeof frame.name === "string" && EXECUTABLE_HIDDEN_TOOL_NAMES.has(frame.name))) {
+          placeRuntimePart(turnId, toolStatusPart(frame.type, frame, turnId));
+        }
+        break;
+      }
       case "tool.call":
         if (
           typeof frame.turn_id === "string"
@@ -1920,7 +2176,12 @@ export function useSuperChat({
         );
         break;
       }
-      case "chat.done":
+      case "chat.done": {
+        const completedTurnId =
+          typeof frame.turn_id === "string" && frame.turn_id.trim() ? frame.turn_id : null;
+        if (completedTurnId) {
+          setApprovals((current) => current.filter((approval) => approval.turnId !== completedTurnId));
+        }
         if (!frameMatchesCurrentScope(frame, desiredScopeRef.current)) {
           const remoteScopeKey = frameScopeSessionKey(frame);
           const turnId = typeof frame.turn_id === "string" ? frame.turn_id : null;
@@ -1935,8 +2196,10 @@ export function useSuperChat({
           markTurnInactive(frame.turn_id);
           break;
         }
-        const completedTurnId =
-          typeof frame.turn_id === "string" && frame.turn_id.trim() ? frame.turn_id : null;
+        if (completedTurnId) {
+          const eventScopeKey = frameScopeSessionKey(frame) ?? scopeKey;
+          thoughtTextByTurnRef.current.delete(`${eventScopeKey}:${completedTurnId}`);
+        }
         finalizeStream();
         if (completedTurnId) {
           setMessages((current) => {
@@ -1953,6 +2216,7 @@ export function useSuperChat({
           });
         }
         break;
+      }
       case "project.created":
         setMessages((current) => [...current, buildToolMessage(frame.type, frame)]);
         break;
@@ -2225,9 +2489,43 @@ export function useSuperChat({
     }
   }, [markTurnInactive]);
 
-  const resolveApproval = useCallback((_approval: ApprovalRequest, _decision: "allow-once" | "allow-always" | "deny") => {
-    setApprovals([]);
+  const resolveApproval = useCallback((approval: ApprovalRequest, decision: ApprovalDecision) => {
+    if (approval.kind !== "agent" || approval.requestId === undefined) {
+      setApprovals((current) => current.filter((item) => item.id !== approval.id));
+      return;
+    }
+    const optionId = approvalOptionId(approval, decision);
+    if (!optionId) {
+      setError("Agent 没有提供可用的授权选项");
+      return;
+    }
+    void api.post("api/v1/chat/permission-result", {
+      json: {
+        scope: approval.scope ?? desiredScopeRef.current,
+        request_id: approval.requestId,
+        option_id: optionId,
+      },
+    }).then(() => {
+      setApprovals((current) => current.filter((item) => item.id !== approval.id));
+    }).catch(() => {
+      setError("授权请求已失效，请让虾导重新执行该操作");
+    });
   }, []);
+
+  useEffect(() => {
+    const nextExpiry = approvals.reduce<number | null>((earliest, approval) => {
+      if (!approval.expiresAtMs) return earliest;
+      return earliest === null ? approval.expiresAtMs : Math.min(earliest, approval.expiresAtMs);
+    }, null);
+    if (nextExpiry === null) return;
+    const timeout = window.setTimeout(() => {
+      const now = Date.now();
+      setApprovals((current) => current.filter(
+        (approval) => !approval.expiresAtMs || approval.expiresAtMs > now,
+      ));
+    }, Math.max(0, nextExpiry - Date.now()) + 25);
+    return () => window.clearTimeout(timeout);
+  }, [approvals]);
 
   const refreshRelayInstances = useCallback(() => {
     setRelayInstances([]);
@@ -2308,7 +2606,9 @@ export function useSuperChat({
 
   return {
     abort,
-    approvals,
+    approvals: approvals.filter(
+      (approval) => !approval.scope || scopeMatches(approval.scope, desiredScope),
+    ),
     activeTurnId,
     busy,
     connected,

@@ -65,6 +65,24 @@ describe("ComposerWaitingStatus", () => {
     expect(screen.getByText("Understanding the request")).toHaveClass("opacity-100");
   });
 
+  it("shows a live agent activity instead of rotating placeholder text", () => {
+    render(
+      <ComposerWaitingStatus
+        label="Waiting"
+        activityLabel="正在读取画布资产"
+        visible
+      />,
+    );
+
+    act(() => vi.advanceTimersByTime(100));
+
+    expect(screen.getByLabelText("正在读取画布资产")).toBeInTheDocument();
+    expect(screen.queryByText("Understanding the request")).not.toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(screen.getByLabelText("正在读取画布资产")).toBeInTheDocument();
+  });
+
   it("settles on the long-wait label without changing the wave speed", () => {
     const { container } = render(<ComposerWaitingStatus label="Waiting" visible />);
 

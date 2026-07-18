@@ -10,11 +10,31 @@ from typing import Any, AsyncIterator, Literal
 
 @dataclass(slots=True)
 class ChatBackendEvent:
-    type: Literal["thread_started", "assistant_delta", "tool_update", "complete"]
+    type: Literal[
+        "thread_started",
+        "assistant_delta",
+        "thought_delta",
+        "plan_update",
+        "tool_started",
+        "tool_updated",
+        "tool_update",
+        "permission_requested",
+        "usage_update",
+        "complete",
+    ]
     thread_id: str | None = None
     turn_id: str | None = None
     text: str | None = None
     name: str | None = None
+    call_id: str | None = None
+    status: str | None = None
+    input: Any | None = None
+    output: Any | None = None
+    error: Any | None = None
+    request_id: str | int | None = None
+    options: list[dict[str, Any]] | None = None
+    entries: list[dict[str, Any]] | None = None
+    usage: dict[str, Any] | None = None
     raw: Any | None = None
 
 

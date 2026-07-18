@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 import yaml
 
@@ -37,6 +41,25 @@ def _dramaclaw_provider(config: dict) -> dict:
         for item in config["custom_providers"]
         if item.get("name") == "dramaclaw"
     )
+
+
+def _hermes_thread() -> hermes_sdk.HermesSdkThread:
+    return hermes_sdk.HermesSdkThread(
+        cli_path=Path("hermes"),
+        cwd=Path("."),
+        env={},
+        model=None,
+        username="admin",
+        session_id="session-a",
+    )
+
+
+def _session_update(update: dict) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {"sessionId": "session-a", "update": update},
+    }
 
 
 @pytest.fixture
@@ -208,6 +231,202 @@ def test_hermes_detects_content_filter_finish_reason():
     }
 
     assert hermes_sdk._has_content_filter_signal(payload)
+
+
+def test_hermes_translates_thought_plan_and_usage_updates():
+    thread = _hermes_thread()
+
+    thought = thread._translate_notification(
+        _session_update(
+            {
+                "sessionUpdate": "agent_thought_chunk",
+                "content": {"type": "text", "text": "分析画布结构"},
+            }
+        ),
+        "turn-a",
+    )
+    plan = thread._translate_notification(
+        _session_update(
+            {
+                "sessionUpdate": "plan",
+                "entries": [
+                    {"content": "读取资产", "status": "completed", "priority": "medium"},
+                    {"content": "生成分镜", "status": "in_progress", "priority": "high"},
+                ],
+            }
+        ),
+        "turn-a",
+    )
+    usage = thread._translate_notification(
+        _session_update(
+            {"sessionUpdate": "usage_update", "used": 128, "size": 4096}
+        ),
+        "turn-a",
+    )
+
+    assert thought is not None
+    assert thought.type == "thought_delta"
+    assert thought.text == "分析画布结构"
+    assert plan is not None
+    assert plan.type == "plan_update"
+    assert plan.entries == [
+        {"content": "读取资产", "status": "completed", "priority": "medium"},
+        {"content": "生成分镜", "status": "in_progress", "priority": "high"},
+    ]
+    assert usage is not None
+    assert usage.type == "usage_update"
+    assert usage.usage == {"used": 128, "size": 4096}
+
+
+def test_hermes_preserves_tool_call_identity_across_lifecycle_updates():
+    thread = _hermes_thread()
+    tool_started = thread._translate_notification(
+        _session_update(
+            {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "call-1",
+                "title": "read_file: storyboard.json",
+                "status": "pending",
+                "rawInput": {"path": "storyboard.json"},
+            }
+        ),
+        "turn-a",
+    )
+    tool_completed = thread._translate_notification(
+        _session_update(
+            {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-1",
+                "status": "completed",
+                "rawOutput": {"ok": True},
+            }
+        ),
+        "turn-a",
+    )
+
+    assert tool_started is not None
+    assert tool_started.type == "tool_started"
+    assert tool_started.call_id == "call-1"
+    assert tool_started.name == "read_file"
+    assert tool_started.input == {"path": "storyboard.json"}
+    assert tool_completed is not None
+    assert tool_completed.type == "tool_updated"
+    assert tool_completed.call_id == "call-1"
+    assert tool_completed.name == "read_file"
+    assert tool_completed.input == {"path": "storyboard.json"}
+    assert tool_completed.output == {"ok": True}
+    assert tool_completed.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_hermes_permission_request_round_trip_uses_selected_acp_option():
+    class _Writer:
+        def __init__(self) -> None:
+            self.data = bytearray()
+
+        def write(self, value: bytes) -> None:
+            self.data.extend(value)
+
+        async def drain(self) -> None:
+            return None
+
+    thread = _hermes_thread()
+    writer = _Writer()
+    thread._proc = SimpleNamespace(stdin=writer)
+    event = thread._translate_notification(
+        {
+            "jsonrpc": "2.0",
+            "id": 71,
+            "method": "session/request_permission",
+            "params": {
+                "sessionId": "session-a",
+                "toolCall": {
+                    "title": "运行媒体探测",
+                    "rawInput": "ffprobe clip.mp4",
+                },
+                "options": [
+                    {"optionId": "allow-1", "kind": "allow_once", "name": "允许一次"},
+                    {"optionId": "deny-1", "kind": "reject_once", "name": "拒绝"},
+                ],
+            },
+        },
+        "turn-a",
+    )
+
+    assert event is not None
+    assert event.type == "permission_requested"
+    assert event.request_id == 71
+    assert event.text == "运行媒体探测"
+    assert await thread.resolve_permission(71, "allow-1") is True
+    assert json.loads(writer.data.decode("utf-8")) == {
+        "jsonrpc": "2.0",
+        "id": 71,
+        "result": {"outcome": {"outcome": "selected", "optionId": "allow-1"}},
+    }
+    assert await thread.resolve_permission(71, "allow-1") is False
+
+
+@pytest.mark.asyncio
+async def test_hermes_rejects_expired_permission_response(monkeypatch):
+    class _Writer:
+        def __init__(self) -> None:
+            self.data = bytearray()
+
+        def write(self, value: bytes) -> None:
+            self.data.extend(value)
+
+        async def drain(self) -> None:
+            return None
+
+    now = [100.0]
+    monkeypatch.setattr(hermes_sdk.time, "monotonic", lambda: now[0])
+    thread = _hermes_thread()
+    writer = _Writer()
+    thread._proc = SimpleNamespace(stdin=writer)
+    event = thread._translate_notification(
+        {
+            "jsonrpc": "2.0",
+            "id": 72,
+            "method": "session/request_permission",
+            "params": {
+                "sessionId": "session-a",
+                "toolCall": {"title": "运行命令"},
+                "options": [
+                    {"optionId": "allow_once", "kind": "allow_once", "name": "Allow once"}
+                ],
+            },
+        },
+        "turn-expired",
+    )
+
+    assert event is not None
+    now[0] += hermes_sdk.PERMISSION_REQUEST_TIMEOUT_SECONDS + 1
+    assert await thread.resolve_permission(72, "allow_once") is False
+    assert writer.data == b""
+    assert thread._pending_permissions == {}
+
+
+def test_hermes_clears_pending_permissions_for_completed_turn():
+    thread = _hermes_thread()
+    event = thread._translate_notification(
+        {
+            "jsonrpc": "2.0",
+            "id": 73,
+            "method": "session/request_permission",
+            "params": {
+                "sessionId": "session-a",
+                "toolCall": {"title": "运行命令"},
+                "options": [
+                    {"optionId": "deny", "kind": "reject_once", "name": "Deny"}
+                ],
+            },
+        },
+        "turn-complete",
+    )
+
+    assert event is not None
+    thread._clear_pending_permissions_for_turn("turn-complete")
+    assert thread._pending_permissions == {}
 
 
 def test_hermes_detects_content_filter_error_text():

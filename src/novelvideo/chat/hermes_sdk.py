@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -69,6 +70,7 @@ FREEZONE_TURN_TOOL_CALL_LIMIT = max(
     80,
 )
 TOOL_DETAIL_LIMIT = 1600
+PERMISSION_REQUEST_TIMEOUT_SECONDS = 60.0
 CONTENT_FILTER_MESSAGE = (
     "本轮回复被模型网关的内容安全过滤拦截了，虾导没有拿到可用输出。"
     "请把需求拆得更具体，避免一次性要求完成整集或包含敏感/违规描述；"
@@ -137,6 +139,13 @@ _TOOL_DETAIL_FIELDS = (
     ("preview", "预览"),
     ("content", "内容"),
 )
+
+
+def _first_present(mapping: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return None
 
 
 def _split_tool_title(title: object) -> tuple[str, str]:
@@ -360,6 +369,11 @@ class HermesSdkThread:
         self._req_counter = 0
         self._closed = False
         self._initialized = False
+        self._tool_names_by_call_id: dict[str, str] = {}
+        self._tool_inputs_by_call_id: dict[str, Any] = {}
+        self._pending_permissions: dict[
+            str, tuple[str | int, set[str], float, str]
+        ] = {}
         # Serializes the spawn→initialize→session prologue so a background
         # warm() and the first real stream() can't interleave on the shared
         # JSON-RPC stdio. Whichever runs first pays the cold start; the other
@@ -379,6 +393,45 @@ class HermesSdkThread:
         self._proc.stdin.write(line.encode("utf-8"))
         await self._proc.stdin.drain()
         return req_id
+
+    async def resolve_permission(self, request_id: str | int, option_id: str) -> bool:
+        """Resolve one server-initiated ACP permission request."""
+        if self._proc is None or self._proc.stdin is None:
+            return False
+        key = str(request_id)
+        pending = self._pending_permissions.get(key)
+        if pending is None:
+            return False
+        original_id, allowed_options, expires_at, _turn_id = pending
+        if time.monotonic() >= expires_at:
+            self._pending_permissions.pop(key, None)
+            return False
+        if option_id not in allowed_options:
+            return False
+        response = {
+            "jsonrpc": "2.0",
+            "id": original_id,
+            "result": {
+                "outcome": {
+                    "outcome": "selected",
+                    "optionId": option_id,
+                }
+            },
+        }
+        self._proc.stdin.write((json.dumps(response) + "\n").encode("utf-8"))
+        await self._proc.stdin.drain()
+        self._pending_permissions.pop(key, None)
+        return True
+
+    def _clear_pending_permissions_for_turn(self, turn_id: str) -> None:
+        stale = [
+            key
+            for key, (_request_id, _options, _expires_at, pending_turn_id)
+            in self._pending_permissions.items()
+            if pending_turn_id == turn_id
+        ]
+        for key in stale:
+            self._pending_permissions.pop(key, None)
 
     async def _spawn(self) -> None:
         """Launch the hermes acp subprocess inside our sandbox."""
@@ -515,13 +568,13 @@ class HermesSdkThread:
             raise RuntimeError("HermesSdkThread is closed")
 
         await self._prepare()
+        turn_id = uuid.uuid4().hex
         try:
             assert self._proc is not None and self._proc.stdout is not None
             # Compose prompt blocks (ACP supports rich content; we send plain text).
             text = prompt
             if current_project:
                 text = f"[CONTEXT: current_project={current_project}]\n\n{prompt}"
-            turn_id = uuid.uuid4().hex
             yield ChatBackendEvent(type="thread_started", thread_id=self.id, turn_id=turn_id)
 
             req_id = await self._send(
@@ -534,7 +587,7 @@ class HermesSdkThread:
             )
 
             # Read until we see the final session/prompt response (id matches).
-            # Along the way emit assistant_delta / tool_update for any
+            # Along the way emit assistant/tool/plan/thought/usage events for any
             # session/update notifications hermes sends.
             assert self._proc.stdout is not None
             deadline = asyncio.get_event_loop().time() + STREAM_READ_TIMEOUT
@@ -593,7 +646,7 @@ class HermesSdkThread:
                 # ACP notifications carry assistant chunks, tool calls, etc.
                 ev = self._translate_notification(msg, turn_id)
                 if ev is not None:
-                    if ev.type == "tool_update" and (ev.raw or {}).get("sessionUpdate") == "tool_call":
+                    if ev.type == "tool_started":
                         tool_call_count += 1
                         tool_name = str(ev.name or "").strip()
                         active_tool_name = tool_name
@@ -659,7 +712,7 @@ class HermesSdkThread:
                             )
                             return
                     elif (
-                        ev.type == "tool_update"
+                        ev.type == "tool_updated"
                         and (ev.raw or {}).get("sessionUpdate") == "tool_call_update"
                         and _should_mark_first_write_failed(
                             first_write_tool,
@@ -672,7 +725,9 @@ class HermesSdkThread:
         finally:
             # Don't kill subprocess here — caller may want to send more prompts.
             # HermesPool handles cleanup on idle / shutdown.
-            pass
+            self._clear_pending_permissions_for_turn(turn_id)
+            self._tool_names_by_call_id.clear()
+            self._tool_inputs_by_call_id.clear()
 
     def _translate_notification(self, msg: dict, turn_id: str) -> ChatBackendEvent | None:
         """Map ACP session/update notifications to ChatBackendEvent.
@@ -682,11 +737,41 @@ class HermesSdkThread:
                 "sessionId": "...", "update": {<one of many variants>}
             }}
 
-        We surface text deltas as ``assistant_delta`` and tool calls as
-        ``tool_update``.  Other variants (plans, modes, etc.) are ignored
-        for the MVP.
+        Preserve ACP's structured runtime information so clients can render
+        plans, reasoning, tool lifecycle state, and context usage without
+        parsing presentation text.
         """
         method = msg.get("method")
+        if method == "session/request_permission":
+            params = msg.get("params") or {}
+            request_id = msg.get("id")
+            raw_options = params.get("options")
+            options = [option for option in raw_options if isinstance(option, dict)] \
+                if isinstance(raw_options, list) else []
+            allowed_options = {
+                str(option.get("optionId") or option.get("option_id") or "").strip()
+                for option in options
+            }
+            allowed_options.discard("")
+            if request_id is None or not allowed_options:
+                return None
+            self._pending_permissions[str(request_id)] = (
+                request_id,
+                allowed_options,
+                time.monotonic() + PERMISSION_REQUEST_TIMEOUT_SECONDS,
+                turn_id,
+            )
+            tool_call = params.get("toolCall") or params.get("tool_call") or {}
+            title = tool_call.get("title") if isinstance(tool_call, dict) else None
+            return ChatBackendEvent(
+                type="permission_requested",
+                thread_id=self.id,
+                turn_id=turn_id,
+                text=str(title or "需要操作授权"),
+                request_id=request_id,
+                options=options,
+                raw=tool_call,
+            )
         if method != "session/update":
             return None
         update = (msg.get("params") or {}).get("update") or {}
@@ -699,26 +784,93 @@ class HermesSdkThread:
                 type="assistant_delta", thread_id=self.id, turn_id=turn_id,
                 text=text or "",
             )
+        if kind == "agent_thought_chunk":
+            content = update.get("content") or {}
+            text = content.get("text") if isinstance(content, dict) else None
+            return ChatBackendEvent(
+                type="thought_delta", thread_id=self.id, turn_id=turn_id,
+                text=text or "", raw=update,
+            )
+        if kind == "plan":
+            raw_entries = update.get("entries")
+            entries = [entry for entry in raw_entries if isinstance(entry, dict)] \
+                if isinstance(raw_entries, list) else []
+            return ChatBackendEvent(
+                type="plan_update", thread_id=self.id, turn_id=turn_id,
+                entries=entries, raw=update,
+            )
         if kind == "tool_call":
             title = update.get("title") or update.get("kind") or "tool"
             tool_name, _body = _split_tool_title(title)
+            tool_input = _first_present(update, "rawInput", "raw_input")
+            call_id = str(
+                update.get("toolCallId")
+                or update.get("tool_call_id")
+                or update.get("id")
+                or ""
+            ).strip() or None
+            if call_id:
+                self._tool_names_by_call_id[call_id] = tool_name
+                self._tool_inputs_by_call_id[call_id] = tool_input
             return ChatBackendEvent(
-                type="tool_update", thread_id=self.id, turn_id=turn_id,
+                type="tool_started", thread_id=self.id, turn_id=turn_id,
                 text=_format_tool_call_text(update, title),
                 name=tool_name,
+                call_id=call_id,
+                status=str(update.get("status") or "pending"),
+                input=tool_input,
                 raw=update,
             )
         if kind == "tool_call_update":
-            status = update.get("status")
+            status = str(update.get("status") or "updated")
+            call_id = str(
+                update.get("toolCallId")
+                or update.get("tool_call_id")
+                or update.get("id")
+                or ""
+            ).strip() or None
+            update_title = update.get("title") or update.get("kind")
+            tool_name = self._tool_names_by_call_id.get(call_id or "")
+            if not tool_name and update_title:
+                tool_name, _body = _split_tool_title(update_title)
+            tool_input = self._tool_inputs_by_call_id.get(call_id or "")
+            update_input = _first_present(update, "rawInput", "raw_input")
+            tool_output = _first_present(
+                update, "rawOutput", "raw_output", "result", "content"
+            )
+            tool_error = update.get("error")
+            if tool_error is None and isinstance(tool_output, dict):
+                tool_error = tool_output.get("error")
+            if call_id and status.lower() in {
+                "completed", "failed", "cancelled", "canceled", "error"
+            }:
+                self._tool_names_by_call_id.pop(call_id, None)
+                self._tool_inputs_by_call_id.pop(call_id, None)
             return ChatBackendEvent(
-                type="tool_update", thread_id=self.id, turn_id=turn_id,
-                text=f"  {status or 'updated'}",
+                type="tool_updated", thread_id=self.id, turn_id=turn_id,
+                text=f"  {status}",
+                name=tool_name,
+                call_id=call_id,
+                status=status,
+                input=update_input if update_input is not None else tool_input,
+                output=tool_output,
+                error=tool_error,
                 raw=update,
             )
+        if kind == "usage_update":
+            return ChatBackendEvent(
+                type="usage_update", thread_id=self.id, turn_id=turn_id,
+                usage={key: value for key, value in update.items() if key != "sessionUpdate"},
+                raw=update,
+            )
+        _log.debug("ignoring unsupported Hermes ACP session update: %s", kind)
         return None
 
     async def close(self) -> None:
         """Terminate the hermes subprocess."""
+        self._pending_permissions.clear()
+        self._tool_names_by_call_id.clear()
+        self._tool_inputs_by_call_id.clear()
         if self._closed:
             return
         self._closed = True
