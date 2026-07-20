@@ -30,8 +30,6 @@ import { MyBuddyCompanion } from "@/features/companion/MyBuddyCompanion";
 import { AccessoryUnlockPrompt } from "@/features/rewards/AccessoryUnlockPrompt";
 import { VersionUpdateDialog } from "@/features/version-update/VersionUpdateDialog";
 import { PikoInspirationStation } from "@/features/piko-mini-game/PikoInspirationStation";
-import { LiexiaorenEntryOverlay } from "@/features/liexiaoren/LiexiaorenEntryOverlay";
-import { LIEXIAOREN_ENTRY_PENDING_KEY } from "@/features/liexiaoren/liexiaoren-events";
 
 export function shouldRedirectMissingUsernameToLogin(): boolean {
   return authRequired();
@@ -46,7 +44,6 @@ function AppLayout() {
   const refreshAvatar = useAuthStore((s) => s.refreshAvatar);
   const [validated, setValidated] = useState(false);
   const [pikoStationOpen, setPikoStationOpen] = useState(false);
-  const [liexiaorenPreviewOpen, setLiexiaorenPreviewOpen] = useState(false);
   const validatedUsernameRef = useRef<string | null>(null);
   const params = useParams({ strict: false }) as { project?: string };
   const routeProject = params.project ?? null;
@@ -150,13 +147,6 @@ function AppLayout() {
     }
   }, [canonicalProject, navigate, projectSummaries.isLoading, routeProject]);
 
-  useEffect(() => {
-    if (!validated || typeof window === "undefined") return;
-    if (window.sessionStorage.getItem(LIEXIAOREN_ENTRY_PENDING_KEY) !== "1") return;
-    window.sessionStorage.removeItem(LIEXIAOREN_ENTRY_PENDING_KEY);
-    setLiexiaorenPreviewOpen(true);
-  }, [validated]);
-
   if (routeProject && projectSummaries.isLoading) {
     return (
       <div className="flex h-dvh items-center justify-center">
@@ -215,11 +205,6 @@ function AppLayout() {
           </div>
         </div>
       </div>
-      {liexiaorenPreviewOpen ? (
-        <LiexiaorenEntryOverlay
-          onClose={() => setLiexiaorenPreviewOpen(false)}
-        />
-      ) : null}
     </TaskCenterProvider>
   );
 }

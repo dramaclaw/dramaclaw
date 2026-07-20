@@ -42,7 +42,6 @@ import {
   markUpgradeSeen,
   shouldShowUpgradeNudge,
 } from "@/lib/release-notification-state";
-import { LiexiaorenSkinPreview } from "@/features/liexiaoren/LiexiaorenSkinPreview";
 import {
   ProjectHeaderNavigation,
   ProjectSwitcher,
@@ -247,7 +246,6 @@ export function Header() {
           </TooltipProvider>
           <div className="ml-[22px] flex min-w-0 items-center gap-6">
             {project ? <ProjectSwitcher current={project} /> : null}
-            <LiexiaorenSkinPreview />
           </div>
         </div>
 
