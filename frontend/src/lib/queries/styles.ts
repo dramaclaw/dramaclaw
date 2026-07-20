@@ -2,9 +2,10 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
-import type { OkResponse } from "@/types/api";
+import type { ApiResponse, OkResponse } from "@/types/api";
 import type { Style } from "@/types/style";
 
 export function useStyles(project?: string) {
@@ -59,9 +60,12 @@ export function useAnalyzeStyle(project: string) {
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append("file", file);
-      return api
-        .post(p`api/v1/projects/${project}/styles/analyze`, { body: formData })
-        .json<OkResponse<Record<string, unknown>>>();
+      return jsonWithBackendError<ApiResponse<Record<string, unknown>>>(
+        api.post(p`api/v1/projects/${project}/styles/analyze`, {
+          body: formData,
+          throwHttpErrors: false,
+        }),
+      );
     },
   });
 }

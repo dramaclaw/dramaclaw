@@ -86,7 +86,8 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-AI_IDENTITY_DETECTION_FEATURE_KEY = "ai_identity_detection"
+AI_IDENTITY_DETECTION_TASK_TYPE = "ai_identity_detection"
+AI_IDENTITY_DETECTION_FEATURE_KEY = "mainline.ai_identity_detection"
 MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED = "feature_included"
 
 
@@ -5682,7 +5683,7 @@ async def detect_sketch_identities(
         feature_key=AI_IDENTITY_DETECTION_FEATURE_KEY,
         project_id=project_id,
         resource_kind="sketch",
-        task_type=AI_IDENTITY_DETECTION_FEATURE_KEY,
+        task_type=AI_IDENTITY_DETECTION_TASK_TYPE,
         metadata={
             "source": "sync_api",
             "endpoint": "detect_sketch_identities",

@@ -46,6 +46,10 @@ import { SidebarListSkeleton, DetailPaneSkeleton } from "@/components/skeletons"
 import type { Style } from "@/types/style";
 import { stylePreviewUrl } from "@/lib/style-preview-url";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 
 // ─── style constants (aligned with characters page) ─────────────────────────
@@ -754,7 +758,15 @@ function CreateStyleDialog({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const createStyle = useCreateStyle();
   const analyzeStyle = useAnalyzeStyle(project);
-  const styleAnalyzeCost = useGenerationCreditCost("style_analyzer");
+  const styleAnalyzeCost = useGenerationCreditCost(
+    "feature",
+    "mainline.style_analysis",
+  );
+  const styleAnalyzeCostDisplay =
+    styleAnalyzeCost.data?.data.display ??
+    (styleAnalyzeCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
 
   const [id, setId] = useState("");
   const [name, setName] = useState("");
@@ -772,11 +784,12 @@ function CreateStyleDialog({
   const handleAnalyze = async (file: File) => {
     try {
       const res = await analyzeStyle.mutateAsync(file);
+      if (!res.ok) throw new Error(res.error || t("common.error"));
       const cfg = extractConfig({ id: "", name: "", config: res.data } as Style);
       setAnalyzed(cfg);
       toast.success(t("styles.paramsExtracted"));
-    } catch {
-      toast.error(t("common.error"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
 
@@ -860,7 +873,7 @@ function CreateStyleDialog({
                 <Upload className="size-3.5" />
               )}
               {analyzed ? t("styles.reupload") : t("styles.uploadRef")}
-              <CreditCostInline display={styleAnalyzeCost.data?.data.display} />
+              <CreditCostInline display={styleAnalyzeCostDisplay} />
             </Button>
             <input
               ref={fileInputRef}

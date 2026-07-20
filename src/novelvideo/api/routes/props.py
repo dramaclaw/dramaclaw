@@ -287,6 +287,14 @@ async def generate_prop_reference(
 
     scope = prop_reference_asset_scope(prop.name)
     if ctx is not None:
+        from novelvideo.api.routes.model_credits import _fixed_image_billing_params
+        from novelvideo.generators.nanobanana_prop import (
+            _prop_reference_image_source,
+            resolve_prop_reference_image_model,
+        )
+
+        _, selected_model = _prop_reference_image_source(model)
+        pricing_model = selected_model or resolve_prop_reference_image_model()
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             task_type="prop_reference_asset",
@@ -298,6 +306,13 @@ async def generate_prop_reference(
                 "style": style,
                 "model": model,
                 "output_dir": output_dir,
+                "billing": {
+                    "pricing_kind": "image",
+                    "pricing_model": pricing_model,
+                    "pricing_params": _fixed_image_billing_params(
+                        "prop_reference", model=pricing_model
+                    ),
+                },
             },
         )
         return {
@@ -331,12 +346,41 @@ async def batch_generate_prop_references(
     model = str(body.model if body else "").strip()
 
     if ctx is not None:
+        from novelvideo.api.routes.model_credits import _fixed_image_billing_params
+        from novelvideo.generators.nanobanana_prop import (
+            _prop_reference_image_source,
+            resolve_prop_reference_image_model,
+        )
+
+        store = await make_sqlite_store_for_context(ctx)
+        props = await store.list_props()
+        output_dir_path = Path(output_dir)
+        pending_count = sum(
+            not (output_dir_path / "assets" / "props" / prop.name / "reference_3view.png").exists()
+            for prop in props
+        )
+        if pending_count <= 0:
+            return {"ok": False, "error": "所有道具均已生成参考图"}
+        _, selected_model = _prop_reference_image_source(model)
+        pricing_model = selected_model or resolve_prop_reference_image_model()
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             task_type="batch_prop_ref",
             queue_kind="default",
             episode=0,
-            payload={"style": style, "model": model, "output_dir": output_dir},
+            payload={
+                "style": style,
+                "model": model,
+                "output_dir": output_dir,
+                "billing": {
+                    "items": pending_count,
+                    "pricing_kind": "image",
+                    "pricing_model": pricing_model,
+                    "pricing_params": _fixed_image_billing_params(
+                        "prop_reference", model=pricing_model
+                    ),
+                },
+            },
         )
         return {
             "ok": True,

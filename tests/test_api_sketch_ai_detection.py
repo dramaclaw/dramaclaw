@@ -240,7 +240,7 @@ def test_detect_identities_reserves_feature_credit_and_marks_model_calls_include
     assert usage_meter.reserve_calls == [
         {
             "user_id": "user-1",
-            "feature_key": "ai_identity_detection",
+            "feature_key": "mainline.ai_identity_detection",
             "project_id": "project-1",
             "resource_kind": "sketch",
             "task_type": "ai_identity_detection",

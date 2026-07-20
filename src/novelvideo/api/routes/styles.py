@@ -1,6 +1,7 @@
 """风格管理端点。"""
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, UploadFile, File, Query
 from fastapi.responses import FileResponse
@@ -12,6 +13,35 @@ from novelvideo.api.deps import resolve_project_scope
 from novelvideo.api.schemas import StylePreviewRequest
 
 router = APIRouter()
+
+STYLE_ANALYSIS_FEATURE_KEY = "mainline.style_analysis"
+STYLE_ANALYSIS_TASK_TYPE = "style_analysis"
+MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED = "feature_included"
+
+
+def _requester_user_id_for_billing(resolved: Any, user: dict) -> str:
+    ctx = getattr(resolved, "ctx", None)
+    return str(
+        getattr(ctx, "requester_user_id", "")
+        or user.get("id")
+        or user.get("user_id")
+        or user.get("username")
+        or ""
+    )
+
+
+def style_analysis_billing_params() -> dict[str, Any]:
+    from novelvideo.config import get_newapi_text_model_name
+
+    return {
+        "pricing_kind": "text",
+        "pricing_model": get_newapi_text_model_name(
+            "STYLE_ANALYZER_MODEL",
+            "gemini-3.5-flash",
+        ),
+        "pricing_params": {},
+        "pricing_quantity": 1,
+    }
 
 
 @router.get("/styles")
@@ -223,30 +253,76 @@ async def analyze_style(
 
     mime_type = file.content_type or "image/jpeg"
 
+    usage_meter = get_usage_meter()
+    ctx = getattr(resolved, "ctx", None)
+    project_id = str(getattr(ctx, "project_id", "") or "")
+    billing_user_id = _requester_user_id_for_billing(resolved, user)
+    reservation = await usage_meter.reserve_feature_start_credits(
+        user_id=billing_user_id,
+        feature_key=STYLE_ANALYSIS_FEATURE_KEY,
+        project_id=project_id,
+        resource_kind="script",
+        task_type=STYLE_ANALYSIS_TASK_TYPE,
+        metadata={
+            "source": "sync_api",
+            "endpoint": "analyze_style",
+            "mime_type": mime_type,
+        },
+        params=style_analysis_billing_params(),
+        require_price_rule=True,
+        require_positive_cost=True,
+    )
+    reservation_id = str(reservation.get("id") or "")
+    billing_metadata: dict[str, Any] = {
+        "model_call_credit_policy": MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED,
+        "feature_key": STYLE_ANALYSIS_FEATURE_KEY,
+        "source": "sync_api",
+    }
+    if reservation_id:
+        billing_metadata.update(
+            {
+                "feature_credit_reservation_id": reservation_id,
+                "feature_credit_charge_id": reservation_id,
+                "feature_credit_cost": str(reservation.get("cost") or 0),
+            }
+        )
+
     try:
-        if resolved.ctx is not None:
-            billing_user_id = (
-                str(getattr(resolved.ctx, "requester_user_id", "") or "").strip()
-                or str(getattr(resolved.ctx, "owner_id", "") or "").strip()
-            )
-            get_usage_meter().set_llm_usage_context(
-                billing_user_id,
-                project_id=resolved.ctx.project_id,
-                resource_kind="script",
-                billing_metadata={
-                    "billing_user_id": billing_user_id,
-                    "requester_user_id": str(
-                        getattr(resolved.ctx, "requester_user_id", "") or ""
-                    ).strip(),
-                    "project_owner_id": str(getattr(resolved.ctx, "owner_id", "") or "").strip(),
-                    "source": "style_analyzer",
-                },
-            )
+        usage_meter.set_llm_usage_context(
+            billing_user_id,
+            project_id=project_id,
+            resource_kind="script",
+            billing_metadata=billing_metadata,
+        )
         analyzer = StyleAnalyzer()
         result = await analyzer.analyze(content, mime_type=mime_type)
+        if reservation_id:
+            await usage_meter.confirm_feature_credit_reservation(
+                reservation_id,
+                metadata={
+                    "source": "sync_api",
+                    "endpoint": "analyze_style",
+                    "mime_type": mime_type,
+                },
+            )
     except Exception as e:
+        if reservation_id:
+            try:
+                await usage_meter.refund_feature_credit_reservation(
+                    reservation_id,
+                    metadata={
+                        "source": "sync_api",
+                        "endpoint": "analyze_style",
+                        "mime_type": mime_type,
+                        "error": str(e),
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to refund style analysis feature credit reservation"
+                )
         return {"ok": False, "error": f"Style analysis failed: {e}"}
     finally:
-        get_usage_meter().clear_llm_usage_context()
+        usage_meter.clear_llm_usage_context()
 
     return {"ok": True, "data": result}

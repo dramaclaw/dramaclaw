@@ -390,11 +390,82 @@ def _video_backend_feature_billing_params(params: dict) -> dict:
 
 def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> dict:
     feature_key = str(value or "").strip()
+    if feature_key == "mainline.style_analysis":
+        if str(params.get("pricing_model") or "").strip():
+            return params
+        from novelvideo.api.routes.styles import style_analysis_billing_params
+
+        return {**params, **style_analysis_billing_params()}
     if feature_key == "mainline.beat_video_generation":
         return _video_backend_feature_billing_params(params)
+    if feature_key == "mainline.scene_pano_generation":
+        if str(params.get("pricing_model") or "").strip():
+            return params
+        from novelvideo.stage_asset_tasks import (
+            _scene_360_credit_billing_params,
+            resolve_scene_360_image_model,
+            resolve_scene_360_image_provider,
+        )
+
+        provider = resolve_scene_360_image_provider(str(params.get("provider") or ""))
+        pricing_model = resolve_scene_360_image_model(
+            provider=provider,
+            model=str(params.get("model") or ""),
+        )
+        if not pricing_model:
+            return params
+        image_size = str(
+            params.get("image_size") or os.environ.get("SCENE_360_IMAGE_SIZE") or "2K"
+        )
+        quality = str(
+            params.get("quality")
+            or os.environ.get("SCENE_360_IMAGE_QUALITY")
+            or os.environ.get("HUIMENG_IMAGE_QUALITY")
+            or "medium"
+        )
+        return {
+            **params,
+            "pricing_kind": "image",
+            "pricing_model": pricing_model,
+            "pricing_params": _scene_360_credit_billing_params(
+                image_size=image_size,
+                quality=quality,
+            ),
+            "pricing_model_selection": str(params.get("model") or pricing_model),
+            "pricing_model_label": pricing_model,
+            "provider": provider,
+        }
+    if feature_key == "mainline.scene_reference_image":
+        if str(params.get("pricing_model") or "").strip():
+            return params
+        image_selection = str(params.get("image_selection") or "").strip()
+        if not image_selection:
+            return params
+        from novelvideo.config import (
+            IMAGE_GENERATION_SELECTIONS,
+            normalize_image_generation_selection,
+        )
+
+        selection = normalize_image_generation_selection(image_selection)
+        model_cfg = IMAGE_GENERATION_SELECTIONS.get(selection) or {}
+        pricing_model = str(model_cfg.get("model") or "").strip()
+        if not pricing_model:
+            return params
+        return {
+            **params,
+            "pricing_kind": "image",
+            "pricing_model": pricing_model,
+            "pricing_params": _fixed_image_billing_params(
+                "scene_master",
+                model=pricing_model,
+            ),
+            "pricing_model_selection": selection,
+            "pricing_model_label": str(model_cfg.get("label") or selection),
+        }
     feature_image_role = {
         "mainline.character_portrait": "character",
         "mainline.identity_image": "identity",
+        "mainline.prop_reference_image": "prop",
         "mainline.sketch_regen": "sketch",
         "mainline.render_regen": "render",
     }.get(feature_key)
@@ -415,17 +486,21 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
 
     selection = (
         normalize_image_generation_selection(image_selection)
-        if feature_image_role in {"sketch", "render"}
+        if feature_image_role in {"sketch", "render", "prop"}
         else normalize_character_image_selection(image_selection)
     )
     model_cfg = IMAGE_GENERATION_SELECTIONS.get(selection) or {}
     pricing_model = str(model_cfg.get("model") or "").strip()
     if not pricing_model:
         return params
-    pricing_params = _image_selection_billing_params(
-        model=pricing_model,
-        mode_key=mode_key,
-        image_role=feature_image_role,
+    pricing_params = (
+        _fixed_image_billing_params("prop_reference", model=pricing_model)
+        if feature_image_role == "prop"
+        else _image_selection_billing_params(
+            model=pricing_model,
+            mode_key=mode_key,
+            image_role=feature_image_role,
+        )
     )
     return {
         **params,
