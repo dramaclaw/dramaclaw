@@ -94,7 +94,7 @@ import {
   showErrorDialog,
 } from "@/features/canvas/application/errorDialog";
 import { backendErrorToastMessage } from "@/lib/api-errors";
-import { extractRequestId } from "@/features/canvas/application/generationErrorReport";
+import { resolveGenerationErrorDiagnostics } from "@/features/canvas/application/generationErrorReport";
 import {
   PromptMentionEditor,
   type MentionCandidate,
@@ -2373,6 +2373,7 @@ export const VideoNode = memo(
             if (completedUrls.length > 0) return;
             const resolved = resolveErrorContent(error, "视频生成失败");
             const displayErrorMessage = backendErrorToastMessage(error, t);
+            const diagnostics = resolveGenerationErrorDiagnostics(error, resolved.details);
             // Persist the failure on the node so the 重新生成 entry survives after
             // the user dismisses the dialog (previously the error was dialog-only).
             // 只有 run 0 失败才终结 loading：非首 run 失败时 run 0 可能还在跑，
@@ -2382,9 +2383,8 @@ export const VideoNode = memo(
                 ? { isGenerating: false, generationStartedAt: null }
                 : {}),
               generationError: displayErrorMessage,
-              generationErrorDetails: resolved.details ?? null,
-              generationErrorRequestId:
-                extractRequestId(displayErrorMessage) ?? extractRequestId(resolved.details),
+              generationErrorDetails: diagnostics.details,
+              generationErrorRequestId: diagnostics.requestId,
             });
           }
         };

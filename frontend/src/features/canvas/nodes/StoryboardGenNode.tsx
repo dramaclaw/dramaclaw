@@ -43,8 +43,8 @@ import {
   buildGenerationErrorReport,
   CURRENT_RUNTIME_SESSION_ID,
   createReferenceImagePlaceholders,
-  extractRequestId,
   getRuntimeDiagnostics,
+  resolveGenerationErrorDiagnostics,
   type GenerationDebugContext,
 } from '@/features/canvas/application/generationErrorReport';
 import {
@@ -1181,6 +1181,10 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     } catch (generationError) {
       const resolvedError = resolveErrorContent(generationError, '生成失败');
       const displayErrorMessage = backendErrorToastMessage(generationError, t);
+      const diagnostics = resolveGenerationErrorDiagnostics(
+        generationError,
+        resolvedError.details,
+      );
       const generationDebugContext: GenerationDebugContext = {
         sourceType: 'storyboardGen',
         providerId: selectedModel.providerId,
@@ -1199,11 +1203,16 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       };
       const reportText = buildGenerationErrorReport({
         errorMessage: displayErrorMessage,
-        errorDetails: resolvedError.details,
+        errorDetails: diagnostics.details ?? undefined,
         context: generationDebugContext,
       });
       setError(displayErrorMessage);
-      void showErrorDialog(displayErrorMessage, t('common.error'), resolvedError.details, reportText);
+      void showErrorDialog(
+        displayErrorMessage,
+        t('common.error'),
+        diagnostics.details ?? undefined,
+        reportText,
+      );
       updateNodeData(newNodeId, {
         isGenerating: false,
         generationStartedAt: null,
@@ -1215,9 +1224,8 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         generationRequestPayload: regenerationPayload,
         generationStoryboardMetadata: storyboardMetadata,
         generationError: displayErrorMessage,
-        generationErrorDetails: resolvedError.details ?? null,
-        generationErrorRequestId:
-          extractRequestId(displayErrorMessage) ?? extractRequestId(resolvedError.details),
+        generationErrorDetails: diagnostics.details,
+        generationErrorRequestId: diagnostics.requestId,
         generationDebugContext,
       });
     }
