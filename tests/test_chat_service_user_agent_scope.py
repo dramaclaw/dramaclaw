@@ -887,6 +887,27 @@ def test_freezone_prompt_includes_skill_studio_contract_only_for_catalog_intent(
     assert "must not emit Freezone canvas commands" in prompt
 
 
+def test_freezone_prompt_separates_new_skill_from_current_canvas_context(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+
+    prompt = chat_service._prompt_with_user_context(
+        "admin",
+        "project-a",
+        "我想做一个制作公益短片的 skill",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+    )
+
+    assert "[FREEZONE_SKILL_STUDIO]" in prompt
+    assert "new_from_user_brief" in prompt
+    assert "current canvas is ambient context, not source evidence" in prompt
+    assert "Do not ask whether to preserve current project details" in prompt
+    assert "topic/domain, audience/context, artifact scope, style/tone, and workflow granularity" in prompt
+    assert "distill_from_canvas" in prompt
+
+
 def test_freezone_prompt_requires_summary_confirmation_for_canvas_workflow_skill(
     monkeypatch, tmp_path
 ):
@@ -901,7 +922,8 @@ def test_freezone_prompt_requires_summary_confirmation_for_canvas_workflow_skill
     )
 
     assert "[FREEZONE_SKILL_STUDIO]" in prompt
-    assert "current canvas, current flow, selected nodes, or existing workflow" in prompt
+    assert "distill_from_canvas" in prompt
+    assert "current canvas, current flow, selected nodes, this project, this workflow, or existing workflow" in prompt
     assert "ask 1-2 high-level confirmation questions first" in prompt
     assert "preserve project-specific details or abstract them into a reusable Skill" in prompt
     assert "split key generator/planner capabilities into Recipes or merge them into fewer Recipes" in prompt

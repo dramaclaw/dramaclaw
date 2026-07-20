@@ -40,11 +40,14 @@ export function ComposerWaitingStatus({
       return;
     }
 
-    const liveActivityLabel = activityLabel?.trim() || "";
-    const options = liveActivityLabel
-      ? [liveActivityLabel]
-      : waitingLabels.length > 0 ? waitingLabels : [label];
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const liveActivityLabel = activityLabel?.trim() || "";
+      const options = liveActivityLabel
+        ? [liveActivityLabel]
+        : waitingLabels.length > 0
+          ? waitingLabels
+          : [label];
+      const reduceMotion =
+        window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     const timers = new Set<number>();
     const schedule = (callback: () => void, delay: number) => {
       const timer = window.setTimeout(() => {

@@ -168,7 +168,7 @@ async def test_hermes_pool_uses_separate_sessions_per_agent_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pool, calls, fake_auth = _patch_fake_hermes_pool(tmp_path, monkeypatch)
+    pool, calls, fake_auth, _gateway = _patch_fake_hermes_pool(tmp_path, monkeypatch)
 
     try:
         main = await pool.get_for_user("alice", scope_kind="project", project_id="project_a")

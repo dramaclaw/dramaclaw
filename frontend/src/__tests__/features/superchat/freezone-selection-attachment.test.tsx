@@ -559,7 +559,7 @@ describe("SuperChatPanel Freezone selection attachment state", () => {
 
     const copyButton = screen.getByLabelText("Copy");
     expect(copyButton.parentElement).toHaveClass("absolute");
-    expect(copyButton.parentElement).toHaveClass("bottom-0");
+    expect(copyButton.parentElement).toHaveClass("bottom-2");
     expect(copyButton.parentElement).toHaveClass("right-0");
     expect(copyButton.parentElement?.parentElement).toHaveClass("hover:pb-10");
 

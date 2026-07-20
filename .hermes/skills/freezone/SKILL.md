@@ -23,7 +23,7 @@ compatibility: Requires Freezone/虾画 chat surface with frontend-injected curr
 - **运行已有工作流**：复用已有节点、内容和连线，优先运行已有工作流；不要重新规划一套重复节点，除非用户明确要求新增、重写或替换。
 - **注册工作流**：用户询问支持哪些工作流时，使用 `freezone_list_workflows`。用户明确要求创建已注册工作流时，交给 `workflows` skill 并调用 `freezone_create_workflow_graph`；不要手写节点、连线或分组命令。用户只要求规划/预览时，使用 `freezone_build_workflow_plan`。
 - **Skill Studio 配置类**：用户明确要求创建、编辑、保存、沉淀 Skill / Recipe / 技能 / 配方时，这是 catalog 配置草稿流程，不是画布写入，也不是纯文本完成。不要调用画布写入工具，不要声称已保存；需要澄清方向时调用 `freezone_request_user_clarification`，生成或修改草稿时调用 `freezone_present_agent_catalog_draft`，由 Freezone bridge 触发前端卡片展示。
-- **编写或沉淀 Skill / Recipe**：用户要求创建、编写、编辑、总结、抽成、沉淀或保存 Skill / Recipe 时，必须读取 `references/skill-studio-authoring-guide.md`。先做能力建模；如果来源是当前画布/流程/选中节点，还要做画布工作流分析；不要只按 tool schema 字段或节点类型摘要。
+- **编写或沉淀 Skill / Recipe**：用户要求创建、编写、编辑、总结、抽成、沉淀或保存 Skill / Recipe 时，必须读取 `references/skill-studio-authoring-guide.md`。先判定来源模式再做能力建模：从用户一句话新建时，不要把当前画布当来源；只有用户明确说当前画布/流程/选中节点时，才做画布工作流分析；不要只按 tool schema 字段或节点类型摘要。
 - **全画布理解**：用户要求总结、理解或沉淀整张画布时，优先使用 canvas ontology / canvas summary；不要为了全局理解逐个读取所有节点详情。只有缺少关键字段时，才少量补读关键节点。
 
 ### 开放意图的默认响应

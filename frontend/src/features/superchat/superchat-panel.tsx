@@ -5560,7 +5560,7 @@ const MessageBubble = memo(function MessageBubble({
     <div
       className={cn(
         isUser
-          ? "pointer-events-none absolute right-[calc(100%+8px)] top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 whitespace-nowrap rounded-full border border-border/70 bg-background/85 px-1 py-0.5 text-foreground/75 opacity-0 shadow-sm backdrop-blur transition-opacity after:absolute after:-right-2 after:top-0 after:h-full after:w-2 after:content-[''] group-hover/message-actions:pointer-events-auto group-hover/message-actions:opacity-100 group-focus-within/message-actions:pointer-events-auto group-focus-within/message-actions:opacity-100"
+          ? "pointer-events-none absolute bottom-2 right-0 z-10 flex items-center gap-0.5 whitespace-nowrap rounded-full border border-border/70 bg-background/85 px-1 py-0.5 text-foreground/75 opacity-0 shadow-sm backdrop-blur transition-opacity after:absolute after:-top-2 after:left-0 after:h-2 after:w-full after:content-[''] group-hover/message-actions:pointer-events-auto group-hover/message-actions:opacity-100 group-focus-within/message-actions:pointer-events-auto group-focus-within/message-actions:opacity-100"
           : "mt-2 flex items-center gap-1 text-muted-foreground/70",
       )}
     >
@@ -10476,7 +10476,7 @@ export function SuperChatPanel({
   }, []);
 
   useEffect(() => {
-    composerBeamRef.current?.setActive(composerBeamActive);
+    composerBeamRef.current?.setActive?.(composerBeamActive);
   }, [composerBeamActive]);
 
   useEffect(() => {
