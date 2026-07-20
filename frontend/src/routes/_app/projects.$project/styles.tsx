@@ -25,6 +25,7 @@ import {
   useAnalyzeStyle,
   useCreateStyle,
   useDeleteStyle,
+  useUploadStylePreview,
   useStyleDetail,
   useStyles,
 } from "@/lib/queries/styles";
@@ -52,6 +53,13 @@ import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 
 const STYLES_INPUT_CLASS =
   "h-9 rounded-[8px] border-white/10 bg-white/[0.025] px-3 text-sm shadow-none placeholder:text-muted-foreground/60 focus-visible:border-white/20 focus-visible:ring-2 focus-visible:ring-white/8 dark:bg-white/[0.025]";
+const STYLE_PREVIEW_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
+const STYLE_PREVIEW_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
 const STYLES_TEXTAREA_CLASS =
   "w-full resize-none rounded-[8px] border border-white/10 bg-white/[0.025] p-2.5 text-sm leading-relaxed shadow-none placeholder:text-muted-foreground/60 focus-visible:border-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/8";
 
@@ -263,7 +271,7 @@ function StyleListItem({
   const { t } = useTranslation();
   const preset = isPreset(style);
   const display = style.label || style.name;
-  const previewSrc = preset ? stylePreviewUrl(style.id) : null;
+  const previewSrc = preset ? stylePreviewUrl(style.id) : style.preview_url;
   return (
     <button
       type="button"
@@ -321,16 +329,12 @@ function PreviewBox({ style }: { style: Style }) {
     setHasError(false);
   }, [style.id]);
 
-  if (!preset) {
+  if (!preset && !style.preview_url) {
     return (
       <div className="flex aspect-video items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-background/40 px-4 text-center">
         <Info className="size-4 shrink-0 text-muted-foreground/60" />
         <p className="text-xs leading-snug text-muted-foreground/80">
-          {t("styles.customPreviewUnavailable")}
-          <br />
-          <span className="text-muted-foreground/50">
-            {t("styles.customPreviewHint")}
-          </span>
+          {t("styles.customPreviewEmpty")}
         </p>
       </div>
     );
@@ -346,7 +350,7 @@ function PreviewBox({ style }: { style: Style }) {
 
   return (
     <img
-      src={stylePreviewUrl(style.id)}
+      src={preset ? stylePreviewUrl(style.id) : style.preview_url ?? undefined}
       alt={`${style.name} preview`}
       loading="lazy"
       decoding="async"
@@ -754,29 +758,76 @@ function CreateStyleDialog({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const createStyle = useCreateStyle();
   const analyzeStyle = useAnalyzeStyle(project);
+  const uploadStylePreview = useUploadStylePreview(project);
   const styleAnalyzeCost = useGenerationCreditCost("style_analyzer");
 
   const [id, setId] = useState("");
   const [name, setName] = useState("");
   const [analyzed, setAnalyzed] = useState<StyleConfig | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const previewPathRef = useRef<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewObjectUrlRef = useRef<string | null>(null);
 
   // Reset on open.
   useEffect(() => {
-    if (open) {
-      setId("");
-      setName("");
-      setAnalyzed(null);
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = null;
     }
+    setPreviewUrl(null);
+    if (!open) return;
+    setId("");
+    setName("");
+    setAnalyzed(null);
+    setPreviewPath(null);
+    previewPathRef.current = null;
   }, [open]);
 
+  useEffect(
+    () => () => {
+      if (previewObjectUrlRef.current) {
+        URL.revokeObjectURL(previewObjectUrlRef.current);
+      }
+    },
+    [],
+  );
+
   const handleAnalyze = async (file: File) => {
+    if (!STYLE_PREVIEW_MIME_TYPES.has(file.type.toLowerCase())) {
+      toast.error(t("styles.unsupportedPreviewType"));
+      return;
+    }
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+    }
+    const objectUrl = URL.createObjectURL(file);
+    previewObjectUrlRef.current = objectUrl;
+    setPreviewUrl(objectUrl);
+    previewPathRef.current = null;
+    setPreviewPath(null);
     try {
+      const uploadRes = await uploadStylePreview.mutateAsync({
+        file,
+        styleId: id.trim(),
+      });
+      if (!uploadRes.ok) {
+        toast.error(uploadRes.error);
+        return;
+      }
+      const path = uploadRes.data.preview_path;
+      previewPathRef.current = path;
+      setPreviewPath(path);
       const res = await analyzeStyle.mutateAsync(file);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       const cfg = extractConfig({ id: "", name: "", config: res.data } as Style);
       setAnalyzed(cfg);
       toast.success(t("styles.paramsExtracted"));
-    } catch {
-      toast.error(t("common.error"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("common.error"));
     }
   };
 
@@ -788,14 +839,19 @@ function CreateStyleDialog({
       return;
     }
     try {
-      await createStyle.mutateAsync({
+      const result = await createStyle.mutateAsync({
         id: trimmedId,
         name: trimmedName,
         project,
         config: analyzed
           ? buildSavePayload(analyzed, null)
           : {},
+        preview_path: previewPathRef.current ?? previewPath,
       });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
       toast.success(t("styles.styleCreated"));
       onCreated(trimmedId);
       onOpenChange(false);
@@ -851,7 +907,8 @@ function CreateStyleDialog({
               variant="outline"
               size="sm"
               onClick={() => fileInputRef.current?.click()}
-              disabled={analyzeStyle.isPending}
+              disabled={analyzeStyle.isPending || !id.trim()}
+              title={!id.trim() ? t("styles.styleIdRequiredBeforeUpload") : undefined}
               className="h-9 w-fit rounded-[8px] border-white/10 bg-transparent px-3 text-xs font-normal shadow-none hover:bg-white/[0.04] gap-1.5 dark:bg-transparent"
             >
               {analyzeStyle.isPending ? (
@@ -866,13 +923,33 @@ function CreateStyleDialog({
               ref={fileInputRef}
               type="file"
               className="hidden"
-              accept="image/*"
+              accept={STYLE_PREVIEW_ACCEPT}
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) handleAnalyze(file);
               }}
             />
           </div>
+
+          {previewUrl && (
+            <div className="relative overflow-hidden rounded-lg border border-white/10">
+              <img
+                src={previewUrl}
+                alt={t("styles.uploadedPreview")}
+                className="max-h-40 w-full object-contain"
+              />
+              {analyzeStyle.isPending && (
+                <div
+                  className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/55 text-xs text-white/85 backdrop-blur-[2px]"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+                  <span>{t("styles.analyzingPreview")}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {analyzed && (
             <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.04] p-3">
@@ -909,7 +986,13 @@ function CreateStyleDialog({
           <Button
             size="sm"
             onClick={handleCreate}
-            disabled={createStyle.isPending || !id.trim() || !name.trim()}
+            disabled={
+              createStyle.isPending ||
+              uploadStylePreview.isPending ||
+              analyzeStyle.isPending ||
+              !id.trim() ||
+              !name.trim()
+            }
             className="h-10 rounded-md bg-primary px-4 text-sm font-normal text-primary-foreground shadow-lg shadow-primary/15 hover:bg-primary/90"
           >
             {createStyle.isPending ? (

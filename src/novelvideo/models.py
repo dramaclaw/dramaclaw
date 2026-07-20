@@ -636,6 +636,10 @@ class StyleConfig(BaseModel):
     )
     created_at: Optional[datetime] = Field(default=None, description="创建时间（仅自定义风格）")
     created_by: Optional[str] = Field(default=None, description="创建者（仅自定义风格）")
+    preview_path: Optional[str] = Field(
+        default=None,
+        description="自定义风格参考图相对于项目目录的路径；预设风格为空",
+    )
 
     def to_legacy_dict(self) -> dict:
         """Return the runtime style dict used by all generation paths."""
