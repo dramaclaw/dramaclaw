@@ -79,6 +79,7 @@ _TASK_TYPE_LABELS = {
     "freezone_audio_speech": "生成语音",
     "freezone_audio_eleven_music": "生成音乐",
     "freezone_image_to_3gs": "图片转世界",
+    "freezone_image_reverse_prompt": "图片反推提示词",
     "batch_prop_ref": "批量道具参考图",
 }
 _STAGE_ASSET_STEP_LABELS = {
