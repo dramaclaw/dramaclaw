@@ -1478,7 +1478,8 @@
       "single_video": "Single video",
       "global_optimize_video": "Global optimize video",
       "selected_regen": "Selected regen",
-      "compose_episode": "Video compose"
+      "compose_episode": "Video compose",
+      "freezone_image_reverse_prompt": "Image reverse prompt"
     }
   },
   "taskCenter": {
