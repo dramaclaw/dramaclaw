@@ -42,4 +42,16 @@ describe("taskErrorMessage", () => {
       defaultValue: "计费规则未配置，请联系管理员设置积分规则",
     });
   });
+
+  it("uses only the nested provider message in failure notifications", () => {
+    const t = vi.fn((key: string) => key) as unknown as TFunction;
+    const raw =
+      'DramaClawAPI image generation failed: HTTP 400: request_id=req-123; ' +
+      'body={"error":{"message":"Content failed safety review. / 内容未通过安全审核。",' +
+      '"type":"content_policy_violation","code":"moderation_blocked"}}';
+
+    expect(taskErrorMessage(task({ error: raw }), t)).toBe(
+      "Content failed safety review. / 内容未通过安全审核。",
+    );
+  });
 });

@@ -299,6 +299,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     typeof data.generationError === 'string' && data.generationError.length > 0
       ? data.generationError
       : null;
+  const generationErrorDetails =
+    typeof data.generationErrorDetails === 'string' && data.generationErrorDetails.length > 0
+      ? data.generationErrorDetails
+      : null;
   const generationErrorRequestId =
     typeof data.generationErrorRequestId === 'string' && data.generationErrorRequestId.length > 0
       ? data.generationErrorRequestId
@@ -315,18 +319,21 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isTranslatingPrompt, setIsTranslatingPrompt] = useState(false);
-  const [requestIdCopied, setRequestIdCopied] = useState(false);
+  const [errorDetailsCopied, setErrorDetailsCopied] = useState(false);
 
-  const handleCopyRequestId = useCallback(async () => {
-    if (!generationErrorRequestId) return;
+  const handleCopyErrorDetails = useCallback(async () => {
+    // New failures keep the complete task/provider response in details. For
+    // older persisted nodes, generationError itself may still be the raw blob.
+    const copyText = generationErrorDetails || generationError || generationErrorRequestId;
+    if (!copyText) return;
     try {
-      await navigator.clipboard.writeText(generationErrorRequestId);
-      setRequestIdCopied(true);
-      window.setTimeout(() => setRequestIdCopied(false), 1200);
+      await navigator.clipboard.writeText(copyText);
+      setErrorDetailsCopied(true);
+      window.setTimeout(() => setErrorDetailsCopied(false), 1200);
     } catch (error) {
-      console.error('[image-gen] copy request id failed', error);
+      console.error('[image-gen] copy error details failed', error);
     }
-  }, [generationErrorRequestId]);
+  }, [generationError, generationErrorDetails, generationErrorRequestId]);
 
   const {
     models: availableModels,
@@ -907,6 +914,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       isGenerating: true,
       generationStartedAt: Date.now(),
       generationError: null,
+      generationErrorDetails: null,
       generationErrorRequestId: null,
       generationBatch: null,
     });
@@ -992,13 +1000,20 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         // submit — the request id is the handle support uses to trace it.
         // 只有 run 0 失败才终结 loading：非首 run 失败时 run 0 可能还在跑，
         // 它的成功补丁会清掉这里写的错误横幅。
+        const rawErrorMessage =
+          error instanceof Error && error.message
+            ? error.message
+            : String(error || t('common.error'));
         const displayErrorMessage = backendErrorToastMessage(error, t);
         updateNodeData(id, {
           ...(runIndex === 0
             ? { isGenerating: false, generationStartedAt: null }
             : {}),
           generationError: displayErrorMessage,
-          generationErrorRequestId: extractRequestId(displayErrorMessage),
+          // Keep the complete task/provider error for support copy. Only the
+          // concise provider `message` is rendered on the node.
+          generationErrorDetails: rawErrorMessage,
+          generationErrorRequestId: extractRequestId(rawErrorMessage),
         });
         // Re-throw so the caller can surface a single error dialog after all
         // concurrent attempts settle (rather than one dialog per failed image).
@@ -1490,10 +1505,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                 </code>
                 <button
                   type="button"
-                  title={requestIdCopied ? t("node.imageNode.requestIdCopied") : t("node.imageNode.copyRequestId")}
+                  title={errorDetailsCopied ? t("nodeToolbar.copied") : t("nodeToolbar.copyErrorReport")}
                   onClick={(event) => {
                     event.stopPropagation();
-                    void handleCopyRequestId();
+                    void handleCopyErrorDetails();
                   }}
                   onPointerDown={(event) => event.stopPropagation()}
                   className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-muted/70 transition-colors hover:bg-white/10 hover:text-text-dark"

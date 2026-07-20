@@ -194,6 +194,83 @@ export async function jsonWithBackendError<T>(request: Promise<Response>): Promi
  */
 export type GatewayErrorKind = "channel_policy" | "rate_limit";
 
+function parseJsonValueAt(text: string, start: number): unknown | null {
+  const opener = text[start];
+  if (opener !== "{" && opener !== "[") return null;
+
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{" || char === "[") {
+      stack.push(char);
+      continue;
+    }
+    if (char !== "}" && char !== "]") continue;
+    const expected = char === "}" ? "{" : "[";
+    if (stack.pop() !== expected) return null;
+    if (stack.length === 0) {
+      try {
+        return JSON.parse(text.slice(start, index + 1));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+function providerErrorPayload(raw: string): unknown | null {
+  const text = raw.trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Gateway failures commonly wrap the provider response as
+    // `HTTP ...; body={...}`. Preserve the wrapper for diagnostics while
+    // parsing only the JSON body for the user-facing message.
+  }
+
+  const bodyMatch = /\bbody\s*=\s*/gi.exec(text);
+  if (!bodyMatch) return null;
+  const jsonStart = bodyMatch.index + bodyMatch[0].length;
+  return parseJsonValueAt(text, jsonStart);
+}
+
+function messageFromPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  if (record.error && typeof record.error === "object") {
+    const nested = messageFromPayload(record.error);
+    if (nested) return nested;
+  }
+  if (typeof record.message === "string" && record.message.trim()) {
+    return record.message.trim();
+  }
+  return null;
+}
+
+/** Extract the provider's concise message without discarding the raw error. */
+export function providerErrorMessage(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  return messageFromPayload(providerErrorPayload(raw));
+}
+
 export function classifyGatewayError(
   raw: string | null | undefined,
 ): GatewayErrorKind | null {
@@ -226,7 +303,7 @@ export function humanizeTaskError(
     case "rate_limit":
       return t("common.generationRateLimited", { defaultValue: fallback });
     default:
-      return fallback;
+      return providerErrorMessage(raw) ?? fallback;
   }
 }
 
@@ -256,5 +333,8 @@ export function backendErrorToastMessage(error: unknown, t: TFunction): string {
       defaultValue: t("common.projectQueueFull", { queue: queueLabel }),
     });
   }
-  return error instanceof Error && error.message ? error.message : t("common.error");
+  if (error instanceof Error && error.message) {
+    return providerErrorMessage(error.message) ?? error.message;
+  }
+  return t("common.error");
 }
