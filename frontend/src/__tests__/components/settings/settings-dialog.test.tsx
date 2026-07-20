@@ -58,14 +58,24 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (
       key: string,
-      options?: { defaultValue?: string; count?: number; id?: string; selectedCount?: number },
+      options?: {
+        defaultValue?: string;
+        count?: number;
+        id?: string;
+        page?: string;
+        selectedCount?: number;
+      },
     ) =>
       ({
         "settings.title": "设置",
         "settings.close": "关闭",
-        "settings.tabs.general": "通用",
-        "settings.tabs.freezoneSkills": "虾画 Skills",
-        "settings.tabs.freezoneRecipes": "虾画 Recipes",
+        "settings.navigationLabel": "设置导航",
+        "settings.pages.models": "模型配置",
+        "settings.pages.storage": "媒体存储",
+        "settings.pages.freezoneSkills": "虾画 Skills",
+        "settings.pages.freezoneRecipes": "虾画 Recipes",
+        "settings.statusConfigured": `${options?.page ?? ""}已配置`,
+        "settings.statusNotConfigured": `${options?.page ?? ""}未配置`,
         "settings.modelConfig.title": "模型配置",
         "settings.modelConfig.description": "选择模型网关渠道",
         "settings.modelConfig.gatewayWarningIconLabel": "模型网关未配置",
@@ -232,24 +242,27 @@ beforeEach(() => {
   freezoneAgentConfigMocks.save.mockReset();
 });
 
-describe("SettingsDialog tabs", () => {
-  it("opens on the general settings tab", () => {
+describe("SettingsDialog pages", () => {
+  it("opens on the model settings page", () => {
     renderSettingsDialog();
 
-    expect(screen.getByRole("tab", { name: "通用" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("模型配置")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /模型配置/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByText("选择模型网关渠道")).toBeInTheDocument();
   });
 
   it("switches to Freezone Skills and Recipes without replacing the original settings", () => {
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
 
     expect(screen.getByText("暂无虾画 Skills")).toBeInTheDocument();
     expect(screen.getByText("导入")).toBeInTheDocument();
     expect(screen.queryByText("freezone_demo")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Recipes" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Recipes" }));
 
     expect(screen.getByText("暂无虾画 Recipes")).toBeInTheDocument();
   });
@@ -260,7 +273,7 @@ describe("SettingsDialog tabs", () => {
       .mockImplementation(() => undefined);
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getByRole("button", { name: "导入" }));
 
     expect(clickSpy).toHaveBeenCalledTimes(1);
@@ -273,7 +286,7 @@ describe("SettingsDialog tabs", () => {
   it("opens the new Skill editor shell without saving data", () => {
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
 
     expect(screen.getByText("新增 Skill")).toBeInTheDocument();
@@ -291,7 +304,7 @@ describe("SettingsDialog tabs", () => {
   it("opens the new Recipe editor shell from the Recipes tab", () => {
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Recipes" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Recipes" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
 
     expect(screen.getByText("新增 Recipe")).toBeInTheDocument();
@@ -306,7 +319,7 @@ describe("SettingsDialog tabs", () => {
   it("shows raw JSON that maps to the current new Recipe form fields", () => {
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Recipes" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Recipes" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
     fireEvent.change(screen.getByPlaceholderText("my-recipe"), {
       target: { value: "digital-product-text-plan" },
@@ -362,7 +375,7 @@ describe("SettingsDialog tabs", () => {
     });
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Recipes" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Recipes" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
     fireEvent.change(screen.getByPlaceholderText("my-recipe"), {
       target: { value: "copyable-recipe" },
@@ -386,7 +399,7 @@ describe("SettingsDialog tabs", () => {
   it("does not save a Freezone Recipe until all required fields are present", () => {
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Recipes" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Recipes" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
     fireEvent.change(screen.getByPlaceholderText("my-recipe"), {
       target: { value: "story-recipe" },
@@ -421,7 +434,7 @@ describe("SettingsDialog tabs", () => {
   it("adds and removes rating band rows in the new Skill editor", () => {
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
 
     expect(screen.queryByPlaceholderText("该分数段的描述")).not.toBeInTheDocument();
@@ -443,7 +456,7 @@ describe("SettingsDialog tabs", () => {
   it("adds and removes visual and text dimension rows in the new Skill editor", () => {
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
 
     expect(screen.queryByPlaceholderText("维度名称")).not.toBeInTheDocument();
@@ -470,7 +483,7 @@ describe("SettingsDialog tabs", () => {
   it("shows raw JSON that maps to the current new Skill form fields", () => {
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
     fireEvent.change(screen.getByPlaceholderText("my-skill"), { target: { value: "id" } });
     fireEvent.change(screen.getByPlaceholderText("general"), {
@@ -643,7 +656,7 @@ describe("SettingsDialog tabs", () => {
     });
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
     fireEvent.change(screen.getByPlaceholderText("my-skill"), {
       target: { value: "copyable-skill" },
@@ -680,7 +693,7 @@ describe("SettingsDialog tabs", () => {
     });
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
     fireEvent.change(screen.getByPlaceholderText("my-skill"), {
       target: { value: "story-skill" },
@@ -718,7 +731,7 @@ describe("SettingsDialog tabs", () => {
     ];
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
 
     expect(screen.getByText("social-media")).toBeInTheDocument();
     expect(screen.getByText("社交媒体内容素材制作")).toBeInTheDocument();
@@ -756,7 +769,7 @@ describe("SettingsDialog tabs", () => {
     ];
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Recipes" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Recipes" }));
 
     expect(screen.getByText("public-welfare-poster-9-16").closest("article")).toHaveTextContent("图片");
     expect(screen.getByText("public-welfare-copy").closest("article")).toHaveTextContent("文本");
@@ -786,7 +799,7 @@ describe("SettingsDialog tabs", () => {
     ];
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
 
     expect(screen.getByText("builtin-skill")).toBeInTheDocument();
     expect(screen.getByText("user-skill")).toBeInTheDocument();
@@ -818,7 +831,7 @@ describe("SettingsDialog tabs", () => {
     freezoneAgentConfigMocks.save.mockResolvedValue({});
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
 
     expect(screen.getByText("builtin-skill").closest("article")).toHaveTextContent("内置");
     expect(screen.getByText("customized-skill").closest("article")).toHaveTextContent("定制");
@@ -840,7 +853,7 @@ describe("SettingsDialog tabs", () => {
   it("does not save a Freezone Skill until all required fields are present", async () => {
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getByRole("button", { name: "新增" }));
     fireEvent.change(screen.getByPlaceholderText("my-skill"), {
       target: { value: "story-skill" },
@@ -863,7 +876,7 @@ describe("SettingsDialog tabs", () => {
   it("rejects imported Freezone Recipes that miss required fields", async () => {
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Recipes" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Recipes" }));
     const importInput = screen.getByLabelText("导入");
     const file = new File(
       [
@@ -919,7 +932,7 @@ describe("SettingsDialog tabs", () => {
     try {
       renderSettingsDialog();
 
-      fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+      fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
       fireEvent.click(screen.getAllByRole("checkbox")[1]);
       fireEvent.click(screen.getByRole("button", { name: "导出" }));
 
@@ -961,7 +974,7 @@ describe("SettingsDialog tabs", () => {
     freezoneAgentConfigMocks.delete.mockResolvedValue({ deleted: true });
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getAllByRole("checkbox")[0]);
     fireEvent.click(screen.getByRole("button", { name: "删除选中" }));
 
@@ -991,7 +1004,7 @@ describe("SettingsDialog tabs", () => {
     freezoneAgentConfigMocks.delete.mockResolvedValue({ deleted: true });
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getByRole("switch", { name: "切换 story-skill 启用状态" }));
 
     await waitFor(() => {
@@ -1032,7 +1045,7 @@ describe("SettingsDialog tabs", () => {
     ];
     renderSettingsDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "虾画 Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "虾画 Skills" }));
     fireEvent.click(screen.getByRole("button", { name: "编辑 story-skill" }));
 
     expect(screen.getByText("编辑 Skill")).toBeInTheDocument();
