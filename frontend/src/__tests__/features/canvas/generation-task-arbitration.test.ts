@@ -27,6 +27,20 @@ describe('generation task arbitration', () => {
     });
   });
 
+  it('keeps provider policy codes searchable after normalizing the displayed message', () => {
+    const policyCode = 'InputImageSensitiveContentDetected.PrivateInformation';
+    const rawError =
+      'video generation failed: request_id=req-sensitive; ' +
+      `body={"error":{"message":"Sensitive input image.","code":"${policyCode}"}}`;
+    const error = new TaskCompletionError(rawError, 'failed', 'task-current');
+    const displayMessage = backendErrorToastMessage(error, t);
+    const diagnostics = resolveGenerationErrorDiagnostics(error);
+
+    expect(displayMessage).toBe('Sensitive input image.');
+    expect(displayMessage).not.toContain(policyCode);
+    expect(`${displayMessage}\n${diagnostics.details ?? ''}`).toContain(policyCode);
+  });
+
   it('clears stale generation errors when an image generation succeeds', () => {
     expect(buildImageGenerationSuccessPatch('/outputs/image.png')).toEqual({
       imageUrl: '/outputs/image.png',

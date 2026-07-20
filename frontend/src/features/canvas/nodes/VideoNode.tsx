@@ -2406,7 +2406,8 @@ export const VideoNode = memo(
           const firstError = runErrors[0];
           const resolved = resolveErrorContent(firstError, "视频生成失败");
           const displayErrorMessage = backendErrorToastMessage(firstError, t);
-          const haystack = `${displayErrorMessage}\n${resolved.details ?? ""}`;
+          const diagnostics = resolveGenerationErrorDiagnostics(firstError, resolved.details);
+          const haystack = `${displayErrorMessage}\n${diagnostics.details ?? ""}`;
           if (
             haystack.includes(
               "InputImageSensitiveContentDetected.PrivateInformation",
@@ -2416,10 +2417,14 @@ export const VideoNode = memo(
             void showErrorDialog(
               "素材包含真实人脸，已被内容安全策略拦截。请在下方打开「真人素材审核」开关后重试（可能增加审核时间，不保证通过）。",
               "素材被拦截",
-              resolved.details,
+              diagnostics.details ?? undefined,
             );
           } else {
-            void showErrorDialog(displayErrorMessage, t("common.error"), resolved.details);
+            void showErrorDialog(
+              displayErrorMessage,
+              t("common.error"),
+              diagnostics.details ?? undefined,
+            );
           }
         } else if (runErrors.length > 0) {
           toast.error(
