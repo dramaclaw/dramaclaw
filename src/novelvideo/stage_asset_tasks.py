@@ -191,7 +191,11 @@ def _confirm_scene_360_model_call(
             metadata={
                 "source": "scene_360_subprocess",
                 "provider": provider,
-                **({"response_id": provider_response_id} if provider_response_id else {}),
+                **(
+                    {"response_id": provider_response_id}
+                    if provider_response_id
+                    else {}
+                ),
             },
         )
 
@@ -471,14 +475,18 @@ def run_splat_collision(
                 try:
                     archived.replace(original)
                 except OSError:
-                    logger.warning("failed to restore archived collision GLB: %s", archived)
+                    logger.warning(
+                        "failed to restore archived collision GLB: %s", archived
+                    )
         if archived_voxel is not None:
             original, archived = archived_voxel
             if archived.exists() and not original.exists():
                 try:
                     archived.replace(original)
                 except OSError:
-                    logger.warning("failed to restore archived voxel JSON: %s", archived)
+                    logger.warning(
+                        "failed to restore archived voxel JSON: %s", archived
+                    )
 
     def remove_fresh_outputs() -> None:
         if voxel_out.exists():
@@ -670,7 +678,9 @@ def run_pano_sharp(
         geometry_mode = "pano-depth"
     if geometry_mode not in {"pano-depth", "sharp"}:
         raise ValueError(f"unknown pano geometry_mode: {geometry_mode}")
-    output_name = "pano_depth.ply" if geometry_mode == "pano-depth" else "pano_sharp_merged.ply"
+    output_name = (
+        "pano_depth.ply" if geometry_mode == "pano-depth" else "pano_sharp_merged.ply"
+    )
     generated_ply = run_dir / output_name
     dest_ply = out_dir / output_name
     dest_sog = _sog_path_for_ply(dest_ply)
@@ -681,9 +691,13 @@ def run_pano_sharp(
         report(0.18, "DA-2 未安装，降级使用 constant depth；几何质量会降低。")
         depth_source = "constant"
     depth_device = (
-        str(depth_device or os.environ.get("PANO_SHARP_DEPTH_DEVICE") or "auto").strip().lower()
+        str(depth_device or os.environ.get("PANO_SHARP_DEPTH_DEVICE") or "auto")
+        .strip()
+        .lower()
     )
-    device = str(device or os.environ.get("PANO_SHARP_DEVICE") or "auto").strip().lower()
+    device = (
+        str(device or os.environ.get("PANO_SHARP_DEVICE") or "auto").strip().lower()
+    )
     face_size = int(face_size)
     internal_size = int(internal_size)
     max_gaussians_per_face = int(max_gaussians_per_face)
@@ -780,7 +794,8 @@ def run_pano_sharp(
     if not generated_ply.exists():
         message = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(
-            "360 PLY 生成器成功退出，但没有写出目标 PLY: " f"{generated_ply}. {message[-1000:]}"
+            "360 PLY 生成器成功退出，但没有写出目标 PLY: "
+            f"{generated_ply}. {message[-1000:]}"
         )
 
     archived_sog = _archive_existing(dest_sog, timestamp)
@@ -809,7 +824,9 @@ def run_pano_sharp(
 
     report(0.90, f"{dest_sog.name} 已写入 3GS 资产包")
     if update_manifest:
-        existing_source = (stage_manifest.load_manifest(project_dir, scene_id) or {}).get("source")
+        existing_source = (
+            stage_manifest.load_manifest(project_dir, scene_id) or {}
+        ).get("source")
         manifest_source = (
             existing_source
             if existing_source in {"uploaded_360", "uploaded_master", "text_to_360"}
@@ -825,7 +842,9 @@ def run_pano_sharp(
             ],
             ply_path=dest_sog.name,
             pano_ply_path=dest_sog.name,
-            pano_depth_ply_path=(dest_sog.name if geometry_mode == "pano-depth" else None),
+            pano_depth_ply_path=(
+                dest_sog.name if geometry_mode == "pano-depth" else None
+            ),
             source=manifest_source,
             pano_sharp_args={
                 "script": "novelvideo.director_world.pano_sharp",
@@ -909,7 +928,9 @@ def run_single_face_sharp(
         if source_kind == "reverse":
             reverse_path = compute_scene_reverse_master_path(project_dir, scene_id)
             if not reverse_path:
-                raise FileNotFoundError("缺少 reverse_master.png。请先生成 reverse master。")
+                raise FileNotFoundError(
+                    "缺少 reverse_master.png。请先生成 reverse master。"
+                )
             image_path = Path(reverse_path)
         else:
             master_path = compute_scene_master_path(project_dir, scene_id)
@@ -927,10 +948,14 @@ def run_single_face_sharp(
     run_dir = out_dir / "single_face_sharp_runs" / timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
     generated_ply = run_dir / "pano_sharp_merged.ply"
-    dest_ply = out_dir / ("reverse_sharp.ply" if source_kind == "reverse" else "master_sharp.ply")
+    dest_ply = out_dir / (
+        "reverse_sharp.ply" if source_kind == "reverse" else "master_sharp.ply"
+    )
     dest_sog = _sog_path_for_ply(dest_ply)
 
-    device = str(device or os.environ.get("PANO_SHARP_DEVICE") or "auto").strip().lower()
+    device = (
+        str(device or os.environ.get("PANO_SHARP_DEVICE") or "auto").strip().lower()
+    )
     if device == "mps":
         try:
             import torch  # type: ignore
@@ -1009,8 +1034,12 @@ def run_single_face_sharp(
 
     report(0.90, f"{source_kind} single-face SOG 已写入 3GS 资产包")
     path_field = "reverse_ply_path" if source_kind == "reverse" else "master_ply_path"
-    args_field = "reverse_sharp_args" if source_kind == "reverse" else "master_sharp_args"
-    manifest_source = "single_face_reverse" if source_kind == "reverse" else "single_face_master"
+    args_field = (
+        "reverse_sharp_args" if source_kind == "reverse" else "master_sharp_args"
+    )
+    manifest_source = (
+        "single_face_reverse" if source_kind == "reverse" else "single_face_master"
+    )
     args_payload = {
         "script": "novelvideo.director_world.pano_sharp",
         "source_kind": source_kind,
@@ -1128,6 +1157,7 @@ def run_scene_360(
     update_manifest: bool = True,
     timeout_seconds: int = 1800,
     progress_callback: Callable[[float, str], None] | None = None,
+    _manage_model_credit: bool = True,
 ) -> dict[str, Any]:
     """Generate `pano_360.png` from a scene master image or text description."""
 
@@ -1141,7 +1171,9 @@ def run_scene_360(
         raise ValueError("scene 360 source must be 'master' or 'text'")
 
     out_dir = (
-        Path(artifact_dir) if artifact_dir else stage_manifest.stage_dir(project_dir, scene_id)
+        Path(artifact_dir)
+        if artifact_dir
+        else stage_manifest.stage_dir(project_dir, scene_id)
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     generation_dir = out_dir / "scene_360_generation"
@@ -1240,7 +1272,8 @@ def run_scene_360(
                     Path(reverse_master_path).stat().st_mtime,
                 )
                 needs_analysis = (
-                    not analysis_path.exists() or analysis_path.stat().st_mtime < latest_input_mtime
+                    not analysis_path.exists()
+                    or analysis_path.stat().st_mtime < latest_input_mtime
                 )
                 if needs_analysis and os.environ.get("OPENROUTER_API_KEY"):
                     report(0.12, "分析 master/reverse 侧边 overlap 和 continuation...")
@@ -1268,12 +1301,16 @@ def run_scene_360(
                             logger.warning(
                                 "scene overlap analyzer failed for %s: %s",
                                 scene_id,
-                                (analyzer_proc.stderr or analyzer_proc.stdout or "")[-800:],
+                                (analyzer_proc.stderr or analyzer_proc.stdout or "")[
+                                    -800:
+                                ],
                             )
                     except (TaskCancelled, TaskTimedOut):
                         raise
                     except Exception as exc:
-                        logger.warning("scene overlap analyzer failed for %s: %s", scene_id, exc)
+                        logger.warning(
+                            "scene overlap analyzer failed for %s: %s", scene_id, exc
+                        )
                 contract_path = (
                     Path(master_path).parent
                     / "scene_spatial_contract"
@@ -1296,7 +1333,10 @@ def run_scene_360(
                     )
                 )
                 if needs_contract and os.environ.get("OPENROUTER_API_KEY"):
-                    report(0.14, f"分析 master/reverse 空间合同 ({spatial_contract_model})...")
+                    report(
+                        0.14,
+                        f"分析 master/reverse 空间合同 ({spatial_contract_model})...",
+                    )
                     contract_cmd = [
                         sys.executable,
                         "-m",
@@ -1325,12 +1365,16 @@ def run_scene_360(
                             logger.warning(
                                 "scene spatial contract failed for %s: %s",
                                 scene_id,
-                                (contract_proc.stderr or contract_proc.stdout or "")[-800:],
+                                (contract_proc.stderr or contract_proc.stdout or "")[
+                                    -800:
+                                ],
                             )
                     except (TaskCancelled, TaskTimedOut):
                         raise
                     except Exception as exc:
-                        logger.warning("scene spatial contract failed for %s: %s", scene_id, exc)
+                        logger.warning(
+                            "scene spatial contract failed for %s: %s", scene_id, exc
+                        )
             manifest_source = "uploaded_master"
     if source == "text":
         cmd.append("--text-only")
@@ -1357,12 +1401,14 @@ def run_scene_360(
         timeout_seconds,
     )
     logger.info("running scene 360 generator: %s", " ".join(cmd[:2] + ["..."]))
-    reservation_id = _reserve_scene_360_model_call(
-        resolved_model,
-        provider=provider,
-        image_size=image_size,
-        quality=quality,
-    )
+    reservation_id = ""
+    if _manage_model_credit:
+        reservation_id = _reserve_scene_360_model_call(
+            resolved_model,
+            provider=provider,
+            image_size=image_size,
+            quality=quality,
+        )
     try:
         proc = run_project_subprocess(
             cmd,
@@ -1387,7 +1433,11 @@ def run_scene_360(
 
         report(
             0.90,
-            "pano_360.png 已写入 3GS 资产包" if update_manifest else "360 全景候选已写入画布输出",
+            (
+                "pano_360.png 已写入 3GS 资产包"
+                if update_manifest
+                else "360 全景候选已写入画布输出"
+            ),
         )
         if update_manifest:
             stage_manifest.update_manifest(
@@ -1411,7 +1461,11 @@ def run_scene_360(
                     "image_size": image_size,
                     "quality": quality,
                     "source": source,
-                    "topology": "master_reverse_safe_side_seam" if pano_correction_payload else "",
+                    "topology": (
+                        "master_reverse_safe_side_seam"
+                        if pano_correction_payload
+                        else ""
+                    ),
                     "master_path": master_path,
                     "reverse_master_path": reverse_master_path,
                     "spatial_contract_path": spatial_contract_path,
@@ -1443,22 +1497,30 @@ def run_scene_360(
             "stdout_tail": (proc.stdout or "")[-2000:],
         }
     except BaseException as exc:
-        _refund_scene_360_model_call(
-            reservation_id,
-            provider=provider,
-            error=exc.__class__.__name__,
-        )
+        if _manage_model_credit:
+            _refund_scene_360_model_call(
+                reservation_id,
+                provider=provider,
+                error=exc.__class__.__name__,
+            )
         raise
 
-    _confirm_scene_360_model_call(
-        model=resolved_model,
-        reservation_id=reservation_id,
-        provider=provider,
-        provider_request_id=provider_trace.get("request_id", ""),
-        provider_task_id=provider_trace.get("provider_task_id", ""),
-        provider_response_id=provider_trace.get("response_id", ""),
-    )
+    if _manage_model_credit:
+        _confirm_scene_360_model_call(
+            model=resolved_model,
+            reservation_id=reservation_id,
+            provider=provider,
+            provider_request_id=provider_trace.get("request_id", ""),
+            provider_task_id=provider_trace.get("provider_task_id", ""),
+            provider_response_id=provider_trace.get("response_id", ""),
+        )
     return result
+
+
+def run_scene_360_feature_billed(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Generate a panorama whose credit lifecycle is owned by the feature task."""
+    kwargs["_manage_model_credit"] = False
+    return run_scene_360(*args, **kwargs)
 
 
 def run_voxel_world_from_360(
@@ -1491,7 +1553,9 @@ def run_voxel_world_from_360(
         raise block_world_builder.BlockWorldUnavailable()
 
     report(0.20, "准备 spatial_layout voxel 参考图...")
-    model_refs_dir = stage_manifest.stage_dir(project_dir, scene_id) / "voxel_model_refs"
+    model_refs_dir = (
+        stage_manifest.stage_dir(project_dir, scene_id) / "voxel_model_refs"
+    )
     if model_refs_dir.exists():
         shutil.rmtree(model_refs_dir)
 
@@ -1560,14 +1624,16 @@ def run_voxel_world_from_360(
         message = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(
             "DirectorWorld 生成失败: "
-            f"{message[-1000:]}" + (f"；失败输出已保留: {failed_path}" if failed_path else "")
+            f"{message[-1000:]}"
+            + (f"；失败输出已保留: {failed_path}" if failed_path else "")
         )
 
     if not scene_world_path.exists():
         if archived is not None and archived.exists():
             archived.replace(scene_world_path)
         raise RuntimeError(
-            "DirectorWorld 生成器成功退出，但没有写出 world.json: " f"{scene_world_path}"
+            "DirectorWorld 生成器成功退出，但没有写出 world.json: "
+            f"{scene_world_path}"
         )
 
     report(0.90, "voxel world.json 已写出")

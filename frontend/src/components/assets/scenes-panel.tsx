@@ -39,6 +39,7 @@ import { useNavigateToAsset } from "@/hooks/use-assets-deep-link";
 import {
   backendErrorToastMessage,
   BillingRuleNotConfiguredError,
+  humanizeTaskError,
 } from "@/lib/api-errors";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { Button } from "@/components/ui/button";
@@ -612,12 +613,31 @@ function SceneAssetCardController({
   const generateMaster = useGenerateSceneMasterAsync(project, scene.name);
   const generateReverse = useGenerateSceneReverseAsync(project, scene.name);
   const generatePano = useGenerateScenePanoAsync(project, scene.name);
-  const masterCost = useGenerationCreditCost("fixed_image", "scene_master");
-  const reverseCost = useGenerationCreditCost(
-    "fixed_image",
-    "scene_reverse_master",
+  const sceneReferenceCost = useGenerationCreditCost(
+    "feature",
+    "mainline.scene_reference_image",
+    {
+      surface: "supertale",
+      params: imageSourceSelection
+        ? { image_selection: imageSourceSelection }
+        : null,
+    },
   );
-  const panoCost = useGenerationCreditCost("fixed_image", "scene_pano");
+  const panoCost = useGenerationCreditCost(
+    "feature",
+    "mainline.scene_pano_generation",
+    { surface: "supertale" },
+  );
+  const sceneReferenceCostDisplay =
+    sceneReferenceCost.data?.data.display ??
+    (sceneReferenceCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
+  const panoCostDisplay =
+    panoCost.data?.data.display ??
+    (panoCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const generateStagePly = useGenerateScene3gsPlyAsync(project, scene.name);
   const saveDirectorWorld = useSaveSceneDirectorWorld(project, scene.name);
   const clearDirectorWorld = useClearSceneDirectorWorld(project, scene.name);
@@ -640,7 +660,7 @@ function SceneAssetCardController({
   });
   const panoTask = useTaskController({
     key: {
-      taskType: "stage_asset",
+      taskType: "scene_pano_generation",
       project,
       episode: 0,
       scope: stageAssetScope(scene.name, panoStep),
@@ -713,7 +733,7 @@ function SceneAssetCardController({
     try {
       const res = await generateMaster.mutateAsync({ model: imageSourceSelection });
       if (isErrorResponse(res)) {
-        toast.error(res.error);
+        toast.error(humanizeTaskError(res.error, t));
         return;
       }
       masterTask.start({ scope: res.scope });
@@ -727,7 +747,7 @@ function SceneAssetCardController({
     try {
       const res = await generatePano.mutateAsync({ source });
       if (isErrorResponse(res)) {
-        toast.error(res.error);
+        toast.error(humanizeTaskError(res.error, t));
         return;
       }
       panoTask.start({ scope: res.scope });
@@ -741,7 +761,7 @@ function SceneAssetCardController({
     try {
       const res = await generateReverse.mutateAsync({ model: imageSourceSelection });
       if (isErrorResponse(res)) {
-        toast.error(res.error);
+        toast.error(humanizeTaskError(res.error, t));
         return;
       }
       reverseTask.start({ scope: res.scope });
@@ -934,9 +954,9 @@ function SceneAssetCardController({
         }
         customUploading={uploadCustom.isPending}
         customDeleting={deleteCustom.isPending}
-        masterCost={masterCost.data?.data.display}
-        reverseCost={reverseCost.data?.data.display}
-        panoCost={panoCost.data?.data.display}
+        masterCost={sceneReferenceCostDisplay}
+        reverseCost={sceneReferenceCostDisplay}
+        panoCost={panoCostDisplay}
         onEdit={onEdit}
         onDelete={onDelete}
         onUploadMaster={() => masterInputRef.current?.click()}

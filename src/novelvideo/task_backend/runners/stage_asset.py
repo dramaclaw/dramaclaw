@@ -51,7 +51,9 @@ def _publish_freezone_splat_result(
     result["media_type"] = "file"
 
 
-def run_stage_asset(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any] | None:
+def run_stage_asset(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any] | None:
     from novelvideo import stage_asset_tasks
     from novelvideo.api.deps import make_static_url_for_context
 
@@ -64,7 +66,9 @@ def run_stage_asset(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, 
     manager = get_task_manager()
 
     def check_cancel() -> None:
-        raise_if_envelope_cancel_requested(envelope, task_type="stage_asset", scope=scope)
+        raise_if_envelope_cancel_requested(
+            envelope, task_type="stage_asset", scope=scope
+        )
 
     def local_runner_timeout(default_seconds: int) -> int | None:
         return remaining_timeout_seconds(envelope, default_seconds=default_seconds)
@@ -116,7 +120,9 @@ def run_stage_asset(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, 
             face_size=int(params.get("face_size", 768)),
             internal_size=int(params.get("internal_size", 1536)),
             max_gaussians_per_face=int(params.get("max_gaussians_per_face", 1_000_000)),
-            timeout_seconds=local_runner_timeout(int(params.get("timeout_seconds", 7200))),
+            timeout_seconds=local_runner_timeout(
+                int(params.get("timeout_seconds", 7200))
+            ),
             progress_callback=update,
         )
     elif step == "single_face_sharp":
@@ -132,7 +138,9 @@ def run_stage_asset(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, 
             face_size=int(params.get("face_size", 768)),
             internal_size=int(params.get("internal_size", 1536)),
             max_gaussians_per_face=int(params.get("max_gaussians_per_face", 1_000_000)),
-            timeout_seconds=local_runner_timeout(int(params.get("timeout_seconds", 7200))),
+            timeout_seconds=local_runner_timeout(
+                int(params.get("timeout_seconds", 7200))
+            ),
             progress_callback=update,
         )
     elif step == "voxel_world_from_360":
@@ -162,11 +170,15 @@ def run_stage_asset(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, 
                 Path(params["master_path"]) if params.get("master_path") else None
             ),
             reverse_master_path_override=(
-                Path(params["reverse_master_path"]) if params.get("reverse_master_path") else None
+                Path(params["reverse_master_path"])
+                if params.get("reverse_master_path")
+                else None
             ),
             artifact_dir=Path(artifact_dir) if artifact_dir else None,
             update_manifest=bool(params.get("update_manifest", True)),
-            timeout_seconds=local_runner_timeout(int(params.get("timeout_seconds", 1800))),
+            timeout_seconds=local_runner_timeout(
+                int(params.get("timeout_seconds", 1800))
+            ),
             progress_callback=update,
         )
     else:
@@ -206,6 +218,96 @@ def run_stage_asset(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, 
 
 
 register_project_task_runner("stage_asset", run_stage_asset)
+
+
+def run_scene_pano_generation(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any] | None:
+    """Run the mainline scene panorama feature without legacy model billing."""
+    from novelvideo import stage_asset_tasks
+    from novelvideo.api.deps import make_static_url_for_context
+
+    payload = envelope.get("payload") or {}
+    scene_name = str(payload["scene_name"])
+    step = str(payload["step"])
+    params = dict(payload.get("params") or {})
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    scope = envelope.get("scope")
+    manager = get_task_manager()
+
+    if step not in {"pano_from_master", "pano_from_text"}:
+        raise ValueError(f"unknown scene_pano_generation step: {step}")
+
+    def check_cancel() -> None:
+        raise_if_envelope_cancel_requested(
+            envelope,
+            task_type="scene_pano_generation",
+            scope=scope,
+        )
+
+    def update(progress: float, current_task: str) -> None:
+        check_cancel()
+        manager.update_progress_for_project(
+            ctx,
+            "scene_pano_generation",
+            0,
+            scope=scope,
+            progress=progress,
+            current_task=current_task,
+            logs=[current_task],
+        )
+
+    update(0.10, f"启动 {step}...")
+    source = "master" if step == "pano_from_master" else "text"
+    artifact_dir = params.get("artifact_dir")
+    result = stage_asset_tasks.run_scene_360_feature_billed(
+        project_dir,
+        scene_name,
+        source=source,
+        description=params.get("description", ""),
+        provider=params.get("provider", ""),
+        model=params.get("model", ""),
+        style=params.get("style", ""),
+        image_size=params.get("image_size", ""),
+        quality=params.get("quality", ""),
+        master_path_override=(
+            Path(params["master_path"]) if params.get("master_path") else None
+        ),
+        reverse_master_path_override=(
+            Path(params["reverse_master_path"])
+            if params.get("reverse_master_path")
+            else None
+        ),
+        artifact_dir=Path(artifact_dir) if artifact_dir else None,
+        update_manifest=bool(params.get("update_manifest", True)),
+        timeout_seconds=remaining_timeout_seconds(
+            envelope,
+            default_seconds=int(params.get("timeout_seconds", 1800)),
+        ),
+        progress_callback=update,
+    )
+    check_cancel()
+    if isinstance(result, dict):
+        pano_path_text = result.get("pano_path") or result.get("output_path")
+        if pano_path_text:
+            pano_path = Path(str(pano_path_text))
+            if pano_path.exists():
+                try:
+                    output_url = make_static_url_for_context(
+                        ctx,
+                        pano_path.relative_to(project_dir).as_posix(),
+                    )
+                    result.setdefault("output_url", output_url)
+                    result.setdefault("url", output_url)
+                    result.setdefault("image_url", output_url)
+                    result.setdefault("media_type", "image")
+                except ValueError:
+                    pass
+    return result
+
+
+register_project_task_runner("scene_pano_generation", run_scene_pano_generation)
 
 
 def run_freezone_image_to_3gs(
@@ -273,7 +375,9 @@ def run_freezone_image_to_3gs(
             face_size=int(params.get("face_size", 768)),
             internal_size=int(params.get("internal_size", 1536)),
             max_gaussians_per_face=int(params.get("max_gaussians_per_face", 1_000_000)),
-            timeout_seconds=local_runner_timeout(int(params.get("timeout_seconds", 7200))),
+            timeout_seconds=local_runner_timeout(
+                int(params.get("timeout_seconds", 7200))
+            ),
             progress_callback=update,
         )
     else:
@@ -290,7 +394,9 @@ def run_freezone_image_to_3gs(
             face_size=int(params.get("face_size", 768)),
             internal_size=int(params.get("internal_size", 1536)),
             max_gaussians_per_face=int(params.get("max_gaussians_per_face", 1_000_000)),
-            timeout_seconds=local_runner_timeout(int(params.get("timeout_seconds", 7200))),
+            timeout_seconds=local_runner_timeout(
+                int(params.get("timeout_seconds", 7200))
+            ),
             progress_callback=update,
         )
 
@@ -329,7 +435,9 @@ def run_freezone_image_to_3gs(
             )
             if history_record is not None:
                 result["generation_history_record"] = {
-                    key: value for key, value in history_record.items() if key != "result"
+                    key: value
+                    for key, value in history_record.items()
+                    if key != "result"
                 }
     return result
 

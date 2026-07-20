@@ -226,7 +226,9 @@ async def test_generation_credit_cost_route_resolves_freezone_story_script(monke
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_resolves_freezone_image_reverse_prompt(monkeypatch):
+async def test_generation_credit_cost_route_resolves_freezone_image_reverse_prompt(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
 
     monkeypatch.setenv("FREEZONE_VISION_MODEL", "freezone-vision-model")
@@ -360,6 +362,46 @@ async def test_generation_credit_cost_route_adds_scene_pano_params(monkeypatch):
     assert result == {"ok": True, "data": {"cost": 18, "display": "18"}}
 
 
+def test_scene_reference_feature_quote_resolves_selected_bottom_model(monkeypatch):
+    from novelvideo import config
+    from novelvideo.api.routes import model_credits
+
+    monkeypatch.setitem(
+        config.IMAGE_GENERATION_SELECTIONS,
+        "newapi_gpt_image2",
+        {"label": "LingShan-G2", "provider": "newapi", "model": "gpt-image-2"},
+    )
+
+    params = model_credits._feature_billing_params(
+        "mainline.scene_reference_image",
+        {"image_selection": "newapi_gpt_image2"},
+    )
+
+    assert params["pricing_kind"] == "image"
+    assert params["pricing_model"] == "gpt-image-2"
+    assert params["pricing_params"] == {"size": "1K", "quality": "low"}
+    assert params["pricing_model_selection"] == "newapi_gpt_image2"
+
+
+def test_scene_pano_feature_quote_resolves_runtime_model_and_params(monkeypatch):
+    from novelvideo.api.routes import model_credits
+
+    monkeypatch.setenv("SCENE_360_IMAGE_PROVIDER", "newapi")
+    monkeypatch.setenv("SCENE_360_IMAGE_MODEL", "gpt-image-2")
+    monkeypatch.setenv("SCENE_360_IMAGE_SIZE", "2K")
+    monkeypatch.setenv("SCENE_360_IMAGE_QUALITY", "medium")
+
+    params = model_credits._feature_billing_params(
+        "mainline.scene_pano_generation",
+        {},
+    )
+
+    assert params["pricing_kind"] == "image"
+    assert params["pricing_model"] == "gpt-image-2"
+    assert params["pricing_params"] == {"size": "2k", "quality": "medium"}
+    assert params["provider"] == "newapi"
+
+
 @pytest.mark.asyncio
 async def test_generation_credit_cost_route_adds_image_mode_params(monkeypatch):
     from novelvideo import config
@@ -393,7 +435,9 @@ async def test_generation_credit_cost_route_adds_image_mode_params(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_canvas_uses_only_explicit_params(monkeypatch):
+async def test_generation_credit_cost_route_canvas_uses_only_explicit_params(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
 
     monkeypatch.setattr(
@@ -457,7 +501,9 @@ async def test_generation_credit_cost_route_adds_character_image_params(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_keeps_video_params_and_quantity(monkeypatch):
+async def test_generation_credit_cost_route_keeps_video_params_and_quantity(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
 
     patch_quote_expect(
@@ -519,10 +565,43 @@ async def test_generation_credit_cost_route_prices_video_feature_by_backend_and_
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_style_analysis_feature_by_model(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    monkeypatch.setenv("STYLE_ANALYZER_MODEL", "style-analyzer-model")
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="mainline.style_analysis",
+        expected_params={
+            "pricing_kind": "text",
+            "pricing_model": "style-analyzer-model",
+            "pricing_params": {},
+            "pricing_quantity": 1,
+        },
+        expected_quantity=1,
+        cost=7,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        value="mainline.style_analysis",
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 7, "display": "7"}}
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_resolves_newapi_video_backend(monkeypatch):
     from novelvideo.api.routes import model_credits
 
-    patch_quote(monkeypatch, model_credits, expected_model="seedance-1.0-pro-fast", cost=12)
+    patch_quote(
+        monkeypatch, model_credits, expected_model="seedance-1.0-pro-fast", cost=12
+    )
 
     result = await model_credits.get_generation_credit_cost(
         kind="video_backend",
@@ -534,11 +613,15 @@ async def test_generation_credit_cost_route_resolves_newapi_video_backend(monkey
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_resolves_newapi_video_backend_label(monkeypatch):
+async def test_generation_credit_cost_route_resolves_newapi_video_backend_label(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
     from novelvideo.generators.video_generator import newapi_video_backend_options
 
-    patch_quote(monkeypatch, model_credits, expected_model="seedance-1.0-pro-fast", cost=12)
+    patch_quote(
+        monkeypatch, model_credits, expected_model="seedance-1.0-pro-fast", cost=12
+    )
 
     result = await model_credits.get_generation_credit_cost(
         kind="video_backend",
@@ -565,7 +648,9 @@ async def test_generation_credit_cost_route_resolves_huimeng_video_backend(monke
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_resolves_huimeng_video_backend_label(monkeypatch):
+async def test_generation_credit_cost_route_resolves_huimeng_video_backend_label(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
     from novelvideo.generators.huimengi import huimeng_video_backend_options
 
@@ -581,7 +666,9 @@ async def test_generation_credit_cost_route_resolves_huimeng_video_backend_label
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_keeps_legacy_video_backend_values(monkeypatch):
+async def test_generation_credit_cost_route_keeps_legacy_video_backend_values(
+    monkeypatch,
+):
     from novelvideo import config
     from novelvideo.api.routes import model_credits
 
@@ -629,7 +716,9 @@ async def test_generation_credit_cost_route_rejects_unknown_video_backend():
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_rejects_unconfigured_fixed_image_model(monkeypatch):
+async def test_generation_credit_cost_route_rejects_unconfigured_fixed_image_model(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
 
     monkeypatch.setattr(model_credits, "_fixed_image_cost_model", lambda kind: "")

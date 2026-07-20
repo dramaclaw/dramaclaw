@@ -12,6 +12,7 @@ Sketch 模式使用 3x3 网格（每张 9 panel 位），按 beat 顺序分块�
 
 import asyncio
 import base64
+import contextvars
 import hashlib
 import io
 import json
@@ -91,6 +92,25 @@ SINGLE_CELL_RENDER_MODE_BY_ASPECT = {
     "16:9": "1x1_16-9",
 }
 logger = logging.getLogger(__name__)
+
+_SCENE_REFERENCE_FEATURE_BILLING = contextvars.ContextVar(
+    "scene_reference_feature_billing", default=False
+)
+
+
+class scene_reference_feature_billing:
+    """Temporarily delegate scene-reference billing to the EE feature ledger."""
+
+    def __enter__(self):
+        self._token = _SCENE_REFERENCE_FEATURE_BILLING.set(True)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        _SCENE_REFERENCE_FEATURE_BILLING.reset(self._token)
+
+
+def _scene_reference_feature_billing_active() -> bool:
+    return _SCENE_REFERENCE_FEATURE_BILLING.get()
 
 
 def _newapi_request_id_from_headers(headers: Any) -> str:
@@ -3139,6 +3159,8 @@ async def _call_openai_image_api(
         request_options["input_fidelity"] = input_fidelity
 
     async def _reserve(source: str) -> str:
+        if _scene_reference_feature_billing_active():
+            return ""
         return await get_usage_meter().reserve_current_model_call_credit(
             model=model,
             billing_kind="image",
@@ -3166,6 +3188,8 @@ async def _call_openai_image_api(
         provider_request_id: str = "",
         response_id: str = "",
     ) -> None:
+        if _scene_reference_feature_billing_active() or not reservation_id:
+            return
         try:
             await get_usage_meter().bump_model_call(
                 user_id=None,
@@ -3345,6 +3369,8 @@ async def _call_newapi_image_api(
     }
 
     async def _reserve(source: str) -> str:
+        if _scene_reference_feature_billing_active():
+            return ""
         return await get_usage_meter().reserve_current_model_call_credit(
             model=model,
             billing_kind="image",
@@ -3387,6 +3413,8 @@ async def _call_newapi_image_api(
         provider_request_id: str = "",
         response_id: str = "",
     ) -> None:
+        if _scene_reference_feature_billing_active() or not reservation_id:
+            return
         try:
             await get_usage_meter().bump_model_call(
                 user_id=None,
