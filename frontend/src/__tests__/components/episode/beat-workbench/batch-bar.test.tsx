@@ -217,6 +217,18 @@ vi.mock("@/lib/queries/video", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
+  useGlobalOptimizeBillingQuote: () => ({
+    data: {
+      ok: true,
+      data: {
+        beat_numbers: [1, 2],
+        quantity: 2,
+        unit_cost: 6,
+        cost: 12,
+        display: "12",
+      },
+    },
+  }),
   useVideoBackends: () => ({
     data: {
       ok: true,
@@ -472,7 +484,8 @@ describe("BatchBar", () => {
     expect(screen.queryByText("0.5K")).not.toBeInTheDocument();
   });
 
-  it("shows whole-episode video prompt generation only for narrated projects", () => {
+  it("shows the backend batch quote for narrated projects", async () => {
+    const user = userEvent.setup();
     const { rerender } = render(
       <I18nextProvider i18n={i18n}>
         <BatchBar
@@ -487,9 +500,13 @@ describe("BatchBar", () => {
       </I18nextProvider>,
     );
 
-    expect(
-      screen.getByRole("button", { name: "生成全 Beat 视频提示词" }),
-    ).toBeInTheDocument();
+    const batchButton = screen.getByRole("button", {
+      name: /生成全 Beat 视频提示词/,
+    });
+    expect(batchButton).toHaveTextContent("12");
+    await user.click(batchButton);
+    expect(screen.getAllByText("12").length).toBeGreaterThanOrEqual(2);
+    await user.click(screen.getByRole("button", { name: "取消" }));
 
     rerender(
       <I18nextProvider i18n={i18n}>
@@ -506,7 +523,7 @@ describe("BatchBar", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "生成全 Beat 视频提示词" }),
+      screen.queryByRole("button", { name: /生成全 Beat 视频提示词/ }),
     ).not.toBeInTheDocument();
   });
 

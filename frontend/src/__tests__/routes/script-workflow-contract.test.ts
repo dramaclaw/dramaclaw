@@ -44,6 +44,16 @@ describe("script workflow canonical contract", () => {
     );
     expect(route).toMatch(/<CreditCostInline\s+display=\{generateScriptCostDisplay\}/);
     expect(route).toContain("useGenerateRewrite");
+    expect(route).toContain(
+      'useGenerationCreditCost("feature", "mainline.content_rewrite")',
+    );
+    expect(route).toContain(
+      "generateRewriteCost.error instanceof BillingRuleNotConfiguredError",
+    );
+    expect(route).toContain(
+      '<CreditCostInline display={generateRewriteCostDisplay} />',
+    );
+    expect(route).toContain("backendErrorToastMessage(error, t)");
     expect(route).toContain('spine_template === "narrated"');
     expect(route).toContain("initializedSourceRef");
     expect(route).toContain("ensureBeatSourceText");
@@ -93,6 +103,16 @@ describe("script workflow canonical contract", () => {
 
     expect(queryKeys).not.toContain("raw-content");
     expect(queryKeys).not.toContain("adapted-content");
+  });
+
+  it("parses AI rewrite billing errors through the shared API error contract", () => {
+    const queries = read("src/lib/queries/scripts.ts");
+
+    expect(queries).toContain("rewrite/generate");
+    expect(queries).toContain("jsonWithBackendError<OkResponse<");
+    expect(queries).toMatch(
+      /rewrite\/generate[\s\S]*?throwHttpErrors: false/,
+    );
   });
 
   it("uses script review feedback for Script tab completion", () => {

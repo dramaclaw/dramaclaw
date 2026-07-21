@@ -41,16 +41,17 @@ export function useGenerateRewrite(project: string, episode: number) {
       beat_chars_max?: number;
       narration_style?: string;
     }) =>
-      api
-        .post(p`api/v1/projects/${project}/episodes/${episode}/rewrite/generate`, {
-          json: params ?? {},
-        })
-        .json<OkResponse<{
+      jsonWithBackendError<OkResponse<{
           episode: number;
           line_count: number;
           adapted_content: string;
           used_fallback: boolean;
-        }> | ErrorResponse>(),
+        }> | ErrorResponse>(
+        api.post(p`api/v1/projects/${project}/episodes/${episode}/rewrite/generate`, {
+          json: params ?? {},
+          throwHttpErrors: false,
+        }),
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.episodeDetail(project, episode) });
       qc.invalidateQueries({ queryKey: queryKeys.script(project, episode) });

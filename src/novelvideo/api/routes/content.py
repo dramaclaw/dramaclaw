@@ -3,17 +3,34 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from novelvideo.api.auth import get_api_user, require_project_scope
-from novelvideo.api.deps import get_sqlite_store
+from novelvideo.api.deps import get_sqlite_store, resolve_project_scope
 from novelvideo.api.schemas import ContentUpdateRequest, RewriteGenerateRequest
+from novelvideo.ports import get_usage_meter
 from novelvideo.sqlite_store import SQLiteStore
 
 logger = logging.getLogger("novelvideo.api.content")
 
 router = APIRouter()
+
+CONTENT_REWRITE_FEATURE_KEY = "mainline.content_rewrite"
+CONTENT_REWRITE_TASK_TYPE = "content_rewrite"
+MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED = "feature_included"
+
+
+def _requester_user_id_for_billing(resolved: Any, user: dict) -> str:
+    ctx = getattr(resolved, "ctx", None)
+    return str(
+        getattr(ctx, "requester_user_id", "")
+        or user.get("id")
+        or user.get("user_id")
+        or user.get("username")
+        or ""
+    )
 
 
 @router.get("/projects/{project}/episodes/{episode_num}/raw-content")
@@ -112,29 +129,92 @@ async def generate_rewrite(
             "error": f"第 {episode_num} 集尚未有原文，请先填写 raw-content",
         }
 
-    await store.load_graph_state()
-    episode = store.get_episode(episode_num)
-    episode_title = getattr(episode, "title", "") if episode else ""
-    narrator_main_name = _resolve_narrator_main_name(store)
-
-    from novelvideo.agents.content_rewriter import rewrite_episode_content
-
-    rewritten = await rewrite_episode_content(
-        raw_content,
-        episode_title=episode_title,
-        protagonist_name=narrator_main_name,
-        target_beats=body.target_beats,
-        beat_chars_range=(body.beat_chars_min, body.beat_chars_max),
-        narration_style=body.narration_style or "first_person",
+    resolved = await resolve_project_scope(project, user, required_role="editor")
+    ctx = getattr(resolved, "ctx", None)
+    project_id = str(getattr(ctx, "project_id", "") or "")
+    billing_user_id = _requester_user_id_for_billing(resolved, user)
+    usage_meter = get_usage_meter()
+    billing_context = {
+        "source": "sync_api",
+        "endpoint": "generate_content_rewrite",
+        "episode": episode_num,
+        "target_beats": body.target_beats,
+        "beat_chars_min": body.beat_chars_min,
+        "beat_chars_max": body.beat_chars_max,
+    }
+    reservation = await usage_meter.reserve_feature_start_credits(
+        user_id=billing_user_id,
+        feature_key=CONTENT_REWRITE_FEATURE_KEY,
+        project_id=project_id,
+        resource_kind="script",
+        task_type=CONTENT_REWRITE_TASK_TYPE,
+        metadata=billing_context,
+        require_price_rule=True,
+        require_positive_cost=True,
     )
-    normalized = rewritten.strip()
-    if normalized == raw_content:
-        normalized = ""
+    reservation_id = str(reservation.get("id") or "")
+    model_billing_metadata: dict[str, Any] = {
+        "model_call_credit_policy": MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED,
+        "feature_key": CONTENT_REWRITE_FEATURE_KEY,
+        "source": "sync_api",
+    }
+    if reservation_id:
+        model_billing_metadata.update(
+            {
+                "feature_credit_reservation_id": reservation_id,
+                "feature_credit_charge_id": reservation_id,
+                "feature_credit_cost": str(reservation.get("cost") or 0),
+            }
+        )
+
     try:
+        usage_meter.set_llm_usage_context(
+            billing_user_id,
+            project_id=project_id,
+            resource_kind="script",
+            billing_metadata=model_billing_metadata,
+        )
+        await store.load_graph_state()
+        episode = store.get_episode(episode_num)
+        episode_title = getattr(episode, "title", "") if episode else ""
+        narrator_main_name = _resolve_narrator_main_name(store)
+
+        from novelvideo.agents.content_rewriter import rewrite_episode_content
+
+        rewritten = await rewrite_episode_content(
+            raw_content,
+            episode_title=episode_title,
+            protagonist_name=narrator_main_name,
+            target_beats=body.target_beats,
+            beat_chars_range=(body.beat_chars_min, body.beat_chars_max),
+            narration_style=body.narration_style or "first_person",
+        )
+        normalized = rewritten.strip()
+        if normalized == raw_content:
+            normalized = ""
         await store.save_adapted_content(episode_num, normalized)
         await store.update_episode(episode_num, beat_source_text=normalized)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if reservation_id:
+            await usage_meter.confirm_feature_credit_reservation(
+                reservation_id,
+                metadata=billing_context,
+            )
+    except Exception as exc:
+        if reservation_id:
+            try:
+                await usage_meter.refund_feature_credit_reservation(
+                    reservation_id,
+                    metadata={**billing_context, "error": str(exc)},
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to refund content rewrite feature credit reservation"
+                )
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise
+    finally:
+        usage_meter.clear_llm_usage_context()
 
     lines = [line for line in normalized.splitlines() if line.strip()]
     return {

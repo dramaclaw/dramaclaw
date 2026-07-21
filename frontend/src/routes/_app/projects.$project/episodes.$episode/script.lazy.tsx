@@ -121,6 +121,12 @@ function ScriptTabContent() {
       ? t("common.billingRuleNotConfiguredShort")
       : null);
   const generateRewrite = useGenerateRewrite(project, epNum);
+  const generateRewriteCost = useGenerationCreditCost("feature", "mainline.content_rewrite");
+  const generateRewriteCostDisplay =
+    generateRewriteCost.data?.data.display ??
+    (generateRewriteCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
   const scriptTask = useTaskController({
     key: { taskType: TASK_TYPES.SCRIPT_WRITER, project, episode: epNum },
     alsoReconcile: [TASK_TYPES.LITERAL_SCRIPT_WRITER],
@@ -359,8 +365,8 @@ function ScriptTabContent() {
         queryKey: queryKeys.episodeDetail(project, epNum),
       });
       toast.success(t("episode.script.rewriteComplete"));
-    } catch {
-      toast.error(t("common.error"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
 
@@ -575,6 +581,7 @@ function ScriptTabContent() {
                   <Sparkles className="size-3.5" />
                 )}
                 {t("episode.script.generateRewrite")}
+                <CreditCostInline display={generateRewriteCostDisplay} />
               </Button>
             </>
           )}

@@ -70,7 +70,7 @@ from novelvideo.seedance2_i2v.pipeline import (
 from novelvideo.seedance2_i2v.voice_clone import normalize_seedance2_audio_type
 from novelvideo.project_config import load_project_config, save_project_config
 from novelvideo.project_context import ProjectContext
-from novelvideo.ports import get_task_backend, get_usage_meter
+from novelvideo.ports import get_credit_quote, get_task_backend, get_usage_meter
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.models import beat_scene_id
 from novelvideo.services.background_anchor_service import (
@@ -2250,6 +2250,75 @@ async def generate_audio(
 # ── 视频优化 ──────────────────────────────────────────────────────────────────
 
 
+def _global_optimize_billable_beat_numbers(
+    *, output_dir: str, episode_num: int, beats: list[dict]
+) -> list[int]:
+    """Return Beat numbers with a canonical sketch, matching the worker path."""
+    from novelvideo.utils.path_resolver import PathResolver
+
+    sketches_dir = PathResolver(output_dir, episode_num).sketches_dir()
+    billable: list[int] = []
+    for beat in beats:
+        beat_num = int(beat.get("beat_number") or 0)
+        if beat_num <= 0:
+            continue
+        if any(
+            (sketches_dir / f"beat_{beat_num:02d}.{ext}").exists()
+            for ext in ("png", "jpg")
+        ):
+            billable.append(beat_num)
+    return billable
+
+
+@router.get("/projects/{project}/episodes/{episode_num}/optimize/video-global/billing-quote")
+async def global_optimize_video_billing_quote(
+    project: str,
+    episode_num: int,
+    user: dict = Depends(get_api_user),
+):
+    """Return the number of Beat prompt generations the batch action can run."""
+    resolved = await _resolve_generation_project(project, user, required_role="viewer")
+    store = (
+        await make_sqlite_store_for_context(resolved.ctx)
+        if resolved.ctx
+        else await make_sqlite_store(resolved.username, resolved.project_name)
+    )
+    beats = await store.get_beats_as_dicts(episode_num)
+    beat_numbers = _global_optimize_billable_beat_numbers(
+        output_dir=resolved.output_dir,
+        episode_num=episode_num,
+        beats=beats,
+    )
+    quantity = len(beat_numbers)
+    if quantity <= 0:
+        return {
+            "ok": True,
+            "data": {
+                "beat_numbers": [],
+                "quantity": 0,
+                "unit_cost": 0,
+                "cost": 0,
+                "display": "",
+            },
+        }
+    quote = await get_credit_quote().generation_credit_quote(
+        kind="feature",
+        model="mainline.beat_video_prompt",
+        params={},
+        quantity=quantity,
+    )
+    return {
+        "ok": True,
+        "data": {
+            "beat_numbers": beat_numbers,
+            "quantity": quantity,
+            "unit_cost": quote.unit_cost,
+            "cost": quote.total_cost,
+            "display": quote.display,
+        },
+    }
+
+
 @router.post("/projects/{project}/episodes/{episode_num}/optimize/video-global")
 async def global_optimize_video(
     project: str,
@@ -2278,12 +2347,14 @@ async def global_optimize_video(
     if not beats:
         return {"ok": False, "error": f"No beats found for episode {episode_num}"}
 
-    # 预检：确认有草图存在
-    from novelvideo.utils.path_resolver import PathResolver
-
-    resolver = PathResolver(output_dir, episode_num)
-    sketches_dir = resolver.sketches_dir()
-    if not sketches_dir.exists() or not any(sketches_dir.glob("beat_*.png")):
+    # 预检和报价必须使用同一统计口径。
+    billable_beat_numbers = _global_optimize_billable_beat_numbers(
+        output_dir=output_dir,
+        episode_num=episode_num,
+        beats=beats,
+    )
+    billable_beat_count = len(billable_beat_numbers)
+    if billable_beat_count <= 0:
         return {"ok": False, "error": "没有草图，请先生成草图再执行全局优化"}
 
     characters = store.get_all_characters()
@@ -2311,6 +2382,11 @@ async def global_optimize_video(
                 "characters": char_list,
                 "output_dir": output_dir,
                 "language": body.language,
+                "billing": {
+                    "items": billable_beat_count,
+                    "beat_numbers": billable_beat_numbers,
+                },
+                "beat_numbers": billable_beat_numbers,
             },
         )
         return {

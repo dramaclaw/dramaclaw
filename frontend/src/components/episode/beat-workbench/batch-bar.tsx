@@ -18,6 +18,7 @@ import {
 } from "@/lib/queries/sketches";
 import {
   useGlobalOptimize,
+  useGlobalOptimizeBillingQuote,
   useVideoBackends,
 } from "@/lib/queries/video";
 import { useTaskController } from "@/hooks/use-task-controller";
@@ -105,9 +106,26 @@ export function BatchBar({
   const detectIdentities = useDetectIdentities(project, episode);
   const generateAudio = useGenerateAudio(project, episode);
   const globalOptimize = useGlobalOptimize(project, episode);
+  const globalOptimizeAssetRevision = useMemo(
+    () =>
+      beats
+        .map((beat) => `${beat.beat_number}:${beat.sketch_url ? "1" : "0"}`)
+        .join(","),
+    [beats],
+  );
+  const globalOptimizeBillingQuote = useGlobalOptimizeBillingQuote(
+    project,
+    episode,
+    globalOptimizeAssetRevision,
+  );
   const videoBackends = useVideoBackends(project);
   const detectIdentitiesCost = useGenerationCreditCost("feature", "mainline.ai_identity_detection");
   const episodeAudioCost = useGenerationCreditCost("beat_tts");
+  const globalOptimizeCostDisplay =
+    globalOptimizeBillingQuote.data?.data.display ??
+    (globalOptimizeBillingQuote.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
 
   const [errorDialog, setErrorDialog] = useState<{
     title: string;
@@ -157,19 +175,23 @@ export function BatchBar({
     title: string;
     description: string;
     onConfirm: () => void;
-    costSource?: "episodeAudio";
+    costSource?: "episodeAudio" | "globalOptimize";
   } | null>(null);
 
   const askConfirm = (
     title: string,
     description: string,
     onConfirm: () => void,
-    costSource?: "episodeAudio",
+    costSource?: "episodeAudio" | "globalOptimize",
   ) => {
     setConfirm({ title, description, onConfirm, costSource });
   };
   const confirmCostDisplay =
-    confirm?.costSource === "episodeAudio" ? episodeAudioCostDisplay : "";
+    confirm?.costSource === "episodeAudio"
+      ? episodeAudioCostDisplay
+      : confirm?.costSource === "globalOptimize"
+        ? globalOptimizeCostDisplay
+        : "";
 
   const handleGenAllAudio = async () => {
     try {
@@ -192,8 +214,8 @@ export function BatchBar({
       }
       globalOptimizeTask.start();
       toast.success(t("episode.workbench.batch.globalOptimizeStarted"));
-    } catch {
-      toast.error(t("common.error"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
   const handleAiDetect = async () => {
@@ -274,7 +296,7 @@ export function BatchBar({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => askConfirm(t("episode.workbench.batch.aiOptimizeTitle"), t("episode.workbench.batch.aiOptimizeDesc"), handleGlobalOptimize)}
+              onClick={() => askConfirm(t("episode.workbench.batch.aiOptimizeTitle"), t("episode.workbench.batch.aiOptimizeDesc"), handleGlobalOptimize, "globalOptimize")}
               disabled={globalOptimize.isPending || globalOptimizeTask.started}
               className={TOOLBAR_CONTROL_CLASS}
             >
@@ -284,6 +306,7 @@ export function BatchBar({
                 <Sparkles className="size-3.5" />
               )}
               {t("episode.workbench.batch.aiOptimize")}
+              <CreditCostInline display={globalOptimizeCostDisplay} />
             </Button>
           )}
           <Button

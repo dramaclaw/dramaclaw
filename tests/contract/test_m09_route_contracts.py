@@ -55,6 +55,10 @@ _M09_OPERATIONS = {
         "POST",
         "/api/v1/projects/{project}/episodes/{episode_num}/beats/{beat_num}/seedance2/assets/audio-trim",
     ),
+    (
+        "GET",
+        "/api/v1/projects/{project}/episodes/{episode_num}/optimize/video-global/billing-quote",
+    ),
     ("POST", "/api/v1/projects/{project}/episodes/{episode_num}/optimize/video-global"),
     ("GET", "/api/v1/projects/{project}/assets/{asset_type}/{asset_id}/references"),
     ("GET", "/api/v1/projects/{project}/media/{file_path}"),
@@ -178,6 +182,20 @@ class _FakeTaskBackend:
         )
 
 
+class _FakeCreditQuote:
+    async def generation_credit_quote(self, *, kind, model, params, quantity):
+        assert kind == "feature"
+        assert model == "mainline.beat_video_prompt"
+        assert params == {}
+        return SimpleNamespace(
+            total_cost=6 * quantity,
+            display=str(6 * quantity),
+            unit="call",
+            unit_cost=6,
+            quantity=quantity,
+        )
+
+
 @pytest.fixture()
 def m09_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from novelvideo.api import auth as api_auth
@@ -197,6 +215,7 @@ def m09_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "frames/ep001/beat_01.png",
         "frames/ep001/beat_02.png",
         "sketches/ep001/beat_01.png",
+        "sketches/ep001/beat_02.png",
         "grids/ep001/grid_01.png",
     ):
         target = project_dir / rel
@@ -292,6 +311,7 @@ def m09_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(generation, "_api_audio_duration_seconds", audio_duration)
     monkeypatch.setattr(generation, "load_project_config", lambda *_: {})
     monkeypatch.setattr(generation, "save_project_config", lambda *_, **__: None)
+    monkeypatch.setattr(generation, "get_credit_quote", lambda: _FakeCreditQuote())
     monkeypatch.setattr(
         generation,
         "make_static_url_for_context",
@@ -363,7 +383,7 @@ def _assert_task_payload(payload: dict, *, backend: str, task_type: str):
     assert "celery_id" not in payload
 
 
-def test_m09_openapi_exposes_all_22_owned_operations(m09_client_factory):
+def test_m09_openapi_exposes_all_23_owned_operations(m09_client_factory):
     client, _task_backend, _project_dir, _pool_id = m09_client_factory("inline")
     spec = client.get("/openapi.json").json()
     actual = {
@@ -373,11 +393,11 @@ def test_m09_openapi_exposes_all_22_owned_operations(m09_client_factory):
         if method.lower() in {"get", "post", "patch", "delete"}
     }
 
-    assert len(_M09_OPERATIONS) == 22
+    assert len(_M09_OPERATIONS) == 23
     assert not sorted(_M09_OPERATIONS - actual)
 
 
-def test_m09_l2_exercises_all_22_endpoint_contracts(m09_client_factory):
+def test_m09_l2_exercises_all_23_endpoint_contracts(m09_client_factory):
     client, _task_backend, _project_dir, pool_id = m09_client_factory("inline")
     png = _png_bytes()
 
@@ -513,6 +533,37 @@ def test_m09_task_backend_responses_are_ce_ee_isomorphic(m09_client_factory, bac
         client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/videos/compose", json={})
     )
     _assert_task_payload(compose, backend=backend, task_type="compose_episode")
+
+
+@pytest.mark.parametrize("backend", ["inline", "celery"])
+def test_global_video_prompt_batch_bills_existing_sketches(
+    m09_client_factory,
+    backend: str,
+):
+    client, task_backend, _project_dir, _pool_id = m09_client_factory(backend)
+
+    quote = _assert_ok(
+        client.get(
+            f"/api/v1/projects/{_PROJECT}/episodes/1/optimize/video-global/billing-quote"
+        )
+    )
+    assert quote["data"]["beat_numbers"] == [1, 2]
+    assert quote["data"]["quantity"] == 2
+    assert quote["data"]["unit_cost"] == 6
+    assert quote["data"]["cost"] == 12
+    assert quote["data"]["display"] == "12"
+
+    response = _assert_ok(
+        client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/optimize/video-global", json={})
+    )
+
+    _assert_task_payload(response, backend=backend, task_type="global_optimize_video")
+    call = next(
+        call for call in reversed(task_backend.calls) if call["task_type"] == "global_optimize_video"
+    )
+    assert call["payload"]["billing"]["items"] == 2
+    assert call["payload"]["billing"]["beat_numbers"] == [1, 2]
+    assert call["payload"]["beat_numbers"] == [1, 2]
 
 
 def test_m09_render_execute_rejects_stale_fingerprint_and_plan_hash(m09_client_factory):

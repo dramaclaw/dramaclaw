@@ -310,6 +310,17 @@ async def _run_video_generation_async(
     episode = int(envelope.get("episode") or payload.get("episode") or 0)
     output_dir = str(payload.get("output_dir") or ctx.output_dir)
     beats = list(payload.get("beats") or [])
+    requested_beat_numbers = {
+        int(value)
+        for value in payload.get("beat_numbers") or []
+        if int(value) > 0
+    }
+    if requested_beat_numbers:
+        beats = [
+            beat
+            for beat in beats
+            if int(beat.get("beat_number") or 0) in requested_beat_numbers
+        ]
     video_backend = str(payload.get("video_backend") or "mock")
     resolution = str(payload.get("resolution") or "720p")
     ratio = str(payload.get("ratio") or "9:16")
