@@ -752,7 +752,7 @@ def test_m05_l2_exercises_happy_path_route_contracts(m05_client_factory):
             json={"grid_index": 0},
         ).json(),
         backend="inline",
-        task_type="sketch_generation",
+            task_type="sketch_grid_generation",
     )
     _assert_task_shape(
         client.post(
@@ -1074,7 +1074,7 @@ def test_m05_task_responses_are_ce_ee_isomorphic_without_celery_only_fields(
                 client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/scenes/plan"),
             ),
             (
-                "sketch_generation",
+                "sketch_grid_generation",
                 client.post(
                     f"/api/v1/projects/{_PROJECT}/episodes/1/sketches/generate", json={}
                 ),
@@ -1108,7 +1108,7 @@ def test_m05_task_responses_are_ce_ee_isomorphic_without_celery_only_fields(
 
         assert [call["task_type"] for call in task_backend.calls] == [
             "episode_scene_planner",
-            "sketch_generation",
+            "sketch_grid_generation",
             "sketch_regen",
             "selected_regen",
             "sketch_edit_execute",

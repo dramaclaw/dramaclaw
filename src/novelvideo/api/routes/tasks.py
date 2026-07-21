@@ -50,6 +50,7 @@ _TASK_TYPE_LABELS = {
     "scene_reference_asset": "场景参考图",
     "prop_reference_asset": "道具参考图",
     "sketch_generation": "生成草图",
+    "sketch_grid_generation": "生成草图网格",
     "sketch_regen": "重生成草图",
     "mainline_sketch_from_context": "生成草图",
     "mainline_frame_from_context": "渲染分镜",

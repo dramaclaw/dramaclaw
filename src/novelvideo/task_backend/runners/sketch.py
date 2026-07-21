@@ -603,24 +603,26 @@ async def _run_sketch_generation_async(
 
 
 def run_sketch_generation(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+    task_type = str(envelope.get("task_type") or "sketch_generation")
     if (envelope.get("payload") or {}).get("task_kind") == "director_control_to_sketch":
         return asyncio.run(
             await_envelope_with_cancel_watch(
                 _run_control_frame_to_sketch_async(envelope, ctx),
                 envelope,
-                task_type="sketch_generation",
+                task_type=task_type,
             )
         )
     return asyncio.run(
         await_envelope_with_cancel_watch(
             _run_sketch_generation_async(envelope, ctx),
             envelope,
-            task_type="sketch_generation",
+            task_type=task_type,
         )
     )
 
 
 register_project_task_runner("sketch_generation", run_sketch_generation)
+register_project_task_runner("sketch_grid_generation", run_sketch_generation)
 
 
 async def _run_control_frame_to_sketch_async(

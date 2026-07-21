@@ -2019,15 +2019,25 @@ async def generate_sketches(
         return {"ok": False, "error": f"No beats found for episode {episode_num}"}
 
     # 提前验证 grid_index，避免异步任务内才报错
-    from novelvideo.generators.nanobanana_grid import sketch_grid_split, sketch_scene_grid_split
+    from novelvideo.generators.nanobanana_grid import (
+        get_sketch_nxn_modes,
+        sketch_grid_split,
+        sketch_scene_grid_split,
+    )
 
     use_scene_grouping = body.sketch_scene_grouping
     if use_scene_grouping:
         loc_plan = sketch_scene_grid_split(beats, aspect_ratio=body.aspect_ratio)
         grid_plan = [(p["rows"], p["cols"]) for p in loc_plan]
+        billing_mode_keys = [str(p["mode_key"]) for p in loc_plan]
     else:
         loc_plan = None
         grid_plan = sketch_grid_split(len(beats))
+        mode_by_shape = {
+            (rows, cols): mode_key
+            for _capacity, mode_key, rows, cols in get_sketch_nxn_modes(body.aspect_ratio)
+        }
+        billing_mode_keys = [mode_by_shape[(rows, cols)] for rows, cols in grid_plan]
 
     generate_all_grids = body.grid_index == -1
     if body.grid_index < -1 or body.grid_index >= len(grid_plan):
@@ -2083,9 +2093,13 @@ async def generate_sketches(
         queued_tasks = []
         for grid_index in dispatch_grid_indices:
             scope = f"grid_{grid_index}"
+            billing = _sketch_regen_billing_metadata(
+                sketch_image_selection,
+                billing_mode_keys[grid_index],
+            )
             queued = await get_task_backend().enqueue_project_task(
                 ctx,
-                task_type="sketch_generation",
+                task_type="sketch_grid_generation",
                 queue_kind="default",
                 episode=episode_num,
                 scope=scope,
@@ -2093,6 +2107,7 @@ async def generate_sketches(
                     "episode": episode_num,
                     "output_dir": output_dir,
                     "config": {**base_config, "grid_index": grid_index},
+                    "billing": billing,
                 },
             )
             queued_tasks.append(
@@ -2101,7 +2116,7 @@ async def generate_sketches(
                     "scope": scope,
                     "task_id": queued.task_state.task_id,
                     "task_key": project_task_state_key(
-                        "sketch_generation",
+                        "sketch_grid_generation",
                         ctx.project_id,
                         episode_num,
                         scope=scope,
@@ -2114,7 +2129,7 @@ async def generate_sketches(
             grid_labels = " + ".join(f"{r}x{c}" for r, c in grid_plan)
             return {
                 "ok": True,
-                "task_type": "sketch_generation",
+                "task_type": "sketch_grid_generation",
                 "backend": queued_tasks[0]["backend"] if queued_tasks else "inline",
                 "data": {
                     "dispatched": len(dispatch_grid_indices),
@@ -2126,7 +2141,7 @@ async def generate_sketches(
 
         return {
             "ok": True,
-            "task_type": "sketch_generation",
+            "task_type": "sketch_grid_generation",
             "backend": queued_tasks[0]["backend"],
             "task_id": queued_tasks[0]["task_id"],
             "task_key": queued_tasks[0]["task_key"],
@@ -2577,6 +2592,7 @@ async def regenerate_grid(
                 ),
             }
         selected_beat_numbers = [int(beat) for beat in char_plan[grid_index].get("beat_numbers", [])]
+        billing_mode_key = str(char_plan[grid_index]["mode_key"])
     elif body.scene_grouping:
         from novelvideo.generators.nanobanana_grid import scene_grid_split
 
@@ -2593,6 +2609,7 @@ async def regenerate_grid(
                 ),
             }
         selected_beat_numbers = [int(beat) for beat in loc_plan[grid_index].get("beat_numbers", [])]
+        billing_mode_key = str(loc_plan[grid_index]["mode_key"])
     else:
         from novelvideo.generators.nanobanana_grid import (
             perfect_grid_split,
@@ -2612,6 +2629,7 @@ async def regenerate_grid(
             }
         start_offset = sum(_RMC[mk]["capacity"] for mk in grid_plan[:grid_index])
         capacity = _RMC[grid_plan[grid_index]]["capacity"]
+        billing_mode_key = str(grid_plan[grid_index])
         selected_beat_numbers = [
             int(beat.get("beat_number", index + 1))
             for index, beat in enumerate(beats[start_offset : start_offset + capacity], start_offset)
@@ -2641,6 +2659,10 @@ async def regenerate_grid(
 
     scope = f"grid_{grid_index}"
     if ctx is not None:
+        billing = _render_regen_billing_metadata(
+            render_image_selection,
+            billing_mode_key,
+        )
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             task_type="grid_regenerate",
@@ -2652,6 +2674,7 @@ async def regenerate_grid(
                 "grid_index": grid_index,
                 "output_dir": output_dir,
                 "config": config,
+                "billing": billing,
             },
         )
         return {

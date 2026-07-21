@@ -98,12 +98,15 @@ export function useRebuildPoolIndex(project: string, episode: number) {
 export function useGenerateSketches(project: string, episode: number) {
   return useMutation({
     mutationFn: (params?: SketchGenerateParams) =>
-      api
-        .post(
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/sketches/generate`,
-          { json: { grid_index: 0, ...(params ?? {}) } },
-        )
-        .json<TaskResponse | ErrorResponse>(),
+          {
+            json: { grid_index: 0, ...(params ?? {}) },
+            throwHttpErrors: false,
+          },
+        ),
+      ),
   });
 }
 
@@ -124,8 +127,8 @@ export function useRegenerateGrid(project: string, episode: number) {
       sceneGrouping?: boolean;
       characterGrouping?: boolean;
     } & RenderGenerationSettings) =>
-      api
-        .post(
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/grids/${gridIndex}/regenerate`,
           {
             json: {
@@ -138,9 +141,10 @@ export function useRegenerateGrid(project: string, episode: number) {
                 sketchAspectPadding,
               }),
             },
+            throwHttpErrors: false,
           },
-        )
-        .json<TaskResponse | ErrorResponse>(),
+        ),
+      ),
   });
 }
 

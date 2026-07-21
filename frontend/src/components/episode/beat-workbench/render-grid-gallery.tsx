@@ -26,8 +26,15 @@ import {
 import { queryKeys } from "@/lib/query-keys";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { gridAspectCss } from "@/lib/aspect-ratio";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
+import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
+import { useRenderSettings } from "@/lib/queries/render-settings";
 import { useProjectAspectRatio } from "@/stores/aspect-ratio-store";
 import { useTaskController } from "@/hooks/use-task-controller";
+import { CreditCostInline } from "@/components/credit-cost-inline";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -145,6 +152,7 @@ function RenderGridCard({
 }) {
   const { t } = useTranslation();
   const regenerateGrid = useRegenerateGrid(project, episode);
+  const renderSettings = useRenderSettings(project);
   const cutGrid = useCutGrid(project, episode);
   const uploadGrid = useUploadGrid(project, episode);
   const exportGridPrompt = useExportGridPrompt(project, episode);
@@ -166,6 +174,24 @@ function RenderGridCard({
     ],
   });
   const gridUrl = resolveMediaUrl(group.gridUrl);
+  const renderImageSelection = renderSettings.data?.data.render_image_selection;
+  const gridCost = useGenerationCreditCost(
+    "feature",
+    "mainline.render_regen",
+    {
+      surface: "supertale",
+      imageRole: "render",
+      modeKey: group.modeKey,
+      params: renderImageSelection
+        ? { image_selection: renderImageSelection }
+        : null,
+    },
+  );
+  const gridCostDisplay =
+    gridCost.data?.data.display ??
+    (gridCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
 
   const handleRegenerate = async () => {
     try {
@@ -174,7 +200,7 @@ function RenderGridCard({
         sceneGrouping: true,
       });
       if (res.ok === false) {
-        toast.error(res.error || t("episode.workbench.renderGrid.regenFailed"));
+        toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
       regenTask.start({ scope });
@@ -183,8 +209,8 @@ function RenderGridCard({
           n: group.gridIndex,
         }),
       );
-    } catch {
-      toast.error(t("episode.workbench.renderGrid.regenFailed"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
 
@@ -346,6 +372,7 @@ function RenderGridCard({
               <RefreshCw className="size-3" />
             )}
             {t("common.regenerate")}
+            <CreditCostInline display={gridCostDisplay} />
           </Button>
         )}
         <input

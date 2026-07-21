@@ -24,9 +24,16 @@ import {
 import type { SketchAspectRatio } from "@/lib/queries/sketch-settings";
 import { gridAspectCss } from "@/lib/aspect-ratio";
 import { queryKeys } from "@/lib/query-keys";
+import { TASK_TYPES } from "@/lib/task-types";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { cn } from "@/lib/utils";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
+import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { useTaskController } from "@/hooks/use-task-controller";
+import { CreditCostInline } from "@/components/credit-cost-inline";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -126,7 +133,7 @@ function SketchGridCard({
   const scope = `grid_${group.gridIndex}`;
   const sketchTask = useTaskController({
     key: {
-      taskType: "sketch_generation",
+      taskType: TASK_TYPES.SKETCH_GRID_GENERATION,
       project,
       episode,
       scope,
@@ -157,6 +164,23 @@ function SketchGridCard({
       ? resolveMediaUrl(sketchPreview.data.data?.preview_url)
       : null;
   const hasPreview = Boolean(gridUrl || generatedPreviewUrl || hasFallbackPreview);
+  const gridCost = useGenerationCreditCost(
+    "feature",
+    "mainline.sketch_regen",
+    {
+      surface: "supertale",
+      imageRole: "sketch",
+      modeKey: group.modeKey,
+      params: imageGenerationSelection
+        ? { image_selection: imageGenerationSelection }
+        : null,
+    },
+  );
+  const gridCostDisplay =
+    gridCost.data?.data.display ??
+    (gridCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
 
   const handleGenerate = async () => {
     try {
@@ -169,7 +193,7 @@ function SketchGridCard({
           : {}),
       });
       if (res.ok === false) {
-        toast.error(res.error || t("episode.workbench.sketchGrid.regenFailed"));
+        toast.error(backendErrorToastMessage(res.error, t));
         return;
       }
       sketchTask.start({ scope });
@@ -178,8 +202,8 @@ function SketchGridCard({
           n: group.gridIndex,
         }),
       );
-    } catch {
-      toast.error(t("episode.workbench.sketchGrid.regenFailed"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
 
@@ -367,6 +391,7 @@ function SketchGridCard({
               <RefreshCw className="size-3" />
             )}
             {t("episode.workbench.sketchGrid.generateGrid")}
+            <CreditCostInline display={gridCostDisplay} />
           </Button>
         )}
         <input

@@ -30,6 +30,7 @@ export const TASK_TYPES = {
   EPISODE_PROP_PLANNER: "episode_prop_planner",
   // Sketch
   SKETCH_GENERATION: "sketch_generation",
+  SKETCH_GRID_GENERATION: "sketch_grid_generation",
   BATCH_SKETCH: "batch_sketch",
   SKETCH_REGEN: "sketch_regen",
   GRID_REGENERATE: "grid_regenerate",
