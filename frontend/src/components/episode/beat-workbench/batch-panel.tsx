@@ -15,7 +15,7 @@ import {
 
 import { useRegenerateSketches } from "@/lib/queries/sketches";
 import { useAudioBillingQuote, useGenerateAudio } from "@/lib/queries/audio";
-import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
+import { useGenerationCreditCostPlan } from "@/lib/queries/generation-credit-cost";
 import { useSketchSettings } from "@/lib/queries/sketch-settings";
 import {
   SKETCH_REGEN_MODES,
@@ -389,12 +389,6 @@ export function BatchPanel({
   const regenSketches = useRegenerateSketches(project, episode);
   const generateAudio = useGenerateAudio(project, episode);
   const sketchSettings = useSketchSettings(project);
-  const sketchCostMode = singleSketchModeForAspect(spec.sketchAspect);
-  const sketchCost = useGenerationCreditCost(
-    "image_selection",
-    sketchSettings.data?.data.sketch_image_selection,
-    { surface: "supertale", imageRole: "sketch", modeKey: sketchCostMode.key },
-  );
   const tasks = useTasks({ project, episode });
   const queueQuery = useSketchRegenQueue(project, episode);
   const saveQueue = useSaveSketchRegenQueue(project, episode);
@@ -503,6 +497,18 @@ export function BatchPanel({
     ),
     [beatList, beats, spec.sketchAspect],
   );
+  const sketchPlanCost = useGenerationCreditCostPlan(
+    "feature",
+    "mainline.sketch_regen",
+    sketchPlanItems,
+    {
+      surface: "supertale",
+      imageRole: "sketch",
+      params: sketchSettings.data?.data.sketch_image_selection
+        ? { image_selection: sketchSettings.data.data.sketch_image_selection }
+        : null,
+    },
+  );
   const singleSketchPlanItems = useMemo(
     () => createSingleSketchRegenQueueItems(beats, beatList, spec.sketchAspect),
     [beatList, beats, spec.sketchAspect],
@@ -522,10 +528,9 @@ export function BatchPanel({
     (item) => !lockedSketchItemIds.has(item.id),
   ).length;
   const sketchPlanCostDisplay = useMemo(() => {
-    const unitCost = sketchCost.data?.data.cost;
-    if (typeof unitCost !== "number") return null;
-    return formatCreditCost(unitCost * sketchRegenModelCallCount(sketchPlanItems));
-  }, [sketchCost.data?.data.cost, sketchPlanItems]);
+    if (typeof sketchPlanCost.cost !== "number") return null;
+    return formatCreditCost(sketchPlanCost.cost);
+  }, [sketchPlanCost.cost]);
   const selectedVideoRunning = useMemo(() => {
     if (beatList.length === 0) return false;
     const selectedBeatNumbers = new Set(beatList);

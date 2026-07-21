@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 
 import {
   BillingRuleNotConfiguredError,
@@ -24,6 +24,10 @@ export type GenerationCreditCostOptions = {
   quantity?: number | null;
   modeKey?: string | null;
   imageRole?: string | null;
+};
+
+export type GenerationCreditCostPlanItem = {
+  modeKey?: string | null;
 };
 
 export const generationCreditCostQueryKey = (
@@ -88,4 +92,62 @@ export function useGenerationCreditCost(
       !(error instanceof BillingRuleNotConfiguredError) && failureCount < 3,
     staleTime: 60_000,
   });
+}
+
+export function useGenerationCreditCostPlan(
+  kind: string,
+  value: string,
+  items: readonly GenerationCreditCostPlanItem[],
+  options: Omit<GenerationCreditCostOptions, "quantity" | "modeKey"> = {},
+) {
+  const groupedItems = new Map<string, number>();
+  for (const item of items) {
+    const modeKey = String(item.modeKey ?? "").trim();
+    groupedItems.set(modeKey, (groupedItems.get(modeKey) ?? 0) + 1);
+  }
+  const groups = [...groupedItems.entries()].map(([modeKey, quantity]) => ({
+    modeKey,
+    quantity,
+  }));
+  const cleanKind = kind.trim();
+  const cleanValue = value.trim();
+  const cleanSurface = String(options.surface ?? "").trim();
+  const cleanImageRole = String(options.imageRole ?? "").trim();
+  const paramsJson = options.params ? JSON.stringify(options.params) : "";
+  const queries = useQueries({
+    queries: groups.map(({ modeKey, quantity }) => ({
+      queryKey: generationCreditCostQueryKey(cleanKind, cleanValue, {
+        ...options,
+        modeKey,
+        quantity,
+      }),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        jsonWithBackendError<OkResponse<GenerationCreditCost>>(
+          api.get("api/v1/generation-credit-cost", {
+            searchParams: {
+              kind: cleanKind,
+              ...(cleanSurface ? { surface: cleanSurface } : {}),
+              value: cleanValue,
+              ...(paramsJson ? { params: paramsJson } : {}),
+              quantity: String(quantity),
+              ...(modeKey ? { mode_key: modeKey } : {}),
+              ...(cleanImageRole ? { image_role: cleanImageRole } : {}),
+            },
+            signal,
+            throwHttpErrors: false,
+          }),
+        ),
+      enabled: !!cleanKind && !!cleanValue && quantity > 0,
+      retry: (failureCount: number, error: Error) =>
+        !(error instanceof BillingRuleNotConfiguredError) && failureCount < 3,
+      staleTime: 60_000,
+    })),
+  });
+
+  const cost =
+    groups.length > 0 && queries.every((query) => query.data?.ok === true)
+      ? queries.reduce((sum, query) => sum + (query.data?.data.cost ?? 0), 0)
+      : undefined;
+
+  return { cost, queries };
 }

@@ -49,7 +49,6 @@ import { BatchBar } from "@/components/episode/beat-workbench/batch-bar";
 import {
   createSketchRegenPlanItems,
   getLockedSketchRegenItemIds,
-  sketchRegenModelCallCount,
   sketchPlanGridLabel,
 } from "@/components/episode/beat-workbench/batch-panel";
 import {
@@ -92,7 +91,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
+import {
+  useGenerationCreditCost,
+  useGenerationCreditCostPlan,
+} from "@/lib/queries/generation-credit-cost";
 
 const SHOW_EPISODE_FREEZONE_ENTRY = false;
 
@@ -258,13 +260,6 @@ function BeatsTabContent() {
   );
   const sketchImageGenerationSelection =
     sketchSettingsRes?.data?.sketch_image_selection;
-  const sketchCostModeKey =
-    sketchAspectRatio === "16:9" ? "1x1_16-9_sketch" : "1x1_2-3_sketch";
-  const sketchCost = useGenerationCreditCost(
-    "image_selection",
-    sketchImageGenerationSelection,
-    { surface: "supertale", imageRole: "sketch", modeKey: sketchCostModeKey },
-  );
   const isSeedance2Backend =
     videoBackendsRes.data?.data.find((backend) => backend.value === videoBackend)
       ?.is_seedance2 === true;
@@ -314,6 +309,18 @@ function BeatsTabContent() {
     () => createSketchRegenPlanItems(beats, checkedBeatNums, sketchAspectRatio),
     [beats, checkedBeatNums, sketchAspectRatio],
   );
+  const sketchPlanCost = useGenerationCreditCostPlan(
+    "feature",
+    "mainline.sketch_regen",
+    sketchPlanItems,
+    {
+      surface: "supertale",
+      imageRole: "sketch",
+      params: sketchImageGenerationSelection
+        ? { image_selection: sketchImageGenerationSelection }
+        : null,
+    },
+  );
   const lockedSketchItemIds = useMemo(
     () => getLockedSketchRegenItemIds(tasks.data?.data, sketchPlanItems),
     [sketchPlanItems, tasks.data?.data],
@@ -322,10 +329,9 @@ function BeatsTabContent() {
     (item) => !lockedSketchItemIds.has(item.id),
   ).length;
   const sketchPlanCostDisplay = useMemo(() => {
-    const unitCost = sketchCost.data?.data.cost;
-    if (typeof unitCost !== "number") return null;
-    return formatCreditCost(unitCost * sketchRegenModelCallCount(sketchPlanItems));
-  }, [sketchCost.data?.data.cost, sketchPlanItems]);
+    if (typeof sketchPlanCost.cost !== "number") return null;
+    return formatCreditCost(sketchPlanCost.cost);
+  }, [sketchPlanCost.cost]);
 
   const openSketchPlan = useCallback(() => {
     if (checkedBeatNums.length === 0) return;
