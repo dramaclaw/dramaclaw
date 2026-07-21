@@ -23,6 +23,8 @@ export interface Style {
   style_tag?: string;
   created_at?: string | null;
   created_by?: string | null;
+  preview_path?: string | null;
+  preview_url?: string | null;
   // Nested config used by create/analyze flows.
   config?: Record<string, unknown>;
 }

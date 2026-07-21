@@ -1574,12 +1574,15 @@
   "pikoMiniGame": {
     "statusEntry": "Piko Break",
     "statusTooltip": "Play a one-minute Piko game",
+    "libraryTitle": "Piko Break",
+    "librarySubtitle": "Choose a game",
     "title": "Piko a bit, find your spark",
     "idleHint": "Press Space to fire",
     "countdownHint": "Ready to go~",
     "start": "Start",
     "playAgain": "Play again",
     "backToWork": "Back to work",
+    "backToLibrary": "Back to game list",
     "audioOn": "Turn Piko game sound on",
     "audioOff": "Turn Piko game sound off",
     "score": "Idea power {{score}}",
@@ -1628,6 +1631,70 @@
         "jelly": "Time Jelly slowed the field"
       },
       "ultimate": "Idea burst"
+    },
+    "memory": {
+      "title": "Memory Match",
+      "hint": "Match cards with the same symbol",
+      "moves": "Moves",
+      "cardHidden": "Face-down card",
+      "cardVisible": "Card {{value}}",
+      "completed": "All pairs matched",
+      "resultMeta": "{{moves}} moves"
+    },
+    "breakout": {
+      "title": "Breakout",
+      "canvasLabel": "Breakout game board",
+      "hint": "Move the paddle with your mouse or touch, or use Arrow keys or A and D",
+      "start": "Start game",
+      "ready": "Clear every brick",
+      "lifeLost": "Keep going!",
+      "won": "Board cleared!",
+      "lost": "Game over",
+      "score": "Score {{score}}",
+      "lives": "Lives {{lives}}"
+    },
+    "rollingBall": {
+      "title": "Rolling Ball",
+      "canvasLabel": "Rolling Ball game board",
+      "hint": "Move left and right to land on the scrolling platforms",
+      "start": "Start game",
+      "ready": "Keep rolling down",
+      "lost": "The ball slipped away",
+      "score": "Landings {{score}}"
+    },
+    "flying": {
+      "title": "Flying Piko",
+      "canvasLabel": "Flying Piko game board",
+      "hint": "Press Space, Arrow Up, or tap to fly Piko through the energy gates",
+      "start": "Start flying",
+      "ready": "Ready for takeoff",
+      "lost": "Piko hit an energy gate",
+      "score": "Gates {{score}}"
+    },
+    "catch": {
+      "title": "Piko Catch",
+      "canvasLabel": "Piko Catch game board",
+      "hint": "Move Piko left and right, catch idea stars and crystals, and avoid red glitches",
+      "start": "Start catching",
+      "ready": "Catch the falling ideas",
+      "finished": "Idea collection complete",
+      "lost": "Piko needs a quick rest",
+      "score": "Ideas {{score}}",
+      "status": "Lives {{lives}} · {{seconds}}s",
+      "result": "You collected {{score}} idea points"
+    },
+    "leap": {
+      "title": "Piko Leap",
+      "canvasLabel": "Piko Leap game board",
+      "hint": "Hold Space, mouse, or touch to charge, then release to jump to the next idea chip",
+      "start": "Start leaping",
+      "ready": "Ready for the next leap",
+      "lost": "Piko missed the landing",
+      "score": "Leap score {{score}}",
+      "combo": "Center combo ×{{combo}}",
+      "centerHint": "Land in the center for bonus points",
+      "chargeHint": "Hold to charge · release to jump",
+      "result": "You scored {{score}} points"
     }
   },
   "literalScript": {
@@ -2551,8 +2618,11 @@
     "projectDefault": "Project default",
     "preset": "Preset",
     "custom": "Custom",
-    "customPreviewUnavailable": "Server preview not yet available for custom styles",
-    "customPreviewHint": "Pending backend: POST /styles/{id}/preview/generate",
+    "customPreviewEmpty": "No uploaded reference image",
+    "uploadedPreview": "Uploaded reference preview",
+    "analyzingPreview": "Analyzing reference image…",
+    "styleIdRequiredBeforeUpload": "Enter a style ID before uploading a reference image",
+    "unsupportedPreviewType": "Use a PNG, JPEG, WebP, or GIF image.",
     "jsonFormatError": "Invalid JSON",
     "jsonChangesApplied": "JSON changes applied",
     "styleSaved": "Style saved",

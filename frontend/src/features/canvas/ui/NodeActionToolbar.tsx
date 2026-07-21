@@ -542,8 +542,10 @@ export const NodeActionToolbar = memo(
     const projectionStatus = useCanvasProjectionStatus(protectedProjectionKey);
     const projectionIsStale = projectionStatus?.stale === true;
     const extractableBeatContext = useMemo(() => beatContextFromNode(node), [node]);
+    const canExposeGenerationError =
+      isExportImageNode(node) || isImageGenNode(node);
     const generationError =
-      isExportImageNode(node) &&
+      canExposeGenerationError &&
       typeof (node.data as { generationError?: unknown }).generationError ===
         "string"
         ? (
@@ -551,7 +553,7 @@ export const NodeActionToolbar = memo(
           ).trim()
         : "";
     const generationErrorDetails =
-      isExportImageNode(node) &&
+      canExposeGenerationError &&
       typeof (node.data as { generationErrorDetails?: unknown })
         .generationErrorDetails === "string"
         ? (
@@ -560,16 +562,22 @@ export const NodeActionToolbar = memo(
           ).trim()
         : "";
     const canCopyGenerationError =
-      isExportImageNode(node) && generationError.length > 0;
+      canExposeGenerationError && generationError.length > 0;
     const generationErrorReport = useMemo(
-      () =>
-        buildGenerationErrorReport({
+      () => {
+        // ImageGen keeps the exact pre-normalization error in details: copy it
+        // verbatim. Export-image nodes retain their richer diagnostic report.
+        if (isImageGenNode(node)) {
+          return generationErrorDetails || generationError;
+        }
+        return buildGenerationErrorReport({
           errorMessage: generationError || t("ai.error"),
           errorDetails: generationErrorDetails || undefined,
           context: (node.data as { generationDebugContext?: unknown })
             .generationDebugContext,
-        }),
-      [generationError, generationErrorDetails, node.data, t],
+        });
+      },
+      [generationError, generationErrorDetails, node, t],
     );
 
     const closeDownloadMenu = useCallback(() => {}, []);

@@ -2,8 +2,13 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, Gamepad2, Volume2, VolumeX, X } from "lucide-react";
 import { PikoActionFigure } from "@/features/companion/PikoActionFigure";
+import { PikoBreakoutGame } from "@/features/piko-mini-game/PikoBreakoutGame";
+import { PikoCatchGame } from "@/features/piko-mini-game/PikoCatchGame";
+import { PikoFlyingGame } from "@/features/piko-mini-game/PikoFlyingGame";
+import { PikoLeapGame } from "@/features/piko-mini-game/PikoLeapGame";
+import { PikoRollingBallGame } from "@/features/piko-mini-game/PikoRollingBallGame";
 import { cn } from "@/lib/utils";
 
 const GAME_DURATION_MS = 60_000;
@@ -89,11 +94,44 @@ type HitSpark = {
 };
 
 type GameStatus = "idle" | "countdown" | "playing" | "finished";
+type StationView = "library" | "game";
+type PikoGameId = "inspiration-station" | "memory-match" | "breakout" | "rolling-ball" | "flying" | "catch" | "leap";
 
 type PikoInspirationStationProps = {
   open: boolean;
   onClose: () => void;
 };
+
+const PIKO_GAME_LIBRARY = [
+  {
+    id: "inspiration-station",
+    titleKey: "pikoMiniGame.title",
+  },
+  {
+    id: "memory-match",
+    titleKey: "pikoMiniGame.memory.title",
+  },
+  {
+    id: "breakout",
+    titleKey: "pikoMiniGame.breakout.title",
+  },
+  {
+    id: "rolling-ball",
+    titleKey: "pikoMiniGame.rollingBall.title",
+  },
+  {
+    id: "flying",
+    titleKey: "pikoMiniGame.flying.title",
+  },
+  {
+    id: "catch",
+    titleKey: "pikoMiniGame.catch.title",
+  },
+  {
+    id: "leap",
+    titleKey: "pikoMiniGame.leap.title",
+  },
+] as const;
 
 const KIND_LABEL: Record<FallingKind, string> = {
   spark: "✦",
@@ -134,6 +172,11 @@ const BGM_FADE_MS = 2_200;
 const BGM_RESTART_BEFORE_END_SECONDS = 3.2;
 
 type ResultSoundKind = "combo" | "wild" | "burst" | "rain" | "high" | "medium" | "soft";
+type MemoryCard = {
+  id: number;
+  value: string;
+  matched: boolean;
+};
 
 let hitAudioContext: AudioContext | null = null;
 let pikoAudioMuted = false;
@@ -151,6 +194,20 @@ function clamp(value: number, min: number, max: number) {
 
 function randomBetween(min: number, max: number) {
   return min + Math.random() * (max - min);
+}
+
+function shuffleMemoryCards(cards: MemoryCard[]) {
+  return [...cards].sort(() => Math.random() - 0.5);
+}
+
+function makeMemoryDeck() {
+  const values = ["✦", "◆", "✚", "✹", "◇", "◌"];
+  return shuffleMemoryCards(
+    values.flatMap((value, index) => [
+      { id: index * 2, value, matched: false },
+      { id: index * 2 + 1, value, matched: false },
+    ]),
+  );
 }
 
 function panFromX(x: number) {
@@ -566,6 +623,135 @@ function playCountdownSound(count: number) {
   playTone(frequency * 2, 0.06, 0.045, "sine", 0.035);
 }
 
+function PikoMemoryMatchGame({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
+  const timersRef = useRef<Set<number>>(new Set());
+  const [cards, setCards] = useState<MemoryCard[]>(() => makeMemoryDeck());
+  const [flippedIds, setFlippedIds] = useState<number[]>([]);
+  const [moves, setMoves] = useState(0);
+  const matchedCount = cards.filter((card) => card.matched).length;
+  const isComplete = matchedCount === cards.length;
+
+  const clearTimers = useCallback(() => {
+    for (const timer of timersRef.current) {
+      window.clearTimeout(timer);
+    }
+    timersRef.current.clear();
+  }, []);
+
+  const resetMemoryGame = useCallback(() => {
+    clearTimers();
+    setCards(makeMemoryDeck());
+    setFlippedIds([]);
+    setMoves(0);
+  }, [clearTimers]);
+
+  useEffect(() => {
+    return () => {
+      clearTimers();
+    };
+  }, [clearTimers]);
+
+  const flipCard = useCallback(
+    (card: MemoryCard) => {
+      if (card.matched || flippedIds.includes(card.id) || flippedIds.length >= 2 || isComplete) return;
+
+      const nextFlippedIds = [...flippedIds, card.id];
+      setFlippedIds(nextFlippedIds);
+
+      if (nextFlippedIds.length !== 2) return;
+
+      const [firstId, secondId] = nextFlippedIds;
+      const firstCard = cards.find((candidate) => candidate.id === firstId);
+      const secondCard = cards.find((candidate) => candidate.id === secondId);
+      setMoves((current) => current + 1);
+
+      const timer = window.setTimeout(() => {
+        if (firstCard && secondCard && firstCard.value === secondCard.value) {
+          setCards((current) =>
+            current.map((candidate) =>
+              candidate.id === firstCard.id || candidate.id === secondCard.id
+                ? { ...candidate, matched: true }
+                : candidate,
+            ),
+          );
+        }
+        setFlippedIds([]);
+        timersRef.current.delete(timer);
+      }, firstCard?.value === secondCard?.value ? 360 : 720);
+      timersRef.current.add(timer);
+    },
+    [cards, flippedIds, isComplete],
+  );
+
+  return (
+    <div className="relative h-[520px] overflow-hidden border border-white/[0.08] bg-white/[0.03]">
+      <div className="flex h-full flex-col px-5 py-5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h3 className="text-xl font-semibold text-white">{t("pikoMiniGame.memory.title")}</h3>
+            <p className="mt-1 text-sm text-white/56">{t("pikoMiniGame.memory.hint")}</p>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="text-xs text-white/48">{t("pikoMiniGame.memory.moves")}</div>
+            <div className="mt-0.5 text-lg font-semibold text-white">{moves}</div>
+          </div>
+        </div>
+
+        <div className="mt-6 grid flex-1 grid-cols-4 gap-3">
+          {cards.map((card) => {
+            const visible = card.matched || flippedIds.includes(card.id);
+            return (
+              <button
+                key={card.id}
+                type="button"
+                className={cn(
+                  "grid min-h-0 place-items-center rounded-2xl border text-3xl font-semibold leading-none transition-[background-color,border-color,transform,opacity]",
+                  visible
+                    ? "border-cyan-100/30 bg-cyan-200/[0.12] text-cyan-50 shadow-[0_0_22px_rgba(103,232,249,0.12)]"
+                    : "border-white/[0.12] bg-white/[0.05] text-white/30 hover:-translate-y-0.5 hover:border-cyan-100/24 hover:bg-white/[0.08]",
+                  card.matched && "opacity-58",
+                )}
+                aria-label={visible ? t("pikoMiniGame.memory.cardVisible", { value: card.value }) : t("pikoMiniGame.memory.cardHidden")}
+                onClick={() => flipCard(card)}
+              >
+                {visible ? card.value : <Gamepad2 className="size-7" />}
+              </button>
+            );
+          })}
+        </div>
+
+        {isComplete ? (
+          <div className="absolute inset-0 grid place-items-center bg-black/58 px-5 backdrop-blur-md">
+            <div className="max-w-sm rounded-2xl border border-white/[0.16] bg-black/64 px-7 py-6 text-center shadow-[0_24px_72px_rgba(0,0,0,0.5)]">
+              <div className="text-sm font-medium text-cyan-100/78">
+                {t("pikoMiniGame.memory.resultMeta", { moves })}
+              </div>
+              <h3 className="mt-2 text-2xl font-semibold text-white">{t("pikoMiniGame.memory.completed")}</h3>
+              <div className="mt-6 flex justify-center gap-3">
+                <button
+                  type="button"
+                  className="h-10 rounded-full border border-white/[0.14] px-5 text-sm text-white/78 transition-colors hover:bg-white/[0.08] hover:text-white"
+                  onClick={onClose}
+                >
+                  {t("pikoMiniGame.backToWork")}
+                </button>
+                <button
+                  type="button"
+                  className="h-10 rounded-full bg-cyan-300 px-5 text-sm font-medium text-slate-950 transition-colors hover:bg-cyan-200"
+                  onClick={resetMemoryGame}
+                >
+                  {t("pikoMiniGame.playAgain")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function PikoInspirationStation({ open, onClose }: PikoInspirationStationProps) {
   const { t } = useTranslation();
   const boardRef = useRef<HTMLDivElement | null>(null);
@@ -643,6 +829,8 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
   const [maxCombo, setMaxCombo] = useState(0);
   const [burstHits, setBurstHits] = useState(0);
   const [rainEvents, setRainEvents] = useState(0);
+  const [stationView, setStationView] = useState<StationView>("library");
+  const [activeGameId, setActiveGameId] = useState<PikoGameId>("inspiration-station");
 
   const resultKind = useMemo(
     () => resultKindFor(score, maxCombo, burstHits, rainEvents),
@@ -658,11 +846,25 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
     return "pikoMiniGame.insight.soft";
   }, [burstHits, maxCombo, powerUpUses.jelly, rainEvents, score]);
   const activePowerUpLabel = activePowerUp ? t(`pikoMiniGame.powerUps.${activePowerUp}`) : null;
+  const activeGameTitleKey =
+    activeGameId === "memory-match"
+      ? "pikoMiniGame.memory.title"
+      : activeGameId === "breakout"
+        ? "pikoMiniGame.breakout.title"
+        : activeGameId === "rolling-ball"
+          ? "pikoMiniGame.rollingBall.title"
+          : activeGameId === "flying"
+            ? "pikoMiniGame.flying.title"
+            : activeGameId === "catch"
+              ? "pikoMiniGame.catch.title"
+              : activeGameId === "leap"
+                ? "pikoMiniGame.leap.title"
+            : "pikoMiniGame.title";
 
   useEffect(() => {
     setPikoAudioMuted(isAudioMuted);
     window.localStorage.setItem("st.pikoMiniGame.muted", String(isAudioMuted));
-    if (!open || isAudioMuted) {
+    if (!open || stationView !== "game" || activeGameId !== "inspiration-station" || isAudioMuted) {
       stopBgm();
       return;
     }
@@ -670,7 +872,7 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
     return () => {
       stopBgm();
     };
-  }, [isAudioMuted, open]);
+  }, [activeGameId, isAudioMuted, open, stationView]);
 
   const stopFrame = useCallback(() => {
     if (frameRef.current !== null) {
@@ -866,6 +1068,20 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
     setStatus("countdown");
   }, [requestPointerLock, resetGame]);
 
+  const openGame = useCallback((gameId: PikoGameId) => {
+    resetGame();
+    setStatus("idle");
+    setActiveGameId(gameId);
+    setStationView("game");
+  }, [resetGame]);
+
+  const backToLibrary = useCallback(() => {
+    resetGame();
+    setStatus("idle");
+    setActiveGameId("inspiration-station");
+    setStationView("library");
+  }, [resetGame]);
+
   const beginPlaying = useCallback(() => {
     startedAtRef.current = performance.now();
     const openingItems = makeOpeningItems();
@@ -957,10 +1173,7 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
     const cooldown = activePowerUpRef.current === "rapid" ? RAPID_FIRE_COOLDOWN_MS : FIRE_COOLDOWN_MS;
     if (now - lastFireRef.current < cooldown) return;
     lastFireRef.current = now;
-    const nextBullets: PixelBulletDraft[] = [{
-      x: pikoXRef.current,
-      y: 74,
-    }];
+    const nextBullets: PixelBulletDraft[] = [{ x: pikoXRef.current, y: 82 }];
     playFireSound(pikoXRef.current, activePowerUpRef.current === "rapid");
     addBullets(nextBullets);
   }, [addBullets]);
@@ -988,6 +1201,8 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
     if (!open) return;
     resetGame();
     setStatus("idle");
+    setActiveGameId("inspiration-station");
+    setStationView("library");
     return () => {
       stopFrame();
       exitPointerLock();
@@ -1289,57 +1504,90 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
       <div className="w-full max-w-[900px] overflow-hidden rounded-[22px] border border-white/[0.12] bg-[#0b0d10]/92 shadow-[0_26px_90px_rgba(0,0,0,0.48)]">
         <div className="flex items-start justify-between gap-4 px-6 pb-4 pt-5">
           <h2 id="piko-mini-game-title" className="sr-only">
-            {t("pikoMiniGame.title")}
+            {stationView === "library" ? t("pikoMiniGame.libraryTitle") : t(activeGameTitleKey)}
           </h2>
-          <div className="flex min-h-9 items-center gap-4">
-            <span
-              className={cn(
-                "inline-flex items-center text-sm text-white/78 transition-transform duration-200",
-                scorePulse && "animate-[piko-mini-score-pulse_260ms_cubic-bezier(0.2,1.25,0.3,1)_both]",
-              )}
-            >
-              <span className="mr-1 text-cyan-200" aria-hidden>
-                ✦
-              </span>
-              {t("pikoMiniGame.score", { score })}
-            </span>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-white/58">{t("pikoMiniGame.energy")}</span>
-              <div
-                className={cn(
-                  "h-1.5 w-28 overflow-hidden rounded-full bg-white/[0.1] transition-shadow duration-200",
-                  energy >= ENERGY_MAX && "shadow-[0_0_16px_rgba(103,232,249,0.32)] ring-1 ring-cyan-100/35",
-                )}
-              >
-                <div
-                  className={cn(
-                    "h-full rounded-full bg-cyan-300 transition-[width,filter] duration-200",
-                    energy >= ENERGY_MAX && "animate-[piko-mini-energy-ready_820ms_ease-in-out_infinite]",
-                  )}
-                  style={{ width: `${energy}%` }}
-                />
+          <div className="flex min-h-9 min-w-0 items-center gap-4">
+            {stationView === "library" ? (
+              <div className="min-w-0">
+                <div className="text-base font-semibold text-white">{t("pikoMiniGame.libraryTitle")}</div>
+                <div className="mt-1 text-xs text-white/48">{t("pikoMiniGame.librarySubtitle")}</div>
               </div>
-              <span
-                className={cn(
-                  "rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-none transition-[background-color,border-color,color,transform,box-shadow] duration-200",
-                  energy >= ENERGY_MAX
-                    ? "scale-110 border-cyan-100/60 bg-cyan-200/[0.18] text-cyan-50 shadow-[0_0_14px_rgba(103,232,249,0.34)] animate-[piko-mini-energy-ready_820ms_ease-in-out_infinite]"
-                    : "border-white/10 text-white/38",
-                )}
-              >
-                Q
-              </span>
-            </div>
+            ) : activeGameId === "inspiration-station" ? (
+              <>
+                <button
+                  type="button"
+                  className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-white/68 transition-colors hover:bg-white/[0.08] hover:text-white"
+                  aria-label={t("pikoMiniGame.backToLibrary")}
+                  onClick={backToLibrary}
+                >
+                  <ArrowLeft className="size-4" />
+                </button>
+                <span
+                  className={cn(
+                    "inline-flex items-center text-sm text-white/78 transition-transform duration-200",
+                    scorePulse && "animate-[piko-mini-score-pulse_260ms_cubic-bezier(0.2,1.25,0.3,1)_both]",
+                  )}
+                >
+                  <span className="mr-1 text-cyan-200" aria-hidden>
+                    ✦
+                  </span>
+                  {t("pikoMiniGame.score", { score })}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-white/58">{t("pikoMiniGame.energy")}</span>
+                  <div
+                    className={cn(
+                      "h-1.5 w-28 overflow-hidden rounded-full bg-white/[0.1] transition-shadow duration-200",
+                      energy >= ENERGY_MAX && "shadow-[0_0_16px_rgba(103,232,249,0.32)] ring-1 ring-cyan-100/35",
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        "h-full rounded-full bg-cyan-300 transition-[width,filter] duration-200",
+                        energy >= ENERGY_MAX && "animate-[piko-mini-energy-ready_820ms_ease-in-out_infinite]",
+                      )}
+                      style={{ width: `${energy}%` }}
+                    />
+                  </div>
+                  <span
+                    className={cn(
+                      "rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-none transition-[background-color,border-color,color,transform,box-shadow] duration-200",
+                      energy >= ENERGY_MAX
+                        ? "scale-110 border-cyan-100/60 bg-cyan-200/[0.18] text-cyan-50 shadow-[0_0_14px_rgba(103,232,249,0.34)] animate-[piko-mini-energy-ready_820ms_ease-in-out_infinite]"
+                        : "border-white/10 text-white/38",
+                    )}
+                  >
+                    Q
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-white/68 transition-colors hover:bg-white/[0.08] hover:text-white"
+                  aria-label={t("pikoMiniGame.backToLibrary")}
+                  onClick={backToLibrary}
+                >
+                  <ArrowLeft className="size-4" />
+                </button>
+                <div className="min-w-0">
+                  <div className="text-base font-semibold text-white">{t(activeGameTitleKey)}</div>
+                </div>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              className="inline-flex size-9 items-center justify-center rounded-full text-white/68 transition-colors hover:bg-white/[0.08] hover:text-white"
-              aria-label={isAudioMuted ? t("pikoMiniGame.audioOn") : t("pikoMiniGame.audioOff")}
-              onClick={() => setIsAudioMuted((current) => !current)}
-            >
-              {isAudioMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-            </button>
+            {stationView === "game" && (activeGameId === "inspiration-station" || activeGameId === "breakout" || activeGameId === "rolling-ball" || activeGameId === "flying" || activeGameId === "catch" || activeGameId === "leap") ? (
+              <button
+                type="button"
+                className="inline-flex size-9 items-center justify-center rounded-full text-white/68 transition-colors hover:bg-white/[0.08] hover:text-white"
+                aria-label={isAudioMuted ? t("pikoMiniGame.audioOn") : t("pikoMiniGame.audioOff")}
+                onClick={() => setIsAudioMuted((current) => !current)}
+              >
+                {isAudioMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+              </button>
+            ) : null}
             <button
               type="button"
               className="inline-flex size-9 items-center justify-center rounded-full text-white/68 transition-colors hover:bg-white/[0.08] hover:text-white"
@@ -1352,12 +1600,45 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
         </div>
 
         <div className="px-6 pb-6">
-          <div
-            ref={boardRef}
-            className="relative h-[520px] overflow-hidden"
-            onPointerMove={handlePointerMove}
-            onPointerDown={handlePointerDown}
-          >
+          {stationView === "library" ? (
+            <div className="h-[520px] overflow-y-auto pr-1">
+              <div className="grid grid-cols-3 gap-3 sm:gap-4">
+                {PIKO_GAME_LIBRARY.map((game) => (
+                  <button
+                    key={game.id}
+                    type="button"
+                    className="group flex aspect-square min-h-0 flex-col items-center justify-center gap-3 rounded-2xl border border-white/[0.12] bg-white/[0.04] p-3 text-center transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-cyan-200/40 hover:bg-cyan-200/[0.08] focus:outline-none focus:ring-2 focus:ring-cyan-200/45"
+                    onClick={() => openGame(game.id)}
+                  >
+                    <span className="grid size-14 place-items-center rounded-2xl border border-cyan-100/24 bg-cyan-200/[0.1] text-cyan-100 shadow-[0_0_24px_rgba(103,232,249,0.14)] transition-colors group-hover:border-cyan-100/40 group-hover:bg-cyan-200/[0.16]">
+                      <Gamepad2 className="size-7" />
+                    </span>
+                    <span className="max-w-full break-words text-xs font-medium leading-snug text-white/82 sm:text-sm">
+                      {t(game.titleKey)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : activeGameId === "memory-match" ? (
+            <PikoMemoryMatchGame onClose={onClose} />
+          ) : activeGameId === "breakout" ? (
+            <PikoBreakoutGame onClose={onClose} muted={isAudioMuted} />
+          ) : activeGameId === "rolling-ball" ? (
+            <PikoRollingBallGame onClose={onClose} muted={isAudioMuted} />
+          ) : activeGameId === "flying" ? (
+            <PikoFlyingGame onClose={onClose} muted={isAudioMuted} />
+          ) : activeGameId === "catch" ? (
+            <PikoCatchGame onClose={onClose} muted={isAudioMuted} />
+          ) : activeGameId === "leap" ? (
+            <PikoLeapGame onClose={onClose} muted={isAudioMuted} />
+          ) : (
+            <div
+              ref={boardRef}
+              className="relative h-[520px] overflow-hidden"
+              onPointerMove={handlePointerMove}
+              onPointerDown={handlePointerDown}
+            >
             <div className="absolute right-4 top-4 z-10 text-sm text-white/78">
               <span>{t("pikoMiniGame.timeLeft", { seconds: timeLeft })}</span>
             </div>
@@ -1487,14 +1768,18 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
 
             <div
               className={cn(
-                "absolute bottom-[14%] z-20 isolate flex -translate-x-1/2 flex-col items-center",
+                "absolute bottom-[4%] z-20 isolate size-[62px] -translate-x-1/2",
                 comboStage >= 1 && "drop-shadow-[0_0_12px_rgba(165,243,252,0.36)]",
                 comboStage >= 2 && "animate-[piko-mini-combo-glow_900ms_ease-in-out_infinite]",
                 activePowerUp && "drop-shadow-[0_0_18px_rgba(217,249,157,0.34)]",
               )}
               style={{ left: `${pikoX}%` }}
             >
-              <PikoActionFigure action="typing" className="scale-[0.74]" />
+              <PikoActionFigure
+                action="typing"
+                className="mybuddy-companion-anchor--preview !h-[62px]"
+                style={{ transform: "scale(0.82)", transformOrigin: "center" }}
+              />
             </div>
 
             {status !== "playing" ? (
@@ -1599,6 +1884,7 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
               </div>
             ) : null}
           </div>
+          )}
         </div>
       </div>
     </div>

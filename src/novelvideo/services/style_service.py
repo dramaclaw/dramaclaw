@@ -18,6 +18,8 @@
 """
 
 import json
+import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -51,6 +53,99 @@ class StyleService:
         "3d": "3D",
         "hybrid": "混合媒介",
     }
+    STYLE_PREVIEW_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+
+    @classmethod
+    def _style_preview_dir(cls, project_dir: str | Path, style_id: str) -> Path:
+        project_root = Path(project_dir).resolve()
+        if not style_id or Path(style_id).name != style_id:
+            raise ValueError("Invalid style id")
+        style_dir = (project_root / "assets" / "styles" / style_id).resolve()
+        if not style_dir.is_relative_to(project_root):
+            raise ValueError("Invalid style preview path")
+        return style_dir
+
+    @classmethod
+    def remove_style_previews(cls, project_dir: str | Path, style_id: str) -> None:
+        """Remove every supported reference image variant for a custom style."""
+        style_dir = cls._style_preview_dir(project_dir, style_id)
+        for extension in cls.STYLE_PREVIEW_EXTENSIONS:
+            candidate = style_dir / f"reference{extension}"
+            if candidate.is_file():
+                candidate.unlink()
+
+    @classmethod
+    def stage_style_preview(
+        cls,
+        project_dir: str | Path,
+        content: bytes,
+        extension: str,
+    ) -> str:
+        """Store an uploaded reference image in the project staging area."""
+        suffix = extension.lower()
+        if not suffix.startswith("."):
+            suffix = f".{suffix}"
+        if suffix not in cls.STYLE_PREVIEW_EXTENSIONS:
+            raise ValueError("Unsupported style preview image type")
+        staging_dir = Path(project_dir) / "assets" / "styles" / ".staging"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        relative = Path("assets") / "styles" / ".staging" / f"{uuid.uuid4().hex}{suffix}"
+        (Path(project_dir) / relative).write_bytes(content)
+        return relative.as_posix()
+
+    @classmethod
+    def finalize_style_preview(
+        cls,
+        project_dir: str | Path,
+        style_id: str,
+        staged_path: str,
+    ) -> str:
+        """Move a staged reference image to its custom style directory."""
+        project_root = Path(project_dir).resolve()
+        target_dir = cls._style_preview_dir(project_root, style_id)
+        staged = (project_root / staged_path).resolve()
+        staging_root = (project_root / "assets" / "styles" / ".staging").resolve()
+        if not staged.is_relative_to(staging_root) or not staged.is_file():
+            raise ValueError("Invalid style preview token")
+        if staged.suffix.lower() not in cls.STYLE_PREVIEW_EXTENSIONS:
+            raise ValueError("Unsupported style preview image type")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"reference{staged.suffix.lower()}"
+        cls.remove_style_previews(project_root, style_id)
+        shutil.move(str(staged), str(target))
+        return target.relative_to(project_root).as_posix()
+
+    @classmethod
+    def find_style_preview(cls, project_dir: str | Path, style_id: str) -> str | None:
+        """Return an already-uploaded reference image for a style, if present."""
+        root = Path(project_dir).resolve()
+        style_root = cls._style_preview_dir(root, style_id)
+        for extension in cls.STYLE_PREVIEW_EXTENSIONS:
+            candidate = style_root / f"reference{extension}"
+            if candidate.is_file():
+                return candidate.relative_to(root).as_posix()
+        return None
+
+    @classmethod
+    def validate_style_preview_path(
+        cls,
+        project_dir: str | Path,
+        style_id: str,
+        preview_path: str,
+    ) -> str:
+        """Validate that a preview points at the style's published reference file."""
+        root = Path(project_dir).resolve()
+        style_root = cls._style_preview_dir(root, style_id)
+        candidate = (root / preview_path).resolve()
+        if candidate.parent != style_root:
+            raise ValueError("Invalid style preview path")
+        if candidate.name not in {
+            f"reference{extension}" for extension in cls.STYLE_PREVIEW_EXTENSIONS
+        }:
+            raise ValueError("Invalid style preview path")
+        if not candidate.is_file():
+            raise ValueError("Custom style preview does not exist")
+        return candidate.relative_to(root).as_posix()
 
     @staticmethod
     def _resolve_project_context(
@@ -229,6 +324,8 @@ class StyleService:
                 project_dir=project_dir,
             ):
                 return False
+            root = Path(project_dir) if project_dir else Path(OUTPUT_DIR) / str(username) / str(project)
+            cls.remove_style_previews(root, style_id)
             print(f"[StyleService] 自定义风格已删除: {style_id}")
             return True
         except Exception as e:
@@ -366,6 +463,7 @@ class StyleService:
                     "name": config.name,
                     "label": config.label or config.name,
                     "type": "custom",
+                    "preview_path": config.preview_path,
                     "style_family": config.style_family,
                     "animation_subtype": config.animation_subtype,
                 })

@@ -19,6 +19,7 @@ import {
 } from '@/api/ops';
 import { awaitTaskCompletion, listTasks, type TaskState } from '@/api/tasks';
 import { resolveErrorContent } from '@/features/canvas/application/errorDialog';
+import { providerErrorMessage } from '@/lib/api-errors';
 import { extractRequestId } from '@/features/canvas/application/generationErrorReport';
 import {
   isStaleGenerationTask,
@@ -214,12 +215,13 @@ function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unkno
   }
   if (kind === 'image' || kind === 'video') {
     const resolved = resolveErrorContent(error, kind === 'video' ? '视频生成失败' : '图像生成失败');
+    const rawMessage = resolved.message;
     return {
       ...CLEARED_TASK_FIELDS,
-      generationError: resolved.message,
-      generationErrorDetails: resolved.details ?? null,
+      generationError: providerErrorMessage(rawMessage) ?? rawMessage,
+      generationErrorDetails: resolved.details ?? rawMessage,
       generationErrorRequestId:
-        extractRequestId(resolved.message) ?? extractRequestId(resolved.details),
+        extractRequestId(rawMessage) ?? extractRequestId(resolved.details),
     };
   }
   // audio / script / reverse-prompt surface their own inline errors elsewhere;

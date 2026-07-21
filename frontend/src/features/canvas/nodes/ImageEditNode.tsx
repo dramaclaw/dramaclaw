@@ -57,8 +57,8 @@ import {
   buildGenerationErrorReport,
   CURRENT_RUNTIME_SESSION_ID,
   createReferenceImagePlaceholders,
-  extractRequestId,
   getRuntimeDiagnostics,
+  resolveGenerationErrorDiagnostics,
   type GenerationDebugContext,
 } from '@/features/canvas/application/generationErrorReport';
 import {
@@ -741,6 +741,10 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     } catch (generationError) {
       const resolvedError = resolveErrorContent(generationError, t('ai.error'));
       const displayErrorMessage = backendErrorToastMessage(generationError, t);
+      const diagnostics = resolveGenerationErrorDiagnostics(
+        generationError,
+        resolvedError.details,
+      );
       const generationDebugContext: GenerationDebugContext = {
         sourceType: 'imageEdit',
         providerId: selectedModel.providerId,
@@ -759,14 +763,14 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       };
       const reportText = buildGenerationErrorReport({
         errorMessage: displayErrorMessage,
-        errorDetails: resolvedError.details,
+        errorDetails: diagnostics.details ?? undefined,
         context: generationDebugContext,
       });
       setError(displayErrorMessage);
       void showErrorDialog(
         displayErrorMessage,
         t('common.error'),
-        resolvedError.details,
+        diagnostics.details ?? undefined,
         reportText
       );
       updateNodeData(newNodeId, {
@@ -779,9 +783,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         // before a job is created.
         generationRequestPayload: regenerationPayload,
         generationError: displayErrorMessage,
-        generationErrorDetails: resolvedError.details ?? null,
-        generationErrorRequestId:
-          extractRequestId(displayErrorMessage) ?? extractRequestId(resolvedError.details),
+        generationErrorDetails: diagnostics.details,
+        generationErrorRequestId: diagnostics.requestId,
         generationDebugContext,
       });
     }

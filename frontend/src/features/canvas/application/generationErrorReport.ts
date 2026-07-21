@@ -52,6 +52,29 @@ export function extractRequestId(message: string | null | undefined): string | n
   return match ? match[1] : null;
 }
 
+export interface GenerationErrorDiagnostics {
+  details: string | null;
+  requestId: string | null;
+}
+
+export function resolveGenerationErrorDiagnostics(
+  error: unknown,
+  resolvedDetails?: string,
+): GenerationErrorDiagnostics {
+  const rawErrorMessage =
+    error instanceof Error && error.message
+      ? error.message.trim()
+      : typeof error === 'string'
+        ? error.trim()
+        : null;
+  const details = resolvedDetails?.trim() || rawErrorMessage || null;
+
+  return {
+    details,
+    requestId: extractRequestId(rawErrorMessage) ?? extractRequestId(resolvedDetails),
+  };
+}
+
 export function createReferenceImagePlaceholders(count: number): string[] {
   const safeCount = Math.max(0, Math.min(64, Math.floor(count)));
   return Array.from({ length: safeCount }, (_, index) => `[IMAGE_${index + 1}]`);

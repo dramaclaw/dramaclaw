@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import type { TFunction } from "i18next";
+import { humanizeTaskError } from "@/lib/api-errors";
 import type { TaskState } from "./types";
 
 export function taskErrorMessage(task: TaskState, t: TFunction): string {
@@ -14,5 +15,5 @@ export function taskErrorMessage(task: TaskState, t: TFunction): string {
       defaultValue: task.error || t("common.error"),
     });
   }
-  return task.error || t("common.error");
+  return humanizeTaskError(task.error, t);
 }

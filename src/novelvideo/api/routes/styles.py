@@ -1,9 +1,10 @@
 """风格管理端点。"""
 
 import logging
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, UploadFile, File, Query
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import FileResponse
 
 logger = logging.getLogger("novelvideo.api.styles")
@@ -11,6 +12,14 @@ logger = logging.getLogger("novelvideo.api.styles")
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import resolve_project_scope
 from novelvideo.api.schemas import StylePreviewRequest
+
+
+def _custom_preview_url(project: str | None, preview_path: str | None) -> str | None:
+    if not project or not preview_path:
+        return None
+    from urllib.parse import quote
+
+    return f"/api/v1/projects/{quote(project, safe='')}/media/{quote(preview_path, safe='/')}"
 
 router = APIRouter()
 
@@ -59,6 +68,12 @@ async def list_styles(
         username = resolved.username
         project_name = resolved.project_name
     styles = StyleService.list_all_styles(username=username, project=project_name)
+    for style in styles:
+        if style.get("type") == "custom":
+            style["preview_url"] = _custom_preview_url(
+                project,
+                style.get("preview_path"),
+            )
     return {"ok": True, "data": styles}
 
 
@@ -81,7 +96,10 @@ async def get_style(
     if style is None:
         return {"ok": False, "error": f"Style '{style_id}' not found"}
 
-    return {"ok": True, "data": style.model_dump() if hasattr(style, "model_dump") else style.__dict__}
+    payload = style.model_dump() if hasattr(style, "model_dump") else style.__dict__
+    if not payload.get("is_preset"):
+        payload["preview_url"] = _custom_preview_url(project, payload.get("preview_path"))
+    return {"ok": True, "data": payload}
 
 
 @router.get("/styles/{style_id}/preview")
@@ -101,12 +119,18 @@ async def get_style_preview(
         project_name = resolved.project_name
 
     if not StyleService.get_preset(style_id):
-        if StyleService.get_style(
+        style = StyleService.get_style(
             style_id,
             username=username,
             project=project_name,
-        ):
-            return {"ok": False, "error": "自定义风格暂不支持预览"}
+        )
+        if style:
+            if not project or not getattr(style, "preview_path", None):
+                return {"ok": False, "error": "自定义风格暂无参考图"}
+            preview_path = (resolved.project_dir / style.preview_path).resolve()
+            if not preview_path.is_relative_to(resolved.project_dir.resolve()) or not preview_path.exists():
+                return {"ok": False, "error": "自定义风格参考图不存在"}
+            return FileResponse(path=str(preview_path), media_type="image/*")
         return {"ok": False, "error": f"Style '{style_id}' not found"}
 
     preview_path = StyleService.PRESETS_DIR / f"{style_id}.png"
@@ -140,9 +164,21 @@ async def create_style(body: dict, user: dict = Depends(get_api_user)):
 
     try:
         config_payload = dict(body.get("config", {}) or {})
+        preview_path = body.get("preview_path")
         config_payload["id"] = style_id
         config_payload["name"] = body.get("name") or config_payload.get("name") or style_id
         config = StyleConfig(**config_payload)
+        if preview_path:
+            config.preview_path = StyleService.validate_style_preview_path(
+                resolved.project_dir,
+                style_id,
+                str(preview_path),
+            )
+        else:
+            config.preview_path = StyleService.find_style_preview(
+                resolved.project_dir,
+                style_id,
+            )
         success = StyleService.save_custom_style(
             style_id,
             config,
@@ -151,6 +187,8 @@ async def create_style(body: dict, user: dict = Depends(get_api_user)):
         )
         if not success:
             return {"ok": False, "error": "保存自定义风格失败"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -240,10 +278,12 @@ async def preview_style(
 async def analyze_style(
     project: str,
     file: UploadFile = File(...),
+    style_id: str = Form(""),
     user: dict = Depends(get_api_user),
 ):
     """上传参考图片，AI 分析并提取风格参数。"""
     resolved = await resolve_project_scope(project, user, required_role="editor")
+    from novelvideo.services.style_service import StyleService
     from novelvideo.generators.style_analyzer import StyleAnalyzer
     from novelvideo.ports import get_usage_meter
 
@@ -252,6 +292,15 @@ async def analyze_style(
         return {"ok": False, "error": "No file uploaded"}
 
     mime_type = file.content_type or "image/jpeg"
+
+    preview_token = None
+    if style_id.strip():
+        extension = Path(file.filename or "").suffix.lower() or ".png"
+        preview_token = StyleService.stage_style_preview(
+            resolved.project_dir,
+            content,
+            extension,
+        )
 
     usage_meter = get_usage_meter()
     ctx = getattr(resolved, "ctx", None)
@@ -325,4 +374,59 @@ async def analyze_style(
     finally:
         usage_meter.clear_llm_usage_context()
 
-    return {"ok": True, "data": result}
+    data = dict(result)
+    if preview_token:
+        data["preview_token"] = preview_token
+    return {"ok": True, "data": data}
+
+
+@router.post("/projects/{project}/styles/preview-upload")
+async def upload_style_preview(
+    project: str,
+    file: UploadFile = File(...),
+    style_id: str = Form(...),
+    user: dict = Depends(get_api_user),
+):
+    """立即保存自定义风格参考图，不等待 AI 风格分析。"""
+    resolved = await resolve_project_scope(project, user, required_role="editor")
+    from novelvideo.services.style_service import StyleService
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="No preview image uploaded")
+
+    extension = Path(file.filename or "").suffix.lower() or ".png"
+    allowed_mime_types = {
+        ".png": {"image/png"},
+        ".jpg": {"image/jpeg"},
+        ".jpeg": {"image/jpeg"},
+        ".webp": {"image/webp"},
+        ".gif": {"image/gif"},
+    }
+    if (
+        extension not in allowed_mime_types
+        or (file.content_type or "").lower() not in allowed_mime_types[extension]
+    ):
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported style preview image type",
+        )
+
+    try:
+        staged_token = StyleService.stage_style_preview(
+            resolved.project_dir,
+            content,
+            extension,
+        )
+        preview_token = StyleService.finalize_style_preview(
+            resolved.project_dir,
+            style_id,
+            staged_token,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except OSError as e:
+        logger.exception("Failed to persist style preview for %s", style_id)
+        raise HTTPException(status_code=500, detail="Failed to persist style preview") from e
+
+    return {"ok": True, "data": {"preview_path": preview_token}}

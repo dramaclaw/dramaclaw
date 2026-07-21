@@ -2,7 +2,12 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from "vitest";
 
-import { classifyGatewayError, humanizeTaskError } from "@/lib/api-errors";
+import {
+  backendErrorToastMessage,
+  classifyGatewayError,
+  humanizeTaskError,
+  providerErrorMessage,
+} from "@/lib/api-errors";
 
 // A stub TFunction: return the key, unless a `defaultValue` is supplied and
 // the key is unknown. Our two keys are "known", so return a marker per key.
@@ -20,6 +25,31 @@ const CHANNEL_POLICY_RAW =
 
 const REAL_429_RAW =
   'Render 重生未生成可用图片: HTTP 429: rate limit exceeded; body={"error":{"message":"Too Many Requests"}}';
+
+const MODERATION_RAW =
+  'DramaClawAPI image generation failed: HTTP 400: request_id=req-123; ' +
+  'body={"error":{"message":"Content failed safety review. / 内容未通过安全审核。",' +
+  '"type":"content_policy_violation","param":"","code":"moderation_blocked"}}';
+
+describe("providerErrorMessage", () => {
+  it("extracts a top-level message from a pure provider JSON error", () => {
+    expect(
+      providerErrorMessage(
+        '{"message":"Content failed safety review.","code":"moderation_blocked"}',
+      ),
+    ).toBe("Content failed safety review.");
+  });
+
+  it("extracts a nested provider message from a wrapped body without altering the raw input", () => {
+    expect(providerErrorMessage(MODERATION_RAW)).toBe(
+      "Content failed safety review. / 内容未通过安全审核。",
+    );
+  });
+
+  it("returns null when the raw error has no parseable provider JSON", () => {
+    expect(providerErrorMessage("disk full")).toBeNull();
+  });
+});
 
 describe("classifyGatewayError", () => {
   it("flags channel_policy rejections (route-layer skip, not throttling)", () => {
@@ -61,6 +91,15 @@ describe("humanizeTaskError", () => {
 
   it("passes unrelated errors through unchanged", () => {
     expect(humanizeTaskError("disk full", t)).toBe("disk full");
+  });
+
+  it("shows only the provider message for moderation failures", () => {
+    expect(humanizeTaskError(MODERATION_RAW, t)).toBe(
+      "Content failed safety review. / 内容未通过安全审核。",
+    );
+    expect(backendErrorToastMessage(new Error(MODERATION_RAW), t)).toBe(
+      "Content failed safety review. / 内容未通过安全审核。",
+    );
   });
 
   it("falls back to the generic error label when input is empty", () => {

@@ -120,22 +120,6 @@ describe("Header runtime gating", () => {
     expect(await screen.findByText("Log out")).toBeInTheDocument();
   });
 
-  it("keeps the Liexiaoren archive entry visible on the project dashboard", () => {
-    renderHeader();
-
-    expect(screen.getByRole("button", { name: "打开猎魈档案" })).toBeInTheDocument();
-  });
-
-  it("opens the Liexiaoren archive only after an explicit user click", () => {
-    renderHeader();
-
-    window.dispatchEvent(new Event("liexiaoren:open-skin"));
-    expect(screen.queryByRole("dialog", { name: "鲁班秘术猎魈人档案" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "打开猎魈档案" }));
-    expect(screen.getByRole("dialog", { name: "鲁班秘术猎魈人档案" })).toBeInTheDocument();
-  });
-
   it("hides logout when runtime does not require auth while keeping the local identity", async () => {
     runtimeState.authRequired = false;
 

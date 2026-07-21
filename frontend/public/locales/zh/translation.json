@@ -1574,12 +1574,15 @@
   "pikoMiniGame": {
     "statusEntry": "Piko一下",
     "statusTooltip": "陪 Piko 玩 1 分钟小游戏",
+    "libraryTitle": "Piko一下",
+    "librarySubtitle": "选择一个小游戏",
     "title": "Piko一下，找回灵感",
     "idleHint": "按空格键发射子弹",
     "countdownHint": "准备开始咯～",
     "start": "开始补给",
     "playAgain": "再来一局",
     "backToWork": "回到创作",
+    "backToLibrary": "返回游戏列表",
     "audioOn": "开启 Piko 小游戏音效",
     "audioOff": "关闭 Piko 小游戏音效",
     "score": "灵感值 {{score}}",
@@ -1628,6 +1631,70 @@
         "jelly": "时间果冻放慢节奏"
       },
       "ultimate": "灵感爆发"
+    },
+    "memory": {
+      "title": "记忆翻牌",
+      "hint": "翻开相同图案完成配对",
+      "moves": "步数",
+      "cardHidden": "未翻开的卡片",
+      "cardVisible": "卡片 {{value}}",
+      "completed": "全部配对完成",
+      "resultMeta": "共用了 {{moves}} 步"
+    },
+    "breakout": {
+      "title": "打砖块",
+      "canvasLabel": "打砖块游戏区域",
+      "hint": "移动鼠标或触摸控制挡板，也可使用方向键或 A、D 键",
+      "start": "开始游戏",
+      "ready": "击碎所有砖块",
+      "lifeLost": "还有机会，继续！",
+      "won": "全部清除！",
+      "lost": "本局结束",
+      "score": "得分 {{score}}",
+      "lives": "生命 {{lives}}"
+    },
+    "rollingBall": {
+      "title": "滚动小球",
+      "canvasLabel": "滚动小球游戏区域",
+      "hint": "控制小球左右移动，落到不断滚动的平台上",
+      "start": "开始游戏",
+      "ready": "一路向下",
+      "lost": "小球掉下去了",
+      "score": "落台 {{score}}"
+    },
+    "flying": {
+      "title": "飞行的 Piko",
+      "canvasLabel": "飞行的 Piko 游戏区域",
+      "hint": "按空格、向上键或点击，让 Piko 向上飞并穿过能量门",
+      "start": "开始飞行",
+      "ready": "准备起飞",
+      "lost": "Piko 撞到能量门了",
+      "score": "穿越 {{score}}"
+    },
+    "catch": {
+      "title": "Piko 接接乐",
+      "canvasLabel": "Piko 接物游戏区域",
+      "hint": "左右移动 Piko，接住灵感星和晶体，避开红色故障块",
+      "start": "开始接取",
+      "ready": "接住掉落的灵感",
+      "finished": "灵感收集完成",
+      "lost": "Piko 需要休息一下",
+      "score": "灵感 {{score}}",
+      "status": "生命 {{lives}} · {{seconds}} 秒",
+      "result": "本局收集了 {{score}} 点灵感"
+    },
+    "leap": {
+      "title": "Piko 跃迁",
+      "canvasLabel": "Piko 跃迁游戏区域",
+      "hint": "长按空格、鼠标或屏幕蓄力，松开后跳向下一块灵感芯片",
+      "start": "开始跃迁",
+      "ready": "准备好下一跳",
+      "lost": "Piko 没有落稳",
+      "score": "跃迁 {{score}}",
+      "combo": "中心连击 ×{{combo}}",
+      "centerHint": "落在中心可获额外分数",
+      "chargeHint": "长按蓄力 · 松开跳跃",
+      "result": "本局获得 {{score}} 分"
     }
   },
   "literalScript": {
@@ -2551,8 +2618,11 @@
     "projectDefault": "项目默认",
     "preset": "预设",
     "custom": "自定义",
-    "customPreviewUnavailable": "自定义风格暂不支持服务端预览",
-    "customPreviewHint": "待后端实装 POST /styles/{id}/preview/generate",
+    "customPreviewEmpty": "暂无上传的参考图",
+    "uploadedPreview": "已上传参考图预览",
+    "analyzingPreview": "正在解析参考图…",
+    "styleIdRequiredBeforeUpload": "请先填写风格 ID，再上传参考图",
+    "unsupportedPreviewType": "请上传 PNG、JPEG、WebP 或 GIF 图片。",
     "jsonFormatError": "JSON 格式错误",
     "jsonChangesApplied": "JSON 改动已应用",
     "styleSaved": "风格已保存",

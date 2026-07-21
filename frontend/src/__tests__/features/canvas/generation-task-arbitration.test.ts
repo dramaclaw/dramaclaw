@@ -8,8 +8,39 @@ import {
   isStaleGenerationTask,
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
+import { resolveGenerationErrorDiagnostics } from '@/features/canvas/application/generationErrorReport';
+import { backendErrorToastMessage } from '@/lib/api-errors';
+
+const t = ((key: string) => key) as unknown as Parameters<typeof backendErrorToastMessage>[1];
 
 describe('generation task arbitration', () => {
+  it('shows a concise task error while preserving its raw response and request id', () => {
+    const rawError =
+      'video generation failed: request_id=req-123; ' +
+      'body={"error":{"message":"Content failed safety review.","code":"moderation_blocked"}}';
+    const error = new TaskCompletionError(rawError, 'failed', 'task-current');
+
+    expect(backendErrorToastMessage(error, t)).toBe('Content failed safety review.');
+    expect(resolveGenerationErrorDiagnostics(error)).toEqual({
+      details: rawError,
+      requestId: 'req-123',
+    });
+  });
+
+  it('keeps provider policy codes searchable after normalizing the displayed message', () => {
+    const policyCode = 'InputImageSensitiveContentDetected.PrivateInformation';
+    const rawError =
+      'video generation failed: request_id=req-sensitive; ' +
+      `body={"error":{"message":"Sensitive input image.","code":"${policyCode}"}}`;
+    const error = new TaskCompletionError(rawError, 'failed', 'task-current');
+    const displayMessage = backendErrorToastMessage(error, t);
+    const diagnostics = resolveGenerationErrorDiagnostics(error);
+
+    expect(displayMessage).toBe('Sensitive input image.');
+    expect(displayMessage).not.toContain(policyCode);
+    expect(`${displayMessage}\n${diagnostics.details ?? ''}`).toContain(policyCode);
+  });
+
   it('clears stale generation errors when an image generation succeeds', () => {
     expect(buildImageGenerationSuccessPatch('/outputs/image.png')).toEqual({
       imageUrl: '/outputs/image.png',
@@ -82,4 +113,3 @@ describe('generation task arbitration', () => {
     expect(shouldWrite).toBe(true);
   });
 });
-
