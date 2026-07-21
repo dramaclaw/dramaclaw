@@ -1,30 +1,31 @@
 ---
-version: 1.1.2
+version: 1.1.3
 attention: low
 ---
-# v1.1.2
+# v1.1.3
 
 ## User-facing Highlights (zh)
 
-- **虾格视频支持 HappyHorse 1.0**: 画布视频节点新增文生视频、首帧、图片参考和视频编辑四种 HappyHorse 模式,按上游节点自动切换。
-- **虾料导入更稳**: 上传小说时防误切走,导入中刷新或返回页面会自动恢复进度视图。
-- **自建模型链路统一**: CE 的 NewAPI 运行时与 Freezone 视觉路由统一,本地/自建网关的视频与视觉能力更一致。
+- **Piko 一下小游戏库**: 新增记忆翻牌、打砖块、滚动小球、飞行的 Piko、Piko 接物和 Piko 跃迁,支持键盘与鼠标操作、音效、计分和重新挑战。
+- **自定义风格预览可持久保存**: 用户上传的风格参考图会随项目保存,刷新后仍可在风格列表和详情中查看。
+- **生成失败提示更清楚**: 图片和视频生成失败时优先展示简洁的上游错误原因,同时保留完整诊断信息供复制排查。
 
 ## User-facing Highlights (en)
 
-- **HappyHorse 1.0 in Freezone video nodes**: Canvas video nodes now support HappyHorse text-to-video, first-frame, image-reference, and video-edit modes with automatic mode selection from upstream nodes.
-- **More reliable novel ingest**: Novel upload is protected from accidental navigation, and in-progress imports restore their progress view after refresh or returning to the page.
-- **Unified self-hosted model routing**: CE NewAPI runtime and Freezone vision routing are now aligned for more consistent video and vision behavior with local/self-hosted gateways.
+- **Piko mini game library**: Adds memory match, breakout, rolling ball, Flying Piko, Piko catch, and Piko leap with keyboard and pointer controls, sound, scoring, and replay.
+- **Persistent custom style previews**: User-uploaded style references are saved with the project and remain visible in style lists and details after refresh.
+- **Clearer generation failures**: Image and video failures now show concise provider messages while preserving complete diagnostics for troubleshooting.
 
 ## New Features
 
-- 新增 HappyHorse 1.0 视频四模式:文生视频、首帧、图片参考、视频编辑 (#141).
-
-## Improvements
-
-- 统一 CE NewAPI runtime 与 Freezone vision routing,并升级 bundled new-api image 到 `v1.0.0-rc.21` (#138, #140).
+- 扩展「Piko 一下」为可滚动的小游戏库,新增六款轻量小游戏及统一音效控制 (#155, #156).
 
 ## Bug Fixes
 
-- 修复虾料导入中切走、刷新后页面丢失进度视图的问题,并修复 stale-cache 与跨项目复用下的恢复漏洞 (#139, #142).
-- 统一关键帧提示词路由,移除无效的样式提取路径 (#143).
+- 修复自定义风格参考图刷新后丢失、预览地址错误及异常响应仍继续分析的问题 (#153, Fixes #152).
+- 优化图片和视频生成失败提示,保留完整错误与请求 ID 供复制排查 (#154).
+- 修复任务中心「图片反推提示词」显示为内部英文任务名的问题 (#146).
+
+## Improvements
+
+- 按运营计划下线猎魈人推广入口与相关展示,保留独立的社区作品内容 (#145).
