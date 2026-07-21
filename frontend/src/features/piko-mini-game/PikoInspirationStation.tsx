@@ -1173,10 +1173,7 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
     const cooldown = activePowerUpRef.current === "rapid" ? RAPID_FIRE_COOLDOWN_MS : FIRE_COOLDOWN_MS;
     if (now - lastFireRef.current < cooldown) return;
     lastFireRef.current = now;
-    const nextBullets: PixelBulletDraft[] = [{
-      x: pikoXRef.current,
-      y: 74,
-    }];
+    const nextBullets: PixelBulletDraft[] = [{ x: pikoXRef.current, y: 82 }];
     playFireSound(pikoXRef.current, activePowerUpRef.current === "rapid");
     addBullets(nextBullets);
   }, [addBullets]);
@@ -1771,14 +1768,18 @@ export function PikoInspirationStation({ open, onClose }: PikoInspirationStation
 
             <div
               className={cn(
-                "absolute bottom-[14%] z-20 isolate flex -translate-x-1/2 flex-col items-center",
+                "absolute bottom-[4%] z-20 isolate size-[62px] -translate-x-1/2",
                 comboStage >= 1 && "drop-shadow-[0_0_12px_rgba(165,243,252,0.36)]",
                 comboStage >= 2 && "animate-[piko-mini-combo-glow_900ms_ease-in-out_infinite]",
                 activePowerUp && "drop-shadow-[0_0_18px_rgba(217,249,157,0.34)]",
               )}
               style={{ left: `${pikoX}%` }}
             >
-              <PikoActionFigure action="typing" className="scale-[0.74]" />
+              <PikoActionFigure
+                action="typing"
+                className="mybuddy-companion-anchor--preview !h-[62px]"
+                style={{ transform: "scale(0.82)", transformOrigin: "center" }}
+              />
             </div>
 
             {status !== "playing" ? (
