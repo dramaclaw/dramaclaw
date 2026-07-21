@@ -632,12 +632,12 @@ function SceneAssetCardController({
     sceneReferenceCost.data?.data.display ??
     (sceneReferenceCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
-      : null);
+      : undefined);
   const panoCostDisplay =
     panoCost.data?.data.display ??
     (panoCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
-      : null);
+      : undefined);
   const generateStagePly = useGenerateScene3gsPlyAsync(project, scene.name);
   const saveDirectorWorld = useSaveSceneDirectorWorld(project, scene.name);
   const clearDirectorWorld = useClearSceneDirectorWorld(project, scene.name);
