@@ -47,7 +47,9 @@ def _patch_generation_project(
     username="alice",
     project="demo",
 ):
-    async def fake_resolve_generation_project(project_arg, user, required_role="editor"):
+    async def fake_resolve_generation_project(
+        project_arg, user, required_role="editor"
+    ):
         assert project_arg == project
         assert user["username"] == username
         return SimpleNamespace(
@@ -60,7 +62,9 @@ def _patch_generation_project(
             runtime_dir=str(tmp_path / "runtime"),
         )
 
-    monkeypatch.setattr(generation, "_resolve_generation_project", fake_resolve_generation_project)
+    monkeypatch.setattr(
+        generation, "_resolve_generation_project", fake_resolve_generation_project
+    )
     monkeypatch.setattr(
         generation,
         "get_state_dir",
@@ -84,7 +88,9 @@ def _patch_generation_celery(
     """
     ctx = SimpleNamespace(project_id="proj-1", state_dir=tmp_path / "state")
 
-    async def fake_resolve_generation_project(project_arg, user, required_role="editor"):
+    async def fake_resolve_generation_project(
+        project_arg, user, required_role="editor"
+    ):
         assert project_arg == project
         assert user["username"] == username
         return SimpleNamespace(
@@ -101,7 +107,9 @@ def _patch_generation_celery(
         assert ctx_arg is ctx
         return store
 
-    monkeypatch.setattr(generation, "_resolve_generation_project", fake_resolve_generation_project)
+    monkeypatch.setattr(
+        generation, "_resolve_generation_project", fake_resolve_generation_project
+    )
     monkeypatch.setattr(
         generation, "make_sqlite_store_for_context", fake_make_sqlite_store_for_context
     )
@@ -109,7 +117,9 @@ def _patch_generation_celery(
 
 
 def _fake_enqueue(calls):
-    async def fake_enqueue_project_task(ctx, *, task_type, queue_kind, episode, payload, **extra):
+    async def fake_enqueue_project_task(
+        ctx, *, task_type, queue_kind, episode, payload, **extra
+    ):
         calls.append(
             {
                 "ctx": ctx,
@@ -180,6 +190,7 @@ async def test_audio_generate_route_dispatches_indextts2(monkeypatch, tmp_path):
                 "beat_numbers": [2],
                 "output_dir": str(tmp_path),
                 "state_dir": str(tmp_path / "state"),
+                "billing": generation._audio_billing_payload([2]),
             },
         }
     ]
@@ -219,6 +230,57 @@ def test_audio_generate_http_route_dispatches_indextts2(monkeypatch, tmp_path):
         "beat_numbers": [2],
         "output_dir": str(tmp_path),
         "state_dir": str(tmp_path / "state"),
+        "billing": generation._audio_billing_payload([2]),
+    }
+
+
+@pytest.mark.asyncio
+async def test_audio_billing_quote_uses_server_planned_quantity(monkeypatch, tmp_path):
+    from novelvideo.api.routes import generation
+    from novelvideo.api.schemas import TTSGenerateRequest
+    from novelvideo.ports.credit_quote import CreditQuote
+
+    captured = {}
+
+    async def fake_make_sqlite_store(username, project):
+        return _FakeStore()
+
+    async def fake_plan(**kwargs):
+        assert kwargs["mode"] == "redo_selected"
+        assert kwargs["beat_numbers"] == [2, 4]
+        return [2, 4], []
+
+    class FakeCreditQuote:
+        async def generation_credit_quote(self, **kwargs):
+            captured.update(kwargs)
+            return CreditQuote(
+                total_cost=6,
+                display="6",
+                unit="call",
+                unit_cost=3,
+                quantity=2,
+            )
+
+    _patch_generation_project(monkeypatch, generation, tmp_path)
+    monkeypatch.setattr(generation, "make_sqlite_store", fake_make_sqlite_store)
+    monkeypatch.setattr(generation, "_audio_generation_plan", fake_plan)
+    monkeypatch.setattr(generation, "get_credit_quote", lambda: FakeCreditQuote())
+
+    response = await generation.audio_generation_billing_quote(
+        project="demo",
+        episode_num=3,
+        body=TTSGenerateRequest(mode="redo_selected", beat_numbers=[2, 4]),
+        user={"username": "alice"},
+    )
+
+    assert response["data"]["beat_numbers"] == [2, 4]
+    assert response["data"]["quantity"] == 2
+    assert response["data"]["cost"] == 6
+    assert captured == {
+        "kind": "feature",
+        "model": "mainline.beat_audio_generation",
+        "params": generation._audio_billing_payload([2, 4]),
+        "quantity": 2,
     }
 
 
@@ -255,6 +317,7 @@ async def test_single_beat_audio_route_dispatches_indextts2(monkeypatch, tmp_pat
                 "beat_numbers": [2],
                 "output_dir": str(tmp_path),
                 "state_dir": str(tmp_path / "state"),
+                "billing": generation._audio_billing_payload([2]),
             },
         }
     ]
@@ -331,7 +394,9 @@ async def test_single_beat_audio_without_celery_backend_errors_and_does_not_enqu
 
 
 @pytest.mark.asyncio
-async def test_seedance2_single_video_passes_prepared_config_and_duration(monkeypatch, tmp_path):
+async def test_seedance2_single_video_passes_prepared_config_and_duration(
+    monkeypatch, tmp_path
+):
     from novelvideo.api.routes import generation
     from novelvideo.api.schemas import SingleVideoRequest
     from novelvideo.seedance2_i2v.models import Seedance2I2VMode
@@ -389,7 +454,10 @@ async def test_seedance2_single_video_passes_prepared_config_and_duration(monkey
     config = calls[0]["payload"]["config"]
     assert config["prompt"] == "configured prompt"
     assert config["video_duration"] == 11
-    assert config["seedance2_config"] == '{"duration": 11, "final_prompt": "configured prompt"}'
+    assert (
+        config["seedance2_config"]
+        == '{"duration": 11, "final_prompt": "configured prompt"}'
+    )
     assert calls[0]["payload"]["billing"] == {
         "pricing_kind": "video",
         "pricing_model": "seedance-2.0-fast",
@@ -465,8 +533,12 @@ async def test_seedance2_single_video_applies_return_last_frame_request_override
     )
 
     assert response["ok"] is True
-    assert '"return_last_frame":true' in prepare_calls[0]["beat"]["seedance2_config_json"]
-    assert '"return_last_frame":true' in calls[0]["payload"]["config"]["seedance2_config"]
+    assert (
+        '"return_last_frame":true' in prepare_calls[0]["beat"]["seedance2_config_json"]
+    )
+    assert (
+        '"return_last_frame":true' in calls[0]["payload"]["config"]["seedance2_config"]
+    )
     assert (
         store.updated[-1]["seedance2_config_json"]
         == prepare_calls[0]["beat"]["seedance2_config_json"]
@@ -474,7 +546,9 @@ async def test_seedance2_single_video_applies_return_last_frame_request_override
 
 
 @pytest.mark.asyncio
-async def test_seedance2_single_video_applies_inline_request_config_controls(monkeypatch, tmp_path):
+async def test_seedance2_single_video_applies_inline_request_config_controls(
+    monkeypatch, tmp_path
+):
     from novelvideo.api.routes import generation
     from novelvideo.api.schemas import SingleVideoRequest
     from novelvideo.seedance2_i2v.models import Seedance2I2VMode, parse_seedance2_config
@@ -542,7 +616,9 @@ async def test_seedance2_single_video_applies_inline_request_config_controls(mon
 
     assert response["ok"] is True
     assert prepare_calls[0]["ratio"] == "16:9"
-    merged_config = parse_seedance2_config(prepare_calls[0]["beat"]["seedance2_config_json"])
+    merged_config = parse_seedance2_config(
+        prepare_calls[0]["beat"]["seedance2_config_json"]
+    )
     assert merged_config.mode == Seedance2I2VMode.MULTIMODAL_REFERENCE
     assert merged_config.duration == 9
     assert merged_config.ratio == "16:9"
@@ -559,7 +635,9 @@ async def test_seedance2_single_video_applies_inline_request_config_controls(mon
 
 
 @pytest.mark.asyncio
-async def test_happyhorse_single_video_enqueues_prepared_references(monkeypatch, tmp_path):
+async def test_happyhorse_single_video_enqueues_prepared_references(
+    monkeypatch, tmp_path
+):
     from novelvideo.api.routes import generation
     from novelvideo.api.schemas import SingleVideoRequest
 
@@ -588,7 +666,11 @@ async def test_happyhorse_single_video_enqueues_prepared_references(monkeypatch,
             "ratio": "1:1",
             "image_path": None,
             "references": [
-                {"type": "image", "path": "https://example.com/ref.png", "role": "图片1"}
+                {
+                    "type": "image",
+                    "path": "https://example.com/ref.png",
+                    "role": "图片1",
+                }
             ],
             "config_json": '{"final_prompt":"happyhorse prompt","ratio":"1:1"}',
         }
@@ -637,7 +719,10 @@ async def test_happyhorse_single_video_enqueues_prepared_references(monkeypatch,
         {"type": "image", "path": "https://example.com/ref.png", "role": "图片1"}
     ]
     assert config["audio_setting"] == "origin"
-    assert config["seedance2_config"] == '{"final_prompt":"happyhorse prompt","ratio":"1:1"}'
+    assert (
+        config["seedance2_config"]
+        == '{"final_prompt":"happyhorse prompt","ratio":"1:1"}'
+    )
 
 
 @pytest.mark.asyncio

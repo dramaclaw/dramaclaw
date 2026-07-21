@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 
 import { useRegenerateSketches } from "@/lib/queries/sketches";
-import { useGenerateAudio } from "@/lib/queries/audio";
+import { useAudioBillingQuote, useGenerateAudio } from "@/lib/queries/audio";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { useSketchSettings } from "@/lib/queries/sketch-settings";
 import {
@@ -48,6 +48,10 @@ import {
 } from "@/lib/queries/sketch-regen-queue";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { formatCreditCost } from "@/components/credits/credit-visual";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { RenderPlanDialog } from "./render-plan-dialog";
 import type { Beat } from "@/types/episode";
 import type { Task } from "@/types/task";
@@ -464,6 +468,33 @@ export function BatchPanel({
 
   const beatList = [...checkedBeats].sort((a, b) => a - b);
   const count = beatList.length;
+  const audioRevision = useMemo(
+    () =>
+      beats
+        .filter((beat) => beatList.includes(Number(beat.beat_number)))
+        .map((beat) =>
+          [
+            beat.beat_number,
+            beat.audio_type,
+            beat.speaker,
+            beat.audio_url,
+            beat.narration_segment,
+          ].join(":"),
+        )
+        .join(","),
+    [beatList, beats],
+  );
+  const audioBillingQuote = useAudioBillingQuote(
+    project,
+    episode,
+    { beatNumbers: beatList, mode: "redo_selected" },
+    audioRevision,
+  );
+  const audioCostDisplay =
+    audioBillingQuote.data?.data.display ??
+    (audioBillingQuote.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : "");
   const sketchPlanItems = useMemo(
     () => createSketchRegenPlanItems(
       beats,
@@ -630,8 +661,8 @@ export function BatchPanel({
       audioTask.start({ scope: res.scope });
       toast.success(t("episode.workbench.batch.audioDispatched", { count }));
       onClearSelection();
-    } catch {
-      toast.error(t("episode.workbench.batch.dispatchFailed"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
 
@@ -872,6 +903,7 @@ export function BatchPanel({
                   <Loader2 className="size-3 animate-spin" />
                 ) : null}
                 {t("episode.workbench.batch.genBatchAudio", { count })}
+                <CreditCostInline display={audioCostDisplay} />
               </Button>
             </div>
           )}

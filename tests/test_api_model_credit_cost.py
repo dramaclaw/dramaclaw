@@ -182,6 +182,43 @@ async def test_generation_credit_cost_route_resolves_beat_tts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_audio_feature_by_model(monkeypatch):
+    from novelvideo import config
+    from novelvideo.api.routes import model_credits
+
+    monkeypatch.setattr(config, "INDEXTTS2_RECORD_MODEL", "index-tts-2")
+    monkeypatch.setattr(
+        "novelvideo.audio.indextts2_beat_audio_task.INDEXTTS2_RECORD_MODEL",
+        "index-tts-2",
+    )
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="mainline.beat_audio_generation",
+        expected_params={
+            "pricing_kind": "audio",
+            "pricing_model": "index-tts-2",
+            "pricing_params": {},
+            "pricing_quantity": 2,
+            "items": 2,
+        },
+        expected_quantity=2,
+        cost=6,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        value="mainline.beat_audio_generation",
+        params='{"pricing_quantity":2}',
+        quantity=2,
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 6, "display": "6"}}
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_resolves_freezone_audio_music(monkeypatch):
     from novelvideo.api.routes import model_credits
 

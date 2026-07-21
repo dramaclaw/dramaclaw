@@ -398,6 +398,18 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
         return {**params, **style_analysis_billing_params()}
     if feature_key == "mainline.beat_video_generation":
         return _video_backend_feature_billing_params(params)
+    if feature_key == "mainline.beat_audio_generation":
+        if str(params.get("pricing_model") or "").strip():
+            return params
+        from novelvideo.audio.indextts2_beat_audio_task import (
+            indextts2_audio_billing_params,
+        )
+
+        try:
+            quantity = max(int(params.get("pricing_quantity") or 1), 1)
+        except (TypeError, ValueError):
+            quantity = 1
+        return {**params, **indextts2_audio_billing_params(quantity)}
     if feature_key == "mainline.scene_pano_generation":
         if str(params.get("pricing_model") or "").strip():
             return params

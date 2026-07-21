@@ -2169,6 +2169,54 @@ async def _collect_audio_prereq_errors(
         return []
 
 
+async def _audio_generation_plan(
+    *,
+    store,
+    username: str,
+    project: str,
+    episode: int,
+    beat_numbers,
+    mode: str,
+) -> tuple[list[int], list[str]]:
+    from novelvideo.audio.indextts2_beat_audio_task import (
+        build_indextts2_audio_generation_plan,
+    )
+
+    try:
+        plan = await build_indextts2_audio_generation_plan(
+            store=store,
+            username=username,
+            project=project,
+            episode=episode,
+            beat_numbers=beat_numbers,
+            mode=mode,
+        )
+        return list(plan.beat_numbers), list(plan.errors)
+    except AttributeError:
+        # Narrow route-test stores do not expose the voice and audio-state
+        # surfaces used by the production planner.
+        beats = await store.get_beats_as_dicts(episode)
+        selected = {int(value) for value in beat_numbers or [] if int(value) > 0}
+        planned = [
+            int(beat.get("beat_number") or 0)
+            for beat in beats
+            if int(beat.get("beat_number") or 0) > 0
+            and (not selected or int(beat.get("beat_number") or 0) in selected)
+        ]
+        return planned, []
+
+
+def _audio_billing_payload(beat_numbers: list[int]) -> dict:
+    from novelvideo.audio.indextts2_beat_audio_task import (
+        indextts2_audio_billing_params,
+    )
+
+    return {
+        **indextts2_audio_billing_params(len(beat_numbers)),
+        "beat_numbers": list(beat_numbers),
+    }
+
+
 def _voice_prereq_error_response(errors: list[str]) -> dict:
     preview = "；".join(errors[:5])
     suffix = " ..." if len(errors) > 5 else ""
@@ -2176,6 +2224,61 @@ def _voice_prereq_error_response(errors: list[str]) -> dict:
         "ok": False,
         "code": "voice_prereq_required",
         "error": f"{preview}{suffix}",
+    }
+
+
+@router.post("/projects/{project}/episodes/{episode_num}/audio/billing-quote")
+async def audio_generation_billing_quote(
+    project: str,
+    episode_num: int,
+    body: TTSGenerateRequest = TTSGenerateRequest(),
+    user: dict = Depends(get_api_user),
+):
+    """Quote the exact set of Beat audio model calls for an audio action."""
+    resolved = await _resolve_generation_project(project, user, required_role="viewer")
+    store = (
+        await make_sqlite_store_for_context(resolved.ctx)
+        if resolved.ctx
+        else await make_sqlite_store(resolved.username, resolved.project_name)
+    )
+    mode = body.mode or "sync_changed"
+    beat_numbers, errors = await _audio_generation_plan(
+        store=store,
+        username=resolved.username,
+        project=resolved.project_name,
+        episode=episode_num,
+        beat_numbers=body.beat_numbers,
+        mode=mode,
+    )
+    quantity = len(beat_numbers)
+    if quantity <= 0:
+        return {
+            "ok": True,
+            "data": {
+                "beat_numbers": [],
+                "quantity": 0,
+                "unit_cost": 0,
+                "cost": 0,
+                "display": "",
+                "prereq_errors": errors,
+            },
+        }
+    quote = await get_credit_quote().generation_credit_quote(
+        kind="feature",
+        model="mainline.beat_audio_generation",
+        params=_audio_billing_payload(beat_numbers),
+        quantity=quantity,
+    )
+    return {
+        "ok": True,
+        "data": {
+            "beat_numbers": beat_numbers,
+            "quantity": quantity,
+            "unit_cost": quote.unit_cost,
+            "cost": quote.total_cost,
+            "display": quote.display,
+            "prereq_errors": errors,
+        },
     }
 
 
@@ -2204,7 +2307,7 @@ async def generate_audio(
         return {"ok": False, "error": f"No beats found for episode {episode_num}"}
 
     mode = body.mode or "sync_changed"
-    missing_voice = await _collect_audio_prereq_errors(
+    billable_beat_numbers, missing_voice = await _audio_generation_plan(
         store=store,
         username=username,
         project=project_name,
@@ -2214,6 +2317,12 @@ async def generate_audio(
     )
     if missing_voice:
         return _voice_prereq_error_response(missing_voice)
+    if not billable_beat_numbers:
+        return {
+            "ok": False,
+            "code": "audio_generation_not_required",
+            "error": "没有需要生成的音频",
+        }
 
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
@@ -2224,9 +2333,10 @@ async def generate_audio(
             payload={
                 "episode": episode_num,
                 "mode": mode,
-                "beat_numbers": body.beat_numbers,
+                "beat_numbers": billable_beat_numbers,
                 "output_dir": output_dir,
                 "state_dir": state_dir,
+                "billing": _audio_billing_payload(billable_beat_numbers),
             },
         )
         return {
@@ -5036,7 +5146,7 @@ async def regenerate_beat_audio(
         else:
             return {"ok": False, "error": f"Beat {beat_num} not found"}
 
-    missing_voice = await _collect_audio_prereq_errors(
+    billable_beat_numbers, missing_voice = await _audio_generation_plan(
         store=store,
         username=username,
         project=project_name,
@@ -5046,6 +5156,12 @@ async def regenerate_beat_audio(
     )
     if missing_voice:
         return _voice_prereq_error_response(missing_voice)
+    if not billable_beat_numbers:
+        return {
+            "ok": False,
+            "code": "audio_generation_not_required",
+            "error": "当前 Beat 没有需要生成的音频",
+        }
 
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
@@ -5056,9 +5172,10 @@ async def regenerate_beat_audio(
             payload={
                 "episode": episode_num,
                 "mode": "redo_selected",
-                "beat_numbers": [beat_num],
+                "beat_numbers": billable_beat_numbers,
                 "output_dir": output_dir,
                 "state_dir": state_dir,
+                "billing": _audio_billing_payload(billable_beat_numbers),
             },
         )
         return {

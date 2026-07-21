@@ -6,10 +6,7 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import i18next from "i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  BatchBar,
-  episodeAudioModelCallCount,
-} from "@/components/episode/beat-workbench/batch-bar";
+import { BatchBar } from "@/components/episode/beat-workbench/batch-bar";
 
 const i18n = i18next.createInstance();
 
@@ -158,6 +155,20 @@ vi.mock("@/lib/queries/sketch-image-usage", () => ({
 }));
 
 vi.mock("@/lib/queries/audio", () => ({
+  useAudioBillingQuote: () => ({
+    data: {
+      ok: true,
+      data: {
+        beat_numbers: [1, 2, 3],
+        quantity: 3,
+        unit_cost: 6,
+        cost: 18,
+        display: "18",
+        prereq_errors: [],
+      },
+    },
+    error: null,
+  }),
   useGenerateAudio: () => ({
     mutateAsync: vi.fn(),
     isPending: false,
@@ -379,40 +390,6 @@ const DEFAULT_BEATS = [
 ];
 
 describe("BatchBar", () => {
-  it("estimates whole-episode audio model calls from eligible beats", () => {
-    expect(
-      episodeAudioModelCallCount([
-        ...DEFAULT_BEATS,
-        {
-          beat_number: 4,
-          narration_segment: "no audio",
-          visual_description: "v4",
-          audio_type: "silence",
-        },
-        {
-          beat_number: 5,
-          narration_segment: "manual",
-          visual_description: "v5",
-          audio_type: "narration",
-          is_manual_shot: true,
-        },
-        {
-          beat_number: 6,
-          narration_segment: "dialogue",
-          visual_description: "v6",
-          audio_type: "dialogue",
-          speaker: "Hero_Main",
-        },
-        {
-          beat_number: 7,
-          narration_segment: "",
-          visual_description: "v7",
-          audio_type: "narration",
-        },
-      ]),
-    ).toBe(3);
-  });
-
   it("hides whole-episode script rewrite from the batch toolbar", () => {
     render(
       <I18nextProvider i18n={i18n}>
@@ -565,7 +542,7 @@ describe("BatchBar", () => {
     await user.click(screen.getByRole("button", { name: "生成音频" }));
 
     expect(screen.getByRole("button", { name: "确认执行" })).toBeInTheDocument();
-    expect(screen.getAllByText("5").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("18").length).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps whole-episode TTS generation visible but unavailable when Seedance2 is selected", async () => {

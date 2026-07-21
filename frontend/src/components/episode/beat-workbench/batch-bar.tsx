@@ -11,7 +11,7 @@ import {
   Wand2,
 } from "lucide-react";
 
-import { useGenerateAudio } from "@/lib/queries/audio";
+import { useAudioBillingQuote, useGenerateAudio } from "@/lib/queries/audio";
 import {
   useAssignColors,
   useDetectIdentities,
@@ -32,7 +32,7 @@ import {
 import type { SketchAspectRatio } from "@/lib/queries/sketch-settings";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { CreditCostInline } from "@/components/credit-cost-inline";
-import { CreditCostPill, formatCreditCost } from "@/components/credits/credit-visual";
+import { CreditCostPill } from "@/components/credits/credit-visual";
 import type { Beat } from "@/types/episode";
 
 import { RenderModelSelect } from "./render-settings-controls";
@@ -67,30 +67,6 @@ interface BatchBarProps {
   onSketchAspectRatioChange: (aspectRatio: SketchAspectRatio) => void;
 }
 
-type AudioCostBeat = Beat & {
-  narration?: string | null;
-};
-
-function normalizeAudioTypeForCost(beat: AudioCostBeat): string {
-  const audioType = String(beat.audio_type || "").trim();
-  if (audioType === "action") return "silence";
-  if (audioType) return audioType;
-  if (String(beat.speaker || "").trim()) return "dialogue";
-  return "narration";
-}
-
-export function episodeAudioModelCallCount(beats: readonly Beat[]): number {
-  return beats.reduce((count, beat) => {
-    const beatNumber = Number(beat.beat_number || 0);
-    if (beatNumber <= 0 || beat.is_manual_shot) return count;
-
-    const audioType = normalizeAudioTypeForCost(beat);
-    if (audioType !== "narration" && audioType !== "dialogue") return count;
-
-    return count + 1;
-  }, 0);
-}
-
 export function BatchBar({
   project,
   episode,
@@ -118,9 +94,29 @@ export function BatchBar({
     episode,
     globalOptimizeAssetRevision,
   );
+  const episodeAudioRevision = useMemo(
+    () =>
+      beats
+        .map((beat) =>
+          [
+            beat.beat_number,
+            beat.audio_type,
+            beat.speaker,
+            beat.audio_url,
+            beat.narration_segment,
+          ].join(":"),
+        )
+        .join(","),
+    [beats],
+  );
+  const episodeAudioBillingQuote = useAudioBillingQuote(
+    project,
+    episode,
+    { mode: "sync_changed" },
+    episodeAudioRevision,
+  );
   const videoBackends = useVideoBackends(project);
   const detectIdentitiesCost = useGenerationCreditCost("feature", "mainline.ai_identity_detection");
-  const episodeAudioCost = useGenerationCreditCost("beat_tts");
   const globalOptimizeCostDisplay =
     globalOptimizeBillingQuote.data?.data.display ??
     (globalOptimizeBillingQuote.error instanceof BillingRuleNotConfiguredError
@@ -156,15 +152,11 @@ export function BatchBar({
   );
   const audioUnavailableForVideoBackend = selectedVideoBackend?.is_seedance2 === true;
   const showGlobalOptimize = spineTemplate === "narrated";
-  const episodeAudioCalls = useMemo(
-    () => episodeAudioModelCallCount(beats),
-    [beats],
-  );
-  const episodeAudioCostDisplay = useMemo(() => {
-    const unitCost = episodeAudioCost.data?.data.cost;
-    if (episodeAudioCalls <= 0 || typeof unitCost !== "number") return "";
-    return formatCreditCost(unitCost * episodeAudioCalls);
-  }, [episodeAudioCost.data?.data.cost, episodeAudioCalls]);
+  const episodeAudioCostDisplay =
+    episodeAudioBillingQuote.data?.data.display ??
+    (episodeAudioBillingQuote.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : "");
   const detectIdentitiesCostDisplay =
     detectIdentitiesCost.data?.data.display ??
     (detectIdentitiesCost.error instanceof BillingRuleNotConfiguredError
@@ -201,8 +193,8 @@ export function BatchBar({
         return;
       }
       audioTask.start({ scope: res.scope });
-    } catch {
-      toast.error(t("common.error"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
   const handleGlobalOptimize = async () => {
