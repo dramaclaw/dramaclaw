@@ -623,6 +623,7 @@ def run_sketch_generation(envelope: dict[str, Any], ctx: ProjectContext) -> dict
 
 register_project_task_runner("sketch_generation", run_sketch_generation)
 register_project_task_runner("sketch_grid_generation", run_sketch_generation)
+register_project_task_runner("director_control_to_sketch", run_sketch_generation)
 
 
 async def _run_control_frame_to_sketch_async(
@@ -672,6 +673,7 @@ async def _run_control_frame_to_sketch_async(
         output_dir=output_dir,
         state_dir=state_dir,
         control_frames_dir=control_frames_dir or None,
+        mode_key=str(payload.get("mode_key") or ""),
     )
     promoted = result.get("promoted_sketch") or str(paths.sketch(beat_num))
     _log(manager, ctx, task_type, episode, scope, f"草图已写入: {promoted}", progress=1.0)

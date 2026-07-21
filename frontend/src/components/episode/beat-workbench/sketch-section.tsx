@@ -46,6 +46,7 @@ import { useNow } from "@/hooks/use-now";
 import { useNavigateToAsset } from "@/hooks/use-assets-deep-link";
 import { useTaskController } from "@/hooks/use-task-controller";
 import { queryKeys } from "@/lib/query-keys";
+import { TASK_TYPES } from "@/lib/task-types";
 import { useSeenPoolStore } from "@/stores/seen-pool-store";
 import { Button } from "@/components/ui/button";
 import {
@@ -165,9 +166,10 @@ export function SketchSection({
   });
   const directorTask = useTaskController({
     key: {
-      taskType: "sketch_generation",
+      taskType: TASK_TYPES.DIRECTOR_CONTROL_TO_SKETCH,
       project,
       episode,
+      beatNum: beat.beat_number,
     },
     invalidateKeys: [
       queryKeys.grids(project, episode),
@@ -258,6 +260,18 @@ export function SketchSection({
   const directorControlUrl = resolvedDirectorControlUrl
     ? withImageCacheBust(resolvedDirectorControlUrl, directorStatus.dataUpdatedAt)
     : null;
+  const directorControlCost = useGenerationCreditCost(
+    "feature",
+    directorControlUrl ? "mainline.director_control_to_sketch" : null,
+    {
+      surface: "supertale",
+      imageRole: "sketch",
+      modeKey: directorControl?.mode_key || singleSketchModeKey,
+      params: sketchImageSelection
+        ? { image_selection: sketchImageSelection }
+        : null,
+    },
+  );
   const backgroundData =
     backgroundAnchors.data?.ok === true ? backgroundAnchors.data.data : null;
   const visibleBackgroundData = backgroundDialogData ?? backgroundData;
@@ -364,14 +378,10 @@ export function SketchSection({
         toast.error(res.error || t("episode.workbench.sketch.convertDirectorFailed"));
         return;
       }
-      directorTask.start({ scope: res.scope });
+      directorTask.start({ scope: res.scope, taskId: res.task_id });
       toast.success(t("episode.workbench.sketch.convertDirectorStarted"));
     } catch (err) {
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : t("episode.workbench.sketch.convertDirectorFailed"),
-      );
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -620,6 +630,14 @@ export function SketchSection({
                   <Sparkles className="size-3" />
                 )}
                 {t("episode.workbench.sketch.convertDirectorControl")}
+                <CreditCostInline
+                  display={
+                    directorControlCost.data?.data.display ??
+                    (directorControlCost.error instanceof BillingRuleNotConfiguredError
+                      ? t("common.billingRuleNotConfiguredShort")
+                      : null)
+                  }
+                />
               </Button>
             )}
           </div>

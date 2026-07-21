@@ -479,6 +479,7 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
         "mainline.identity_image": "identity",
         "mainline.prop_reference_image": "prop",
         "mainline.sketch_regen": "sketch",
+        "mainline.director_control_to_sketch": "sketch",
         "mainline.render_regen": "render",
     }.get(feature_key)
     if not feature_image_role:

@@ -40,6 +40,7 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "stage_asset": "render",
     "freezone_image_to_3gs": "render",
     "sketch_generation": "sketch",
+    "director_control_to_sketch": "sketch",
     "sketch_grid_generation": "sketch",
     "sketch_regen": "sketch",
     "mainline_sketch_from_context": "sketch",

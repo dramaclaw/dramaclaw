@@ -3258,11 +3258,19 @@ def _director_control_payload(
     episode_num: int,
     beat_num: int,
 ) -> dict[str, Any]:
+    from novelvideo.director_world.control_frame_to_sketch import _director_control_mode_key
     from novelvideo.utils.path_resolver import PathResolver
 
     paths = PathResolver(str(project_dir), int(episode_num))
     control_frame = paths.director_render(int(beat_num))
     ready = control_frame.exists()
+    mode_key = ""
+    if ready:
+        mode_key, _aspect_ratio = _director_control_mode_key(
+            control_frame=control_frame,
+            requested_mode_key="",
+            requested_aspect_ratio="",
+        )
     rel_path = None
     url = None
     if ready:
@@ -3279,6 +3287,7 @@ def _director_control_payload(
         "rel_path": rel_path,
         "url": url,
         "scope": _director_control_scope(episode_num, beat_num),
+        "mode_key": mode_key,
     }
 
 
@@ -4000,10 +4009,15 @@ async def director_control_to_sketch(
             "data": payload,
         }
 
+    project_config = load_project_config(username, project_name)
+    sketch_image_selection = _resolve_sketch_image_selection(project_config)
+    mode_key = str(payload.get("mode_key") or "1x1_2-3_sketch")
+    billing = _sketch_regen_billing_metadata(sketch_image_selection, mode_key)
+
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
-            task_type="sketch_generation",
+            task_type="director_control_to_sketch",
             queue_kind="default",
             episode=int(episode_num),
             beat_num=int(beat_num),
@@ -4014,15 +4028,17 @@ async def director_control_to_sketch(
                 "beat_num": int(beat_num),
                 "output_dir": str(project_dir),
                 "state_dir": state_dir,
+                "mode_key": mode_key,
+                "billing": billing,
             },
         )
         return {
             "ok": True,
-            "task_type": "sketch_generation",
+            "task_type": "director_control_to_sketch",
             "scope": payload["scope"],
             "task_id": queued.task_state.task_id,
             "task_key": project_task_state_key(
-                "sketch_generation",
+                "director_control_to_sketch",
                 ctx.project_id,
                 int(episode_num),
                 beat_num=int(beat_num),
@@ -4057,7 +4073,7 @@ async def director_control_to_sketch(
 
     return {
         "ok": True,
-        "task_type": "sketch_generation",
+        "task_type": "director_control_to_sketch",
         "scope": payload["scope"],
         "message": f"Beat {int(beat_num)} Direct Render 转草图任务已启动",
         "data": payload,

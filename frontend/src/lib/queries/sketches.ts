@@ -570,6 +570,7 @@ export interface DirectorControlFrameStatus {
   rel_path?: string | null;
   url?: string | null;
   scope: string;
+  mode_key?: string;
 }
 
 export function useDirectorControlFrameStatus(
@@ -598,14 +599,15 @@ export function useDirectorControlToSketch(
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      api
-        .post(
+      jsonWithBackendError<
+        | (TaskResponse & { data?: DirectorControlFrameStatus })
+        | (ErrorResponse & { data?: DirectorControlFrameStatus })
+      >(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/director-control-to-sketch`,
-        )
-        .json<
-          | (TaskResponse & { data?: DirectorControlFrameStatus })
-          | (ErrorResponse & { data?: DirectorControlFrameStatus })
-        >(),
+          { throwHttpErrors: false },
+        ),
+      ),
     onSuccess: (res) => {
       qc.invalidateQueries({
         queryKey: queryKeys.directorControlFrame(project, episode, beatNum),

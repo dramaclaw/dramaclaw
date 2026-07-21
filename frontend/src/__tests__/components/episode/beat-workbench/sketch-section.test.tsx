@@ -17,6 +17,8 @@ const directorConvertMock = vi.fn();
 const taskStartMock = vi.fn();
 const regenerateSketchMock = vi.fn();
 const poolSelectMock = vi.fn();
+const creditCostMock = vi.fn();
+const taskControllerKeyMock = vi.fn();
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -81,12 +83,7 @@ vi.mock("@/lib/queries/sketch-settings", () => ({
 }));
 
 vi.mock("@/lib/queries/generation-credit-cost", () => ({
-  useGenerationCreditCost: () => ({
-    data: {
-      ok: true,
-      data: { cost: 1, display: "1 credit" },
-    },
-  }),
+  useGenerationCreditCost: (...args: unknown[]) => creditCostMock(...args),
 }));
 
 vi.mock("@/lib/queries/characters", () => ({
@@ -112,7 +109,10 @@ vi.mock("@/lib/queries/episodes", () => ({
 }));
 
 vi.mock("@/hooks/use-task-controller", () => ({
-  useTaskController: () => ({ start: taskStartMock }),
+  useTaskController: (options: { key: unknown }) => {
+    taskControllerKeyMock(options.key);
+    return { start: taskStartMock };
+  },
 }));
 
 vi.mock("@/hooks/use-now", () => ({
@@ -234,6 +234,11 @@ describe("SketchSection", () => {
       task_type: "sketch_generation",
       scope: "director_control_to_sketch:ep001:beat_04",
     });
+    creditCostMock.mockReset();
+    creditCostMock.mockReturnValue({
+      data: { ok: true, data: { cost: 1, display: "1 credit" } },
+    });
+    taskControllerKeyMock.mockReset();
   });
 
   it("keeps sketch identity, detected props, and local marked props in the right-side info row", () => {
@@ -378,6 +383,7 @@ describe("SketchSection", () => {
           ready: true,
           url: "/static/admin/demo/director_control_frames/ep001/beat_04/combined.png",
           scope: "director_control_to_sketch:ep001:beat_04",
+          mode_key: "1x1_16-9_sketch",
         },
       },
       dataUpdatedAt: 1_717_000_000_123,
@@ -397,6 +403,20 @@ describe("SketchSection", () => {
     expect(screen.getByText("导演合成资产")).toBeInTheDocument();
     expect(screen.getByText("合成图 + 纯背景 + 元数据")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /转草图/ })).toBeEnabled();
+    expect(creditCostMock).toHaveBeenCalledWith(
+      "feature",
+      "mainline.director_control_to_sketch",
+      expect.objectContaining({
+        imageRole: "sketch",
+        modeKey: "1x1_16-9_sketch",
+      }),
+    );
+    expect(taskControllerKeyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskType: "director_control_to_sketch",
+        beatNum: 4,
+      }),
+    );
     expect(screen.getByAltText("Beat 4 Director World control frame")).toHaveAttribute(
       "src",
       "/static/projects/demo/director_control_frames/ep001/beat_04/combined.png?st_v=1717000000123",
@@ -520,6 +540,7 @@ describe("SketchSection", () => {
     expect(regenerateSketchMock).toHaveBeenCalledWith({
       beatIndices: [4],
       modeKey: "1x1_16-9_sketch",
+      imageGenerationSelection: "doubao_seedream-3.0-t2i",
     });
   });
 
@@ -535,12 +556,13 @@ describe("SketchSection", () => {
     );
 
     expect(screen.queryByRole("button", { name: /重新生成/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /生成新图/ }));
+    fireEvent.click(screen.getByRole("button", { name: /立即生成/ }));
     fireEvent.click(screen.getByRole("button", { name: "common.confirm" }));
 
     await waitFor(() => expect(regenerateSketchMock).toHaveBeenCalledWith({
       beatIndices: [4],
       modeKey: "1x1_2-3_sketch",
+      imageGenerationSelection: "doubao_seedream-3.0-t2i",
     }));
   });
 });

@@ -30,6 +30,7 @@ export const TASK_TYPES = {
   EPISODE_PROP_PLANNER: "episode_prop_planner",
   // Sketch
   SKETCH_GENERATION: "sketch_generation",
+  DIRECTOR_CONTROL_TO_SKETCH: "director_control_to_sketch",
   SKETCH_GRID_GENERATION: "sketch_grid_generation",
   BATCH_SKETCH: "batch_sketch",
   SKETCH_REGEN: "sketch_regen",
@@ -59,6 +60,7 @@ export const SCOPED_TASK_TYPES = new Set<TaskType>([
   TASK_TYPES.BEAT_VIDEO_PROMPT,
   TASK_TYPES.GRID_REGENERATE,
   TASK_TYPES.SKETCH_REGEN,
+  TASK_TYPES.DIRECTOR_CONTROL_TO_SKETCH,
   TASK_TYPES.SELECTED_REGEN,
 ]);
 
