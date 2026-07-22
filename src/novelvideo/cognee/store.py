@@ -614,12 +614,7 @@ class CogneeStore:
         oversized or vector-shaped values before returning them to the browser.
         """
 
-        self._set_cognee_context()
-        with preserve_st_env():
-            from cognee.infrastructure.databases.graph import get_graph_engine
-
-        graph_engine = await get_graph_engine()
-        raw_nodes, raw_edges = await graph_engine.get_graph_data()
+        raw_nodes, raw_edges = await self._get_dataset_graph_data()
 
         max_nodes = max(20, min(int(max_nodes), 240))
         degree: Dict[str, int] = {}
@@ -709,6 +704,34 @@ class CogneeStore:
             "total_edges": len(raw_edges),
             "truncated": len(raw_nodes) > len(nodes) or len(raw_edges) > len(edges),
         }
+
+    async def _get_dataset_graph_data(self) -> tuple[list, list]:
+        """Read the graph through Cognee's project dataset context.
+
+        With backend access control enabled, Cognee stores each dataset in its
+        own graph database. Calling ``get_graph_engine()`` without first setting
+        that dataset context opens the empty global graph instead of the graph
+        populated by ``cognify()``.
+        """
+
+        self._set_cognee_context()
+        with preserve_st_env():
+            from cognee.context_global_variables import (
+                set_database_global_context_variables,
+            )
+            from cognee.infrastructure.databases.graph import get_graph_engine
+            from cognee.modules.data.methods import get_datasets_by_name
+            from cognee.modules.users.methods import get_default_user
+
+        user = await get_default_user()
+        datasets = await get_datasets_by_name(self.dataset_name, user.id)
+        if not datasets:
+            return [], []
+
+        dataset = datasets[0]
+        async with set_database_global_context_variables(dataset.id, dataset.owner_id):
+            graph_engine = await get_graph_engine()
+            return await graph_engine.get_graph_data()
 
     async def build_characters_from_graph(
         self,
