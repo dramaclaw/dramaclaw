@@ -40,6 +40,17 @@ beforeAll(async () => {
             supportedFormats: "Supports .txt / .md / .docx",
             restoredFilename: "Imported novel",
             previewHeading: "Novel Structure Preview",
+            knowledgeGraph: {
+              title: "Knowledge Graph",
+              ready: "Ready",
+              description: "Semantic relationships are ready.",
+              uses: {
+                characters: "Characters",
+                scenes: "Scenes",
+                props: "Props",
+                episodes: "Episode planning",
+              },
+            },
             inputMode: { upload: "Upload Novel", paste: "Paste Text" },
             sourceHint: {
               uploadActive: "Uploaded file active",
@@ -387,6 +398,30 @@ describe("IngestPage settings save", () => {
     // ...but file replacement/destructive actions are gone once import succeeded.
     expect(screen.queryByRole("button", { name: "Reupload" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  });
+
+  it("shows the knowledge graph result after content is imported", () => {
+    mocks.chaptersData = {
+      ok: true,
+      data: {
+        total_chars: 10,
+        count: 1,
+        chapters: [{ number: 1, title: "第一章", char_count: 10 }],
+      },
+    };
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Knowledge Graph" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Ready")).toBeInTheDocument();
+    expect(screen.getByText("Characters")).toBeInTheDocument();
+    expect(screen.getByText("Episode planning")).toBeInTheDocument();
   });
 
   it("falls back to chapter content title and legacy char count in preview", () => {

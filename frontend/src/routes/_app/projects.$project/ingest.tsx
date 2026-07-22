@@ -16,6 +16,7 @@ import {
   FishSymbol,
   Info,
   Loader2,
+  Network,
   Play,
   Plus,
   RefreshCw,
@@ -1681,6 +1682,52 @@ export function IngestPageContent({ project }: { project: string }) {
               {/* Preview — populated */}
               {chaptersData && chapterCount > 0 && (
                 <div className="space-y-4">
+                  <section
+                    aria-labelledby="knowledge-graph-title"
+                    className={cn(
+                      "overflow-hidden rounded-xl border p-4",
+                      INGEST_SURFACE_SUBTLE_CLASS,
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/12 text-emerald-400">
+                        <Network className="size-[18px]" aria-hidden />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2
+                            id="knowledge-graph-title"
+                            className="text-sm font-semibold text-foreground"
+                          >
+                            {t("ingest.knowledgeGraph.title")}
+                          </h2>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/12 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+                            <CheckCircle2 className="size-3" aria-hidden />
+                            {t("ingest.knowledgeGraph.ready")}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          {t("ingest.knowledgeGraph.description")}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {([
+                            "characters",
+                            "scenes",
+                            "props",
+                            "episodes",
+                          ] as const).map((item) => (
+                            <span
+                              key={item}
+                              className="rounded-md border border-white/[0.07] bg-white/[0.035] px-2 py-1 text-[11px] text-muted-foreground"
+                            >
+                              {t(`ingest.knowledgeGraph.uses.${item}`)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
                   <h2 className="text-lg font-semibold text-foreground">
                     {t("ingest.previewHeading")}
                   </h2>
