@@ -118,6 +118,38 @@ class _M06Store:
     async def get_episode_from_graph(self, episode: int):
         return self._episodes[episode]
 
+    async def get_graph_snapshot(self):
+        return {
+            "nodes": [
+                {
+                    "id": "character-1",
+                    "label": _CHARACTER,
+                    "type": "Entity",
+                    "degree": 1,
+                    "properties": {"description": "雨巷少年"},
+                },
+                {
+                    "id": "scene-1",
+                    "label": _SCENE,
+                    "type": "Entity",
+                    "degree": 1,
+                    "properties": {},
+                },
+            ],
+            "edges": [
+                {
+                    "id": "edge-1",
+                    "source": "character-1",
+                    "target": "scene-1",
+                    "relation": "appears_in",
+                    "properties": {},
+                }
+            ],
+            "total_nodes": 2,
+            "total_edges": 1,
+            "truncated": False,
+        }
+
     async def list_visual_beats(self):
         return []
 
@@ -325,6 +357,11 @@ def m06_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         app.dependency_overrides[api_auth.get_api_user] = lambda user=user: user
         app.dependency_overrides[ingest.get_api_user] = lambda user=user: user
         app.dependency_overrides[freezone.get_api_user] = lambda user=user: user
+
+        async def override_cognee_store():
+            yield store
+
+        app.dependency_overrides[ingest.get_cognee_store] = override_cognee_store
         return TestClient(app), task_backend, task_manager, project_dir, assets, store
 
     return build
@@ -407,6 +444,18 @@ def test_m06_ingest_upload_preview_and_unsupported_format(m06_client_factory):
     payload = response.json()
     assert payload["ok"] is False
     assert payload["error_type"] == "unsupported"
+
+
+def test_m06_ingest_exposes_real_knowledge_graph_snapshot(m06_client_factory):
+    client, _backend, _task_manager, _project_dir, _assets, _store = m06_client_factory("inline")
+
+    response = client.get(f"/api/v1/projects/{_PROJECT}/ingest/graph")
+    payload = _assert_ok(response)
+
+    assert payload["data"]["total_nodes"] == 2
+    assert payload["data"]["total_edges"] == 1
+    assert payload["data"]["nodes"][0]["label"] == _CHARACTER
+    assert payload["data"]["edges"][0]["relation"] == "appears_in"
 
 
 @pytest.mark.parametrize("backend", ["inline", "celery"])

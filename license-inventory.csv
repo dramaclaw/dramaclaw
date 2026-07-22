@@ -609,6 +609,7 @@ frontend/src/components/episode/script-beat-preview.tsx,Elastic-2.0,2026 SuperTa
 frontend/src/components/episode/task-controller-provider.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/identity-picker-dialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/ingest/FormatCheckDetailsDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/components/ingest/KnowledgeGraphVisualization.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/ingest/NovelFormatDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/layout/ai-assistant-panel.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/layout/brand-holiday-badge.css,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

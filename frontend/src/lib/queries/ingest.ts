@@ -38,6 +38,32 @@ interface ChaptersResult {
   total_chars: number;
   billable_chars?: number;
   count?: number;
+  /** Client-only marker: upload parsing succeeded, but Cognee ingest has not completed. */
+  preview_only?: boolean;
+}
+
+export interface KnowledgeGraphNode {
+  id: string;
+  label: string;
+  type: string;
+  degree: number;
+  properties: Record<string, unknown>;
+}
+
+export interface KnowledgeGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  relation: string;
+  properties: Record<string, unknown>;
+}
+
+export interface KnowledgeGraphSnapshot {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  total_nodes: number;
+  total_edges: number;
+  truncated: boolean;
 }
 
 export function useUploadNovel(project: string) {
@@ -69,6 +95,7 @@ export function useUploadNovel(project: string) {
               total_chars: preview.total_chars,
               billable_chars: preview.billable_chars,
               count: preview.count,
+              preview_only: true,
             },
           },
         );
@@ -88,6 +115,18 @@ export function useChapters(project: string, enabled = true) {
         .get(p`api/v1/projects/${project}/chapters`, { signal })
         .json<OkResponse<ChaptersResult>>(),
     enabled: !!project && enabled,
+  });
+}
+
+export function useKnowledgeGraph(project: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.knowledgeGraph(project),
+    queryFn: ({ signal }) =>
+      api
+        .get(p`api/v1/projects/${project}/ingest/graph`, { signal })
+        .json<OkResponse<KnowledgeGraphSnapshot>>(),
+    enabled: !!project && enabled,
+    staleTime: 30_000,
   });
 }
 

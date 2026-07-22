@@ -24,6 +24,9 @@ services:
       ST_CELERY_BROKER_URL: ""
       ST_CELERY_RESULT_BACKEND: ""
       NOVELVIDEO_DATA_ROOT: /data
+      # Keep project outputs (including imported novel.txt) on the persistent
+      # ce-data volume even when .env.example sets the relative value "output".
+      NOVELVIDEO_OUTPUT_DIR: /data/output
       NOVELVIDEO_STATE_DIR: /data/state
       DRAMACLAW_CHAT_BACKEND: hermes
       HERMES_CLI_PATH: /root/.local/bin/hermes
