@@ -59,6 +59,7 @@ import {
   useUploadPortrait,
 } from "@/lib/queries/characters";
 import {
+  backendErrorResponseToastMessage,
   backendErrorToastMessage,
   BillingRuleNotConfiguredError,
 } from "@/lib/api-errors";
@@ -3167,7 +3168,11 @@ function CharactersPageContent() {
   const handleBuild = async () => {
     setRebuildDialogOpen(false);
     try {
-      await buildChars.mutateAsync();
+      const res = await buildChars.mutateAsync();
+      if (res.ok === false) {
+        toast.error(backendErrorResponseToastMessage(res, t));
+        return;
+      }
       setBuildStarted(true);
     } catch (error) {
       toast.error(backendErrorToastMessage(error, t));

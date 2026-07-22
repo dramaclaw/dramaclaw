@@ -11,6 +11,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: true }));
 const toastErrorMock = vi.hoisted(() => vi.fn());
 const mutation = vi.hoisted(() => () => ({ mutateAsync: vi.fn(), isPending: false }));
+const buildCharactersMutationMock = vi.hoisted(() => vi.fn());
+const taskStreamOptionsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runtime-config", () => ({
   isCeRuntime: () => runtimeState.isCeRuntime,
@@ -52,13 +54,16 @@ vi.mock("@/hooks/use-task-controller", () => ({
 }));
 
 vi.mock("@/hooks/use-task-stream", () => ({
-  useTaskStream: () => ({
-    status: "idle",
-    progress: 0,
-    currentTask: "",
-    result: null,
-    error: null,
-  }),
+  useTaskStream: (options: unknown) => {
+    taskStreamOptionsMock(options);
+    return {
+      status: "idle",
+      progress: 0,
+      currentTask: "",
+      result: null,
+      error: null,
+    };
+  },
 }));
 
 vi.mock("@/hooks/use-media-query", () => ({
@@ -138,7 +143,10 @@ vi.mock("@/lib/queries/characters", () => ({
       ],
     },
   }),
-  useBuildCharacters: mutation,
+  useBuildCharacters: () => ({
+    mutateAsync: buildCharactersMutationMock,
+    isPending: false,
+  }),
   useCreateCharacter: mutation,
   useUpdateCharacter: mutation,
   useDeleteCharacter: mutation,
@@ -209,6 +217,18 @@ beforeAll(async () => {
   await i18n.use(initReactI18next).init({
     lng: "en",
     fallbackLng: "en",
+    resources: {
+      en: {
+        translation: {
+          common: { novelImportRequired: "Please import a novel first" },
+        },
+      },
+      zh: {
+        translation: {
+          common: { novelImportRequired: "请先导入小说" },
+        },
+      },
+    },
     interpolation: { escapeValue: false },
   });
 });
@@ -223,9 +243,12 @@ function renderCharactersPage() {
 }
 
 describe("characters page CE generation credit gating", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
     runtimeState.isCeRuntime = true;
     toastErrorMock.mockClear();
+    buildCharactersMutationMock.mockReset();
+    taskStreamOptionsMock.mockClear();
     Element.prototype.scrollTo = vi.fn();
     window.localStorage.clear();
   });
@@ -266,4 +289,38 @@ describe("characters page CE generation credit gating", () => {
       expect.stringMatching(/积分不足|credit|insufficient/i),
     );
   });
+
+  it.each([
+    ["en", "Please import a novel first"],
+    ["zh", "请先导入小说"],
+  ])(
+    "localizes the backend prerequisite error in %s without starting a missing task stream",
+    async (language, expectedMessage) => {
+      await i18n.changeLanguage(language);
+      buildCharactersMutationMock.mockResolvedValue({
+        ok: false,
+        code: "NOVEL_IMPORT_REQUIRED",
+        error: "请先导入小说",
+      });
+      const user = userEvent.setup();
+      renderCharactersPage();
+
+      await user.click(
+        await screen.findByRole("button", { name: /characters\.autoExtract/ }),
+      );
+      const dialog = await screen.findByRole("alertdialog");
+      await user.click(
+        within(dialog).getByRole("button", { name: "common.confirm" }),
+      );
+
+      await waitFor(() =>
+        expect(toastErrorMock).toHaveBeenCalledWith(expectedMessage),
+      );
+      expect(
+        taskStreamOptionsMock.mock.calls.some(
+          ([options]) => (options as { enabled?: boolean }).enabled === true,
+        ),
+      ).toBe(false);
+    },
+  );
 });

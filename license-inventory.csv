@@ -1391,6 +1391,7 @@ src/novelvideo/model_gateway_runtime.py,Elastic-2.0,2026 SuperTale contributors,
 src/novelvideo/model_gateway_settings.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/newapi_provisioner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/novel_source.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/official_defaults.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/ports/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/ports/audit.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1615,6 +1616,7 @@ tests/test_api_grid_cut.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml ag
 tests/test_api_grid_upload_prompt.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_ingest_chapter_preview.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_model_credit_cost.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_novel_prerequisites.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_narrator_voice.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_pipeline_manual_shots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_project_resolution.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

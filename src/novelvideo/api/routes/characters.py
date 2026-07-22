@@ -22,6 +22,7 @@ from novelvideo.api.deps import (
     resolve_project_scope,
 )
 from novelvideo.project_context import ProjectContext
+from novelvideo.novel_source import has_imported_novel, novel_import_required_response
 from novelvideo.ports import get_task_backend
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.api.schemas import (
@@ -596,6 +597,8 @@ async def build_characters(project: str, user: dict = Depends(get_api_user)):
     ctx = resolved.ctx
     output_dir = resolved.output_dir
     if ctx is not None:
+        if not has_imported_novel(resolved.project_dir):
+            return novel_import_required_response()
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             task_type="build_characters",

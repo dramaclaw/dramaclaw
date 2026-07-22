@@ -60,6 +60,7 @@ def _completion_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     runtime_dir = tmp_path / "runtime" / "alice" / "m03_completion"
     for path in (output_dir, state_dir, runtime_dir):
         path.mkdir(parents=True, exist_ok=True)
+    (output_dir / "novel.txt").write_text("测试原文", encoding="utf-8")
     return ProjectContext(
         project_id="proj_m03_completion",
         project_name="m03_completion",
@@ -433,6 +434,7 @@ def test_seedance2_prompt_does_not_create_media_side_effects(m03_completion_clie
 def test_chapters_without_novel_returns_ok_false(m03_completion_client):
     client, ctx = m03_completion_client
     novel_path = ctx.output_dir / "novel.txt"
+    novel_path.unlink()
     assert not novel_path.exists()
 
     response = client.get("/api/v1/projects/proj_m03_completion/chapters")

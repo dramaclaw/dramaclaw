@@ -1605,6 +1605,7 @@ async def test_build_scenes_allows_supplement_when_derived_scenes_exist(
             NovelScene(name="故宫_下雪", base_scene_id="故宫", variant_id="下雪"),
         ]
     )
+    (tmp_path / "novel.txt").write_text("剧本文本", encoding="utf-8")
     _patch_project(monkeypatch, scenes, tmp_path, store)
 
     async def fake_resolve_scene_project(

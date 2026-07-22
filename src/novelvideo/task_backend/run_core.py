@@ -334,6 +334,11 @@ def _project_task_timeout_seconds() -> int:
 
 
 def _project_task_failure_for_exception(exc: BaseException) -> tuple[str, dict[str, Any], bool]:
+    from novelvideo.novel_source import NovelImportRequiredError
+
+    if isinstance(exc, NovelImportRequiredError):
+        return str(exc), {"error_code": exc.error_code}, True
+
     if isinstance(exc, TaskTimedOut):
         timeout_seconds = int(getattr(exc, "timeout_seconds", None) or 30 * 60)
         timeout_minutes = max(round(timeout_seconds / 60), 1)

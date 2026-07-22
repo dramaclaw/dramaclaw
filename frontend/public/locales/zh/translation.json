@@ -1242,6 +1242,7 @@
     "loading": "加载中...",
     "back": "返回",
     "error": "出错了",
+    "novelImportRequired": "请先导入小说",
     "insufficientCredits": "积分不足，请联系管理员充值",
     "billingRuleNotConfigured": "计费规则未配置，请联系管理员设置积分规则",
     "billingRuleNotConfiguredShort": "需配置",

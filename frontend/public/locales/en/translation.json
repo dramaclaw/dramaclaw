@@ -1242,6 +1242,7 @@
     "loading": "Loading...",
     "back": "Back",
     "error": "Something went wrong",
+    "novelImportRequired": "Please import a novel first",
     "insufficientCredits": "Insufficient credits. Please contact your administrator to recharge.",
     "billingRuleNotConfigured": "Billing rule is not configured. Please contact an administrator to set credit pricing.",
     "billingRuleNotConfiguredShort": "Configure",

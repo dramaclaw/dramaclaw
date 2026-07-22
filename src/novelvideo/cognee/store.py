@@ -25,6 +25,7 @@ with preserve_st_env():
 from rich.console import Console
 from novelvideo.config import get_newapi_reasoning_kwargs
 from novelvideo.official_defaults import DEFAULT_COGNEE_LLM_MODEL
+from novelvideo.novel_source import require_imported_novel
 from novelvideo.sqlite_store import SQLiteStore
 from novelvideo.utils.document_parsers import load_novel_text
 
@@ -624,10 +625,10 @@ class CogneeStore:
                 on_log(message)
             console.print(f"[dim]{message}[/dim]")
 
+        novel_text = require_imported_novel(self.project_dir)
         report(0.1, "从图谱提取人物节点...")
         log("从图谱提取角色候选...")
         self._set_cognee_context()
-        novel_text = self.load_novel_content()
         characters = await extract_characters_from_graph(
             dataset_name=self.dataset_name,
             project_name=self.project_name,
@@ -690,11 +691,8 @@ class CogneeStore:
 
         # 获取原文内容
         log("从文件加载原文...")
-        novel_content = self.load_novel_content()
-        if novel_content:
-            log(f"原文加载完成: {len(novel_content)} 字符")
-        else:
-            raise ValueError("请先导入小说（调用 ingest_novel_fast）")
+        novel_content = require_imported_novel(self.project_dir)
+        log(f"原文加载完成: {len(novel_content)} 字符")
 
         # 获取已确认的角色列表
         character_names = list(self._characters.keys())
@@ -760,9 +758,7 @@ class CogneeStore:
         # 获取小说原文
         if novel_text is None:
             log("从文件加载原文...")
-            novel_text = self.load_novel_content()
-            if not novel_text:
-                raise ValueError("请先导入小说（调用 ingest_novel_fast）")
+            novel_text = require_imported_novel(self.project_dir)
             log(f"原文加载完成: {len(novel_text)} 字符")
 
         # 清理剧集内容
@@ -878,9 +874,7 @@ class CogneeStore:
 
         # 1. 加载原文并检测章节
         log("从文件加载原文...")
-        novel_text = self.load_novel_content()
-        if not novel_text:
-            raise ValueError("请先导入小说（调用 ingest_novel_fast）")
+        novel_text = require_imported_novel(self.project_dir)
 
         log(f"原文加载完成: {len(novel_text)} 字符")
 
@@ -1713,11 +1707,7 @@ class CogneeStore:
             console.print(f"[dim]{message}[/dim]")
 
         report(0.1, "解析剧本提取场景...")
-        novel_text = self.load_novel_content()
-        if not novel_text:
-            log("⚠️ 未找到剧本原文（novel.txt），无法提取场景")
-            report(1.0, "提取失败：无原文")
-            return []
+        novel_text = require_imported_novel(self.project_dir)
 
         log(f"加载剧本原文: {len(novel_text)} 字符")
         scenes = await extract_scenes_from_script(

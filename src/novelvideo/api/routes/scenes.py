@@ -34,6 +34,7 @@ from novelvideo.models import (
     build_scene_effective_prompt,
     resolve_scene_plate_from_records,
 )
+from novelvideo.novel_source import has_imported_novel, novel_import_required_response
 from novelvideo.project_config import load_project_config_file
 from novelvideo.project_context import ProjectContext, resolve_project_context
 from novelvideo.sqlite_store import SQLiteStore
@@ -899,7 +900,7 @@ async def delete_scene(
 
 @router.post("/projects/{project}/scenes/build")
 async def build_scenes(project: str, user: dict = Depends(get_api_user)):
-    ctx, username, project_name, _project_dir, output_dir, store = (
+    ctx, username, project_name, project_dir, output_dir, store = (
         await _resolve_scene_project(
             project,
             user,
@@ -907,6 +908,8 @@ async def build_scenes(project: str, user: dict = Depends(get_api_user)):
         )
     )
     if ctx is not None:
+        if not has_imported_novel(project_dir):
+            return novel_import_required_response()
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             task_type="build_scenes",

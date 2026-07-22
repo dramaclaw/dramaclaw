@@ -44,7 +44,7 @@ export function useCharacters(project: string) {
 export function useBuildCharacters(project: string) {
   return useMutation({
     mutationFn: () =>
-      jsonWithBackendError<TaskResponse>(
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
         api.post(p`api/v1/projects/${project}/characters/build`, {
           json: {},
           throwHttpErrors: false,

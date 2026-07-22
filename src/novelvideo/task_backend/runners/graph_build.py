@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from novelvideo.novel_source import require_imported_novel
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
 from novelvideo.task_backend.registry import register_project_task_runner
@@ -42,6 +43,7 @@ def run_build_characters(envelope: dict[str, Any], ctx: ProjectContext) -> dict[
 
 
 async def _run_build_characters(ctx: ProjectContext) -> dict[str, Any]:
+    require_imported_novel(ctx.output_dir)
     store = await _load_store(ctx)
     try:
         characters = await store.build_characters_from_graph(
@@ -58,6 +60,7 @@ def run_build_scenes(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str,
 
 
 async def _run_build_scenes(ctx: ProjectContext) -> dict[str, Any]:
+    require_imported_novel(ctx.output_dir)
     store = await _load_store(ctx)
     try:
         scenes = await store.build_scenes_from_graph(
@@ -98,6 +101,7 @@ async def _run_build_episodes(envelope: dict[str, Any], ctx: ProjectContext) -> 
     use_agent = bool(config.get("use_agent_planner", True))
     planning_mode = str(config.get("planning_mode", "ai"))
     generate_metadata = bool(config.get("generate_metadata", False))
+    require_imported_novel(ctx.output_dir)
     store = await _load_store(ctx)
     try:
         def update(progress: float, task: str) -> None:
