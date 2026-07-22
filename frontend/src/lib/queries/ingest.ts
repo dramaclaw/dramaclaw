@@ -38,6 +38,8 @@ interface ChaptersResult {
   total_chars: number;
   billable_chars?: number;
   count?: number;
+  /** Client-only marker: upload parsing succeeded, but Cognee ingest has not completed. */
+  preview_only?: boolean;
 }
 
 export interface KnowledgeGraphNode {
@@ -93,6 +95,7 @@ export function useUploadNovel(project: string) {
               total_chars: preview.total_chars,
               billable_chars: preview.billable_chars,
               count: preview.count,
+              preview_only: true,
             },
           },
         );

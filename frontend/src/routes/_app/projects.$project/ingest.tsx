@@ -898,6 +898,7 @@ export function IngestPageContent({ project }: { project: string }) {
   );
   const chaptersData = chaptersRes?.data;
   const hasImportedContent = (chaptersData?.chapters?.length ?? 0) > 0;
+  const isUploadOnlyPreview = chaptersData?.preview_only === true;
 
   const pastedBillableChars = useMemo(
     () => countBillableNovelChars(pastedText.trim()),
@@ -946,7 +947,7 @@ export function IngestPageContent({ project }: { project: string }) {
   const [reuploadConfirmOpen, setReuploadConfirmOpen] = useState(false);
   const knowledgeGraph = useKnowledgeGraph(
     project,
-    hasImportedContent && !ingestStarted,
+    hasImportedContent && !isUploadOnlyPreview && !ingestStarted,
   );
   const cancelTask = useCancelTask();
   const taskStream = useTaskStream({

@@ -121,6 +121,7 @@ const mocks = vi.hoisted(() => ({
         data: {
           total_chars: number;
           count: number;
+          preview_only?: boolean;
           chapters: {
             number: number;
             title?: string | null;
@@ -247,7 +248,7 @@ vi.mock("@/lib/queries/ingest", () => ({
             total_nodes: 2,
             total_edges: 1,
             truncated: false,
-          },
+          }
         }
       : undefined,
     isLoading: false,
@@ -468,6 +469,28 @@ describe("IngestPage settings save", () => {
     expect(screen.getByText("2 nodes · 1 relationships")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "林昭, Entity" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "雨巷, Entity" })).toBeInTheDocument();
+  });
+
+  it("does not request or show the graph for an upload-only chapter preview", () => {
+    mocks.chaptersData = {
+      ok: true,
+      data: {
+        total_chars: 10,
+        count: 1,
+        preview_only: true,
+        chapters: [{ number: 1, title: "第一章", char_count: 10 }],
+      },
+    };
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    expect(
+      screen.queryByRole("heading", { name: "Knowledge Graph" }),
+    ).not.toBeInTheDocument();
   });
 
   it("falls back to chapter content title and legacy char count in preview", () => {
