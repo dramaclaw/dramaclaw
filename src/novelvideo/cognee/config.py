@@ -18,6 +18,10 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
+from novelvideo.cognee.concurrency import (
+    get_cognee_concurrency_config,
+    install_cognee_pipeline_concurrency,
+)
 from novelvideo.llm_instrumentation import (
     reset_model_call_reservation_active,
     set_model_call_reservation_active,
@@ -51,6 +55,7 @@ _litellm_embedding_header_patch_installed = False
 _embedding_headers_capture: contextvars.ContextVar[dict[str, str] | None] = (
     contextvars.ContextVar("novelvideo_embedding_headers_capture", default=None)
 )
+logger = logging.getLogger(__name__)
 
 
 # 在导入 cognee 之前设置环境变量（Cognee 在导入时会读取）
@@ -255,6 +260,21 @@ def _apply_cognee_runtime_defaults() -> None:
     )
     if graph_config_module and hasattr(graph_config_module, "get_graph_config"):
         graph_config_module.get_graph_config.cache_clear()
+
+
+def _install_cognee_pipeline_concurrency() -> None:
+    get_cognee_concurrency_config()
+    install_cognee_pipeline_concurrency()
+
+
+def _install_cognee_pipeline_concurrency_on_import() -> None:
+    try:
+        _install_cognee_pipeline_concurrency()
+    except (RuntimeError, ValueError) as exc:
+        logger.warning(
+            "Cognee pipeline concurrency installation deferred until init_cognee(): %s",
+            exc,
+        )
 
 
 def _patch_cognee_embedding_timeout() -> None:
@@ -811,6 +831,7 @@ try:
     _patch_cognee_embedding_timeout()
     _install_insufficient_credits_log_filter()
     _patch_cognee_embedding_gateway()
+    _install_cognee_pipeline_concurrency_on_import()
 
     COGNEE_AVAILABLE = True
 except ImportError:
@@ -899,6 +920,7 @@ def init_cognee() -> None:
     _patch_cognee_embedding_timeout()
     _install_insufficient_credits_log_filter()
     _patch_cognee_embedding_gateway()
+    _install_cognee_pipeline_concurrency()
     if is_ce_effective():
         _active_gateway_fingerprint = _current_gateway_fingerprint()
 

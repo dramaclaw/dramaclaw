@@ -17,6 +17,7 @@ from uuid import UUID
 
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
 from .config import apply_cognee_project_storage_context, init_cognee  # noqa: F401
+from .concurrency import cognee_pipeline_concurrency
 
 from novelvideo.shared.env_guard import preserve_st_env
 
@@ -362,7 +363,8 @@ class CogneeStore:
         for attempt in range(2):
             self._set_cognee_context()
             try:
-                result = await operation()
+                async with cognee_pipeline_concurrency():
+                    result = await operation()
                 self._ensure_pipeline_run_succeeded(result, stage_name)
                 return result
             except Exception as exc:
