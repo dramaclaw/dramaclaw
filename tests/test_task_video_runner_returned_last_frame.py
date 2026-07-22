@@ -28,6 +28,15 @@ def _ctx(tmp_path: Path) -> ProjectContext:
     )
 
 
+def test_video_aspect_ratio_uses_adaptive_mode_for_first_frame():
+    from novelvideo.task_backend.runners.video import _resolve_video_aspect_ratio
+
+    assert _resolve_video_aspect_ratio("auto", "/tmp/first.png") == "adaptive"
+    assert _resolve_video_aspect_ratio(None, "/tmp/first.png") == "adaptive"
+    assert _resolve_video_aspect_ratio("9:16", "/tmp/first.png") == "9:16"
+    assert _resolve_video_aspect_ratio(None, None) == "9:16"
+
+
 @pytest.mark.asyncio
 async def test_single_video_runner_includes_returned_last_frame_in_task_result(
     tmp_path,
