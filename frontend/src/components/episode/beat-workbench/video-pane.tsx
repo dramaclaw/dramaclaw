@@ -228,7 +228,7 @@ interface Seedance2ConfigDraft {
 }
 
 type Seedance2ReferenceField = "prompt_guidance" | "final_prompt";
-type Seedance2CropAspect = "2:3" | "9:16" | "16:9";
+type Seedance2CropAspect = Seedance2ConfigDraft["ratio"];
 
 const SEEDANCE2_AUTOSAVE_DELAY_MS = 800;
 
@@ -2549,12 +2549,8 @@ export function VideoPane({
       <Seedance2AssetCropDialog
         intent={seedance2CropIntent}
         targetCropAspect={
-          showSeedance2Config
-            ? seedance2CropAspectForMode(
-                seedance2Draft.mode,
-                seedance2Draft.ratio,
-                spec.renderAspect,
-              )
+          showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
+            ? seedance2Draft.ratio
             : videoInputCropAspectForProjectAspect(spec.renderAspect)
         }
         pending={cropSeedance2Asset.isPending}
@@ -3105,17 +3101,6 @@ function seedance2DefaultRatioForProjectAspect(
   return aspect === "16:9" ? "16:9" : "9:16";
 }
 
-function seedance2CropAspectForMode(
-  mode: Seedance2ConfigDraft["mode"],
-  ratio: Seedance2ConfigDraft["ratio"],
-  firstFrameAspect: "2:3" | "16:9",
-): Seedance2CropAspect {
-  if (mode === "first_frame" || mode === "first_last_frame") {
-    return videoInputCropAspectForProjectAspect(firstFrameAspect);
-  }
-  return ratio === "16:9" ? "16:9" : "9:16";
-}
-
 function seedance2CropTargetForAsset(
   mode: Seedance2ConfigDraft["mode"],
   asset: Seedance2AssetItem,
@@ -3134,9 +3119,8 @@ function videoInputCropAspectForProjectAspect(
 }
 
 function cropAspectRatioValue(aspect: Seedance2CropAspect): number {
-  if (aspect === "16:9") return 16 / 9;
-  if (aspect === "2:3") return 2 / 3;
-  return 9 / 16;
+  const [width, height] = aspect.split(":").map(Number);
+  return width > 0 && height > 0 ? width / height : 9 / 16;
 }
 
 function defaultSeedance2Config(
