@@ -16,7 +16,6 @@ import {
   FishSymbol,
   Info,
   Loader2,
-  Network,
   Play,
   Plus,
   RefreshCw,
@@ -27,6 +26,7 @@ import {
 import { useProject, useUpdateProject } from "@/lib/queries/projects";
 import {
   useChapters,
+  useKnowledgeGraph,
   useStartIngest,
   useUploadNovel,
   type FormatCheck,
@@ -34,6 +34,7 @@ import {
 } from "@/lib/queries/ingest";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import { NovelFormatDialog } from "@/components/ingest/NovelFormatDialog";
+import { KnowledgeGraphVisualization } from "@/components/ingest/KnowledgeGraphVisualization";
 import { useStyles } from "@/lib/queries/styles";
 import { useCancelTask, useTasks } from "@/lib/queries/tasks";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
@@ -943,6 +944,10 @@ export function IngestPageContent({ project }: { project: string }) {
   const [ingestStarted, setIngestStarted] = useState(false);
   const [reimporting, setReimporting] = useState(false);
   const [reuploadConfirmOpen, setReuploadConfirmOpen] = useState(false);
+  const knowledgeGraph = useKnowledgeGraph(
+    project,
+    hasImportedContent && !ingestStarted,
+  );
   const cancelTask = useCancelTask();
   const taskStream = useTaskStream({
     taskType: "ingest_fast",
@@ -964,6 +969,9 @@ export function IngestPageContent({ project }: { project: string }) {
       await queryClient.refetchQueries({
         queryKey: queryKeys.chapters(project),
         type: "active",
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.knowledgeGraph(project),
       });
       toast.success(t("common.generate") + " ✓");
     },
@@ -1682,51 +1690,47 @@ export function IngestPageContent({ project }: { project: string }) {
               {/* Preview — populated */}
               {chaptersData && chapterCount > 0 && (
                 <div className="space-y-4">
-                  <section
-                    aria-labelledby="knowledge-graph-title"
-                    className={cn(
-                      "overflow-hidden rounded-xl border p-4",
-                      INGEST_SURFACE_SUBTLE_CLASS,
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/12 text-emerald-400">
-                        <Network className="size-[18px]" aria-hidden />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2
-                            id="knowledge-graph-title"
-                            className="text-sm font-semibold text-foreground"
-                          >
-                            {t("ingest.knowledgeGraph.title")}
-                          </h2>
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/12 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
-                            <CheckCircle2 className="size-3" aria-hidden />
-                            {t("ingest.knowledgeGraph.ready")}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          {t("ingest.knowledgeGraph.description")}
-                        </p>
-                        <div className="mt-3 flex flex-wrap gap-1.5">
-                          {([
-                            "characters",
-                            "scenes",
-                            "props",
-                            "episodes",
-                          ] as const).map((item) => (
-                            <span
-                              key={item}
-                              className="rounded-md border border-white/[0.07] bg-white/[0.035] px-2 py-1 text-[11px] text-muted-foreground"
-                            >
-                              {t(`ingest.knowledgeGraph.uses.${item}`)}
-                            </span>
-                          ))}
+                  {knowledgeGraph.isLoading && (
+                    <div className="h-[520px] overflow-hidden rounded-2xl border border-violet-300/10 bg-[#05050a] p-5">
+                      <div className="flex items-center gap-3">
+                        <Skeleton className="size-9 rounded-xl" />
+                        <div className="space-y-2">
+                          <Skeleton className="h-3 w-24" />
+                          <Skeleton className="h-2.5 w-40" />
                         </div>
                       </div>
+                      <Skeleton className="mx-auto mt-16 size-72 rounded-full opacity-40" />
                     </div>
-                  </section>
+                  )}
+
+                  {knowledgeGraph.data?.data.nodes.length ? (
+                    <KnowledgeGraphVisualization graph={knowledgeGraph.data.data} />
+                  ) : null}
+
+                  {knowledgeGraph.isError && (
+                    <div className="flex min-h-28 items-center justify-between gap-4 rounded-xl border border-amber-300/15 bg-amber-500/[0.04] p-4">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-400" />
+                        <div>
+                          <p className="text-sm font-medium text-foreground">
+                            {t("ingest.knowledgeGraph.loadFailed")}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t("ingest.knowledgeGraph.loadFailedHint")}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => knowledgeGraph.refetch()}
+                      >
+                        <RefreshCw className="size-3.5" />
+                        {t("common.retry")}
+                      </Button>
+                    </div>
+                  )}
 
                   <h2 className="text-lg font-semibold text-foreground">
                     {t("ingest.previewHeading")}

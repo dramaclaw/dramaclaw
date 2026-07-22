@@ -32,6 +32,8 @@ beforeAll(async () => {
             stop: "Stop",
             reupload: "Reupload",
             delete: "Delete",
+            close: "Close",
+            retry: "Retry",
           },
           ingest: {
             title: "Import Novel",
@@ -42,14 +44,17 @@ beforeAll(async () => {
             previewHeading: "Novel Structure Preview",
             knowledgeGraph: {
               title: "Knowledge Graph",
-              ready: "Ready",
-              description: "Semantic relationships are ready.",
-              uses: {
-                characters: "Characters",
-                scenes: "Scenes",
-                props: "Props",
-                episodes: "Episode planning",
-              },
+              stats: "{{nodes}} nodes · {{edges}} relationships",
+              connections: "{{count}} connections",
+              relationships: "Relationships",
+              interactionHint: "Drag to pan",
+              truncated: "Showing core relationships",
+              zoomIn: "Zoom in",
+              zoomOut: "Zoom out",
+              resetView: "Reset view",
+              expand: "Expand graph",
+              loadFailed: "Knowledge graph is unavailable",
+              loadFailedHint: "Try again later.",
             },
             inputMode: { upload: "Upload Novel", paste: "Paste Text" },
             sourceHint: {
@@ -132,6 +137,7 @@ const mocks = vi.hoisted(() => ({
   // 模拟 React Query 的 isFetchedAfterMount：默认 true（已挂载后刷到新数据）；
   // stale-cache 竞态用例把它设为 false，表示当前 data 还是挂载前的旧缓存。
   ingestTasksFetchedAfterMount: true,
+  refetchKnowledgeGraph: vi.fn(),
 }));
 
 vi.mock("@/components/ui/select", async () => {
@@ -208,6 +214,46 @@ vi.mock("@/lib/queries/projects", () => ({
 
 vi.mock("@/lib/queries/ingest", () => ({
   useChapters: () => ({ data: mocks.chaptersData, isFetching: false }),
+  useKnowledgeGraph: (_project: string, enabled: boolean) => ({
+    data: enabled
+      ? {
+          ok: true,
+          data: {
+            nodes: [
+              {
+                id: "node-1",
+                label: "林昭",
+                type: "Entity",
+                degree: 1,
+                properties: { description: "雨巷少年" },
+              },
+              {
+                id: "node-2",
+                label: "雨巷",
+                type: "Entity",
+                degree: 1,
+                properties: {},
+              },
+            ],
+            edges: [
+              {
+                id: "edge-1",
+                source: "node-1",
+                target: "node-2",
+                relation: "appears_in",
+                properties: {},
+              },
+            ],
+            total_nodes: 2,
+            total_edges: 1,
+            truncated: false,
+          },
+        }
+      : undefined,
+    isLoading: false,
+    isError: false,
+    refetch: mocks.refetchKnowledgeGraph,
+  }),
   useUploadNovel: () => ({ mutateAsync: mocks.uploadNovel, isPending: false }),
   useStartIngest: () => ({
     mutateAsync: mocks.startIngest,
@@ -419,9 +465,9 @@ describe("IngestPage settings save", () => {
     expect(
       screen.getByRole("heading", { name: "Knowledge Graph" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Ready")).toBeInTheDocument();
-    expect(screen.getByText("Characters")).toBeInTheDocument();
-    expect(screen.getByText("Episode planning")).toBeInTheDocument();
+    expect(screen.getByText("2 nodes · 1 relationships")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "林昭, Entity" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "雨巷, Entity" })).toBeInTheDocument();
   });
 
   it("falls back to chapter content title and legacy char count in preview", () => {

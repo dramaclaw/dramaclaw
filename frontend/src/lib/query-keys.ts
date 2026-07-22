@@ -49,6 +49,7 @@ export const queryKeys = {
   episodeDetail: (p: string, ep: number) =>
     ["projects", p, "episodes", ep, "detail"] as const,
   chapters: (p: string) => ["projects", p, "chapters"] as const,
+  knowledgeGraph: (p: string) => ["projects", p, "knowledge-graph"] as const,
   script: (p: string, ep: number) =>
     ["projects", p, "episodes", ep, "script"] as const,
   beats: (p: string, ep: number) =>

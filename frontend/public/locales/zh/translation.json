@@ -1343,14 +1343,17 @@
     "previewHeading": "小说结构预览",
     "knowledgeGraph": {
       "title": "知识图谱",
-      "ready": "已构建",
-      "description": "已从原文建立语义关系，后续创作流程会基于这些上下文理解故事。",
-      "uses": {
-        "characters": "人物关系",
-        "scenes": "场景脉络",
-        "props": "道具线索",
-        "episodes": "剧集规划"
-      }
+      "stats": "{{nodes}} 个节点 · {{edges}} 条关系",
+      "connections": "{{count}} 条关联",
+      "relationships": "关联关系",
+      "interactionHint": "拖动画布 · 滚轮缩放 · 点击节点查看详情",
+      "truncated": "正在展示核心关系",
+      "zoomIn": "放大图谱",
+      "zoomOut": "缩小图谱",
+      "resetView": "重置视图",
+      "expand": "展开图谱",
+      "loadFailed": "知识图谱暂时无法显示",
+      "loadFailedHint": "图谱数据仍然保留，可以稍后重试。"
     },
     "scriptDetails": "剧本配置",
     "previewGenerating": "正在生成结构预览...",

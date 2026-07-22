@@ -1343,14 +1343,17 @@
     "previewHeading": "Novel Structure Preview",
     "knowledgeGraph": {
       "title": "Knowledge Graph",
-      "ready": "Ready",
-      "description": "Semantic relationships have been built from the source text to ground the downstream creative workflow.",
-      "uses": {
-        "characters": "Characters",
-        "scenes": "Scenes",
-        "props": "Props",
-        "episodes": "Episode planning"
-      }
+      "stats": "{{nodes}} nodes · {{edges}} relationships",
+      "connections": "{{count}} connections",
+      "relationships": "Relationships",
+      "interactionHint": "Drag to pan · Scroll to zoom · Select a node for details",
+      "truncated": "Showing core relationships",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "resetView": "Reset view",
+      "expand": "Expand graph",
+      "loadFailed": "Knowledge graph is temporarily unavailable",
+      "loadFailedHint": "Your graph data is intact. Try loading it again shortly."
     },
     "scriptDetails": "Script details",
     "previewGenerating": "Generating structure preview...",

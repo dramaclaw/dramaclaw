@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Awaitable, Callable, Dict, List, Optional, Any, Iterable
 import json
 from importlib import import_module
+from datetime import date, datetime
+from uuid import UUID
 
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
 from .config import apply_cognee_project_storage_context, init_cognee  # noqa: F401
@@ -601,6 +603,111 @@ class CogneeStore:
             "char_count": len(content),
             "dataset": self.dataset_name,
             "status": "graph_ready",
+        }
+
+    async def get_graph_snapshot(self, max_nodes: int = 160) -> dict:
+        """Return a bounded, JSON-safe snapshot for the project graph viewer.
+
+        Cognee's graph may contain large chunk payloads and embedding metadata. The
+        viewer needs topology and concise human-readable properties, not the raw
+        storage representation, so this method ranks connected nodes and strips
+        oversized or vector-shaped values before returning them to the browser.
+        """
+
+        self._set_cognee_context()
+        with preserve_st_env():
+            from cognee.infrastructure.databases.graph import get_graph_engine
+
+        graph_engine = await get_graph_engine()
+        raw_nodes, raw_edges = await graph_engine.get_graph_data()
+
+        max_nodes = max(20, min(int(max_nodes), 240))
+        degree: Dict[str, int] = {}
+        for source, target, _relation, _properties in raw_edges:
+            source_id = str(source)
+            target_id = str(target)
+            degree[source_id] = degree.get(source_id, 0) + 1
+            degree[target_id] = degree.get(target_id, 0) + 1
+
+        type_priority = {
+            "Entity": 6,
+            "EntityType": 5,
+            "TextSummary": 4,
+            "Document": 3,
+            "DocumentChunk": 1,
+        }
+
+        ranked_nodes = sorted(
+            raw_nodes,
+            key=lambda item: (
+                degree.get(str(item[0]), 0) * 10
+                + type_priority.get(str((item[1] or {}).get("type") or ""), 2) * 3
+                + int(bool((item[1] or {}).get("name")))
+            ),
+            reverse=True,
+        )[:max_nodes]
+        selected_ids = {str(node_id) for node_id, _properties in ranked_nodes}
+
+        def compact(value: Any, *, depth: int = 0) -> Any:
+            if value is None or isinstance(value, (bool, int, float)):
+                return value
+            if isinstance(value, (UUID, date, datetime)):
+                return str(value)
+            if isinstance(value, str):
+                return value if len(value) <= 500 else value[:497] + "..."
+            if depth >= 2:
+                return str(value)[:500]
+            if isinstance(value, (list, tuple, set)):
+                return [compact(item, depth=depth + 1) for item in list(value)[:12]]
+            if isinstance(value, dict):
+                result = {}
+                for key, item in list(value.items())[:16]:
+                    key_text = str(key)
+                    if any(token in key_text.lower() for token in ("embedding", "vector")):
+                        continue
+                    result[key_text] = compact(item, depth=depth + 1)
+                return result
+            return str(value)[:500]
+
+        nodes = []
+        for node_id, properties in ranked_nodes:
+            props = dict(properties or {})
+            node_type = str(props.pop("type", "Unknown") or "Unknown")
+            label = str(props.pop("name", "") or node_id)
+            nodes.append(
+                {
+                    "id": str(node_id),
+                    "label": label[:160],
+                    "type": node_type[:80],
+                    "degree": degree.get(str(node_id), 0),
+                    "properties": compact(props),
+                }
+            )
+
+        edges = []
+        for index, (source, target, relation, properties) in enumerate(raw_edges):
+            source_id = str(source)
+            target_id = str(target)
+            if source_id not in selected_ids or target_id not in selected_ids:
+                continue
+            edges.append(
+                {
+                    "id": f"{source_id}:{target_id}:{index}",
+                    "source": source_id,
+                    "target": target_id,
+                    "relation": str(relation or "related_to")[:120],
+                    "properties": compact(properties or {}),
+                }
+            )
+            if len(edges) >= 600:
+                break
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "total_nodes": len(raw_nodes),
+            "total_edges": len(raw_edges),
+            "truncated": len(raw_nodes) > len(nodes) or len(raw_edges) > len(edges),
         }
 
     async def build_characters_from_graph(

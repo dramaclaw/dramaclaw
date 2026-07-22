@@ -40,6 +40,30 @@ interface ChaptersResult {
   count?: number;
 }
 
+export interface KnowledgeGraphNode {
+  id: string;
+  label: string;
+  type: string;
+  degree: number;
+  properties: Record<string, unknown>;
+}
+
+export interface KnowledgeGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  relation: string;
+  properties: Record<string, unknown>;
+}
+
+export interface KnowledgeGraphSnapshot {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  total_nodes: number;
+  total_edges: number;
+  truncated: boolean;
+}
+
 export function useUploadNovel(project: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -88,6 +112,18 @@ export function useChapters(project: string, enabled = true) {
         .get(p`api/v1/projects/${project}/chapters`, { signal })
         .json<OkResponse<ChaptersResult>>(),
     enabled: !!project && enabled,
+  });
+}
+
+export function useKnowledgeGraph(project: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.knowledgeGraph(project),
+    queryFn: ({ signal }) =>
+      api
+        .get(p`api/v1/projects/${project}/ingest/graph`, { signal })
+        .json<OkResponse<KnowledgeGraphSnapshot>>(),
+    enabled: !!project && enabled,
+    staleTime: 30_000,
   });
 }
 
