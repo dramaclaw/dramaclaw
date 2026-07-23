@@ -673,6 +673,7 @@ export function useCanvasSync(
   // At most one save waits behind the one on the wire; further callers for the
   // same canvas generation ride on it instead of stacking. See `scheduleSave`.
   const queuedSaveRef = useRef<{
+    canvasKey: string;
     generation: number;
     promise: Promise<boolean>;
   } | null>(null);
@@ -871,6 +872,13 @@ export function useCanvasSync(
       // path uses to suppress in-flight save callbacks from clobbering the
       // freshly-applied remote content.
       switchingRef.current = true;
+      // Fence off every save dispatched before this refresh. We are about to
+      // overwrite revisionRef with the remote revision; a PUT already on the
+      // wire would otherwise come back with an older revision and roll it
+      // backwards, and the next save would 409 against it. A save still queued
+      // behind that PUT is stale for the same reason — the merged content is
+      // rescheduled explicitly below when there is local work to keep.
+      canvasGenerationRef.current += 1;
       const local = useCanvasStore.getState();
       const remoteNodes = (remote.nodes ?? []) as CanvasNode[];
       const remoteEdges = (remote.edges ?? []) as CanvasEdge[];
@@ -1656,7 +1664,11 @@ interface SaveArgs {
    * swallowed with it.
    */
   queuedSaveRef: {
-    current: { generation: number; promise: Promise<boolean> } | null;
+    current: {
+      canvasKey: string;
+      generation: number;
+      promise: Promise<boolean>;
+    } | null;
   };
   canvasEnvelopeRef: { current: Partial<FreezoneCanvasPayload> };
   pendingClientSaveIdRef: { current: string | null };
@@ -1714,8 +1726,18 @@ async function scheduleSave(
     // entirely, and re-reading it would PUT that canvas's content to our
     // (stale) args.canvasId.
     const generation = args.canvasGenerationRef.current;
+    // Belt and braces: the generation counter already moves on every hydrate
+    // and every remote refresh, so it covers a canvas switch. Comparing the
+    // canvas key too means a queue slot can never be shared across canvases
+    // even if some future caller reaches `scheduleSave` between a canvasId
+    // change and the hydrate effect that bumps the counter.
+    const canvasKey = `${args.project}:${args.canvasId}`;
     const alreadyQueued = args.queuedSaveRef.current;
-    if (alreadyQueued && alreadyQueued.generation === generation) {
+    if (
+      alreadyQueued &&
+      alreadyQueued.generation === generation &&
+      alreadyQueued.canvasKey === canvasKey
+    ) {
       // Same canvas: ride along. The queued save re-reads the store, so it will
       // carry our content too.
       return await alreadyQueued.promise;
@@ -1727,7 +1749,11 @@ async function scheduleSave(
     const waitFor = alreadyQueued?.promise ?? inFlight;
     // Assigned on the line after the IIFE is created. The closure only reads it
     // past an `await`, so it is always populated by the time it is dereferenced.
-    let entry!: { generation: number; promise: Promise<boolean> };
+    let entry!: {
+      canvasKey: string;
+      generation: number;
+      promise: Promise<boolean>;
+    };
     const follow = (async () => {
       try {
         await waitFor;
@@ -1745,7 +1771,7 @@ async function scheduleSave(
       }
       return await scheduleSave(args, true);
     })();
-    entry = { generation, promise: follow };
+    entry = { canvasKey, generation, promise: follow };
     args.queuedSaveRef.current = entry;
     return await follow;
   }

@@ -17,6 +17,7 @@ import {
   writeCanvasDraft,
 } from "@/features/freezone/canvasDraftStorage";
 import {
+  applyRemoteFreezoneCanvas,
   consumeQueuedLocalFreezoneProjections,
   queueLocalFreezoneProjection,
   removeLocalFreezoneProjection,
@@ -856,6 +857,85 @@ describe("useCanvasSync hydrate lifecycle", () => {
     // And it must carry canvas B's revision — not the one canvas A's response
     // just returned, which would 409 straight back.
     expect(putBaseRevisions).toEqual([7, 3]);
+
+    hook.unmount();
+  });
+
+  // A remote refresh rewrites revisionRef from the server. A PUT dispatched
+  // before that refresh comes back carrying an *older* revision; letting it
+  // land would roll the ref backwards and 409 the very next save.
+  it("ignores a save response that lands after a remote refresh", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 7,
+    });
+
+    const putBaseRevisions: Array<number | null> = [];
+    const releases: Array<(revision: number) => void> = [];
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      (_project: string, _canvasId: string, payload: unknown) => {
+        const body = payload as { base_revision?: number | null };
+        putBaseRevisions.push(body.base_revision ?? null);
+        return new Promise((resolve) => {
+          releases.push((revision: number) =>
+            resolve({ saved: true, revision }),
+          );
+        });
+      },
+    );
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "fence_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // An edit goes out against revision 7 and hangs on the wire.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putBaseRevisions).toEqual([7]);
+
+    // Meanwhile the runtime pushes a much newer server state.
+    act(() => {
+      applyRemoteFreezoneCanvas("project-a", "fence_user_eric", {
+        nodes: [
+          {
+            id: "remote-node",
+            type: CANVAS_NODE_TYPES.upload,
+            position: { x: 0, y: 0 },
+            data: { imageUrl: "/static/remote.png" },
+          },
+        ],
+        edges: [],
+        revision: 100,
+      });
+    });
+    expect(hook.result.current.revision).toBe(100);
+
+    // The stale PUT finally answers with revision 8. It must not win.
+    await act(async () => {
+      releases[0](8);
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(hook.result.current.revision).toBe(100);
+
+    // And the next save must build on 100, not on the rolled-back 8.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 30, y: 30 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(putBaseRevisions).toEqual([7, 100]);
 
     hook.unmount();
   });
