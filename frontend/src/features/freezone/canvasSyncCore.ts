@@ -374,6 +374,20 @@ export function classifySaveError(
   const code = typeof body?.detail?.code === "string" ? body.detail.code : null;
 
   if (status === 409) {
+    // Three backend conditions land on 409, but only two are distinguishable
+    // here: `canvas_revision_conflict` and `canvas_idempotency_conflict` carry
+    // a `detail.code`, while `CanvasBaseRevisionRequired` raises a bare string
+    // detail and therefore still falls through to the canonical message.
+    // `canvas_idempotency_conflict` is one client replaying a client_save_id
+    // with a different body — telling that user "another window" sends them
+    // hunting for a tab that does not exist. Only the plain revision conflict
+    // really means someone else wrote to the canvas.
+    if (code === "canvas_idempotency_conflict") {
+      return {
+        kind: "conflict",
+        message: "同一次保存被重复提交且内容不一致，请刷新后重试",
+      };
+    }
     return {
       kind: "conflict",
       message: "画布已被其他窗口或用户修改",

@@ -580,6 +580,179 @@ describe("useCanvasSync hydrate lifecycle", () => {
     hook.unmount();
   });
 
+  // Regression: on a slow link a PUT outlives the 800ms debounce, so two more
+  // debounced saves stack on the same in-flight promise. They used to resume in
+  // one microtask batch and both fire with the base_revision the first save had
+  // just published — the second earned a 409 and the UI blamed "another window"
+  // for a race the client created. Reproducible in the browser by throttling to
+  // 3G and dragging nodes.
+  it("serializes saves that stack behind a slow in-flight PUT", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 7,
+    });
+
+    const baseRevisions: Array<number | null> = [];
+    const nodeCounts: number[] = [];
+    const releases: Array<() => void> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let revision = 7;
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      (_project: string, _canvasId: string, payload: unknown) => {
+        const body = payload as {
+          base_revision?: number | null;
+          nodes?: unknown[];
+        };
+        baseRevisions.push(body.base_revision ?? null);
+        nodeCounts.push((body.nodes ?? []).length);
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        return new Promise((resolve) => {
+          releases.push(() => {
+            inFlight -= 1;
+            revision += 1;
+            resolve({ saved: true, revision });
+          });
+        });
+      },
+    );
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "slow_link_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(hook.result.current.status).toBe("ready");
+
+    // Three edits, each debounced out while the previous PUT is still hanging.
+    for (const x of [100, 200, 300]) {
+      useCanvasStore
+        .getState()
+        .addNode(CANVAS_NODE_TYPES.upload, { x, y: x }, {});
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+    }
+
+    // Only the first save is on the wire; the other two collapse into one
+    // queued follow-up rather than stacking.
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(releases).toHaveLength(1);
+
+    // Release the in-flight save; the queued follow-up then goes out.
+    await act(async () => {
+      releases[0]();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(2);
+    expect(releases).toHaveLength(2);
+    await act(async () => {
+      releases[1]();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Three edits produce two PUTs, never concurrent, never sharing a
+    // base_revision — and the queued one carries the newest node set rather
+    // than the snapshot captured before it waited.
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(2);
+    expect(maxInFlight).toBe(1);
+    expect(baseRevisions).toEqual([7, 8]);
+    expect(nodeCounts).toEqual([1, 3]);
+    expect(useCanvasStore.getState().nodes).toHaveLength(3);
+    expect(hook.result.current.status).toBe("ready");
+
+    hook.unmount();
+  });
+
+  // A queued save wakes up holding refs that now describe a *different* canvas:
+  // FreezoneShell is mounted without a key, so switching canvases re-runs the
+  // hydrate effect against the same ref set. Re-reading the store at that point
+  // would PUT the new canvas's content under the old canvas's id.
+  it("drops a save queued across a canvas switch", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockImplementation(
+      async (_project: string, canvasId: string) => ({
+        nodes:
+          canvasId === "switch_target_user_eric"
+            ? [
+                {
+                  id: "b-node",
+                  type: CANVAS_NODE_TYPES.upload,
+                  position: { x: 0, y: 0 },
+                  data: { imageUrl: "/static/b.png" },
+                },
+              ]
+            : [],
+        edges: [],
+        revision: 7,
+      }),
+    );
+
+    const putCanvasIds: string[] = [];
+    const releases: Array<() => void> = [];
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      (_project: string, canvasId: string) => {
+        putCanvasIds.push(canvasId);
+        return new Promise((resolve) => {
+          releases.push(() => resolve({ saved: true, revision: 8 }));
+        });
+      },
+    );
+
+    const hook = renderHook(
+      ({ canvasId }: { canvasId: string }) =>
+        useCanvasSync("project-a", canvasId),
+      { initialProps: { canvasId: "switch_source_user_eric" } },
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Edit canvas A and let its save reach the wire.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putCanvasIds).toEqual(["switch_source_user_eric"]);
+
+    // A second edit queues behind it, then the user switches canvases.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 20, y: 20 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+
+    hook.rerender({ canvasId: "switch_target_user_eric" });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Canvas A's PUT finally lands; the queued save must not resume against
+    // canvas B's content.
+    await act(async () => {
+      releases[0]();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(putCanvasIds).toEqual(["switch_source_user_eric"]);
+
+    hook.unmount();
+  });
+
   it("writes a draft and keepalive PUT on beforeunload when an edit is pending", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
