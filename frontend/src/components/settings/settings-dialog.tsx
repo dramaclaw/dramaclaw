@@ -1081,7 +1081,7 @@ function EmbeddingModelBlock({
 
   const selectedProvider = localModel?.provider ?? "";
   const upstreamModel = localModel?.upstreamModel ?? "";
-  const dimension = localModel?.dimension ?? DEFAULT_EMBEDDING_DIMENSION;
+  const dimension = DEFAULT_EMBEDDING_DIMENSION;
   const batchSize =
     localModel === undefined ? DEFAULT_EMBEDDING_BATCH_SIZE : localModel.batchSize;
 
@@ -1122,7 +1122,7 @@ function EmbeddingModelBlock({
       return;
     }
     const normalizedDimension = Math.round(Number(dimension));
-    if (!Number.isFinite(normalizedDimension) || normalizedDimension <= 0) {
+    if (normalizedDimension !== DEFAULT_EMBEDDING_DIMENSION) {
       toast.error(t("settings.modelConfig.embeddingModel.invalidDimension"));
       return;
     }
@@ -1214,13 +1214,12 @@ function EmbeddingModelBlock({
           />
           <Input
             value={String(dimension)}
-            onChange={(event) => updateLocal({ dimension: Number(event.target.value) })}
             inputMode="numeric"
             min={1}
             step={1}
             type="number"
             className="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
-            disabled={configuredProviders.length === 0}
+            readOnly
           />
           <Input
             value={batchSize == null ? "" : String(batchSize)}

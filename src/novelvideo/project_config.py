@@ -83,6 +83,45 @@ def load_project_config_file_from_state_dir(state_dir: str | Path) -> dict:
     return load_project_config_file_from_path(get_project_config_path_from_state_dir(state_dir))
 
 
+def ensure_cognee_embedding_model_in_state_dir(state_dir: str | Path) -> str:
+    """Return the project's permanent embedding binding, backfilling legacy projects.
+
+    Unlike the general compatibility loader, this path is intentionally strict:
+    corrupt project configuration must not be mistaken for a missing historical
+    field because choosing the wrong 1024-dimensional vector space is silent.
+    """
+
+    from novelvideo.embedding_models import (
+        PROJECT_EMBEDDING_MODEL_KEY,
+        embedding_model_for_legacy_project,
+        embedding_model_spec,
+    )
+
+    config_path = get_project_config_path_from_state_dir(state_dir)
+    with _project_config_lock(config_path):
+        if config_path.exists():
+            try:
+                raw = json.loads(config_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Invalid project configuration: {config_path}"
+                ) from exc
+            if not isinstance(raw, dict):
+                raise RuntimeError(f"Invalid project configuration object: {config_path}")
+            config = normalize_project_config(raw)
+        else:
+            config = {}
+
+        model = str(config.get(PROJECT_EMBEDDING_MODEL_KEY) or "").strip()
+        if not model:
+            model = embedding_model_for_legacy_project()
+            config[PROJECT_EMBEDDING_MODEL_KEY] = model
+            _write_project_config_atomic(config_path, config)
+
+        embedding_model_spec(model)
+        return model
+
+
 def _default_project_config() -> dict:
     from novelvideo.config import (
         DEFAULT_RENDER_IMAGE_SELECTION,

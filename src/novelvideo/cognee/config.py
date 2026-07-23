@@ -14,13 +14,17 @@ import os
 import sys
 import warnings
 from pathlib import Path
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 from dotenv import load_dotenv
 
 from novelvideo.cognee.concurrency import (
     get_cognee_concurrency_config,
     install_cognee_pipeline_concurrency,
+)
+from novelvideo.embedding_models import (
+    embedding_gateway_credentials,
+    require_current_embedding_model_spec,
 )
 from novelvideo.llm_instrumentation import (
     reset_model_call_reservation_active,
@@ -492,8 +496,148 @@ def _embedding_response_trace(
     return request_id, response_id
 
 
+def _project_embedding_request_kwargs(kwargs: dict) -> dict:
+    """Apply the current project's immutable model and gateway to LiteLLM kwargs."""
+
+    spec = require_current_embedding_model_spec()
+    api_key, base_url = embedding_gateway_credentials(spec)
+    if not api_key or not base_url:
+        raise RuntimeError(f"Embedding gateway is not configured for {spec.gateway}")
+
+    routed = dict(kwargs)
+    routed["custom_llm_provider"] = "openai"
+    routed["model"] = _normalize_embedding_model("newapi", spec.internal_model)
+    routed["api_key"] = api_key
+    routed["api_base"] = base_url
+    if spec.send_dimensions:
+        routed["dimensions"] = spec.dimensions
+        allowed_openai_params = list(routed.get("allowed_openai_params") or [])
+        if "dimensions" not in allowed_openai_params:
+            allowed_openai_params.append("dimensions")
+        routed["allowed_openai_params"] = allowed_openai_params
+    else:
+        routed.pop("dimensions", None)
+        allowed_openai_params = [
+            param
+            for param in (routed.get("allowed_openai_params") or [])
+            if param != "dimensions"
+        ]
+        if allowed_openai_params:
+            routed["allowed_openai_params"] = allowed_openai_params
+        else:
+            routed.pop("allowed_openai_params", None)
+    return routed
+
+
+def _validate_embedding_vectors(
+    vectors: object,
+    *,
+    expected_dimensions: int,
+    expected_count: int,
+) -> list[list[float]]:
+    if not isinstance(vectors, list) or len(vectors) != expected_count:
+        received_count = len(vectors) if isinstance(vectors, list) else 0
+        raise RuntimeError(
+            "Embedding response count mismatch: "
+            f"expected {expected_count}, received {received_count}"
+        )
+    for index, vector in enumerate(vectors):
+        received = len(vector) if isinstance(vector, list) else 0
+        if received != expected_dimensions:
+            raise RuntimeError(
+                "Embedding dimension mismatch: "
+                f"expected {expected_dimensions}, received {received} "
+                f"at index {index}"
+            )
+    return vectors
+
+
+async def _run_project_embedding_with_billing(
+    operation: Callable[[], Awaitable[list[list[float]]]],
+    *,
+    expected_count: int,
+) -> list[list[float]]:
+    spec = require_current_embedding_model_spec()
+    captured_headers: dict[str, str] = {}
+    token = _embedding_headers_capture.set(captured_headers)
+    reservation_id = ""
+    active_token = None
+    metadata = {
+        "source": "cognee_embedding_gateway",
+        "embedding_gateway": spec.gateway,
+    }
+    try:
+        try:
+            reservation_id = (
+                await get_usage_meter().reserve_current_model_call_credit(
+                    model=spec.internal_model,
+                    billing_kind="embedding",
+                    metadata=metadata,
+                )
+            )
+        except Exception as exc:
+            insufficient = find_insufficient_credits_error(exc)
+            if insufficient is not None:
+                raise InsufficientCreditsStop(
+                    user_id=insufficient.user_id,
+                    cost=insufficient.cost,
+                    balance=insufficient.balance,
+                ) from None
+            raise
+        active_token = set_model_call_reservation_active(bool(reservation_id))
+        result = _validate_embedding_vectors(
+            await operation(),
+            expected_dimensions=spec.dimensions,
+            expected_count=expected_count,
+        )
+    except BaseException:
+        if reservation_id:
+            try:
+                await get_usage_meter().refund_model_call_credit_reservation(
+                    reservation_id,
+                    metadata={
+                        "source": "cognee_embedding_gateway_exception",
+                        "embedding_gateway": spec.gateway,
+                    },
+                )
+            except Exception:
+                pass
+        raise
+    finally:
+        if active_token is not None:
+            try:
+                reset_model_call_reservation_active(active_token)
+            except Exception:
+                pass
+        _embedding_headers_capture.reset(token)
+
+    if reservation_id:
+        try:
+            request_id = (
+                captured_headers.get("x-novelvideo-request-id")
+                or captured_headers.get("x-request-id")
+                or captured_headers.get("x-newapi-request-id")
+                or captured_headers.get("x-oneapi-request-id")
+                or ""
+            )
+            bump_metadata = dict(metadata)
+            response_id = captured_headers.get("x-novelvideo-response-id", "")
+            if response_id:
+                bump_metadata["response_id"] = response_id
+            await get_usage_meter().bump_model_call(
+                user_id=None,
+                model=spec.internal_model,
+                credit_reservation_id=reservation_id,
+                provider_request_id=request_id,
+                metadata=bump_metadata,
+            )
+        except Exception:
+            pass
+    return result
+
+
 def _patch_cognee_embedding_gateway() -> None:
-    """Force Cognee LiteLLM embeddings through the newAPI OpenAI-compatible gateway."""
+    """Install one concurrency-safe project-aware newAPI embedding gateway."""
     global _embedding_gateway_patch_installed
     if _embedding_gateway_patch_installed:
         return
@@ -511,121 +655,41 @@ def _patch_cognee_embedding_gateway() -> None:
         return
 
     original_embed_text = engine_cls.embed_text
+    litellm = _mod.litellm
+    original_aembedding = litellm.aembedding
 
-    async def patched_embed_text(self, text):
-        provider = str(getattr(self, "provider", "") or "").strip().lower()
-        endpoint = str(getattr(self, "endpoint", "") or "").strip()
-        if provider not in {"custom", "openai"} or not endpoint:
-            return await original_embed_text(self, text)
-
-        litellm = _mod.litellm
-        original_aembedding = litellm.aembedding
-
-        async def gateway_aembedding(*args, **kwargs):
-            kwargs.setdefault("custom_llm_provider", "openai")
-            raw_model = str(kwargs.get("model") or "").strip()
-            if raw_model:
-                kwargs["model"] = _normalize_embedding_model("newapi", raw_model)
-            if os.getenv("COGNEE_EMBEDDING_SEND_DIMENSIONS", "false").lower() not in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            ):
-                # dimensions 仍用于本地向量库 sizing；默认不传给 newAPI 上游。
-                kwargs.pop("dimensions", None)
-            response = await original_aembedding(*args, **kwargs)
+    async def gateway_aembedding(*args, **kwargs):
+        response = await original_aembedding(
+            *args, **_project_embedding_request_kwargs(kwargs)
+        )
+        captured_headers = _embedding_headers_capture.get()
+        if captured_headers is not None:
             _attach_embedding_response_headers(response, captured_headers)
-            nonlocal captured_request_id, captured_response_id
             request_id, response_id = _embedding_response_trace(
                 response, captured_headers
             )
-            captured_request_id = captured_request_id or request_id
-            captured_response_id = captured_response_id or response_id
-            return response
+            if request_id:
+                captured_headers.setdefault("x-novelvideo-request-id", request_id)
+            if response_id:
+                captured_headers.setdefault("x-novelvideo-response-id", response_id)
+        return response
 
-        litellm.aembedding = gateway_aembedding
-        _install_litellm_embedding_header_capture()
-        captured_headers: dict[str, str] = {}
-        captured_request_id = ""
-        captured_response_id = ""
-        token = _embedding_headers_capture.set(captured_headers)
-        raw_model = str(
-            getattr(self, "model", "") or os.getenv("EMBEDDING_MODEL", "")
-        ).strip()
-        model = _normalize_embedding_model("newapi", raw_model)
-        billing_model = _billing_model_name(raw_model or model)
-        original_model = getattr(self, "model", None)
-        reservation_id = ""
-        active_token = None
-        try:
-            if model:
-                self.model = model
+    litellm.aembedding = gateway_aembedding
+    _install_litellm_embedding_header_capture()
 
-            try:
-                reservation_id = (
-                    await get_usage_meter().reserve_current_model_call_credit(
-                        model=billing_model,
-                        billing_kind="embedding",
-                        metadata={"source": "cognee_embedding_gateway"},
-                    )
-                )
-            except Exception as exc:
-                insufficient = find_insufficient_credits_error(exc)
-                if insufficient is not None:
-                    raise InsufficientCreditsStop(
-                        user_id=insufficient.user_id,
-                        cost=insufficient.cost,
-                        balance=insufficient.balance,
-                    ) from None
-                raise
-            active_token = set_model_call_reservation_active(bool(reservation_id))
-            result = await original_embed_text(self, text)
-        except BaseException:
-            if reservation_id:
-                try:
-                    await get_usage_meter().refund_model_call_credit_reservation(
-                        reservation_id,
-                        metadata={"source": "cognee_embedding_gateway_exception"},
-                    )
-                except Exception:
-                    pass
-            raise
-        finally:
-            if active_token is not None:
-                try:
-                    reset_model_call_reservation_active(active_token)
-                except Exception:
-                    pass
-            if original_model is not None:
-                self.model = original_model
-            _embedding_headers_capture.reset(token)
-            litellm.aembedding = original_aembedding
-        if reservation_id:
-            try:
-                request_id = (
-                    captured_request_id
-                    or captured_headers.get("x-request-id")
-                    or captured_headers.get("x-newapi-request-id")
-                    or captured_headers.get("x-oneapi-request-id")
-                    or ""
-                )
-                metadata = {"source": "cognee_embedding_gateway"}
-                if captured_response_id:
-                    metadata["response_id"] = captured_response_id
-                await get_usage_meter().bump_model_call(
-                    user_id=None,
-                    model=billing_model,
-                    credit_reservation_id=reservation_id,
-                    provider_request_id=request_id,
-                    metadata=metadata,
-                )
-            except Exception:
-                pass
-        return result
+    async def patched_embed_text(self, text):
+        provider = str(getattr(self, "provider", "") or "").strip().lower()
+        if provider not in {"custom", "openai"}:
+            return await original_embed_text(self, text)
+        expected_count = len(text) if isinstance(text, list) else 1
+        return await _run_project_embedding_with_billing(
+            lambda: original_embed_text(self, text),
+            expected_count=expected_count,
+        )
 
     engine_cls.embed_text = patched_embed_text
     engine_cls._novelvideo_original_embed_text = original_embed_text
+    engine_cls._novelvideo_original_aembedding = original_aembedding
     engine_cls._novelvideo_gateway_patch = True
     _embedding_gateway_patch_installed = True
 

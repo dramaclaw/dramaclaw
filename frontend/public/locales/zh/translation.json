@@ -3923,7 +3923,7 @@
       },
       "embeddingModel": {
         "title": "② 向量化与语义检索（Embedding）",
-        "description": "负责文本向量化和知识库语义检索。请选择渠道和上游 Embedding 模型，维度必须与实际上游输出一致。",
+        "description": "负责文本向量化和知识库语义检索。Cognee 自定义 Embedding 固定使用 1024 维向量空间。",
         "colProvider": "已配置渠道",
         "colUpstreamModel": "上游模型名",
         "colDimension": "维度",
@@ -3931,7 +3931,7 @@
         "defaultProvider": "选择渠道",
         "upstreamModelPlaceholder": "填写上游 embedding 模型名，如 text-embedding-3-large",
         "batchSizePlaceholder": "默认 10",
-        "dimensionWarning": "维度必须与上游 embedding 输出一致。批量大小为空时使用 EMBEDDING_BATCH_SIZE 环境变量或官方默认 10；如果上游支持更大批量，可以按需调高。",
+        "dimensionWarning": "更换上游模型会改变CE共享向量空间，所有绑定自定义Embedding的项目都必须清空图谱并重建。批量大小为空时使用官方默认10。",
         "saveHint": "保存后会写入 NewAPI 映射，并把维度和可选批量大小保存到 CE 本地配置。",
         "noChannelsHint": "请先在上方添加供应商渠道，再配置 embedding 模型。",
         "save": "保存 Embedding 配置",
@@ -3939,7 +3939,7 @@
         "noChannels": "请先添加供应商渠道。",
         "missingProvider": "请选择 embedding 使用的供应商渠道。",
         "missingModel": "请填写上游 embedding 模型名。",
-        "invalidDimension": "请填写有效的 embedding 维度。",
+        "invalidDimension": "Embedding 维度必须为 1024。",
         "invalidBatchSize": "请填写有效的 embedding 批量大小。"
       },
       "mediaModels": {

@@ -3923,7 +3923,7 @@
       },
       "embeddingModel": {
         "title": "② Vectorization & Semantic Search (Embedding)",
-        "description": "Vectorizes text for semantic knowledge-base search. Choose a channel and upstream Embedding model; the dimension must match the actual upstream output.",
+        "description": "Vectorizes text for semantic knowledge-base search. Custom Cognee embeddings use a fixed 1024-dimensional vector space.",
         "colProvider": "Configured Channel",
         "colUpstreamModel": "Upstream Model",
         "colDimension": "Dimension",
@@ -3931,7 +3931,7 @@
         "defaultProvider": "Choose Channel",
         "upstreamModelPlaceholder": "Enter upstream embedding model, e.g. text-embedding-3-large",
         "batchSizePlaceholder": "Default 10",
-        "dimensionWarning": "The dimension must match the upstream embedding output. Empty batch size uses the EMBEDDING_BATCH_SIZE env var or the official default 10; models that support larger batches can be tuned upward.",
+        "dimensionWarning": "Changing the upstream model changes the shared CE vector space. Rebuild the graph for every project bound to the custom embedding model. Empty batch size uses the official default 10.",
         "saveHint": "Saving writes the NewAPI mapping and stores the dimension and optional batch size in the CE local config.",
         "noChannelsHint": "Add provider channels above before configuring the embedding model.",
         "save": "Save Embedding Config",
@@ -3939,7 +3939,7 @@
         "noChannels": "Add a provider channel first.",
         "missingProvider": "Choose the provider channel for embedding.",
         "missingModel": "Enter the upstream embedding model name.",
-        "invalidDimension": "Enter a valid embedding dimension.",
+        "invalidDimension": "Embedding dimension must be 1024.",
         "invalidBatchSize": "Enter a valid embedding batch size."
       },
       "mediaModels": {

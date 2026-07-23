@@ -60,6 +60,7 @@ export interface SavedEmbeddingModelConfig {
   upstreamModel: string;
   dimension: number;
   batchSize?: number;
+  sendDimensions?: boolean;
   internalModel?: string;
 }
 

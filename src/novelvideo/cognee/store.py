@@ -27,8 +27,13 @@ with preserve_st_env():
     from cognee.modules.engine.operations.setup import setup
 from rich.console import Console
 from novelvideo.config import get_newapi_reasoning_kwargs
+from novelvideo.embedding_models import (
+    embedding_model_for_legacy_project,
+    embedding_model_scope as project_embedding_model_scope,
+)
 from novelvideo.official_defaults import DEFAULT_COGNEE_LLM_MODEL
 from novelvideo.novel_source import require_imported_novel
+from novelvideo.project_config import ensure_cognee_embedding_model_in_state_dir
 from novelvideo.sqlite_store import SQLiteStore
 from novelvideo.utils.document_parsers import load_novel_text
 
@@ -155,6 +160,7 @@ class CogneeStore:
             state_dir=self.state_dir,
         )
         self._share_sqlite_caches()
+        self.cognee_embedding_model: str | None = None
 
         # 立即设置 Cognee 上下文
         self._set_cognee_context()
@@ -286,6 +292,18 @@ class CogneeStore:
                 flush=True,
             )
 
+    def embedding_model_scope(self):
+        model = getattr(self, "cognee_embedding_model", None)
+        if not model:
+            state_dir = getattr(self, "state_dir", None)
+            model = (
+                ensure_cognee_embedding_model_in_state_dir(state_dir)
+                if state_dir
+                else embedding_model_for_legacy_project()
+            )
+            self.cognee_embedding_model = model
+        return project_embedding_model_scope(model)
+
     @staticmethod
     def _ensure_pipeline_run_succeeded(result, stage_name: str) -> None:
         """Treat Cognee pipeline Errored/Failed results as task failures."""
@@ -360,7 +378,8 @@ class CogneeStore:
             self._set_cognee_context()
             try:
                 async with cognee_pipeline_concurrency():
-                    result = await operation()
+                    with self.embedding_model_scope():
+                        result = await operation()
                 self._ensure_pipeline_run_succeeded(result, stage_name)
                 return result
             except Exception as exc:
@@ -386,6 +405,9 @@ class CogneeStore:
 
     async def initialize(self):
         """初始化 SQLite 数据库和 Cognee 配置。"""
+        self.cognee_embedding_model = ensure_cognee_embedding_model_in_state_dir(
+            self.state_dir
+        )
         init_cognee()
 
         # 初始化项目 SQLite；Cognee 图谱上下文独立设置。
@@ -395,7 +417,8 @@ class CogneeStore:
         self._set_cognee_context(verbose=True)
 
         try:
-            await setup()
+            with self.embedding_model_scope():
+                await setup()
         except Exception as e:
             # cognee 0.5.3 bug: 重复初始化时 CREATE TABLE data 报 already exists
             if "already exists" in str(e):
@@ -410,7 +433,8 @@ class CogneeStore:
             )
 
         try:
-            await resolve_authorized_user_datasets(datasets=self.dataset_name)
+            with self.embedding_model_scope():
+                await resolve_authorized_user_datasets(datasets=self.dataset_name)
         except Exception as e:
             if "UNIQUE constraint failed: datasets.id" in str(e):
                 pass
@@ -566,7 +590,8 @@ class CogneeStore:
         report(0.1, "解析原文...")
         log("Step 1/2: 导入原文到 Cognee...")
         self._set_cognee_context()
-        await cognee.add(content, dataset_name=self.dataset_name)
+        with self.embedding_model_scope():
+            await cognee.add(content, dataset_name=self.dataset_name)
         log("原文导入完成")
         await asyncio.sleep(0)
 
@@ -757,13 +782,14 @@ class CogneeStore:
         report(0.1, "从图谱提取人物节点...")
         log("从图谱提取角色候选...")
         self._set_cognee_context()
-        characters = await extract_characters_from_graph(
-            dataset_name=self.dataset_name,
-            project_name=self.project_name,
-            project_dir=str(self.project_dir),
-            novel_text=novel_text,
-            on_progress=lambda p, t: report(0.1 + p * 0.6, t),
-        )
+        with self.embedding_model_scope():
+            characters = await extract_characters_from_graph(
+                dataset_name=self.dataset_name,
+                project_name=self.project_name,
+                project_dir=str(self.project_dir),
+                novel_text=novel_text,
+                on_progress=lambda p, t: report(0.1 + p * 0.6, t),
+            )
 
         if not characters:
             log("⚠️ 图谱提取无结果，保留现有角色数据")
@@ -1416,11 +1442,12 @@ class CogneeStore:
         search_type = mode_map.get(mode, SearchType.GRAPH_COMPLETION)
 
         try:
-            result = await cognee.search(
-                query_type=search_type,
-                query_text=query,
-                top_k=top_k,
-            )
+            with self.embedding_model_scope():
+                result = await cognee.search(
+                    query_type=search_type,
+                    query_text=query,
+                    top_k=top_k,
+                )
         except DatasetNotFoundError:
             return "暂无相关数据，请先运行 cognee-ingest 导入小说"
         except Exception as e:
@@ -1924,13 +1951,14 @@ class CogneeStore:
         novel_text = self.load_novel_content()
         if novel_text:
             log(f"已加载原文全文用于辅助道具提取: {len(novel_text)} 字符")
-        props = await extract_props_from_graph(
-            dataset_name=self.dataset_name,
-            project_name=self.project_name,
-            project_dir=self.project_dir,
-            novel_text=novel_text,
-            on_progress=lambda p, t: report(0.1 + p * 0.6, t),
-        )
+        with self.embedding_model_scope():
+            props = await extract_props_from_graph(
+                dataset_name=self.dataset_name,
+                project_name=self.project_name,
+                project_dir=self.project_dir,
+                novel_text=novel_text,
+                on_progress=lambda p, t: report(0.1 + p * 0.6, t),
+            )
 
         if not props:
             log("⚠️ 图谱提取无结果，保留现有道具数据")

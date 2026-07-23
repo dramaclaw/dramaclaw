@@ -1335,6 +1335,7 @@ src/novelvideo/director_world/store.py,Elastic-2.0,2026 SuperTale contributors,R
 src/novelvideo/director_world/supertale_lanzhou_demo.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/supertale_voxel_palette.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/sync_global_props.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/embedding_models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/env.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/export/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/export/episode_export.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1724,6 +1725,7 @@ tests/test_pool_index_state_storage.py,Elastic-2.0,2026 SuperTale contributors,R
 tests/test_project_config_narration.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_context.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_dependencies.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_project_embedding_models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_id_route_paths.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_spine_template.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_static_media.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

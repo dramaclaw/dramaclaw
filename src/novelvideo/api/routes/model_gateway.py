@@ -176,6 +176,7 @@ class SaveEmbeddingModelBody(BaseModel):
     upstream_model: str = Field(alias="upstreamModel")
     dimension: int
     batch_size: int | None = Field(default=None, alias="batchSize")
+    send_dimensions: bool = Field(default=True, alias="sendDimensions")
 
 
 def _permission_error(exc: PermissionError) -> HTTPException:
@@ -282,14 +283,15 @@ def _build_embedding_model_channel_spec(
         raise ValueError("provider is required for embedding model")
     if not upstream_model:
         raise ValueError("upstreamModel is required for embedding model")
-    if dimension <= 0:
-        raise ValueError("dimension must be positive")
+    if dimension != 1024:
+        raise ValueError("dimension must be 1024 for project-bound Cognee embeddings")
     if body.batch_size is not None and batch_size <= 0:
         raise ValueError("batchSize must be positive")
     normalized = {
         "provider": provider,
         "upstreamModel": upstream_model,
         "dimension": dimension,
+        "sendDimensions": body.send_dimensions,
         "internalModel": "DC-cognee-embedding",
     }
     if batch_size > 0:
@@ -768,6 +770,7 @@ async def save_custom_newapi_embedding_model(
         upstream_model=normalized_model["upstreamModel"],
         dimension=normalized_model["dimension"],
         batch_size=normalized_model.get("batchSize"),
+        send_dimensions=normalized_model["sendDimensions"],
     )
     return {
         "ok": True,
