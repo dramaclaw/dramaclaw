@@ -19,7 +19,6 @@ from typing import Any, Dict, List, Optional
 import aiosqlite
 from rich.console import Console
 
-from novelvideo.sqlite_pragmas import configure_sqlite_connection_async
 from novelvideo.models import (
     CharacterIdentity,
     NovelCharacter,
@@ -31,6 +30,8 @@ from novelvideo.models import (
     normalize_detected_props,
     sync_beat_asset_refs,
 )
+from novelvideo.novel_source import load_imported_novel_content
+from novelvideo.sqlite_pragmas import configure_sqlite_connection_async
 from novelvideo.utils.path_resolver import compute_identity_path
 
 console = Console()
@@ -479,10 +480,7 @@ class SQLiteStore:
         novel_path.write_text(content, encoding="utf-8")
 
     def load_novel_content(self) -> Optional[str]:
-        novel_path = Path(self.project_dir) / "novel.txt"
-        if novel_path.exists():
-            return novel_path.read_text(encoding="utf-8")
-        return None
+        return load_imported_novel_content(self.project_dir)
 
     async def save_episode_content(self, ep_num: int, content: str) -> None:
         db = await self._ensure_db()

@@ -10,11 +10,14 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import TYPE_CHECKING, Callable, Iterable
 
 from novelvideo.config import STATE_DIR
 
 _log = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from novelvideo.embedding_models import EmbeddingModelSpec
 
 # Backward-compatible monkeypatch alias: source-branch tests
 # (e.g. test_indextts2_beat_audio_task) redirect config root by setting
@@ -81,6 +84,73 @@ def load_project_config_file_from_path(config_path: str | Path) -> dict:
 
 def load_project_config_file_from_state_dir(state_dir: str | Path) -> dict:
     return load_project_config_file_from_path(get_project_config_path_from_state_dir(state_dir))
+
+
+def ensure_cognee_embedding_binding_in_state_dir(
+    state_dir: str | Path,
+) -> EmbeddingModelSpec:
+    """Return the permanent embedding contract, backfilling legacy projects.
+
+    Unlike the general compatibility loader, this path is intentionally strict:
+    corrupt project configuration must not be mistaken for a missing historical
+    field because choosing the wrong vector space is silent.
+    """
+
+    from novelvideo.embedding_models import (
+        COGNEE_EMBEDDING_DIMENSIONS,
+        PROJECT_EMBEDDING_DIMENSION_KEY,
+        PROJECT_EMBEDDING_MODEL_KEY,
+        embedding_model_for_legacy_project,
+        embedding_model_spec,
+    )
+
+    config_path = get_project_config_path_from_state_dir(state_dir)
+    with _project_config_lock(config_path):
+        if config_path.exists():
+            try:
+                raw = json.loads(config_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Invalid project configuration: {config_path}"
+                ) from exc
+            if not isinstance(raw, dict):
+                raise RuntimeError(f"Invalid project configuration object: {config_path}")
+            config = normalize_project_config(raw)
+        else:
+            config = {}
+
+        changed = False
+        model = str(config.get(PROJECT_EMBEDDING_MODEL_KEY) or "").strip()
+        if not model:
+            model = embedding_model_for_legacy_project()
+            config[PROJECT_EMBEDDING_MODEL_KEY] = model
+            changed = True
+
+        raw_dimensions = config.get(PROJECT_EMBEDDING_DIMENSION_KEY)
+        if raw_dimensions is None:
+            # Every project created before dimension binding used the historical
+            # 1024-dimensional Cognee vector store, including CE custom projects.
+            dimensions = COGNEE_EMBEDDING_DIMENSIONS
+            config[PROJECT_EMBEDDING_DIMENSION_KEY] = dimensions
+            changed = True
+        else:
+            try:
+                dimensions = int(raw_dimensions)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"Invalid project embedding dimensions: {raw_dimensions!r}"
+                ) from exc
+
+        spec = embedding_model_spec(model, dimensions=dimensions)
+        if changed:
+            _write_project_config_atomic(config_path, config)
+        return spec
+
+
+def ensure_cognee_embedding_model_in_state_dir(state_dir: str | Path) -> str:
+    """Compatibility wrapper returning only the project's bound model name."""
+
+    return ensure_cognee_embedding_binding_in_state_dir(state_dir).internal_model
 
 
 def _default_project_config() -> dict:

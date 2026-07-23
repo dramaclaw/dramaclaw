@@ -99,7 +99,7 @@ async def test_build_characters_from_graph_only_adds_missing_characters(tmp_proj
         "extract_characters_from_graph",
         fake_extract_characters_from_graph,
     )
-    monkeypatch.setattr(tmp_project, "load_novel_content", lambda: "剧本文本")
+    tmp_project.save_novel_content("剧本文本")
 
     added = await tmp_project.build_characters_from_graph()
 
@@ -195,7 +195,7 @@ async def test_build_scenes_from_graph_only_adds_missing_base_scenes(tmp_project
         ]
 
     monkeypatch.setattr(pipeline, "extract_scenes_from_script", fake_extract_scenes_from_script)
-    monkeypatch.setattr(tmp_project, "load_novel_content", lambda: "剧本文本")
+    tmp_project.save_novel_content("剧本文本")
 
     added = await tmp_project.build_scenes_from_graph()
 
@@ -208,6 +208,15 @@ async def test_build_scenes_from_graph_only_adds_missing_base_scenes(tmp_project
     assert derived.base_scene_id == "城市街道"
     assert derived.variant_prompt == "用户修过的雨夜增量"
     assert await tmp_project.sqlite_store.get_scene("新场景") is not None
+
+
+@pytest.mark.asyncio
+async def test_graph_build_steps_reject_missing_novel(tmp_project):
+    with pytest.raises(ValueError, match="^请先导入小说$"):
+        await tmp_project.build_characters_from_graph()
+
+    with pytest.raises(ValueError, match="^请先导入小说$"):
+        await tmp_project.build_scenes_from_graph()
 
 
 @pytest.mark.asyncio

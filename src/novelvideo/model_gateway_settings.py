@@ -301,6 +301,9 @@ def _decode_embedding_model_config(value: str | None) -> dict[str, Any]:
         "provider": provider,
         "upstreamModel": upstream_model,
         "dimension": dimensions,
+        # Retain the field for API compatibility, but request behavior is an
+        # internal model contract and cannot be disabled by saved CE settings.
+        "sendDimensions": True,
         "internalModel": "DC-cognee-embedding",
     }
     if batch_size > 0:
@@ -412,6 +415,7 @@ def save_newapi_embedding_model_config(
     upstream_model: str,
     dimension: int | str,
     batch_size: int | str | None = None,
+    send_dimensions: bool = True,
 ) -> dict[str, Any]:
     normalized_provider = str(provider or "").strip().lower()
     normalized_upstream_model = str(upstream_model or "").strip()
@@ -429,6 +433,7 @@ def save_newapi_embedding_model_config(
         "provider": normalized_provider,
         "upstreamModel": normalized_upstream_model,
         "dimension": normalized_dimension,
+        "sendDimensions": True,
         "internalModel": "DC-cognee-embedding",
     }
     if normalized_batch_size > 0:
@@ -519,6 +524,21 @@ def get_effective_newapi_config(
 
     settings = get_model_gateway_settings()
     mode = normalize_gateway_mode(settings.get("model_gateway_mode"))
+    return get_ce_newapi_config_for_mode(mode)
+
+
+def get_ce_newapi_config_for_mode(mode: str) -> EffectiveNewApiConfig:
+    """Return CE credentials for one gateway without changing the active mode.
+
+    Embedding projects can remain bound to the gateway that created their vector
+    space even when the installation's general model gateway is switched later.
+    """
+
+    if not _uses_ce_gateway_settings():
+        raise RuntimeError("CE model gateway settings are not available in EE")
+
+    settings = get_model_gateway_settings()
+    mode = normalize_gateway_mode(mode)
     if mode == MODE_CUSTOM:
         return EffectiveNewApiConfig(
             mode=MODE_CUSTOM,
@@ -540,6 +560,14 @@ def _int_setting(value: str | None, default: int) -> int:
         return int(str(value or "").strip())
     except ValueError:
         return default
+
+
+def _bool_setting(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def get_effective_media_relay_config(
@@ -646,7 +674,11 @@ def get_effective_cognee_embedding_config(
     env_dimensions: str | int | None = None,
     llm_provider: str | None = None,
 ) -> EffectiveCogneeEmbeddingConfig:
-    saved = get_newapi_embedding_model_config() if _uses_ce_gateway_settings() else {}
+    saved: dict[str, Any] = {}
+    if _uses_ce_gateway_settings():
+        gateway = get_effective_newapi_config()
+        if gateway.mode == MODE_CUSTOM:
+            saved = get_newapi_embedding_model_config()
     if saved:
         saved_batch_size = str(
             saved.get("batchSize")

@@ -123,6 +123,11 @@ def test_ce_auth_me_logout_and_project_crud_contract(
         detail = client.get(f"/api/v1/projects/{project_id}")
         assert detail.status_code == 200
         assert detail.json()["data"]["project_id"] == project_id
+        assert (
+            detail.json()["data"]["cognee_embedding_model"]
+            == "DC-cognee-embedding-v2"
+        )
+        assert detail.json()["data"]["cognee_embedding_dimension"] == 1024
 
 
 @pytest.mark.ee

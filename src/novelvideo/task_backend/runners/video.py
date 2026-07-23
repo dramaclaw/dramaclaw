@@ -31,6 +31,19 @@ def _log(manager, ctx: ProjectContext, envelope: dict[str, Any], message: str) -
     )
 
 
+def _resolve_video_aspect_ratio(value: object, frame_path: object) -> str:
+    """Use the provider's adaptive mode when I2V should follow its first frame.
+
+    Legacy Seedance 1.x tasks historically omitted ``ratio`` and were forced to
+    9:16.  Seedance does not expose a fixed 2:3 output preset, but its I2V API
+    supports ``adaptive`` specifically for following the supplied first frame.
+    """
+    requested = str(value or "").strip()
+    if requested and requested.lower() != "auto":
+        return requested
+    return "adaptive" if str(frame_path or "").strip() else "9:16"
+
+
 def _append_freezone_video_node_history(
     *,
     ctx: ProjectContext,
@@ -175,7 +188,7 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
         "image_path": frame_path,
         "prompt": prompt,
         "output_path": video_path.as_posix(),
-        "aspect_ratio": str(config.get("ratio") or "9:16"),
+        "aspect_ratio": _resolve_video_aspect_ratio(config.get("ratio"), frame_path),
         "duration": video_duration,
         "on_log": on_log,
         "on_progress": on_progress,

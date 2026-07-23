@@ -1242,6 +1242,7 @@
     "loading": "Loading...",
     "back": "Back",
     "error": "Something went wrong",
+    "novelImportRequired": "Please import a novel first",
     "insufficientCredits": "Insufficient credits. Please contact your administrator to recharge.",
     "billingRuleNotConfigured": "Billing rule is not configured. Please contact an administrator to set credit pricing.",
     "billingRuleNotConfiguredShort": "Configure",
@@ -1341,6 +1342,20 @@
       "failed": "Import failed"
     },
     "previewHeading": "Novel Structure Preview",
+    "knowledgeGraph": {
+      "title": "Knowledge Graph",
+      "stats": "{{nodes}} nodes · {{edges}} relationships",
+      "connections": "{{count}} connections",
+      "relationships": "Relationships",
+      "interactionHint": "Drag to pan · Scroll to zoom · Select a node for details",
+      "truncated": "Showing core relationships",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "resetView": "Reset view",
+      "expand": "Expand graph",
+      "loadFailed": "Knowledge graph is temporarily unavailable",
+      "loadFailedHint": "Your graph data is intact. Try loading it again shortly."
+    },
     "scriptDetails": "Script details",
     "previewGenerating": "Generating structure preview...",
     "restoredFilename": "Imported novel",
@@ -3908,7 +3923,7 @@
       },
       "embeddingModel": {
         "title": "② Vectorization & Semantic Search (Embedding)",
-        "description": "Vectorizes text for semantic knowledge-base search. Choose a channel and upstream Embedding model; the dimension must match the actual upstream output.",
+        "description": "Vectorizes text for semantic knowledge-base search. A custom model's dimension is bound when each project is created.",
         "colProvider": "Configured Channel",
         "colUpstreamModel": "Upstream Model",
         "colDimension": "Dimension",
@@ -3916,7 +3931,7 @@
         "defaultProvider": "Choose Channel",
         "upstreamModelPlaceholder": "Enter upstream embedding model, e.g. text-embedding-3-large",
         "batchSizePlaceholder": "Default 10",
-        "dimensionWarning": "The dimension must match the upstream embedding output. Empty batch size uses the EMBEDDING_BATCH_SIZE env var or the official default 10; models that support larger batches can be tuned upward.",
+        "dimensionWarning": "The dimension is bound to the custom embedding model when a project is created; later changes here affect only new projects. Clear and rebuild the graph before changing an existing project's model or dimension. Empty batch size uses the official default 10.",
         "saveHint": "Saving writes the NewAPI mapping and stores the dimension and optional batch size in the CE local config.",
         "noChannelsHint": "Add provider channels above before configuring the embedding model.",
         "save": "Save Embedding Config",
@@ -3924,7 +3939,7 @@
         "noChannels": "Add a provider channel first.",
         "missingProvider": "Choose the provider channel for embedding.",
         "missingModel": "Enter the upstream embedding model name.",
-        "invalidDimension": "Enter a valid embedding dimension.",
+        "invalidDimension": "Embedding dimension must be a positive integer.",
         "invalidBatchSize": "Enter a valid embedding batch size."
       },
       "mediaModels": {

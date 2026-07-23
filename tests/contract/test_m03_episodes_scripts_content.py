@@ -191,6 +191,7 @@ def m03_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     monkeypatch.setenv("ST_EDITION", "ce")
     monkeypatch.setenv("ST_LOCAL_USERNAME", "alice")
+    (tmp_path / "novel.txt").write_text("测试原文", encoding="utf-8")
 
     from novelvideo.api import auth as api_auth
     from novelvideo.api.deps import ProjectResolution

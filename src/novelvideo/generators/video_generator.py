@@ -468,7 +468,10 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
         duration = max(4, min(12, math.ceil(duration)))
 
         # 映射 aspect_ratio 格式
-        ratio = aspect_ratio if ":" in aspect_ratio else "9:16"
+        ratio_text = str(aspect_ratio or "").strip().lower()
+        # Seedance I2V uses ``adaptive`` to preserve the first-frame framing.
+        # The old colon-only guard accidentally converted it back to 9:16.
+        ratio = ratio_text if ":" in ratio_text or ratio_text == "adaptive" else "9:16"
 
         # 处理首帧
         if image_path.startswith(("http://", "https://", "data:")):
@@ -2202,7 +2205,10 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         if duration != original_duration:
             log(f"时长已调整: {original_duration:.1f}s -> {duration:.0f}s")
 
-        ratio = aspect_ratio if ":" in aspect_ratio else "9:16"
+        ratio_text = str(aspect_ratio or "").strip().lower()
+        # Seedance I2V uses ``adaptive`` to preserve the first-frame framing.
+        # The old colon-only guard accidentally converted it back to 9:16.
+        ratio = ratio_text if ":" in ratio_text or ratio_text == "adaptive" else "9:16"
         image_path = str(image_path or "").strip()
 
         metadata: dict[str, object] = {

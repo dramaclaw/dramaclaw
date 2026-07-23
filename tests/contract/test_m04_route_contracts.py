@@ -180,6 +180,7 @@ def m04_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     runtime_dir = tmp_path / "runtime" / "alice" / _PROJECT
     for path in (project_dir, state_dir, runtime_dir):
         path.mkdir(parents=True, exist_ok=True)
+    (project_dir / "novel.txt").write_text("测试原文", encoding="utf-8")
     store.project_dir = str(project_dir)
     (project_dir / "assets" / "characters" / _CHARACTER).mkdir(parents=True, exist_ok=True)
     portrait = project_dir / "assets" / "characters" / _CHARACTER / "portrait.png"

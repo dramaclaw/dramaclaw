@@ -203,6 +203,39 @@ def test_render_selected_regen_returns_scope_and_passes_render_settings(
     assert billing["pricing_params"]
 
 
+@pytest.mark.parametrize(
+    ("sketch_size", "requested_mode", "expected_mode"),
+    [
+        ((1200, 1800), "1x1_16-9", "1x1_2-3"),
+        ((1920, 1080), "1x1_2-3", "1x1_16-9"),
+    ],
+)
+def test_single_render_inherits_canonical_sketch_aspect(
+    monkeypatch,
+    tmp_path,
+    sketch_size,
+    requested_mode,
+    expected_mode,
+):
+    from PIL import Image
+    from novelvideo.task_identity import selection_scope
+
+    sketch_path = tmp_path / "sketches" / "ep002" / "beat_01.png"
+    sketch_path.parent.mkdir(parents=True)
+    Image.new("RGB", sketch_size).save(sketch_path)
+    client, calls = _client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/v1/projects/demo/episodes/2/beats/regenerate",
+        json={"beat_indices": [1], "mode_key": requested_mode},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["scope"] == selection_scope(expected_mode, [1])
+    assert calls[0]["payload"]["mode_key"] == expected_mode
+    assert calls[0]["payload"]["config"]["mode_key"] == expected_mode
+
+
 def test_render_selected_regen_checks_only_selected_beat_detection(monkeypatch, tmp_path):
     client, calls, seen_character_map_beats = _client_with_real_detection_guard(
         monkeypatch,

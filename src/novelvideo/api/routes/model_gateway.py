@@ -176,6 +176,7 @@ class SaveEmbeddingModelBody(BaseModel):
     upstream_model: str = Field(alias="upstreamModel")
     dimension: int
     batch_size: int | None = Field(default=None, alias="batchSize")
+    send_dimensions: bool = Field(default=True, alias="sendDimensions")
 
 
 def _permission_error(exc: PermissionError) -> HTTPException:
@@ -290,6 +291,10 @@ def _build_embedding_model_channel_spec(
         "provider": provider,
         "upstreamModel": upstream_model,
         "dimension": dimension,
+        # Kept in the response/config schema for compatibility with older
+        # clients. Runtime request behavior is controlled by the internal
+        # EmbeddingModelSpec, not by this user-supplied field.
+        "sendDimensions": True,
         "internalModel": "DC-cognee-embedding",
     }
     if batch_size > 0:
@@ -768,6 +773,7 @@ async def save_custom_newapi_embedding_model(
         upstream_model=normalized_model["upstreamModel"],
         dimension=normalized_model["dimension"],
         batch_size=normalized_model.get("batchSize"),
+        send_dimensions=normalized_model["sendDimensions"],
     )
     return {
         "ok": True,

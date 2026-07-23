@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth-store";
 import {
+  backendErrorCodeToastMessage,
   backendErrorToastMessage,
   errorFromBackendBody,
   humanizeTaskError,
@@ -85,6 +86,8 @@ export function useTaskStream(options: UseTaskStreamOptions): TaskStreamState {
   const taskErrorMessage = useCallback(
     (data: Pick<TaskStreamEvent, "error" | "error_code">, fallback: string) => {
       const message = data.error || fallback;
+      const localized = backendErrorCodeToastMessage(data.error_code, message, t);
+      if (localized) return localized;
       const status = data.error_code === "INSUFFICIENT_CREDITS" ? 402 : 409;
       const parsed = data.error_code
         ? errorFromBackendBody(

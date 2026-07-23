@@ -2,6 +2,30 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { TFunction } from "i18next";
 import { HTTPError } from "ky";
+import type { ErrorResponse } from "@/types/api";
+
+export const NOVEL_IMPORT_REQUIRED_CODE = "NOVEL_IMPORT_REQUIRED";
+
+export function backendErrorCodeToastMessage(
+  errorCode: string | null | undefined,
+  fallback: string,
+  t: TFunction,
+): string | null {
+  if (errorCode === NOVEL_IMPORT_REQUIRED_CODE) {
+    return t("common.novelImportRequired", { defaultValue: fallback });
+  }
+  return null;
+}
+
+export function backendErrorResponseToastMessage(
+  response: Pick<ErrorResponse, "code" | "error">,
+  t: TFunction,
+): string {
+  return (
+    backendErrorCodeToastMessage(response.code, response.error, t) ??
+    backendErrorToastMessage(new Error(response.error), t)
+  );
+}
 
 export class ProjectQueueLimitError extends Error {
   queueKind: string;

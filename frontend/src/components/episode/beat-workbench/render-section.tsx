@@ -107,7 +107,6 @@ const RENDER_BACKGROUND_ANCHOR_LABEL_KEYS: Record<string, string> = {
   reverse: "episode.workbench.render.backgroundAnchorLabels.reverse",
 };
 const RENDER_REGEN_FEATURE_KEY = "mainline.render_regen";
-const SINGLE_RENDER_MODE_KEY = "1x1_2-3";
 
 function clampCropBox(
   crop: { x: number; y: number; width: number; height: number },
@@ -140,6 +139,29 @@ export function RenderSection({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { spec: aspectSpec } = useProjectAspectRatio(project);
+  const currentAssignment = assignments[String(beat.beat_number)] ?? null;
+  const currentSketch = currentAssignment
+    ? images.find((image) => isSketchAssignmentMatch(image, currentAssignment)) ?? null
+    : null;
+  const latestSketch = images
+    .filter(
+      (image) =>
+        image.type === "sketch" &&
+        image.original_beat === beat.beat_number &&
+        image.cell_url,
+    )
+    .sort((a, b) => {
+      const ta = a.generated_at ? Date.parse(a.generated_at) : 0;
+      const tb = b.generated_at ? Date.parse(b.generated_at) : 0;
+      return tb - ta;
+    })[0] ?? null;
+  const sourceSketchAspect = useImageAspectRatio(
+    beat.sketch_url || currentSketch?.cell_url || latestSketch?.cell_url || null,
+  );
+  const singleRenderModeKey =
+    (sourceSketchAspect ?? aspectSpec.renderAspect) === "16:9"
+      ? "1x1_16-9"
+      : "1x1_2-3";
   const poolSelect = usePoolSelect(project, episode);
   const regenerate = useRegenerateRenderBeats(project, episode);
   const renderSettings = useRenderSettings(project);
@@ -161,7 +183,7 @@ export function RenderSection({
     {
       surface: "supertale",
       imageRole: "render",
-      modeKey: SINGLE_RENDER_MODE_KEY,
+      modeKey: singleRenderModeKey,
       params: renderImageSelection ? { image_selection: renderImageSelection } : null,
     },
   );
@@ -210,7 +232,6 @@ export function RenderSection({
       return tb - ta;
     });
 
-  const currentAssignment = assignments[String(beat.beat_number)] ?? null;
   const assignedRender = currentAssignment
     ? images.find((i) => isRenderAssignmentMatch(i, currentAssignment)) ?? null
     : null;
@@ -273,7 +294,7 @@ export function RenderSection({
       }
       const res = await regenerate.mutateAsync({
         beatIndices: [beat.beat_number],
-        modeKey: SINGLE_RENDER_MODE_KEY,
+        modeKey: singleRenderModeKey,
         imageGenerationSelection: renderImageSelection,
       });
       if (res.ok === false) {
@@ -1127,4 +1148,41 @@ function isRenderAssignmentMatch(img: PoolImage, assignment: string) {
       img.cell_path === assignment ||
       img.grid_path === assignment)
   );
+}
+
+function isSketchAssignmentMatch(img: PoolImage, assignment: string) {
+  return (
+    img.type === "sketch" &&
+    (img.id === assignment ||
+      img.cell_path === assignment ||
+      img.grid_path === assignment)
+  );
+}
+
+function useImageAspectRatio(url: string | null): "2:3" | "16:9" | null {
+  const [aspect, setAspect] = useState<"2:3" | "16:9" | null>(null);
+
+  useEffect(() => {
+    setAspect(null);
+    const resolvedUrl = url ? resolveMediaUrl(url) : null;
+    if (!resolvedUrl) return;
+
+    let active = true;
+    const image = new Image();
+    image.onload = () => {
+      if (!active || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+      const ratio = image.naturalWidth / image.naturalHeight;
+      setAspect(
+        Math.abs(ratio - 16 / 9) < Math.abs(ratio - 2 / 3) ? "16:9" : "2:3",
+      );
+    };
+    image.src = resolvedUrl;
+
+    return () => {
+      active = false;
+      image.onload = null;
+    };
+  }, [url]);
+
+  return aspect;
 }

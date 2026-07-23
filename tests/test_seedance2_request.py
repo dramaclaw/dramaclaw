@@ -616,6 +616,46 @@ async def test_newapi_seedance2_generator_preserves_config_resolution_and_scene_
     assert payload["seconds"] == "8"
 
 
+async def test_newapi_seedance1_generator_preserves_adaptive_ratio(tmp_path, monkeypatch):
+    from novelvideo.generators import video_generator as video_module
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    captured: dict[str, object] = {}
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="seedance-1.0-pro-fast",
+        resolution="720p",
+    )
+
+    async def fake_reserve(*_args, **_kwargs):
+        return "reservation-1"
+
+    async def fake_refund(*_args, **_kwargs):
+        return None
+
+    async def fake_post_json(_url: str, payload: dict):
+        captured["payload"] = payload
+        return {}
+
+    monkeypatch.setattr(video_module, "_reserve_video_model_call", fake_reserve)
+    monkeypatch.setattr(video_module, "_refund_video_model_call", fake_refund)
+    monkeypatch.setattr(generator, "_post_json", fake_post_json)
+
+    await generator.generate(
+        image_path="https://example.com/first.png",
+        prompt="人物缓慢抬头。",
+        output_path=str(tmp_path / "out.mp4"),
+        aspect_ratio="adaptive",
+    )
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    metadata = payload["metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["ratio"] == "adaptive"
+
+
 async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_path, monkeypatch):
     from pathlib import Path
 

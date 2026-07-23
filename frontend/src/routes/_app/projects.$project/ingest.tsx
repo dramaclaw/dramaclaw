@@ -26,6 +26,7 @@ import {
 import { useProject, useUpdateProject } from "@/lib/queries/projects";
 import {
   useChapters,
+  useKnowledgeGraph,
   useStartIngest,
   useUploadNovel,
   type FormatCheck,
@@ -33,6 +34,7 @@ import {
 } from "@/lib/queries/ingest";
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import { NovelFormatDialog } from "@/components/ingest/NovelFormatDialog";
+import { KnowledgeGraphVisualization } from "@/components/ingest/KnowledgeGraphVisualization";
 import { useStyles } from "@/lib/queries/styles";
 import { useCancelTask, useTasks } from "@/lib/queries/tasks";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
@@ -896,6 +898,7 @@ export function IngestPageContent({ project }: { project: string }) {
   );
   const chaptersData = chaptersRes?.data;
   const hasImportedContent = (chaptersData?.chapters?.length ?? 0) > 0;
+  const isUploadOnlyPreview = chaptersData?.preview_only === true;
 
   const pastedBillableChars = useMemo(
     () => countBillableNovelChars(pastedText.trim()),
@@ -942,6 +945,10 @@ export function IngestPageContent({ project }: { project: string }) {
   const [ingestStarted, setIngestStarted] = useState(false);
   const [reimporting, setReimporting] = useState(false);
   const [reuploadConfirmOpen, setReuploadConfirmOpen] = useState(false);
+  const knowledgeGraph = useKnowledgeGraph(
+    project,
+    hasImportedContent && !isUploadOnlyPreview && !ingestStarted,
+  );
   const cancelTask = useCancelTask();
   const taskStream = useTaskStream({
     taskType: "ingest_fast",
@@ -963,6 +970,9 @@ export function IngestPageContent({ project }: { project: string }) {
       await queryClient.refetchQueries({
         queryKey: queryKeys.chapters(project),
         type: "active",
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.knowledgeGraph(project),
       });
       toast.success(t("common.generate") + " ✓");
     },
@@ -1681,6 +1691,48 @@ export function IngestPageContent({ project }: { project: string }) {
               {/* Preview — populated */}
               {chaptersData && chapterCount > 0 && (
                 <div className="space-y-4">
+                  {knowledgeGraph.isLoading && (
+                    <div className="h-[520px] overflow-hidden rounded-2xl border border-violet-300/10 bg-[#05050a] p-5">
+                      <div className="flex items-center gap-3">
+                        <Skeleton className="size-9 rounded-xl" />
+                        <div className="space-y-2">
+                          <Skeleton className="h-3 w-24" />
+                          <Skeleton className="h-2.5 w-40" />
+                        </div>
+                      </div>
+                      <Skeleton className="mx-auto mt-16 size-72 rounded-full opacity-40" />
+                    </div>
+                  )}
+
+                  {knowledgeGraph.data?.data.nodes.length ? (
+                    <KnowledgeGraphVisualization graph={knowledgeGraph.data.data} />
+                  ) : null}
+
+                  {knowledgeGraph.isError && (
+                    <div className="flex min-h-28 items-center justify-between gap-4 rounded-xl border border-amber-300/15 bg-amber-500/[0.04] p-4">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-400" />
+                        <div>
+                          <p className="text-sm font-medium text-foreground">
+                            {t("ingest.knowledgeGraph.loadFailed")}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t("ingest.knowledgeGraph.loadFailedHint")}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => knowledgeGraph.refetch()}
+                      >
+                        <RefreshCw className="size-3.5" />
+                        {t("common.retry")}
+                      </Button>
+                    </div>
+                  )}
+
                   <h2 className="text-lg font-semibold text-foreground">
                     {t("ingest.previewHeading")}
                   </h2>

@@ -2141,7 +2141,7 @@ def test_custom_newapi_embedding_model_writes_mapping_and_persists_dimension(
             "newApiBaseUrl": "http://new-api:3000",
             "provider": "openai",
             "upstreamModel": "text-embedding-3-large",
-            "dimension": 3072,
+            "dimension": 1024,
             "batchSize": 36,
         },
     )
@@ -2155,7 +2155,7 @@ def test_custom_newapi_embedding_model_writes_mapping_and_persists_dimension(
         "DC-cognee-embedding": "text-embedding-3-large",
     }
     assert "dimension" not in payloads[0]["channel"]
-    assert "3072" not in payloads[0]["channel"]["model_mapping"]
+    assert "1024" not in payloads[0]["channel"]["model_mapping"]
     assert "sk-openai-upstream-secret" not in response.text
 
     config_response = client.get("/model-gateway/config")
@@ -2163,14 +2163,32 @@ def test_custom_newapi_embedding_model_writes_mapping_and_persists_dimension(
     assert embedding == {
         "provider": "openai",
         "upstreamModel": "text-embedding-3-large",
-        "dimension": 3072,
+        "dimension": 1024,
         "batchSize": 36,
+        "sendDimensions": True,
         "internalModel": "DC-cognee-embedding",
     }
 
 
+def test_custom_newapi_embedding_model_accepts_positive_project_dimension(
+):
+    body = model_gateway.SaveEmbeddingModelBody.model_validate(
+        {
+            "provider": "openai",
+            "upstreamModel": "text-embedding-3-large",
+            "dimension": 3072,
+        }
+    )
+
+    _, normalized = model_gateway._build_embedding_model_channel_spec(body)
+
+    assert normalized["dimension"] == 3072
+    assert normalized["sendDimensions"] is True
+
+
 def test_effective_cognee_embedding_prefers_saved_custom_config(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
+    set_model_gateway_mode(MODE_CUSTOM)
     monkeypatch.setenv("COGNEE_EMBEDDING_PROVIDER", "gemini")
     monkeypatch.setenv("COGNEE_EMBEDDING_MODEL", "gemini-embedding-001")
     monkeypatch.setenv("COGNEE_EMBEDDING_DIM", "768")
@@ -2193,6 +2211,7 @@ def test_effective_cognee_embedding_prefers_saved_custom_config(monkeypatch, tmp
 
 def test_effective_cognee_embedding_keeps_saved_batch_size(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
+    set_model_gateway_mode(MODE_CUSTOM)
 
     save_newapi_embedding_model_config(
         provider="ali",
@@ -2208,6 +2227,25 @@ def test_effective_cognee_embedding_keeps_saved_batch_size(monkeypatch, tmp_path
     assert effective.model == "DC-cognee-embedding"
     assert effective.dimensions == "1024"
     assert effective.batch_size == "10"
+
+
+def test_ce_official_embedding_ignores_saved_custom_model(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_embedding_model_config(
+        provider="openai",
+        upstream_model="stale-custom-model",
+        dimension=1024,
+    )
+    set_model_gateway_mode(MODE_OFFICIAL)
+    monkeypatch.setenv("COGNEE_EMBEDDING_MODEL", "DC-cognee-embedding")
+    monkeypatch.setenv("COGNEE_EMBEDDING_DIM", "1024")
+
+    effective = get_effective_cognee_embedding_config()
+
+    assert effective.source == "environment"
+    assert effective.model == "DC-cognee-embedding"
+    assert effective.dimensions == "1024"
+    assert effective.upstream_model == ""
 
 
 def test_cognee_apply_embedding_env_sets_saved_batch_size(monkeypatch, tmp_path):

@@ -12,6 +12,7 @@ from novelvideo.api.chapter_preview import (
     load_novel_text,
 )
 from novelvideo.api.deps import resolve_project_scope
+from novelvideo.api.deps import get_cognee_store
 from novelvideo.api.schemas import IngestStart
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
@@ -36,6 +37,16 @@ from novelvideo.utils.upload_safety import (
 
 logger = logging.getLogger("novelvideo.api.ingest")
 router = APIRouter()
+
+
+@router.get("/projects/{project}/ingest/graph")
+async def get_ingest_knowledge_graph(
+    project: str,
+    store=Depends(get_cognee_store),
+):
+    """Return the imported project's real Cognee graph for visualization."""
+    snapshot = await store.get_graph_snapshot()
+    return {"ok": True, "data": snapshot}
 
 
 def _unsupported_format_response(filename: str) -> dict:

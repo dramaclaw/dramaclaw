@@ -45,6 +45,7 @@ import { useTaskController } from "@/hooks/use-task-controller";
 import { TASK_TYPES } from "@/lib/task-types";
 import { queryKeys } from "@/lib/query-keys";
 import {
+  backendErrorResponseToastMessage,
   backendErrorToastMessage,
   BillingRuleNotConfiguredError,
 } from "@/lib/api-errors";
@@ -908,7 +909,7 @@ function EpisodesPage() {
     try {
       const res = await planEpisodes.mutateAsync({});
       if (res.ok === false) {
-        toast.error(backendErrorToastMessage(res.error, t));
+        toast.error(backendErrorResponseToastMessage(res, t));
         return;
       }
       planTask.start();

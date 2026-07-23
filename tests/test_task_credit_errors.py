@@ -3,6 +3,11 @@ import sys
 
 import pytest
 
+from novelvideo.novel_source import (
+    NOVEL_IMPORT_REQUIRED_CODE,
+    NOVEL_IMPORT_REQUIRED_MESSAGE,
+    NovelImportRequiredError,
+)
 from novelvideo.shared.billing_errors import (
     INSUFFICIENT_CREDITS_CODE,
     INSUFFICIENT_CREDITS_MESSAGE,
@@ -53,6 +58,18 @@ def test_celery_task_failure_maps_insufficient_credits_stop(monkeypatch) -> None
     assert metadata["error_code"] == INSUFFICIENT_CREDITS_CODE
     assert metadata["required"] == 2
     assert metadata["balance"] == 1
+
+
+def test_task_failure_maps_novel_import_prerequisite(monkeypatch) -> None:
+    celery_tasks = _import_celery_tasks(monkeypatch)
+
+    error, metadata, handled = celery_tasks._project_task_failure_for_exception(
+        NovelImportRequiredError()
+    )
+
+    assert handled is True
+    assert error == NOVEL_IMPORT_REQUIRED_MESSAGE
+    assert metadata == {"error_code": NOVEL_IMPORT_REQUIRED_CODE}
 
 
 def test_celery_task_failure_maps_output_moderation(monkeypatch) -> None:

@@ -80,7 +80,7 @@ from novelvideo.services.background_anchor_service import (
     save_uploaded_background_anchor_image,
     select_background_anchor,
 )
-from novelvideo.utils.path_resolver import compute_identity_path, compute_portrait_path
+from novelvideo.utils.path_resolver import PathResolver, compute_identity_path, compute_portrait_path
 
 router = APIRouter()
 
@@ -89,6 +89,30 @@ logger = logging.getLogger(__name__)
 AI_IDENTITY_DETECTION_TASK_TYPE = "ai_identity_detection"
 AI_IDENTITY_DETECTION_FEATURE_KEY = "mainline.ai_identity_detection"
 MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED = "feature_included"
+
+
+def _single_render_mode_from_sketch(
+    output_dir: str,
+    episode: int,
+    beat_indices: list[int],
+) -> str | None:
+    """Choose a single-render mode from the canonical upstream sketch."""
+    if len(beat_indices) != 1:
+        return None
+
+    from PIL import Image
+
+    sketch_path = PathResolver(output_dir, episode).sketch(int(beat_indices[0]))
+    try:
+        with Image.open(sketch_path) as image:
+            width, height = image.size
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+
+    ratio = width / height
+    return "1x1_16-9" if abs(ratio - 16 / 9) < abs(ratio - 2 / 3) else "1x1_2-3"
 
 
 async def _resolve_generation_project(project: str, user: dict, required_role: str = "editor"):
@@ -3073,7 +3097,12 @@ async def regenerate_beats(
         use_detected_identities=True,
     )
 
-    mode_key = body.mode_key
+    # The selected sketch is the source of truth for a single Render. The
+    # client mode remains a compatibility fallback for missing legacy assets.
+    mode_key = (
+        _single_render_mode_from_sketch(output_dir, episode_num, body.beat_indices)
+        or body.mode_key
+    )
     episode_obj = _episode_from_store_or_none(store, episode_num)
     prop_menu = await _runtime_prop_menu_with_global_props(store, episode_obj, beats)
     billing = _render_regen_billing_metadata(render_image_selection, mode_key)

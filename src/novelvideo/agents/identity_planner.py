@@ -558,13 +558,14 @@ class IdentityPlanner:
 
             # 获取与本集相关的图谱上下文（人物关系、别名、背景信息）
             try:
-                graph_results = await cognee.search(
-                    query_text=f"第{episode.number}集出场的人物角色，以及他们的别名、称谓和关系",
-                    query_type=SearchType.GRAPH_COMPLETION,
-                    datasets=[self.cognee_store.dataset_name],
-                    only_context=True,
-                    top_k=20,
-                )
+                with self.cognee_store.embedding_model_scope():
+                    graph_results = await cognee.search(
+                        query_text=f"第{episode.number}集出场的人物角色，以及他们的别名、称谓和关系",
+                        query_type=SearchType.GRAPH_COMPLETION,
+                        datasets=[self.cognee_store.dataset_name],
+                        only_context=True,
+                        top_k=20,
+                    )
                 if graph_results:
                     parts = []
                     for item in graph_results:

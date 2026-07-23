@@ -1242,6 +1242,7 @@
     "loading": "加载中...",
     "back": "返回",
     "error": "出错了",
+    "novelImportRequired": "请先导入小说",
     "insufficientCredits": "积分不足，请联系管理员充值",
     "billingRuleNotConfigured": "计费规则未配置，请联系管理员设置积分规则",
     "billingRuleNotConfiguredShort": "需配置",
@@ -1341,6 +1342,20 @@
       "failed": "导入失败"
     },
     "previewHeading": "小说结构预览",
+    "knowledgeGraph": {
+      "title": "知识图谱",
+      "stats": "{{nodes}} 个节点 · {{edges}} 条关系",
+      "connections": "{{count}} 条关联",
+      "relationships": "关联关系",
+      "interactionHint": "拖动画布 · 滚轮缩放 · 点击节点查看详情",
+      "truncated": "正在展示核心关系",
+      "zoomIn": "放大图谱",
+      "zoomOut": "缩小图谱",
+      "resetView": "重置视图",
+      "expand": "展开图谱",
+      "loadFailed": "知识图谱暂时无法显示",
+      "loadFailedHint": "图谱数据仍然保留，可以稍后重试。"
+    },
     "scriptDetails": "剧本配置",
     "previewGenerating": "正在生成结构预览...",
     "restoredFilename": "已导入小说",
@@ -3908,7 +3923,7 @@
       },
       "embeddingModel": {
         "title": "② 向量化与语义检索（Embedding）",
-        "description": "负责文本向量化和知识库语义检索。请选择渠道和上游 Embedding 模型，维度必须与实际上游输出一致。",
+        "description": "负责文本向量化和知识库语义检索。自定义模型的维度会在项目创建时绑定。",
         "colProvider": "已配置渠道",
         "colUpstreamModel": "上游模型名",
         "colDimension": "维度",
@@ -3916,7 +3931,7 @@
         "defaultProvider": "选择渠道",
         "upstreamModelPlaceholder": "填写上游 embedding 模型名，如 text-embedding-3-large",
         "batchSizePlaceholder": "默认 10",
-        "dimensionWarning": "维度必须与上游 embedding 输出一致。批量大小为空时使用 EMBEDDING_BATCH_SIZE 环境变量或官方默认 10；如果上游支持更大批量，可以按需调高。",
+        "dimensionWarning": "维度会在创建项目时与自定义Embedding模型一起绑定；之后修改这里只影响新项目。更换已有项目的模型或维度前必须清空图谱并重建。批量大小为空时使用官方默认10。",
         "saveHint": "保存后会写入 NewAPI 映射，并把维度和可选批量大小保存到 CE 本地配置。",
         "noChannelsHint": "请先在上方添加供应商渠道，再配置 embedding 模型。",
         "save": "保存 Embedding 配置",
@@ -3924,7 +3939,7 @@
         "noChannels": "请先添加供应商渠道。",
         "missingProvider": "请选择 embedding 使用的供应商渠道。",
         "missingModel": "请填写上游 embedding 模型名。",
-        "invalidDimension": "请填写有效的 embedding 维度。",
+        "invalidDimension": "Embedding 维度必须为正整数。",
         "invalidBatchSize": "请填写有效的 embedding 批量大小。"
       },
       "mediaModels": {
