@@ -77,7 +77,11 @@ from novelvideo.api.schemas import (
     ProjectionStatusRequest,
     PushRequest,
 )
-from novelvideo.config import IMAGE_GENERATION_SELECTIONS, image_generation_selection_options
+from novelvideo.config import (
+    IMAGE_GENERATION_SELECTIONS,
+    image_generation_selection_options,
+    infer_image_generation_selection,
+)
 from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
 from novelvideo.freezone import canvas_store
@@ -449,6 +453,22 @@ async def _start_or_enqueue_freezone_gen_job(
     job_id = _new_job_id()
     resolved_provider, resolved_model = _split_provider_and_model(provider, model)
     normalized_provider = _resolve_freezone_image_provider(resolved_provider)
+    image_selection = infer_image_generation_selection(
+        normalized_provider,
+        resolved_model,
+        fallback=model,
+    )
+    from novelvideo.api.routes.model_credits import (
+        freezone_image_generate_billing_params,
+    )
+
+    billing = freezone_image_generate_billing_params(
+        {
+            "image_selection": image_selection,
+            "size": image_size,
+            **({"quality": quality} if quality else {}),
+        }
+    )
     prompt_text = _merge_prompt_with_style_and_camera(prompt, style, camera)
     display_payload = {
         "task_family": "freezone_canvas",
@@ -473,6 +493,7 @@ async def _start_or_enqueue_freezone_gen_job(
                 "provider": normalized_provider,
                 "model": resolved_model,
                 "quality": quality,
+                "billing": billing,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
                 "model_id": model_id or "",

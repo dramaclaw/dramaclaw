@@ -2240,6 +2240,16 @@ async def test_freezone_gen_route_passes_output_dir_and_quality(
     assert result["data"]["task_type"] == "freezone_gen"
     assert captured["payload"]["project_dir"] == str(project_dir)
     assert captured["payload"]["quality"] == "low"
+    billing = captured["payload"]["billing"]
+    assert billing["image_selection"] == "newapi_gpt_image2"
+    assert billing["size"] == "1K"
+    assert billing["quality"] == "low"
+    assert billing["pricing_kind"] == "image"
+    assert billing["pricing_model"] == freezone_routes.IMAGE_GENERATION_SELECTIONS[
+        "newapi_gpt_image2"
+    ]["model"]
+    assert billing["pricing_params"] == {"size": "1K", "quality": "low"}
+    assert billing["pricing_quantity"] == 1
 
 
 @pytest.mark.asyncio

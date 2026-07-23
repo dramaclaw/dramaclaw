@@ -100,7 +100,10 @@ import {
 import type { DirectorStageManifest } from '@/features/viewer-kit/three-d/directorManifest';
 import { awaitTaskCompletion } from '@/api/tasks';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
-import { backendErrorToastMessage } from '@/lib/api-errors';
+import {
+  BillingRuleNotConfiguredError,
+  backendErrorToastMessage,
+} from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
@@ -198,6 +201,7 @@ const OPERATIONS_PANEL_MIN_WIDTH = 720;
 // 「放大」后的操作区尺寸：给提示词编辑区更舒适的高度与宽度。
 const OPERATIONS_PANEL_EXPANDED_HEIGHT = 560;
 const OPERATIONS_PANEL_EXPANDED_MIN_WIDTH = 960;
+const IMAGE_GENERATE_FEATURE_KEY = 'freezone.image_generate';
 
 const ASPECT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'auto', label: '自适应' },
@@ -405,16 +409,32 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const isImage2 = isImage2Model(selectedModel?.apiModel);
   const imageSelectionForCost =
     imageModelsLoading || imageModelsFallback ? null : selectedModel?.apiModel ?? null;
-  const imageCreditCost = useGenerationCreditCost('image_selection', imageSelectionForCost, {
-    surface: 'canvas',
-    params: isImage2 ? { size, quality } : { size },
-    quantity: Math.min(Math.max(effectiveCount, 1), 4),
-  });
+  const imageQuantity = Math.min(Math.max(effectiveCount, 1), 4);
+  const imageCreditCost = useGenerationCreditCost(
+    'feature',
+    imageSelectionForCost ? IMAGE_GENERATE_FEATURE_KEY : null,
+    {
+      surface: 'canvas',
+      params: {
+        image_selection: imageSelectionForCost,
+        size,
+        ...(isImage2 ? { quality } : {}),
+        pricing_quantity: imageQuantity,
+      },
+      quantity: imageQuantity,
+    },
+  );
+  const imageBillingRuleMissing =
+    imageCreditCost.error instanceof BillingRuleNotConfiguredError;
   const totalCreditCostDisplay = useMemo(() => {
     const total = imageCreditCost.data?.data.cost;
-    if (typeof total !== 'number') return null;
+    if (typeof total !== 'number') {
+      return imageBillingRuleMissing
+        ? t('common.billingRuleNotConfiguredShort')
+        : null;
+    }
     return formatCreditCost(total);
-  }, [imageCreditCost.data?.data.cost]);
+  }, [imageBillingRuleMissing, imageCreditCost.data?.data.cost, t]);
   const { options: cameraOptions } = useFreezoneCameraOptions();
   const cameraSummary = describeCameraSelection(cameraSelection, cameraOptions);
   const { templates: styleTemplates } = useFreezoneStyleTemplates();
@@ -842,7 +862,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       (!shouldInlineUpstreamTextAsPrompt || !hasUserEditedPromptRef.current)
     );
   const submitDisabled =
-    isGenerating || !hasEffectivePrompt;
+    isGenerating || !hasEffectivePrompt || imageBillingRuleMissing;
 
   const handleSubmit = useCallback(async () => {
     if (submitDisabled || submittingRef.current) return;

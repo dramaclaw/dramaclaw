@@ -317,6 +317,51 @@ async def test_generation_credit_cost_route_resolves_style_analyzer(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_freezone_image_generate_by_model(
+    monkeypatch,
+):
+    from novelvideo import config
+    from novelvideo.api.routes import model_credits
+
+    pricing_model = config.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"]
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="freezone.image_generate",
+        expected_params={
+            "image_selection": "newapi_gpt_image2",
+            "size": "2K",
+            "quality": "low",
+            "pricing_quantity": 3,
+            "pricing_kind": "image",
+            "pricing_model": pricing_model,
+            "pricing_params": {"size": "2K", "quality": "low"},
+            "pricing_model_selection": "newapi_gpt_image2",
+            "pricing_model_label": config.IMAGE_GENERATION_SELECTIONS[
+                "newapi_gpt_image2"
+            ]["label"],
+        },
+        expected_quantity=3,
+        cost=21,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="freezone.image_generate",
+        params=(
+            '{"image_selection":"newapi_gpt_image2","size":"2K",'
+            '"quality":"low","pricing_quantity":3}'
+        ),
+        quantity=3,
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 21, "display": "21"}}
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_resolves_image_selection(monkeypatch):
     from novelvideo.api.routes import model_credits
     from novelvideo import config
