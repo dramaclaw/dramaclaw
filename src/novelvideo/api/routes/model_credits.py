@@ -19,7 +19,6 @@ GenerationCreditCostKind = Literal[
     "beat_tts",
     "freezone_audio_music",
     "freezone_image_reverse_prompt",
-    "freezone_story_script",
     "style_analyzer",
     "feature",
 ]
@@ -258,10 +257,6 @@ def _generation_credit_cost_model(kind: str, value: str) -> str:
         from novelvideo.freezone.vision_gateway import resolve_freezone_vision_model
 
         return resolve_freezone_vision_model()
-    if kind == "freezone_story_script":
-        from novelvideo.freezone.text_node import resolve_freezone_story_script_model
-
-        return resolve_freezone_story_script_model(clean_value or None)["model"]
     if kind == "style_analyzer":
         from novelvideo.config import get_newapi_text_model_name
 
@@ -282,7 +277,6 @@ def _generation_billing_kind(kind: str) -> str:
         return "audio"
     if kind in {
         "freezone_image_reverse_prompt",
-        "freezone_story_script",
         "style_analyzer",
     }:
         return "text"

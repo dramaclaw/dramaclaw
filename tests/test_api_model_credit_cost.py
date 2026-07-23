@@ -246,20 +246,24 @@ async def test_generation_credit_cost_route_resolves_freezone_audio_music(monkey
 async def test_generation_credit_cost_route_resolves_freezone_story_script(monkeypatch):
     from novelvideo.api.routes import model_credits
 
-    patch_quote(
+    patch_quote_expect(
         monkeypatch,
         model_credits,
-        expected_model="DC-freezone-story-script-writer-LLM",
-        cost=4,
+        expected_kind="feature",
+        expected_model="freezone.story_script",
+        expected_params={},
+        expected_quantity=2501,
+        cost=12,
     )
 
     result = await model_credits.get_generation_credit_cost(
-        kind="freezone_story_script",
-        value="",
+        kind="feature",
+        value="freezone.story_script",
+        quantity=2501,
         user={"user_id": "usr_1"},
     )
 
-    assert result == {"ok": True, "data": {"cost": 4, "display": "4"}}
+    assert result == {"ok": True, "data": {"cost": 12, "display": "12"}}
 
 
 @pytest.mark.asyncio

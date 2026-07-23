@@ -258,6 +258,7 @@ from novelvideo.task_identity import (
 )
 from novelvideo.task_state import get_task_manager
 from novelvideo.utils.background_anchor import copy_to_beat_selected_background
+from novelvideo.utils.document_parsers import count_billable_text_chars
 from novelvideo.utils.path_resolver import (
     PathResolver,
     canonical_beat_director_env_only_path,
@@ -5392,6 +5393,9 @@ async def freezone_text_translate(
                     "node_type": body.node_type,
                     "canvas_id": body.canvas_id or "",
                     "node_id": body.node_id or "",
+                    "billing": {
+                        "billable_chars": count_billable_text_chars(body.text),
+                    },
                 },
             )
         _start_freezone_text_translate_task(
@@ -6384,6 +6388,11 @@ async def freezone_story_script_generate(
                     "model": body.model,
                     "canvas_id": body.canvas_id or "",
                     "node_id": body.node_id or "",
+                    "billing": {
+                        "billable_chars": count_billable_text_chars(
+                            f"{source_text}\n{body.prompt}"
+                        ),
+                    },
                 },
             )
         _start_freezone_story_script_task(
