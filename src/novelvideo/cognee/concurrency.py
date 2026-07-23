@@ -134,6 +134,12 @@ class _LimitedVectorEngine:
     def __init__(self, engine: Any):
         self._engine = engine
 
+    @property
+    def __class__(self) -> type:
+        # Preserve the wrapped engine's identity for isinstance() checks that
+        # Cognee may add around the vector engine in future versions.
+        return type(self._engine)
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._engine, name)
 

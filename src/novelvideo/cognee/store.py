@@ -32,6 +32,14 @@ from novelvideo.novel_source import require_imported_novel
 from novelvideo.sqlite_store import SQLiteStore
 from novelvideo.utils.document_parsers import load_novel_text
 
+# 路径计算工具函数 — canonical implementation lives in utils.path_resolver.
+from novelvideo.utils.path_resolver import (  # noqa: F401
+    compute_portrait_path,
+    compute_identity_path,
+    compute_scene_reference_path,
+    compute_prop_reference_path,
+)
+
 from novelvideo.models import (
     CharacterIdentity,
     NovelCharacter,
@@ -49,24 +57,12 @@ from novelvideo.models import (
     normalize_detected_props,
     sync_beat_asset_refs,
 )
-from .config import init_cognee
 
 console = Console()
 
 
 def _json_list_payload(values: list[str]) -> str:
     return json.dumps(list(values or []), ensure_ascii=False)
-
-
-# ============================================================
-# 路径计算工具函数 — canonical implementation lives in utils.path_resolver.
-# ============================================================
-from novelvideo.utils.path_resolver import (  # noqa: F401
-    compute_portrait_path,
-    compute_identity_path,
-    compute_scene_reference_path,
-    compute_prop_reference_path,
-)
 
 
 class CogneeStore:
@@ -1463,7 +1459,7 @@ class CogneeStore:
 
     async def load_graph_state(self) -> None:
         """从 SQLite 加载角色和剧集到内存缓存。"""
-        print(f"[load_graph_state] 从 SQLite 加载...")
+        print("[load_graph_state] 从 SQLite 加载...")
         try:
             await self.sqlite_store.load_graph_state()
             self._sync_sqlite_caches()
@@ -2344,9 +2340,9 @@ class CogneeStore:
         if character.face_prompt:
             lines.append(f"- 面部 Prompt: {character.face_prompt}")
         if character.identities:
-            lines.append(f"- 可用身份:")
+            lines.append("- 可用身份:")
             lines.append(f"  - character_name 填: {character.name}")
-            lines.append(f"  - 可选 identity_id:")
+            lines.append("  - 可选 identity_id:")
             for identity in character.identities:
                 desc = ""
                 if identity.appearance_details:
