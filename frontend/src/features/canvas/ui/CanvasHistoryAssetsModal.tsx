@@ -22,6 +22,7 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { downloadUrlAsFile } from '@/lib/browserDownload';
 import {
   extractCanvasAssets,
+  filterAssetBuckets,
   groupAssetsByDate,
   type CanvasAsset,
   type CanvasAssetBuckets,
@@ -155,40 +156,6 @@ export function recordsToAssetBuckets(
   return buckets;
 }
 
-/**
- * 关键词搜索命中判定(issue #175):匹配资产的提示词(prompt)与展示名(label —— 世界记录
- * 的 label 会回退成上游节点名,live-canvas 取图时则是文件名)。二者都为空的资产(音频、
- * 没存提示词的旧记录)在有查询词时自然落选。
- *
- * query 两端会被 trim、大小写不敏感。这里对查询词也做一次 normalize(而不是只信调用方
- * 传进来已经是小写):它是导出函数,把「必须预先小写」当隐式前置条件,一旦有调用方直接
- * 传用户原文,大写输入会静默零命中。needle 很短,重复 normalize 的代价可以忽略。
- */
-export function assetMatchesQuery(asset: CanvasAsset, query: string): boolean {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return true;
-  return `${asset.prompt ?? ''}\n${asset.label ?? ''}`.toLowerCase().includes(needle);
-}
-
-/**
- * 按关键词过滤四个资产桶。空查询原样返回同一个对象(不复制),让上游 memo 保持引用稳定。
- * 四个桶都过滤(而非只过滤当前 tab),这样各 tab 的计数直接反映命中数,用户能看出该去哪个
- * tab 找。
- */
-export function filterAssetBuckets(
-  buckets: CanvasAssetBuckets,
-  query: string,
-): CanvasAssetBuckets {
-  if (!query.trim()) return buckets;
-  const match = (asset: CanvasAsset) => assetMatchesQuery(asset, query);
-  return {
-    image: buckets.image.filter(match),
-    video: buckets.video.filter(match),
-    audio: buckets.audio.filter(match),
-    model: buckets.model.filter(match),
-  };
-}
-
 const TAB_ORDER: CanvasAssetKind[] = ['image', 'video', 'audio', 'model'];
 const TAB_LABEL_KEY: Record<CanvasAssetKind, string> = {
   image: 'canvas.history.tabs.image',
@@ -251,8 +218,13 @@ export function CanvasHistoryAssetsModal({
   const [activeTab, setActiveTab] = useState<CanvasAssetKind>('image');
   const tabOrder = imageOnly ? (['image'] as CanvasAssetKind[]) : TAB_ORDER;
   const [direction, setDirection] = useState<'desc' | 'asc'>('desc');
-  // 关键词搜索:按资产的提示词/名字过滤历史(issue #175)。空格裁剪后小写比较。
+  // 关键词搜索(issue #175)。分两个 state:`query` 是输入框显示值(含 IME 组字中还没上屏
+  // 的拼音),`searchTerm` 才参与过滤 —— 组字期间不更新,否则中文用户敲「小猫」的途中,
+  // x/xi/xia/xiao 每一步都是一次真实过滤,网格反复清空、计数掉到 (0)。与
+  // AudioOperationsPanel 的输入框同一套路:草稿照常更新保证输入框跟手,只把下游提交挡住。
   const [query, setQuery] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const isComposingRef = useRef(false);
   const [zoom, setZoom] = useState(100);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -295,12 +267,17 @@ export function CanvasHistoryAssetsModal({
         : extractCanvasAssets(nodes),
     [useHistory, records, nodes, resolveNodeMeta],
   );
-  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedQuery = searchTerm.trim().toLowerCase();
   const filteredBuckets = useMemo(
     () => filterAssetBuckets(buckets, normalizedQuery),
     [buckets, normalizedQuery],
   );
   const activeAssets = filteredBuckets[activeTab];
+  // 当前 tab 没命中、但别的 tab 有时,空态要指路 —— 否则「没有匹配的历史资产」会和头上
+  // 明明写着「视频历史(1)」的计数自相矛盾。
+  const otherTabsWithMatches = tabOrder.filter(
+    (tab) => tab !== activeTab && filteredBuckets[tab].length > 0,
+  );
   const groups = useMemo(
     () => groupAssetsByDate(activeAssets, direction),
     [activeAssets, direction],
@@ -327,11 +304,13 @@ export function CanvasHistoryAssetsModal({
   }, [onClose, imageViewerIndex, videoViewerUrl, worldManifest, promptDialogText]);
 
   useEffect(() => {
-    // Reset selection when switching tab (so counts can't leak across kinds) or
-    // when the search query changes (so a hidden-but-selected card can't linger
-    // in a batch action, then reappear when the filter clears).
+    // Reset selection when switching tab so counts can't leak across kinds.
+    // 刻意不在搜索词变化时清空:`selectedAssets` 本来就是从过滤后的 activeAssets 里取的,
+    // 被筛掉的卡片进不了任何批量操作,清空并不能多防住什么;反倒会让用户手挑了几十张后
+    // 多敲一个字就全没了(批量下载途中还会把进度条连同 spinner 一起卸载)。选中项在筛选
+    // 期间保留、清空搜索后回来,是可预期的。
     setSelectedIds(new Set());
-  }, [activeTab, normalizedQuery]);
+  }, [activeTab]);
 
   const toggleSelect = (asset: CanvasAsset) => {
     setSelectedIds((current) => {
@@ -381,12 +360,18 @@ export function CanvasHistoryAssetsModal({
     activeAssets.length > 0 && selectedAssets.length === activeAssets.length;
   const [isDownloading, setIsDownloading] = useState(false);
 
+  // 全选 / 取消全选只作用于「当前可见(已过滤)的」资产,与 allSelected 用同一个判据
+  // (selectedAssets),否则搜索把已选项筛掉后,按钮会显示「全选」却执行清空。筛选期间被
+  // 隐藏的选中项保持不动。
   const handleToggleSelectAll = () => {
-    setSelectedIds((current) =>
-      current.size === activeAssets.length
-        ? new Set()
-        : new Set(activeAssets.map((asset) => asset.id)),
-    );
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const asset of activeAssets) {
+        if (allSelected) next.delete(asset.id);
+        else next.add(asset.id);
+      }
+      return next;
+    });
   };
 
   // 批量下载：逐个触发浏览器下载，之间留一点间隔，避免浏览器把并发下载判为弹窗滥用而拦截。
@@ -482,30 +467,60 @@ export function CanvasHistoryAssetsModal({
           })}
         </div>
         <div className="flex items-center gap-4">
-          {/* 关键词搜索:输入提示词过滤当前所有 tab 的历史资产(命中数反映在各 tab 计数)。
-              Escape 先清空搜索框再让弹窗接管(见输入框 onKeyDown)。 */}
-          <div className="relative">
+          {/* 关键词搜索:过滤当前所有 tab 的历史资产(命中数反映在各 tab 计数)。
+              placeholder 分两套 —— live-canvas 取图那条路径上资产没有 prompt(见
+              CanvasAsset.prompt 注释),只有节点名/文件名可搜,不能承诺「搜提示词」。
+              框里有内容时 Escape 先清空输入,否则才让弹窗接管关闭。 */}
+          <div className="relative shrink-0">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/35"
               aria-hidden
             />
             <input
-              type="text"
+              type="search"
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              aria-label={t(
+                useHistory
+                  ? 'canvas.history.searchPlaceholder'
+                  : 'canvas.history.searchPlaceholderName',
+              )}
+              onChange={(event) => {
+                const next = event.target.value;
+                setQuery(next);
+                if (!isComposingRef.current) setSearchTerm(next);
+              }}
+              onCompositionStart={() => {
+                isComposingRef.current = true;
+              }}
+              onCompositionEnd={(event) => {
+                isComposingRef.current = false;
+                const next = event.currentTarget.value;
+                setQuery(next);
+                setSearchTerm(next);
+              }}
               onKeyDown={(event) => {
-                if (event.key === 'Escape' && query) {
+                // 组字中的 Escape 是「取消候选词」,不是「清空搜索框」—— 不加这个判断,
+                // 用中文输入法按 Esc 关候选窗会把已经敲好的整个查询词抹掉。
+                if (event.key === 'Escape' && query && !event.nativeEvent.isComposing) {
                   event.stopPropagation();
                   setQuery('');
+                  setSearchTerm('');
                 }
               }}
-              placeholder={t('canvas.history.searchPlaceholder')}
-              className="h-8 w-44 rounded-lg border border-white/[0.12] bg-white/[0.04] pl-8 pr-7 text-[13px] text-white/85 outline-none transition-colors placeholder:text-white/35 focus:border-white/30 focus:bg-white/[0.07]"
+              placeholder={t(
+                useHistory
+                  ? 'canvas.history.searchPlaceholder'
+                  : 'canvas.history.searchPlaceholderName',
+              )}
+              className="h-8 w-44 rounded-lg border border-white/[0.12] bg-white/[0.04] pl-8 pr-7 text-[13px] text-white/85 outline-none transition-colors placeholder:text-white/35 focus:border-white/30 focus:bg-white/[0.07] [&::-webkit-search-cancel-button]:appearance-none"
             />
             {query && (
               <button
                 type="button"
-                onClick={() => setQuery('')}
+                onClick={() => {
+                  setQuery('');
+                  setSearchTerm('');
+                }}
                 aria-label={t('canvas.history.clearSearch')}
                 className="absolute right-2 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-white/40 transition-colors hover:bg-white/10 hover:text-white"
               >
@@ -542,7 +557,7 @@ export function CanvasHistoryAssetsModal({
           >
             <Check className="h-3.5 w-3.5" />
             {selectionMode
-              ? t('canvas.history.selectedCount', { n: selectedIds.size })
+              ? t('canvas.history.selectedCount', { n: selectedAssets.length })
               : t('canvas.history.batch')}
           </button>
         </div>
@@ -550,13 +565,27 @@ export function CanvasHistoryAssetsModal({
 
       {/* Body */}
       <div className="ui-scrollbar min-h-0 flex-1 overflow-y-auto px-6 pb-8">
-        {useHistory && isLoading && activeAssets.length === 0 ? (
+        {/* 加载态判据用**未过滤**的桶:搜索无命中时后台若刚好在 refetch(如删掉某个节点触发
+            重新拉取),用 activeAssets 会把已经确定的「没有匹配」换成「加载中」,暗示结果
+            还可能出现。 */}
+        {useHistory && isLoading && buckets[activeTab].length === 0 ? (
           <div className="flex h-full items-center justify-center text-[14px] text-white/40">
             {t('common.loading')}
           </div>
         ) : activeAssets.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-[14px] text-white/40">
-            {t(normalizedQuery ? 'canvas.history.noMatch' : 'canvas.history.empty')}
+          <div
+            aria-live="polite"
+            className="flex h-full items-center justify-center px-6 text-center text-[14px] text-white/40"
+          >
+            {!normalizedQuery
+              ? t('canvas.history.empty')
+              : otherTabsWithMatches.length > 0
+                ? t('canvas.history.noMatchOtherTabs', {
+                    tabs: otherTabsWithMatches
+                      .map((tab) => t(TAB_LABEL_KEY[tab]))
+                      .join('、'),
+                  })
+                : t('canvas.history.noMatch')}
           </div>
         ) : (
           groups.map((group) => (

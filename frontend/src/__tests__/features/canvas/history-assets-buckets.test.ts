@@ -2,12 +2,12 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from "vitest";
 
+import { recordsToAssetBuckets } from "@/features/canvas/ui/CanvasHistoryAssetsModal";
 import {
   assetMatchesQuery,
   filterAssetBuckets,
-  recordsToAssetBuckets,
-} from "@/features/canvas/ui/CanvasHistoryAssetsModal";
-import type { CanvasAsset } from "@/features/canvas/domain/canvasAssets";
+  type CanvasAsset,
+} from "@/features/canvas/domain/canvasAssets";
 import {
   historyRecordInputImageUrl,
   historyRecordPreviewImageUrl,
@@ -224,10 +224,25 @@ describe("assetMatchesQuery", () => {
   });
 
   it("不会跨 prompt/label 边界拼出假命中", () => {
-    // prompt 以「猫」结尾、label 以「鱼」开头，中间是换行分隔符，不该被「猫鱼」命中。
+    // 逐字段匹配：prompt 结尾 +『label 开头』不该被拼成一个命中。
     expect(assetMatchesQuery(asset({ prompt: "小猫", label: "鱼缸" }), "猫鱼")).toBe(
       false,
     );
+  });
+
+  it("live-canvas 资产（prompt 恒为 undefined）仍可按 label 搜到", () => {
+    // extractCanvasAssets 从不写 prompt，只有 label（节点名/文件名）。
+    const live = asset({ prompt: undefined, label: "分镜01.png" });
+    expect(assetMatchesQuery(live, "分镜")).toBe(true);
+    expect(assetMatchesQuery(live, "png")).toBe(true);
+  });
+
+  it("首尾空格不影响命中", () => {
+    expect(assetMatchesQuery(asset({ prompt: "一只小猫" }), "  小猫  ")).toBe(true);
+  });
+
+  it("纯空白查询视同空查询，命中一切", () => {
+    expect(assetMatchesQuery(asset({ prompt: null, label: null }), "   ")).toBe(true);
   });
 });
 
