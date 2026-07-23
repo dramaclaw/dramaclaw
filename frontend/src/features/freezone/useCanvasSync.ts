@@ -808,13 +808,21 @@ export function useCanvasSync(
   ): SaveArgs => {
     const canvasState = useCanvasStore.getState();
     const shot = useShotMetadataStore.getState().shot;
+    const metadata = buildPersistMetadata(shot);
+    // What this request actually carries. Compared against the live store when
+    // the response comes back, to decide whether the draft is now redundant.
+    const sentSignature = canvasDraftSignature(
+      canvasState.nodes,
+      canvasState.edges,
+      metadata,
+    );
     return {
       project,
       canvasId,
       nodes: canvasState.nodes,
       edges: canvasState.edges,
       viewport: canvasState.currentViewport,
-      metadata: buildPersistMetadata(shot),
+      metadata,
       revisionRef,
       statusRef,
       canvasGenerationRef,
@@ -834,6 +842,12 @@ export function useCanvasSync(
         // have kept editing while it was on the wire, and that newer content
         // exists nowhere but localStorage until the queued save lands too.
         if (session.hasUnsavedContentBeyond(version)) return;
+        // The autosave debounce is a second blind spot the session can't see:
+        // an edit made in the last DEBOUNCE_MS has already been written to the
+        // draft, but has not called `requestSave` yet, so no version exists for
+        // it. Compare what we sent against what the store holds now — if they
+        // differ, the draft is still the only copy of the difference.
+        if (sentSignature !== currentDraftSignature()) return;
         clearDraftTimerAndDraft();
       },
       markDraftPersisted: (signature) => {
@@ -859,6 +873,25 @@ export function useCanvasSync(
 
   const requestSave = (): Promise<boolean> =>
     sessionRef.current?.requestSave() ?? Promise.resolve(false);
+
+  // ---- 0a. Retire the last session on unmount ---- //
+  // `startSaveSession` only ever disposes its *predecessor*, so without this the
+  // final session outlives the hook: its queued follow-up would still fire, and
+  // (because it reads the live stores at send time) would PUT the *next*
+  // canvas's nodes to the unmounted canvas's id. Bumping the generation matters
+  // just as much as disposing — a request already on the wire must also be
+  // barred from writing back into revision/status/draft state that now belongs
+  // to whoever mounted next.
+  useEffect(() => {
+    return () => {
+      canvasGenerationRef.current += 1;
+      const session = sessionRef.current;
+      sessionRef.current = null;
+      session?.dispose();
+    };
+    // Mount-scoped on purpose: canvas switches are handled by startSaveSession.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- 0. External-trigger remote canvas refresh ---- //
   // canvasSyncRuntime lets other features (beat-context preset refresh,

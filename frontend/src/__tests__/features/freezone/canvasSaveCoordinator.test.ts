@@ -213,6 +213,34 @@ describe("createCanvasSaveSession", () => {
     expect(sessionB.savedVersion()).toBe(1);
   });
 
+  it("restarts the pump when a waiter schedules another save as it resolves", async () => {
+    const gate = controllable();
+    const s = session(gate.runSave);
+
+    // The hook does exactly this shape: code resumes from `await requestSave()`
+    // and immediately saves again. That resumption happens in a microtask *after*
+    // the pump has seen an empty queue but *before* it has cleared its running
+    // flag, so the new request lands in the blind spot between the two.
+    const followUps: Array<Promise<boolean>> = [];
+    void s.requestSave().then(() => {
+      followUps.push(s.requestSave());
+    });
+    await tick();
+    expect(gate.calls).toEqual([1]);
+
+    gate.releases[0](true);
+    await tick();
+
+    // Without a re-check on the way out, version 2 would sit in the queue
+    // forever and its promise would never settle.
+    expect(gate.calls).toEqual([1, 2]);
+
+    gate.releases[1](true);
+    await tick();
+    expect(await followUps[0]).toBe(true);
+    expect(s.savedVersion()).toBe(2);
+  });
+
   it("does not let a rejected runSave escape as an unhandled rejection", async () => {
     const s = createCanvasSaveSession({
       canvasKey: "project-a:canvas-a",

@@ -182,6 +182,16 @@ export function createCanvasSaveSession(
         await pump();
       } finally {
         pumping = false;
+        // Re-check before parking. `settle()` only *resolves* the waiters — their
+        // `.then` callbacks run in a later microtask, after the loop has already
+        // seen an empty queue and returned. So a caller that saves again the
+        // moment its save lands (`await requestSave(); …; requestSave()`) enqueues
+        // while `pumping` is still true, and its `startPump()` bails out. Without
+        // this re-check that work would sit in `pendingVersion` forever and its
+        // promise would never settle.
+        if (!disposed && pendingVersion !== null) {
+          startPump();
+        }
       }
     })();
   }

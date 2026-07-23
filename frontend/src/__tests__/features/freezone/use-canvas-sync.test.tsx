@@ -859,6 +859,85 @@ describe("useCanvasSync hydrate lifecycle", () => {
     hook.unmount();
   });
 
+  // Unmount is the third way a session can be orphaned (after a canvas switch
+  // and a remote refresh). The store is global, so whatever mounts next owns it;
+  // a queued save from the unmounted hook would read *that* content and PUT it
+  // to the canvas it left.
+  it("drops a queued save when the hook unmounts", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockImplementation(
+      async (_project: string, canvasId: string) => ({
+        nodes:
+          canvasId === "unmount_target_user_eric"
+            ? [
+                {
+                  id: "b-node",
+                  type: CANVAS_NODE_TYPES.upload,
+                  position: { x: 0, y: 0 },
+                  data: { imageUrl: "/static/b.png" },
+                },
+              ]
+            : [],
+        edges: [],
+        revision: canvasId === "unmount_target_user_eric" ? 3 : 7,
+      }),
+    );
+
+    const putCanvasIds: string[] = [];
+    const releases: Array<() => void> = [];
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      (_project: string, canvasId: string) => {
+        putCanvasIds.push(canvasId);
+        return new Promise((resolve) => {
+          releases.push(() => resolve({ saved: true, revision: 42 }));
+        });
+      },
+    );
+
+    const hookA = renderHook(() =>
+      useCanvasSync("project-a", "unmount_source_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Canvas A: one PUT on the wire, one save queued behind it.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 20, y: 20 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putCanvasIds).toEqual(["unmount_source_user_eric"]);
+
+    // Canvas A goes away and canvas B takes over the global store.
+    hookA.unmount();
+    const hookB = renderHook(() =>
+      useCanvasSync("project-a", "unmount_target_user_eric"),
+    );
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    // Canvas A's PUT finally answers. Draining its queue now would send canvas
+    // B's nodes to canvas A's id.
+    await act(async () => {
+      releases[0]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(putCanvasIds).toEqual(["unmount_source_user_eric"]);
+
+    hookB.unmount();
+  });
+
   // A remote refresh rewrites revisionRef from the server. A PUT dispatched
   // before that refresh comes back carrying an *older* revision; letting it
   // land would roll the ref backwards and 409 the very next save.
@@ -1001,6 +1080,83 @@ describe("useCanvasSync hydrate lifecycle", () => {
       for (let i = 0; i < 12; i += 1) await Promise.resolve();
     });
     expect(readCanvasDraft("project-a", "draft_race_user_eric")).toBeNull();
+
+    hook.unmount();
+  });
+
+  // The session only learns about content that has reached `requestSave`. An
+  // edit still inside the autosave debounce has already been written to the
+  // draft but has no version yet, so "nothing newer is queued" is not enough to
+  // conclude the draft is redundant.
+  it("keeps the draft for an edit still inside the autosave debounce window", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 7,
+    });
+
+    const releases: Array<() => void> = [];
+    let revision = 7;
+    vi.mocked(putFreezoneCanvas).mockImplementation(() => {
+      return new Promise((resolve) => {
+        releases.push(() => {
+          revision += 1;
+          resolve({ saved: true, revision });
+        });
+      });
+    });
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "draft_debounce_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // First edit: draft written, PUT on the wire.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(releases).toHaveLength(1);
+
+    // Second edit: past the 300ms draft debounce, still short of the 800ms
+    // autosave debounce. The session has never heard of this content.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 20, y: 20 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+      await Promise.resolve();
+    });
+    expect(
+      readCanvasDraft("project-a", "draft_debounce_user_eric")?.nodes,
+    ).toHaveLength(2);
+
+    // The first save lands. It only ever carried one node, so the draft is
+    // still the sole copy of the second one.
+    await act(async () => {
+      releases[0]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(
+      readCanvasDraft("project-a", "draft_debounce_user_eric")?.nodes,
+    ).toHaveLength(2);
+
+    // Once the debounce elapses and that save lands too, the draft is redundant.
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    await act(async () => {
+      releases[1]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(readCanvasDraft("project-a", "draft_debounce_user_eric")).toBeNull();
 
     hook.unmount();
   });
