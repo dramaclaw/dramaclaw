@@ -189,6 +189,37 @@ async def test_embedding_scheduler_enters_vector_engine_after_admission():
 
 
 @pytest.mark.asyncio
+async def test_embedding_scheduler_preserves_vector_engine_type_identity():
+    from novelvideo.cognee.concurrency import (
+        CogneeConcurrencyConfig,
+        build_limited_index_data_points,
+        cognee_pipeline_concurrency,
+    )
+
+    class CustomEmbeddingEngine:
+        provider = "custom"
+
+    class VectorEngine:
+        embedding_engine = CustomEmbeddingEngine()
+
+    original_engine = VectorEngine()
+
+    async def scheduler(_points, vector_engine=None):
+        assert isinstance(vector_engine, VectorEngine)
+        assert vector_engine.embedding_engine is original_engine.embedding_engine
+
+    limited_scheduler = build_limited_index_data_points(
+        scheduler,
+        CustomEmbeddingEngine,
+    )
+
+    async with cognee_pipeline_concurrency(
+        CogneeConcurrencyConfig(llm=1, embedding_batch=1)
+    ):
+        await limited_scheduler([], vector_engine=original_engine)
+
+
+@pytest.mark.asyncio
 async def test_embedding_queue_wait_does_not_consume_retry_budget():
     from novelvideo.cognee.concurrency import (
         CogneeConcurrencyConfig,
