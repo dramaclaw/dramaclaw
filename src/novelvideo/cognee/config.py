@@ -263,6 +263,7 @@ def _apply_cognee_runtime_defaults() -> None:
 
 
 def _install_cognee_pipeline_concurrency() -> None:
+    # Validate environment values during initialization, before the first import.
     get_cognee_concurrency_config()
     install_cognee_pipeline_concurrency()
 
