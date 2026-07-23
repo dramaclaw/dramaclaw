@@ -335,6 +335,19 @@ async def _start_or_enqueue_freezone_video_gen(
     model_id: str | None = None,
     gen_mode: str | None = None,
 ) -> dict:
+    from novelvideo.api.routes.model_credits import (
+        freezone_video_generate_task_billing,
+    )
+
+    billing = freezone_video_generate_task_billing(
+        {
+            "video_backend": backend,
+            "resolution": resolution,
+            "pricing_quantity": duration_seconds,
+            "operation": gen_mode or "textToVideo",
+            "generate_audio": generate_audio,
+        }
+    )
     payload = {
         "job_id": job_id,
         "canvas_id": canvas_id or "",
@@ -353,6 +366,7 @@ async def _start_or_enqueue_freezone_video_gen(
         "last_frame_path": last_frame_path,
         "audio_setting": audio_setting or "",
         "project_dir": str(project_dir),
+        "billing": billing,
     }
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(

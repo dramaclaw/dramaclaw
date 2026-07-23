@@ -329,6 +329,64 @@ async def test_freezone_video_start_runtime_error_is_logged(
     assert "broker unavailable" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_freezone_video_generation_enqueues_feature_billing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        captured["payload"] = kwargs.get("payload") or {}
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_video"),
+            backend="celery",
+            queue="node.node_a.video",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    result = await freezone_routes._start_or_enqueue_freezone_video_gen(
+        ctx=_project_ctx(tmp_path),
+        username="admin",
+        project="demo",
+        project_dir=tmp_path / "project",
+        output_dir=str(tmp_path / "output"),
+        job_id="job_video",
+        prompt="雨夜街头",
+        reference_items=[],
+        aspect_ratio="16:9",
+        resolution="1080p",
+        duration_seconds=8,
+        generate_audio=True,
+        human_review=False,
+        scene_optimize=None,
+        backend="newapi_seedance-1.0-pro-fast",
+        gen_mode="imageToVideo",
+    )
+
+    assert result["data"]["task_type"] == "freezone_video_gen"
+    assert captured["task_type"] == "freezone_video_gen"
+    assert captured["queue_kind"] == "video"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "freezone.video_generate",
+        "video_backend": "newapi_seedance-1.0-pro-fast",
+        "resolution": "1080p",
+        "pricing_quantity": 8,
+        "operation": "imageToVideo",
+        "generate_audio": True,
+        "pricing_kind": "video",
+        "pricing_model": "seedance-1.0-pro-fast",
+        "pricing_params": {"resolution": "1080p"},
+        "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
+    }
+
+
 def test_infer_scene_id_from_master_path_uses_scene_folder(tmp_path: Path) -> None:
     project_dir = tmp_path / "project"
     source = project_dir / "assets" / "scenes" / "小区" / "master.png"

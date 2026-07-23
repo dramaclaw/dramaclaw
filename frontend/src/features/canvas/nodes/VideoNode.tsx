@@ -93,7 +93,10 @@ import {
   resolveErrorContent,
   showErrorDialog,
 } from "@/features/canvas/application/errorDialog";
-import { backendErrorToastMessage } from "@/lib/api-errors";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { resolveGenerationErrorDiagnostics } from "@/features/canvas/application/generationErrorReport";
 import {
   PromptMentionEditor,
@@ -199,10 +202,7 @@ import {
   ProviderModelPicker,
 } from "@/features/canvas/ui/ProviderModelPicker";
 import { writeLastVideoModel } from "@/features/canvas/domain/lastVideoModel";
-import {
-  CreditCostPill,
-  formatCreditCost,
-} from "@/components/credits/credit-visual";
+import { CreditCostPill } from "@/components/credits/credit-visual";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
@@ -305,6 +305,7 @@ const VIDEO_MODE_TOOLTIP_CLASS =
   "text-white/90 shadow-lg ring-1 ring-white/10";
 const DEFAULT_DURATION_MIN = 5;
 const DEFAULT_DURATION_MAX = 15;
+const VIDEO_GENERATE_FEATURE_KEY = "freezone.video_generate";
 
 function qualityToResolution(q: VideoGenQuality): FreezoneVideoResolution {
   return q.toLowerCase() as FreezoneVideoResolution;
@@ -873,20 +874,31 @@ export const VideoNode = memo(
     const debouncedQuality = useDebouncedValue(quality, 350);
     const debouncedCount = useDebouncedValue(count, 350);
     const debouncedDurationSec = useDebouncedValue(durationSec, 350);
+    const videoCount = Math.min(Math.max(debouncedCount, 1), 4);
+    const videoPricingQuantity =
+      videoCount * debouncedDurationSec;
     const videoCreditCost = useGenerationCreditCost(
-      "video_backend",
-      debouncedBackend,
+      "feature",
+      debouncedBackend ? VIDEO_GENERATE_FEATURE_KEY : null,
       {
         surface: "canvas",
-        params: { resolution: qualityToResolution(debouncedQuality) },
-        quantity: Math.min(Math.max(debouncedCount, 1), 4) * debouncedDurationSec,
+        params: {
+          video_backend: debouncedBackend,
+          resolution: qualityToResolution(debouncedQuality),
+          pricing_quantity: videoPricingQuantity,
+          operation: genMode,
+          generate_audio: generateAudio,
+        },
+        quantity: videoCount,
       },
     );
-    const totalCreditCostDisplay = useMemo(() => {
-      const total = videoCreditCost.data?.data.cost;
-      if (typeof total !== "number") return null;
-      return formatCreditCost(total);
-    }, [videoCreditCost.data?.data.cost]);
+    const videoBillingRuleMissing =
+      videoCreditCost.error instanceof BillingRuleNotConfiguredError;
+    const totalCreditCostDisplay =
+      videoCreditCost.data?.data.display ??
+      (videoBillingRuleMissing
+        ? t("common.billingRuleNotConfiguredShort")
+        : null);
     const cameraMovementId =
       typeof data.cameraMovement === "string" ? data.cameraMovement : null;
     // Pull the camera-template catalog from `/freezone/video/camera-templates`.
@@ -1985,6 +1997,7 @@ export const VideoNode = memo(
 
     const submitDisabled =
       isGenerating ||
+      videoBillingRuleMissing ||
       (prompt.trim().length === 0 && upstreamTextJoined.length === 0);
 
     const handleSubmit = useCallback(async () => {

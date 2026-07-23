@@ -708,6 +708,47 @@ async def test_generation_credit_cost_route_prices_video_feature_by_backend_and_
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_freezone_video_generate_by_feature(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="freezone.video_generate",
+        expected_params={
+            "video_backend": "newapi_seedance-1.0-pro-fast",
+            "resolution": "1080p",
+            "pricing_quantity": 16,
+            "operation": "imageToVideo",
+            "generate_audio": True,
+            "pricing_kind": "video",
+            "pricing_model": "seedance-1.0-pro-fast",
+            "pricing_params": {"resolution": "1080p"},
+            "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
+        },
+        expected_quantity=1,
+        cost=48,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="freezone.video_generate",
+        params=(
+            '{"video_backend":"newapi_seedance-1.0-pro-fast",'
+            '"resolution":"1080p","pricing_quantity":16,'
+            '"operation":"imageToVideo","generate_audio":true}'
+        ),
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 48, "display": "48"}}
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_prices_style_analysis_feature_by_model(
     monkeypatch,
 ):

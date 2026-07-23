@@ -382,6 +382,18 @@ def _video_backend_feature_billing_params(params: dict) -> dict:
     }
 
 
+def freezone_video_generate_billing_params(params: dict) -> dict:
+    """Resolve Freezone video generation metadata for quotes and task reservations."""
+    return _video_backend_feature_billing_params(params)
+
+
+def freezone_video_generate_task_billing(params: dict) -> dict:
+    return {
+        "feature_key": "freezone.video_generate",
+        **freezone_video_generate_billing_params(params),
+    }
+
+
 FREEZONE_IMAGE_FEATURE_KEYS = {
     "freezone.image_generate",
     "freezone.image_panorama",
@@ -447,6 +459,8 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
     feature_key = str(value or "").strip()
     if feature_key in FREEZONE_IMAGE_FEATURE_KEYS:
         return freezone_image_feature_billing_params(feature_key, params)
+    if feature_key == "freezone.video_generate":
+        return freezone_video_generate_billing_params(params)
     if feature_key == "mainline.style_analysis":
         if str(params.get("pricing_model") or "").strip():
             return params
