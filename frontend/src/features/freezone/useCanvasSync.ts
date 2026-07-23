@@ -670,9 +670,12 @@ export function useCanvasSync(
   // measure/select pass after load doesn't fire a redundant save.
   const lastSignatureRef = useRef<string | null>(null);
   const inFlightRef = useRef<Promise<boolean> | null>(null);
-  // At most one save waits behind the one on the wire; further callers ride on
-  // it instead of stacking. See `scheduleSave`.
-  const queuedSaveRef = useRef<Promise<boolean> | null>(null);
+  // At most one save waits behind the one on the wire; further callers for the
+  // same canvas generation ride on it instead of stacking. See `scheduleSave`.
+  const queuedSaveRef = useRef<{
+    generation: number;
+    promise: Promise<boolean>;
+  } | null>(null);
   // Incremented whenever the hydrate effect points this ref set at a different
   // canvas, so a save that was queued across the switch can bail out.
   const canvasGenerationRef = useRef(0);
@@ -1645,8 +1648,16 @@ interface SaveArgs {
    * the whole ref set.
    */
   canvasGenerationRef: { current: number };
-  /** The single follow-up save queued behind the one on the wire, if any. */
-  queuedSaveRef: { current: Promise<boolean> | null };
+  /**
+   * The single follow-up save queued behind the one on the wire, if any, tagged
+   * with the canvas generation it belongs to. The tag is what stops a save for
+   * a freshly-switched-to canvas from riding on a queued save for the previous
+   * one — that one bails on its generation check, and the rider would be
+   * swallowed with it.
+   */
+  queuedSaveRef: {
+    current: { generation: number; promise: Promise<boolean> } | null;
+  };
   canvasEnvelopeRef: { current: Partial<FreezoneCanvasPayload> };
   pendingClientSaveIdRef: { current: string | null };
   pendingClientSaveIdSignatureRef: { current: string | null };
@@ -1697,30 +1708,45 @@ async function scheduleSave(
   // persisted, and flush waits one round-trip rather than N.
   const inFlight = args.inFlightRef.current;
   if (inFlight) {
-    const alreadyQueued = args.queuedSaveRef.current;
-    if (alreadyQueued) {
-      return await alreadyQueued;
-    }
     // Which canvas this save belongs to. `FreezoneShell` is mounted without a
     // key, so switching canvases re-runs the hydrate effect against these very
     // refs: by the time we wake, the store can be holding a different canvas
     // entirely, and re-reading it would PUT that canvas's content to our
     // (stale) args.canvasId.
     const generation = args.canvasGenerationRef.current;
+    const alreadyQueued = args.queuedSaveRef.current;
+    if (alreadyQueued && alreadyQueued.generation === generation) {
+      // Same canvas: ride along. The queued save re-reads the store, so it will
+      // carry our content too.
+      return await alreadyQueued.promise;
+    }
+    // Either nothing is queued, or what is queued belongs to the canvas we just
+    // left — that one will bail out on its own generation check, and riding on
+    // it would silently swallow this canvas's save. Chain behind it instead so
+    // the two still never overlap.
+    const waitFor = alreadyQueued?.promise ?? inFlight;
+    // Assigned on the line after the IIFE is created. The closure only reads it
+    // past an `await`, so it is always populated by the time it is dereferenced.
+    let entry!: { generation: number; promise: Promise<boolean> };
     const follow = (async () => {
       try {
-        await inFlight;
+        await waitFor;
       } catch {
         // The save we queued behind reported its own failure through
         // handleSaveError; its rejection must not become ours.
       }
-      args.queuedSaveRef.current = null;
+      // Only clear the slot if it is still ours — a newer generation may have
+      // chained behind us and taken it over.
+      if (args.queuedSaveRef.current === entry) {
+        args.queuedSaveRef.current = null;
+      }
       if (args.canvasGenerationRef.current !== generation) {
         return false;
       }
       return await scheduleSave(args, true);
     })();
-    args.queuedSaveRef.current = follow;
+    entry = { generation, promise: follow };
+    args.queuedSaveRef.current = entry;
     return await follow;
   }
 
@@ -1804,9 +1830,16 @@ async function scheduleSave(
   const clientSaveId = args.pendingClientSaveIdRef.current;
 
   args.setStatus("saving");
+  const dispatchGeneration = args.canvasGenerationRef.current;
   const job = (async () => {
     try {
-      return await performSave(args, decision, clientSaveId, 0);
+      return await performSave(
+        args,
+        decision,
+        clientSaveId,
+        0,
+        dispatchGeneration,
+      );
     } finally {
       args.inFlightRef.current = null;
     }
@@ -1820,6 +1853,13 @@ async function performSave(
   decision: Extract<SaveDecision, { kind: "send" }>,
   clientSaveId: string,
   attempt: number,
+  /**
+   * The canvas generation this PUT was dispatched under. If the user switches
+   * canvases while it is on the wire, the shared refs no longer describe the
+   * canvas we saved, and publishing the response into them would corrupt the
+   * new canvas's state.
+   */
+  dispatchGeneration: number,
 ): Promise<boolean> {
   const payload = buildSavePayload({
     canvasId: args.canvasId,
@@ -1873,12 +1913,32 @@ async function performSave(
 
   try {
     const response = await putFreezoneCanvas(args.project, args.canvasId, payload);
+    if (args.canvasGenerationRef.current !== dispatchGeneration) {
+      // The user switched canvases while this PUT was on the wire. The save
+      // itself succeeded server-side, but every ref the response would update
+      // (revision, envelope, remote node count, draft signature) now belongs to
+      // a different canvas — writing this canvas's revision into them would
+      // make the new canvas's next save PUT a stale base_revision and 409.
+      return true;
+    }
     consumeSaveResponse(args, response, decision);
     args.setStatus("ready");
     args.setError(null);
     return true;
   } catch (err) {
-    return await handleSaveError(args, err, decision, clientSaveId, attempt);
+    if (args.canvasGenerationRef.current !== dispatchGeneration) {
+      // Same reasoning: a failure that belongs to the canvas we left must not
+      // flip the new canvas into a conflict/error state or hijack its retry.
+      return false;
+    }
+    return await handleSaveError(
+      args,
+      err,
+      decision,
+      clientSaveId,
+      attempt,
+      dispatchGeneration,
+    );
   }
 }
 
@@ -1941,6 +2001,7 @@ async function handleSaveError(
   decision: Extract<SaveDecision, { kind: "send" }>,
   clientSaveId: string,
   attempt: number,
+  dispatchGeneration: number,
 ): Promise<boolean> {
   const { status, body } = saveErrorStatusAndBody(err);
   const fallback = err instanceof Error ? err.message : String(err);
@@ -1979,7 +2040,18 @@ async function handleSaveError(
         await new Promise((resolve) =>
           setTimeout(resolve, outcome.afterMs),
         );
-        return await performSave(args, decision, clientSaveId, attempt + 1);
+        if (args.canvasGenerationRef.current !== dispatchGeneration) {
+          // Switched canvases during the backoff; the retry would PUT the new
+          // canvas's content under the old canvas's id.
+          return false;
+        }
+        return await performSave(
+          args,
+          decision,
+          clientSaveId,
+          attempt + 1,
+          dispatchGeneration,
+        );
       }
       // Retry budget exhausted — surface as a generic error so the user
       // knows the save did not stick.

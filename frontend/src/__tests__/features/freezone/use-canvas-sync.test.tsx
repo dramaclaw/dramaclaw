@@ -753,6 +753,113 @@ describe("useCanvasSync hydrate lifecycle", () => {
     hook.unmount();
   });
 
+  // Same shape as above, except the user *edits* the canvas they switched to
+  // while the old canvas's PUT is still hanging. Dropping the stale queued save
+  // must not drop the new canvas's edit with it: a save that arrives after the
+  // switch cannot ride on a queue slot belonging to the canvas we just left,
+  // because that slot is going to bail out on its generation check.
+  it("still dispatches the new canvas's save queued behind the old canvas's PUT", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockImplementation(
+      async (_project: string, canvasId: string) => ({
+        nodes:
+          canvasId === "cross_target_user_eric"
+            ? [
+                {
+                  id: "b-node",
+                  type: CANVAS_NODE_TYPES.upload,
+                  position: { x: 0, y: 0 },
+                  data: { imageUrl: "/static/b.png" },
+                },
+              ]
+            : [],
+        edges: [],
+        revision: canvasId === "cross_target_user_eric" ? 3 : 7,
+      }),
+    );
+
+    const putCanvasIds: string[] = [];
+    const putBaseRevisions: Array<number | null> = [];
+    const putNodeXs: number[][] = [];
+    const releases: Array<() => void> = [];
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      (_project: string, canvasId: string, payload: unknown) => {
+        const body = payload as {
+          base_revision?: number | null;
+          nodes?: Array<{ position?: { x?: number } }>;
+        };
+        putCanvasIds.push(canvasId);
+        putBaseRevisions.push(body.base_revision ?? null);
+        putNodeXs.push((body.nodes ?? []).map((node) => node.position?.x ?? -1));
+        return new Promise((resolve) => {
+          releases.push(() => resolve({ saved: true, revision: 42 }));
+        });
+      },
+    );
+
+    const hook = renderHook(
+      ({ canvasId }: { canvasId: string }) =>
+        useCanvasSync("project-a", canvasId),
+      { initialProps: { canvasId: "cross_source_user_eric" } },
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Canvas A: first edit reaches the wire and hangs there.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putCanvasIds).toEqual(["cross_source_user_eric"]);
+
+    // Canvas A: a second edit takes the single queue slot behind it.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 20, y: 20 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putCanvasIds).toHaveLength(1);
+
+    // Switch to canvas B, then edit it while canvas A's PUT is still hanging.
+    hook.rerender({ canvasId: "cross_target_user_eric" });
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 99, y: 99 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    // Saves still never overlap: nothing new goes out while A is on the wire.
+    expect(putCanvasIds).toHaveLength(1);
+
+    // Release canvas A's PUT. Its own queued follow-up is dropped (it belongs
+    // to a canvas we left), but canvas B's edit must go out on its own.
+    await act(async () => {
+      releases[0]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+
+    expect(putCanvasIds).toEqual([
+      "cross_source_user_eric",
+      "cross_target_user_eric",
+    ]);
+    expect(putNodeXs).toEqual([[10], [0, 99]]);
+    // And it must carry canvas B's revision — not the one canvas A's response
+    // just returned, which would 409 straight back.
+    expect(putBaseRevisions).toEqual([7, 3]);
+
+    hook.unmount();
+  });
+
   it("writes a draft and keepalive PUT on beforeunload when an edit is pending", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
