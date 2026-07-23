@@ -37,6 +37,7 @@ import {
   type FreezoneRedrawAspectRatio,
 } from '@/api/ops';
 import { awaitTaskCompletion } from '@/api/tasks';
+import { buildRedHighlightMaskBlob } from '@/lib/mask-highlight';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { readUrl } from '@/lib/url-params';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
@@ -117,6 +118,8 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
   const undoStackRef = useRef<ImageData[]>([]);
   const redoStackRef = useRef<ImageData[]>([]);
   const baseUrlRef = useRef(imageSource.split('?')[0]);
+  // 已加载的源图，导出蒙版时用作红色高亮的打底（后端把蒙版当视觉参考图）。
+  const sourceImgRef = useRef<HTMLImageElement | null>(null);
 
   const [tool, setTool] = useState<Tool>('brush');
   const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH);
@@ -179,6 +182,7 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
         c.width = w;
         c.height = h;
       });
+      sourceImgRef.current = img;
       setImageDims({ w, h });
     };
     img.onerror = () => setError('无法加载源图');
@@ -410,25 +414,13 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
     [canvasToImageCoords, commitRect, recomputeHasMask, tool],
   );
 
-  // 蒙版导出：白底 + 透明的可编辑区域（与后端约定，透明像素 = 重绘/擦除区域）。
+  // 蒙版导出（供视觉模型识别）：源图 + 涂抹区二值化后的均匀半透明红高亮，见 mask-highlight.ts。
   const buildMaskBlob = useCallback(async (): Promise<Blob> => {
-    const src = maskCanvasRef.current;
-    if (!src) throw new Error('mask canvas not ready');
-    const out = document.createElement('canvas');
-    out.width = src.width;
-    out.height = src.height;
-    const ctx = out.getContext('2d');
-    if (!ctx) throw new Error('ctx');
-    ctx.fillStyle = 'rgba(255,255,255,1)';
-    ctx.fillRect(0, 0, out.width, out.height);
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.drawImage(src, 0, 0);
-    return await new Promise<Blob>((resolve, reject) => {
-      out.toBlob(
-        (blob) => (blob ? resolve(blob) : reject(new Error('toBlob returned null'))),
-        'image/png',
-      );
-    });
+    const mask = maskCanvasRef.current;
+    const baseImg = sourceImgRef.current;
+    if (!mask) throw new Error('mask canvas not ready');
+    if (!baseImg) throw new Error('source image not ready');
+    return await buildRedHighlightMaskBlob(baseImg, mask);
   }, []);
 
   // 建一个 loading 结果节点并连边，立即返回节点 id（同步，不等待上传/生成）。
