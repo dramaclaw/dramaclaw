@@ -451,6 +451,51 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
     }
 
 
+@pytest.mark.asyncio
+async def test_freezone_image_reverse_prompt_enqueues_feature_billing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("FREEZONE_VISION_MODEL", "freezone-vision-model")
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    source = project_dir / "freezone" / "_uploads" / "source.png"
+    _write_image(source)
+    captured: dict[str, object] = {}
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_reverse_prompt"),
+            backend="celery",
+            queue="node.node_a.default",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    result = await freezone_routes.freezone_image_reverse_prompt(
+        project="58",
+        body=freezone_routes.FreezoneImageReversePromptRequest(
+            source_url="/static/admin/58/freezone/_uploads/source.png",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["data"]["task_type"] == "freezone_image_reverse_prompt"
+    assert captured["task_type"] == "freezone_image_reverse_prompt"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "freezone.image_reverse_prompt",
+        "operation": "image_reverse_prompt",
+        "pricing_quantity": 1,
+        "pricing_kind": "text",
+        "pricing_model": "freezone-vision-model",
+        "pricing_params": {},
+    }
+
+
 def test_infer_scene_id_from_master_path_uses_scene_folder(tmp_path: Path) -> None:
     project_dir = tmp_path / "project"
     source = project_dir / "assets" / "scenes" / "小区" / "master.png"

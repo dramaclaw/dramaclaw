@@ -6758,6 +6758,10 @@ async def freezone_image_reverse_prompt(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：异步反推图片提示词。"""
+    from novelvideo.api.routes.model_credits import (
+        freezone_image_reverse_prompt_task_billing,
+    )
+
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user
     )
@@ -6780,6 +6784,12 @@ async def freezone_image_reverse_prompt(
                     "source_path": source_path.as_posix(),
                     "canvas_id": body.canvas_id or "",
                     "node_id": body.node_id or "",
+                    "billing": freezone_image_reverse_prompt_task_billing(
+                        {
+                            "operation": "image_reverse_prompt",
+                            "pricing_quantity": 1,
+                        }
+                    ),
                 },
             )
         _start_freezone_image_reverse_prompt_task(

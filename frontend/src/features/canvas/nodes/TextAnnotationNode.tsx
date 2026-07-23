@@ -71,6 +71,7 @@ import {
 import { useFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
 import { CreditCostInline } from '@/components/credit-cost-inline';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 
 type TextAnnotationNodeProps = NodeProps & {
   id: string;
@@ -86,6 +87,7 @@ const MIN_HEIGHT = 240;
 const COMPACT_MIN_HEIGHT = 240;
 const MAX_WIDTH = 900;
 const MAX_HEIGHT = 1200;
+const IMAGE_REVERSE_PROMPT_FEATURE_KEY = 'freezone.image_reverse_prompt';
 
 const PICKER_INSET = 32;
 const COMPACT_OPS_PANEL_HEIGHT = 140;
@@ -184,10 +186,23 @@ export const TextAnnotationNode = memo(({
   // 文生视频默认模型取「视频模型接口返回的第一个」，而非文本节点的图像默认 id。
   const { models: videoModels } = useFreezoneVideoModels();
   const reversePromptCost = useGenerationCreditCost(
-    mode === 'imageToPrompt' ? 'freezone_image_reverse_prompt' : '',
-    null,
-    { surface: 'canvas' },
+    'feature',
+    mode === 'imageToPrompt' ? IMAGE_REVERSE_PROMPT_FEATURE_KEY : null,
+    {
+      surface: 'canvas',
+      params: {
+        operation: 'image_reverse_prompt',
+        pricing_quantity: 1,
+      },
+    },
   );
+  const reversePromptBillingRuleMissing =
+    reversePromptCost.error instanceof BillingRuleNotConfiguredError;
+  const reversePromptCostDisplay =
+    reversePromptCost.data?.data.display ??
+    (reversePromptBillingRuleMissing
+      ? t('common.billingRuleNotConfiguredShort')
+      : null);
   const { isGenerating } = useNodeGenerationTaskState(data);
   // referenceOnly: 节点被作为上游引用素材使用（脚本节点 spawn 出来的）。
   // 复用 compact 视图（只渲染编辑卡片），同时 selected ops panel 也不显示。
@@ -465,7 +480,7 @@ export const TextAnnotationNode = memo(({
   const hasUserContent = content.trim().length > 0 && content.trim() !== textPlaceholder.trim();
 
   const handleSubmit = useCallback(() => {
-    if (isGenerating) return;
+    if (isGenerating || reversePromptBillingRuleMissing) return;
     if (mode === 'imageToPrompt') {
       void runImageToPrompt();
       return;
@@ -476,9 +491,20 @@ export const TextAnnotationNode = memo(({
     }
     if (!hasUserContent) return;
     console.info('[text-node] submit stub', { id, mode, model: modelId, content });
-  }, [content, hasUserContent, id, isGenerating, mode, modelId, runImageToPrompt, runTextToVideo]);
+  }, [
+    content,
+    hasUserContent,
+    id,
+    isGenerating,
+    mode,
+    modelId,
+    reversePromptBillingRuleMissing,
+    runImageToPrompt,
+    runTextToVideo,
+  ]);
 
   const submitDisabled = isGenerating
+    || (mode === 'imageToPrompt' && reversePromptBillingRuleMissing)
     || (mode !== 'imageToPrompt' && !hasUserContent);
   // Inner panels stay neutral regardless of selection — the React Flow node
   // wrapper already shows the active state as an outer outline. Doubling it
@@ -660,7 +686,7 @@ export const TextAnnotationNode = memo(({
                 )}
                 <div className="flex items-center gap-1.5">
                   {mode === 'imageToPrompt' && (
-                    <CreditCostInline display={reversePromptCost.data?.data.display} />
+                    <CreditCostInline display={reversePromptCostDisplay} />
                   )}
                   <button
                     type="button"

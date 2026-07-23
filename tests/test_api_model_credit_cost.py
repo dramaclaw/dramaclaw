@@ -350,16 +350,24 @@ async def test_generation_credit_cost_route_resolves_freezone_image_reverse_prom
     patch_quote_expect(
         monkeypatch,
         model_credits,
-        expected_kind="text",
-        expected_model="freezone-vision-model",
-        expected_params={},
+        expected_kind="feature",
+        expected_model="freezone.image_reverse_prompt",
+        expected_params={
+            "operation": "image_reverse_prompt",
+            "pricing_quantity": 1,
+            "pricing_kind": "text",
+            "pricing_model": "freezone-vision-model",
+            "pricing_params": {},
+        },
         expected_quantity=1,
         cost=6,
     )
 
     result = await model_credits.get_generation_credit_cost(
-        kind="freezone_image_reverse_prompt",
-        value="",
+        kind="feature",
+        surface="canvas",
+        value="freezone.image_reverse_prompt",
+        params='{"operation":"image_reverse_prompt","pricing_quantity":1}',
         user={"user_id": "usr_1"},
     )
 

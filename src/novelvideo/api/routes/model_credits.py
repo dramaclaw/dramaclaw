@@ -446,6 +446,28 @@ def freezone_audio_task_billing(feature_key: str, params: dict) -> dict:
     return {"feature_key": feature_key, **resolved}
 
 
+def freezone_image_reverse_prompt_billing_params(params: dict) -> dict:
+    """Resolve vision-model metadata for reverse-prompt quotes and reservations."""
+    if str(params.get("pricing_model") or "").strip():
+        return params
+    from novelvideo.freezone.vision_gateway import resolve_freezone_vision_model
+
+    return {
+        **params,
+        "pricing_kind": "text",
+        "pricing_model": resolve_freezone_vision_model(),
+        "pricing_params": {},
+        "pricing_quantity": 1,
+    }
+
+
+def freezone_image_reverse_prompt_task_billing(params: dict) -> dict:
+    return {
+        "feature_key": "freezone.image_reverse_prompt",
+        **freezone_image_reverse_prompt_billing_params(params),
+    }
+
+
 FREEZONE_IMAGE_FEATURE_KEYS = {
     "freezone.image_generate",
     "freezone.image_panorama",
@@ -517,6 +539,8 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
         return freezone_audio_speech_billing_params(params)
     if feature_key == "freezone.audio_music":
         return freezone_audio_music_billing_params(params)
+    if feature_key == "freezone.image_reverse_prompt":
+        return freezone_image_reverse_prompt_billing_params(params)
     if feature_key == "mainline.style_analysis":
         if str(params.get("pricing_model") or "").strip():
             return params
