@@ -394,6 +394,58 @@ def freezone_video_generate_task_billing(params: dict) -> dict:
     }
 
 
+def freezone_audio_speech_billing_params(params: dict) -> dict:
+    """Resolve Freezone speech metadata for quotes and task reservations."""
+    if str(params.get("pricing_model") or "").strip():
+        return params
+    from novelvideo.audio.indextts2_beat_audio_task import (
+        indextts2_audio_billing_params,
+    )
+
+    try:
+        quantity = max(int(params.get("pricing_quantity") or 1), 1)
+    except (TypeError, ValueError):
+        quantity = 1
+    return {**params, **indextts2_audio_billing_params(quantity)}
+
+
+def freezone_audio_music_billing_params(params: dict) -> dict:
+    """Resolve Freezone music metadata for quotes and task reservations."""
+    if str(params.get("pricing_model") or "").strip():
+        return params
+    from novelvideo.freezone.audio_node import freezone_audio_music_billing_seconds
+
+    try:
+        pricing_quantity = max(int(params.get("pricing_quantity") or 0), 0)
+    except (TypeError, ValueError):
+        pricing_quantity = 0
+    if pricing_quantity <= 0:
+        pricing_quantity = freezone_audio_music_billing_seconds(
+            int(params.get("music_length_ms") or 0)
+        )
+    pricing_model = (
+        str(params.get("model") or "LingShan-MU-11").strip()
+        or "LingShan-MU-11"
+    )
+    return {
+        **params,
+        "pricing_kind": "audio",
+        "pricing_model": pricing_model,
+        "pricing_params": {},
+        "pricing_quantity": pricing_quantity,
+    }
+
+
+def freezone_audio_task_billing(feature_key: str, params: dict) -> dict:
+    if feature_key == "freezone.audio_speech":
+        resolved = freezone_audio_speech_billing_params(params)
+    elif feature_key == "freezone.audio_music":
+        resolved = freezone_audio_music_billing_params(params)
+    else:
+        raise ValueError(f"unsupported Freezone audio feature: {feature_key}")
+    return {"feature_key": feature_key, **resolved}
+
+
 FREEZONE_IMAGE_FEATURE_KEYS = {
     "freezone.image_generate",
     "freezone.image_panorama",
@@ -461,6 +513,10 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
         return freezone_image_feature_billing_params(feature_key, params)
     if feature_key == "freezone.video_generate":
         return freezone_video_generate_billing_params(params)
+    if feature_key == "freezone.audio_speech":
+        return freezone_audio_speech_billing_params(params)
+    if feature_key == "freezone.audio_music":
+        return freezone_audio_music_billing_params(params)
     if feature_key == "mainline.style_analysis":
         if str(params.get("pricing_model") or "").strip():
             return params

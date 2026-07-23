@@ -387,6 +387,70 @@ async def test_freezone_video_generation_enqueues_feature_billing(
     }
 
 
+@pytest.mark.asyncio
+async def test_freezone_audio_generation_enqueues_two_feature_billings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo.config import INDEXTTS2_RECORD_MODEL
+
+    _patch_freezone_project(monkeypatch, tmp_path)
+    captured: list[dict] = []
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.append(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id=f"task_audio_{len(captured)}"),
+            backend="celery",
+            queue="node.node_a.default",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    await freezone_routes.freezone_audio_speech(
+        project="58",
+        body=freezone_routes.FreezoneAudioSpeechRequest(text="她终于回来了。"),
+        user={"username": "admin"},
+    )
+    await freezone_routes.freezone_audio_eleven_music(
+        project="58",
+        body=freezone_routes.FreezoneAudioMusicRequest(
+            input="雨夜悬疑配乐",
+            music_length_ms=30_500,
+        ),
+        user={"username": "admin"},
+    )
+
+    speech_billing = captured[0]["payload"]["billing"]
+    assert captured[0]["task_type"] == "freezone_audio_speech"
+    assert speech_billing == {
+        "feature_key": "freezone.audio_speech",
+        "operation": "speech",
+        "pricing_quantity": 1,
+        "pricing_kind": "audio",
+        "pricing_model": INDEXTTS2_RECORD_MODEL,
+        "pricing_params": {},
+        "items": 1,
+    }
+
+    music_billing = captured[1]["payload"]["billing"]
+    assert captured[1]["task_type"] == "freezone_audio_eleven_music"
+    assert music_billing == {
+        "feature_key": "freezone.audio_music",
+        "operation": "music",
+        "model": "LingShan-MU-11",
+        "music_length_ms": 30_500,
+        "pricing_kind": "audio",
+        "pricing_model": "LingShan-MU-11",
+        "pricing_params": {},
+        "pricing_quantity": 31,
+    }
+
+
 def test_infer_scene_id_from_master_path_uses_scene_folder(tmp_path: Path) -> None:
     project_dir = tmp_path / "project"
     source = project_dir / "assets" / "scenes" / "小区" / "master.png"

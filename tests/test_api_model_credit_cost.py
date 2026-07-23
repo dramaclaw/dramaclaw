@@ -243,6 +243,80 @@ async def test_generation_credit_cost_route_resolves_freezone_audio_music(monkey
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_freezone_audio_speech_by_feature(
+    monkeypatch,
+):
+    from novelvideo import config
+    from novelvideo.api.routes import model_credits
+
+    monkeypatch.setattr(config, "INDEXTTS2_RECORD_MODEL", "index-tts-2")
+    monkeypatch.setattr(
+        "novelvideo.audio.indextts2_beat_audio_task.INDEXTTS2_RECORD_MODEL",
+        "index-tts-2",
+    )
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="freezone.audio_speech",
+        expected_params={
+            "operation": "speech",
+            "pricing_quantity": 1,
+            "pricing_kind": "audio",
+            "pricing_model": "index-tts-2",
+            "pricing_params": {},
+            "items": 1,
+        },
+        expected_quantity=1,
+        cost=3,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="freezone.audio_speech",
+        params='{"operation":"speech","pricing_quantity":1}',
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 3, "display": "3"}}
+
+
+@pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_freezone_audio_music_by_feature(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="freezone.audio_music",
+        expected_params={
+            "operation": "music",
+            "music_length_ms": 30_500,
+            "pricing_kind": "audio",
+            "pricing_model": "LingShan-MU-11",
+            "pricing_params": {},
+            "pricing_quantity": 31,
+        },
+        expected_quantity=1,
+        cost=93,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="freezone.audio_music",
+        params='{"operation":"music","music_length_ms":30500}',
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 93, "display": "93"}}
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_resolves_freezone_story_script(monkeypatch):
     from novelvideo.api.routes import model_credits
 

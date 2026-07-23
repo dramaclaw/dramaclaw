@@ -7615,6 +7615,10 @@ async def freezone_audio_speech(
     try:
         job_id = _new_job_id()
         if ctx is not None:
+            from novelvideo.api.routes.model_credits import (
+                freezone_audio_task_billing,
+            )
+
             return await _enqueue_freezone_background_job(
                 ctx=ctx,
                 project_dir=project_dir,
@@ -7627,6 +7631,13 @@ async def freezone_audio_speech(
                     "account_voice_username": account_voice_username,
                     "target_episode": body.target_episode,
                     "target_beat": body.target_beat,
+                    "billing": freezone_audio_task_billing(
+                        "freezone.audio_speech",
+                        {
+                            "operation": "speech",
+                            "pricing_quantity": 1,
+                        },
+                    ),
                 },
             )
         _start_freezone_audio_speech_task(
@@ -7674,6 +7685,10 @@ async def freezone_audio_eleven_music(
     try:
         job_id = _new_job_id()
         if ctx is not None:
+            from novelvideo.api.routes.model_credits import (
+                freezone_audio_task_billing,
+            )
+
             return await _enqueue_freezone_background_job(
                 ctx=ctx,
                 project_dir=project_dir,
@@ -7687,6 +7702,14 @@ async def freezone_audio_eleven_music(
                     "force_instrumental": body.force_instrumental,
                     "respect_sections_durations": body.respect_sections_durations,
                     "output_format": body.output_format,
+                    "billing": freezone_audio_task_billing(
+                        "freezone.audio_music",
+                        {
+                            "operation": "music",
+                            "model": body.model,
+                            "music_length_ms": body.music_length_ms,
+                        },
+                    ),
                 },
             )
         _raise_project_context_required("freezone_audio_eleven_music")
