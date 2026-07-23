@@ -373,6 +373,7 @@ frontend/src/__tests__/features/companion/petdex-pets.test.ts,Elastic-2.0,2026 S
 frontend/src/__tests__/features/freezone/asset-library-panel-beat-context.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/beat-context-projection.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/canvas-draft-storage.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/freezone/canvasSaveCoordinator.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/canvasSyncCore.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/canvases-tab-query.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/canvases-tab.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -951,6 +952,7 @@ frontend/src/features/freezone/CanvasesTab.tsx,Elastic-2.0,2026 SuperTale contri
 frontend/src/features/freezone/FreezoneShell.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/canvasDraftStorage.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/canvasMetadataContext.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/freezone/canvasSaveCoordinator.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/canvasSyncCore.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/canvasSyncRuntime.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/capabilities/candidate_capabilities.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
