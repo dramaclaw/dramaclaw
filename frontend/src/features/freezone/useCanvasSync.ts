@@ -47,6 +47,10 @@ import {
   removeProjectionMetadata,
 } from "./projections";
 import {
+  createCanvasSaveSession,
+  type CanvasSaveSession,
+} from "./canvasSaveCoordinator";
+import {
   canvasDraftSignature,
   clearCanvasDraft,
   pruneOldCanvasDrafts,
@@ -669,16 +673,14 @@ export function useCanvasSync(
   // is how we ignore pure view-state churn. Seeded on hydrate so the initial
   // measure/select pass after load doesn't fire a redundant save.
   const lastSignatureRef = useRef<string | null>(null);
-  const inFlightRef = useRef<Promise<boolean> | null>(null);
-  // At most one save waits behind the one on the wire; further callers for the
-  // same canvas generation ride on it instead of stacking. See `scheduleSave`.
-  const queuedSaveRef = useRef<{
-    canvasKey: string;
-    generation: number;
-    promise: Promise<boolean>;
-  } | null>(null);
-  // Incremented whenever the hydrate effect points this ref set at a different
-  // canvas, so a save that was queued across the switch can bail out.
+  // All save scheduling for the currently-loaded canvas. Replaced (and the old
+  // one disposed) on every hydrate and every remote refresh, so queued work can
+  // never survive into a canvas it was not written for. See
+  // `canvasSaveCoordinator`.
+  const sessionRef = useRef<CanvasSaveSession | null>(null);
+  // Incremented alongside every new session. Outgoing requests are stamped with
+  // it so a late response can be recognised as belonging to a canvas load we
+  // have already moved past.
   const canvasGenerationRef = useRef(0);
   const debounceTimerRef = useRef<number | null>(null);
   const draftTimerRef = useRef<number | null>(null);
@@ -762,23 +764,6 @@ export function useCanvasSync(
       buildPersistMetadata(shot),
     );
   };
-  // Everything a save payload is built from, read fresh. Handed to
-  // `scheduleSave` so a save that had to queue behind an in-flight PUT can
-  // refresh its stale snapshot instead of overwriting newer content. Pure on
-  // purpose: it runs before the decision gate, so a save that ends up skipped
-  // or blocked must not leave persistence state behind (notably
-  // `lastSavedViewportRef`, which suppresses the localStorage viewport mirror).
-  const currentSaveSnapshot = () => {
-    const canvasState = useCanvasStore.getState();
-    const shot = useShotMetadataStore.getState().shot;
-    return {
-      nodes: canvasState.nodes as unknown[],
-      edges: canvasState.edges as unknown[],
-      viewport: canvasState.currentViewport,
-      metadata: buildPersistMetadata(shot),
-    };
-  };
-
   const scheduleDraftWrite = () => {
     if (draftTimerRef.current != null) {
       window.clearTimeout(draftTimerRef.current);
@@ -814,6 +799,67 @@ export function useCanvasSync(
     setBackupStatus(next);
   };
 
+  // One place that describes a save. The session pump calls it immediately
+  // before the request goes out, which is what makes a coalesced save carry the
+  // newest content instead of the snapshot whichever caller scheduled it held.
+  const buildSaveArgs = (
+    session: CanvasSaveSession,
+    version: number,
+  ): SaveArgs => {
+    const canvasState = useCanvasStore.getState();
+    const shot = useShotMetadataStore.getState().shot;
+    return {
+      project,
+      canvasId,
+      nodes: canvasState.nodes,
+      edges: canvasState.edges,
+      viewport: canvasState.currentViewport,
+      metadata: buildPersistMetadata(shot),
+      revisionRef,
+      statusRef,
+      canvasGenerationRef,
+      canvasEnvelopeRef,
+      pendingClientSaveIdRef,
+      pendingClientSaveIdSignatureRef,
+      hydratedRef,
+      switchingRef,
+      lastRemoteNodeCountRef,
+      setStatus: setSyncStatus,
+      setError,
+      snapshotConflict,
+      publishBackupStatus,
+      publishRevision: setRevision,
+      clearDraftAfterSave: () => {
+        // This save landing does not make the draft redundant. The user may
+        // have kept editing while it was on the wire, and that newer content
+        // exists nowhere but localStorage until the queued save lands too.
+        if (session.hasUnsavedContentBeyond(version)) return;
+        clearDraftTimerAndDraft();
+      },
+      markDraftPersisted: (signature) => {
+        lastPersistedDraftSignatureRef.current = signature;
+      },
+    };
+  };
+
+  // Retire the session for the canvas we are leaving and open one for the
+  // canvas we are entering. Bumping the generation in lock-step is what lets a
+  // response arriving after this point be recognised as stale.
+  const startSaveSession = (): CanvasSaveSession => {
+    sessionRef.current?.dispose();
+    canvasGenerationRef.current += 1;
+    const session = createCanvasSaveSession({
+      canvasKey: `${project}:${canvasId}`,
+      generation: canvasGenerationRef.current,
+      runSave: (version, self) => scheduleSave(buildSaveArgs(self, version)),
+    });
+    sessionRef.current = session;
+    return session;
+  };
+
+  const requestSave = (): Promise<boolean> =>
+    sessionRef.current?.requestSave() ?? Promise.resolve(false);
+
   // ---- 0. External-trigger remote canvas refresh ---- //
   // canvasSyncRuntime lets other features (beat-context preset refresh,
   // mainline rebuild) hand us a fresh server payload to apply in place.
@@ -828,38 +874,9 @@ export function useCanvasSync(
         if (statusRef.current === "conflict" || statusRef.current === "error") {
           return;
         }
-        const canvasState = useCanvasStore.getState();
-        const shot = useShotMetadataStore.getState().shot;
-        lastSavedViewportRef.current = canvasState.currentViewport;
-        void scheduleSave({
-          project,
-          canvasId,
-          nodes: canvasState.nodes,
-          edges: canvasState.edges,
-          viewport: canvasState.currentViewport,
-          metadata: buildPersistMetadata(shot),
-          resnapshot: currentSaveSnapshot,
-          revisionRef,
-          statusRef,
-          canvasGenerationRef,
-          queuedSaveRef,
-          canvasEnvelopeRef,
-          pendingClientSaveIdRef,
-          pendingClientSaveIdSignatureRef,
-          hydratedRef,
-          switchingRef,
-          lastRemoteNodeCountRef,
-          setStatus: setSyncStatus,
-          setError,
-          inFlightRef,
-          snapshotConflict,
-          publishBackupStatus,
-          publishRevision: setRevision,
-          clearDraftAfterSave: clearDraftTimerAndDraft,
-          markDraftPersisted: (signature) => {
-            lastPersistedDraftSignatureRef.current = signature;
-          },
-        });
+        lastSavedViewportRef.current =
+          useCanvasStore.getState().currentViewport;
+        void requestSave();
       }, 0);
     };
 
@@ -876,9 +893,9 @@ export function useCanvasSync(
       // overwrite revisionRef with the remote revision; a PUT already on the
       // wire would otherwise come back with an older revision and roll it
       // backwards, and the next save would 409 against it. A save still queued
-      // behind that PUT is stale for the same reason — the merged content is
-      // rescheduled explicitly below when there is local work to keep.
-      canvasGenerationRef.current += 1;
+      // Queued work is stale for the same reason — the merged content is
+      // rescheduled explicitly below when there is local work worth keeping.
+      startSaveSession();
       const local = useCanvasStore.getState();
       const remoteNodes = (remote.nodes ?? []) as CanvasNode[];
       const remoteEdges = (remote.edges ?? []) as CanvasEdge[];
@@ -917,38 +934,9 @@ export function useCanvasSync(
       if (mergedLocalWork) {
         window.setTimeout(() => {
           if (!hydratedRef.current || switchingRef.current) return;
-          const canvasState = useCanvasStore.getState();
-          const shot = useShotMetadataStore.getState().shot;
-          lastSavedViewportRef.current = canvasState.currentViewport;
-          void scheduleSave({
-            project,
-            canvasId,
-            nodes: canvasState.nodes,
-            edges: canvasState.edges,
-            viewport: canvasState.currentViewport,
-            metadata: buildPersistMetadata(shot),
-            resnapshot: currentSaveSnapshot,
-            revisionRef,
-            statusRef,
-            canvasGenerationRef,
-            queuedSaveRef,
-            canvasEnvelopeRef,
-            pendingClientSaveIdRef,
-            pendingClientSaveIdSignatureRef,
-            hydratedRef,
-            switchingRef,
-            lastRemoteNodeCountRef,
-            setStatus: setSyncStatus,
-            setError,
-            inFlightRef,
-            snapshotConflict,
-            publishBackupStatus,
-            publishRevision: setRevision,
-            clearDraftAfterSave: clearDraftTimerAndDraft,
-            markDraftPersisted: (signature) => {
-              lastPersistedDraftSignatureRef.current = signature;
-            },
-          });
+          lastSavedViewportRef.current =
+            useCanvasStore.getState().currentViewport;
+          void requestSave();
         }, 0);
       }
     }, flush, (projection) => {
@@ -1013,10 +1001,10 @@ export function useCanvasSync(
     lastPersistedDraftSignatureRef.current = null;
     hydratedRef.current = false;
     switchingRef.current = true;
-    // These refs are about to describe a different canvas. Any save still
-    // queued for the previous one must not wake up and PUT this canvas's
-    // content under the old canvas id.
-    canvasGenerationRef.current += 1;
+    // Everything queued for the previous canvas is dropped here: the new
+    // session owns save scheduling from now on, and the old one can no longer
+    // write to anything this canvas reads.
+    startSaveSession();
     lastRemoteNodeCountRef.current = 0;
     pendingClientSaveIdRef.current = null;
     pendingClientSaveIdSignatureRef.current = null;
@@ -1251,38 +1239,9 @@ export function useCanvasSync(
         window.clearTimeout(debounceTimerRef.current);
       }
       debounceTimerRef.current = window.setTimeout(() => {
-        const canvasState = useCanvasStore.getState();
-        const shot = useShotMetadataStore.getState().shot;
-        lastSavedViewportRef.current = canvasState.currentViewport;
-        void scheduleSave({
-          project,
-          canvasId,
-          nodes: canvasState.nodes,
-          edges: canvasState.edges,
-          viewport: canvasState.currentViewport,
-          metadata: buildPersistMetadata(shot),
-          resnapshot: currentSaveSnapshot,
-          revisionRef,
-          statusRef,
-          canvasGenerationRef,
-          queuedSaveRef,
-          canvasEnvelopeRef,
-          pendingClientSaveIdRef,
-          pendingClientSaveIdSignatureRef,
-          hydratedRef,
-          switchingRef,
-          lastRemoteNodeCountRef,
-          setStatus: setSyncStatus,
-          setError,
-          inFlightRef,
-          snapshotConflict,
-          publishBackupStatus,
-          publishRevision: setRevision,
-          clearDraftAfterSave: clearDraftTimerAndDraft,
-          markDraftPersisted: (signature) => {
-            lastPersistedDraftSignatureRef.current = signature;
-          },
-        });
+        lastSavedViewportRef.current =
+          useCanvasStore.getState().currentViewport;
+        void requestSave();
       }, DEBOUNCE_MS);
     };
     // Only react to changes that alter the persisted nodes/edges shape. View
@@ -1360,38 +1319,8 @@ export function useCanvasSync(
       window.clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
-    const { nodes, edges, currentViewport } = useCanvasStore.getState();
-    const shot = useShotMetadataStore.getState().shot;
-    lastSavedViewportRef.current = currentViewport;
-    return await scheduleSave({
-      project,
-      canvasId,
-      nodes,
-      edges,
-      viewport: currentViewport,
-      metadata: buildPersistMetadata(shot),
-      resnapshot: currentSaveSnapshot,
-      revisionRef,
-      statusRef,
-      canvasGenerationRef,
-      queuedSaveRef,
-      canvasEnvelopeRef,
-      pendingClientSaveIdRef,
-      pendingClientSaveIdSignatureRef,
-      hydratedRef,
-      switchingRef,
-      lastRemoteNodeCountRef,
-      setStatus: setSyncStatus,
-      setError,
-      inFlightRef,
-      snapshotConflict,
-      publishBackupStatus,
-      publishRevision: setRevision,
-      clearDraftAfterSave: clearDraftTimerAndDraft,
-      markDraftPersisted: (signature) => {
-        lastPersistedDraftSignatureRef.current = signature;
-      },
-    });
+    lastSavedViewportRef.current = useCanvasStore.getState().currentViewport;
+    return await requestSave();
   };
 
   // Save once more on tab close — best effort, fire-and-forget. Fires when a
@@ -1412,7 +1341,7 @@ export function useCanvasSync(
       const hasUnsettledContentSave =
         draftTimerRef.current != null ||
         debounceTimerRef.current != null ||
-        inFlightRef.current != null ||
+        sessionRef.current?.isSaving() === true ||
         statusRef.current === "saving";
       if (
         !hasUnsettledContentSave ||
@@ -1633,43 +1562,15 @@ interface SaveArgs {
    * that already know what they are.
    */
   forcedDecision?: Extract<SaveDecision, { kind: "send" }>;
-  /**
-   * Re-read the live snapshot a save payload is built from. `scheduleSave`
-   * calls this only when it had to queue behind an in-flight save, where the
-   * caller's captured `nodes`/`edges`/`viewport`/`metadata` have gone stale.
-   * Every autosave site reads the same two stores, so re-reading is exactly
-   * what the caller would have captured had it run at that moment. A caller
-   * that omits it (to send one fixed payload) is simply never queued: rather
-   * than PUT a snapshot from before the wait, `scheduleSave` drops the save.
-   */
-  resnapshot?: () => Pick<
-    SaveArgs,
-    "nodes" | "edges" | "viewport" | "metadata"
-  >;
   revisionRef: { current: number | null };
   statusRef: { current: CanvasSyncStatus };
   /**
-   * Bumped by the hydrate effect every time a different canvas is loaded into
-   * these refs. A queued save compares it before and after its wait so it can
-   * never PUT the newly-loaded canvas's content to the canvas it was scheduled
-   * for — `FreezoneShell` is mounted without a key, so a canvas switch reuses
-   * the whole ref set.
+   * Bumped every time a canvas is loaded into these refs (hydrate or remote
+   * refresh). A request stamps itself with the value it saw and refuses to
+   * apply its response if the stamp has moved on — `FreezoneShell` is mounted
+   * without a key, so a canvas switch reuses the whole ref set.
    */
   canvasGenerationRef: { current: number };
-  /**
-   * The single follow-up save queued behind the one on the wire, if any, tagged
-   * with the canvas generation it belongs to. The tag is what stops a save for
-   * a freshly-switched-to canvas from riding on a queued save for the previous
-   * one — that one bails on its generation check, and the rider would be
-   * swallowed with it.
-   */
-  queuedSaveRef: {
-    current: {
-      canvasKey: string;
-      generation: number;
-      promise: Promise<boolean>;
-    } | null;
-  };
   canvasEnvelopeRef: { current: Partial<FreezoneCanvasPayload> };
   pendingClientSaveIdRef: { current: string | null };
   pendingClientSaveIdSignatureRef: { current: string | null };
@@ -1678,7 +1579,6 @@ interface SaveArgs {
   lastRemoteNodeCountRef: { current: number };
   setStatus: (s: CanvasSyncStatus) => void;
   setError: (e: string | null) => void;
-  inFlightRef: { current: Promise<boolean> | null };
   /**
    * Persist a snapshot of the local edits to `localStorage` so the user can
    * recover them after a 409. Implementation lives in the hook so the keys
@@ -1696,112 +1596,20 @@ interface SaveArgs {
   markDraftPersisted?: (signature: string) => void;
 }
 
-async function scheduleSave(
-  args: SaveArgs,
-  requeued = false,
-): Promise<boolean> {
-  // Coalesce overlapping saves.
-  //
-  // The old code did this with a single `await` on the in-flight promise, which
-  // is not enough: several callers park on the *same* promise, and when it
-  // settles they all resume inside one microtask batch — each then walks
-  // straight through to its own PUT carrying the base_revision the first save
-  // just published. The backend's optimistic lock 409s the loser, and the UI
-  // blames "another window" for a race we caused ourselves. (Reproducible by
-  // throttling to 3G and dragging nodes: a PUT slower than DEBOUNCE_MS is all
-  // it takes for two debounced saves to stack, and the projection-sync / flush
-  // paths skip the debounce entirely.)
-  //
-  // So: exactly one follow-up save is ever queued behind the one on the wire.
-  // Because a queued save re-reads the store before it builds its payload, a
-  // second waiter would put byte-identical content on the wire one round-trip
-  // later; extra callers ride on the queued save instead. That also keeps
-  // `flush()` honest — the save it rides on carries the content flush wanted
-  // persisted, and flush waits one round-trip rather than N.
-  const inFlight = args.inFlightRef.current;
-  if (inFlight) {
-    // Which canvas this save belongs to. `FreezoneShell` is mounted without a
-    // key, so switching canvases re-runs the hydrate effect against these very
-    // refs: by the time we wake, the store can be holding a different canvas
-    // entirely, and re-reading it would PUT that canvas's content to our
-    // (stale) args.canvasId.
-    const generation = args.canvasGenerationRef.current;
-    // Belt and braces: the generation counter already moves on every hydrate
-    // and every remote refresh, so it covers a canvas switch. Comparing the
-    // canvas key too means a queue slot can never be shared across canvases
-    // even if some future caller reaches `scheduleSave` between a canvasId
-    // change and the hydrate effect that bumps the counter.
-    const canvasKey = `${args.project}:${args.canvasId}`;
-    const alreadyQueued = args.queuedSaveRef.current;
-    if (
-      alreadyQueued &&
-      alreadyQueued.generation === generation &&
-      alreadyQueued.canvasKey === canvasKey
-    ) {
-      // Same canvas: ride along. The queued save re-reads the store, so it will
-      // carry our content too.
-      return await alreadyQueued.promise;
-    }
-    // Either nothing is queued, or what is queued belongs to the canvas we just
-    // left — that one will bail out on its own generation check, and riding on
-    // it would silently swallow this canvas's save. Chain behind it instead so
-    // the two still never overlap.
-    const waitFor = alreadyQueued?.promise ?? inFlight;
-    // Assigned on the line after the IIFE is created. The closure only reads it
-    // past an `await`, so it is always populated by the time it is dereferenced.
-    let entry!: {
-      canvasKey: string;
-      generation: number;
-      promise: Promise<boolean>;
-    };
-    const follow = (async () => {
-      try {
-        await waitFor;
-      } catch {
-        // The save we queued behind reported its own failure through
-        // handleSaveError; its rejection must not become ours.
-      }
-      // Only clear the slot if it is still ours — a newer generation may have
-      // chained behind us and taken it over.
-      if (args.queuedSaveRef.current === entry) {
-        args.queuedSaveRef.current = null;
-      }
-      if (args.canvasGenerationRef.current !== generation) {
-        return false;
-      }
-      return await scheduleSave(args, true);
-    })();
-    entry = { canvasKey, generation, promise: follow };
-    args.queuedSaveRef.current = entry;
-    return await follow;
-  }
-
-  if (requeued) {
-    // We skipped the guards our callers apply before scheduling, and the world
-    // moved while we sat in the queue. Re-apply them now.
-    if (
-      args.statusRef.current === "conflict" ||
-      args.statusRef.current === "error"
-    ) {
-      // The save ahead of us failed terminally. Callers stop autosaving in this
-      // state; a queued save must not sneak a doomed PUT past that, nor
-      // overwrite the conflict snapshot the overlay offers for download.
-      return false;
-    }
-    if (!args.resnapshot) {
-      // Without a fresh read we would PUT the payload captured before the wait,
-      // rolling the canvas back over whatever just landed. Skipping is strictly
-      // better; the content is still in the store and the next edit re-triggers.
-      return false;
-    }
-    // The save we queued behind persisted part of our payload, and the user
-    // kept editing meanwhile. Re-read the live stores so we carry the newest
-    // content rather than overwriting it with a stale snapshot.
-    const fresh = args.resnapshot();
-    args.nodes = fresh.nodes;
-    args.edges = fresh.edges;
-    args.viewport = fresh.viewport;
-    args.metadata = fresh.metadata;
+async function scheduleSave(args: SaveArgs): Promise<boolean> {
+  // Serialisation and coalescing live in `canvasSaveCoordinator` now. This
+  // function is only ever entered from a session's pump, one call at a time,
+  // with `args` read from the live stores a moment earlier. What is left here
+  // is the per-attempt work: re-check the guards, run the decision gate, put
+  // the payload on the wire.
+  if (
+    args.statusRef.current === "conflict" ||
+    args.statusRef.current === "error"
+  ) {
+    // A previous save failed terminally. Callers stop autosaving in this state;
+    // a save already queued when that happened must not sneak a doomed PUT
+    // past it, nor overwrite the conflict snapshot the overlay offers.
+    return false;
   }
 
   // ---- Decision gate ---- //
@@ -1856,22 +1664,13 @@ async function scheduleSave(
   const clientSaveId = args.pendingClientSaveIdRef.current;
 
   args.setStatus("saving");
-  const dispatchGeneration = args.canvasGenerationRef.current;
-  const job = (async () => {
-    try {
-      return await performSave(
-        args,
-        decision,
-        clientSaveId,
-        0,
-        dispatchGeneration,
-      );
-    } finally {
-      args.inFlightRef.current = null;
-    }
-  })();
-  args.inFlightRef.current = job;
-  return await job;
+  return await performSave(
+    args,
+    decision,
+    clientSaveId,
+    0,
+    args.canvasGenerationRef.current,
+  );
 }
 
 async function performSave(

@@ -756,10 +756,10 @@ describe("useCanvasSync hydrate lifecycle", () => {
 
   // Same shape as above, except the user *edits* the canvas they switched to
   // while the old canvas's PUT is still hanging. Dropping the stale queued save
-  // must not drop the new canvas's edit with it: a save that arrives after the
-  // switch cannot ride on a queue slot belonging to the canvas we just left,
-  // because that slot is going to bail out on its generation check.
-  it("still dispatches the new canvas's save queued behind the old canvas's PUT", async () => {
+  // must not drop the new canvas's edit with it. Save sessions are per-canvas,
+  // so canvas B does not queue behind canvas A at all — the backend lock is
+  // per-canvas, and making B wait out A's slow request buys nothing.
+  it("dispatches the new canvas's save without waiting for the old canvas's PUT", async () => {
     vi.useFakeTimers();
     vi.mocked(getFreezoneCanvas).mockImplementation(
       async (_project: string, canvasId: string) => ({
@@ -839,24 +839,22 @@ describe("useCanvasSync hydrate lifecycle", () => {
       vi.advanceTimersByTime(800);
       await Promise.resolve();
     });
-    // Saves still never overlap: nothing new goes out while A is on the wire.
-    expect(putCanvasIds).toHaveLength(1);
-
-    // Release canvas A's PUT. Its own queued follow-up is dropped (it belongs
-    // to a canvas we left), but canvas B's edit must go out on its own.
-    await act(async () => {
-      releases[0]();
-      for (let i = 0; i < 12; i += 1) await Promise.resolve();
-    });
-
+    // Canvas B's edit goes out on its own session, immediately.
     expect(putCanvasIds).toEqual([
       "cross_source_user_eric",
       "cross_target_user_eric",
     ]);
     expect(putNodeXs).toEqual([[10], [0, 99]]);
-    // And it must carry canvas B's revision — not the one canvas A's response
-    // just returned, which would 409 straight back.
+    // And it carries canvas B's own revision, not canvas A's.
     expect(putBaseRevisions).toEqual([7, 3]);
+
+    // Canvas A's PUT finally lands. Its queued follow-up belongs to a canvas we
+    // left, so it must not produce a third request against canvas B.
+    await act(async () => {
+      releases[0]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(putCanvasIds).toHaveLength(2);
 
     hook.unmount();
   });
@@ -936,6 +934,73 @@ describe("useCanvasSync hydrate lifecycle", () => {
       for (let i = 0; i < 12; i += 1) await Promise.resolve();
     });
     expect(putBaseRevisions).toEqual([7, 100]);
+
+    hook.unmount();
+  });
+
+  // The draft is the only copy of edits that have not reached the server. A
+  // save landing clears it — but only if nothing newer is still queued behind
+  // that save, otherwise the newest edit exists nowhere at all.
+  it("keeps the draft when newer content is still queued behind a save", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 7,
+    });
+
+    const releases: Array<() => void> = [];
+    let revision = 7;
+    vi.mocked(putFreezoneCanvas).mockImplementation(() => {
+      return new Promise((resolve) => {
+        releases.push(() => {
+          revision += 1;
+          resolve({ saved: true, revision });
+        });
+      });
+    });
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "draft_race_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // First edit: draft written, PUT on the wire.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(readCanvasDraft("project-a", "draft_race_user_eric")).not.toBeNull();
+
+    // Second edit while the first is still hanging: queued, draft-only.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 20, y: 20 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+
+    // First PUT succeeds. The draft must survive: it is the only copy of the
+    // second node until the queued save lands.
+    await act(async () => {
+      releases[0]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    const midFlight = readCanvasDraft("project-a", "draft_race_user_eric");
+    expect(midFlight?.nodes).toHaveLength(2);
+
+    // Once the queued save lands too, nothing is unsaved and the draft goes.
+    await act(async () => {
+      releases[1]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(readCanvasDraft("project-a", "draft_race_user_eric")).toBeNull();
 
     hook.unmount();
   });
