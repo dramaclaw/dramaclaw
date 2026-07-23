@@ -37,6 +37,7 @@ import {
   type FreezoneRedrawAspectRatio,
 } from '@/api/ops';
 import { awaitTaskCompletion } from '@/api/tasks';
+import { buildRedHighlightMaskBlob } from '@/lib/mask-highlight';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { readUrl } from '@/lib/url-params';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
@@ -413,40 +414,13 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
     [canvasToImageCoords, commitRect, recomputeHasMask, tool],
   );
 
-  // 蒙版导出（供视觉模型识别）：源图 + 涂抹区半透明红色高亮。
-  // 后端把它当作 Image 2 的编辑参考——红色只是标注区域用，模型不会把红色画进结果。
-  // 旧做法是「白底 + 透明孔洞」，编辑区只存在于 alpha 通道，模型 RGB 里看是整张纯白 → 定位失败。
+  // 蒙版导出（供视觉模型识别）：源图 + 涂抹区二值化后的均匀半透明红高亮，见 mask-highlight.ts。
   const buildMaskBlob = useCallback(async (): Promise<Blob> => {
     const mask = maskCanvasRef.current;
     const baseImg = sourceImgRef.current;
     if (!mask) throw new Error('mask canvas not ready');
     if (!baseImg) throw new Error('source image not ready');
-    const w = mask.width;
-    const h = mask.height;
-    const out = document.createElement('canvas');
-    out.width = w;
-    out.height = h;
-    const ctx = out.getContext('2d');
-    if (!ctx) throw new Error('ctx');
-    // 1) 源图打底。
-    ctx.drawImage(baseImg, 0, 0, w, h);
-    // 2) 把涂抹区归一成均匀的半透明红（source-in 消除笔刷叠加深浅不均），再叠到源图上。
-    const overlay = document.createElement('canvas');
-    overlay.width = w;
-    overlay.height = h;
-    const octx = overlay.getContext('2d');
-    if (!octx) throw new Error('ctx');
-    octx.drawImage(mask, 0, 0);
-    octx.globalCompositeOperation = 'source-in';
-    octx.fillStyle = 'rgba(255, 0, 0, 0.6)';
-    octx.fillRect(0, 0, w, h);
-    ctx.drawImage(overlay, 0, 0);
-    return await new Promise<Blob>((resolve, reject) => {
-      out.toBlob(
-        (blob) => (blob ? resolve(blob) : reject(new Error('toBlob returned null'))),
-        'image/png',
-      );
-    });
+    return await buildRedHighlightMaskBlob(baseImg, mask);
   }, []);
 
   // 建一个 loading 结果节点并连边，立即返回节点 id（同步，不等待上传/生成）。

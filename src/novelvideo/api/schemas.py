@@ -883,13 +883,17 @@ class FreezoneRedrawRequest(BaseModel):
 
     统一承接整体重绘和局部擦除：
     - 不传 mask_url：整体/局部自由重绘
-    - 传 mask_url：仅在 mask 透明区域内按 prompt 执行局部编辑
+    - 传 mask_url：仅在标注的编辑区内按 prompt 执行局部编辑。mask 约定为
+      「源图 + 涂抹区半透明红色高亮」（红色仅作区域标注，不进入结果）
     """
 
     source_url: str = Field(description="待重绘的源图静态地址，作为图生图的 base 图")
     mask_url: Optional[str] = Field(
         default=None,
-        description="可选的遮罩图静态地址。传入后表示走局部擦除/局部重绘模式",
+        description=(
+            "可选的遮罩图静态地址。传入后走局部擦除/局部重绘模式；约定为"
+            "「源图 + 涂抹区半透明红色高亮」，仅编辑红色区域"
+        ),
     )
     aspect_ratio: Literal["original", "1:1", "4:3", "3:4", "16:9", "9:16"] = Field(
         default="original",
