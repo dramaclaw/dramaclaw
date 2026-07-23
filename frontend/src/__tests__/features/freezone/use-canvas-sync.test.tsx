@@ -17,6 +17,7 @@ import {
   writeCanvasDraft,
 } from "@/features/freezone/canvasDraftStorage";
 import {
+  applyRemoteFreezoneCanvas,
   consumeQueuedLocalFreezoneProjections,
   queueLocalFreezoneProjection,
   removeLocalFreezoneProjection,
@@ -576,6 +577,586 @@ describe("useCanvasSync hydrate lifecycle", () => {
     });
 
     expect(putFreezoneCanvas).toHaveBeenCalledTimes(1);
+
+    hook.unmount();
+  });
+
+  // Regression: on a slow link a PUT outlives the 800ms debounce, so two more
+  // debounced saves stack on the same in-flight promise. They used to resume in
+  // one microtask batch and both fire with the base_revision the first save had
+  // just published — the second earned a 409 and the UI blamed "another window"
+  // for a race the client created. Reproducible in the browser by throttling to
+  // 3G and dragging nodes.
+  it("serializes saves that stack behind a slow in-flight PUT", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 7,
+    });
+
+    const baseRevisions: Array<number | null> = [];
+    const nodeCounts: number[] = [];
+    const releases: Array<() => void> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let revision = 7;
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      (_project: string, _canvasId: string, payload: unknown) => {
+        const body = payload as {
+          base_revision?: number | null;
+          nodes?: unknown[];
+        };
+        baseRevisions.push(body.base_revision ?? null);
+        nodeCounts.push((body.nodes ?? []).length);
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        return new Promise((resolve) => {
+          releases.push(() => {
+            inFlight -= 1;
+            revision += 1;
+            resolve({ saved: true, revision });
+          });
+        });
+      },
+    );
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "slow_link_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(hook.result.current.status).toBe("ready");
+
+    // Three edits, each debounced out while the previous PUT is still hanging.
+    for (const x of [100, 200, 300]) {
+      useCanvasStore
+        .getState()
+        .addNode(CANVAS_NODE_TYPES.upload, { x, y: x }, {});
+      await act(async () => {
+        vi.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+    }
+
+    // Only the first save is on the wire; the other two collapse into one
+    // queued follow-up rather than stacking.
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(1);
+    expect(releases).toHaveLength(1);
+
+    // Release the in-flight save; the queued follow-up then goes out.
+    await act(async () => {
+      releases[0]();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(2);
+    expect(releases).toHaveLength(2);
+    await act(async () => {
+      releases[1]();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Three edits produce two PUTs, never concurrent, never sharing a
+    // base_revision — and the queued one carries the newest node set rather
+    // than the snapshot captured before it waited.
+    expect(putFreezoneCanvas).toHaveBeenCalledTimes(2);
+    expect(maxInFlight).toBe(1);
+    expect(baseRevisions).toEqual([7, 8]);
+    expect(nodeCounts).toEqual([1, 3]);
+    expect(useCanvasStore.getState().nodes).toHaveLength(3);
+    expect(hook.result.current.status).toBe("ready");
+
+    hook.unmount();
+  });
+
+  // A queued save wakes up holding refs that now describe a *different* canvas:
+  // FreezoneShell is mounted without a key, so switching canvases re-runs the
+  // hydrate effect against the same ref set. Re-reading the store at that point
+  // would PUT the new canvas's content under the old canvas's id.
+  it("drops a save queued across a canvas switch", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockImplementation(
+      async (_project: string, canvasId: string) => ({
+        nodes:
+          canvasId === "switch_target_user_eric"
+            ? [
+                {
+                  id: "b-node",
+                  type: CANVAS_NODE_TYPES.upload,
+                  position: { x: 0, y: 0 },
+                  data: { imageUrl: "/static/b.png" },
+                },
+              ]
+            : [],
+        edges: [],
+        revision: 7,
+      }),
+    );
+
+    const putCanvasIds: string[] = [];
+    const releases: Array<() => void> = [];
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      (_project: string, canvasId: string) => {
+        putCanvasIds.push(canvasId);
+        return new Promise((resolve) => {
+          releases.push(() => resolve({ saved: true, revision: 8 }));
+        });
+      },
+    );
+
+    const hook = renderHook(
+      ({ canvasId }: { canvasId: string }) =>
+        useCanvasSync("project-a", canvasId),
+      { initialProps: { canvasId: "switch_source_user_eric" } },
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Edit canvas A and let its save reach the wire.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putCanvasIds).toEqual(["switch_source_user_eric"]);
+
+    // A second edit queues behind it, then the user switches canvases.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 20, y: 20 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+
+    hook.rerender({ canvasId: "switch_target_user_eric" });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Canvas A's PUT finally lands; the queued save must not resume against
+    // canvas B's content.
+    await act(async () => {
+      releases[0]();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(putCanvasIds).toEqual(["switch_source_user_eric"]);
+
+    hook.unmount();
+  });
+
+  // Same shape as above, except the user *edits* the canvas they switched to
+  // while the old canvas's PUT is still hanging. Dropping the stale queued save
+  // must not drop the new canvas's edit with it. Save sessions are per-canvas,
+  // so canvas B does not queue behind canvas A at all — the backend lock is
+  // per-canvas, and making B wait out A's slow request buys nothing.
+  it("dispatches the new canvas's save without waiting for the old canvas's PUT", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockImplementation(
+      async (_project: string, canvasId: string) => ({
+        nodes:
+          canvasId === "cross_target_user_eric"
+            ? [
+                {
+                  id: "b-node",
+                  type: CANVAS_NODE_TYPES.upload,
+                  position: { x: 0, y: 0 },
+                  data: { imageUrl: "/static/b.png" },
+                },
+              ]
+            : [],
+        edges: [],
+        revision: canvasId === "cross_target_user_eric" ? 3 : 7,
+      }),
+    );
+
+    const putCanvasIds: string[] = [];
+    const putBaseRevisions: Array<number | null> = [];
+    const putNodeXs: number[][] = [];
+    const releases: Array<() => void> = [];
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      (_project: string, canvasId: string, payload: unknown) => {
+        const body = payload as {
+          base_revision?: number | null;
+          nodes?: Array<{ position?: { x?: number } }>;
+        };
+        putCanvasIds.push(canvasId);
+        putBaseRevisions.push(body.base_revision ?? null);
+        putNodeXs.push((body.nodes ?? []).map((node) => node.position?.x ?? -1));
+        return new Promise((resolve) => {
+          releases.push(() => resolve({ saved: true, revision: 42 }));
+        });
+      },
+    );
+
+    const hook = renderHook(
+      ({ canvasId }: { canvasId: string }) =>
+        useCanvasSync("project-a", canvasId),
+      { initialProps: { canvasId: "cross_source_user_eric" } },
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Canvas A: first edit reaches the wire and hangs there.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putCanvasIds).toEqual(["cross_source_user_eric"]);
+
+    // Canvas A: a second edit takes the single queue slot behind it.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 20, y: 20 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putCanvasIds).toHaveLength(1);
+
+    // Switch to canvas B, then edit it while canvas A's PUT is still hanging.
+    hook.rerender({ canvasId: "cross_target_user_eric" });
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 99, y: 99 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    // Canvas B's edit goes out on its own session, immediately.
+    expect(putCanvasIds).toEqual([
+      "cross_source_user_eric",
+      "cross_target_user_eric",
+    ]);
+    expect(putNodeXs).toEqual([[10], [0, 99]]);
+    // And it carries canvas B's own revision, not canvas A's.
+    expect(putBaseRevisions).toEqual([7, 3]);
+
+    // Canvas A's PUT finally lands. Its queued follow-up belongs to a canvas we
+    // left, so it must not produce a third request against canvas B.
+    await act(async () => {
+      releases[0]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(putCanvasIds).toHaveLength(2);
+
+    hook.unmount();
+  });
+
+  // Unmount is the third way a session can be orphaned (after a canvas switch
+  // and a remote refresh). The store is global, so whatever mounts next owns it;
+  // a queued save from the unmounted hook would read *that* content and PUT it
+  // to the canvas it left.
+  it("drops a queued save when the hook unmounts", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockImplementation(
+      async (_project: string, canvasId: string) => ({
+        nodes:
+          canvasId === "unmount_target_user_eric"
+            ? [
+                {
+                  id: "b-node",
+                  type: CANVAS_NODE_TYPES.upload,
+                  position: { x: 0, y: 0 },
+                  data: { imageUrl: "/static/b.png" },
+                },
+              ]
+            : [],
+        edges: [],
+        revision: canvasId === "unmount_target_user_eric" ? 3 : 7,
+      }),
+    );
+
+    const putCanvasIds: string[] = [];
+    const releases: Array<() => void> = [];
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      (_project: string, canvasId: string) => {
+        putCanvasIds.push(canvasId);
+        return new Promise((resolve) => {
+          releases.push(() => resolve({ saved: true, revision: 42 }));
+        });
+      },
+    );
+
+    const hookA = renderHook(() =>
+      useCanvasSync("project-a", "unmount_source_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Canvas A: one PUT on the wire, one save queued behind it.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 20, y: 20 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putCanvasIds).toEqual(["unmount_source_user_eric"]);
+
+    // Canvas A goes away and canvas B takes over the global store.
+    hookA.unmount();
+    const hookB = renderHook(() =>
+      useCanvasSync("project-a", "unmount_target_user_eric"),
+    );
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    // Canvas A's PUT finally answers. Draining its queue now would send canvas
+    // B's nodes to canvas A's id.
+    await act(async () => {
+      releases[0]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(putCanvasIds).toEqual(["unmount_source_user_eric"]);
+
+    hookB.unmount();
+  });
+
+  // A remote refresh rewrites revisionRef from the server. A PUT dispatched
+  // before that refresh comes back carrying an *older* revision; letting it
+  // land would roll the ref backwards and 409 the very next save.
+  it("ignores a save response that lands after a remote refresh", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 7,
+    });
+
+    const putBaseRevisions: Array<number | null> = [];
+    const releases: Array<(revision: number) => void> = [];
+    vi.mocked(putFreezoneCanvas).mockImplementation(
+      (_project: string, _canvasId: string, payload: unknown) => {
+        const body = payload as { base_revision?: number | null };
+        putBaseRevisions.push(body.base_revision ?? null);
+        return new Promise((resolve) => {
+          releases.push((revision: number) =>
+            resolve({ saved: true, revision }),
+          );
+        });
+      },
+    );
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "fence_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // An edit goes out against revision 7 and hangs on the wire.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(putBaseRevisions).toEqual([7]);
+
+    // Meanwhile the runtime pushes a much newer server state.
+    act(() => {
+      applyRemoteFreezoneCanvas("project-a", "fence_user_eric", {
+        nodes: [
+          {
+            id: "remote-node",
+            type: CANVAS_NODE_TYPES.upload,
+            position: { x: 0, y: 0 },
+            data: { imageUrl: "/static/remote.png" },
+          },
+        ],
+        edges: [],
+        revision: 100,
+      });
+    });
+    expect(hook.result.current.revision).toBe(100);
+
+    // The stale PUT finally answers with revision 8. It must not win.
+    await act(async () => {
+      releases[0](8);
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(hook.result.current.revision).toBe(100);
+
+    // And the next save must build on 100, not on the rolled-back 8.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 30, y: 30 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(putBaseRevisions).toEqual([7, 100]);
+
+    hook.unmount();
+  });
+
+  // The draft is the only copy of edits that have not reached the server. A
+  // save landing clears it — but only if nothing newer is still queued behind
+  // that save, otherwise the newest edit exists nowhere at all.
+  it("keeps the draft when newer content is still queued behind a save", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 7,
+    });
+
+    const releases: Array<() => void> = [];
+    let revision = 7;
+    vi.mocked(putFreezoneCanvas).mockImplementation(() => {
+      return new Promise((resolve) => {
+        releases.push(() => {
+          revision += 1;
+          resolve({ saved: true, revision });
+        });
+      });
+    });
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "draft_race_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // First edit: draft written, PUT on the wire.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(readCanvasDraft("project-a", "draft_race_user_eric")).not.toBeNull();
+
+    // Second edit while the first is still hanging: queued, draft-only.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 20, y: 20 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+
+    // First PUT succeeds. The draft must survive: it is the only copy of the
+    // second node until the queued save lands.
+    await act(async () => {
+      releases[0]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    const midFlight = readCanvasDraft("project-a", "draft_race_user_eric");
+    expect(midFlight?.nodes).toHaveLength(2);
+
+    // Once the queued save lands too, nothing is unsaved and the draft goes.
+    await act(async () => {
+      releases[1]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(readCanvasDraft("project-a", "draft_race_user_eric")).toBeNull();
+
+    hook.unmount();
+  });
+
+  // The session only learns about content that has reached `requestSave`. An
+  // edit still inside the autosave debounce has already been written to the
+  // draft but has no version yet, so "nothing newer is queued" is not enough to
+  // conclude the draft is redundant.
+  it("keeps the draft for an edit still inside the autosave debounce window", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      revision: 7,
+    });
+
+    const releases: Array<() => void> = [];
+    let revision = 7;
+    vi.mocked(putFreezoneCanvas).mockImplementation(() => {
+      return new Promise((resolve) => {
+        releases.push(() => {
+          revision += 1;
+          resolve({ saved: true, revision });
+        });
+      });
+    });
+
+    const hook = renderHook(() =>
+      useCanvasSync("project-a", "draft_debounce_user_eric"),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // First edit: draft written, PUT on the wire.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 10, y: 10 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      await Promise.resolve();
+    });
+    expect(releases).toHaveLength(1);
+
+    // Second edit: past the 300ms draft debounce, still short of the 800ms
+    // autosave debounce. The session has never heard of this content.
+    useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.upload, { x: 20, y: 20 }, {});
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+      await Promise.resolve();
+    });
+    expect(
+      readCanvasDraft("project-a", "draft_debounce_user_eric")?.nodes,
+    ).toHaveLength(2);
+
+    // The first save lands. It only ever carried one node, so the draft is
+    // still the sole copy of the second one.
+    await act(async () => {
+      releases[0]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(
+      readCanvasDraft("project-a", "draft_debounce_user_eric")?.nodes,
+    ).toHaveLength(2);
+
+    // Once the debounce elapses and that save lands too, the draft is redundant.
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    await act(async () => {
+      releases[1]();
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(readCanvasDraft("project-a", "draft_debounce_user_eric")).toBeNull();
 
     hook.unmount();
   });

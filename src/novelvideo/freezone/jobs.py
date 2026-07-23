@@ -136,9 +136,11 @@ async def run_freezone_mask_edit(
     provider_name = str(cfg.get("provider") or provider or "newapi").strip().lower()
     mask_prompt = (
         f"{prompt}\n\n"
-        "Use Image 1 as the source image. Use Image 2 as the edit mask reference. "
-        "Only modify the masked/transparent marked region; preserve all unmasked source pixels, "
-        "composition, identity, lighting, and texture as much as possible."
+        "Use Image 1 as the source image. Image 2 is the same image with a translucent RED "
+        "highlight painted over the region to edit. Edit ONLY the red-highlighted region; the "
+        "red highlight is just an annotation marking where to work and must NOT appear in the "
+        "output. Preserve all pixels outside the highlighted region — composition, identity, "
+        "lighting, and texture — as much as possible."
     ).strip()
     try:
         await generate_reference_edit_image(

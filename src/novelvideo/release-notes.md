@@ -1,31 +1,34 @@
 ---
-version: 1.1.3
+version: 1.1.4
 attention: low
 ---
-# v1.1.3
+# v1.1.4
 
 ## User-facing Highlights (zh)
 
-- **Piko 一下小游戏库**: 新增记忆翻牌、打砖块、滚动小球、飞行的 Piko、Piko 接物和 Piko 跃迁,支持键盘与鼠标操作、音效、计分和重新挑战。
-- **自定义风格预览可持久保存**: 用户上传的风格参考图会随项目保存,刷新后仍可在风格列表和详情中查看。
-- **生成失败提示更清楚**: 图片和视频生成失败时优先展示简洁的上游错误原因,同时保留完整诊断信息供复制排查。
+- **知识图谱可视化**: 小说导入完成后可直接查看知识图谱,支持缩放、拖动、展开节点并检查关系和属性。
+- **图片与视频构图更准确**: Seedance 首帧、Beat 渲染和视频裁剪会遵循实际素材或所选输出比例,蒙版编辑也能更准确识别指定区域。
+- **知识图谱构建更稳定**: 项目会固定使用对应的嵌入模型与网关,并限制并发请求,减少配置变化、并行任务和上游限流造成的失败。
+- **操作前置校验更清楚**: 未导入小说时规划角色、场景或剧集会直接提示先导入内容,不会创建无效任务或产生扣费。
 
 ## User-facing Highlights (en)
 
-- **Piko mini game library**: Adds memory match, breakout, rolling ball, Flying Piko, Piko catch, and Piko leap with keyboard and pointer controls, sound, scoring, and replay.
-- **Persistent custom style previews**: User-uploaded style references are saved with the project and remain visible in style lists and details after refresh.
-- **Clearer generation failures**: Image and video failures now show concise provider messages while preserving complete diagnostics for troubleshooting.
+- **Knowledge graph visualization**: Explore the imported novel's knowledge graph with pan, zoom, node expansion, relationships, and property details.
+- **More accurate image and video framing**: Seedance first frames, Beat renders, and video crops now follow the actual source or selected output ratio, while mask edits identify the intended region more reliably.
+- **More reliable knowledge graph builds**: Projects retain their assigned embedding model and gateway, with bounded concurrency to reduce failures from configuration changes, parallel work, and upstream rate limits.
+- **Clearer prerequisite checks**: Character, scene, and episode planning now asks for an imported novel before creating a task or reserving credits.
 
 ## New Features
 
-- 扩展「Piko 一下」为可滚动的小游戏库,新增六款轻量小游戏及统一音效控制 (#155, #156).
+- 新增导入小说知识图谱的交互式可视化,支持查看节点、关系和属性 (#161).
 
 ## Bug Fixes
 
-- 修复自定义风格参考图刷新后丢失、预览地址错误及异常响应仍继续分析的问题 (#153, Fixes #152).
-- 优化图片和视频生成失败提示,保留完整错误与请求 ID 供复制排查 (#154).
-- 修复任务中心「图片反推提示词」显示为内部英文任务名的问题 (#146).
+- 未导入小说时阻止角色、场景和剧集规划,避免无效任务及扣费 (#162).
+- 修复 Seedance 首帧方向、Beat 渲染比例和视频输入裁剪与目标比例不一致的问题 (#166, #167, #168).
+- 修复不同项目的知识图谱嵌入模型和网关配置相互影响的问题 (#170).
+- 修复蒙版编辑区域仅存在于透明通道、视觉模型无法准确定位的问题 (#174).
 
 ## Improvements
 
-- 按运营计划下线猎魈人推广入口与相关展示,保留独立的社区作品内容 (#145).
+- 限制单次知识图谱流水线的模型与嵌入并发请求,降低上游限流导致的导入失败 (#171).
