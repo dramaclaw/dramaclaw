@@ -827,6 +827,75 @@ async def test_newapi_grok_video_channel_uses_relayclaw_video_payload(tmp_path, 
     assert "watermark" not in metadata
 
 
+async def test_newapi_catalog_model_builds_vendor_neutral_multimedia_references():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator, ShotReference
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="kling-v3-omni",
+    )
+    payload: dict[str, object] = {}
+    metadata: dict[str, object] = {}
+
+    await generator._apply_generic_reference_inputs(
+        payload,
+        metadata,
+        image_path="https://example.com/first.png",
+        last_frame_path="https://example.com/last.png",
+        references=[
+            ShotReference("image", "https://example.com/first.png", "首帧"),
+            ShotReference("image", "https://example.com/ref.png", "角色参考"),
+            ShotReference("video", "https://example.com/input.mp4", "视频编辑源"),
+            ShotReference("audio", "https://example.com/input.mp3", "音频参考"),
+        ],
+        log=lambda _message: None,
+    )
+
+    assert payload["image"] == "https://example.com/first.png"
+    assert payload["images"] == [
+        "https://example.com/first.png",
+        "https://example.com/ref.png",
+        "https://example.com/last.png",
+    ]
+    assert metadata["image_url"] == "https://example.com/first.png"
+    assert metadata["end_image_url"] == "https://example.com/last.png"
+    assert metadata["image_urls"] == payload["images"]
+    assert metadata["reference_images"] == payload["images"]
+    assert metadata["video_url"] == "https://example.com/input.mp4"
+    assert metadata["video_urls"] == ["https://example.com/input.mp4"]
+    assert metadata["reference_videos"] == ["https://example.com/input.mp4"]
+    assert metadata["audio_urls"] == ["https://example.com/input.mp3"]
+    assert metadata["reference_audios"] == ["https://example.com/input.mp3"]
+    assert metadata["content"] == [
+        {
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/first.png"},
+            "role": "first_frame",
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/ref.png"},
+            "role": "角色参考",
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/last.png"},
+            "role": "last_frame",
+        },
+        {
+            "type": "video_url",
+            "video_url": {"url": "https://example.com/input.mp4"},
+            "role": "视频编辑源",
+        },
+        {
+            "type": "audio_url",
+            "audio_url": {"url": "https://example.com/input.mp3"},
+            "role": "音频参考",
+        },
+    ]
+
+
 async def test_newapi_video_relay_frame_input_normalizes_local_image_refs(
     tmp_path, monkeypatch
 ):

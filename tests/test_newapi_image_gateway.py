@@ -335,6 +335,49 @@ def test_seedream5_newapi_size_meets_volcengine_pixel_floor(resolution, ratio):
     assert width * height >= 3_686_400
 
 
+@pytest.mark.parametrize(
+    ("resolution", "ratio", "expected"),
+    [
+        ("8K", "16:9", "8192x4608"),
+        ("5.5K", "1:1", "5632x5632"),
+        ("2048x1152", "1:1", "2048x1152"),
+    ],
+)
+def test_newapi_image_size_supports_dynamic_admin_resolutions(
+    resolution,
+    ratio,
+    expected,
+):
+    from novelvideo.generators.nanobanana_grid import resolve_openai_image_size
+
+    assert (
+        resolve_openai_image_size(
+            ratio,
+            resolution,
+            "future-image-model",
+            allow_dynamic_resolution=True,
+        )
+        == expected
+    )
+
+
+def test_newapi_image_call_rejects_unrecognized_admin_resolution():
+    from novelvideo.generators import nanobanana_grid
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="newapi-token",
+            model="future-image-model",
+            prompt="prompt",
+            image_config={"aspect_ratio": "16:9", "image_size": "ultra"},
+            base_url="http://newapi.test/v1",
+        )
+    )
+
+    assert image_bytes is None
+    assert "unsupported image resolution: ultra" in error
+
+
 def test_newapi_seedream5_sends_3k_resolution(monkeypatch):
     import httpx
     from novelvideo.generators import nanobanana_grid

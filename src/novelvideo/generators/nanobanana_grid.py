@@ -328,7 +328,7 @@ def normalize_image_size(size: str, provider: str = "google") -> str:
 def _newapi_resolution_from_image_size(image_size: str | None) -> str:
     normalized = normalize_image_size(str(image_size or "").strip(), provider="newapi")
     lower = normalized.lower()
-    return lower if lower in {"1k", "2k", "3k", "4k"} else ""
+    return lower if re.fullmatch(r"\d+(?:\.\d+)?k", lower) else ""
 
 
 def _newapi_image_model_supports_quality(model: str | None) -> bool:
@@ -380,6 +380,8 @@ def resolve_openai_image_size(
     aspect_ratio: str = "1:1",
     image_size: str = "1K",
     model: str | None = None,
+    *,
+    allow_dynamic_resolution: bool = False,
 ) -> str:
     """Map internal aspect/image_size labels to GPT Image 2 size strings.
 
@@ -418,9 +420,34 @@ def resolve_openai_image_size(
         # Volcengine Seedream 5 defines 2K with a 3,686,400-pixel floor
         # (2560x1440 at 16:9), rather than a literal 2048px long edge.
         long_edges["2K"] = 2560
-    long_edge = long_edges.get(normalized_size, 1024)
+    long_edge = long_edges.get(normalized_size)
+    dynamic_max_edge = _OPENAI_MAX_EDGE
+    dynamic_max_pixels = _OPENAI_MAX_PIXELS
+    if long_edge is None and allow_dynamic_resolution:
+        explicit_size = re.fullmatch(r"(\d+)\s*[xX×]\s*(\d+)", normalized_size)
+        if explicit_size:
+            width_i, height_i = (int(value) for value in explicit_size.groups())
+            if width_i <= 0 or height_i <= 0:
+                raise ValueError(f"invalid image resolution: {image_size}")
+            return f"{width_i}x{height_i}"
+        k_size = re.fullmatch(r"(\d+(?:\.\d+)?)\s*[kK]", normalized_size)
+        if k_size:
+            long_edge = max(16, _round_openai_edge(float(k_size.group(1)) * 1024))
+            dynamic_max_edge = long_edge
+            dynamic_max_pixels = long_edge * long_edge
+        else:
+            raise ValueError(
+                f"unsupported image resolution: {image_size}; "
+                "use a value such as 2K, 3K, 8K, or 2048x2048"
+            )
+    if long_edge is None:
+        long_edge = 1024
     min_pixels = 3_686_400 if is_seedream5 else _OPENAI_MIN_PIXELS
-    max_pixels = 16_777_216 if is_seedream5 else _OPENAI_MAX_PIXELS
+    max_pixels = (
+        16_777_216
+        if is_seedream5
+        else dynamic_max_pixels
+    )
 
     if ratio >= 1:
         width = float(long_edge)
@@ -439,13 +466,13 @@ def resolve_openai_image_size(
         width *= scale
         height *= scale
 
-    width_i = min(_OPENAI_MAX_EDGE, _round_openai_edge(width))
-    height_i = min(_OPENAI_MAX_EDGE, _round_openai_edge(height))
+    width_i = min(dynamic_max_edge, _round_openai_edge(width))
+    height_i = min(dynamic_max_edge, _round_openai_edge(height))
 
     if width_i * height_i < min_pixels:
         scale = math.sqrt(min_pixels / max(1, width_i * height_i))
-        width_i = min(_OPENAI_MAX_EDGE, _round_openai_edge(width_i * scale))
-        height_i = min(_OPENAI_MAX_EDGE, _round_openai_edge(height_i * scale))
+        width_i = min(dynamic_max_edge, _round_openai_edge(width_i * scale))
+        height_i = min(dynamic_max_edge, _round_openai_edge(height_i * scale))
 
     return f"{width_i}x{height_i}"
 
@@ -3319,7 +3346,15 @@ async def _call_newapi_image_api(
     image_config = image_config or {}
     aspect_ratio = str(image_config.get("aspect_ratio") or "1:1").strip() or "1:1"
     image_size = normalize_image_size(str(image_config.get("image_size") or "1K"), "newapi")
-    size = resolve_openai_image_size(aspect_ratio, image_size, model)
+    try:
+        size = resolve_openai_image_size(
+            aspect_ratio,
+            image_size,
+            model,
+            allow_dynamic_resolution=True,
+        )
+    except ValueError as exc:
+        return None, "", str(exc)
     extra_fields: dict[str, object] = {
         "aspect_ratio": aspect_ratio,
         "image_size": image_size,

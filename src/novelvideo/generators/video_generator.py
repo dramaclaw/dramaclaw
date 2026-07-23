@@ -1973,6 +1973,92 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             image_transform=image_transform,
         )
 
+    async def _apply_generic_reference_inputs(
+        self,
+        payload: dict[str, object],
+        metadata: dict[str, object],
+        *,
+        image_path: str,
+        last_frame_path: str | None,
+        references: object,
+        log: Callable[[str], None],
+    ) -> None:
+        """Populate RelayClaw's vendor-neutral media fields for catalog models."""
+
+        raw_items: list[tuple[str, str, str]] = []
+        if image_path:
+            raw_items.append(("image", image_path, "first_frame"))
+        for ref in references if isinstance(references, list) else []:
+            media_type = str(getattr(ref, "type", "") or "image").strip().lower()
+            path = str(getattr(ref, "path", "") or "").strip()
+            role = str(getattr(ref, "role", "") or "").strip()
+            if path and media_type in {"image", "video", "audio"}:
+                raw_items.append((media_type, path, role))
+        if last_frame_path:
+            raw_items.append(("image", str(last_frame_path), "last_frame"))
+
+        seen: set[tuple[str, str]] = set()
+        relayed: dict[str, list[tuple[str, str]]] = {
+            "image": [],
+            "video": [],
+            "audio": [],
+        }
+        for media_type, path, role in raw_items:
+            identity = (media_type, path)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if media_type == "image":
+                url = await self._relay_frame_input(path)
+            else:
+                url = await self._relay_media_input(
+                    path,
+                    default_ext="mp4" if media_type == "video" else "mp3",
+                )
+            if not path.startswith(("http://", "https://")):
+                log(f"{media_type} 参考素材已上传到媒体中转")
+            relayed[media_type].append((url, role))
+
+        image_urls = [url for url, _role in relayed["image"]]
+        video_urls = [url for url, _role in relayed["video"]]
+        audio_urls = [url for url, _role in relayed["audio"]]
+        if image_urls:
+            payload["image"] = image_urls[0]
+            payload["images"] = image_urls
+            metadata["image_url"] = image_urls[0]
+            metadata["image_urls"] = image_urls
+            metadata["reference_images"] = image_urls
+        last_frame = next(
+            (
+                url
+                for url, role in relayed["image"]
+                if "尾帧" in role or role.lower() == "last_frame"
+            ),
+            "",
+        )
+        if last_frame:
+            metadata["end_image_url"] = last_frame
+        if video_urls:
+            metadata["video_url"] = video_urls[0]
+            metadata["video_urls"] = video_urls
+            metadata["reference_videos"] = video_urls
+        if audio_urls:
+            metadata["audio_urls"] = audio_urls
+            metadata["reference_audios"] = audio_urls
+
+        content: list[dict[str, object]] = []
+        for media_type in ("image", "video", "audio"):
+            for url, role in relayed[media_type]:
+                item: dict[str, object] = {
+                    "type": f"{media_type}_url",
+                    f"{media_type}_url": {"url": url},
+                }
+                if role:
+                    item["role"] = role
+                content.append(item)
+        if content:
+            metadata["content"] = content
+
     def _duration_bounds(self) -> tuple[int, int]:
         from novelvideo.config import NEWAPI_VIDEO_DURATION_BOUNDS
 
@@ -2453,53 +2539,20 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             payload["seconds"] = str(seedance2_params.pop("duration"))
             metadata.update(seedance2_params)
         else:
-            if last_frame_path:
-                if not image_path:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error="First frame is required when last_frame_path is provided",
-                    )
-                try:
-                    first_frame = await self._relay_frame_input(image_path)
-                    if not image_path.startswith(("http://", "https://")):
-                        log("首帧已上传到媒体中转")
-                except Exception as exc:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error=f"media relay upload failed: {exc}",
-                    )
-                try:
-                    last_frame = await self._relay_frame_input(str(last_frame_path))
-                    if not str(last_frame_path).startswith(("http://", "https://")):
-                        log("尾帧已上传到媒体中转")
-                except Exception as exc:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error=f"media relay upload failed: {exc}",
-                    )
-                metadata["content"] = [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": first_frame},
-                        "role": "first_frame",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": last_frame},
-                        "role": "last_frame",
-                    },
-                ]
-            elif image_path:
-                try:
-                    first_frame = await self._relay_frame_input(image_path)
-                    if not image_path.startswith(("http://", "https://")):
-                        log("首帧已上传到媒体中转")
-                except Exception as exc:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error=f"media relay upload failed: {exc}",
-                    )
-                payload["images"] = [first_frame]
+            try:
+                await self._apply_generic_reference_inputs(
+                    payload,
+                    metadata,
+                    image_path=image_path,
+                    last_frame_path=last_frame_path,
+                    references=kwargs.get("references"),
+                    log=log,
+                )
+            except Exception as exc:
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error=f"media relay upload failed: {exc}",
+                )
 
         task_id: str | None = None
         provider_request_id = ""
