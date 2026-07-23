@@ -256,6 +256,131 @@ def test_newapi_sketch_config_can_use_dc_banana2_without_quality(monkeypatch):
     }
 
 
+def test_catalog_can_enable_arbitrary_newapi_image_quality(monkeypatch):
+    import httpx
+    from novelvideo.generators import nanobanana_grid
+
+    posted = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"b64_json": base64.b64encode(b"image").decode()}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            posted["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="newapi-token",
+            model="Seedream-Custom",
+            prompt="prompt",
+            image_config={
+                "aspect_ratio": "adaptive",
+                "image_size": "3K",
+                "quality": "ultra",
+                "request_schema": {
+                    "endpoint": "images/generations",
+                    "parameters": [],
+                    "includeQuality": True,
+                },
+            },
+            base_url="http://newapi.test/v1",
+        )
+    )
+
+    assert image_bytes == b"image"
+    assert error == ""
+    assert posted["json"]["model"] == "Seedream-Custom"
+    assert posted["json"]["quality"] == "ultra"
+    assert posted["json"]["extra_fields"]["image_size"] == "3K"
+    assert posted["json"]["extra_fields"]["aspect_ratio"] == "adaptive"
+
+
+@pytest.mark.parametrize(
+    ("resolution", "ratio"),
+    [
+        ("2K", "16:9"),
+        ("2K", "21:9"),
+        ("3K", "16:9"),
+    ],
+)
+def test_seedream5_newapi_size_meets_volcengine_pixel_floor(resolution, ratio):
+    from novelvideo.generators.nanobanana_grid import resolve_openai_image_size
+
+    width, height = (
+        int(value)
+        for value in resolve_openai_image_size(
+            ratio,
+            resolution,
+            "seedream-5.0-lite",
+        ).split("x")
+    )
+
+    assert width * height >= 3_686_400
+
+
+def test_newapi_seedream5_sends_3k_resolution(monkeypatch):
+    import httpx
+    from novelvideo.generators import nanobanana_grid
+
+    posted = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"b64_json": base64.b64encode(b"image").decode()}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            posted["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="newapi-token",
+            model="seedream-5.0-lite",
+            prompt="prompt",
+            image_config={"aspect_ratio": "16:9", "image_size": "3K"},
+            base_url="http://newapi.test/v1",
+        )
+    )
+
+    assert image_bytes == b"image"
+    assert error == ""
+    assert posted["json"]["extra_fields"]["resolution"] == "3k"
+    width, height = (int(value) for value in posted["json"]["size"].split("x"))
+    assert width * height >= 3_686_400
+
+
 def test_newapi_image_call_sends_gpt_image2_params(monkeypatch):
     import httpx
     from novelvideo.generators import nanobanana_grid
@@ -1297,7 +1422,9 @@ def test_freezone_single_image_generation_routes_newapi(monkeypatch, tmp_path):
         captured.update(kwargs)
         return b"freezone-image", "", ""
 
-    monkeypatch.setattr(nanobanana_grid, "_call_newapi_image_api", fake_call_newapi_image_api)
+    monkeypatch.setattr(
+        nanobanana_grid, "_call_newapi_image_api", fake_call_newapi_image_api
+    )
 
     output_path = tmp_path / "freezone.png"
     image_path = run_async(
@@ -1334,6 +1461,8 @@ def test_freezone_single_image_generation_routes_newapi(monkeypatch, tmp_path):
         "aspect_ratio": "1:1",
         "image_size": "2K",
         "quality": "medium",
+    "request_schema": {},
+        "model_params": {},
     }
 
 

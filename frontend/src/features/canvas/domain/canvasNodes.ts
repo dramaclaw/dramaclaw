@@ -52,8 +52,8 @@ export const IMAGE_ASPECT_RATIOS = [
 
 export type ImageSize = (typeof IMAGE_SIZES)[number];
 
-/** Image quality preset, only honored by image2 models (gpt-image-2). */
-export type ImageQuality = 'low' | 'medium' | 'high';
+/** Image quality value advertised by the selected media model. */
+export type ImageQuality = string;
 
 export interface NodeDisplayData {
   displayName?: string;
@@ -89,7 +89,7 @@ export type VideoGenMode =
   | 'imageReference'
   | 'videoEdit';
 
-export type VideoGenQuality = '480P' | '720P' | '1080P';
+export type VideoGenQuality = string;
 export type VideoGenCount = 1 | 2 | 4;
 export type Seedance2SceneOptimize = 'anime' | 'realistic';
 
@@ -135,6 +135,7 @@ export interface VideoNodeData extends NodeDisplayData {
   quality?: VideoGenQuality;
   durationSec?: number;
   generateAudio?: boolean;
+  modelParams?: Record<string, unknown>;
   /**
    * 真人素材审核开关。仅 Seedance 2.0 视频模型展示。开启后请求体里
    * `human_review: true`，素材含真实人脸时降低被拦截概率（不保证通过、可能增加审核时间）。
@@ -344,6 +345,7 @@ export interface ImageGenNodeData extends NodeImageData {
   generationBatch?: string[] | null;
   /** Quality preset for image2 models; defaults to 'medium' when unset. */
   quality?: ImageQuality;
+  modelParams?: Record<string, unknown>;
   requestAspectRatio?: string;
   count?: ImageGenCount;
   styleTemplateId?: string | null;

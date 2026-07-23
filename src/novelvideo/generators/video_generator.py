@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import aiohttp
 import websockets
@@ -1784,6 +1784,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         model: Optional[str] = None,
         resolution: Optional[str] = None,
         generate_audio: Optional[bool] = None,
+    model_params: Optional[dict[str, Any]] = None,
+        request_schema: Optional[dict[str, Any]] = None,
     ):
         from novelvideo.config import (
             NEWAPI_VIDEO_MODEL,
@@ -1796,7 +1798,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         self.base_url = (endpoint or gateway.base_url).rstrip("/")
         self.model = model or NEWAPI_VIDEO_MODEL
         self.resolution = resolution or NEWAPI_VIDEO_RESOLUTION
-        raw_generate_audio = os.environ.get("NEWAPI_VIDEO_GENERATE_AUDIO", "").strip().lower()
+        self.model_params = model_params or {}
+        self.request_schema = request_schema or {}
+        raw_generate_audio = (
+            os.environ.get("NEWAPI_VIDEO_GENERATE_AUDIO", "").strip().lower()
+        )
         if generate_audio is not None:
             self.generate_audio = generate_audio
         elif raw_generate_audio == "auto" or not raw_generate_audio:
@@ -1805,7 +1811,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             self.generate_audio = raw_generate_audio in {"true", "1", "yes", "on"}
 
         if not self.api_key:
-            raise ValueError("DramaClawAPI key must be set for DramaClawAPI video generation")
+            raise ValueError(
+                "DramaClawAPI key must be set for DramaClawAPI video generation"
+            )
 
     @staticmethod
     def _extract_request_id(text: str = "", headers: object | None = None) -> str:
@@ -2259,7 +2267,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             # image_path 是 run_freezone_video_gen 无条件传进来的「首张图」。仅当它
             # 还没作为参考图存在时，才把它被动提升为首帧——否则参考模式(所有图都在
             # reference_image_paths 里)会把首张图重复算一次（首帧位 + 参考位）。
-            if not first_frame_path and image_path and image_path not in reference_image_paths:
+            if (
+                not first_frame_path and image_path and image_path not in reference_image_paths
+            ):
                 first_frame_path = image_path
 
             # HappyHorse 没有尾帧能力，且把尾帧混进 reference_images 会误触发 r2v，
@@ -2361,13 +2371,17 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
         elif is_seedance2_model:
             try:
-                first_frame = await self._relay_frame_input(image_path) if image_path else ""
+                first_frame = (
+                    await self._relay_frame_input(image_path) if image_path else ""
+                )
                 if image_path and not image_path.startswith(("http://", "https://")):
                     log("首帧已上传到媒体中转")
                 last_frame = (
                     await self._relay_frame_input(str(last_frame_path)) if last_frame_path else ""
                 )
-                if last_frame_path and not str(last_frame_path).startswith(("http://", "https://")):
+                if last_frame_path and not str(last_frame_path).startswith(
+                    ("http://", "https://")
+                ):
                     log("尾帧已上传到媒体中转")
                 reference_params = await self._relay_seedance2_references(
                     kwargs.get("references") or [],
@@ -2413,7 +2427,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             if "return_last_frame" not in seedance2_config:
                 seedance2_config["return_last_frame"] = False
             if "human_review" not in seedance2_config:
-                seedance2_config["human_review"] = bool(kwargs.get("human_review", False))
+                seedance2_config["human_review"] = bool(
+                    kwargs.get("human_review", False)
+                )
                 seedance2_config["human_review_user_set"] = True
             elif "human_review_user_set" not in seedance2_config:
                 seedance2_config["human_review_user_set"] = True
@@ -2490,8 +2506,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         reservation_id = ""
         try:
             model_label = self._model_label(self.model)
-            request_resolution = str(metadata.get("resolution") or self.resolution or "").strip()
-            log(f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})...")
+            request_resolution = str(
+                metadata.get("resolution") or self.resolution or ""
+            ).strip()
+            log(
+                f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})..."
+            )
             progress(0.1)
             reservation_id = await _reserve_video_model_call(
                 self.model,
@@ -2499,7 +2519,14 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 resolution=request_resolution,
                 duration_seconds=duration,
             )
-            submitted = await self._post_json(f"{self.base_url}/video/generations", payload)
+            from novelvideo.media_model_request_schema import apply_media_request_schema
+
+            payload = apply_media_request_schema(
+                payload, self.request_schema, self.model_params
+            )
+            submitted = await self._post_json(
+                f"{self.base_url}/video/generations", payload
+            )
             task_id = str(submitted.get("id") or submitted.get("task_id") or "")
             provider_request_id = str(submitted.get("_newapi_request_id") or "").strip()
             if not task_id:
@@ -2526,7 +2553,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     progress(0.9)
                     video_url = self._extract_video_url(task)
                     if not video_url:
-                        update_request_status(task_id, "failed", "No video url in DramaClawAPI result")
+                        update_request_status(
+                            task_id, "failed", "No video url in DramaClawAPI result"
+                        )
                         await _refund_video_model_call(
                             reservation_id,
                             source="newapi_video_generation",
@@ -2550,9 +2579,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     if bool(metadata.get("return_last_frame")):
                         last_frame_url = self._extract_returned_last_frame_url(task)
                         if last_frame_url:
-                            last_frame_output_path = self._returned_last_frame_output_path(
+                            last_frame_output_path = (
+                                self._returned_last_frame_output_path(
                                 output_path,
                                 last_frame_url,
+                            )
                             )
                             await self._download_video(
                                 last_frame_url,
@@ -2604,7 +2635,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     )
                 await asyncio.sleep(poll_interval)
 
-            update_request_status(task_id, "failed", "Timeout waiting for DramaClawAPI video task")
+            update_request_status(
+                task_id, "failed", "Timeout waiting for DramaClawAPI video task"
+            )
             await _refund_video_model_call(
                 reservation_id,
                 source="newapi_video_generation",
@@ -3562,12 +3595,13 @@ NEWAPI_DISABLED_VIDEO_MODELS = {"grok-video-channel"}
 
 
 def parse_newapi_video_backend(backend: str | None) -> str | None:
-    value = str(backend or "").strip().lower()
-    if value == "newapi":
+    value = str(backend or "").strip()
+    lowered = value.lower()
+    if lowered == "newapi":
         from novelvideo.config import NEWAPI_VIDEO_MODEL
 
         return NEWAPI_VIDEO_MODEL
-    if value.startswith(NEWAPI_VIDEO_BACKEND_PREFIX):
+    if lowered.startswith(NEWAPI_VIDEO_BACKEND_PREFIX):
         model = value[len(NEWAPI_VIDEO_BACKEND_PREFIX) :].strip()
         return model or None
     return None
@@ -3592,8 +3626,13 @@ def _coerce_video_backend_value(backend: VideoBackend | str | None) -> str:
         backend = os.environ.get("VIDEO_BACKEND", "comfyui")
     if isinstance(backend, VideoBackend):
         return backend.value
-    value = str(backend).strip().lower()
-    return "comfyui" if value == "jimeng" else value
+    value = str(backend).strip()
+    lowered = value.lower()
+    if lowered.startswith(NEWAPI_VIDEO_BACKEND_PREFIX):
+        return (
+            f"{NEWAPI_VIDEO_BACKEND_PREFIX}{value[len(NEWAPI_VIDEO_BACKEND_PREFIX) :]}"
+        )
+    return "comfyui" if lowered == "jimeng" else lowered
 
 
 def create_video_generator(

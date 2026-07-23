@@ -453,6 +453,7 @@ class FreezoneGenRequest(BaseModel):
         default=None, description="可选：注册表模型 id，用于还原节点时回填 model"
     )
     gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    model_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class FreezoneEditRequest(BaseModel):
@@ -1008,11 +1009,11 @@ class FreezoneVideoGenRequest(BaseModel):
         default_factory=list,
         description="局部元素标记列表。来自前端点击图片选中的主体/物体局部区域，不是普通 tags",
     )
-    aspect_ratio: Literal["auto", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"] = Field(
+    aspect_ratio: str = Field(
         default="16:9",
         description="视频比例；auto 当前回退为 16:9",
     )
-    resolution: Literal["480p", "720p", "1080p"] = Field(
+    resolution: str = Field(
         default="720p",
         description="输出清晰度档位",
     )
@@ -1037,6 +1038,7 @@ class FreezoneVideoGenRequest(BaseModel):
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
     gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    model_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class FreezoneImageToVideoRequest(BaseModel):
@@ -1060,11 +1062,11 @@ class FreezoneImageToVideoRequest(BaseModel):
         default_factory=list,
         description="局部元素标记列表。来自前端点击图片选中的主体/物体局部区域，不是普通 tags",
     )
-    aspect_ratio: Literal["auto", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"] = Field(
+    aspect_ratio: str = Field(
         default="16:9",
         description="视频比例；auto 当前回退为 16:9",
     )
-    resolution: Literal["480p", "720p", "1080p"] = Field(
+    resolution: str = Field(
         default="720p",
         description="输出清晰度档位",
     )
@@ -1089,6 +1091,7 @@ class FreezoneImageToVideoRequest(BaseModel):
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
     gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    model_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class FreezoneKeyframeVideoRequest(BaseModel):
@@ -1114,11 +1117,11 @@ class FreezoneKeyframeVideoRequest(BaseModel):
         default_factory=list,
         description="局部元素标记列表。来自前端点击图片选中的主体/物体局部区域，不是普通 tags",
     )
-    aspect_ratio: Literal["auto", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"] = Field(
+    aspect_ratio: str = Field(
         default="16:9",
         description="视频比例；auto 当前回退为 16:9",
     )
-    resolution: Literal["480p", "720p", "1080p"] = Field(
+    resolution: str = Field(
         default="720p",
         description="输出清晰度档位",
     )
@@ -1143,6 +1146,7 @@ class FreezoneKeyframeVideoRequest(BaseModel):
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
     gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    model_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class FreezoneVideoEditRequest(BaseModel):
@@ -1165,11 +1169,11 @@ class FreezoneVideoEditRequest(BaseModel):
         default_factory=list,
         description="局部元素标记列表",
     )
-    aspect_ratio: Literal["auto", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"] = Field(
+    aspect_ratio: str = Field(
         default="16:9",
         description="视频比例；视频编辑画幅由源视频决定，此字段仅占位",
     )
-    resolution: Literal["480p", "720p", "1080p"] = Field(
+    resolution: str = Field(
         default="720p",
         description="输出清晰度档位",
     )
@@ -1194,6 +1198,7 @@ class FreezoneVideoEditRequest(BaseModel):
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
     gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    model_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class FreezoneVideoReferenceItem(BaseModel):
@@ -1325,11 +1330,11 @@ class FreezoneVideoOmniGenRequest(BaseModel):
         default_factory=list,
         description="局部元素标记列表。来自前端点击图片选中的主体/物体局部区域，不是普通 tags",
     )
-    aspect_ratio: Literal["auto", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"] = Field(
+    aspect_ratio: str = Field(
         default="16:9",
         description="视频比例；auto 当前回退为 16:9",
     )
-    resolution: Literal["480p", "720p", "1080p"] = Field(
+    resolution: str = Field(
         default="720p",
         description="输出清晰度档位",
     )
@@ -1354,6 +1359,7 @@ class FreezoneVideoOmniGenRequest(BaseModel):
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
     gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    model_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class FreezoneVideoEraseRequest(BaseModel):

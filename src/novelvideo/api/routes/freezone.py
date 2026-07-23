@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import Annotated, Any, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, unquote, urlencode, urlsplit
 
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile,
+)
 from fastapi.responses import FileResponse
 
 from novelvideo.api.auth import get_api_user
@@ -77,10 +79,18 @@ from novelvideo.api.schemas import (
     ProjectionStatusRequest,
     PushRequest,
 )
-from novelvideo.config import IMAGE_GENERATION_SELECTIONS, image_generation_selection_options
+from novelvideo.config import (
+    IMAGE_GENERATION_SELECTIONS, image_generation_selection_options,
+)
 from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
 from novelvideo.freezone import canvas_store
+from novelvideo.media_model_request_schema import (
+    MediaModelSchemaError,
+    media_request_schema_for_mode,
+    validate_media_model_params,
+    validate_media_request_schema,
+)
 from novelvideo.freezone.audio_node import (
     create_user_audio_voice,
     freezone_audio_eleven_music_output_path,
@@ -249,7 +259,9 @@ from novelvideo.project_context import (
 )
 from novelvideo.seedance2_i2v.voice_clone import resolve_character_voice
 from novelvideo.ports import get_task_backend
-from novelvideo.task_backend.limits import ProjectTaskLimitExceeded, ProjectUserTaskLimitExceeded
+from novelvideo.task_backend.limits import (
+    ProjectTaskLimitExceeded, ProjectUserTaskLimitExceeded,
+)
 from novelvideo.task_identity import (
     project_task_state_key,
     selection_scope,
@@ -329,6 +341,8 @@ async def _start_or_enqueue_freezone_video_gen(
     node_id: str | None = None,
     model_id: str | None = None,
     gen_mode: str | None = None,
+model_params: dict[str, Any] | None = None,
+    request_schema: dict[str, Any] | None = None,
 ) -> dict:
     payload = {
         "job_id": job_id,
@@ -343,11 +357,15 @@ async def _start_or_enqueue_freezone_video_gen(
         "duration_seconds": duration_seconds,
         "generate_audio": generate_audio,
         "human_review": human_review,
-        "scene_optimize": normalize_freezone_seedance2_scene_optimize(backend, scene_optimize),
+        "scene_optimize": normalize_freezone_seedance2_scene_optimize(
+            backend, scene_optimize
+        ),
         "backend": backend,
         "last_frame_path": last_frame_path,
         "audio_setting": audio_setting or "",
         "project_dir": str(project_dir),
+    "model_params": model_params or {},
+        "request_schema": request_schema or {},
     }
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
@@ -440,6 +458,8 @@ async def _start_or_enqueue_freezone_gen_job(
     model_id: str | None = None,
     gen_mode: str | None = None,
     task_display: dict[str, str] | None = None,
+    model_params: dict[str, Any] | None = None,
+    request_schema: dict[str, Any] | None = None,
 ) -> dict:
     reference_paths = _resolve_url_list(project_dir, reference_urls)
     for path_text in reference_paths:
@@ -476,6 +496,8 @@ async def _start_or_enqueue_freezone_gen_job(
                 "node_id": node_id or "",
                 "model_id": model_id or "",
                 "gen_mode": gen_mode or "",
+                "model_params": model_params or {},
+                "request_schema": request_schema or {},
                 **display_payload,
             },
         )
@@ -485,7 +507,9 @@ async def _start_or_enqueue_freezone_gen_job(
                 "task_type": "freezone_gen",
                 "job_id": job_id,
                 "task_id": queued.task_state.task_id,
-                "task_key": project_task_state_key("freezone_gen", ctx.project_id, 0, scope=job_id),
+                "task_key": project_task_state_key(
+                    "freezone_gen", ctx.project_id, 0, scope=job_id
+                ),
                 "backend": queued.backend,
                 "queue": queued.queue,
             },
@@ -3999,6 +4023,21 @@ async def freezone_gen(
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
         project, user
     )
+    request_schema, model_params, catalog_entry = await _resolve_catalog_request(
+        "image", body.model_id or body.model, body.model_params, mode=body.gen_mode
+    )
+    reference_image_max = (
+        catalog_entry.get("referenceImageMax") if catalog_entry else None
+    )
+    if (
+        type(reference_image_max) is int
+        and reference_image_max >= 0
+        and len(body.reference_urls or []) > reference_image_max
+    ):
+        raise HTTPException(
+            400,
+            f"image model supports at most {reference_image_max} reference images",
+        )
     return await _start_or_enqueue_freezone_gen_job(
         ctx=ctx,
         username=username,
@@ -4018,6 +4057,8 @@ async def freezone_gen(
         node_id=body.node_id or None,
         model_id=body.model_id or None,
         gen_mode=body.gen_mode or None,
+    model_params=model_params,
+        request_schema=request_schema,
     )
 
 
@@ -6520,6 +6561,149 @@ def _start_freezone_image_reverse_prompt_task(
 # ============================================================
 
 
+async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | None:
+    """Use the optional EE catalog while keeping CE's static model list intact."""
+    from novelvideo.ports.registry import PortNotRegistered, get_port
+
+    try:
+        catalog = get_port("media_model_catalog")
+    except PortNotRegistered:
+        return None
+    return await catalog.list_models(media_type)
+
+
+async def _resolve_catalog_request(
+    media_type: str,
+    model: str | None,
+    model_params: dict[str, Any] | None,
+    *,
+    mode: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    requested = str(model or "").strip()
+    entry = next(
+        (
+            item
+            for item in (await _ee_media_model_catalog(media_type)) or []
+            if requested
+            in {
+                str(item.get("id") or ""),
+                str(item.get("apiModel") or ""),
+                str(item.get("gatewayModel") or ""),
+            }
+        ),
+        None,
+    )
+    if entry is None:
+        if model_params:
+            raise HTTPException(
+                400, "model parameters require a configured media model"
+            )
+        return {}, {}, None
+    try:
+        full_schema = validate_media_request_schema(entry.get("request"))
+        expected_endpoint = (
+            "images/generations" if media_type == "image" else "video/generations"
+        )
+        if full_schema and full_schema.get("endpoint") != expected_endpoint:
+            raise MediaModelSchemaError(f"endpoint must be {expected_endpoint}")
+        schema = media_request_schema_for_mode(full_schema, mode)
+        active_keys = {
+            str(parameter["key"]) for parameter in schema.get("parameters") or []
+        }
+        defined_keys = {
+            str(parameter["key"]) for parameter in full_schema.get("parameters") or []
+        }
+        filtered_params = {
+            key: value
+            for key, value in (model_params or {}).items()
+            if key in active_keys or key not in defined_keys
+        }
+        if media_type == "image" and entry.get("qualityOptions"):
+            schema = {**schema, "includeQuality": True}
+        values = validate_media_model_params(schema, filtered_params)
+    except MediaModelSchemaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return schema, values, entry
+
+
+async def _catalog_video_capabilities(model: str | None) -> dict[str, Any] | None:
+    requested = str(model or "").strip()
+    return next(
+        (
+            item
+            for item in (await _ee_media_model_catalog("video")) or []
+            if requested
+            in {
+                str(item.get("id") or ""),
+                str(item.get("apiModel") or ""),
+                str(item.get("gatewayModel") or ""),
+            }
+        ),
+        None,
+    )
+
+
+def _catalog_mode_enabled(
+    capabilities: dict[str, Any] | None, mode: str
+) -> bool | None:
+    if capabilities is None:
+        return None
+    modes = capabilities.get("supportedModes") or []
+    return mode in modes
+
+
+def _catalog_resolution_options(
+    capabilities: dict[str, Any] | None,
+) -> list[str] | None:
+    if not capabilities:
+        return None
+    options = capabilities.get("resolutionOptions")
+    if not isinstance(options, list):
+        return None
+    normalized = [str(option).strip() for option in options if str(option).strip()]
+    return normalized or None
+
+
+def _catalog_reference_limits(
+    capabilities: dict[str, Any] | None,
+    *,
+    image_default: int,
+    video_default: int,
+    audio_default: int,
+) -> dict[str, int]:
+    def _limit(key: str, default: int) -> int:
+        value = capabilities.get(key) if capabilities else None
+        return value if type(value) is int and value >= 0 else default
+
+    return {
+        "image": _limit("referenceImageMax", image_default),
+        "video": _limit("referenceVideoMax", video_default),
+        "audio": _limit("referenceAudioMax", audio_default),
+    }
+
+
+def _catalog_duration_bounds(
+    capabilities: dict[str, Any] | None,
+) -> tuple[int | None, int | None]:
+    def _bound(key: str) -> int | None:
+        value = capabilities.get(key) if capabilities else None
+        return value if type(value) is int and value > 0 else None
+
+    return _bound("minDuration"), _bound("maxDuration")
+
+
+async def _resolve_catalog_video_backend(model: str | None) -> str:
+    requested = str(model or "").strip()
+    if requested:
+        for entry in (await _ee_media_model_catalog("video")) or []:
+            if requested in {
+                str(entry.get("id") or ""),
+                str(entry.get("apiModel") or ""),
+            }:
+                return str(entry.get("apiModel") or requested)
+    return resolve_freezone_video_backend(model)
+
+
 @router.get("/projects/{project}/freezone/video/camera-templates", tags=[TAG_FREEZONE_VIDEO])
 async def freezone_video_camera_templates(
     project: str,
@@ -6537,7 +6721,11 @@ async def freezone_video_models(
 ):
     """视频处理：返回和 NovelVideo 视频模型下拉一致的可见模型。"""
     await _resolve_freezone_project(project, user, required_role="viewer")
-    return {"ok": True, "data": get_freezone_video_model_options()}
+    catalog = await _ee_media_model_catalog("video")
+    return {
+        "ok": True,
+        "data": get_freezone_video_model_options() if catalog is None else catalog,
+    }
 
 
 @router.get("/projects/{project}/freezone/image/models", tags=[TAG_FREEZONE_IMAGE])
@@ -6547,6 +6735,9 @@ async def freezone_image_models(
 ):
     """图片处理：返回和 NovelVideo 图片模型下拉一致的可见模型。"""
     await _resolve_freezone_project(project, user, required_role="viewer")
+    catalog = await _ee_media_model_catalog("image")
+    if catalog is not None:
+        return {"ok": True, "data": catalog}
     options = image_generation_selection_options()
     data = []
     for key, label in options.items():
@@ -6878,10 +7069,16 @@ async def freezone_video_gen(
     if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
         raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
     try:
-        backend = resolve_freezone_video_backend(body.model)
+        backend = await _resolve_catalog_video_backend(body.model)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    request_schema, model_params, capabilities = await _resolve_catalog_request(
+        "video",
+        body.model,
+        body.model_params,
+        mode=body.gen_mode or "text_to_video",
+    )
     character_items = _load_video_character_items_by_ids(project_dir, body.character_ids)
     character_names = [str(item.get("name") or "") for item in character_items]
     character_reference_urls: list[str] = []
@@ -6913,8 +7110,16 @@ async def freezone_video_gen(
             prompt=final_prompt,
             reference_items=reference_items,
             aspect_ratio=normalize_video_aspect_ratio(body.aspect_ratio),
-            resolution=normalize_video_resolution_for_backend(backend, body.resolution),
-            duration_seconds=normalize_video_duration_for_backend(backend, body.duration_seconds),
+            resolution=normalize_video_resolution_for_backend(
+                backend,
+                body.resolution,
+                _catalog_resolution_options(capabilities),
+            ),
+            duration_seconds=normalize_video_duration_for_backend(
+                backend,
+                body.duration_seconds,
+                *_catalog_duration_bounds(capabilities),
+            ),
             generate_audio=body.generate_audio,
             human_review=body.human_review,
             scene_optimize=body.scene_optimize,
@@ -6923,10 +7128,14 @@ async def freezone_video_gen(
             node_id=body.node_id or None,
             model_id=body.model,
             gen_mode=body.gen_mode,
+        model_params=model_params,
+            request_schema=request_schema,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error("failed to start freezone video gen task", exc)
-        raise HTTPException(503, f"failed to start freezone video gen task: {exc}") from exc
+        raise HTTPException(
+            503, f"failed to start freezone video gen task: {exc}"
+        ) from exc
 
 
 @router.post("/projects/{project}/freezone/video/i2v", tags=[TAG_FREEZONE_VIDEO])
@@ -6948,21 +7157,37 @@ async def freezone_video_i2v(
     if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
         raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
     try:
-        backend = resolve_freezone_video_backend(body.model)
+        backend = await _resolve_catalog_video_backend(body.model)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    request_schema, model_params, capabilities = await _resolve_catalog_request(
+        "video",
+        body.model,
+        body.model_params,
+        mode=body.gen_mode or "first_frame",
+    )
+
+    reference_limits = _catalog_reference_limits(
+        capabilities,
+        image_default=9,
+        video_default=0,
+        audio_default=0,
+    )
     if not body.image_urls:
         raise HTTPException(400, "image_urls is required")
-    if len(body.image_urls) > 9:
-        raise HTTPException(400, "image_urls count must be <= 9")
+    if len(body.image_urls) > reference_limits["image"]:
+        raise HTTPException(
+            400,
+            f"this model supports at most {reference_limits['image']} image references",
+        )
 
     source_paths = _resolve_url_list(project_dir, list(body.image_urls))
     if not source_paths:
         raise HTTPException(400, "at least one valid image_url is required")
     if len(source_paths) != len(body.image_urls):
         raise HTTPException(400, "some image_urls could not be resolved")
-    if (
+    if capabilities is None and (
         len(source_paths) > 1
         and not is_freezone_seedance2_backend(backend)
         and not is_freezone_happyhorse_backend(backend)
@@ -7004,8 +7229,16 @@ async def freezone_video_i2v(
             prompt=final_prompt,
             reference_items=reference_items,
             aspect_ratio=normalize_video_aspect_ratio(body.aspect_ratio),
-            resolution=normalize_video_resolution_for_backend(backend, body.resolution),
-            duration_seconds=normalize_video_duration_for_backend(backend, body.duration_seconds),
+            resolution=normalize_video_resolution_for_backend(
+                backend,
+                body.resolution,
+                _catalog_resolution_options(capabilities),
+            ),
+            duration_seconds=normalize_video_duration_for_backend(
+                backend,
+                body.duration_seconds,
+                *_catalog_duration_bounds(capabilities),
+            ),
             generate_audio=body.generate_audio,
             human_review=body.human_review,
             scene_optimize=body.scene_optimize,
@@ -7014,10 +7247,16 @@ async def freezone_video_i2v(
             node_id=body.node_id or None,
             model_id=body.model,
             gen_mode=body.gen_mode,
+        model_params=model_params,
+            request_schema=request_schema,
         )
     except RuntimeError as exc:
-        _handle_task_start_runtime_error("failed to start freezone image-to-video task", exc)
-        raise HTTPException(503, f"failed to start freezone image-to-video task: {exc}") from exc
+        _handle_task_start_runtime_error(
+            "failed to start freezone image-to-video task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone image-to-video task: {exc}"
+        ) from exc
 
 
 @router.post("/projects/{project}/freezone/video/keyframes", tags=[TAG_FREEZONE_VIDEO])
@@ -7039,9 +7278,28 @@ async def freezone_video_keyframes(
     if not (body.first_frame_url or body.last_frame_url):
         raise HTTPException(400, "first_frame_url or last_frame_url is required")
     try:
-        backend = resolve_freezone_video_backend(body.model)
+        backend = await _resolve_catalog_video_backend(body.model)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+    request_schema, model_params, capabilities = await _resolve_catalog_request(
+        "video",
+        body.model,
+        body.model_params,
+        mode=body.gen_mode or "first_last_frame",
+    )
+    reference_limits = _catalog_reference_limits(
+        capabilities,
+        image_default=2,
+        video_default=0,
+        audio_default=0,
+    )
+    frame_count = int(bool(body.first_frame_url)) + int(bool(body.last_frame_url))
+    if frame_count > reference_limits["image"]:
+        raise HTTPException(
+            400,
+            f"this model supports at most {reference_limits['image']} image references",
+        )
 
     first_paths = _resolve_url_list(
         project_dir, [body.first_frame_url] if body.first_frame_url else []
@@ -7080,8 +7338,16 @@ async def freezone_video_keyframes(
             prompt=final_prompt,
             reference_items=reference_items,
             aspect_ratio=normalize_video_aspect_ratio(body.aspect_ratio),
-            resolution=normalize_video_resolution_for_backend(backend, body.resolution),
-            duration_seconds=normalize_video_duration_for_backend(backend, body.duration_seconds),
+            resolution=normalize_video_resolution_for_backend(
+                backend,
+                body.resolution,
+                _catalog_resolution_options(capabilities),
+            ),
+            duration_seconds=normalize_video_duration_for_backend(
+                backend,
+                body.duration_seconds,
+                *_catalog_duration_bounds(capabilities),
+            ),
             generate_audio=body.generate_audio,
             human_review=body.human_review,
             scene_optimize=body.scene_optimize,
@@ -7091,10 +7357,16 @@ async def freezone_video_keyframes(
             node_id=body.node_id or None,
             model_id=body.model,
             gen_mode=body.gen_mode,
+        model_params=model_params,
+            request_schema=request_schema,
         )
     except RuntimeError as exc:
-        _handle_task_start_runtime_error("failed to start freezone keyframe video task", exc)
-        raise HTTPException(503, f"failed to start freezone keyframe video task: {exc}") from exc
+        _handle_task_start_runtime_error(
+            "failed to start freezone keyframe video task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone keyframe video task: {exc}"
+        ) from exc
 
 
 @router.post("/projects/{project}/freezone/video/omni-gen", tags=[TAG_FREEZONE_VIDEO])
@@ -7116,20 +7388,54 @@ async def freezone_video_omni_gen(
     if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
         raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
     try:
-        backend = resolve_freezone_video_backend(body.model)
+        backend = await _resolve_catalog_video_backend(body.model)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    is_happyhorse = is_freezone_happyhorse_backend(backend)
-    if is_happyhorse:
-        raise HTTPException(400, "HappyHorse video does not support omni reference mode")
-    if not is_freezone_seedance2_backend(backend):
+    request_schema, model_params, capabilities = await _resolve_catalog_request(
+        "video",
+        body.model,
+        body.model_params,
+        mode=body.gen_mode or "all_reference",
+    )
+    mode_enabled = _catalog_mode_enabled(capabilities, "all_reference")
+    if mode_enabled is False:
+        raise HTTPException(400, "this model does not support omni reference mode")
+    if mode_enabled is None and is_freezone_happyhorse_backend(backend):
+        raise HTTPException(
+            400, "HappyHorse video does not support omni reference mode"
+        )
+    if mode_enabled is None and not is_freezone_seedance2_backend(backend):
         raise HTTPException(
             400, "omni video currently only supports Seedance 2.0 models"
         )
 
     raw_reference_items = [item.model_dump() for item in body.references]
+    reference_limits = _catalog_reference_limits(
+        capabilities,
+        image_default=9,
+        video_default=3,
+        audio_default=3,
+    )
     try:
-        validate_omni_reference_limits(raw_reference_items)
+        validate_omni_reference_limits(
+            raw_reference_items,
+            image_max=reference_limits["image"],
+            video_max=reference_limits["video"],
+            audio_max=reference_limits["audio"],
+            total_max=(
+                sum(reference_limits.values())
+                if capabilities
+                and any(
+                    type(capabilities.get(key)) is int
+                    for key in (
+                        "referenceImageMax",
+                        "referenceVideoMax",
+                        "referenceAudioMax",
+                    )
+                )
+                else 12
+            ),
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     reference_items: list[dict[str, str]] = []
@@ -7164,8 +7470,16 @@ async def freezone_video_omni_gen(
             prompt=final_prompt,
             reference_items=reference_items,
             aspect_ratio=normalize_video_aspect_ratio(body.aspect_ratio),
-            resolution=normalize_video_resolution_for_backend(backend, body.resolution),
-            duration_seconds=normalize_video_duration_for_backend(backend, body.duration_seconds),
+            resolution=normalize_video_resolution_for_backend(
+                backend,
+                body.resolution,
+                _catalog_resolution_options(capabilities),
+            ),
+            duration_seconds=normalize_video_duration_for_backend(
+                backend,
+                body.duration_seconds,
+                *_catalog_duration_bounds(capabilities),
+            ),
             generate_audio=body.generate_audio,
             human_review=body.human_review,
             scene_optimize=body.scene_optimize,
@@ -7174,10 +7488,16 @@ async def freezone_video_omni_gen(
             node_id=body.node_id or None,
             model_id=body.model,
             gen_mode=body.gen_mode,
+        model_params=model_params,
+            request_schema=request_schema,
         )
     except RuntimeError as exc:
-        _handle_task_start_runtime_error("failed to start freezone omni video gen task", exc)
-        raise HTTPException(503, f"failed to start freezone omni video gen task: {exc}") from exc
+        _handle_task_start_runtime_error(
+            "failed to start freezone omni video gen task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone omni video gen task: {exc}"
+        ) from exc
 
     counts = summarize_omni_reference_counts(raw_reference_items)
     return {
@@ -7203,10 +7523,19 @@ async def freezone_video_edit(
     if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
         raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
     try:
-        backend = resolve_freezone_video_backend(body.model)
+        backend = await _resolve_catalog_video_backend(body.model)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    if not is_freezone_happyhorse_backend(backend):
+    request_schema, model_params, capabilities = await _resolve_catalog_request(
+        "video",
+        body.model,
+        body.model_params,
+        mode=body.gen_mode or "video_edit",
+    )
+    mode_enabled = _catalog_mode_enabled(capabilities, "video_edit")
+    if mode_enabled is False or (
+        mode_enabled is None and not is_freezone_happyhorse_backend(backend)
+    ):
         raise HTTPException(400, "video edit currently only supports HappyHorse models")
 
     if not body.video_url.strip():
@@ -7218,8 +7547,19 @@ async def freezone_video_edit(
     image_paths = _resolve_url_list(project_dir, list(body.image_urls))
     if len(image_paths) != len(body.image_urls):
         raise HTTPException(400, "some image_urls could not be resolved")
-    if len(image_paths) > 5:
-        raise HTTPException(400, "image_urls count must be <= 5")
+    reference_limits = _catalog_reference_limits(
+        capabilities,
+        image_default=5,
+        video_default=1,
+        audio_default=0,
+    )
+    if reference_limits["video"] < 1:
+        raise HTTPException(400, "this model does not support video references")
+    if len(image_paths) > reference_limits["image"]:
+        raise HTTPException(
+            400,
+            f"this model supports at most {reference_limits['image']} image references",
+        )
 
     reference_items: list[dict[str, str]] = [
         {"type": "video", "path": video_paths[0], "role": "视频编辑源"}
@@ -7246,8 +7586,16 @@ async def freezone_video_edit(
             prompt=final_prompt,
             reference_items=reference_items,
             aspect_ratio=normalize_video_aspect_ratio(body.aspect_ratio),
-            resolution=normalize_video_resolution_for_backend(backend, body.resolution),
-            duration_seconds=normalize_video_duration_for_backend(backend, body.duration_seconds),
+            resolution=normalize_video_resolution_for_backend(
+                backend,
+                body.resolution,
+                _catalog_resolution_options(capabilities),
+            ),
+            duration_seconds=normalize_video_duration_for_backend(
+                backend,
+                body.duration_seconds,
+                *_catalog_duration_bounds(capabilities),
+            ),
             generate_audio=body.generate_audio,
             human_review=body.human_review,
             scene_optimize=None,
@@ -7257,10 +7605,16 @@ async def freezone_video_edit(
             node_id=body.node_id or None,
             model_id=body.model,
             gen_mode=body.gen_mode,
+        model_params=model_params,
+            request_schema=request_schema,
         )
     except RuntimeError as exc:
-        _handle_task_start_runtime_error("failed to start freezone video edit task", exc)
-        raise HTTPException(503, f"failed to start freezone video edit task: {exc}") from exc
+        _handle_task_start_runtime_error(
+            "failed to start freezone video edit task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone video edit task: {exc}"
+        ) from exc
 
 
 @router.post(
