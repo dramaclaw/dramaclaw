@@ -10,6 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar, Position, useViewport } from '@xyflow/react';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowUp,
   Brush,
@@ -49,6 +50,8 @@ import {
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
+import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
 
 interface EraseOverlayProps {
   node: CanvasNode;
@@ -102,6 +105,7 @@ function imageModelSupportsQuality(apiModel: string | null | undefined): boolean
 }
 
 export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayProps) => {
+  const { t } = useTranslation();
   const addNode = useCanvasStore((state) => state.addNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
@@ -132,13 +136,28 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
   const [aspectRatio, setAspectRatio] = useState<FreezoneRedrawAspectRatio>('16:9');
   const { models: imageModels } = useFreezoneImageModels();
   const selectedModel = imageModels[0];
-  const creditCost = useGenerationCreditCost('image_selection', selectedModel?.apiModel ?? null, {
-    surface: 'canvas',
-    params: imageModelSupportsQuality(selectedModel?.apiModel)
-      ? { size: imageSize, quality: 'medium' }
-      : { size: imageSize },
-    quantity: Math.min(Math.max(numImages, 1), 4),
-  });
+  const creditCost = useGenerationCreditCost(
+    'feature',
+    selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
+    {
+      surface: 'canvas',
+      params: {
+        image_selection: selectedModel?.apiModel,
+        size: imageSize,
+        ...(imageModelSupportsQuality(selectedModel?.apiModel)
+          ? { quality: 'medium' }
+          : {}),
+        operation: 'erase',
+        pricing_quantity: Math.min(Math.max(numImages, 1), 4),
+      },
+      quantity: Math.min(Math.max(numImages, 1), 4),
+    },
+  );
+  const billingRuleMissing =
+    creditCost.error instanceof BillingRuleNotConfiguredError;
+  const costDisplay =
+    creditCost.data?.data.display ??
+    (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
 
   // 节点在画布坐标系里的尺寸（flow 单位）。蒙版画布要按当前缩放贴合到节点上的图。
   const nodeWidth =
@@ -740,14 +759,14 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
 
           {error && <span className="max-w-[160px] truncate px-1 text-xs text-red-400">{error}</span>}
           <CreditCostPill
-            display={creditCost.data?.data.display}
+            display={costDisplay}
             className={NODE_CREDIT_PILL_FLAT_CLASS}
           />
 
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || !imageDims}
+            disabled={submitting || !imageDims || billingRuleMissing}
             className={`ml-1 shrink-0 ${NODE_GENERATE_BUTTON_BASE_CLASS} ${NODE_GENERATE_BUTTON_ENABLED_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
             title="提交擦除"
           >

@@ -41,6 +41,8 @@ import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImage
 import { inheritMainlineFields } from '@/features/canvas/domain/inheritMainlineFields';
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
+import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
 import { CANVAS_NODE_TOOLBAR_PILL_CLASS } from './nodeFrameStyles';
 import {
@@ -111,16 +113,27 @@ export const OutpaintEditorOverlay = memo(
       ?? availableModels[0]
       ?? SHARED_MODELS.find((m) => m.id === modelId);
     const creditCost = useGenerationCreditCost(
-      'image_selection',
-      selectedModel?.apiModel ?? null,
+      'feature',
+      selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
       {
         surface: 'canvas',
-        params: imageModelSupportsQuality(selectedModel?.apiModel)
-          ? { size: imageSize, quality: 'medium' }
-          : { size: imageSize },
+        params: {
+          image_selection: selectedModel?.apiModel,
+          size: imageSize,
+          ...(imageModelSupportsQuality(selectedModel?.apiModel)
+            ? { quality: 'medium' }
+            : {}),
+          operation: 'outpaint',
+          pricing_quantity: Math.min(Math.max(numImages, 1), 4),
+        },
         quantity: Math.min(Math.max(numImages, 1), 4),
       },
     );
+    const billingRuleMissing =
+      creditCost.error instanceof BillingRuleNotConfiguredError;
+    const costDisplay =
+      creditCost.data?.data.display ??
+      (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
 
     const nodeWidth =
       typeof node.measured?.width === 'number'
@@ -363,16 +376,16 @@ export const OutpaintEditorOverlay = memo(
               titleI18nKey="outpaintEditor.numImagesLabel"
             />
             <CreditCostPill
-              display={creditCost.data?.data.display}
+              display={costDisplay}
               className={NODE_CREDIT_PILL_FLAT_CLASS}
             />
 
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={isSubmitting}
+              disabled={isSubmitting || billingRuleMissing}
               className={`shrink-0 ${NODE_GENERATE_BUTTON_BASE_CLASS} ${
-                isSubmitting
+                isSubmitting || billingRuleMissing
                   ? NODE_GENERATE_BUTTON_DISABLED_CLASS
                   : NODE_GENERATE_BUTTON_ENABLED_CLASS
               }`}

@@ -362,6 +362,63 @@ async def test_generation_credit_cost_route_prices_freezone_image_generate_by_mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("feature_key", "operation"),
+    [
+        ("freezone.image_panorama", "panorama"),
+        ("freezone.image_multi_view", "multi_view"),
+        ("freezone.image_relight", "relight"),
+        ("freezone.image_edit", "erase"),
+        ("freezone.image_grid", "multi_angle_nine_grid"),
+    ],
+)
+async def test_generation_credit_cost_route_prices_freezone_image_tools_by_feature(
+    monkeypatch,
+    feature_key,
+    operation,
+):
+    from novelvideo import config
+    from novelvideo.api.routes import model_credits
+
+    pricing_model = config.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"]
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model=feature_key,
+        expected_params={
+            "image_selection": "newapi_gpt_image2",
+            "size": "2K",
+            "quality": "low",
+            "operation": operation,
+            "pricing_quantity": 1,
+            "pricing_kind": "image",
+            "pricing_model": pricing_model,
+            "pricing_params": {"size": "2K", "quality": "low"},
+            "pricing_model_selection": "newapi_gpt_image2",
+            "pricing_model_label": config.IMAGE_GENERATION_SELECTIONS[
+                "newapi_gpt_image2"
+            ]["label"],
+        },
+        expected_quantity=1,
+        cost=12,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value=feature_key,
+        params=(
+            '{"image_selection":"newapi_gpt_image2","size":"2K",'
+            f'"quality":"low","operation":"{operation}"}}'
+        ),
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 12, "display": "12"}}
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_resolves_image_selection(monkeypatch):
     from novelvideo.api.routes import model_credits
     from novelvideo import config

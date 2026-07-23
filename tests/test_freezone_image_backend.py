@@ -2129,6 +2129,9 @@ async def test_masked_redraw_uses_default_newapi_model(
     assert captured["provider"] == "newapi"
     assert captured["model"] == NEWAPI_IMAGE_MODEL
     assert captured["quality"] == "low"
+    assert captured["billing"]["feature_key"] == "freezone.image_edit"
+    assert captured["billing"]["operation"] == "erase"
+    assert captured["billing"]["pricing_kind"] == "image"
 
 
 @pytest.mark.asyncio
@@ -2770,6 +2773,10 @@ async def test_scene_360_endpoint_caps_mainline_image_size_to_2k(
     assert captured["payload"]["params"]["quality"] == "low"
     assert captured["payload"]["params"]["update_manifest"] is False
     assert captured["payload"]["params"]["artifact_dir"]
+    assert captured["payload"]["billing"]["feature_key"] == "freezone.image_panorama"
+    assert captured["payload"]["billing"]["size"] == "2K"
+    assert captured["payload"]["billing"]["quality"] == "low"
+    assert captured["payload"]["billing"]["pricing_kind"] == "image"
 
 
 def _skill_beat_input() -> dict:
@@ -5954,6 +5961,9 @@ async def test_freezone_upscale_resolves_original_ratio_before_model_call(
     assert result["ok"] is True
     assert captured["aspect_ratio"] == "16:9"
     assert captured["quality"] == "low"
+    assert captured["billing"]["feature_key"] == "freezone.image_edit"
+    assert captured["billing"]["operation"] == "upscale"
+    assert captured["billing"]["pricing_kind"] == "image"
     assert "新古典插画" in captured["prompt"]
     assert "Panavision DXL2" in captured["prompt"]
     assert "Arri Signature Prime" in captured["prompt"]
@@ -5993,6 +6003,9 @@ async def test_template_edit_projection_preserves_source_aspect_ratio(
     assert result["data"]["task_type"] == "freezone_edit"
     assert captured["aspect_ratio"] == "9:16"
     assert captured["quality"] == "high"
+    assert captured["billing"]["feature_key"] == "freezone.image_grid"
+    assert captured["billing"]["operation"] == "image_projection_after_3s"
+    assert captured["billing"]["pricing_kind"] == "image"
     assert "Preserve the source image aspect ratio" in captured["prompt"]
     assert "Within the same frame size" in captured["prompt"]
     assert "different action phase" in captured["prompt"]

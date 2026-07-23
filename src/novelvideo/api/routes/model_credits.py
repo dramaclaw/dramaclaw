@@ -382,8 +382,21 @@ def _video_backend_feature_billing_params(params: dict) -> dict:
     }
 
 
-def freezone_image_generate_billing_params(params: dict) -> dict:
-    """Resolve Freezone image feature metadata for quotes and task reservations."""
+FREEZONE_IMAGE_FEATURE_KEYS = {
+    "freezone.image_generate",
+    "freezone.image_panorama",
+    "freezone.image_multi_view",
+    "freezone.image_relight",
+    "freezone.image_edit",
+    "freezone.image_grid",
+}
+
+
+def freezone_image_feature_billing_params(feature_key: str, params: dict) -> dict:
+    """Resolve shared Freezone image metadata for quotes and task reservations."""
+    clean_feature_key = str(feature_key or "").strip()
+    if clean_feature_key not in FREEZONE_IMAGE_FEATURE_KEYS:
+        raise ValueError(f"unsupported Freezone image feature: {clean_feature_key}")
     if str(params.get("pricing_model") or "").strip():
         return params
     image_selection = str(params.get("image_selection") or "").strip()
@@ -418,10 +431,22 @@ def freezone_image_generate_billing_params(params: dict) -> dict:
     }
 
 
+def freezone_image_task_billing(feature_key: str, params: dict) -> dict:
+    return {
+        "feature_key": str(feature_key or "").strip(),
+        **freezone_image_feature_billing_params(feature_key, params),
+    }
+
+
+def freezone_image_generate_billing_params(params: dict) -> dict:
+    """Backward-compatible helper for ordinary Freezone image generation."""
+    return freezone_image_feature_billing_params("freezone.image_generate", params)
+
+
 def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> dict:
     feature_key = str(value or "").strip()
-    if feature_key == "freezone.image_generate":
-        return freezone_image_generate_billing_params(params)
+    if feature_key in FREEZONE_IMAGE_FEATURE_KEYS:
+        return freezone_image_feature_billing_params(feature_key, params)
     if feature_key == "mainline.style_analysis":
         if str(params.get("pricing_model") or "").strip():
             return params

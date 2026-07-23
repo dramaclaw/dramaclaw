@@ -1793,6 +1793,20 @@ async def _start_or_enqueue_mainline_scene_360_task(
         "newapi",
         model or FREEZONE_DEFAULT_IMAGE_MODEL,
     )
+    from novelvideo.api.routes.model_credits import freezone_image_task_billing
+
+    billing = freezone_image_task_billing(
+        "freezone.image_panorama",
+        {
+            "image_selection": infer_image_generation_selection(
+                resolved_provider,
+                resolved_model,
+                fallback=model or FREEZONE_DEFAULT_IMAGE_MODEL,
+            ),
+            "size": image_size or MAINLINE_SCENE_360_IMAGE_SIZE,
+            "quality": quality or "medium",
+        },
+    )
     queued = await get_task_backend().enqueue_project_task(
         ctx,
         task_type=task_type,
@@ -1816,6 +1830,7 @@ async def _start_or_enqueue_mainline_scene_360_task(
             "project_dir": str(project_dir),
             "canvas_id": canvas_id or "",
             "node_id": node_id or "",
+            "billing": billing,
             "task_family": "mainline_skill",
             "task_label": "生成 360 全景",
             "display_name": f"生成 360 全景 · {scene_id}",
@@ -1857,6 +1872,8 @@ async def _start_or_enqueue_freezone_edit_job(
     model_id: str | None = None,
     gen_mode: str | None = None,
     task_display: dict[str, str] | None = None,
+    billing_feature_key: str = "",
+    billing_operation: str = "",
 ) -> dict:
     base_paths = _resolve_url_list(project_dir, [base_url])
     if not base_paths:
@@ -1876,6 +1893,23 @@ async def _start_or_enqueue_freezone_edit_job(
     job_id = _new_job_id()
     resolved_provider, resolved_model = _split_provider_and_model(provider, model)
     normalized_provider = _resolve_freezone_image_provider(resolved_provider)
+    billing: dict[str, Any] = {}
+    if billing_feature_key:
+        from novelvideo.api.routes.model_credits import freezone_image_task_billing
+
+        billing = freezone_image_task_billing(
+            billing_feature_key,
+            {
+                "image_selection": infer_image_generation_selection(
+                    normalized_provider,
+                    resolved_model,
+                    fallback=model,
+                ),
+                "size": image_size,
+                **({"quality": quality} if quality else {}),
+                **({"operation": billing_operation} if billing_operation else {}),
+            },
+        )
     prompt_text = _merge_prompt_with_style_and_camera(prompt, style, camera)
     display_payload = {
         "task_family": "freezone_canvas",
@@ -1905,6 +1939,7 @@ async def _start_or_enqueue_freezone_edit_job(
                 "node_id": node_id or "",
                 "model_id": model_id or "",
                 "gen_mode": gen_mode or "",
+                **({"billing": billing} if billing else {}),
                 **display_payload,
             },
         )
@@ -1976,8 +2011,24 @@ async def _start_or_enqueue_freezone_edit_path(
     provider: str | None,
     model: str | None,
     quality: str | None,
+    billing_operation: str,
 ) -> dict:
     task_type = "freezone_edit"
+    from novelvideo.api.routes.model_credits import freezone_image_task_billing
+
+    billing = freezone_image_task_billing(
+        "freezone.image_edit",
+        {
+            "image_selection": infer_image_generation_selection(
+                provider,
+                model,
+                fallback=model,
+            ),
+            "size": image_size,
+            **({"quality": quality} if quality else {}),
+            "operation": billing_operation,
+        },
+    )
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -1996,6 +2047,7 @@ async def _start_or_enqueue_freezone_edit_path(
                 "provider": provider,
                 "model": model,
                 "quality": quality,
+                "billing": billing,
             },
         )
         return _project_job_response(
@@ -2026,8 +2078,24 @@ async def _start_or_enqueue_freezone_mask_edit_path(
     quality: str,
     provider: str,
     model: str | None,
+    billing_operation: str,
 ) -> dict:
     task_type = "freezone_mask_edit"
+    from novelvideo.api.routes.model_credits import freezone_image_task_billing
+
+    billing = freezone_image_task_billing(
+        "freezone.image_edit",
+        {
+            "image_selection": infer_image_generation_selection(
+                provider,
+                model,
+                fallback=model,
+            ),
+            "size": image_size,
+            "quality": quality,
+            "operation": billing_operation,
+        },
+    )
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -2046,6 +2114,7 @@ async def _start_or_enqueue_freezone_mask_edit_path(
                 "quality": quality,
                 "provider": provider,
                 "model": model,
+                "billing": billing,
             },
         )
         return _project_job_response(
@@ -4694,6 +4763,8 @@ async def freezone_multi_view(
         provider=None,
         model=body.model or FREEZONE_DEFAULT_IMAGE_MODEL,
         quality=body.quality or "medium",
+        billing_feature_key="freezone.image_multi_view",
+        billing_operation="multi_view",
     )
 
 
@@ -4727,6 +4798,8 @@ async def freezone_relight(
         provider=None,
         model=body.model or FREEZONE_DEFAULT_IMAGE_MODEL,
         quality=body.quality or "medium",
+        billing_feature_key="freezone.image_relight",
+        billing_operation="relight",
     )
 
 
@@ -4760,6 +4833,8 @@ async def freezone_template_edit(
         provider=None,
         model=body.model or FREEZONE_DEFAULT_IMAGE_MODEL,
         quality=body.quality or "medium",
+        billing_feature_key="freezone.image_grid",
+        billing_operation=body.mode,
     )
 
 
@@ -4921,6 +4996,7 @@ async def freezone_upscale(
             provider=provider,
             model=resolved_model,
             quality=body.quality or "medium",
+            billing_operation="upscale",
         )
     except RuntimeError as e:
         _handle_task_start_runtime_error("failed to start upscale task", e)
@@ -4989,6 +5065,7 @@ async def freezone_outpaint(
             provider=provider,
             model=resolved_model,
             quality=body.quality or "medium",
+            billing_operation="outpaint",
         )
     except RuntimeError as e:
         _handle_task_start_runtime_error("failed to start outpaint task", e)
@@ -5060,6 +5137,9 @@ async def freezone_redraw(
                 quality=body.quality or "medium",
                 provider=provider,
                 model=resolved_model,
+                billing_operation=(
+                    "erase" if not body.prompt.strip() else "redraw"
+                ),
             )
         except RuntimeError as e:
             _handle_task_start_runtime_error("failed to start masked redraw task", e)
@@ -5083,6 +5163,7 @@ async def freezone_redraw(
             provider=provider,
             model=resolved_model,
             quality=body.quality or "medium",
+            billing_operation="redraw",
         )
     except RuntimeError as e:
         _handle_task_start_runtime_error("failed to start redraw task", e)

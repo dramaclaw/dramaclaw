@@ -23,6 +23,8 @@ import {
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
+import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
 import { CANVAS_NODE_TOOLBAR_CARD_CLASS } from './nodeFrameStyles';
 import { NODE_CREDIT_PILL_FLAT_CLASS } from './nodeControlStyles';
@@ -88,15 +90,25 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
     ?? availableModels[0]
     ?? SHARED_MODELS.find((m) => m.id === persistedModelId);
   const creditCost = useGenerationCreditCost(
-    'image_selection',
-    selectedModel?.apiModel ?? null,
+    'feature',
+    selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
     {
       surface: 'canvas',
-      params: imageModelSupportsQuality(selectedModel?.apiModel)
-        ? { size: persistedImageSize, quality: 'medium' }
-        : { size: persistedImageSize },
+      params: {
+        image_selection: selectedModel?.apiModel,
+        size: persistedImageSize,
+        ...(imageModelSupportsQuality(selectedModel?.apiModel)
+          ? { quality: 'medium' }
+          : {}),
+        operation: 'upscale',
+      },
     },
   );
+  const billingRuleMissing =
+    creditCost.error instanceof BillingRuleNotConfiguredError;
+  const costDisplay =
+    creditCost.data?.data.display ??
+    (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
 
   const handleModelChange = useCallback(
     (modelId: string) => {
@@ -241,13 +253,13 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
 
         <div className="mt-4 flex items-center justify-end gap-3 border-t border-white/10 pt-3">
           <CreditCostPill
-            display={creditCost.data?.data.display}
+            display={costDisplay}
             className={NODE_CREDIT_PILL_FLAT_CLASS}
           />
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || billingRuleMissing}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-bg-dark transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             title={t('upscaleEditor.submit')}
           >
