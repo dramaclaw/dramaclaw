@@ -12,6 +12,7 @@ import {
   Pause,
   Play,
   Plus,
+  Search,
   Trash2,
   Volume2,
   X,
@@ -154,6 +155,40 @@ export function recordsToAssetBuckets(
   return buckets;
 }
 
+/**
+ * 关键词搜索命中判定(issue #175):匹配资产的提示词(prompt)与展示名(label —— 世界记录
+ * 的 label 会回退成上游节点名,live-canvas 取图时则是文件名)。二者都为空的资产(音频、
+ * 没存提示词的旧记录)在有查询词时自然落选。
+ *
+ * query 两端会被 trim、大小写不敏感。这里对查询词也做一次 normalize(而不是只信调用方
+ * 传进来已经是小写):它是导出函数,把「必须预先小写」当隐式前置条件,一旦有调用方直接
+ * 传用户原文,大写输入会静默零命中。needle 很短,重复 normalize 的代价可以忽略。
+ */
+export function assetMatchesQuery(asset: CanvasAsset, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return `${asset.prompt ?? ''}\n${asset.label ?? ''}`.toLowerCase().includes(needle);
+}
+
+/**
+ * 按关键词过滤四个资产桶。空查询原样返回同一个对象(不复制),让上游 memo 保持引用稳定。
+ * 四个桶都过滤(而非只过滤当前 tab),这样各 tab 的计数直接反映命中数,用户能看出该去哪个
+ * tab 找。
+ */
+export function filterAssetBuckets(
+  buckets: CanvasAssetBuckets,
+  query: string,
+): CanvasAssetBuckets {
+  if (!query.trim()) return buckets;
+  const match = (asset: CanvasAsset) => assetMatchesQuery(asset, query);
+  return {
+    image: buckets.image.filter(match),
+    video: buckets.video.filter(match),
+    audio: buckets.audio.filter(match),
+    model: buckets.model.filter(match),
+  };
+}
+
 const TAB_ORDER: CanvasAssetKind[] = ['image', 'video', 'audio', 'model'];
 const TAB_LABEL_KEY: Record<CanvasAssetKind, string> = {
   image: 'canvas.history.tabs.image',
@@ -216,6 +251,8 @@ export function CanvasHistoryAssetsModal({
   const [activeTab, setActiveTab] = useState<CanvasAssetKind>('image');
   const tabOrder = imageOnly ? (['image'] as CanvasAssetKind[]) : TAB_ORDER;
   const [direction, setDirection] = useState<'desc' | 'asc'>('desc');
+  // 关键词搜索:按资产的提示词/名字过滤历史(issue #175)。空格裁剪后小写比较。
+  const [query, setQuery] = useState('');
   const [zoom, setZoom] = useState(100);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -258,7 +295,12 @@ export function CanvasHistoryAssetsModal({
         : extractCanvasAssets(nodes),
     [useHistory, records, nodes, resolveNodeMeta],
   );
-  const activeAssets = buckets[activeTab];
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredBuckets = useMemo(
+    () => filterAssetBuckets(buckets, normalizedQuery),
+    [buckets, normalizedQuery],
+  );
+  const activeAssets = filteredBuckets[activeTab];
   const groups = useMemo(
     () => groupAssetsByDate(activeAssets, direction),
     [activeAssets, direction],
@@ -285,9 +327,11 @@ export function CanvasHistoryAssetsModal({
   }, [onClose, imageViewerIndex, videoViewerUrl, worldManifest, promptDialogText]);
 
   useEffect(() => {
-    // Reset selection when switching tab so counts can't leak across kinds.
+    // Reset selection when switching tab (so counts can't leak across kinds) or
+    // when the search query changes (so a hidden-but-selected card can't linger
+    // in a batch action, then reappear when the filter clears).
     setSelectedIds(new Set());
-  }, [activeTab]);
+  }, [activeTab, normalizedQuery]);
 
   const toggleSelect = (asset: CanvasAsset) => {
     setSelectedIds((current) => {
@@ -432,12 +476,43 @@ export function CanvasHistoryAssetsModal({
                   active ? 'text-white' : 'text-white/40 hover:text-white/70'
                 }`}
               >
-                {t(TAB_LABEL_KEY[tab])}({buckets[tab].length})
+                {t(TAB_LABEL_KEY[tab])}({filteredBuckets[tab].length})
               </button>
             );
           })}
         </div>
         <div className="flex items-center gap-4">
+          {/* 关键词搜索:输入提示词过滤当前所有 tab 的历史资产(命中数反映在各 tab 计数)。
+              Escape 先清空搜索框再让弹窗接管(见输入框 onKeyDown)。 */}
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/35"
+              aria-hidden
+            />
+            <input
+              type="text"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && query) {
+                  event.stopPropagation();
+                  setQuery('');
+                }
+              }}
+              placeholder={t('canvas.history.searchPlaceholder')}
+              className="h-8 w-44 rounded-lg border border-white/[0.12] bg-white/[0.04] pl-8 pr-7 text-[13px] text-white/85 outline-none transition-colors placeholder:text-white/35 focus:border-white/30 focus:bg-white/[0.07]"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                aria-label={t('canvas.history.clearSearch')}
+                className="absolute right-2 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-white/40 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setDirection((value) => (value === 'desc' ? 'asc' : 'desc'))}
@@ -481,7 +556,7 @@ export function CanvasHistoryAssetsModal({
           </div>
         ) : activeAssets.length === 0 ? (
           <div className="flex h-full items-center justify-center text-[14px] text-white/40">
-            {t('canvas.history.empty')}
+            {t(normalizedQuery ? 'canvas.history.noMatch' : 'canvas.history.empty')}
           </div>
         ) : (
           groups.map((group) => (
