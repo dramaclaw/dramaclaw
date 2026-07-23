@@ -117,6 +117,8 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
   const undoStackRef = useRef<ImageData[]>([]);
   const redoStackRef = useRef<ImageData[]>([]);
   const baseUrlRef = useRef(imageSource.split('?')[0]);
+  // 已加载的源图，导出蒙版时用作红色高亮的打底（后端把蒙版当视觉参考图）。
+  const sourceImgRef = useRef<HTMLImageElement | null>(null);
 
   const [tool, setTool] = useState<Tool>('brush');
   const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH);
@@ -179,6 +181,7 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
         c.width = w;
         c.height = h;
       });
+      sourceImgRef.current = img;
       setImageDims({ w, h });
     };
     img.onerror = () => setError('无法加载源图');
@@ -410,19 +413,34 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
     [canvasToImageCoords, commitRect, recomputeHasMask, tool],
   );
 
-  // 蒙版导出：白底 + 透明的可编辑区域（与后端约定，透明像素 = 重绘/擦除区域）。
+  // 蒙版导出（供视觉模型识别）：源图 + 涂抹区半透明红色高亮。
+  // 后端把它当作 Image 2 的编辑参考——红色只是标注区域用，模型不会把红色画进结果。
+  // 旧做法是「白底 + 透明孔洞」，编辑区只存在于 alpha 通道，模型 RGB 里看是整张纯白 → 定位失败。
   const buildMaskBlob = useCallback(async (): Promise<Blob> => {
-    const src = maskCanvasRef.current;
-    if (!src) throw new Error('mask canvas not ready');
+    const mask = maskCanvasRef.current;
+    const baseImg = sourceImgRef.current;
+    if (!mask) throw new Error('mask canvas not ready');
+    if (!baseImg) throw new Error('source image not ready');
+    const w = mask.width;
+    const h = mask.height;
     const out = document.createElement('canvas');
-    out.width = src.width;
-    out.height = src.height;
+    out.width = w;
+    out.height = h;
     const ctx = out.getContext('2d');
     if (!ctx) throw new Error('ctx');
-    ctx.fillStyle = 'rgba(255,255,255,1)';
-    ctx.fillRect(0, 0, out.width, out.height);
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.drawImage(src, 0, 0);
+    // 1) 源图打底。
+    ctx.drawImage(baseImg, 0, 0, w, h);
+    // 2) 把涂抹区归一成均匀的半透明红（source-in 消除笔刷叠加深浅不均），再叠到源图上。
+    const overlay = document.createElement('canvas');
+    overlay.width = w;
+    overlay.height = h;
+    const octx = overlay.getContext('2d');
+    if (!octx) throw new Error('ctx');
+    octx.drawImage(mask, 0, 0);
+    octx.globalCompositeOperation = 'source-in';
+    octx.fillStyle = 'rgba(255, 0, 0, 0.6)';
+    octx.fillRect(0, 0, w, h);
+    ctx.drawImage(overlay, 0, 0);
     return await new Promise<Blob>((resolve, reject) => {
       out.toBlob(
         (blob) => (blob ? resolve(blob) : reject(new Error('toBlob returned null'))),
