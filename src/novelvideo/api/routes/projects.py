@@ -30,8 +30,9 @@ from novelvideo.api.schemas import (
 )
 from novelvideo.config import ensure_project_dirs_at_paths
 from novelvideo.embedding_models import (
+    PROJECT_EMBEDDING_DIMENSION_KEY,
     PROJECT_EMBEDDING_MODEL_KEY,
-    embedding_model_for_new_project,
+    embedding_model_binding_for_new_project,
 )
 from novelvideo.ports import get_project_access, get_project_registry
 from novelvideo.ports.project import ProjectRecord
@@ -466,11 +467,13 @@ async def create_project(
             state_dir=record.state_dir,
             runtime_dir=record.runtime_dir,
         )
+        embedding_binding = embedding_model_binding_for_new_project()
         save_project_config_in_state_dir(
             record.state_dir,
             config={
                 "user": user["username"],
-                PROJECT_EMBEDDING_MODEL_KEY: embedding_model_for_new_project(),
+                PROJECT_EMBEDDING_MODEL_KEY: embedding_binding.internal_model,
+                PROJECT_EMBEDDING_DIMENSION_KEY: embedding_binding.dimensions,
             },
         )
     except Exception:

@@ -23,6 +23,7 @@ from novelvideo.cognee.concurrency import (
     install_cognee_pipeline_concurrency,
 )
 from novelvideo.embedding_models import (
+    current_embedding_model_spec,
     embedding_gateway_credentials,
     require_current_embedding_model_spec,
 )
@@ -655,6 +656,8 @@ def _patch_cognee_embedding_gateway() -> None:
         return
 
     original_embed_text = engine_cls.embed_text
+    original_get_vector_size = engine_cls.get_vector_size
+    original_handle_embedding_response = _mod.handle_embedding_response
     litellm = _mod.litellm
     original_aembedding = litellm.aembedding
 
@@ -677,18 +680,46 @@ def _patch_cognee_embedding_gateway() -> None:
     litellm.aembedding = gateway_aembedding
     _install_litellm_embedding_header_capture()
 
+    def project_handle_embedding_response(original_texts, embeddings, dimensions):
+        spec = current_embedding_model_spec()
+        return original_handle_embedding_response(
+            original_texts,
+            embeddings,
+            spec.dimensions if spec is not None else dimensions,
+        )
+
+    _mod.handle_embedding_response = project_handle_embedding_response
+
     async def patched_embed_text(self, text):
         provider = str(getattr(self, "provider", "") or "").strip().lower()
         if provider not in {"custom", "openai"}:
             return await original_embed_text(self, text)
         expected_count = len(text) if isinstance(text, list) else 1
+
+        async def project_embed():
+            if getattr(self, "mock", False):
+                dimensions = require_current_embedding_model_spec().dimensions
+                return [[0.0] * dimensions for _ in range(expected_count)]
+            return await original_embed_text(self, text)
+
         return await _run_project_embedding_with_billing(
-            lambda: original_embed_text(self, text),
+            project_embed,
             expected_count=expected_count,
         )
 
+    def patched_get_vector_size(self):
+        spec = current_embedding_model_spec()
+        if spec is not None:
+            return spec.dimensions
+        return original_get_vector_size(self)
+
     engine_cls.embed_text = patched_embed_text
+    engine_cls.get_vector_size = patched_get_vector_size
     engine_cls._novelvideo_original_embed_text = original_embed_text
+    engine_cls._novelvideo_original_get_vector_size = original_get_vector_size
+    engine_cls._novelvideo_original_handle_embedding_response = (
+        original_handle_embedding_response
+    )
     engine_cls._novelvideo_original_aembedding = original_aembedding
     engine_cls._novelvideo_gateway_patch = True
     _embedding_gateway_patch_installed = True

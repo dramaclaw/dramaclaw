@@ -283,15 +283,18 @@ def _build_embedding_model_channel_spec(
         raise ValueError("provider is required for embedding model")
     if not upstream_model:
         raise ValueError("upstreamModel is required for embedding model")
-    if dimension != 1024:
-        raise ValueError("dimension must be 1024 for project-bound Cognee embeddings")
+    if dimension <= 0:
+        raise ValueError("dimension must be positive")
     if body.batch_size is not None and batch_size <= 0:
         raise ValueError("batchSize must be positive")
     normalized = {
         "provider": provider,
         "upstreamModel": upstream_model,
         "dimension": dimension,
-        "sendDimensions": body.send_dimensions,
+        # Kept in the response/config schema for compatibility with older
+        # clients. Runtime request behavior is controlled by the internal
+        # EmbeddingModelSpec, not by this user-supplied field.
+        "sendDimensions": True,
         "internalModel": "DC-cognee-embedding",
     }
     if batch_size > 0:

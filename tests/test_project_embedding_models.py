@@ -10,6 +10,8 @@ from novelvideo.embedding_models import (
     COGNEE_EMBEDDING_MODEL_LEGACY,
     COGNEE_EMBEDDING_MODEL_V1,
     COGNEE_EMBEDDING_MODEL_V2,
+    PROJECT_EMBEDDING_DIMENSION_KEY,
+    embedding_model_binding_for_new_project,
     embedding_model_for_legacy_project,
     embedding_model_for_new_project,
     embedding_gateway_credentials,
@@ -25,7 +27,10 @@ from novelvideo.model_gateway_settings import (
     save_official_newapi_key,
     set_model_gateway_mode,
 )
-from novelvideo.project_config import ensure_cognee_embedding_model_in_state_dir
+from novelvideo.project_config import (
+    ensure_cognee_embedding_binding_in_state_dir,
+    ensure_cognee_embedding_model_in_state_dir,
+)
 
 
 def _isolate_ce(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -52,6 +57,27 @@ def test_ce_custom_projects_bind_unversioned_model(monkeypatch, tmp_path):
 
     assert embedding_model_for_new_project() == COGNEE_EMBEDDING_MODEL_LEGACY
     assert embedding_model_for_legacy_project() == COGNEE_EMBEDDING_MODEL_LEGACY
+
+
+def test_ce_custom_new_project_snapshots_configured_dimensions(monkeypatch, tmp_path):
+    _isolate_ce(monkeypatch, tmp_path)
+    save_custom_newapi_gateway(
+        base_url="http://new-api:3000",
+        api_key="sk-custom",
+        activate=True,
+    )
+    save_newapi_embedding_model_config(
+        provider="ali",
+        upstream_model="Qwen3-Embedding-8B",
+        dimension=3072,
+        send_dimensions=False,
+    )
+
+    binding = embedding_model_binding_for_new_project()
+
+    assert binding.internal_model == COGNEE_EMBEDDING_MODEL_LEGACY
+    assert binding.dimensions == 3072
+    assert binding.send_dimensions is True
 
 
 def test_project_model_keeps_its_gateway_after_active_mode_switch(monkeypatch, tmp_path):
@@ -90,6 +116,7 @@ def test_legacy_project_binding_is_backfilled_once(monkeypatch, tmp_path):
     assert persisted == {
         "visual_style": "cinematic",
         "cognee_embedding_model": COGNEE_EMBEDDING_MODEL_V1,
+        PROJECT_EMBEDDING_DIMENSION_KEY: 1024,
     }
 
     set_model_gateway_mode(MODE_CUSTOM)
@@ -125,7 +152,7 @@ def test_fixed_official_model_specs():
     assert (v1.gateway, v1.dimensions, v1.send_dimensions) == (
         MODE_OFFICIAL,
         1024,
-        False,
+        True,
     )
     assert (v2.gateway, v2.dimensions, v2.send_dimensions) == (
         MODE_OFFICIAL,
@@ -134,7 +161,18 @@ def test_fixed_official_model_specs():
     )
 
 
-def test_ce_custom_spec_uses_saved_send_dimensions(monkeypatch, tmp_path):
+def test_official_project_dimension_mismatch_fails_closed():
+    with pytest.raises(RuntimeError, match="does not match"):
+        embedding_model_spec(
+            COGNEE_EMBEDDING_MODEL_V2,
+            dimensions=3072,
+        )
+
+
+def test_ce_custom_spec_uses_project_dimensions_and_internal_send_policy(
+    monkeypatch,
+    tmp_path,
+):
     _isolate_ce(monkeypatch, tmp_path)
     save_newapi_embedding_model_config(
         provider="ali",
@@ -143,11 +181,45 @@ def test_ce_custom_spec_uses_saved_send_dimensions(monkeypatch, tmp_path):
         send_dimensions=False,
     )
 
-    spec = embedding_model_spec(COGNEE_EMBEDDING_MODEL_LEGACY)
+    spec = embedding_model_spec(
+        COGNEE_EMBEDDING_MODEL_LEGACY,
+        dimensions=3072,
+    )
 
     assert spec.gateway == MODE_CUSTOM
-    assert spec.dimensions == 1024
-    assert spec.send_dimensions is False
+    assert spec.dimensions == 3072
+    assert spec.send_dimensions is True
+
+
+def test_existing_custom_project_keeps_backfilled_1024_dimensions(
+    monkeypatch,
+    tmp_path,
+):
+    _isolate_ce(monkeypatch, tmp_path)
+    save_custom_newapi_gateway(
+        base_url="http://new-api:3000",
+        api_key="sk-custom",
+        activate=True,
+    )
+    save_newapi_embedding_model_config(
+        provider="ali",
+        upstream_model="Qwen3-Embedding-8B",
+        dimension=3072,
+    )
+    state_dir = tmp_path / "project-state"
+    state_dir.mkdir()
+    config_path = state_dir / "project_config.json"
+    config_path.write_text(
+        json.dumps({"cognee_embedding_model": COGNEE_EMBEDDING_MODEL_LEGACY}),
+        encoding="utf-8",
+    )
+
+    binding = ensure_cognee_embedding_binding_in_state_dir(state_dir)
+
+    assert binding.dimensions == 1024
+    assert json.loads(config_path.read_text(encoding="utf-8"))[
+        PROJECT_EMBEDDING_DIMENSION_KEY
+    ] == 1024
 
 
 @pytest.mark.asyncio
@@ -177,6 +249,50 @@ async def test_embedding_model_scope_is_isolated_between_concurrent_tasks():
         require_current_embedding_model_spec()
 
 
+@pytest.mark.asyncio
+async def test_custom_project_dimensions_are_isolated_between_concurrent_tasks(
+    monkeypatch,
+    tmp_path,
+):
+    _isolate_ce(monkeypatch, tmp_path)
+
+    async def read_scoped(dimensions: int) -> int:
+        with embedding_model_scope(
+            COGNEE_EMBEDDING_MODEL_LEGACY,
+            dimensions=dimensions,
+        ):
+            await asyncio.sleep(0)
+            return require_current_embedding_model_spec().dimensions
+
+    first, second = await asyncio.gather(
+        read_scoped(768),
+        read_scoped(3072),
+    )
+
+    assert (first, second) == (768, 3072)
+
+
+def test_cognee_vector_size_follows_project_scope(monkeypatch, tmp_path):
+    _isolate_ce(monkeypatch, tmp_path)
+    from cognee.infrastructure.databases.vector.embeddings.LiteLLMEmbeddingEngine import (
+        LiteLLMEmbeddingEngine,
+    )
+
+    from novelvideo.cognee import config as cognee_config
+
+    cognee_config._patch_cognee_embedding_gateway()
+    engine = LiteLLMEmbeddingEngine.__new__(LiteLLMEmbeddingEngine)
+    engine.dimensions = 1024
+
+    with embedding_model_scope(
+        COGNEE_EMBEDDING_MODEL_LEGACY,
+        dimensions=3072,
+    ):
+        assert engine.get_vector_size() == 3072
+
+    assert engine.get_vector_size() == 1024
+
+
 def test_litellm_kwargs_follow_project_model(monkeypatch):
     from novelvideo.cognee import config as cognee_config
 
@@ -198,8 +314,8 @@ def test_litellm_kwargs_follow_project_model(monkeypatch):
         v2 = cognee_config._project_embedding_request_kwargs({"model": "wrong"})
 
     assert v1["model"] == "openai/DC-cognee-embedding-v1"
-    assert "dimensions" not in v1
-    assert "allowed_openai_params" not in v1
+    assert v1["dimensions"] == 1024
+    assert v1["allowed_openai_params"] == ["dimensions"]
     assert v1["api_base"] == "https://official.example/v1"
     assert v2["model"] == "openai/DC-cognee-embedding-v2"
     assert v2["dimensions"] == 1024
@@ -240,7 +356,8 @@ async def test_concurrent_embedding_requests_do_not_cross_models(monkeypatch):
     )
 
     assert v1["model"] == "openai/DC-cognee-embedding-v1"
-    assert "dimensions" not in v1
+    assert v1["dimensions"] == 1024
+    assert v1["allowed_openai_params"] == ["dimensions"]
     assert v2["model"] == "openai/DC-cognee-embedding-v2"
     assert v2["dimensions"] == 1024
     assert v2["allowed_openai_params"] == ["dimensions"]

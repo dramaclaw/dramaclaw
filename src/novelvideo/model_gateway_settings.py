@@ -301,7 +301,9 @@ def _decode_embedding_model_config(value: str | None) -> dict[str, Any]:
         "provider": provider,
         "upstreamModel": upstream_model,
         "dimension": dimensions,
-        "sendDimensions": _bool_setting(raw.get("sendDimensions"), True),
+        # Retain the field for API compatibility, but request behavior is an
+        # internal model contract and cannot be disabled by saved CE settings.
+        "sendDimensions": True,
         "internalModel": "DC-cognee-embedding",
     }
     if batch_size > 0:
@@ -431,7 +433,7 @@ def save_newapi_embedding_model_config(
         "provider": normalized_provider,
         "upstreamModel": normalized_upstream_model,
         "dimension": normalized_dimension,
-        "sendDimensions": bool(send_dimensions),
+        "sendDimensions": True,
         "internalModel": "DC-cognee-embedding",
     }
     if normalized_batch_size > 0:

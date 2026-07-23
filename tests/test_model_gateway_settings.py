@@ -2170,26 +2170,20 @@ def test_custom_newapi_embedding_model_writes_mapping_and_persists_dimension(
     }
 
 
-def test_custom_newapi_embedding_model_rejects_non_project_dimension(
-    monkeypatch,
-    tmp_path,
+def test_custom_newapi_embedding_model_accepts_positive_project_dimension(
 ):
-    _isolate_settings_db(monkeypatch, tmp_path)
-    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
-
-    app = FastAPI()
-    app.include_router(model_gateway.router)
-    response = TestClient(app).post(
-        "/model-gateway/custom/newapi/embedding-model",
-        json={
+    body = model_gateway.SaveEmbeddingModelBody.model_validate(
+        {
             "provider": "openai",
             "upstreamModel": "text-embedding-3-large",
             "dimension": 3072,
-        },
+        }
     )
 
-    assert response.status_code == 400
-    assert "dimension must be 1024" in response.text
+    _, normalized = model_gateway._build_embedding_model_channel_spec(body)
+
+    assert normalized["dimension"] == 3072
+    assert normalized["sendDimensions"] is True
 
 
 def test_effective_cognee_embedding_prefers_saved_custom_config(monkeypatch, tmp_path):

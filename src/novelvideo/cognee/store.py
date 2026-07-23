@@ -33,7 +33,7 @@ from novelvideo.embedding_models import (
 )
 from novelvideo.official_defaults import DEFAULT_COGNEE_LLM_MODEL
 from novelvideo.novel_source import require_imported_novel
-from novelvideo.project_config import ensure_cognee_embedding_model_in_state_dir
+from novelvideo.project_config import ensure_cognee_embedding_binding_in_state_dir
 from novelvideo.sqlite_store import SQLiteStore
 from novelvideo.utils.document_parsers import load_novel_text
 
@@ -161,6 +161,7 @@ class CogneeStore:
         )
         self._share_sqlite_caches()
         self.cognee_embedding_model: str | None = None
+        self.cognee_embedding_dimensions: int | None = None
 
         # 立即设置 Cognee 上下文
         self._set_cognee_context()
@@ -294,15 +295,18 @@ class CogneeStore:
 
     def embedding_model_scope(self):
         model = getattr(self, "cognee_embedding_model", None)
-        if not model:
+        dimensions = getattr(self, "cognee_embedding_dimensions", None)
+        if not model or dimensions is None:
             state_dir = getattr(self, "state_dir", None)
-            model = (
-                ensure_cognee_embedding_model_in_state_dir(state_dir)
-                if state_dir
-                else embedding_model_for_legacy_project()
-            )
+            if state_dir:
+                binding = ensure_cognee_embedding_binding_in_state_dir(state_dir)
+                model = binding.internal_model
+                dimensions = binding.dimensions
+            else:
+                model = embedding_model_for_legacy_project()
             self.cognee_embedding_model = model
-        return project_embedding_model_scope(model)
+            self.cognee_embedding_dimensions = dimensions
+        return project_embedding_model_scope(model, dimensions=dimensions)
 
     @staticmethod
     def _ensure_pipeline_run_succeeded(result, stage_name: str) -> None:
@@ -405,9 +409,9 @@ class CogneeStore:
 
     async def initialize(self):
         """初始化 SQLite 数据库和 Cognee 配置。"""
-        self.cognee_embedding_model = ensure_cognee_embedding_model_in_state_dir(
-            self.state_dir
-        )
+        embedding_binding = ensure_cognee_embedding_binding_in_state_dir(self.state_dir)
+        self.cognee_embedding_model = embedding_binding.internal_model
+        self.cognee_embedding_dimensions = embedding_binding.dimensions
         init_cognee()
 
         # 初始化项目 SQLite；Cognee 图谱上下文独立设置。
