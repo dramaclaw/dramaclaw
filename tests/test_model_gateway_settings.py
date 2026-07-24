@@ -2431,6 +2431,137 @@ def test_media_relay_config_route_persists_and_masks_cloudinary_keys(
     assert "cloudinary-api-secret" not in response.text
 
 
+def test_media_relay_config_route_supports_partial_credential_updates(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    monkeypatch.setattr(model_gateway.app_config, "MEDIA_RELAY_PROVIDER", "aliyun_oss")
+    monkeypatch.setattr(model_gateway.app_config, "MEDIA_RELAY_TTL_SECONDS", 1800)
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_ENDPOINT", "")
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_BUCKET", "")
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_AK", "")
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_SK", "")
+    monkeypatch.setattr(model_gateway.app_config, "CLOUDINARY_RELAY_CLOUD_NAME", "")
+    monkeypatch.setattr(model_gateway.app_config, "CLOUDINARY_RELAY_API_KEY", "")
+    monkeypatch.setattr(model_gateway.app_config, "CLOUDINARY_RELAY_API_SECRET", "")
+    monkeypatch.setattr(model_gateway.app_config, "CLOUDINARY_RELAY_FOLDER", "")
+
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    initial = client.post(
+        "/model-gateway/media-relay/config",
+        json={
+            "provider": "aliyun_oss",
+            "ttlSeconds": 900,
+            "endpoint": "oss-cn-shanghai.aliyuncs.com",
+            "bucket": "user-relay",
+            "accessKeyId": "LTAI-old-secret",
+            "accessKeySecret": "SK-old-secret",
+        },
+    )
+    assert initial.status_code == 200
+
+    updated = client.post(
+        "/model-gateway/media-relay/config",
+        json={
+            "provider": "aliyun_oss",
+            "ttlSeconds": 1200,
+            "endpoint": "oss-cn-beijing.aliyuncs.com",
+            "bucket": "user-relay",
+            "accessKeyId": "LTAI-new-secret",
+            "accessKeySecret": "",
+        },
+    )
+
+    assert updated.status_code == 200
+    data = updated.json()["data"]
+    assert data["ttlSeconds"] == 1200
+    assert data["endpoint"] == "oss-cn-beijing.aliyuncs.com"
+    assert data["accessKeyIdPreview"] == "LTAI...cret"
+    assert data["accessKeySecretPreview"] == "SK-o...cret"
+    assert data["configured"] is True
+    assert "LTAI-new-secret" not in updated.text
+    assert "SK-old-secret" not in updated.text
+
+
+def test_media_relay_config_route_preserves_inactive_provider_credentials(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    monkeypatch.setattr(model_gateway.app_config, "MEDIA_RELAY_PROVIDER", "aliyun_oss")
+    monkeypatch.setattr(model_gateway.app_config, "MEDIA_RELAY_TTL_SECONDS", 1800)
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_ENDPOINT", "")
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_BUCKET", "")
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_AK", "")
+    monkeypatch.setattr(model_gateway.app_config, "OSS_RELAY_SK", "")
+    monkeypatch.setattr(model_gateway.app_config, "CLOUDINARY_RELAY_CLOUD_NAME", "")
+    monkeypatch.setattr(model_gateway.app_config, "CLOUDINARY_RELAY_API_KEY", "")
+    monkeypatch.setattr(model_gateway.app_config, "CLOUDINARY_RELAY_API_SECRET", "")
+    monkeypatch.setattr(model_gateway.app_config, "CLOUDINARY_RELAY_FOLDER", "")
+
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    oss = client.post(
+        "/model-gateway/media-relay/config",
+        json={
+            "provider": "aliyun_oss",
+            "endpoint": "oss.example.com",
+            "bucket": "oss-bucket",
+            "accessKeyId": "oss-access-key",
+            "accessKeySecret": "oss-secret-key",
+        },
+    )
+    assert oss.status_code == 200
+
+    cloudinary = client.post(
+        "/model-gateway/media-relay/config",
+        json={
+            "provider": "cloudinary",
+            "cloudName": "demo-cloud",
+            "apiKey": "cloudinary-api-key",
+            "apiSecret": "cloudinary-api-secret",
+        },
+    )
+    assert cloudinary.status_code == 200
+    cloudinary_data = cloudinary.json()["data"]
+    assert cloudinary_data["accessKeyIdPreview"] == "oss-...-key"
+    assert cloudinary_data["accessKeySecretPreview"] == "oss-...-key"
+
+    cloudinary_partial = client.post(
+        "/model-gateway/media-relay/config",
+        json={
+            "provider": "cloudinary",
+            "cloudName": "demo-cloud",
+            "apiKey": "",
+            "apiSecret": "cloudinary-new-secret",
+        },
+    )
+    assert cloudinary_partial.status_code == 200
+    cloudinary_partial_data = cloudinary_partial.json()["data"]
+    assert cloudinary_partial_data["cloudinaryApiKeyPreview"] == "clou...-key"
+    assert cloudinary_partial_data["cloudinaryApiSecretPreview"] == "clou...cret"
+
+    switched_back = client.post(
+        "/model-gateway/media-relay/config",
+        json={
+            "provider": "aliyun_oss",
+            "endpoint": "oss.example.com",
+            "bucket": "oss-bucket",
+        },
+    )
+    assert switched_back.status_code == 200
+    switched_data = switched_back.json()["data"]
+    assert switched_data["configured"] is True
+    assert switched_data["cloudinaryApiKeyPreview"] == "clou...-key"
+    assert switched_data["cloudinaryApiSecretPreview"] == "clou...cret"
+
+
 def test_media_relay_status_prefers_database_config(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
     save_media_relay_config(

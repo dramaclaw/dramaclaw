@@ -26,6 +26,7 @@ import {
   ChevronUp,
   Download,
   Film,
+  Images,
   Languages,
   Layers,
   Library,
@@ -42,6 +43,7 @@ import {
   Volume2,
   VolumeX,
   X as XIcon,
+  type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -61,6 +63,17 @@ import {
   type VideoGenQuality,
   type VideoNodeData,
 } from "@/features/canvas/domain/canvasNodes";
+import {
+  isGrokVideoChannelModel,
+  isHappyHorseVideoModel,
+  isSeedance1xVideoModel,
+  isSeedance2VideoModel,
+  isVideoModeSupportedByModel,
+  videoEmptyStateCtaModes,
+  videoModeRequiresPrompt,
+  videoUpstreamImageDefaultMode,
+  type VideoEmptyStateCtaMode,
+} from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import {
   VIDEO_GENERATION_ASPECT_RATIOS,
   mediaNeedsCrossOrigin,
@@ -222,11 +235,9 @@ const MAX_WIDTH = 1100;
 const MAX_HEIGHT = 1000;
 
 // 图片节点的默认落位尺寸（与 ImageGenNode 的 DEFAULT_WIDTH/HEIGHT 对齐）。
-// 「首帧生成视频」会在视频节点左侧新建一个图片节点，排版要按它的真实尺寸算。
+// 「全能参考 / 图片参考」会在视频节点左侧新建一个图片节点，排版要按它的真实尺寸算。
 const IMAGE_GEN_NODE_WIDTH = 580;
 const IMAGE_GEN_NODE_HEIGHT = 360;
-/** 「首帧生成视频」预填的提示词，用户可以直接改。 */
-const FIRST_FRAME_PROMPT = "以当前图为首帧生成视频";
 
 const OPERATIONS_PANEL_HEIGHT = 280;
 const OPERATIONS_PANEL_GAP = 12;
@@ -254,6 +265,18 @@ const HAPPYHORSE_TAB_ORDER: ReadonlyArray<VideoGenMode> = [
   "imageReference",
   "videoEdit",
 ];
+
+// 空态 CTA 的图标 + 文案：具体展示哪几个模式由 `videoEmptyStateCtaModes(modelId)`
+// 按模型能力决定（见 shared/videoModelCapabilities.ts），这里只负责「模式 → 外观」。
+const VIDEO_EMPTY_STATE_CTA_META: Record<
+  VideoEmptyStateCtaMode,
+  { Icon: LucideIcon; label: string }
+> = {
+  allReference: { Icon: Sparkles, label: "全能参考" },
+  imageReference: { Icon: Images, label: "图片参考" },
+  imageToVideo: { Icon: Film, label: "首帧生成视频" },
+  firstLastFrame: { Icon: Layers, label: "首尾帧生成视频" },
+};
 
 // 各 genMode 对上游引用数量的硬上限。UI 用这张表把后端字段约束（多图 / 多模态
 // 场景下）显式表达出来：超额 chip 标灰 + 从 @ 候选剔除，避免「prompt 引用了
@@ -396,47 +419,10 @@ function isSeedance2ValueModel(modelId: string | null | undefined): boolean {
     normalized === "huimeng_seedance-2.0-fast-value";
 }
 
-// Seedance 1 全系列(1.0 Pro Fast / 1.5 Pro / …)。素材去掉分隔符后版本号
-// `1.x` → `1x`,匹配 `seedance1` 后跟任意数字,避免误命中 2.0(`20`)。
-// 引用了素材时这些模型不可用。
-function isSeedance1xModel(modelId: string | null | undefined): boolean {
-  const normalized = String(modelId ?? "")
-    .replace(/[\s._-]/g, "")
-    .toLowerCase();
-  return /seedance1\d/.test(normalized);
-}
-
-function isGrokVideoChannelModel(modelId: string | null | undefined): boolean {
-  const normalized = String(modelId ?? "")
-    .replace(/[\s._-]/g, "")
-    .toLowerCase();
-  return normalized.includes("grokvideochannel");
-}
-
-function isHappyHorseVideoModel(modelId: string | null | undefined): boolean {
-  const normalized = String(modelId ?? "")
-    .replace(/[\s._-]/g, "")
-    .toLowerCase();
-  return normalized.includes("happyhorse10");
-}
-
-// 某 genMode 是否被指定模型支持（与 GenModeSelect 的可见 tab 口径一致）：
-// videoEdit 是 HappyHorse 专属；firstLastFrame / allReference 是非 HappyHorse 专属。
-// 切换模型时用它判断是否要重置残留 genMode，避免提交打到不支持的端点。
-function isVideoModeSupportedByModel(
-  mode: VideoGenMode,
-  modelId: string | null | undefined,
-): boolean {
-  if (isHappyHorseVideoModel(modelId)) {
-    return (
-      mode === "textToVideo" ||
-      mode === "imageToVideo" ||
-      mode === "imageReference" ||
-      mode === "videoEdit"
-    );
-  }
-  return mode !== "videoEdit";
-}
+// 模型能力判定（isHappyHorseVideoModel / isSeedance1xVideoModel /
+// isSeedance2VideoModel / isGrokVideoChannelModel / isVideoModeSupportedByModel）
+// 统一收敛到 nodes/shared/videoModelCapabilities.ts，作为 CTA / tab / 提交校验的
+// 单一事实来源，避免「非 HappyHorse 一律当 Seedance 2.0」的假设散落在组件里。
 
 function videoModelReferenceDisabledReason(
   modelId: string | null | undefined,
@@ -451,7 +437,7 @@ function videoModelReferenceDisabledReason(
     }
     return null;
   }
-  if (isSeedance1xModel(modelId)) {
+  if (isSeedance1xVideoModel(modelId)) {
     if (counts.images > 0 || counts.videos > 0 || counts.audios > 0) {
       return "该模型不支持当前接入的素材";
     }
@@ -841,9 +827,8 @@ export const VideoNode = memo(
       defaultSceneOptimizeForModel(selectedVideoModel),
     );
     const generateAudio = Boolean(data.generateAudio);
-    // 真人素材审核开关只对 Seedance 2.0 系列模型生效。归一化掉分隔符后匹配
-    // `seedance2`，覆盖 `huimeng_seedance20_fast` / 未来可能的 `seedance_2_0` 等 id。
-    const isSeedance20Model = /seedance2/i.test(modelId.replace(/[\s._-]/g, ""));
+    // 真人素材审核开关只对 Seedance 2.0 系列模型生效（口径同能力模块）。
+    const isSeedance20Model = isSeedance2VideoModel(modelId);
     const humanReview = Boolean(data.humanReview);
     const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
     useEffect(() => {
@@ -1441,19 +1426,35 @@ export const VideoNode = memo(
       inputRef.current?.click();
     }, []);
 
-    // Spawn the frame source node(s) to the left of this video node and wire
-    // them as inputs. Used by the empty-state "首帧/首尾帧 生成视频" CTAs.
-    // 首帧走图片节点（可上传也可直接生图）+ 全能参考；首尾帧仍走上传节点 + 关键帧。
+    // Spawn the source node(s) to the left of this video node and wire them as
+    // inputs. Used by the empty-state 全能参考 / 图片参考 / 首尾帧 CTAs.
+    // 全能参考 / 图片参考走图片节点（可上传也可直接生图）+ 对应参考模式；
+    // 首尾帧走两个上传节点 + firstLastFrame 关键帧。
     const spawnFrameUploads = useCallback(
-      (mode: "firstFrame" | "firstLastFrame") => {
+      (
+        mode:
+          | "allReference"
+          | "imageReference"
+          | "imageToVideo"
+          | "firstLastFrame",
+      ) => {
         const state = useCanvasStore.getState();
         const self = state.nodes.find((n) => n.id === id);
         if (!self) return;
-        const isFirstFrame = mode === "firstFrame";
+        // 垂直居中要按视频节点的真实高度算，优先用测量值，未测量时回退设定高度/默认值。
+        const selfHeight =
+          self.measured?.height ??
+          (typeof self.height === "number" ? self.height : DEFAULT_HEIGHT);
+        // 全能参考 / 图片参考 / 首帧生成视频都只铺一个图片节点；首尾帧要铺首帧 + 尾帧
+        // 两个上传节点。
+        const isSingleImage =
+          mode === "allReference" ||
+          mode === "imageReference" ||
+          mode === "imageToVideo";
         // 两种源节点的默认尺寸不同（图片节点 580×360 / 上传节点 320×350），
         // 左列的定位与避让都得按实际尺寸算，否则图片节点会压到视频节点身上。
-        const FRAME_WIDTH = isFirstFrame ? IMAGE_GEN_NODE_WIDTH : 320;
-        const FRAME_HEIGHT = isFirstFrame ? IMAGE_GEN_NODE_HEIGHT : 350;
+        const FRAME_WIDTH = isSingleImage ? IMAGE_GEN_NODE_WIDTH : 320;
+        const FRAME_HEIGHT = isSingleImage ? IMAGE_GEN_NODE_HEIGHT : 350;
         const GAP_X = 40;
         const GAP_Y = 24;
         const baseX = self.position.x - FRAME_WIDTH - GAP_X;
@@ -1522,30 +1523,37 @@ export const VideoNode = memo(
           occupiedRects.push({ x: baseX, y, width: FRAME_WIDTH, height: FRAME_HEIGHT });
           return y;
         };
-        if (isFirstFrame) {
-          const baseY = resolveAvailableY(
-            self.position.y + ((self.height ?? DEFAULT_HEIGHT) - FRAME_HEIGHT) / 2,
-          );
+        if (isSingleImage) {
+          // 直接按视频高度垂直居中，不做向下避让。resolveAvailableY 只会向下顶，
+          // 左侧空间一旦被别的节点占用就把参考图挤下一行、破坏与视频的对齐（正是
+          // 「全能参考 vs 图片参考」对不齐的成因）。这里优先保证对齐：参考图恒在视频
+          // 左侧（有 GAP_X 间隔）不会压到视频本身；万一撞上左侧的无关节点，宁可让
+          // 用户手动挪开，也不牺牲与视频的对齐。
+          const baseY = self.position.y + (selfHeight - FRAME_HEIGHT) / 2;
           const newId = addNode(
             CANVAS_NODE_TYPES.imageGen,
             { x: baseX, y: baseY },
             {
-              displayName: "首帧",
+              displayName: mode === "imageToVideo" ? "首帧" : "参考图",
             },
           );
           addEdge(newId, id);
-          state.autoGroupSpawn(id, [newId], { label: '首帧生成视频组' });
-          // 首帧走全能参考（把上游图当参考图喂给全能生成端点），并把提示词直接
-          // 写好；用户已经写过提示词就别覆盖他的内容。
-          updateNodeData(id, {
-            genMode: "allReference",
-            ...(prompt.trim() ? {} : { prompt: FIRST_FRAME_PROMPT }),
-          });
+          const groupLabel =
+            mode === "imageReference"
+              ? "图片参考组"
+              : mode === "imageToVideo"
+                ? "首帧生成视频组"
+                : "全能参考组";
+          state.autoGroupSpawn(id, [newId], { label: groupLabel });
+          // 上游图片直接作为素材喂给对应端点；模式切到用户点的那一个，不预填提示词
+          // （尊重用户已写内容）。HappyHorse 下由统一状态机确认（imageToVideo /
+          // imageReference 都与「1 张上游图」匹配，不会被改写）；非 HappyHorse 下
+          // data.genMode 一旦非空，默认推断 effect 就不再覆盖它。
+          updateNodeData(id, { genMode: mode });
           return;
         }
         const totalH = FRAME_HEIGHT * 2 + GAP_Y;
-        const startY =
-          self.position.y + ((self.height ?? DEFAULT_HEIGHT) - totalH) / 2;
+        const startY = self.position.y + (selfHeight - totalH) / 2;
         const firstY = resolveAvailableY(startY);
         const lastY = resolveAvailableY(firstY + stepY);
         const firstId = addNode(
@@ -1563,7 +1571,7 @@ export const VideoNode = memo(
         state.autoGroupSpawn(id, [firstId, lastId], { label: '首尾帧生成视频组' });
         updateNodeData(id, { genMode: "firstLastFrame" });
       },
-      [addEdge, addNode, id, prompt, updateNodeData],
+      [addEdge, addNode, id, updateNodeData],
     );
 
     // Spawn reference nodes from selected asset-library entries — one per
@@ -1715,17 +1723,26 @@ export const VideoNode = memo(
     }, [id, processFile]);
 
     // First time an upstream image becomes available, flip the gen mode so the
-    // video actually consumes it. Default to `allReference`（全能参考）—— it
-    // accepts 1-9 images and is the more general entry point; the 首尾帧 keyframe
-    // workflow stays reachable via the explicit empty-state CTA. Only fires while
-    // data.genMode is undefined — once the user picks any tab we respect that.
+    // video actually consumes it. 默认模式按模型能力选（videoUpstreamImageDefaultMode）：
+    // Seedance 2.0 → 全能参考（1-9 图的通用入口，首尾帧仍可经空态 CTA 进入）；
+    // Seedance 1.x → 首帧（1.x 不支持全能参考，默认推成它会让提交必 400）。
+    // 仅在 data.genMode 未定义时兜底——用户一旦选过任何 tab 就尊重其选择。
     // HappyHorse 走下面的统一状态机，不参与这条默认。
     useEffect(() => {
       if (isHappyHorseModel) return;
       if (data.genMode != null) return;
       if (referenceImages.length === 0) return;
-      updateNodeData(id, { genMode: "allReference" });
-    }, [data.genMode, id, isHappyHorseModel, referenceImages.length, updateNodeData]);
+      updateNodeData(id, {
+        genMode: videoUpstreamImageDefaultMode(selectedVideoModelId),
+      });
+    }, [
+      data.genMode,
+      id,
+      isHappyHorseModel,
+      referenceImages.length,
+      selectedVideoModelId,
+      updateNodeData,
+    ]);
 
     // HappyHorse 的模式完全由上游节点类型决定（文档的 4 大功能一一对应），这里用
     // 一条统一状态机替代分散的兜底 effect，避免多个 effect 互相打架：
@@ -1766,6 +1783,8 @@ export const VideoNode = memo(
     // audio upstream first appears, force the mode to `allReference`. Tracked
     // through a ref so we only fire on the 0 → ≥1 transition; once the user
     // disconnects all audio and reconnects, it fires again.
+    // 仅 Seedance 2.0 能消费音频（omni）；非 2.0（Seedance 1.x）不支持音频素材，
+    // 由模型选择器拦截，这里不强推 allReference 以免顶进提交必 400 的模式。
     const prevHasAudioRef = useRef(false);
     const hasAudioUpstream = useMemo(
       () => referenceMedia.some((item) => item.kind === "audio"),
@@ -1774,34 +1793,66 @@ export const VideoNode = memo(
     useEffect(() => {
       const prev = prevHasAudioRef.current;
       prevHasAudioRef.current = hasAudioUpstream;
-      if (!prev && hasAudioUpstream && data.genMode !== "allReference" && !isHappyHorseModel) {
+      if (
+        !prev &&
+        hasAudioUpstream &&
+        data.genMode !== "allReference" &&
+        !isHappyHorseModel &&
+        isSeedance20Model
+      ) {
         updateNodeData(id, { genMode: "allReference" });
       }
-    }, [data.genMode, hasAudioUpstream, id, isHappyHorseModel, updateNodeData]);
+    }, [
+      data.genMode,
+      hasAudioUpstream,
+      id,
+      isHappyHorseModel,
+      isSeedance20Model,
+      updateNodeData,
+    ]);
 
     // 上游接入视频素材时，只有「全能参考」能消费视频；其它模式（文生 / 图生 /
     // 首尾帧 / 图片参考）都会把视频丢弃。所以只要上游存在视频就强制切到
     // allReference 并锁死——下面的 tab 禁用规则会把其它 tab 一并禁用。
     // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
+    // 仅 Seedance 2.0 能消费视频（omni）；非 2.0（Seedance 1.x）不支持视频素材，
+    // 由模型选择器拦截，这里不强推 allReference 以免顶进提交必 400 的模式。
     useEffect(() => {
       if (upstreamCounts.videos === 0) return;
       if (isHappyHorseModel) return;
+      if (!isSeedance20Model) return;
       if (genMode === "allReference") return;
       updateNodeData(id, { genMode: "allReference" });
-    }, [upstreamCounts.videos, genMode, id, isHappyHorseModel, updateNodeData]);
+    }, [
+      upstreamCounts.videos,
+      genMode,
+      id,
+      isHappyHorseModel,
+      isSeedance20Model,
+      updateNodeData,
+    ]);
 
     // 文生视频不接受任何素材引用。即便用户先手动选了 textToVideo 再接入
     // 图片/音频（此时上面两个自动切换 effect 都因 genMode 已显式而 bail），
-    // 也要强制切走，否则会停在 textToVideo 把已连素材丢弃。图片/音频统一走
-    // allReference（全能参考），与「首次接入图片」的默认保持一致。
+    // 也要强制切走，否则会停在 textToVideo 把已连素材丢弃。
+    // 有图 → 按模型能力选默认（2.0 全能参考 / 1.x 首帧）；仅音频（只有 Seedance 2.0
+    // 能消费）→ 全能参考；音频对非 2.0 不可用，由模型选择器拦截，这里不强推。
     useEffect(() => {
       if (isHappyHorseModel) return;
       if (genMode !== "textToVideo") return;
       if (upstreamCounts.images === 0 && upstreamCounts.audios === 0) return;
-      updateNodeData(id, { genMode: "allReference" });
+      if (upstreamCounts.images > 0) {
+        updateNodeData(id, {
+          genMode: videoUpstreamImageDefaultMode(selectedVideoModelId),
+        });
+      } else if (isSeedance20Model) {
+        updateNodeData(id, { genMode: "allReference" });
+      }
     }, [
       genMode,
       isHappyHorseModel,
+      isSeedance20Model,
+      selectedVideoModelId,
       upstreamCounts.images,
       upstreamCounts.audios,
       id,
@@ -2023,9 +2074,22 @@ export const VideoNode = memo(
       updateNodeData,
     ]);
 
+    // 提交可用性按模式区分（对齐后端各端点校验）：
+    // - 文生 / 全能参考：后端强校验 prompt，必须有提示词（自写或上游 text）；
+    // - 首帧(i2v) / 图片参考 / 首尾帧 / 视频编辑：后端不校验 prompt，允许空提示词，
+    //   只要素材齐备即可提交（图片类要 ≥1 张上游图；视频编辑要 ≥1 个上游视频）。
+    //   这修掉「删掉默认提示词后传了首帧仍无法直接生成」的问题。
+    const hasPromptText =
+      prompt.trim().length > 0 || upstreamTextJoined.length > 0;
+    const hasRequiredMediaForMode =
+      genMode === "videoEdit"
+        ? upstreamCounts.videos > 0
+        : upstreamCounts.images > 0;
     const submitDisabled =
       isGenerating ||
-      (prompt.trim().length === 0 && upstreamTextJoined.length === 0);
+      (videoModeRequiresPrompt(genMode)
+        ? !hasPromptText
+        : !hasRequiredMediaForMode);
 
     const handleSubmit = useCallback(async () => {
       if (submitDisabled) return;
@@ -2191,9 +2255,14 @@ export const VideoNode = memo(
               nodeId: targetId,
             });
         } else if (genMode === "allReference") {
-          if (isHappyHorseModel) {
+          // 全能参考(omni)仅 Seedance 2.0 后端支持：HappyHorse / Seedance 1.x 打
+          // omni 端点必被后端 400。这里前置守卫给出可读提示，防止残留模式（如从
+          // 2.0 切到 1.x 后未重置）在提交时打到不支持的端点。
+          if (!isSeedance20Model) {
             void showErrorDialog(
-              "HappyHorse 不支持全能参考模式，请切换为文生视频或图生视频。",
+              isHappyHorseModel
+                ? "HappyHorse 不支持全能参考模式，请切换为文生视频或图生视频。"
+                : "全能参考仅支持 Seedance 2.0 模型，请切换到 Seedance 2.0，或改用「首帧生成视频」。",
               t("common.error"),
             );
             updateNodeData(id, {
@@ -2872,37 +2941,33 @@ export const VideoNode = memo(
             </div>
           ) : (
             <div className="flex h-full w-full items-center px-8">
-              {/* 上游含视频时只能走全能参考，首尾帧/首帧这两个 CTA 会引导到被禁用的
-                  firstLastFrame 模式，所以此时隐藏。 */}
-              {upstreamCounts.videos === 0 && (
-                <div className="flex min-h-0 flex-col justify-center gap-2 py-4">
-                  <div className="text-xs text-[var(--canvas-node-input-helper)]">试试：</div>
-                  <div className="flex flex-col gap-0.5">
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        spawnFrameUploads("firstLastFrame");
-                      }}
-                      className="nodrag -mx-2 inline-flex items-center gap-3 rounded-lg px-2 py-2 text-sm text-text-dark transition-colors hover:bg-white/[0.08]"
-                    >
-                      <Layers className="h-4 w-4 text-text-muted/90" />
-                      <span>首尾帧生成视频</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        spawnFrameUploads("firstFrame");
-                      }}
-                      className="nodrag -mx-2 inline-flex items-center gap-3 rounded-lg px-2 py-2 text-sm text-text-dark transition-colors hover:bg-white/[0.08]"
-                    >
-                      <Sparkles className="h-4 w-4 text-text-muted/90" />
-                      <span>首帧生成视频</span>
-                    </button>
-                  </div>
+              {/* 空态（无入边）才走到这里，一定没有上游视频。CTA 展示哪几个模式
+                  完全按当前模型的能力口径决定（videoEmptyStateCtaModes）：HappyHorse
+                  给「首帧 / 图片参考」；Seedance 2.0 给「全能参考 / 图片参考 / 首尾帧」；
+                  Seedance 1.x 等非 2.0 只给「首帧」——全能参考会 400、首尾帧尾帧被
+                  静默丢弃、多图参考不支持，不给入口免得点了被静默改写或提交必失败。 */}
+              <div className="flex min-h-0 flex-col justify-center gap-2 py-4">
+                <div className="text-xs text-[var(--canvas-node-input-helper)]">试试：</div>
+                <div className="flex flex-col gap-0.5">
+                  {videoEmptyStateCtaModes(selectedVideoModelId).map((mode) => {
+                    const { Icon, label } = VIDEO_EMPTY_STATE_CTA_META[mode];
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          spawnFrameUploads(mode);
+                        }}
+                        className="nodrag -mx-2 inline-flex items-center gap-3 rounded-lg px-2 py-2 text-sm text-text-dark transition-colors hover:bg-white/[0.08]"
+                      >
+                        <Icon className="h-4 w-4 text-text-muted/90" />
+                        <span>{label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+              </div>
               <Play className="ml-auto mr-20 h-9 w-9 text-text-muted/46" />
             </div>
           )}
@@ -3511,7 +3576,9 @@ function GenModeSelect({ value, modelId, upstreamCounts, onChange }: GenModeSele
   // 非 HappyHorse 不暴露「视频编辑」(它是 HappyHorse 专属功能)。
   const visibleTabs = useMemo(() => {
     if (!isHappyHorseVideoModel(modelId)) {
-      return MODE_TABS.filter((tab) => tab.key !== "videoEdit");
+      // 按模型能力过滤，而非「非 HappyHorse 一律给全部」：Seedance 1.x 不支持
+      // 全能参考(400)与真尾帧首尾帧(静默丢尾帧)，这两个 tab 对它不可见。
+      return MODE_TABS.filter((tab) => isVideoModeSupportedByModel(tab.key, modelId));
     }
     const order =
       upstreamCounts.videos > 0
