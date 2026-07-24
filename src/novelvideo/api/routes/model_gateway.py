@@ -12,6 +12,7 @@ from novelvideo.model_gateway_settings import (
     MODE_OFFICIAL,
     build_media_relay_status,
     build_model_gateway_status,
+    get_effective_media_relay_config,
     normalize_relay_base_url,
     normalize_api_key,
     save_media_relay_config,
@@ -74,14 +75,14 @@ class OfficialGatewayBody(BaseModel):
 class MediaRelayConfigBody(BaseModel):
     provider: str = "aliyun_oss"
     ttl_seconds: int = Field(default=1800, alias="ttlSeconds")
-    endpoint: str = ""
-    bucket: str = ""
-    access_key_id: str = Field(default="", alias="accessKeyId")
-    access_key_secret: str = Field(default="", alias="accessKeySecret")
-    cloud_name: str = Field(default="", alias="cloudName")
-    cloudinary_api_key: str = Field(default="", alias="apiKey")
-    cloudinary_api_secret: str = Field(default="", alias="apiSecret")
-    cloudinary_folder: str = Field(default="", alias="apiFolder")
+    endpoint: str | None = None
+    bucket: str | None = None
+    access_key_id: str | None = Field(default=None, alias="accessKeyId")
+    access_key_secret: str | None = Field(default=None, alias="accessKeySecret")
+    cloud_name: str | None = Field(default=None, alias="cloudName")
+    cloudinary_api_key: str | None = Field(default=None, alias="apiKey")
+    cloudinary_api_secret: str | None = Field(default=None, alias="apiSecret")
+    cloudinary_folder: str | None = Field(default=None, alias="apiFolder")
 
 
 class NewApiDatabaseBody(BaseModel):
@@ -407,14 +408,43 @@ async def save_media_relay_settings(body: MediaRelayConfigBody) -> dict[str, Any
         raise HTTPException(status_code=400, detail="unsupported media relay provider")
     if body.ttl_seconds <= 0:
         raise HTTPException(status_code=400, detail="ttlSeconds must be positive")
-    endpoint = body.endpoint.strip()
-    bucket = body.bucket.strip()
-    access_key_id = body.access_key_id.strip()
-    access_key_secret = body.access_key_secret.strip()
-    cloud_name = body.cloud_name.strip()
-    cloudinary_api_key = body.cloudinary_api_key.strip()
-    cloudinary_api_secret = body.cloudinary_api_secret.strip()
-    cloudinary_folder = body.cloudinary_folder.strip().strip("/")
+    current = get_effective_media_relay_config(
+        env_provider=app_config.MEDIA_RELAY_PROVIDER,
+        env_ttl_seconds=app_config.MEDIA_RELAY_TTL_SECONDS,
+        env_endpoint=app_config.OSS_RELAY_ENDPOINT,
+        env_bucket=app_config.OSS_RELAY_BUCKET,
+        env_access_key_id=app_config.OSS_RELAY_AK,
+        env_access_key_secret=app_config.OSS_RELAY_SK,
+        env_cloud_name=app_config.CLOUDINARY_RELAY_CLOUD_NAME,
+        env_cloudinary_api_key=app_config.CLOUDINARY_RELAY_API_KEY,
+        env_cloudinary_api_secret=app_config.CLOUDINARY_RELAY_API_SECRET,
+        env_cloudinary_folder=app_config.CLOUDINARY_RELAY_FOLDER,
+    )
+
+    def merge_field(value: str | None, saved: str, *, secret: bool = False) -> str:
+        if value is None:
+            return saved
+        normalized = value.strip()
+        if secret and not normalized:
+            return saved
+        return normalized
+
+    endpoint = merge_field(body.endpoint, current.endpoint)
+    bucket = merge_field(body.bucket, current.bucket)
+    access_key_id = merge_field(body.access_key_id, current.access_key_id, secret=True)
+    access_key_secret = merge_field(
+        body.access_key_secret, current.access_key_secret, secret=True
+    )
+    cloud_name = merge_field(body.cloud_name, current.cloud_name)
+    cloudinary_api_key = merge_field(
+        body.cloudinary_api_key, current.cloudinary_api_key, secret=True
+    )
+    cloudinary_api_secret = merge_field(
+        body.cloudinary_api_secret, current.cloudinary_api_secret, secret=True
+    )
+    cloudinary_folder = merge_field(
+        body.cloudinary_folder, current.cloudinary_folder
+    ).strip("/")
     if provider == "cloudinary":
         required = {
             "cloudName": cloud_name,
