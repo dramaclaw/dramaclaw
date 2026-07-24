@@ -3,7 +3,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
-import { useCanvasStore } from "@/stores/canvasStore";
+import { resolveAbsolutePosition, useCanvasStore } from "@/stores/canvasStore";
+
+/** 用当前 store 的节点算某节点的绝对坐标（走父链累加，对新建的素材组同样成立）。 */
+function absolutePositionOf(nodeId: string) {
+  const nodes = useCanvasStore.getState().nodes;
+  const node = nodes.find((n) => n.id === nodeId);
+  if (!node) throw new Error(`节点不存在：${nodeId}`);
+  return resolveAbsolutePosition(node, new Map(nodes.map((n) => [n.id, n] as const)));
+}
 
 // 与 spawnExternalAssets / spawnCharacterLibraryReferences 的落位口径一致：派生节点
 // 按「源节点坐标系」摆放（baseX = source.position.x - 宽 - 间距），先建成根层节点，
@@ -68,9 +76,9 @@ describe("canvasStore autoGroupSpawn — 组内派生节点的坐标语义", () 
     useCanvasStore.getState().setCanvasData([], []);
   });
 
-  it("受保护投影组：收不了成员，但把派生节点平移回绝对坐标（不再落到画布原点）", () => {
+  it("受保护投影组：源不入组，但把派生素材平移回绝对坐标后另编成一个根层素材组", () => {
     // user_spawned 不为 true + 有 projection_key → 受保护投影组。
-    const { videoId, orphanIds } = seedGroupedVideoWithOrphans({
+    const { videoId, groupId, orphanIds } = seedGroupedVideoWithOrphans({
       projection_key: "proj-a",
     });
 
@@ -78,27 +86,32 @@ describe("canvasStore autoGroupSpawn — 组内派生节点的坐标语义", () 
       label: "外部素材组",
     });
 
-    // 受保护组不接收成员，明确返回 null。
-    expect(result).toBeNull();
+    // 无法把源挪出受保护组，但素材（≥2 个）会另成一个新的根层素材组。
+    expect(result).not.toBeNull();
+    expect(result).not.toBe(groupId); // 不是原受保护投影组
 
     const state = useCanvasStore.getState();
+    const assetGroup = state.nodes.find((n) => n.id === result);
+    expect(assetGroup?.type).toBe(CANVAS_NODE_TYPES.group);
+    // 新素材组是根层节点（没有被塞进受保护投影组）。
+    expect(assetGroup?.parentId).toBeUndefined();
+
     orphanIds.forEach((orphanId, idx) => {
       const node = state.nodes.find((n) => n.id === orphanId);
       expect(node).toBeDefined();
-      // 仍是根层节点（没被塞进受保护组）。
-      expect(node?.parentId).toBeUndefined();
-      // 坐标被平移 +组绝对位移，落到视频身边的绝对坐标，而不是原来的相对值。
-      expect(node?.position).toEqual({
+      // 素材被收进新的根层素材组。
+      expect(node?.parentId).toBe(result);
+      // 关键回归：绝对坐标落在视频身边（组绝对位移已补偿），而不是「相对值当绝对
+      // 坐标」的画布左上角。组内相对坐标随新组原点变化，所以只断言绝对坐标。
+      expect(absolutePositionOf(orphanId)).toEqual({
         x: baseX + GROUP_ABS.x, // -300 + 1000 = 700
         y: VIDEO_REL.y + idx * ORPHAN_GAP_Y + GROUP_ABS.y, // 540 / 800
       });
-      // 回归护栏：绝不再停在「相对值当绝对坐标」的画布左上角。
-      expect(node?.position.x).not.toBe(baseX);
     });
   });
 
-  it("分镜组：同样收不了成员，也把派生节点修正到绝对坐标", () => {
-    const { videoId, orphanIds } = seedGroupedVideoWithOrphans({
+  it("分镜组：源同样不入组，派生素材修正到绝对坐标后另编成根层素材组", () => {
+    const { videoId, groupId, orphanIds } = seedGroupedVideoWithOrphans({
       storyboardGroup: true,
     });
 
@@ -106,10 +119,35 @@ describe("canvasStore autoGroupSpawn — 组内派生节点的坐标语义", () 
       label: "外部素材组",
     });
 
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result).not.toBe(groupId);
     const first = useCanvasStore.getState().nodes.find((n) => n.id === orphanIds[0]);
-    expect(first?.parentId).toBeUndefined();
-    expect(first?.position.x).toBe(baseX + GROUP_ABS.x);
+    expect(first?.parentId).toBe(result);
+    expect(absolutePositionOf(orphanIds[0])).toEqual({
+      x: baseX + GROUP_ABS.x,
+      y: VIDEO_REL.y + GROUP_ABS.y,
+    });
+  });
+
+  it("受保护投影组 + 只有一个派生素材：成不了组（<2 成员），素材保持独立根节点但坐标已修正", () => {
+    const { videoId, orphanIds } = seedGroupedVideoWithOrphans({
+      projection_key: "proj-a",
+    });
+    const singleOrphan = orphanIds[0];
+
+    const result = useCanvasStore.getState().autoGroupSpawn(videoId, [singleOrphan], {
+      label: "外部素材组",
+    });
+
+    // groupNodes 要求 ≥2 个成员，单个素材成不了组 → 返回 null，保持独立根节点。
+    expect(result).toBeNull();
+    const node = useCanvasStore.getState().nodes.find((n) => n.id === singleOrphan);
+    expect(node?.parentId).toBeUndefined();
+    // 但坐标仍被修正到绝对坐标，不会落到画布左上角。
+    expect(absolutePositionOf(singleOrphan)).toEqual({
+      x: baseX + GROUP_ABS.x,
+      y: VIDEO_REL.y + GROUP_ABS.y,
+    });
   });
 
   it("普通组：仍把派生节点收编为成员，且不加组绝对位移（保持组内相对坐标语义）", () => {
