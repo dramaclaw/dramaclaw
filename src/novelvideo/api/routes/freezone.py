@@ -130,6 +130,7 @@ from novelvideo.freezone.presets import (
 from novelvideo.freezone.route_helpers import (
     FREEZONE_DEFAULT_IMAGE_MODEL,
 )
+from novelvideo.ports import get_usage_meter
 from novelvideo.freezone.route_helpers import (
     accepted_job_response as _accepted_job_response,
 )
@@ -419,6 +420,10 @@ async def _start_or_enqueue_freezone_image_to_3gs(
         "project_dir": str(project_dir),
         "canvas_id": canvas_id or "",
         "node_id": node_id or "",
+        "billing": {
+            "feature_key": "freezone.image_to_3gs",
+            "operation": source_kind,
+        },
     }
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
@@ -2156,13 +2161,30 @@ async def _enqueue_or_start_freezone_video_analysis(
     payload: dict,
 ) -> dict:
     if ctx is not None:
+        billing = (
+            {
+                "feature_key": "freezone.video_analyze",
+                "operation": (
+                    "video_story"
+                    if task_type == "freezone_video_story"
+                    else "shots"
+                ),
+            }
+            if task_type in {"freezone_analyze", "freezone_video_story"}
+            else {}
+        )
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             task_type=task_type,
             queue_kind="ffmpeg" if task_type != "freezone_analyze" else "default",
             episode=0,
             scope=job_id,
-            payload={"job_id": job_id, "project_dir": str(project_dir), **payload},
+            payload={
+                "job_id": job_id,
+                "project_dir": str(project_dir),
+                **payload,
+                **({"billing": billing} if billing else {}),
+            },
         )
         return _project_job_response(
             task_type=task_type,
@@ -6705,7 +6727,7 @@ async def freezone_mark_detect(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：识别单张图片中点击点或框选区域的局部元素标记。"""
-    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user
     )
     source_paths = _resolve_url_list(project_dir, [body.source_url])
@@ -6719,7 +6741,53 @@ async def freezone_mark_detect(
     if not (has_point or has_box):
         raise HTTPException(400, "point or box selection is required")
 
+    usage_meter = get_usage_meter()
+    billing_context = {
+        "source": "sync_api",
+        "endpoint": "freezone_mark_detect",
+        "selection": "box" if has_box else "point",
+    }
+    billing_user_id = str(
+        getattr(ctx, "requester_user_id", "")
+        or user.get("id")
+        or user.get("user_id")
+        or user.get("username")
+        or ""
+    )
+    billing_project_id = str(getattr(ctx, "project_id", "") or project)
+    reservation = await usage_meter.reserve_feature_start_credits(
+        user_id=billing_user_id,
+        feature_key="freezone.image_mark_detect",
+        project_id=billing_project_id,
+        resource_kind="image",
+        task_type="freezone_image_mark_detect",
+        metadata=billing_context,
+        params={"operation": billing_context["selection"]},
+        require_price_rule=True,
+        require_positive_cost=True,
+    )
+    reservation_id = str(reservation.get("id") or "")
+    model_billing_metadata = {
+        "model_call_credit_policy": "feature_included",
+        "feature_key": "freezone.image_mark_detect",
+        "source": "sync_api",
+    }
+    if reservation_id:
+        model_billing_metadata.update(
+            {
+                "feature_credit_reservation_id": reservation_id,
+                "feature_credit_charge_id": reservation_id,
+                "feature_credit_cost": str(reservation.get("cost") or 0),
+            }
+        )
+
     try:
+        usage_meter.set_llm_usage_context(
+            billing_user_id,
+            project_id=billing_project_id,
+            resource_kind="image",
+            billing_metadata=model_billing_metadata,
+        )
         result = await detect_freezone_mark(
             image_path=Path(source_paths[0]),
             point_x=body.point_x,
@@ -6729,8 +6797,25 @@ async def freezone_mark_detect(
             box_width=body.box_width,
             box_height=body.box_height,
         )
+        if reservation_id:
+            await usage_meter.confirm_feature_credit_reservation(
+                reservation_id,
+                metadata=billing_context,
+            )
     except Exception as exc:
+        if reservation_id:
+            try:
+                await usage_meter.refund_feature_credit_reservation(
+                    reservation_id,
+                    metadata={**billing_context, "error": str(exc)},
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to refund Freezone mark detection feature credit reservation"
+                )
         raise HTTPException(500, f"mark detect failed: {exc}") from exc
+    finally:
+        usage_meter.clear_llm_usage_context()
 
     return {
         "ok": True,

@@ -2532,6 +2532,48 @@ async def test_freezone_celery_text_runner_records_project_node_history(
     assert history[-1]["result"]["translated_text"] == "hello"
 
 
+@pytest.mark.asyncio
+async def test_freezone_image_to_3gs_task_includes_fixed_feature_billing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _project_ctx(tmp_path)
+    source_path = ctx.output_dir / "source.png"
+    _write_image(source_path)
+    captured: dict[str, object] = {}
+
+    async def fake_enqueue_project_task(*_args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_3gs"),
+            backend="celery",
+            queue="node.world",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    await freezone_routes._start_or_enqueue_freezone_image_to_3gs(
+        ctx=ctx,
+        username="admin",
+        project=ctx.project_id,
+        project_dir=ctx.output_dir,
+        job_id="job_3gs",
+        scene_id="scene_1",
+        source_path=source_path,
+        source_kind="pano",
+        params={},
+    )
+
+    assert captured["payload"]["billing"] == {
+        "feature_key": "freezone.image_to_3gs",
+        "operation": "pano",
+    }
+
+
 def test_freezone_image_to_3gs_runner_records_project_node_history(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

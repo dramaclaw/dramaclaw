@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -41,6 +42,54 @@ def test_freezone_analyze_request_defaults_to_shots_mode() -> None:
 
     assert body.analysis_mode == "shots"
     assert body.duration_sec is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("task_type", "operation"),
+    [
+        ("freezone_analyze", "shots"),
+        ("freezone_video_story", "video_story"),
+    ],
+)
+async def test_video_analysis_tasks_include_shared_feature_billing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task_type: str,
+    operation: str,
+) -> None:
+    captured: dict[str, object] = {}
+    ctx = SimpleNamespace(project_id="project_59")
+
+    async def fake_enqueue_project_task(*_args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_1"),
+            backend="celery",
+            queue="node.default",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    await freezone_routes._enqueue_or_start_freezone_video_analysis(
+        ctx=ctx,
+        username="admin",
+        project="59",
+        project_dir=tmp_path,
+        output_dir=str(tmp_path),
+        task_type=task_type,
+        job_id="job_1",
+        payload={"frame_paths": []},
+    )
+
+    assert captured["payload"]["billing"] == {
+        "feature_key": "freezone.video_analyze",
+        "operation": operation,
+    }
 
 
 @pytest.mark.asyncio

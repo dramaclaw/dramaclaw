@@ -18,7 +18,7 @@ import {
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { ArrowRight, Loader2, Orbit } from 'lucide-react';
+import { ArrowUp, Loader2, Orbit } from 'lucide-react';
 
 import {
   uploadFreezoneImage,
@@ -83,7 +83,13 @@ import {
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { NodeGenerationOverlay } from '@/features/canvas/ui/NodeGenerationOverlay';
 import { CANVAS_NODE_OPS_PANEL_CLASS, canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
-import { NODE_INLINE_ERROR_MESSAGE_CLASS } from '@/features/canvas/ui/nodeControlStyles';
+import {
+  NODE_CREDIT_PILL_FLAT_CLASS,
+  NODE_GENERATE_BUTTON_BASE_CLASS,
+  NODE_GENERATE_BUTTON_DISABLED_CLASS,
+  NODE_GENERATE_BUTTON_ENABLED_CLASS,
+  NODE_INLINE_ERROR_MESSAGE_CLASS,
+} from '@/features/canvas/ui/nodeControlStyles';
 import {
   hasMainlineContexts,
   NodeContextBadges,
@@ -93,6 +99,9 @@ import { ReferenceDetachButton } from '@/features/canvas/nodes/shared/ReferenceD
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';
 import { useDetachUpstream } from '@/features/canvas/hooks/useDetachUpstream';
 import { readUrl } from '@/lib/url-params';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
+import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 type ThreeDWorldNodeProps = NodeProps & {
@@ -599,6 +608,8 @@ function ReferenceImageThumb({
 interface OpsPanelProps {
   isGenerating: boolean;
   hasUpstream: boolean;
+  billingRuleMissing: boolean;
+  creditCostDisplay: string | null;
   errorMessage?: string | null;
   sourceKind: DirectorImageSourceKind;
   referenceImages: ReferenceImageRef[];
@@ -618,6 +629,8 @@ interface OpsPanelProps {
 function OpsPanel({
   isGenerating,
   hasUpstream,
+  billingRuleMissing,
+  creditCostDisplay,
   errorMessage,
   sourceKind,
   referenceImages,
@@ -707,23 +720,38 @@ function OpsPanel({
             ))}
           </select>
         </label>
+        <CreditCostPill
+          display={creditCostDisplay}
+          disabled={isGenerating || !hasUpstream || billingRuleMissing}
+          className={NODE_CREDIT_PILL_FLAT_CLASS}
+        />
         <button
           type="button"
-          disabled={isGenerating || !hasUpstream}
+          disabled={isGenerating || !hasUpstream || billingRuleMissing}
           onClick={(event) => {
             event.stopPropagation();
             onSubmit();
           }}
           onPointerDown={(event) => event.stopPropagation()}
-          title={hasUpstream ? t('nodeToolbar.generateDirectorWorld') : t('nodeToolbar.connectImageSource')}
-          className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white px-2.5 text-[11px] font-medium text-bg-dark transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-text-muted"
+          title={
+            billingRuleMissing
+              ? t('common.billingRuleNotConfiguredShort')
+              : hasUpstream
+                ? t('nodeToolbar.generateDirectorWorld')
+                : t('nodeToolbar.connectImageSource')
+          }
+          aria-label={t('nodeToolbar.generateDirectorWorld')}
+          className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
+            isGenerating || !hasUpstream || billingRuleMissing
+              ? NODE_GENERATE_BUTTON_DISABLED_CLASS
+              : NODE_GENERATE_BUTTON_ENABLED_CLASS
+          }`}
         >
           {isGenerating ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
-            <ArrowRight className="h-3.5 w-3.5" />
+            <ArrowUp className="h-4 w-4" />
           )}
-          {t('nodeToolbar.generateDirectorWorld')}
         </button>
       </div>
     </div>
@@ -772,6 +800,26 @@ function HistoryPanel({
 
 export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: ThreeDWorldNodeProps) => {
   const { t } = useTranslation();
+  const worldCreditCost = useGenerationCreditCost(
+    'feature',
+    'freezone.image_to_3gs',
+    {
+      surface: 'canvas',
+      params: {
+        operation:
+          data.plyKind === 'pano' || data.plyKind === 'master'
+            ? data.plyKind
+            : 'master',
+      },
+    },
+  );
+  const worldBillingRuleMissing =
+    worldCreditCost.error instanceof BillingRuleNotConfiguredError;
+  const worldCreditCostDisplay =
+    worldCreditCost.data?.data.display ??
+    (worldBillingRuleMissing
+      ? t('common.billingRuleNotConfiguredShort')
+      : null);
   const updateNodeInternals = useUpdateNodeInternals();
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
@@ -1384,6 +1432,8 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
           <OpsPanel
             isGenerating={isGenerating}
             hasUpstream={hasUpstream}
+            billingRuleMissing={worldBillingRuleMissing}
+            creditCostDisplay={worldCreditCostDisplay}
             errorMessage={data.errorMessage}
             sourceKind={selectedImageSourceKind}
             referenceImages={referenceImages}
