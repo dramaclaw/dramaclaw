@@ -33,6 +33,7 @@ import {
   Music,
   Pause,
   Play,
+  Plus,
   RotateCcw,
   Sparkles,
   Square,
@@ -68,6 +69,7 @@ import {
 } from "@/features/canvas/application/imageData";
 import { ensureWebSafeVideo } from "@/features/canvas/application/videoTranscode";
 import { isVideoFile, VIDEO_FILE_ACCEPT } from "@/features/canvas/application/videoFileTypes";
+import { spawnExternalAssetNodes } from "@/features/canvas/application/spawnExternalAssets";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { toast } from "sonner";
 import { downloadUrlAsFile } from "@/lib/browserDownload";
@@ -703,6 +705,9 @@ export const VideoNode = memo(
       (state) => state.setActiveOverlayNodeId,
     );
     const inputRef = useRef<HTMLInputElement>(null);
+    // 与 inputRef 分开:那个是「替换本节点自身的视频」(单选、只收视频),
+    // 这个是「添加上游外部素材」(多选、收图片/视频/音频)。
+    const externalAssetInputRef = useRef<HTMLInputElement>(null);
     // 在途守卫：持到本批所有并发任务 allSettled 才释放（见 handleSubmit）。
     const submittingRef = useRef(false);
     // Mirror the actual <video> element into state so VideoPlayerControls 能
@@ -1623,6 +1628,38 @@ export const VideoNode = memo(
         state.autoGroupSpawn(id, newIds, { label: '资产参考组' });
       },
       [addEdge, addNode, data.aspectRatio, id],
+    );
+
+    const handleExternalAssetFiles = useCallback(
+      (event: ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(event.target.files ?? []);
+        // 先清空,好让用户能连续两次选同一个文件(否则 change 不触发)。
+        event.target.value = "";
+        if (files.length === 0) return;
+        const state = useCanvasStore.getState();
+        const self = state.nodes.find((n) => n.id === id);
+        // 节点可能在文件选择器打开期间被删掉了。
+        if (!self) return;
+        spawnExternalAssetNodes(
+          {
+            id,
+            position: self.position,
+            // 与 spawnCharacterLibraryReferences 取同一个字段,保证两条入口
+            // 排出来的版式一致;spawn 侧对 undefined/0 会兜底成 380。
+            height: self.height ?? undefined,
+          },
+          files,
+          {
+            addNode,
+            addEdge,
+            // canvasEventBus.publish 是原型方法、用到 this,不能裸传。
+            publish: (type, payload) => canvasEventBus.publish(type, payload),
+            autoGroupSpawn: (sourceId, spawnedIds, opts) =>
+              state.autoGroupSpawn(sourceId, spawnedIds, opts),
+          },
+        );
+      },
+      [addEdge, addNode, id],
     );
 
     const handleTranslatePrompt = useCallback(async () => {
@@ -3107,6 +3144,9 @@ export const VideoNode = memo(
                   <CharacterLibraryChip
                     onOpen={() => setIsCharacterLibraryOpen(true)}
                   />
+                  <ExternalAssetChip
+                    onOpen={() => externalAssetInputRef.current?.click()}
+                  />
                 </div>
                 <div className="ml-3 flex shrink-0 items-center gap-3">
                   <GenModeSelect
@@ -3363,6 +3403,14 @@ export const VideoNode = memo(
           accept={VIDEO_FILE_ACCEPT}
           className="hidden"
           onChange={handleFileChange}
+        />
+        <input
+          ref={externalAssetInputRef}
+          type="file"
+          multiple
+          accept={`image/*,${VIDEO_FILE_ACCEPT},audio/*`}
+          className="hidden"
+          onChange={handleExternalAssetFiles}
         />
 
         <AssetLibraryModal
@@ -3983,6 +4031,26 @@ function CharacterLibraryChip({ onOpen }: CharacterLibraryChipProps) {
     >
       <Library className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/asset:text-text-dark`} />
       <span>资产库</span>
+    </button>
+  );
+}
+
+interface ExternalAssetChipProps {
+  onOpen: () => void;
+}
+
+function ExternalAssetChip({ onOpen }: ExternalAssetChipProps) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen();
+      }}
+      className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} group/external px-1.5`}
+    >
+      <Plus className={`${NODE_TEXT_CONTROL_ICON_CLASS} group-hover/external:text-text-dark`} />
+      <span>外部素材</span>
     </button>
   );
 }
