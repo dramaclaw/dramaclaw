@@ -1644,9 +1644,12 @@ export const VideoNode = memo(
           {
             id,
             position: self.position,
-            // 与 spawnCharacterLibraryReferences 取同一个字段,保证两条入口
-            // 排出来的版式一致;spawn 侧对 undefined/0 会兜底成 380。
-            height: self.height ?? undefined,
+            // measured 优先、再退 data.height —— 对齐 store duplicateNodeAsSibling
+            // (canvasStore.ts:1600)的口径 measured?.height ?? height ?? fallback。
+            // 只读 data.height 会漏掉「已重新测量但没写死 height」的常见节点,把整列
+            // 排偏(节点实高 280、却按 fallback 380 居中,下移约 50px)。spawn 侧对
+            // undefined/0 仍兜底成 380。
+            height: self.measured?.height ?? self.height ?? undefined,
           },
           files,
           {
