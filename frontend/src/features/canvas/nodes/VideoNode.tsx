@@ -71,6 +71,7 @@ import {
   isVideoModeSupportedByModel,
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
+  videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
   type VideoEmptyStateCtaMode,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
@@ -2085,8 +2086,16 @@ export const VideoNode = memo(
       genMode === "videoEdit"
         ? upstreamCounts.videos > 0
         : upstreamCounts.images > 0;
+    // 提交前守卫：当前模型/模式无法消费已接入素材（视频/音频被静默丢、非 2.0 非
+    // HappyHorse 多图会被后端 400）时给出理由并禁用提交，替代静默丢素材 / 提交 400。
+    const mediaRejectionReason = videoSubmitMediaRejectionReason(
+      genMode,
+      selectedVideoModelId,
+      upstreamCounts,
+    );
     const submitDisabled =
       isGenerating ||
+      mediaRejectionReason != null ||
       (videoModeRequiresPrompt(genMode)
         ? !hasPromptText
         : !hasRequiredMediaForMode);
@@ -3395,7 +3404,7 @@ export const VideoNode = memo(
                     title={
                       isGenerating
                         ? t("node.videoNode.submitBusy")
-                        : t("node.videoNode.submit")
+                        : (mediaRejectionReason ?? t("node.videoNode.submit"))
                     }
                     onClick={(event) => {
                       event.stopPropagation();

@@ -117,3 +117,39 @@ export function videoUpstreamImageDefaultMode(
 export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
   return mode === "textToVideo" || mode === "allReference";
 }
+
+/**
+ * 提交前守卫：当前 (模型, 模式) 是否会**丢弃或被后端直接拒绝**已接入的上游素材。
+ * 返回非空理由则应禁用提交、并把理由显示到按钮 tooltip 上，替代「静默丢素材 / 提交 400」。
+ *
+ * 规则对齐后端 freezone i2v / omni-gen 端点（src/novelvideo/api/routes/freezone.py）：
+ * - 视频素材：仅「全能参考」(omni，Seedance 2.0) 与「视频编辑」(HappyHorse) 消费，
+ *   其余模式静默丢弃 → 拦；
+ * - 音频素材：仅「全能参考」(omni，Seedance 2.0) 消费，其余模式静默丢弃 → 拦；
+ * - 多图(>1)：i2v 端点仅 Seedance 2.0 / HappyHorse 放行，非 2.0 非 HappyHorse
+ *   （Seedance 1.x）传 >1 图后端直接 400 → 拦。
+ *
+ * 非 2.0 / 非 HappyHorse 一接入视频/音频就无模式可消费（allReference / videoEdit 均
+ * 不受支持），因此这三条只会在真正会丢素材 / 400 的场景触发；2.0 / HappyHorse 的自动
+ * 推导 effect 会先把模式导到能消费素材的模式，不会误伤。
+ */
+export function videoSubmitMediaRejectionReason(
+  mode: VideoGenMode,
+  modelId: string | null | undefined,
+  counts: { images: number; videos: number; audios: number },
+): string | null {
+  if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit") {
+    return "该模型不支持视频素材";
+  }
+  if (counts.audios > 0 && mode !== "allReference") {
+    return "该模型不支持音频素材";
+  }
+  if (
+    counts.images > 1 &&
+    !isSeedance2VideoModel(modelId) &&
+    !isHappyHorseVideoModel(modelId)
+  ) {
+    return "该模型单次仅支持 1 张图片";
+  }
+  return null;
+}

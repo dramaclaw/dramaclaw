@@ -11,6 +11,7 @@ import {
   isVideoModeSupportedByModel,
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
+  videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 
@@ -124,6 +125,61 @@ describe("videoUpstreamImageDefaultMode — auto-derived default on first image"
   it("Seedance 1.x 接图默认「首帧」而非全能参考 (否则提交必 400)", () => {
     expect(videoUpstreamImageDefaultMode(SEEDANCE10_PRO_FAST)).toBe("imageToVideo");
     expect(videoUpstreamImageDefaultMode(SEEDANCE15_PRO)).toBe("imageToVideo");
+  });
+});
+
+describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", () => {
+  const none = { images: 0, videos: 0, audios: 0 };
+
+  it("Seedance 1.x：接入视频 → 拦 (P1 静默丢视频)", () => {
+    expect(
+      videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE10_PRO_FAST, { ...none, videos: 1 }),
+    ).toBeTruthy();
+    expect(
+      videoSubmitMediaRejectionReason("textToVideo", SEEDANCE10_PRO_FAST, { ...none, videos: 1 }),
+    ).toBeTruthy();
+  });
+
+  it("Seedance 1.x：接入音频 → 拦 (P1 静默丢音频)", () => {
+    expect(
+      videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE10_PRO_FAST, { ...none, audios: 1 }),
+    ).toBeTruthy();
+  });
+
+  it("Seedance 1.x：>1 图 → 拦 (P2 多图 400)，无论 imageReference 还是 imageToVideo", () => {
+    for (const mode of ["imageReference", "imageToVideo"] as VideoGenMode[]) {
+      expect(
+        videoSubmitMediaRejectionReason(mode, SEEDANCE10_PRO_FAST, { images: 2, videos: 0, audios: 0 }),
+      ).toBeTruthy();
+      expect(
+        videoSubmitMediaRejectionReason(mode, SEEDANCE15_PRO, { images: 9, videos: 0, audios: 0 }),
+      ).toBeTruthy();
+    }
+  });
+
+  it("Seedance 1.x：单图 / 纯文本 → 放行", () => {
+    expect(
+      videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
+    ).toBeNull();
+    expect(
+      videoSubmitMediaRejectionReason("imageReference", SEEDANCE10_PRO_FAST, { ...none, images: 1 }),
+    ).toBeNull();
+    expect(videoSubmitMediaRejectionReason("textToVideo", SEEDANCE10_PRO_FAST, none)).toBeNull();
+  });
+
+  it("Seedance 2.0：全能参考消费视频/音频/多图 → 放行", () => {
+    expect(
+      videoSubmitMediaRejectionReason("allReference", SEEDANCE2_FAST, { images: 9, videos: 1, audios: 1 }),
+    ).toBeNull();
+  });
+
+  it("HappyHorse：视频编辑消费视频、图片参考消费多图 → 放行", () => {
+    expect(
+      videoSubmitMediaRejectionReason("videoEdit", HAPPYHORSE, { ...none, videos: 1 }),
+    ).toBeNull();
+    expect(
+      videoSubmitMediaRejectionReason("imageReference", HAPPYHORSE, { images: 5, videos: 0, audios: 0 }),
+    ).toBeNull();
   });
 });
 
