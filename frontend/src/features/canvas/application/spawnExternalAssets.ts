@@ -10,7 +10,12 @@ import type { CanvasEventMap } from '@/features/canvas/application/ports';
 
 /** 与 VideoNode 的 spawnCharacterLibraryReferences 同一套名义尺寸。 */
 const UPLOAD_WIDTH = 320;
+const UPLOAD_HEIGHT = 240;
 const GAP_X = 40;
+const GAP_Y = 24;
+
+/** 对齐 VideoNode.tsx 的 DEFAULT_HEIGHT,target 没给 height 时的兜底值。 */
+const FALLBACK_TARGET_HEIGHT = 380;
 
 /** 与资产库的「资产参考组」区分来源。 */
 export const EXTERNAL_ASSET_GROUP_LABEL = '外部素材组';
@@ -18,7 +23,7 @@ export const EXTERNAL_ASSET_GROUP_LABEL = '外部素材组';
 export interface SpawnExternalAssetsTarget {
   id: string;
   position: { x: number; y: number };
-  /** Task 2 起用于垂直居中多节点排布。 */
+  /** 用于让竖排的素材节点与目标节点垂直居中;缺省按 380 算。 */
   height?: number;
 }
 
@@ -33,7 +38,7 @@ export interface SpawnExternalAssetsDeps {
     type: 'upload-node/external-file',
     payload: CanvasEventMap['upload-node/external-file'],
   ) => void;
-  /** Task 2 起用于自动编组。 */
+  /** 用于把新建的素材节点自动编成一组。 */
   autoGroupSpawn: (
     sourceNodeId: string,
     spawnedNodeIds: string[],
@@ -62,7 +67,10 @@ export interface SpawnExternalAssetsDeps {
  * 投递必须延后一帧(经 schedule 注入),否则新节点还没挂载订阅,事件会被
  * canvasEventBus 的无重放语义直接丢掉。
  *
- * 尚未做垂直排布与编组:多文件会全部叠在同一个 y。留给后续任务由测试驱动补上。
+ * 多文件竖直排布、与目标节点垂直居中,口径对齐 VideoNode.tsx 的
+ * spawnCharacterLibraryReferences:同一套 UPLOAD_WIDTH/UPLOAD_HEIGHT/GAP_X/GAP_Y,
+ * 目标节点没给 height 时按 FALLBACK_TARGET_HEIGHT(=VideoNode 的 DEFAULT_HEIGHT)
+ * 兜底。新建的节点最后会被 autoGroupSpawn 编成一组。
  */
 export function spawnExternalAssetNodes(
   target: SpawnExternalAssetsTarget,
@@ -72,20 +80,28 @@ export function spawnExternalAssetNodes(
   // 非媒体文件必须先在这里挡掉:UploadNode.handleMediaFile 对既非图片、也非
   // 视频/音频的文件是静默 return(没有 else 分支),放进来就会留下一个连着线
   // 却永远空着的 upload 节点。
-  //
-  // 顺序要求:这一步必须在函数里任何「短路」之前跑。以后如果要加「空列表/空
-  // 选择直接返回 []」之类的早退,那个判断必须落在 accepted 算出来之后 —— 否则
-  // 「选中的全是非媒体文件」这种情况会绕开短路、把这个洞重新放回来。
   const accepted = files.filter(isSupportedMediaFile);
+
+  // 短路必须落在 accepted 算出来之后、判断 accepted.length —— 如果改成在过滤
+  // 之前判断 files.length,「选中的全是非媒体文件」这种情况会绕开短路、走到底,
+  // 然后 autoGroupSpawn(target.id, []) 编出一个空组。
+  if (accepted.length === 0) return [];
 
   const schedule =
     deps.schedule ?? ((fn: () => void) => { requestAnimationFrame(fn); });
 
+  const baseX = target.position.x - UPLOAD_WIDTH - GAP_X;
+  const totalH =
+    UPLOAD_HEIGHT * accepted.length + GAP_Y * (accepted.length - 1);
+  const startY =
+    target.position.y + ((target.height ?? FALLBACK_TARGET_HEIGHT) - totalH) / 2;
+
   const newIds: string[] = [];
-  accepted.forEach((file) => {
+  accepted.forEach((file, idx) => {
+    const y = startY + idx * (UPLOAD_HEIGHT + GAP_Y);
     const nodeId = deps.addNode(
       CANVAS_NODE_TYPES.upload,
-      { x: target.position.x - UPLOAD_WIDTH - GAP_X, y: target.position.y },
+      { x: baseX, y },
       { user_spawned: true } as Partial<CanvasNodeData>,
     );
     const edgeId = deps.addEdge(nodeId, target.id);
@@ -101,6 +117,8 @@ export function spawnExternalAssetNodes(
     });
     newIds.push(nodeId);
   });
+
+  deps.autoGroupSpawn(target.id, newIds, { label: EXTERNAL_ASSET_GROUP_LABEL });
 
   return newIds;
 }

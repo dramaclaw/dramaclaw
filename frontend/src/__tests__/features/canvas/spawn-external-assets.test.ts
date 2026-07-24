@@ -148,6 +148,99 @@ describe('spawnExternalAssetNodes', () => {
     scheduled.forEach((fn) => fn());
     expect(publish).toHaveBeenCalledTimes(1);
   });
+
+  it('单文件相对目标节点垂直居中', () => {
+    const { deps, addNode } = makeDeps();
+
+    spawnExternalAssetNodes(TARGET, [makeFile('a.png', 'image/png')], deps);
+
+    // UPLOAD_HEIGHT=240,target.height=380 → y = 500 + (380-240)/2 = 570
+    expect(addNode).toHaveBeenCalledExactlyOnceWith(
+      CANVAS_NODE_TYPES.upload,
+      { x: 640, y: 570 },
+      { user_spawned: true },
+    );
+  });
+
+  it('多文件竖排,步长为 UPLOAD_HEIGHT+GAP_Y=264,整体相对目标居中', () => {
+    const { deps, addNode } = makeDeps();
+    const files = [makeFile('a.png', 'image/png'), makeFile('b.mp4', 'video/mp4')];
+
+    spawnExternalAssetNodes(TARGET, files, deps);
+
+    // totalH = 240*2 + 24 = 504; startY = 500 + (380-504)/2 = 438
+    expect(addNode.mock.calls[0]?.[1]).toEqual({ x: 640, y: 438 });
+    expect(addNode.mock.calls[1]?.[1]).toEqual({ x: 640, y: 702 });
+    expect(addNode.mock.calls[1]![1].x).toBe(addNode.mock.calls[0]![1].x);
+    expect(addNode.mock.calls[1]![1].y - addNode.mock.calls[0]![1].y).toBe(264);
+  });
+
+  it('target 没给 height 时按 380(FALLBACK_TARGET_HEIGHT)兜底', () => {
+    const { deps, addNode } = makeDeps();
+    const targetNoHeight = { id: 'video-1', position: { x: 1000, y: 500 } };
+
+    spawnExternalAssetNodes(targetNoHeight, [makeFile('a.png', 'image/png')], deps);
+
+    expect(addNode).toHaveBeenCalledExactlyOnceWith(
+      CANVAS_NODE_TYPES.upload,
+      { x: 640, y: 570 },
+      { user_spawned: true },
+    );
+  });
+
+  it('非媒体文件不占竖排位置:totalH 按 accepted.length 而非 files.length 算', () => {
+    const { deps, addNode } = makeDeps();
+    const pdf = new File(['x'], 'a.pdf', { type: 'application/pdf' });
+    const files = [pdf, makeFile('a.png', 'image/png'), pdf];
+
+    spawnExternalAssetNodes(TARGET, files, deps);
+
+    // 只有 1 个被接受 → 应按「单文件居中」的 y=570 排布,而不是按 files.length=3
+    // 算出的居中偏移(那样会把它排到别的 y)。
+    expect(addNode).toHaveBeenCalledExactlyOnceWith(
+      CANVAS_NODE_TYPES.upload,
+      { x: 640, y: 570 },
+      { user_spawned: true },
+    );
+  });
+
+  it('新建的节点被自动编成一组', () => {
+    const { deps, autoGroupSpawn } = makeDeps();
+    const files = [makeFile('a.png', 'image/png'), makeFile('b.mp4', 'video/mp4')];
+
+    spawnExternalAssetNodes(TARGET, files, deps);
+
+    expect(autoGroupSpawn).toHaveBeenCalledExactlyOnceWith(
+      'video-1',
+      ['up-0', 'up-1'],
+      { label: EXTERNAL_ASSET_GROUP_LABEL },
+    );
+  });
+
+  it('空文件列表:直接返回 [],不建节点、不连边、不投递、不编组', () => {
+    const { deps, addNode, addEdge, publish, autoGroupSpawn } = makeDeps();
+
+    const ids = spawnExternalAssetNodes(TARGET, [], deps);
+
+    expect(ids).toEqual([]);
+    expect(addNode).not.toHaveBeenCalled();
+    expect(addEdge).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(autoGroupSpawn).not.toHaveBeenCalled();
+  });
+
+  it('选中的全是非媒体文件:短路必须落在过滤之后,不留空组', () => {
+    const { deps, autoGroupSpawn } = makeDeps();
+    const pdf = new File(['x'], 'a.pdf', { type: 'application/pdf' });
+
+    const ids = spawnExternalAssetNodes(TARGET, [pdf], deps);
+
+    expect(ids).toEqual([]);
+    // 回归测试:如果短路写在过滤之前、判断的是 files.length,这种「全非媒体」
+    // 的输入会穿过短路、走到底,然后 autoGroupSpawn(target.id, []) 编出一个
+    // 空组。
+    expect(autoGroupSpawn).not.toHaveBeenCalled();
+  });
 });
 
 describe('EXTERNAL_ASSET_GROUP_LABEL', () => {
