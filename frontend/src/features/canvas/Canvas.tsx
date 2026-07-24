@@ -71,7 +71,7 @@ import {
   isPresetManagedNode,
 } from '@/features/canvas/domain/mainlineNodeFlags';
 import { prepareNodeImage } from '@/features/canvas/application/imageData';
-import { isVideoFile } from '@/features/canvas/application/videoFileTypes';
+import { isSupportedMediaFile } from '@/features/canvas/application/videoFileTypes';
 import { uploadLocalImageToBackend } from '@/features/canvas/application/uploadToolOutput';
 import {
   buildGenerationErrorReport,
@@ -464,20 +464,14 @@ function resolveClipboardImageFile(event: ClipboardEvent): File | null {
   return null;
 }
 
-// 从一次 OS 文件拖放里挑出图片 / 视频 / 音频文件，保持与 UploadNode 的媒体识别
-// 口径一致（按 MIME 前缀）。非媒体文件被忽略。
+// 从一次 OS 文件拖放里挑出图片 / 视频 / 音频文件，口径见 isSupportedMediaFile
+// （与 UploadNode 的媒体分流一致）。非媒体文件被忽略。
 function collectDroppedMediaFiles(dataTransfer: DataTransfer): File[] {
   const files = dataTransfer.files;
   if (!files || files.length === 0) {
     return [];
   }
-  return Array.from(files).filter(
-    (file) =>
-      file.type.startsWith('image/') ||
-      // isVideoFile 兜住 .mxf 等 file.type 为空串的专业容器（后续 ffmpeg 转码）。
-      isVideoFile(file) ||
-      file.type.startsWith('audio/')
-  );
+  return Array.from(files).filter(isSupportedMediaFile);
 }
 
 function resolveAllowedNodeTypes(
