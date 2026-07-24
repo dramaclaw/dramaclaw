@@ -94,10 +94,12 @@ describe('spawnExternalAssetNodes', () => {
     const ids = spawnExternalAssetNodes(TARGET, [file], deps);
 
     expect(ids).toEqual(['up-0']);
-    expect(publish).toHaveBeenCalledExactlyOnceWith('upload-node/external-file', {
-      nodeId: 'up-0',
-      file,
-    });
+    expect(publish).toHaveBeenCalledOnce();
+    const [type, payload] = publish.mock.calls[0]!;
+    expect(type).toBe('upload-node/external-file');
+    expect(payload.nodeId).toBe('up-0');
+    // 契约是「把原 File 对象投过去」,身份而非结构。
+    expect(payload.file).toBe(file);
   });
 
   it('多文件时每个节点各收到自己的那个文件、各连自己的边', () => {
@@ -106,20 +108,20 @@ describe('spawnExternalAssetNodes', () => {
 
     spawnExternalAssetNodes(TARGET, files, deps);
 
-    // 把 file 写成 files[0]、或把 nodeId 提到循环外,都会让这条断言炸——单文件
-    // 用例测不出这两种回归。
+    // 把 nodeId 提到循环外会让下面两条断言炸;而 file 必须用 toBe 比身份 ——
+    // File 的 name/type/size 都是原型 getter、没有自有可枚举属性,toEqual 下
+    // 任意两个 File 都相等,写成结构比较等于没测。
     expect(addEdge.mock.calls).toEqual([
       ['up-0', 'video-1'],
       ['up-1', 'video-1'],
     ]);
-    expect(publish.mock.calls.map((c) => [c[1].nodeId, c[1].file])).toEqual([
-      ['up-0', files[0]],
-      ['up-1', files[1]],
-    ]);
+    expect(publish.mock.calls.map((c) => c[1].nodeId)).toEqual(['up-0', 'up-1']);
+    expect(publish.mock.calls[0]?.[1].file).toBe(files[0]);
+    expect(publish.mock.calls[1]?.[1].file).toBe(files[1]);
   });
 
   it('投递发生时边已经连好了,变形才有边可继承', () => {
-    const { deps, addEdge } = makeDeps();
+    const { deps, addEdge, publish } = makeDeps();
     const scheduled: Array<() => void> = [];
     deps.schedule = (fn) => {
       scheduled.push(fn);
@@ -129,6 +131,7 @@ describe('spawnExternalAssetNodes', () => {
 
     expect(addEdge).toHaveBeenCalledOnce(); // 还没投递,边就已经在了
     scheduled.forEach((fn) => fn());
+    expect(publish).toHaveBeenCalledOnce();
   });
 
   it('投递被推迟到调度器里,等新节点挂载并订阅', () => {

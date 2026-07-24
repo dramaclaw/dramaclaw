@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isVideoFile, VIDEO_FILE_ACCEPT } from "./videoFileTypes";
+import { isSupportedMediaFile, isVideoFile, VIDEO_FILE_ACCEPT } from "./videoFileTypes";
 
 describe("isVideoFile", () => {
   it("accepts standard video MIME types", () => {
@@ -27,5 +27,23 @@ describe("isVideoFile", () => {
   it("lists the extra extensions in the <input accept> string", () => {
     expect(VIDEO_FILE_ACCEPT).toContain("video/*");
     expect(VIDEO_FILE_ACCEPT).toContain(".mxf");
+  });
+});
+
+describe("isSupportedMediaFile", () => {
+  it("accepts images", () => {
+    expect(isSupportedMediaFile({ type: "image/png", name: "poster.png" })).toBe(true);
+  });
+
+  it("accepts audio", () => {
+    expect(isSupportedMediaFile({ type: "audio/mpeg", name: "voice.mp3" })).toBe(true);
+  });
+
+  it("rejects files with empty MIME and a non-media extension", () => {
+    expect(isSupportedMediaFile({ type: "", name: "notes.txt" })).toBe(false);
+  });
+
+  it("rejects non-media MIME types", () => {
+    expect(isSupportedMediaFile({ type: "application/pdf", name: "doc.pdf" })).toBe(false);
   });
 });
