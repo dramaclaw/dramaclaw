@@ -23,7 +23,7 @@ export const EXTERNAL_ASSET_GROUP_LABEL = '外部素材组';
 export interface SpawnExternalAssetsTarget {
   id: string;
   position: { x: number; y: number };
-  /** 用于让竖排的素材节点与目标节点垂直居中;缺省按 380 算。 */
+  /** 用于让竖排的素材节点与目标节点垂直居中;缺省或 0 时按 380 兜底。 */
   height?: number;
 }
 
@@ -56,8 +56,18 @@ export interface SpawnExternalAssetsDeps {
  * 节点。变形不换 id,所以先连的边不会丢。
  *
  * 不传 imageOnly(会让 UploadNode 拒收音视频)、不传 displayName(会顶掉
- * 「用上传文件名作节点标题」的默认行为),只传 user_spawned:true(否则新节点
- * 会被 NodeActionToolbar 当成系统节点锁死)。
+ * 「用上传文件名作节点标题」的默认行为),只传 user_spawned:true —— 它是
+ * nodeMainlineFlags 的分类依据,也是后端 _merge_restored_preset_canvas
+ * (freezone.py 的 _is_replaceable_projection_node)判断「刷新预设画布时别覆盖
+ * 这个节点」的依据。
+ *
+ * 别照抄 Canvas.tsx 落文件处那句「不传就会被 NodeActionToolbar 的 canvas 级兜底
+ * 锁死」—— 那个兜底已经没了。NodeActionToolbar.tsx:1043 起 isPresetLocked 只看
+ * isPresetManaged,不带任何标记的 {} 节点判定为 ordinary、不锁(有测试钉着:
+ * system-managed-node-data.test.ts 的 isSystemManagedNodeData({}) === false)。
+ *
+ * target 是调用方传入的快照,函数内部不现读 store —— 调用方必须在调用那一刻从
+ * store 取最新的 position/height,别塞一个可能过期的闭包值。
  *
  * 本模块形状上像「从已有节点派生新节点」,但语义上是全新导入的外部素材、没有
  * provenance 可继承,所以故意不走 domain/inheritMainlineFields.ts —— 那条 helper
@@ -93,8 +103,10 @@ export function spawnExternalAssetNodes(
   const baseX = target.position.x - UPLOAD_WIDTH - GAP_X;
   const totalH =
     UPLOAD_HEIGHT * accepted.length + GAP_Y * (accepted.length - 1);
+  // 用 || 而不是 ??:0 和 NaN 也该走兜底。参照实现写的是 ??,那样 height 为 0 时
+  // 会按 0 高度居中、把整组往上推出目标节点范围 —— 这个洞不跟。
   const startY =
-    target.position.y + ((target.height ?? FALLBACK_TARGET_HEIGHT) - totalH) / 2;
+    target.position.y + ((target.height || FALLBACK_TARGET_HEIGHT) - totalH) / 2;
 
   const newIds: string[] = [];
   accepted.forEach((file, idx) => {

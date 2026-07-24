@@ -188,6 +188,33 @@ describe('spawnExternalAssetNodes', () => {
     );
   });
 
+  it('target.height 为 0 时也走 380 兜底,不按 0 高度居中', () => {
+    const { deps, addNode } = makeDeps();
+    // 用 ?? 的话 0 会穿过去,startY 变成 500 + (0-240)/2 = 380,整组往上飘。
+    const targetZeroHeight = { id: 'video-1', position: { x: 1000, y: 500 }, height: 0 };
+
+    spawnExternalAssetNodes(targetZeroHeight, [makeFile('a.png', 'image/png')], deps);
+
+    expect(addNode.mock.calls[0]?.[1]).toEqual({ x: 640, y: 570 });
+  });
+
+  it('连边失败时打警告,但文件照投(不静默吞掉)', () => {
+    const { deps, addEdge, publish } = makeDeps();
+    addEdge.mockReturnValueOnce(null);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      spawnExternalAssetNodes(TARGET, [makeFile('a.png', 'image/png')], deps);
+
+      expect(warn).toHaveBeenCalledOnce();
+      expect(String(warn.mock.calls[0]?.[0])).toContain('up-0');
+      // 边没连上不代表文件不该投递 —— 节点已经建出来了,至少让它有内容。
+      expect(publish).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('非媒体文件不占竖排位置:totalH 按 accepted.length 而非 files.length 算', () => {
     const { deps, addNode } = makeDeps();
     const pdf = new File(['x'], 'a.pdf', { type: 'application/pdf' });
