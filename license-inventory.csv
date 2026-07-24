@@ -628,6 +628,7 @@ frontend/src/components/login/cinematic/FourthScreen.tsx,Elastic-2.0,2026 SuperT
 frontend/src/components/login/cinematic/IntroRitualScreen.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/login/cinematic/LoginCinematicHero.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/login/cinematic/LoginCinematicPage.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/components/login/cinematic/MoreInfoMenu.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/login/cinematic/NinthWorkflowScreen.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/login/cinematic/ScrollVideoScene.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/components/login/cinematic/SecondScreenVideo.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
