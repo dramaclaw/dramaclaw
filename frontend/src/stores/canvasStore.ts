@@ -2890,6 +2890,41 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const groupId = enclosing.id;
     // 分镜组按宫格自排版、投影组受保护——都不往里塞成员。
     if (isStoryboardGroupNode(enclosing) || isProtectedProjectionGroupNode(enclosing)) {
+      // 但派生节点是在「源节点坐标系」下摆放的（调用方按 source.position 算落位）：
+      // 源在组内时该坐标系是组内相对坐标，而这些新节点留在根层（无 parentId）会被
+      // 当成绝对坐标——不修正就会落到画布原点附近 / 视野外，还不成组（见
+      // spawnExternalAssets / spawnCharacterLibraryReferences 均依赖本函数收编）。
+      // 受保护 / 分镜组收不了成员，那就退而求其次：把这些根层节点平移回真正的绝对
+      // 坐标，让素材仍出现在源节点身边、可见且连线正确。偏移 = 源的绝对坐标 − 源的
+      // 原始 position，即源所有祖先的累计位移，对任意嵌套深度都成立。
+      const sourceAbsolute = resolveAbsolutePosition(source, nodeMap);
+      const offsetX = sourceAbsolute.x - source.position.x;
+      const offsetY = sourceAbsolute.y - source.position.y;
+      if (offsetX === 0 && offsetY === 0) {
+        // 源坐标系原点即画布原点（组在 0,0），派生坐标本就是绝对坐标，无需平移。
+        return null;
+      }
+      const orphanSet = new Set(spawned.map((node) => node.id));
+      const shiftedNodes = state.nodes.map((node) =>
+        orphanSet.has(node.id)
+          ? {
+              ...node,
+              position: {
+                x: node.position.x + offsetX,
+                y: node.position.y + offsetY,
+              },
+            }
+          : node,
+      );
+      set({
+        nodes: shiftedNodes,
+        history: {
+          past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+          future: [],
+        },
+        dragHistorySnapshot: null,
+        ...trackEdit(state),
+      });
       return null;
     }
 
