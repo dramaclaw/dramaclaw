@@ -756,11 +756,11 @@ export async function fetchFreezoneAudioSeparateResult(
 // /freezone/image/reverse-prompt ----------------------------------------- //
 
 /**
- * Per `FreezoneImageReversePromptRequest` in openapi.json the only field is
- * `source_url` (required). No `model`, no `prompt` steering on the backend.
+ * `source_url` is required; `instruction` steers the returned prompt.
  */
 export interface FreezoneReversePromptPayload extends FreezoneNodeContext {
   sourceUrl: string;
+  instruction?: string;
 }
 
 export async function submitFreezoneReversePrompt(
@@ -773,6 +773,7 @@ export async function submitFreezoneReversePrompt(
       method: "POST",
       json: {
         source_url: payload.sourceUrl,
+        instruction: payload.instruction ?? "",
         ...nodeContextBody(payload),
       },
     },

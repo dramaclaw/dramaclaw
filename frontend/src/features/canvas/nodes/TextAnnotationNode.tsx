@@ -99,6 +99,10 @@ const COMPACT_MODES = new Set<TextNodeMode>(['textToVideo', 'imageToPrompt']);
 const IMAGE_TO_PROMPT_DEFAULT_CONTENT =
   '根据图片生成结构化中文提示词，包括主体描述、环境、光影、镜头语言、风格关键词。';
 
+function countBillableTextChars(text: string): number {
+  return text.replace(/[\s\u3000]+/gu, '').length;
+}
+
 // 「文字生成音乐」的默认音乐描述——点击后预填进文本节点，用户可在此基础上改。
 const TEXT_TO_MUSIC_DEFAULT_CONTENT =
   '生成一首现代品牌电子音乐（约 110 BPM），干净有力的低频贝斯，清晰电子鼓点，整体风格高级、未来感强。开场节奏型贝斯与简洁合成器音色建立律动。主段加入稳定鼓点，节奏清晰，保持克制的张力。强化段加入更丰富的音层，合成器音色提升，律动增强但不过度拥挤。结尾鼓点减弱，仅保留低频与氛围音渐出，干净利落收尾。';
@@ -185,14 +189,21 @@ export const TextAnnotationNode = memo(({
     : DEFAULT_SHARED_MODEL_ID;
   // 文生视频默认模型取「视频模型接口返回的第一个」，而非文本节点的图像默认 id。
   const { models: videoModels } = useFreezoneVideoModels();
+  const reversePromptInstruction =
+    instruction.trim() || IMAGE_TO_PROMPT_DEFAULT_CONTENT;
+  const reversePromptBillableChars = countBillableTextChars(
+    reversePromptInstruction,
+  );
   const reversePromptCost = useGenerationCreditCost(
     'feature',
     mode === 'imageToPrompt' ? IMAGE_REVERSE_PROMPT_FEATURE_KEY : null,
     {
       surface: 'canvas',
+      quantity: reversePromptBillableChars,
       params: {
         operation: 'image_reverse_prompt',
-        pricing_quantity: 1,
+        billable_chars: reversePromptBillableChars,
+        pricing_quantity: reversePromptBillableChars,
       },
     },
   );
@@ -366,6 +377,7 @@ export const TextAnnotationNode = memo(({
       const sourceUrl = await ensureBackendImageUrl(projectId, rawUrl);
       const ref = await submitFreezoneReversePrompt(projectId, {
         sourceUrl,
+        instruction: reversePromptInstruction,
         canvasId: readUrl().canvas ?? 'default',
         nodeId: id,
       });
@@ -385,7 +397,7 @@ export const TextAnnotationNode = memo(({
       console.error('[text-node] reverse-prompt failed', error);
       updateNodeData(id, { isGenerating: false, generationStartedAt: null });
     }
-  }, [id, updateNodeData]);
+  }, [id, reversePromptInstruction, updateNodeData]);
 
   const runTextToVideo = useCallback(async () => {
     const promptText = content.trim();

@@ -261,13 +261,14 @@ async def test_generation_credit_cost_route_prices_freezone_audio_speech_by_feat
         expected_model="freezone.audio_speech",
         expected_params={
             "operation": "speech",
-            "pricing_quantity": 1,
+            "billable_chars": 1_201,
+            "pricing_quantity": 1_201,
             "pricing_kind": "audio",
             "pricing_model": "index-tts-2",
             "pricing_params": {},
-            "items": 1,
+            "items": 1_201,
         },
-        expected_quantity=1,
+        expected_quantity=1_201,
         cost=3,
     )
 
@@ -275,7 +276,8 @@ async def test_generation_credit_cost_route_prices_freezone_audio_speech_by_feat
         kind="feature",
         surface="canvas",
         value="freezone.audio_speech",
-        params='{"operation":"speech","pricing_quantity":1}',
+        params='{"operation":"speech","billable_chars":1201,"pricing_quantity":1201}',
+        quantity=1_201,
         user={"user_id": "usr_1"},
     )
 
@@ -354,12 +356,13 @@ async def test_generation_credit_cost_route_resolves_freezone_image_reverse_prom
         expected_model="freezone.image_reverse_prompt",
         expected_params={
             "operation": "image_reverse_prompt",
-            "pricing_quantity": 1,
+            "billable_chars": 1_201,
+            "pricing_quantity": 1_201,
             "pricing_kind": "text",
             "pricing_model": "freezone-vision-model",
             "pricing_params": {},
         },
-        expected_quantity=1,
+        expected_quantity=1_201,
         cost=6,
     )
 
@@ -367,7 +370,11 @@ async def test_generation_credit_cost_route_resolves_freezone_image_reverse_prom
         kind="feature",
         surface="canvas",
         value="freezone.image_reverse_prompt",
-        params='{"operation":"image_reverse_prompt","pricing_quantity":1}',
+        params=(
+            '{"operation":"image_reverse_prompt",'
+            '"billable_chars":1201,"pricing_quantity":1201}'
+        ),
+        quantity=1_201,
         user={"user_id": "usr_1"},
     )
 

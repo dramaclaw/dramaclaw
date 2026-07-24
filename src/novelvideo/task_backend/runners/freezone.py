@@ -865,7 +865,10 @@ async def _run_freezone_image_reverse_prompt_async(
     ensure_freezone_dirs(project_dir)
     source_path = Path(str(payload["source_path"]))
     _update(ctx, "freezone_image_reverse_prompt", job_id, 0.1, "开始反推图片提示词...")
-    prompt = await reverse_prompt_from_image(image_path=source_path)
+    prompt = await reverse_prompt_from_image(
+        image_path=source_path,
+        instruction=str(payload.get("instruction") or ""),
+    )
     out = outputs_dir(project_dir, "freezone_image_reverse_prompt") / f"{job_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     import json

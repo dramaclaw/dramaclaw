@@ -430,11 +430,12 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
     assert speech_billing == {
         "feature_key": "freezone.audio_speech",
         "operation": "speech",
-        "pricing_quantity": 1,
+        "billable_chars": 7,
+        "pricing_quantity": 7,
         "pricing_kind": "audio",
         "pricing_model": INDEXTTS2_RECORD_MODEL,
         "pricing_params": {},
-        "items": 1,
+        "items": 7,
     }
 
     music_billing = captured[1]["payload"]["billing"]
@@ -480,6 +481,7 @@ async def test_freezone_image_reverse_prompt_enqueues_feature_billing(
         project="58",
         body=freezone_routes.FreezoneImageReversePromptRequest(
             source_url="/static/admin/58/freezone/_uploads/source.png",
+            instruction="电影感光影",
         ),
         user={"username": "admin"},
     )
@@ -489,11 +491,13 @@ async def test_freezone_image_reverse_prompt_enqueues_feature_billing(
     assert captured["payload"]["billing"] == {
         "feature_key": "freezone.image_reverse_prompt",
         "operation": "image_reverse_prompt",
-        "pricing_quantity": 1,
+        "billable_chars": 5,
+        "pricing_quantity": 5,
         "pricing_kind": "text",
         "pricing_model": "freezone-vision-model",
         "pricing_params": {},
     }
+    assert captured["payload"]["instruction"] == "电影感光影"
 
 
 def test_infer_scene_id_from_master_path_uses_scene_folder(tmp_path: Path) -> None:
@@ -7241,7 +7245,12 @@ async def test_reverse_prompt_uses_shared_freezone_vision_model(
         fake_call_freezone_vision_model,
     )
 
-    prompt = await image_node.reverse_prompt_from_image(image_path=image_path)
+    prompt = await image_node.reverse_prompt_from_image(
+        image_path=image_path,
+        instruction="突出电影感光影",
+    )
 
     assert prompt == "白色方形主体，极简构图"
     assert len(captured["images"]) == 1
+    assert "用户补充要求" in captured["prompt"]
+    assert "突出电影感光影" in captured["prompt"]

@@ -452,12 +452,23 @@ def freezone_image_reverse_prompt_billing_params(params: dict) -> dict:
         return params
     from novelvideo.freezone.vision_gateway import resolve_freezone_vision_model
 
+    try:
+        pricing_quantity = max(
+            int(
+                params.get("pricing_quantity")
+                or params.get("billable_chars")
+                or 1
+            ),
+            1,
+        )
+    except (TypeError, ValueError):
+        pricing_quantity = 1
     return {
         **params,
         "pricing_kind": "text",
         "pricing_model": resolve_freezone_vision_model(),
         "pricing_params": {},
-        "pricing_quantity": 1,
+        "pricing_quantity": pricing_quantity,
     }
 
 

@@ -23,6 +23,18 @@ describe("canvas audio generation credit contract", () => {
     expect(panelSource).toContain(
       "pricing_quantity: musicBillingSeconds",
     );
+    expect(panelSource).toContain(
+      "const speechBillableChars = countBillableTextChars(effectivePrompt)",
+    );
+    expect(panelSource).toContain(
+      "quantity: isMusic ? undefined : speechBillableChars",
+    );
+    expect(panelSource).toContain(
+      "billable_chars: speechBillableChars",
+    );
+    expect(panelSource).toContain(
+      "pricing_quantity: speechBillableChars",
+    );
     expect(panelSource).not.toContain(
       "isMusic ? 'freezone_audio_music' : 'beat_tts'",
     );

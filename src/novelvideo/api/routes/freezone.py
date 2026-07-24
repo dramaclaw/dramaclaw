@@ -105,6 +105,7 @@ from novelvideo.freezone.history import (
     read_generation_history,
 )
 from novelvideo.freezone.image_node import (
+    DEFAULT_IMAGE_REVERSE_PROMPT_INSTRUCTION,
     reverse_prompt_from_image,
 )
 from novelvideo.freezone.mark_node import detect_freezone_mark
@@ -6543,6 +6544,7 @@ def _start_freezone_image_reverse_prompt_task(
     project_dir: Path,
     job_id: str,
     source_path: Path,
+    instruction: str = "",
     canvas_id: str | None = None,
     node_id: str | None = None,
 ) -> None:
@@ -6577,7 +6579,10 @@ def _start_freezone_image_reverse_prompt_task(
                 current_task="reverse_prompting_image",
                 logs=logs,
             )
-            prompt = await reverse_prompt_from_image(image_path=source_path)
+            prompt = await reverse_prompt_from_image(
+                image_path=source_path,
+                instruction=instruction,
+            )
             out = _image_reverse_prompt_output_path(project_dir, job_id)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(
@@ -6771,6 +6776,11 @@ async def freezone_image_reverse_prompt(
     source_path = Path(source_paths[0])
     if not source_path.exists():
         raise HTTPException(404, f"source not found: {source_path}")
+    instruction = (
+        body.instruction.strip()
+        or DEFAULT_IMAGE_REVERSE_PROMPT_INSTRUCTION
+    )
+    billable_chars = count_billable_text_chars(instruction)
 
     try:
         job_id = _new_job_id()
@@ -6782,12 +6792,14 @@ async def freezone_image_reverse_prompt(
                 job_id=job_id,
                 payload={
                     "source_path": source_path.as_posix(),
+                    "instruction": instruction,
                     "canvas_id": body.canvas_id or "",
                     "node_id": body.node_id or "",
                     "billing": freezone_image_reverse_prompt_task_billing(
                         {
                             "operation": "image_reverse_prompt",
-                            "pricing_quantity": 1,
+                            "billable_chars": billable_chars,
+                            "pricing_quantity": billable_chars,
                         }
                     ),
                 },
@@ -6798,6 +6810,7 @@ async def freezone_image_reverse_prompt(
             project_dir=project_dir,
             job_id=job_id,
             source_path=source_path,
+            instruction=instruction,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
         )
@@ -7621,6 +7634,7 @@ async def freezone_audio_speech(
         raise HTTPException(400, "text is required")
     if len(body.text) > 10_000:
         raise HTTPException(400, "text must be <= 10000 characters")
+    billable_chars = count_billable_text_chars(body.text)
 
     try:
         job_id = _new_job_id()
@@ -7645,7 +7659,8 @@ async def freezone_audio_speech(
                         "freezone.audio_speech",
                         {
                             "operation": "speech",
-                            "pricing_quantity": 1,
+                            "billable_chars": billable_chars,
+                            "pricing_quantity": billable_chars,
                         },
                     ),
                 },

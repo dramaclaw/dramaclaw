@@ -85,6 +85,10 @@ function musicBillingSecondsFromMs(ms: number): number {
   return Math.max(Math.ceil(Math.max(ms, 0) / 1000), 1);
 }
 
+function countBillableTextChars(text: string): number {
+  return text.replace(/[\s\u3000]+/gu, '').length;
+}
+
 interface AudioOperationsPanelProps {
   nodeId: string;
   data: AudioNodeData;
@@ -101,6 +105,13 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
   const [showMusicSettings, setShowMusicSettings] = useState(false);
   // 'music'：文字生成音乐(走 /freezone/audio/eleven-music)；缺省/'speech'：克隆音频(TTS)。
   const isMusic = data.audioKind === 'music';
+  // 生成逻辑(含失败重试)抽到 useAudioGeneration，与节点本体的重试共用同一实现。
+  const {
+    generate: handleSubmit,
+    effectivePrompt,
+    isGenerating,
+  } = useAudioGeneration(nodeId, data);
+  const speechBillableChars = countBillableTextChars(effectivePrompt);
   const musicLengthMs =
     typeof data.musicLengthMs === 'number' ? data.musicLengthMs : DEFAULT_MUSIC_LENGTH_MS;
   const musicBillingSeconds = musicBillingSecondsFromMs(musicLengthMs);
@@ -109,6 +120,7 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
     isMusic ? AUDIO_MUSIC_FEATURE_KEY : AUDIO_SPEECH_FEATURE_KEY,
     {
       surface: 'canvas',
+      quantity: isMusic ? undefined : speechBillableChars,
       params: isMusic
         ? {
             operation: 'music',
@@ -117,7 +129,8 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
           }
         : {
             operation: 'speech',
-            pricing_quantity: 1,
+            billable_chars: speechBillableChars,
+            pricing_quantity: speechBillableChars,
           },
     },
   );
@@ -126,13 +139,6 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
   const costDisplay =
     audioCost.data?.data.display ??
     (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
-  // 生成逻辑(含失败重试)抽到 useAudioGeneration，与节点本体的重试共用同一实现。
-  const {
-    generate: handleSubmit,
-    effectivePrompt,
-    isGenerating,
-  } = useAudioGeneration(nodeId, data);
-
   const text = useMemo(() => deriveAudioText(data), [data]);
   const emotionPrompt = data.emotionPrompt ?? '';
 

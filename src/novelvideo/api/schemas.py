@@ -1290,6 +1290,7 @@ class FreezoneImageReversePromptRequest(BaseModel):
     """图反推提示词请求。"""
 
     source_url: str = Field(description="待分析图片静态地址")
+    instruction: str = Field(default="", description="可选：反推提示词的补充要求")
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
 

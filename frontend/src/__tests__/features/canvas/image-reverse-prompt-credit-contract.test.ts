@@ -17,6 +17,18 @@ describe("canvas image reverse-prompt credit contract", () => {
       "mode === 'imageToPrompt' ? IMAGE_REVERSE_PROMPT_FEATURE_KEY : null",
     );
     expect(nodeSource).toContain("operation: 'image_reverse_prompt'");
+    expect(nodeSource).toContain(
+      "quantity: reversePromptBillableChars",
+    );
+    expect(nodeSource).toContain(
+      "billable_chars: reversePromptBillableChars",
+    );
+    expect(nodeSource).toContain(
+      "pricing_quantity: reversePromptBillableChars",
+    );
+    expect(nodeSource).toContain(
+      "instruction: reversePromptInstruction",
+    );
     expect(nodeSource).not.toContain(
       "mode === 'imageToPrompt' ? 'freezone_image_reverse_prompt' : ''",
     );
