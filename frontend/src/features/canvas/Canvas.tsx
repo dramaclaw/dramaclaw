@@ -2867,11 +2867,14 @@ export function Canvas({
           y: basePosition.y + index * 36,
         };
         // File drops are user actions by definition — stamp user_spawned: true
-        // so the new node is correctly classified by `nodeMainlineFlags`
-        // (and survives `_merge_restored_preset_canvas` refresh). Without
-        // this, dropped uploads on a mainline preset canvas would be locked
-        // by the canvas-level fallback in `NodeActionToolbar`, breaking the
-        // mixed-canvas contract.
+        // so the new node is correctly classified by `nodeMainlineFlags` and
+        // survives `_merge_restored_preset_canvas` refresh (the backend's
+        // `_is_replaceable_projection_node` refuses to overwrite it).
+        //
+        // NB: this is NOT about unlocking. The canvas-level fallback that used
+        // to lock unmarked nodes on preset canvases is gone — NodeActionToolbar
+        // now locks on `isPresetManaged` alone, and an unmarked node classifies
+        // as "ordinary" (see system-managed-node-data.test.ts).
         const newNodeId = addNode(
           CANVAS_NODE_TYPES.upload,
           position,
