@@ -3649,6 +3649,14 @@ def create_video_generator(
     if huimeng_model:
         return HuimengVideoGenerator(model=huimeng_model, **kwargs)
 
+    from novelvideo.generators.artlist_video import parse_artlist_video_backend
+
+    artlist_group = parse_artlist_video_backend(backend_str)
+    if artlist_group is not None:
+        from novelvideo.generators.artlist_video import ArtlistVideoGenerator
+
+        return ArtlistVideoGenerator(model_group_id=artlist_group, **kwargs)
+
     try:
         backend_enum = VideoBackend(backend_str)
     except ValueError:

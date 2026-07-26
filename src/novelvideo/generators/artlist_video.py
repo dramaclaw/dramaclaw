@@ -40,6 +40,41 @@ DEFAULT_MCP_URL = "https://mcp.artlist.io/mcp"
 _DONE_STATES = {"completed", "succeeded", "done", "success"}
 _FAILED_STATES = {"failed", "error", "canceled", "cancelled", "nsfw", "rejected"}
 
+# Convenience aliases so a backend string like ``artlist_seedance-2.0`` routes
+# to a specific Artlist model group (mirrors the ``newapi_<model>`` pattern).
+# Group ids come from Artlist's list_models (image-to-video); use
+# ``artlist_<numericGroupId>`` for any model not aliased here, or the bare
+# ``artlist`` backend + ARTLIST_VIDEO_MODEL_GROUP_ID for a configured default.
+ARTLIST_BACKEND_PREFIX = "artlist_"
+ARTLIST_VIDEO_MODEL_GROUPS: dict[str, int] = {
+    # ByteDance Seedance
+    "seedance-1.0-pro-fast": 309,
+    "seedance-1.5": 304,
+    "seedance-2.0": 358,
+    "seedance-2.0-fast": 405,
+    "seedance-2.0-mini": 416,
+    # a few other popular families available on the gateway
+    "kling-2.1": 105,
+    "veo-3.1": 114,
+    "sora-2": 110,
+    "happyhorse-1.1": 415,
+}
+
+
+def parse_artlist_video_backend(backend: Optional[str]) -> Optional[int]:
+    """Map an ``artlist_<model>`` backend string to an Artlist model group id.
+
+    Returns the group id for a known alias, an explicit ``artlist_<number>``,
+    or ``None`` when the string is not an ``artlist_`` backend.
+    """
+    raw = str(backend or "").strip()
+    if not raw.lower().startswith(ARTLIST_BACKEND_PREFIX):
+        return None
+    model = raw[len(ARTLIST_BACKEND_PREFIX):]
+    if model.isdigit():
+        return int(model)
+    return ARTLIST_VIDEO_MODEL_GROUPS.get(model.lower())
+
 
 class ArtlistVideoGenerator(VideoGeneratorBase):
     """Image-to-video via Artlist's MCP generative gateway."""
