@@ -130,6 +130,7 @@ class VideoBackend(Enum):
     WAN26 = "wan26"  # 阿里云 DashScope Wan2.6-i2v-flash
     LTX23 = "ltx23"  # Lightricks LTX-Video 2.3 22B
     GROK_720 = "grok_720"  # xAI Grok Imagine Video 720p
+    ARTLIST = "artlist"  # Artlist generative video (MCP gateway), image-to-video
 
 
 @dataclass
@@ -3676,5 +3677,9 @@ def create_video_generator(
         return Wan26VideoGenerator(**kwargs)
     elif backend_enum == VideoBackend.GROK_720:
         return GrokVideoGenerator(**kwargs)
+    elif backend_enum == VideoBackend.ARTLIST:
+        from novelvideo.generators.artlist_video import ArtlistVideoGenerator
+
+        return ArtlistVideoGenerator(**kwargs)
     else:
         raise ValueError(f"Unknown video backend: {backend_str}")
