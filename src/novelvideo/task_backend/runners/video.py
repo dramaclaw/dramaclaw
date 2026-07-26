@@ -414,9 +414,109 @@ def run_video_generation(envelope: dict[str, Any], ctx: ProjectContext) -> dict[
     )
 
 
+def _probe_media_duration(path: str, *, timeout_seconds: int | None) -> float:
+    """Return a media file's duration in seconds via ffprobe (0.0 on failure)."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+        return float((out.stdout or "").strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def _apply_artlist_bgm(
+    *,
+    video_path: Path,
+    tmp_dir: Path,
+    query: str,
+    volume: float,
+    run_checked,
+    subprocess_timeout,
+) -> str:
+    """Mix an Artlist background track under the episode audio, in place.
+
+    Searches Artlist for a track near the episode length, loops/ducks it under
+    the existing dialogue/narration, and overwrites ``video_path``. Raises on
+    failure so the caller can log-and-skip — BGM never blocks delivery.
+    """
+    import asyncio
+    import shutil
+
+    from novelvideo.music import ArtlistMusicProvider
+
+    duration = _probe_media_duration(
+        str(video_path), timeout_seconds=subprocess_timeout(30)
+    )
+    provider = ArtlistMusicProvider()
+    bgm_source = str(tmp_dir / "bgm_source.mp3")
+    track, _ = asyncio.run(
+        provider.fetch_bgm(
+            bgm_source,
+            query=query or None,
+            duration_target=duration or None,
+        )
+    )
+
+    mixed_path = tmp_dir / "episode_with_bgm.mp4"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-stream_loop",
+        "-1",
+        "-i",
+        bgm_source,
+        "-filter_complex",
+        # Music at a low fixed level, mixed under the full-length dialogue track.
+        f"[1:a]volume={volume}[bg];"
+        f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+        "-map",
+        "0:v:0",
+        "-map",
+        "[aout]",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "160k",
+        "-shortest",
+        str(mixed_path),
+    ]
+    result = run_checked(cmd, default_timeout_seconds=30 * 60)
+    if result.returncode != 0:
+        raise RuntimeError(f"BGM mix failed: {result.stderr[:300]}")
+
+    shutil.move(str(mixed_path), str(video_path))
+    return f"Artlist BGM applied: {track.name or track.id} ({track.duration:.0f}s)"
+
+
 def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+    import os
     import subprocess
     import tempfile
+
+    def _bgm_volume() -> float:
+        try:
+            return float(os.environ.get("ARTLIST_BGM_VOLUME") or 0.15)
+        except ValueError:
+            return 0.15
 
     from novelvideo.utils.path_resolver import PathResolver
 
@@ -426,6 +526,7 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
     beats = list(payload.get("beats") or [])
     resolution = str(payload.get("resolution") or "720x1280")
     add_subtitles = bool(payload.get("add_subtitles"))
+    add_bgm = bool(payload.get("add_bgm"))
     manager = get_task_manager()
     paths = PathResolver(output_dir, episode)
     final_dir = Path(output_dir) / "videos" / "episodes"
@@ -629,9 +730,45 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
         if result.returncode != 0:
             raise RuntimeError(f"拼接失败: {result.stderr[:500]}")
 
+        bgm_applied = False
+        if add_bgm:
+            check_cancel()
+            manager.update_progress_for_project(
+                ctx,
+                "compose_episode",
+                episode,
+                current_task="Adding background music...",
+            )
+            try:
+                status = _apply_artlist_bgm(
+                    video_path=output_path,
+                    tmp_dir=tmp_dir,
+                    query=str(
+                        payload.get("bgm_query")
+                        or os.environ.get("ARTLIST_BGM_QUERY")
+                        or "cinematic"
+                    ),
+                    volume=_bgm_volume(),
+                    run_checked=run_checked,
+                    subprocess_timeout=subprocess_timeout,
+                )
+                bgm_applied = True
+                manager.update_progress_for_project(
+                    ctx, "compose_episode", episode, logs=[status]
+                )
+            except Exception as exc:
+                # BGM is best-effort: never fail delivery over it.
+                manager.update_progress_for_project(
+                    ctx,
+                    "compose_episode",
+                    episode,
+                    logs=[f"Background music skipped: {exc}"],
+                )
+
     return {
         "video_path": output_path.as_posix(),
         "add_subtitles_requested": add_subtitles,
+        "bgm_applied": bgm_applied,
     }
 
 
