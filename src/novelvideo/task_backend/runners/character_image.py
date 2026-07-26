@@ -335,7 +335,7 @@ async def _generate_identity_image(
     else:
         portrait_path = char_assets_dir / "portrait.png"
         if not portrait_path.exists():
-            raise RuntimeError(f"Please generate a portrait (face close-up) for character 「{character.name}」 first")
+            raise RuntimeError(f"Please generate a portrait (face close-up) for character \"{character.name}\" first")
         identity_prompt = "" if has_costume_image else appearance_details
         reference_image_path = str(portrait_path)
 

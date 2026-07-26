@@ -54,7 +54,7 @@ async def _run_beat_video_prompt(envelope: dict[str, Any], ctx: ProjectContext) 
             logs=[task],
         )
 
-    update_progress(0.05, f"开始生成 Beat {beat_num} 视频提示词")
+    update_progress(0.05, f"Starting Beat {beat_num} video prompt generation")
     store = await make_sqlite_store_for_context(ctx)
     try:
         data = await _generate_and_save_beat_video_prompt(
@@ -65,7 +65,7 @@ async def _run_beat_video_prompt(envelope: dict[str, Any], ctx: ProjectContext) 
             beat_num=beat_num,
             language=language,
         )
-        update_progress(0.95, f"已保存 Beat {beat_num} 视频提示词")
+        update_progress(0.95, f"Saved Beat {beat_num} video prompt")
         return {
             "episode": episode,
             "beat_num": beat_num,
@@ -99,13 +99,13 @@ async def _run_script_writer(envelope: dict[str, Any], ctx: ProjectContext) -> d
             logs=[task],
         )
 
-    update_progress(0.02, "开始生成脚本...")
+    update_progress(0.02, "Starting script generation...")
 
     store = CogneeStore(ctx.owner_project_label, output_dir=output_dir)
     await store.initialize()
     try:
         await store.load_graph_state()
-        update_progress(0.10, "图谱状态已加载")
+        update_progress(0.10, "Graph state loaded")
 
         project_config = load_project_config(ctx.owner_username, ctx.project_name)
         merged_config = {**project_config, **config}
@@ -134,7 +134,7 @@ async def _run_script_writer(envelope: dict[str, Any], ctx: ProjectContext) -> d
                 ctx,
                 "script_writer",
                 episode,
-                logs=[f"已清理 {deleted} 个旧草图文件"],
+                logs=[f"Cleaned up {deleted} old sketch files"],
             )
 
         try:
@@ -160,14 +160,14 @@ async def _run_script_writer(envelope: dict[str, Any], ctx: ProjectContext) -> d
                     ctx,
                     "script_writer",
                     episode,
-                    logs=[f"已分配 {len(colors)} 个身份配色"],
+                    logs=[f"Assigned {len(colors)} identity colors"],
                 )
         except Exception as exc:  # noqa: BLE001
             manager.update_progress_for_project(
                 ctx,
                 "script_writer",
                 episode,
-                logs=[f"自动配色失败（不影响脚本）: {exc}"],
+                logs=[f"Automatic color assignment failed (does not affect script): {exc}"],
             )
 
         result = {

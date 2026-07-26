@@ -49,7 +49,7 @@ def run_sketch_edit_execute(
     def log(message: str) -> None:
         update(0.0, message)
 
-    update(0.01, "启动 sketch edit execute...")
+    update(0.01, "Starting sketch edit execute...")
     result = execute_sketch_edit_batches(
         project_dir=project_dir,
         episode_num=episode,

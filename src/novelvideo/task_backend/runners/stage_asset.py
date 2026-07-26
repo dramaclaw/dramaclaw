@@ -81,7 +81,7 @@ def run_stage_asset(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, 
             logs=[current_task],
         )
 
-    update(0.10, f"启动 {step}...")
+    update(0.10, f"Starting {step}...")
 
     if step == "splat_collision":
         ply_param = params.get("ply_path")
@@ -251,7 +251,7 @@ def run_freezone_image_to_3gs(
     ensure_freezone_dirs(project_dir)
     artifact_dir = outputs_dir(project_dir, "freezone_image_to_3gs") / job_id
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    update(0.10, "准备 Freezone 3GS 输出目录...")
+    update(0.10, "Preparing Freezone 3GS output directory...")
 
     if source_kind == "pano":
         result = stage_asset_tasks.run_pano_sharp(
