@@ -572,7 +572,15 @@
       "total": "Characters",
       "withPortraits": "With portrait",
       "identities": "Identities",
-      "attempts": "Gen requests"
+      "attempts": "Gen requests",
+      "strip": {
+        "total": "Total",
+        "mainCharacter": "Narrator lead",
+        "portrait": "Portrait",
+        "identity": "Identity",
+        "voice": "Voice",
+        "ariaLabel": "Character stats"
+      }
     },
     "tabs": {
       "basics": "Basics",
@@ -1532,6 +1540,8 @@
       "justNow": "just now"
     },
     "detail": {
+      "currentStatus": "Current status",
+      "debugInfo": "Debug info",
       "tabs": {
         "overview": "Overview",
         "logs": "Logs"

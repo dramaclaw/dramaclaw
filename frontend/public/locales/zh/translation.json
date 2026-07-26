@@ -572,7 +572,15 @@
       "total": "角色数",
       "withPortraits": "已有肖像",
       "identities": "身份造型",
-      "attempts": "生成请求"
+      "attempts": "生成请求",
+      "strip": {
+        "total": "总角色",
+        "mainCharacter": "解说主角",
+        "portrait": "头像",
+        "identity": "身份",
+        "voice": "声线",
+        "ariaLabel": "角色统计"
+      }
     },
     "tabs": {
       "basics": "基本",
@@ -1532,6 +1540,8 @@
       "justNow": "刚刚"
     },
     "detail": {
+      "currentStatus": "当前状态",
+      "debugInfo": "调试信息",
       "tabs": {
         "overview": "概览",
         "logs": "日志"
