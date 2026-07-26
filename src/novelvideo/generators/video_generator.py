@@ -130,6 +130,7 @@ class VideoBackend(Enum):
     WAN26 = "wan26"  # 阿里云 DashScope Wan2.6-i2v-flash
     LTX23 = "ltx23"  # Lightricks LTX-Video 2.3 22B
     GROK_720 = "grok_720"  # xAI Grok Imagine Video 720p
+    HIGGSFIELD = "higgsfield"  # Higgsfield DoP image-to-video
 
 
 @dataclass
@@ -1229,6 +1230,246 @@ class GrokVideoGenerator(VideoGeneratorBase):
 
             if poll_count % 6 == 0:
                 log(f"正在生成中... ({status_str or 'pending'}, {poll_count}/{max_polls})")
+            await asyncio.sleep(poll_interval)
+
+        return VideoGenResult(
+            status=VideoGenStatus.FAILED,
+            error="Generation timeout",
+            task_id=request_id,
+        )
+
+
+class HiggsfieldVideoGenerator(VideoGeneratorBase):
+    """Higgsfield video generator (first-frame image-to-video, native HTTP).
+
+    Uses the official Higgsfield platform API. Image-to-video via the DoP
+    ("Director of Photography") model: submit a first frame plus a motion
+    prompt, poll the request status, then download the finished clip.
+    """
+
+    MODEL = "dop-turbo"
+    DEFAULT_ENDPOINT = "https://platform.higgsfield.ai"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        model: Optional[str] = None,
+        **_ignored,
+    ):
+        # Higgsfield keys are a two-part "KEY_ID:KEY_SECRET" string sent as
+        # `Authorization: Key <id>:<secret>`.
+        self.api_key = api_key or os.environ.get("HIGGSFIELD_API_KEY")
+        self.endpoint = (
+            endpoint or os.environ.get("HIGGSFIELD_BASE_URL") or self.DEFAULT_ENDPOINT
+        ).rstrip("/")
+        self.model = model or os.environ.get("HIGGSFIELD_VIDEO_MODEL") or self.MODEL
+
+        if not self.api_key:
+            raise ValueError(
+                "HIGGSFIELD_API_KEY must be set for Higgsfield video generation"
+            )
+
+    def _local_to_data_url(self, image_path: str) -> str:
+        import base64
+
+        suffix = Path(image_path).suffix.lower()
+        mime_type = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
+        with open(image_path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode()
+        return f"data:{mime_type};base64,{encoded}"
+
+    async def _download_video(
+        self, url: str, output_path: str, max_retries: int = 3
+    ) -> bool:
+        for attempt in range(1, max_retries + 1):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        if resp.status != 200:
+                            if attempt < max_retries:
+                                await asyncio.sleep(2 * attempt)
+                                continue
+                            return False
+                        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                        with open(output_path, "wb") as f:
+                            f.write(await resp.read())
+                        return True
+            except Exception:
+                if attempt < max_retries:
+                    await asyncio.sleep(2 * attempt)
+        return False
+
+    @staticmethod
+    def _extract_video_url(data: dict) -> Optional[str]:
+        video = data.get("video")
+        if isinstance(video, dict) and video.get("url"):
+            return video["url"]
+        # Some responses nest media under jobs[].results.raw.url.
+        for job in data.get("jobs") or []:
+            results = (job or {}).get("results") or {}
+            raw = results.get("raw") if isinstance(results, dict) else None
+            if isinstance(raw, dict) and raw.get("url"):
+                return raw["url"]
+        return None
+
+    async def generate(
+        self,
+        image_path: str,
+        prompt: str,
+        output_path: str,
+        aspect_ratio: str = "9:16",
+        duration: float = 5.0,
+        poll_interval: float = 2.0,
+        max_polls: int = 180,
+        on_log: Optional[Callable[[str], None]] = None,
+        on_progress: Optional[Callable[[float], None]] = None,
+        last_frame_path: Optional[str] = None,
+        **kwargs,
+    ) -> VideoGenResult:
+        def log(msg: str):
+            if on_log:
+                on_log(msg)
+
+        def progress(value: float):
+            if on_progress:
+                on_progress(value)
+
+        if last_frame_path:
+            return VideoGenResult(
+                status=VideoGenStatus.FAILED,
+                error="Higgsfield DoP does not support keyframe/first-last-frame mode",
+            )
+
+        if image_path and image_path.startswith(("http://", "https://", "data:")):
+            image_url = image_path
+        elif image_path and os.path.exists(image_path):
+            image_url = self._local_to_data_url(image_path)
+            log("First frame encoded as data URL")
+        else:
+            return VideoGenResult(
+                status=VideoGenStatus.FAILED,
+                error=f"First frame not found: {image_path}",
+            )
+
+        headers = {
+            "Authorization": f"Key {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        request_body = {
+            "model": self.model,
+            "prompt": prompt,
+            "input_images": [{"type": "image_url", "image_url": image_url}],
+        }
+
+        log(f"Submitting Higgsfield video task ({self.model})...")
+        progress(0.1)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.endpoint}/v1/image2video/dop",
+                    json=request_body,
+                    headers=headers,
+                ) as resp:
+                    if resp.status not in (200, 201, 202):
+                        error_text = await resp.text()
+                        return VideoGenResult(
+                            status=VideoGenStatus.FAILED,
+                            error=f"Submit failed: HTTP {resp.status} - {error_text[:200]}",
+                        )
+                    data = await resp.json()
+        except Exception as e:
+            return VideoGenResult(
+                status=VideoGenStatus.FAILED,
+                error=f"Submit exception: {e}",
+            )
+
+        request_id = data.get("request_id")
+        status_url = data.get("status_url") or (
+            f"{self.endpoint}/requests/{request_id}/status" if request_id else None
+        )
+
+        def _finish(payload: dict) -> Optional[VideoGenResult]:
+            video_url = self._extract_video_url(payload)
+            if not video_url:
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error="No video URL in response",
+                    task_id=request_id,
+                )
+            log("Video ready, downloading...")
+            progress(0.9)
+            return VideoGenResult(
+                status=VideoGenStatus.DONE,
+                video_url=video_url,
+                video_path=output_path,
+                task_id=request_id,
+                duration_seconds=float(duration),
+            )
+
+        # Some requests complete synchronously and already carry the video.
+        if (data.get("status") or "").lower() == "completed":
+            done = _finish(data)
+            if done and done.status == VideoGenStatus.DONE:
+                if await self._download_video(done.video_url, output_path):
+                    progress(1.0)
+                    return done
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error="Download failed",
+                    task_id=request_id,
+                )
+            return done
+
+        if not status_url:
+            return VideoGenResult(
+                status=VideoGenStatus.FAILED,
+                error=f"No request_id/status_url in response: {str(data)[:200]}",
+            )
+
+        log(f"Task submitted: {request_id}")
+        progress(0.2)
+
+        for poll_count in range(max_polls):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        status_url,
+                        headers={"Authorization": f"Key {self.api_key}"},
+                    ) as resp:
+                        if resp.status != 200:
+                            await asyncio.sleep(poll_interval)
+                            continue
+                        data = await resp.json()
+            except Exception:
+                await asyncio.sleep(poll_interval)
+                continue
+
+            status_str = (data.get("status") or "").lower()
+            progress(0.2 + (poll_count / max_polls) * 0.7)
+
+            if status_str == "completed":
+                done = _finish(data)
+                if done and done.status == VideoGenStatus.DONE:
+                    if not await self._download_video(done.video_url, output_path):
+                        return VideoGenResult(
+                            status=VideoGenStatus.FAILED,
+                            error="Download failed",
+                            task_id=request_id,
+                        )
+                    progress(1.0)
+                return done
+
+            if status_str in {"failed", "nsfw"}:
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error=f"Higgsfield video generation {status_str}",
+                    task_id=request_id,
+                )
+
+            if poll_count % 6 == 0:
+                log(f"Generating... ({status_str or 'queued'}, {poll_count}/{max_polls})")
             await asyncio.sleep(poll_interval)
 
         return VideoGenResult(
@@ -3676,5 +3917,7 @@ def create_video_generator(
         return Wan26VideoGenerator(**kwargs)
     elif backend_enum == VideoBackend.GROK_720:
         return GrokVideoGenerator(**kwargs)
+    elif backend_enum == VideoBackend.HIGGSFIELD:
+        return HiggsfieldVideoGenerator(**kwargs)
     else:
         raise ValueError(f"Unknown video backend: {backend_str}")
