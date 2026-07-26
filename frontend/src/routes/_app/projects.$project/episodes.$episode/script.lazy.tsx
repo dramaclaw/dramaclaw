@@ -605,7 +605,7 @@ function ScriptTabContent() {
             disabled={
               scriptTask.started
                 ? scriptTask.stopping
-                : generateButtonBusy
+                : generateButtonBusy || scriptTask.started
             }
             title={
               !scriptTask.started && identitiesEmpty
@@ -657,7 +657,7 @@ function ScriptTabContent() {
                 >
                   <SelectTrigger
                     size="sm"
-                    className="inline-flex !h-6 w-[112px] shrink-0 items-center gap-1 !rounded-[6px] !border !border-white/[0.12] !bg-white/[0.04] px-2 text-[11px] font-normal text-foreground/78 shadow-none hover:!border-white/[0.2] hover:!bg-white/[0.05] hover:text-foreground focus-visible:!border-white/24 focus-visible:!ring-0 [&_svg]:!size-3"
+                    className="inline-flex !h-6 w-[112px] shrink-0 items-center gap-1 !rounded-[6px] !border !border-white/[0.12] !bg-white/[0.04] px-2 text-[11px] font-normal text-foreground/78 [...]"
                   >
                     {/* base-ui Select.Value renders the raw value by default — map
                         it to the localized label so the trigger shows 中文. */}
