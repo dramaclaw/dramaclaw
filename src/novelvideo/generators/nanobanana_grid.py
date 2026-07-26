@@ -502,7 +502,7 @@ async def _check_openrouter_image_capability(api_key: str, model: str) -> tuple[
         models = result.get("data", [])
         model_info = next((item for item in models if item.get("id") == model), None)
         if not model_info:
-            detail = f"模型 {model} 不在 OpenRouter /models 列表中，跳过 image capability 预检"
+            detail = f"Model {model} is not in the OpenRouter /models list; skipping image capability precheck"
             print(f"[OpenRouter] {detail}")
             outcome = (True, detail)
             _OPENROUTER_IMAGE_CAPABILITY_CACHE[cache_key] = outcome
@@ -519,7 +519,7 @@ async def _check_openrouter_image_capability(api_key: str, model: str) -> tuple[
         _OPENROUTER_IMAGE_CAPABILITY_CACHE[cache_key] = outcome
         return outcome
     except Exception as exc:
-        detail = "image capability 预检失败，跳过阻断: " f"{type(exc).__name__}: {exc!r}"
+        detail = "image capability precheck failed, not blocking: " f"{type(exc).__name__}: {exc!r}"
         print(f"[OpenRouter] {detail}")
         outcome = (True, detail)
         _OPENROUTER_IMAGE_CAPABILITY_CACHE[cache_key] = outcome
@@ -1610,7 +1610,7 @@ def filter_character_map_for_beats(
 
     non_panel = [c for c in character_map if c not in filtered]
     if non_panel:
-        print(f"[filter_character_map] 过滤非出场角色: {non_panel}")
+        print(f"[filter_character_map] Filtered out non-appearing characters: {non_panel}")
 
     return filtered
 
@@ -1826,7 +1826,7 @@ def filter_character_map_by_sketch(
             removed.append(char_name)
 
     if removed:
-        print(f"[filter_by_sketch] 草图中未检测到颜色，移除角色: {removed}")
+        print(f"[filter_by_sketch] No color detected in sketch, removing character: {removed}")
 
     return filtered
 
@@ -1881,7 +1881,7 @@ def filter_character_map_by_precomputed(
             removed.append(char_name)
 
     if removed:
-        print(f"[filter_by_precomputed] 预计算未检测到，移除角色: {removed}")
+        print(f"[filter_by_precomputed] Not detected in precomputed data, removing character: {removed}")
 
     return filtered
 
@@ -1978,11 +1978,11 @@ def crop_sketch_panels(
     if pool_hit > 0:
         now = time.time()
         if now - getattr(crop_sketch_panels, "_last_log_t", 0.0) >= 5.0:
-            print(f"[crop_sketch_panels] 从图片池取 {pool_hit}/{len(beat_numbers)} 个 beat 草图")
+            print(f"[crop_sketch_panels] Pulled {pool_hit}/{len(beat_numbers)} beat sketches from image pool")
             crop_sketch_panels._last_log_t = now
 
     if not panels or panel_width is None:
-        raise ValueError(f"无法从草图中提取 beat {beat_numbers}")
+        raise ValueError(f"Unable to extract beat {beat_numbers} from sketch")
 
     target_width = target_cols * panel_width
     target_height = target_rows * panel_height
@@ -3011,7 +3011,7 @@ async def _call_openrouter_image_api(
     try:
         supports_image, capability_detail = await _check_openrouter_image_capability(api_key, model)
         if not supports_image:
-            detail = f"OpenRouter 模型未声明 image output 支持: {capability_detail}"
+            detail = f"OpenRouter model does not declare image output support: {capability_detail}"
             print(f"[OpenRouter] {detail}")
             return None, "", detail
 
@@ -3028,8 +3028,8 @@ async def _call_openrouter_image_api(
             # 提取图像
             choices = result.get("choices", [])
             if not choices:
-                print(f"[OpenRouter] 响应无 choices: {_truncate_openrouter_debug(result)}")
-                return None, "", "响应无 choices"
+                print(f"[OpenRouter] Response has no choices: {_truncate_openrouter_debug(result)}")
+                return None, "", "response has no choices"
 
             message = choices[0].get("message", {})
 
@@ -3055,7 +3055,7 @@ async def _call_openrouter_image_api(
                 text_content = content
 
             if text_content:
-                print(f"[OpenRouter] 文本响应: {text_content[:500]}")
+                print(f"[OpenRouter] Text response: {text_content[:500]}")
 
             # 优先从 message.images 取图（旧格式）
             images = message.get("images", [])
@@ -3065,10 +3065,10 @@ async def _call_openrouter_image_api(
                     image_data_url = url
 
             if not image_data_url:
-                print(f"[OpenRouter] 响应无图像: {_truncate_openrouter_debug(message)}")
-                detail = "模型未返回图像"
+                print(f"[OpenRouter] Response has no image: {_truncate_openrouter_debug(message)}")
+                detail = "Model did not return an image"
                 if text_content:
-                    detail = f"{detail}，仅返回文本: {text_content[:200]}"
+                    detail = f"{detail}; only text returned: {text_content[:200]}"
                 return None, text_content or "", detail
 
             # 提取 base64 部分
@@ -3077,7 +3077,7 @@ async def _call_openrouter_image_api(
 
     except httpx.HTTPStatusError as e:
         print(
-            "[OpenRouter] HTTP 错误: "
+            "[OpenRouter] HTTP error: "
             f"{e.response.status_code} - {_truncate_openrouter_debug(e.response.text, limit=500)}"
         )
         body = _truncate_openrouter_debug(e.response.text, limit=280)
@@ -3090,8 +3090,8 @@ async def _call_openrouter_image_api(
         if is_insufficient_credits_error(e):
             raise
         detail = f"{type(e).__name__}: {e!r}"
-        print(f"[OpenRouter] 请求异常: {detail}")
-        return None, "", f"请求异常: {detail}"
+        print(f"[OpenRouter] Request error: {detail}")
+        return None, "", f"Request error: {detail}"
 
 
 async def _call_openai_image_api(
@@ -3221,7 +3221,7 @@ async def _call_openai_image_api(
                 unknown_parameter = _extract_openai_unknown_parameter(detail)
                 if unknown_parameter and unknown_parameter in request_options:
                     print(
-                        f"[OpenAI Image] 参数 {unknown_parameter!r} 不被当前端点接受，" "移除后重试"
+                        f"[OpenAI Image] parameter {unknown_parameter!r} not accepted by current endpoint; " "removing and retrying"
                     )
                     request_options.pop(unknown_parameter, None)
                     continue
@@ -3238,7 +3238,7 @@ async def _call_openai_image_api(
                 if transient_error and _attempt < 3:
                     wait_seconds = 2**_attempt
                     print(
-                        f"[OpenAI Image] 暂时性错误，{wait_seconds}s 后重试 "
+                        f"[OpenAI Image] transient error; retrying in {wait_seconds}s "
                         f"({_attempt + 1}/4): {detail}"
                     )
                     await asyncio.sleep(wait_seconds)
@@ -3272,8 +3272,8 @@ async def _call_openai_image_api(
         if is_insufficient_credits_error(exc):
             raise
         detail = f"{type(exc).__name__}: {exc!r}"
-        print(f"[OpenAI Image] 请求异常: {detail}")
-        return None, "", f"请求异常: {detail}"
+        print(f"[OpenAI Image] Request error: {detail}")
+        return None, "", f"Request error: {detail}"
 
 
 async def _call_newapi_image_api(
@@ -3549,7 +3549,7 @@ async def _call_newapi_image_api(
         error_context = _newapi_context_for_error(request_context)
         detail = f"{type(exc).__name__}: {exc!r}; {error_context}"
         logger.warning("DramaClawAPI image request exception: %s", detail)
-        return None, "", f"请求异常: {detail}"
+        return None, "", f"Request error: {detail}"
 
 
 async def _relay_reference_images_for_newapi(
@@ -3811,19 +3811,19 @@ class NanoBananaGridGenerator:
         # 使用全局默认风格
         if style is None:
             style = IMAGE_DEFAULT_STYLE
-        print(f"[NanoBananaPro] 使用风格: {style}, 网格: {rows}x{cols}")
+        print(f"[NanoBananaPro] Using style: {style}, grid: {rows}x{cols}")
 
         if len(beats) < 1:
             return GridGenerationResult(
                 success=False,
-                error=f"需要至少 1 个 beat，当前没有 beats",
+                error=f"At least 1 beat is required, but there are no beats",
                 generation_time=time.time() - start_time,
             )
 
         # 如果不足网格容量，后面会用黑色填充
         actual_beat_count = min(len(beats), grid_capacity)
         print(
-            f"[NanoBananaPro] 有效 beats: {actual_beat_count}/{grid_capacity}，不足部分用黑色填充"
+            f"[NanoBananaPro] valid beats: {actual_beat_count}/{grid_capacity}; remaining slots filled with black"
         )
         if not sketch and sketch_dir:
             detection_error = render_ai_detection_error(beats[:grid_capacity])
@@ -3855,20 +3855,20 @@ class NanoBananaGridGenerator:
                 if upstream_mode == "composite" and ref_path and os.path.exists(ref_path):
                     char_info["reference_path"] = ref_path
                     char_info["reference_mode"] = "composite"
-                    print(f"[NanoBananaPro] {char_name}: 复合图模式 -> {ref_path}")
+                    print(f"[NanoBananaPro] {char_name}: composite image mode -> {ref_path}")
                     valid_character_map[char_name] = char_info
                     continue
 
                 if ref_path and os.path.exists(ref_path):
                     char_info["reference_path"] = ref_path
                     char_info["reference_mode"] = "portrait_only"
-                    print(f"[NanoBananaPro] {char_name}: Portrait 模式（仅锁脸）-> {ref_path}")
+                    print(f"[NanoBananaPro] {char_name}: Portrait mode (face lock only) -> {ref_path}")
                     valid_character_map[char_name] = char_info
                     continue
 
                 char_info["reference_path"] = None
                 char_info["reference_mode"] = "prompt_only"
-                print(f"[NanoBananaPro] {char_name}: 提示词模式（无参考图）")
+                print(f"[NanoBananaPro] {char_name}: prompt mode (no reference image)")
                 valid_character_map[char_name] = char_info
 
             # 1. 构建网格 Prompt
@@ -3946,13 +3946,13 @@ class NanoBananaGridGenerator:
                     director_sheet_path and os.path.exists(director_sheet_path)
                 )
                 if has_director_sheet:
-                    print(f"[DirectorSheet] 使用 DirectorWorld sheet: {director_sheet_path}")
+                    print(f"[DirectorSheet] Using DirectorWorld sheet: {director_sheet_path}")
                 elif actual_beat_count != 1 or rows != 1 or cols != 1:
                     return GridGenerationResult(
                         success=False,
                         error=(
-                            "导演参考图模式只支持单 beat 1x1；"
-                            "批量草图请先导出对应 DirectorWorld 控制图。"
+                            "Director reference mode only supports a single 1x1 beat; "
+                            "for batch sketches, export the corresponding DirectorWorld control image first."
                         ),
                         generation_time=time.time() - start_time,
                     )
@@ -3960,8 +3960,8 @@ class NanoBananaGridGenerator:
                     return GridGenerationResult(
                         success=False,
                         error=(
-                            "导演单镜缺少 beat 级 3GS control frame；"
-                            "草图主线不再回退到旧场景参考图。"
+                            "Director single-shot is missing a beat-level 3GS control frame; "
+                            "the sketch pipeline no longer falls back to legacy scene reference images."
                         ),
                         generation_time=time.time() - start_time,
                     )
@@ -3978,7 +3978,7 @@ class NanoBananaGridGenerator:
 
             if sketch:
                 # Sketch 模式使用 UnifiedPromptBuilder（与导出逻辑一致）
-                print(f"[NanoBananaPro] 进入 Sketch 模式")
+                print(f"[NanoBananaPro] Entering Sketch mode")
 
                 # 当前网格的全局 beat 范围 (1-based)
                 grid_beat_start = beat_start_index + 1
@@ -4045,16 +4045,16 @@ class NanoBananaGridGenerator:
                 )
                 if sketch_result is None and not has_all_pool_sketches:
                     print(
-                        f"[Render] 警告：未找到覆盖 beat {beat_range_start}-{beat_range_end} 的草图"
+                        f"[Render] warning: no sketch found covering beat {beat_range_start}-{beat_range_end}"
                     )
 
                 if sketch_result or has_all_pool_sketches:
-                    print(f"[NanoBananaPro] 进入 Render 模式 (基于草图渲染)")
+                    print(f"[NanoBananaPro] Entering Render mode (sketch-based rendering)")
                     if has_all_pool_sketches:
-                        print(f"[Render] 使用图片池草图: {len(beat_sketch_paths)} 个 beat")
+                        print(f"[Render] Using image-pool sketches: {len(beat_sketch_paths)} beats")
                     elif sketch_result:
                         sketch_file, s_rows, s_cols = sketch_result
-                        print(f"[Render] 使用草图: {sketch_file} ({s_rows}x{s_cols})")
+                        print(f"[Render] Using sketch: {sketch_file} ({s_rows}x{s_cols})")
                     is_render_mode = True
 
                     # Render 模式：先切片草图，再用颜色检测过滤角色
@@ -4078,8 +4078,8 @@ class NanoBananaGridGenerator:
                         beat_sketch_paths=beat_sketch_paths,
                         target_aspect=target_aspect,
                     )
-                    print(f"[Render] 草图切片: beat_numbers={actual_beat_numbers} -> {rows}x{cols}")
-                    print(f"[Render] 子草图已保存: {sub_sketch_path}")
+                    print(f"[Render] Sketch slicing: beat_numbers={actual_beat_numbers} -> {rows}x{cols}")
+                    print(f"[Render] Sub-sketch saved: {sub_sketch_path}")
 
                     # 用切片后的草图作为参考
                     previous_grid_path = sub_sketch_path
@@ -4114,7 +4114,7 @@ class NanoBananaGridGenerator:
                     prompt = builder.build()
                 else:
                     # 草图未找到，明确报错终止（不 fallback）
-                    msg = f"Render 模式需要草图但未找到覆盖 beat {beat_range_start}-{beat_range_end} 的草图"
+                    msg = f"Render mode requires a sketch, but none was found covering beats {beat_range_start}-{beat_range_end}"
                     print(f"[NanoBananaPro] ❌ {msg}")
                     return GridGenerationResult(
                         success=False,
@@ -4122,14 +4122,14 @@ class NanoBananaGridGenerator:
                     )
             else:
                 # 需要草图或草图目录
-                msg = "generate_grid() 需要 sketch 或 sketch_dir 参数"
+                msg = "generate_grid() requires a sketch or sketch_dir argument"
                 print(f"[NanoBananaPro] ❌ {msg}")
                 return GridGenerationResult(
                     success=False,
                     error=msg,
                 )
 
-            print(f"[NanoBananaPro] 构建 Prompt 完成，共 {len(beats[:grid_capacity])} 个分镜")
+            print(f"[NanoBananaPro] Prompt built, {len(beats[:grid_capacity])} shots total")
 
             # 保存 prompt 到文件（审计用）
             # 目录结构: grids/ep001/2x2/prompts/grid_01.prompt.txt
@@ -4140,21 +4140,21 @@ class NanoBananaGridGenerator:
                 grid_basename = Path(output_path).stem  # "grid_01"
                 prompt_file = prompts_dir / f"{grid_basename}.prompt.txt"
                 prompt_file.write_text(prompt, encoding="utf-8")
-                print(f"[NanoBananaPro] Grid Prompt 已保存: {prompt_file}")
+                print(f"[NanoBananaPro] Grid Prompt saved: {prompt_file}")
 
             # Prompt-Only 模式：只生成提示词，跳过 API 调用
             if prompt_only:
-                print(f"[NanoBananaPro] Prompt-Only 模式，跳过 API 调用")
+                print(f"[NanoBananaPro] Prompt-Only mode, skipping API call")
                 # 在 Render 模式下，显示 sketch 切片信息（用于验证）
                 if is_render_mode:
                     sketch_capacity = SKETCH_GRID_CONFIG["rows"] * SKETCH_GRID_CONFIG["cols"]
                     local_offset = beat_start_index % sketch_capacity
                     end_index = local_offset + len(beats[:grid_capacity])
                     print(
-                        f"[NanoBananaPro] [Render 预览] 草图 {SKETCH_GRID_CONFIG['rows']}x{SKETCH_GRID_CONFIG['cols']}"
+                        f"[NanoBananaPro] [Render preview] sketch {SKETCH_GRID_CONFIG['rows']}x{SKETCH_GRID_CONFIG['cols']}"
                     )
                     print(
-                        f"[NanoBananaPro] [Render 预览] 本地切片: [{local_offset}:{end_index}] (共 {end_index - local_offset} panels)"
+                        f"[NanoBananaPro] [Render preview] local slice: [{local_offset}:{end_index}] ({end_index - local_offset} panels total)"
                     )
                 return GridGenerationResult(
                     success=True,
@@ -4251,7 +4251,7 @@ class NanoBananaGridGenerator:
                         }
                     )
                     print(
-                        "[NanoBananaPro] 添加草图底图 (Image 1 composition lock): "
+                        "[NanoBananaPro] added sketch base image (Image 1 composition lock): "
                         f"{previous_grid_path}"
                     )
 
@@ -4281,7 +4281,7 @@ class NanoBananaGridGenerator:
                     ctx, beats, grid_capacity, valid_character_map
                 )
 
-                print(f"[NanoBananaPro] 角色参考图顺序: {ordered_chars}")
+                print(f"[NanoBananaPro] Character reference image order: {ordered_chars}")
                 self._append_reference_parts_from_plan(
                     contents,
                     ctx,
@@ -4308,7 +4308,7 @@ class NanoBananaGridGenerator:
                     json.dumps(submitted_payload, ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
-                print(f"[NanoBananaPro] Submitted Prompt/Refs 已保存: {submitted_file}")
+                print(f"[NanoBananaPro] Submitted Prompt/Refs saved: {submitted_file}")
 
             # contents 结构:
             # - Render 模式: [prompt, char/scene/prop refs..., sketch(最后)]
@@ -4356,7 +4356,7 @@ class NanoBananaGridGenerator:
                 # ===== OpenRouter 分支 =====
                 effective_image_size = normalize_image_size(image_size, provider="openrouter")
                 print(
-                    f"[NanoBananaPro] 调用 OpenRouter ({self.model}) 生成网格图 (分辨率: {effective_image_size}, 比例: {aspect_ratio})..."
+                    f"[NanoBananaPro] calling OpenRouter ({self.model}) to generate grid image (resolution: {effective_image_size}, ratio: {aspect_ratio})..."
                 )
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(contents)
                 image_bytes, or_text, or_error = await _call_openrouter_image_api(
@@ -4367,12 +4367,12 @@ class NanoBananaGridGenerator:
                     image_config={"aspect_ratio": aspect_ratio, "image_size": effective_image_size},
                 )
                 if not image_bytes:
-                    message = "OpenRouter API 未返回图像数据"
+                    message = "OpenRouter API did not return image data"
                     if or_error:
                         message = f"{message}: {or_error}"
                     return _usage_fail(message)
             elif self.provider == "huimeng":
-                print(f"[HuiMeng Images] 调用 {self.model} 生成网格图 (比例: {aspect_ratio})...")
+                print(f"[HuiMeng Images] Calling {self.model} to generate grid image (ratio: {aspect_ratio})...")
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(contents)
                 image_bytes, _text, huimeng_error = await _call_huimeng_image_api(
                     api_key=self.api_key,
@@ -4386,7 +4386,7 @@ class NanoBananaGridGenerator:
                     },
                 )
                 if not image_bytes:
-                    message = "HuiMeng Images 未返回图像数据"
+                    message = "HuiMeng Images did not return image data"
                     if huimeng_error:
                         message = f"{message}: {huimeng_error}"
                     return _usage_fail(message)
@@ -4395,8 +4395,8 @@ class NanoBananaGridGenerator:
                 openai_image_size = "1K" if sketch else image_size
                 openai_size = resolve_openai_image_size(aspect_ratio, openai_image_size)
                 print(
-                    f"[NanoBananaPro] 调用 OpenAI Image API ({self.model}) 生成网格图 "
-                    f"(size: {openai_size}, 比例: {aspect_ratio})..."
+                    f"[NanoBananaPro] calling OpenAI Image API ({self.model}) to generate grid image "
+                    f"(size: {openai_size}, ratio: {aspect_ratio})..."
                 )
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
                     contents,
@@ -4419,15 +4419,15 @@ class NanoBananaGridGenerator:
                     },
                 )
                 if not image_bytes:
-                    message = "OpenAI Image API 未返回图像数据"
+                    message = "OpenAI Image API did not return image data"
                     if openai_error:
                         message = f"{message}: {openai_error}"
                     return _usage_fail(message)
             elif self.provider == "newapi":
                 effective_image_size = normalize_image_size(image_size, provider="newapi")
                 print(
-                    f"[DramaClawAPI Images] 调用 {self.model} 生成网格图 "
-                    f"(分辨率: {effective_image_size}, 比例: {aspect_ratio})..."
+                    f"[DramaClawAPI Images] calling {self.model} to generate grid image "
+                    f"(resolution: {effective_image_size}, ratio: {aspect_ratio})..."
                 )
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
                     contents,
@@ -4450,7 +4450,7 @@ class NanoBananaGridGenerator:
                     base_url=self.base_url,
                 )
                 if not image_bytes:
-                    message = "DramaClawAPI Images 未返回图像数据"
+                    message = "DramaClawAPI Images did not return image data"
                     if newapi_error:
                         message = f"{message}: {newapi_error}"
                     return _usage_fail(message)
@@ -4461,7 +4461,7 @@ class NanoBananaGridGenerator:
                 if is_gemini3:
                     effective_image_size = normalize_image_size(image_size, provider="google")
                     print(
-                        f"[NanoBananaPro] 调用 {self.model} 生成网格图 (分辨率: {effective_image_size}, 比例: {aspect_ratio})..."
+                        f"[NanoBananaPro] calling {self.model} to generate grid image (resolution: {effective_image_size}, ratio: {aspect_ratio})..."
                     )
                     image_config = types.ImageConfig(
                         aspect_ratio=aspect_ratio,
@@ -4469,7 +4469,7 @@ class NanoBananaGridGenerator:
                     )
                 else:
                     # gemini-2.5-flash-image 不支持 image_size 参数
-                    print(f"[NanoBananaPro] 调用 {self.model} 生成网格图 (比例: {aspect_ratio})...")
+                    print(f"[NanoBananaPro] Calling {self.model} to generate grid image (ratio: {aspect_ratio})...")
                     image_config = types.ImageConfig(
                         aspect_ratio=aspect_ratio,
                     )
@@ -4511,29 +4511,29 @@ class NanoBananaGridGenerator:
 
                 # 检查响应结构
                 if not response.candidates:
-                    print(f"[NanoBananaPro] API 响应无 candidates: {response}")
-                    return _usage_fail(f"API 响应无 candidates: {response}")
+                    print(f"[NanoBananaPro] API response has no candidates: {response}")
+                    return _usage_fail(f"API response has no candidates: {response}")
 
                 candidate = response.candidates[0]
                 if not candidate.content:
                     print(
-                        f"[NanoBananaPro] candidate 无 content: finish_reason={getattr(candidate, 'finish_reason', 'unknown')}"
+                        f"[NanoBananaPro] candidate has no content: finish_reason={getattr(candidate, 'finish_reason', 'unknown')}"
                     )
                     # 打印安全评级（如果有）
                     if hasattr(candidate, "safety_ratings") and candidate.safety_ratings:
                         for rating in candidate.safety_ratings:
                             print(f"[NanoBananaPro] safety_rating: {rating}")
                     return _usage_fail(
-                        f"API 响应无 content, finish_reason={getattr(candidate, 'finish_reason', 'unknown')}"
+                        f"API response has no content, finish_reason={getattr(candidate, 'finish_reason', 'unknown')}"
                     )
 
                 if not candidate.content.parts:
                     print(
-                        f"[NanoBananaPro] content 无 parts: {candidate.content}, finish_reason={getattr(candidate, 'finish_reason', 'unknown')}"
+                        f"[NanoBananaPro] content has no parts: {candidate.content}, finish_reason={getattr(candidate, 'finish_reason', 'unknown')}"
                     )
                     # 打印完整 candidate 对象以便调试
-                    print(f"[NanoBananaPro] 完整 candidate: {candidate}")
-                    return _usage_fail("API 响应 content 无 parts")
+                    print(f"[NanoBananaPro] Full candidate: {candidate}")
+                    return _usage_fail("API response content has no parts")
 
                 text_parts = []
                 for part in candidate.content.parts:
@@ -4542,10 +4542,10 @@ class NanoBananaGridGenerator:
                     # 收集文本响应
                     if hasattr(part, "text") and part.text:
                         text_parts.append(part.text)
-                        print(f"[NanoBananaPro] API 文本响应: {part.text[:500]}")
+                        print(f"[NanoBananaPro] API text response: {part.text[:500]}")
 
                 if not image_bytes:
-                    return _usage_fail("API 未返回图像数据")
+                    return _usage_fail("API did not return image data")
 
             # 5. 保存文件
             if output_path:
@@ -4554,7 +4554,7 @@ class NanoBananaGridGenerator:
                     os.makedirs(output_dir, exist_ok=True)
                 with open(output_path, "wb") as f:
                     f.write(image_bytes)
-                print(f"[NanoBananaPro] 网格图已保存: {output_path}")
+                print(f"[NanoBananaPro] Grid image saved: {output_path}")
 
                 # 5.1 后处理：移除面板间缝隙并覆盖
                 try:
@@ -4567,19 +4567,19 @@ class NanoBananaGridGenerator:
                     # 更新 image_bytes 以保持返回值一致
                     with open(output_path, "rb") as f:
                         image_bytes = f.read()
-                    print(f"[NanoBananaPro] Gap removal 后处理完成: {output_path}")
+                    print(f"[NanoBananaPro] Gap removal post-processing complete: {output_path}")
                 except Exception as e:
-                    print(f"[NanoBananaPro] Gap removal 失败，保留原图: {e}")
+                    print(f"[NanoBananaPro] Gap removal failed, keeping original image: {e}")
 
             generation_time = time.time() - start_time
-            print(f"[NanoBananaPro] 生成完成，耗时 {generation_time:.1f}s")
+            print(f"[NanoBananaPro] Generation complete, took {generation_time:.1f}s")
 
             return _usage_success(output_path, image_bytes)
 
         except ImportError:
             return GridGenerationResult(
                 success=False,
-                error="请安装 google-genai: pip install google-genai",
+                error="Please install google-genai: pip install google-genai",
                 generation_time=time.time() - start_time,
             )
         except Exception as e:
@@ -4639,7 +4639,7 @@ class NanoBananaGridGenerator:
         mode_cfg = REGEN_MODE_CONFIGS.get(mode_key, REGEN_MODE_CONFIGS["5x5_2-3_sketch"])
         rows = mode_cfg["rows"]
         cols = mode_cfg["cols"]
-        print(f"[ActionGrid] 生成 {rows}x{cols} 动作分镜, 风格: {style}")
+        print(f"[ActionGrid] Generating {rows}x{cols} action shots, style: {style}")
 
         # 构建伪 beat 列表（单个 action beat 扩展为 25 panel 占位）
         action_beat = {
@@ -4708,7 +4708,7 @@ class NanoBananaGridGenerator:
                 if not image_bytes:
                     return GridGenerationResult(
                         success=False,
-                        error=f"OpenRouter API 未返回图片: {error_detail or ''}".strip(),
+                        error=f"OpenRouter API did not return an image: {error_detail or ''}".strip(),
                         generation_time=time.time() - start_time,
                     )
             elif self.provider == "huimeng":
@@ -4723,7 +4723,7 @@ class NanoBananaGridGenerator:
                 if not image_bytes:
                     return GridGenerationResult(
                         success=False,
-                        error=f"HuiMeng Images 未返回图片: {error_detail or ''}".strip(),
+                        error=f"HuiMeng Images did not return an image: {error_detail or ''}".strip(),
                         generation_time=time.time() - start_time,
                     )
             elif self.provider == "openai":
@@ -4746,7 +4746,7 @@ class NanoBananaGridGenerator:
                 if not image_bytes:
                     return GridGenerationResult(
                         success=False,
-                        error=f"OpenAI Image API 未返回图片: {error_detail or ''}".strip(),
+                        error=f"OpenAI Image API did not return an image: {error_detail or ''}".strip(),
                         generation_time=time.time() - start_time,
                     )
             elif self.provider == "newapi":
@@ -4769,7 +4769,7 @@ class NanoBananaGridGenerator:
                 if not image_bytes:
                     return GridGenerationResult(
                         success=False,
-                        error=f"DramaClawAPI Images 未返回图片: {error_detail or ''}".strip(),
+                        error=f"DramaClawAPI Images did not return an image: {error_detail or ''}".strip(),
                         generation_time=time.time() - start_time,
                     )
             else:
@@ -4799,7 +4799,7 @@ class NanoBananaGridGenerator:
             if not image_bytes:
                 return GridGenerationResult(
                     success=False,
-                    error="API 未返回图片",
+                    error="API did not return an image",
                     generation_time=time.time() - start_time,
                 )
 
@@ -4820,10 +4820,10 @@ class NanoBananaGridGenerator:
                     with open(output_path, "rb") as f:
                         image_bytes = f.read()
                 except Exception as e:
-                    print(f"[ActionGrid] Gap removal 失败，保留原图: {e}")
+                    print(f"[ActionGrid] Gap removal failed, keeping original image: {e}")
 
             generation_time = time.time() - start_time
-            print(f"[ActionGrid] 生成完成，耗时 {generation_time:.1f}s")
+            print(f"[ActionGrid] Generation complete, took {generation_time:.1f}s")
 
             return GridGenerationResult(
                 success=True,
@@ -4885,7 +4885,7 @@ class NanoBananaGridGenerator:
             if prompt_file.exists():
                 original_prompt = prompt_file.read_text(encoding="utf-8")
                 print(
-                    f"[Reformat] 读取 Pass 1 提示词: {prompt_file} ({len(original_prompt)} chars)"
+                    f"[Reformat] read Pass 1 prompt: {prompt_file} ({len(original_prompt)} chars)"
                 )
 
             # reformat_sketch 现在只处理 outpaint（1:1 → 2:3）
@@ -4914,7 +4914,7 @@ class NanoBananaGridGenerator:
                 )
                 prompt = f"{reformat_instruction}\n\n{structural_prompt}"
                 print(
-                    f"[Reformat] Outpaint 模式，提示词精简: {len(original_prompt)} → {len(prompt)} chars"
+                    f"[Reformat] Outpaint mode, prompt trimmed: {len(original_prompt)} → {len(prompt)} chars"
                 )
             else:
                 prompt = reformat_instruction
@@ -4924,14 +4924,14 @@ class NanoBananaGridGenerator:
             pass2_prompt_file = source_dir / "prompts" / f"{output_stem}.prompt.txt"
             pass2_prompt_file.parent.mkdir(parents=True, exist_ok=True)
             pass2_prompt_file.write_text(prompt, encoding="utf-8")
-            print(f"[Reformat] Pass 2 Prompt 已保存: {pass2_prompt_file} ({len(prompt)} chars)")
+            print(f"[Reformat] Pass 2 Prompt saved: {pass2_prompt_file} ({len(prompt)} chars)")
 
             ref_image = self._load_image_as_part(source_path)
             contents = [prompt, ref_image]
 
             if self.provider == "openrouter":
                 # ===== OpenRouter 分支 =====
-                print(f"[Reformat] 调用 OpenRouter ({self.model}) 转换 → {target_aspect} ...")
+                print(f"[Reformat] Calling OpenRouter ({self.model}) to convert → {target_aspect} ...")
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(contents)
                 image_bytes, _or_text, _or_error = await _call_openrouter_image_api(
                     api_key=self.api_key,
@@ -4948,14 +4948,14 @@ class NanoBananaGridGenerator:
                     return GridGenerationResult(
                         success=False,
                         error=(
-                            f"[Reformat] OpenRouter API 未返回图像数据: {_or_error}"
+                            f"[Reformat] OpenRouter API did not return image data: {_or_error}"
                             if _or_error
-                            else "[Reformat] OpenRouter API 未返回图像数据"
+                            else "[Reformat] OpenRouter API did not return image data"
                         ),
                         generation_time=time.time() - start_time,
                     )
             elif self.provider == "huimeng":
-                print(f"[Reformat] 调用 HuiMeng Images ({self.model}) 转换 → {target_aspect} ...")
+                print(f"[Reformat] Calling HuiMeng Images ({self.model}) to convert → {target_aspect} ...")
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(contents)
                 image_bytes, _text, huimeng_error = await _call_huimeng_image_api(
                     api_key=self.api_key,
@@ -4968,15 +4968,15 @@ class NanoBananaGridGenerator:
                     return GridGenerationResult(
                         success=False,
                         error=(
-                            f"[Reformat] HuiMeng Images 未返回图像数据: {huimeng_error}"
+                            f"[Reformat] HuiMeng Images did not return image data: {huimeng_error}"
                             if huimeng_error
-                            else "[Reformat] HuiMeng Images 未返回图像数据"
+                            else "[Reformat] HuiMeng Images did not return image data"
                         ),
                         generation_time=time.time() - start_time,
                     )
             elif self.provider == "openai":
                 # ===== OpenAI Image API 分支 =====
-                print(f"[Reformat] 调用 OpenAI Image API ({self.model}) 转换 → {target_aspect} ...")
+                print(f"[Reformat] Calling OpenAI Image API ({self.model}) to convert → {target_aspect} ...")
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
                     contents,
                     include_mime=True,
@@ -4996,14 +4996,14 @@ class NanoBananaGridGenerator:
                     return GridGenerationResult(
                         success=False,
                         error=(
-                            f"[Reformat] OpenAI Image API 未返回图像数据: {openai_error}"
+                            f"[Reformat] OpenAI Image API did not return image data: {openai_error}"
                             if openai_error
-                            else "[Reformat] OpenAI Image API 未返回图像数据"
+                            else "[Reformat] OpenAI Image API did not return image data"
                         ),
                         generation_time=time.time() - start_time,
                     )
             elif self.provider == "newapi":
-                print(f"[Reformat] 调用 DramaClawAPI Images ({self.model}) 转换 → {target_aspect} ...")
+                print(f"[Reformat] Calling DramaClawAPI Images ({self.model}) to convert → {target_aspect} ...")
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
                     contents,
                     include_mime=True,
@@ -5024,9 +5024,9 @@ class NanoBananaGridGenerator:
                     return GridGenerationResult(
                         success=False,
                         error=(
-                            f"[Reformat] DramaClawAPI Images 未返回图像数据: {newapi_error}"
+                            f"[Reformat] DramaClawAPI Images did not return image data: {newapi_error}"
                             if newapi_error
-                            else "[Reformat] DramaClawAPI Images 未返回图像数据"
+                            else "[Reformat] DramaClawAPI Images did not return image data"
                         ),
                         generation_time=time.time() - start_time,
                     )
@@ -5053,7 +5053,7 @@ class NanoBananaGridGenerator:
                     image_config=image_config,
                 )
 
-                print(f"[Reformat] 调用 {self.model} 转换 → {target_aspect} ...")
+                print(f"[Reformat] Calling {self.model} to convert → {target_aspect} ...")
                 response = await asyncio.to_thread(
                     client.models.generate_content,
                     model=self.model,
@@ -5066,7 +5066,7 @@ class NanoBananaGridGenerator:
                 if not response.candidates or not response.candidates[0].content:
                     return GridGenerationResult(
                         success=False,
-                        error=f"[Reformat] API 响应无有效内容",
+                        error=f"[Reformat] API response has no valid content",
                         generation_time=time.time() - start_time,
                     )
 
@@ -5078,7 +5078,7 @@ class NanoBananaGridGenerator:
                 if not image_bytes:
                     return GridGenerationResult(
                         success=False,
-                        error="[Reformat] API 未返回图像数据",
+                        error="[Reformat] API did not return image data",
                         generation_time=time.time() - start_time,
                     )
 
@@ -5090,7 +5090,7 @@ class NanoBananaGridGenerator:
                 f.write(image_bytes)
 
             generation_time = time.time() - start_time
-            print(f"[Reformat] 完成 → {output_path}，耗时 {generation_time:.1f}s")
+            print(f"[Reformat] Done → {output_path}, took {generation_time:.1f}s")
 
             return GridGenerationResult(
                 success=True,
@@ -5209,11 +5209,11 @@ class NanoBananaGridGenerator:
         if sketch and use_director_refs:
             if actual_beat_count != 1 or rows != 1 or cols != 1:
                 raise RuntimeError(
-                    "导演参考图模式只支持单 beat 1x1；批量草图请先导出对应 DirectorWorld 控制图。"
+                    "Director reference mode only supports a single 1x1 beat; for batch sketches, export the corresponding DirectorWorld control image first."
                 )
             if not _has_director_image_ref(scene_refs, panel_idx=1):
                 raise RuntimeError(
-                    "导演单镜缺少 beat 级 3GS control frame；" "草图主线不再回退到旧场景参考图。"
+                    "Director single-shot is missing a beat-level 3GS control frame; " "the sketch pipeline no longer falls back to legacy scene reference images."
                 )
             _prepare_director_blocking_refs(
                 scene_refs=scene_refs,
@@ -5322,10 +5322,10 @@ class NanoBananaGridGenerator:
                 prompt = builder.build()
             else:
                 raise RuntimeError(
-                    f"Render 模式需要草图但未找到覆盖 beat {beat_range_start}-{beat_range_end} 的草图"
+                    f"Render mode requires a sketch, but none was found covering beat {beat_range_start}-{beat_range_end}"
                 )
         else:
-            raise RuntimeError("prepare_batch_request() 需要 sketch 或 sketch_dir 参数")
+            raise RuntimeError("prepare_batch_request() requires a sketch or sketch_dir argument")
 
         # 构建 contents
         contents = [prompt]
@@ -5430,7 +5430,7 @@ class NanoBananaGridGenerator:
         """
         if self.provider != "google":
             raise NotImplementedError(
-                "Google Batch API 只支持 google provider，请使用标准模式 (generate_grid) 或切换到 google provider。"
+                "Google Batch API only supports the google provider; use standard mode (generate_grid) or switch to the google provider."
             )
 
         from google import genai
@@ -5477,7 +5477,7 @@ class NanoBananaGridGenerator:
                 }
             )
 
-        print(f"[BatchAPI] 提交 {len(batch_requests)} 个请求到 Google Batch API...")
+        print(f"[BatchAPI] Submitting {len(batch_requests)} requests to Google Batch API...")
 
         # 提交 Batch
         batch_job = client.batches.create(
@@ -5486,7 +5486,7 @@ class NanoBananaGridGenerator:
             config={"display_name": f"grid_batch_{int(time.time())}"},
         )
 
-        print(f"[BatchAPI] Batch 已提交: {batch_job.name}")
+        print(f"[BatchAPI] Batch submitted: {batch_job.name}")
 
         # 轮询等待
         elapsed = 0
@@ -5495,20 +5495,20 @@ class NanoBananaGridGenerator:
             batch = client.batches.get(name=batch_job.name)
             if batch.state != last_state:
                 last_state = batch.state
-                print(f"[BatchAPI] 状态: {batch.state}")
+                print(f"[BatchAPI] Status: {batch.state}")
                 if on_status_change:
                     on_status_change(batch.state)
 
             if batch.state == "JOB_STATE_SUCCEEDED":
                 break
             elif batch.state in ("JOB_STATE_FAILED", "JOB_STATE_CANCELLED"):
-                raise RuntimeError(f"Batch 失败: {batch.state}")
+                raise RuntimeError(f"Batch failed: {batch.state}")
 
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
 
         if elapsed >= timeout:
-            raise RuntimeError(f"Batch 超时（{timeout}s）")
+            raise RuntimeError(f"Batch timed out ({timeout}s)")
 
         # 提取结果
         results = []
@@ -5541,7 +5541,7 @@ class NanoBananaGridGenerator:
                 results.append(
                     GridGenerationResult(
                         success=False,
-                        error=f"Batch 响应 {i} 未返回图像数据",
+                        error=f"Batch response {i} did not return image data",
                     )
                 )
                 continue
@@ -5563,7 +5563,7 @@ class NanoBananaGridGenerator:
                     grid_img = remove_grid_gaps(grid_img, req["rows"], req["cols"])
                     grid_img.save(output_path)
                 except Exception as e:
-                    print(f"[BatchAPI] Grid {i} gap removal 失败: {e}")
+                    print(f"[BatchAPI] Grid {i} gap removal failed: {e}")
 
             results.append(
                 GridGenerationResult(
@@ -5573,7 +5573,7 @@ class NanoBananaGridGenerator:
                 )
             )
 
-        print(f"[BatchAPI] 完成: {sum(1 for r in results if r.success)}/{len(results)} 成功")
+        print(f"[BatchAPI] Done: {sum(1 for r in results if r.success)}/{len(results)} succeeded")
         return results
 
     async def generate_grid_batch(
@@ -5625,9 +5625,9 @@ class NanoBananaGridGenerator:
 
         total_beats = len(all_beats)
         print(
-            f"[NanoBananaPro Batch] 共 {total_beats} 个 beats，最大网格: {max_grid_rows}x{max_grid_cols}"
+            f"[NanoBananaPro Batch] {total_beats} beats total, max grid: {max_grid_rows}x{max_grid_cols}"
         )
-        print(f"[NanoBananaPro Batch] 动态网格优化已启用（最小化黑色填充）")
+        print(f"[NanoBananaPro Batch] Dynamic grid optimization enabled (minimizing black padding)")
 
         # 确保输出目录存在
         if output_dir:
@@ -5645,9 +5645,9 @@ class NanoBananaGridGenerator:
                 for mk, loc in zip(grid_plan_tuples, loc_labels)
             ]
             print(
-                f"[NanoBananaPro Batch] 场景分组模式: "
+                f"[NanoBananaPro Batch] scene grouping mode: "
                 f"{' + '.join(scene_grid_labels)} "
-                f"(共 {len(grid_plan_tuples)} 个网格)"
+                f"({len(grid_plan_tuples)} grids total)"
             )
         else:
             # ===== 默认分割：完美分割 =====
@@ -5683,8 +5683,8 @@ class NanoBananaGridGenerator:
                 for mk in grid_plan_tuples
             ]
             print(
-                f"[NanoBananaPro Batch] 完美分割方案: {' + '.join(grid_labels)} "
-                f"= {sum(grid_capacities)} (共 {len(grid_plan_tuples)} 个网格，0 填充)"
+                f"[NanoBananaPro Batch] perfect split plan: {' + '.join(grid_labels)} "
+                f"= {sum(grid_capacities)} ({len(grid_plan_tuples)} grids total, 0 padding)"
             )
 
         # 按照分割方案逐个生成网格
@@ -5711,7 +5711,7 @@ class NanoBananaGridGenerator:
             # 角色过滤交给 generate_grid 内部完成，避免批量阶段重复解析引用。
             batch_character_map = character_map
             print(
-                f"[NanoBananaPro Batch] 网格 {batch_idx + 1} 候选角色: "
+                f"[NanoBananaPro Batch] grid {batch_idx + 1} candidate characters: "
                 f"{list(batch_character_map.keys())}"
             )
 
@@ -5719,7 +5719,7 @@ class NanoBananaGridGenerator:
             # （如果因为某种原因 beat 数量不匹配，这里会有问题，但理论上不会发生）
             if len(batch_beats) != batch_capacity:
                 print(
-                    f"[NanoBananaPro Batch] 警告: 网格 {batch_idx + 1} beat 数量不匹配 ({len(batch_beats)} vs {batch_capacity})"
+                    f"[NanoBananaPro Batch] warning: grid {batch_idx + 1} beat count mismatch ({len(batch_beats)} vs {batch_capacity})"
                 )
 
             # 生成网格图路径
@@ -5728,7 +5728,7 @@ class NanoBananaGridGenerator:
                 output_path = str(Path(output_dir) / f"grid_{batch_idx + 1:02d}.png")
 
             print(
-                f"[NanoBananaPro Batch] 生成网格 {batch_idx + 1} (beats {start_idx}-{end_idx}, 网格: {batch_rows}x{batch_cols})"
+                f"[NanoBananaPro Batch] generating grid {batch_idx + 1} (beats {start_idx}-{end_idx}, grid: {batch_rows}x{batch_cols})"
             )
 
             # 调用单网格生成（使用过滤后的角色映射和动态网格尺寸）
@@ -5764,15 +5764,15 @@ class NanoBananaGridGenerator:
                 try:
                     on_grid_complete(batch_idx, result)
                 except Exception as e:
-                    print(f"[NanoBananaPro Batch] 回调错误: {e}")
+                    print(f"[NanoBananaPro Batch] Callback error: {e}")
 
             if not result.success:
-                print(f"[NanoBananaPro Batch] 网格 {batch_idx + 1} 生成失败: {result.error}")
+                print(f"[NanoBananaPro Batch] Grid {batch_idx + 1} generation failed: {result.error}")
                 # 继续生成下一个网格，不中断整个流程
 
         successful = sum(1 for r in results if r.success)
         total_grids = len(results)
-        print(f"[NanoBananaPro Batch] 批量生成完成: {successful}/{total_grids} 成功")
+        print(f"[NanoBananaPro Batch] Batch generation complete: {successful}/{total_grids} succeeded")
 
         return results
 
@@ -5824,7 +5824,7 @@ class NanoBananaGridGenerator:
             if grid_index >= len(scene_grid_plan):
                 return GridGenerationResult(
                     success=False,
-                    error=f"网格索引 {grid_index} 超出范围（最大 {len(scene_grid_plan) - 1}）",
+                    error=f"Grid index {grid_index} out of range (max {len(scene_grid_plan) - 1})",
                     generation_time=0,
                 )
             entry = scene_grid_plan[grid_index]
@@ -5836,9 +5836,9 @@ class NanoBananaGridGenerator:
             target_start_idx = 0  # 场景分组无连续起始索引
             loc_name = entry.get("scene_id", "")
             print(
-                f"[NanoBananaPro Regen] 场景分组: 网格 {grid_index + 1} ({loc_name}, "
+                f"[NanoBananaPro Regen] scene grouping: grid {grid_index + 1} ({loc_name}, "
                 f"{len(target_batch_beats)} beats, "
-                f"网格: {target_batch_rows}x{target_batch_cols})"
+                f"grid: {target_batch_rows}x{target_batch_cols})"
             )
         else:
             # ===== 默认分割 =====
@@ -5848,7 +5848,7 @@ class NanoBananaGridGenerator:
             if grid_index >= len(grid_plan):
                 return GridGenerationResult(
                     success=False,
-                    error=f"网格索引 {grid_index} 超出范围（最大 {len(grid_plan) - 1}）",
+                    error=f"Grid index {grid_index} out of range (max {len(grid_plan) - 1})",
                     generation_time=0,
                 )
 
@@ -5866,22 +5866,22 @@ class NanoBananaGridGenerator:
         actual_beat_count = len(target_batch_beats)
         if not scene_grid_plan:
             print(
-                f"[NanoBananaPro Regen] 重新生成网格 {grid_index + 1} "
+                f"[NanoBananaPro Regen] regenerating grid {grid_index + 1} "
                 f"(beats {target_start_idx + 1}-{target_start_idx + actual_beat_count}, "
-                f"网格: {target_batch_rows}x{target_batch_cols})"
+                f"grid: {target_batch_rows}x{target_batch_cols})"
             )
 
         # 角色过滤交给 generate_grid 内部完成，避免重生阶段重复解析引用。
         batch_character_map = character_map
         print(
-            f"[NanoBananaPro Regen] 网格 {grid_index + 1} 候选角色: "
+            f"[NanoBananaPro Regen] grid {grid_index + 1} candidate characters: "
             f"{list(batch_character_map.keys())}"
         )
 
         # 完美分割不需要填充，但检查以防万一
         if len(target_batch_beats) != batch_capacity:
             print(
-                f"[NanoBananaPro Regen] 警告: 网格 {grid_index + 1} beat 数量不匹配 "
+                f"[NanoBananaPro Regen] warning: grid {grid_index + 1} beat count mismatch "
                 f"({len(target_batch_beats)} vs {batch_capacity})"
             )
 
@@ -5915,9 +5915,9 @@ class NanoBananaGridGenerator:
         )
 
         if result.success:
-            print(f"[NanoBananaPro Regen] 网格 {grid_index + 1} 重新生成成功")
+            print(f"[NanoBananaPro Regen] Grid {grid_index + 1} regenerated successfully")
         else:
-            print(f"[NanoBananaPro Regen] 网格 {grid_index + 1} 重新生成失败: {result.error}")
+            print(f"[NanoBananaPro Regen] Grid {grid_index + 1} regeneration failed: {result.error}")
 
         # 添加额外的元数据到结果
         result.beat_start_index = target_start_idx
@@ -5970,7 +5970,7 @@ class NanoBananaGridGenerator:
                     )
                     img = img.resize(new_size, Image.Resampling.LANCZOS)
                     print(
-                        f"[参考图放大] {os.path.basename(image_path)}: "
+                        f"[Reference upscale] {os.path.basename(image_path)}: "
                         f"{original_dimensions[0]}x{original_dimensions[1]} → "
                         f"{new_size[0]}x{new_size[1]}"
                     )
@@ -5990,9 +5990,9 @@ class NanoBananaGridGenerator:
                 compressed_size = len(image_data)
                 ratio = (1 - compressed_size / original_size) * 100
                 print(
-                    f"[压缩] {os.path.basename(image_path)}: "
+                    f"[Compress] {os.path.basename(image_path)}: "
                     f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-                    f"({ratio:.0f}% 压缩)"
+                    f"({ratio:.0f}% smaller)"
                 )
             else:
                 if img.size != original_dimensions:
@@ -6028,7 +6028,7 @@ class NanoBananaGridGenerator:
                 return types.Part.from_bytes(data=image_data, mime_type=mime_type)
 
         except Exception as e:
-            print(f"[NanoBananaPro] 加载参考图失败: {image_path}, {e}")
+            print(f"[NanoBananaPro] Failed to load reference image: {image_path}, {e}")
             return None
 
     def _append_reference_parts_from_plan(
@@ -6068,7 +6068,7 @@ class NanoBananaGridGenerator:
                         names.append(char_name)
                         if verbose:
                             print(
-                                f"[NanoBananaPro] 添加完整多视图参考 sheet: {char_name} -> "
+                                f"[NanoBananaPro] added full multi-view reference sheet: {char_name} -> "
                                 f"{sheet.size[0]}x{sheet.size[1]}px"
                             )
                     if sheets:
@@ -6076,7 +6076,7 @@ class NanoBananaGridGenerator:
                         if merged_part:
                             contents.append(merged_part)
                             if verbose:
-                                print(f"[NanoBananaPro] 多人完整 sheet 合并参考图: {names}")
+                                print(f"[NanoBananaPro] Multi-character full sheet merged reference image: {names}")
                 finally:
                     for sheet in sheets:
                         try:
@@ -6104,17 +6104,17 @@ class NanoBananaGridGenerator:
                     continue
                 if kind == "composite":
                     print(
-                        "[NanoBananaPro] 添加参考图 (复合图): "
+                        "[NanoBananaPro] added reference image (composite): "
                         f"{entry.get('char_name', '')} -> {path}"
                     )
                 elif kind == "portrait_only":
                     print(
-                        "[NanoBananaPro] 添加参考图 (Portrait): "
+                        "[NanoBananaPro] added reference image (Portrait): "
                         f"{entry.get('char_name', '')} -> {path}"
                     )
                 else:
                     print(
-                        "[NanoBananaPro] 添加身份级 Portrait (年龄变体): "
+                        "[NanoBananaPro] added identity-level Portrait (age variant): "
                         f"{entry.get('char_name', '')}/{entry.get('tag', '')}"
                     )
             elif kind in {"scene", "prop"}:
@@ -6146,7 +6146,7 @@ class NanoBananaGridGenerator:
                         }
                     )
                 if verbose:
-                    label = "场景" if kind == "scene" else "道具"
+                    label = "scene" if kind == "scene" else "prop"
                     try:
                         size_bytes = os.path.getsize(path)
                     except OSError:
@@ -6156,7 +6156,7 @@ class NanoBananaGridGenerator:
                         f"base_id={getattr(ref, 'base_id', '')} "
                         f"path={path} bytes={size_bytes}"
                     )
-                    print(f"[NanoBananaPro] 添加{label}参考图: " f"{getattr(ref, 'base_id', '')}")
+                    print(f"[NanoBananaPro] Adding {label} reference image: " f"{getattr(ref, 'base_id', '')}")
 
     def _extract_ref_bytes_from_contents(
         self, contents: list, *, include_mime: bool = False
@@ -6220,7 +6220,7 @@ class NanoBananaGridGenerator:
         merged.save(buffer, format="JPEG", quality=compress_quality, optimize=True)
         image_data = buffer.getvalue()
         print(
-            f"[NanoBananaPro] 合并参考图: {len(panels)} 角色, "
+            f"[NanoBananaPro] merged reference images: {len(panels)} characters, "
             f"{total_w}x{max_h}px, {len(image_data)/1024:.0f}KB"
         )
 
@@ -6285,7 +6285,7 @@ class NanoBananaGridGenerator:
                 s_rows = SKETCH_GRID_CONFIG["rows"]
                 s_cols = SKETCH_GRID_CONFIG["cols"]
                 local_offset = beat_start_index  # 单文件 fallback
-                print(f"[Render] 回退：使用传入草图 {sketch_path}")
+                print(f"[Render] Fallback: using provided sketch {sketch_path}")
 
             sketch_img = Image.open(actual_sketch_file)
             sketch_w, sketch_h = sketch_img.size
@@ -6294,7 +6294,7 @@ class NanoBananaGridGenerator:
             panel_h = sketch_h // s_rows
 
             print(f"[Render] Sketch: {actual_sketch_file} ({s_rows}x{s_cols})")
-            print(f"[Render] Panel 尺寸: {panel_w}x{panel_h}")
+            print(f"[Render] Panel size: {panel_w}x{panel_h}")
 
             # 2. 切分草图得到所有 panel
             all_panels = []
@@ -6308,7 +6308,7 @@ class NanoBananaGridGenerator:
             panels = all_panels[local_offset : local_offset + len(beats)]
 
             print(
-                f"[Render] 从 {len(all_panels)} 个 sketch panel 中取 [local {local_offset}:{local_offset + len(beats)}] = {len(panels)} panels"
+                f"[Render] taking [local {local_offset}:{local_offset + len(beats)}] from {len(all_panels)} sketch panels = {len(panels)} panels"
             )
 
         except Exception as e:
@@ -6534,7 +6534,7 @@ CRITICAL: Keep exact composition from sketch. Only add color, texture, and light
                         f.write(image_bytes)
                     return output_path
                 if error_detail:
-                    print(f"[HuiMeng Render] 失败: {error_detail}")
+                    print(f"[HuiMeng Render] Failed: {error_detail}")
                 return None
             elif self.provider == "openai":
                 # ===== OpenAI Image API 分支 =====
@@ -6558,7 +6558,7 @@ CRITICAL: Keep exact composition from sketch. Only add color, texture, and light
                         f.write(image_bytes)
                     return output_path
                 if error_detail:
-                    print(f"[OpenAI Render] 失败: {error_detail}")
+                    print(f"[OpenAI Render] Failed: {error_detail}")
                 return None
             elif self.provider == "newapi":
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
@@ -6582,7 +6582,7 @@ CRITICAL: Keep exact composition from sketch. Only add color, texture, and light
                         f.write(image_bytes)
                     return output_path
                 if error_detail:
-                    print(f"[DramaClawAPI Render] 失败: {error_detail}")
+                    print(f"[DramaClawAPI Render] Failed: {error_detail}")
                 return None
             else:
                 # ===== Google 直连分支 =====
@@ -6655,7 +6655,7 @@ CRITICAL: Keep exact composition from sketch. Only add color, texture, and light
         # 加载原图作为参考
         ref_image = self._load_image_as_part(input_path)
         if not ref_image:
-            raise ValueError(f"无法加载参考图: {input_path}")
+            raise ValueError(f"Unable to load reference image: {input_path}")
 
         # 构建高清修复 Prompt
         prompt = f"""Based on this reference image, create a high-quality vertical (9:16) version.
@@ -6675,7 +6675,7 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
 """
 
         try:
-            print(f"[NanoBananaPro Upscale] 处理: {input_path}")
+            print(f"[NanoBananaPro Upscale] Processing: {input_path}")
 
             if self.provider == "openrouter":
                 # ===== OpenRouter 分支 =====
@@ -6692,9 +6692,9 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                 )
                 if not image_bytes:
                     raise ValueError(
-                        f"OpenRouter API 未返回图像数据: {or_error}"
+                        f"OpenRouter API did not return image data: {or_error}"
                         if or_error
-                        else "OpenRouter API 未返回图像数据"
+                        else "OpenRouter API did not return image data"
                     )
 
                 # 保存为临时文件并缩放
@@ -6705,7 +6705,7 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                 img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
                 img.save(output_path)
                 Path(temp_path).unlink()
-                print(f"[NanoBananaPro Upscale] 完成: {output_path}")
+                print(f"[NanoBananaPro Upscale] Done: {output_path}")
                 return Path(output_path)
             elif self.provider == "huimeng":
                 ref_bytes = []
@@ -6720,9 +6720,9 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                 )
                 if not image_bytes:
                     raise ValueError(
-                        f"HuiMeng Images 未返回图像数据: {huimeng_error}"
+                        f"HuiMeng Images did not return image data: {huimeng_error}"
                         if huimeng_error
-                        else "HuiMeng Images 未返回图像数据"
+                        else "HuiMeng Images did not return image data"
                     )
 
                 temp_path = output_path + ".tmp.png"
@@ -6732,7 +6732,7 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                 img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
                 img.save(output_path)
                 Path(temp_path).unlink()
-                print(f"[NanoBananaPro Upscale] 完成: {output_path}")
+                print(f"[NanoBananaPro Upscale] Done: {output_path}")
                 return Path(output_path)
             elif self.provider == "openai":
                 ref_bytes = []
@@ -6756,9 +6756,9 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                 )
                 if not image_bytes:
                     raise ValueError(
-                        f"OpenAI Image API 未返回图像数据: {openai_error}"
+                        f"OpenAI Image API did not return image data: {openai_error}"
                         if openai_error
-                        else "OpenAI Image API 未返回图像数据"
+                        else "OpenAI Image API did not return image data"
                     )
 
                 temp_path = output_path + ".tmp.png"
@@ -6768,7 +6768,7 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                 img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
                 img.save(output_path)
                 Path(temp_path).unlink()
-                print(f"[NanoBananaPro Upscale] 完成: {output_path}")
+                print(f"[NanoBananaPro Upscale] Done: {output_path}")
                 return Path(output_path)
             elif self.provider == "newapi":
                 ref_bytes = []
@@ -6793,9 +6793,9 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                 )
                 if not image_bytes:
                     raise ValueError(
-                        f"DramaClawAPI Images 未返回图像数据: {newapi_error}"
+                        f"DramaClawAPI Images did not return image data: {newapi_error}"
                         if newapi_error
-                        else "DramaClawAPI Images 未返回图像数据"
+                        else "DramaClawAPI Images did not return image data"
                     )
 
                 temp_path = output_path + ".tmp.png"
@@ -6805,7 +6805,7 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                 img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
                 img.save(output_path)
                 Path(temp_path).unlink()
-                print(f"[NanoBananaPro Upscale] 完成: {output_path}")
+                print(f"[NanoBananaPro Upscale] Done: {output_path}")
                 return Path(output_path)
             else:
                 # ===== Google 直连分支 =====
@@ -6852,13 +6852,13 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                         # 删除临时文件
                         Path(temp_path).unlink()
 
-                        print(f"[NanoBananaPro Upscale] 完成: {output_path}")
+                        print(f"[NanoBananaPro Upscale] Done: {output_path}")
                         return Path(output_path)
 
-                raise ValueError("API 未返回图像数据")
+                raise ValueError("API did not return image data")
 
         except Exception as e:
-            print(f"[NanoBananaPro Upscale] 失败: {e}")
+            print(f"[NanoBananaPro Upscale] Failed: {e}")
             raise
 
     async def generate_single_preview(
@@ -6915,11 +6915,11 @@ OUTPUT: Single high-quality image, no watermarks, no text overlays.
                         ref_image = self._load_image_as_part(ref_path)
                         if ref_image:
                             contents.append(ref_image)
-                            print(f"[StylePreview] 添加参考图: {ref_path}")
+                            print(f"[StylePreview] Adding reference image: {ref_path}")
 
             if self.provider == "openrouter":
                 # ===== OpenRouter 分支 =====
-                print(f"[StylePreview] 调用 OpenRouter ({self.model}) 生成预览图...")
+                print(f"[StylePreview] Calling OpenRouter ({self.model}) to generate preview image...")
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(contents)
                 image_bytes, _, _ = await _call_openrouter_image_api(
                     api_key=self.api_key,
@@ -6929,7 +6929,7 @@ OUTPUT: Single high-quality image, no watermarks, no text overlays.
                     image_config={"aspect_ratio": "9:16", "image_size": "1K"},
                 )
             elif self.provider == "huimeng":
-                print(f"[StylePreview] 调用 HuiMeng Images ({self.model}) 生成预览图...")
+                print(f"[StylePreview] Calling HuiMeng Images ({self.model}) to generate preview image...")
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(contents)
                 image_bytes, _, error_detail = await _call_huimeng_image_api(
                     api_key=self.api_key,
@@ -6939,10 +6939,10 @@ OUTPUT: Single high-quality image, no watermarks, no text overlays.
                     image_config={"aspect_ratio": "9:16", "image_size": "1K"},
                 )
                 if not image_bytes and error_detail:
-                    print(f"[StylePreview] HuiMeng 失败详情: {error_detail}")
+                    print(f"[StylePreview] HuiMeng failure details: {error_detail}")
             elif self.provider == "openai":
                 # ===== OpenAI Image API 分支 =====
-                print(f"[StylePreview] 调用 OpenAI Image API ({self.model}) 生成预览图...")
+                print(f"[StylePreview] Calling OpenAI Image API ({self.model}) to generate preview image...")
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
                     contents,
                     include_mime=True,
@@ -6959,9 +6959,9 @@ OUTPUT: Single high-quality image, no watermarks, no text overlays.
                     },
                 )
                 if not image_bytes and error_detail:
-                    print(f"[StylePreview] OpenAI 失败详情: {error_detail}")
+                    print(f"[StylePreview] OpenAI failure details: {error_detail}")
             elif self.provider == "newapi":
-                print(f"[StylePreview] 调用 DramaClawAPI Images ({self.model}) 生成预览图...")
+                print(f"[StylePreview] Calling DramaClawAPI Images ({self.model}) to generate preview image...")
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(
                     contents,
                     include_mime=True,
@@ -6979,7 +6979,7 @@ OUTPUT: Single high-quality image, no watermarks, no text overlays.
                     base_url=self.base_url,
                 )
                 if not image_bytes and error_detail:
-                    print(f"[StylePreview] DramaClawAPI 失败详情: {error_detail}")
+                    print(f"[StylePreview] DramaClawAPI failure details: {error_detail}")
             else:
                 # ===== Google 直连分支 =====
                 from google import genai
@@ -6999,7 +6999,7 @@ OUTPUT: Single high-quality image, no watermarks, no text overlays.
                         aspect_ratio="9:16",
                     )
 
-                print(f"[StylePreview] 调用 {self.model} 生成预览图...")
+                print(f"[StylePreview] Calling {self.model} to generate preview image...")
 
                 response = await asyncio.to_thread(
                     client.models.generate_content,
@@ -7020,7 +7020,7 @@ OUTPUT: Single high-quality image, no watermarks, no text overlays.
                             break
 
             if not image_bytes:
-                raise ValueError("API 未返回图像数据")
+                raise ValueError("API did not return image data")
 
             # 保存文件（如果指定了输出路径）
             if output_path:
@@ -7029,15 +7029,15 @@ OUTPUT: Single high-quality image, no watermarks, no text overlays.
                     os.makedirs(output_dir, exist_ok=True)
                 with open(output_path, "wb") as f:
                     f.write(image_bytes)
-                print(f"[StylePreview] 预览图已保存: {output_path}")
+                print(f"[StylePreview] Preview image saved: {output_path}")
 
             generation_time = time.time() - start_time
-            print(f"[StylePreview] 生成完成，耗时 {generation_time:.1f}s")
+            print(f"[StylePreview] Generation complete, took {generation_time:.1f}s")
 
             return image_bytes
 
         except Exception as e:
-            print(f"[StylePreview] 生成失败: {e}")
+            print(f"[StylePreview] Generation failed: {e}")
             raise
 
     async def generate_shot_grid(
@@ -7077,7 +7077,7 @@ OUTPUT: Single high-quality image, no watermarks, no text overlays.
         aspect_ratio = cfg["aspect_ratio"]
         image_size = cfg["image_size"]
 
-        print(f"[ShotGrid] 生成 Shot Grid: {beat_count} beats → {rows}x{cols} ({aspect_ratio})")
+        print(f"[ShotGrid] Generating Shot Grid: {beat_count} beats → {rows}x{cols} ({aspect_ratio})")
 
         return await self.generate_grid(
             beats=shot_beats,
@@ -7205,9 +7205,9 @@ async def regenerate_selected_beats(
         results.append(result)
 
         if result.success:
-            print(f"[RegenBeats] Grid {grid_idx} 成功: {result.grid_image_path}")
+            print(f"[RegenBeats] Grid {grid_idx} succeeded: {result.grid_image_path}")
         else:
-            print(f"[RegenBeats] Grid {grid_idx} 失败: {result.error}")
+            print(f"[RegenBeats] Grid {grid_idx} failed: {result.error}")
 
     return results
 
@@ -7322,9 +7322,9 @@ async def regenerate_selected_beats(
         results.append(result)
 
         if result.success:
-            print(f"[RegenBeats] Grid {grid_idx} 成功: {result.grid_image_path}")
+            print(f"[RegenBeats] Grid {grid_idx} succeeded: {result.grid_image_path}")
         else:
-            print(f"[RegenBeats] Grid {grid_idx} 失败: {result.error}")
+            print(f"[RegenBeats] Grid {grid_idx} failed: {result.error}")
 
     return results
 

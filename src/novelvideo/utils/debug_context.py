@@ -95,10 +95,10 @@ class DebugContext:
             with open(latest_path, "w", encoding="utf-8") as f:
                 json.dump(content, f, ensure_ascii=False, indent=2, default=default_serializer)
 
-            print(f"[DebugContext] {self.name} 上下文已保存到: {latest_path}")
+            print(f"[DebugContext] {self.name} context saved to: {latest_path}")
             return latest_path
         except Exception as e:
-            print(f"[DebugContext] 保存失败: {e}")
+            print(f"[DebugContext] Save failed: {e}")
             return None
 
     def print_summary(self):

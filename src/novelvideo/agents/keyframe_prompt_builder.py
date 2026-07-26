@@ -128,9 +128,9 @@ class KeyframePromptBuilder:
         compressed_size = len(image_bytes)
         ratio = (1 - compressed_size / original_size) * 100
         print(
-            f"[KeyframePromptBuilder] 压缩图片: {os.path.basename(image_path)}: "
+            f"[KeyframePromptBuilder] Compressed image: {os.path.basename(image_path)}: "
             f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-            f"({ratio:.0f}% 压缩)"
+            f"({ratio:.0f}% reduction)"
         )
 
         return image_bytes
@@ -231,10 +231,10 @@ Output the transition prompt in Chinese directly."""
 
 Output the transition prompt in Chinese directly."""
 
-        lang_hint = "中文"
+        lang_hint = "Chinese"
         log_agent_start(
-            "首尾帧过渡提示词生成师",
-            f"生成过渡描述 ({lang_hint})"
+            "Keyframe Transition Prompt Builder",
+            f"Generating transition description ({lang_hint})"
         )
 
         # 存储上下文供调试
@@ -257,16 +257,16 @@ Output the transition prompt in Chinese directly."""
                 "overloaded",
             ]
             if any(indicator in result for indicator in error_indicators):
-                raise RuntimeError(f"API 返回错误响应: {result[:200]}")
+                raise RuntimeError(f"API returned an error response: {result[:200]}")
 
-            log_agent_end("首尾帧过渡提示词生成师", success=True, result=f"{len(result)}字")
+            log_agent_end("Keyframe Transition Prompt Builder", success=True, result=f"{len(result)} chars")
             # dialogue beat：追加台词内容
             if audio_type == "dialogue" and dialogue_line:
                 result = f"{result}，说：{dialogue_line}"
             return result
 
         except Exception as e:
-            log_agent_end("首尾帧过渡提示词生成师", success=False, result=str(e))
+            log_agent_end("Keyframe Transition Prompt Builder", success=False, result=str(e))
             # 失败时回退到默认提示词
             return self._fallback_build(language)
 

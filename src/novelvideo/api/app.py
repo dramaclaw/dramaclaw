@@ -99,7 +99,7 @@ def create_app() -> FastAPI:
             status_code=429,
             content={
                 "ok": False,
-                "error": f"当前项目 {exc.queue_kind} 队列任务已满，请等待已有任务完成后再提交",
+                "error": f"The {exc.queue_kind} queue for this project is full. Please wait for existing tasks to finish before submitting.",
                 "data": {
                     "project_id": exc.project_id,
                     "queue_kind": exc.queue_kind,
@@ -121,8 +121,8 @@ def create_app() -> FastAPI:
             content={
                 "ok": False,
                 "error": (
-                    f"你在当前项目 {exc.queue_kind} 队列任务已满，"
-                    "请等待自己的任务完成后再提交"
+                    f"Your {exc.queue_kind} queue for this project is full. "
+                    "Please wait for your own tasks to finish before submitting."
                 ),
                 "data": {
                     "project_id": exc.project_id,
@@ -145,7 +145,7 @@ def create_app() -> FastAPI:
             status_code=429,
             content={
                 "ok": False,
-                "error": f"当前节点 {exc.queue_kind} 队列已满，请稍后再提交",
+                "error": f"The {exc.queue_kind} queue on this node is full. Please try again later.",
                 "data": {
                     "project_id": exc.project_id,
                     "queue_kind": exc.queue_kind,
@@ -199,7 +199,7 @@ def create_app() -> FastAPI:
                             status_code=200,
                             content={
                                 "ok": False,
-                                "error": "参考音频超过 5MB 上限，请压缩或裁剪后重新上传",
+                                "error": "Reference audio exceeds the 5MB limit. Please compress or trim it and upload again.",
                                 "data": {
                                     "code": "freezone_audio_voice_too_large",
                                     "field": "file",

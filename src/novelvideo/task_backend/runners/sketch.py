@@ -33,7 +33,7 @@ def _format_generation_time(value: Any) -> str:
     try:
         return f"{float(value):.1f}s"
     except (TypeError, ValueError):
-        return "未知"
+        return "unknown"
 
 
 def _scene_refs_override_from_config(
@@ -131,7 +131,7 @@ async def _ensure_scene_refs_for_beats(
         requested_scene_ids.append(scene_id)
 
     if not requested_scene_ids:
-        log("当前 beats 无 scene_id，跳过场景资产检查")
+        log("Current beats have no scene_id; skipping scene asset check")
         return {"requested": 0, "generated": 0, "skipped": 0, "missing": 0, "director_refs": 0}
 
     store = CogneeStore(ctx.owner_project_label, output_dir=output_dir)
@@ -144,14 +144,14 @@ async def _ensure_scene_refs_for_beats(
         scene = await store.sqlite_store.get_scene(requested_scene_id)
         if not scene:
             missing += 1
-            log(f"未找到场景，跳过场景资产检查: {requested_scene_id}")
+            log(f"Scene not found; skipping scene asset check: {requested_scene_id}")
             continue
         if compute_scene_master_path(Path(output_dir), scene.name):
             skipped += 1
-            log(f"场景资产就绪: {scene.name} (master=yes)")
+            log(f"Scene assets ready: {scene.name} (master=yes)")
         else:
             missing += 1
-            log(f"场景缺少主线资产: {scene.name} (需要 master 作为默认 sketch 场景参考)")
+            log(f"Scene missing master asset: {scene.name} (master is required as the default sketch scene reference)")
 
     prepare_director_refs = str(director_ref_mode or "off").strip().lower() not in {
         "",
@@ -177,9 +177,9 @@ async def _ensure_scene_refs_for_beats(
             if paths.director_render(beat_num).exists():
                 director_refs += 1
         if director_refs:
-            log(f"DirectorWorld 控制图已就绪: {director_refs} 个 beat")
+            log(f"DirectorWorld control frames ready: {director_refs} beats")
         else:
-            log("未发现 DirectorWorld 控制图；导演单镜不会回退到旧参考图。")
+            log("No DirectorWorld control frames found; director single-shot will not fall back to legacy reference images.")
 
     return {
         "requested": len(requested_scene_ids),
@@ -234,7 +234,7 @@ def _build_director_blocking_sheet_for_grid(
             ref_paths.append(None)
             missing.append(int(beat_num))
     if missing:
-        log(f"DirectorWorld sheet 跳过：缺少 beat refs {missing}")
+        log(f"DirectorWorld sheet skipped: missing beat refs {missing}")
         return ""
 
     safe_scene = re.sub(r"[/\\:*?\"<>|]+", "_", str(scene_id or "scene")).strip().strip(".")
@@ -266,7 +266,7 @@ def _build_director_blocking_sheet_for_grid(
             cell.paste(fitted, ((cell_w - fitted.width) // 2, (cell_h - fitted.height) // 2))
             sheet.paste(cell, ((idx % cols) * cell_w, (idx // cols) * cell_h))
     sheet.save(out_path, format="PNG")
-    log(f"DirectorWorld sheet 已生成: {out_path}")
+    log(f"DirectorWorld sheet generated: {out_path}")
     return str(out_path)
 
 
@@ -302,7 +302,7 @@ async def _run_sketch_generation_async(
     def log(message: str, *, progress: float | None = None) -> None:
         _log(manager, ctx, task_type, episode, scope, message, progress=progress)
 
-    log("开始生成草图...", progress=0.02)
+    log("Starting sketch generation...", progress=0.02)
 
     beats = list(config.get("beats") or [])
     character_map = config.get("character_map") or {}
@@ -327,30 +327,30 @@ async def _run_sketch_generation_async(
     use_director_refs = False
 
     if not beats:
-        raise ValueError("没有 beats 数据")
+        raise ValueError("No beats data")
 
     if direct_sketch_beats:
         requested_beat_numbers = _int_list(config.get("beat_numbers"))
         if not requested_beat_numbers:
-            raise ValueError("direct_sketch_beats 模式缺少 beat_numbers")
+            raise ValueError("direct_sketch_beats mode is missing beat_numbers")
         beat_by_number = {
             int(beat.get("beat_number", idx + 1)): beat for idx, beat in enumerate(beats)
         }
         missing = [bn for bn in requested_beat_numbers if bn not in beat_by_number]
         if missing:
-            raise ValueError(f"未找到 direct sketch beats: {missing}")
+            raise ValueError(f"Direct sketch beats not found: {missing}")
         mk = str(config.get("mode_key") or config.get("grid_mode") or "")
         mk_cfg = REGEN_MODE_CONFIGS.get(mk)
         if not mk_cfg:
-            raise ValueError(f"未知 direct sketch mode_key: {mk}")
+            raise ValueError(f"Unknown direct sketch mode_key: {mk}")
         grid_rows = int(mk_cfg.get("rows") or 0)
         grid_cols = int(mk_cfg.get("cols") or 0)
         if len(requested_beat_numbers) > grid_rows * grid_cols:
-            raise ValueError(f"{mk} 最多容纳 {grid_rows * grid_cols} 个 beat")
+            raise ValueError(f"{mk} holds at most {grid_rows * grid_cols} beats")
         if director_mode_enabled and (
             len(requested_beat_numbers) != 1 or grid_rows != 1 or grid_cols != 1
         ):
-            raise ValueError("导演草图模式只支持单 beat 1x1")
+            raise ValueError("Director sketch mode only supports a single 1x1 beat")
         grid_beats = [beat_by_number[bn] for bn in requested_beat_numbers]
         beat_numbers = requested_beat_numbers
         if configured_director_ref_beats:
@@ -362,14 +362,14 @@ async def _run_sketch_generation_async(
         use_director_refs = bool(selected_director_ref_beats)
         start_beat_idx = min(beat_numbers) - 1
         log(
-            f"导演草图模式: {grid_rows}x{grid_cols} (beats {beat_numbers}), "
+            f"Director sketch mode: {grid_rows}x{grid_cols} (beats {beat_numbers}), "
             f"director_ref_mode={director_ref_mode}, "
             f"director_ref_beats={selected_director_ref_beats or 'none'}"
         )
     elif use_scene_grouping:
         loc_plan = sketch_scene_grid_split(beats, aspect_ratio=sketch_aspect_ratio)
         if grid_index >= len(loc_plan):
-            raise ValueError(f"网格索引 {grid_index} 超出范围（共 {len(loc_plan)} 个网格）")
+            raise ValueError(f"Grid index {grid_index} out of range ({len(loc_plan)} grids total)")
         plan_entry = loc_plan[grid_index]
         grid_rows, grid_cols = int(plan_entry["rows"]), int(plan_entry["cols"])
         grid_beats = list(plan_entry["beats"])
@@ -377,7 +377,7 @@ async def _run_sketch_generation_async(
         start_beat_idx = min(beat_numbers) - 1
         scene_id = str(plan_entry["scene_id"])
         log(
-            f"生成网格 {grid_index + 1}/{len(loc_plan)}: "
+            f"Generating grid {grid_index + 1}/{len(loc_plan)}: "
             f"{grid_rows}x{grid_cols} [{scene_id}] (beats {beat_numbers})"
         )
         if configured_director_ref_beats:
@@ -388,11 +388,11 @@ async def _run_sketch_generation_async(
             selected_director_ref_beats = [int(bn) for bn in beat_numbers]
         use_director_refs = bool(selected_director_ref_beats)
     elif director_mode_enabled:
-        raise ValueError("导演单镜参考模式必须指定 direct_sketch_beats + 单个 beat")
+        raise ValueError("Director single-shot reference mode requires direct_sketch_beats plus a single beat")
     else:
         grid_plan = sketch_grid_split(len(beats))
         if grid_index >= len(grid_plan):
-            raise ValueError(f"网格索引 {grid_index} 超出范围（共 {len(grid_plan)} 个网格）")
+            raise ValueError(f"Grid index {grid_index} out of range ({len(grid_plan)} grids total)")
         start_beat_idx = sum(r * c for r, c in grid_plan[:grid_index])
         grid_rows, grid_cols = grid_plan[grid_index]
         grid_capacity = grid_rows * grid_cols
@@ -413,13 +413,13 @@ async def _run_sketch_generation_async(
             log=log,
         )
         log(
-            "当前网格场景参考图检查完成: "
+            "Current grid scene reference check complete: "
             f"requested={stats['requested']}, generated={stats['generated']}, "
             f"skipped={stats['skipped']}, missing={stats['missing']}, "
             f"director_world_refs={stats.get('director_refs', 0)}"
         )
     else:
-        log("普通草图网格使用场景 master + reverse 弱参考。")
+        log("Standard sketch grid uses scene master + reverse as weak references.")
 
     if use_scene_grouping and not direct_sketch_beats and selected_director_ref_beats:
         director_sheet_path = _build_director_blocking_sheet_for_grid(
@@ -435,7 +435,7 @@ async def _run_sketch_generation_async(
         use_director_refs = bool(director_sheet_path)
 
     scene_refs_override = _scene_refs_override_from_config(config, beat_numbers)
-    log(f"角色: {len(character_map)} 个")
+    log(f"Characters: {len(character_map)}")
     paths = PathResolver(output_dir, episode)
     sketch_dir = paths.sketch_dir()
     sketch_dir.mkdir(parents=True, exist_ok=True)
@@ -448,7 +448,7 @@ async def _run_sketch_generation_async(
     )
     effective_mk = mk or SKETCH_DEFAULT_MODE_KEY
 
-    log(f"生成 {grid_rows}x{grid_cols} 草图...", progress=0.3)
+    log(f"Generating {grid_rows}x{grid_cols} sketch...", progress=0.3)
     if use_director_refs:
         generator_config = get_grid_generation_config(selection_override="openai_gpt_image2")
         import os
@@ -456,7 +456,7 @@ async def _run_sketch_generation_async(
         generator_config["openai_image_quality"] = os.environ.get(
             "OPENAI_SKETCH_IMAGE_QUALITY", "low"
         )
-        log("[Sketch Image] 3GS 导演实景草图强制使用 OpenAI provider")
+        log("[Sketch Image] 3GS director live-scene sketch forces the OpenAI provider")
     else:
         sketch_image_selection = normalize_image_generation_selection(
             config.get("image_generation_selection"),
@@ -467,7 +467,7 @@ async def _run_sketch_generation_async(
     generator = NanoBananaGridGenerator(config=generator_config)
     if use_director_refs and generator.provider != "openai":
         raise RuntimeError(
-            f"3GS 导演实景草图只允许使用 OpenAI provider，当前 provider={generator.provider}"
+            f"3GS director live-scene sketch only allows the OpenAI provider; current provider={generator.provider}"
         )
     log(f"[Sketch Image] provider={generator.provider}, model={generator.model}")
 
@@ -484,7 +484,7 @@ async def _run_sketch_generation_async(
     result = None
     if pass1_key:
         target_ar = REGEN_MODE_CONFIGS.get(effective_mk, {}).get("aspect_ratio", "9:16")
-        log(f"[Two-Pass] Pass 1: 生成 1:1 中间草图 (mode_key={pass1_key})")
+        log(f"[Two-Pass] Pass 1: generating 1:1 intermediate sketch (mode_key={pass1_key})")
         pass1_base = compute_scoped_grid_filename(
             effective_mk,
             beat_numbers,
@@ -513,8 +513,8 @@ async def _run_sketch_generation_async(
             scene_refs_override=scene_refs_override,
         )
         if not result.success:
-            raise RuntimeError(f"草图生成失败 (Pass 1): {result.error}")
-        log(f"[Two-Pass] Pass 1 完成，耗时 {_format_generation_time(result.generation_time)}")
+            raise RuntimeError(f"Sketch generation failed (Pass 1): {result.error}")
+        log(f"[Two-Pass] Pass 1 complete, took {_format_generation_time(result.generation_time)}")
         target_size = REGEN_MODE_CONFIGS.get(effective_mk, {}).get("image_size", "1K")
         result2 = await generator.reformat_sketch(
             source_path=pass1_path,
@@ -526,13 +526,13 @@ async def _run_sketch_generation_async(
         )
         if result2.success:
             log(
-                f"[Two-Pass] Pass 2 完成，耗时 "
+                f"[Two-Pass] Pass 2 complete, took "
                 f"{_format_generation_time(result2.generation_time)}"
             )
         else:
             import shutil
 
-            log(f"[Two-Pass] Pass 2 失败 ({result2.error})，回退使用 1:1 草图")
+            log(f"[Two-Pass] Pass 2 failed ({result2.error}), falling back to the 1:1 sketch")
             shutil.copy2(pass1_path, output_path)
     else:
         result = await generator.generate_grid(
@@ -555,15 +555,15 @@ async def _run_sketch_generation_async(
             scene_refs_override=scene_refs_override,
         )
         if not result.success:
-            raise RuntimeError(f"草图生成失败: {result.error}")
+            raise RuntimeError(f"Sketch generation failed: {result.error}")
 
     log(
-        f"[NanoBananaPro] 网格图生成完成，耗时 "
+        f"[NanoBananaPro] Grid image generated, took "
         f"{_format_generation_time(result.generation_time)}",
         progress=0.8,
     )
-    log("[Deface] 跳过去脸后处理（SeedEdit 模型暂不可用）")
-    log("切割草图入池...", progress=0.85)
+    log("[Deface] Skipping face-removal post-processing (SeedEdit model currently unavailable)")
+    log("Splitting sketch and adding to pool...", progress=0.85)
     ts = datetime.now().strftime("%Y%m%d%H%M%S")
     sketches_dir = paths.sketches_dir()
     sketches_dir.mkdir(parents=True, exist_ok=True)
@@ -582,7 +582,7 @@ async def _run_sketch_generation_async(
         beats=grid_beats,
         sketch_colors=config.get("sketch_colors"),
     )
-    log(f"草图切割完成：{save_result['added']} 个 beat 图片已入池", progress=0.95)
+    log(f"Sketch split complete: {save_result['added']} beat images added to pool", progress=0.95)
 
     if direct_sketch_beats:
         total_grids = 1
@@ -598,7 +598,7 @@ async def _run_sketch_generation_async(
         "grid_size": (grid_rows, grid_cols),
         "total_grids": total_grids,
     }
-    log(f"✅ 草图 {grid_index + 1}/{total_grids} 生成完成！", progress=1.0)
+    log(f"✅ Sketch {grid_index + 1}/{total_grids} generated!", progress=1.0)
     return result_payload
 
 
@@ -645,7 +645,7 @@ async def _run_control_frame_to_sketch_async(
         task_type,
         episode,
         scope,
-        f"开始 Beat {beat_num} Direct Render 转草图...",
+        f"Starting Beat {beat_num} Direct Render to sketch conversion...",
         progress=0.05,
     )
 
@@ -659,9 +659,9 @@ async def _run_control_frame_to_sketch_async(
         control_frames_root / f"ep{episode:03d}" / f"beat_{beat_num:02d}" / "combined.png"
     )
     if not control_frame.exists():
-        raise FileNotFoundError(f"缺少 Direct Render combined.png: {control_frame}")
+        raise FileNotFoundError(f"Missing Direct Render combined.png: {control_frame}")
 
-    _log(manager, ctx, task_type, episode, scope, "提交图像模型生成草图...", progress=0.18)
+    _log(manager, ctx, task_type, episode, scope, "Submitting to the image model to generate the sketch...", progress=0.18)
     result = await convert_control_frame_to_sketch(
         user=ctx.owner_username,
         project=ctx.project_name,
@@ -672,7 +672,7 @@ async def _run_control_frame_to_sketch_async(
         control_frames_dir=control_frames_dir or None,
     )
     promoted = result.get("promoted_sketch") or str(paths.sketch(beat_num))
-    _log(manager, ctx, task_type, episode, scope, f"草图已写入: {promoted}", progress=1.0)
+    _log(manager, ctx, task_type, episode, scope, f"Sketch written: {promoted}", progress=1.0)
     return {
         **result,
         "sketch_path": promoted,

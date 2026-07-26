@@ -79,9 +79,9 @@ async def assert_identity_voice_hash_current(
 ) -> None:
     current_hash = await resolve_identity_voice_sha256(store, speaker)
     if not current_hash:
-        raise RuntimeError("当前身份缺少声线版本，请重新保存声线")
+        raise RuntimeError("Current identity has no voice version; please re-save the voice")
     if current_hash != str(expected_voice_sha256 or "").strip():
-        raise RuntimeError("当前身份声线版本已变化，请重新启动音频任务")
+        raise RuntimeError("Current identity voice version has changed; please restart the audio task")
 
 
 async def run_seedance2_voice_audio_generation(
@@ -116,8 +116,8 @@ async def run_seedance2_voice_audio_generation(
     beats = await store.get_beats_as_dicts(int(episode))
     targets = same_voice_dialogue_beats(beats, speaker)
     _emit_log(
-        f"Seedance2 身份音频: 共扫描 Beat {len(beats)} 个，"
-        f"匹配身份 {speaker} 的目标 {len(targets)} 个"
+        f"Seedance2 identity audio: scanned {len(beats)} beats, "
+        f"{len(targets)} targets matched identity {speaker}"
     )
     result = Seedance2VoiceAudioTaskResult(
         total_targets=len(targets),
@@ -134,12 +134,12 @@ async def run_seedance2_voice_audio_generation(
         output_path = beat_audio_path(store.project_dir, episode, beat_num)
         if mode == "missing_only" and output_path.exists() and output_path.stat().st_size > 0:
             result.skipped_existing += 1
-            _emit_log(f"Beat {beat_num:02d}: 已有音频，跳过")
+            _emit_log(f"Beat {beat_num:02d}: audio already exists, skipping")
             if progress_callback:
                 progress_callback(index, len(targets), beat_num, "skipped")
             continue
 
-        _emit_log(f"Beat {beat_num:02d}: 调用 IndexTTS2 开始生成")
+        _emit_log(f"Beat {beat_num:02d}: calling IndexTTS2 to start generation")
         try:
             item_result = await generate_seedance2_dialogue_audio(
                 beat=beat,
@@ -152,7 +152,7 @@ async def run_seedance2_voice_audio_generation(
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             result.failed.append(f"Beat {beat_num:02d}: {error}")
-            _emit_log(f"Beat {beat_num:02d}: 异常 {error}")
+            _emit_log(f"Beat {beat_num:02d}: exception {error}")
             status = "failed"
             item_result = None
         else:
@@ -160,18 +160,18 @@ async def run_seedance2_voice_audio_generation(
                 result.failed.append(f"Beat {beat_num:02d}: no reference audio")
                 status = "failed"
                 error = "no reference audio"
-                _emit_log(f"Beat {beat_num:02d}: 没有解析到参考声线")
+                _emit_log(f"Beat {beat_num:02d}: no reference voice resolved")
             elif not item_result.success:
                 error = item_result.error or "IndexTTS2 generation failed"
                 result.failed.append(f"Beat {beat_num:02d}: {error}")
                 status = "failed"
-                _emit_log(f"Beat {beat_num:02d}: 失败 {error}")
+                _emit_log(f"Beat {beat_num:02d}: failed {error}")
             else:
                 result.generated += 1
                 result.generated_beats.append(int(beat_num))
                 status = "completed"
                 error = ""
-                _emit_log(f"Beat {beat_num:02d}: 生成完成 -> {output_path.name}")
+                _emit_log(f"Beat {beat_num:02d}: generation complete -> {output_path.name}")
 
         upsert_seedance2_voice_audio_record(
             db_path=store.db_path,

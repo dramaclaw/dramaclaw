@@ -154,9 +154,9 @@ async def run_freezone_mask_edit(
             config=cfg,
         )
     except Exception as exc:
-        raise RuntimeError(f"{provider_name} 图像擦除失败：{redact_secrets(exc)}") from exc
+        raise RuntimeError(f"{provider_name} image erase failed: {redact_secrets(exc)}") from exc
     if not out.exists():
-        raise RuntimeError(f"{provider_name} 图像擦除未生成输出文件")
+        raise RuntimeError(f"{provider_name} image erase produced no output file")
     return out
 
 

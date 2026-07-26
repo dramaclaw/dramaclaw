@@ -108,7 +108,7 @@ def _selected_audio_assets(assets: list[Seedance2ResolvedAsset]) -> list[Seedanc
 
 def _validate_reference_audio_request(audio_paths: list[str]) -> None:
     if len(audio_paths) > MAX_SEEDANCE2_REFERENCE_AUDIOS:
-        raise ValueError("Seedance2 参考音频最多 3 段")
+        raise ValueError("Seedance2 supports at most 3 reference audio clips")
 
     total_duration = 0.0
     measured = False
@@ -120,7 +120,8 @@ def _validate_reference_audio_request(audio_paths: list[str]) -> None:
             continue
     if measured and total_duration > MAX_SEEDANCE2_REFERENCE_AUDIO_TOTAL_SECONDS:
         raise ValueError(
-            "Seedance2 参考音频总时长超过 15 秒，" "请回到角色工作台把参考声线裁剪到 3-5 秒"
+            "Seedance2 reference audio total duration exceeds 15 seconds; "
+            "please return to the character workbench and trim the reference voice to 3-5 seconds"
         )
 
 
@@ -149,8 +150,8 @@ def _validate_dialogue_final_prompt(
     ]
     if missing_lines:
         raise ValueError(
-            "Seedance2 最终提示词缺少台词内容："
-            + "、".join(str(item) for item in missing_lines[:3])
+            "Seedance2 final prompt is missing dialogue content: "
+            + ", ".join(str(item) for item in missing_lines[:3])
         )
 
     audio_labels = [
@@ -159,7 +160,7 @@ def _validate_dialogue_final_prompt(
         if asset.reference_label.startswith("音频")
     ]
     if not audio_labels or any(label not in final_prompt for label in audio_labels):
-        raise ValueError("Seedance2 最终提示词缺少参考声线，请在台词描述中写明对应音频编号")
+        raise ValueError("Seedance2 final prompt is missing reference voices; please state the corresponding audio number in the dialogue description")
 
 
 def collect_seedance2_video_prereq_errors(
@@ -200,7 +201,7 @@ def collect_seedance2_video_prereq_errors(
                 Seedance2VideoPrereqError(
                     beat_number=beat_number,
                     key="reference_audios",
-                    label="Seedance2 参考音频最多 3 段，请减少同一 Beat 的 speaker 或合并台词",
+                    label="Seedance2 supports at most 3 reference audio clips; reduce the number of speakers in the same beat or merge dialogue",
                     media_type="audio",
                     path="",
                     reason="reference_audio_count_exceeded",
@@ -215,7 +216,7 @@ def collect_seedance2_video_prereq_errors(
                 Seedance2VideoPrereqError(
                     beat_number=beat_number,
                     key=asset.key,
-                    label=f"{asset.label}（{asset.note}）" if asset.note else asset.label,
+                    label=f"{asset.label} ({asset.note})" if asset.note else asset.label,
                     media_type=asset.media_type,
                     path=str(asset.path),
                     reason=reason,
@@ -271,7 +272,7 @@ async def prepare_seedance2_generation_inputs(
         beat_number = int(beat.get("beat_number") or 0)
         prefix = f"Beat {beat_number} " if beat_number else ""
         raise ValueError(
-            f"{prefix}Seedance 2.0 最终提示词为空，请先在 Seedance 2.0 Prompt 面板生成或填写最终提示词"
+            f"{prefix}Seedance 2.0 final prompt is empty; please generate or fill in the final prompt in the Seedance 2.0 Prompt panel first"
         )
     config.final_prompt = final_prompt
     assets = apply_prompt_audio_selection(assets, final_prompt)

@@ -355,9 +355,9 @@ def _resolve_project_audio_source(project_dir: Path, source_path: str | Path) ->
     try:
         source.relative_to(root)
     except ValueError as exc:
-        raise ValueError("请选择项目内有效的音频文件") from exc
+        raise ValueError("Please select a valid audio file within the project") from exc
     if not source.exists() or not source.is_file() or source.suffix.lower() not in VOICE_SAMPLE_EXTENSIONS:
-        raise ValueError("请选择项目内有效的音频文件")
+        raise ValueError("Please select a valid audio file within the project")
     return source
 
 
@@ -774,16 +774,16 @@ def _seedance2_prompt_inputs_hash(
 
 def _seedance2_prompt_status(config: Any, current_hash: str) -> str:
     if not str(config.final_prompt or "").strip():
-        return "未生成"
+        return "Not generated"
     if str(config.prompt_source or "") in {"manual", "edited"}:
-        return "已手动编辑"
+        return "Manually edited"
     if config.prompt_inputs_hash and config.prompt_inputs_hash != current_hash:
-        return "Prompt 已过期"
+        return "Prompt outdated"
     if config.prompt_source == "generated":
-        return "AI 生成"
+        return "AI generated"
     if config.prompt_source == "fallback":
-        return "规则草稿"
-    return "旧提示词"
+        return "Rule-based draft"
+    return "Legacy prompt"
 
 
 def _seedance2_storyboard_context(beat: dict[str, Any]) -> list[tuple[str, str]]:
@@ -794,14 +794,14 @@ def _seedance2_storyboard_context(beat: dict[str, Any]) -> list[tuple[str, str]]
         ).strip()
     rows = [
         (
-            "分镜概要",
+            "Storyboard summary",
             str(beat.get("synopsis") or beat.get("visual_description") or "").strip(),
         ),
         (
-            "旧视频提示词",
+            "Previous video prompt",
             str(beat.get("video_prompt") or beat.get("keyframe_prompt") or "").strip(),
         ),
-        ("旁白/对话", spoken_text),
+        ("Narration / Dialogue", spoken_text),
     ]
     return [(label, value) for label, value in rows if value]
 

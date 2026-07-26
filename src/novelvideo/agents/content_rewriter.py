@@ -27,7 +27,7 @@ class AdaptedContentOutput(BaseModel):
             if text:
                 normalized.append(text)
         if not normalized:
-            raise ValueError("lines 不能为空")
+            raise ValueError("lines cannot be empty")
         self.lines = normalized
         return self
 

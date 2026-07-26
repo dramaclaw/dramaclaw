@@ -99,7 +99,7 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
     output_dir = str(payload.get("output_dir") or ctx.output_dir)
 
     manager = get_task_manager()
-    _log(manager, ctx, envelope, f"开始生成 Beat {beat_num} 视频")
+    _log(manager, ctx, envelope, f"Starting video generation for Beat {beat_num}")
 
     from novelvideo.generators.video_generator import ShotReference, create_video_generator
     from novelvideo.seedance2_i2v.pipeline import is_huimeng_seedance2_backend
@@ -137,7 +137,7 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
             episode,
             beat_num=beat_num,
             progress=value,
-            current_task=f"生成 Beat {beat_num} 视频",
+            current_task=f"Generating Beat {beat_num} video",
         )
 
     if video_mode == "keyframe" and last_frame_path and not is_seedance2_backend:
@@ -207,7 +207,7 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
 
     result = await video_gen.generate(**generate_kwargs)
     if result.status.value != "done":
-        raise RuntimeError(result.error or "视频生成失败")
+        raise RuntimeError(result.error or "Video generation failed")
 
     video_pool_id = None
     try:
@@ -225,7 +225,7 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
         )
         video_pool_id = entry.id
     except Exception as exc:  # noqa: BLE001
-        on_log(f"添加到视频池失败 (非致命): {exc}")
+        on_log(f"Failed to add to video pool (non-fatal): {exc}")
 
     task_result = {
         "video_path": video_path.as_posix(),
@@ -339,7 +339,7 @@ async def _run_video_generation_async(
             "video_generation",
             episode,
             progress=index / max(1, len(beats)),
-            current_task=f"生成 Beat {beat_num} 视频...",
+            current_task=f"Generating Beat {beat_num} video...",
         )
         frame_path = paths.first_frame_for_video(
             beat_num,
@@ -350,7 +350,7 @@ async def _run_video_generation_async(
                 ctx,
                 "video_generation",
                 episode,
-                logs=[f"Beat {beat_num} 缺少首帧，跳过: {frame_path}"],
+                logs=[f"Beat {beat_num} missing first frame, skipping: {frame_path}"],
             )
             continue
 
@@ -477,7 +477,7 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
                 "compose_episode",
                 episode,
                 progress=index / max(1, len(beats)),
-                current_task=f"合成 Beat {beat_num}...",
+                current_task=f"Composing Beat {beat_num}...",
             )
             cmd = ["ffmpeg", "-y", "-i", str(video_path)]
             has_embedded_audio = False
@@ -508,7 +508,7 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
                     ctx,
                     "compose_episode",
                     episode,
-                    logs=[f"Beat {beat_num} 使用独立音频: {audio_path.name}"],
+                    logs=[f"Beat {beat_num} using separate audio: {audio_path.name}"],
                 )
             else:
                 has_embedded_audio = _video_has_audio_stream(
@@ -542,7 +542,7 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
                     ctx,
                     "compose_episode",
                     episode,
-                    logs=[f"Beat {beat_num} 使用视频内置音轨"],
+                    logs=[f"Beat {beat_num} using video's embedded audio track"],
                 )
             elif not audio_path.exists():
                 cmd.extend(
@@ -580,11 +580,11 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
                     ctx,
                     "compose_episode",
                     episode,
-                    logs=[f"Beat {beat_num} 合成失败: {result.stderr[:500]}"],
+                    logs=[f"Beat {beat_num} composition failed: {result.stderr[:500]}"],
                 )
 
         if not video_clips:
-            raise RuntimeError("没有可用的视频片段")
+            raise RuntimeError("No usable video clips available")
 
         check_cancel()
         cmd = ["ffmpeg", "-y"]
@@ -627,7 +627,7 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
         result = run_checked(cmd, default_timeout_seconds=30 * 60)
         check_cancel()
         if result.returncode != 0:
-            raise RuntimeError(f"拼接失败: {result.stderr[:500]}")
+            raise RuntimeError(f"Concatenation failed: {result.stderr[:500]}")
 
     return {
         "video_path": output_path.as_posix(),
@@ -669,7 +669,7 @@ async def _run_global_optimize_video_async(
             logs=[message],
         )
 
-    log("开始全局视频提示词优化（仅 first_frame）...", progress=0.02)
+    log("Starting global video prompt optimization (first_frame only)...", progress=0.02)
     store = CogneeStore(
         ctx.owner_project_label,
         output_dir=output_dir,
@@ -687,7 +687,7 @@ async def _run_global_optimize_video_async(
             project=ctx.project_name,
         )
         if not sketch_paths:
-            raise RuntimeError("找不到草图网格，请先生成草图")
+            raise RuntimeError("Sketch grid not found; please generate sketches first")
 
         resolver = PathResolver(output_dir, episode)
         sketches_dir = str(resolver.sketches_dir())
@@ -700,7 +700,7 @@ async def _run_global_optimize_video_async(
         for index, beat in enumerate(sorted_beats):
             beat_num = int(beat.get("beat_number") or 0)
             log(
-                f"Beat {beat_num}/{len(sorted_beats)}: 生成视频提示词...",
+                f"Beat {beat_num}/{len(sorted_beats)}: generating video prompt...",
                 progress=0.2 + 0.7 * index / max(1, len(sorted_beats)),
             )
             sketch_path = None
@@ -710,7 +710,7 @@ async def _run_global_optimize_video_async(
                     sketch_path = candidate
                     break
             if not sketch_path:
-                log(f"Beat {beat_num}: 无草图帧，跳过")
+                log(f"Beat {beat_num}: no sketch frame, skipping")
                 continue
 
             prev_beat = sorted_beats[index - 1] if index > 0 else None
@@ -741,15 +741,15 @@ async def _run_global_optimize_video_async(
                 prev_prompt = prompt
             except Exception as exc:  # noqa: BLE001
                 failure_messages.append(f"Beat {beat_num}: {exc}")
-                log(f"Beat {beat_num}: 生成失败 ({exc})")
+                log(f"Beat {beat_num}: generation failed ({exc})")
 
         if updated_count == 0:
-            error = f"全局优化失败：0/{len(sorted_beats)} 个 Beat 生成成功"
+            error = f"Global optimization failed: 0/{len(sorted_beats)} beats generated successfully"
             if failure_messages:
-                error = f"{error}；最后错误：{failure_messages[-1]}"
+                error = f"{error}; last error: {failure_messages[-1]}"
             raise RuntimeError(error)
 
-        log(f"全局优化完成：成功更新 {updated_count}/{len(sorted_beats)} 个 Beat", progress=1.0)
+        log(f"Global optimization complete: successfully updated {updated_count}/{len(sorted_beats)} beats", progress=1.0)
         return {"optimized": updated_count, "beats": beats}
     finally:
         await store.close()
@@ -786,8 +786,8 @@ async def _run_freezone_video_gen_async(
         0,
         scope=job_id,
         progress=0.1,
-        current_task="调用视频生成器...",
-        logs=["开始 freezone 视频生成"],
+        current_task="Calling video generator...",
+        logs=["Starting freezone video generation"],
     )
 
     try:

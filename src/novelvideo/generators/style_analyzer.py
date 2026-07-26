@@ -132,8 +132,8 @@ Return ONLY valid JSON with no markdown formatting:
 
         compressed_size = len(compressed_data)
         ratio = (1 - compressed_size / original_size) * 100
-        print(f"[StyleAnalyzer压缩] "
+        print(f"[StyleAnalyzer compress] "
               f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-              f"({ratio:.0f}% 压缩)")
+              f"({ratio:.0f}% smaller)")
 
         return compressed_data, "image/jpeg"

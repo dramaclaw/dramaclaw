@@ -273,18 +273,18 @@ def validate_huimeng_media_download(
     url: str = "",
 ) -> None:
     """Reject empty or obvious non-media CDN responses before writing artifacts."""
-    label = "图片" if expected_media_type == "image" else "视频"
+    label = "image" if expected_media_type == "image" else "video"
     content_type = str(content_type or "").split(";", 1)[0].strip().lower()
     context = f" ({url})" if url else ""
     if not content:
-        raise RuntimeError(f"HuiMeng 下载结果为空{context}")
+        raise RuntimeError(f"HuiMeng download returned empty content{context}")
     if content_type.startswith("text/") or content_type in {
         "application/json",
         "application/problem+json",
         "application/xml",
     }:
         raise RuntimeError(
-            f"HuiMeng 下载结果不是有效{label}: content-type={content_type or 'unknown'}{context}"
+            f"HuiMeng download is not a valid {label}: content-type={content_type or 'unknown'}{context}"
         )
     if expected_media_type == "image":
         if content_type.startswith("image/") or content.startswith(
@@ -303,7 +303,7 @@ def validate_huimeng_media_download(
         if content.startswith(b"RIFF") and content[8:12] == b"AVI ":
             return
     raise RuntimeError(
-        f"HuiMeng 下载结果不是有效{label}: content-type={content_type or 'unknown'}{context}"
+        f"HuiMeng download is not a valid {label}: content-type={content_type or 'unknown'}{context}"
     )
 
 

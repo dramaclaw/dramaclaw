@@ -142,7 +142,7 @@ async def _start_or_enqueue_stage_asset(
             "queue": queued.queue,
         }
 
-    raise RuntimeError("片场资产生成需要 project context")
+    raise RuntimeError("Stage asset generation requires a project context")
 
 
 def _scene_360_description(scene: NovelScene) -> str:
@@ -423,9 +423,9 @@ async def _is_derived_scene(store: SQLiteStore, scene_name: str) -> bool:
 async def _derived_scene_guard_error(store: SQLiteStore, scene_name: str) -> str:
     derived_names = await _derived_scene_names_for(store, scene_name)
     if derived_names:
-        preview = "、".join(derived_names[:5])
+        preview = ", ".join(derived_names[:5])
         suffix = "…" if len(derived_names) > 5 else ""
-        return f"场景「{scene_name}」存在派生场景：{preview}{suffix}；请先处理派生场景"
+        return f"Scene '{scene_name}' has derived scenes: {preview}{suffix}; handle the derived scenes first"
     return ""
 
 
@@ -442,31 +442,31 @@ def _scene_plate_preview_payload(
     if not has_time:
         render_status = "no_time"
         render_relight = False
-        render_label = f"Render：将使用 {resolved_scene_name}，锁图光"
-        seedance_label = f"Seedance2：将喂入 {resolved_scene_name}，提示词时间：无"
+        render_label = f"Render: will use {resolved_scene_name}, baked lighting"
+        seedance_label = f"Seedance2: will feed in {resolved_scene_name}, prompt time: none"
     elif planned_scene_name and planned_scene_name != resolved_scene_name:
         render_status = "planned_missing"
         render_relight = True
         render_label = (
-            f"Render：已规划 {planned_scene_name} 但暂无图，将使用 "
-            f"{resolved_scene_name}，relight 到 {time_of_day}"
+            f"Render: {planned_scene_name} is planned but has no image yet; will use "
+            f"{resolved_scene_name}, relight to {time_of_day}"
         )
         seedance_label = (
-            f"Seedance2：将喂入 {resolved_scene_name}，提示词时间：{time_of_day}"
+            f"Seedance2: will feed in {resolved_scene_name}, prompt time: {time_of_day}"
         )
     elif time_baked:
         render_status = "time_baked"
         render_relight = False
-        render_label = f"Render：将使用 {resolved_scene_name}，锁图光"
+        render_label = f"Render: will use {resolved_scene_name}, baked lighting"
         seedance_label = (
-            f"Seedance2：将喂入 {resolved_scene_name}，提示词时间：{time_of_day}"
+            f"Seedance2: will feed in {resolved_scene_name}, prompt time: {time_of_day}"
         )
     else:
         render_status = "relight"
         render_relight = True
-        render_label = f"Render：将使用 {resolved_scene_name}，relight 到 {time_of_day}"
+        render_label = f"Render: will use {resolved_scene_name}, relight to {time_of_day}"
         seedance_label = (
-            f"Seedance2：将喂入 {resolved_scene_name}，提示词时间：{time_of_day}"
+            f"Seedance2: will feed in {resolved_scene_name}, prompt time: {time_of_day}"
         )
 
     return {
@@ -608,7 +608,7 @@ async def get_scene_pano_manifest(
         mode="scene",
     )
     if manifest is None:
-        return {"ok": False, "error": "当前场景没有 360 全景资产"}
+        return {"ok": False, "error": "This scene has no 360 panorama asset"}
     return {"ok": True, "data": manifest.model_dump(exclude_none=True)}
 
 
@@ -637,7 +637,7 @@ async def update_scene_pano_correction(
         mode="scene",
     )
     if manifest is None:
-        return {"ok": False, "error": "当前场景没有 360 全景资产"}
+        return {"ok": False, "error": "This scene has no 360 panorama asset"}
     return {"ok": True, "data": manifest.model_dump(exclude_none=True)}
 
 
@@ -660,7 +660,7 @@ async def get_scene_director_stage_manifest(
         mode="scene",
     )
     if manifest is None:
-        return {"ok": False, "error": "当前场景没有 3GS 资产"}
+        return {"ok": False, "error": "This scene has no 3GS asset"}
     return {"ok": True, "data": manifest.model_dump(exclude_none=True)}
 
 
@@ -924,10 +924,10 @@ async def build_scenes(project: str, user: dict = Depends(get_api_user)):
             "task_key": project_task_state_key("build_scenes", ctx.project_id, 0),
             "backend": queued.backend,
             "queue": queued.queue,
-            "message": "场景补充任务已进入队列",
+            "message": "Scene backfill task has been queued",
         }
 
-    return {"ok": False, "error": "场景补充需要 project context"}
+    return {"ok": False, "error": "Scene backfill requires a project context"}
 
 
 @router.post("/projects/{project}/scenes/{name}/master/upload")
@@ -1067,10 +1067,10 @@ async def _start_scene_reference_task(
             ),
             "backend": queued.backend,
             "queue": queued.queue,
-            "message": f"场景「{scene.name}」{kind} 生成任务已进入队列",
+            "message": f"Scene '{scene.name}' {kind} generation task has been queued",
         }
 
-    return {"ok": False, "error": "场景参考图生成需要 project context"}
+    return {"ok": False, "error": "Scene reference image generation requires a project context"}
 
 
 @router.post("/projects/{project}/scenes/{name}/pano/upload")
@@ -1272,10 +1272,10 @@ async def _start_3gs_single_face_task(
         if not compute_scene_reverse_master_path(project_dir, scene.name):
             return {
                 "ok": False,
-                "error": "缺少 reverse_master.png，请先生成 reverse master",
+                "error": "Missing reverse_master.png; generate the reverse master first",
             }
     elif not compute_scene_master_path(project_dir, scene.name):
-        return {"ok": False, "error": "缺少 master.png，请先上传或生成场景源图"}
+        return {"ok": False, "error": "Missing master.png; upload or generate the scene source image first"}
 
     params = {
         "source_kind": source_kind,
@@ -1307,7 +1307,7 @@ async def _start_3gs_single_face_task(
         "scope": scope,
         "source": source_kind,
         **(queued or {}),
-        "message": f"场景「{scene.name}」{source_kind} → SOG 任务已启动",
+        "message": f"Scene '{scene.name}' {source_kind} → SOG task has started",
     }
 
 
@@ -1354,7 +1354,7 @@ async def generate_scene_3gs_pano_ply(
     if scene is None:
         return {"ok": False, "error": f"Scene '{name}' not found"}
     if stage_manifest.resolve_pano_path(project_dir, scene.name) is None:
-        return {"ok": False, "error": "缺少 pano_360.png，请先上传或生成 360 全景"}
+        return {"ok": False, "error": "Missing pano_360.png; upload or generate the 360 panorama first"}
 
     params = {
         "geometry_mode": "pano-depth",
@@ -1392,7 +1392,7 @@ async def generate_scene_3gs_pano_ply(
         "scope": scope,
         "source": "pano",
         **(queued or {}),
-        "message": f"场景「{scene.name}」360 → SOG 任务已启动",
+        "message": f"Scene '{scene.name}' 360 → SOG task has started",
     }
 
 
@@ -1445,5 +1445,5 @@ async def generate_scene_pano(
         "scope": scope,
         "source": source,
         **(queued or {}),
-        "message": f"场景「{scene.name}」360 全景生成任务已启动",
+        "message": f"Scene '{scene.name}' 360 panorama generation task has started",
     }

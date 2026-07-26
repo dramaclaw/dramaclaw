@@ -330,7 +330,7 @@ def apply_patches(plan: "SeriesPlan", fix_plan: FixPlan) -> "SeriesPlan":
     for patch in fix_plan.patches:
         ep = episode_map.get(patch.episode_number)
         if not ep:
-            print(f"  [Patch] 警告: 第 {patch.episode_number} 集不存在，跳过")
+            print(f"  [Patch] Warning: episode {patch.episode_number} does not exist, skipping")
             continue
 
         field = patch.field.lower()
@@ -354,13 +354,13 @@ def apply_patches(plan: "SeriesPlan", fix_plan: FixPlan) -> "SeriesPlan":
             elif field == "chapter_end":
                 ep.chapter_end = int(value)
             else:
-                print(f"  [Patch] 警告: 未知字段 '{field}'，跳过")
+                print(f"  [Patch] Warning: unknown field '{field}', skipping")
                 continue
 
-            print(f"  [Patch] 第 {patch.episode_number} 集.{field} ← {value[:30]}{'...' if len(value) > 30 else ''}")
+            print(f"  [Patch] episode {patch.episode_number}.{field} ← {value[:30]}{'...' if len(value) > 30 else ''}")
 
         except Exception as e:
-            print(f"  [Patch] 错误: 应用补丁到第 {patch.episode_number} 集.{field} 失败: {e}")
+            print(f"  [Patch] Error: failed to apply patch to episode {patch.episode_number}.{field}: {e}")
 
     return fixed
 

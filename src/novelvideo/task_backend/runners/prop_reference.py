@@ -45,7 +45,7 @@ async def _run_prop_reference_asset(
     try:
         prop = await store.sqlite_store.get_prop(prop_name)
         if prop is None:
-            raise RuntimeError(f"找不到道具: {prop_name}")
+            raise RuntimeError(f"Prop not found: {prop_name}")
         visual_prompt = prop.visual_prompt or prop.description or prop.name
         prop_dir = output_dir / "assets" / "props" / prop.name
         prop_dir.mkdir(parents=True, exist_ok=True)
@@ -56,7 +56,7 @@ async def _run_prop_reference_asset(
             0,
             scope=scope,
             progress=0.50,
-            current_task="调用图像模型生成三视图...",
+            current_task="Calling image model to generate three-view sheet...",
         )
         result_path = await generate_prop_reference(
             visual_prompt=visual_prompt,
@@ -66,7 +66,7 @@ async def _run_prop_reference_asset(
             model=model,
         )
         if not result_path:
-            raise RuntimeError("图像 API 未返回有效图像")
+            raise RuntimeError("Image API did not return a valid image")
         return {"prop_name": prop.name, "path": str(result_path), "style": style}
     finally:
         await store.close()
@@ -107,7 +107,7 @@ async def _run_batch_prop_ref(envelope: dict[str, Any], ctx: ProjectContext) -> 
 
         generated = 0
         for index, prop in enumerate(props_to_gen, start=1):
-            current = f"生成三视图: {prop.name}..."
+            current = f"Generating three-view sheet: {prop.name}..."
             manager.update_progress_for_project(
                 ctx,
                 "batch_prop_ref",

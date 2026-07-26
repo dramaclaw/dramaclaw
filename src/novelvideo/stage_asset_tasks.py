@@ -326,7 +326,7 @@ def _compress_ply_to_sog(
         cmd.extend(["-g", gpu])
     cmd.extend([str(src), str(dest)])
     if progress_callback:
-        progress_callback(0.88, "压缩 3GS PLY → SOG...")
+        progress_callback(0.88, "Compressing 3GS PLY → SOG...")
     logger.info("running splat-transform SOG compression: %s", " ".join(cmd))
     proc = run_project_subprocess(
         cmd,
@@ -337,7 +337,7 @@ def _compress_ply_to_sog(
     )
     if proc.returncode != 0 or not dest.exists():
         message = (proc.stderr or proc.stdout or "").strip()
-        raise RuntimeError(f"PLY → SOG 压缩失败: {message[-2000:]}")
+        raise RuntimeError(f"PLY → SOG compression failed: {message[-2000:]}")
     return dest
 
 
@@ -439,19 +439,19 @@ def run_splat_collision(
     profiles = [
         {
             "name": "standard",
-            "label": "降级",
+            "label": "reduced",
             "voxel_params": os.environ.get("STAGE_COLLISION_VOXEL_PARAMS", "0.16,0.38"),
             "voxel_carve": os.environ.get("STAGE_COLLISION_VOXEL_CARVE", "1.8,0.35"),
         },
         {
             "name": "coarse",
-            "label": "粗略",
+            "label": "coarse",
             "voxel_params": "0.24,0.5",
             "voxel_carve": "2.2,0.5",
         },
         {
             "name": "very_coarse",
-            "label": "超粗略",
+            "label": "very coarse",
             "voxel_params": "0.32,0.62",
             "voxel_carve": "2.6,0.65",
         },
@@ -540,7 +540,7 @@ def run_splat_collision(
             str(ply_path),
             str(voxel_out),
         ]
-        report(0.40 + idx * 0.10, f"生成调度区域（{profile['label']}精度）...")
+        report(0.40 + idx * 0.10, f"Generating navigation area ({profile['label']} precision)...")
         logger.info("running splat-transform: %s", " ".join(cmd))
         proc = run_project_subprocess(
             cmd,
@@ -560,7 +560,7 @@ def run_splat_collision(
         if not is_scale_failure(proc) or idx == len(profiles) - 1:
             restore_archived_outputs()
             raise RuntimeError("splat-transform failed: " + "\n".join(failures))
-        report(0.45 + idx * 0.10, "调度区域过细，自动降低精度重试...")
+        report(0.45 + idx * 0.10, "Navigation area too fine-grained; automatically lowering precision and retrying...")
 
     if proc is None or selected_profile is None:
         restore_archived_outputs()
@@ -653,7 +653,7 @@ def run_pano_sharp(
     if pano_path is None:
         resolved = stage_manifest.resolve_pano_path(project_dir, scene_id)
         if resolved is None:
-            raise FileNotFoundError("缺少 pano_360.png。请先上传或生成 360 全景。")
+            raise FileNotFoundError("Missing pano_360.png. Please upload or generate a 360 panorama first.")
         pano_path = resolved
     pano_path = Path(pano_path)
     if not pano_path.exists():
@@ -678,7 +678,7 @@ def run_pano_sharp(
     depth_source = str(depth_source or "da2").strip().lower()
     if depth_source == "da2" and not pano_sharp.da2_available():
         logger.warning("DA-2 package is not installed; falling back to constant depth.")
-        report(0.18, "DA-2 未安装，降级使用 constant depth；几何质量会降低。")
+        report(0.18, "DA-2 is not installed; falling back to constant depth. Geometry quality will be lower.")
         depth_source = "constant"
     depth_device = (
         str(depth_device or os.environ.get("PANO_SHARP_DEPTH_DEVICE") or "auto").strip().lower()
@@ -761,9 +761,9 @@ def run_pano_sharp(
     report(
         0.20,
         (
-            "启动 360 → depth 3GS..."
+            "Starting 360 → depth 3GS..."
             if geometry_mode == "pano-depth"
-            else "启动 pano_sharp：360 → cubemap → SHARP → 3GS..."
+            else "Starting pano_sharp: 360 → cubemap → SHARP → 3GS..."
         ),
     )
     logger.info("running pano ply builder: %s", " ".join(cmd[:2] + ["..."]))
@@ -775,12 +775,12 @@ def run_pano_sharp(
     )
     if proc.returncode != 0:
         message = (proc.stderr or proc.stdout or "").strip()
-        raise RuntimeError(f"pano_sharp 失败: {message[-2000:]}")
+        raise RuntimeError(f"pano_sharp failed: {message[-2000:]}")
 
     if not generated_ply.exists():
         message = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(
-            "360 PLY 生成器成功退出，但没有写出目标 PLY: " f"{generated_ply}. {message[-1000:]}"
+            "360 PLY builder exited successfully but did not write the target PLY: " f"{generated_ply}. {message[-1000:]}"
         )
 
     archived_sog = _archive_existing(dest_sog, timestamp)
@@ -807,7 +807,7 @@ def run_pano_sharp(
         archived_sog.unlink(missing_ok=True)
         archived_sog = None
 
-    report(0.90, f"{dest_sog.name} 已写入 3GS 资产包")
+    report(0.90, f"{dest_sog.name} written to the 3GS asset package")
     if update_manifest:
         existing_source = (stage_manifest.load_manifest(project_dir, scene_id) or {}).get("source")
         manifest_source = (
@@ -909,12 +909,12 @@ def run_single_face_sharp(
         if source_kind == "reverse":
             reverse_path = compute_scene_reverse_master_path(project_dir, scene_id)
             if not reverse_path:
-                raise FileNotFoundError("缺少 reverse_master.png。请先生成 reverse master。")
+                raise FileNotFoundError("Missing reverse_master.png. Please generate the reverse master first.")
             image_path = Path(reverse_path)
         else:
             master_path = compute_scene_master_path(project_dir, scene_id)
             if not master_path:
-                raise FileNotFoundError("缺少 master.png。请先上传或生成场景源图。")
+                raise FileNotFoundError("Missing master.png. Please upload or generate the scene source image first.")
             image_path = Path(master_path)
     image_path = Path(image_path)
     if not image_path.exists():
@@ -964,7 +964,7 @@ def run_single_face_sharp(
     if int(max_gaussians_per_face) > 0:
         cmd.extend(["--max-gaussians-per-face", str(int(max_gaussians_per_face))])
 
-    report(0.20, f"启动 single-face SHARP：{source_kind} → 单面 3GS...")
+    report(0.20, f"Starting single-face SHARP: {source_kind} → single-face 3GS...")
     logger.info("running single-face sharp: %s", " ".join(cmd[:2] + ["..."]))
     proc = run_project_subprocess(
         cmd,
@@ -974,12 +974,12 @@ def run_single_face_sharp(
     )
     if proc.returncode != 0:
         message = (proc.stderr or proc.stdout or "").strip()
-        raise RuntimeError(f"single-face SHARP 失败: {message[-2000:]}")
+        raise RuntimeError(f"single-face SHARP failed: {message[-2000:]}")
 
     if not generated_ply.exists():
         message = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(
-            "single-face SHARP 成功退出，但没有写出 pano_sharp_merged.ply: "
+            "single-face SHARP exited successfully but did not write pano_sharp_merged.ply: "
             f"{generated_ply}. {message[-1000:]}"
         )
 
@@ -1007,7 +1007,7 @@ def run_single_face_sharp(
         archived_sog.unlink(missing_ok=True)
         archived_sog = None
 
-    report(0.90, f"{source_kind} single-face SOG 已写入 3GS 资产包")
+    report(0.90, f"{source_kind} single-face SOG written to the 3GS asset package")
     path_field = "reverse_ply_path" if source_kind == "reverse" else "master_ply_path"
     args_field = "reverse_sharp_args" if source_kind == "reverse" else "master_sharp_args"
     manifest_source = "single_face_reverse" if source_kind == "reverse" else "single_face_master"
@@ -1243,7 +1243,7 @@ def run_scene_360(
                     not analysis_path.exists() or analysis_path.stat().st_mtime < latest_input_mtime
                 )
                 if needs_analysis and os.environ.get("OPENROUTER_API_KEY"):
-                    report(0.12, "分析 master/reverse 侧边 overlap 和 continuation...")
+                    report(0.12, "Analyzing master/reverse side overlap and continuation...")
                     analyzer_cmd = [
                         sys.executable,
                         "-m",
@@ -1296,7 +1296,7 @@ def run_scene_360(
                     )
                 )
                 if needs_contract and os.environ.get("OPENROUTER_API_KEY"):
-                    report(0.14, f"分析 master/reverse 空间合同 ({spatial_contract_model})...")
+                    report(0.14, f"Analyzing master/reverse spatial contract ({spatial_contract_model})...")
                     contract_cmd = [
                         sys.executable,
                         "-m",
@@ -1340,7 +1340,7 @@ def run_scene_360(
     if generated.exists():
         generated.replace(generation_dir / f"scene_panorama_2to1_{timestamp}.png")
 
-    report(0.20, f"启动 {provider} 生成 {image_size}/{quality} 360 全景...")
+    report(0.20, f"Starting {provider} to generate a {image_size}/{quality} 360 panorama...")
     logger.info(
         "scene_360 start: scene_id=%s source=%s provider=%s model=%s image_size=%s "
         "quality=%s style=%s has_master=%s has_reverse_master=%s text_only=%s timeout_seconds=%s",
@@ -1372,10 +1372,10 @@ def run_scene_360(
         )
         if proc.returncode != 0:
             message = (proc.stderr or proc.stdout or "").strip()
-            raise RuntimeError(f"360 全景生成失败: {message[-1200:]}")
+            raise RuntimeError(f"360 panorama generation failed: {message[-1200:]}")
 
         if not generated.exists():
-            raise RuntimeError(f"360 生成器成功退出，但没有写出结果: {generated}")
+            raise RuntimeError(f"360 generator exited successfully but did not write a result: {generated}")
 
         provider_trace = _read_scene_360_provider_trace(generation_dir)
         pano_path = out_dir / "pano_360.png"
@@ -1387,7 +1387,7 @@ def run_scene_360(
 
         report(
             0.90,
-            "pano_360.png 已写入 3GS 资产包" if update_manifest else "360 全景候选已写入画布输出",
+            "pano_360.png written to the 3GS asset package" if update_manifest else "360 panorama candidate written to canvas output",
         )
         if update_manifest:
             stage_manifest.update_manifest(
@@ -1485,12 +1485,12 @@ def run_voxel_world_from_360(
     project_dir = Path(project_dir)
     spatial_layout_path = compute_scene_spatial_layout_path(project_dir, scene_id)
     if not spatial_layout_path:
-        raise FileNotFoundError("缺少 spatial_layout.png。请先在场景工作台生成位置图。")
+        raise FileNotFoundError("Missing spatial_layout.png. Please generate the layout map in the scene workbench first.")
 
     if not block_world_builder.node_available():
         raise block_world_builder.BlockWorldUnavailable()
 
-    report(0.20, "准备 spatial_layout voxel 参考图...")
+    report(0.20, "Preparing spatial_layout voxel reference image...")
     model_refs_dir = stage_manifest.stage_dir(project_dir, scene_id) / "voxel_model_refs"
     if model_refs_dir.exists():
         shutil.rmtree(model_refs_dir)
@@ -1541,7 +1541,7 @@ def run_voxel_world_from_360(
         archived = scene_world_path.with_name(f"world_{timestamp}.json")
         scene_world_path.replace(archived)
 
-    report(0.55, "正在生成 voxel world.json...")
+    report(0.55, "Generating voxel world.json...")
     logger.info("running voxel world generator: %s", " ".join(cmd[:2] + ["..."]))
     proc = run_project_subprocess(
         cmd,
@@ -1559,18 +1559,18 @@ def run_voxel_world_from_360(
             archived.replace(scene_world_path)
         message = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(
-            "DirectorWorld 生成失败: "
-            f"{message[-1000:]}" + (f"；失败输出已保留: {failed_path}" if failed_path else "")
+            "DirectorWorld generation failed: "
+            f"{message[-1000:]}" + (f"; failed output retained: {failed_path}" if failed_path else "")
         )
 
     if not scene_world_path.exists():
         if archived is not None and archived.exists():
             archived.replace(scene_world_path)
         raise RuntimeError(
-            "DirectorWorld 生成器成功退出，但没有写出 world.json: " f"{scene_world_path}"
+            "DirectorWorld generator exited successfully but did not write world.json: " f"{scene_world_path}"
         )
 
-    report(0.90, "voxel world.json 已写出")
+    report(0.90, "voxel world.json written")
     return {
         "ok": True,
         "scene_id": scene_id,

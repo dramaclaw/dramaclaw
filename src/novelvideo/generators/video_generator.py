@@ -449,7 +449,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                     cost_estimate=tracking_cost_estimate,
                 )
             except Exception as e:
-                log(f"记账失败(accepted): {e}")
+                log(f"Billing record failed (accepted): {e}")
 
         def _update_request_status(request_id: str, status: str, error_message: str | None = None):
             if not project_output_dir or not request_id:
@@ -462,7 +462,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                     error_message=error_message,
                 )
             except Exception as e:
-                log(f"记账失败({status}): {e}")
+                log(f"Billing record failed ({status}): {e}")
 
         # 限制 duration 在 4-12 范围；向上取整保证视频不短于音频
         duration = max(4, min(12, math.ceil(duration)))
@@ -478,7 +478,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
             first_frame_url = image_path
         elif os.path.exists(image_path):
             first_frame_url = self._local_to_data_url(image_path)
-            log("首帧已转换为 data URL")
+            log("First frame converted to data URL")
         else:
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
@@ -492,7 +492,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                 last_frame_url = last_frame_path
             elif os.path.exists(last_frame_path):
                 last_frame_url = self._local_to_data_url(last_frame_path)
-                log("尾帧已转换为 data URL")
+                log("Last frame converted to data URL")
             else:
                 return VideoGenResult(
                     status=VideoGenStatus.FAILED,
@@ -532,8 +532,8 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
         }
         request_body["generate_audio"] = self.generate_audio
 
-        mode_desc = "首尾帧模式" if last_frame_url else "首帧模式"
-        log(f"正在提交 Seedance 视频生成任务 ({mode_desc}, {self.model}, {duration}s)...")
+        mode_desc = "first-last-frame mode" if last_frame_url else "first-frame mode"
+        log(f"Submitting Seedance video generation task ({mode_desc}, {self.model}, {duration}s)...")
         progress(0.1)
 
         # 1. 提交任务
@@ -552,7 +552,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
 
                 if resp.status_code != 200:
                     error_text = resp.text
-                    log(f"任务提交失败: HTTP {resp.status_code} - {error_text[:500]}")
+                    log(f"Task submission failed: HTTP {resp.status_code} - {error_text[:500]}")
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
                         error=f"Submit failed: HTTP {resp.status_code} - {error_text[:200]}",
@@ -561,17 +561,17 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                 data = resp.json()
                 task_id = data.get("id")
                 if not task_id:
-                    log(f"未获取到 task_id: {data}")
+                    log(f"No task_id received: {data}")
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
                         error=f"No task_id in response: {data}",
                     )
 
-                log(f"任务已提交: {task_id}")
+                log(f"Task submitted: {task_id}")
                 _record_request_accepted(task_id)
 
         except Exception as e:
-            log(f"任务提交异常: {e}")
+            log(f"Task submission error: {e}")
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=f"Submit exception: {e}",
@@ -588,7 +588,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                     )
 
                     if resp.status_code != 200:
-                        log(f"查询状态失败: HTTP {resp.status_code}")
+                        log(f"Status query failed: HTTP {resp.status_code}")
                         await asyncio.sleep(poll_interval)
                         continue
 
@@ -600,7 +600,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                     progress(poll_progress)
 
                     if status_str == "succeeded":
-                        log("视频生成完成，正在下载...")
+                        log("Video generation complete, downloading...")
                         progress(0.9)
                         _update_request_status(task_id, "completed")
 
@@ -618,7 +618,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                         if video_url:
                             success = await self._download_video(video_url, output_path)
                             if success:
-                                log(f"视频已保存: {output_path}")
+                                log(f"Video saved: {output_path}")
                                 progress(1.0)
                                 _update_request_status(task_id, "downloaded")
                                 return VideoGenResult(
@@ -629,7 +629,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                                     duration_seconds=float(duration),
                                 )
                             else:
-                                log("视频下载失败")
+                                log("Video download failed")
                                 _update_request_status(task_id, "failed", "Download failed")
                                 return VideoGenResult(
                                     status=VideoGenStatus.FAILED,
@@ -637,7 +637,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                                     task_id=task_id,
                                 )
                         else:
-                            log(f"API 未返回视频 URL: {data}")
+                            log(f"API did not return a video URL: {data}")
                             _update_request_status(task_id, "failed", "No video URL in response")
                             return VideoGenResult(
                                 status=VideoGenStatus.FAILED,
@@ -647,7 +647,7 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
 
                     elif status_str == "failed":
                         error_msg = data.get("error", {}).get("message", "Unknown error")
-                        log(f"视频生成失败: {error_msg}")
+                        log(f"Video generation failed: {error_msg}")
                         _update_request_status(task_id, "failed", error_msg)
                         return VideoGenResult(
                             status=VideoGenStatus.FAILED,
@@ -657,14 +657,14 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
 
                     # queued / running → 继续轮询
                     if poll_count % 6 == 0:
-                        log(f"正在生成中... ({status_str}, {poll_count}/{max_polls})")
+                        log(f"Generating... ({status_str}, {poll_count}/{max_polls})")
 
             except Exception as e:
-                log(f"查询状态异常: {e}")
+                log(f"Status query error: {e}")
 
             await asyncio.sleep(poll_interval)
 
-        log("视频生成超时")
+        log("Video generation timed out")
         _update_request_status(task_id, "failed", "Timeout waiting for video generation")
         return VideoGenResult(
             status=VideoGenStatus.FAILED,
@@ -851,7 +851,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
         image_count, video_count, audio_count = 0, 0, 0
         for ref in refs:
             if not os.path.exists(ref.path):
-                log(f"警告: 素材不存在: {ref.path}")
+                log(f"Warning: asset not found: {ref.path}")
                 continue
 
             data_url = self._file_to_data_url(ref.path)
@@ -902,9 +902,9 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
         if audio:
             request_body["audio"] = True
 
-        ref_summary = f"{image_count}图+{video_count}视频+{audio_count}音频"
+        ref_summary = f"{image_count} img + {video_count} video + {audio_count} audio"
         log(
-            f"正在提交 Seedance 2.0 视频生成任务 "
+            f"Submitting Seedance 2.0 video generation task "
             f"({ref_summary}, model={model}, {duration}s, audio={audio})..."
         )
         progress(0.1)
@@ -923,7 +923,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
                 )
                 if resp.status_code != 200:
                     error_text = resp.text
-                    log(f"任务提交失败: HTTP {resp.status_code} - {error_text[:500]}")
+                    log(f"Task submission failed: HTTP {resp.status_code} - {error_text[:500]}")
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
                         error=f"Submit failed: HTTP {resp.status_code} - {error_text[:200]}",
@@ -931,14 +931,14 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
                 data = resp.json()
                 task_id = data.get("id")
                 if not task_id:
-                    log(f"未获取到 task_id: {data}")
+                    log(f"No task_id received: {data}")
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
                         error=f"No task_id in response: {data}",
                     )
-                log(f"任务已提交: {task_id}")
+                log(f"Task submitted: {task_id}")
         except Exception as e:
-            log(f"任务提交异常: {e}")
+            log(f"Task submission error: {e}")
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=f"Submit exception: {e}",
@@ -954,7 +954,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
                         headers=headers,
                     )
                     if resp.status_code != 200:
-                        log(f"查询状态失败: HTTP {resp.status_code}")
+                        log(f"Status query failed: HTTP {resp.status_code}")
                         await asyncio.sleep(poll_interval)
                         continue
 
@@ -964,7 +964,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
                     progress(poll_progress)
 
                     if status_str == "succeeded":
-                        log("视频生成完成，正在下载...")
+                        log("Video generation complete, downloading...")
                         progress(0.9)
 
                         video_url = None
@@ -980,7 +980,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
                         if video_url:
                             success = await self._download_video(video_url, output_path)
                             if success:
-                                log(f"视频已保存: {output_path}")
+                                log(f"Video saved: {output_path}")
                                 progress(1.0)
                                 return VideoGenResult(
                                     status=VideoGenStatus.DONE,
@@ -990,14 +990,14 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
                                     duration_seconds=float(duration),
                                 )
                             else:
-                                log("视频下载失败")
+                                log("Video download failed")
                                 return VideoGenResult(
                                     status=VideoGenStatus.FAILED,
                                     error="Download failed",
                                     task_id=task_id,
                                 )
                         else:
-                            log(f"API 未返回视频 URL: {data}")
+                            log(f"API did not return a video URL: {data}")
                             return VideoGenResult(
                                 status=VideoGenStatus.FAILED,
                                 error="No video URL in response",
@@ -1006,7 +1006,7 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
 
                     elif status_str == "failed":
                         error_msg = data.get("error", {}).get("message", "Unknown error")
-                        log(f"视频生成失败: {error_msg}")
+                        log(f"Video generation failed: {error_msg}")
                         return VideoGenResult(
                             status=VideoGenStatus.FAILED,
                             error=f"Generation failed: {error_msg}",
@@ -1014,14 +1014,14 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
                         )
 
                     if poll_count % 6 == 0:
-                        log(f"正在生成中... ({status_str}, {poll_count}/{max_polls})")
+                        log(f"Generating... ({status_str}, {poll_count}/{max_polls})")
 
             except Exception as e:
-                log(f"查询状态异常: {e}")
+                log(f"Status query error: {e}")
 
             await asyncio.sleep(poll_interval)
 
-        log("视频生成超时")
+        log("Video generation timed out")
         return VideoGenResult(
             status=VideoGenStatus.FAILED,
             error="Timeout waiting for video generation",
@@ -1112,7 +1112,7 @@ class GrokVideoGenerator(VideoGeneratorBase):
         if last_frame_path:
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
-                error="Grok 720 does not support keyframe/首尾帧模式",
+                error="Grok 720 does not support keyframe/first-last-frame mode",
             )
 
         duration = max(1, min(15, int(duration)))
@@ -1122,7 +1122,7 @@ class GrokVideoGenerator(VideoGeneratorBase):
             image_url = image_path
         elif os.path.exists(image_path):
             image_url = self._local_to_data_url(image_path)
-            log("首帧已转换为 data URL")
+            log("First frame converted to data URL")
         else:
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
@@ -1142,7 +1142,7 @@ class GrokVideoGenerator(VideoGeneratorBase):
             "resolution": self.resolution,
         }
 
-        log(f"正在提交 Grok 视频生成任务 ({self.model}, {duration}s, {self.resolution})...")
+        log(f"Submitting Grok video generation task ({self.model}, {duration}s, {self.resolution})...")
         progress(0.1)
 
         try:
@@ -1172,7 +1172,7 @@ class GrokVideoGenerator(VideoGeneratorBase):
                 error=f"No request_id in response: {data}",
             )
 
-        log(f"任务已提交: {request_id}")
+        log(f"Task submitted: {request_id}")
         progress(0.2)
 
         for poll_count in range(max_polls):
@@ -1202,7 +1202,7 @@ class GrokVideoGenerator(VideoGeneratorBase):
                         error="No video URL in response",
                         task_id=request_id,
                     )
-                log("视频生成完成，正在下载...")
+                log("Video generation complete, downloading...")
                 progress(0.9)
                 success = await self._download_video(video_url, output_path)
                 if not success:
@@ -1228,7 +1228,7 @@ class GrokVideoGenerator(VideoGeneratorBase):
                 )
 
             if poll_count % 6 == 0:
-                log(f"正在生成中... ({status_str or 'pending'}, {poll_count}/{max_polls})")
+                log(f"Generating... ({status_str or 'pending'}, {poll_count}/{max_polls})")
             await asyncio.sleep(poll_interval)
 
         return VideoGenResult(
@@ -1262,7 +1262,7 @@ async def translate_prompt_to_english(prompt: str) -> str:
 
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            print("[VIDEO] 警告: 未配置 GOOGLE_API_KEY，跳过翻译")
+            print("[VIDEO] Warning: GOOGLE_API_KEY not configured, skipping translation")
             return prompt
 
         client = genai.Client(api_key=api_key)
@@ -1297,11 +1297,11 @@ Convert this Chinese video motion description into an optimized English prompt f
         # 移除可能的引号包裹
         if english_prompt.startswith('"') and english_prompt.endswith('"'):
             english_prompt = english_prompt[1:-1]
-        print(f"[VIDEO] 优化提示词: {prompt} -> {english_prompt}")
+        print(f"[VIDEO] Optimized prompt: {prompt} -> {english_prompt}")
         return english_prompt
 
     except Exception as e:
-        print(f"[VIDEO] 翻译失败，使用原文: {e}")
+        print(f"[VIDEO] Translation failed, using original: {e}")
         return prompt
 
 
@@ -1406,9 +1406,9 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                         "human_review requires OSS presigned HTTP media URLs. "
                         f"Failed to upload or presign local file: {text}"
                     )
-                log(f"{label}已上传/复用 OSS URL")
+                log(f"{label} uploaded/reused OSS URL")
                 return oss_url
-            log(f"{label}已转换为 data URL")
+            log(f"{label} converted to data URL")
             return local_file_to_data_url(text)
         raise FileNotFoundError(f"{label} not found: {text}")
 
@@ -1430,7 +1430,7 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                 continue
             ref_type = str(getattr(ref, "type", "") or "image").strip().lower()
             role = str(getattr(ref, "role", "") or "").strip()
-            label = f"{role or ref_type}参考"
+            label = f"{role or ref_type} reference"
             data_url = self._to_upload_url(
                 path,
                 label=label,
@@ -1503,7 +1503,7 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                     cost_estimate=tracking_cost_estimate,
                 )
             except Exception as exc:
-                log(f"记账失败(accepted): {exc}")
+                log(f"Billing record failed (accepted): {exc}")
 
         def update_request_status(
             request_id: str,
@@ -1520,7 +1520,7 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                     error_message=error_message,
                 )
             except Exception as exc:
-                log(f"记账失败({status}): {exc}")
+                log(f"Billing record failed ({status}): {exc}")
 
         is_seedance2_model = self._is_seedance2_model()
         seedance2_config = (
@@ -1531,7 +1531,7 @@ class HuimengVideoGenerator(VideoGeneratorBase):
         original_duration = duration
         duration = max(min_duration, min(max_duration, math.ceil(duration)))
         if duration != original_duration:
-            log(f"时长已调整: {original_duration:.1f}s -> {duration:.0f}s")
+            log(f"Duration adjusted: {original_duration:.1f}s -> {duration:.0f}s")
 
         ratio = aspect_ratio if ":" in aspect_ratio else "adaptive"
 
@@ -1545,13 +1545,13 @@ class HuimengVideoGenerator(VideoGeneratorBase):
         try:
             first_frame = self._to_upload_url(
                 image_path,
-                label="首帧",
+                label="first frame",
                 log=log,
                 require_http_url=require_http_media,
             )
             last_frame = self._to_upload_url(
                 last_frame_path,
-                label="尾帧",
+                label="last frame",
                 log=log,
                 require_http_url=require_http_media,
             )
@@ -1650,15 +1650,15 @@ class HuimengVideoGenerator(VideoGeneratorBase):
         try:
             request_resolution = str(params.get("resolution") or self.resolution or "").strip()
             log(
-                f"正在提交 HuiMeng 视频任务 "
-                f"({self.model}, refs={ref_counts['image_count']}图/{ref_counts['video_count']}视频/{ref_counts['audio_count']}音频, "
+                f"Submitting HuiMeng video task "
+                f"({self.model}, refs={ref_counts['image_count']} img/{ref_counts['video_count']} video/{ref_counts['audio_count']} audio, "
                 f"{duration}s, {request_resolution})..."
             )
             progress(0.1)
             submitted = await self.client.submit_task(model=self.model, params=params)
             task_id = submitted["task_id"]
             record_accepted(task_id)
-            log(f"任务已提交: {task_id}")
+            log(f"Task submitted: {task_id}")
             progress(0.2)
 
             task = await self.client.wait_for_completion(
@@ -1686,7 +1686,7 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                     task_id=task_id,
                 )
 
-            log("视频生成完成，正在下载...")
+            log("Video generation complete, downloading...")
             await self.client.download_url(video_url, output_path)
             last_frame_url = ""
             last_frame_path = ""
@@ -1714,7 +1714,7 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                         str(last_frame_output_path),
                     )
                     last_frame_path = last_frame_output_path.as_posix()
-                    log("已保存 HuiMeng 返回尾帧")
+                    log("Saved HuiMeng returned last frame")
             progress(1.0)
             update_request_status(task_id, "completed")
             return VideoGenResult(
@@ -2014,17 +2014,17 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             if ref_type == "image":
                 key = "reference_images"
                 default_ext = "png"
-                label = "图片参考"
+                label = "image reference"
                 image_transform = IMAGE_TRANSFORM_AI_REFERENCE_JPEG
             elif ref_type == "video":
                 key = "reference_videos"
                 default_ext = "mp4"
-                label = "视频参考"
+                label = "video reference"
                 image_transform = None
             elif ref_type == "audio":
                 key = "reference_audios"
                 default_ext = "mp3"
-                label = "音频参考"
+                label = "audio reference"
                 image_transform = None
             else:
                 continue
@@ -2034,7 +2034,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 image_transform=image_transform,
             )
             if not path.startswith(("http://", "https://")):
-                log(f"{label}已上传到媒体中转")
+                log(f"{label} uploaded to media relay")
             reference_urls.setdefault(key, []).append(url)
         return reference_urls
 
@@ -2175,7 +2175,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     cost_estimate=tracking_cost_estimate,
                 )
             except Exception as exc:
-                log(f"记账失败(accepted): {exc}")
+                log(f"Billing record failed (accepted): {exc}")
 
         def update_request_status(
             request_id: str,
@@ -2192,7 +2192,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     error_message=error_message,
                 )
             except Exception as exc:
-                log(f"记账失败({status}): {exc}")
+                log(f"Billing record failed ({status}): {exc}")
 
         is_seedance2_model = self._is_seedance2_model()
         seedance2_config = (
@@ -2203,7 +2203,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         original_duration = duration
         duration = max(min_duration, min(max_duration, math.ceil(duration)))
         if duration != original_duration:
-            log(f"时长已调整: {original_duration:.1f}s -> {duration:.0f}s")
+            log(f"Duration adjusted: {original_duration:.1f}s -> {duration:.0f}s")
 
         ratio_text = str(aspect_ratio or "").strip().lower()
         # Seedance I2V uses ``adaptive`` to preserve the first-frame framing.
@@ -2228,7 +2228,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             if len(prompt) > 2500:
                 prompt = prompt[:2500]
                 payload["prompt"] = prompt
-                log("提示词已截断到 HappyHorse 1.0 上限 2500 字符")
+                log("Prompt truncated to HappyHorse 1.0 limit of 2500 characters")
 
             duration_int = int(math.ceil(duration))
             metadata.pop("generate_audio", None)
@@ -2265,7 +2265,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             # HappyHorse 没有尾帧能力，且把尾帧混进 reference_images 会误触发 r2v，
             # 与首帧的 image_url 冲突（上游 INVALID_PARAMS）。这里直接忽略尾帧。
             if last_frame_path:
-                log("HappyHorse 不支持尾帧，已忽略尾帧输入")
+                log("HappyHorse does not support a last frame; last-frame input ignored")
 
             # HappyHorse 的 image_url(i2v) 与 reference_images(r2v/视频编辑) 互斥，
             # 不能出现在同一次请求里。策略：参考优先——只要带了参考图或参考视频，就走
@@ -2273,7 +2273,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             # 应降级为 reference_images 的首位（保持身份优先），而不是整张丢弃，
             # 否则「2 张图」会只发出去 1 张。纯首帧（无其它参考）才走 i2v。
             if (video_reference_paths or reference_image_paths) and first_frame_path:
-                log("HappyHorse 参考/视频编辑模式不支持首帧，已将首帧降级为参考图")
+                log("HappyHorse reference/video-editing mode does not support a first frame; the first frame was downgraded to a reference image")
                 reference_image_paths.insert(0, first_frame_path)
                 first_frame_path = ""
 
@@ -2289,7 +2289,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         default_ext="mp4",
                     )
                     if not video_reference_paths[0].startswith(("http://", "https://")):
-                        log("视频参考已上传到媒体中转")
+                        log("Video reference uploaded to media relay")
                     metadata["video_url"] = video_url
                     metadata["audio_setting"] = self._happyhorse_audio_setting(
                         kwargs.get("audio_setting")
@@ -2299,13 +2299,13 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 for path in reference_image_paths[: 5 if video_reference_paths else 9]:
                     url = await self._relay_frame_input(path)
                     if not path.startswith(("http://", "https://")):
-                        log("图片参考已上传到媒体中转")
+                        log("Image reference uploaded to media relay")
                     relayed_references.append(url)
 
                 if first_frame_path:
                     first_frame_url = await self._relay_frame_input(first_frame_path)
                     if not first_frame_path.startswith(("http://", "https://")):
-                        log("首帧已上传到媒体中转")
+                        log("First frame uploaded to media relay")
                     metadata["image_url"] = first_frame_url
                     payload["images"] = [first_frame_url]
 
@@ -2341,7 +2341,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 if first_frame_path:
                     first_frame_url = await self._relay_frame_input(first_frame_path)
                     if not first_frame_path.startswith(("http://", "https://")):
-                        log("首帧已上传到媒体中转")
+                        log("First frame uploaded to media relay")
                     metadata["image_url"] = first_frame_url
                     payload["images"] = [first_frame_url]
 
@@ -2349,7 +2349,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 for path in reference_image_paths[:7]:
                     url = await self._relay_frame_input(path)
                     if not path.startswith(("http://", "https://")):
-                        log("参考图片已上传到媒体中转")
+                        log("Reference image uploaded to media relay")
                     relayed_references.append(url)
                 if relayed_references:
                     metadata["reference_images"] = relayed_references
@@ -2363,12 +2363,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             try:
                 first_frame = await self._relay_frame_input(image_path) if image_path else ""
                 if image_path and not image_path.startswith(("http://", "https://")):
-                    log("首帧已上传到媒体中转")
+                    log("First frame uploaded to media relay")
                 last_frame = (
                     await self._relay_frame_input(str(last_frame_path)) if last_frame_path else ""
                 )
                 if last_frame_path and not str(last_frame_path).startswith(("http://", "https://")):
-                    log("尾帧已上传到媒体中转")
+                    log("Last frame uploaded to media relay")
                 reference_params = await self._relay_seedance2_references(
                     kwargs.get("references") or [],
                     log=log,
@@ -2446,7 +2446,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 try:
                     first_frame = await self._relay_frame_input(image_path)
                     if not image_path.startswith(("http://", "https://")):
-                        log("首帧已上传到媒体中转")
+                        log("First frame uploaded to media relay")
                 except Exception as exc:
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
@@ -2455,7 +2455,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 try:
                     last_frame = await self._relay_frame_input(str(last_frame_path))
                     if not str(last_frame_path).startswith(("http://", "https://")):
-                        log("尾帧已上传到媒体中转")
+                        log("Last frame uploaded to media relay")
                 except Exception as exc:
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
@@ -2477,7 +2477,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 try:
                     first_frame = await self._relay_frame_input(image_path)
                     if not image_path.startswith(("http://", "https://")):
-                        log("首帧已上传到媒体中转")
+                        log("First frame uploaded to media relay")
                 except Exception as exc:
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
@@ -2491,7 +2491,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         try:
             model_label = self._model_label(self.model)
             request_resolution = str(metadata.get("resolution") or self.resolution or "").strip()
-            log(f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})...")
+            log(f"Submitting DramaClawAPI video task ({model_label}, {duration}s, {request_resolution})...")
             progress(0.1)
             reservation_id = await _reserve_video_model_call(
                 self.model,
@@ -2514,7 +2514,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     error=f"No task_id in DramaClawAPI response: {submitted}",
                 )
             record_accepted(task_id)
-            log(f"任务已提交: {task_id}")
+            log(f"Task submitted: {task_id}")
             progress(0.2)
 
             for poll_count in range(max_polls):
@@ -2539,7 +2539,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             error=f"No video url in DramaClawAPI result: {task}",
                             task_id=task_id,
                         )
-                    log("视频生成完成，正在下载...")
+                    log("Video generation complete, downloading...")
                     await self._download_video(video_url, output_path)
                     provider_task_id = self._extract_provider_task_id(
                         task,
@@ -2559,7 +2559,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                 str(last_frame_output_path),
                             )
                             last_frame_path = last_frame_output_path.as_posix()
-                            log("已保存 DramaClawAPI 返回尾帧")
+                            log("Saved DramaClawAPI returned last frame")
                     progress(1.0)
                     update_request_status(task_id, "completed")
                     await _confirm_video_model_call(
@@ -2827,7 +2827,7 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
             data.add_field("image", image_bytes, filename=filename, content_type="image/png")
             async with session.post(f"{self.http_url}/upload/image", data=data) as response:
                 if response.status != 200:
-                    raise Exception(f"上传图片失败: {await response.text()}")
+                    raise Exception(f"Image upload failed: {await response.text()}")
                 return await response.json()
 
     async def _queue_prompt(self, workflow: dict, client_id: str) -> dict:
@@ -2836,7 +2836,7 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{self.http_url}/prompt", json=p) as response:
                 if response.status != 200:
-                    raise Exception(f"提交工作流失败: {await response.text()}")
+                    raise Exception(f"Workflow submission failed: {await response.text()}")
                 return await response.json()
 
     async def _get_history(self, prompt_id: str) -> dict:
@@ -2844,7 +2844,7 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{self.http_url}/history/{prompt_id}") as response:
                 if response.status != 200:
-                    raise Exception(f"获取历史失败: {await response.text()}")
+                    raise Exception(f"Failed to fetch history: {await response.text()}")
                 return await response.json()
 
     async def _download_video(self, filename: str, subfolder: str = "") -> bytes:
@@ -2854,7 +2854,7 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status != 200:
-                    raise Exception(f"下载视频失败: {await response.text()}")
+                    raise Exception(f"Video download failed: {await response.text()}")
                 return await response.read()
 
     async def generate(
@@ -2904,7 +2904,7 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         # 选择工作流
         if use_flf_mode:
             workflow_key = "fp8_flf"
-            mode_desc = "FLF (首尾帧过渡)"
+            mode_desc = "FLF (first-last frame transition)"
         elif self.workflow_type == "ltx23":
             workflow_key = "ltx23"
             mode_desc = "LTX 2.3 I2V"
@@ -2926,7 +2926,7 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
             }.get(workflow_key, "unknown")
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
-                error=f"工作流模板不存在: {workflow_path}",
+                error=f"Workflow template not found: {workflow_path}",
             )
 
         # 获取节点映射
@@ -2936,14 +2936,14 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         if not os.path.exists(image_path):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
-                error=f"首帧图片不存在: {image_path}",
+                error=f"First-frame image not found: {image_path}",
             )
 
         # 检查尾帧图片（FLF 模式）
         if use_flf_mode and not os.path.exists(last_frame_path):
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
-                error=f"尾帧图片不存在: {last_frame_path}",
+                error=f"Last-frame image not found: {last_frame_path}",
             )
 
         client_id = str(uuid.uuid4())
@@ -2954,29 +2954,29 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         if use_flf_mode:
             frames = self.FLF_FRAMES
             actual_duration = frames / self.FPS
-            log(f"开始生成视频 | 模式: {mode_desc} | 固定帧数: {frames} (~{actual_duration:.1f}s)")
+            log(f"Starting video generation | mode: {mode_desc} | fixed frames: {frames} (~{actual_duration:.1f}s)")
         else:
             fps = self.LTX23_FPS if workflow_key == "ltx23" else self.FPS
             frames = int(duration * fps) + 1  # +1 确保时长足够
-            log(f"开始生成视频 | 模式: {mode_desc} | 时长: {duration}s")
+            log(f"Starting video generation | mode: {mode_desc} | duration: {duration}s")
 
         try:
             # 1. 读取并上传图片
-            log("上传图片到 ComfyUI...")
+            log("Uploading image to ComfyUI...")
             with open(image_path, "rb") as f:
                 first_image_bytes = f.read()
             await self._upload_image(first_image_bytes, first_image_filename)
-            log(f"首帧已上传: {first_image_filename}")
+            log(f"First frame uploaded: {first_image_filename}")
 
             # FLF 模式：上传尾帧
             if use_flf_mode:
                 with open(last_frame_path, "rb") as f:
                     last_image_bytes = f.read()
                 await self._upload_image(last_image_bytes, last_image_filename)
-                log(f"尾帧已上传: {last_image_filename}")
+                log(f"Last frame uploaded: {last_image_filename}")
 
             # 2. 准备工作流
-            log("准备工作流...")
+            log("Preparing workflow...")
             workflow = json.loads(json.dumps(workflow_template))
 
             # 设置输入图片（根据工作流类型）
@@ -2989,26 +2989,26 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
                 workflow[node_map["input_image"]]["inputs"]["image"] = first_image_filename
                 # 设置帧数（PrimitiveInt.value）
                 workflow[node_map["frame_count"]]["inputs"]["value"] = frames
-                log(f"帧数: {frames} (duration={duration}s, fps={self.LTX23_FPS})")
+                log(f"Frames: {frames} (duration={duration}s, fps={self.LTX23_FPS})")
             elif workflow_key == "fp8_i2v":
                 # fp8 I2V 模式
                 workflow[node_map["input_image"]]["inputs"]["image"] = first_image_filename
                 # 设置帧数
                 workflow[node_map["frame_count"]]["inputs"]["Number"] = frames
-                log(f"帧数: {frames} (duration={duration}s, fps={self.FPS})")
+                log(f"Frames: {frames} (duration={duration}s, fps={self.FPS})")
             else:
                 # GGUF 模式
                 workflow[node_map["input_image"]]["inputs"]["image"] = first_image_filename
                 # 设置帧数（WanImageToVideo.length）
                 workflow[node_map["frame_count"]]["inputs"]["length"] = frames
-                log(f"帧数: {frames} (duration={duration}s, fps={self.FPS})")
+                log(f"Frames: {frames} (duration={duration}s, fps={self.FPS})")
 
             # 设置提示词（LTX23 用 "prompt" 字段，其余用 "text"）
             prompt_field = "prompt" if workflow_key == "ltx23" else "text"
             workflow[node_map["positive_prompt"]]["inputs"][prompt_field] = prompt or ""
             # 负向提示词保持默认（已在模板中设置）
             if prompt:
-                log(f"提示词: {prompt[:80]}{'...' if len(prompt) > 80 else ''}")
+                log(f"Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}")
 
             # 设置随机种子
             seed = random.randint(0, 0xFFFFFFFFFFFF)
@@ -3018,10 +3018,10 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
                 workflow[node_map["seed_low"]]["inputs"]["noise_seed"] = seed
             else:
                 workflow[node_map["seed"]]["inputs"]["noise_seed"] = seed
-            log(f"随机种子: {seed}")
+            log(f"Random seed: {seed}")
 
             # 3. 连接 WebSocket
-            log("连接 WebSocket...")
+            log("Connecting WebSocket...")
             ws_connect_url = f"{self.ws_url}/ws?clientId={client_id}"
             ws = await websockets.connect(
                 ws_connect_url,
@@ -3033,15 +3033,15 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
 
             try:
                 # 4. 提交工作流
-                log("提交工作流到队列...")
+                log("Submitting workflow to queue...")
                 result = await self._queue_prompt(workflow, client_id)
                 prompt_id = result.get("prompt_id")
                 if not prompt_id:
-                    raise Exception("未获取到 prompt_id")
+                    raise Exception("No prompt_id received")
                 log(f"prompt_id: {prompt_id}")
 
                 # 5. 监听 WebSocket 消息
-                log("等待 ComfyUI 执行...")
+                log("Waiting for ComfyUI execution...")
                 current_node = None
                 while True:
                     out = await ws.recv()
@@ -3054,33 +3054,33 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
                             if data.get("prompt_id") == prompt_id:
                                 node = data.get("node")
                                 if node is None:
-                                    log("推理完成!")
+                                    log("Inference complete!")
                                     break
                                 elif node != current_node:
                                     current_node = node
                                     node_title = (
                                         workflow.get(node, {}).get("_meta", {}).get("title", node)
                                     )
-                                    log(f"执行节点: {node_title}")
+                                    log(f"Executing node: {node_title}")
 
                         elif msg_type == "progress":
                             data = message.get("data", {})
                             value = data.get("value", 0)
                             max_val = data.get("max", 100)
                             pct = value / max_val * 100 if max_val > 0 else 0
-                            log(f"进度: {value}/{max_val} ({pct:.0f}%)")
+                            log(f"Progress: {value}/{max_val} ({pct:.0f}%)")
                             # 更新进度 (0.0 ~ 1.0)
                             progress(value / max_val if max_val > 0 else 0)
 
                         elif msg_type == "execution_error":
                             error_data = message.get("data", {})
-                            raise Exception(f"执行错误: {error_data}")
+                            raise Exception(f"Execution error: {error_data}")
 
             finally:
                 await ws.close()
 
             # 6. 获取输出文件名
-            log("获取输出文件...")
+            log("Fetching output files...")
             await asyncio.sleep(0.5)
 
             # 获取输出节点 ID
@@ -3097,25 +3097,25 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
                         video_output = outputs.get(output_node_id, {}).get("images", [])
                     if video_output:
                         break
-                log(f"重试 {retry + 1}/3: 等待历史记录...")
+                log(f"Retry {retry + 1}/3: waiting for history...")
                 await asyncio.sleep(1)
             else:
-                raise Exception(f"未找到视频输出 (节点 {output_node_id})")
+                raise Exception(f"No video output found (node {output_node_id})")
 
             video_info = video_output[0]
             video_filename = video_info.get("filename")
             video_subfolder = video_info.get("subfolder", "")
             log(
-                f"输出文件: {video_subfolder}/{video_filename}"
+                f"Output file: {video_subfolder}/{video_filename}"
                 if video_subfolder
-                else f"输出文件: {video_filename}"
+                else f"Output file: {video_filename}"
             )
 
             if not video_filename:
-                raise Exception("未找到视频文件名")
+                raise Exception("Video filename not found")
 
             # 7. 下载视频
-            log("下载视频...")
+            log("Downloading video...")
             video_bytes = await self._download_video(video_filename, video_subfolder)
 
             # 8. 保存到本地
@@ -3123,7 +3123,7 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
             with open(output_path, "wb") as f:
                 f.write(video_bytes)
 
-            log(f"视频已保存: {output_path} ({len(video_bytes) / 1024 / 1024:.2f} MB)")
+            log(f"Video saved: {output_path} ({len(video_bytes) / 1024 / 1024:.2f} MB)")
 
             return VideoGenResult(
                 status=VideoGenStatus.DONE,
@@ -3132,7 +3132,7 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
             )
 
         except Exception as e:
-            log(f"错误: {e}")
+            log(f"Error: {e}")
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error=str(e),
@@ -3273,13 +3273,13 @@ class Wan26VideoGenerator(VideoGeneratorBase):
                 else:
                     return f"{size_bytes}B"
 
-            log(f"图片压缩: {format_size(original_size)} → {format_size(compressed_size)}")
+            log(f"Image compressed: {format_size(original_size)} → {format_size(compressed_size)}")
 
             return temp_path
 
         except Exception as e:
             if on_log:
-                on_log(f"图片压缩失败，使用原图: {e}")
+                on_log(f"Image compression failed, using original: {e}")
             return None
 
     async def generate(
@@ -3327,7 +3327,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
             from dashscope import VideoSynthesis
             from http import HTTPStatus
         except ImportError:
-            log("错误: 请安装 dashscope SDK: pip install dashscope>=1.25.2")
+            log("Error: please install the dashscope SDK: pip install dashscope>=1.25.2")
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
                 error="dashscope SDK not installed",
@@ -3344,7 +3344,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
             # 首尾帧模式：固定 5 秒
             duration = self.KF2V_DURATION
             model = self.MODEL_KF2V
-            log(f"使用首尾帧模式 ({model})，固定时长 {duration:.0f}s")
+            log(f"Using first-last-frame mode ({model}), fixed duration {duration:.0f}s")
         else:
             # 普通 I2V 模式：限制时长在有效范围内
             model = self.MODEL_I2V
@@ -3352,7 +3352,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
             duration = max(self.MIN_DURATION, min(duration, self.MAX_DURATION))
             if duration != original_duration:
                 log(
-                    f"时长已调整: {original_duration:.1f}s -> {duration:.1f}s (API 限制 {self.MIN_DURATION}-{self.MAX_DURATION}s)"
+                    f"Duration adjusted: {original_duration:.1f}s -> {duration:.1f}s (API limit {self.MIN_DURATION}-{self.MAX_DURATION}s)"
                 )
 
         # 临时压缩文件列表，用于最后清理
@@ -3370,7 +3370,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
                 temp_files.append(compressed_path)
             else:
                 image_url = image_path
-            log(f"使用本地首帧: {image_path}")
+            log(f"Using local first frame: {image_path}")
         else:
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
@@ -3390,7 +3390,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
                     temp_files.append(compressed_path)
                 else:
                     last_frame_url = last_frame_path
-                log(f"使用本地尾帧: {last_frame_path}")
+                log(f"Using local last frame: {last_frame_path}")
             else:
                 return VideoGenResult(
                     status=VideoGenStatus.FAILED,
@@ -3398,8 +3398,8 @@ class Wan26VideoGenerator(VideoGeneratorBase):
                 )
 
         # 3. 提交任务
-        mode_desc = f"首尾帧模式 ({model})" if use_keyframe_mode else f"I2V 模式 ({model})"
-        log(f"正在提交视频生成任务 ({mode_desc}, {duration:.0f}s)...")
+        mode_desc = f"first-last-frame mode ({model})" if use_keyframe_mode else f"I2V mode ({model})"
+        log(f"Submitting video generation task ({mode_desc}, {duration:.0f}s)...")
         progress(0.1)
 
         try:
@@ -3431,7 +3431,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
                 )
 
             if rsp.status_code != 200:
-                log(f"任务提交失败: {rsp.code} - {rsp.message}")
+                log(f"Task submission failed: {rsp.code} - {rsp.message}")
                 for f in temp_files:
                     if os.path.exists(f):
                         os.remove(f)
@@ -3441,10 +3441,10 @@ class Wan26VideoGenerator(VideoGeneratorBase):
                 )
 
             task_id = rsp.output.task_id
-            log(f"任务已提交: {task_id}")
+            log(f"Task submitted: {task_id}")
 
         except Exception as e:
-            log(f"任务提交异常: {e}")
+            log(f"Task submission error: {e}")
             for f in temp_files:
                 if os.path.exists(f):
                     os.remove(f)
@@ -3459,7 +3459,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
             try:
                 rsp = VideoSynthesis.fetch(task=task_id, api_key=self.api_key)
             except Exception as e:
-                log(f"查询状态异常: {e}")
+                log(f"Status query error: {e}")
                 await asyncio.sleep(poll_interval)
                 continue
 
@@ -3471,7 +3471,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
                 task_status = rsp.output.task_status
 
                 if task_status == "SUCCEEDED":
-                    log("视频生成完成，正在下载...")
+                    log("Video generation complete, downloading...")
                     progress(0.9)
 
                     # 4. 下载视频
@@ -3479,7 +3479,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
                     if video_url:
                         success = await self._download_video(video_url, output_path)
                         if success:
-                            log(f"视频已保存: {output_path}")
+                            log(f"Video saved: {output_path}")
                             progress(1.0)
                             for f in temp_files:
                                 if os.path.exists(f):
@@ -3492,7 +3492,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
                                 duration_seconds=duration,
                             )
                         else:
-                            log("视频下载失败")
+                            log("Video download failed")
                             for f in temp_files:
                                 if os.path.exists(f):
                                     os.remove(f)
@@ -3502,7 +3502,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
                                 task_id=task_id,
                             )
                     else:
-                        log("API 未返回视频 URL")
+                        log("API did not return a video URL")
                         for f in temp_files:
                             if os.path.exists(f):
                                 os.remove(f)
@@ -3514,7 +3514,7 @@ class Wan26VideoGenerator(VideoGeneratorBase):
 
                 elif task_status == "FAILED":
                     error_msg = getattr(rsp.output, "message", "Unknown error")
-                    log(f"视频生成失败: {error_msg}")
+                    log(f"Video generation failed: {error_msg}")
                     for f in temp_files:
                         if os.path.exists(f):
                             os.remove(f)
@@ -3526,11 +3526,11 @@ class Wan26VideoGenerator(VideoGeneratorBase):
 
                 # PENDING, RUNNING - 继续轮询
                 if poll_count % 6 == 0:  # 每 30 秒输出一次
-                    log(f"正在生成中... ({task_status}, {poll_count}/{max_polls})")
+                    log(f"Generating... ({task_status}, {poll_count}/{max_polls})")
 
             await asyncio.sleep(poll_interval)
 
-        log("视频生成超时")
+        log("Video generation timed out")
         for f in temp_files:
             if os.path.exists(f):
                 os.remove(f)

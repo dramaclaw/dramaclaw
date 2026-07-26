@@ -244,9 +244,9 @@ class VolcengineImageGenerator:
 
         compressed_size = len(image_data)
         ratio = (1 - compressed_size / original_size) * 100
-        print(f"[Seedream压缩] {os.path.basename(image_path)}: "
+        print(f"[Seedream compress] {os.path.basename(image_path)}: "
               f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-              f"({ratio:.0f}% 压缩)", flush=True)
+              f"({ratio:.0f}% smaller)", flush=True)
 
         return base64.b64encode(image_data).decode(), "image/jpeg"
 
@@ -440,7 +440,7 @@ class VolcengineImageGenerator:
                     ref_base64, mime_type = self._compress_image(ref_path, quality=60)
                     data_url = f"data:{mime_type};base64,{ref_base64}"
                     image_urls.append(data_url)
-                    print(f"[Seedream] 添加参考图: {ref_path}", flush=True)
+                    print(f"[Seedream] Added reference image: {ref_path}", flush=True)
 
             # 获取风格预设
             style_preset = get_style_preset(self.default_style)
@@ -450,9 +450,9 @@ class VolcengineImageGenerator:
             if request.skip_prompt_enhancement:
                 # 跳过提示词增强，直接使用传入的 prompt
                 enhanced_prompt = request.prompt
-                print(f"[Seedream] 使用原始提示词（skip_prompt_enhancement=True）", flush=True)
+                print(f"[Seedream] Using raw prompt (skip_prompt_enhancement=True)", flush=True)
                 if image_urls:
-                    print(f"[Seedream] 参考图数量: {len(image_urls)}, strength={request.reference_scale}", flush=True)
+                    print(f"[Seedream] Reference image count: {len(image_urls)}, strength={request.reference_scale}", flush=True)
             elif image_urls and request.reference_prompts:
                 # 有参考图和角色描述时：显式映射每张参考图对应的角色
                 ref_mapping = "\n".join([
@@ -464,15 +464,15 @@ class VolcengineImageGenerator:
                     f"{ref_mapping}\n\n"
                     f"场景描述：{style_keywords}, {request.prompt}"
                 )
-                print(f"[Seedream] 使用 {len(image_urls)} 张参考图（含角色描述），strength={request.reference_scale}", flush=True)
-                print(f"[Seedream] 角色映射:\n{ref_mapping}", flush=True)
+                print(f"[Seedream] Using {len(image_urls)} reference images (with character descriptions), strength={request.reference_scale}", flush=True)
+                print(f"[Seedream] Character mapping:\n{ref_mapping}", flush=True)
             elif image_urls:
                 # 有参考图但没有描述（向后兼容）
                 enhanced_prompt = (
                     f"保持人物外观与参考图一致，使用参考图中的角色形象。"
                     f"{style_keywords}, {request.prompt}"
                 )
-                print(f"[Seedream] 使用 {len(image_urls)} 张参考图，strength={request.reference_scale}", flush=True)
+                print(f"[Seedream] Using {len(image_urls)} reference images, strength={request.reference_scale}", flush=True)
             else:
                 enhanced_prompt = f"{style_keywords}, {request.prompt}"
 
@@ -489,7 +489,7 @@ class VolcengineImageGenerator:
             # Seedream 草图渲染模式：完全禁用 negative_prompt
             # 避免任何词汇与草图参考产生语义冲突（仅 Seedream 模型适用此策略）
             if request.is_sketch_render:
-                print(f"[Seedream] 草图渲染模式: 完全禁用 negative_prompt (Seedream专用)", flush=True)
+                print(f"[Seedream] Sketch render mode: negative_prompt fully disabled (Seedream only)", flush=True)
                 # 不设置 negative_prompt
             else:
                 style_negative = style_preset.get("avoid_instructions", "")
@@ -509,14 +509,14 @@ class VolcengineImageGenerator:
 
             # === DEBUG: 打印完整请求参数 ===
             print("=" * 60, flush=True)
-            print("[Seedream DEBUG] 完整 API 请求参数:", flush=True)
+            print("[Seedream DEBUG] Full API request parameters:", flush=True)
             print(f"  model: {request_body.get('model')}", flush=True)
             print(f"  size: {request_body.get('size')}", flush=True)
             print(f"  strength: {request_body.get('strength', 'N/A')}", flush=True)
-            print(f"  image_urls 数量: {len(request_body.get('image_urls', []))}", flush=True)
+            print(f"  image_urls count: {len(request_body.get('image_urls', []))}", flush=True)
             print(f"  negative_prompt: {request_body.get('negative_prompt', 'N/A')[:100]}...", flush=True)
             print("-" * 60, flush=True)
-            print(f"[Seedream DEBUG] 完整 prompt:\n{request_body.get('prompt')}", flush=True)
+            print(f"[Seedream DEBUG] Full prompt:\n{request_body.get('prompt')}", flush=True)
             print("=" * 60, flush=True)
 
             reservation_id = await _reserve_image_model_call(
@@ -539,8 +539,8 @@ class VolcengineImageGenerator:
                 )
 
                 if response.status_code != 200:
-                    print(f"[Seedream] API 错误: {response.status_code}", flush=True)
-                    print(f"[Seedream] 错误响应: {response.text[:500]}", flush=True)
+                    print(f"[Seedream] API error: {response.status_code}", flush=True)
+                    print(f"[Seedream] Error response: {response.text[:500]}", flush=True)
                     raise Exception(f"API error: {response.status_code} - {response.text}")
 
                 result = response.json()
@@ -548,11 +548,11 @@ class VolcengineImageGenerator:
                 response_id = str(result.get("id") or "").strip()
 
                 # 诊断日志：打印响应结构
-                print(f"[Seedream] API 响应字段: {list(result.keys())}", flush=True)
+                print(f"[Seedream] API response fields: {list(result.keys())}", flush=True)
 
                 if "data" in result and len(result["data"]) > 0:
                     image_data = result["data"][0]
-                    print(f"[Seedream] data[0] 字段: {list(image_data.keys())}", flush=True)
+                    print(f"[Seedream] data[0] fields: {list(image_data.keys())}", flush=True)
 
                     # 尝试多个可能的字段名
                     image_base64 = (
@@ -564,8 +564,8 @@ class VolcengineImageGenerator:
 
                     # 验证 image_base64 不为空
                     if not image_base64:
-                        print(f"[Seedream] 警告: API 响应缺少图片数据!", flush=True)
-                        print(f"[Seedream] 完整响应: {result}", flush=True)
+                        print(f"[Seedream] Warning: API response missing image data!", flush=True)
+                        print(f"[Seedream] Full response: {result}", flush=True)
                         await _refund_image_model_call(
                             reservation_id,
                             source="seedream_image_request_api",
@@ -573,7 +573,7 @@ class VolcengineImageGenerator:
                         )
                         return ImageGenResult(
                             success=False,
-                            error="API 响应中没有图片数据（b64_json/b64/image 字段为空）",
+                            error="No image data in API response (b64_json/b64/image fields are empty)",
                             image_path=output_path,
                             generation_time=time.time() - start_time,
                         )
@@ -590,7 +590,7 @@ class VolcengineImageGenerator:
 
                 # 验证文件已创建且有效
                 if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-                    print(f"[Seedream] 错误: 文件保存失败或为空: {output_path}", flush=True)
+                    print(f"[Seedream] Error: file save failed or empty: {output_path}", flush=True)
                     await _refund_image_model_call(
                         reservation_id,
                         source="seedream_image_request_api",
@@ -598,12 +598,12 @@ class VolcengineImageGenerator:
                     )
                     return ImageGenResult(
                         success=False,
-                        error="图片保存失败或文件为空",
+                        error="Image save failed or file is empty",
                         image_path=output_path,
                         generation_time=time.time() - start_time,
                     )
 
-                print(f"[Seedream] 图片已保存: {output_path} ({os.path.getsize(output_path)} bytes)", flush=True)
+                print(f"[Seedream] Image saved: {output_path} ({os.path.getsize(output_path)} bytes)", flush=True)
 
             generation_time = time.time() - start_time
             await _confirm_image_model_call(
@@ -669,7 +669,7 @@ class VolcengineImageGenerator:
         if not os.path.exists(input_path):
             return ImageGenResult(
                 success=False,
-                error=f"输入文件不存在: {input_path}",
+                error=f"Input file does not exist: {input_path}",
                 generation_time=time.time() - start_time,
             )
 
@@ -711,7 +711,7 @@ class VolcengineImageGenerator:
             if style_negative:
                 request_body["negative_prompt"] = style_negative
 
-            print(f"[Seedream] 高清修复: {input_path} -> {target_width}x{target_height}, strength={strength}")
+            print(f"[Seedream] Upscale: {input_path} -> {target_width}x{target_height}, strength={strength}")
 
             reservation_id = await _reserve_image_model_call(
                 self.seedream_model,
@@ -755,7 +755,7 @@ class VolcengineImageGenerator:
                     f.write(base64.b64decode(image_base64))
 
             generation_time = time.time() - start_time
-            print(f"[Seedream] 高清修复完成: {output_path}, 耗时 {generation_time:.1f}s")
+            print(f"[Seedream] Upscale complete: {output_path}, took {generation_time:.1f}s")
             await _confirm_image_model_call(
                 model=self.seedream_model,
                 reservation_id=reservation_id,
@@ -809,7 +809,7 @@ class VolcengineImageGenerator:
         if not os.path.exists(input_path):
             return ImageGenResult(
                 success=False,
-                error=f"输入文件不存在: {input_path}",
+                error=f"Input file does not exist: {input_path}",
                 generation_time=time.time() - start_time,
             )
 
@@ -833,7 +833,7 @@ class VolcengineImageGenerator:
             if seed:
                 request_body["seed"] = seed
 
-            print(f"[SeedEdit] 图像编辑: {input_path}, prompt={prompt[:50]}...", flush=True)
+            print(f"[SeedEdit] Image edit: {input_path}, prompt={prompt[:50]}...", flush=True)
             print(f"[SeedEdit] model={self.seededit_model}, guidance_scale={guidance_scale}", flush=True)
 
             reservation_id = await _reserve_image_model_call(
@@ -851,33 +851,33 @@ class VolcengineImageGenerator:
 
                 if response.status_code != 200:
                     error_text = response.text[:500]
-                    print(f"[SeedEdit] API 错误: {response.status_code} - {error_text}", flush=True)
+                    print(f"[SeedEdit] API error: {response.status_code} - {error_text}", flush=True)
                     raise Exception(f"API error: {response.status_code} - {error_text}")
 
                 result = response.json()
                 provider_request_id = _provider_request_id_from_response(response, result)
                 response_id = str(result.get("id") or "").strip()
-                print(f"[SeedEdit] API 响应字段: {list(result.keys())}", flush=True)
+                print(f"[SeedEdit] API response fields: {list(result.keys())}", flush=True)
 
                 if "data" not in result or len(result["data"]) == 0:
                     raise Exception(f"No image data in response: {result}")
 
                 image_data = result["data"][0]
-                print(f"[SeedEdit] data[0] 字段: {list(image_data.keys())}", flush=True)
+                print(f"[SeedEdit] data[0] fields: {list(image_data.keys())}", flush=True)
 
                 # 优先用 b64_json，否则从 URL 下载
                 image_base64 = image_data.get("b64_json") or image_data.get("b64") or ""
                 image_url = image_data.get("url", "")
 
                 if not image_base64 and image_url:
-                    print(f"[SeedEdit] 从 URL 下载结果图...", flush=True)
+                    print(f"[SeedEdit] Downloading result image from URL...", flush=True)
                     dl_response = await client.get(image_url, timeout=60.0)
                     if dl_response.status_code != 200:
-                        raise Exception(f"下载结果图失败: {dl_response.status_code}")
+                        raise Exception(f"Failed to download result image: {dl_response.status_code}")
                     image_bytes = dl_response.content
                     image_base64 = base64.b64encode(image_bytes).decode()
                 elif not image_base64:
-                    raise Exception(f"API 响应中无图片数据 (无 b64_json/url): {list(image_data.keys())}")
+                    raise Exception(f"No image data in API response (no b64_json/url): {list(image_data.keys())}")
 
             # 保存文件
             if output_path and image_base64:
@@ -886,10 +886,10 @@ class VolcengineImageGenerator:
                     os.makedirs(output_dir, exist_ok=True)
                 with open(output_path, "wb") as f:
                     f.write(base64.b64decode(image_base64))
-                print(f"[SeedEdit] 图片已保存: {output_path} ({os.path.getsize(output_path)} bytes)", flush=True)
+                print(f"[SeedEdit] Image saved: {output_path} ({os.path.getsize(output_path)} bytes)", flush=True)
 
             generation_time = time.time() - start_time
-            print(f"[SeedEdit] 编辑完成, 耗时 {generation_time:.1f}s", flush=True)
+            print(f"[SeedEdit] Edit complete, took {generation_time:.1f}s", flush=True)
             await _confirm_image_model_call(
                 model=self.seededit_model,
                 reservation_id=reservation_id,
@@ -905,7 +905,7 @@ class VolcengineImageGenerator:
             )
 
         except Exception as e:
-            print(f"[SeedEdit] 异常: {e}", flush=True)
+            print(f"[SeedEdit] Error: {e}", flush=True)
             await _refund_image_model_call(
                 reservation_id,
                 source="seededit_image_api",
@@ -1168,17 +1168,17 @@ async def generate_character_reference_unified(
             if result.success:
                 return result.reference_paths
             else:
-                print(f"[Character] NanoBanana 生成失败: {result.error}")
+                print(f"[Character] NanoBanana generation failed: {result.error}")
                 if is_insufficient_credits_error(message=result.error or ""):
                     raise RuntimeError("INSUFFICIENT_CREDITS")
                 if raise_on_error:
-                    raise RuntimeError(result.error or "NanoBanana 生成失败")
+                    raise RuntimeError(result.error or "NanoBanana generation failed")
                 return []  # 失败就是失败，不回退
         except ImportError as e:
-            print(f"[Character] 无法导入 NanoBanana 生成器: {e}")
+            print(f"[Character] Failed to import NanoBanana generator: {e}")
             return []
         except ValueError as e:
-            print(f"[Character] NanoBanana 配置错误: {e}")
+            print(f"[Character] NanoBanana configuration error: {e}")
             return []
 
     if model in IMAGE_GENERATION_SELECTIONS:
@@ -1203,17 +1203,17 @@ async def generate_character_reference_unified(
 
             if result.success:
                 return result.reference_paths
-            print(f"[Character] {model} 生成失败: {result.error}")
+            print(f"[Character] {model} generation failed: {result.error}")
             if is_insufficient_credits_error(message=result.error or ""):
                 raise RuntimeError("INSUFFICIENT_CREDITS")
             if raise_on_error:
-                raise RuntimeError(result.error or f"{model} 生成失败")
+                raise RuntimeError(result.error or f"{model} generation failed")
             return []
         except ImportError as e:
-            print(f"[Character] 无法导入统一角色生成器: {e}")
+            print(f"[Character] Failed to import unified character generator: {e}")
             return []
         except ValueError as e:
-            print(f"[Character] {model} 配置错误: {e}")
+            print(f"[Character] {model} configuration error: {e}")
             return []
 
     if model == "seedream":
@@ -1229,7 +1229,7 @@ async def generate_character_reference_unified(
                 project_dir=project_dir,
             )
         except ValueError as e:
-            print(f"[Character] Seedream 配置错误: {e}，使用 Mock")
+            print(f"[Character] Seedream configuration error: {e}; using Mock")
             generator = MockImageGenerator()
             return await generator.generate_character_reference(
                 character_name=character_name,
@@ -1322,14 +1322,14 @@ async def generate_identity_image_unified(
                 if is_insufficient_credits_error(message=result.error or ""):
                     raise RuntimeError("INSUFFICIENT_CREDITS")
                 if raise_on_error:
-                    raise RuntimeError(result.error or "身份图生成失败")
+                    raise RuntimeError(result.error or "Identity image generation failed")
             return result.success
 
         except ImportError as e:
-            print(f"[Identity] 无法导入 NanoBanana 生成器: {e}")
+            print(f"[Identity] Failed to import NanoBanana generator: {e}")
             return False
         except ValueError as e:
-            print(f"[Identity] NanoBanana 配置错误: {e}")
+            print(f"[Identity] NanoBanana configuration error: {e}")
             return False
 
     if model in IMAGE_GENERATION_SELECTIONS:
@@ -1362,17 +1362,17 @@ async def generate_identity_image_unified(
                 if is_insufficient_credits_error(message=result.error or ""):
                     raise RuntimeError("INSUFFICIENT_CREDITS")
                 if raise_on_error:
-                    raise RuntimeError(result.error or f"{model} 身份图生成失败")
+                    raise RuntimeError(result.error or f"{model} identity image generation failed")
             return result.success
         except ImportError as e:
-            print(f"[Identity] 无法导入统一角色生成器: {e}")
+            print(f"[Identity] Failed to import unified character generator: {e}")
             return False
         except ValueError as e:
-            print(f"[Identity] {model} 配置错误: {e}")
+            print(f"[Identity] {model} configuration error: {e}")
             return False
 
     # Seedream 或其他模型：回退到原来的逻辑（不支持 Identity Locking）
-    print(f"[Identity] {model} 不支持 Identity Locking，使用独立生成")
+    print(f"[Identity] {model} does not support Identity Locking; using standalone generation")
     import os
     output_dir = os.path.dirname(output_path)
     paths = await generate_character_reference_unified(
@@ -1396,5 +1396,5 @@ async def generate_identity_image_unified(
             shutil.copy(first, output_path)
         return True
     if raise_on_error:
-        raise RuntimeError("身份图生成失败")
+        raise RuntimeError("Identity image generation failed")
     return False

@@ -234,7 +234,7 @@ def build_background_anchors_payload(
             "display_reference": None,
             "render_input": None,
             "anchors": [],
-            "error": "当前 Beat 没有关联场景，不能选择背景",
+            "error": "This beat has no associated scene, so a background cannot be selected",
         }
 
     render_input = build_background_reference_payload(
@@ -319,7 +319,7 @@ def select_background_anchor(
 ) -> dict[str, Any]:
     scene_name = beat_background_scene_name(beat)
     if not scene_name:
-        raise BackgroundAnchorError("当前 Beat 没有关联场景，不能选择背景")
+        raise BackgroundAnchorError("This beat has no associated scene, so a background cannot be selected")
 
     normalized = normalize_background_anchor_id(anchor_id)
     if normalized not in set(BACKGROUND_SOURCE_ANCHORS):
@@ -334,7 +334,7 @@ def select_background_anchor(
             anchor_id=normalized,
         )
         if not source_path or not source_path.exists():
-            raise BackgroundAnchorError(f"{background_anchor_label(normalized)} 背景图不存在")
+            raise BackgroundAnchorError(f"{background_anchor_label(normalized)} background image does not exist")
         copy_to_beat_selected_background(project_dir, int(episode_num), int(beat_num), source_path)
         source_anchor = normalized
     else:
@@ -344,7 +344,7 @@ def select_background_anchor(
             int(beat_num),
         )
         if not selected_path.exists():
-            raise BackgroundAnchorError("当前 beat 还没有 selected_background.png")
+            raise BackgroundAnchorError("This beat does not have a selected_background.png yet")
         source_anchor = ANCHOR_SELECTED_BACKGROUND
 
     _set_selected_background_ref(beat, scene_name=scene_name, source_anchor_id=source_anchor)
@@ -375,7 +375,7 @@ def crop_background_anchor_to_selected(
 ) -> dict[str, Any]:
     scene_name = beat_background_scene_name(beat)
     if not scene_name:
-        raise BackgroundAnchorError("当前 Beat 没有关联场景，不能裁剪背景参考")
+        raise BackgroundAnchorError("This beat has no associated scene, so the background reference cannot be cropped")
 
     normalized = normalize_background_anchor_id(anchor_id)
     if normalized not in SNAPSHOT_SOURCE_ANCHORS:
@@ -389,7 +389,7 @@ def crop_background_anchor_to_selected(
         anchor_id=normalized,
     )
     if not source_path or not source_path.exists():
-        raise BackgroundAnchorError(f"{background_anchor_label(normalized)} 背景图不存在")
+        raise BackgroundAnchorError(f"{background_anchor_label(normalized)} background image does not exist")
 
     crop_to_beat_selected_background(
         project_dir,
@@ -428,7 +428,7 @@ def save_uploaded_background_anchor_image(
 ) -> dict[str, Any]:
     scene_name = beat_background_scene_name(beat)
     if not scene_name:
-        raise BackgroundAnchorError("当前 Beat 没有关联场景，不能上传背景参考")
+        raise BackgroundAnchorError("This beat has no associated scene, so a background reference cannot be uploaded")
 
     selected_path = canonical_beat_selected_background_path(
         project_dir,

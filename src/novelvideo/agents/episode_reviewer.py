@@ -308,8 +308,8 @@ class EpisodePlanReviewer:
                 EpisodePlanIssue(
                     issue_type=EpisodePlanIssueType.CHAPTER_GAP,
                     severity="critical",
-                    message="分集规划为空",
-                    suggestion="需要生成分集规划",
+                    message="Episode plan is empty",
+                    suggestion="An episode plan needs to be generated",
                 )
             ], coverage_info
 
@@ -326,8 +326,8 @@ class EpisodePlanReviewer:
                         issue_type=EpisodePlanIssueType.CHAPTER_GAP,
                         severity="critical",
                         episode_number=ep.number,
-                        message=f"第 {ep.number} 集章节范围无效: {ep.chapter_start}-{ep.chapter_end}",
-                        suggestion="chapter_start 应该 <= chapter_end",
+                        message=f"Episode {ep.number} has an invalid chapter range: {ep.chapter_start}-{ep.chapter_end}",
+                        suggestion="chapter_start should be <= chapter_end",
                     )
                 )
                 penalty += 2.0
@@ -338,8 +338,8 @@ class EpisodePlanReviewer:
                         issue_type=EpisodePlanIssueType.CHAPTER_OUT_OF_RANGE,
                         severity="critical",
                         episode_number=ep.number,
-                        message=f"第 {ep.number} 集结束章节 {ep.chapter_end} 超出总章节数 {total_chapters}",
-                        suggestion=f"调整章节范围不超过 {total_chapters}",
+                        message=f"Episode {ep.number} end chapter {ep.chapter_end} exceeds the total chapter count {total_chapters}",
+                        suggestion=f"Adjust the chapter range to not exceed {total_chapters}",
                     )
                 )
                 penalty += 1.5
@@ -350,8 +350,8 @@ class EpisodePlanReviewer:
                         issue_type=EpisodePlanIssueType.CHAPTER_OUT_OF_RANGE,
                         severity="critical",
                         episode_number=ep.number,
-                        message=f"第 {ep.number} 集起始章节 {ep.chapter_start} 小于 1",
-                        suggestion="章节编号从 1 开始",
+                        message=f"Episode {ep.number} start chapter {ep.chapter_start} is less than 1",
+                        suggestion="Chapter numbering starts at 1",
                     )
                 )
                 penalty += 1.5
@@ -367,8 +367,8 @@ class EpisodePlanReviewer:
                             issue_type=EpisodePlanIssueType.CHAPTER_GAP,
                             severity="critical",
                             episode_number=ep.number,
-                            message=f"第 {ep.number} 集和第 {next_ep.number} 集之间缺少第 {gap_start}-{gap_end} 章",
-                            suggestion=f"扩展相邻剧集的章节范围",
+                            message=f"Chapters {gap_start}-{gap_end} are missing between episode {ep.number} and episode {next_ep.number}",
+                            suggestion=f"Extend the chapter range of the adjacent episodes",
                         )
                     )
                     penalty += 2.0
@@ -379,8 +379,8 @@ class EpisodePlanReviewer:
                             issue_type=EpisodePlanIssueType.CHAPTER_OVERLAP,
                             severity="critical",
                             episode_number=ep.number,
-                            message=f"第 {ep.number} 集和第 {next_ep.number} 集章节重叠",
-                            suggestion="调整章节边界，避免重叠",
+                            message=f"Episode {ep.number} and episode {next_ep.number} have overlapping chapters",
+                            suggestion="Adjust chapter boundaries to avoid overlap",
                         )
                     )
                     penalty += 2.0
@@ -416,8 +416,8 @@ class EpisodePlanReviewer:
                 EpisodePlanIssue(
                     issue_type=EpisodePlanIssueType.CHAPTER_GAP,
                     severity=severity,
-                    message=f"缺少 {len(missing)} 章内容: {missing_ranges}",
-                    suggestion="扩展相邻剧集的章节范围以覆盖缺失章节",
+                    message=f"Missing {len(missing)} chapters of content: {missing_ranges}",
+                    suggestion="Extend the chapter range of adjacent episodes to cover the missing chapters",
                 )
             )
 
@@ -457,8 +457,8 @@ class EpisodePlanReviewer:
                 EpisodePlanIssue(
                     issue_type=EpisodePlanIssueType.INVALID_CHARACTER,
                     severity="warning",
-                    message=f"角色 '{char}' 不在已分析的角色列表中 (出现在第 {episodes_str} 集)",
-                    suggestion=f"使用已分析的角色名",
+                    message=f"Character '{char}' is not in the analyzed character list (appears in episode {episodes_str})",
+                    suggestion=f"Use an analyzed character name",
                 )
             )
 
@@ -516,7 +516,7 @@ class EpisodePlanReviewer:
         missing = coverage_info.get("missing", [])
 
         if not covered:
-            return "无覆盖"
+            return "No coverage"
 
         min_ch = min(covered)
         max_ch = max(covered)
@@ -525,7 +525,7 @@ class EpisodePlanReviewer:
             return f"{min_ch}-{max_ch}"
         else:
             missing_str = self._ranges_to_str(missing)
-            return f"{min_ch}-{max_ch} (缺 {missing_str})"
+            return f"{min_ch}-{max_ch} (missing {missing_str})"
 
     def _generate_summary(
         self,
@@ -540,18 +540,18 @@ class EpisodePlanReviewer:
 
         avg_score = sum(scores.values()) / len(scores) if scores else 0
         if avg_score >= 8:
-            parts.append("规则检查通过")
+            parts.append("Rule check passed")
         elif avg_score >= 6:
-            parts.append("规则检查一般")
+            parts.append("Rule check acceptable")
         else:
-            parts.append("规则检查较差")
+            parts.append("Rule check poor")
 
         if critical_count > 0:
-            parts.append(f"{critical_count} 个严重问题")
+            parts.append(f"{critical_count} critical issue(s)")
         if warning_count > 0:
-            parts.append(f"{warning_count} 个警告")
+            parts.append(f"{warning_count} warning(s)")
 
-        return "，".join(parts) + "。" if parts else "审核完成。"
+        return ", ".join(parts) + "." if parts else "Review complete."
 
 
 def create_episode_plan_reviewer() -> EpisodePlanReviewer:

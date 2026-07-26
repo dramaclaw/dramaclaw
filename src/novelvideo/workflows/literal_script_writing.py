@@ -258,7 +258,7 @@ class LiteralBeatMetaOutput(BaseModel):
     def validate_audio_type(cls, value: str) -> str:
         audio_type = (value or "").strip()
         if audio_type not in {"silence", "narration", "dialogue"}:
-            raise ValueError("audio_type 必须是 silence/narration/dialogue")
+            raise ValueError("audio_type must be silence/narration/dialogue")
         return audio_type
 
     @field_validator("speaker_kind")
@@ -266,13 +266,13 @@ class LiteralBeatMetaOutput(BaseModel):
     def validate_speaker_kind(cls, value: str) -> str:
         speaker_kind = (value or "").strip()
         if speaker_kind not in {"character", "non_character"}:
-            raise ValueError("speaker_kind 只能是 character 或 non_character")
+            raise ValueError("speaker_kind must be either character or non_character")
         return speaker_kind
 
     @model_validator(mode="after")
     def validate_dialogue_speaker(self) -> "LiteralBeatMetaOutput":
         if self.audio_type == "dialogue" and not (self.speaker or "").strip():
-            raise ValueError("audio_type=dialogue 时必须填写 speaker")
+            raise ValueError("speaker is required when audio_type=dialogue")
         if self.audio_type in {"silence", "narration"}:
             self.speaker = ""
             self.speaker_kind = "character"
@@ -389,7 +389,7 @@ class LiteralScriptWritingWorkflow:
         self._scene_section = ""
         self._prop_section = ""
         self.last_review_passed = True
-        self.last_review_summary = "逐行剧本模式"
+        self.last_review_summary = "Line-by-line script mode"
 
     @property
     def agent(self) -> Agent:
@@ -444,12 +444,12 @@ class LiteralScriptWritingWorkflow:
         self._scene_section = ""
         self._prop_section = ""
         self.last_review_passed = True
-        self.last_review_summary = "逐行剧本模式"
+        self.last_review_summary = "Line-by-line script mode"
 
         await self.cognee_store.load_graph_state()
         episode = await self.sqlite_store.get_episode_from_graph(episode_num)
         if not episode:
-            raise ValueError(f"未找到第 {episode_num} 集规划")
+            raise ValueError(f"No plan found for episode {episode_num}")
 
         if source_text is None:
             source_text = (
@@ -459,7 +459,7 @@ class LiteralScriptWritingWorkflow:
                 or ""
             )
         if not source_text.strip():
-            raise ValueError("当前集原文为空，无法逐行生成脚本")
+            raise ValueError("This episode's source text is empty; cannot generate a line-by-line script")
 
         quality_report = check_screenplay_import_quality(source_text)
         for issue in quality_report.blocking_issues:
@@ -482,7 +482,7 @@ class LiteralScriptWritingWorkflow:
 
         lines = split_literal_source_text(source_text)
         if not lines:
-            raise ValueError("原文无法切分出有效行")
+            raise ValueError("Could not split the source text into valid lines")
 
         scene_blocks = self._build_scene_blocks(lines)
         for block_index, block in enumerate(scene_blocks):
@@ -499,10 +499,10 @@ class LiteralScriptWritingWorkflow:
             )
         line_contexts = self._build_scene_line_contexts(scene_blocks, source_lines=lines)
         if not line_contexts:
-            raise ValueError("原文无法切分出有效场次内容")
+            raise ValueError("Could not split the source text into valid scene content")
 
-        report_progress(0.05, "按行切分剧本...")
-        log(f"[Literal] 共切分出 {len(lines)} 行，识别 {len(scene_blocks)} 个场次块")
+        report_progress(0.05, "Splitting script by line...")
+        log(f"[Literal] Split into {len(lines)} lines, identified {len(scene_blocks)} scene blocks")
 
         beats: list[VisualBeat] = []
         total = max(1, len(line_contexts))
@@ -544,7 +544,7 @@ class LiteralScriptWritingWorkflow:
             current_time_of_day = block.time_of_day
 
             report_progress(
-                0.08 + ((content_index - 1) / total) * 0.82, f"生成第 {content_index}/{total} 行..."
+                0.08 + ((content_index - 1) / total) * 0.82, f"Generating line {content_index}/{total}..."
             )
 
             block_ctx = block.context
@@ -653,9 +653,9 @@ class LiteralScriptWritingWorkflow:
                 ):
                     log(message)
                 raise RuntimeError(
-                    f"第 {content_index}/{total} 行触发模型内容安全过滤，剧本生成已停止。"
-                    "请检查该行及前后文是否包含血腥、暴力、胁迫、裸露等高风险表达，"
-                    "或在 RelayClaw 中切换更适合剧本创作的文本模型后重试。"
+                    f"Line {content_index}/{total} triggered the model's content safety filter; script generation has stopped. "
+                    "Check whether this line and its surrounding context contain high-risk content such as gore, violence, coercion, or nudity, "
+                    "or switch to a text model better suited to script writing in RelayClaw and retry."
                 ) from exc
             output: LiteralBeatMetaOutput = result.output
 
@@ -667,19 +667,19 @@ class LiteralScriptWritingWorkflow:
                 elif llm_scene_id and llm_scene_id != current_scene_id:
                     log(
                         f"[Literal][WARN] beat {len(beats) + 1} scene_id `{llm_scene_id}` "
-                        f"不属于当前场次候选，回落 `{current_scene_id}`"
+                        f"is not among the current scene's candidates; falling back to `{current_scene_id}`"
                     )
             else:
                 if llm_scene_id and llm_scene_id in self._valid_scene_ids:
                     resolved_scene_id = llm_scene_id
                     log(
-                        f"[Literal] beat {len(beats) + 1} scene_id 字符串匹配失败，"
-                        f"LLM 兜底选用 `{llm_scene_id}`（block.location={current_scene_label!r}）"
+                        f"[Literal] beat {len(beats) + 1} scene_id string match failed; "
+                        f"LLM fallback selected `{llm_scene_id}` (block.location={current_scene_label!r})"
                     )
                 else:
                     log(
-                        f"[Literal][WARN] beat {len(beats) + 1} scene_id 留空 "
-                        f"(block.location={current_scene_label!r}, LLM 输出={llm_scene_id!r})"
+                        f"[Literal][WARN] beat {len(beats) + 1} scene_id left empty "
+                        f"(block.location={current_scene_label!r}, LLM output={llm_scene_id!r})"
                     )
             time_of_day = (current_time_of_day or "").strip()
             visual_description = output.visual_description.strip()
@@ -718,7 +718,7 @@ class LiteralScriptWritingWorkflow:
                     block_sticky_identities[char_name] = identity_id
                 if char_name and char_name not in episode_sticky_identities:
                     episode_sticky_identities[char_name] = identity_id
-            log(f"[Literal] 行 {content_index}/{total} -> {audio_type}")
+            log(f"[Literal] line {content_index}/{total} -> {audio_type}")
 
         self._valid_identity_ids.clear()
         self._valid_identity_ids.update(episode_identity_ids)
@@ -731,9 +731,9 @@ class LiteralScriptWritingWorkflow:
             beats=beats,
             total_duration_seconds=0.0,
         )
-        report_progress(0.93, "保存脚本...")
+        report_progress(0.93, "Saving script...")
         await self.cognee_store.persist_narration_script(script)
-        report_progress(1.0, "完成")
+        report_progress(1.0, "Done")
         return script
 
     async def run_all_episodes(self) -> list[NarrationScript]:
@@ -982,20 +982,20 @@ class LiteralScriptWritingWorkflow:
                     candidate_identity_ids.add(default_identity_id)
                     if on_log:
                         on_log(
-                            f"[Literal Block] 默认身份回退: "
+                            f"[Literal Block] Default identity fallback: "
                             f"{character_name} -> {default_identity_id}"
                         )
                 else:
                     candidate_identity_ids.update(identity_ids)
                     if on_log:
                         on_log(
-                            f"[Literal Block] 身份无法区分（无 identity_name 文本证据）: "
+                            f"[Literal Block] Identity could not be disambiguated (no identity_name text evidence): "
                             f"{character_name} -> {', '.join(sorted(identity_ids))}"
                         )
 
         identity_fallback_reason = ""
         if not candidate_identity_ids and explicit_character_tokens:
-            identity_fallback_reason = "身份候选为空，回退本集身份池: " + ", ".join(
+            identity_fallback_reason = "No identity candidates; falling back to this episode's identity pool: " + ", ".join(
                 sorted(explicit_character_tokens)
             )
 
@@ -1155,50 +1155,50 @@ class LiteralScriptWritingWorkflow:
         source_line_number = int(getattr(line_ctx, "source_line_number", 0) or 0)
         block = line_ctx.scene_block
         source_line_label = (
-            f"源文本第 {source_line_number} 行，" if source_line_number > 0 else ""
+            f"source text line {source_line_number}, " if source_line_number > 0 else ""
         )
         context_text = "\n".join([prev_line, current_line, next_line])
         hint_matches = _content_filter_hint_matches(context_text)
         messages = [
             (
-                f"[Literal][ERROR] 第 {content_index}/{total} 行生成失败："
-                "上游文本模型触发内容安全过滤(content_filter)，未返回可解析剧本内容。"
+                f"[Literal][ERROR] Line {content_index}/{total} failed to generate: "
+                "the upstream text model triggered its content safety filter (content_filter) and returned no parseable script content."
             ),
             (
-                f"[Literal][ERROR] 需修改行（{source_line_label}内容行 {content_index}/{total}）: "
+                f"[Literal][ERROR] Line to revise ({source_line_label}content line {content_index}/{total}): "
                 f"{_short_log_text(current_line, limit=300)}"
             ),
         ]
         if block.header_line or block.location:
             messages.append(
-                "[Literal][ERROR] 所属场次: "
+                "[Literal][ERROR] Scene: "
                 f"{_short_log_text(block.header_line or block.location, limit=180)}"
             )
         if prev_line or next_line:
             messages.append(
-                "[Literal][ERROR] 前后文: "
-                f"上一行={_short_log_text(prev_line, limit=180) or '无'}；"
-                f"下一行={_short_log_text(next_line, limit=180) or '无'}"
+                "[Literal][ERROR] Context: "
+                f"previous line={_short_log_text(prev_line, limit=180) or 'none'}; "
+                f"next line={_short_log_text(next_line, limit=180) or 'none'}"
             )
         if hint_matches:
             messages.append(
-                f"[Literal][ERROR] 第 {content_index}/{total} 行附近包含疑似高风险表达: "
-                + "；".join(hint_matches)
+                f"[Literal][ERROR] Suspected high-risk content found near line {content_index}/{total}: "
+                + "; ".join(hint_matches)
             )
         else:
             messages.append(
-                f"[Literal][ERROR] 第 {content_index}/{total} 行附近未识别到明确疑似词，"
-                "但模型仍判定输入或潜在输出不符合安全策略。"
+                f"[Literal][ERROR] No clearly suspect terms were detected near line {content_index}/{total}, "
+                "but the model still judged the input or potential output to violate its safety policy."
             )
         messages.append(
-            "[Literal][ERROR] 建议：弱化该行及前后文中的血腥、暴力、胁迫、裸露等表达，"
-            "或在 RelayClaw 中将该内部文本模型切换到更适合剧本创作的上游模型后重试。"
+            "[Literal][ERROR] Suggestion: tone down any gore, violence, coercion, or nudity in this line and its context, "
+            "or switch this internal text model to an upstream model better suited to script writing in RelayClaw and retry."
         )
         messages.append(
-            "[Literal][ERROR] 说明：上游模型不会返回精确违规规则；以上行号和疑似表达"
-            "是 Dramaclaw 根据本次请求上下文本地定位，供修改剧本时参考。"
+            "[Literal][ERROR] Note: the upstream model does not return the exact rule violated; the line numbers and suspected "
+            "content above were located locally by Dramaclaw from this request's context, for reference when revising the script."
         )
-        messages.append(f"[Literal][ERROR] 原始模型错误: {_short_log_text(str(error), limit=180)}")
+        messages.append(f"[Literal][ERROR] Original model error: {_short_log_text(str(error), limit=180)}")
         return messages
 
     def _audio_type_mode_instruction(self) -> str:

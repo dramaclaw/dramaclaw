@@ -345,10 +345,10 @@ def print_tool_stats() -> None:
     """打印工具调用统计摘要。"""
     stats = get_tool_stats()
     if not stats:
-        console.print("[dim]暂无工具调用统计[/dim]")
+        console.print("[dim]No tool call statistics yet[/dim]")
         return
 
-    console.print("\n[bold]工具调用统计[/bold]")
+    console.print("\n[bold]Tool Call Statistics[/bold]")
     console.print("-" * 70)
 
     # 按调用次数排序
@@ -360,9 +360,9 @@ def print_tool_stats() -> None:
         )
         console.print(
             f"  {tool_name:30} "
-            f"调用: {s['call_count']:3}  "
-            f"成功: {success_rate:5.1f}%  "
-            f"平均: {s['avg_duration_ms']:7.1f}ms"
+            f"calls: {s['call_count']:3}  "
+            f"success: {success_rate:5.1f}%  "
+            f"avg: {s['avg_duration_ms']:7.1f}ms"
         )
 
     console.print("-" * 70)
@@ -386,4 +386,4 @@ def export_trace_log(path: str) -> None:
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(export_data, f, ensure_ascii=False, indent=2, default=str)
 
-    console.print(f"[green]日志已导出到: {path}[/green]")
+    console.print(f"[green]Logs exported to: {path}[/green]")

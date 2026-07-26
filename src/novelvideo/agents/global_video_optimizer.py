@@ -235,9 +235,9 @@ class GlobalVideoPromptOptimizer:
         compressed_size = len(image_bytes)
         ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
         print(
-            f"[GlobalVideoOptimizer] 压缩图片: {os.path.basename(image_path)}: "
+            f"[GlobalVideoOptimizer] compressing image: {os.path.basename(image_path)}: "
             f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-            f"({ratio:.0f}% 压缩)"
+            f"({ratio:.0f}% smaller)"
         )
         return image_bytes
 
@@ -370,7 +370,7 @@ Output JSON array with one element directly."""
 
         # Load and compress the sketch image
         if not os.path.exists(sketch_image_path):
-            raise RuntimeError(f"草图帧不存在: {sketch_image_path}")
+            raise RuntimeError(f"Sketch frame not found: {sketch_image_path}")
 
         image_bytes = self._compress_image(sketch_image_path)
         image_content = BinaryContent(data=image_bytes, media_type="image/jpeg")
@@ -384,11 +384,11 @@ Output JSON array with one element directly."""
         response = await agent.run(user_prompt)
 
         if not response.output:
-            raise RuntimeError(f"Beat {bn}: AI 返回空内容")
+            raise RuntimeError(f"Beat {bn}: AI returned empty content")
 
         strategies: list[BeatVideoStrategy] = response.output
         if not strategies:
-            raise RuntimeError(f"Beat {bn}: AI 返回空数组")
+            raise RuntimeError(f"Beat {bn}: AI returned empty array")
 
         # Take the first (and should be only) result
         s = strategies[0]
@@ -432,7 +432,7 @@ Output JSON array with one element directly."""
             [{"beat_number": int, "video_mode": str, "prompt": str}, ...]
         """
         if not beats:
-            raise RuntimeError("beats 参数不能为空")
+            raise RuntimeError("beats parameter cannot be empty")
 
         validated = []
         sorted_beats = sorted(beats, key=lambda b: b.get("beat_number", 0))
@@ -451,7 +451,7 @@ Output JSON array with one element directly."""
                         break
 
             if not sketch_path:
-                print(f"[GlobalVideoOptimizer] Beat {bn}: 无单帧草图，跳过")
+                print(f"[GlobalVideoOptimizer] Beat {bn}: no single-frame sketch, skipping")
                 continue
 
             # prev/next beat for continuity
@@ -472,7 +472,7 @@ Output JSON array with one element directly."""
                 validated.append(result)
                 prev_prompt = result["prompt"]
             except Exception as e:
-                print(f"[GlobalVideoOptimizer] Beat {bn}: 优化失败 ({e})")
+                print(f"[GlobalVideoOptimizer] Beat {bn}: optimization failed ({e})")
 
             if progress_callback:
                 progress_callback(bn, len(sorted_beats), i + 1)
@@ -519,7 +519,7 @@ Output JSON array with one element directly."""
             # 查找草图帧
             sketch_file = sketches_path / f"beat_{beat_num:02d}.png"
             if not sketch_file.exists():
-                _log(f"Beat {beat_num}: 草图帧不存在，跳过审核")
+                _log(f"Beat {beat_num}: sketch frame not found, skipping review")
                 continue
 
             beat = beats_by_num.get(beat_num, {})
@@ -564,16 +564,16 @@ Output JSON array with one element directly."""
                     if review.needs_fix:
                         result["prompt"] = review.prompt or prompt
                         fixed_count += 1
-                        _log(f"Beat {beat_num}: ✏️ 已修正 — {review.reason}")
+                        _log(f"Beat {beat_num}: ✏️ fixed — {review.reason}")
                     else:
-                        _log(f"Beat {beat_num}: ✅ 通过审核")
+                        _log(f"Beat {beat_num}: ✅ passed review")
                 else:
-                    _log(f"Beat {beat_num}: 审核返回空，跳过")
+                    _log(f"Beat {beat_num}: review returned empty, skipping")
 
             except Exception as e:
-                _log(f"Beat {beat_num}: 审核异常 ({e})，保留原 prompt")
+                _log(f"Beat {beat_num}: review error ({e}), keeping original prompt")
 
-        _log(f"审核完成：{fixed_count}/{len(results)} 个 Beat 已修正")
+        _log(f"Review complete: {fixed_count}/{len(results)} beats fixed")
         return results
 
     def _build_color_map_text(self, character_color_map: dict) -> str:
@@ -652,11 +652,11 @@ def _try_combine_frames_to_grid(resolver, beats, output_dir, episode) -> list[st
             sketch_pool_dir.mkdir(parents=True, exist_ok=True)
             combine_to_grid(frame_paths, grid_path, rows=rows, cols=cols)
             print(
-                f"[GlobalOptimizer] 草图网格已保存: {grid_path} ({len(frame_paths)} 帧, {rows}x{cols})"
+                f"[GlobalOptimizer] sketch grid saved: {grid_path} ({len(frame_paths)} frames, {rows}x{cols})"
             )
             return [str(grid_path)]
     except Exception as e:
-        print(f"[prepare_global_optimizer_input] 拼接草图失败: {e}")
+        print(f"[prepare_global_optimizer_input] failed to combine sketches: {e}")
 
     return []
 
@@ -810,22 +810,22 @@ Use an empty identities array for panels with no colored markers."""
                 img.save(buffer, format="JPEG", quality=70, optimize=True)
                 images.append(BinaryContent(data=buffer.getvalue(), media_type="image/jpeg"))
             except Exception as e:
-                print(f"[detect_identities_by_ai] 加载图片失败: {path}, {e}")
+                print(f"[detect_identities_by_ai] failed to load image: {path}, {e}")
 
     if not images:
-        raise RuntimeError("没有可用的草图网格图片")
+        raise RuntimeError("No usable sketch grid images")
 
-    print(f"[detect_identities_by_ai] 发送 {len(images)} 张网格图片, {total_beats} beats")
+    print(f"[detect_identities_by_ai] sending {len(images)} grid images, {total_beats} beats")
     response = await agent.run([task] + images)
 
     if not response.output:
-        raise RuntimeError("AI 返回空内容")
+        raise RuntimeError("AI returned empty content")
 
     # structured output: response.output 直接是 list[BeatIdentity]
     beat_identities: list[BeatIdentity] = response.output
     result: dict[int, list[str]] = {bi.beat_number: bi.identities for bi in beat_identities}
 
-    print(f"[detect_identities_by_ai] 识别结果: { {k: v for k, v in sorted(result.items())} }")
+    print(f"[detect_identities_by_ai] detection result: { {k: v for k, v in sorted(result.items())} }")
     return result
 
 

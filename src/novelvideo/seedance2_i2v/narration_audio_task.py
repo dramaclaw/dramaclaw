@@ -65,13 +65,13 @@ def _assert_resolution_matches(
     expected_voice_sha256: str,
 ) -> None:
     if resolution.audio_path is None:
-        raise RuntimeError(resolution.error or "解说人声线不可用")
+        raise RuntimeError(resolution.error or "Narration voice line unavailable")
     current = (resolution.sha256 or "").strip()
     expected = str(expected_voice_sha256 or "").strip()
     if not current:
-        raise RuntimeError("解说人声线文件无法读取，请检查文件是否完整")
+        raise RuntimeError("Cannot read narration voice line file; please verify the file is intact")
     if expected and current != expected:
-        raise RuntimeError("解说人声线版本已变化，请重新启动音频任务")
+        raise RuntimeError("Narration voice line version has changed; please restart the audio task")
 
 
 async def run_seedance2_narration_audio_generation(
@@ -106,13 +106,13 @@ async def run_seedance2_narration_audio_generation(
     beats = await store.get_beats_as_dicts(int(episode))
     targets = narration_beats(beats)
     source_hint = (
-        f"解说主角声线（{resolution.character_name}）"
+        f"protagonist narration voice line ({resolution.character_name})"
         if resolution.source == "protagonist_identity"
-        else "项目解说人声线"
+        else "project narration voice line"
     )
     _emit_log(
-        f"Seedance2 解说音频: 共扫描 Beat {len(beats)} 个，匹配解说 Beat {len(targets)} 个，"
-        f"解说风格 {style}，声线来源 {source_hint}"
+        f"Seedance2 narration audio: scanned {len(beats)} beats, matched {len(targets)} narration beats, "
+        f"narration style {style}, voice source {source_hint}"
     )
     result = Seedance2NarrationAudioTaskResult(
         total_targets=len(targets),
@@ -127,12 +127,12 @@ async def run_seedance2_narration_audio_generation(
         output_path = beat_audio_path(store.project_dir, episode, beat_num)
         if mode == "missing_only" and output_path.exists() and output_path.stat().st_size > 0:
             result.skipped_existing += 1
-            _emit_log(f"Beat {beat_num:02d}: 已有音频，跳过")
+            _emit_log(f"Beat {beat_num:02d}: audio already exists, skipping")
             if progress_callback:
                 progress_callback(index, len(targets), beat_num, "skipped")
             continue
 
-        _emit_log(f"Beat {beat_num:02d}: 调用 IndexTTS2 开始生成（解说）")
+        _emit_log(f"Beat {beat_num:02d}: calling IndexTTS2 to start generation (narration)")
         try:
             item_result = await generate_seedance2_narration_audio(
                 beat=beat,
@@ -147,7 +147,7 @@ async def run_seedance2_narration_audio_generation(
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             result.failed.append(f"Beat {beat_num:02d}: {error}")
-            _emit_log(f"Beat {beat_num:02d}: 异常 {error}")
+            _emit_log(f"Beat {beat_num:02d}: exception {error}")
             status = "failed"
             item_result = None
         else:
@@ -155,18 +155,18 @@ async def run_seedance2_narration_audio_generation(
                 result.failed.append(f"Beat {beat_num:02d}: not a narration beat")
                 status = "failed"
                 error = "not a narration beat"
-                _emit_log(f"Beat {beat_num:02d}: 非解说 Beat，跳过")
+                _emit_log(f"Beat {beat_num:02d}: not a narration beat, skipping")
             elif not item_result.success:
                 error = item_result.error or "IndexTTS2 generation failed"
                 result.failed.append(f"Beat {beat_num:02d}: {error}")
                 status = "failed"
-                _emit_log(f"Beat {beat_num:02d}: 失败 {error}")
+                _emit_log(f"Beat {beat_num:02d}: failed {error}")
             else:
                 result.generated += 1
                 result.generated_beats.append(int(beat_num))
                 status = "completed"
                 error = ""
-                _emit_log(f"Beat {beat_num:02d}: 生成完成 -> {output_path.name}")
+                _emit_log(f"Beat {beat_num:02d}: generation complete -> {output_path.name}")
 
         upsert_seedance2_voice_audio_record(
             db_path=store.db_path,
