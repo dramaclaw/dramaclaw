@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dramaclaw": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "novelvideo.chat.dramaclaw_mcp"],
+      "env": {
+        "DRAMACLAW_API_URL": "http://localhost:8780",
+        "DRAMACLAW_CE_OWNER": "1"
+      }
+    }
+  }
+}

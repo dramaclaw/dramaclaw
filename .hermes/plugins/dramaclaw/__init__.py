@@ -157,11 +157,23 @@ def _with_chat_error_hints(value: Any) -> Any:
     return result
 
 
+def _ce_owner_mode() -> bool:
+    """CE single-user mode: authenticate as the local owner without a token.
+
+    A DramaClaw CE instance trusts local requests as the owner (no
+    ``Authorization`` header required), so an external MCP client such as
+    Claude Code can call the API on the same machine without minting an
+    agent-session token. This is opt-in via ``DRAMACLAW_CE_OWNER`` so it can
+    never silently drop auth against an EE deployment.
+    """
+    raw = os.environ.get("DRAMACLAW_CE_OWNER", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _available() -> bool:
-    return bool(
-        os.environ.get("DRAMACLAW_API_URL")
-        and os.environ.get("DRAMACLAW_AGENT_TOKEN")
-    )
+    if not os.environ.get("DRAMACLAW_API_URL"):
+        return False
+    return bool(os.environ.get("DRAMACLAW_AGENT_TOKEN")) or _ce_owner_mode()
 
 
 def _base_url() -> str:
@@ -258,10 +270,14 @@ def _request(method: str, path: str, *, query: Any = None, body: Any = None) -> 
     url = f"{_base_url()}{api_path}{_query_string(query)}"
     payload = None
     headers = {
-        "Authorization": f"Bearer {_token()}",
         "Accept": "application/json",
         "User-Agent": "dramaclaw-plugin/0.1.0",
     }
+    token = os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
+    if not token and not _ce_owner_mode():
+        _token()  # raise the standard "DRAMACLAW_AGENT_TOKEN is not set" error
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     if body is not None:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
