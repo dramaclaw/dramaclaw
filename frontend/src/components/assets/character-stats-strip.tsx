@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Fingerprint,
   Image,
@@ -24,6 +25,7 @@ export type CharacterStats = {
 export type CharacterStatsStripProps = {
   characters: Character[];
   identityCounts?: Record<string, number>;
+  /** Overrides the default localized "narrator lead" label. */
   mainCharacterLabel?: string;
   className?: string;
 };
@@ -73,38 +75,44 @@ export function deriveCharacterStats(
 export function CharacterStatsStrip({
   characters,
   identityCounts,
-  mainCharacterLabel = "解说主角",
+  mainCharacterLabel,
   className,
 }: CharacterStatsStripProps) {
+  const { t } = useTranslation();
   const stats = useMemo(
     () => deriveCharacterStats(characters, identityCounts),
     [characters, identityCounts],
   );
-  // 已有/全部 口径:头像、身份、声线都展示「已就绪 / 总角色」。
+  // Ready/total: portrait, identity, and voice each show "ready / total".
   const items: DisplayStatItem[] = [
-    { key: "total", label: "总角色", icon: Users, display: `${stats.total}` },
+    {
+      key: "total",
+      label: t("characters.stats.strip.total"),
+      icon: Users,
+      display: `${stats.total}`,
+    },
     {
       key: "mainCharacters",
-      label: mainCharacterLabel,
+      label: mainCharacterLabel ?? t("characters.stats.strip.mainCharacter"),
       icon: Star,
       display: `${stats.mainCharacters}`,
     },
     {
       key: "withPortraits",
-      label: "头像",
+      label: t("characters.stats.strip.portrait"),
       icon: Image,
       display: `${stats.withPortraits}/${stats.total}`,
       tone: "ready",
     },
     {
       key: "identityReady",
-      label: "身份",
+      label: t("characters.stats.strip.identity"),
       icon: Fingerprint,
       display: `${stats.identityReady}/${stats.total}`,
     },
     {
       key: "voiceReady",
-      label: "声线",
+      label: t("characters.stats.strip.voice"),
       icon: Volume2,
       display: `${stats.voiceReady}/${stats.total}`,
       tone: "ready",
@@ -113,7 +121,7 @@ export function CharacterStatsStrip({
 
   return (
     <ul
-      aria-label="角色统计"
+      aria-label={t("characters.stats.strip.ariaLabel")}
       className={cn(
         "flex flex-wrap items-center justify-center gap-x-10 gap-y-2 py-1.5",
         className,

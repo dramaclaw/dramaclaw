@@ -144,14 +144,14 @@ export function SketchCropDialog({
         <div className="relative flex h-12 items-center border-b border-white/10 px-4">
           <div className="flex items-center gap-2 text-sm font-medium text-white">
             <Crop className="size-4" />
-            {`裁剪 ${spec.label}`}
+            {t("episode.workbench.sketch.cropTitleWithAspect", { aspect: spec.label })}
           </div>
           <DialogTitle className="absolute left-1/2 max-w-[52vw] -translate-x-1/2 truncate text-center text-sm font-medium text-white">
             {t("episode.workbench.sketch.cropTitle", { n: beatNum })}
           </DialogTitle>
           <button
             type="button"
-            aria-label="关闭"
+            aria-label={t("common.close")}
             className="absolute right-4 flex size-7 items-center justify-center text-white/90 hover:text-white"
             onClick={() => onOpenChange(false)}
           >
@@ -190,7 +190,7 @@ export function SketchCropDialog({
                     ref={cropBoxRef}
                     role="button"
                     tabIndex={0}
-                    aria-label="移动裁剪区域"
+                    aria-label={t("episode.workbench.sketch.cropDragHandle")}
                     className="absolute cursor-move touch-none border-2 border-cyan-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.58)]"
                     style={cropBoxStyle}
                     onPointerDown={(event) => {

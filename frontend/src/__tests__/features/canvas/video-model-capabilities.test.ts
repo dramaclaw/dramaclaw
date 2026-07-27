@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import type { VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import {
+  audioReferenceDurationRejection,
+  formatAudioDurationClips,
   isGrokVideoChannelModel,
   isHappyHorseVideoModel,
   isSeedance1xVideoModel,
@@ -180,6 +184,154 @@ describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", ()
     expect(
       videoSubmitMediaRejectionReason("imageReference", HAPPYHORSE, { images: 5, videos: 0, audios: 0 }),
     ).toBeNull();
+  });
+});
+
+describe("audioReferenceDurationRejection — 提交前音频时长守卫", () => {
+  const clip = (label: string, durationMs: number | null) => ({ label, durationMs });
+
+  it("单条短于 1.8s → 拦，并指名是哪条 (厂商 DurationTooShort)", () => {
+    const rejection = audioReferenceDurationRejection([
+      clip("bgm.mp3", 5_000),
+      clip("sfx.wav", 900),
+    ]);
+    expect(rejection).toEqual({
+      kind: "tooShort",
+      clips: [{ label: "sfx.wav", durationMs: 900 }],
+    });
+  });
+
+  it("恰好 1.8s 放行，1.799s 拦 (边界取闭区间，与厂商 1.8s 下限一致)", () => {
+    expect(audioReferenceDurationRejection([clip("a", 1_800)])).toBeNull();
+    expect(audioReferenceDurationRejection([clip("a", 1_799)])?.kind).toBe("tooShort");
+  });
+
+  it("单条长于 15.2s → 拦，并指名是哪条；15.2s 整放行", () => {
+    expect(audioReferenceDurationRejection([clip("a", 15_200)])).toBeNull();
+    expect(
+      audioReferenceDurationRejection([clip("bgm.mp3", 5_000), clip("long.wav", 15_201)]),
+    ).toEqual({
+      kind: "tooLong",
+      clips: [{ label: "long.wav", durationMs: 15_201 }],
+    });
+  });
+
+  it("多条各自合规就放行——不按总时长判定 (3 条 6s 共 18s 厂商也收)", () => {
+    expect(
+      audioReferenceDurationRejection([
+        clip("a", 6_000),
+        clip("b", 6_000),
+        clip("c", 6_000),
+      ]),
+    ).toBeNull();
+    // 3 条顶格 15.2s（总计 45.6s）同样放行：厂商口径是逐条，总和是我们臆想的。
+    expect(
+      audioReferenceDurationRejection([
+        clip("a", 15_200),
+        clip("b", 15_200),
+        clip("c", 15_200),
+      ]),
+    ).toBeNull();
+  });
+
+  it("既有太短又有太长时优先报太短 (一次只报一类，别混着列)", () => {
+    expect(
+      audioReferenceDurationRejection([clip("long", 20_000), clip("short", 500)]),
+    ).toEqual({
+      kind: "tooShort",
+      clips: [{ label: "short", durationMs: 500 }],
+    });
+  });
+
+  it("同类越界的多条一次全列出来", () => {
+    expect(
+      audioReferenceDurationRejection([
+        clip("a", 900),
+        clip("b", 5_000),
+        clip("c", 1_000),
+      ])?.clips,
+    ).toEqual([
+      { label: "a", durationMs: 900 },
+      { label: "c", durationMs: 1_000 },
+    ]);
+  });
+
+  it("探测不出时长 (null) 的不参与判定 → 放行给后端兜底", () => {
+    expect(audioReferenceDurationRejection([clip("unknown", null)])).toBeNull();
+    expect(
+      audioReferenceDurationRejection([clip("unknown", null), clip("ok", 15_200)]),
+    ).toBeNull();
+  });
+
+  it("没有音频引用时不拦", () => {
+    expect(audioReferenceDurationRejection([])).toBeNull();
+  });
+});
+
+describe("formatAudioDurationClips — 提示里的 {{clips}} 走 locale 排版", () => {
+  // 用真实的 translation.json 而不是假 t()：这里要守的就是「en 用户别看到中文标点」，
+  // 假串测不出来。解析 + {{var}} 插值与 i18next 的默认行为一致（escapeValue: false）。
+  const locale = (language: "zh" | "en") => {
+    const bundle = JSON.parse(
+      readFileSync(`public/locales/${language}/translation.json`, "utf8"),
+    );
+    return (key: string, vars?: Record<string, string | number>) => {
+      const value = key
+        .split(".")
+        .reduce<unknown>((node, part) => (node as Record<string, unknown>)?.[part], bundle);
+      if (typeof value !== "string") throw new Error(`missing translation key: ${key}`);
+      return value.replace(/{{(\w+)}}/g, (_, name: string) => String(vars?.[name] ?? ""));
+    };
+  };
+
+  const CLIPS = [
+    { label: "sfx.wav", durationMs: 900 },
+    { label: "bgm.mp3", durationMs: 1_200 },
+  ];
+
+  it("中文用全角括号 + 顿号", () => {
+    expect(formatAudioDurationClips(CLIPS, locale("zh"))).toBe(
+      "sfx.wav（0.9s）、bgm.mp3（1.2s）",
+    );
+  });
+
+  it("英文用半角括号 + 逗号，且不漏出任何中文标点", () => {
+    const formatted = formatAudioDurationClips(CLIPS, locale("en"));
+    expect(formatted).toBe("sfx.wav (0.9s), bgm.mp3 (1.2s)");
+    expect(formatted).not.toMatch(/[（）、。：]/);
+  });
+
+  it("单条时不带分隔符", () => {
+    expect(formatAudioDurationClips([CLIPS[0]], locale("en"))).toBe("sfx.wav (0.9s)");
+  });
+
+  it("紧贴阈值的毫秒不四舍五入到合法值 (否则提示自相矛盾)", () => {
+    // 1.799s 曾被显示成「1.8s」、15.201s 曾被显示成「15.2s」——用户看到的正好是
+    // 合法边界值，却被告知越界。展示按毫秒精度，别再退回 toFixed(1)。
+    expect(
+      formatAudioDurationClips([{ label: "a.wav", durationMs: 1_799 }], locale("en")),
+    ).toBe("a.wav (1.799s)");
+    expect(
+      formatAudioDurationClips([{ label: "b.wav", durationMs: 15_201 }], locale("en")),
+    ).toBe("b.wav (15.201s)");
+  });
+
+  it("整秒不拖尾随 0", () => {
+    expect(
+      formatAudioDurationClips([{ label: "c.wav", durationMs: 6_000 }], locale("en")),
+    ).toBe("c.wav (6s)");
+    expect(
+      formatAudioDurationClips([{ label: "d.wav", durationMs: 15_200 }], locale("en")),
+    ).toBe("d.wav (15.2s)");
+  });
+
+  it("缺文件名时的兜底标签也跟随语言（不再硬编码「音频N」）", () => {
+    expect(locale("zh")("node.videoNode.audio.clipFallbackLabel", { index: 2 })).toBe(
+      "音频2",
+    );
+    expect(locale("en")("node.videoNode.audio.clipFallbackLabel", { index: 2 })).toBe(
+      "Audio 2",
+    );
   });
 });
 

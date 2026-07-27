@@ -3,6 +3,7 @@
 import { createLazyFileRoute, useRouterState } from "@tanstack/react-router";
 import { ReactFlowProvider } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { SupertaleProjectSummary } from "@/api/projects";
 import { GlobalErrorDialog } from "@/components/GlobalErrorDialog";
@@ -17,6 +18,7 @@ import { readLastCanvas, writeUrl } from "@/lib/url-params";
 import { useAuthStore } from "@/stores/auth-store";
 
 function FreezoneProjectRoute() {
+  const { t } = useTranslation();
   const { project } = Route.useParams();
   const username = useAuthStore((state) => state.username);
   const { data: projects, isLoading } = useAllProjectSummaries();
@@ -67,16 +69,16 @@ function FreezoneProjectRoute() {
     return (
       <div className="-m-6 flex h-[calc(100%+3rem)] items-center justify-center bg-bg-dark">
         <div className="max-w-md rounded-2xl border border-border-default bg-surface px-6 py-8 text-center">
-          <div className="mb-2 text-base font-medium text-text">项目不存在</div>
+          <div className="mb-2 text-base font-medium text-text">{t("project.notFound")}</div>
           <div className="mb-6 text-sm text-text-muted">
-            当前账号下找不到项目 <code className="rounded bg-bg-dark px-1 py-0.5">{project}</code>。
+            {t("project.notFoundDescriptionPrefix")} <code className="rounded bg-bg-dark px-1 py-0.5">{project}</code>{t("project.notFoundDescriptionSuffix")}
           </div>
           <button
             type="button"
             onClick={() => writeUrl({ project: null, canvas: null })}
             className="rounded-lg bg-accent/90 px-4 py-2 text-sm text-white transition hover:bg-accent"
           >
-            返回项目
+            {t("project.backToProjects")}
           </button>
         </div>
       </div>
