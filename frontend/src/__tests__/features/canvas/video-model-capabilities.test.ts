@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import {
+  audioReferenceDurationRejection,
   isGrokVideoChannelModel,
   isHappyHorseVideoModel,
   isSeedance1xVideoModel,
@@ -180,6 +181,54 @@ describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", ()
     expect(
       videoSubmitMediaRejectionReason("imageReference", HAPPYHORSE, { images: 5, videos: 0, audios: 0 }),
     ).toBeNull();
+  });
+});
+
+describe("audioReferenceDurationRejection — 提交前音频时长守卫", () => {
+  const clip = (label: string, durationMs: number | null) => ({ label, durationMs });
+
+  it("单条短于 1.8s → 拦，并指名是哪条 (厂商 DurationTooShort)", () => {
+    const rejection = audioReferenceDurationRejection([
+      clip("bgm.mp3", 5_000),
+      clip("sfx.wav", 900),
+    ]);
+    expect(rejection).toEqual({
+      kind: "tooShort",
+      clips: [{ label: "sfx.wav", durationMs: 900 }],
+    });
+  });
+
+  it("恰好 1.8s 放行，1.799s 拦 (边界取闭区间，与厂商 1.8s 下限一致)", () => {
+    expect(audioReferenceDurationRejection([clip("a", 1_800)])).toBeNull();
+    expect(audioReferenceDurationRejection([clip("a", 1_799)])?.kind).toBe("tooShort");
+  });
+
+  it("总时长超 15.2s → 拦；15.2s 整放行", () => {
+    expect(audioReferenceDurationRejection([clip("a", 15_200)])).toBeNull();
+    expect(audioReferenceDurationRejection([clip("a", 15_201)])).toEqual({
+      kind: "totalTooLong",
+      totalMs: 15_201,
+    });
+    expect(
+      audioReferenceDurationRejection([clip("a", 8_000), clip("b", 8_000)])?.kind,
+    ).toBe("totalTooLong");
+  });
+
+  it("既有太短又总时长超限时优先报太短 (能指到具体哪条，更可操作)", () => {
+    expect(
+      audioReferenceDurationRejection([clip("long", 20_000), clip("short", 500)])?.kind,
+    ).toBe("tooShort");
+  });
+
+  it("探测不出时长 (null) 的既不算太短、也按 0 计入总和 → 放行给后端兜底", () => {
+    expect(audioReferenceDurationRejection([clip("unknown", null)])).toBeNull();
+    expect(
+      audioReferenceDurationRejection([clip("unknown", null), clip("ok", 15_200)]),
+    ).toBeNull();
+  });
+
+  it("没有音频引用时不拦", () => {
+    expect(audioReferenceDurationRejection([])).toBeNull();
   });
 });
 

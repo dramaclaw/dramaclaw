@@ -3399,7 +3399,8 @@
         "title": "Generate Audio",
         "on": "On",
         "off": "Off",
-        "durationExceeded": "Total audio duration must not exceed {{max}} seconds. Shorten or replace the audio reference and try again."
+        "durationExceeded": "Total audio duration must not exceed {{max}} seconds. Shorten or replace the audio reference and try again.",
+        "durationTooShort": "Each audio clip must be at least {{min}} seconds: {{clips}}. Replace it or use a longer clip and try again."
       },
       "count": {
         "format": "{{count}}"

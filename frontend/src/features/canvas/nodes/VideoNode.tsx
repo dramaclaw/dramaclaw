@@ -64,6 +64,7 @@ import {
   type VideoNodeData,
 } from "@/features/canvas/domain/canvasNodes";
 import {
+  audioReferenceDurationRejection,
   isGrokVideoChannelModel,
   isHappyHorseVideoModel,
   isSeedance1xVideoModel,
@@ -374,11 +375,6 @@ function videoDurationBoundsForModel(
 function clampVideoDuration(value: number, bounds: { min: number; max: number }): number {
   return Math.min(Math.max(Math.round(value), bounds.min), bounds.max);
 }
-
-// Seedance 2.0(doubao-seedance-2-0，r2v）后端硬上限：一次请求的音频总时长
-// 必须 ≤ 15.2s，超了会以 InvalidParameter 报错。对用户按「15 秒」提示，实际
-// 用 15.2s 作拦截阈值，避免把后端本会放行的 15.0~15.2s 音频误拦。
-const MAX_AUDIO_TOTAL_DURATION_MS = 15_200;
 
 // 音频节点的 durationMs 是懒加载的（波形播放器挂载读元数据后才写入），刚上传、
 // 从未渲染过的音频节点可能为 null。提交前用一个临时 <audio> 探测真实时长兜底，
@@ -2285,7 +2281,11 @@ export const VideoNode = memo(
           const upstream = collectUpstream();
           const references: FreezoneVideoReferenceItem[] = [];
           // 与 references 里 type==="audio" 的项一一对应，用于提交前校验音频总时长。
-          const audioRefs: { url: string; durationMs: number | null }[] = [];
+          const audioRefs: {
+            url: string;
+            label: string;
+            durationMs: number | null;
+          }[] = [];
           let imageCount = 0;
           let videoCount = 0;
           let audioCount = 0;
@@ -2321,6 +2321,9 @@ export const VideoNode = memo(
                 });
                 audioRefs.push({
                   url,
+                  // 时长超限时要指名道姓是哪条，所以这里连标签一起留着；没有
+                  // 文件名的（TTS 直出等）退回「音频N」，与后端日志口径一致。
+                  label: rawLabel || `音频${audioCount + 1}`,
                   durationMs:
                     typeof node.data.durationMs === "number"
                       ? node.data.durationMs
@@ -2344,9 +2347,10 @@ export const VideoNode = memo(
             });
             return;
           }
-          // Seedance 2.0 后端限制音频总时长 ≤ 15.2s，超了会以 InvalidParameter
-          // 报错。提交前先本地校验：durationMs 缺失时用 <audio> 探测兜底，超限就
-          // 弹窗拦下，避免白跑一趟后端。仅对 seedance2 生效（其它模型上限可能不同）。
+          // Seedance 2.0 后端对音频时长有硬约束（单条 ≥1.8s、这里按总时长 ≤15.2s
+          // 卡，见 audioReferenceDurationRejection），越界会以 InvalidParameter
+          // 400 回来。提交前先本地校验：durationMs 缺失时用 <audio> 探测兜底，越界
+          // 就弹窗拦下，避免白跑一趟后端。仅对 seedance2 生效（其它模型上限未知）。
           if (isSeedance20Model && audioRefs.length > 0) {
             const resolvedDurations = await Promise.all(
               audioRefs.map((ref) =>
@@ -2355,13 +2359,25 @@ export const VideoNode = memo(
                   : probeAudioDurationMs(ref.url),
               ),
             );
-            const totalAudioMs = resolvedDurations.reduce<number>(
-              (sum, ms) => sum + (ms ?? 0),
-              0,
+            const rejection = audioReferenceDurationRejection(
+              audioRefs.map((ref, index) => ({
+                label: ref.label,
+                durationMs: resolvedDurations[index] ?? null,
+              })),
             );
-            if (totalAudioMs > MAX_AUDIO_TOTAL_DURATION_MS) {
+            if (rejection) {
               void showErrorDialog(
-                t("node.videoNode.audio.durationExceeded", { max: 15 }),
+                rejection.kind === "tooShort"
+                  ? t("node.videoNode.audio.durationTooShort", {
+                      min: 1.8,
+                      clips: rejection.clips
+                        .map(
+                          (clip) =>
+                            `${clip.label}（${(clip.durationMs / 1000).toFixed(1)}s）`,
+                        )
+                        .join("、"),
+                    })
+                  : t("node.videoNode.audio.durationExceeded", { max: 15 }),
                 t("common.error"),
               );
               updateNodeData(id, {
