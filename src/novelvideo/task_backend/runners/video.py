@@ -805,6 +805,7 @@ async def _run_freezone_video_gen_async(
             backend=str(payload.get("backend") or ""),
             last_frame_path=payload.get("last_frame_path"),
             audio_setting=payload.get("audio_setting") or None,
+            gen_mode=payload.get("gen_mode") or None,
             model_params=payload.get("model_params") or None,
             request_schema=payload.get("request_schema") or None,
         )

@@ -1973,29 +1973,67 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             image_transform=image_transform,
         )
 
-    async def _apply_generic_reference_inputs(
+    async def _apply_huimeng_protocol_media_inputs(
         self,
-        payload: dict[str, object],
         metadata: dict[str, object],
         *,
+        mode: str,
         image_path: str,
         last_frame_path: str | None,
         references: object,
         log: Callable[[str], None],
     ) -> None:
-        """Populate RelayClaw's vendor-neutral media fields for catalog models."""
+        """Populate the stable DramaClaw-to-RelayClaw video media protocol."""
+
+        normalized_mode = {
+            "textToVideo": "text_to_video",
+            "imageToVideo": "first_frame",
+            "firstLastFrame": "first_last_frame",
+            "imageReference": "image_reference",
+            "allReference": "all_reference",
+            "videoEdit": "video_edit",
+        }.get(str(mode or "").strip(), str(mode or "").strip())
+
+        if normalized_mode == "text_to_video":
+            return
+
+        if normalized_mode == "first_frame":
+            first_frame_path = image_path
+            if not first_frame_path:
+                first_frame_path = next(
+                    (
+                        str(getattr(ref, "path", "") or "").strip()
+                        for ref in (
+                            references if isinstance(references, list) else []
+                        )
+                        if str(getattr(ref, "type", "") or "image").strip().lower()
+                        == "image"
+                    ),
+                    "",
+                )
+            if not first_frame_path:
+                raise ValueError("first frame is required for first_frame mode")
+            metadata["image_url"] = await self._relay_frame_input(first_frame_path)
+            return
+
+        if normalized_mode == "first_last_frame":
+            if not image_path:
+                raise ValueError("first frame is required for first_last_frame mode")
+            if not last_frame_path:
+                raise ValueError("last frame is required for first_last_frame mode")
+            metadata["first_frame_image"] = await self._relay_frame_input(image_path)
+            metadata["last_frame_image"] = await self._relay_frame_input(
+                str(last_frame_path)
+            )
+            return
 
         raw_items: list[tuple[str, str, str]] = []
-        if image_path:
-            raw_items.append(("image", image_path, "first_frame"))
         for ref in references if isinstance(references, list) else []:
             media_type = str(getattr(ref, "type", "") or "image").strip().lower()
             path = str(getattr(ref, "path", "") or "").strip()
             role = str(getattr(ref, "role", "") or "").strip()
             if path and media_type in {"image", "video", "audio"}:
                 raw_items.append((media_type, path, role))
-        if last_frame_path:
-            raw_items.append(("image", str(last_frame_path), "last_frame"))
 
         seen: set[tuple[str, str]] = set()
         relayed: dict[str, list[tuple[str, str]]] = {
@@ -2022,42 +2060,17 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         image_urls = [url for url, _role in relayed["image"]]
         video_urls = [url for url, _role in relayed["video"]]
         audio_urls = [url for url, _role in relayed["audio"]]
-        if image_urls:
-            payload["image"] = image_urls[0]
-            payload["images"] = image_urls
-            metadata["image_url"] = image_urls[0]
-            metadata["image_urls"] = image_urls
-            metadata["reference_images"] = image_urls
-        last_frame = next(
-            (
-                url
-                for url, role in relayed["image"]
-                if "尾帧" in role or role.lower() == "last_frame"
-            ),
-            "",
-        )
-        if last_frame:
-            metadata["end_image_url"] = last_frame
-        if video_urls:
-            metadata["video_url"] = video_urls[0]
-            metadata["video_urls"] = video_urls
-            metadata["reference_videos"] = video_urls
-        if audio_urls:
-            metadata["audio_urls"] = audio_urls
-            metadata["reference_audios"] = audio_urls
 
-        content: list[dict[str, object]] = []
-        for media_type in ("image", "video", "audio"):
-            for url, role in relayed[media_type]:
-                item: dict[str, object] = {
-                    "type": f"{media_type}_url",
-                    f"{media_type}_url": {"url": url},
-                }
-                if role:
-                    item["role"] = role
-                content.append(item)
-        if content:
-            metadata["content"] = content
+        if normalized_mode in {"image_reference", "all_reference", "video_edit"}:
+            if image_urls:
+                metadata["reference_images"] = image_urls
+            if video_urls:
+                metadata["reference_videos"] = video_urls
+            if audio_urls:
+                metadata["reference_audios"] = audio_urls
+            return
+
+        raise ValueError(f"unsupported video generation mode: {normalized_mode}")
 
     def _duration_bounds(self) -> tuple[int, int]:
         from novelvideo.config import NEWAPI_VIDEO_DURATION_BOUNDS
@@ -2304,6 +2317,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         # The old colon-only guard accidentally converted it back to 9:16.
         ratio = ratio_text if ":" in ratio_text or ratio_text == "adaptive" else "9:16"
         image_path = str(image_path or "").strip()
+        requested_mode = str(kwargs.get("gen_mode") or "").strip()
 
         metadata: dict[str, object] = {
             "resolution": self.resolution,
@@ -2318,7 +2332,34 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             "metadata": metadata,
         }
 
-        if self._is_happyhorse_model():
+        if requested_mode:
+            try:
+                await self._apply_huimeng_protocol_media_inputs(
+                    metadata,
+                    mode=requested_mode,
+                    image_path=image_path,
+                    last_frame_path=last_frame_path,
+                    references=kwargs.get("references"),
+                    log=log,
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error=str(exc),
+                )
+            seedance2_config = _seedance2_config_mapping(kwargs.get("seedance2_config"))
+            scene_optimize = str(seedance2_config.get("scene_optimize") or "").strip()
+            if scene_optimize:
+                metadata["scene_optimize"] = scene_optimize
+            if kwargs.get("human_review"):
+                metadata["human_review"] = True
+            audio_setting = str(kwargs.get("audio_setting") or "").strip()
+            if audio_setting:
+                metadata["audio_setting"] = audio_setting
+            metadata["return_last_frame"] = bool(
+                seedance2_config.get("return_last_frame", False)
+            )
+        elif self._is_happyhorse_model():
             if len(prompt) > 2500:
                 prompt = prompt[:2500]
                 payload["prompt"] = prompt
@@ -2540,9 +2581,17 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             metadata.update(seedance2_params)
         else:
             try:
-                await self._apply_generic_reference_inputs(
-                    payload,
+                await self._apply_huimeng_protocol_media_inputs(
                     metadata,
+                    mode=(
+                        "first_last_frame"
+                        if last_frame_path
+                        else "first_frame"
+                        if image_path
+                        else "all_reference"
+                        if kwargs.get("references")
+                        else "text_to_video"
+                    ),
                     image_path=image_path,
                     last_frame_path=last_frame_path,
                     references=kwargs.get("references"),

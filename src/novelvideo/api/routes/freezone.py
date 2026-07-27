@@ -6652,6 +6652,22 @@ def _catalog_mode_enabled(
     return mode in modes
 
 
+def _require_catalog_video_mode(
+    capabilities: dict[str, Any] | None,
+    mode: str,
+) -> None:
+    normalized = {
+        "textToVideo": "text_to_video",
+        "imageToVideo": "first_frame",
+        "firstLastFrame": "first_last_frame",
+        "imageReference": "image_reference",
+        "allReference": "all_reference",
+        "videoEdit": "video_edit",
+    }.get(mode, mode)
+    if _catalog_mode_enabled(capabilities, normalized) is False:
+        raise HTTPException(400, f"this model does not support {normalized} mode")
+
+
 def _catalog_resolution_options(
     capabilities: dict[str, Any] | None,
 ) -> list[str] | None:
@@ -7079,6 +7095,10 @@ async def freezone_video_gen(
         body.model_params,
         mode=body.gen_mode or "text_to_video",
     )
+    _require_catalog_video_mode(
+        capabilities,
+        body.gen_mode or "text_to_video",
+    )
     character_items = _load_video_character_items_by_ids(project_dir, body.character_ids)
     character_names = [str(item.get("name") or "") for item in character_items]
     character_reference_urls: list[str] = []
@@ -7127,7 +7147,7 @@ async def freezone_video_gen(
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
             model_id=body.model,
-            gen_mode=body.gen_mode,
+            gen_mode=body.gen_mode or "text_to_video",
         model_params=model_params,
             request_schema=request_schema,
         )
@@ -7161,12 +7181,16 @@ async def freezone_video_i2v(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    requested_mode = body.gen_mode or (
+        "image_reference" if len(body.image_urls) > 1 else "first_frame"
+    )
     request_schema, model_params, capabilities = await _resolve_catalog_request(
         "video",
         body.model,
         body.model_params,
-        mode=body.gen_mode or "first_frame",
+        mode=requested_mode,
     )
+    _require_catalog_video_mode(capabilities, requested_mode)
 
     reference_limits = _catalog_reference_limits(
         capabilities,
@@ -7197,15 +7221,10 @@ async def freezone_video_i2v(
             "multiple image references currently only support Seedance 2.0 or HappyHorse models",
         )
 
-    # HappyHorse 的「图片参考」(r2v) 与「图生视频」(首帧 i2v) 是两种上游模式，
-    # 唯一能区分单图走哪条的信号就是 gen_mode。参考模式下所有图（含第 1 张）都当
-    # reference_images，绝不打「首帧」——否则单张参考图会被误当 image_url 走 i2v。
-    happyhorse_reference_mode = (
-        is_freezone_happyhorse_backend(backend) and body.gen_mode == "imageReference"
-    )
+    reference_mode = requested_mode in {"imageReference", "image_reference"}
     reference_items = []
     for idx, path in enumerate(source_paths):
-        if happyhorse_reference_mode:
+        if reference_mode:
             role = "图片参考"
         else:
             role = "首帧" if idx == 0 else "图片参考"
@@ -7246,7 +7265,7 @@ async def freezone_video_i2v(
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
             model_id=body.model,
-            gen_mode=body.gen_mode,
+            gen_mode=requested_mode,
         model_params=model_params,
             request_schema=request_schema,
         )
@@ -7288,6 +7307,10 @@ async def freezone_video_keyframes(
         body.model_params,
         mode=body.gen_mode or "first_last_frame",
     )
+    _require_catalog_video_mode(
+        capabilities,
+        body.gen_mode or "first_last_frame",
+    )
     reference_limits = _catalog_reference_limits(
         capabilities,
         image_default=2,
@@ -7315,7 +7338,7 @@ async def freezone_video_keyframes(
     reference_items = [
         {"type": "image", "path": primary_first_path, "role": "首帧" if first_path else "尾帧参考"}
     ]
-    if is_freezone_seedance2_backend(backend) and last_path and first_path:
+    if last_path and first_path:
         reference_items.append({"type": "image", "path": last_path, "role": "尾帧"})
 
     final_prompt = build_freezone_keyframe_video_prompt(
@@ -7356,7 +7379,7 @@ async def freezone_video_keyframes(
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
             model_id=body.model,
-            gen_mode=body.gen_mode,
+            gen_mode=body.gen_mode or "first_last_frame",
         model_params=model_params,
             request_schema=request_schema,
         )
@@ -7487,7 +7510,7 @@ async def freezone_video_omni_gen(
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
             model_id=body.model,
-            gen_mode=body.gen_mode,
+            gen_mode=body.gen_mode or "all_reference",
         model_params=model_params,
             request_schema=request_schema,
         )
@@ -7604,7 +7627,7 @@ async def freezone_video_edit(
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
             model_id=body.model,
-            gen_mode=body.gen_mode,
+            gen_mode=body.gen_mode or "video_edit",
         model_params=model_params,
             request_schema=request_schema,
         )

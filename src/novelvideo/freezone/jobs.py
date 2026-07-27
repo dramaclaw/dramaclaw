@@ -1141,6 +1141,7 @@ async def run_freezone_video_gen(
     backend: str = "huimeng_seedance-2.0-fast",
     last_frame_path: Optional[str] = None,
     audio_setting: Optional[str] = None,
+    gen_mode: Optional[str] = None,
     model_params: Optional[dict[str, Any]] = None,
     request_schema: Optional[dict[str, Any]] = None,
 ) -> Path:
@@ -1212,6 +1213,7 @@ async def run_freezone_video_gen(
             references=references,
             human_review=bool(human_review),
             seedance2_config={"scene_optimize": scene_optimize} if scene_optimize else None,
+            gen_mode=gen_mode,
             **extra_kwargs,
         )
     if not result or result.status.value != "done":
