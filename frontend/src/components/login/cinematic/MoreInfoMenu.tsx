@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { ExternalLink, MoreHorizontal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -94,6 +94,23 @@ export function MoreInfoMenu() {
     };
     element.addEventListener("wheel", handleWheel, { passive: false });
     return () => element.removeEventListener("wheel", handleWheel);
+  }, [activeId]);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+
+    const viewportPadding = 16;
+    const contentRect = content.getBoundingClientRect();
+    let correction = 0;
+    if (contentRect.top < viewportPadding) {
+      correction = viewportPadding - contentRect.top;
+    } else if (contentRect.bottom > window.innerHeight - viewportPadding) {
+      correction = window.innerHeight - viewportPadding - contentRect.bottom;
+    }
+    if (correction !== 0) {
+      setActiveTop((current) => current + correction);
+    }
   }, [activeId]);
 
   if (isCeRuntime() || items.length === 0) return null;

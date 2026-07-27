@@ -402,6 +402,10 @@
 .moreInfoMenu {
   width: 146px;
   flex: 0 0 146px;
+  max-height: min(70dvh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 7px;
   border-radius: 10px;
 }
