@@ -24,6 +24,9 @@
     },
     "logoHomeTooltip": "点击返回项目管理中心"
   },
+  "loginCinematic": {
+    "moreInfo": "更多信息"
+  },
   "header": {
     "partyFounding105": "庆祝建党105周年",
     "settings": "设置",
