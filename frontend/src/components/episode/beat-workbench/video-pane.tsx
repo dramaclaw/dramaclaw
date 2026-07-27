@@ -944,7 +944,7 @@ export function VideoPane({
       void seedance2Status.refetch?.();
       toast.success(
         showHappyHorseConfig || showGrokVideoConfig
-          ? "主体提示词已优化"
+          ? t("episode.workbench.video.seedance2SubjectPromptGenerated")
           : t("episode.workbench.video.seedance2PromptGenerated"),
       );
     } catch (error) {
@@ -1841,9 +1841,9 @@ export function VideoPane({
             <Settings2 className="size-3.5 text-muted-foreground/78" />
             <Label className="text-xs font-medium text-foreground/82">
               {showGrokVideoConfig
-                ? "Grok Video 检视器"
+                ? t("episode.workbench.video.grokVideoInspector")
                 : showHappyHorseConfig
-                ? "HappyHorse 检视器"
+                ? t("episode.workbench.video.happyHorseInspector")
                 : t("episode.workbench.video.seedance2Inspector")}
             </Label>
             <Seedance2SummaryPill
@@ -2435,9 +2435,9 @@ export function VideoPane({
                     className="text-[11px] text-muted-foreground/78"
                   >
                     {showGrokVideoConfig
-                      ? "Grok 提示词"
+                      ? t("episode.workbench.video.grokPromptLabel")
                       : showHappyHorseConfig
-                      ? "主体提示词"
+                      ? t("episode.workbench.video.subjectPromptLabel")
                       : t("episode.workbench.video.seedance2Prompt")}
                   </Label>
                 </div>
@@ -2500,9 +2500,9 @@ export function VideoPane({
                     <WandSparkles className="size-3" />
                   )}
                   {showGrokVideoConfig
-                    ? "生成 Grok 提示词"
+                    ? t("episode.workbench.video.generateGrokPrompt")
                     : showHappyHorseConfig
-                    ? "生成主体提示词"
+                    ? t("episode.workbench.video.generateSubjectPrompt")
                     : t("episode.workbench.video.seedance2GeneratePrompt")}
                   <CreditCostInline display={seedance2PromptCostDisplay} />
                 </Button>
@@ -2703,14 +2703,14 @@ function Seedance2AssetCropDialog({
         <div className="relative flex h-12 items-center border-b border-white/10 px-4">
           <div className="flex items-center gap-2 text-sm font-medium text-white">
             <Scissors className="size-4" />
-            {`裁剪 ${cropAspect}`}
+            {t("episode.workbench.video.seedance2CropTitleWithAspect", { aspect: cropAspect })}
           </div>
           <DialogTitle className="absolute left-1/2 max-w-[52vw] -translate-x-1/2 truncate text-center text-sm font-medium text-white">
             {t("episode.workbench.video.seedance2AssetCropTitle")}
           </DialogTitle>
           <button
             type="button"
-            aria-label="关闭"
+            aria-label={t("common.close")}
             className="absolute right-4 flex size-7 items-center justify-center text-white/90 hover:text-white"
             onClick={() => onOpenChange(false)}
           >
@@ -2740,7 +2740,7 @@ function Seedance2AssetCropDialog({
                     ref={cropBoxRef}
                     role="button"
                     tabIndex={0}
-                    aria-label="移动裁剪区域"
+                    aria-label={t("episode.workbench.video.seedance2CropDragHandle")}
                     className="absolute cursor-move touch-none border-2 border-cyan-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.58)]"
                     style={cropBoxStyle}
                     onPointerDown={(event) => {

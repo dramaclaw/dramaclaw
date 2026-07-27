@@ -42,6 +42,8 @@ beforeAll(async () => {
                 regenerated: "Beat #{{n}} 已重新生成",
                 regenFailed: "重生失败",
                 configureVoiceAction: "去配置",
+                prereqHintCharacters: "。请到「角色」中上传解说主角声线。",
+                prereqHintVoices: "。请到「资产 > 声线」上传或裁剪默认解说声线。",
               },
               video: {
                 seedance2Ready: "已配置",

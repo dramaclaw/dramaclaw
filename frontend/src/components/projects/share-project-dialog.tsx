@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useMemo, useState } from "react";
 import { Copy, Loader2, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -42,14 +43,14 @@ function grantDisplayName(grant: ProjectGrant): string {
   return grant.principal_username || grant.principal_id;
 }
 
-function roleCaption(role: GrantRole): string {
+function roleCaption(role: GrantRole, t: (key: string) => string): string {
   switch (role) {
     case "viewer":
-      return "只读查看";
+      return t("project.shareDialog.roleViewer");
     case "editor":
-      return "可编辑与运行任务";
+      return t("project.shareDialog.roleEditor");
     case "admin":
-      return "可管理共享成员";
+      return t("project.shareDialog.roleAdmin");
   }
 }
 
@@ -67,6 +68,7 @@ export function ShareProjectDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [selectedUser, setSelectedUser] = useState<UserSearchResult | null>(null);
   const [role, setRole] = useState<GrantRole>("editor");
@@ -89,12 +91,12 @@ export function ShareProjectDialog({
     if (!username || username.length < 3) return;
     try {
       await addGrant.mutateAsync({ principal_username: username, role });
-      toast.success("已更新共享成员");
+      toast.success(t("project.shareDialog.toastMemberUpdated"));
       setQuery("");
       setSelectedUser(null);
       setRole("editor");
     } catch {
-      toast.error("共享失败，请确认用户存在且你有权限");
+      toast.error(t("project.shareDialog.toastShareFailed"));
     }
   };
 
@@ -102,9 +104,9 @@ export function ShareProjectDialog({
     if (!project) return;
     try {
       await navigator.clipboard.writeText(projectLink(project));
-      toast.success("项目链接已复制");
+      toast.success(t("project.shareDialog.toastLinkCopied"));
     } catch {
-      toast.error("复制失败");
+      toast.error(t("project.shareDialog.toastCopyFailed"));
     }
   };
 
@@ -112,18 +114,18 @@ export function ShareProjectDialog({
     if (grant.role === nextRole) return;
     try {
       await updateGrant.mutateAsync({ grantId: grant.id, role: nextRole });
-      toast.success("权限已更新");
+      toast.success(t("project.shareDialog.toastPermissionUpdated"));
     } catch {
-      toast.error("更新权限失败");
+      toast.error(t("project.shareDialog.toastPermissionUpdateFailed"));
     }
   };
 
   const handleRevoke = async (grant: ProjectGrant) => {
     try {
       await deleteGrant.mutateAsync(grant.id);
-      toast.success("已移除共享成员");
+      toast.success(t("project.shareDialog.toastMemberRemoved"));
     } catch {
-      toast.error("移除失败");
+      toast.error(t("project.shareDialog.toastRemoveFailed"));
     }
   };
 
@@ -137,10 +139,15 @@ export function ShareProjectDialog({
         <DialogHeader className="px-6 pb-2 pt-5">
           <DialogTitle className="flex items-center gap-2 text-lg">
             <Users className="size-5 text-primary" />
-            共享项目
+            {t("project.shareDialog.title")}
           </DialogTitle>
           <DialogDescription>
-            {project ? `${project.name} · ${project.ownerUsername || "当前用户"}` : "管理项目成员"}
+            {project
+              ? t("project.shareDialog.descriptionWithOwner", {
+                  name: project.name,
+                  owner: project.ownerUsername || t("project.shareDialog.currentUserFallback"),
+                })
+              : t("project.shareDialog.descriptionFallback")}
           </DialogDescription>
         </DialogHeader>
 
@@ -148,12 +155,12 @@ export function ShareProjectDialog({
           <section className="rounded-[12px] border border-border/70 bg-card/45 p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-medium text-foreground">添加成员</div>
-                <div className="mt-1 text-xs text-muted-foreground">输入用户名，选择权限后加入项目。</div>
+                <div className="text-sm font-medium text-foreground">{t("project.shareDialog.addMember")}</div>
+                <div className="mt-1 text-xs text-muted-foreground">{t("project.shareDialog.addMemberHint")}</div>
               </div>
               <Button variant="outline" size="sm" onClick={handleCopyLink} disabled={!project}>
                 <Copy className="size-3.5" />
-                复制链接
+                {t("project.shareDialog.copyLink")}
               </Button>
             </div>
             <div className="grid gap-3 md:grid-cols-[1fr_9rem_auto]">
@@ -164,7 +171,7 @@ export function ShareProjectDialog({
                     setQuery(event.target.value);
                     setSelectedUser(null);
                   }}
-                  placeholder="搜索用户名"
+                  placeholder={t("project.shareDialog.searchPlaceholder")}
                   className="h-9 rounded-[8px] focus-visible:ring-1"
                 />
                 {query.trim().length >= 3 && searchResults.length > 0 && !selectedUser && (
@@ -185,7 +192,7 @@ export function ShareProjectDialog({
                           )}
                         >
                           <span>{user.username}</span>
-                          {disabled && <span className="text-xs text-muted-foreground">已在项目中</span>}
+                          {disabled && <span className="text-xs text-muted-foreground">{t("project.shareDialog.alreadyInProject")}</span>}
                         </button>
                       );
                     })}
@@ -208,28 +215,28 @@ export function ShareProjectDialog({
               </Select>
               <Button onClick={handleAdd} disabled={addGrant.isPending || query.trim().length < 3}>
                 {addGrant.isPending ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
-                添加
+                {t("project.shareDialog.add")}
               </Button>
             </div>
           </section>
 
           <section className="rounded-[12px] border border-border/70 bg-card/45 p-4">
-            <div className="mb-3 text-sm font-medium text-foreground">成员</div>
+            <div className="mb-3 text-sm font-medium text-foreground">{t("project.shareDialog.members")}</div>
             <div className="space-y-2">
               {project && (
                 <div className="flex items-center gap-3 rounded-[10px] border border-border/60 bg-background/45 px-3 py-2.5">
                   <ShieldCheck className="size-4 text-primary" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{project.ownerUsername || "所有者"}</div>
-                    <div className="text-xs text-muted-foreground">项目所有者</div>
+                    <div className="truncate text-sm font-medium">{project.ownerUsername || t("project.shareDialog.owner")}</div>
+                    <div className="text-xs text-muted-foreground">{t("project.shareDialog.projectOwner")}</div>
                   </div>
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">所有者</span>
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">{t("project.shareDialog.owner")}</span>
                 </div>
               )}
               {grants.isLoading && (
                 <div className="flex items-center gap-2 rounded-[10px] border border-border/60 bg-background/45 px-3 py-3 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
-                  加载成员
+                  {t("project.shareDialog.loadingMembers")}
                 </div>
               )}
               {!grants.isLoading && grantRows.map((grant) => (
@@ -237,7 +244,7 @@ export function ShareProjectDialog({
                   <Users className="size-4 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{grantDisplayName(grant)}</div>
-                    <div className="text-xs text-muted-foreground">{roleCaption(grant.role)}</div>
+                    <div className="text-xs text-muted-foreground">{roleCaption(grant.role, t)}</div>
                   </div>
                   <Select
                     value={grant.role}
@@ -262,7 +269,7 @@ export function ShareProjectDialog({
                     size="icon-sm"
                     onClick={() => void handleRevoke(grant)}
                     disabled={deleteGrant.isPending}
-                    aria-label="移除成员"
+                    aria-label={t("project.shareDialog.removeMember")}
                   >
                     <Trash2 className="size-4 text-destructive" />
                   </Button>

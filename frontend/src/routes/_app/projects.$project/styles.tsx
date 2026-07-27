@@ -46,6 +46,7 @@ import { cn } from "@/lib/utils";
 import { SidebarListSkeleton, DetailPaneSkeleton } from "@/components/skeletons";
 import type { Style } from "@/types/style";
 import { stylePreviewUrl } from "@/lib/style-preview-url";
+import { BUILTIN_STYLE_LABEL_KEYS } from "@/components/assets/project-style-chip";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 
@@ -270,7 +271,9 @@ function StyleListItem({
 }) {
   const { t } = useTranslation();
   const preset = isPreset(style);
-  const display = style.label || style.name;
+  const presetLabelKey = BUILTIN_STYLE_LABEL_KEYS[style.id];
+  const display =
+    preset && presetLabelKey ? t(presetLabelKey) : style.label || style.name;
   const previewSrc = preset ? stylePreviewUrl(style.id) : style.preview_url;
   return (
     <button

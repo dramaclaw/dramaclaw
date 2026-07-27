@@ -210,7 +210,9 @@ export function TaskDetail() {
           </div>
           {(task.current_task || task.progress > 0) ? (
             <div className="mt-3 rounded bg-muted p-2">
-              <div className="text-muted-foreground">当前状态</div>
+              <div className="text-muted-foreground">
+                {t("taskCenter.detail.currentStatus")}
+              </div>
               <div className="mt-1">{task.current_task || t(`taskCenter.status.${task.status}`)}</div>
               <div className="mt-1 font-mono text-[11px] text-muted-foreground">
                 {Math.round(task.progress * 100)}%
@@ -240,7 +242,9 @@ export function TaskDetail() {
           ) : null}
           {debugRows.length ? (
             <details className="mt-3 rounded border border-border/60 bg-background/40 p-2">
-              <summary className="cursor-pointer text-muted-foreground">调试信息</summary>
+              <summary className="cursor-pointer text-muted-foreground">
+                {t("taskCenter.detail.debugInfo")}
+              </summary>
               <div className="mt-2 grid gap-1 font-mono text-[11px]">
                 {debugRows.map(([label, value]) => (
                   <div key={label} className="truncate">

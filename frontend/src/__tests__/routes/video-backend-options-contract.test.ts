@@ -27,7 +27,7 @@ describe("video backend options alignment", () => {
 
     expect(videoQueries).toContain("is_grok_video");
     expect(videoPane).toContain("showGrokVideoConfig");
-    expect(videoPane).toContain("Grok Video 检视器");
+    expect(videoPane).toContain("grokVideoInspector");
     expect(videoPane).toContain("3:2");
   });
 

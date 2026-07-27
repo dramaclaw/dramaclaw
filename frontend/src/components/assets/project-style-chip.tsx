@@ -15,7 +15,7 @@ export type ProjectStyleChipProps = {
 
 const DEFAULT_VISUAL_STYLE = "chinese_period_drama";
 
-const BUILTIN_STYLE_LABEL_KEYS: Record<string, string> = {
+export const BUILTIN_STYLE_LABEL_KEYS: Record<string, string> = {
   chinese_period_drama: "ingest.visualStyles.chinesePeriodDrama",
   anime: "ingest.visualStyles.anime",
   guoman_fantasy: "ingest.visualStyles.guomanFantasy",
@@ -29,11 +29,13 @@ function resolveStyleLabel(
   styles: Style[],
   t: (key: string) => string,
 ): string {
-  const record = styles.find((style) => style.id === styleId);
-  if (record) return record.label || record.name || styleId;
-
+  // Built-in presets have localized labels; prefer them over the backend's
+  // (Chinese-only) label so the name follows the active language.
   const fallbackKey = BUILTIN_STYLE_LABEL_KEYS[styleId];
-  return fallbackKey ? t(fallbackKey) : styleId;
+  if (fallbackKey) return t(fallbackKey);
+
+  const record = styles.find((style) => style.id === styleId);
+  return record ? record.label || record.name || styleId : styleId;
 }
 
 export function ProjectStyleChip({ project, className }: ProjectStyleChipProps) {
