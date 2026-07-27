@@ -24,6 +24,9 @@
     },
     "logoHomeTooltip": "Click to return to project management center"
   },
+  "loginCinematic": {
+    "moreInfo": "More information"
+  },
   "header": {
     "partyFounding105": "庆祝建党105周年",
     "settings": "Settings",

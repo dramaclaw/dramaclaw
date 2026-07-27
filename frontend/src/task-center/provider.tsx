@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
 import { useAppStore } from "@/stores/app-store";
 import { queryKeys } from "@/lib/query-keys";
-import { api } from "@/lib/api";
+import { api, handleSessionExpired } from "@/lib/api";
 import { createEventBus } from "./event-bus";
 import { EventBusContext } from "./event-bus-context";
 import { createStreamClient } from "./stream-client";
@@ -270,6 +270,22 @@ export function TaskCenterProvider({
       client = createStreamClient({
         streamPath: `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/stream`,
         snapshotQueryParam: true,
+        checkSession: async () => {
+          try {
+            const response = await api.get("api/v1/auth/me", {
+              cache: "no-store",
+              retry: 0,
+              throwHttpErrors: false,
+            });
+            if (response.status === 401 || response.status === 403) {
+              await handleSessionExpired();
+              return false;
+            }
+            return response.ok ? true : null;
+          } catch {
+            return null;
+          }
+        },
         onUnrecoverable: () => {
           // Cold-start SSE failure (likely auth). Force one hydrate via ky so
           // the global 401 handler observes the rejected credential and
