@@ -345,20 +345,12 @@ async def analyze_style(
         )
         analyzer = StyleAnalyzer()
         result = await analyzer.analyze(content, mime_type=mime_type)
-        if reservation_id:
-            await usage_meter.confirm_feature_credit_reservation(
-                reservation_id,
-                metadata={
-                    "source": "sync_api",
-                    "endpoint": "analyze_style",
-                    "mime_type": mime_type,
-                },
-            )
     except Exception as e:
         if reservation_id:
             try:
-                await usage_meter.refund_feature_credit_reservation(
+                await usage_meter.settle_feature_credit_reservation(
                     reservation_id,
+                    action="refund",
                     metadata={
                         "source": "sync_api",
                         "endpoint": "analyze_style",
@@ -373,6 +365,22 @@ async def analyze_style(
         return {"ok": False, "error": f"Style analysis failed: {e}"}
     finally:
         usage_meter.clear_llm_usage_context()
+
+    if reservation_id:
+        try:
+            await usage_meter.settle_feature_credit_reservation(
+                reservation_id,
+                action="confirm",
+                metadata={
+                    "source": "sync_api",
+                    "endpoint": "analyze_style",
+                    "mime_type": mime_type,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Style analysis succeeded but credit confirmation remains pending"
+            )
 
     data = dict(result)
     if preview_token:

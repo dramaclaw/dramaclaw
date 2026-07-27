@@ -91,6 +91,19 @@ class NoOpUsageMeter:
     ) -> None:
         return None
 
+    async def settle_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        action: str,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        return {
+            "reservation_id": reservation_id,
+            "action": action,
+            "status": "completed",
+        }
+
     async def bump_model_call(
         self,
         *,

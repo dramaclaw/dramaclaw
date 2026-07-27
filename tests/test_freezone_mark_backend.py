@@ -107,11 +107,8 @@ async def test_mark_detection_route_reserves_and_confirms_feature_credit(
             calls["reserve"].append(kwargs)
             return {"id": "reservation_mark", "cost": 6}
 
-        async def confirm_feature_credit_reservation(self, *args, **kwargs):
-            calls["confirm"].append((args, kwargs))
-
-        async def refund_feature_credit_reservation(self, *args, **kwargs):
-            calls["refund"].append((args, kwargs))
+        async def settle_feature_credit_reservation(self, *args, action, **kwargs):
+            calls[action].append((args, kwargs))
 
         def set_llm_usage_context(self, *args, **kwargs):
             calls["set_context"].append((args, kwargs))
@@ -187,10 +184,11 @@ async def test_mark_detection_route_refunds_feature_credit_on_failure(
         async def reserve_feature_start_credits(self, **_kwargs):
             return {"id": "reservation_mark", "cost": 6}
 
-        async def confirm_feature_credit_reservation(self, *_args, **_kwargs):
-            raise AssertionError("failed detection must not confirm")
-
-        async def refund_feature_credit_reservation(self, reservation_id, **_kwargs):
+        async def settle_feature_credit_reservation(
+            self, reservation_id, *, action, **_kwargs
+        ):
+            if action == "confirm":
+                raise AssertionError("failed detection must not confirm")
             refunded.append(reservation_id)
 
         def set_llm_usage_context(self, *_args, **_kwargs):

@@ -1137,6 +1137,7 @@ async def _start_or_enqueue_mainline_sketch_from_context_job(
                 "config": config,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
+                "billing": {"feature_key": "mainline.sketch_regen"},
                 **display_payload,
             },
         )
@@ -1323,6 +1324,7 @@ async def _start_or_enqueue_mainline_frame_from_context_job(
                 "config": config,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
+                "billing": {"feature_key": "mainline.render_regen"},
                 **display_payload,
             },
         )
@@ -1606,6 +1608,7 @@ async def _start_or_enqueue_mainline_direct_sketch_task(
             "state_dir": str(ctx.state_dir),
             "canvas_id": canvas_id or "",
             "node_id": node_id or "",
+            "billing": {"feature_key": "mainline.director_control_to_sketch"},
             "task_family": "mainline_skill",
             "task_label": "导演合成图转草图",
             "display_name": f"导演合成图转草图 · EP{episode} / Beat {beat}",
@@ -1665,6 +1668,7 @@ async def _start_or_enqueue_mainline_director_control_sketch_job(
             "aspect_ratio": _normalize_mainline_skill_aspect_ratio(aspect_ratio),
             "canvas_id": canvas_id or "",
             "node_id": node_id or "",
+            "billing": {"feature_key": "mainline.director_control_to_sketch"},
             "task_family": "mainline_skill",
             "task_label": "导演合成图转草图",
             "display_name": f"导演合成图转草图 · EP{episode} / Beat {beat}",
@@ -1723,6 +1727,7 @@ async def _start_or_enqueue_mainline_beat_sketch_task(
             "config": config,
             "canvas_id": canvas_id or "",
             "node_id": node_id or "",
+            "billing": {"feature_key": "mainline.sketch_regen"},
             "task_family": "mainline_skill",
             "task_label": "生成草图",
             "display_name": f"生成草图 · EP{episode} / Beat {beat}",
@@ -6797,16 +6802,12 @@ async def freezone_mark_detect(
             box_width=body.box_width,
             box_height=body.box_height,
         )
-        if reservation_id:
-            await usage_meter.confirm_feature_credit_reservation(
-                reservation_id,
-                metadata=billing_context,
-            )
     except Exception as exc:
         if reservation_id:
             try:
-                await usage_meter.refund_feature_credit_reservation(
+                await usage_meter.settle_feature_credit_reservation(
                     reservation_id,
+                    action="refund",
                     metadata={**billing_context, "error": str(exc)},
                 )
             except Exception:
@@ -6816,6 +6817,18 @@ async def freezone_mark_detect(
         raise HTTPException(500, f"mark detect failed: {exc}") from exc
     finally:
         usage_meter.clear_llm_usage_context()
+
+    if reservation_id:
+        try:
+            await usage_meter.settle_feature_credit_reservation(
+                reservation_id,
+                action="confirm",
+                metadata=billing_context,
+            )
+        except Exception:
+            logger.exception(
+                "Freezone mark detection succeeded but credit confirmation remains pending"
+            )
 
     return {
         "ok": True,

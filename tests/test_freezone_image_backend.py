@@ -3517,6 +3517,9 @@ async def test_skill_run_frame_accepts_plain_canvas_image_as_sketch_input(
     )
 
     assert captured["task_type"] == "mainline_frame_from_context"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "mainline.render_regen"
+    }
     assert captured["payload"]["config"]["canvas_sketch_paths"]["8"].endswith(
         "/freezone/plain_sketch.png"
     )
@@ -3659,6 +3662,9 @@ async def test_skill_run_normalizes_project_media_url_before_dispatch(
     )
 
     assert captured["task_type"] == "mainline_sketch_from_context"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "mainline.sketch_regen"
+    }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
     assert captured["payload"]["config"]["canvas_scene_refs"][0]["image_path"].endswith(
@@ -4888,6 +4894,9 @@ async def test_skill_run_sketch_accepts_director_combined_background(
 
     assert response.run_id == "mainline_director_control_sketch:job_director"
     assert captured["task_type"] == "mainline_director_control_sketch"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "mainline.director_control_to_sketch"
+    }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
     assert captured["payload"]["control_frame_path"].endswith("/freezone/_uploads/combined.png")
@@ -4972,6 +4981,9 @@ async def test_skill_run_sketch_prefers_director_combined_over_background(
     )
 
     assert captured["task_type"] == "mainline_director_control_sketch"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "mainline.director_control_to_sketch"
+    }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
     assert captured["payload"]["control_frame_path"].endswith("/freezone/_uploads/combined.png")

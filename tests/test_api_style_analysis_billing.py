@@ -18,15 +18,11 @@ class DummyUsageMeter:
         self.reserve_calls.append(kwargs)
         return {"id": "style-analysis-reservation", "cost": 7}
 
-    async def confirm_feature_credit_reservation(
-        self, reservation_id: str, *, metadata=None
+    async def settle_feature_credit_reservation(
+        self, reservation_id: str, *, action: str, metadata=None
     ):
-        self.confirm_calls.append((reservation_id, metadata))
-
-    async def refund_feature_credit_reservation(
-        self, reservation_id: str, *, metadata=None
-    ):
-        self.refund_calls.append((reservation_id, metadata))
+        target = self.confirm_calls if action == "confirm" else self.refund_calls
+        target.append((reservation_id, metadata))
 
     def set_llm_usage_context(
         self,

@@ -99,15 +99,11 @@ class _UsageMeter:
         self.reserved.append(kwargs)
         return {"id": "reservation-1", "cost": 6}
 
-    async def confirm_feature_credit_reservation(
-        self, reservation_id: str, *, metadata=None
+    async def settle_feature_credit_reservation(
+        self, reservation_id: str, *, action: str, metadata=None
     ):
-        self.confirmed.append((reservation_id, metadata or {}))
-
-    async def refund_feature_credit_reservation(
-        self, reservation_id: str, *, metadata=None
-    ):
-        self.refunded.append((reservation_id, metadata or {}))
+        target = self.confirmed if action == "confirm" else self.refunded
+        target.append((reservation_id, metadata or {}))
 
     def set_llm_usage_context(self, user_id: str, **kwargs):
         self.contexts.append((user_id, kwargs))
@@ -203,6 +199,57 @@ async def test_generate_rewrite_refunds_feature_credit_on_failure(monkeypatch) -
     assert meter.confirmed == []
     assert meter.refunded[0][0] == "reservation-1"
     assert meter.clear_count == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_rewrite_does_not_refund_success_when_confirm_is_pending(
+    monkeypatch,
+) -> None:
+    from novelvideo.agents import content_rewriter
+    from novelvideo.api.routes import content
+    from novelvideo.api.schemas import RewriteGenerateRequest
+
+    async def fake_rewrite_episode_content(*args, **kwargs):
+        return "已成功改写"
+
+    class ConfirmPendingMeter(_UsageMeter):
+        async def settle_feature_credit_reservation(
+            self, reservation_id: str, *, action: str, metadata=None
+        ):
+            if action == "confirm":
+                raise RuntimeError("settlement unavailable")
+            await super().settle_feature_credit_reservation(
+                reservation_id,
+                action=action,
+                metadata=metadata,
+            )
+
+    monkeypatch.setattr(
+        content_rewriter,
+        "rewrite_episode_content",
+        fake_rewrite_episode_content,
+    )
+    meter = ConfirmPendingMeter()
+    monkeypatch.setattr(content, "get_usage_meter", lambda: meter)
+
+    async def fake_resolve_project_scope(*args, **kwargs):
+        return SimpleNamespace(
+            ctx=SimpleNamespace(project_id="project-1", requester_user_id="user-1")
+        )
+
+    monkeypatch.setattr(content, "resolve_project_scope", fake_resolve_project_scope)
+
+    response = await content.generate_rewrite(
+        project="demo",
+        episode_num=1,
+        body=RewriteGenerateRequest(),
+        user={"username": "admin"},
+        store=_RewriteRouteStore(),
+    )
+
+    assert response["ok"] is True
+    assert response["data"]["adapted_content"] == "已成功改写"
+    assert meter.refunded == []
 
 
 @pytest.mark.asyncio

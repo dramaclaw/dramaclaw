@@ -66,6 +66,14 @@ class UsageMeter(Protocol):
         metadata: Optional[dict[str, Any]] = None,
     ) -> None: ...
 
+    async def settle_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        action: str,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]: ...
+
     async def bump_model_call(
         self,
         *,

@@ -6021,28 +6021,12 @@ async def detect_sketch_identities(
         await store.set_beat_detected_identities(episode_num, identity_detections)
         await store.set_beat_detected_props(episode_num, prop_detections)
 
-        if reservation_id:
-            await usage_meter.confirm_feature_credit_reservation(
-                reservation_id,
-                metadata={
-                    "source": "sync_api",
-                    "endpoint": "detect_sketch_identities",
-                    "episode": episode_num,
-                    "sketch_count": len(frame_items),
-                    "detected_identity_count": sum(
-                        len(real_detected_identities(v))
-                        for v in identity_detections.values()
-                    ),
-                    "detected_prop_count": sum(
-                        len(real_detected_props(v)) for v in prop_detections.values()
-                    ),
-                },
-            )
     except Exception as e:
         if reservation_id:
             try:
-                await usage_meter.refund_feature_credit_reservation(
+                await usage_meter.settle_feature_credit_reservation(
                     reservation_id,
+                    action="refund",
                     metadata={
                         "source": "sync_api",
                         "endpoint": "detect_sketch_identities",
@@ -6057,6 +6041,30 @@ async def detect_sketch_identities(
         return {"ok": False, "error": f"AI detection failed: {e}"}
     finally:
         usage_meter.clear_llm_usage_context()
+
+    if reservation_id:
+        try:
+            await usage_meter.settle_feature_credit_reservation(
+                reservation_id,
+                action="confirm",
+                metadata={
+                    "source": "sync_api",
+                    "endpoint": "detect_sketch_identities",
+                    "episode": episode_num,
+                    "sketch_count": len(frame_items),
+                    "detected_identity_count": sum(
+                        len(real_detected_identities(v))
+                        for v in identity_detections.values()
+                    ),
+                    "detected_prop_count": sum(
+                        len(real_detected_props(v)) for v in prop_detections.values()
+                    ),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "AI identity detection succeeded but credit confirmation remains pending"
+            )
 
     # 转换 key 为字符串（JSON 兼容）
     str_identity_detections = {str(k): v for k, v in identity_detections.items()}

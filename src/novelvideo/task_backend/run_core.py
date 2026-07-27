@@ -45,6 +45,7 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "sketch_regen": "sketch",
     "mainline_sketch_from_context": "sketch",
     "mainline_frame_from_context": "render",
+    "mainline_director_control_sketch": "sketch",
     "sketch_edit_execute": "sketch",
     "action_sketch": "sketch",
     "selected_regen": "render",
@@ -223,12 +224,16 @@ async def _confirm_feature_credit_reservation(
     if not reservation_id:
         return
     try:
-        await get_usage_meter().confirm_feature_credit_reservation(
+        await get_usage_meter().settle_feature_credit_reservation(
             reservation_id,
+            action="confirm",
             metadata=metadata,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("feature credit confirmation failed: %s", exc)
+        logger.error(
+            "feature credit confirmation intent remains awaiting retry: %s",
+            exc,
+        )
 
 
 async def _refund_feature_credit_reservation(
@@ -239,12 +244,16 @@ async def _refund_feature_credit_reservation(
     if not reservation_id:
         return
     try:
-        await get_usage_meter().refund_feature_credit_reservation(
+        await get_usage_meter().settle_feature_credit_reservation(
             reservation_id,
+            action="refund",
             metadata=metadata,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("feature credit refund failed: %s", exc)
+        logger.error(
+            "feature credit refund intent remains awaiting retry: %s",
+            exc,
+        )
 
 
 async def _emit_project_task_metrics(

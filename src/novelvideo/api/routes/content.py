@@ -194,16 +194,12 @@ async def generate_rewrite(
             normalized = ""
         await store.save_adapted_content(episode_num, normalized)
         await store.update_episode(episode_num, beat_source_text=normalized)
-        if reservation_id:
-            await usage_meter.confirm_feature_credit_reservation(
-                reservation_id,
-                metadata=billing_context,
-            )
     except Exception as exc:
         if reservation_id:
             try:
-                await usage_meter.refund_feature_credit_reservation(
+                await usage_meter.settle_feature_credit_reservation(
                     reservation_id,
+                    action="refund",
                     metadata={**billing_context, "error": str(exc)},
                 )
             except Exception:
@@ -215,6 +211,18 @@ async def generate_rewrite(
         raise
     finally:
         usage_meter.clear_llm_usage_context()
+
+    if reservation_id:
+        try:
+            await usage_meter.settle_feature_credit_reservation(
+                reservation_id,
+                action="confirm",
+                metadata=billing_context,
+            )
+        except Exception:
+            logger.exception(
+                "Content rewrite succeeded but credit confirmation remains pending"
+            )
 
     lines = [line for line in normalized.splitlines() if line.strip()]
     return {
