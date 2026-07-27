@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import type { TaskState, StreamHealth } from "./types";
+import { SESSION_EXPIRED_EVENT } from "@/lib/session-expiry";
 
 export interface StreamClientOptions {
   streamPath: string;
@@ -12,6 +13,12 @@ export interface StreamClientOptions {
   /** Called when FSM enters `polling` — provider should start GET /tasks fallback. */
   onPollingStart?: () => void;
   onPollingStop?: () => void;
+  /**
+   * Probe the browser session after repeated EventSource failures.
+   * `false` is terminal auth loss; `true` is a live session; `null` means the
+   * probe itself was inconclusive (network/5xx) and reconnecting should continue.
+   */
+  checkSession?: () => Promise<boolean | null>;
   /**
    * Called once when the client gives up reconnecting because it has never
    * successfully connected and has exhausted the initial-failure budget — a
@@ -55,6 +62,8 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
   let everConnected = false;
   let unrecoverableFired = false;
   let regionSwitchHandler: (() => void) | null = null;
+  let sessionExpiredHandler: (() => void) | null = null;
+  let sessionCheckInFlight = false;
 
   const backoffs = opts.backoffMs ?? DEFAULT_BACKOFF;
   const watchdogMs = opts.watchdogMs ?? DEFAULT_WATCHDOG_MS;
@@ -83,6 +92,56 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
     reconnectTimer = null;
     watchdogTimer = null;
     snapshotTimer = null;
+  }
+
+  function stopForSessionLoss() {
+    if (closed) return;
+    closed = true;
+    clearTimers();
+    if (es) {
+      es.close();
+      es = null;
+    }
+    if (polling) {
+      polling = false;
+      opts.onPollingStop?.();
+    }
+    opts.onHealth("failed");
+  }
+
+  function scheduleReconnect() {
+    if (closed) return;
+    const delay = polling
+      ? pollingRetryMs
+      : backoffs[Math.min(reconnectAttempt - 1, backoffs.length - 1)];
+    reconnectTimer = setTimeout(() => {
+      if (closed) return;
+      open();
+    }, delay);
+  }
+
+  function checkSessionThenReconnect() {
+    if (!opts.checkSession || sessionCheckInFlight) {
+      scheduleReconnect();
+      return;
+    }
+    sessionCheckInFlight = true;
+    void opts
+      .checkSession()
+      .then((active) => {
+        if (closed) return;
+        if (active === false) {
+          stopForSessionLoss();
+          return;
+        }
+        scheduleReconnect();
+      })
+      .catch(() => {
+        scheduleReconnect();
+      })
+      .finally(() => {
+        sessionCheckInFlight = false;
+      });
   }
 
   function handleStreamHealthy() {
@@ -200,13 +259,11 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
     } else {
       opts.onHealth("reconnecting");
     }
-    const delay = polling
-      ? pollingRetryMs
-      : backoffs[Math.min(reconnectAttempt - 1, backoffs.length - 1)];
-    reconnectTimer = setTimeout(() => {
-      if (closed) return;
-      open();
-    }, delay);
+    if (reconnectAttempt >= FAILED_CYCLES_BEFORE_POLLING && opts.checkSession) {
+      checkSessionThenReconnect();
+      return;
+    }
+    scheduleReconnect();
   }
 
   return {
@@ -226,6 +283,10 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
         };
         window.addEventListener("region-switch", regionSwitchHandler);
       }
+      if (typeof window !== "undefined" && !sessionExpiredHandler) {
+        sessionExpiredHandler = stopForSessionLoss;
+        window.addEventListener(SESSION_EXPIRED_EVENT, sessionExpiredHandler);
+      }
       open();
     },
     close() {
@@ -238,6 +299,10 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
       if (typeof window !== "undefined" && regionSwitchHandler) {
         window.removeEventListener("region-switch", regionSwitchHandler);
         regionSwitchHandler = null;
+      }
+      if (typeof window !== "undefined" && sessionExpiredHandler) {
+        window.removeEventListener(SESSION_EXPIRED_EVENT, sessionExpiredHandler);
+        sessionExpiredHandler = null;
       }
     },
   };

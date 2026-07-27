@@ -5,6 +5,7 @@
 
 import ky, { HTTPError, type KyInstance, type Options } from "ky";
 import { errorFromBackendBody } from "@/lib/api-errors";
+import { handleSessionExpired } from "@/lib/api";
 
 export interface ApiEnvelope<T> {
   ok: boolean;
@@ -37,6 +38,13 @@ const baseClient: KyInstance = ky.create({
   },
   timeout: 30_000,
   hooks: {
+    afterResponse: [
+      async ({ response }) => {
+        if (response.status === 401) {
+          await handleSessionExpired();
+        }
+      },
+    ],
     beforeError: [
       async ({ error }) => {
         if (!(error instanceof HTTPError)) {
