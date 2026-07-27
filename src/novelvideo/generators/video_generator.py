@@ -31,6 +31,7 @@ from novelvideo.video_request_usage import (
 from novelvideo.shared.billing_errors import is_insufficient_credits_error
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+    media_relay_ttl_seconds,
     upload_image_bytes,
 )
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
@@ -40,6 +41,7 @@ from novelvideo.task_backend.subprocesses import run_project_subprocess
 load_dotenv()
 
 NEWAPI_VIDEO_HTTP_TIMEOUT_SECONDS = 1800.0
+NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS = 2 * 60 * 60
 
 
 def _run_video_subprocess(cmd: list[str], *, timeout: int = 30 * 60) -> subprocess.CompletedProcess:
@@ -1961,6 +1963,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 upload_image_bytes,
                 data,
                 ext=ext,
+                ttl=media_relay_ttl_seconds(
+                    minimum=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+                ),
                 image_transform=image_transform,
             )
 
@@ -1970,6 +1975,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             upload_image_bytes,
             media_path.read_bytes(),
             ext=ext,
+            ttl=media_relay_ttl_seconds(
+                minimum=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+            ),
             image_transform=image_transform,
         )
 
@@ -2105,6 +2113,154 @@ class NewApiVideoGenerator(VideoGeneratorBase):
     def _happyhorse_audio_setting(value: str | None) -> str:
         text = str(value or "").strip().lower()
         return text if text in {"auto", "origin"} else "auto"
+
+    @staticmethod
+    def _video_dimensions(
+        resolution: object,
+        ratio: object,
+    ) -> tuple[int, int] | None:
+        """Convert a resolution tier and aspect ratio to exact pixel dimensions."""
+
+        resolution_match = re.search(r"(\d+)", str(resolution or ""))
+        ratio_text = str(ratio or "").strip().lower()
+        if not resolution_match or ratio_text == "adaptive" or ":" not in ratio_text:
+            return None
+        try:
+            tier = int(resolution_match.group(1))
+            ratio_width, ratio_height = (
+                float(part.strip()) for part in ratio_text.split(":", 1)
+            )
+        except (TypeError, ValueError):
+            return None
+        if tier <= 0 or ratio_width <= 0 or ratio_height <= 0:
+            return None
+
+        if ratio_width >= ratio_height:
+            height = tier
+            width = round(tier * ratio_width / ratio_height)
+        else:
+            width = tier
+            height = round(tier * ratio_height / ratio_width)
+
+        # Video encoders generally require even dimensions.
+        width += width % 2
+        height += height % 2
+        return width, height
+
+    @classmethod
+    def _canonicalize_video_payload(
+        cls,
+        payload: dict[str, object],
+        metadata: dict[str, object],
+    ) -> None:
+        """Translate legacy channel-shaped fields into the generic NewAPI contract.
+
+        Existing model-specific branches still validate and collect their inputs
+        during phase one. Only the final wire representation is normalized here.
+        """
+
+        resolution = metadata.pop("resolution", "")
+        ratio = metadata.pop("ratio", "")
+
+        duration_value = payload.pop("duration", None)
+        legacy_seconds = payload.pop("seconds", None)
+        if duration_value is None:
+            duration_value = legacy_seconds
+        try:
+            duration_number = float(str(duration_value))
+        except (TypeError, ValueError):
+            duration_number = 0
+        if duration_number > 0:
+            payload["duration"] = (
+                int(duration_number) if duration_number.is_integer() else duration_number
+            )
+
+        first_frame = ""
+        for key in ("first_frame_image", "image_url"):
+            value = metadata.pop(key, "")
+            if not first_frame and isinstance(value, str) and value.strip():
+                first_frame = value.strip()
+
+        last_frame = metadata.pop("last_frame_image", "")
+        if not isinstance(last_frame, str):
+            last_frame = ""
+
+        legacy_images = payload.pop("images", None)
+        if isinstance(legacy_images, list):
+            image_values = [
+                str(value).strip()
+                for value in legacy_images
+                if isinstance(value, str) and str(value).strip()
+            ]
+            if image_values and not first_frame:
+                first_frame = image_values[0]
+            if len(image_values) > 1:
+                references = metadata.get("reference_images")
+                existing = list(references) if isinstance(references, list) else []
+                metadata["reference_images"] = [*image_values[1:], *existing]
+
+        content = metadata.pop("content", None)
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict) or item.get("type") != "image_url":
+                    continue
+                image_url = item.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                if not isinstance(url, str) or not url.strip():
+                    continue
+                role = str(item.get("role") or "").strip().lower()
+                if role == "last_frame" and not last_frame:
+                    last_frame = url.strip()
+                elif role == "first_frame" and not first_frame:
+                    first_frame = url.strip()
+
+        legacy_video = metadata.pop("video_url", "")
+        if isinstance(legacy_video, str) and legacy_video.strip():
+            references = metadata.get("reference_videos")
+            existing = list(references) if isinstance(references, list) else []
+            metadata["reference_videos"] = [legacy_video.strip(), *existing]
+
+        if first_frame:
+            payload["image"] = first_frame
+        if last_frame.strip():
+            metadata["last_frame_image"] = last_frame.strip()
+
+        dimensions = cls._video_dimensions(resolution, ratio)
+        if dimensions:
+            payload["width"], payload["height"] = dimensions
+        else:
+            ratio_text = str(ratio or "").strip()
+            resolution_text = str(resolution or "").strip()
+            if ratio_text:
+                metadata["aspect_ratio"] = ratio_text
+            if resolution_text:
+                metadata["resolution"] = resolution_text
+
+        payload["n"] = 1
+        payload["response_format"] = "url"
+        if metadata:
+            payload["metadata"] = metadata
+        else:
+            payload.pop("metadata", None)
+
+    @staticmethod
+    def _task_response_data(task: dict) -> dict:
+        """Accept both flat and wrapped generic task responses."""
+
+        if not isinstance(task, dict):
+            return {}
+        data = task.get("data")
+        if isinstance(data, dict):
+            merged = dict(data)
+            if "_newapi_request_id" not in merged and task.get("_newapi_request_id"):
+                merged["_newapi_request_id"] = task["_newapi_request_id"]
+            return merged
+        return task
+
+    @classmethod
+    def _task_id_from_submit_response(cls, submitted: dict) -> str:
+        task = cls._task_response_data(submitted)
+        return str(task.get("task_id") or task.get("id") or "").strip()
 
     async def _relay_seedance2_references(
         self,
@@ -2623,13 +2779,14 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             )
             from novelvideo.media_model_request_schema import apply_media_request_schema
 
+            self._canonicalize_video_payload(payload, metadata)
             payload = apply_media_request_schema(
                 payload, self.request_schema, self.model_params
             )
             submitted = await self._post_json(
                 f"{self.base_url}/video/generations", payload
             )
-            task_id = str(submitted.get("id") or submitted.get("task_id") or "")
+            task_id = self._task_id_from_submit_response(submitted)
             provider_request_id = str(submitted.get("_newapi_request_id") or "").strip()
             if not task_id:
                 await _refund_video_model_call(
@@ -2647,7 +2804,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             progress(0.2)
 
             for poll_count in range(max_polls):
-                task = await self._get_json(f"{self.base_url}/videos/{task_id}")
+                task = self._task_response_data(
+                    await self._get_json(f"{self.base_url}/video/generations/{task_id}")
+                )
                 status = str(task.get("status") or "").lower()
                 progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
 

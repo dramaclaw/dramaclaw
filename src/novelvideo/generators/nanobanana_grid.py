@@ -70,6 +70,7 @@ from novelvideo.image_request_usage import (
 from novelvideo.utils.path_resolver import compute_scoped_grid_filename
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+    media_relay_ttl_seconds,
     upload_image_bytes,
 )
 
@@ -91,6 +92,7 @@ SINGLE_CELL_RENDER_MODE_BY_ASPECT = {
     "16:9": "1x1_16-9",
 }
 logger = logging.getLogger(__name__)
+NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS = 2 * 60 * 60
 
 
 def _newapi_request_id_from_headers(headers: Any) -> str:
@@ -122,6 +124,7 @@ def _newapi_safe_header_summary(headers: Any) -> dict[str, str]:
 def _newapi_safe_request_context(
     *,
     endpoint: str,
+    request_path: str,
     model: str,
     payload: dict[str, object],
     prompt: str,
@@ -129,10 +132,10 @@ def _newapi_safe_request_context(
     reference_images = payload.get("images")
     reference_image_count = len(reference_images) if isinstance(reference_images, list) else 0
     return {
-        "endpoint": f"{endpoint}/images/generations",
+        "endpoint": f"{endpoint}{request_path}",
         "model": model,
         "payload_keys": sorted(payload.keys()),
-        "extra_fields": payload.get("extra_fields") or {},
+        "size": payload.get("size") or "",
         "reference_image_count": reference_image_count,
         "prompt_chars": len(prompt or ""),
         "prompt_sha256": hashlib.sha256((prompt or "").encode("utf-8")).hexdigest()[:16],
@@ -144,7 +147,7 @@ def _newapi_context_for_error(context: dict[str, object]) -> str:
         f"model={context.get('model')}; "
         f"endpoint={context.get('endpoint')}; "
         f"payload_keys={context.get('payload_keys')}; "
-        f"extra_fields={context.get('extra_fields')}; "
+        f"size={context.get('size')}; "
         f"reference_image_count={context.get('reference_image_count')}; "
         f"prompt_sha256={context.get('prompt_sha256')}"
     )
@@ -323,12 +326,6 @@ def normalize_image_size(size: str, provider: str = "google") -> str:
     if size == "0.5K":
         return "1K" if provider == "openrouter" else "512"
     return size
-
-
-def _newapi_resolution_from_image_size(image_size: str | None) -> str:
-    normalized = normalize_image_size(str(image_size or "").strip(), provider="newapi")
-    lower = normalized.lower()
-    return lower if re.fullmatch(r"\d+(?:\.\d+)?k", lower) else ""
 
 
 def _newapi_image_model_supports_quality(model: str | None) -> bool:
@@ -3355,13 +3352,6 @@ async def _call_newapi_image_api(
         )
     except ValueError as exc:
         return None, "", str(exc)
-    extra_fields: dict[str, object] = {
-        "aspect_ratio": aspect_ratio,
-        "image_size": image_size,
-    }
-    resolution = _newapi_resolution_from_image_size(image_size)
-    if resolution:
-        extra_fields["resolution"] = resolution
 
     payload: dict[str, object] = {
         "model": model,
@@ -3369,7 +3359,6 @@ async def _call_newapi_image_api(
         "size": size,
         "n": 1,
         "response_format": "b64_json",
-        "extra_fields": extra_fields,
     }
     include_quality = bool(
         (image_config.get("request_schema") or {}).get("includeQuality")
@@ -3377,13 +3366,24 @@ async def _call_newapi_image_api(
     if include_quality and str(image_config.get("quality") or "").strip():
         quality = str(image_config["quality"]).strip()
         payload["quality"] = quality
-        extra_fields["quality"] = quality
+    else:
+        quality = ""
+
+    output_format = str(image_config.get("output_format") or "").strip().lower()
+    if output_format:
+        payload["output_format"] = output_format
+    input_fidelity = str(image_config.get("input_fidelity") or "").strip().lower()
+    if input_fidelity and reference_images:
+        payload["input_fidelity"] = input_fidelity
 
     if reference_images:
         try:
             payload["images"] = await _relay_reference_images_for_newapi(reference_images)
         except Exception as exc:
             return None, "", f"media relay upload failed: {exc}"
+        request_path = "/images/edits"
+    else:
+        request_path = "/images/generations"
 
     from novelvideo.media_model_request_schema import apply_media_request_schema
 
@@ -3401,6 +3401,7 @@ async def _call_newapi_image_api(
         endpoint = get_effective_newapi_gateway_config().base_url.rstrip("/")
     request_context = _newapi_safe_request_context(
         endpoint=endpoint,
+        request_path=request_path,
         model=model,
         payload=payload,
         prompt=prompt,
@@ -3417,7 +3418,7 @@ async def _call_newapi_image_api(
             billing_kind="image",
             billing_params=_image_credit_billing_params(
                 image_size=image_size,
-                quality=extra_fields.get("quality"),
+                quality=quality,
             ),
             metadata={"source": source},
         )
@@ -3488,7 +3489,7 @@ async def _call_newapi_image_api(
         ) as client:
             logger.info("DramaClawAPI image POST start: %s", request_context.get("endpoint"))
             response = await client.post(
-                f"{endpoint}/images/generations",
+                f"{endpoint}{request_path}",
                 headers=headers,
                 json=payload,
             )
@@ -3654,11 +3655,15 @@ async def _relay_reference_images_for_newapi(
 
     def upload_all() -> list[str]:
         urls: list[str] = []
+        relay_ttl = media_relay_ttl_seconds(
+            minimum=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+        )
         for image_ref in reference_images:
             urls.append(
                 upload_image_bytes(
                     _image_bytes(image_ref),
                     ext=_image_ext(image_ref),
+                    ttl=relay_ttl,
                     image_transform=IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
                 )
             )
