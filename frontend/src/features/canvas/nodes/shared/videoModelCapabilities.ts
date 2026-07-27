@@ -119,21 +119,6 @@ export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
 }
 
 /**
- * 提交前守卫：当前 (模型, 模式) 是否会**丢弃或被后端直接拒绝**已接入的上游素材。
- * 返回非空理由则应禁用提交、并把理由显示到按钮 tooltip 上，替代「静默丢素材 / 提交 400」。
- *
- * 规则对齐后端 freezone i2v / omni-gen 端点（src/novelvideo/api/routes/freezone.py）：
- * - 视频素材：仅「全能参考」(omni，Seedance 2.0) 与「视频编辑」(HappyHorse) 消费，
- *   其余模式静默丢弃 → 拦；
- * - 音频素材：仅「全能参考」(omni，Seedance 2.0) 消费，其余模式静默丢弃 → 拦；
- * - 多图(>1)：i2v 端点仅 Seedance 2.0 / HappyHorse 放行，非 2.0 非 HappyHorse
- *   （Seedance 1.x）传 >1 图后端直接 400 → 拦。
- *
- * 非 2.0 / 非 HappyHorse 一接入视频/音频就无模式可消费（allReference / videoEdit 均
- * 不受支持），因此这三条只会在真正会丢素材 / 400 的场景触发；2.0 / HappyHorse 的自动
- * 推导 effect 会先把模式导到能消费素材的模式，不会误伤。
- */
-/**
  * Seedance 2.0 音频引用的时长边界，厂商口径是**逐条**：
  * `[InvalidParameter.DurationTooShort] Duration must be between 1.8s and 15.2s`。
  *
@@ -142,6 +127,10 @@ export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
  * 所以「某条超 15.2s」必然先被总时长这条拦下，逐条上限是冗余的；反过来总时长比
  * 厂商严（3 条各 6s 单条都合法，加起来 18s 会被我们拦），这是刻意保留的既有行为：
  * 后端一次请求能吃多长音频尚未确认，宁可提示得早一点也别让用户白等一轮生成。
+ *
+ * 文案里的秒数一律从这两个常量推（`/ 1000`），别在调用点另写一遍字面量，否则改
+ * 阈值时提示会静默漂移。唯一的例外是总时长的展示值取整到 15 秒——见 durationExceeded
+ * 的调用点注释。
  */
 export const MIN_AUDIO_REFERENCE_DURATION_MS = 1_800;
 export const MAX_AUDIO_TOTAL_DURATION_MS = 15_200;
@@ -178,6 +167,41 @@ export function audioReferenceDurationRejection(
   return null;
 }
 
+/**
+ * 把 `tooShort` 的违规条目拼成提示里的 `{{clips}}`。
+ *
+ * 括号和分隔符都从 locale 取（zh 用全角括号 + 顿号，en 用半角括号 + 逗号），别在
+ * 调用点写死——这里曾经硬编码 `（）` 和 `、`，en 用户会看到一串中文标点。
+ */
+export function formatAudioDurationClips(
+  clips: readonly { label: string; durationMs: number }[],
+  translate: (key: string, vars?: Record<string, string | number>) => string,
+): string {
+  return clips
+    .map((clip) =>
+      translate("node.videoNode.audio.clipDuration", {
+        label: clip.label,
+        seconds: (clip.durationMs / 1000).toFixed(1),
+      }),
+    )
+    .join(translate("node.videoNode.audio.clipSeparator"));
+}
+
+/**
+ * 提交前守卫：当前 (模型, 模式) 是否会**丢弃或被后端直接拒绝**已接入的上游素材。
+ * 返回非空理由则应禁用提交、并把理由显示到按钮 tooltip 上，替代「静默丢素材 / 提交 400」。
+ *
+ * 规则对齐后端 freezone i2v / omni-gen 端点（src/novelvideo/api/routes/freezone.py）：
+ * - 视频素材：仅「全能参考」(omni，Seedance 2.0) 与「视频编辑」(HappyHorse) 消费，
+ *   其余模式静默丢弃 → 拦；
+ * - 音频素材：仅「全能参考」(omni，Seedance 2.0) 消费，其余模式静默丢弃 → 拦；
+ * - 多图(>1)：i2v 端点仅 Seedance 2.0 / HappyHorse 放行，非 2.0 非 HappyHorse
+ *   （Seedance 1.x）传 >1 图后端直接 400 → 拦。
+ *
+ * 非 2.0 / 非 HappyHorse 一接入视频/音频就无模式可消费（allReference / videoEdit 均
+ * 不受支持），因此这三条只会在真正会丢素材 / 400 的场景触发；2.0 / HappyHorse 的自动
+ * 推导 effect 会先把模式导到能消费素材的模式，不会误伤。
+ */
 export function videoSubmitMediaRejectionReason(
   mode: VideoGenMode,
   modelId: string | null | undefined,

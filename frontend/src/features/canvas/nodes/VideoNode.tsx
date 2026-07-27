@@ -65,6 +65,8 @@ import {
 } from "@/features/canvas/domain/canvasNodes";
 import {
   audioReferenceDurationRejection,
+  formatAudioDurationClips,
+  MIN_AUDIO_REFERENCE_DURATION_MS,
   isGrokVideoChannelModel,
   isHappyHorseVideoModel,
   isSeedance1xVideoModel,
@@ -2321,9 +2323,15 @@ export const VideoNode = memo(
                 });
                 audioRefs.push({
                   url,
-                  // 时长超限时要指名道姓是哪条，所以这里连标签一起留着；没有
-                  // 文件名的（TTS 直出等）退回「音频N」，与后端日志口径一致。
-                  label: rawLabel || `音频${audioCount + 1}`,
+                  // 时长超限时要指名道姓是哪条，所以这里连标签一起留着；没有文件名
+                  // 的（TTS 直出等）退回「音频N」。序号按音频自身 1-based 计，与后端
+                  // pipeline.py 的 enumerate(audio_paths, start=1) 同口径；标签本身
+                  // 只进提示文案、不随 references 发给后端，所以跟随界面语言。
+                  label:
+                    rawLabel ||
+                    t("node.videoNode.audio.clipFallbackLabel", {
+                      index: audioCount + 1,
+                    }),
                   durationMs:
                     typeof node.data.durationMs === "number"
                       ? node.data.durationMs
@@ -2369,15 +2377,14 @@ export const VideoNode = memo(
               void showErrorDialog(
                 rejection.kind === "tooShort"
                   ? t("node.videoNode.audio.durationTooShort", {
-                      min: 1.8,
-                      clips: rejection.clips
-                        .map(
-                          (clip) =>
-                            `${clip.label}（${(clip.durationMs / 1000).toFixed(1)}s）`,
-                        )
-                        .join("、"),
+                      min: MIN_AUDIO_REFERENCE_DURATION_MS / 1000,
+                      clips: formatAudioDurationClips(rejection.clips, (key, vars) =>
+                        t(key, vars),
+                      ),
                     })
-                  : t("node.videoNode.audio.durationExceeded", { max: 15 }),
+                  : // 展示值刻意取整到 15（而非阈值 15.2）：对用户按整秒说，拦截仍
+                    // 用 MAX_AUDIO_TOTAL_DURATION_MS，避免误拦后端会放行的 15.0~15.2s。
+                    t("node.videoNode.audio.durationExceeded", { max: 15 }),
                 t("common.error"),
               );
               updateNodeData(id, {

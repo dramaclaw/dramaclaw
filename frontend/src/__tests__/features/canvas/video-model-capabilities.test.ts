@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import type { VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import {
   audioReferenceDurationRejection,
+  formatAudioDurationClips,
   isGrokVideoChannelModel,
   isHappyHorseVideoModel,
   isSeedance1xVideoModel,
@@ -229,6 +232,53 @@ describe("audioReferenceDurationRejection — 提交前音频时长守卫", () =
 
   it("没有音频引用时不拦", () => {
     expect(audioReferenceDurationRejection([])).toBeNull();
+  });
+});
+
+describe("formatAudioDurationClips — 提示里的 {{clips}} 走 locale 排版", () => {
+  // 用真实的 translation.json 而不是假 t()：这里要守的就是「en 用户别看到中文标点」，
+  // 假串测不出来。解析 + {{var}} 插值与 i18next 的默认行为一致（escapeValue: false）。
+  const locale = (language: "zh" | "en") => {
+    const bundle = JSON.parse(
+      readFileSync(`public/locales/${language}/translation.json`, "utf8"),
+    );
+    return (key: string, vars?: Record<string, string | number>) => {
+      const value = key
+        .split(".")
+        .reduce<unknown>((node, part) => (node as Record<string, unknown>)?.[part], bundle);
+      if (typeof value !== "string") throw new Error(`missing translation key: ${key}`);
+      return value.replace(/{{(\w+)}}/g, (_, name: string) => String(vars?.[name] ?? ""));
+    };
+  };
+
+  const CLIPS = [
+    { label: "sfx.wav", durationMs: 900 },
+    { label: "bgm.mp3", durationMs: 1_200 },
+  ];
+
+  it("中文用全角括号 + 顿号", () => {
+    expect(formatAudioDurationClips(CLIPS, locale("zh"))).toBe(
+      "sfx.wav（0.9s）、bgm.mp3（1.2s）",
+    );
+  });
+
+  it("英文用半角括号 + 逗号，且不漏出任何中文标点", () => {
+    const formatted = formatAudioDurationClips(CLIPS, locale("en"));
+    expect(formatted).toBe("sfx.wav (0.9s), bgm.mp3 (1.2s)");
+    expect(formatted).not.toMatch(/[（）、。：]/);
+  });
+
+  it("单条时不带分隔符", () => {
+    expect(formatAudioDurationClips([CLIPS[0]], locale("en"))).toBe("sfx.wav (0.9s)");
+  });
+
+  it("缺文件名时的兜底标签也跟随语言（不再硬编码「音频N」）", () => {
+    expect(locale("zh")("node.videoNode.audio.clipFallbackLabel", { index: 2 })).toBe(
+      "音频2",
+    );
+    expect(locale("en")("node.videoNode.audio.clipFallbackLabel", { index: 2 })).toBe(
+      "Audio 2",
+    );
   });
 });
 
