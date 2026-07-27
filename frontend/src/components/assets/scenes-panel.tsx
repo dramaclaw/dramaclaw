@@ -363,7 +363,9 @@ function SceneDialog({
                         variant_id: event.target.value,
                       }))
                     }
-                    placeholder="漏水"
+                    placeholder={t("assets.scenes.fields.variantPlaceholder", {
+                      defaultValue: "漏水",
+                    })}
                     className={SCENE_DIALOG_INPUT_CLASS}
                   />
                 </div>

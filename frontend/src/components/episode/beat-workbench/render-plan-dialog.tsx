@@ -354,7 +354,8 @@ function PlanCard({
         title={entry.location}
       >
         {entry.location || t("episode.renderPlan.unknownLocation")}
-        {entry.padding_count > 0 && ` +${entry.padding_count}空`}
+        {entry.padding_count > 0 &&
+          ` ${t("episode.renderPlan.paddingCount", { count: entry.padding_count })}`}
       </div>
       {entry.warnings.length > 0 && (
         <div className="text-amber-500">

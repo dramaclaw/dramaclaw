@@ -355,7 +355,9 @@ function SketchGridCard({
         </p>
         {group.sceneId && (
           <p className="truncate text-[11px] text-muted-foreground">
-            {group.sceneId}
+            {group.sceneId === UNKNOWN_SCENE_ID
+              ? t("episode.workbench.sketchGrid.unknownScene")
+              : group.sceneId}
           </p>
         )}
       </div>
@@ -695,12 +697,14 @@ function buildPlannedSketchGridGroups(
   return groups;
 }
 
+const UNKNOWN_SCENE_ID = "__unknown_scene__";
+
 function getBeatSceneId(beat: Beat): string {
   return (
     beat.scene_ref?.scene_id?.trim() ||
     beat.location?.trim() ||
     beat.location_description?.trim() ||
-    "未知场景"
+    UNKNOWN_SCENE_ID
   );
 }
 

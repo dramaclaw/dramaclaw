@@ -572,7 +572,15 @@
       "total": "角色数",
       "withPortraits": "已有肖像",
       "identities": "身份造型",
-      "attempts": "生成请求"
+      "attempts": "生成请求",
+      "strip": {
+        "total": "总角色",
+        "mainCharacter": "解说主角",
+        "portrait": "头像",
+        "identity": "身份",
+        "voice": "声线",
+        "ariaLabel": "角色统计"
+      }
     },
     "tabs": {
       "basics": "基本",
@@ -1076,7 +1084,39 @@
     "sortDesc": "降序",
     "nodes": "节点数",
     "empty": "暂无项目",
-    "emptyHint": "点击上方按钮创建新项目"
+    "emptyHint": "点击上方按钮创建新项目",
+    "notFound": "项目不存在",
+    "notFoundDescriptionPrefix": "当前账号下找不到项目",
+    "notFoundDescriptionSuffix": "。",
+    "backToProjects": "返回项目",
+    "shareDialog": {
+      "title": "共享项目",
+      "descriptionWithOwner": "{{name}} · {{owner}}",
+      "descriptionFallback": "管理项目成员",
+      "currentUserFallback": "当前用户",
+      "addMember": "添加成员",
+      "addMemberHint": "输入用户名，选择权限后加入项目。",
+      "copyLink": "复制链接",
+      "searchPlaceholder": "搜索用户名",
+      "alreadyInProject": "已在项目中",
+      "add": "添加",
+      "members": "成员",
+      "owner": "所有者",
+      "projectOwner": "项目所有者",
+      "loadingMembers": "加载成员",
+      "removeMember": "移除成员",
+      "roleViewer": "只读查看",
+      "roleEditor": "可编辑与运行任务",
+      "roleAdmin": "可管理共享成员",
+      "toastMemberUpdated": "已更新共享成员",
+      "toastShareFailed": "共享失败，请确认用户存在且你有权限",
+      "toastLinkCopied": "项目链接已复制",
+      "toastCopyFailed": "复制失败",
+      "toastPermissionUpdated": "权限已更新",
+      "toastPermissionUpdateFailed": "更新权限失败",
+      "toastMemberRemoved": "已移除共享成员",
+      "toastRemoveFailed": "移除失败"
+    }
   },
   "assets": {
     "common": {
@@ -1171,7 +1211,8 @@
         "environmentPrompt": "环境描述 提示词",
         "variantPrompt": "变体增量提示词",
         "variantPromptPlaceholder": "只写和基础场景不同的部分，例如积水反光、焦黑墙面、节日装饰。",
-        "description": "叙述性描述"
+        "description": "叙述性描述",
+        "variantPlaceholder": "漏水"
       },
       "environment": {
         "front": "正面描述",
@@ -1532,6 +1573,8 @@
       "justNow": "刚刚"
     },
     "detail": {
+      "currentStatus": "当前状态",
+      "debugInfo": "调试信息",
       "tabs": {
         "overview": "概览",
         "logs": "日志"
@@ -2012,7 +2055,9 @@
         "configureVoiceAction": "去配置",
         "beatNarrationVoice": "本条解说音频",
         "beatNarrationVoiceUpload": "上传本条音频",
-        "beatNarrationVoiceUploaded": "本条解说音频已上传"
+        "beatNarrationVoiceUploaded": "本条解说音频已上传",
+        "prereqHintCharacters": "。请到「角色」中上传解说主角声线。",
+        "prereqHintVoices": "。请到「资产 > 声线」上传或裁剪默认解说声线。"
       },
       "video": {
         "started": "Beat #{{n}} 视频已启动",
@@ -2168,7 +2213,16 @@
         "narratorVoiceTrimDuration": "保留秒数",
         "narratorVoiceTrimApply": "裁剪到 3-5 秒",
         "narratorVoiceTrimInvalid": "裁剪参数无效",
-        "narratorVoiceUse": "使用"
+        "narratorVoiceUse": "使用",
+        "seedance2SubjectPromptGenerated": "主体提示词已优化",
+        "grokVideoInspector": "Grok Video 检视器",
+        "happyHorseInspector": "HappyHorse 检视器",
+        "grokPromptLabel": "Grok 提示词",
+        "subjectPromptLabel": "主体提示词",
+        "generateGrokPrompt": "生成 Grok 提示词",
+        "generateSubjectPrompt": "生成主体提示词",
+        "seedance2CropTitleWithAspect": "裁剪 {{aspect}}",
+        "seedance2CropDragHandle": "移动裁剪区域"
       },
       "sketch": {
         "switched": "已切换草图",
@@ -2246,7 +2300,9 @@
         "openFreezone": "虾画编辑",
         "openFreezoneTip": "在 虾画 编辑当前 beat 的草图",
         "freezoneOpened": "已打开草图 虾画",
-        "freezoneOpenFailed": "打开草图 虾画 失败"
+        "freezoneOpenFailed": "打开草图 虾画 失败",
+        "cropTitleWithAspect": "裁剪 {{aspect}}",
+        "cropDragHandle": "移动裁剪区域"
       },
       "sketchGrid": {
         "title": "草图网格",
@@ -2268,7 +2324,8 @@
         "copySuccess": "提示词 已复制",
         "cut": "切割入池",
         "cutSuccess": "网格 #{{n}} 已切割",
-        "cutFailed": "网格 切割失败"
+        "cutFailed": "网格 切割失败",
+        "unknownScene": "未知场景"
       },
       "render": {
         "generateNew": "生成新图",
@@ -2306,7 +2363,14 @@
         "backgroundUploadFailed": "上传 渲染 背景参考失败",
         "backgroundSaved": "渲染 背景参考已切换",
         "backgroundSaveFailed": "保存 渲染 背景参考失败",
-        "backgroundCropSave": "保存截图"
+        "backgroundCropSave": "保存截图",
+        "backgroundCropTitleWithAspect": "裁剪 {{aspect}}",
+        "backgroundCropDragHandle": "移动裁剪区域",
+        "relightLabel": "Relight 到 {{timeOfDay}}",
+        "relightLabelDefaultTime": "指定时间",
+        "relightTooltip": "Relight：按 beat 时间重新打光，不改变场景结构。",
+        "lockedLightTooltip": "锁图光：使用场景图自带光线，不重新打光。",
+        "lockedLightLabel": "锁图光"
       },
       "renderGrid": {
         "title": "渲染网格",
@@ -2479,7 +2543,8 @@
       "readyRatio": "{{ready}}/{{total}}",
       "blockedCount": "{{count}} 未就绪",
       "composeReady": "已就绪",
-      "composeBlocked": "缺 {{count}}"
+      "composeBlocked": "缺 {{count}}",
+      "beatCount": "{{count}} 个 beat"
     },
     "compose": {
       "blocked": "还缺少以下内容:",
@@ -2608,7 +2673,8 @@
       "errors": {
         "invalidBeats": "选中的 beats 不在当前集范围内",
         "noBeats": "当前集暂无 beats"
-      }
+      },
+      "paddingCount": "+{{count}}空"
     },
     "renderSettings": {
       "model": "渲染模型",
@@ -3399,7 +3465,11 @@
         "title": "生成音频",
         "on": "开启",
         "off": "关闭",
-        "durationExceeded": "音频总时长不能超过 {{max}} 秒，请缩短或替换配乐参考后再试。"
+        "durationTooShort": "单条音频时长不能低于 {{min}} 秒：{{clips}}。请替换或补长后再试。",
+        "durationTooLong": "单条音频时长不能超过 {{max}} 秒：{{clips}}。请裁剪或替换后再试。",
+        "clipDuration": "{{label}}（{{seconds}}s）",
+        "clipSeparator": "、",
+        "clipFallbackLabel": "音频{{index}}"
       },
       "count": {
         "format": "{{count}}个"
@@ -3981,13 +4051,13 @@
       "notConfiguredImpact": "未配置参考媒体存储。纯文本和纯文生图通常不受影响；但需要上传本地参考图的功能会失败，例如虾画参考图、角色参考图、身份图、图生图、视频首帧和图生视频。请配置阿里云 OSS 或 Cloudinary。",
       "showSecret": "显示",
       "hideSecret": "隐藏",
-      "fieldsHint": "保存后写入 CE 本地配置库；后端不会回传完整 AccessKey，如需更新请重新输入。",
+      "fieldsHint": "保存后写入 CE 本地配置库；后端不会回传完整 AccessKey。留空保持已保存值，只填写需要替换的字段即可。",
       "save": "保存 OSS 配置",
       "saveCloudinary": "保存 Cloudinary 配置",
       "saveSuccess": "OSS 配置已保存",
       "cloudinarySaveSuccess": "Cloudinary 配置已保存",
       "saveFailed": "OSS 配置保存失败",
-      "cloudinaryFieldsHint": "保存后写入 CE 本地配置库；后端不会回传完整 API Key / Secret，如需更新请重新输入。API 文件夹可留空，留空时上传到 Cloudinary 根目录。",
+      "cloudinaryFieldsHint": "保存后写入 CE 本地配置库；后端不会回传完整 API Key / Secret。留空保持已保存值，只填写需要替换的字段即可。API 文件夹可留空，留空时上传到 Cloudinary 根目录。",
       "cloudinaryRegisterLink": "前往 Cloudinary 注册",
       "testUpload": "测试上传",
       "testUploadPlaceholder": "测试上传功能即将上线",

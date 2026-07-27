@@ -56,13 +56,13 @@ function audioPrereqTarget(error: string): VoiceConfigTarget | null {
   return "voices";
 }
 
-function audioPrereqMessage(error: string): string {
+function audioPrereqMessage(error: string, t: (key: string) => string): string {
   const message = String(error || "").trim();
   if (!message.includes("解说声线缺失")) return message;
   if (message.includes("解说主角") || message.includes("角色工作台")) {
-    return `${message}。请到「角色」中上传解说主角声线。`;
+    return `${message}${t("episode.workbench.audio.prereqHintCharacters")}`;
   }
-  return `${message}。请到「资产 > 声线」上传或裁剪默认解说声线。`;
+  return `${message}${t("episode.workbench.audio.prereqHintVoices")}`;
 }
 
 /** 音频 sub-tab — per-beat IndexTTS2 task dispatch and playback. */
@@ -102,7 +102,7 @@ export function AudioPane({
 
   const showAudioError = (error: string) => {
     const target = audioPrereqTarget(error);
-    const message = audioPrereqMessage(error);
+    const message = audioPrereqMessage(error, t);
     if (!target) {
       toast.error(message);
       return;
