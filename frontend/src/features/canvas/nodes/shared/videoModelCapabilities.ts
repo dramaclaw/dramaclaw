@@ -119,6 +119,93 @@ export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
 }
 
 /**
+ * Seedance 2.0 音频引用的时长边界。厂商口径是**逐条**，没有一个字提到总和：
+ * `[InvalidParameter.DurationTooShort] Duration must be between 1.8s and 15.2s`。
+ *
+ * 所以这里也逐条卡，两头都卡。**别再回到按总时长判定**：那会把 3 条各 6s（每条都
+ * 在 1.8~15.2 区间内、厂商必然放行）的合法组合拦在本地，用一条我们自己臆想出来的
+ * 规则挡住用户。后端 freezone omni-gen 端点（`validate_omni_reference_limits`）只
+ * 校验条数（图≤9 / 视频≤3 / 音频≤3 / 总数≤12），同样没有总时长这回事。
+ *
+ * 注：`seedance2_i2v/pipeline.py` 里那个 `MAX_SEEDANCE2_REFERENCE_AUDIO_TOTAL_SECONDS`
+ * 总时长守卫属于**剧集 beat 流水线的参考声线**（角色工作台 3-5s 声音克隆样本），与画布
+ * 这条 omni-gen 路径无关，不要拿它给这里的总时长限制背书。
+ *
+ * 文案里的秒数一律从这两个常量推（`/ 1000`），别在调用点另写一遍字面量，否则改阈值
+ * 时提示会静默漂移。
+ */
+export const MIN_AUDIO_REFERENCE_DURATION_MS = 1_800;
+export const MAX_AUDIO_REFERENCE_DURATION_MS = 15_200;
+
+export type AudioDurationRejection = {
+  kind: "tooShort" | "tooLong";
+  clips: { label: string; durationMs: number }[];
+};
+
+/**
+ * 提交前音频时长守卫（仅 Seedance 2.0 的全能参考路径调用，其它模型边界未知）。
+ *
+ * `durationMs` 为 null = 探测不出时长（音频节点没渲染过波形，且 `<audio>` 探测撞上
+ * CORS / 网络 / 超时）。这类一律**不参与判定**——宁可放过去让后端兜底，也不要凭空
+ * 拦住一次正常提交。
+ *
+ * 太短优先于太长上报：同时越界时先修哪条都行，报一类比混在一起列更好读。
+ */
+export function audioReferenceDurationRejection(
+  clips: readonly { label: string; durationMs: number | null }[],
+): AudioDurationRejection | null {
+  const measured = clips.filter(
+    (clip): clip is { label: string; durationMs: number } =>
+      typeof clip.durationMs === "number" && clip.durationMs > 0,
+  );
+  const tooShort = measured.filter(
+    (clip) => clip.durationMs < MIN_AUDIO_REFERENCE_DURATION_MS,
+  );
+  if (tooShort.length > 0) {
+    return { kind: "tooShort", clips: tooShort };
+  }
+  const tooLong = measured.filter(
+    (clip) => clip.durationMs > MAX_AUDIO_REFERENCE_DURATION_MS,
+  );
+  if (tooLong.length > 0) {
+    return { kind: "tooLong", clips: tooLong };
+  }
+  return null;
+}
+
+/**
+ * 违规条目的秒数展示——**不能四舍五入到与阈值自相矛盾**。
+ *
+ * 早先用 `toFixed(1)`，1.799s 会显示成「1.8s」、15.201s 显示成「15.2s」：用户看到
+ * 的正好是合法边界值，却被告知越界，只能怀疑是我们算错了。时长本身就是整毫秒
+ * （`Math.round(secs * 1000)`），所以按毫秒精度展示，再去掉无意义的尾随 0：
+ * 900 → `0.9`、1799 → `1.799`、15201 → `15.201`、6000 → `6`。
+ */
+function formatClipSeconds(durationMs: number): string {
+  return (durationMs / 1000).toFixed(3).replace(/\.?0+$/, "");
+}
+
+/**
+ * 把违规条目拼成提示里的 `{{clips}}`（tooShort / tooLong 共用）。
+ *
+ * 括号和分隔符都从 locale 取（zh 用全角括号 + 顿号，en 用半角括号 + 逗号），别在
+ * 调用点写死——这里曾经硬编码 `（）` 和 `、`，en 用户会看到一串中文标点。
+ */
+export function formatAudioDurationClips(
+  clips: readonly { label: string; durationMs: number }[],
+  translate: (key: string, vars?: Record<string, string | number>) => string,
+): string {
+  return clips
+    .map((clip) =>
+      translate("node.videoNode.audio.clipDuration", {
+        label: clip.label,
+        seconds: formatClipSeconds(clip.durationMs),
+      }),
+    )
+    .join(translate("node.videoNode.audio.clipSeparator"));
+}
+
+/**
  * 提交前守卫：当前 (模型, 模式) 是否会**丢弃或被后端直接拒绝**已接入的上游素材。
  * 返回非空理由则应禁用提交、并把理由显示到按钮 tooltip 上，替代「静默丢素材 / 提交 400」。
  *
