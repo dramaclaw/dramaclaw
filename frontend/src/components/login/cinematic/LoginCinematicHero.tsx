@@ -15,6 +15,7 @@ import {
 import styles from "@/components/login/login.module.css";
 import layout from "./hero-layout.module.css";
 import { businessWechatQrUrl } from "./media";
+import { MoreInfoMenu } from "./MoreInfoMenu";
 
 const GITHUB_URL = "https://github.com/dramaclaw/dramaclaw";
 const GITHUB_REPO = "dramaclaw/dramaclaw";
@@ -229,6 +230,7 @@ export function LoginCinematicHeader({
             </div>
           </div>
         </div>
+        <MoreInfoMenu />
         <a
           className={styles.githubLink}
           href={GITHUB_URL}
