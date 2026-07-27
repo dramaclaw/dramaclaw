@@ -289,8 +289,10 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
 //
 // 表里没出现的模式默认不限制（textToVideo 不消费上游、imageToVideo 走
 // `.slice(0, 9)` 自带兜底），各自走原有路径。
-//   - allReference (omni)  ：image 1-9 / video 0-3 / audio 0-3。总时长 ≤ 15s
-//                            的部分前端拿不到精确媒体元数据，延后交给服务端。
+//   - allReference (omni)  ：image 1-9 / video 0-3 / audio 0-3。音频另有**逐条**
+//                            1.8~15.2s 的厂商时长约束，在提交前单独校验（见
+//                            audioReferenceDurationRejection）；**没有总时长上限**，
+//                            服务端也不校验时长，别再往这张表里加总时长口径。
 //   - firstLastFrame       ：仅图片 2 张（首帧 + 尾帧），不允许任何视频 / 音频。
 //                            图片 >2 时另有自动切到 allReference 的兜底（见
 //                            VideoNode 内部 effect）。
@@ -2283,7 +2285,7 @@ export const VideoNode = memo(
           // backend caps: image≤9, video≤3, audio≤3, total≤12.
           const upstream = collectUpstream();
           const references: FreezoneVideoReferenceItem[] = [];
-          // 与 references 里 type==="audio" 的项一一对应，用于提交前校验音频总时长。
+          // 与 references 里 type==="audio" 的项一一对应，用于提交前逐条校验音频时长。
           const audioRefs: {
             url: string;
             label: string;

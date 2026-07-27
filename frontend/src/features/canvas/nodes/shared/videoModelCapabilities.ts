@@ -174,7 +174,19 @@ export function audioReferenceDurationRejection(
 }
 
 /**
- * 把 `tooShort` 的违规条目拼成提示里的 `{{clips}}`。
+ * 违规条目的秒数展示——**不能四舍五入到与阈值自相矛盾**。
+ *
+ * 早先用 `toFixed(1)`，1.799s 会显示成「1.8s」、15.201s 显示成「15.2s」：用户看到
+ * 的正好是合法边界值，却被告知越界，只能怀疑是我们算错了。时长本身就是整毫秒
+ * （`Math.round(secs * 1000)`），所以按毫秒精度展示，再去掉无意义的尾随 0：
+ * 900 → `0.9`、1799 → `1.799`、15201 → `15.201`、6000 → `6`。
+ */
+function formatClipSeconds(durationMs: number): string {
+  return (durationMs / 1000).toFixed(3).replace(/\.?0+$/, "");
+}
+
+/**
+ * 把违规条目拼成提示里的 `{{clips}}`（tooShort / tooLong 共用）。
  *
  * 括号和分隔符都从 locale 取（zh 用全角括号 + 顿号，en 用半角括号 + 逗号），别在
  * 调用点写死——这里曾经硬编码 `（）` 和 `、`，en 用户会看到一串中文标点。
@@ -187,7 +199,7 @@ export function formatAudioDurationClips(
     .map((clip) =>
       translate("node.videoNode.audio.clipDuration", {
         label: clip.label,
-        seconds: (clip.durationMs / 1000).toFixed(1),
+        seconds: formatClipSeconds(clip.durationMs),
       }),
     )
     .join(translate("node.videoNode.audio.clipSeparator"));

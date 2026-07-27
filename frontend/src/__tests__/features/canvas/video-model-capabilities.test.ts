@@ -305,6 +305,26 @@ describe("formatAudioDurationClips — 提示里的 {{clips}} 走 locale 排版"
     expect(formatAudioDurationClips([CLIPS[0]], locale("en"))).toBe("sfx.wav (0.9s)");
   });
 
+  it("紧贴阈值的毫秒不四舍五入到合法值 (否则提示自相矛盾)", () => {
+    // 1.799s 曾被显示成「1.8s」、15.201s 曾被显示成「15.2s」——用户看到的正好是
+    // 合法边界值，却被告知越界。展示按毫秒精度，别再退回 toFixed(1)。
+    expect(
+      formatAudioDurationClips([{ label: "a.wav", durationMs: 1_799 }], locale("en")),
+    ).toBe("a.wav (1.799s)");
+    expect(
+      formatAudioDurationClips([{ label: "b.wav", durationMs: 15_201 }], locale("en")),
+    ).toBe("b.wav (15.201s)");
+  });
+
+  it("整秒不拖尾随 0", () => {
+    expect(
+      formatAudioDurationClips([{ label: "c.wav", durationMs: 6_000 }], locale("en")),
+    ).toBe("c.wav (6s)");
+    expect(
+      formatAudioDurationClips([{ label: "d.wav", durationMs: 15_200 }], locale("en")),
+    ).toBe("d.wav (15.2s)");
+  });
+
   it("缺文件名时的兜底标签也跟随语言（不再硬编码「音频N」）", () => {
     expect(locale("zh")("node.videoNode.audio.clipFallbackLabel", { index: 2 })).toBe(
       "音频2",
