@@ -42,6 +42,8 @@ async def run_freezone_gen(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     quality: Optional[str] = None,
+    model_params: Optional[dict[str, Any]] = None,
+    request_schema: Optional[dict[str, Any]] = None,
     output_task_type: str = "freezone_gen",
 ) -> Path:
     """text → image (with optional reference images).
@@ -75,6 +77,8 @@ async def run_freezone_gen(
         model_override=model,
         image_size_override=image_size,
     )
+    cfg["newapi_model_params"] = model_params or {}
+    cfg["newapi_request_schema"] = request_schema or {}
     if reference_paths:
         await generate_reference_edit_image(
             prompt=prompt,
@@ -1137,6 +1141,9 @@ async def run_freezone_video_gen(
     backend: str = "huimeng_seedance-2.0-fast",
     last_frame_path: Optional[str] = None,
     audio_setting: Optional[str] = None,
+    gen_mode: Optional[str] = None,
+    model_params: Optional[dict[str, Any]] = None,
+    request_schema: Optional[dict[str, Any]] = None,
 ) -> Path:
     """Freezone 文生视频。
 
@@ -1170,6 +1177,8 @@ async def run_freezone_video_gen(
         backend=backend,
         resolution=resolution,
         generate_audio=generate_audio,
+        model_params=model_params,
+        request_schema=request_schema,
     )
     if backend == "seedance_2":
         result = await video_gen.generate(
@@ -1204,6 +1213,7 @@ async def run_freezone_video_gen(
             references=references,
             human_review=bool(human_review),
             seedance2_config={"scene_optimize": scene_optimize} if scene_optimize else None,
+            gen_mode=gen_mode,
             **extra_kwargs,
         )
     if not result or result.status.value != "done":

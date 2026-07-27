@@ -71,6 +71,7 @@ from novelvideo.image_request_usage import (
 from novelvideo.utils.path_resolver import compute_scoped_grid_filename
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+    media_relay_ttl_seconds,
     upload_image_bytes,
 )
 
@@ -92,6 +93,7 @@ SINGLE_CELL_RENDER_MODE_BY_ASPECT = {
     "16:9": "1x1_16-9",
 }
 logger = logging.getLogger(__name__)
+NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS = 2 * 60 * 60
 
 _SCENE_REFERENCE_FEATURE_BILLING = contextvars.ContextVar(
     "scene_reference_feature_billing", default=False
@@ -142,6 +144,7 @@ def _newapi_safe_header_summary(headers: Any) -> dict[str, str]:
 def _newapi_safe_request_context(
     *,
     endpoint: str,
+    request_path: str,
     model: str,
     payload: dict[str, object],
     prompt: str,
@@ -149,10 +152,10 @@ def _newapi_safe_request_context(
     reference_images = payload.get("images")
     reference_image_count = len(reference_images) if isinstance(reference_images, list) else 0
     return {
-        "endpoint": f"{endpoint}/images/generations",
+        "endpoint": f"{endpoint}{request_path}",
         "model": model,
         "payload_keys": sorted(payload.keys()),
-        "extra_fields": payload.get("extra_fields") or {},
+        "size": payload.get("size") or "",
         "reference_image_count": reference_image_count,
         "prompt_chars": len(prompt or ""),
         "prompt_sha256": hashlib.sha256((prompt or "").encode("utf-8")).hexdigest()[:16],
@@ -164,7 +167,7 @@ def _newapi_context_for_error(context: dict[str, object]) -> str:
         f"model={context.get('model')}; "
         f"endpoint={context.get('endpoint')}; "
         f"payload_keys={context.get('payload_keys')}; "
-        f"extra_fields={context.get('extra_fields')}; "
+        f"size={context.get('size')}; "
         f"reference_image_count={context.get('reference_image_count')}; "
         f"prompt_sha256={context.get('prompt_sha256')}"
     )
@@ -345,12 +348,6 @@ def normalize_image_size(size: str, provider: str = "google") -> str:
     return size
 
 
-def _newapi_resolution_from_image_size(image_size: str | None) -> str:
-    normalized = normalize_image_size(str(image_size or "").strip(), provider="newapi")
-    lower = normalized.lower()
-    return lower if lower in {"1k", "2k", "4k"} else ""
-
-
 def _newapi_image_model_supports_quality(model: str | None) -> bool:
     model_name = str(model or "").strip().lower()
     return model_name in {
@@ -396,7 +393,13 @@ def _round_openai_edge(value: float) -> int:
     return max(16, int(math.ceil(value / 16.0)) * 16)
 
 
-def resolve_openai_image_size(aspect_ratio: str = "1:1", image_size: str = "1K") -> str:
+def resolve_openai_image_size(
+    aspect_ratio: str = "1:1",
+    image_size: str = "1K",
+    model: str | None = None,
+    *,
+    allow_dynamic_resolution: bool = False,
+) -> str:
     """Map internal aspect/image_size labels to GPT Image 2 size strings.
 
     gpt-image-2 supports flexible sizes, but they must satisfy OpenAI's documented
@@ -420,13 +423,48 @@ def resolve_openai_image_size(aspect_ratio: str = "1:1", image_size: str = "1K")
         ratio = 1.0 / _OPENAI_MAX_RATIO
 
     normalized_size = normalize_image_size(str(image_size or "1K"), provider="openai")
-    long_edge = {
+    model_name = str(model or "").strip().lower()
+    is_seedream5 = model_name.startswith("seedream-5")
+    long_edges = {
         "512": 1024,
         "0.5K": 1024,
         "1K": 1024,
         "2K": 2048,
+        "3K": 3072,
         "4K": 3840,
-    }.get(normalized_size, 1024)
+    }
+    if is_seedream5:
+        # Volcengine Seedream 5 defines 2K with a 3,686,400-pixel floor
+        # (2560x1440 at 16:9), rather than a literal 2048px long edge.
+        long_edges["2K"] = 2560
+    long_edge = long_edges.get(normalized_size)
+    dynamic_max_edge = _OPENAI_MAX_EDGE
+    dynamic_max_pixels = _OPENAI_MAX_PIXELS
+    if long_edge is None and allow_dynamic_resolution:
+        explicit_size = re.fullmatch(r"(\d+)\s*[xX×]\s*(\d+)", normalized_size)
+        if explicit_size:
+            width_i, height_i = (int(value) for value in explicit_size.groups())
+            if width_i <= 0 or height_i <= 0:
+                raise ValueError(f"invalid image resolution: {image_size}")
+            return f"{width_i}x{height_i}"
+        k_size = re.fullmatch(r"(\d+(?:\.\d+)?)\s*[kK]", normalized_size)
+        if k_size:
+            long_edge = max(16, _round_openai_edge(float(k_size.group(1)) * 1024))
+            dynamic_max_edge = long_edge
+            dynamic_max_pixels = long_edge * long_edge
+        else:
+            raise ValueError(
+                f"unsupported image resolution: {image_size}; "
+                "use a value such as 2K, 3K, 8K, or 2048x2048"
+            )
+    if long_edge is None:
+        long_edge = 1024
+    min_pixels = 3_686_400 if is_seedream5 else _OPENAI_MIN_PIXELS
+    max_pixels = (
+        16_777_216
+        if is_seedream5
+        else dynamic_max_pixels
+    )
 
     if ratio >= 1:
         width = float(long_edge)
@@ -436,22 +474,22 @@ def resolve_openai_image_size(aspect_ratio: str = "1:1", image_size: str = "1K")
         width = height * ratio
 
     pixel_count = width * height
-    if pixel_count < _OPENAI_MIN_PIXELS:
-        scale = math.sqrt(_OPENAI_MIN_PIXELS / pixel_count)
+    if pixel_count < min_pixels:
+        scale = math.sqrt(min_pixels / pixel_count)
         width *= scale
         height *= scale
-    elif pixel_count > _OPENAI_MAX_PIXELS:
-        scale = math.sqrt(_OPENAI_MAX_PIXELS / pixel_count)
+    elif pixel_count > max_pixels:
+        scale = math.sqrt(max_pixels / pixel_count)
         width *= scale
         height *= scale
 
-    width_i = min(_OPENAI_MAX_EDGE, _round_openai_edge(width))
-    height_i = min(_OPENAI_MAX_EDGE, _round_openai_edge(height))
+    width_i = min(dynamic_max_edge, _round_openai_edge(width))
+    height_i = min(dynamic_max_edge, _round_openai_edge(height))
 
-    if width_i * height_i < _OPENAI_MIN_PIXELS:
-        scale = math.sqrt(_OPENAI_MIN_PIXELS / max(1, width_i * height_i))
-        width_i = min(_OPENAI_MAX_EDGE, _round_openai_edge(width_i * scale))
-        height_i = min(_OPENAI_MAX_EDGE, _round_openai_edge(height_i * scale))
+    if width_i * height_i < min_pixels:
+        scale = math.sqrt(min_pixels / max(1, width_i * height_i))
+        width_i = min(dynamic_max_edge, _round_openai_edge(width_i * scale))
+        height_i = min(dynamic_max_edge, _round_openai_edge(height_i * scale))
 
     return f"{width_i}x{height_i}"
 
@@ -1531,9 +1569,15 @@ def _render_pool_template_for_aspect(aspect_mode: str) -> list[str]:
 # 仅使用已验证的格式（Seedance 2.0 理解的 Grid 布局）
 
 SHOT_GRID_CONFIGS: Dict[int, dict] = {
-    1: {"rows": 1, "cols": 1, "aspect_ratio": "9:16", "image_size": "1K", "order_hint": ""},
-    2: {"rows": 1, "cols": 2, "aspect_ratio": "16:9", "image_size": "2K", "order_hint": "从左到右"},
-    3: {"rows": 1, "cols": 3, "aspect_ratio": "21:9", "image_size": "2K", "order_hint": "从左到右"},
+    1: {
+        "rows": 1, "cols": 1, "aspect_ratio": "9:16", "image_size": "1K", "order_hint": "",
+    },
+    2: {
+        "rows": 1, "cols": 2, "aspect_ratio": "16:9", "image_size": "2K", "order_hint": "从左到右",
+    },
+    3: {
+        "rows": 1, "cols": 3, "aspect_ratio": "21:9", "image_size": "2K", "order_hint": "从左到右",
+    },
     4: {
         "rows": 2,
         "cols": 2,
@@ -2803,11 +2847,15 @@ async def _generate_image(
                 "aspect_ratio": aspect_ratio,
                 "image_size": image_size,
                 "quality": quality or generator.openai_image_quality,
+            "request_schema": generator.newapi_request_schema,
+                "model_params": generator.newapi_model_params,
             },
             base_url=generator.base_url,
         )
         if not image_bytes:
-            raise ValueError(f"DramaClawAPI image generation failed: {error_detail or 'empty image'}")
+            raise ValueError(
+                f"DramaClawAPI image generation failed: {error_detail or 'empty image'}"
+            )
     else:
         from google import genai
         from google.genai import types
@@ -3319,14 +3367,15 @@ async def _call_newapi_image_api(
     image_config = image_config or {}
     aspect_ratio = str(image_config.get("aspect_ratio") or "1:1").strip() or "1:1"
     image_size = normalize_image_size(str(image_config.get("image_size") or "1K"), "newapi")
-    size = resolve_openai_image_size(aspect_ratio, image_size)
-    extra_fields: dict[str, object] = {
-        "aspect_ratio": aspect_ratio,
-        "image_size": image_size,
-    }
-    resolution = _newapi_resolution_from_image_size(image_size)
-    if resolution:
-        extra_fields["resolution"] = resolution
+    try:
+        size = resolve_openai_image_size(
+            aspect_ratio,
+            image_size,
+            model,
+            allow_dynamic_resolution=True,
+        )
+    except ValueError as exc:
+        return None, "", str(exc)
 
     payload: dict[str, object] = {
         "model": model,
@@ -3334,21 +3383,39 @@ async def _call_newapi_image_api(
         "size": size,
         "n": 1,
         "response_format": "b64_json",
-        "extra_fields": extra_fields,
     }
-    if _newapi_image_model_supports_quality(model):
-        quality = normalize_openai_quality(
-            str(image_config.get("quality") or ""),
-            default="medium",
-        )
+    include_quality = bool(
+        (image_config.get("request_schema") or {}).get("includeQuality")
+    ) or _newapi_image_model_supports_quality(model)
+    if include_quality and str(image_config.get("quality") or "").strip():
+        quality = str(image_config["quality"]).strip()
         payload["quality"] = quality
-        extra_fields["quality"] = quality
+    else:
+        quality = ""
+
+    output_format = str(image_config.get("output_format") or "").strip().lower()
+    if output_format:
+        payload["output_format"] = output_format
+    input_fidelity = str(image_config.get("input_fidelity") or "").strip().lower()
+    if input_fidelity and reference_images:
+        payload["input_fidelity"] = input_fidelity
 
     if reference_images:
         try:
             payload["images"] = await _relay_reference_images_for_newapi(reference_images)
         except Exception as exc:
             return None, "", f"media relay upload failed: {exc}"
+        request_path = "/images/edits"
+    else:
+        request_path = "/images/generations"
+
+    from novelvideo.media_model_request_schema import apply_media_request_schema
+
+    payload = apply_media_request_schema(
+        payload,
+        image_config.get("request_schema") or {},
+        image_config.get("model_params") or {},
+    )
 
     if base_url:
         endpoint = base_url.rstrip("/")
@@ -3358,6 +3425,7 @@ async def _call_newapi_image_api(
         endpoint = get_effective_newapi_gateway_config().base_url.rstrip("/")
     request_context = _newapi_safe_request_context(
         endpoint=endpoint,
+        request_path=request_path,
         model=model,
         payload=payload,
         prompt=prompt,
@@ -3376,7 +3444,7 @@ async def _call_newapi_image_api(
             billing_kind="image",
             billing_params=_image_credit_billing_params(
                 image_size=image_size,
-                quality=extra_fields.get("quality"),
+                quality=quality,
             ),
             metadata={"source": source},
         )
@@ -3449,7 +3517,7 @@ async def _call_newapi_image_api(
         ) as client:
             logger.info("DramaClawAPI image POST start: %s", request_context.get("endpoint"))
             response = await client.post(
-                f"{endpoint}/images/generations",
+                f"{endpoint}{request_path}",
                 headers=headers,
                 json=payload,
             )
@@ -3615,11 +3683,15 @@ async def _relay_reference_images_for_newapi(
 
     def upload_all() -> list[str]:
         urls: list[str] = []
+        relay_ttl = media_relay_ttl_seconds(
+            minimum=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+        )
         for image_ref in reference_images:
             urls.append(
                 upload_image_bytes(
                     _image_bytes(image_ref),
                     ext=_image_ext(image_ref),
+                    ttl=relay_ttl,
                     image_transform=IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
                 )
             )
@@ -3742,9 +3814,13 @@ class NanoBananaGridGenerator:
         self.model = config["model"]
         self.base_url = config.get("base_url", "")
         self.openai_image_quality = config.get("openai_image_quality", "medium")
-        self.openai_sketch_image_quality = config.get("openai_sketch_image_quality", "low")
+        self.openai_sketch_image_quality = config.get(
+            "openai_sketch_image_quality", "low"
+        )
         self.huimeng_image_quality = config.get("huimeng_image_quality", "medium")
         self.default_image_size = config.get("image_size", "1K")
+        self.newapi_request_schema = config.get("newapi_request_schema") or {}
+        self.newapi_model_params = config.get("newapi_model_params") or {}
         self.mode = config.get("mode", "3x3")
         self.rows = config["rows"]
         self.cols = config["cols"]
@@ -3762,7 +3838,7 @@ class NanoBananaGridGenerator:
                 key_name = "NEWAPI_API_KEY"
             else:
                 key_name = "GOOGLE_AI_API_KEY"
-            raise ValueError(f"API key not set. " f"Set {key_name} environment variable.")
+            raise ValueError(f"API key not set. Set {key_name} environment variable.")
 
         print(f"[NanoBanana Grid] Provider: {self.provider}, Model: {self.model}")
 
@@ -3783,11 +3859,15 @@ class NanoBananaGridGenerator:
         beat_start_index: int = 0,  # Render 模式：当前 grid 的 beat 起始索引（用于从 sketch 切片）
         total_episode_beats: int = 0,  # Render 模式：整集 beat 总数（用于计算 sketch 尺寸）
         location_beat_numbers: List[int] = None,  # 场景分组的原始 beat 编号（1-based）
-        explicit_episode_number: Optional[int] = None,  # 调用方已知的集数，避免从路径反推
+        explicit_episode_number: Optional[
+            int
+        ] = None,  # 调用方已知的集数，避免从路径反推
         scene_refs_override: dict[int, list[Any]] | None = None,
         prop_refs_override: dict[int, list[Any]] | None = None,
         sketch_dir: str = "",  # 草图目录路径（由调用方通过 PathResolver 计算）
-        aspect_ratio_override: Optional[str] = None,  # 覆盖 aspect_ratio（再生模式使用）
+        aspect_ratio_override: Optional[
+            str
+        ] = None,  # 覆盖 aspect_ratio（再生模式使用）
         image_size_override: Optional[str] = None,  # 覆盖 image_size（再生模式使用）
         mode_key: Optional[str] = None,  # mode_key 查表取 aspect_ratio/image_size
         prompt_aspect_ratio: Optional[
@@ -3798,7 +3878,9 @@ class NanoBananaGridGenerator:
         force_image_size: Optional[str] = None,  # 强制覆盖 image_size（如 "0.5K"）
         use_director_refs: bool = False,  # 是否优先使用 beat 级导演参考图
         director_sheet_path: Optional[str] = None,  # 当前 grid 的 DirectorWorld sheet
-        director_ref_beat_numbers: Optional[List[int]] = None,  # 仅这些 beat 使用导演参考
+        director_ref_beat_numbers: Optional[
+            List[int]
+        ] = None,  # 仅这些 beat 使用导演参考
         director_control_frames_dir: str | Path | None = None,
     ) -> GridGenerationResult:
         """生成网格图。
@@ -3880,7 +3962,9 @@ class NanoBananaGridGenerator:
                 ref_path = info.get("ref_path") or info.get("portrait_path")
                 upstream_mode = info.get("reference_mode", "prompt_only")
 
-                if upstream_mode == "composite" and ref_path and os.path.exists(ref_path):
+                if (
+                    upstream_mode == "composite" and ref_path and os.path.exists(ref_path)
+                ):
                     char_info["reference_path"] = ref_path
                     char_info["reference_mode"] = "composite"
                     print(f"[NanoBananaPro] {char_name}: 复合图模式 -> {ref_path}")
@@ -3890,7 +3974,9 @@ class NanoBananaGridGenerator:
                 if ref_path and os.path.exists(ref_path):
                     char_info["reference_path"] = ref_path
                     char_info["reference_mode"] = "portrait_only"
-                    print(f"[NanoBananaPro] {char_name}: Portrait 模式（仅锁脸）-> {ref_path}")
+                    print(
+                        f"[NanoBananaPro] {char_name}: Portrait 模式（仅锁脸）-> {ref_path}"
+                    )
                     valid_character_map[char_name] = char_info
                     continue
 
@@ -3974,7 +4060,9 @@ class NanoBananaGridGenerator:
                     director_sheet_path and os.path.exists(director_sheet_path)
                 )
                 if has_director_sheet:
-                    print(f"[DirectorSheet] 使用 DirectorWorld sheet: {director_sheet_path}")
+                    print(
+                        f"[DirectorSheet] 使用 DirectorWorld sheet: {director_sheet_path}"
+                    )
                 elif actual_beat_count != 1 or rows != 1 or cols != 1:
                     return GridGenerationResult(
                         success=False,
@@ -3984,7 +4072,9 @@ class NanoBananaGridGenerator:
                         ),
                         generation_time=time.time() - start_time,
                     )
-                if not has_director_sheet and not _has_director_image_ref(scene_refs, panel_idx=1):
+                if not has_director_sheet and not _has_director_image_ref(
+                    scene_refs, panel_idx=1
+                ):
                     return GridGenerationResult(
                         success=False,
                         error=(
@@ -4017,7 +4107,9 @@ class NanoBananaGridGenerator:
                     REGEN_MODE_CONFIGS[mode_key]["aspect_ratio"] if mode_key else None
                 )
                 # image_aspect_ratio = 实际输出比例（two-pass Pass1 时为 1:1，否则与 prompt_ar 相同）
-                _image_ar = REGEN_MODE_CONFIGS[mode_key]["aspect_ratio"] if mode_key else ""
+                _image_ar = (
+                    REGEN_MODE_CONFIGS[mode_key]["aspect_ratio"] if mode_key else ""
+                )
                 ctx = create_prompt_context(
                     mode=PromptMode.SKETCH,
                     beats=beats[:grid_capacity],
@@ -4079,7 +4171,9 @@ class NanoBananaGridGenerator:
                 if sketch_result or has_all_pool_sketches:
                     print(f"[NanoBananaPro] 进入 Render 模式 (基于草图渲染)")
                     if has_all_pool_sketches:
-                        print(f"[Render] 使用图片池草图: {len(beat_sketch_paths)} 个 beat")
+                        print(
+                            f"[Render] 使用图片池草图: {len(beat_sketch_paths)} 个 beat"
+                        )
                     elif sketch_result:
                         sketch_file, s_rows, s_cols = sketch_result
                         print(f"[Render] 使用草图: {sketch_file} ({s_rows}x{s_cols})")
@@ -4106,14 +4200,18 @@ class NanoBananaGridGenerator:
                         beat_sketch_paths=beat_sketch_paths,
                         target_aspect=target_aspect,
                     )
-                    print(f"[Render] 草图切片: beat_numbers={actual_beat_numbers} -> {rows}x{cols}")
+                    print(
+                        f"[Render] 草图切片: beat_numbers={actual_beat_numbers} -> {rows}x{cols}"
+                    )
                     print(f"[Render] 子草图已保存: {sub_sketch_path}")
 
                     # 用切片后的草图作为参考
                     previous_grid_path = sub_sketch_path
 
                     # 读取预计算的 per-beat 身份检测结果（草图工作台已完成检测）
-                    _panel_det = load_precomputed_panel_detected(actual_beat_numbers, beats)
+                    _panel_det = load_precomputed_panel_detected(
+                        actual_beat_numbers, beats
+                    )
                     valid_character_map = filter_character_map_by_precomputed(
                         valid_character_map, _panel_det
                     )
@@ -4157,7 +4255,9 @@ class NanoBananaGridGenerator:
                     error=msg,
                 )
 
-            print(f"[NanoBananaPro] 构建 Prompt 完成，共 {len(beats[:grid_capacity])} 个分镜")
+            print(
+                f"[NanoBananaPro] 构建 Prompt 完成，共 {len(beats[:grid_capacity])} 个分镜"
+            )
 
             # 保存 prompt 到文件（审计用）
             # 目录结构: grids/ep001/2x2/prompts/grid_01.prompt.txt
@@ -4175,7 +4275,9 @@ class NanoBananaGridGenerator:
                 print(f"[NanoBananaPro] Prompt-Only 模式，跳过 API 调用")
                 # 在 Render 模式下，显示 sketch 切片信息（用于验证）
                 if is_render_mode:
-                    sketch_capacity = SKETCH_GRID_CONFIG["rows"] * SKETCH_GRID_CONFIG["cols"]
+                    sketch_capacity = (
+                        SKETCH_GRID_CONFIG["rows"] * SKETCH_GRID_CONFIG["cols"]
+                    )
                     local_offset = beat_start_index % sketch_capacity
                     end_index = local_offset + len(beats[:grid_capacity])
                     print(
@@ -4194,7 +4296,9 @@ class NanoBananaGridGenerator:
             usage_request_id = uuid.uuid4().hex
             project_output_dir = infer_project_output_dir(output_path or sketch_dir)
             usage_recorded = False
-            scope_beat_numbers = [int(b) for b in (location_beat_numbers or []) if b is not None]
+            scope_beat_numbers = [
+                int(b) for b in (location_beat_numbers or []) if b is not None
+            ]
             if not scope_beat_numbers:
                 scope_beat_numbers = [
                     _generation_beat_number(beat, beat_start_index + idx)
@@ -4382,7 +4486,9 @@ class NanoBananaGridGenerator:
 
             if self.provider == "openrouter":
                 # ===== OpenRouter 分支 =====
-                effective_image_size = normalize_image_size(image_size, provider="openrouter")
+                effective_image_size = normalize_image_size(
+                    image_size, provider="openrouter"
+                )
                 print(
                     f"[NanoBananaPro] 调用 OpenRouter ({self.model}) 生成网格图 (分辨率: {effective_image_size}, 比例: {aspect_ratio})..."
                 )
@@ -4392,7 +4498,9 @@ class NanoBananaGridGenerator:
                     model=self.model,
                     prompt=prompt_text,
                     reference_images=ref_bytes or None,
-                    image_config={"aspect_ratio": aspect_ratio, "image_size": effective_image_size},
+                    image_config={
+                        "aspect_ratio": aspect_ratio, "image_size": effective_image_size,
+                    },
                 )
                 if not image_bytes:
                     message = "OpenRouter API 未返回图像数据"
@@ -4400,7 +4508,9 @@ class NanoBananaGridGenerator:
                         message = f"{message}: {or_error}"
                     return _usage_fail(message)
             elif self.provider == "huimeng":
-                print(f"[HuiMeng Images] 调用 {self.model} 生成网格图 (比例: {aspect_ratio})...")
+                print(
+                    f"[HuiMeng Images] 调用 {self.model} 生成网格图 (比例: {aspect_ratio})..."
+                )
                 prompt_text, ref_bytes = self._extract_ref_bytes_from_contents(contents)
                 image_bytes, _text, huimeng_error = await _call_huimeng_image_api(
                     api_key=self.api_key,
@@ -4452,7 +4562,9 @@ class NanoBananaGridGenerator:
                         message = f"{message}: {openai_error}"
                     return _usage_fail(message)
             elif self.provider == "newapi":
-                effective_image_size = normalize_image_size(image_size, provider="newapi")
+                effective_image_size = normalize_image_size(
+                    image_size, provider="newapi"
+                )
                 print(
                     f"[DramaClawAPI Images] 调用 {self.model} 生成网格图 "
                     f"(分辨率: {effective_image_size}, 比例: {aspect_ratio})..."
@@ -4474,6 +4586,8 @@ class NanoBananaGridGenerator:
                             if sketch
                             else self.openai_image_quality
                         ),
+                    "request_schema": self.newapi_request_schema,
+                        "model_params": self.newapi_model_params,
                     },
                     base_url=self.base_url,
                 )
@@ -4487,7 +4601,9 @@ class NanoBananaGridGenerator:
                 # 根据模型选择配置：gemini-3 支持 image_size，gemini-2.5 不支持
                 is_gemini3 = "gemini-3" in self.model
                 if is_gemini3:
-                    effective_image_size = normalize_image_size(image_size, provider="google")
+                    effective_image_size = normalize_image_size(
+                        image_size, provider="google"
+                    )
                     print(
                         f"[NanoBananaPro] 调用 {self.model} 生成网格图 (分辨率: {effective_image_size}, 比例: {aspect_ratio})..."
                     )
@@ -4497,7 +4613,9 @@ class NanoBananaGridGenerator:
                     )
                 else:
                     # gemini-2.5-flash-image 不支持 image_size 参数
-                    print(f"[NanoBananaPro] 调用 {self.model} 生成网格图 (比例: {aspect_ratio})...")
+                    print(
+                        f"[NanoBananaPro] 调用 {self.model} 生成网格图 (比例: {aspect_ratio})..."
+                    )
                     image_config = types.ImageConfig(
                         aspect_ratio=aspect_ratio,
                     )
@@ -4510,7 +4628,9 @@ class NanoBananaGridGenerator:
                     thinking_config = None
                 elif is_gemini3:
                     # Gemini 3 用 thinking_level
-                    thinking_config = types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH)
+                    thinking_config = types.ThinkingConfig(
+                        thinking_level=types.ThinkingLevel.HIGH
+                    )
                 else:
                     # Gemini 2.5 模型使用 thinking_budget（最小 128）
                     thinking_config = types.ThinkingConfig(thinking_budget=1024)
@@ -4548,7 +4668,9 @@ class NanoBananaGridGenerator:
                         f"[NanoBananaPro] candidate 无 content: finish_reason={getattr(candidate, 'finish_reason', 'unknown')}"
                     )
                     # 打印安全评级（如果有）
-                    if hasattr(candidate, "safety_ratings") and candidate.safety_ratings:
+                    if (
+                        hasattr(candidate, "safety_ratings") and candidate.safety_ratings
+                    ):
                         for rating in candidate.safety_ratings:
                             print(f"[NanoBananaPro] safety_rating: {rating}")
                     return _usage_fail(
@@ -7206,7 +7328,9 @@ async def regenerate_selected_beats(
         if episode_grids_dir and not is_sketch:
             from novelvideo.generators.pool_indexer import build_beat_sketch_paths
 
-            grid_beat_sketch_paths = build_beat_sketch_paths(episode_grids_dir, beat_numbers)
+            grid_beat_sketch_paths = build_beat_sketch_paths(
+                episode_grids_dir, beat_numbers
+            )
 
         result = await generator.generate_grid(
             beats=grid_beats,

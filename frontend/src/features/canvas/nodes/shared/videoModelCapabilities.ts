@@ -53,8 +53,28 @@ export function isSeedance2VideoModel(modelId: string | null | undefined): boole
  */
 export function isVideoModeSupportedByModel(
   mode: VideoGenMode,
-  modelId: string | null | undefined,
+  model:
+    | string
+    | {
+        id?: string;
+        apiModel?: string;
+        supportedModes?: string[];
+      }
+    | null
+    | undefined,
 ): boolean {
+  if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    const modeKey: Record<VideoGenMode, string> = {
+      textToVideo: "text_to_video",
+      imageToVideo: "first_frame",
+      firstLastFrame: "first_last_frame",
+      imageReference: "image_reference",
+      allReference: "all_reference",
+      videoEdit: "video_edit",
+    };
+    return model.supportedModes?.includes(modeKey[mode]) ?? false;
+  }
+  const modelId = typeof model === "string" ? model : (model?.apiModel ?? model?.id);
   if (isHappyHorseVideoModel(modelId)) {
     return (
       mode === "textToVideo" ||

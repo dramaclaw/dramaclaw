@@ -81,6 +81,14 @@ def test_aliyun_oss_relay_requires_credentials() -> None:
     assert "OSS_RELAY_AK" in str(exc_info.value)
 
 
+def test_media_relay_ttl_seconds_applies_floor_without_shortening_config(monkeypatch) -> None:
+    monkeypatch.setattr(media_relay, "_default_media_relay_ttl_seconds", lambda: 1800)
+    assert media_relay.media_relay_ttl_seconds(minimum=7200) == 7200
+
+    monkeypatch.setattr(media_relay, "_default_media_relay_ttl_seconds", lambda: 10800)
+    assert media_relay.media_relay_ttl_seconds(minimum=7200) == 10800
+
+
 def test_get_media_relay_uses_saved_runtime_oss_config(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(config, "STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(config, "MEDIA_RELAY_PROVIDER", "aliyun_oss")

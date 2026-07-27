@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import aiohttp
 import websockets
@@ -31,6 +31,7 @@ from novelvideo.video_request_usage import (
 from novelvideo.shared.billing_errors import is_insufficient_credits_error
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+    media_relay_ttl_seconds,
     upload_image_bytes,
 )
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
@@ -40,6 +41,7 @@ from novelvideo.task_backend.subprocesses import run_project_subprocess
 load_dotenv()
 
 NEWAPI_VIDEO_HTTP_TIMEOUT_SECONDS = 1800.0
+NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS = 2 * 60 * 60
 
 
 def _run_video_subprocess(cmd: list[str], *, timeout: int = 30 * 60) -> subprocess.CompletedProcess:
@@ -1784,6 +1786,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         model: Optional[str] = None,
         resolution: Optional[str] = None,
         generate_audio: Optional[bool] = None,
+    model_params: Optional[dict[str, Any]] = None,
+        request_schema: Optional[dict[str, Any]] = None,
     ):
         from novelvideo.config import (
             NEWAPI_VIDEO_MODEL,
@@ -1796,7 +1800,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         self.base_url = (endpoint or gateway.base_url).rstrip("/")
         self.model = model or NEWAPI_VIDEO_MODEL
         self.resolution = resolution or NEWAPI_VIDEO_RESOLUTION
-        raw_generate_audio = os.environ.get("NEWAPI_VIDEO_GENERATE_AUDIO", "").strip().lower()
+        self.model_params = model_params or {}
+        self.request_schema = request_schema or {}
+        raw_generate_audio = (
+            os.environ.get("NEWAPI_VIDEO_GENERATE_AUDIO", "").strip().lower()
+        )
         if generate_audio is not None:
             self.generate_audio = generate_audio
         elif raw_generate_audio == "auto" or not raw_generate_audio:
@@ -1805,7 +1813,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             self.generate_audio = raw_generate_audio in {"true", "1", "yes", "on"}
 
         if not self.api_key:
-            raise ValueError("DramaClawAPI key must be set for DramaClawAPI video generation")
+            raise ValueError(
+                "DramaClawAPI key must be set for DramaClawAPI video generation"
+            )
 
     @staticmethod
     def _extract_request_id(text: str = "", headers: object | None = None) -> str:
@@ -1953,6 +1963,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 upload_image_bytes,
                 data,
                 ext=ext,
+                ttl=media_relay_ttl_seconds(
+                    minimum=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+                ),
                 image_transform=image_transform,
             )
 
@@ -1962,8 +1975,110 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             upload_image_bytes,
             media_path.read_bytes(),
             ext=ext,
+            ttl=media_relay_ttl_seconds(
+                minimum=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+            ),
             image_transform=image_transform,
         )
+
+    async def _apply_huimeng_protocol_media_inputs(
+        self,
+        metadata: dict[str, object],
+        *,
+        mode: str,
+        image_path: str,
+        last_frame_path: str | None,
+        references: object,
+        log: Callable[[str], None],
+    ) -> None:
+        """Populate the stable DramaClaw-to-RelayClaw video media protocol."""
+
+        normalized_mode = {
+            "textToVideo": "text_to_video",
+            "imageToVideo": "first_frame",
+            "firstLastFrame": "first_last_frame",
+            "imageReference": "image_reference",
+            "allReference": "all_reference",
+            "videoEdit": "video_edit",
+        }.get(str(mode or "").strip(), str(mode or "").strip())
+
+        if normalized_mode == "text_to_video":
+            return
+
+        if normalized_mode == "first_frame":
+            first_frame_path = image_path
+            if not first_frame_path:
+                first_frame_path = next(
+                    (
+                        str(getattr(ref, "path", "") or "").strip()
+                        for ref in (
+                            references if isinstance(references, list) else []
+                        )
+                        if str(getattr(ref, "type", "") or "image").strip().lower()
+                        == "image"
+                    ),
+                    "",
+                )
+            if not first_frame_path:
+                raise ValueError("first frame is required for first_frame mode")
+            metadata["image_url"] = await self._relay_frame_input(first_frame_path)
+            return
+
+        if normalized_mode == "first_last_frame":
+            if not image_path:
+                raise ValueError("first frame is required for first_last_frame mode")
+            if not last_frame_path:
+                raise ValueError("last frame is required for first_last_frame mode")
+            metadata["first_frame_image"] = await self._relay_frame_input(image_path)
+            metadata["last_frame_image"] = await self._relay_frame_input(
+                str(last_frame_path)
+            )
+            return
+
+        raw_items: list[tuple[str, str, str]] = []
+        for ref in references if isinstance(references, list) else []:
+            media_type = str(getattr(ref, "type", "") or "image").strip().lower()
+            path = str(getattr(ref, "path", "") or "").strip()
+            role = str(getattr(ref, "role", "") or "").strip()
+            if path and media_type in {"image", "video", "audio"}:
+                raw_items.append((media_type, path, role))
+
+        seen: set[tuple[str, str]] = set()
+        relayed: dict[str, list[tuple[str, str]]] = {
+            "image": [],
+            "video": [],
+            "audio": [],
+        }
+        for media_type, path, role in raw_items:
+            identity = (media_type, path)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if media_type == "image":
+                url = await self._relay_frame_input(path)
+            else:
+                url = await self._relay_media_input(
+                    path,
+                    default_ext="mp4" if media_type == "video" else "mp3",
+                )
+            if not path.startswith(("http://", "https://")):
+                log(f"{media_type} 参考素材已上传到媒体中转")
+            relayed[media_type].append((url, role))
+
+        image_urls = [url for url, _role in relayed["image"]]
+        video_urls = [url for url, _role in relayed["video"]]
+        audio_urls = [url for url, _role in relayed["audio"]]
+
+        if normalized_mode in {"image_reference", "all_reference", "video_edit"}:
+            if image_urls:
+                metadata["reference_images"] = image_urls
+            if video_urls:
+                metadata["reference_videos"] = video_urls
+            if audio_urls:
+                metadata["reference_audios"] = audio_urls
+            return
+
+        raise ValueError(f"unsupported video generation mode: {normalized_mode}")
 
     def _duration_bounds(self) -> tuple[int, int]:
         from novelvideo.config import NEWAPI_VIDEO_DURATION_BOUNDS
@@ -1998,6 +2113,154 @@ class NewApiVideoGenerator(VideoGeneratorBase):
     def _happyhorse_audio_setting(value: str | None) -> str:
         text = str(value or "").strip().lower()
         return text if text in {"auto", "origin"} else "auto"
+
+    @staticmethod
+    def _video_dimensions(
+        resolution: object,
+        ratio: object,
+    ) -> tuple[int, int] | None:
+        """Convert a resolution tier and aspect ratio to exact pixel dimensions."""
+
+        resolution_match = re.search(r"(\d+)", str(resolution or ""))
+        ratio_text = str(ratio or "").strip().lower()
+        if not resolution_match or ratio_text == "adaptive" or ":" not in ratio_text:
+            return None
+        try:
+            tier = int(resolution_match.group(1))
+            ratio_width, ratio_height = (
+                float(part.strip()) for part in ratio_text.split(":", 1)
+            )
+        except (TypeError, ValueError):
+            return None
+        if tier <= 0 or ratio_width <= 0 or ratio_height <= 0:
+            return None
+
+        if ratio_width >= ratio_height:
+            height = tier
+            width = round(tier * ratio_width / ratio_height)
+        else:
+            width = tier
+            height = round(tier * ratio_height / ratio_width)
+
+        # Video encoders generally require even dimensions.
+        width += width % 2
+        height += height % 2
+        return width, height
+
+    @classmethod
+    def _canonicalize_video_payload(
+        cls,
+        payload: dict[str, object],
+        metadata: dict[str, object],
+    ) -> None:
+        """Translate legacy channel-shaped fields into the generic NewAPI contract.
+
+        Existing model-specific branches still validate and collect their inputs
+        during phase one. Only the final wire representation is normalized here.
+        """
+
+        resolution = metadata.pop("resolution", "")
+        ratio = metadata.pop("ratio", "")
+
+        duration_value = payload.pop("duration", None)
+        legacy_seconds = payload.pop("seconds", None)
+        if duration_value is None:
+            duration_value = legacy_seconds
+        try:
+            duration_number = float(str(duration_value))
+        except (TypeError, ValueError):
+            duration_number = 0
+        if duration_number > 0:
+            payload["duration"] = (
+                int(duration_number) if duration_number.is_integer() else duration_number
+            )
+
+        first_frame = ""
+        for key in ("first_frame_image", "image_url"):
+            value = metadata.pop(key, "")
+            if not first_frame and isinstance(value, str) and value.strip():
+                first_frame = value.strip()
+
+        last_frame = metadata.pop("last_frame_image", "")
+        if not isinstance(last_frame, str):
+            last_frame = ""
+
+        legacy_images = payload.pop("images", None)
+        if isinstance(legacy_images, list):
+            image_values = [
+                str(value).strip()
+                for value in legacy_images
+                if isinstance(value, str) and str(value).strip()
+            ]
+            if image_values and not first_frame:
+                first_frame = image_values[0]
+            if len(image_values) > 1:
+                references = metadata.get("reference_images")
+                existing = list(references) if isinstance(references, list) else []
+                metadata["reference_images"] = [*image_values[1:], *existing]
+
+        content = metadata.pop("content", None)
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict) or item.get("type") != "image_url":
+                    continue
+                image_url = item.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                if not isinstance(url, str) or not url.strip():
+                    continue
+                role = str(item.get("role") or "").strip().lower()
+                if role == "last_frame" and not last_frame:
+                    last_frame = url.strip()
+                elif role == "first_frame" and not first_frame:
+                    first_frame = url.strip()
+
+        legacy_video = metadata.pop("video_url", "")
+        if isinstance(legacy_video, str) and legacy_video.strip():
+            references = metadata.get("reference_videos")
+            existing = list(references) if isinstance(references, list) else []
+            metadata["reference_videos"] = [legacy_video.strip(), *existing]
+
+        if first_frame:
+            payload["image"] = first_frame
+        if last_frame.strip():
+            metadata["last_frame_image"] = last_frame.strip()
+
+        dimensions = cls._video_dimensions(resolution, ratio)
+        if dimensions:
+            payload["width"], payload["height"] = dimensions
+        else:
+            ratio_text = str(ratio or "").strip()
+            resolution_text = str(resolution or "").strip()
+            if ratio_text:
+                metadata["aspect_ratio"] = ratio_text
+            if resolution_text:
+                metadata["resolution"] = resolution_text
+
+        payload["n"] = 1
+        payload["response_format"] = "url"
+        if metadata:
+            payload["metadata"] = metadata
+        else:
+            payload.pop("metadata", None)
+
+    @staticmethod
+    def _task_response_data(task: dict) -> dict:
+        """Accept both flat and wrapped generic task responses."""
+
+        if not isinstance(task, dict):
+            return {}
+        data = task.get("data")
+        if isinstance(data, dict):
+            merged = dict(data)
+            if "_newapi_request_id" not in merged and task.get("_newapi_request_id"):
+                merged["_newapi_request_id"] = task["_newapi_request_id"]
+            return merged
+        return task
+
+    @classmethod
+    def _task_id_from_submit_response(cls, submitted: dict) -> str:
+        task = cls._task_response_data(submitted)
+        return str(task.get("task_id") or task.get("id") or "").strip()
 
     async def _relay_seedance2_references(
         self,
@@ -2210,6 +2473,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         # The old colon-only guard accidentally converted it back to 9:16.
         ratio = ratio_text if ":" in ratio_text or ratio_text == "adaptive" else "9:16"
         image_path = str(image_path or "").strip()
+        requested_mode = str(kwargs.get("gen_mode") or "").strip()
 
         metadata: dict[str, object] = {
             "resolution": self.resolution,
@@ -2224,7 +2488,34 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             "metadata": metadata,
         }
 
-        if self._is_happyhorse_model():
+        if requested_mode:
+            try:
+                await self._apply_huimeng_protocol_media_inputs(
+                    metadata,
+                    mode=requested_mode,
+                    image_path=image_path,
+                    last_frame_path=last_frame_path,
+                    references=kwargs.get("references"),
+                    log=log,
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error=str(exc),
+                )
+            seedance2_config = _seedance2_config_mapping(kwargs.get("seedance2_config"))
+            scene_optimize = str(seedance2_config.get("scene_optimize") or "").strip()
+            if scene_optimize:
+                metadata["scene_optimize"] = scene_optimize
+            if kwargs.get("human_review"):
+                metadata["human_review"] = True
+            audio_setting = str(kwargs.get("audio_setting") or "").strip()
+            if audio_setting:
+                metadata["audio_setting"] = audio_setting
+            metadata["return_last_frame"] = bool(
+                seedance2_config.get("return_last_frame", False)
+            )
+        elif self._is_happyhorse_model():
             if len(prompt) > 2500:
                 prompt = prompt[:2500]
                 payload["prompt"] = prompt
@@ -2259,7 +2550,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             # image_path 是 run_freezone_video_gen 无条件传进来的「首张图」。仅当它
             # 还没作为参考图存在时，才把它被动提升为首帧——否则参考模式(所有图都在
             # reference_image_paths 里)会把首张图重复算一次（首帧位 + 参考位）。
-            if not first_frame_path and image_path and image_path not in reference_image_paths:
+            if (
+                not first_frame_path and image_path and image_path not in reference_image_paths
+            ):
                 first_frame_path = image_path
 
             # HappyHorse 没有尾帧能力，且把尾帧混进 reference_images 会误触发 r2v，
@@ -2361,13 +2654,17 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
         elif is_seedance2_model:
             try:
-                first_frame = await self._relay_frame_input(image_path) if image_path else ""
+                first_frame = (
+                    await self._relay_frame_input(image_path) if image_path else ""
+                )
                 if image_path and not image_path.startswith(("http://", "https://")):
                     log("首帧已上传到媒体中转")
                 last_frame = (
                     await self._relay_frame_input(str(last_frame_path)) if last_frame_path else ""
                 )
-                if last_frame_path and not str(last_frame_path).startswith(("http://", "https://")):
+                if last_frame_path and not str(last_frame_path).startswith(
+                    ("http://", "https://")
+                ):
                     log("尾帧已上传到媒体中转")
                 reference_params = await self._relay_seedance2_references(
                     kwargs.get("references") or [],
@@ -2413,7 +2710,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             if "return_last_frame" not in seedance2_config:
                 seedance2_config["return_last_frame"] = False
             if "human_review" not in seedance2_config:
-                seedance2_config["human_review"] = bool(kwargs.get("human_review", False))
+                seedance2_config["human_review"] = bool(
+                    kwargs.get("human_review", False)
+                )
                 seedance2_config["human_review_user_set"] = True
             elif "human_review_user_set" not in seedance2_config:
                 seedance2_config["human_review_user_set"] = True
@@ -2437,61 +2736,40 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             payload["seconds"] = str(seedance2_params.pop("duration"))
             metadata.update(seedance2_params)
         else:
-            if last_frame_path:
-                if not image_path:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error="First frame is required when last_frame_path is provided",
-                    )
-                try:
-                    first_frame = await self._relay_frame_input(image_path)
-                    if not image_path.startswith(("http://", "https://")):
-                        log("首帧已上传到媒体中转")
-                except Exception as exc:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error=f"media relay upload failed: {exc}",
-                    )
-                try:
-                    last_frame = await self._relay_frame_input(str(last_frame_path))
-                    if not str(last_frame_path).startswith(("http://", "https://")):
-                        log("尾帧已上传到媒体中转")
-                except Exception as exc:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error=f"media relay upload failed: {exc}",
-                    )
-                metadata["content"] = [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": first_frame},
-                        "role": "first_frame",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": last_frame},
-                        "role": "last_frame",
-                    },
-                ]
-            elif image_path:
-                try:
-                    first_frame = await self._relay_frame_input(image_path)
-                    if not image_path.startswith(("http://", "https://")):
-                        log("首帧已上传到媒体中转")
-                except Exception as exc:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error=f"media relay upload failed: {exc}",
-                    )
-                payload["images"] = [first_frame]
+            try:
+                await self._apply_huimeng_protocol_media_inputs(
+                    metadata,
+                    mode=(
+                        "first_last_frame"
+                        if last_frame_path
+                        else "first_frame"
+                        if image_path
+                        else "all_reference"
+                        if kwargs.get("references")
+                        else "text_to_video"
+                    ),
+                    image_path=image_path,
+                    last_frame_path=last_frame_path,
+                    references=kwargs.get("references"),
+                    log=log,
+                )
+            except Exception as exc:
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error=f"media relay upload failed: {exc}",
+                )
 
         task_id: str | None = None
         provider_request_id = ""
         reservation_id = ""
         try:
             model_label = self._model_label(self.model)
-            request_resolution = str(metadata.get("resolution") or self.resolution or "").strip()
-            log(f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})...")
+            request_resolution = str(
+                metadata.get("resolution") or self.resolution or ""
+            ).strip()
+            log(
+                f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})..."
+            )
             progress(0.1)
             reservation_id = await _reserve_video_model_call(
                 self.model,
@@ -2499,8 +2777,16 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 resolution=request_resolution,
                 duration_seconds=duration,
             )
-            submitted = await self._post_json(f"{self.base_url}/video/generations", payload)
-            task_id = str(submitted.get("id") or submitted.get("task_id") or "")
+            from novelvideo.media_model_request_schema import apply_media_request_schema
+
+            self._canonicalize_video_payload(payload, metadata)
+            payload = apply_media_request_schema(
+                payload, self.request_schema, self.model_params
+            )
+            submitted = await self._post_json(
+                f"{self.base_url}/video/generations", payload
+            )
+            task_id = self._task_id_from_submit_response(submitted)
             provider_request_id = str(submitted.get("_newapi_request_id") or "").strip()
             if not task_id:
                 await _refund_video_model_call(
@@ -2518,7 +2804,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             progress(0.2)
 
             for poll_count in range(max_polls):
-                task = await self._get_json(f"{self.base_url}/videos/{task_id}")
+                task = self._task_response_data(
+                    await self._get_json(f"{self.base_url}/video/generations/{task_id}")
+                )
                 status = str(task.get("status") or "").lower()
                 progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
 
@@ -2526,7 +2814,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     progress(0.9)
                     video_url = self._extract_video_url(task)
                     if not video_url:
-                        update_request_status(task_id, "failed", "No video url in DramaClawAPI result")
+                        update_request_status(
+                            task_id, "failed", "No video url in DramaClawAPI result"
+                        )
                         await _refund_video_model_call(
                             reservation_id,
                             source="newapi_video_generation",
@@ -2550,9 +2840,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     if bool(metadata.get("return_last_frame")):
                         last_frame_url = self._extract_returned_last_frame_url(task)
                         if last_frame_url:
-                            last_frame_output_path = self._returned_last_frame_output_path(
+                            last_frame_output_path = (
+                                self._returned_last_frame_output_path(
                                 output_path,
                                 last_frame_url,
+                            )
                             )
                             await self._download_video(
                                 last_frame_url,
@@ -2604,7 +2896,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     )
                 await asyncio.sleep(poll_interval)
 
-            update_request_status(task_id, "failed", "Timeout waiting for DramaClawAPI video task")
+            update_request_status(
+                task_id, "failed", "Timeout waiting for DramaClawAPI video task"
+            )
             await _refund_video_model_call(
                 reservation_id,
                 source="newapi_video_generation",
@@ -3562,12 +3856,13 @@ NEWAPI_DISABLED_VIDEO_MODELS = {"grok-video-channel"}
 
 
 def parse_newapi_video_backend(backend: str | None) -> str | None:
-    value = str(backend or "").strip().lower()
-    if value == "newapi":
+    value = str(backend or "").strip()
+    lowered = value.lower()
+    if lowered == "newapi":
         from novelvideo.config import NEWAPI_VIDEO_MODEL
 
         return NEWAPI_VIDEO_MODEL
-    if value.startswith(NEWAPI_VIDEO_BACKEND_PREFIX):
+    if lowered.startswith(NEWAPI_VIDEO_BACKEND_PREFIX):
         model = value[len(NEWAPI_VIDEO_BACKEND_PREFIX) :].strip()
         return model or None
     return None
@@ -3592,8 +3887,13 @@ def _coerce_video_backend_value(backend: VideoBackend | str | None) -> str:
         backend = os.environ.get("VIDEO_BACKEND", "comfyui")
     if isinstance(backend, VideoBackend):
         return backend.value
-    value = str(backend).strip().lower()
-    return "comfyui" if value == "jimeng" else value
+    value = str(backend).strip()
+    lowered = value.lower()
+    if lowered.startswith(NEWAPI_VIDEO_BACKEND_PREFIX):
+        return (
+            f"{NEWAPI_VIDEO_BACKEND_PREFIX}{value[len(NEWAPI_VIDEO_BACKEND_PREFIX) :]}"
+        )
+    return "comfyui" if lowered == "jimeng" else lowered
 
 
 def create_video_generator(

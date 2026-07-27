@@ -34,7 +34,6 @@ import {
   type ImageSize,
 } from '@/features/canvas/domain/canvasNodes';
 import {
-  IMAGE_GENERATION_ASPECT_RATIOS,
   parseAspectRatio,
   pickClosestAspectRatio,
   resolveImageDisplayUrl,
@@ -85,6 +84,7 @@ import {
   fetchFreezoneTextTranslateResult,
   submitFreezoneGen,
   submitFreezoneTextTranslate,
+  type FreezoneProvider,
   uploadFreezoneImage,
 } from '@/api/ops';
 import {
@@ -106,13 +106,13 @@ import {
 } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
 import {
-  DEFAULT_SHARED_MODEL_ID,
   ProviderModelPicker,
   SHARED_MODELS,
 } from '@/features/canvas/ui/ProviderModelPicker';
 import { extractRequestId } from '@/features/canvas/application/generationErrorReport';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { useNodeGenerationHistory } from '@/features/canvas/hooks/useNodeGenerationHistory';
+import { MediaModelParameterChip } from '@/features/canvas/ui/MediaModelParameterChip';
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';
 import {
   AssetLibraryModal,
@@ -241,12 +241,6 @@ const IMAGE_PARAM_ROW_CLASS = 'mb-4 flex gap-2';
 const NODE_COUNT_OPTION_BASE_CLASS =
   'flex w-full items-center justify-center rounded-[6px] px-3 py-1.5 text-xs transition-colors';
 
-// 「画质」选项只对 image2 系模型（LingShan-G2 / gpt-image-2 等）生效，
-// 后端也只在 gpt-image-2 上识别该字段。其余模型隐藏该选择器。
-function isImage2Model(apiModel: string | null | undefined): boolean {
-  return /image[-_]?2/i.test(apiModel ?? '');
-}
-
 function resolveOutputUrl(result: Record<string, unknown> | null | undefined): string | null {
   if (!result) return null;
   for (const key of ['output_url', 'image_url', 'url']) {
@@ -290,7 +284,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const aspectRatio = typeof data.aspectRatio === 'string' && data.aspectRatio
     ? data.aspectRatio
     : '16:9';
-  const size = (data.size ?? '2K') as ImageSize;
+  const size = typeof data.size === 'string' && data.size.trim() ? data.size : '2K';
   const quality = (data.quality ?? DEFAULT_IMAGE_QUALITY) as ImageQuality;
   const count = (data.count ?? 1) as ImageGenCount;
   const autoCommitOnGenerate = data.autoCommitOnGenerate === true;
@@ -405,8 +399,39 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       ?? availableModels[0]
     );
   }, [data.model, availableModels]);
-  const modelId = selectedModel?.id ?? DEFAULT_SHARED_MODEL_ID;
-  const isImage2 = isImage2Model(selectedModel?.apiModel);
+  const modelId = selectedModel?.id ?? '';
+  const modelSizeOptions = useMemo(() => {
+    const configured = selectedModel?.resolutionOptions
+      ?.map((item) => item.trim())
+      .filter(Boolean);
+    return configured?.length ? configured : SIZE_OPTIONS;
+  }, [selectedModel]);
+  const modelAspectOptions = useMemo(() => {
+    const configured = (selectedModel?.ratioOptions ?? [])
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((value) => ({
+        value,
+        label: ASPECT_OPTIONS.find((item) => item.value === value)?.label ?? value,
+      }));
+    return configured.length ? configured : ASPECT_OPTIONS;
+  }, [selectedModel]);
+  const effectiveImageSize = modelSizeOptions.includes(size) ? size : modelSizeOptions[0];
+  const effectiveAspectRatio = snapToAllowedAspectRatio(
+    aspectRatio,
+    modelAspectOptions.map((item) => item.value),
+    modelAspectOptions[0]?.value ?? '1:1',
+  );
+  const qualityOptions = useMemo(
+    () => (selectedModel?.qualityOptions ?? []).map((item) => item.trim()).filter(Boolean),
+    [selectedModel],
+  );
+  const supportsImageQuality = qualityOptions.length > 0;
+  const effectiveQuality =
+    qualityOptions.find((option) => option.toLowerCase() === quality.toLowerCase())
+    ?? qualityOptions.find((option) => option.toLowerCase() === DEFAULT_IMAGE_QUALITY)
+    ?? qualityOptions[0]
+    ?? DEFAULT_IMAGE_QUALITY;
   const imageSelectionForCost =
     imageModelsLoading || imageModelsFallback ? null : selectedModel?.apiModel ?? null;
   const imageQuantity = Math.min(Math.max(effectiveCount, 1), 4);
@@ -417,8 +442,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       surface: 'canvas',
       params: {
         image_selection: imageSelectionForCost,
-        size,
-        ...(isImage2 ? { quality } : {}),
+        size: effectiveImageSize,
+        ...(supportsImageQuality ? { quality: effectiveQuality } : {}),
         pricing_quantity: imageQuantity,
       },
       quantity: imageQuantity,
@@ -861,8 +886,17 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       upstreamTextJoined.length > 0 &&
       (!shouldInlineUpstreamTextAsPrompt || !hasUserEditedPromptRef.current)
     );
+  const selectedModelReferenceError =
+    selectedModel?.referenceImageMax != null &&
+    orderedReferenceUrls.length > selectedModel.referenceImageMax
+      ? `该模型最多支持 ${selectedModel.referenceImageMax} 张图片素材`
+      : null;
   const submitDisabled =
-    isGenerating || !hasEffectivePrompt || imageBillingRuleMissing;
+    isGenerating ||
+    !selectedModel ||
+    !hasEffectivePrompt ||
+    imageBillingRuleMissing ||
+    selectedModelReferenceError !== null;
 
   const handleSubmit = useCallback(async () => {
     if (submitDisabled || submittingRef.current) return;
@@ -901,17 +935,15 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       prompt: effectivePrompt,
       // 后端只接受固定的几个比例；节点上的 aspectRatio 可能是图片自然尺寸约分出的
       // 非标准值（如 "43:24"）或 "auto"，提交前吸附到最接近的合法比例（auto→1:1）。
-      aspectRatio: snapToAllowedAspectRatio(
-        aspectRatio,
-        IMAGE_GENERATION_ASPECT_RATIOS,
-        '1:1',
-      ) as typeof aspectRatio,
-      imageSize: size,
-      // 画质仅对 image2 系模型生效，其余模型不下发该字段。
-      quality: isImage2 ? quality : null,
+      aspectRatio: effectiveAspectRatio as typeof aspectRatio,
+      imageSize: effectiveImageSize,
+      // 画质仅在媒体目录声明 qualityOptions 时下发。
+      quality: supportsImageQuality ? effectiveQuality : null,
       referenceUrls,
+      provider: selectedModel?.providerId as FreezoneProvider | undefined,
       model: apiModel,
       modelId,
+      modelParams: data.modelParams,
       camera: hasCamera
         ? {
             cameraBodyId: cameraSelection?.cameraBodyId ?? null,
@@ -1054,19 +1086,20 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       submittingRef.current = false;
     }
   }, [
-    aspectRatio,
     canAutoCommitOnGenerate,
     selectedModel,
     cameraSelection,
     count,
     effectiveCount,
+    effectiveAspectRatio,
+    effectiveImageSize,
     id,
-    isImage2,
+    effectiveQuality,
+    supportsImageQuality,
     modelId,
     orderedReferenceUrls,
     prompt,
     quality,
-    size,
     styleTemplateId,
     submitDisabled,
     shouldInlineUpstreamTextAsPrompt,
@@ -1830,15 +1863,30 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             <div className="flex min-w-0 items-center gap-2">
               <ProviderModelPicker
                 selectedModelId={modelId}
-                onChange={(nextModelId) => updateNodeData(id, { model: nextModelId })}
+                onChange={(nextModelId) => updateNodeData(id, { model: nextModelId, modelParams: {} })}
                 popoverPlacement="top"
+                getOptionDisabledReason={(model) =>
+                  model.referenceImageMax != null &&
+                  orderedReferenceUrls.length > model.referenceImageMax
+                    ? `该模型最多支持 ${model.referenceImageMax} 张图片素材`
+                    : null
+                }
               />
               <AspectSizeChip
                 aspectRatio={aspectRatio}
-                size={size}
-                quality={quality}
-                showQuality={isImage2}
+                size={effectiveImageSize}
+                sizeOptions={modelSizeOptions}
+                aspectOptions={modelAspectOptions}
+                quality={effectiveQuality}
+                qualityOptions={qualityOptions}
+                showQuality={supportsImageQuality}
                 onChange={(patch) => updateNodeData(id, patch)}
+              />
+              <MediaModelParameterChip
+                parameters={selectedModel?.request?.parameters}
+                values={data.modelParams}
+                mode={typeof data.generationMode === 'string' ? data.generationMode : undefined}
+                onChange={(modelParams) => updateNodeData(id, { modelParams })}
               />
               <CameraChip
                 selection={cameraSelection}
@@ -1881,7 +1929,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               <button
                 type="button"
                 disabled={submitDisabled}
-                title="生成"
+                title={selectedModelReferenceError ?? "生成"}
                 onClick={(event) => {
                   event.stopPropagation();
                   void handleSubmit();
@@ -2001,10 +2049,13 @@ ImageGenNode.displayName = 'ImageGenNode';
 // 图片按自然尺寸算出的比例常是约分形式（如 21:9 会被约成 7:3），不在 ASPECT_OPTIONS 里，
 // 直接显示就会出现「7:3」这种列表外的标签。这里退回到「数值最接近的可选比例」（复用
 // imageData 的 pickClosestAspectRatio）——chip 标签与下拉里的高亮选项都基于它，保证两边一致。
-function resolveNearestAspectOption(aspectRatio: string): { value: string; label: string } {
-  const exact = ASPECT_OPTIONS.find((option) => option.value === aspectRatio);
+function resolveNearestAspectOption(
+  aspectRatio: string,
+  options = ASPECT_OPTIONS,
+): { value: string; label: string } {
+  const exact = options.find((option) => option.value === aspectRatio);
   if (exact) return exact;
-  const candidates = ASPECT_OPTIONS.filter((option) => option.value !== 'auto');
+  const candidates = options.filter((option) => option.value !== 'auto');
   const nearestValue = pickClosestAspectRatio(
     parseAspectRatio(aspectRatio),
     candidates.map((option) => option.value),
@@ -2017,14 +2068,17 @@ function resolveNearestAspectOption(aspectRatio: string): { value: string; label
 
 interface AspectSizeChipProps {
   aspectRatio: string;
-  size: ImageSize;
+  size: string;
+  sizeOptions: readonly string[];
+  aspectOptions: ReadonlyArray<{ value: string; label: string }>;
   quality: ImageQuality;
-  /** image2 系模型才显示「画质」选择器，并在标签里带上画质。 */
+  qualityOptions: readonly ImageQuality[];
+  /** 媒体目录声明图片质量选项时显示选择器，并在标签里带上画质。 */
   showQuality: boolean;
   onChange: (patch: Partial<ImageGenNodeData>) => void;
 }
 
-function AspectSizeChip({ aspectRatio, size, quality, showQuality, onChange }: AspectSizeChipProps) {
+function AspectSizeChip({ aspectRatio, size, sizeOptions, aspectOptions, quality, qualityOptions, showQuality, onChange }: AspectSizeChipProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -2044,7 +2098,7 @@ function AspectSizeChip({ aspectRatio, size, quality, showQuality, onChange }: A
     return () => document.removeEventListener('mousedown', onPointerDown, true);
   }, [isOpen]);
 
-  const nearestAspect = resolveNearestAspectOption(aspectRatio);
+  const nearestAspect = resolveNearestAspectOption(aspectRatio, aspectOptions);
   const aspectLabel = nearestAspect.label;
   const qualityLabel = QUALITY_OPTIONS.find((option) => option.value === quality)?.label
     ?? quality;
@@ -2082,20 +2136,21 @@ function AspectSizeChip({ aspectRatio, size, quality, showQuality, onChange }: A
             <>
               <div className={IMAGE_PARAM_LABEL_CLASS}>画质</div>
               <div className={IMAGE_PARAM_ROW_CLASS}>
-                {QUALITY_OPTIONS.map((option) => {
-                  const isActive = quality === option.value;
+                {qualityOptions.map((value) => {
+                  const label = QUALITY_OPTIONS.find((option) => option.value === value)?.label ?? value;
+                  const isActive = quality === value;
                   return (
                     <button
-                      key={option.value}
+                      key={value}
                       type="button"
-                      onClick={() => onChange({ quality: option.value })}
+                      onClick={() => onChange({ quality: value })}
                       className={`${IMAGE_PARAM_BUTTON_BASE_CLASS} flex-1 ${
                         isActive
                           ? IMAGE_PARAM_ACTIVE_BUTTON_CLASS
                           : IMAGE_PARAM_IDLE_BUTTON_CLASS
                       }`}
                     >
-                      {option.label}
+                      {label}
                     </button>
                   );
                 })}
@@ -2104,13 +2159,13 @@ function AspectSizeChip({ aspectRatio, size, quality, showQuality, onChange }: A
           )}
           <div className={IMAGE_PARAM_LABEL_CLASS}>分辨率</div>
           <div className={IMAGE_PARAM_ROW_CLASS}>
-            {SIZE_OPTIONS.map((option) => {
+            {sizeOptions.map((option) => {
               const isActive = size === option;
               return (
                 <button
                   key={option}
                   type="button"
-                  onClick={() => onChange({ size: option })}
+                      onClick={() => onChange({ size: option as ImageSize })}
                   className={`${IMAGE_PARAM_BUTTON_BASE_CLASS} flex-1 ${
                     isActive
                       ? IMAGE_PARAM_ACTIVE_BUTTON_CLASS
@@ -2125,7 +2180,7 @@ function AspectSizeChip({ aspectRatio, size, quality, showQuality, onChange }: A
 
           <div className={IMAGE_PARAM_LABEL_CLASS}>比例</div>
           <div className="grid grid-cols-4 gap-2">
-            {ASPECT_OPTIONS.map((option) => {
+            {aspectOptions.map((option) => {
               const isActive = nearestAspect.value === option.value;
               return (
                 <button

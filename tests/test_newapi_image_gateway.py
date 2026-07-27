@@ -181,12 +181,8 @@ def test_newapi_sketch_config_defaults_to_dc_image2_low_quality(monkeypatch):
     assert posted["timeout"] == nanobanana_grid.NEWAPI_IMAGE_HTTP_TIMEOUT_SECONDS == 1800.0
     assert posted["json"]["model"] == "LingShan-G2"
     assert posted["json"]["quality"] == "low"
-    assert posted["json"]["extra_fields"] == {
-        "aspect_ratio": "2:3",
-        "image_size": "1K",
-        "resolution": "1k",
-        "quality": "low",
-    }
+    assert posted["json"]["size"] == "688x1024"
+    assert "extra_fields" not in posted["json"]
     assert trace == {"request_id": "req-sketch", "response_id": "resp-sketch"}
 
 
@@ -249,11 +245,176 @@ def test_newapi_sketch_config_can_use_dc_banana2_without_quality(monkeypatch):
     assert error == ""
     assert posted["json"]["model"] == "LingShan-NB-2"
     assert "quality" not in posted["json"]
-    assert posted["json"]["extra_fields"] == {
-        "aspect_ratio": "2:3",
-        "image_size": "1K",
-        "resolution": "1k",
-    }
+    assert posted["json"]["size"] == "688x1024"
+    assert "extra_fields" not in posted["json"]
+
+
+def test_catalog_can_enable_arbitrary_newapi_image_quality(monkeypatch):
+    import httpx
+    from novelvideo.generators import nanobanana_grid
+
+    posted = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"b64_json": base64.b64encode(b"image").decode()}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            posted["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="newapi-token",
+            model="Seedream-Custom",
+            prompt="prompt",
+            image_config={
+                "aspect_ratio": "adaptive",
+                "image_size": "3K",
+                "quality": "ultra",
+                "request_schema": {
+                    "endpoint": "images/generations",
+                    "parameters": [],
+                    "includeQuality": True,
+                },
+            },
+            base_url="http://newapi.test/v1",
+        )
+    )
+
+    assert image_bytes == b"image"
+    assert error == ""
+    assert posted["json"]["model"] == "Seedream-Custom"
+    assert posted["json"]["quality"] == "ultra"
+    assert posted["json"]["size"] == "2880x2880"
+    assert "extra_fields" not in posted["json"]
+
+
+@pytest.mark.parametrize(
+    ("resolution", "ratio"),
+    [
+        ("2K", "16:9"),
+        ("2K", "21:9"),
+        ("3K", "16:9"),
+    ],
+)
+def test_seedream5_newapi_size_meets_volcengine_pixel_floor(resolution, ratio):
+    from novelvideo.generators.nanobanana_grid import resolve_openai_image_size
+
+    width, height = (
+        int(value)
+        for value in resolve_openai_image_size(
+            ratio,
+            resolution,
+            "seedream-5.0-lite",
+        ).split("x")
+    )
+
+    assert width * height >= 3_686_400
+
+
+@pytest.mark.parametrize(
+    ("resolution", "ratio", "expected"),
+    [
+        ("8K", "16:9", "8192x4608"),
+        ("5.5K", "1:1", "5632x5632"),
+        ("2048x1152", "1:1", "2048x1152"),
+    ],
+)
+def test_newapi_image_size_supports_dynamic_admin_resolutions(
+    resolution,
+    ratio,
+    expected,
+):
+    from novelvideo.generators.nanobanana_grid import resolve_openai_image_size
+
+    assert (
+        resolve_openai_image_size(
+            ratio,
+            resolution,
+            "future-image-model",
+            allow_dynamic_resolution=True,
+        )
+        == expected
+    )
+
+
+def test_newapi_image_call_rejects_unrecognized_admin_resolution():
+    from novelvideo.generators import nanobanana_grid
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="newapi-token",
+            model="future-image-model",
+            prompt="prompt",
+            image_config={"aspect_ratio": "16:9", "image_size": "ultra"},
+            base_url="http://newapi.test/v1",
+        )
+    )
+
+    assert image_bytes is None
+    assert "unsupported image resolution: ultra" in error
+
+
+def test_newapi_seedream5_sends_3k_resolution(monkeypatch):
+    import httpx
+    from novelvideo.generators import nanobanana_grid
+
+    posted = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"b64_json": base64.b64encode(b"image").decode()}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, json):
+            posted["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="newapi-token",
+            model="seedream-5.0-lite",
+            prompt="prompt",
+            image_config={"aspect_ratio": "16:9", "image_size": "3K"},
+            base_url="http://newapi.test/v1",
+        )
+    )
+
+    assert image_bytes == b"image"
+    assert error == ""
+    width, height = (int(value) for value in posted["json"]["size"].split("x"))
+    assert width * height >= 3_686_400
+    assert "extra_fields" not in posted["json"]
 
 
 def test_newapi_image_call_sends_gpt_image2_params(monkeypatch):
@@ -308,12 +469,8 @@ def test_newapi_image_call_sends_gpt_image2_params(monkeypatch):
     assert posted["json"]["model"] == "LingShan-G2"
     assert posted["json"]["prompt"] == "portrait prompt"
     assert posted["json"]["quality"] == "medium"
-    assert posted["json"]["extra_fields"] == {
-        "aspect_ratio": "3:4",
-        "image_size": "1K",
-        "resolution": "1k",
-        "quality": "medium",
-    }
+    assert posted["json"]["size"] == "768x1024"
+    assert "extra_fields" not in posted["json"]
 
 
 def test_newapi_image_call_reports_transport_exception_type(monkeypatch):
@@ -469,11 +626,8 @@ def test_newapi_image_call_omits_quality_for_nanobanana2(monkeypatch):
     assert error == ""
     assert posted["json"]["model"] == "LingShan-NB-2"
     assert "quality" not in posted["json"]
-    assert posted["json"]["extra_fields"] == {
-        "aspect_ratio": "3:4",
-        "image_size": "1K",
-        "resolution": "1k",
-    }
+    assert posted["json"]["size"] == "768x1024"
+    assert "extra_fields" not in posted["json"]
 
 
 def test_newapi_image_call_relays_reference_images(monkeypatch):
@@ -501,6 +655,7 @@ def test_newapi_image_call_relays_reference_images(monkeypatch):
             return None
 
         async def post(self, url, *, headers, json):
+            posted["url"] = url
             posted["json"] = json
             return FakeResponse()
 
@@ -517,21 +672,41 @@ def test_newapi_image_call_relays_reference_images(monkeypatch):
             model="LingShan-G2",
             prompt="identity prompt",
             reference_images=[b"ref-a", b"ref-b"],
-            image_config={"aspect_ratio": "3:4", "image_size": "1K", "quality": "medium"},
+            image_config={
+                "aspect_ratio": "3:4",
+                "image_size": "1K",
+                "quality": "medium",
+                "output_format": "png",
+                "input_fidelity": "high",
+            },
             base_url="http://newapi.test/v1",
         )
     )
 
     assert image_bytes == b"image-bytes"
     assert error == ""
+    assert posted["url"] == "http://newapi.test/v1/images/edits"
     assert relayed == [
-        (b"ref-a", "png", None, nanobanana_grid.IMAGE_TRANSFORM_AI_REFERENCE_JPEG),
-        (b"ref-b", "png", None, nanobanana_grid.IMAGE_TRANSFORM_AI_REFERENCE_JPEG),
+        (
+            b"ref-a",
+            "png",
+            nanobanana_grid.NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+            nanobanana_grid.IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+        ),
+        (
+            b"ref-b",
+            "png",
+            nanobanana_grid.NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+            nanobanana_grid.IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+        ),
     ]
     assert posted["json"]["images"] == [
         "https://relay.test/1.png",
         "https://relay.test/2.png",
     ]
+    assert posted["json"]["output_format"] == "png"
+    assert posted["json"]["input_fidelity"] == "high"
+    assert "extra_fields" not in posted["json"]
 
 
 def test_newapi_image_call_preserves_reference_image_extensions(monkeypatch):
@@ -584,8 +759,18 @@ def test_newapi_image_call_preserves_reference_image_extensions(monkeypatch):
     assert image_bytes == b"image-bytes"
     assert error == ""
     assert relayed == [
-        (b"jpg-bytes", "jpg", None, nanobanana_grid.IMAGE_TRANSFORM_AI_REFERENCE_JPEG),
-        (b"webp-bytes", "webp", None, nanobanana_grid.IMAGE_TRANSFORM_AI_REFERENCE_JPEG),
+        (
+            b"jpg-bytes",
+            "jpg",
+            nanobanana_grid.NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+            nanobanana_grid.IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+        ),
+        (
+            b"webp-bytes",
+            "webp",
+            nanobanana_grid.NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+            nanobanana_grid.IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+        ),
     ]
 
 
@@ -661,10 +846,10 @@ def test_newapi_image_http_error_logs_redacted_request_context(monkeypatch, capl
     assert "request_id=req-123" in error
     assert "cf-ray-456" in error
     assert "model=LingShan-G2" in error
-    assert "extra_fields" in error
+    assert "size=2048x1024" in error
     assert "reference_image_count=1" in error
     assert "request_id=req-123" in log_text
-    assert "http://newapi.test/v1/images/generations" in log_text
+    assert "http://newapi.test/v1/images/edits" in log_text
     assert "prompt_sha256=" in log_text
     assert "sensitive prompt body" not in error
     assert "sensitive prompt body" not in log_text
@@ -1189,12 +1374,8 @@ def test_newapi_prop_reference_gpt_image2_sends_quality_medium(monkeypatch, tmp_
     assert posted["headers"]["Authorization"] == "Bearer newapi-token"
     assert posted["json"]["model"] == "LingShan-G2"
     assert posted["json"]["quality"] == "medium"
-    assert posted["json"]["extra_fields"] == {
-        "aspect_ratio": "16:9",
-        "image_size": "1K",
-        "resolution": "1k",
-        "quality": "medium",
-    }
+    assert posted["json"]["size"] == "1088x608"
+    assert "extra_fields" not in posted["json"]
 
 
 def test_newapi_prop_reference_nanobanana2_omits_quality(monkeypatch, tmp_path):
@@ -1251,11 +1432,8 @@ def test_newapi_prop_reference_nanobanana2_omits_quality(monkeypatch, tmp_path):
     assert output_path.read_bytes() == b"prop-ref"
     assert posted["json"]["model"] == "LingShan-NB-2"
     assert "quality" not in posted["json"]
-    assert posted["json"]["extra_fields"] == {
-        "aspect_ratio": "16:9",
-        "image_size": "1K",
-        "resolution": "1k",
-    }
+    assert posted["json"]["size"] == "1088x608"
+    assert "extra_fields" not in posted["json"]
 
 
 def test_newapi_prop_reference_reraises_insufficient_credit(monkeypatch, tmp_path):
@@ -1297,7 +1475,9 @@ def test_freezone_single_image_generation_routes_newapi(monkeypatch, tmp_path):
         captured.update(kwargs)
         return b"freezone-image", "", ""
 
-    monkeypatch.setattr(nanobanana_grid, "_call_newapi_image_api", fake_call_newapi_image_api)
+    monkeypatch.setattr(
+        nanobanana_grid, "_call_newapi_image_api", fake_call_newapi_image_api
+    )
 
     output_path = tmp_path / "freezone.png"
     image_path = run_async(
@@ -1334,6 +1514,8 @@ def test_freezone_single_image_generation_routes_newapi(monkeypatch, tmp_path):
         "aspect_ratio": "1:1",
         "image_size": "2K",
         "quality": "medium",
+    "request_schema": {},
+        "model_params": {},
     }
 
 

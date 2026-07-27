@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Box, Check, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import type { MediaModelRequestSchema } from '@/api/ops';
 
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { useFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
@@ -20,6 +21,7 @@ const MODEL_PICKER_OPTION_BASE_CLASS =
   'inline-flex h-8 w-full items-center gap-2 rounded-[6px] px-3 text-left text-xs font-medium transition-colors';
 
 export type ProviderId =
+  | 'newapi'
   | 'huimeng'
   | 'openrouter'
   | 'openai'
@@ -39,13 +41,22 @@ export interface ModelOption {
   apiModel: string;
   label: string;
   resolutionOptions?: string[];
+  qualityOptions?: string[];
+  humanReview?: boolean;
   minDuration?: number | null;
   maxDuration?: number | null;
   sceneOptimizeOptions?: Array<'anime' | 'realistic'>;
   defaultSceneOptimize?: 'anime' | 'realistic' | null;
+  ratioOptions?: string[];
+  supportedModes?: string[];
+  referenceImageMax?: number | null;
+  referenceVideoMax?: number | null;
+  referenceAudioMax?: number | null;
+  request?: MediaModelRequestSchema;
 }
 
 export const SHARED_PROVIDERS: ProviderOption[] = [
+  { id: 'newapi', label: '虾驿 / NewAPI' },
   { id: 'huimeng', label: '绘梦 / HuiMeng' },
   { id: 'openrouter', label: 'OpenRouter' },
   { id: 'openai', label: 'OpenAI' },

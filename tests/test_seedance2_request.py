@@ -565,7 +565,8 @@ async def test_newapi_seedance2_generator_preserves_config_resolution_and_scene_
         captured["payload"] = payload
         return {"id": "task-1", "_newapi_request_id": "req-1"}
 
-    async def fake_get_json(_url: str):
+    async def fake_get_json(url: str):
+        captured["poll_url"] = url
         return {"status": "completed", "url": "https://example.com/out.mp4"}
 
     async def fake_download_video(_url: str, output_path: str):
@@ -608,12 +609,20 @@ async def test_newapi_seedance2_generator_preserves_config_resolution_and_scene_
     assert isinstance(payload, dict)
     metadata = payload["metadata"]
     assert isinstance(metadata, dict)
+    assert captured["url"] == "https://newapi.example/video/generations"
+    assert captured["poll_url"] == "https://newapi.example/video/generations/task-1"
     assert payload["model"] == "seedance-2.0-value"
-    assert metadata["resolution"] == "1080p"
-    assert metadata["ratio"] == "16:9"
+    assert payload["duration"] == 8
+    assert payload["width"] == 1920
+    assert payload["height"] == 1080
+    assert payload["image"] == "https://example.com/first.png"
+    assert payload["n"] == 1
+    assert payload["response_format"] == "url"
     assert metadata["scene_optimize"] == "realistic"
-    assert metadata["image_url"] == "https://example.com/first.png"
-    assert payload["seconds"] == "8"
+    assert "resolution" not in metadata
+    assert "ratio" not in metadata
+    assert "image_url" not in metadata
+    assert "seconds" not in payload
 
 
 async def test_newapi_seedance1_generator_preserves_adaptive_ratio(tmp_path, monkeypatch):
@@ -653,7 +662,77 @@ async def test_newapi_seedance1_generator_preserves_adaptive_ratio(tmp_path, mon
     assert isinstance(payload, dict)
     metadata = payload["metadata"]
     assert isinstance(metadata, dict)
-    assert metadata["ratio"] == "adaptive"
+    assert payload["image"] == "https://example.com/first.png"
+    assert metadata["aspect_ratio"] == "adaptive"
+    assert metadata["resolution"] == "720p"
+    assert "ratio" not in metadata
+
+
+def test_newapi_video_payload_uses_public_fields_and_keeps_only_media_extensions():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    metadata = {
+        "resolution": "720p",
+        "ratio": "16:9",
+        "first_frame_image": "https://example.com/first.png",
+        "last_frame_image": "https://example.com/last.png",
+        "reference_images": [
+            f"https://example.com/reference-{index}.png" for index in range(1, 6)
+        ],
+        "reference_videos": ["https://example.com/reference.mp4"],
+        "generate_audio": True,
+    }
+    payload = {
+        "model": "video-model",
+        "prompt": "animate the references",
+        "seconds": "5",
+        "metadata": metadata,
+    }
+
+    NewApiVideoGenerator._canonicalize_video_payload(payload, metadata)
+
+    assert payload == {
+        "model": "video-model",
+        "prompt": "animate the references",
+        "image": "https://example.com/first.png",
+        "duration": 5,
+        "width": 1280,
+        "height": 720,
+        "n": 1,
+        "response_format": "url",
+        "metadata": {
+            "last_frame_image": "https://example.com/last.png",
+            "reference_images": [
+                f"https://example.com/reference-{index}.png" for index in range(1, 6)
+            ],
+            "reference_videos": ["https://example.com/reference.mp4"],
+            "generate_audio": True,
+        },
+    }
+
+
+def test_newapi_video_task_response_accepts_flat_and_data_wrapped_contracts():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    assert NewApiVideoGenerator._task_id_from_submit_response(
+        {"task_id": "task-flat"}
+    ) == "task-flat"
+    assert NewApiVideoGenerator._task_id_from_submit_response(
+        {"data": {"id": "task-wrapped"}}
+    ) == "task-wrapped"
+    assert NewApiVideoGenerator._task_response_data(
+        {
+            "data": {
+                "task_id": "task-wrapped",
+                "status": "succeeded",
+                "url": "https://example.com/video.mp4",
+            }
+        }
+    ) == {
+        "task_id": "task-wrapped",
+        "status": "succeeded",
+        "url": "https://example.com/video.mp4",
+    }
 
 
 async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_path, monkeypatch):
@@ -727,15 +806,16 @@ async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_pat
     assert isinstance(metadata, dict)
     assert payload["model"] == "happyhorse-1.0"
     assert payload["duration"] == 6
-    assert payload["seconds"] == "6"
+    assert "seconds" not in payload
     # 参考优先：一旦带了参考图/参考视频，首帧(image_url/i2v)与 reference_images/video_url
     # 互斥（同时下发会触发上游 INVALID_PARAMS）。首帧降级为 reference_images 首位，
     # 不再单独发 images/image_url；画幅由输入媒体决定，故 ratio 也被移除。
     assert "images" not in payload
+    assert "image" not in payload
     assert "image_url" not in metadata
-    assert "ratio" not in metadata
+    assert "aspect_ratio" not in metadata
     assert metadata["resolution"] == "1080P"
-    assert metadata["video_url"] == "https://example.com/input.mp4"
+    assert metadata["reference_videos"] == ["https://example.com/input.mp4"]
     assert metadata["audio_setting"] == "origin"
     assert metadata["reference_images"] == [
         "https://example.com/first.png",
@@ -814,17 +894,78 @@ async def test_newapi_grok_video_channel_uses_relayclaw_video_payload(tmp_path, 
     assert payload["model"] == "grok-video-channel"
     assert payload["prompt"] == "一只猫在海滩上漫步"
     assert payload["duration"] == 6
-    assert payload["seconds"] == "6"
-    assert payload["images"] == ["https://example.com/first.png"]
+    assert "seconds" not in payload
+    assert payload["image"] == "https://example.com/first.png"
+    assert payload["width"] == 720
+    assert payload["height"] == 1280
     metadata = payload["metadata"]
     assert isinstance(metadata, dict)
-    assert metadata["resolution"] == "720p"
-    assert metadata["ratio"] == "9:16"
-    assert metadata["image_url"] == "https://example.com/first.png"
     assert metadata["reference_images"] == ["https://example.com/ref.png"]
+    assert "resolution" not in metadata
+    assert "ratio" not in metadata
+    assert "image_url" not in metadata
     assert "video_url" not in metadata
     assert "generate_audio" not in metadata
     assert "watermark" not in metadata
+
+
+async def test_newapi_catalog_model_builds_huimeng_protocol_multimedia_references():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator, ShotReference
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="kling-v3-omni",
+    )
+    metadata: dict[str, object] = {}
+
+    await generator._apply_huimeng_protocol_media_inputs(
+        metadata,
+        mode="all_reference",
+        image_path="",
+        last_frame_path=None,
+        references=[
+            ShotReference("image", "https://example.com/ref.png", "角色参考"),
+            ShotReference("video", "https://example.com/input.mp4", "视频编辑源"),
+            ShotReference("audio", "https://example.com/input.mp3", "音频参考"),
+        ],
+        log=lambda _message: None,
+    )
+
+    assert metadata["reference_images"] == ["https://example.com/ref.png"]
+    assert metadata["reference_videos"] == ["https://example.com/input.mp4"]
+    assert metadata["reference_audios"] == ["https://example.com/input.mp3"]
+    assert set(metadata) == {
+        "reference_images",
+        "reference_videos",
+        "reference_audios",
+    }
+
+
+@pytest.mark.parametrize("model", ["seedance-2-0-mini", "kling-v3-omni"])
+async def test_newapi_catalog_models_use_same_first_last_frame_protocol(model):
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model=model,
+    )
+    metadata: dict[str, object] = {}
+
+    await generator._apply_huimeng_protocol_media_inputs(
+        metadata,
+        mode="first_last_frame",
+        image_path="https://example.com/first.png",
+        last_frame_path="https://example.com/last.png",
+        references=[],
+        log=lambda _message: None,
+    )
+
+    assert metadata == {
+        "first_frame_image": "https://example.com/first.png",
+        "last_frame_image": "https://example.com/last.png",
+    }
 
 
 async def test_newapi_video_relay_frame_input_normalizes_local_image_refs(
@@ -907,3 +1048,7 @@ async def test_newapi_video_seedance2_references_normalize_only_image_refs(
     assert captured[0]["image_transform"] == video_module.IMAGE_TRANSFORM_AI_REFERENCE_JPEG
     assert captured[1]["image_transform"] is None
     assert captured[2]["image_transform"] is None
+    assert all(
+        item["ttl"] == video_module.NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS
+        for item in captured
+    )

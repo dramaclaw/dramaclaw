@@ -23,8 +23,7 @@ describe("canvas image generation credit contract", () => {
       "imageCreditCost.error instanceof BillingRuleNotConfiguredError",
     );
     expect(nodeSource).toContain("t('common.billingRuleNotConfiguredShort')");
-    expect(nodeSource).toContain(
-      "isGenerating || !hasEffectivePrompt || imageBillingRuleMissing",
-    );
+    expect(nodeSource).toContain("const submitDisabled =");
+    expect(nodeSource).toContain("imageBillingRuleMissing ||");
   });
 });

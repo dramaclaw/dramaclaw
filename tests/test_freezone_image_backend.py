@@ -2429,6 +2429,47 @@ async def test_freezone_gen_route_passes_output_dir_and_quality(
 
 
 @pytest.mark.asyncio
+async def test_freezone_gen_rejects_references_above_catalog_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(
+        monkeypatch,
+        tmp_path,
+        username="admin",
+        project="58",
+    )
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {"endpoint": "images/generations", "parameters": []},
+            {},
+            {"referenceImageMax": 1},
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_gen(
+            project="proj_freezone",
+            body=freezone_routes.FreezoneGenRequest(
+                prompt="generate",
+                model="custom-image",
+                model_id="custom-image",
+                reference_urls=["/static/ref-1.png", "/static/ref-2.png"],
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "at most 1 reference images" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_freezone_celery_runner_records_node_history(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -6043,6 +6084,56 @@ async def test_freezone_image_models_returns_selection_keys(
             "label": "LingShan-NB-2",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_freezone_image_models_prefers_ee_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, project="58")
+    catalog = [
+        {
+            "id": "custom-image",
+            "providerId": "huimeng",
+            "apiModel": "custom-upstream",
+            "label": "Custom Image",
+            "resolutionOptions": ["1K", "2K"],
+            "ratioOptions": ["1:1", "16:9"],
+        }
+    ]
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return catalog
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+    result = await freezone_routes.freezone_image_models(
+        project="58",
+        user={"username": "admin"},
+    )
+
+    assert result == {"ok": True, "data": catalog}
+
+
+@pytest.mark.asyncio
+async def test_freezone_image_models_preserves_empty_ee_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, project="58")
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return []
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+    result = await freezone_routes.freezone_image_models(
+        project="58",
+        user={"username": "admin"},
+    )
+
+    assert result == {"ok": True, "data": []}
 
 
 @pytest.mark.asyncio

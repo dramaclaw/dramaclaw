@@ -26,6 +26,7 @@ from novelvideo.freezone.video_node import (
     is_freezone_seedance2_backend,
     load_video_character_library,
     normalize_video_aspect_ratio,
+    normalize_video_duration_for_backend,
     normalize_video_resolution,
     normalize_video_resolution_for_backend,
     resolve_freezone_video_backend,
@@ -174,6 +175,44 @@ def test_video_model_options_and_resolution_work() -> None:
     assert happyhorse["minDuration"] == 3
     assert happyhorse["maxDuration"] == 15
     assert normalize_video_resolution_for_backend("newapi_happyhorse-1.0", "480p") == "720p"
+
+
+def test_catalog_resolution_options_override_legacy_video_whitelist() -> None:
+    assert (
+        normalize_video_resolution_for_backend(
+            "newapi_Kling-V2.1",
+            "4K",
+            ["1080p", "4K"],
+        )
+        == "4K"
+    )
+
+
+def test_catalog_duration_bounds_override_legacy_video_bounds() -> None:
+    assert (
+        normalize_video_duration_for_backend(
+            "newapi_happyhorse-1.0",
+            20,
+            2,
+            30,
+        )
+        == 20
+    )
+    assert (
+        normalize_video_duration_for_backend(
+            "newapi_happyhorse-1.0",
+            1,
+            2,
+            30,
+        )
+        == 2
+    )
+
+
+def test_newapi_video_backend_preserves_gateway_model_case() -> None:
+    from novelvideo.generators.video_generator import parse_newapi_video_backend
+
+    assert parse_newapi_video_backend("newapi_Kling-V2.1") == "Kling-V2.1"
 
 
 def test_grok_video_channel_is_not_exposed_even_if_configured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -350,3 +389,22 @@ def test_validate_omni_reference_limits_and_summary() -> None:
         raise AssertionError("expected validate_omni_reference_limits to fail")
     except ValueError as exc:
         assert "<= 9" in str(exc)
+
+    validate_omni_reference_limits(
+        [{"type": "image", "url": "/static/a.png"}],
+        image_max=1,
+        video_max=0,
+        audio_max=0,
+        total_max=1,
+    )
+    with pytest.raises(ValueError, match="image references count must be <= 1"):
+        validate_omni_reference_limits(
+            [
+                {"type": "image", "url": "/static/a.png"},
+                {"type": "image", "url": "/static/b.png"},
+            ],
+            image_max=1,
+            video_max=0,
+            audio_max=0,
+            total_max=2,
+        )
