@@ -65,10 +65,59 @@ async def test_close_releases_cached_cognee_graph_engine(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_close_does_not_release_graph_engine_with_an_active_reader(monkeypatch):
+    from novelvideo.cognee import store as store_module
+    from novelvideo.cognee.store import CogneeStore
+
+    graph_config_module = import_module("cognee.infrastructure.databases.graph.config")
+    graph_engine_module = import_module("cognee.infrastructure.databases.graph.get_graph_engine")
+    calls = []
+
+    class FakeSQLiteStore:
+        async def close(self):
+            calls.append("sqlite.close")
+
+    class FakeGraphEngine:
+        connection = None
+        db = None
+
+        def close(self):
+            calls.append("graph.close")
+
+    class FakeCachedFactory:
+        def cache_clear(self):
+            calls.append("graph.cache_clear")
+
+    fake_engine = FakeGraphEngine()
+    monkeypatch.setattr(graph_config_module, "get_graph_context_config", lambda: {})
+    monkeypatch.setattr(
+        graph_engine_module, "create_graph_engine", lambda **config: fake_engine
+    )
+    monkeypatch.setattr(graph_engine_module, "_create_graph_engine", FakeCachedFactory())
+
+    store = CogneeStore.__new__(CogneeStore)
+    store._owns_sqlite_store = True
+    store.sqlite_store = FakeSQLiteStore()
+
+    with store_module._track_graph_engine_reader(fake_engine):
+        await store.close()
+
+    assert calls == ["sqlite.close"]
+
+    await store.close()
+    assert calls == [
+        "sqlite.close",
+        "sqlite.close",
+        "graph.close",
+        "graph.cache_clear",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_graph_snapshot_is_bounded_ranked_and_json_safe(monkeypatch):
     from novelvideo.cognee.store import CogneeStore
 
-    async def fake_get_dataset_graph_data():
+    async def fake_get_dataset_graph_data(**_kwargs):
         return (
             [
                 ("chunk", {"name": "原文章节", "type": "DocumentChunk", "embedding": [1, 2]}),
@@ -151,5 +200,68 @@ async def test_graph_snapshot_reads_the_project_dataset_database(monkeypatch):
         ("context.create", "dataset-id", "owner-id"),
         "context.enter",
         "graph.read",
+        "context.exit",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_graph_existence_check_uses_lightweight_is_empty(monkeypatch):
+    from novelvideo.cognee.store import CogneeStore
+
+    context_module = import_module("cognee.context_global_variables")
+    graph_module = import_module("cognee.infrastructure.databases.graph")
+    data_methods = import_module("cognee.modules.data.methods")
+    user_methods = import_module("cognee.modules.users.methods")
+    calls = []
+    user = SimpleNamespace(id="user-id")
+    dataset = SimpleNamespace(id="dataset-id", owner_id="owner-id")
+
+    class FakeDatasetContext:
+        async def __aenter__(self):
+            calls.append("context.enter")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            calls.append("context.exit")
+
+    class FakeGraphEngine:
+        async def is_empty(self):
+            calls.append("graph.is_empty")
+            return False
+
+        async def get_graph_data(self):
+            raise AssertionError("full graph must not be loaded for ingest validation")
+
+    async def fake_get_default_user():
+        return user
+
+    async def fake_get_datasets_by_name(name, user_id):
+        calls.append(("dataset.lookup", name, user_id))
+        return [dataset]
+
+    async def fake_get_graph_engine():
+        return FakeGraphEngine()
+
+    monkeypatch.setattr(user_methods, "get_default_user", fake_get_default_user)
+    monkeypatch.setattr(data_methods, "get_datasets_by_name", fake_get_datasets_by_name)
+    monkeypatch.setattr(
+        context_module,
+        "set_database_global_context_variables",
+        lambda dataset_id, owner_id: (
+            calls.append(("context.create", dataset_id, owner_id)) or FakeDatasetContext()
+        ),
+    )
+    monkeypatch.setattr(graph_module, "get_graph_engine", fake_get_graph_engine)
+
+    store = CogneeStore.__new__(CogneeStore)
+    store.dataset_name = "novelvideo_local/test"
+    store._set_cognee_context = lambda: calls.append("project.context")
+
+    assert await store._dataset_graph_has_nodes() is True
+    assert calls == [
+        "project.context",
+        ("dataset.lookup", "novelvideo_local/test", "user-id"),
+        ("context.create", "dataset-id", "owner-id"),
+        "context.enter",
+        "graph.is_empty",
         "context.exit",
     ]

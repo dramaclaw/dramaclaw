@@ -1403,6 +1403,8 @@
     "scriptDetails": "剧本配置",
     "previewGenerating": "正在生成结构预览...",
     "restoredFilename": "已导入小说",
+    "reimport": "重新导入",
+    "reimportSourceMissing": "原始上传文件已不存在，请重新上传后再导入。",
     "statFilename": "文件名",
     "statTotalChars": "总字数",
     "statBillableChars": "计费字数",

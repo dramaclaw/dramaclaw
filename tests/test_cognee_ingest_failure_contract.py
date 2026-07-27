@@ -49,6 +49,43 @@ def test_cognee_pipeline_error_includes_nested_data_item_error():
     assert "Provider rejected chunk 7" in message
 
 
+def test_cognee_pipeline_completed_parent_still_rejects_nested_error():
+    from novelvideo.cognee.store import CogneeStore
+
+    result = {
+        "run": {
+            "status": _FakeCompletedPipelineStatus(),
+            "data_ingestion_info": [
+                {
+                    "run_info": {
+                        "status": _FakePipelineStatus(),
+                        "payload": "Embedding provider returned 429",
+                    }
+                }
+            ],
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="Embedding provider returned 429"):
+        CogneeStore._ensure_pipeline_run_succeeded(result, "知识图谱构建")
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {},
+        [],
+        SimpleNamespace(status="STARTED", payload=None),
+        {"run": {"status": None, "payload": None}},
+    ],
+)
+def test_cognee_pipeline_rejects_empty_or_non_terminal_result(result):
+    from novelvideo.cognee.store import CogneeStore
+
+    with pytest.raises(RuntimeError, match="知识图谱构建失败"):
+        CogneeStore._ensure_pipeline_run_succeeded(result, "知识图谱构建")
+
+
 @pytest.mark.asyncio
 async def test_failed_graph_build_leaves_project_unimported(tmp_path, monkeypatch):
     """A failed ingest must not persist novel content.
@@ -59,8 +96,6 @@ async def test_failed_graph_build_leaves_project_unimported(tmp_path, monkeypatc
     project un-imported so the user can retry.
     """
     from novelvideo.cognee.store import CogneeStore
-    from novelvideo.cognee import store as store_module
-
     novel = tmp_path / "novel.txt"
     novel.write_text("第一章\n春深不见旧门红，内容内容内容。\n", encoding="utf-8")
 
@@ -75,13 +110,10 @@ async def test_failed_graph_build_leaves_project_unimported(tmp_path, monkeypatc
     monkeypatch.setattr("novelvideo.cognee.config.init_cognee", lambda *a, **k: None)
     monkeypatch.setenv("LLM_API_KEY", "test-key")
 
-    async def fake_add(*a, **k):
-        return None
-
-    monkeypatch.setattr(store_module.cognee, "add", fake_add)
-
-    async def fail_graph(*a, **k):
-        raise RuntimeError("知识图谱构建失败(PipelineRunErrored)")
+    async def fail_graph(*, stage_name, **kwargs):
+        if stage_name == "知识图谱构建":
+            raise RuntimeError("知识图谱构建失败(PipelineRunErrored)")
+        return SimpleNamespace(status=_FakeCompletedPipelineStatus())
 
     monkeypatch.setattr(store, "_run_cognee_pipeline_with_retry", fail_graph)
 
@@ -95,8 +127,6 @@ async def test_failed_graph_build_leaves_project_unimported(tmp_path, monkeypatc
 async def test_successful_ingest_persists_novel_content(tmp_path, monkeypatch):
     """A successful ingest must persist novel content (导入完成)."""
     from novelvideo.cognee.store import CogneeStore
-    from novelvideo.cognee import store as store_module
-
     text = "第一章\n春深不见旧门红，内容内容内容。\n"
     novel = tmp_path / "novel.txt"
     novel.write_text(text, encoding="utf-8")
@@ -112,20 +142,90 @@ async def test_successful_ingest_persists_novel_content(tmp_path, monkeypatch):
     monkeypatch.setattr("novelvideo.cognee.config.init_cognee", lambda *a, **k: None)
     monkeypatch.setenv("LLM_API_KEY", "test-key")
 
-    async def fake_add(*a, **k):
-        return None
-
-    monkeypatch.setattr(store_module.cognee, "add", fake_add)
-
     async def ok_graph(*a, **k):
-        return None
+        return SimpleNamespace(status=_FakeCompletedPipelineStatus())
 
     monkeypatch.setattr(store, "_run_cognee_pipeline_with_retry", ok_graph)
+    monkeypatch.setattr(store, "_dataset_graph_has_nodes", lambda: _async_result(True))
 
     result = await store.ingest_novel_fast(str(novel), rebuild=False)
 
     assert store.load_novel_content() == text
     assert result["status"] == "graph_ready"
+
+
+async def _async_result(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_empty_graph_is_not_reported_as_success(tmp_path, monkeypatch):
+    from novelvideo.cognee.store import CogneeStore
+
+    novel = tmp_path / "source.txt"
+    novel.write_text("第一章\n内容内容内容。\n", encoding="utf-8")
+
+    store = object.__new__(CogneeStore)
+    store.dataset_name = "test_ds"
+    saved: dict[str, str] = {}
+    monkeypatch.setattr(
+        store, "save_novel_content", lambda content: saved.__setitem__("content", content)
+    )
+    monkeypatch.setattr(store, "_set_cognee_context", lambda *a, **k: None)
+    monkeypatch.setattr("novelvideo.cognee.config.init_cognee", lambda *a, **k: None)
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+
+    async def ok_stage(*a, **k):
+        return SimpleNamespace(status=_FakeCompletedPipelineStatus())
+
+    async def empty_graph():
+        return False
+
+    monkeypatch.setattr(store, "_run_cognee_pipeline_with_retry", ok_stage)
+    monkeypatch.setattr(store, "_dataset_graph_has_nodes", empty_graph)
+
+    with pytest.raises(RuntimeError, match="未生成任何图谱节点"):
+        await store.ingest_novel_fast(str(novel), rebuild=False)
+
+    assert "content" not in saved
+
+
+@pytest.mark.asyncio
+async def test_failed_rebuild_invalidates_old_import_but_keeps_upload(
+    tmp_path, monkeypatch
+):
+    from novelvideo.cognee.store import CogneeStore
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    imported_marker = project_dir / "novel.txt"
+    imported_marker.write_text("旧小说", encoding="utf-8")
+    upload = tmp_path / "uploads" / "new.txt"
+    upload.parent.mkdir()
+    upload.write_text("第一章\n新小说内容。\n", encoding="utf-8")
+
+    store = object.__new__(CogneeStore)
+    store.dataset_name = "test_ds"
+    store.project_dir = str(project_dir)
+    monkeypatch.setattr(store, "_set_cognee_context", lambda *a, **k: None)
+    monkeypatch.setattr("novelvideo.cognee.config.init_cognee", lambda *a, **k: None)
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+
+    async def prune():
+        assert not imported_marker.exists()
+        return None
+
+    async def fail_add(*, stage_name, **kwargs):
+        raise RuntimeError(f"{stage_name}失败")
+
+    monkeypatch.setattr(store, "_prune_cognee_only", prune)
+    monkeypatch.setattr(store, "_run_cognee_pipeline_with_retry", fail_add)
+
+    with pytest.raises(RuntimeError, match="原文导入失败"):
+        await store.ingest_novel_fast(str(upload), rebuild=True)
+
+    assert not imported_marker.exists()
+    assert upload.exists()
 
 
 @pytest.mark.asyncio

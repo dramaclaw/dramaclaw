@@ -1403,6 +1403,8 @@
     "scriptDetails": "Script details",
     "previewGenerating": "Generating structure preview...",
     "restoredFilename": "Imported novel",
+    "reimport": "Re-import",
+    "reimportSourceMissing": "The original uploaded file is unavailable. Upload it again before importing.",
     "statFilename": "Filename",
     "statTotalChars": "Total chars",
     "statBillableChars": "Billable chars",

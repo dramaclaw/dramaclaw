@@ -1,6 +1,8 @@
 """小说上传 & 导入端点。"""
 
+import asyncio
 import logging
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, UploadFile
@@ -16,8 +18,7 @@ from novelvideo.api.deps import get_cognee_store
 from novelvideo.api.schemas import IngestStart
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
-    load_project_config,
-    save_project_config,
+    save_project_config_in_state_dir,
 )
 from novelvideo.ports import get_task_backend
 from novelvideo.task_identity import project_task_state_key
@@ -45,7 +46,20 @@ async def get_ingest_knowledge_graph(
     store=Depends(get_cognee_store),
 ):
     """Return the imported project's real Cognee graph for visualization."""
-    snapshot = await store.get_graph_snapshot()
+    # Ladybug executes queries in an executor thread. If the browser cancels the
+    # request while that thread is still reading, FastAPI would otherwise enter
+    # the dependency cleanup immediately and close the same cached graph engine.
+    # Finish the in-flight read before get_cognee_store releases its resources.
+    snapshot_task = asyncio.create_task(store.get_graph_snapshot())
+    try:
+        snapshot = await asyncio.shield(snapshot_task)
+    except asyncio.CancelledError:
+        logger.info("[%s] graph request cancelled; waiting for Ladybug read cleanup", project)
+        try:
+            await snapshot_task
+        except Exception:
+            logger.exception("[%s] graph read failed after request cancellation", project)
+        raise
     return {"ok": True, "data": snapshot}
 
 
@@ -128,8 +142,6 @@ async def start_ingest(
     logger.info("[%s] start_ingest: %s (rebuild=%s)", project, body.filename, body.rebuild)
     resolved = await resolve_project_scope(project, user, required_role="editor")
     ctx = resolved.ctx
-    username = resolved.username
-    project_name = resolved.project_name
     project_dir = resolved.project_dir
     uploads_dir = project_dir / "uploads"
     safe_name = sanitize_upload_filename(body.filename)
@@ -138,6 +150,21 @@ async def start_ingest(
     if not is_supported_novel_path(safe_name):
         return _unsupported_format_response(safe_name)
     novel_path = uploads_dir / safe_name
+
+    # Historical projects may only retain the canonical, already-parsed
+    # ``novel.txt`` and have no original file under ``uploads/``.  Preserve a
+    # durable copy before queuing the rebuild: the Cognee rebuild deliberately
+    # removes the canonical marker early, so passing that marker itself to the
+    # worker would make a failed rebuild impossible to retry.
+    if not novel_path.exists() and safe_name == "novel.txt":
+        imported_novel_path = project_dir / "novel.txt"
+        if imported_novel_path.is_file():
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copy2(imported_novel_path, novel_path)
+            except OSError:
+                logger.exception("[%s] failed to preserve legacy novel source", project)
+                return {"ok": False, "error": "无法保存历史原文，请重新上传后再导入"}
 
     if not novel_path.exists():
         return {"ok": False, "error": f"File '{body.filename}' not found in uploads/"}
@@ -161,16 +188,22 @@ async def start_ingest(
         return {"ok": False, "error": "解析章节失败"}
 
     config = {"rebuild": body.rebuild}
+    # Persist the exact source used by this import. The ingest page can then
+    # rebuild from the existing upload without forcing the user to upload again.
+    project_config_updates = {"ingest_source_filename": safe_name}
     if body.spine_template is not None:
         if not body.rebuild:
             return {"ok": False, "error": "项目类型只能在重新导入时修改"}
-        project_config = load_project_config(username, project_name)
-        project_config["spine_template"] = body.spine_template
-        project_config["aspect_ratio"] = default_aspect_ratio_for_spine_template(
-            body.spine_template
+        project_config_updates.update(
+            {
+                "spine_template": body.spine_template,
+                "aspect_ratio": default_aspect_ratio_for_spine_template(
+                    body.spine_template
+                ),
+            }
         )
-        save_project_config(username, project_name, project_config)
         config["spine_template"] = body.spine_template
+    save_project_config_in_state_dir(resolved.state_dir, config=project_config_updates)
 
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
