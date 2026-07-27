@@ -132,7 +132,14 @@ export interface CanvasEventMap {
     nodeId: string;
     file: File;
   };
-  /** 「上传资源」菜单等外部入口注入 File 给 upload 节点（仅图片）。 */
+  /**
+   * 「上传资源」菜单、画布拖拽、视频节点「外部素材」等外部入口注入 File 给
+   * upload 节点。图片/视频/音频都收 —— UploadNode 订阅侧接的是三类分流器
+   * handleMediaFile，视频与音频会原地 convertNodeType 变形成 video/audio 节点
+   * （不换 id，先连的边不丢）。非媒体文件会被静默丢弃，投递方应自行先过滤。
+   *
+   * 投递方必须等新节点挂载并订阅后再发：总线无重放，早发的事件直接丢。
+   */
   'upload-node/external-file': {
     nodeId: string;
     file: File;

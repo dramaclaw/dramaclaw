@@ -2888,9 +2888,50 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 在谓词检查前先取 id（isStoryboardGroupNode 等共享 isGroupNode 的类型谓词，
     // 检查后 enclosing 会被 TS 收窄成 never，同 fitGroupToChildren 的注释）。
     const groupId = enclosing.id;
-    // 分镜组按宫格自排版、投影组受保护——都不往里塞成员。
+    // 分镜组按宫格自排版、投影组受保护——都不往里塞成员，也不能把被保护的源节点
+    // 挪出来一起编组。但也不能就地放弃：派生节点是在「源节点坐标系」下摆放的
+    // （调用方按 source.position 算落位），源在组内时该坐标系是组内相对坐标，而这些
+    // 新节点留在根层（无 parentId）会被当成绝对坐标——不修正就会落到画布原点附近 /
+    // 视野外（见 spawnExternalAssets / spawnCharacterLibraryReferences 均依赖本函数
+    // 收编）。分两步收尾：① 先把它们平移回真正的绝对坐标，让素材出现在源节点身边；
+    // ② 再把这些已在正确坐标上的素材单独编成一个根层素材组（源节点不入组，仍留在它
+    // 的投影 / 分镜组里），与其它调用路径「自动编成素材组」的承诺保持一致。
     if (isStoryboardGroupNode(enclosing) || isProtectedProjectionGroupNode(enclosing)) {
-      return null;
+      // 偏移 = 源的绝对坐标 − 源的原始 position，即源所有祖先的累计位移，对任意嵌套
+      // 深度都成立。组恰好落在画布原点时 offset 为 0，派生坐标本就是绝对坐标，跳过平移。
+      const sourceAbsolute = resolveAbsolutePosition(source, nodeMap);
+      const offsetX = sourceAbsolute.x - source.position.x;
+      const offsetY = sourceAbsolute.y - source.position.y;
+      if (offsetX !== 0 || offsetY !== 0) {
+        const orphanSet = new Set(spawned.map((node) => node.id));
+        const shiftedNodes = state.nodes.map((node) =>
+          orphanSet.has(node.id)
+            ? {
+                ...node,
+                position: {
+                  x: node.position.x + offsetX,
+                  y: node.position.y + offsetY,
+                },
+              }
+            : node,
+        );
+        set({
+          nodes: shiftedNodes,
+          history: {
+            past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+            future: [],
+          },
+          dragHistorySnapshot: null,
+          ...trackEdit(state),
+        });
+      }
+      // groupNodes 读取最新 store（已平移的绝对坐标），把素材编成根层组并返回组 id。
+      // 它要求 ≥2 个成员：单个素材成不了组、保持独立根节点（已在正确坐标上）即可，
+      // 此时返回 null——与调用方「忽略返回值、素材已连边」的既有约定一致。
+      return get().groupNodes(
+        spawned.map((node) => node.id),
+        { label: opts?.label, extraPadding: 20 },
+      );
     }
 
     // 派生位置全部基于源节点的「原始 position」计算（findNodePosition 与各节点的
