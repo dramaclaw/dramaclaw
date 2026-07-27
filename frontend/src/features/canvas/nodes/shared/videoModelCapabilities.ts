@@ -119,50 +119,56 @@ export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
 }
 
 /**
- * Seedance 2.0 音频引用的时长边界，厂商口径是**逐条**：
+ * Seedance 2.0 音频引用的时长边界。厂商口径是**逐条**，没有一个字提到总和：
  * `[InvalidParameter.DurationTooShort] Duration must be between 1.8s and 15.2s`。
  *
- * 下限逐条卡：短于 1.8s 的音频（随手剪的音效、切碎的采样）以前一路放行到厂商才
- * 400 回来，用户只看得到一句英文报错。上限这里仍按**总时长**卡——总和 ≥ 任意单条，
- * 所以「某条超 15.2s」必然先被总时长这条拦下，逐条上限是冗余的；反过来总时长比
- * 厂商严（3 条各 6s 单条都合法，加起来 18s 会被我们拦），这是刻意保留的既有行为：
- * 后端一次请求能吃多长音频尚未确认，宁可提示得早一点也别让用户白等一轮生成。
+ * 所以这里也逐条卡，两头都卡。**别再回到按总时长判定**：那会把 3 条各 6s（每条都
+ * 在 1.8~15.2 区间内、厂商必然放行）的合法组合拦在本地，用一条我们自己臆想出来的
+ * 规则挡住用户。后端 freezone omni-gen 端点（`validate_omni_reference_limits`）只
+ * 校验条数（图≤9 / 视频≤3 / 音频≤3 / 总数≤12），同样没有总时长这回事。
  *
- * 文案里的秒数一律从这两个常量推（`/ 1000`），别在调用点另写一遍字面量，否则改
- * 阈值时提示会静默漂移。唯一的例外是总时长的展示值取整到 15 秒——见 durationExceeded
- * 的调用点注释。
+ * 注：`seedance2_i2v/pipeline.py` 里那个 `MAX_SEEDANCE2_REFERENCE_AUDIO_TOTAL_SECONDS`
+ * 总时长守卫属于**剧集 beat 流水线的参考声线**（角色工作台 3-5s 声音克隆样本），与画布
+ * 这条 omni-gen 路径无关，不要拿它给这里的总时长限制背书。
+ *
+ * 文案里的秒数一律从这两个常量推（`/ 1000`），别在调用点另写一遍字面量，否则改阈值
+ * 时提示会静默漂移。
  */
 export const MIN_AUDIO_REFERENCE_DURATION_MS = 1_800;
-export const MAX_AUDIO_TOTAL_DURATION_MS = 15_200;
+export const MAX_AUDIO_REFERENCE_DURATION_MS = 15_200;
 
-export type AudioDurationRejection =
-  | { kind: "tooShort"; clips: { label: string; durationMs: number }[] }
-  | { kind: "totalTooLong"; totalMs: number };
+export type AudioDurationRejection = {
+  kind: "tooShort" | "tooLong";
+  clips: { label: string; durationMs: number }[];
+};
 
 /**
- * 提交前音频时长守卫（仅 Seedance 2.0 的全能参考路径调用，其它模型上限未知）。
+ * 提交前音频时长守卫（仅 Seedance 2.0 的全能参考路径调用，其它模型边界未知）。
  *
  * `durationMs` 为 null = 探测不出时长（音频节点没渲染过波形，且 `<audio>` 探测撞上
- * CORS / 网络 / 超时）。这类一律**不参与判定**：既不算太短，也按 0 计入总和——宁可
- * 放过去让后端兜底，也不要凭空拦住一次正常提交。
+ * CORS / 网络 / 超时）。这类一律**不参与判定**——宁可放过去让后端兜底，也不要凭空
+ * 拦住一次正常提交。
  *
- * 太短优先于总时长超限上报：太短能指到具体是哪条，比一句「总时长超了」更可操作。
+ * 太短优先于太长上报：同时越界时先修哪条都行，报一类比混在一起列更好读。
  */
 export function audioReferenceDurationRejection(
   clips: readonly { label: string; durationMs: number | null }[],
 ): AudioDurationRejection | null {
-  const tooShort = clips.filter(
+  const measured = clips.filter(
     (clip): clip is { label: string; durationMs: number } =>
-      typeof clip.durationMs === "number" &&
-      clip.durationMs > 0 &&
-      clip.durationMs < MIN_AUDIO_REFERENCE_DURATION_MS,
+      typeof clip.durationMs === "number" && clip.durationMs > 0,
+  );
+  const tooShort = measured.filter(
+    (clip) => clip.durationMs < MIN_AUDIO_REFERENCE_DURATION_MS,
   );
   if (tooShort.length > 0) {
     return { kind: "tooShort", clips: tooShort };
   }
-  const totalMs = clips.reduce<number>((sum, clip) => sum + (clip.durationMs ?? 0), 0);
-  if (totalMs > MAX_AUDIO_TOTAL_DURATION_MS) {
-    return { kind: "totalTooLong", totalMs };
+  const tooLong = measured.filter(
+    (clip) => clip.durationMs > MAX_AUDIO_REFERENCE_DURATION_MS,
+  );
+  if (tooLong.length > 0) {
+    return { kind: "tooLong", clips: tooLong };
   }
   return null;
 }

@@ -206,24 +206,57 @@ describe("audioReferenceDurationRejection — 提交前音频时长守卫", () =
     expect(audioReferenceDurationRejection([clip("a", 1_799)])?.kind).toBe("tooShort");
   });
 
-  it("总时长超 15.2s → 拦；15.2s 整放行", () => {
+  it("单条长于 15.2s → 拦，并指名是哪条；15.2s 整放行", () => {
     expect(audioReferenceDurationRejection([clip("a", 15_200)])).toBeNull();
-    expect(audioReferenceDurationRejection([clip("a", 15_201)])).toEqual({
-      kind: "totalTooLong",
-      totalMs: 15_201,
+    expect(
+      audioReferenceDurationRejection([clip("bgm.mp3", 5_000), clip("long.wav", 15_201)]),
+    ).toEqual({
+      kind: "tooLong",
+      clips: [{ label: "long.wav", durationMs: 15_201 }],
     });
-    expect(
-      audioReferenceDurationRejection([clip("a", 8_000), clip("b", 8_000)])?.kind,
-    ).toBe("totalTooLong");
   });
 
-  it("既有太短又总时长超限时优先报太短 (能指到具体哪条，更可操作)", () => {
+  it("多条各自合规就放行——不按总时长判定 (3 条 6s 共 18s 厂商也收)", () => {
     expect(
-      audioReferenceDurationRejection([clip("long", 20_000), clip("short", 500)])?.kind,
-    ).toBe("tooShort");
+      audioReferenceDurationRejection([
+        clip("a", 6_000),
+        clip("b", 6_000),
+        clip("c", 6_000),
+      ]),
+    ).toBeNull();
+    // 3 条顶格 15.2s（总计 45.6s）同样放行：厂商口径是逐条，总和是我们臆想的。
+    expect(
+      audioReferenceDurationRejection([
+        clip("a", 15_200),
+        clip("b", 15_200),
+        clip("c", 15_200),
+      ]),
+    ).toBeNull();
   });
 
-  it("探测不出时长 (null) 的既不算太短、也按 0 计入总和 → 放行给后端兜底", () => {
+  it("既有太短又有太长时优先报太短 (一次只报一类，别混着列)", () => {
+    expect(
+      audioReferenceDurationRejection([clip("long", 20_000), clip("short", 500)]),
+    ).toEqual({
+      kind: "tooShort",
+      clips: [{ label: "short", durationMs: 500 }],
+    });
+  });
+
+  it("同类越界的多条一次全列出来", () => {
+    expect(
+      audioReferenceDurationRejection([
+        clip("a", 900),
+        clip("b", 5_000),
+        clip("c", 1_000),
+      ])?.clips,
+    ).toEqual([
+      { label: "a", durationMs: 900 },
+      { label: "c", durationMs: 1_000 },
+    ]);
+  });
+
+  it("探测不出时长 (null) 的不参与判定 → 放行给后端兜底", () => {
     expect(audioReferenceDurationRejection([clip("unknown", null)])).toBeNull();
     expect(
       audioReferenceDurationRejection([clip("unknown", null), clip("ok", 15_200)]),

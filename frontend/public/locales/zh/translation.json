@@ -3399,8 +3399,8 @@
         "title": "生成音频",
         "on": "开启",
         "off": "关闭",
-        "durationExceeded": "音频总时长不能超过 {{max}} 秒，请缩短或替换配乐参考后再试。",
         "durationTooShort": "单条音频时长不能低于 {{min}} 秒：{{clips}}。请替换或补长后再试。",
+        "durationTooLong": "单条音频时长不能超过 {{max}} 秒：{{clips}}。请裁剪或替换后再试。",
         "clipDuration": "{{label}}（{{seconds}}s）",
         "clipSeparator": "、",
         "clipFallbackLabel": "音频{{index}}"

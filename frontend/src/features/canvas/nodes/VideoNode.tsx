@@ -66,6 +66,7 @@ import {
 import {
   audioReferenceDurationRejection,
   formatAudioDurationClips,
+  MAX_AUDIO_REFERENCE_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
   isGrokVideoChannelModel,
   isHappyHorseVideoModel,
@@ -2355,10 +2356,10 @@ export const VideoNode = memo(
             });
             return;
           }
-          // Seedance 2.0 后端对音频时长有硬约束（单条 ≥1.8s、这里按总时长 ≤15.2s
-          // 卡，见 audioReferenceDurationRejection），越界会以 InvalidParameter
-          // 400 回来。提交前先本地校验：durationMs 缺失时用 <audio> 探测兜底，越界
-          // 就弹窗拦下，避免白跑一趟后端。仅对 seedance2 生效（其它模型上限未知）。
+          // Seedance 2.0 厂商对**每条**音频都要求 1.8s ≤ 时长 ≤ 15.2s（见
+          // audioReferenceDurationRejection），越界会以 InvalidParameter 400 回来。
+          // 提交前先本地校验：durationMs 缺失时用 <audio> 探测兜底，越界就弹窗拦下，
+          // 避免白跑一趟后端。仅对 seedance2 生效（其它模型边界未知）。
           if (isSeedance20Model && audioRefs.length > 0) {
             const resolvedDurations = await Promise.all(
               audioRefs.map((ref) =>
@@ -2374,17 +2375,19 @@ export const VideoNode = memo(
               })),
             );
             if (rejection) {
+              const clips = formatAudioDurationClips(rejection.clips, (key, vars) =>
+                t(key, vars),
+              );
               void showErrorDialog(
                 rejection.kind === "tooShort"
                   ? t("node.videoNode.audio.durationTooShort", {
                       min: MIN_AUDIO_REFERENCE_DURATION_MS / 1000,
-                      clips: formatAudioDurationClips(rejection.clips, (key, vars) =>
-                        t(key, vars),
-                      ),
+                      clips,
                     })
-                  : // 展示值刻意取整到 15（而非阈值 15.2）：对用户按整秒说，拦截仍
-                    // 用 MAX_AUDIO_TOTAL_DURATION_MS，避免误拦后端会放行的 15.0~15.2s。
-                    t("node.videoNode.audio.durationExceeded", { max: 15 }),
+                  : t("node.videoNode.audio.durationTooLong", {
+                      max: MAX_AUDIO_REFERENCE_DURATION_MS / 1000,
+                      clips,
+                    }),
                 t("common.error"),
               );
               updateNodeData(id, {
