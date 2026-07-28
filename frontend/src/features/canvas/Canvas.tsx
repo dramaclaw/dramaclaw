@@ -89,6 +89,7 @@ import { prefetchEpisodeBeats, prefetchEpisodeDetail } from '@/lib/queries/episo
 import {
   getConnectMenuNodeTypes,
   getDownstreamSpawnTypes,
+  getAllowedDownstreamTargetTypes,
   getAllowedUpstreamSourceTypes,
   isUpstreamConnectionAllowed,
   nodeHasSourceHandle,
@@ -487,7 +488,12 @@ function resolveAllowedNodeTypes(
   if (handleType === 'source') {
     return getDownstreamSpawnTypes(originNodeType);
   }
-  const base = getConnectMenuNodeTypes(handleType);
+  // 候选上游里先剔掉「下游白名单不含本节点类型」的类型（如音频只能连视频 / 视频
+  // 合成）。不剔的话菜单里能创建，但创建完那条边会被建边规则拒掉，画布上只剩一个
+  // 孤零零的新节点。
+  const base = getConnectMenuNodeTypes(handleType).filter(
+    (type) => !originNodeType || isUpstreamConnectionAllowed(type, originNodeType),
+  );
   // 3D 世界节点的上游仅允许文本 / 图片节点（Phase 1）。
   if (originNodeType === CANVAS_NODE_TYPES.threeDWorld && handleType === 'target') {
     const allowed = new Set<CanvasNodeType>([
@@ -557,8 +563,11 @@ function canNodeTypeBeManualConnectionSource(
   if (type === CANVAS_NODE_TYPES.pano360Viewer) {
     return targetType ? PANO_360_DOWNSTREAM_IMAGE_TYPES.has(targetType) : true;
   }
-  // 受上游类型白名单约束的目标（如音频←文本）走领域层统一规则。
-  if (targetType && getAllowedUpstreamSourceTypes(targetType)) {
+  // 受类型白名单约束的连接（音频←文本、音频→视频/视频合成）走领域层统一规则。
+  if (
+    targetType &&
+    (getAllowedUpstreamSourceTypes(targetType) || getAllowedDownstreamTargetTypes(type))
+  ) {
     return isUpstreamConnectionAllowed(type, targetType);
   }
   // 只要 getDownstreamSpawnTypes 给这种类型留了至少一个合法下游，就允许从右侧

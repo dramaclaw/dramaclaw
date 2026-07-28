@@ -651,14 +651,29 @@ export function nodeHasTargetHandle(type: CanvasNodeType): boolean {
   return canvasNodeDefinitions[type].connectivity.targetHandle;
 }
 
-// 「目标节点类型」→ 允许的上游（源）节点类型白名单。这是建边规则的单一事实
-// 来源：UI 层（连线菜单 / 手动拖线 / isValidConnection）与 store 建边收口
-// （onConnect / addEdge / addEdgeWithData / 加载规范化）都查这张表，避免任何
-// 一条建边路径绕过规则。不在表中的目标类型表示「不额外限制类型」，仅受 handle
-// 级默认规则约束。
+// 「目标节点类型」→ 允许的上游（源）节点类型白名单。这张表和下面的
+// DOWNSTREAM_TARGET_WHITELIST 一起，是建边规则的单一事实来源：UI 层（连线菜单 /
+// 手动拖线 / isValidConnection）与 store 建边收口（onConnect / addEdge /
+// addEdgeWithData / 加载规范化）都经由 isUpstreamConnectionAllowed 查它们，避免
+// 任何一条建边路径绕过规则。不在表中的目标类型表示「不额外限制类型」，仅受
+// handle 级默认规则约束。
 const UPSTREAM_SOURCE_WHITELIST: Partial<Record<CanvasNodeType, readonly CanvasNodeType[]>> = {
   // 音频节点的上游只能是文本节点。
   [CANVAS_NODE_TYPES.audio]: [CANVAS_NODE_TYPES.textAnnotation],
+};
+
+// 「源节点类型」→ 允许的下游（目标）节点类型白名单。与上面那张表对称：那张按
+// 目标收口（谁能连进我），这张按源收口（我能连去谁）。两张表一起构成建边规则，
+// 同样被所有建边路径查询。不在表中的源类型表示「不额外限制下游类型」。
+//
+// 音频是目前唯一需要按源收口的类型：只有视频节点（声轨素材）和视频合成（音频轨）
+// 会读上游音频，连到图片 / 脚本 / 3D 等节点上不产生任何效果，只是画布上一根骗人
+// 的线。这条规则本来就写在别处了 —— getDownstreamSpawnTypes(audio) 只给
+// [video, videoCompose]，Canvas.resolveAllowedNodeTypes 里图片节点的上游菜单也
+// 明写「不收音频」—— 但那两处只管菜单能创建什么，拖线落到一个**既有**节点上时
+// 谁都没拦。放进这里才真正收口。
+const DOWNSTREAM_TARGET_WHITELIST: Partial<Record<CanvasNodeType, readonly CanvasNodeType[]>> = {
+  [CANVAS_NODE_TYPES.audio]: [CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.videoCompose],
 };
 
 // 返回某目标类型允许的上游源类型；返回 null 表示该类型不施加额外类型限制。
@@ -668,13 +683,27 @@ export function getAllowedUpstreamSourceTypes(
   return UPSTREAM_SOURCE_WHITELIST[targetType] ?? null;
 }
 
-// 判断从 sourceType 连向 targetType 的上游连接是否合法。
+// 返回某源类型允许的下游目标类型；返回 null 表示该类型不施加额外类型限制。
+export function getAllowedDownstreamTargetTypes(
+  sourceType: CanvasNodeType,
+): readonly CanvasNodeType[] | null {
+  return DOWNSTREAM_TARGET_WHITELIST[sourceType] ?? null;
+}
+
+// 判断从 sourceType 连向 targetType 的连接是否合法：两张白名单都要过。
 export function isUpstreamConnectionAllowed(
   sourceType: CanvasNodeType,
   targetType: CanvasNodeType,
 ): boolean {
-  const allowed = UPSTREAM_SOURCE_WHITELIST[targetType];
-  return allowed ? allowed.includes(sourceType) : true;
+  const allowedSources = UPSTREAM_SOURCE_WHITELIST[targetType];
+  if (allowedSources && !allowedSources.includes(sourceType)) {
+    return false;
+  }
+  const allowedTargets = DOWNSTREAM_TARGET_WHITELIST[sourceType];
+  if (allowedTargets && !allowedTargets.includes(targetType)) {
+    return false;
+  }
+  return true;
 }
 
 export function getConnectMenuNodeTypes(handleType: 'source' | 'target'): CanvasNodeType[] {
@@ -702,6 +731,9 @@ export function getDownstreamSpawnTypes(
 ): CanvasNodeType[] {
   const base = getConnectMenuNodeTypes('source');
   if (!originType) return base;
+  // 先过一遍建边白名单：菜单里出现的候选必须真的连得上。否则用户点了以后新节点
+  // 建出来了、边被建边规则拒掉，画布上留下一个孤立节点（如脚本 → 音频）。
+  const connectable = base.filter((type) => isUpstreamConnectionAllowed(originType, type));
 
   if (originType === CANVAS_NODE_TYPES.video) {
     const allowed = new Set<CanvasNodeType>([
@@ -710,7 +742,7 @@ export function getDownstreamSpawnTypes(
       CANVAS_NODE_TYPES.videoCompose,
       CANVAS_NODE_TYPES.script,
     ]);
-    return base.filter((type) => allowed.has(type));
+    return connectable.filter((type) => allowed.has(type));
   }
 
   // 音频节点：下游允许视频（作为声轨素材）与视频合成（音频轨）。
@@ -719,7 +751,7 @@ export function getDownstreamSpawnTypes(
       CANVAS_NODE_TYPES.video,
       CANVAS_NODE_TYPES.videoCompose,
     ]);
-    return base.filter((type) => allowed.has(type));
+    return connectable.filter((type) => allowed.has(type));
   }
 
   // 360° 全景查看器：下游只能是图片节点（截图都是图片，手动连线也只接图片）。
@@ -730,7 +762,7 @@ export function getDownstreamSpawnTypes(
       CANVAS_NODE_TYPES.exportImage,
       CANVAS_NODE_TYPES.upload,
     ]);
-    return base.filter((type) => allowed.has(type));
+    return connectable.filter((type) => allowed.has(type));
   }
 
   if (
@@ -747,8 +779,8 @@ export function getDownstreamSpawnTypes(
       CANVAS_NODE_TYPES.pano360Viewer,
       CANVAS_NODE_TYPES.threeDWorld,
     ]);
-    return base.filter((type) => allowed.has(type));
+    return connectable.filter((type) => allowed.has(type));
   }
 
-  return base;
+  return connectable;
 }
