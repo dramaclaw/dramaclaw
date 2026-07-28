@@ -2172,7 +2172,9 @@ async def test_mask_edit_job_uses_reference_edit_provider_routing(
     assert captured["reference_images"] == [str(base), str(mask)]
     assert captured["config"]["provider"] == "newapi"
     assert captured["config"]["model"] == NEWAPI_IMAGE_MODEL
-    assert "Use Image 2 as the edit mask reference" in captured["prompt"]
+    # Image 2 = 源图 + 红色高亮标注；模型只改红色区域，且红色不进入结果。
+    assert "red-highlighted region" in captured["prompt"]
+    assert "must NOT appear in the output" in captured["prompt"]
 
 
 def test_camera_prompt_contains_camera_body_lens_focal_and_aperture() -> None:

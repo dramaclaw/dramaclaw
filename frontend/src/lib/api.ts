@@ -11,6 +11,7 @@ import {
   resetRegionState,
   resetUserSessionState,
 } from "@/lib/reset-region-state";
+import { SESSION_EXPIRED_EVENT } from "@/lib/session-expiry";
 
 // Module-level QueryClient handle so the afterResponse hook can do the full
 // cross-store + query-cache purge on a 400 no_region. Wired from main.tsx
@@ -18,6 +19,39 @@ import {
 let _queryClient: QueryClient | null = null;
 export function setApiQueryClient(qc: QueryClient): void {
   _queryClient = qc;
+}
+
+let sessionExpiryInFlight: Promise<void> | null = null;
+let sessionExpiryBroadcast = false;
+
+/**
+ * Tear down one rejected browser session exactly once.
+ *
+ * Every authenticated HTTP client delegates 401 handling here. Dispatch the
+ * event before awaiting logout so EventSource connections and interval-driven
+ * work stop immediately, even if the cleanup request is slow.
+ */
+export function handleSessionExpired(): Promise<void> {
+  if (typeof window === "undefined" || window.location.pathname === "/login") {
+    return Promise.resolve();
+  }
+  if (sessionExpiryInFlight) return sessionExpiryInFlight;
+  if (!sessionExpiryBroadcast) {
+    sessionExpiryBroadcast = true;
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+  }
+  if (!tryAcquireNavLock()) return Promise.resolve();
+
+  sessionExpiryInFlight = (async () => {
+    await useAuthStore.getState().logout().catch(() => undefined);
+    if (_queryClient) {
+      resetUserSessionState({ queryClient: _queryClient });
+    }
+    window.location.href = "/login";
+  })().finally(() => {
+    sessionExpiryInFlight = null;
+  });
+  return sessionExpiryInFlight;
 }
 
 // Why `credentials: "include"`? The SPA authenticates via an HttpOnly cookie
@@ -95,18 +129,7 @@ export const api = ky.create({
           return;
         }
         if (response.status === 401) {
-          if (typeof window !== "undefined" && window.location.pathname === "/login") return;
-          if (!tryAcquireNavLock()) return;
-          await useAuthStore.getState().logout();
-          // 硬跳转会重建内存缓存，但 supertale-* 持久化的用户级 localStorage
-          // （seen-pools / reward-events / episode-workbench 等）会存活到下一个
-          // 账号的会话里 —— 与手动退出同一套用户态清理（保留区域选择）。
-          if (_queryClient) {
-            resetUserSessionState({ queryClient: _queryClient });
-          }
-          if (typeof window !== "undefined") {
-            window.location.href = "/login";
-          }
+          await handleSessionExpired();
         }
       },
     ],

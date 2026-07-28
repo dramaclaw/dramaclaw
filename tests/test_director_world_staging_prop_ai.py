@@ -1,6 +1,44 @@
 from __future__ import annotations
 
+import pydantic_ai
+
+from novelvideo import config
 from novelvideo.director_world import staging_prop_ai
+
+
+def test_create_staging_prop_agent_uses_request_model_config(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    model_instance = object()
+    agent_instance = object()
+
+    def fake_model(model_name, **kwargs):
+        captured["model_name"] = model_name
+        captured["model_kwargs"] = kwargs
+        return model_instance
+
+    def fake_agent(model, **kwargs):
+        captured["agent_model"] = model
+        return agent_instance
+
+    monkeypatch.setenv("STAGING_PROP_TIMEOUT_SECONDS", "45")
+    monkeypatch.setattr(config, "_newapi_text_openai_model", fake_model)
+    monkeypatch.setattr(pydantic_ai, "Agent", fake_agent)
+
+    result = staging_prop_ai.create_staging_prop_agent(
+        model="request-model",
+        api_key="request-key",
+        base_url="https://request.example/v1",
+    )
+
+    assert result is agent_instance
+    assert captured["model_name"] == "request-model"
+    assert captured["model_kwargs"] == {
+        "api_key": "request-key",
+        "base_url": "https://request.example/v1",
+        "timeout_seconds": 45.0,
+        "profile": None,
+    }
+    assert captured["agent_model"] is model_instance
 
 
 def test_generate_ai_staging_prop_uses_director_world_shape_hints(monkeypatch) -> None:

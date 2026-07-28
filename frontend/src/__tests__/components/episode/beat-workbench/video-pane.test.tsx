@@ -30,6 +30,7 @@ beforeAll(async () => {
             download: "下载",
             regenerate: "重新生成",
             save: "保存",
+            close: "关闭",
           },
           episode: {
             workbench: {
@@ -127,6 +128,15 @@ beforeAll(async () => {
                 },
                 seedance2GeneratePrompt: "AI 优化",
                 seedance2PromptGenerated: "Seedance2 Prompt 已优化",
+                seedance2SubjectPromptGenerated: "主体提示词已优化",
+                grokVideoInspector: "Grok Video 检视器",
+                happyHorseInspector: "HappyHorse 检视器",
+                grokPromptLabel: "Grok 提示词",
+                subjectPromptLabel: "主体提示词",
+                generateGrokPrompt: "生成 Grok 提示词",
+                generateSubjectPrompt: "生成主体提示词",
+                seedance2CropTitleWithAspect: "裁剪 {{aspect}}",
+                seedance2CropDragHandle: "移动裁剪区域",
                 seedance2PromptGeneratedOtherBeat: "主体提示词已优化，已写回镜头 #{{n}}",
                 seedance2PromptGenerateFailed: "Seedance2 Prompt 生成失败",
                 videoPrompt: "视频提示词",

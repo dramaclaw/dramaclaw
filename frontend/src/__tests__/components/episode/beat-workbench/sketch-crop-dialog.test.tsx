@@ -10,14 +10,26 @@ import { useAspectRatioStore } from "@/stores/aspect-ratio-store";
 const poseEditorQueryMock = vi.hoisted(() => vi.fn());
 const cropSketchMock = vi.hoisted(() => vi.fn());
 
+const SKETCH_CROP_DIALOG_TRANSLATIONS: Record<string, string> = {
+  "episode.workbench.sketch.cropTitleWithAspect": "裁剪 {{aspect}}",
+  "episode.workbench.sketch.cropDragHandle": "移动裁剪区域",
+};
+
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, vars?: Record<string, string | number>, fallback?: string) => {
-      if (fallback) return fallback;
-      if (!vars) return key;
-      return Object.entries(vars).reduce(
+    t: (
+      key: string,
+      varsOrFallback?: Record<string, string | number> | string,
+      fallback?: string,
+    ) => {
+      if (typeof varsOrFallback === "string") {
+        return SKETCH_CROP_DIALOG_TRANSLATIONS[key] ?? varsOrFallback;
+      }
+      const template = SKETCH_CROP_DIALOG_TRANSLATIONS[key] ?? fallback ?? key;
+      if (!varsOrFallback) return template;
+      return Object.entries(varsOrFallback).reduce(
         (acc, [k, v]) => acc.replace(`{{${k}}}`, String(v)),
-        key,
+        template,
       );
     },
   }),
@@ -104,7 +116,7 @@ describe("SketchCropDialog", () => {
       />,
     );
 
-    await user.click(await screen.findByRole("button", { name: "common.save" }));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
 
     expect(cropSketchMock).toHaveBeenCalledWith({
       beatNum: 2,

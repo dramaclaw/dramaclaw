@@ -38,7 +38,7 @@ export function ComposeGate({ project, episode }: ComposeGateProps) {
   if (counts.compose.ready) {
     return (
       <p className="rounded border border-primary/40 bg-primary/10 p-3 text-xs text-primary">
-        ✓ {t("episode.health.allReady")} · {counts.script.total} 个 beat
+        ✓ {t("episode.health.allReady")} · {t("episode.health.beatCount", { count: counts.script.total })}
       </p>
     );
   }

@@ -24,6 +24,9 @@
     },
     "logoHomeTooltip": "Click to return to project management center"
   },
+  "loginCinematic": {
+    "moreInfo": "More information"
+  },
   "header": {
     "partyFounding105": "庆祝建党105周年",
     "settings": "Settings",
@@ -572,7 +575,15 @@
       "total": "Characters",
       "withPortraits": "With portrait",
       "identities": "Identities",
-      "attempts": "Gen requests"
+      "attempts": "Gen requests",
+      "strip": {
+        "total": "Total",
+        "mainCharacter": "Narrator lead",
+        "portrait": "Portrait",
+        "identity": "Identity",
+        "voice": "Voice",
+        "ariaLabel": "Character stats"
+      }
     },
     "tabs": {
       "basics": "Basics",
@@ -1076,7 +1087,39 @@
     "sortDesc": "Descending",
     "nodes": "Nodes",
     "empty": "No Projects",
-    "emptyHint": "Click the button above to create a new project"
+    "emptyHint": "Click the button above to create a new project",
+    "notFound": "Project not found",
+    "notFoundDescriptionPrefix": "No project found under the current account:",
+    "notFoundDescriptionSuffix": ".",
+    "backToProjects": "Back to projects",
+    "shareDialog": {
+      "title": "Share project",
+      "descriptionWithOwner": "{{name}} · {{owner}}",
+      "descriptionFallback": "Manage project members",
+      "currentUserFallback": "current user",
+      "addMember": "Add member",
+      "addMemberHint": "Enter a username, choose a role, then add them to the project.",
+      "copyLink": "Copy link",
+      "searchPlaceholder": "Search username",
+      "alreadyInProject": "Already in project",
+      "add": "Add",
+      "members": "Members",
+      "owner": "Owner",
+      "projectOwner": "Project owner",
+      "loadingMembers": "Loading members",
+      "removeMember": "Remove member",
+      "roleViewer": "View only",
+      "roleEditor": "Can edit and run tasks",
+      "roleAdmin": "Can manage shared members",
+      "toastMemberUpdated": "Shared member updated",
+      "toastShareFailed": "Share failed. Confirm the user exists and you have permission.",
+      "toastLinkCopied": "Project link copied",
+      "toastCopyFailed": "Copy failed",
+      "toastPermissionUpdated": "Permission updated",
+      "toastPermissionUpdateFailed": "Failed to update permission",
+      "toastMemberRemoved": "Shared member removed",
+      "toastRemoveFailed": "Failed to remove"
+    }
   },
   "assets": {
     "common": {
@@ -1171,7 +1214,8 @@
         "environmentPrompt": "Environment prompt",
         "variantPrompt": "Variant delta prompt",
         "variantPromptPlaceholder": "Only describe what differs from the base scene, such as wet reflections, scorched walls, or holiday dressing.",
-        "description": "Narrative description"
+        "description": "Narrative description",
+        "variantPlaceholder": "Water leak"
       },
       "environment": {
         "front": "Front",
@@ -1532,6 +1576,8 @@
       "justNow": "just now"
     },
     "detail": {
+      "currentStatus": "Current status",
+      "debugInfo": "Debug info",
       "tabs": {
         "overview": "Overview",
         "logs": "Logs"
@@ -2012,7 +2058,9 @@
         "configureVoiceAction": "Configure",
         "beatNarrationVoice": "This beat's narration audio",
         "beatNarrationVoiceUpload": "Upload beat audio",
-        "beatNarrationVoiceUploaded": "Beat narration audio uploaded"
+        "beatNarrationVoiceUploaded": "Beat narration audio uploaded",
+        "prereqHintCharacters": ". Go to Characters to upload the narrator voice.",
+        "prereqHintVoices": ". Go to Assets > Voices to upload or trim a default narrator voice."
       },
       "video": {
         "started": "Beat #{{n}} video started",
@@ -2168,7 +2216,16 @@
         "narratorVoiceTrimDuration": "Duration seconds",
         "narratorVoiceTrimApply": "Trim to 3-5 seconds",
         "narratorVoiceTrimInvalid": "Invalid trim values",
-        "narratorVoiceUse": "Use"
+        "narratorVoiceUse": "Use",
+        "seedance2SubjectPromptGenerated": "Subject prompt optimized",
+        "grokVideoInspector": "Grok Video Inspector",
+        "happyHorseInspector": "HappyHorse Inspector",
+        "grokPromptLabel": "Grok prompt",
+        "subjectPromptLabel": "Subject prompt",
+        "generateGrokPrompt": "Generate Grok prompt",
+        "generateSubjectPrompt": "Generate subject prompt",
+        "seedance2CropTitleWithAspect": "Crop {{aspect}}",
+        "seedance2CropDragHandle": "Move crop area"
       },
       "sketch": {
         "switched": "Sketch switched",
@@ -2246,7 +2303,9 @@
         "openFreezone": "Edit in Freezone",
         "openFreezoneTip": "Edit this beat sketch in Freezone",
         "freezoneOpened": "Sketch Freezone opened",
-        "freezoneOpenFailed": "Failed to open Sketch Freezone"
+        "freezoneOpenFailed": "Failed to open Sketch Freezone",
+        "cropTitleWithAspect": "Crop {{aspect}}",
+        "cropDragHandle": "Move crop area"
       },
       "sketchGrid": {
         "title": "Sketch Grid",
@@ -2268,7 +2327,8 @@
         "copySuccess": "Prompt copied",
         "cut": "Cut to pool",
         "cutSuccess": "Grid #{{n}} cut",
-        "cutFailed": "Grid cut failed"
+        "cutFailed": "Grid cut failed",
+        "unknownScene": "Unknown scene"
       },
       "render": {
         "generateNew": "Generate new",
@@ -2306,7 +2366,14 @@
         "backgroundUploadFailed": "Failed to upload render background reference",
         "backgroundSaved": "Render background reference switched",
         "backgroundSaveFailed": "Failed to save render background reference",
-        "backgroundCropSave": "Save crop"
+        "backgroundCropSave": "Save crop",
+        "backgroundCropTitleWithAspect": "Crop {{aspect}}",
+        "backgroundCropDragHandle": "Move crop area",
+        "relightLabel": "Relight to {{timeOfDay}}",
+        "relightLabelDefaultTime": "specified time",
+        "relightTooltip": "Relight: re-lights the shot for the beat's time of day without changing the scene structure.",
+        "lockedLightTooltip": "Locked lighting: uses the scene image's own lighting; no relight.",
+        "lockedLightLabel": "Locked lighting"
       },
       "renderGrid": {
         "title": "Render Grid",
@@ -2479,7 +2546,8 @@
       "readyRatio": "{{ready}}/{{total}}",
       "blockedCount": "{{count}} blocked",
       "composeReady": "Ready",
-      "composeBlocked": "Missing {{count}}"
+      "composeBlocked": "Missing {{count}}",
+      "beatCount": "{{count}} beats"
     },
     "compose": {
       "blocked": "Missing:",
@@ -2608,7 +2676,8 @@
       "errors": {
         "invalidBeats": "Selected beats are not in this episode",
         "noBeats": "This episode has no beats yet"
-      }
+      },
+      "paddingCount": "+{{count}} empty"
     },
     "renderSettings": {
       "model": "Render model",
@@ -3404,7 +3473,11 @@
         "title": "Generate Audio",
         "on": "On",
         "off": "Off",
-        "durationExceeded": "Total audio duration must not exceed {{max}} seconds. Shorten or replace the audio reference and try again."
+        "durationTooShort": "Each audio clip must be at least {{min}} seconds: {{clips}}. Replace it or use a longer clip and try again.",
+        "durationTooLong": "Each audio clip must be at most {{max}} seconds: {{clips}}. Trim it or use a shorter clip and try again.",
+        "clipDuration": "{{label}} ({{seconds}}s)",
+        "clipSeparator": ", ",
+        "clipFallbackLabel": "Audio {{index}}"
       },
       "count": {
         "format": "{{count}}"
@@ -3986,13 +4059,13 @@
       "notConfiguredImpact": "Reference media storage is not configured. Text-only flows and text-to-image usually still work; features that need to upload local reference images will fail, including XiaHua reference images, character references, identity images, image-to-image, video first frames, and image-to-video. Configure Aliyun OSS or Cloudinary.",
       "showSecret": "Show",
       "hideSecret": "Hide",
-      "fieldsHint": "Saved values are stored in the local CE settings database; full AccessKeys are not returned, so re-enter them when updating.",
+      "fieldsHint": "Saved values are stored in the local CE settings database; full AccessKeys are not returned. Leave saved credentials blank and enter only the fields you want to replace.",
       "save": "Save OSS config",
       "saveCloudinary": "Save Cloudinary config",
       "saveSuccess": "OSS config saved",
       "cloudinarySaveSuccess": "Cloudinary config saved",
       "saveFailed": "Failed to save OSS config",
-      "cloudinaryFieldsHint": "Saved values are stored in the local CE settings database; full API Key / Secret values are not returned, so re-enter them when updating. API Folder is optional; leave it empty to upload to the Cloudinary root.",
+      "cloudinaryFieldsHint": "Saved values are stored in the local CE settings database; full API Key / Secret values are not returned. Leave saved credentials blank and enter only the fields you want to replace. API Folder is optional; leave it empty to upload to the Cloudinary root.",
       "cloudinaryRegisterLink": "Register at Cloudinary",
       "testUpload": "Test upload",
       "testUploadPlaceholder": "Test upload is coming soon",

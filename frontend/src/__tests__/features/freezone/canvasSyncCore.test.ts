@@ -392,6 +392,34 @@ describe("classifySaveError", () => {
   it("maps 409 to conflict with the canonical message", () => {
     expect(classifySaveError(409, {}, "fallback")).toMatchObject({
       kind: "conflict",
+      message: "画布已被其他窗口或用户修改",
+    });
+  });
+
+  it("gives 409 canvas_idempotency_conflict its own wording", () => {
+    // Same client replaying one client_save_id with a different body — no
+    // other window is involved, so the canonical message would misdirect.
+    const outcome = classifySaveError(
+      409,
+      { detail: { code: "canvas_idempotency_conflict" } },
+      "fallback",
+    );
+    expect(outcome).toMatchObject({ kind: "conflict" });
+    expect((outcome as { message: string }).message).not.toBe(
+      "画布已被其他窗口或用户修改",
+    );
+  });
+
+  it("keeps the canonical message for a real revision conflict", () => {
+    expect(
+      classifySaveError(
+        409,
+        { detail: { code: "canvas_revision_conflict" } },
+        "fallback",
+      ),
+    ).toMatchObject({
+      kind: "conflict",
+      message: "画布已被其他窗口或用户修改",
     });
   });
 

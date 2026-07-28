@@ -1,7 +1,21 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string) =>
+      ({
+        "characters.stats.strip.total": "总角色",
+        "characters.stats.strip.mainCharacter": "解说主角",
+        "characters.stats.strip.portrait": "头像",
+        "characters.stats.strip.identity": "身份",
+        "characters.stats.strip.voice": "声线",
+        "characters.stats.strip.ariaLabel": "角色统计",
+      })[key] ?? key,
+  }),
+}));
 
 import {
   CharacterStatsStrip,

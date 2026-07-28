@@ -2229,17 +2229,25 @@ function MediaStorageSection() {
               provider: "cloudinary",
               ttlSeconds: Math.trunc(ttl),
               cloudName: cloudinary.cloudName.trim(),
-              apiKey: cloudinary.apiKey.trim(),
-              apiSecret: cloudinary.apiSecret.trim(),
               apiFolder: cloudinary.apiFolder.trim(),
+              ...(cloudinary.apiKey.trim()
+                ? { apiKey: cloudinary.apiKey.trim() }
+                : {}),
+              ...(cloudinary.apiSecret.trim()
+                ? { apiSecret: cloudinary.apiSecret.trim() }
+                : {}),
             }
           : {
               provider: "aliyun_oss",
               ttlSeconds: Math.trunc(ttl),
               endpoint: aliyunOss.endpoint.trim(),
               bucket: aliyunOss.bucket.trim(),
-              accessKeyId: aliyunOss.accessKeyId.trim(),
-              accessKeySecret: aliyunOss.accessKeySecret.trim(),
+              ...(aliyunOss.accessKeyId.trim()
+                ? { accessKeyId: aliyunOss.accessKeyId.trim() }
+                : {}),
+              ...(aliyunOss.accessKeySecret.trim()
+                ? { accessKeySecret: aliyunOss.accessKeySecret.trim() }
+                : {}),
             },
       );
       if (!res.ok) {
