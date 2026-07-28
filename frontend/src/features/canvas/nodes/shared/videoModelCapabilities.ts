@@ -327,7 +327,7 @@ export interface VideoReferenceAutoSwitch {
  * 时退到任意一个 2.0——总比让他卡在必然失败的 1.x 上强；一个 2.0 都没有则返回 null，
  * 宁可不动也不要瞎切。
  */
-export function videoReferenceAutoSwitch(
+function pickVideoReferenceAutoSwitch(
   currentModelId: string | null | undefined,
   counts: { videos: number; audios: number },
   models: readonly { id: string; apiModel?: string }[],
@@ -342,4 +342,53 @@ export function videoReferenceAutoSwitch(
     models.find((model) => isBaseSeedance2VideoModel(model.apiModel ?? model.id)) ??
     models.find((model) => isSeedance2VideoModel(model.apiModel ?? model.id));
   return target ? { modelId: target.id, genMode: "allReference" } : null;
+}
+
+export type VideoReferenceAutoSwitchAction =
+  /** 什么都别做（还在加载 / 已经救过一次 / 本来就不需要换）。 */
+  | { kind: "none" }
+  /** 视频音频都撤走了 —— 松开一次性闩锁，为下一次接入做准备。 */
+  | { kind: "release" }
+  /** 写这一个 patch（模型 + 模式一次写完），并落闩。 */
+  | { kind: "switch"; modelId: string; genMode: VideoGenMode };
+
+/**
+ * 自动救场的**完整闸门**——组件那条 effect 该调的就是这一个，除了改 ref 和发 patch
+ * 之外不该再自己判断任何条件。把闸门做成纯函数是为了能整段测：异步加载时序（下面第
+ * 一条）光测「该换成谁」是覆盖不到的，而它恰恰是最容易出事的地方。
+ *
+ * 三道闸，顺序有讲究：
+ * 1. **素材撤走优先于一切**（含加载中）——松闩只是复位一个 ref，没有任何副作用，
+ *    没必要等列表；等了反而会漏掉「加载期间用户又把线拔了」这种收尾。
+ * 2. **`modelsLoading` 期间一律不动**。`useFreezoneVideoModels` 在 pending 时返回的
+ *    不是空数组，而是硬编码的 `VIDEO_MODELS`——照着它挑出来的 2.0 未必存在于该项目
+ *    的真列表里。提前切了还落闩，真列表回来也不再纠正，节点就卡在一个后端不认识的
+ *    模型上，提交直接 400。**注意只看 `isLoading`，不要连 `isFallback` 一起挡**：
+ *    isFallback 在「URL 没有 project」「拉取失败」「后端返回空列表」这三种**已落定**
+ *    的情况下会一直是 true，而此时选择器渲染的正是同一份 `VIDEO_MODELS`（
+ *    `ProviderModelPicker` 用的就是这个 hook 的 models），2.0 就在里面、用户手动也
+ *    能选中；连它一起挡等于在这些情况下永久关掉救场。
+ * 3. **`alreadySwitched` 落闩后不再纠正**，避免把 undo 堵死（见组件里的注释）。
+ *
+ * 「没切成」不落闩：列表里一个 2.0 都没有时返回 `none`，把这次跳变留着，等列表变了
+ * 还有机会补救。
+ */
+export function videoReferenceAutoSwitchAction(input: {
+  counts: { videos: number; audios: number };
+  currentModelId: string | null | undefined;
+  models: readonly { id: string; apiModel?: string }[];
+  modelsLoading: boolean;
+  alreadySwitched: boolean;
+}): VideoReferenceAutoSwitchAction {
+  const { counts, currentModelId, models, modelsLoading, alreadySwitched } = input;
+  if (counts.videos === 0 && counts.audios === 0) {
+    return { kind: "release" };
+  }
+  if (modelsLoading || alreadySwitched) {
+    return { kind: "none" };
+  }
+  const target = pickVideoReferenceAutoSwitch(currentModelId, counts, models);
+  return target
+    ? { kind: "switch", modelId: target.modelId, genMode: target.genMode }
+    : { kind: "none" };
 }

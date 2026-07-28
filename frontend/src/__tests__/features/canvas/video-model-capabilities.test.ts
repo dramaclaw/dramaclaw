@@ -16,7 +16,8 @@ import {
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
   videoModelReferenceDisabledReason,
-  videoReferenceAutoSwitch,
+  videoReferenceAutoSwitchAction,
+  type VideoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
@@ -303,75 +304,221 @@ describe("置灰守卫 × 提交守卫 — 不置灰的组合必须存在可提�
   });
 });
 
-describe("videoReferenceAutoSwitch — 接入视频/音频时替 1.x 换成 2.0", () => {
-  // 选择器的真实顺序：Fast 排在基础款 2.0 前面（见 ProviderModelPicker VIDEO_MODELS）。
-  // 这个顺序是关键——挑目标不能图省事取「第一个 2.0」，那会落到 Fast 上。
-  const SEEDANCE2_BASE = "newapi_seedance-2.0";
-  const MODELS = [
-    { id: SEEDANCE2_FAST, apiModel: SEEDANCE2_FAST },
-    { id: SEEDANCE2_BASE, apiModel: SEEDANCE2_BASE },
-    { id: SEEDANCE2_VALUE, apiModel: SEEDANCE2_VALUE },
-    { id: SEEDANCE15_PRO, apiModel: SEEDANCE15_PRO },
-    { id: SEEDANCE10_PRO_FAST, apiModel: SEEDANCE10_PRO_FAST },
-  ];
+// 选择器的真实顺序：Fast 排在基础款 2.0 前面（见 ProviderModelPicker VIDEO_MODELS）。
+// 这个顺序是关键——挑目标不能图省事取「第一个 2.0」，那会落到 Fast 上。
+const SEEDANCE2_BASE = "newapi_seedance-2.0";
+const MODELS = [
+  { id: SEEDANCE2_FAST, apiModel: SEEDANCE2_FAST },
+  { id: SEEDANCE2_BASE, apiModel: SEEDANCE2_BASE },
+  { id: SEEDANCE2_VALUE, apiModel: SEEDANCE2_VALUE },
+  { id: SEEDANCE15_PRO, apiModel: SEEDANCE15_PRO },
+  { id: SEEDANCE10_PRO_FAST, apiModel: SEEDANCE10_PRO_FAST },
+];
+
+function expectSwitch(action: VideoReferenceAutoSwitchAction) {
+  if (action.kind !== "switch") {
+    throw new Error(`期望 switch，实际拿到 ${action.kind}`);
+  }
+  return action;
+}
+
+describe("videoReferenceAutoSwitchAction — 接入视频/音频时替 1.x 换成 2.0", () => {
+  // 常态入参：列表已就绪、还没落闩。加载时序与闩锁本身在下一个 describe 里按帧验。
+  const pick = (
+    currentModelId: string | null | undefined,
+    counts: { videos: number; audios: number },
+    models: readonly { id: string; apiModel?: string }[],
+  ) =>
+    videoReferenceAutoSwitchAction({
+      counts,
+      currentModelId,
+      models,
+      modelsLoading: false,
+      alreadySwitched: false,
+    });
 
   it("Seedance 1.x + 视频 → 换成基础款 2.0（不是排在前面的 Fast），并落到全能参考", () => {
-    expect(videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, MODELS)).toEqual(
-      { modelId: SEEDANCE2_BASE, genMode: "allReference" },
-    );
+    expect(pick(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, MODELS)).toEqual({
+      kind: "switch",
+      modelId: SEEDANCE2_BASE,
+      genMode: "allReference",
+    });
   });
 
   it("Seedance 1.x + 音频 → 同样切到基础款 2.0", () => {
-    expect(videoReferenceAutoSwitch(SEEDANCE15_PRO, { videos: 0, audios: 1 }, MODELS)).toEqual({
+    expect(pick(SEEDANCE15_PRO, { videos: 0, audios: 1 }, MODELS)).toEqual({
+      kind: "switch",
       modelId: SEEDANCE2_BASE,
       genMode: "allReference",
     });
   });
 
   it("候选里没有基础款（只下发了 fast / value 变体）→ 退到任意一个 2.0", () => {
-    expect(
-      videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, [
-        { id: SEEDANCE2_VALUE, apiModel: SEEDANCE2_VALUE },
-        { id: SEEDANCE2_FAST, apiModel: SEEDANCE2_FAST },
-      ])?.modelId,
-    ).toBe(SEEDANCE2_VALUE);
+    const action = pick(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, [
+      { id: SEEDANCE2_VALUE, apiModel: SEEDANCE2_VALUE },
+      { id: SEEDANCE2_FAST, apiModel: SEEDANCE2_FAST },
+    ]);
+    expect(expectSwitch(action).modelId).toBe(SEEDANCE2_VALUE);
   });
 
-  it("Seedance 1.x 但只有图片 / 什么都没连 → 不动（单图首帧是它的正常用法）", () => {
-    expect(videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, { videos: 0, audios: 0 }, MODELS)).toBeNull();
+  it("素材没接 / 已撤走 → release（松闩），不写任何 patch", () => {
+    expect(pick(SEEDANCE10_PRO_FAST, { videos: 0, audios: 0 }, MODELS)).toEqual({
+      kind: "release",
+    });
   });
 
   it("返回的是 id 而非 apiModel —— 存进 VideoNodeData.model 的是 id", () => {
     const renamed = [{ id: "picker-id-2.0", apiModel: "newapi_seedance-2.0" }];
-    expect(videoReferenceAutoSwitch(SEEDANCE15_PRO, { videos: 1, audios: 0 }, renamed)?.modelId).toBe(
-      "picker-id-2.0",
-    );
+    const action = pick(SEEDANCE15_PRO, { videos: 1, audios: 0 }, renamed);
+    expect(expectSwitch(action).modelId).toBe("picker-id-2.0");
   });
 
   it("2.0 / HappyHorse / Grok 都不抢：各有自己的路径或渠道", () => {
     for (const id of [SEEDANCE2_FAST, HAPPYHORSE, "newapi_grok-video-channel"]) {
-      expect(videoReferenceAutoSwitch(id, { videos: 1, audios: 1 }, MODELS)).toBeNull();
+      expect(pick(id, { videos: 1, audios: 1 }, MODELS)).toEqual({ kind: "none" });
     }
   });
 
   it("候选列表里没有 2.0（接口异常）→ 宁可不动也不瞎切", () => {
     expect(
-      videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, [
+      pick(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, [
         { id: SEEDANCE15_PRO, apiModel: SEEDANCE15_PRO },
       ]),
-    ).toBeNull();
-    expect(videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, [])).toBeNull();
+    ).toEqual({ kind: "none" });
+    expect(pick(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, [])).toEqual({ kind: "none" });
   });
 
   // 切完必须自洽：新模型 + 新模式既不该被选择器置灰，也不该被提交守卫拦下，
   // 否则就是把用户从一个死胡同推进另一个。
   it("切换结果自洽：目标模型在同样的素材下既不置灰也不被提交守卫拦", () => {
     const counts = { images: 1, videos: 1, audios: 1 };
-    const next = videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, counts, MODELS);
-    expect(next).not.toBeNull();
-    expect(videoModelReferenceDisabledReason(next!.modelId, counts)).toBeNull();
-    expect(videoSubmitMediaRejectionReason(next!.genMode, next!.modelId, counts)).toBeNull();
-    expect(isVideoModeSupportedByModel(next!.genMode, next!.modelId)).toBe(true);
+    const next = expectSwitch(pick(SEEDANCE10_PRO_FAST, counts, MODELS));
+    expect(videoModelReferenceDisabledReason(next.modelId, counts)).toBeNull();
+    expect(videoSubmitMediaRejectionReason(next.genMode, next.modelId, counts)).toBeNull();
+    expect(isVideoModeSupportedByModel(next.genMode, next.modelId)).toBe(true);
+  });
+});
+
+// useFreezoneVideoModels 在 pending 期间返回的**不是空数组**，而是硬编码的
+// VIDEO_MODELS（isLoading: true / isFallback: true）。所以「列表非空」根本不能当作
+// 「列表已就绪」用——照着 fallback 挑出来的 2.0 未必存在于该项目的真列表里，提前切了
+// 还落闩，真列表回来也不再纠正，节点就卡在一个后端不认识的模型上。下面按帧回放组件那
+// 条 effect，专门盯这段时序。
+describe("videoReferenceAutoSwitchAction — 模型列表异步加载期间的闸门", () => {
+  // 加载中先给出的硬编码 fallback：里面有 2.0。
+  const FALLBACK_WITH_2 = MODELS;
+  // 该项目真列表：接口只下发了 1.x，没有任何 2.0。
+  const REAL_ONLY_1X = [
+    { id: SEEDANCE15_PRO, apiModel: SEEDANCE15_PRO },
+    { id: SEEDANCE10_PRO_FAST, apiModel: SEEDANCE10_PRO_FAST },
+  ];
+  // 该项目真列表：模型 id 与硬编码那份不同名，但确实有基础款 2.0。
+  const REAL_WITH_2 = [
+    { id: "proj-2.0-fast", apiModel: SEEDANCE2_FAST },
+    { id: "proj-2.0", apiModel: SEEDANCE2_BASE },
+  ];
+
+  interface Frame {
+    currentModelId: string;
+    models: readonly { id: string; apiModel?: string }[];
+    modelsLoading: boolean;
+    counts?: { videos: number; audios: number };
+  }
+
+  /** 原样跑一遍组件里那条 effect 的分支：算 action → 更新闩锁 / 记录写入。 */
+  function replay(frames: readonly Frame[]) {
+    let latched = false;
+    const writes: { modelId: string; genMode: VideoGenMode }[] = [];
+    for (const frame of frames) {
+      const action = videoReferenceAutoSwitchAction({
+        counts: frame.counts ?? { videos: 1, audios: 0 },
+        currentModelId: frame.currentModelId,
+        models: frame.models,
+        modelsLoading: frame.modelsLoading,
+        alreadySwitched: latched,
+      });
+      if (action.kind === "release") {
+        latched = false;
+      } else if (action.kind === "switch") {
+        latched = true;
+        writes.push({ modelId: action.modelId, genMode: action.genMode });
+      }
+    }
+    return { writes, latched };
+  }
+
+  // 这条是 reviewer 点名要的回归：fallback 里有 2.0，真列表却只有 1.x。
+  it("fallback 有 2.0 但真列表只有 1.x → 全程不写，绝不写入列表里不存在的模型", () => {
+    const { writes, latched } = replay([
+      { currentModelId: SEEDANCE15_PRO, models: FALLBACK_WITH_2, modelsLoading: true },
+      { currentModelId: SEEDANCE15_PRO, models: REAL_ONLY_1X, modelsLoading: false },
+      { currentModelId: SEEDANCE15_PRO, models: REAL_ONLY_1X, modelsLoading: false },
+    ]);
+    expect(writes).toEqual([]);
+    // 也没落闩：真列表哪天补上 2.0，这次跳变仍然有机会被救。
+    expect(latched).toBe(false);
+  });
+
+  it("加载中不动；真列表到了才切，且切的是真列表里的 id，只切一次", () => {
+    const { writes } = replay([
+      { currentModelId: SEEDANCE15_PRO, models: FALLBACK_WITH_2, modelsLoading: true },
+      { currentModelId: SEEDANCE15_PRO, models: FALLBACK_WITH_2, modelsLoading: true },
+      { currentModelId: SEEDANCE15_PRO, models: REAL_WITH_2, modelsLoading: false },
+      // 切完后 selectedVideoModelId 变成新模型，effect 还会再跑几帧。
+      { currentModelId: "proj-2.0", models: REAL_WITH_2, modelsLoading: false },
+    ]);
+    expect(writes).toEqual([{ modelId: "proj-2.0", genMode: "allReference" }]);
+  });
+
+  // isFallback 刻意不作为入参：它在「URL 没 project」「拉取失败」「后端返回空列表」
+  // 这三种**已落定**的情况下会一直是 true，而此时选择器渲染的就是这份 VIDEO_MODELS，
+  // 2.0 就在里面、用户手动也能选。跟着 isFallback 一起挡 = 永久关掉救场。
+  it("已落定的 fallback（isLoading 已 false）照常救场，不因为「是 fallback」而放弃", () => {
+    const { writes } = replay([
+      { currentModelId: SEEDANCE15_PRO, models: FALLBACK_WITH_2, modelsLoading: true },
+      { currentModelId: SEEDANCE15_PRO, models: FALLBACK_WITH_2, modelsLoading: false },
+    ]);
+    expect(writes).toEqual([{ modelId: SEEDANCE2_BASE, genMode: "allReference" }]);
+  });
+
+  // 闩锁的意义：undo 把 model 恢复成 1.x、而视频边还在时，不能再纠正回去，
+  // 否则 updateNodeData 会再压一条 past 并清空 future，⌘Z 看起来毫无反应。
+  it("落闩后即使模型被 undo 回 1.x（素材边仍在）也不再纠正", () => {
+    const { writes } = replay([
+      { currentModelId: SEEDANCE15_PRO, models: MODELS, modelsLoading: false },
+      { currentModelId: SEEDANCE2_BASE, models: MODELS, modelsLoading: false },
+      // ⌘Z：model 回到 1.x，视频边还在
+      { currentModelId: SEEDANCE15_PRO, models: MODELS, modelsLoading: false },
+      { currentModelId: SEEDANCE15_PRO, models: MODELS, modelsLoading: false },
+    ]);
+    expect(writes).toHaveLength(1);
+  });
+
+  it("素材撤走后松闩，下次再接入还能救一次", () => {
+    const { writes } = replay([
+      { currentModelId: SEEDANCE15_PRO, models: MODELS, modelsLoading: false },
+      // 拔线：videos 归零 → release
+      {
+        currentModelId: SEEDANCE15_PRO,
+        models: MODELS,
+        modelsLoading: false,
+        counts: { videos: 0, audios: 0 },
+      },
+      // 重新连上
+      { currentModelId: SEEDANCE15_PRO, models: MODELS, modelsLoading: false },
+    ]);
+    expect(writes).toHaveLength(2);
+  });
+
+  it("加载中素材就被撤走 → 仍然松闩（松闩只是复位 ref，没必要等列表）", () => {
+    const action = videoReferenceAutoSwitchAction({
+      counts: { videos: 0, audios: 0 },
+      currentModelId: SEEDANCE15_PRO,
+      models: FALLBACK_WITH_2,
+      modelsLoading: true,
+      alreadySwitched: true,
+    });
+    expect(action).toEqual({ kind: "release" });
   });
 });
 

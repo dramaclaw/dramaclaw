@@ -74,7 +74,7 @@ import {
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
   videoModelReferenceDisabledReason,
-  videoReferenceAutoSwitch,
+  videoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
   type VideoEmptyStateCtaMode,
@@ -1810,24 +1810,22 @@ export const VideoNode = memo(
     // 与紧邻上面那条音频 → allReference 的 effect 用的是同一套闩锁。
     const autoSwitchedForMediaRef = useRef(false);
     useEffect(() => {
-      const hasReferenceMedia =
-        upstreamTypeCounts.videos > 0 || upstreamTypeCounts.audios > 0;
-      if (!hasReferenceMedia) {
+      // 所有判断（加载态、闩锁、该不该换、换成谁）都在 videoReferenceAutoSwitchAction
+      // 里，这里只负责改 ref 和发 patch —— 那边是纯函数，异步加载时序才测得到。
+      const action = videoReferenceAutoSwitchAction({
+        counts: upstreamTypeCounts,
+        currentModelId: selectedVideoModelId,
+        models: availableVideoModels,
+        modelsLoading: videoModelsLoading,
+        alreadySwitched: autoSwitchedForMediaRef.current,
+      });
+      if (action.kind === "release") {
         autoSwitchedForMediaRef.current = false;
         return;
       }
-      // 模型列表还没拉到时先别落闩：否则「挂载时素材已在场 + 列表未就绪」会把这次
-      // 跳变白白消耗掉，列表到了也不再补救。
-      if (availableVideoModels.length === 0) return;
-      if (autoSwitchedForMediaRef.current) return;
+      if (action.kind === "none") return;
       autoSwitchedForMediaRef.current = true;
-      const next = videoReferenceAutoSwitch(
-        selectedVideoModelId,
-        upstreamTypeCounts,
-        availableVideoModels,
-      );
-      if (!next) return;
-      updateNodeData(id, { model: next.modelId, genMode: next.genMode });
+      updateNodeData(id, { model: action.modelId, genMode: action.genMode });
       // 刻意不调 writeLastVideoModel：这是替用户救场，不是他表达的偏好，不该顺手
       // 把后续新建视频节点继承的默认模型也改掉。
     }, [
@@ -1836,6 +1834,7 @@ export const VideoNode = memo(
       selectedVideoModelId,
       updateNodeData,
       upstreamTypeCounts,
+      videoModelsLoading,
     ]);
 
     // 上游接入视频素材时，只有「全能参考」能消费视频；其它模式（文生 / 图生 /
