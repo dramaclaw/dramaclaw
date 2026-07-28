@@ -235,10 +235,13 @@ export function RenderPlanDialog({
       ? t("episode.renderPlan.planning")
       : t("episode.renderPlan.unavailable");
   let renderPlanCostDisplay: string | null = null;
+  let renderPlanPromotion: GenerationCreditCost["promotion"];
   if (plan) {
     let complete = true;
     let missingRule = false;
     let totalCost = 0;
+    let totalOriginalCost = 0;
+    const promotions: NonNullable<GenerationCreditCost["promotion"]>[] = [];
     for (const entry of plan.plan) {
       const queryIndex = renderCostModeKeys.indexOf(entry.mode_key);
       const query = renderCostQueries[queryIndex];
@@ -252,11 +255,25 @@ export function RenderPlanDialog({
         break;
       }
       totalCost += cost;
+      totalOriginalCost += query?.data?.data.original_cost ?? cost;
+      if (query?.data?.data.promotion?.id) {
+        promotions.push(query.data.data.promotion);
+      }
+    }
+    const firstPromotion = promotions[0];
+    if (
+      firstPromotion
+      && promotions.length === plan.plan.length
+      && promotions.every((item) => item.id === firstPromotion.id)
+    ) {
+      renderPlanPromotion = firstPromotion;
     }
     renderPlanCostDisplay = missingRule
       ? t("common.billingRuleNotConfiguredShort")
       : complete
-        ? formatCreditCost(totalCost)
+        ? totalOriginalCost > totalCost
+          ? `${formatCreditCost(totalOriginalCost)}→${formatCreditCost(totalCost)}`
+          : formatCreditCost(totalCost)
         : null;
   }
 
@@ -316,7 +333,10 @@ export function RenderPlanDialog({
             ) : (
               confirmLabel
             )}
-            <CreditCostInline display={renderPlanCostDisplay} />
+            <CreditCostInline
+              display={renderPlanCostDisplay}
+              promotion={renderPlanPromotion}
+            />
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -17,8 +17,8 @@ describe("style analysis feature credit contract", () => {
       "styleAnalyzeCost.error instanceof BillingRuleNotConfiguredError",
     );
     expect(routeSource).toContain('t("common.billingRuleNotConfiguredShort")');
-    expect(routeSource).toContain(
-      "<CreditCostInline display={styleAnalyzeCostDisplay} />",
+    expect(routeSource).toMatch(
+      /<CreditCostInline\s+display=\{styleAnalyzeCostDisplay\}/,
     );
   });
 

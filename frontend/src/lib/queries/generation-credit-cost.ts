@@ -12,6 +12,16 @@ import type { OkResponse } from "@/types/api";
 export type GenerationCreditCost = {
   cost: number;
   display: string;
+  original_cost?: number;
+  original_display?: string;
+  discount_amount?: number;
+  promotion?: {
+    id?: string;
+    name?: string;
+    discount_basis_points?: number;
+    starts_at?: string | null;
+    ends_at?: string | null;
+  };
   unit?: "call" | "item" | "second" | "token" | "character" | string;
   unit_cost?: number;
   quantity?: number;
@@ -148,6 +158,32 @@ export function useGenerationCreditCostPlan(
     groups.length > 0 && queries.every((query) => query.data?.ok === true)
       ? queries.reduce((sum, query) => sum + (query.data?.data.cost ?? 0), 0)
       : undefined;
+  const originalCost =
+    cost != null
+      ? queries.reduce(
+          (sum, query) =>
+            sum
+            + (query.data?.data.original_cost
+              ?? query.data?.data.cost
+              ?? 0),
+          0,
+        )
+      : undefined;
+  const appliedPromotions = queries
+    .map((query) => query.data?.data.promotion)
+    .filter(
+      (
+        promotion,
+      ): promotion is NonNullable<GenerationCreditCost["promotion"]> =>
+        !!promotion?.id,
+    );
+  const firstPromotion = appliedPromotions[0];
+  const promotion =
+    firstPromotion
+    && appliedPromotions.length === queries.length
+    && appliedPromotions.every((item) => item.id === firstPromotion.id)
+      ? firstPromotion
+      : undefined;
 
-  return { cost, queries };
+  return { cost, originalCost, promotion, queries };
 }

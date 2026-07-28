@@ -377,6 +377,7 @@ export const OutpaintEditorOverlay = memo(
             />
             <CreditCostPill
               display={costDisplay}
+              promotion={creditCost.data?.data.promotion}
               className={NODE_CREDIT_PILL_FLAT_CLASS}
             />
 

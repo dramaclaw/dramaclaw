@@ -50,8 +50,8 @@ describe("script workflow canonical contract", () => {
     expect(route).toContain(
       "generateRewriteCost.error instanceof BillingRuleNotConfiguredError",
     );
-    expect(route).toContain(
-      '<CreditCostInline display={generateRewriteCostDisplay} />',
+    expect(route).toMatch(
+      /<CreditCostInline\s+display=\{generateRewriteCostDisplay\}/,
     );
     expect(route).toContain("backendErrorToastMessage(error, t)");
     expect(route).toContain('spine_template === "narrated"');

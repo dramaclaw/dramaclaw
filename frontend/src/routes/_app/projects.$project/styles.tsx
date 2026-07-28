@@ -929,7 +929,10 @@ function CreateStyleDialog({
                 <Upload className="size-3.5" />
               )}
               {analyzed ? t("styles.reupload") : t("styles.uploadRef")}
-              <CreditCostInline display={styleAnalyzeCostDisplay} />
+              <CreditCostInline
+                display={styleAnalyzeCostDisplay}
+                promotion={styleAnalyzeCost.data?.data.promotion}
+              />
             </Button>
             <input
               ref={fileInputRef}

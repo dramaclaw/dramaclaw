@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
+import type { GenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 
 export interface GenerateAudioParams {
   beatNumbers?: number[];
@@ -17,6 +18,9 @@ export interface AudioBillingQuote {
   unit_cost: number;
   cost: number;
   display: string;
+  original_cost?: number;
+  discount_amount?: number;
+  promotion?: GenerationCreditCost["promotion"];
   prereq_errors: string[];
 }
 

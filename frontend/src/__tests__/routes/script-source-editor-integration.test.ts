@@ -82,7 +82,7 @@ describe("script route source editor integration", () => {
     expect(route).toMatch(
       /const handlePlanProps[\s\S]*toast\.error\(backendErrorToastMessage\(res\.error, t\)\)[\s\S]*catch \(err\)[\s\S]*toast\.error\(backendErrorToastMessage\(err, t\)\)/,
     );
-    expect(planning).toContain("<CreditCostInline display={costDisplay} />");
+    expect(planning).toMatch(/<CreditCostInline\s+display=\{costDisplay\}/);
   });
 
   it("shows feature credit cost on detail identity planning", () => {
@@ -100,7 +100,7 @@ describe("script route source editor integration", () => {
       "planIdentitiesCost.error instanceof BillingRuleNotConfiguredError",
     );
     expect(route).toContain("planCostDisplay={planIdentitiesCostDisplay}");
-    expect(picker).toContain("<CreditCostInline display={planCostDisplay} />");
+    expect(picker).toMatch(/<CreditCostInline\s+display=\{planCostDisplay\}/);
   });
 
   it("wires episode prop promotion labels into the planning area", () => {

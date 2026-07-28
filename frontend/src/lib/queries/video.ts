@@ -344,6 +344,9 @@ export interface GlobalOptimizeBillingQuote {
   unit_cost: number;
   cost: number;
   display: string;
+  original_cost?: number;
+  discount_amount?: number;
+  promotion?: import("@/lib/queries/generation-credit-cost").GenerationCreditCost["promotion"];
 }
 
 export function useGlobalOptimizeBillingQuote(

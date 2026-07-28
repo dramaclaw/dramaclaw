@@ -171,7 +171,10 @@ export function AudioPane({
               <RefreshCw className="size-3" />
             )}
             {t("common.regenerate")}
-            <CreditCostInline display={audioCostDisplay} />
+            <CreditCostInline
+              display={audioCostDisplay}
+              promotion={audioCost.data?.data.promotion}
+            />
           </Button>
         </div>
       )}

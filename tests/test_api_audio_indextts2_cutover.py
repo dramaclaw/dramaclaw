@@ -254,11 +254,18 @@ async def test_audio_billing_quote_uses_server_planned_quantity(monkeypatch, tmp
         async def generation_credit_quote(self, **kwargs):
             captured.update(kwargs)
             return CreditQuote(
-                total_cost=6,
-                display="6",
+                total_cost=5,
+                display="6→5",
                 unit="call",
                 unit_cost=3,
                 quantity=2,
+                original_total_cost=6,
+                discount_amount=1,
+                promotion={
+                    "id": "promo_audio",
+                    "name": "配音优惠",
+                    "discount_basis_points": 8000,
+                },
             )
 
     _patch_generation_project(monkeypatch, generation, tmp_path)
@@ -270,17 +277,20 @@ async def test_audio_billing_quote_uses_server_planned_quantity(monkeypatch, tmp
         project="demo",
         episode_num=3,
         body=TTSGenerateRequest(mode="redo_selected", beat_numbers=[2, 4]),
-        user={"username": "alice"},
+        user={"id": "user_1", "username": "alice"},
     )
 
     assert response["data"]["beat_numbers"] == [2, 4]
     assert response["data"]["quantity"] == 2
-    assert response["data"]["cost"] == 6
+    assert response["data"]["cost"] == 5
+    assert response["data"]["original_cost"] == 6
+    assert response["data"]["promotion"]["id"] == "promo_audio"
     assert captured == {
         "kind": "feature",
         "model": "mainline.beat_audio_generation",
         "params": generation._audio_billing_payload([2, 4]),
         "quantity": 2,
+        "user_id": "user_1",
     }
 
 

@@ -752,6 +752,7 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
           {error && <span className="max-w-[160px] truncate px-1 text-xs text-red-400">{error}</span>}
           <CreditCostPill
             display={costDisplay}
+            promotion={creditCost.data?.data.promotion}
             className={NODE_CREDIT_PILL_FLAT_CLASS}
           />
 

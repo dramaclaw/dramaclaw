@@ -18,6 +18,7 @@ import { ASSET_CARD_META_BADGE_CLASS } from "@/components/assets/asset-card-styl
 import { UsageCountBadge } from "@/components/assets/usage-count-badge";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -34,6 +35,7 @@ interface PropAssetCardProps {
   uploading?: boolean;
   referenceCount?: number;
   referenceCost?: string;
+  referencePromotion?: CreditPromotionDisplay | null;
   onEdit: () => void;
   onDelete: () => void;
   onGenerateReference: () => void;
@@ -48,6 +50,7 @@ export function PropAssetCard({
   uploading = false,
   referenceCount = 0,
   referenceCost,
+  referencePromotion,
   onEdit,
   onDelete,
   onGenerateReference,
@@ -179,7 +182,10 @@ export function PropAssetCard({
               : referenceUrl
                 ? t("assets.props.regenerateReference")
                 : t("assets.props.generateReference")}
-            <CreditCostInline display={referenceCost} />
+            <CreditCostInline
+              display={referenceCost}
+              promotion={referencePromotion}
+            />
           </Button>
           <Button
             type="button"

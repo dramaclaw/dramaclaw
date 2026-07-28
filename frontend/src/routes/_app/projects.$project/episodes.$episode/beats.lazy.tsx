@@ -330,8 +330,16 @@ function BeatsTabContent() {
   ).length;
   const sketchPlanCostDisplay = useMemo(() => {
     if (typeof sketchPlanCost.cost !== "number") return null;
+    if (
+      typeof sketchPlanCost.originalCost === "number"
+      && sketchPlanCost.originalCost > sketchPlanCost.cost
+    ) {
+      return `${formatCreditCost(sketchPlanCost.originalCost)}→${formatCreditCost(
+        sketchPlanCost.cost,
+      )}`;
+    }
     return formatCreditCost(sketchPlanCost.cost);
-  }, [sketchPlanCost.cost]);
+  }, [sketchPlanCost.cost, sketchPlanCost.originalCost]);
 
   const openSketchPlan = useCallback(() => {
     if (checkedBeatNums.length === 0) return;
@@ -595,7 +603,10 @@ function BeatsTabContent() {
             <Play className="size-4" />
           )}
           {t("episode.beats.generateBeats")}
-          <CreditCostInline display={generateScriptCostDisplay} />
+          <CreditCostInline
+            display={generateScriptCostDisplay}
+            promotion={generateScriptCost.data?.data.promotion}
+          />
         </Button>
         <AlertDialog open={genBeatsConfirm} onOpenChange={setGenBeatsConfirm}>
           <AlertDialogContent>
@@ -882,7 +893,10 @@ function BeatsTabContent() {
                 grids: sketchPlanItems.length,
                 defaultValue: `确认草图 ${sketchPlanItems.length} 个网格`,
               })}
-              <CreditCostInline display={sketchPlanCostDisplay} />
+              <CreditCostInline
+                display={sketchPlanCostDisplay}
+                promotion={sketchPlanCost.promotion}
+              />
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

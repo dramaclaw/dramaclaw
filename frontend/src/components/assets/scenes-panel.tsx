@@ -958,8 +958,11 @@ function SceneAssetCardController({
         customUploading={uploadCustom.isPending}
         customDeleting={deleteCustom.isPending}
         masterCost={sceneReferenceCostDisplay}
+        masterPromotion={sceneReferenceCost.data?.data.promotion}
         reverseCost={sceneReferenceCostDisplay}
+        reversePromotion={sceneReferenceCost.data?.data.promotion}
         panoCost={panoCostDisplay}
+        panoPromotion={panoCost.data?.data.promotion}
         onEdit={onEdit}
         onDelete={onDelete}
         onUploadMaster={() => masterInputRef.current?.click()}
@@ -1334,6 +1337,7 @@ export function ScenesPanel({
           {t("assets.scenes.build")}
           <CreditCostInline
             display={buildScenesCostDisplay}
+            promotion={buildScenesCost.data?.data.promotion}
             className="text-black"
             iconClassName="text-black drop-shadow-none [&_path]:fill-current"
           />

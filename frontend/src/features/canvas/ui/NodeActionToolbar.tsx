@@ -2050,6 +2050,7 @@ export const NodeActionToolbar = memo(
                       {t("nodeToolbar.video.analyze")}
                       <CreditCostPill
                         display={videoAnalyzeCreditCostDisplay}
+                        promotion={videoAnalyzeCreditCost.data?.data.promotion}
                         disabled={!hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing}
                       />
                     </UiChipButton>

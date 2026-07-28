@@ -581,7 +581,10 @@ function ScriptTabContent() {
                   <Sparkles className="size-3.5" />
                 )}
                 {t("episode.script.generateRewrite")}
-                <CreditCostInline display={generateRewriteCostDisplay} />
+                <CreditCostInline
+                  display={generateRewriteCostDisplay}
+                  promotion={generateRewriteCost.data?.data.promotion}
+                />
               </Button>
             </>
           )}
@@ -640,6 +643,7 @@ function ScriptTabContent() {
             {!scriptTask.started && (
               <CreditCostInline
                 display={generateScriptCostDisplay}
+                promotion={generateScriptCost.data?.data.promotion}
                 className="text-black"
                 iconClassName="text-black drop-shadow-none [&_path]:fill-current"
               />
@@ -703,7 +707,9 @@ function ScriptTabContent() {
                 scenePending={planScenes.isPending || sceneTask.started}
                 propPending={planProps.isPending || propTask.started}
                 sceneCostDisplay={planScenesCostDisplay}
+                scenePromotion={planScenesCost.data?.data.promotion}
                 propCostDisplay={planPropsCostDisplay}
+                propPromotion={planPropsCost.data?.data.promotion}
                 onPlanIdentities={() => setPickerOpen(true)}
                 onIdentityChange={handleIdentityChange}
                 onPlanScenes={handlePlanScenes}
@@ -806,6 +812,7 @@ function ScriptTabContent() {
         onPlan={handlePlanIdentities}
         planPending={identityPlanning}
         planCostDisplay={planIdentitiesCostDisplay}
+        planPromotion={planIdentitiesCost.data?.data.promotion}
       />
     </div>
   );

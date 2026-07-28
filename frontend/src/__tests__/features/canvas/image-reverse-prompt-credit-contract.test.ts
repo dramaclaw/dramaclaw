@@ -44,8 +44,8 @@ describe("canvas image reverse-prompt credit contract", () => {
     expect(nodeSource).toContain(
       "mode === 'imageToPrompt' && reversePromptBillingRuleMissing",
     );
-    expect(nodeSource).toContain(
-      "<CreditCostInline display={reversePromptCostDisplay} />",
+    expect(nodeSource).toMatch(
+      /<CreditCostInline\s+display=\{reversePromptCostDisplay\}/,
     );
   });
 });

@@ -698,7 +698,10 @@ export const TextAnnotationNode = memo(({
                 )}
                 <div className="flex items-center gap-1.5">
                   {mode === 'imageToPrompt' && (
-                    <CreditCostInline display={reversePromptCostDisplay} />
+                    <CreditCostInline
+                      display={reversePromptCostDisplay}
+                      promotion={reversePromptCost.data?.data.promotion}
+                    />
                   )}
                   <button
                     type="button"

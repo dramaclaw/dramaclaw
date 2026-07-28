@@ -737,17 +737,16 @@ async def get_generation_credit_cost(
     user: dict = Depends(get_api_user),
 ) -> dict:
     """Return display-ready credit cost for one generation action or model."""
-    del user
     model = _generation_credit_cost_model(kind, value)
     if not model:
         raise HTTPException(
             status_code=400, detail="generation model is not configured"
         )
     parsed_params = _parse_billing_params(params)
-    quote = await get_credit_quote().generation_credit_quote(
-        kind=_generation_billing_kind(kind),
-        model=model,
-        params=_default_billing_params(
+    quote_args = {
+        "kind": _generation_billing_kind(kind),
+        "model": model,
+        "params": _default_billing_params(
             kind=kind,
             surface=surface,
             value=value,
@@ -756,12 +755,38 @@ async def get_generation_credit_cost(
             mode_key=_clean_query_value(mode_key),
             image_role=_clean_query_value(image_role),
         ),
-        quantity=_clean_quantity(quantity),
-    )
-    data = {
-        "cost": quote.total_cost,
-        "display": _display_credit_cost(quote.total_cost),
+        "quantity": _clean_quantity(quantity),
     }
+    try:
+        quote = await get_credit_quote().generation_credit_quote(
+            **quote_args,
+            user_id=str(user.get("id") or user.get("user_id") or ""),
+        )
+    except TypeError as exc:
+        if "user_id" not in str(exc):
+            raise
+        # One-release compatibility for third-party quote ports compiled
+        # against the previous protocol.
+        quote = await get_credit_quote().generation_credit_quote(**quote_args)
+    original_cost = (
+        quote.total_cost
+        if quote.original_total_cost is None
+        else quote.original_total_cost
+    )
+    data = {"cost": quote.total_cost, "display": _display_credit_cost(quote.total_cost)}
+    if quote.discount_amount > 0:
+        data.update(
+            {
+                "display": (
+                    f"{_display_credit_cost(original_cost)}"
+                    f"→{_display_credit_cost(quote.total_cost)}"
+                ),
+                "original_cost": original_cost,
+                "original_display": _display_credit_cost(original_cost),
+                "discount_amount": quote.discount_amount,
+                "promotion": quote.promotion or {},
+            }
+        )
     if getattr(quote, "unit", "call") == "character":
         data.update(
             {

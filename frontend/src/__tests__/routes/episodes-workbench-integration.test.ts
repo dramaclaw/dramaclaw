@@ -36,7 +36,7 @@ describe("episodes workbench integration", () => {
       "planIdentitiesCost.error instanceof BillingRuleNotConfiguredError",
     );
     expect(routeSource).toContain("identityCostDisplay={planIdentitiesCostDisplay}");
-    expect(routeSource).toContain("<CreditCostInline display={costDisplay} />");
+    expect(routeSource).toMatch(/<CreditCostInline\s+display=\{costDisplay\}/);
   });
 
   it("shows feature credit cost on list-card scene and prop planning actions", () => {

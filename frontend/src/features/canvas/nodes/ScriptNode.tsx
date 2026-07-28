@@ -1090,6 +1090,7 @@ function ScriptOperationsPanel({
                 ? null
                 : translateCost.data?.data.display
             }
+            promotion={translateCost.data?.data.promotion}
             disabled={isGenerating || isTranslating || prompt.trim().length === 0}
             className={NODE_CREDIT_PILL_FLAT_CLASS}
           />
@@ -1100,6 +1101,7 @@ function ScriptOperationsPanel({
                 ? t('common.billingRuleNotConfiguredShort')
                 : null)
             }
+            promotion={scriptCost.data?.data.promotion}
             disabled={submitDisabled}
             className={NODE_CREDIT_PILL_FLAT_CLASS}
           />

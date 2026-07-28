@@ -743,6 +743,7 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
               {error && <span className="text-red-400">{error}</span>}
               <CreditCostPill
                 display={costDisplay}
+                promotion={creditCost.data?.data.promotion}
                 className={NODE_CREDIT_PILL_FLAT_CLASS}
               />
               <button

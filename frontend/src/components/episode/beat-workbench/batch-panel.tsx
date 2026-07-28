@@ -529,8 +529,16 @@ export function BatchPanel({
   ).length;
   const sketchPlanCostDisplay = useMemo(() => {
     if (typeof sketchPlanCost.cost !== "number") return null;
+    if (
+      typeof sketchPlanCost.originalCost === "number"
+      && sketchPlanCost.originalCost > sketchPlanCost.cost
+    ) {
+      return `${formatCreditCost(sketchPlanCost.originalCost)}→${formatCreditCost(
+        sketchPlanCost.cost,
+      )}`;
+    }
     return formatCreditCost(sketchPlanCost.cost);
-  }, [sketchPlanCost.cost]);
+  }, [sketchPlanCost.cost, sketchPlanCost.originalCost]);
   const selectedVideoRunning = useMemo(() => {
     if (beatList.length === 0) return false;
     const selectedBeatNumbers = new Set(beatList);
@@ -754,7 +762,10 @@ export function BatchPanel({
                 {t("episode.workbench.batch.autoCombine", {
                   defaultValue: "批量重抽",
                 })}
-                <CreditCostInline display={sketchPlanCostDisplay} />
+                <CreditCostInline
+                  display={sketchPlanCostDisplay}
+                  promotion={sketchPlanCost.promotion}
+                />
               </Button>
             </div>
           </div>
@@ -832,7 +843,10 @@ export function BatchPanel({
                     grids: sketchPlanItems.length,
                     defaultValue: `确认草图 ${sketchPlanItems.length} 个网格`,
                   })}
-                  <CreditCostInline display={sketchPlanCostDisplay} />
+                  <CreditCostInline
+                    display={sketchPlanCostDisplay}
+                    promotion={sketchPlanCost.promotion}
+                  />
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -908,7 +922,10 @@ export function BatchPanel({
                   <Loader2 className="size-3 animate-spin" />
                 ) : null}
                 {t("episode.workbench.batch.genBatchAudio", { count })}
-                <CreditCostInline display={audioCostDisplay} />
+                <CreditCostInline
+                  display={audioCostDisplay}
+                  promotion={audioBillingQuote.data?.data.promotion}
+                />
               </Button>
             </div>
           )}

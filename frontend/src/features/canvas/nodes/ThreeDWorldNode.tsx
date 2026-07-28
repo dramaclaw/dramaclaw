@@ -101,7 +101,10 @@ import { useDetachUpstream } from '@/features/canvas/hooks/useDetachUpstream';
 import { readUrl } from '@/lib/url-params';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
-import { CreditCostPill } from '@/components/credits/credit-visual';
+import {
+  CreditCostPill,
+  type CreditPromotionDisplay,
+} from '@/components/credits/credit-visual';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 type ThreeDWorldNodeProps = NodeProps & {
@@ -610,6 +613,7 @@ interface OpsPanelProps {
   hasUpstream: boolean;
   billingRuleMissing: boolean;
   creditCostDisplay: string | null;
+  creditPromotion?: CreditPromotionDisplay | null;
   errorMessage?: string | null;
   sourceKind: DirectorImageSourceKind;
   referenceImages: ReferenceImageRef[];
@@ -631,6 +635,7 @@ function OpsPanel({
   hasUpstream,
   billingRuleMissing,
   creditCostDisplay,
+  creditPromotion,
   errorMessage,
   sourceKind,
   referenceImages,
@@ -722,6 +727,7 @@ function OpsPanel({
         </label>
         <CreditCostPill
           display={creditCostDisplay}
+          promotion={creditPromotion}
           disabled={isGenerating || !hasUpstream || billingRuleMissing}
           className={NODE_CREDIT_PILL_FLAT_CLASS}
         />
@@ -1434,6 +1440,7 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
             hasUpstream={hasUpstream}
             billingRuleMissing={worldBillingRuleMissing}
             creditCostDisplay={worldCreditCostDisplay}
+            creditPromotion={worldCreditCost.data?.data.promotion}
             errorMessage={data.errorMessage}
             sourceKind={selectedImageSourceKind}
             referenceImages={referenceImages}

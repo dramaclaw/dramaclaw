@@ -353,6 +353,7 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
         )}
         <CreditCostPill
           display={costDisplay}
+          promotion={audioCost.data?.data.promotion}
           disabled={submitDisabled}
           className={NODE_CREDIT_PILL_FLAT_CLASS}
         />

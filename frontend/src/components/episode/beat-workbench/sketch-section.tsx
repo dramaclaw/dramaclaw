@@ -637,6 +637,7 @@ export function SketchSection({
                       ? t("common.billingRuleNotConfiguredShort")
                       : null)
                   }
+                  promotion={directorControlCost.data?.data.promotion}
                 />
               </Button>
             )}
@@ -726,6 +727,7 @@ export function SketchSection({
                     ? t("common.billingRuleNotConfiguredShort")
                     : null)
                 }
+                promotion={sketchRegenCost.data?.data.promotion}
               />
             </Button>
           )}

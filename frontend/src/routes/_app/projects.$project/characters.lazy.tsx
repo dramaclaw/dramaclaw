@@ -92,6 +92,7 @@ import { useAssetsDeepLink } from "@/hooks/use-assets-deep-link";
 import { useAssetFocus } from "@/hooks/use-asset-focus";
 import { LightboxImage } from "@/components/lightbox-image";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
 import { EMPTY_STATE_ACTION_BUTTON_CLASS } from "@/components/ui/empty-state-styles";
 import {
   AssetHeaderActionsSlotProvider,
@@ -536,6 +537,7 @@ function CharactersPageHeader({
   onRebuild,
   rebuildDisabled,
   buildCharactersCostDisplay,
+  buildCharactersPromotion,
   onAdd,
   project,
   activeTab,
@@ -544,6 +546,7 @@ function CharactersPageHeader({
   onRebuild: () => void;
   rebuildDisabled: boolean;
   buildCharactersCostDisplay?: string | null;
+  buildCharactersPromotion?: CreditPromotionDisplay | null;
   onAdd: () => void;
   project: string;
   activeTab: AssetTab;
@@ -608,6 +611,7 @@ function CharactersPageHeader({
               {t("characters.autoExtract")}
               <CreditCostInline
                 display={buildCharactersCostDisplay}
+                promotion={buildCharactersPromotion}
                 className="text-primary-foreground"
                 iconClassName="text-primary-foreground drop-shadow-none [&_path]:fill-current"
               />
@@ -991,7 +995,10 @@ function PortraitBlock({
           {character.portrait_url
             ? t("characters.portrait.regenerate")
             : t("characters.summary.generateNew")}
-          <CreditCostInline display={portraitCost} />
+          <CreditCostInline
+            display={portraitCost}
+            promotion={portraitCostRes.data?.data.promotion}
+          />
         </Button>
         <Button
           size="sm"
@@ -1735,7 +1742,10 @@ function IdentityCard({
               {identity.image_url
                 ? t("characters.identities.regenerate")
                 : t("characters.identities.generate")}
-              <CreditCostInline display={identityImageCost} />
+              <CreditCostInline
+                display={identityImageCost}
+                promotion={identityImageCostRes.data?.data.promotion}
+              />
             </Button>
             <Button
               size="sm"
@@ -2015,7 +2025,12 @@ function IdentityCard({
                                 {identity.portrait_image_url
                                   ? t("characters.identities.regenerate")
                                   : t("characters.identities.generate")}
-                                <CreditCostInline display={identityPortraitCost} />
+                                <CreditCostInline
+                                  display={identityPortraitCost}
+                                  promotion={
+                                    identityPortraitCostRes.data?.data.promotion
+                                  }
+                                />
                               </Button>
                             }
                           />
@@ -2210,7 +2225,10 @@ function IdentityCard({
               className={identityCreditDialogActionClass}
             >
               {t("characters.identities.generate")}
-              <CreditCostInline display={identityImageCost} />
+              <CreditCostInline
+                display={identityImageCost}
+                promotion={identityImageCostRes.data?.data.promotion}
+              />
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2243,7 +2261,10 @@ function IdentityCard({
               className={identityCreditDialogActionClass}
             >
               {t("characters.identities.generate")}
-              <CreditCostInline display={identityPortraitCost} />
+              <CreditCostInline
+                display={identityPortraitCost}
+                promotion={identityPortraitCostRes.data?.data.promotion}
+              />
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2908,6 +2929,7 @@ function CharactersSplit({
   onRebuild,
   rebuildDisabled,
   buildCharactersCostDisplay,
+  buildCharactersPromotion,
 }: {
   project: string;
   isDesktop: boolean;
@@ -2928,6 +2950,7 @@ function CharactersSplit({
   onRebuild: () => void;
   rebuildDisabled: boolean;
   buildCharactersCostDisplay?: string | null;
+  buildCharactersPromotion?: CreditPromotionDisplay | null;
 }) {
   const { t } = useTranslation();
   const isExtracting = buildStarted && taskStream.status !== "idle";
@@ -3009,7 +3032,10 @@ function CharactersSplit({
             >
               <RefreshCw className="size-3.5" />
               {t("characters.autoExtract")}
-              <CreditCostInline display={buildCharactersCostDisplay} />
+              <CreditCostInline
+                display={buildCharactersCostDisplay}
+                promotion={buildCharactersPromotion}
+              />
             </Button>
           </div>
         ) : searchActive && characters.length === 0 ? (
@@ -3219,6 +3245,7 @@ function CharactersPageContent() {
         onRebuild={() => setRebuildDialogOpen(true)}
         rebuildDisabled={buildChars.isPending || buildStarted}
         buildCharactersCostDisplay={buildCharactersCostDisplay}
+        buildCharactersPromotion={buildCharactersCost.data?.data.promotion}
         onAdd={() => setAddDialogOpen(true)}
         project={project}
         activeTab={assetTab}
@@ -3255,6 +3282,7 @@ function CharactersPageContent() {
             onRebuild={() => setRebuildDialogOpen(true)}
             rebuildDisabled={buildChars.isPending || buildStarted}
             buildCharactersCostDisplay={buildCharactersCostDisplay}
+            buildCharactersPromotion={buildCharactersCost.data?.data.promotion}
           />
         </>
       ) : assetTab === "voices" ? (

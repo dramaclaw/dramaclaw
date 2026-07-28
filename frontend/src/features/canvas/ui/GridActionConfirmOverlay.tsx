@@ -224,7 +224,10 @@ export const GridActionConfirmOverlay = memo(
             <ImageIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
             <span className="truncate font-medium">{request.label}</span>
           </div>
-          <CreditCostInline display={costDisplay} />
+          <CreditCostInline
+            display={costDisplay}
+            promotion={gridActionCost.data?.data.promotion}
+          />
 
           <button
             type="button"

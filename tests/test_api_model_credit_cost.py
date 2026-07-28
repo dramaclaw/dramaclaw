@@ -104,6 +104,41 @@ async def test_generation_credit_cost_route_uses_ce_zero_quote_port(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_returns_promotion_display(monkeypatch):
+    from novelvideo.api.routes import model_credits
+    from novelvideo.ports.credit_quote import CreditQuote
+    from novelvideo.ports.registry import register_port
+
+    class DiscountQuotePort:
+        async def generation_credit_quote(self, **kwargs):
+            assert kwargs["user_id"] == "usr_1"
+            return CreditQuote(
+                total_cost=9,
+                display="9",
+                original_total_cost=12,
+                discount_amount=3,
+                promotion={"id": "promo_1", "name": "模型七五折"},
+            )
+
+    register_port("credit_quote", DiscountQuotePort())
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        value="freezone.image_generate",
+        user={"user_id": "usr_1"},
+    )
+
+    assert result["data"] == {
+        "cost": 9,
+        "display": "12→9",
+        "original_cost": 12,
+        "original_display": "12",
+        "discount_amount": 3,
+        "promotion": {"id": "promo_1", "name": "模型七五折"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_resolves_model_kind(monkeypatch):
     from novelvideo.api.routes import model_credits
 

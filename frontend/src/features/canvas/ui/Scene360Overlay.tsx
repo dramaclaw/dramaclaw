@@ -198,7 +198,10 @@ export const Scene360Overlay = memo(
             onChange={setAspectRatio}
             label={t('scene360.aspectRatioLabel')}
           />
-          <CreditCostInline display={costDisplay} />
+          <CreditCostInline
+            display={costDisplay}
+            promotion={panoCost.data?.data.promotion}
+          />
 
           <button
             type="button"

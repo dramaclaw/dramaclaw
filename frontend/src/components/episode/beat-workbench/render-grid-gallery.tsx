@@ -372,7 +372,10 @@ function RenderGridCard({
               <RefreshCw className="size-3" />
             )}
             {t("common.regenerate")}
-            <CreditCostInline display={gridCostDisplay} />
+            <CreditCostInline
+              display={gridCostDisplay}
+              promotion={gridCost.data?.data.promotion}
+            />
           </Button>
         )}
         <input

@@ -1538,7 +1538,10 @@ export function VideoPane({
                 <WandSparkles className="size-3" />
               )}
               {t("episode.workbench.video.generateBeatVideoPrompt")}
-              <CreditCostInline display={beatVideoPromptCostDisplay} />
+              <CreditCostInline
+                display={beatVideoPromptCostDisplay}
+                promotion={beatVideoPromptCost.data?.data.promotion}
+              />
             </Button>
           </div>
         </div>
@@ -1749,7 +1752,10 @@ export function VideoPane({
                   <Film className="size-3" />
                 )}
                 {videoActionLabel}
-                <CreditCostInline display={videoCostDisplay} />
+                <CreditCostInline
+                  display={videoCostDisplay}
+                  promotion={videoCost.data?.data.promotion}
+                />
               </Button>
             )}
           </VideoParamField>
@@ -2523,7 +2529,10 @@ export function VideoPane({
                     : showHappyHorseConfig
                     ? t("episode.workbench.video.generateSubjectPrompt")
                     : t("episode.workbench.video.seedance2GeneratePrompt")}
-                  <CreditCostInline display={seedance2PromptCostDisplay} />
+                  <CreditCostInline
+                    display={seedance2PromptCostDisplay}
+                    promotion={seedance2PromptCost.data?.data.promotion}
+                  />
                 </Button>
                 {regenTask.started ? (
                   <Button
@@ -2556,7 +2565,10 @@ export function VideoPane({
                       <Film className="size-3" />
                     )}
                     {videoActionLabel}
-                    <CreditCostInline display={videoCostDisplay} />
+                    <CreditCostInline
+                      display={videoCostDisplay}
+                      promotion={videoCost.data?.data.promotion}
+                    />
                   </Button>
                 )}
               </div>

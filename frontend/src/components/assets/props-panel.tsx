@@ -323,6 +323,7 @@ function PropAssetCardController({
       uploading={uploadReference.isPending}
       referenceCount={referenceCount}
       referenceCost={referenceCostDisplay}
+      referencePromotion={referenceCost.data?.data.promotion}
       freezonePending={freezonePending}
       onEdit={onEdit}
       onDelete={onDelete}
@@ -477,7 +478,10 @@ export function PropsPanel({
             <Sparkles className="size-3.5" />
           )}
           {t("assets.props.batchGenerate")}
-          <CreditCostInline display={batchReferenceCost} />
+          <CreditCostInline
+            display={batchReferenceCost}
+            promotion={batchReferenceCostQuery.data?.data.promotion}
+          />
         </Button>
         <TooltipProvider delay={80}>
           <Tooltip>

@@ -254,6 +254,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
         <div className="mt-4 flex items-center justify-end gap-3 border-t border-white/10 pt-3">
           <CreditCostPill
             display={costDisplay}
+            promotion={creditCost.data?.data.promotion}
             className={NODE_CREDIT_PILL_FLAT_CLASS}
           />
           <button

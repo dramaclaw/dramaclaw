@@ -153,7 +153,7 @@ import {
 } from '@/features/freezone/context/mainlineContext';
 import { RegenerateButton } from '@/features/canvas/ui/RegenerateButton';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
-import { CreditCostPill, formatCreditCost } from '@/components/credits/credit-visual';
+import { CreditCostPill } from '@/components/credits/credit-visual';
 import {
   NODE_COUNT_POPOVER_CLASS,
   NODE_CREDIT_PILL_FLAT_CLASS,
@@ -453,14 +453,14 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const imageBillingRuleMissing =
     imageCreditCost.error instanceof BillingRuleNotConfiguredError;
   const totalCreditCostDisplay = useMemo(() => {
-    const total = imageCreditCost.data?.data.cost;
-    if (typeof total !== 'number') {
+    const display = imageCreditCost.data?.data.display;
+    if (!display) {
       return imageBillingRuleMissing
         ? t('common.billingRuleNotConfiguredShort')
         : null;
     }
-    return formatCreditCost(total);
-  }, [imageBillingRuleMissing, imageCreditCost.data?.data.cost, t]);
+    return display;
+  }, [imageBillingRuleMissing, imageCreditCost.data?.data.display, t]);
   const { options: cameraOptions } = useFreezoneCameraOptions();
   const cameraSummary = describeCameraSelection(cameraSelection, cameraOptions);
   const { templates: styleTemplates } = useFreezoneStyleTemplates();
@@ -1924,6 +1924,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             <div className="flex shrink-0 items-center gap-2">
               <CreditCostPill
                 display={totalCreditCostDisplay}
+                promotion={imageCreditCost.data?.data.promotion}
                 disabled={submitDisabled}
                 className={NODE_CREDIT_PILL_FLAT_CLASS}
               />

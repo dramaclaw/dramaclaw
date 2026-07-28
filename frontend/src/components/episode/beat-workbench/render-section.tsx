@@ -571,6 +571,7 @@ export function RenderSection({
                         ? t("common.billingRuleNotConfiguredShort")
                         : null)
                     }
+                    promotion={renderRegenCost.data?.data.promotion}
                   />
                 </Button>
               )}

@@ -298,7 +298,10 @@ export function BatchBar({
                 <Sparkles className="size-3.5" />
               )}
               {t("episode.workbench.batch.aiOptimize")}
-              <CreditCostInline display={globalOptimizeCostDisplay} />
+              <CreditCostInline
+                display={globalOptimizeCostDisplay}
+                promotion={globalOptimizeBillingQuote.data?.data.promotion}
+              />
             </Button>
           )}
           <Button
@@ -315,7 +318,10 @@ export function BatchBar({
               <Wand2 className="size-3.5" />
             )}
             {t("episode.workbench.batch.aiDetect")}
-            <CreditCostInline display={detectIdentitiesCostDisplay} />
+            <CreditCostInline
+              display={detectIdentitiesCostDisplay}
+              promotion={detectIdentitiesCost.data?.data.promotion}
+            />
           </Button>
           <Button
             size="sm"
@@ -376,6 +382,7 @@ export function BatchBar({
               <span aria-hidden="true" className="inline-flex min-w-7 justify-start">
                 <CreditCostPill
                   display={episodeAudioCostDisplay}
+                  promotion={episodeAudioBillingQuote.data?.data.promotion}
                   disabled={audioUnavailableForVideoBackend}
                   className="h-4 bg-transparent px-0 text-[11px]"
                 />
@@ -417,7 +424,14 @@ export function BatchBar({
               )}
             >
               {t("common.confirmExecute")}
-              <CreditCostInline display={confirmCostDisplay} />
+              <CreditCostInline
+                display={confirmCostDisplay}
+                promotion={
+                  confirm?.costSource === "episodeAudio"
+                    ? episodeAudioBillingQuote.data?.data.promotion
+                    : globalOptimizeBillingQuote.data?.data.promotion
+                }
+              />
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

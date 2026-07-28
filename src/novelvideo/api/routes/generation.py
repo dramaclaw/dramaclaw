@@ -2302,12 +2302,21 @@ async def audio_generation_billing_quote(
                 "prereq_errors": errors,
             },
         }
-    quote = await get_credit_quote().generation_credit_quote(
-        kind="feature",
-        model="mainline.beat_audio_generation",
-        params=_audio_billing_payload(beat_numbers),
-        quantity=quantity,
-    )
+    quote_args = {
+        "kind": "feature",
+        "model": "mainline.beat_audio_generation",
+        "params": _audio_billing_payload(beat_numbers),
+        "quantity": quantity,
+    }
+    try:
+        quote = await get_credit_quote().generation_credit_quote(
+            **quote_args,
+            user_id=str(user.get("id") or user.get("user_id") or ""),
+        )
+    except TypeError as exc:
+        if "user_id" not in str(exc):
+            raise
+        quote = await get_credit_quote().generation_credit_quote(**quote_args)
     return {
         "ok": True,
         "data": {
@@ -2317,6 +2326,15 @@ async def audio_generation_billing_quote(
             "cost": quote.total_cost,
             "display": quote.display,
             "prereq_errors": errors,
+            **(
+                {
+                    "original_cost": getattr(quote, "original_total_cost", None),
+                    "discount_amount": getattr(quote, "discount_amount", None),
+                    "promotion": getattr(quote, "promotion", None),
+                }
+                if getattr(quote, "promotion", None)
+                else {}
+            ),
         },
     }
 
@@ -2450,12 +2468,21 @@ async def global_optimize_video_billing_quote(
                 "display": "",
             },
         }
-    quote = await get_credit_quote().generation_credit_quote(
-        kind="feature",
-        model="mainline.beat_video_prompt",
-        params={},
-        quantity=quantity,
-    )
+    quote_args = {
+        "kind": "feature",
+        "model": "mainline.beat_video_prompt",
+        "params": {},
+        "quantity": quantity,
+    }
+    try:
+        quote = await get_credit_quote().generation_credit_quote(
+            **quote_args,
+            user_id=str(user.get("id") or user.get("user_id") or ""),
+        )
+    except TypeError as exc:
+        if "user_id" not in str(exc):
+            raise
+        quote = await get_credit_quote().generation_credit_quote(**quote_args)
     return {
         "ok": True,
         "data": {
@@ -2464,6 +2491,15 @@ async def global_optimize_video_billing_quote(
             "unit_cost": quote.unit_cost,
             "cost": quote.total_cost,
             "display": quote.display,
+            **(
+                {
+                    "original_cost": getattr(quote, "original_total_cost", None),
+                    "discount_amount": getattr(quote, "discount_amount", None),
+                    "promotion": getattr(quote, "promotion", None),
+                }
+                if getattr(quote, "promotion", None)
+                else {}
+            ),
         },
     }
 
