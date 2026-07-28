@@ -157,6 +157,11 @@ function invalidateCompletedAssetQueries(
   }
 }
 
+function invalidateCreditQueries(queryClient: QueryClient): void {
+  queryClient.invalidateQueries({ queryKey: queryKeys.creditSummary() });
+  queryClient.invalidateQueries({ queryKey: ["credits", "transactions"] });
+}
+
 function isTypingInForm(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
@@ -325,6 +330,17 @@ export function TaskCenterProvider({
             Date.now() - completedAt < TOAST_FRESHNESS_MS;
           const sawRunning = prev !== null && !isTerminal(prev);
           const firstFreshObservation = isFresh && prev === null;
+
+          // A newly submitted task has already reserved credits. A terminal
+          // transition confirms or refunds that reservation. Refresh the
+          // user-facing balance at those lifecycle boundaries without
+          // refetching on every progress update or historical snapshot row.
+          if (
+            (source !== "snapshot" && prev === null)
+            || (sawRunning && isTerminal(task))
+          ) {
+            invalidateCreditQueries(queryClient);
+          }
 
           // Invalidate asset queries for any genuinely-new completion, even
           // when it arrives via a reconnect/hydration snapshot — otherwise an
