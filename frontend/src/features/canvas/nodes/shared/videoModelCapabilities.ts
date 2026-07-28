@@ -44,6 +44,12 @@ export function isSeedance2VideoModel(modelId: string | null | undefined): boole
   return /seedance2/.test(normalizeVideoModelId(modelId));
 }
 
+// 基础款 Seedance 2.0（`…seedance-2.0` 本体，不含 fast / value / fast-value 变体）。
+// 归一化后以 `seedance20` 结尾即为基础款——变体都会在后面多出 `fast` / `value` 后缀。
+function isBaseSeedance2VideoModel(modelId: string | null | undefined): boolean {
+  return /seedance20$/.test(normalizeVideoModelId(modelId));
+}
+
 /**
  * 指定模型是否支持某 genMode（与可见 tab / 切模型时是否重置残留模式口径一致）。
  * - HappyHorse：文生 / 首帧(i2v) / 图片参考(r2v) / 视频编辑。
@@ -239,4 +245,85 @@ export function videoSubmitMediaRejectionReason(
     return "该模型单次仅支持 1 张图片";
   }
   return null;
+}
+
+/**
+ * 模型选择器里某个候选**为什么不能选**（非 null 则置灰 + 悬浮显示这句理由）。
+ *
+ * 与上面的 `videoSubmitMediaRejectionReason` 是一对：那条管「选定模型后能不能提交」，
+ * 这条管「带着当前这堆上游素材，还能不能切到这个模型」。两者的阈值必须一致，否则会出现
+ * 「提交守卫说单图可以，选择器却不让你选」这种自相矛盾的状态。
+ *
+ * Seedance 1.x 的阈值是 **>1 图**，不是 >0：后端 i2v 端点只在 `len(source_paths) > 1`
+ * 且非 2.0 非 HappyHorse 时才 400（freezone.py），单图首帧正是 1.x 唯一能用、也是
+ * `videoEmptyStateCtaModes` 明确推荐给它的模式。写成 >0 会把「一张图 + Seedance 1.5 Pro」
+ * 这个完全合法的常规组合整个锁死。
+ */
+export function videoModelReferenceDisabledReason(
+  modelId: string | null | undefined,
+  counts: { images: number; videos: number; audios: number },
+): string | null {
+  if (isGrokVideoChannelModel(modelId)) {
+    if (counts.videos > 0 || counts.audios > 0) {
+      return "Grok Video Channel 仅支持图片素材";
+    }
+    if (counts.images > 8) {
+      return "Grok Video Channel 最多支持 1 张首帧和 7 张参考图";
+    }
+    return null;
+  }
+  if (isSeedance1xVideoModel(modelId)) {
+    if (counts.videos > 0 || counts.audios > 0) {
+      return "该模型仅支持图片素材";
+    }
+    if (counts.images > 1) {
+      return "该模型单次仅支持 1 张图片";
+    }
+  }
+  return null;
+}
+
+export interface VideoReferenceAutoSwitch {
+  /** 目标模型的 `id`（存进 `VideoNodeData.model` 的那个值，不是 apiModel）。 */
+  modelId: string;
+  genMode: VideoGenMode;
+}
+
+/**
+ * 上游接入视频 / 音频时的**自动救场**：Seedance 1.x 根本消费不了这两类素材
+ * （i2v 端点只收图，omni 端点非 2.0 直接 400），把用户留在 1.x 上只能得到一次
+ * 必然失败的提交。用户连上视频/音频节点这个动作本身就是明确意图，所以直接替他
+ * 换成能吃这些素材的 Seedance 2.0，并落到唯一能消费它们的「全能参考」。
+ *
+ * 只管 Seedance 1.x：
+ * - HappyHorse 有自己的「视频编辑」路径，能吃视频，不该被抢走；
+ * - Grok Video Channel 是用户显式选的独立渠道，只支持图片，这里不替他改渠道，
+ *   继续由选择器置灰 + 提交守卫兜底；
+ * - 2.0 本来就支持，无需动。
+ *
+ * 素材计数请传**按节点类型**的口径（空的视频节点也算），并且和喂给
+ * `videoModelReferenceDisabledReason` 的口径保持同源 —— 否则会出现「effect 把模型
+ * 切走、选择器又允许切回来」的来回打架。
+ *
+ * 目标锁定**基础款 Seedance 2.0**，而不是列表里排最前的 `Seedance2.0 Fast`：fast 是
+ * 提速降档的变体，替用户救场时把他悄悄放到降档模型上不合适；基础款也正是后端
+ * `FreezoneVideoGenRequest.model` 的默认值。基础款不在候选列表里（接口只下发了变体）
+ * 时退到任意一个 2.0——总比让他卡在必然失败的 1.x 上强；一个 2.0 都没有则返回 null，
+ * 宁可不动也不要瞎切。
+ */
+export function videoReferenceAutoSwitch(
+  currentModelId: string | null | undefined,
+  counts: { videos: number; audios: number },
+  models: readonly { id: string; apiModel?: string }[],
+): VideoReferenceAutoSwitch | null {
+  if (counts.videos === 0 && counts.audios === 0) {
+    return null;
+  }
+  if (!isSeedance1xVideoModel(currentModelId)) {
+    return null;
+  }
+  const target =
+    models.find((model) => isBaseSeedance2VideoModel(model.apiModel ?? model.id)) ??
+    models.find((model) => isSeedance2VideoModel(model.apiModel ?? model.id));
+  return target ? { modelId: target.id, genMode: "allReference" } : null;
 }

@@ -15,6 +15,8 @@ import {
   isVideoModeSupportedByModel,
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
+  videoModelReferenceDisabledReason,
+  videoReferenceAutoSwitch,
   videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
@@ -184,6 +186,133 @@ describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", ()
     expect(
       videoSubmitMediaRejectionReason("imageReference", HAPPYHORSE, { images: 5, videos: 0, audios: 0 }),
     ).toBeNull();
+  });
+});
+
+describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", () => {
+  const none = { images: 0, videos: 0, audios: 0 };
+
+  // 回归：曾经写成 `counts.images > 0` 一律置灰，一张图片节点就把整个 Seedance 1 系列
+  // 锁死 —— 而单图首帧恰恰是 1.x 唯一能用的模式，后端也只在 >1 图时才 400。
+  it("Seedance 1.x：单图 → 可选（不置灰）", () => {
+    for (const id of [SEEDANCE10_PRO_FAST, SEEDANCE15_PRO]) {
+      expect(videoModelReferenceDisabledReason(id, { ...none, images: 1 })).toBeNull();
+      expect(videoModelReferenceDisabledReason(id, none)).toBeNull();
+    }
+  });
+
+  it("Seedance 1.x：>1 图 → 置灰", () => {
+    expect(
+      videoModelReferenceDisabledReason(SEEDANCE15_PRO, { ...none, images: 2 }),
+    ).toBeTruthy();
+  });
+
+  it("Seedance 1.x：接入视频 / 音频 → 置灰", () => {
+    expect(
+      videoModelReferenceDisabledReason(SEEDANCE10_PRO_FAST, { ...none, videos: 1 }),
+    ).toBeTruthy();
+    expect(
+      videoModelReferenceDisabledReason(SEEDANCE10_PRO_FAST, { ...none, audios: 1 }),
+    ).toBeTruthy();
+  });
+
+  // 两条守卫是一对，阈值漂开就会出现「能选但一提交就被拦」或反过来的自相矛盾。
+  it("与提交守卫同阈值：单图放行 / 多图拦截的判定一致", () => {
+    for (const images of [0, 1, 2, 9]) {
+      const counts = { ...none, images };
+      const pickerBlocked = videoModelReferenceDisabledReason(SEEDANCE15_PRO, counts) != null;
+      const submitBlocked =
+        videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE15_PRO, counts) != null;
+      expect(pickerBlocked).toBe(submitBlocked);
+    }
+  });
+
+  it("Seedance 2.0 / HappyHorse：多图 + 视频 + 音频都不置灰", () => {
+    for (const id of [SEEDANCE2_FAST, SEEDANCE2_VALUE, HAPPYHORSE]) {
+      expect(
+        videoModelReferenceDisabledReason(id, { images: 9, videos: 1, audios: 1 }),
+      ).toBeNull();
+    }
+  });
+
+  it("Grok Video Channel：仅图片、且最多 8 张", () => {
+    const GROK = "newapi_grok-video-channel";
+    expect(videoModelReferenceDisabledReason(GROK, { ...none, images: 8 })).toBeNull();
+    expect(videoModelReferenceDisabledReason(GROK, { ...none, images: 9 })).toBeTruthy();
+    expect(videoModelReferenceDisabledReason(GROK, { ...none, videos: 1 })).toBeTruthy();
+    expect(videoModelReferenceDisabledReason(GROK, { ...none, audios: 1 })).toBeTruthy();
+  });
+});
+
+describe("videoReferenceAutoSwitch — 接入视频/音频时替 1.x 换成 2.0", () => {
+  // 选择器的真实顺序：Fast 排在基础款 2.0 前面（见 ProviderModelPicker VIDEO_MODELS）。
+  // 这个顺序是关键——挑目标不能图省事取「第一个 2.0」，那会落到 Fast 上。
+  const SEEDANCE2_BASE = "newapi_seedance-2.0";
+  const MODELS = [
+    { id: SEEDANCE2_FAST, apiModel: SEEDANCE2_FAST },
+    { id: SEEDANCE2_BASE, apiModel: SEEDANCE2_BASE },
+    { id: SEEDANCE2_VALUE, apiModel: SEEDANCE2_VALUE },
+    { id: SEEDANCE15_PRO, apiModel: SEEDANCE15_PRO },
+    { id: SEEDANCE10_PRO_FAST, apiModel: SEEDANCE10_PRO_FAST },
+  ];
+
+  it("Seedance 1.x + 视频 → 换成基础款 2.0（不是排在前面的 Fast），并落到全能参考", () => {
+    expect(videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, MODELS)).toEqual(
+      { modelId: SEEDANCE2_BASE, genMode: "allReference" },
+    );
+  });
+
+  it("Seedance 1.x + 音频 → 同样切到基础款 2.0", () => {
+    expect(videoReferenceAutoSwitch(SEEDANCE15_PRO, { videos: 0, audios: 1 }, MODELS)).toEqual({
+      modelId: SEEDANCE2_BASE,
+      genMode: "allReference",
+    });
+  });
+
+  it("候选里没有基础款（只下发了 fast / value 变体）→ 退到任意一个 2.0", () => {
+    expect(
+      videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, [
+        { id: SEEDANCE2_VALUE, apiModel: SEEDANCE2_VALUE },
+        { id: SEEDANCE2_FAST, apiModel: SEEDANCE2_FAST },
+      ])?.modelId,
+    ).toBe(SEEDANCE2_VALUE);
+  });
+
+  it("Seedance 1.x 但只有图片 / 什么都没连 → 不动（单图首帧是它的正常用法）", () => {
+    expect(videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, { videos: 0, audios: 0 }, MODELS)).toBeNull();
+  });
+
+  it("返回的是 id 而非 apiModel —— 存进 VideoNodeData.model 的是 id", () => {
+    const renamed = [{ id: "picker-id-2.0", apiModel: "newapi_seedance-2.0" }];
+    expect(videoReferenceAutoSwitch(SEEDANCE15_PRO, { videos: 1, audios: 0 }, renamed)?.modelId).toBe(
+      "picker-id-2.0",
+    );
+  });
+
+  it("2.0 / HappyHorse / Grok 都不抢：各有自己的路径或渠道", () => {
+    for (const id of [SEEDANCE2_FAST, HAPPYHORSE, "newapi_grok-video-channel"]) {
+      expect(videoReferenceAutoSwitch(id, { videos: 1, audios: 1 }, MODELS)).toBeNull();
+    }
+  });
+
+  it("候选列表里没有 2.0（接口异常）→ 宁可不动也不瞎切", () => {
+    expect(
+      videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, [
+        { id: SEEDANCE15_PRO, apiModel: SEEDANCE15_PRO },
+      ]),
+    ).toBeNull();
+    expect(videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, { videos: 1, audios: 0 }, [])).toBeNull();
+  });
+
+  // 切完必须自洽：新模型 + 新模式既不该被选择器置灰，也不该被提交守卫拦下，
+  // 否则就是把用户从一个死胡同推进另一个。
+  it("切换结果自洽：目标模型在同样的素材下既不置灰也不被提交守卫拦", () => {
+    const counts = { images: 1, videos: 1, audios: 1 };
+    const next = videoReferenceAutoSwitch(SEEDANCE10_PRO_FAST, counts, MODELS);
+    expect(next).not.toBeNull();
+    expect(videoModelReferenceDisabledReason(next!.modelId, counts)).toBeNull();
+    expect(videoSubmitMediaRejectionReason(next!.genMode, next!.modelId, counts)).toBeNull();
+    expect(isVideoModeSupportedByModel(next!.genMode, next!.modelId)).toBe(true);
   });
 });
 
