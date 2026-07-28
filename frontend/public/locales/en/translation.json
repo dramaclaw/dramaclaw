@@ -2869,6 +2869,9 @@
       "unlock": "Unlock Canvas",
       "organize": "Organize / Locate Canvas",
       "organizeShortcut": "⌥⇧F",
+      "toolMove": "Move",
+      "toolHand": "Hand",
+      "toolGroupLabel": "Canvas pointer tool",
       "hideEdges": "Hide connections",
       "showEdges": "Show connections"
     },

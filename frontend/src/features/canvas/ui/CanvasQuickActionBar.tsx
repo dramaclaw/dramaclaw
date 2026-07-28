@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Clock, HelpCircle, Keyboard, Plus } from 'lucide-react';
+import { Clock, Hand, HelpCircle, Keyboard, MousePointer2, Plus } from 'lucide-react';
 
 import type { CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 import type { CanvasAsset } from '@/features/canvas/domain/canvasAssets';
@@ -11,12 +11,18 @@ import type { SkillDefinition } from '@/features/freezone/context/skillRoles';
 import { CanvasAddNodePanel } from './CanvasAddNodePanel';
 import { CanvasShortcutsPanel } from './CanvasShortcutsPanel';
 import { CanvasHistoryAssetsModal } from './CanvasHistoryAssetsModal';
+import { CanvasToolMenu } from './CanvasToolMenu';
+import { useCanvasToolStore } from './canvasToolStore';
 
-type QuickPanel = 'add' | 'history' | 'shortcuts' | 'help';
+type QuickPanel = 'add' | 'tool' | 'history' | 'shortcuts' | 'help';
 
 // 悬停即开 / 离开延迟关闭的轻量 popover 面板（区别于 history 那种 modal）。
 const HOVER_POPOVER_PANELS: ReadonlySet<QuickPanel> = new Set(['add']);
-const ANCHORED_POPOVER_PANELS: ReadonlySet<QuickPanel> = new Set(['add', 'shortcuts']);
+const ANCHORED_POPOVER_PANELS: ReadonlySet<QuickPanel> = new Set([
+  'add',
+  'tool',
+  'shortcuts',
+]);
 const PRODUCT_MANUAL_URL = 'https://neo-flying.feishu.cn/docx/T2UgdVA4Fo1A5KxCh0vckDz3nTg';
 
 interface CanvasQuickActionBarProps {
@@ -40,6 +46,8 @@ interface QuickActionDef {
 
 const ACTIONS: QuickActionDef[] = [
   { key: 'add', icon: Plus, labelKey: 'canvas.quickbar.addNode', primary: true },
+  // 指针工具。图标跟着当前工具走（见下方 resolveIcon），所以这里的 icon 只是占位。
+  { key: 'tool', icon: MousePointer2, labelKey: 'canvas.toolbar.toolGroupLabel' },
   {
     key: 'history',
     icon: Clock,
@@ -73,6 +81,7 @@ export function CanvasQuickActionBar({
   const [openPanel, setOpenPanel] = useState<QuickPanel | null>(null);
   const popoverCloseTimerRef = useRef<number | null>(null);
   const isTop = placement === 'top-right';
+  const handToolActive = useCanvasToolStore((state) => state.tool === 'hand');
 
   const cancelPopoverClose = () => {
     if (popoverCloseTimerRef.current !== null) {
@@ -183,11 +192,22 @@ export function CanvasQuickActionBar({
 
           <div className="flex h-12 items-center gap-2.5 rounded-[12px] border border-white/[0.08] bg-[#11151d]/95 px-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.42)] backdrop-blur-md">
             {ACTIONS.map((action) => {
-              const { key, icon: Icon, labelKey, tooltipKey, primary } = action;
+              const { key, labelKey, tooltipKey, primary } = action;
               const active = openPanel === key;
+              // 指针工具的图标就是当前工具本身 —— 收起菜单后还得一眼看出现在是抓手。
+              const Icon =
+                key === 'tool' ? (handToolActive ? Hand : MousePointer2) : action.icon;
+              // 指针工具的悬浮提示报当前工具和它的快捷键，别只报「指针工具」这个类别名。
+              const tooltip =
+                key === 'tool'
+                  ? handToolActive
+                    ? `${t('canvas.toolbar.toolHand')} H`
+                    : `${t('canvas.toolbar.toolMove')} V`
+                  : tooltipKey && t(tooltipKey);
               // The "+" is always a white primary chip; the other two only fill
               // white while their panel is open (libtv keyboard-highlight style).
-              const filled = primary || active;
+              // 指针工具多一条：抓手是「画布现在不听左键选择」的状态，菜单关了也要亮着。
+              const filled = primary || active || (key === 'tool' && handToolActive);
               return (
                 <span key={key} className="group relative inline-flex">
                   <button
@@ -211,14 +231,23 @@ export function CanvasQuickActionBar({
                       }`}
                     />
                   </button>
-                  {tooltipKey && (
+                  {/* 面板开着就别再弹提示了：两者都锚在按钮正上方，会糊在一起。 */}
+                  {tooltip && !active && (
                     <span
                       className={`pointer-events-none absolute left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-[6px] border border-white/[0.08] bg-[#11151d]/95 px-2 py-1 text-[11px] leading-none text-white/78 opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.32)] transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 ${
                         isTop ? 'top-full mt-2' : 'bottom-full mb-2'
                       }`}
                     >
-                      {t(tooltipKey)}
+                      {tooltip}
                     </span>
+                  )}
+                  {/* 挂在按钮自己的 span 上，菜单跟着按钮走，不用去算它在这一排里的偏移。 */}
+                  {key === 'tool' && active && (
+                    <div className={`absolute left-0 z-20 ${popoverAnchorClass}`}>
+                      <div className={popoverEnterClass}>
+                        <CanvasToolMenu onSelect={() => setOpenPanel(null)} />
+                      </div>
+                    </div>
                   )}
                 </span>
               );

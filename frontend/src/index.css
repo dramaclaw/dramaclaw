@@ -619,6 +619,13 @@
   cursor: grabbing;
 }
 
+/* 抓手工具（H）下左键拖到节点上也是在平移画布。节点本身已经是 grab（见上面的
+   .react-flow__node），这里只补平移中的握拳——节点在 pane 的子树里，用 .dragging
+   的 pane 当祖先就能盖住节点自己的 grab。 */
+[data-canvas-tool='hand'] .react-flow__pane.dragging .react-flow__node {
+  cursor: grabbing;
+}
+
 .react-flow__handle {
   width: 8px;
   height: 8px;

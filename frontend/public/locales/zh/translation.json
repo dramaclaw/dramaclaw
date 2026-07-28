@@ -2869,6 +2869,9 @@
       "unlock": "解锁画布",
       "organize": "整理 / 定位画布",
       "organizeShortcut": "⌥⇧F",
+      "toolMove": "移动工具",
+      "toolHand": "抓手工具",
+      "toolGroupLabel": "画布指针工具",
       "hideEdges": "隐藏连线",
       "showEdges": "显示连线"
     },
