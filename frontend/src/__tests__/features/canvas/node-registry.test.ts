@@ -76,6 +76,21 @@ describe("建边白名单", () => {
     );
   });
 
+  it("「人声/背景音分离」留下的视频 → 音频溯源边合法", () => {
+    // NodeActionToolbar 的音视频分离动作从一个视频节点同时产出「背景音」音频节点
+    // 与「无声」视频节点，两条边都画回源视频。音频那条边曾被建边收口静默丢掉。
+    expect(isUpstreamConnectionAllowed(CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.audio)).toBe(
+      true,
+    );
+    expect(isUpstreamConnectionAllowed(CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.video)).toBe(
+      true,
+    );
+    // 放开 video 不等于放开所有类型：图片仍然连不进音频节点。
+    expect(isUpstreamConnectionAllowed(CANVAS_NODE_TYPES.imageGen, CANVAS_NODE_TYPES.audio)).toBe(
+      false,
+    );
+  });
+
   it("新增的下游白名单不误伤既有连线", () => {
     // 文本 → 音频（音频节点唯一的合法上游）仍然放行。
     expect(
