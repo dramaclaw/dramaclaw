@@ -1800,7 +1800,27 @@ export const VideoNode = memo(
     // 是正常顺序，等它出了 URL 再切模型就太迟了（用户中间会看见一个不该出现的 1.x）。
     // 模型和模式必须一次 patch 写完：分两步会先渲染出「2.0 + 图生视频」的中间态，
     // 再被下面那条 videos→allReference 的 effect 纠一次，白闪一帧。
+    //
+    // 只在「没有 → 有视频/音频」这一次跳变时触发，**不能每次渲染都无条件纠正**：
+    // updateNodeData 每次都 pushSnapshot 且清空 future（canvasStore），若持续纠正，
+    // 用户 ⌘Z 恢复回 1.x 后边还在，effect 立刻把 2.0 写回去、再压一条 past ——
+    // 撤销看起来毫无反应，redo 栈还被清空，等于把「回到连线之前」这条路堵死。改的
+    // 又是 model 这种用户显式挑过的值，无声覆盖且撤不回来，性质比 genMode 重得多。
+    // 一次性触发也不会被绕过：素材在场期间选择器已经把 1.x 置灰了，切不回去。
+    // 与紧邻上面那条音频 → allReference 的 effect 用的是同一套闩锁。
+    const autoSwitchedForMediaRef = useRef(false);
     useEffect(() => {
+      const hasReferenceMedia =
+        upstreamTypeCounts.videos > 0 || upstreamTypeCounts.audios > 0;
+      if (!hasReferenceMedia) {
+        autoSwitchedForMediaRef.current = false;
+        return;
+      }
+      // 模型列表还没拉到时先别落闩：否则「挂载时素材已在场 + 列表未就绪」会把这次
+      // 跳变白白消耗掉，列表到了也不再补救。
+      if (availableVideoModels.length === 0) return;
+      if (autoSwitchedForMediaRef.current) return;
+      autoSwitchedForMediaRef.current = true;
       const next = videoReferenceAutoSwitch(
         selectedVideoModelId,
         upstreamTypeCounts,

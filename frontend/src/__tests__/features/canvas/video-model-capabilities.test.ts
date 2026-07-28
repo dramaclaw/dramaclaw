@@ -227,12 +227,23 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
     }
   });
 
-  it("Seedance 2.0 / HappyHorse：多图 + 视频 + 音频都不置灰", () => {
-    for (const id of [SEEDANCE2_FAST, SEEDANCE2_VALUE, HAPPYHORSE]) {
+  it("Seedance 2.0：多图 + 视频 + 音频都不置灰（全能参考全吃）", () => {
+    for (const id of [SEEDANCE2_FAST, SEEDANCE2_VALUE]) {
       expect(
         videoModelReferenceDisabledReason(id, { images: 9, videos: 1, audios: 1 }),
       ).toBeNull();
     }
+  });
+
+  it("HappyHorse：多图 / 视频不置灰（r2v 与视频编辑各有路径），音频置灰", () => {
+    expect(
+      videoModelReferenceDisabledReason(HAPPYHORSE, { images: 9, videos: 1, audios: 0 }),
+    ).toBeNull();
+    // 音频只有全能参考(2.0)能消费，而 HappyHorse 永远到不了 allReference —— 不拦
+    // 就会把用户放进「选得进去、提交必被拦」的死胡同。
+    expect(
+      videoModelReferenceDisabledReason(HAPPYHORSE, { ...none, audios: 1 }),
+    ).toBeTruthy();
   });
 
   it("Grok Video Channel：仅图片、且最多 8 张", () => {
@@ -241,6 +252,54 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
     expect(videoModelReferenceDisabledReason(GROK, { ...none, images: 9 })).toBeTruthy();
     expect(videoModelReferenceDisabledReason(GROK, { ...none, videos: 1 })).toBeTruthy();
     expect(videoModelReferenceDisabledReason(GROK, { ...none, audios: 1 })).toBeTruthy();
+  });
+});
+
+// 两条守卫真正要维持的不变量——不是逐条阈值相等（HappyHorse 的多图/视频由它自己的
+// 路径消化，两边判断本就不同），而是「选得进去就必须走得通」。这条网格测试就是当年
+// 「HappyHorse + 音频」那类死胡同的探照灯：选择器放行、却没有任何一个它支持的模式能
+// 通过提交守卫。Grok 不在网格里：后端 FREEZONE_DISABLED_VIDEO_BACKENDS 把它关掉了，
+// 压根不会出现在选择器中，它那条分支是休眠的。
+describe("置灰守卫 × 提交守卫 — 不置灰的组合必须存在可提交的模式", () => {
+  const ALL_MODES: VideoGenMode[] = [
+    "textToVideo",
+    "imageToVideo",
+    "imageReference",
+    "allReference",
+    "firstLastFrame",
+    "videoEdit",
+  ];
+  const PICKER_MODELS = [
+    SEEDANCE10_PRO_FAST,
+    SEEDANCE15_PRO,
+    SEEDANCE2_FAST,
+    SEEDANCE2_VALUE,
+    HAPPYHORSE,
+  ];
+
+  it("对每个模型 × 每种素材组合都成立", () => {
+    const deadEnds: string[] = [];
+    for (const modelId of PICKER_MODELS) {
+      for (const images of [0, 1, 2, 9]) {
+        for (const videos of [0, 1]) {
+          for (const audios of [0, 1]) {
+            const counts = { images, videos, audios };
+            if (videoModelReferenceDisabledReason(modelId, counts) != null) {
+              continue; // 已置灰 —— 用户选不进来，谈不上死胡同
+            }
+            const usable = ALL_MODES.some(
+              (mode) =>
+                isVideoModeSupportedByModel(mode, modelId) &&
+                videoSubmitMediaRejectionReason(mode, modelId, counts) == null,
+            );
+            if (!usable) {
+              deadEnds.push(`${modelId} + ${JSON.stringify(counts)}`);
+            }
+          }
+        }
+      }
+    }
+    expect(deadEnds).toEqual([]);
   });
 });
 

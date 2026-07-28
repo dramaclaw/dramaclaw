@@ -251,13 +251,23 @@ export function videoSubmitMediaRejectionReason(
  * 模型选择器里某个候选**为什么不能选**（非 null 则置灰 + 悬浮显示这句理由）。
  *
  * 与上面的 `videoSubmitMediaRejectionReason` 是一对：那条管「选定模型后能不能提交」，
- * 这条管「带着当前这堆上游素材，还能不能切到这个模型」。两者的阈值必须一致，否则会出现
- * 「提交守卫说单图可以，选择器却不让你选」这种自相矛盾的状态。
+ * 这条管「带着当前这堆上游素材，还能不能切到这个模型」。要维持的不变量是
+ * **「不置灰 ⇒ 存在一个该模型支持、且提交守卫放行的模式」**——不是逐条阈值相等。
+ * 逐条相等这个说法在这里不成立：HappyHorse 的多图 / 视频都由它自己的 r2v / 视频编辑
+ * 路径消化，两条守卫本来就写着不同的判断；真正不能破的是「选得进去就必须走得通」，
+ * 否则用户会被放进一个提交必被拦、界面上又毫无预兆的死胡同。
  *
- * Seedance 1.x 的阈值是 **>1 图**，不是 >0：后端 i2v 端点只在 `len(source_paths) > 1`
- * 且非 2.0 非 HappyHorse 时才 400（freezone.py），单图首帧正是 1.x 唯一能用、也是
- * `videoEmptyStateCtaModes` 明确推荐给它的模式。写成 >0 会把「一张图 + Seedance 1.5 Pro」
- * 这个完全合法的常规组合整个锁死。
+ * 三处阈值的由来：
+ * - Seedance 1.x 是 **>1 图**，不是 >0：后端 i2v 端点只在 `len(source_paths) > 1`
+ *   且非 2.0 非 HappyHorse 时才 400（freezone.py），单图首帧正是 1.x 唯一能用、也是
+ *   `videoEmptyStateCtaModes` 明确推荐给它的模式。写成 >0 会把「一张图 + Seedance
+ *   1.5 Pro」这个完全合法的常规组合整个锁死。
+ * - HappyHorse 只拦音频：音频只有全能参考(omni, 2.0)能消费，而
+ *   `isVideoModeSupportedByModel` 里 HappyHorse 永远到不了 allReference——不拦的话
+ *   「HappyHorse + 音频节点」就是上面说的那种死胡同（选得进去、提交必被拦）。
+ *   它的多图（r2v）和视频（视频编辑）都能消化，不拦。
+ * - Grok Video Channel 只支持图片。注：它当前在后端是关掉的
+ *   （`FREEZONE_DISABLED_VIDEO_BACKENDS`），不会出现在选择器里，这条分支是休眠的。
  */
 export function videoModelReferenceDisabledReason(
   modelId: string | null | undefined,
@@ -269,6 +279,12 @@ export function videoModelReferenceDisabledReason(
     }
     if (counts.images > 8) {
       return "Grok Video Channel 最多支持 1 张首帧和 7 张参考图";
+    }
+    return null;
+  }
+  if (isHappyHorseVideoModel(modelId)) {
+    if (counts.audios > 0) {
+      return "该模型不支持音频素材";
     }
     return null;
   }
