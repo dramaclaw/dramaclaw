@@ -6727,6 +6727,17 @@ async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | Non
     return await catalog.list_models(media_type)
 
 
+def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
+    """Return new and legacy identifiers accepted at the API boundary."""
+    return {
+        str(entry.get("catalogId") or ""),
+        str(entry.get("catalog_id") or ""),
+        str(entry.get("id") or ""),
+        str(entry.get("apiModel") or ""),
+        str(entry.get("gatewayModel") or ""),
+    }
+
+
 async def _resolve_catalog_request(
     media_type: str,
     model: str | None,
@@ -6739,12 +6750,7 @@ async def _resolve_catalog_request(
         (
             item
             for item in (await _ee_media_model_catalog(media_type)) or []
-            if requested
-            in {
-                str(item.get("id") or ""),
-                str(item.get("apiModel") or ""),
-                str(item.get("gatewayModel") or ""),
-            }
+            if requested in _catalog_entry_identifiers(item)
         ),
         None,
     )
@@ -6787,12 +6793,7 @@ async def _catalog_video_capabilities(model: str | None) -> dict[str, Any] | Non
         (
             item
             for item in (await _ee_media_model_catalog("video")) or []
-            if requested
-            in {
-                str(item.get("id") or ""),
-                str(item.get("apiModel") or ""),
-                str(item.get("gatewayModel") or ""),
-            }
+            if requested in _catalog_entry_identifiers(item)
         ),
         None,
     )
@@ -6867,10 +6868,7 @@ async def _resolve_catalog_video_backend(model: str | None) -> str:
     requested = str(model or "").strip()
     if requested:
         for entry in (await _ee_media_model_catalog("video")) or []:
-            if requested in {
-                str(entry.get("id") or ""),
-                str(entry.get("apiModel") or ""),
-            }:
+            if requested in _catalog_entry_identifiers(entry):
                 return str(entry.get("apiModel") or requested)
     return resolve_freezone_video_backend(model)
 

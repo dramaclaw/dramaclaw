@@ -6117,6 +6117,40 @@ async def test_freezone_image_models_prefers_ee_catalog(
 
 
 @pytest.mark.asyncio
+async def test_catalog_id_resolves_without_breaking_legacy_model_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = [
+        {
+            "catalogId": "01TESTCATALOG0000000000000",
+            "catalog_id": "01TESTCATALOG0000000000000",
+            "id": "newapi_seedance-2.0",
+            "apiModel": "newapi_seedance-2.0",
+            "gatewayModel": "seedance-2.0",
+        }
+    ]
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "video"
+        return catalog
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+
+    assert (
+        await freezone_routes._resolve_catalog_video_backend(
+            "01TESTCATALOG0000000000000"
+        )
+        == "newapi_seedance-2.0"
+    )
+    assert (
+        await freezone_routes._resolve_catalog_video_backend(
+            "newapi_seedance-2.0"
+        )
+        == "newapi_seedance-2.0"
+    )
+
+
+@pytest.mark.asyncio
 async def test_freezone_image_models_preserves_empty_ee_catalog(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

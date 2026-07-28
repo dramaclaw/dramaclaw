@@ -36,6 +36,8 @@ export interface ProviderOption {
 }
 
 export interface ModelOption {
+  /** Opaque database identity used by new billing and task records. */
+  catalogId?: string;
   id: string;
   providerId: ProviderId;
   apiModel: string;

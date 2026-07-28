@@ -840,6 +840,8 @@ export interface MediaModelRequestSchema {
 }
 
 export interface FreezoneImageModelInfo {
+  /** Opaque database identity used by new billing and task records. */
+  catalogId?: string;
   /** Stable picker id, e.g. `"huimeng/gpt-image-2"`. */
   id: string;
   /** Provider tab id (`huimeng` / `openrouter` / `openai`). */
@@ -944,7 +946,9 @@ function modelEntryFromObject(entry: Record<string, unknown>): FreezoneImageMode
     inferProvider(apiModel);
   const id = pickString(entry, "id") ?? `${providerId}/${apiModel}`;
   const label = pickString(entry, "label", "displayName", "display_name") ?? apiModel;
+  const catalogId = pickString(entry, "catalogId", "catalog_id");
   return {
+    ...(catalogId ? { catalogId } : {}),
     id,
     providerId,
     apiModel,
@@ -1028,6 +1032,8 @@ export async function fetchFreezoneImageModels(
 export type FreezoneVideoProvider = "newapi" | "seedance" | "huimeng";
 
 export interface FreezoneVideoModelInfo {
+  /** Opaque database identity used by new billing and task records. */
+  catalogId?: string;
   /** Stable picker id, e.g. `"seedance_2"` (backend currently keys by api id). */
   id: string;
   /** Provider tab id (`seedance` / `huimeng`). */
@@ -1090,6 +1096,7 @@ function videoModelEntryFromObject(
     inferVideoProvider(apiModel);
   const id = pickString(entry, "id") ?? apiModel;
   const label = pickString(entry, "label", "displayName", "display_name") ?? apiModel;
+  const catalogId = pickString(entry, "catalogId", "catalog_id");
   const resolutionOptions = pickStringArray(entry, "resolutionOptions", "resolution_options");
   const sceneOptimizeOptions = pickStringArray(entry, "sceneOptimizeOptions", "scene_optimize_options")
     .map((value) => value.toLowerCase())
@@ -1103,6 +1110,7 @@ function videoModelEntryFromObject(
       ? defaultSceneOptimizeRaw
       : null;
   return {
+    ...(catalogId ? { catalogId } : {}),
     id,
     providerId,
     apiModel,
