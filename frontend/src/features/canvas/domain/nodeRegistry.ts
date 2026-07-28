@@ -709,6 +709,30 @@ export function isUpstreamConnectionAllowed(
   return true;
 }
 
+// 只由系统动作建立、**不开放给用户手工创建**的边。上面两张表必须放行它们（否则
+// 加载规范化会把存量边丢掉），但连线菜单和手动拖线不该提供 —— 用户自己画一根出来
+// 没有任何消费方，又是一根骗人的线。
+const SYSTEM_ONLY_CONNECTIONS: readonly (readonly [CanvasNodeType, CanvasNodeType])[] = [
+  // 「人声/背景音分离」把产出的「背景音」音频节点画回源视频，是条溯源边。音频节点
+  // 自己只读文本上游（AudioOperationsPanel 只取 text），手工连一根视频进来什么都
+  // 不会发生。
+  [CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.audio],
+];
+
+// 判断用户能不能**手工**建立这条边：建边规则放行，且不是系统专用边。菜单候选与
+// 手动拖线查这条；store 的建边收口查的仍是 isUpstreamConnectionAllowed。
+export function isManualConnectionAllowed(
+  sourceType: CanvasNodeType,
+  targetType: CanvasNodeType,
+): boolean {
+  if (!isUpstreamConnectionAllowed(sourceType, targetType)) {
+    return false;
+  }
+  return !SYSTEM_ONLY_CONNECTIONS.some(
+    ([source, target]) => source === sourceType && target === targetType,
+  );
+}
+
 export function getConnectMenuNodeTypes(handleType: 'source' | 'target'): CanvasNodeType[] {
   const fromSource = handleType === 'source';
   return Object.values(canvasNodeDefinitions)
@@ -721,69 +745,120 @@ export function getConnectMenuNodeTypes(handleType: 'source' | 'target'): Canvas
     .map((definition) => definition.type);
 }
 
-// 给定起源节点类型，返回「从右侧 source handle 出发能创建的下游节点类型集」。
-// 这是 + 菜单（NodeSpawnPlusOverlay）和拖线落空菜单（Canvas.handleConnectEnd）
-// 共用的产品级白名单，必须保持单一事实来源。
+// 图片类节点（upload / imageEdit / imageGen / exportImage）共用的下游候选。
+const IMAGE_DOWNSTREAM_SPAWN_TYPES: readonly CanvasNodeType[] = [
+  CANVAS_NODE_TYPES.textAnnotation,
+  CANVAS_NODE_TYPES.imageGen,
+  CANVAS_NODE_TYPES.video,
+  CANVAS_NODE_TYPES.script,
+  CANVAS_NODE_TYPES.pano360Viewer,
+  CANVAS_NODE_TYPES.threeDWorld,
+];
+
+// 「从右侧 source handle 出发能创建哪些下游节点」的产品白名单。这是 + 菜单
+// （NodeSpawnPlusOverlay）和拖线落空菜单（Canvas.handleConnectEnd）共用的那一份。
+// 不在表中的源类型回落到注册表的 connectMenu.fromSource 默认列表。
 //
-// - 视频：仅允许 文本 / 视频 / 脚本 —— 图片/音频/多版本不该作为视频下游。
-// - 图片类（upload/imageEdit/imageGen/exportImage）：允许 文本 / 图片 / 视频 /
-//   脚本 / 360° / 3D 世界，排除 多版本 与 音频。
-// - 其他：回落到注册表中 connectMenu.fromSource 默认列表。
+// 这里写的是**产品意图**，不代表边一定建得起来 —— 建边规则（上面两张表 +
+// SYSTEM_ONLY_CONNECTIONS）才是最终裁决，取用时会再过一道。两者若打架，测试
+// 「菜单白名单不与建边规则冲突」会红。
+export const DOWNSTREAM_SPAWN_WHITELIST: Partial<
+  Record<CanvasNodeType, readonly CanvasNodeType[]>
+> = {
+  // 视频：仅允许 文本 / 视频 / 视频合成 / 脚本 —— 图片、音频、多版本不该作为下游。
+  [CANVAS_NODE_TYPES.video]: [
+    CANVAS_NODE_TYPES.textAnnotation,
+    CANVAS_NODE_TYPES.video,
+    CANVAS_NODE_TYPES.videoCompose,
+    CANVAS_NODE_TYPES.script,
+  ],
+  // 音频：下游只有视频（声轨素材）与视频合成（音频轨）读得懂。
+  [CANVAS_NODE_TYPES.audio]: [CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.videoCompose],
+  // 360° 全景查看器：截图都是图片，下游只接图片类节点。
+  [CANVAS_NODE_TYPES.pano360Viewer]: [
+    CANVAS_NODE_TYPES.imageGen,
+    CANVAS_NODE_TYPES.imageEdit,
+    CANVAS_NODE_TYPES.exportImage,
+    CANVAS_NODE_TYPES.upload,
+  ],
+  [CANVAS_NODE_TYPES.upload]: IMAGE_DOWNSTREAM_SPAWN_TYPES,
+  [CANVAS_NODE_TYPES.imageEdit]: IMAGE_DOWNSTREAM_SPAWN_TYPES,
+  [CANVAS_NODE_TYPES.imageGen]: IMAGE_DOWNSTREAM_SPAWN_TYPES,
+  [CANVAS_NODE_TYPES.exportImage]: IMAGE_DOWNSTREAM_SPAWN_TYPES,
+};
+
+// 给定起源节点类型，返回「从右侧 source handle 出发能创建的下游节点类型集」。
 export function getDownstreamSpawnTypes(
   originType: CanvasNodeType | undefined,
 ): CanvasNodeType[] {
   const base = getConnectMenuNodeTypes('source');
   if (!originType) return base;
-  // 先过一遍建边白名单：菜单里出现的候选必须真的连得上。否则用户点了以后新节点
-  // 建出来了、边被建边规则拒掉，画布上留下一个孤立节点（如脚本 → 音频）。
-  const connectable = base.filter((type) => isUpstreamConnectionAllowed(originType, type));
+  // 再过一遍手工建边规则：菜单里出现的候选必须真的连得上。否则用户点了以后新节点
+  // 建出来了、边被建边收口拒掉，画布上留下一个孤立节点（如脚本 → 音频）。
+  const connectable = base.filter((type) => isManualConnectionAllowed(originType, type));
+  const allowed = DOWNSTREAM_SPAWN_WHITELIST[originType];
+  return allowed ? connectable.filter((type) => allowed.includes(type)) : connectable;
+}
 
-  if (originType === CANVAS_NODE_TYPES.video) {
-    const allowed = new Set<CanvasNodeType>([
-      CANVAS_NODE_TYPES.textAnnotation,
-      CANVAS_NODE_TYPES.video,
-      CANVAS_NODE_TYPES.videoCompose,
-      CANVAS_NODE_TYPES.script,
-    ]);
-    return connectable.filter((type) => allowed.has(type));
+// 「从左侧 target handle 出发能创建哪些上游节点」的产品白名单 —— 上面那张表的
+// 镜像。同样只是产品意图，取用时仍要过手工建边规则。
+export const UPSTREAM_SPAWN_WHITELIST: Partial<
+  Record<CanvasNodeType, readonly CanvasNodeType[]>
+> = {
+  // 3D 世界：上游仅允许文本 / 图片节点（Phase 1）。
+  [CANVAS_NODE_TYPES.threeDWorld]: [
+    CANVAS_NODE_TYPES.textAnnotation,
+    CANVAS_NODE_TYPES.imageGen,
+  ],
+  // 图片节点：上游仅允许 文本（textAnnotation / script）+ 图片（upload），
+  // 不收音频 / 视频 / 3D 世界。
+  [CANVAS_NODE_TYPES.imageGen]: [
+    CANVAS_NODE_TYPES.textAnnotation,
+    CANVAS_NODE_TYPES.script,
+    CANVAS_NODE_TYPES.upload,
+  ],
+  // 视频节点：上游仅允许 文本 / 图片 / 音频，跟 NodeSpawnPlusOverlay 左侧「+」
+  // 按钮的白名单保持一致。
+  [CANVAS_NODE_TYPES.video]: [
+    CANVAS_NODE_TYPES.textAnnotation,
+    CANVAS_NODE_TYPES.imageGen,
+    CANVAS_NODE_TYPES.audio,
+  ],
+};
+
+// 给定目标节点类型，返回「从左侧 target handle 出发能创建的上游节点类型集」。
+//
+// 与下游那侧不同，这里多数分支**不沿用 base**：base 只收 connectMenu.fromTarget
+// 为 true 的类型，而 textAnnotation / imageGen 的 fromTarget 是 false，沿用就会
+// 被错杀。所以白名单在这里是「重写候选集」而不是「过滤候选集」。
+export function getUpstreamSpawnTypes(
+  originType: CanvasNodeType | undefined,
+): CanvasNodeType[] {
+  const base = getConnectMenuNodeTypes('target');
+  if (!originType) return base;
+  // 所有分支最后都过一道手工建边规则：菜单给的候选必须是用户真能连的。少了这道，
+  // 音频节点的上游菜单会冒出「视频」——那是「人声/背景音分离」的溯源边，音频节点
+  // 只读文本上游，用户手工连一根视频进来什么都不会发生。
+  const manual = (types: readonly CanvasNodeType[]) =>
+    types.filter((type) => isManualConnectionAllowed(type, originType));
+
+  // 3D 世界是唯一与 base 取交集的分支（历史行为，未在本次改动中调整）。
+  if (originType === CANVAS_NODE_TYPES.threeDWorld) {
+    const allowed = UPSTREAM_SPAWN_WHITELIST[originType] ?? [];
+    return manual(base.filter((type) => allowed.includes(type)));
   }
 
-  // 音频节点：下游允许视频（作为声轨素材）与视频合成（音频轨）。
-  if (originType === CANVAS_NODE_TYPES.audio) {
-    const allowed = new Set<CanvasNodeType>([
-      CANVAS_NODE_TYPES.video,
-      CANVAS_NODE_TYPES.videoCompose,
-    ]);
-    return connectable.filter((type) => allowed.has(type));
+  const declared = UPSTREAM_SPAWN_WHITELIST[originType];
+  if (declared) {
+    return manual(declared);
   }
 
-  // 360° 全景查看器：下游只能是图片节点（截图都是图片，手动连线也只接图片）。
-  if (originType === CANVAS_NODE_TYPES.pano360Viewer) {
-    const allowed = new Set<CanvasNodeType>([
-      CANVAS_NODE_TYPES.imageGen,
-      CANVAS_NODE_TYPES.imageEdit,
-      CANVAS_NODE_TYPES.exportImage,
-      CANVAS_NODE_TYPES.upload,
-    ]);
-    return connectable.filter((type) => allowed.has(type));
+  // 受上游类型白名单约束的目标（如音频←文本）：直接用领域层白名单，保证连线菜单、
+  // 手动拖线、isValidConnection、store 建边收口共用同一份规则。
+  const allowedUpstream = getAllowedUpstreamSourceTypes(originType);
+  if (allowedUpstream) {
+    return manual(allowedUpstream);
   }
 
-  if (
-    originType === CANVAS_NODE_TYPES.upload ||
-    originType === CANVAS_NODE_TYPES.imageEdit ||
-    originType === CANVAS_NODE_TYPES.imageGen ||
-    originType === CANVAS_NODE_TYPES.exportImage
-  ) {
-    const allowed = new Set<CanvasNodeType>([
-      CANVAS_NODE_TYPES.textAnnotation,
-      CANVAS_NODE_TYPES.imageGen,
-      CANVAS_NODE_TYPES.video,
-      CANVAS_NODE_TYPES.script,
-      CANVAS_NODE_TYPES.pano360Viewer,
-      CANVAS_NODE_TYPES.threeDWorld,
-    ]);
-    return connectable.filter((type) => allowed.has(type));
-  }
-
-  return connectable;
+  return manual(base);
 }

@@ -87,10 +87,11 @@ import { readUrl } from '@/lib/url-params';
 import { useQueryClient } from '@tanstack/react-query';
 import { prefetchEpisodeBeats, prefetchEpisodeDetail } from '@/lib/queries/episodes';
 import {
-  getConnectMenuNodeTypes,
   getDownstreamSpawnTypes,
+  getUpstreamSpawnTypes,
   getAllowedDownstreamTargetTypes,
   getAllowedUpstreamSourceTypes,
+  isManualConnectionAllowed,
   isUpstreamConnectionAllowed,
   nodeHasSourceHandle,
   nodeHasTargetHandle,
@@ -483,56 +484,12 @@ function resolveAllowedNodeTypes(
   handleType: HandleType,
   originNodeType?: CanvasNodeType,
 ): CanvasNodeType[] {
-  // 拖线落空时弹出的「创建新节点」菜单，与 NodeSpawnPlusOverlay 的 + 菜单
-  // 共用同一份白名单：source 端用 getDownstreamSpawnTypes(originType)。
-  if (handleType === 'source') {
-    return getDownstreamSpawnTypes(originNodeType);
-  }
-  // 候选上游里先剔掉「下游白名单不含本节点类型」的类型（如音频只能连视频 / 视频
-  // 合成）。不剔的话菜单里能创建，但创建完那条边会被建边规则拒掉，画布上只剩一个
-  // 孤零零的新节点。
-  const base = getConnectMenuNodeTypes(handleType).filter(
-    (type) => !originNodeType || isUpstreamConnectionAllowed(type, originNodeType),
-  );
-  // 3D 世界节点的上游仅允许文本 / 图片节点（Phase 1）。
-  if (originNodeType === CANVAS_NODE_TYPES.threeDWorld && handleType === 'target') {
-    const allowed = new Set<CanvasNodeType>([
-      CANVAS_NODE_TYPES.textAnnotation,
-      CANVAS_NODE_TYPES.imageGen,
-    ]);
-    return base.filter((type) => allowed.has(type));
-  }
-  // 图片节点的上游仅允许 文本（textAnnotation / script）+ 图片（upload）
-  // —— 不收音频 / 视频 / 3D 世界。这里不沿用 base 过滤，因为 base 只看
-  // `fromTarget: true`，textAnnotation / imageGen 等 fromTarget 默认为 false
-  // 会被错杀；我们对 imageGen target 直接重写候选集。
-  if (originNodeType === CANVAS_NODE_TYPES.imageGen && handleType === 'target') {
-    return [
-      CANVAS_NODE_TYPES.textAnnotation,
-      CANVAS_NODE_TYPES.script,
-      CANVAS_NODE_TYPES.upload,
-    ];
-  }
-  // 视频节点的上游仅允许 文本 / 图片（imageGen） / 音频 —— 跟
-  // NodeSpawnPlusOverlay 左侧「+」按钮的白名单保持一致。
-  if (originNodeType === CANVAS_NODE_TYPES.video && handleType === 'target') {
-    return [
-      CANVAS_NODE_TYPES.textAnnotation,
-      CANVAS_NODE_TYPES.imageGen,
-      CANVAS_NODE_TYPES.audio,
-    ];
-  }
-  // 受上游类型白名单约束的目标（如音频←文本）：直接返回领域层白名单，保证连线
-  // 菜单、手动拖线、isValidConnection、store 建边收口共用同一份规则。这里不沿用
-  // base 过滤——base 只看 connectMenu.fromTarget，textAnnotation 的 fromTarget
-  // 为 false 会被错杀。
-  if (handleType === 'target' && originNodeType) {
-    const allowedUpstream = getAllowedUpstreamSourceTypes(originNodeType);
-    if (allowedUpstream) {
-      return [...allowedUpstream];
-    }
-  }
-  return base;
+  // 拖线落空时弹出的「创建新节点」菜单，与 NodeSpawnPlusOverlay 的 + 菜单共用
+  // 同一份产品白名单，两侧都住在 nodeRegistry 里（连同建边规则一起，便于测试
+  // 「菜单候选 vs 建边规则」是否打架）。
+  return handleType === 'source'
+    ? getDownstreamSpawnTypes(originNodeType)
+    : getUpstreamSpawnTypes(originNodeType);
 }
 
 // 3D 世界节点的目标允许的手动拖线源：任何可以承载图片或文本结果的节点。
@@ -564,11 +521,13 @@ function canNodeTypeBeManualConnectionSource(
     return targetType ? PANO_360_DOWNSTREAM_IMAGE_TYPES.has(targetType) : true;
   }
   // 受类型白名单约束的连接（音频←文本、音频→视频/视频合成）走领域层统一规则。
+  // 这里查的是「手工」建边规则：视频→音频那条溯源边由「人声/背景音分离」程序建立，
+  // 建边收口放行，但不该让用户自己拖出来。
   if (
     targetType &&
     (getAllowedUpstreamSourceTypes(targetType) || getAllowedDownstreamTargetTypes(type))
   ) {
-    return isUpstreamConnectionAllowed(type, targetType);
+    return isManualConnectionAllowed(type, targetType);
   }
   // 只要 getDownstreamSpawnTypes 给这种类型留了至少一个合法下游，就允许从右侧
   // source handle 拖线创建 —— 这样 + 菜单和拖线菜单始终对齐，新增节点类型时

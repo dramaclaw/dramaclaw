@@ -8,7 +8,11 @@ import {
   getAllowedDownstreamTargetTypes,
   getDownstreamSpawnTypes,
   getMenuNodeDefinitions,
+  getUpstreamSpawnTypes,
+  isManualConnectionAllowed,
   isUpstreamConnectionAllowed,
+  DOWNSTREAM_SPAWN_WHITELIST,
+  UPSTREAM_SPAWN_WHITELIST,
 } from "@/features/canvas/domain/nodeRegistry";
 
 describe("canvas node registry", () => {
@@ -106,18 +110,66 @@ describe("建边白名单", () => {
     ).toBe(true);
   });
 
-  it("菜单给出的下游候选必然是建边规则放行的", () => {
-    // 这条守的是「菜单能创建、边却被拒」这类漂移：用户点了以后新节点建出来了，
-    // 边被 store 的建边收口丢掉，画布上只剩一个连不上的孤立节点。
-    const orphans: string[] = [];
-    for (const originType of Object.keys(canvasNodeDefinitions) as CanvasNodeType[]) {
-      for (const spawnType of getDownstreamSpawnTypes(originType)) {
-        if (!isUpstreamConnectionAllowed(originType, spawnType)) {
-          orphans.push(`${originType} -> ${spawnType}`);
+  it("菜单的产品白名单不与建边规则冲突", () => {
+    // 断言落在**声明**的白名单上，而不是 getXxxSpawnTypes 的返回值 —— 那两个函数
+    // 出口处就用建边规则过了一道，拿同一个谓词去断言它们的输出必然恒真，守不住
+    // 任何漂移。这里查的是「产品意图里写了、但建边规则根本不放行」的格子：运行时
+    // 会被静默过滤掉，菜单和白名单从此对不上，而没人会发现。
+    const conflicts: string[] = [];
+    for (const [source, targets] of Object.entries(DOWNSTREAM_SPAWN_WHITELIST)) {
+      for (const target of targets ?? []) {
+        if (!isUpstreamConnectionAllowed(source as CanvasNodeType, target)) {
+          conflicts.push(`下游白名单 ${source} -> ${target}`);
+        }
+      }
+    }
+    for (const [target, sources] of Object.entries(UPSTREAM_SPAWN_WHITELIST)) {
+      for (const source of sources ?? []) {
+        if (!isUpstreamConnectionAllowed(source, target as CanvasNodeType)) {
+          conflicts.push(`上游白名单 ${source} -> ${target}`);
         }
       }
     }
 
-    expect(orphans).toEqual([]);
+    expect(conflicts).toEqual([]);
+  });
+});
+
+describe("连线菜单候选", () => {
+  it("音频节点的上游菜单里没有视频", () => {
+    // 视频 → 音频那条边是「人声/背景音分离」程序建的溯源边，建边收口必须放行
+    // （否则存量边会被加载规范化丢掉），但用户手工连一根视频进来什么都不会发生
+    // —— AudioOperationsPanel 只读 text 上游。菜单和手动拖线都不该提供。
+    expect(getUpstreamSpawnTypes(CANVAS_NODE_TYPES.audio)).toEqual([
+      CANVAS_NODE_TYPES.textAnnotation,
+    ]);
+    expect(isManualConnectionAllowed(CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.audio)).toBe(
+      false,
+    );
+    // 但建边规则本身仍放行 —— 这正是两者要分开的原因。
+    expect(isUpstreamConnectionAllowed(CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.audio)).toBe(
+      true,
+    );
+  });
+
+  it("其余节点的菜单候选不受影响", () => {
+    expect(getUpstreamSpawnTypes(CANVAS_NODE_TYPES.video)).toEqual([
+      CANVAS_NODE_TYPES.textAnnotation,
+      CANVAS_NODE_TYPES.imageGen,
+      CANVAS_NODE_TYPES.audio,
+    ]);
+    expect(getUpstreamSpawnTypes(CANVAS_NODE_TYPES.imageGen)).toEqual([
+      CANVAS_NODE_TYPES.textAnnotation,
+      CANVAS_NODE_TYPES.script,
+      CANVAS_NODE_TYPES.upload,
+    ]);
+    expect(getDownstreamSpawnTypes(CANVAS_NODE_TYPES.audio)).toEqual([
+      CANVAS_NODE_TYPES.video,
+      CANVAS_NODE_TYPES.videoCompose,
+    ]);
+    // 图片类节点的下游不含音频。
+    expect(getDownstreamSpawnTypes(CANVAS_NODE_TYPES.imageGen)).not.toContain(
+      CANVAS_NODE_TYPES.audio,
+    );
   });
 });
