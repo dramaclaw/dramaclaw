@@ -659,6 +659,9 @@ async def test_cli_project_id_scene_migration_uses_ee_entry_point(
                     "task_backend",
                     "cancellation_store",
                     "lifecycle",
+                    "model_credentials",
+                    "authz",
+                    "egress",
                 ):
                     registry.register_port(name, object())
                 registry.register_port("project_registry", FakeProjectRegistry())

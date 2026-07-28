@@ -27,6 +27,9 @@ _EE_REQUIRED_PORTS = (
     "task_backend",
     "cancellation_store",
     "lifecycle",
+    "model_credentials",
+    "authz",
+    "egress",
 )
 
 

@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
+from novelvideo.ports.egress import EgressClaim
+from novelvideo.ports.model_credentials import (
+    CredentialReference,
+    ModelCredentialError,
+    RequestCredential,
+)
 from novelvideo.ports.local.audit import NoOpAuditSink
 from novelvideo.ports.local.auth import FileAuthPort, LocalAuthSession
 from novelvideo.ports.local.credit_quote import LocalCreditQuote
@@ -11,6 +21,52 @@ from novelvideo.ports.local.release_feed import LocalReleaseFeed
 from novelvideo.ports.local.tasks import InlineTaskBackend, InMemoryCancellationStore
 from novelvideo.ports.local.usage import NoOpProviderInstrumentation, NoOpUsageMeter
 from novelvideo.ports.registry import get_port, register_port
+
+
+class LocalModelCredentials:
+    async def resolve(self, admission) -> RequestCredential:
+        if admission.credential.source != "local":
+            raise ModelCredentialError(
+                "ORG_CREDENTIAL_MISSING",
+                "organization credentials require the control plane resolver",
+            )
+        from novelvideo.config import get_newapi_runtime_credentials
+
+        api_key, base_url = get_newapi_runtime_credentials()
+        return RequestCredential(
+            reference=admission.credential,
+            api_key=api_key,
+            base_url=base_url,
+        )
+
+
+class LocalAuthz:
+    async def admit_model_task(self, *, user_id: str, root_task_id: str) -> AdmissionContext:
+        return AdmissionContext(
+            requester_user_id=user_id,
+            billing_principal=BillingPrincipal(kind="local", id=user_id),
+            credential=CredentialReference(
+                source="local",
+                credential_id="local-newapi",
+                key_version=1,
+            ),
+            admission_id=f"local-{uuid4().hex}",
+            root_task_id=root_task_id,
+            admitted_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+
+class LocalEgress:
+    async def claim(self, *, admission, spec) -> EgressClaim:
+        return EgressClaim(
+            operation_id=spec.operation_id,
+            attempt_id=f"local-{uuid4().hex}",
+            status="claimed",
+            claim_deadline="local",
+        )
+
+    async def record_success(self, *, claim, result) -> None:
+        return None
 
 
 def register_local_ports() -> None:
@@ -26,4 +82,7 @@ def register_local_ports() -> None:
     register_port("audit_sink", NoOpAuditSink())
     register_port("lifecycle", NoOpLifecycle())
     register_port("release_feed", LocalReleaseFeed())
+    register_port("model_credentials", LocalModelCredentials())
+    register_port("authz", LocalAuthz())
+    register_port("egress", LocalEgress())
     get_port("provider_instrumentation").install()

@@ -72,13 +72,28 @@ def get_release_feed_port():
         return NoOpReleaseFeed()
 
 
+def get_model_credentials():
+    return get_port("model_credentials")
+
+
+def get_authz_port():
+    return get_port("authz")
+
+
+def get_egress_port():
+    return get_port("egress")
+
+
 __all__ = [
     "get_audit_sink",
     "get_auth_port",
     "get_auth_session_port",
+    "get_authz_port",
     "get_cancellation_store",
     "get_credit_quote",
+    "get_egress_port",
     "get_lifecycle_port",
+    "get_model_credentials",
     "get_project_access",
     "get_project_registry",
     "get_provider_instrumentation",

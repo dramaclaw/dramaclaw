@@ -51,6 +51,9 @@ def test_ensure_bootstrap_registers_local_ports_for_explicit_ce(monkeypatch) -> 
     assert registry.get_port("cancellation_store") is not None
     assert registry.get_port("audit_sink") is not None
     assert registry.get_port("lifecycle") is not None
+    assert registry.get_port("model_credentials") is not None
+    assert registry.get_port("authz") is not None
+    assert registry.get_port("egress") is not None
 
 
 def test_ensure_bootstrap_rejects_dsn_and_ce_conflict(monkeypatch) -> None:
@@ -104,6 +107,9 @@ def test_ensure_bootstrap_reports_all_missing_ee_ports_when_entry_points_empty(m
         "project_access",
         "usage_meter",
         "lifecycle",
+        "model_credentials",
+        "authz",
+        "egress",
     ):
         assert name in message
     assert "novelvideo.ports_bootstrap" in message
