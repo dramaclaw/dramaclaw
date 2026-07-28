@@ -241,15 +241,12 @@ def create_staging_prop_agent(
     api_key: str,
     base_url: str,
 ):
-    from openai import AsyncOpenAI
     from pydantic_ai import Agent
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     from novelvideo.config import (
         _env_float,
         _get_newapi_text_model_profile,
-        _newapi_text_openai_client_kwargs,
+        _newapi_text_openai_model,
         get_newapi_text_pydantic_model_settings,
     )
 
@@ -262,17 +259,11 @@ def create_staging_prop_agent(
         agent_kwargs["model_settings"] = model_settings
 
     return Agent(
-        OpenAIChatModel(
+        _newapi_text_openai_model(
             model,
-            provider=OpenAIProvider(
-                openai_client=AsyncOpenAI(
-                    **_newapi_text_openai_client_kwargs(
-                        api_key=api_key,
-                        base_url=base_url,
-                        timeout_seconds=_env_float("STAGING_PROP_TIMEOUT_SECONDS", 120.0),
-                    )
-                ),
-            ),
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=_env_float("STAGING_PROP_TIMEOUT_SECONDS", 120.0),
             profile=_get_newapi_text_model_profile(model),
         ),
         system_prompt=SYSTEM_PROMPT,

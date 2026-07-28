@@ -163,6 +163,105 @@ describe("stream-client", () => {
     client.close();
   });
 
+  it("stops an established stream when the session probe confirms auth loss", async () => {
+    const checkSession = vi.fn(async () => false);
+    const onHealth = vi.fn();
+    const client = createStreamClient({
+      streamPath: PROJECT_STREAM_PATH,
+      onEvent: vi.fn(),
+      onDelete: vi.fn(),
+      onHealth,
+      checkSession,
+    } as Parameters<typeof createStreamClient>[0] & {
+      checkSession: () => Promise<boolean>;
+    });
+    client.start();
+    MockEventSource.instances[0].dispatch("heartbeat", { ts: "healthy" });
+
+    MockEventSource.instances[0].triggerError();
+    await vi.advanceTimersByTimeAsync(1_100);
+    MockEventSource.instances[1].triggerError();
+    await vi.advanceTimersByTimeAsync(2_100);
+    MockEventSource.instances[2].triggerError();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(checkSession).toHaveBeenCalledOnce();
+    expect(onHealth).toHaveBeenLastCalledWith("failed");
+    const countAfterAuthLoss = MockEventSource.instances.length;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(MockEventSource.instances).toHaveLength(countAfterAuthLoss);
+  });
+
+  it.each([
+    ["5xx result", vi.fn(async () => null)],
+    ["network failure", vi.fn(async () => Promise.reject(new Error("offline")))],
+  ])("keeps reconnecting when the session probe has a transient %s", async (_case, checkSession) => {
+    const client = createStreamClient({
+      streamPath: PROJECT_STREAM_PATH,
+      onEvent: vi.fn(),
+      onDelete: vi.fn(),
+      onHealth: vi.fn(),
+      checkSession,
+      pollingRetryMs: 15_000,
+    });
+    client.start();
+    MockEventSource.instances[0].dispatch("heartbeat", { ts: "healthy" });
+
+    MockEventSource.instances[0].triggerError();
+    await vi.advanceTimersByTimeAsync(1_100);
+    MockEventSource.instances[1].triggerError();
+    await vi.advanceTimersByTimeAsync(2_100);
+    MockEventSource.instances[2].triggerError();
+    await vi.advanceTimersByTimeAsync(15_100);
+
+    expect(checkSession).toHaveBeenCalledOnce();
+    expect(MockEventSource.instances).toHaveLength(4);
+    client.close();
+  });
+
+  it("closes immediately when the shared session-expired event fires", () => {
+    const client = createStreamClient({
+      streamPath: PROJECT_STREAM_PATH,
+      onEvent: vi.fn(),
+      onDelete: vi.fn(),
+      onHealth: vi.fn(),
+    });
+    client.start();
+    const es = MockEventSource.instances[0];
+
+    window.dispatchEvent(new Event("session-expired"));
+
+    expect(es.readyState).toBe(2);
+    vi.advanceTimersByTime(30_000);
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  it("allows a fresh stream client to monitor after login", () => {
+    const expiredClient = createStreamClient({
+      streamPath: PROJECT_STREAM_PATH,
+      onEvent: vi.fn(),
+      onDelete: vi.fn(),
+      onHealth: vi.fn(),
+    });
+    expiredClient.start();
+    window.dispatchEvent(new Event("session-expired"));
+    expiredClient.close();
+
+    const onHealth = vi.fn();
+    const freshClient = createStreamClient({
+      streamPath: PROJECT_STREAM_PATH,
+      onEvent: vi.fn(),
+      onDelete: vi.fn(),
+      onHealth,
+    });
+    freshClient.start();
+    MockEventSource.instances[1].dispatch("heartbeat", { ts: "fresh-login" });
+
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(onHealth).toHaveBeenLastCalledWith("connected");
+    freshClient.close();
+  });
+
   it("fires onReconnected after a disconnect→reconnect so provider can rehydrate", () => {
     const onReconnected = vi.fn();
     const client = createStreamClient({

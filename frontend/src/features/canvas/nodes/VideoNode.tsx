@@ -68,13 +68,13 @@ import {
   formatAudioDurationClips,
   MAX_AUDIO_REFERENCE_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
-  isGrokVideoChannelModel,
   isHappyHorseVideoModel,
-  isSeedance1xVideoModel,
   isSeedance2VideoModel,
   isVideoModeSupportedByModel,
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
+  videoModelReferenceDisabledReason,
+  videoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
   type VideoEmptyStateCtaMode,
@@ -426,14 +426,16 @@ function isSeedance2ValueModel(modelId: string | null | undefined): boolean {
 // 模型能力判定（isHappyHorseVideoModel / isSeedance1xVideoModel /
 // isSeedance2VideoModel / isGrokVideoChannelModel / isVideoModeSupportedByModel）
 // 统一收敛到 nodes/shared/videoModelCapabilities.ts，作为 CTA / tab / 提交校验的
-// 单一事实来源，避免「非 HappyHorse 一律当 Seedance 2.0」的假设散落在组件里。
+// 单一事实来源；这里仅额外叠加媒体目录声明的逐模式素材上限。
 
-function videoModelReferenceDisabledReason(
+function selectedVideoModelReferenceDisabledReason(
   model: ModelOption | null | undefined,
   counts: { images: number; videos: number; audios: number },
   mode: VideoGenMode,
 ): string | null {
   const modelId = model?.apiModel ?? model?.id;
+  const capabilityReason = videoModelReferenceDisabledReason(modelId, counts);
+  if (capabilityReason) return capabilityReason;
   const caps = referenceCapsForMode(model, mode);
   if (!caps) return null;
   if (counts.images > caps.image) {
@@ -448,20 +450,6 @@ function videoModelReferenceDisabledReason(
     return caps.audio === 0
       ? "该模型不支持音频素材"
       : `该模型最多支持 ${caps.audio} 个音频素材`;
-  }
-  if (isGrokVideoChannelModel(modelId)) {
-    if (counts.videos > 0 || counts.audios > 0) {
-      return "Grok Video Channel 仅支持图片素材";
-    }
-    if (counts.images > 8) {
-      return "Grok Video Channel 最多支持 1 张首帧和 7 张参考图";
-    }
-    return null;
-  }
-  if (isSeedance1xVideoModel(modelId)) {
-    if (counts.images > 0 || counts.videos > 0 || counts.audios > 0) {
-      return "该模型不支持当前接入的素材";
-    }
   }
   return null;
 }
@@ -1878,12 +1866,55 @@ export const VideoNode = memo(
       updateNodeData,
     ]);
 
+    // Seedance 1.x 吃不下视频 / 音频，留在上面只能收获一次必然失败的提交。用户把
+    // 视频或音频节点连上来就是明确意图，直接替他换成 Seedance 2.0 + 全能参考。
+    // 判定走 upstreamTypeCounts（按节点类型）：空的视频节点也算 —— 先连节点、后生成
+    // 是正常顺序，等它出了 URL 再切模型就太迟了（用户中间会看见一个不该出现的 1.x）。
+    // 模型和模式必须一次 patch 写完：分两步会先渲染出「2.0 + 图生视频」的中间态，
+    // 再被下面那条 videos→allReference 的 effect 纠一次，白闪一帧。
+    //
+    // 只在「没有 → 有视频/音频」这一次跳变时触发，**不能每次渲染都无条件纠正**：
+    // updateNodeData 每次都 pushSnapshot 且清空 future（canvasStore），若持续纠正，
+    // 用户 ⌘Z 恢复回 1.x 后边还在，effect 立刻把 2.0 写回去、再压一条 past ——
+    // 撤销看起来毫无反应，redo 栈还被清空，等于把「回到连线之前」这条路堵死。改的
+    // 又是 model 这种用户显式挑过的值，无声覆盖且撤不回来，性质比 genMode 重得多。
+    // 一次性触发也不会被绕过：素材在场期间选择器已经把 1.x 置灰了，切不回去。
+    // 与紧邻上面那条音频 → allReference 的 effect 用的是同一套闩锁。
+    const autoSwitchedForMediaRef = useRef(false);
+    useEffect(() => {
+      // 所有判断（加载态、闩锁、该不该换、换成谁）都在 videoReferenceAutoSwitchAction
+      // 里，这里只负责改 ref 和发 patch —— 那边是纯函数，异步加载时序才测得到。
+      const action = videoReferenceAutoSwitchAction({
+        counts: upstreamTypeCounts,
+        currentModelId: selectedVideoModelId,
+        models: availableVideoModels,
+        modelsLoading: videoModelsLoading,
+        alreadySwitched: autoSwitchedForMediaRef.current,
+      });
+      if (action.kind === "release") {
+        autoSwitchedForMediaRef.current = false;
+        return;
+      }
+      if (action.kind === "none") return;
+      autoSwitchedForMediaRef.current = true;
+      updateNodeData(id, { model: action.modelId, genMode: action.genMode });
+      // 刻意不调 writeLastVideoModel：这是替用户救场，不是他表达的偏好，不该顺手
+      // 把后续新建视频节点继承的默认模型也改掉。
+    }, [
+      availableVideoModels,
+      id,
+      selectedVideoModelId,
+      updateNodeData,
+      upstreamTypeCounts,
+      videoModelsLoading,
+    ]);
+
     // 上游接入视频素材时，只有「全能参考」能消费视频；其它模式（文生 / 图生 /
     // 首尾帧 / 图片参考）都会把视频丢弃。所以只要上游存在视频就强制切到
     // allReference 并锁死——下面的 tab 禁用规则会把其它 tab 一并禁用。
     // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
-    // 仅 Seedance 2.0 能消费视频（omni）；非 2.0（Seedance 1.x）不支持视频素材，
-    // 由模型选择器拦截，这里不强推 allReference 以免顶进提交必 400 的模式。
+    // 仅 Seedance 2.0 能消费视频（omni）；1.x 已由上面那条 effect 换成 2.0，剩下
+    // 的非 2.0 情形（Grok 等显式渠道）不强推 allReference，以免顶进必 400 的模式。
     useEffect(() => {
       if (upstreamCounts.videos === 0) return;
       if (isHappyHorseModel) return;
@@ -2159,7 +2190,7 @@ export const VideoNode = memo(
       selectedVideoModelId,
       upstreamCounts,
     );
-    const selectedModelReferenceError = videoModelReferenceDisabledReason(
+    const selectedModelReferenceError = selectedVideoModelReferenceDisabledReason(
       selectedVideoModel,
       upstreamCounts,
       genMode,
@@ -3445,7 +3476,14 @@ export const VideoNode = memo(
                     domain="video"
                     popoverPlacement="top"
                     getOptionDisabledReason={(model) =>
-                      videoModelReferenceDisabledReason(model, upstreamCounts, genMode)
+                      videoModelReferenceDisabledReason(model.apiModel ?? model.id, {
+                        images: upstreamCounts.images,
+                        // 视频 / 音频必须和自动切模型的 effect 同一口径（按节点类型，
+                        // 空节点也算）。若这里用「已解析 URL」口径，连着空视频节点时
+                        // 1.x 不置灰、用户能选回去，又被 effect 立刻切走，来回打架。
+                        videos: upstreamTypeCounts.videos,
+                        audios: upstreamTypeCounts.audios,
+                      })
                     }
                   />
                   <VideoConfigChip

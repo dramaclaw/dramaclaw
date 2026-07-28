@@ -3,6 +3,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TFunction } from "i18next";
 
+const handleSessionExpiredMock = vi.hoisted(() => vi.fn(async () => undefined));
+
+vi.mock("@/lib/api", () => ({
+  handleSessionExpired: handleSessionExpiredMock,
+}));
+
 import { apiCall } from "@/api/client";
 import {
   backendErrorToastMessage,
@@ -13,10 +19,36 @@ import {
 } from "@/lib/api-errors";
 
 afterEach(() => {
+  handleSessionExpiredMock.mockClear();
   vi.unstubAllGlobals();
 });
 
 describe("apiCall backend errors", () => {
+  it("routes a 401 through the shared session-expired handler", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ detail: "Missing session or agent token" }),
+          {
+            status: 401,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      ),
+    );
+
+    await expect(
+      apiCall("projects/demo/freezone/canvases/demo/projections:status", {
+        prefix: "http://localhost/api/v1",
+        method: "POST",
+        json: { projection_keys: [] },
+      } as Parameters<typeof apiCall>[1]),
+    ).rejects.toMatchObject({ status: 401 });
+
+    expect(handleSessionExpiredMock).toHaveBeenCalledOnce();
+  });
+
   it("keeps status on string detail backend errors", () => {
     const error = errorFromBackendBody(
       409,

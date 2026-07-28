@@ -389,3 +389,58 @@ async def test_detect_chapters_returns_content_and_total_chars(tmp_path, monkeyp
     assert data["chapters"][1]["title"] == "第二章 风起"
     assert data["chapters"][1]["content"].startswith("第二章")
     assert data["chapters"][1]["word_count"] == len(data["chapters"][1]["content"])
+    assert data["source_filename"] == "novel.txt"
+
+
+@pytest.mark.asyncio
+async def test_detect_chapters_backfills_existing_upload_source(tmp_path, monkeypatch):
+    from novelvideo.api.routes import episodes
+
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+    (uploads_dir / "original-novel.txt").write_text(NOVEL_TEXT, encoding="utf-8")
+    monkeypatch.setattr(
+        episodes,
+        "resolve_project_scope",
+        _project_scope_resolver(tmp_path),
+    )
+
+    async def make_store(username: str, project: str):
+        return _NovelStore(NOVEL_TEXT)
+
+    monkeypatch.setattr(episodes, "make_sqlite_store", make_store)
+
+    response = await episodes.detect_chapters(
+        project="demo",
+        user={"username": "admin"},
+    )
+
+    assert response["ok"] is True
+    assert response["data"]["source_filename"] == "original-novel.txt"
+
+
+@pytest.mark.asyncio
+async def test_start_ingest_preserves_legacy_canonical_novel_for_reimport(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import ingest
+
+    canonical = tmp_path / "novel.txt"
+    canonical.write_text(NOVEL_TEXT, encoding="utf-8")
+    monkeypatch.setattr(
+        ingest,
+        "resolve_project_scope",
+        _project_scope_resolver(tmp_path),
+    )
+
+    response = await ingest.start_ingest(
+        project="demo",
+        body=IngestStart(filename="novel.txt", rebuild=True),
+        user={"username": "admin"},
+    )
+
+    assert response["ok"] is False
+    assert "project context" in response["error"]
+    preserved = tmp_path / "uploads" / "novel.txt"
+    assert preserved.read_text(encoding="utf-8") == NOVEL_TEXT
+    assert canonical.read_text(encoding="utf-8") == NOVEL_TEXT

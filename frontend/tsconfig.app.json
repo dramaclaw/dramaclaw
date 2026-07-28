@@ -3,7 +3,9 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsBuildInfo",
     "target": "ES2020",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    // ES2021.Intl 只为拿到 Intl.ListFormat 的类型(target 仍是 ES2020,不影响产物)。
+    // 运行时基线远高于它的支持起点(Chrome 72 / Safari 14.1)。
+    "lib": ["ES2020", "ES2021.Intl", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
 

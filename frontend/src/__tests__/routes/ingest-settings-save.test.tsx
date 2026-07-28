@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider, initReactI18next } from "react-i18next";
@@ -34,6 +34,7 @@ beforeAll(async () => {
             delete: "Delete",
             close: "Close",
             retry: "Retry",
+            cancel: "Cancel",
           },
           ingest: {
             title: "Import Novel",
@@ -41,6 +42,13 @@ beforeAll(async () => {
             dropzoneHint: "Click or drop your novel file here",
             supportedFormats: "Supports .txt / .md / .docx",
             restoredFilename: "Imported novel",
+            reimport: "Re-import",
+            reimportSourceMissing: "Original upload missing",
+            reuploadConfirm: {
+              title: "Confirm re-import",
+              description: "Rebuild from the existing upload?",
+              confirm: "Confirm re-import",
+            },
             previewHeading: "Novel Structure Preview",
             knowledgeGraph: {
               title: "Knowledge Graph",
@@ -122,6 +130,7 @@ const mocks = vi.hoisted(() => ({
           total_chars: number;
           count: number;
           preview_only?: boolean;
+          source_filename?: string;
           chapters: {
             number: number;
             title?: string | null;
@@ -139,6 +148,7 @@ const mocks = vi.hoisted(() => ({
   // stale-cache 竞态用例把它设为 false，表示当前 data 还是挂载前的旧缓存。
   ingestTasksFetchedAfterMount: true,
   refetchKnowledgeGraph: vi.fn(),
+  taskStreamOnError: null as ((error: string) => void) | null,
 }));
 
 vi.mock("@/components/ui/select", async () => {
@@ -275,14 +285,17 @@ vi.mock("@/lib/queries/tasks", () => ({
 }));
 
 vi.mock("@/hooks/use-task-stream", () => ({
-  useTaskStream: () => ({
-    status: "idle",
-    progress: 0,
-    currentTask: "",
-    result: null,
-    error: null,
-    logs: [],
-  }),
+  useTaskStream: (options: { onError?: (error: string) => void }) => {
+    mocks.taskStreamOnError = options.onError ?? null;
+    return {
+      status: "idle",
+      progress: 0,
+      currentTask: "",
+      result: null,
+      error: null,
+      logs: [],
+    };
+  },
 }));
 
 vi.mock("sonner", () => ({
@@ -322,6 +335,7 @@ beforeEach(() => {
   mocks.toastError.mockReset();
   mocks.ingestTasks = [];
   mocks.ingestTasksFetchedAfterMount = true;
+  mocks.taskStreamOnError = null;
 });
 
 describe("IngestPage settings save", () => {
@@ -423,13 +437,14 @@ describe("IngestPage settings save", () => {
     });
   });
 
-  it("hides the reupload button once chapters are imported", async () => {
+  it("allows re-import once chapters are imported but hides delete", async () => {
     // Imported state: chapters exist, no in-session upload -> previewStatus "completed".
     mocks.chaptersData = {
       ok: true,
       data: {
         total_chars: 10,
         count: 1,
+        source_filename: "original-novel.txt",
         chapters: [{ number: 1, title: "第一章", char_count: 10 }],
       },
     };
@@ -442,9 +457,92 @@ describe("IngestPage settings save", () => {
 
     // The imported summary is shown (file card + preview)...
     expect(screen.getByText("第一章")).toBeInTheDocument();
-    // ...but file replacement/destructive actions are gone once import succeeded.
+    // ...and users may intentionally rebuild it, without exposing destructive delete.
+    expect(screen.getByRole("button", { name: "Re-import" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  });
+
+  it("re-imports the existing source without uploading it again", async () => {
+    const user = userEvent.setup();
+    mocks.chaptersData = {
+      ok: true,
+      data: {
+        total_chars: 10,
+        count: 1,
+        source_filename: "original-novel.txt",
+        chapters: [{ number: 1, title: "第一章", char_count: 10 }],
+      },
+    };
+    mocks.startIngest.mockResolvedValue({
+      ok: true,
+      data: { task_id: "task-reimport" },
+    });
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Re-import" }));
+    await user.click(
+      screen.getByRole("button", { name: "Confirm re-import" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.startIngest).toHaveBeenCalledWith({
+        filename: "original-novel.txt",
+        rebuild: true,
+        spine_template: "drama",
+      }),
+    );
+    expect(mocks.uploadNovel).not.toHaveBeenCalled();
+  });
+
+  it("retries the same locked source after re-import fails", async () => {
+    const user = userEvent.setup();
+    mocks.chaptersData = {
+      ok: true,
+      data: {
+        total_chars: 10,
+        count: 1,
+        source_filename: "original-novel.txt",
+        chapters: [{ number: 1, title: "第一章", char_count: 10 }],
+      },
+    };
+    mocks.startIngest.mockResolvedValue({
+      ok: true,
+      data: { task_id: "task-reimport" },
+    });
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Re-import" }));
+    await user.click(
+      screen.getByRole("button", { name: "Confirm re-import" }),
+    );
+    await waitFor(() => expect(mocks.taskStreamOnError).not.toBeNull());
+
+    await act(async () => {
+      await mocks.taskStreamOnError?.("Embedding provider returned 429");
+    });
+
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Reupload" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(mocks.startIngest).toHaveBeenCalledTimes(2));
+    expect(mocks.startIngest).toHaveBeenLastCalledWith({
+      filename: "original-novel.txt",
+      rebuild: true,
+      spine_template: "drama",
+    });
+    expect(mocks.uploadNovel).not.toHaveBeenCalled();
   });
 
   it("shows the knowledge graph result after content is imported", () => {
@@ -616,6 +714,43 @@ describe("IngestPage settings save", () => {
       await screen.findByText("知识图谱构建失败: provider error"),
     ).toBeInTheDocument();
     expect(mocks.toastError).toHaveBeenCalledWith("知识图谱构建失败: provider error");
+  });
+
+  it("allows retrying the same upload after an asynchronous ingest failure", async () => {
+    const user = userEvent.setup();
+    mocks.uploadNovel.mockResolvedValue({
+      ok: true,
+      data: { filename: "novel.txt", size: 12 },
+    });
+    mocks.startIngest.mockResolvedValue({
+      ok: true,
+      data: { task_id: "task-1" },
+    });
+
+    const { container } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    await user.upload(
+      fileInput!,
+      new File(["Chapter 1"], "novel.txt", { type: "text/plain" }),
+    );
+    await user.click(screen.getByRole("button", { name: /start import/i }));
+
+    await waitFor(() => expect(mocks.taskStreamOnError).not.toBeNull());
+    act(() => {
+      mocks.taskStreamOnError?.("Embedding provider returned 429");
+    });
+
+    expect(
+      screen.getByRole("button", { name: /start import/i }),
+    ).toBeEnabled();
+    expect(screen.getByText("Embedding provider returned 429")).toBeInTheDocument();
+    expect(mocks.uploadNovel).toHaveBeenCalledTimes(1);
   });
 
   it("restores the import progress view on mount when an ingest_fast task is still running", async () => {

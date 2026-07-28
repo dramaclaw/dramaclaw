@@ -458,8 +458,43 @@ def test_m06_ingest_exposes_real_knowledge_graph_snapshot(m06_client_factory):
     assert payload["data"]["edges"][0]["relation"] == "appears_in"
 
 
+@pytest.mark.asyncio
+async def test_m06_cancelled_graph_request_waits_for_reader_before_cleanup():
+    from novelvideo.api.routes.ingest import get_ingest_knowledge_graph
+
+    read_started = asyncio.Event()
+    allow_read_to_finish = asyncio.Event()
+    calls: list[str] = []
+
+    class FakeStore:
+        async def get_graph_snapshot(self):
+            calls.append("read.start")
+            read_started.set()
+            await allow_read_to_finish.wait()
+            calls.append("read.finish")
+            return {"nodes": [], "edges": []}
+
+    request_task = asyncio.create_task(
+        get_ingest_knowledge_graph("demo", store=FakeStore())
+    )
+    await read_started.wait()
+    request_task.cancel()
+    await asyncio.sleep(0)
+
+    assert not request_task.done()
+    assert calls == ["read.start"]
+
+    allow_read_to_finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+
+    assert calls == ["read.start", "read.finish"]
+
+
 @pytest.mark.parametrize("backend", ["inline", "celery"])
 def test_m06_ingest_start_task_shape_is_ce_ee_isomorphic(m06_client_factory, backend: str):
+    from novelvideo.project_config import load_project_config_file_from_state_dir
+
     client, task_backend, _task_manager, project_dir, _assets, _store = m06_client_factory(backend)
     upload = project_dir / "uploads" / "novel.txt"
     upload.parent.mkdir(parents=True, exist_ok=True)
@@ -475,6 +510,12 @@ def test_m06_ingest_start_task_shape_is_ce_ee_isomorphic(m06_client_factory, bac
     assert payload["backend"] == backend
     assert payload["queue"] == ("inline" if backend == "inline" else "default")
     assert [call["task_type"] for call in task_backend.calls] == ["ingest_fast"]
+    assert (
+        load_project_config_file_from_state_dir(_assets.ctx.state_dir)[
+            "ingest_source_filename"
+        ]
+        == "novel.txt"
+    )
 
 
 def _freezone_task_cases(client: TestClient, assets: SimpleNamespace):

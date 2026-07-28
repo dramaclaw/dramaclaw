@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { FreezoneCanvasSummary } from "@/api/canvas";
+import * as freezoneShellModule from "@/features/freezone/FreezoneShell";
 import {
   buildCanvasBrowserSections,
   canDeleteCanvasSummary,
@@ -30,6 +31,10 @@ import {
   shouldFlushBeforePresetRefresh,
 } from "@/features/freezone/useCanvasSync";
 import { BackendStatusError } from "@/lib/api-errors";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function canvas(
   id: string,
@@ -280,6 +285,75 @@ describe("freezone preset auto refresh guard", () => {
         syncStatus: "ready",
       }),
     ).toBe(true);
+  });
+
+  it("does not restart projection status requests after session expiry", () => {
+    expect(
+      shouldFetchProjectionStatuses({
+        canvasId: "user_eric",
+        hydratedCanvasId: "user_eric",
+        projectionKeyCount: 2,
+        revision: 8,
+        syncStatus: "ready",
+        sessionExpired: true,
+      } as Parameters<typeof shouldFetchProjectionStatuses>[0] & {
+        sessionExpired: boolean;
+      }),
+    ).toBe(false);
+  });
+
+  it("stops projection timer and browser refresh triggers on session expiry", () => {
+    vi.useFakeTimers();
+    const bump = vi.fn();
+    const startProjectionStatusRefresh = (
+      freezoneShellModule as typeof freezoneShellModule & {
+        startProjectionStatusRefresh?: (
+          refresh: () => void,
+          onSessionExpired: () => void,
+        ) => () => void;
+      }
+    ).startProjectionStatusRefresh;
+    expect(startProjectionStatusRefresh).toBeTypeOf("function");
+    if (!startProjectionStatusRefresh) return;
+
+    const onSessionExpired = vi.fn();
+    const cleanup = startProjectionStatusRefresh(bump, onSessionExpired);
+    vi.advanceTimersByTime(30_000);
+    expect(bump).toHaveBeenCalledOnce();
+
+    window.dispatchEvent(new Event("session-expired"));
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(60_000);
+
+    expect(onSessionExpired).toHaveBeenCalledOnce();
+    expect(bump).toHaveBeenCalledOnce();
+    cleanup();
+  });
+
+  it("allows a fresh projection monitor after a new login mounts the shell", () => {
+    vi.useFakeTimers();
+    const startProjectionStatusRefresh = (
+      freezoneShellModule as typeof freezoneShellModule & {
+        startProjectionStatusRefresh?: (
+          refresh: () => void,
+          onSessionExpired: () => void,
+        ) => () => void;
+      }
+    ).startProjectionStatusRefresh;
+    expect(startProjectionStatusRefresh).toBeTypeOf("function");
+    if (!startProjectionStatusRefresh) return;
+
+    const expiredBump = vi.fn();
+    startProjectionStatusRefresh(expiredBump, vi.fn());
+    window.dispatchEvent(new Event("session-expired"));
+
+    const freshBump = vi.fn();
+    const cleanup = startProjectionStatusRefresh(freshBump, vi.fn());
+    vi.advanceTimersByTime(30_000);
+
+    expect(freshBump).toHaveBeenCalledOnce();
+    cleanup();
   });
 
   it("does not refetch projection statuses for the same persisted revision", () => {

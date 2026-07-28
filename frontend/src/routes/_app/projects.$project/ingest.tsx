@@ -460,6 +460,7 @@ function UploadedFileCard({
   isIngesting,
   canStart,
   isStarting,
+  sourceLocked,
   ingestCostDisplay,
   ingestPromotion,
   onStart,
@@ -479,6 +480,7 @@ function UploadedFileCard({
   isIngesting: boolean;
   canStart: boolean;
   isStarting: boolean;
+  sourceLocked: boolean;
   ingestCostDisplay?: string | null;
   ingestPromotion?: CreditPromotionDisplay | null;
   onStart: () => void;
@@ -579,28 +581,34 @@ function UploadedFileCard({
                   ) : (
                     <Play className="size-3.5 fill-current" />
                   )}
-                  {isStarting ? t("ingest.processing") : t("ingest.startIngest")}
+                  {isStarting
+                    ? t("ingest.processing")
+                    : status === "failed" || status === "stopped"
+                      ? t("common.retry")
+                      : t("ingest.startIngest")}
                   <CreditCostInline
                     display={ingestCostDisplay}
                     promotion={ingestPromotion}
                   />
                 </Button>
               )}
-              {/* 导入完成后去掉「重新上传」「删除」：已导入的小说不再允许就地换文件
-                  或删除，避免误操作覆盖/清掉已建好的图谱；未导入（uploaded/stopped/
-                  failed）时保留这两个入口。 */}
-              {status !== "completed" && (
+              {/* 已锁定的重导入源只允许原文件重试；普通临时上传在失败或停止后
+                  仍允许换文件。删除只针对尚未完成导入的临时上传。 */}
+              {!sourceLocked && (
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={onReupload}
+                  disabled={isStarting}
                   className="gap-1.5"
                 >
                   <RefreshCw className="size-3.5" />
-                  {t("common.reupload")}
+                  {status === "completed"
+                    ? t("ingest.reimport")
+                    : t("common.reupload")}
                 </Button>
               )}
-              {status !== "completed" && (
+              {!sourceLocked && status !== "completed" && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -927,6 +935,12 @@ export function IngestPageContent({ project }: { project: string }) {
   const [ingestStarted, setIngestStarted] = useState(false);
   const [reimporting, setReimporting] = useState(false);
   const [reuploadConfirmOpen, setReuploadConfirmOpen] = useState(false);
+  const [reimportSourceFilename, setReimportSourceFilename] = useState<string | null>(
+    null,
+  );
+  useEffect(() => {
+    setReimportSourceFilename(null);
+  }, [project]);
   const knowledgeGraph = useKnowledgeGraph(
     project,
     hasImportedContent && !isUploadOnlyPreview && !ingestStarted,
@@ -949,6 +963,7 @@ export function IngestPageContent({ project }: { project: string }) {
       setIngestStarted(false);
       setIngestFileStatus("completed");
       setIngestError(null);
+      setReimportSourceFilename(null);
       await queryClient.refetchQueries({
         queryKey: queryKeys.chapters(project),
         type: "active",
@@ -958,10 +973,22 @@ export function IngestPageContent({ project }: { project: string }) {
       });
       toast.success(t("common.generate") + " ✓");
     },
-    onError: (error) => {
+    onError: async (error) => {
       setIngestStarted(false);
+      // 任务失败后允许直接用当前上传文件重试。上传文件由独立上传接口持久化，
+      // 不应因为 Cognee 的 LLM/Embedding 阶段失败而要求用户重新上传。
+      setIngestSubmitted(false);
       setIngestFileStatus("failed");
       setIngestError(error);
+      // rebuild 已让后端旧 novel.txt 失效；立即与服务端重新对账，避免旧
+      // chapters / graph 缓存继续把失败项目显示成“已导入”。
+      await queryClient.refetchQueries({
+        queryKey: queryKeys.chapters(project),
+        type: "active",
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.knowledgeGraph(project),
+      });
     },
   });
 
@@ -1018,6 +1045,7 @@ export function IngestPageContent({ project }: { project: string }) {
         project,
         episode: 0,
       });
+      setIngestSubmitted(false);
       toast.success(t("ingest.stopped"));
     } catch {
       // Already hidden locally; swallow.
@@ -1211,57 +1239,92 @@ export function IngestPageContent({ project }: { project: string }) {
     }
   }, [saveProjectSettings, t]);
 
-  // Save-on-import: persist settings (if changed), then kick off ingest
+  const startIngestFromFilename = useCallback(
+    async (filename: string, options?: { lockSource?: boolean }) => {
+      if (options?.lockSource) {
+        setReimportSourceFilename(filename);
+      } else {
+        setReimportSourceFilename(null);
+      }
+      try {
+        await saveProjectSettings();
+        setIngestLogs([]);
+        setIngestError(null);
+        await startIngestMutation.mutateAsync({
+          filename,
+          rebuild: true,
+          spine_template: resolveIngestSettings(
+            getValues(),
+            normalizeLegacyDefaults(config),
+          ).spine_template,
+        });
+        setIngestSubmitted(true);
+        setHideImportedPreview(false);
+        writeHiddenImportedPreview(project, false);
+        setIngestStarted(true);
+        setReimporting(false);
+        setIngestFileStatus("importing");
+      } catch (error) {
+        setIngestFileStatus("failed");
+        const message = backendErrorToastMessage(error, t);
+        setIngestError(message);
+        toast.error(message);
+      }
+    },
+    [
+      saveProjectSettings,
+      startIngestMutation,
+      getValues,
+      config,
+      project,
+      t,
+    ],
+  );
+
+  // Save-on-import: persist settings (if changed), then kick off ingest.
   const handleStartIngest = useCallback(async () => {
-    try {
-      const sourceFile =
-        inputMode === "upload" ? uploadedFile : await uploadPastedText();
-      if (!sourceFile) return;
-      await saveProjectSettings();
-      setIngestLogs([]);
-      setIngestError(null);
-      await startIngestMutation.mutateAsync({
-        filename: sourceFile.filename,
-        rebuild: true,
-        spine_template: resolveIngestSettings(getValues(), normalizeLegacyDefaults(config))
-          .spine_template,
-      });
-      setIngestSubmitted(true);
-      setHideImportedPreview(false);
-      writeHiddenImportedPreview(project, false);
-      setIngestStarted(true);
-      setReimporting(false);
-      setIngestFileStatus("importing");
-    } catch (error) {
-      setIngestFileStatus("failed");
-      const message = backendErrorToastMessage(error, t);
-      setIngestError(message);
-      toast.error(message);
+    const sourceFile =
+      inputMode === "upload" ? uploadedFile : await uploadPastedText();
+    if (!sourceFile) return;
+    await startIngestFromFilename(sourceFile.filename);
+  }, [inputMode, uploadedFile, uploadPastedText, startIngestFromFilename]);
+
+  const handleReimportExisting = useCallback(async () => {
+    setReuploadConfirmOpen(false);
+    const sourceFilename = chaptersData?.source_filename;
+    if (!sourceFilename) {
+      toast.error(t("ingest.reimportSourceMissing"));
+      return;
     }
-  }, [
-    uploadedFile,
-    inputMode,
-    uploadPastedText,
-    saveProjectSettings,
-    startIngestMutation,
-    getValues,
-    config,
-    project,
-    t,
-  ]);
+    await startIngestFromFilename(sourceFilename, { lockSource: true });
+  }, [chaptersData?.source_filename, startIngestFromFilename, t]);
+
+  const handleRetryReimport = useCallback(async () => {
+    if (!reimportSourceFilename) return;
+    await startIngestFromFilename(reimportSourceFilename, { lockSource: true });
+  }, [reimportSourceFilename, startIngestFromFilename]);
 
   const chapters = chaptersData?.chapters ?? [];
   const chapterCount = chapters.length;
   const shouldRestoreImportedPreview =
     hasImportedContent && !hideImportedPreview;
-  const shouldShowPreview = ingestSubmitted || shouldRestoreImportedPreview;
+  const shouldShowPreview =
+    ingestSubmitted || shouldRestoreImportedPreview || !!reimportSourceFilename;
   const previewFile =
     uploadedFile ??
-    (shouldRestoreImportedPreview || ingestSubmitted
-      ? { filename: t("ingest.restoredFilename"), size: null }
-      : null);
+    (reimportSourceFilename
+      ? { filename: reimportSourceFilename, size: null }
+      : shouldRestoreImportedPreview || ingestSubmitted
+        ? {
+            filename:
+              chaptersData?.source_filename ?? t("ingest.restoredFilename"),
+            size: null,
+          }
+        : null);
   const previewStatus: IngestFileStatus =
-    uploadedFile || ingestSubmitted ? ingestFileStatus : "completed";
+    uploadedFile || ingestSubmitted || reimportSourceFilename
+      ? ingestFileStatus
+      : "completed";
   const totalChars =
     typeof chaptersData?.total_chars === "number"
       ? chaptersData.total_chars
@@ -1622,14 +1685,31 @@ export function IngestPageContent({ project }: { project: string }) {
                     });
                   }}
                   isIngesting={ingestStarted}
-                  canStart={!!uploadedFile && !ingestSubmitted}
+                  canStart={
+                    !ingestSubmitted &&
+                    (!!uploadedFile ||
+                      (!!reimportSourceFilename &&
+                        (previewStatus === "failed" ||
+                          previewStatus === "stopped")))
+                  }
                   isStarting={isStarting}
+                  sourceLocked={!!reimportSourceFilename}
                   ingestCostDisplay={ingestFeatureCostDisplay}
                   ingestPromotion={ingestFeatureCostData?.promotion}
-                  onStart={handleStartIngest}
+                  onStart={
+                    reimportSourceFilename
+                      ? handleRetryReimport
+                      : handleStartIngest
+                  }
                   onCancel={handleCancelIngest}
                   isCancelling={cancelTask.isPending}
-                  onReupload={() => setReuploadConfirmOpen(true)}
+                  onReupload={() => {
+                    if (previewStatus === "completed") {
+                      setReuploadConfirmOpen(true);
+                    } else {
+                      handleReupload();
+                    }
+                  }}
                   onDelete={handleDeleteFile}
                 />
               )}
@@ -1651,10 +1731,7 @@ export function IngestPageContent({ project }: { project: string }) {
                     <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
                     <AlertDialogAction
                       variant="destructive"
-                      onClick={() => {
-                        setReuploadConfirmOpen(false);
-                        handleReupload();
-                      }}
+                      onClick={handleReimportExisting}
                     >
                       {t("ingest.reuploadConfirm.confirm")}
                     </AlertDialogAction>

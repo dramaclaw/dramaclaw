@@ -24,6 +24,9 @@
     },
     "logoHomeTooltip": "点击返回项目管理中心"
   },
+  "loginCinematic": {
+    "moreInfo": "更多信息"
+  },
   "header": {
     "partyFounding105": "庆祝建党105周年",
     "settings": "设置",
@@ -1400,6 +1403,8 @@
     "scriptDetails": "剧本配置",
     "previewGenerating": "正在生成结构预览...",
     "restoredFilename": "已导入小说",
+    "reimport": "重新导入",
+    "reimportSourceMissing": "原始上传文件已不存在，请重新上传后再导入。",
     "statFilename": "文件名",
     "statTotalChars": "总字数",
     "statBillableChars": "计费字数",
@@ -2864,6 +2869,9 @@
       "unlock": "解锁画布",
       "organize": "整理 / 定位画布",
       "organizeShortcut": "⌥⇧F",
+      "toolMove": "移动工具",
+      "toolHand": "抓手工具",
+      "toolGroupLabel": "画布指针工具",
       "hideEdges": "隐藏连线",
       "showEdges": "显示连线"
     },
@@ -2893,6 +2901,11 @@
       "sortAsc": "时间升序",
       "batch": "批量操作",
       "selectedCount": "已选 {{n}} 项",
+      "searchPlaceholder": "搜索提示词…",
+      "searchPlaceholderName": "搜索名称…",
+      "clearSearch": "清空搜索",
+      "noMatch": "没有匹配的历史资产",
+      "noMatchOtherTabs": "当前分类没有匹配项，试试{{tabs}}",
       "empty": "暂无历史资产",
       "unknownDate": "未知日期",
       "view": "查看",

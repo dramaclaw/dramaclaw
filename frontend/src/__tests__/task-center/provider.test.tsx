@@ -9,12 +9,15 @@ import i18next from "i18next";
 import { http, HttpResponse } from "msw";
 import ky from "ky";
 
+const handleSessionExpiredMock = vi.hoisted(() => vi.fn(async () => undefined));
+
 // MSW 2 + ky 2 in jsdom: the global Request is replaced by an undici-backed
 // implementation that requires an absolute URL, so the production `api` (which
 // uses `prefix: "/"` + relative inputs) throws `Failed to parse URL`. Inject a
 // test-only ky instance with an absolute `baseUrl` so requests reach MSW.
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  handleSessionExpired: handleSessionExpiredMock,
 }));
 
 import { server } from "@/__mocks__/msw/server";
@@ -46,6 +49,9 @@ class MockEventSource {
     const evt = new MessageEvent(type, { data: JSON.stringify(data) });
     this.listeners.get(type)?.forEach((cb) => cb(evt));
   }
+  triggerError() {
+    this.onerror?.(new Event("error"));
+  }
   close() {
     this.readyState = 2;
   }
@@ -75,6 +81,7 @@ beforeEach(async () => {
     });
   }
   MockEventSource.instances.length = 0;
+  handleSessionExpiredMock.mockClear();
   // @ts-expect-error — swap global EventSource
   globalThis.EventSource = MockEventSource;
   useTaskCenterStore.getState().reset();
@@ -111,6 +118,28 @@ function TasksConsumer() {
 }
 
 describe("TaskCenterProvider", () => {
+  it("runs full session teardown when the auth probe returns 403", async () => {
+    server.use(
+      http.get("*/api/v1/projects/demo/tasks", () =>
+        HttpResponse.json({ ok: true, data: [] }),
+      ),
+      http.get("*/api/v1/auth/me", () =>
+        HttpResponse.json({ detail: "Forbidden" }, { status: 403 }),
+      ),
+    );
+    render(<Harness />);
+    await vi.waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    MockEventSource.instances[0].dispatch("heartbeat", { ts: "healthy" });
+
+    MockEventSource.instances[0].triggerError();
+    await new Promise((resolve) => window.setTimeout(resolve, 1_100));
+    MockEventSource.instances[1].triggerError();
+    await new Promise((resolve) => window.setTimeout(resolve, 2_100));
+    MockEventSource.instances[2].triggerError();
+
+    await vi.waitFor(() => expect(handleSessionExpiredMock).toHaveBeenCalledOnce());
+  });
+
   it("does NOT open a stream when logged out (no username)", async () => {
     useAuthStore.setState({ username: null });
     render(<Harness />);

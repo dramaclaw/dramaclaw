@@ -11,8 +11,10 @@ import os
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, List, Optional, Any, Iterable
 import json
+from contextlib import contextmanager
 from importlib import import_module
 from datetime import date, datetime
+from threading import Lock
 from uuid import UUID
 
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
@@ -64,6 +66,31 @@ from novelvideo.models import (
 )
 
 console = Console()
+
+_GRAPH_ENGINE_READERS_LOCK = Lock()
+_GRAPH_ENGINE_READERS: Dict[int, int] = {}
+
+
+@contextmanager
+def _track_graph_engine_reader(graph_engine):
+    """Prevent request cleanup from closing an engine used by another reader."""
+    engine_id = id(graph_engine)
+    with _GRAPH_ENGINE_READERS_LOCK:
+        _GRAPH_ENGINE_READERS[engine_id] = _GRAPH_ENGINE_READERS.get(engine_id, 0) + 1
+    try:
+        yield
+    finally:
+        with _GRAPH_ENGINE_READERS_LOCK:
+            remaining = _GRAPH_ENGINE_READERS.get(engine_id, 1) - 1
+            if remaining > 0:
+                _GRAPH_ENGINE_READERS[engine_id] = remaining
+            else:
+                _GRAPH_ENGINE_READERS.pop(engine_id, None)
+
+
+def _graph_engine_has_active_reader(graph_engine) -> bool:
+    with _GRAPH_ENGINE_READERS_LOCK:
+        return _GRAPH_ENGINE_READERS.get(id(graph_engine), 0) > 0
 
 
 def _json_list_payload(values: list[str]) -> str:
@@ -310,7 +337,7 @@ class CogneeStore:
 
     @staticmethod
     def _ensure_pipeline_run_succeeded(result, stage_name: str) -> None:
-        """Treat Cognee pipeline Errored/Failed results as task failures."""
+        """Require every Cognee pipeline run to report a completed status."""
 
         def truncate(value: Any, limit: int = 400) -> str:
             detail = str(value or "").strip() or "unknown error"
@@ -323,25 +350,44 @@ class CogneeStore:
                 return value.get(field_name, default)
             return getattr(value, field_name, default)
 
-        def nested_pipeline_errors(run: Any) -> List[str]:
-            nested_errors: List[str] = []
+        def pipeline_status_text(status: Any) -> str:
+            return str(getattr(status, "value", status) or "").strip()
+
+        def is_completed_status(status: Any) -> bool:
+            normalized = "".join(
+                character
+                for character in pipeline_status_text(status).lower()
+                if character.isalnum()
+            )
+            return normalized in {
+                "completed",
+                "alreadycompleted",
+                "pipelineruncompleted",
+                "pipelinerunalreadycompleted",
+                "datasetprocessingcompleted",
+            }
+
+        def nested_pipeline_failures(run: Any) -> List[str]:
+            nested_failures: List[str] = []
             data_ingestion_info = read_field(run, "data_ingestion_info") or []
             if not isinstance(data_ingestion_info, Iterable) or isinstance(
                 data_ingestion_info, (str, bytes)
             ):
-                return nested_errors
+                return nested_failures
 
             for item in data_ingestion_info:
                 run_info = read_field(item, "run_info")
                 if run_info is None:
                     continue
                 status = read_field(run_info, "status")
-                status_text = str(getattr(status, "value", status) or "")
-                if "error" not in status_text.lower() and "fail" not in status_text.lower():
+                if is_completed_status(status):
                     continue
+                status_text = pipeline_status_text(status) or "unknown status"
                 payload = read_field(run_info, "payload")
-                nested_errors.append(truncate(payload, limit=600))
-            return nested_errors
+                nested_failures.append(
+                    f"{status_text}: {truncate(payload, limit=600)}"
+                )
+            return nested_failures
 
         if isinstance(result, dict):
             runs = list(result.values())
@@ -350,21 +396,29 @@ class CogneeStore:
         else:
             runs = [result]
 
+        if not runs:
+            raise RuntimeError(f"{stage_name}失败: Cognee 返回空结果")
+
         errors: List[str] = []
         for run in runs:
             if run is None:
-                errors.append(f"{stage_name} 返回空结果")
+                errors.append(f"{stage_name}失败: Cognee 返回空结果")
                 continue
 
-            status = getattr(run, "status", None)
-            payload = getattr(run, "payload", None)
-            status_text = str(getattr(status, "value", status) or "")
-            if "error" in status_text.lower() or "fail" in status_text.lower():
+            status = read_field(run, "status")
+            payload = read_field(run, "payload")
+            status_text = pipeline_status_text(status)
+            nested = nested_pipeline_failures(run)
+            if nested:
                 detail = truncate(payload)
-                nested = nested_pipeline_errors(run)
-                if nested:
-                    detail = f"{detail}; data item errors: " + " | ".join(nested[:3])
+                detail = f"{detail}; data item failures: " + " | ".join(nested[:3])
                 errors.append(f"{stage_name}失败({status_text}): {detail}")
+                continue
+            if not is_completed_status(status):
+                detail = truncate(payload)
+                errors.append(
+                    f"{stage_name}失败({status_text or 'unknown status'}): {detail}"
+                )
 
         if errors:
             raise RuntimeError("；".join(errors))
@@ -483,6 +537,11 @@ class CogneeStore:
             except Exception:
                 graph_engine = None
 
+        # Cognee caches graph engines across request-scoped CogneeStore objects.
+        # Another request may still be executing against the same engine.
+        if graph_engine is not None and _graph_engine_has_active_reader(graph_engine):
+            return
+
         if graph_engine is not None:
             for attr_name in ("connection", "db"):
                 handle = getattr(graph_engine, attr_name, None)
@@ -567,14 +626,7 @@ class CogneeStore:
         if not Path(novel_path).exists():
             raise FileNotFoundError(f"文件不存在: {novel_path}")
 
-        if rebuild:
-            report(0.05, "重建图谱...")
-            log("清除 cognee 图谱数据...")
-            await self._prune_cognee_only()
-
         from .config import init_cognee
-
-        init_cognee()
 
         log(f"读取文件: {novel_path}")
         content = load_novel_text(novel_path)
@@ -590,12 +642,26 @@ class CogneeStore:
                 "LLM API key 未设置。请在 .env 文件中添加:\n" "  OPENAI_API_KEY=your_key_here"
             )
 
+        if rebuild:
+            report(0.05, "重建图谱...")
+            # novel.txt 是前端和后续流水线判断“已导入”的持久标志。旧图谱已经
+            # 清除前必须先让旧标志失效：即使清理中途失败，也不能继续显示成功。
+            imported_novel_path = Path(self.project_dir) / "novel.txt"
+            imported_novel_path.unlink(missing_ok=True)
+            log("清除 cognee 图谱数据...")
+            await self._prune_cognee_only()
+
+        # 重建时必须先清理旧存储，再初始化 Cognee 的数据库连接。
+        init_cognee()
+
         # Step 1: 添加原文到 Cognee
         report(0.1, "解析原文...")
-        log("Step 1/2: 导入原文到 Cognee...")
-        self._set_cognee_context()
-        with self.embedding_model_scope():
-            await cognee.add(content, dataset_name=self.dataset_name)
+        log("Step 1/3: 导入原文到 Cognee...")
+        await self._run_cognee_pipeline_with_retry(
+            stage_name="原文导入",
+            operation=lambda: cognee.add(content, dataset_name=self.dataset_name),
+            log=log,
+        )
         log("原文导入完成")
         await asyncio.sleep(0)
 
@@ -608,6 +674,10 @@ class CogneeStore:
             log=log,
         )
         log("知识图谱构建完成")
+
+        if not await self._dataset_graph_has_nodes():
+            raise RuntimeError("知识图谱构建失败：未生成任何图谱节点")
+        log("知识图谱校验完成")
 
         # Step 3: 创建向量索引（memify）
         report(0.7, "创建向量索引...")
@@ -633,7 +703,7 @@ class CogneeStore:
             "status": "graph_ready",
         }
 
-    async def get_graph_snapshot(self, max_nodes: int = 160) -> dict:
+    async def get_graph_snapshot(self, max_nodes: int = 48) -> dict:
         """Return a bounded, JSON-safe snapshot for the project graph viewer.
 
         Cognee's graph may contain large chunk payloads and embedding metadata. The
@@ -642,9 +712,12 @@ class CogneeStore:
         oversized or vector-shaped values before returning them to the browser.
         """
 
-        raw_nodes, raw_edges = await self._get_dataset_graph_data()
-
-        max_nodes = max(20, min(int(max_nodes), 240))
+        max_nodes = max(20, min(int(max_nodes), 80))
+        max_edges = min(max_nodes * 3, 160)
+        raw_nodes, raw_edges = await self._get_dataset_graph_data(
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+        )
         degree: Dict[str, int] = {}
         for source, target, _relation, _properties in raw_edges:
             source_id = str(source)
@@ -722,7 +795,7 @@ class CogneeStore:
                     "properties": compact(properties or {}),
                 }
             )
-            if len(edges) >= 600:
+            if len(edges) >= max_edges:
                 break
 
         return {
@@ -730,16 +803,23 @@ class CogneeStore:
             "edges": edges,
             "total_nodes": len(raw_nodes),
             "total_edges": len(raw_edges),
-            "truncated": len(raw_nodes) > len(nodes) or len(raw_edges) > len(edges),
+            "truncated": len(raw_nodes) >= max_nodes or len(raw_edges) >= max_edges,
         }
 
-    async def _get_dataset_graph_data(self) -> tuple[list, list]:
-        """Read the graph through Cognee's project dataset context.
+    async def _get_dataset_graph_data(
+        self,
+        *,
+        max_nodes: int = 48,
+        max_edges: int = 144,
+    ) -> tuple[list, list]:
+        """Read a bounded preview through Cognee's project dataset context.
 
         With backend access control enabled, Cognee stores each dataset in its
         own graph database. Calling ``get_graph_engine()`` without first setting
         that dataset context opens the empty global graph instead of the graph
-        populated by ``cognify()``.
+        populated by ``cognify()``. The ingest UI is only a visual preview, so
+        querying the complete graph here would make large novels unnecessarily
+        expensive and could block the API worker.
         """
 
         self._set_cognee_context()
@@ -759,7 +839,117 @@ class CogneeStore:
         dataset = datasets[0]
         async with set_database_global_context_variables(dataset.id, dataset.owner_id):
             graph_engine = await get_graph_engine()
-            return await graph_engine.get_graph_data()
+            with _track_graph_engine_reader(graph_engine):
+                query = getattr(graph_engine, "query", None)
+                if not callable(query):
+                    # Compatibility fallback for graph adapters that only expose
+                    # Cognee's all-graph interface.
+                    nodes, edges = await graph_engine.get_graph_data()
+                    return nodes[:max_nodes], edges[:max_edges]
+
+                max_nodes = max(1, min(int(max_nodes), 80))
+                max_edges = max(1, min(int(max_edges), 160))
+                edge_rows = await query(
+                    f"""
+                    MATCH (n:Node)-[r]->(m:Node)
+                    WHERE n.type <> 'DocumentChunk' AND m.type <> 'DocumentChunk'
+                    RETURN n.id, n.name, n.type, n.properties,
+                           m.id, m.name, m.type, m.properties,
+                           r.relationship_name, r.properties
+                    LIMIT {max_edges}
+                    """
+                )
+                node_rows = await query(
+                    f"""
+                    MATCH (n:Node)
+                    WHERE n.type <> 'DocumentChunk'
+                    RETURN n.id, n.name, n.type, n.properties
+                    LIMIT {max_nodes}
+                    """
+                )
+
+                def parse_properties(raw: Any) -> dict:
+                    if not raw:
+                        return {}
+                    if isinstance(raw, dict):
+                        return dict(raw)
+                    if isinstance(raw, str):
+                        try:
+                            parsed = json.loads(raw)
+                            return parsed if isinstance(parsed, dict) else {}
+                        except (TypeError, json.JSONDecodeError):
+                            return {}
+                    return {}
+
+                nodes_by_id: dict[str, dict] = {}
+
+                def add_node(row: Any, offset: int = 0) -> None:
+                    if (
+                        not row
+                        or len(row) < offset + 4
+                        or not row[offset]
+                        or len(nodes_by_id) >= max_nodes
+                    ):
+                        return
+                    node_id = str(row[offset])
+                    nodes_by_id.setdefault(
+                        node_id,
+                        {
+                            "name": row[offset + 1],
+                            "type": row[offset + 2],
+                            **parse_properties(row[offset + 3]),
+                        },
+                    )
+
+                # Take connected endpoints first so the preview remains a useful
+                # subgraph instead of a collection of unrelated nodes.
+                for row in edge_rows:
+                    add_node(row)
+                    add_node(row, 4)
+                for row in node_rows:
+                    add_node(row)
+
+                selected_ids = set(nodes_by_id)
+                edges = []
+                for row in edge_rows:
+                    if not row or len(row) < 10:
+                        continue
+                    source_id = str(row[0])
+                    target_id = str(row[4])
+                    if source_id not in selected_ids or target_id not in selected_ids:
+                        continue
+                    edges.append(
+                        (
+                            source_id,
+                            target_id,
+                            str(row[8] or "related_to"),
+                            parse_properties(row[9]),
+                        )
+                    )
+                nodes = list(nodes_by_id.items())
+                return nodes, edges
+
+    async def _dataset_graph_has_nodes(self) -> bool:
+        """Check graph existence without loading every node and edge."""
+        self._set_cognee_context()
+        with preserve_st_env():
+            from cognee.context_global_variables import (
+                set_database_global_context_variables,
+            )
+            from cognee.infrastructure.databases.graph import get_graph_engine
+            from cognee.modules.data.methods import get_datasets_by_name
+            from cognee.modules.users.methods import get_default_user
+
+        user = await get_default_user()
+        datasets = await get_datasets_by_name(self.dataset_name, user.id)
+        if not datasets:
+            return False
+
+        dataset = datasets[0]
+        async with set_database_global_context_variables(dataset.id, dataset.owner_id):
+            graph_engine = await get_graph_engine()
+            with _track_graph_engine_reader(graph_engine):
+                return not await graph_engine.is_empty()
 
     async def build_characters_from_graph(
         self,

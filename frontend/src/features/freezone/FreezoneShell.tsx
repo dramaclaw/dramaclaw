@@ -58,6 +58,7 @@ import {
 } from "@/stores/assetDropStore";
 import { withImageCacheBust } from "@/features/canvas/application/imageData";
 import { queryKeys } from "@/lib/query-keys";
+import { SESSION_EXPIRED_EVENT } from "@/lib/session-expiry";
 import { useCanvasSync, type CanvasSyncStatus, type ConflictSnapshot } from "./useCanvasSync";
 import { prefetchFreezoneImageModels } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { prefetchFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
@@ -90,6 +91,38 @@ interface FreezoneShellProps {
 
 const FREEZONE_CHAT_WIDTH = "clamp(500px, 34vw, 540px)";
 const PROJECTION_STATUS_REFRESH_MS = 30_000;
+
+/**
+ * Register every trigger that refreshes projection status and tear them all
+ * down synchronously when the shared API layer confirms session expiry.
+ */
+export function startProjectionStatusRefresh(
+  refresh: () => void,
+  onSessionExpired: () => void,
+): () => void {
+  let stopped = false;
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "visible") refresh();
+  };
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    window.removeEventListener("focus", refresh);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+    window.clearInterval(timer);
+  };
+  const handleSessionExpired = () => {
+    stop();
+    onSessionExpired();
+  };
+
+  window.addEventListener("focus", refresh);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+  const timer = window.setInterval(refresh, PROJECTION_STATUS_REFRESH_MS);
+  return stop;
+}
 
 function renderCommitSuccessMessage(target: PushTarget, result: PushResult): string {
   if (target.kind === "director_render") {
@@ -169,14 +202,17 @@ export function shouldFetchProjectionStatuses({
   hydratedCanvasId,
   projectionKeyCount,
   revision,
+  sessionExpired = false,
   syncStatus,
 }: {
   canvasId: string;
   hydratedCanvasId: string | null;
   projectionKeyCount: number;
   revision: number | null;
+  sessionExpired?: boolean;
   syncStatus: CanvasSyncStatus;
 }): boolean {
+  if (sessionExpired) return false;
   if (shouldClearProjectionStatuses({ canvasId, hydratedCanvasId, projectionKeyCount })) {
     return false;
   }
@@ -379,6 +415,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
       useCanvasStore.getState().nodes.length > 0,
   );
   const [projectionStatusRefreshToken, setProjectionStatusRefreshToken] = useState(0);
+  const [projectionMonitoringExpired, setProjectionMonitoringExpired] = useState(false);
   const lastProjectionStatusRevisionRef = useRef<{
     canvasId: string;
     revision: number;
@@ -441,35 +478,31 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     [sync.metadata],
   );
   useEffect(() => {
+    if (projectionMonitoringExpired) return;
     if (!shouldFetchProjectionStatuses({
       canvasId,
       hydratedCanvasId: sync.hydratedCanvasId,
       projectionKeyCount: projectionKeys.length,
       revision: sync.revision,
+      sessionExpired: projectionMonitoringExpired,
       syncStatus: sync.status,
     })) {
       return;
     }
     const bump = () => setProjectionStatusRefreshToken((value) => value + 1);
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") bump();
-    };
-    window.addEventListener("focus", bump);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    const timer = window.setInterval(bump, PROJECTION_STATUS_REFRESH_MS);
-    return () => {
-      window.removeEventListener("focus", bump);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.clearInterval(timer);
-    };
+    return startProjectionStatusRefresh(bump, () => {
+      setProjectionMonitoringExpired(true);
+    });
   }, [
     canvasId,
+    projectionMonitoringExpired,
     projectionKeys.length,
     sync.hydratedCanvasId,
     sync.revision,
     sync.status,
   ]);
   useEffect(() => {
+    if (projectionMonitoringExpired) return;
     if (shouldClearProjectionStatuses({
       canvasId,
       hydratedCanvasId: sync.hydratedCanvasId,
@@ -484,6 +517,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
       hydratedCanvasId: sync.hydratedCanvasId,
       projectionKeyCount: projectionKeys.length,
       revision,
+      sessionExpired: projectionMonitoringExpired,
       syncStatus: sync.status,
     })) {
       return;
@@ -525,6 +559,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   }, [
     canvasId,
     projectId,
+    projectionMonitoringExpired,
     projectionKeys,
     projectionStatusRefreshToken,
     sync.hydratedCanvasId,

@@ -38,6 +38,7 @@ interface ChaptersResult {
   total_chars: number;
   billable_chars?: number;
   count?: number;
+  source_filename?: string;
   /** Client-only marker: upload parsing succeeded, but Cognee ingest has not completed. */
   preview_only?: boolean;
 }
@@ -95,6 +96,7 @@ export function useUploadNovel(project: string) {
               total_chars: preview.total_chars,
               billable_chars: preview.billable_chars,
               count: preview.count,
+              source_filename: preview.filename,
               preview_only: true,
             },
           },
@@ -121,9 +123,12 @@ export function useChapters(project: string, enabled = true) {
 export function useKnowledgeGraph(project: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.knowledgeGraph(project),
-    queryFn: ({ signal }) =>
+    // Ladybug graph reads run in a backend executor thread and cannot be stopped
+    // safely midway. Do not consume React Query's unmount signal: let the request
+    // finish and populate the cache when users briefly switch pages.
+    queryFn: () =>
       api
-        .get(p`api/v1/projects/${project}/ingest/graph`, { signal })
+        .get(p`api/v1/projects/${project}/ingest/graph`)
         .json<OkResponse<KnowledgeGraphSnapshot>>(),
     enabled: !!project && enabled,
     staleTime: 30_000,

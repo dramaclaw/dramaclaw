@@ -14,8 +14,13 @@ from novelvideo.api.deps import (
     resolve_project_scope,
 )
 from novelvideo.api.schemas import EpisodePlanRequest, EpisodeUpdate, InsertManualShotRequest
-from novelvideo.novel_source import has_imported_novel, novel_import_required_response
+from novelvideo.novel_source import (
+    has_imported_novel,
+    novel_import_required_response,
+    resolve_uploaded_novel_filename,
+)
 from novelvideo.ports import get_task_backend, get_usage_meter
+from novelvideo.project_config import load_project_config_file_from_state_dir
 from novelvideo.task_identity import project_task_state_key
 
 logger = logging.getLogger("novelvideo.api.episodes")
@@ -625,7 +630,16 @@ async def detect_chapters(project: str, user: dict = Depends(get_api_user)):
     if not novel_text:
         return {"ok": False, "error": "No novel file found. Upload a novel first."}
 
-    return {
-        "ok": True,
-        "data": build_chapter_preview(novel_text),
-    }
+    preview = build_chapter_preview(novel_text)
+    config = load_project_config_file_from_state_dir(resolved.state_dir)
+    source_filename = resolve_uploaded_novel_filename(
+        resolved.project_dir,
+        novel_text,
+        preferred_filename=str(config.get("ingest_source_filename") or ""),
+    )
+    # Old projects may predate persistent source tracking and only retain the
+    # canonical parsed novel.  ``ingest/start`` recognizes this fallback and
+    # first copies it into uploads/, keeping subsequent retries durable.
+    preview["source_filename"] = source_filename or "novel.txt"
+
+    return {"ok": True, "data": preview}

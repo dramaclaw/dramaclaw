@@ -76,6 +76,13 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
         noteKey: 'canvas.shortcuts.gestures.middleDrag',
       },
       { labelKey: 'canvas.shortcuts.actions.boxSelect', noteIcons: [MouseLeft], noteKey: 'canvas.shortcuts.gestures.holdLeftDrag' },
+      { labelKey: 'canvas.toolbar.toolMove', keys: ['V'] },
+      {
+        labelKey: 'canvas.toolbar.toolHand',
+        keys: ['H'],
+        noteIcons: [MouseLeft],
+        noteKey: 'canvas.shortcuts.gestures.holdLeftDrag',
+      },
       { labelKey: 'canvas.shortcuts.actions.organize', keys: ['⌥', '⇧', 'F'] },
     ],
   },

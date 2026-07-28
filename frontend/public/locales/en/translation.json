@@ -24,6 +24,9 @@
     },
     "logoHomeTooltip": "Click to return to project management center"
   },
+  "loginCinematic": {
+    "moreInfo": "More information"
+  },
   "header": {
     "partyFounding105": "庆祝建党105周年",
     "settings": "Settings",
@@ -1400,6 +1403,8 @@
     "scriptDetails": "Script details",
     "previewGenerating": "Generating structure preview...",
     "restoredFilename": "Imported novel",
+    "reimport": "Re-import",
+    "reimportSourceMissing": "The original uploaded file is unavailable. Upload it again before importing.",
     "statFilename": "Filename",
     "statTotalChars": "Total chars",
     "statBillableChars": "Billable chars",
@@ -2864,6 +2869,9 @@
       "unlock": "Unlock Canvas",
       "organize": "Organize / Locate Canvas",
       "organizeShortcut": "⌥⇧F",
+      "toolMove": "Move",
+      "toolHand": "Hand",
+      "toolGroupLabel": "Canvas pointer tool",
       "hideEdges": "Hide connections",
       "showEdges": "Show connections"
     },
@@ -2893,6 +2901,11 @@
       "sortAsc": "Oldest first",
       "batch": "Select",
       "selectedCount": "{{n}} selected",
+      "searchPlaceholder": "Search prompts…",
+      "searchPlaceholderName": "Search names…",
+      "clearSearch": "Clear search",
+      "noMatch": "No matching history assets",
+      "noMatchOtherTabs": "No matches in this tab — try {{tabs}}",
       "empty": "No history assets yet",
       "unknownDate": "Unknown date",
       "view": "View",
