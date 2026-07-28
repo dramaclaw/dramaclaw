@@ -330,8 +330,8 @@ frontend/src/__tests__/features/canvas/background-cropper-dialog.test.ts,Elastic
 frontend/src/__tests__/features/canvas/beat-context-node.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-add-node-panel.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-bookmark-context-menu.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/canvas-manual-connect.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-node-image-wake-refresh.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/src/__tests__/features/canvas/canvas-skill-manual-connect.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-tool-menu.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-viewport-bookmarks.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/context-prompt-palette.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -516,6 +516,7 @@ frontend/src/__tests__/stores/app-store-task-panel.test.ts,Elastic-2.0,2026 Supe
 frontend/src/__tests__/stores/auth-store.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-3d-upstream.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-auto-group-spawn.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/stores/canvas-store-convert-node-type.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-draft-hydrate.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-group-grow.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-image-resize-aspect.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

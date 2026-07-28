@@ -276,10 +276,12 @@ interface CanvasState {
     options?: { lockManualSize?: boolean; data?: Partial<CanvasNodeData> },
   ) => void;
   /**
-   * Swap a node's `type` in place while keeping its `id`, position, and any
-   * already-attached edges. Used when an UploadNode's user picks a video file
-   * and the node needs to morph into a VideoNode so the header / toolbar /
-   * connectivity match the new resource type.
+   * Swap a node's `type` in place while keeping its `id` and position. Used
+   * when an UploadNode's user picks a video file and the node needs to morph
+   * into a VideoNode so the header / toolbar / connectivity match the new
+   * resource type. Attached edges survive the swap **unless** the new type
+   * makes them illegal (same rules the load-time normalizer applies), in which
+   * case they are dropped along with it — one undo restores both.
    */
   convertNodeType: (
     nodeId: string,
@@ -2336,8 +2338,29 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           } as CanvasNode)
         : node
     );
+    // 换了类型，原本合法的关联边可能不再合法：空 Upload 先连到图片节点，之后
+    // 上传音频转成 Audio —— audio → 图片就不再放行了。不在这里清掉，那条边会一直
+    // 留在画布上（还能提交生成），直到下次加载被规范化静默删除。口径与加载规范化
+    // 那道过滤保持一致：handle 有无 + 建边类型规则。
+    const nextNodeTypeById = new Map(nextNodes.map((node) => [node.id, node.type]));
+    const nextEdges = state.edges.filter((edge) => {
+      if (edge.source !== nodeId && edge.target !== nodeId) {
+        return true;
+      }
+      const sourceType = nextNodeTypeById.get(edge.source);
+      const targetType = nextNodeTypeById.get(edge.target);
+      if (!sourceType || !targetType) {
+        return true;
+      }
+      if (!nodeHasSourceHandle(sourceType) || !nodeHasTargetHandle(targetType)) {
+        return false;
+      }
+      return isUpstreamConnectionAllowed(sourceType, targetType);
+    });
+
     set({
       nodes: nextNodes,
+      edges: nextEdges,
       history: {
         past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
         future: [],

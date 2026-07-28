@@ -92,7 +92,6 @@ import {
   getAllowedDownstreamTargetTypes,
   getAllowedUpstreamSourceTypes,
   isManualConnectionAllowed,
-  isUpstreamConnectionAllowed,
   nodeHasSourceHandle,
   nodeHasTargetHandle,
 } from '@/features/canvas/domain/nodeRegistry';
@@ -1746,11 +1745,14 @@ export function Canvas({
       if (!targetId) return true;
       const targetNode = nodes.find((node) => node.id === targetId);
       if (!targetNode) return true;
-      // 上游类型规则：拖线过程中即把不合法的源（如音频连音频）变灰、禁止落点。
+      // 类型规则：拖线过程中就把不合法的源（如音频连图片）变灰、禁止落点。刻意复用
+      // handleConnect 松手时那把尺子本身 —— 只查领域层的手工建边规则是不够的，那样
+      // 3D 世界 / 360° 全景的额外限制会漏在外面，表现成「拖过去高亮成合法、一松手
+      // 什么也没有」（视频→音频那条溯源边就是这样：建边规则放行，但不开放手工创建）。
       const sourceNode = connection.source
         ? nodes.find((node) => node.id === connection.source)
         : undefined;
-      if (sourceNode && !isUpstreamConnectionAllowed(sourceNode.type, targetNode.type)) {
+      if (sourceNode && !canNodeTypeBeManualConnectionSource(sourceNode.type, targetNode.type)) {
         return false;
       }
       if (targetNode.type !== CANVAS_NODE_TYPES.threeDWorld) return true;
