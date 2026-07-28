@@ -340,6 +340,7 @@ frontend/src/__tests__/features/canvas/director-world-sources.test.ts,Elastic-2.
 frontend/src/__tests__/features/canvas/generation-task-arbitration.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/group-selection-delete.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/history-assets-buckets.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/history-search-keyboard.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-gen-director-world-entry.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-gen-error-notification.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/image-gen-node-context-palette.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -12,6 +12,7 @@ import {
   Pause,
   Play,
   Plus,
+  Search,
   Trash2,
   Volume2,
   X,
@@ -21,6 +22,7 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { downloadUrlAsFile } from '@/lib/browserDownload';
 import {
   extractCanvasAssets,
+  filterAssetBuckets,
   groupAssetsByDate,
   type CanvasAsset,
   type CanvasAssetBuckets,
@@ -195,7 +197,7 @@ export function CanvasHistoryAssetsModal({
   imageOnly = false,
   assetSource = 'generation-history',
 }: CanvasHistoryAssetsModalProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const nodes = useCanvasStore((state) => state.nodes);
   const useHistory = assetSource === 'generation-history';
 
@@ -216,6 +218,13 @@ export function CanvasHistoryAssetsModal({
   const [activeTab, setActiveTab] = useState<CanvasAssetKind>('image');
   const tabOrder = imageOnly ? (['image'] as CanvasAssetKind[]) : TAB_ORDER;
   const [direction, setDirection] = useState<'desc' | 'asc'>('desc');
+  // 关键词搜索(issue #175)。分两个 state:`query` 是输入框显示值(含 IME 组字中还没上屏
+  // 的拼音),`searchTerm` 才参与过滤 —— 组字期间不更新,否则中文用户敲「小猫」的途中,
+  // x/xi/xia/xiao 每一步都是一次真实过滤,网格反复清空、计数掉到 (0)。与
+  // AudioOperationsPanel 的输入框同一套路:草稿照常更新保证输入框跟手,只把下游提交挡住。
+  const [query, setQuery] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const isComposingRef = useRef(false);
   const [zoom, setZoom] = useState(100);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -258,7 +267,17 @@ export function CanvasHistoryAssetsModal({
         : extractCanvasAssets(nodes),
     [useHistory, records, nodes, resolveNodeMeta],
   );
-  const activeAssets = buckets[activeTab];
+  const normalizedQuery = searchTerm.trim().toLowerCase();
+  const filteredBuckets = useMemo(
+    () => filterAssetBuckets(buckets, normalizedQuery),
+    [buckets, normalizedQuery],
+  );
+  const activeAssets = filteredBuckets[activeTab];
+  // 当前 tab 没命中、但别的 tab 有时,空态要指路 —— 否则「没有匹配的历史资产」会和头上
+  // 明明写着「视频历史(1)」的计数自相矛盾。
+  const otherTabsWithMatches = tabOrder.filter(
+    (tab) => tab !== activeTab && filteredBuckets[tab].length > 0,
+  );
   const groups = useMemo(
     () => groupAssetsByDate(activeAssets, direction),
     [activeAssets, direction],
@@ -270,6 +289,10 @@ export function CanvasHistoryAssetsModal({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // 组字中的 Escape 是「关掉候选窗」,浏览器照样把 keydown 冒泡到 document ——
+      // 不在这里拦住,搜索框那边的守卫(它组字时刻意不 stopPropagation)就会让中文
+      // 用户取消一次候选词把整个弹窗关掉。与 Canvas.tsx 的全局键盘守卫同一判据。
+      if (event.isComposing) return;
       if (event.key === 'Escape') {
         // Inner overlays own Escape while open: prompt dialog first, then the
         // modal itself once viewers/prompt are all closed.
@@ -286,6 +309,10 @@ export function CanvasHistoryAssetsModal({
 
   useEffect(() => {
     // Reset selection when switching tab so counts can't leak across kinds.
+    // 刻意不在搜索词变化时清空:`selectedAssets` 本来就是从过滤后的 activeAssets 里取的,
+    // 被筛掉的卡片进不了任何批量操作,清空并不能多防住什么;反倒会让用户手挑了几十张后
+    // 多敲一个字就全没了(批量下载途中还会把进度条连同 spinner 一起卸载)。选中项在筛选
+    // 期间保留、清空搜索后回来,是可预期的。
     setSelectedIds(new Set());
   }, [activeTab]);
 
@@ -337,12 +364,18 @@ export function CanvasHistoryAssetsModal({
     activeAssets.length > 0 && selectedAssets.length === activeAssets.length;
   const [isDownloading, setIsDownloading] = useState(false);
 
+  // 全选 / 取消全选只作用于「当前可见(已过滤)的」资产,与 allSelected 用同一个判据
+  // (selectedAssets),否则搜索把已选项筛掉后,按钮会显示「全选」却执行清空。筛选期间被
+  // 隐藏的选中项保持不动。
   const handleToggleSelectAll = () => {
-    setSelectedIds((current) =>
-      current.size === activeAssets.length
-        ? new Set()
-        : new Set(activeAssets.map((asset) => asset.id)),
-    );
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const asset of activeAssets) {
+        if (allSelected) next.delete(asset.id);
+        else next.add(asset.id);
+      }
+      return next;
+    });
   };
 
   // 批量下载：逐个触发浏览器下载，之间留一点间隔，避免浏览器把并发下载判为弹窗滥用而拦截。
@@ -432,12 +465,73 @@ export function CanvasHistoryAssetsModal({
                   active ? 'text-white' : 'text-white/40 hover:text-white/70'
                 }`}
               >
-                {t(TAB_LABEL_KEY[tab])}({buckets[tab].length})
+                {t(TAB_LABEL_KEY[tab])}({filteredBuckets[tab].length})
               </button>
             );
           })}
         </div>
         <div className="flex items-center gap-4">
+          {/* 关键词搜索:过滤当前所有 tab 的历史资产(命中数反映在各 tab 计数)。
+              placeholder 分两套 —— live-canvas 取图那条路径上资产没有 prompt(见
+              CanvasAsset.prompt 注释),只有节点名/文件名可搜,不能承诺「搜提示词」。
+              框里有内容时 Escape 先清空输入,否则才让弹窗接管关闭。 */}
+          <div className="relative shrink-0">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/35"
+              aria-hidden
+            />
+            <input
+              type="search"
+              value={query}
+              aria-label={t(
+                useHistory
+                  ? 'canvas.history.searchPlaceholder'
+                  : 'canvas.history.searchPlaceholderName',
+              )}
+              onChange={(event) => {
+                const next = event.target.value;
+                setQuery(next);
+                if (!isComposingRef.current) setSearchTerm(next);
+              }}
+              onCompositionStart={() => {
+                isComposingRef.current = true;
+              }}
+              onCompositionEnd={(event) => {
+                isComposingRef.current = false;
+                const next = event.currentTarget.value;
+                setQuery(next);
+                setSearchTerm(next);
+              }}
+              onKeyDown={(event) => {
+                // 组字中的 Escape 是「取消候选词」,不是「清空搜索框」—— 不加这个判断,
+                // 用中文输入法按 Esc 关候选窗会把已经敲好的整个查询词抹掉。
+                if (event.key === 'Escape' && query && !event.nativeEvent.isComposing) {
+                  event.stopPropagation();
+                  setQuery('');
+                  setSearchTerm('');
+                }
+              }}
+              placeholder={t(
+                useHistory
+                  ? 'canvas.history.searchPlaceholder'
+                  : 'canvas.history.searchPlaceholderName',
+              )}
+              className="h-8 w-44 rounded-lg border border-white/[0.12] bg-white/[0.04] pl-8 pr-7 text-[13px] text-white/85 outline-none transition-colors placeholder:text-white/35 focus:border-white/30 focus:bg-white/[0.07] [&::-webkit-search-cancel-button]:appearance-none"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery('');
+                  setSearchTerm('');
+                }}
+                aria-label={t('canvas.history.clearSearch')}
+                className="absolute right-2 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-white/40 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setDirection((value) => (value === 'desc' ? 'asc' : 'desc'))}
@@ -467,7 +561,7 @@ export function CanvasHistoryAssetsModal({
           >
             <Check className="h-3.5 w-3.5" />
             {selectionMode
-              ? t('canvas.history.selectedCount', { n: selectedIds.size })
+              ? t('canvas.history.selectedCount', { n: selectedAssets.length })
               : t('canvas.history.batch')}
           </button>
         </div>
@@ -475,13 +569,30 @@ export function CanvasHistoryAssetsModal({
 
       {/* Body */}
       <div className="ui-scrollbar min-h-0 flex-1 overflow-y-auto px-6 pb-8">
-        {useHistory && isLoading && activeAssets.length === 0 ? (
+        {/* 加载态判据用**未过滤**的桶:搜索无命中时后台若刚好在 refetch(如删掉某个节点触发
+            重新拉取),用 activeAssets 会把已经确定的「没有匹配」换成「加载中」,暗示结果
+            还可能出现。 */}
+        {useHistory && isLoading && buckets[activeTab].length === 0 ? (
           <div className="flex h-full items-center justify-center text-[14px] text-white/40">
             {t('common.loading')}
           </div>
         ) : activeAssets.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-[14px] text-white/40">
-            {t('canvas.history.empty')}
+          <div
+            aria-live="polite"
+            className="flex h-full items-center justify-center px-6 text-center text-[14px] text-white/40"
+          >
+            {!normalizedQuery
+              ? t('canvas.history.empty')
+              : otherTabsWithMatches.length > 0
+                ? t('canvas.history.noMatchOtherTabs', {
+                    // 连接词跟着界面语言走:硬编码顿号会让英文界面显示成
+                    // 「try Images、Videos」。disjunction 而非 conjunction ——
+                    // 这里是让用户挑一个别的分类去看,不是说两个都要看。
+                    tabs: new Intl.ListFormat(i18n.resolvedLanguage ?? i18n.language, {
+                      type: 'disjunction',
+                    }).format(otherTabsWithMatches.map((tab) => t(TAB_LABEL_KEY[tab]))),
+                  })
+                : t('canvas.history.noMatch')}
           </div>
         ) : (
           groups.map((group) => (

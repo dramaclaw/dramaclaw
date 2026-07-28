@@ -41,6 +41,58 @@ export interface CanvasAssetBuckets {
   model: CanvasAsset[];
 }
 
+/**
+ * 逐字段做大小写不敏感子串匹配。刻意逐字段 `.some()` 而不是把 prompt/label 拼成一个串:
+ * 拼接会让「上一字段结尾 + 下一字段开头」凑出并不存在的命中(如 prompt「小猫」+ label
+ * 「鱼缸」被「猫鱼」命中),而且生成历史里 prompt 与 label 往往是同一段提示词,拼接等于
+ * 把每个资产的扫描量翻倍。
+ *
+ * 与 `filterBySearch`(components/assets/asset-search-box.tsx)同语义,但这里不 import 它
+ * ——那是个 .tsx 组件模块,domain 层引它会把 React/shadcn 整条图拖进来。
+ */
+function matchesNeedle(asset: CanvasAsset, needle: string): boolean {
+  return [asset.prompt, asset.label].some(
+    (value) => typeof value === 'string' && value.toLowerCase().includes(needle),
+  );
+}
+
+/**
+ * 关键词搜索命中判定(issue #175):匹配资产的提示词与展示名。
+ *
+ * 各来源的字段含义不同:生成历史里 prompt/label 都是那次生成的提示词(世界记录的 label
+ * 会回退成上游节点名);live-canvas 取图时 prompt 恒为空、label 是节点名/文件名(见
+ * `CanvasAsset.prompt` 注释)——所以那条路径上只有名字可搜,调用方的 placeholder 要相应
+ * 改口,别承诺「搜提示词」。
+ *
+ * query 两端会被 trim、大小写不敏感;这里对查询词也 normalize 一次,不把「必须预先小写」
+ * 当隐式前置条件(否则调用方直接传用户原文时,大写输入会静默零命中)。
+ */
+export function assetMatchesQuery(asset: CanvasAsset, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return matchesNeedle(asset, needle);
+}
+
+/**
+ * 按关键词过滤四个资产桶。空查询原样返回同一个对象(不复制)。四个桶都过滤(而非只过滤
+ * 当前 tab),这样各 tab 的计数直接反映命中数,用户能看出该去哪个 tab 找。needle 只
+ * normalize 一次,不在每个资产上重算。
+ */
+export function filterAssetBuckets(
+  buckets: CanvasAssetBuckets,
+  query: string,
+): CanvasAssetBuckets {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return buckets;
+  const match = (asset: CanvasAsset) => matchesNeedle(asset, needle);
+  return {
+    image: buckets.image.filter(match),
+    video: buckets.video.filter(match),
+    audio: buckets.audio.filter(match),
+    model: buckets.model.filter(match),
+  };
+}
+
 function asRecord(data: unknown): Record<string, unknown> {
   return data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
 }
