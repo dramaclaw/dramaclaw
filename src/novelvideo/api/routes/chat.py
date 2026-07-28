@@ -37,7 +37,7 @@ from novelvideo.shared.billing_errors import (
 
 router = APIRouter()
 
-AI_ASSISTANT_CHAT_FEATURE_KEY = "ai_assistant_chat"
+AI_ASSISTANT_CHAT_FEATURE_KEY = "assistant.chat"
 
 
 @router.post("/chat/cancel")
