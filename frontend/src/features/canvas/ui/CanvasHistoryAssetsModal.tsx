@@ -197,7 +197,7 @@ export function CanvasHistoryAssetsModal({
   imageOnly = false,
   assetSource = 'generation-history',
 }: CanvasHistoryAssetsModalProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const nodes = useCanvasStore((state) => state.nodes);
   const useHistory = assetSource === 'generation-history';
 
@@ -289,6 +289,10 @@ export function CanvasHistoryAssetsModal({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // 组字中的 Escape 是「关掉候选窗」,浏览器照样把 keydown 冒泡到 document ——
+      // 不在这里拦住,搜索框那边的守卫(它组字时刻意不 stopPropagation)就会让中文
+      // 用户取消一次候选词把整个弹窗关掉。与 Canvas.tsx 的全局键盘守卫同一判据。
+      if (event.isComposing) return;
       if (event.key === 'Escape') {
         // Inner overlays own Escape while open: prompt dialog first, then the
         // modal itself once viewers/prompt are all closed.
@@ -581,9 +585,12 @@ export function CanvasHistoryAssetsModal({
               ? t('canvas.history.empty')
               : otherTabsWithMatches.length > 0
                 ? t('canvas.history.noMatchOtherTabs', {
-                    tabs: otherTabsWithMatches
-                      .map((tab) => t(TAB_LABEL_KEY[tab]))
-                      .join('、'),
+                    // 连接词跟着界面语言走:硬编码顿号会让英文界面显示成
+                    // 「try Images、Videos」。disjunction 而非 conjunction ——
+                    // 这里是让用户挑一个别的分类去看,不是说两个都要看。
+                    tabs: new Intl.ListFormat(i18n.resolvedLanguage ?? i18n.language, {
+                      type: 'disjunction',
+                    }).format(otherTabsWithMatches.map((tab) => t(TAB_LABEL_KEY[tab]))),
                   })
                 : t('canvas.history.noMatch')}
           </div>
