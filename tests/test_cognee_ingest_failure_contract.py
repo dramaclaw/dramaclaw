@@ -70,6 +70,45 @@ def test_cognee_pipeline_completed_parent_still_rejects_nested_error():
         CogneeStore._ensure_pipeline_run_succeeded(result, "知识图谱构建")
 
 
+def test_cognee_pipeline_completed_parent_rejects_nested_non_terminal_run():
+    from novelvideo.cognee.store import CogneeStore
+
+    result = {
+        "run": {
+            "status": "PipelineRunCompleted",
+            "data_ingestion_info": [
+                {
+                    "run_info": {
+                        "status": "PipelineRunStarted",
+                        "payload": None,
+                    }
+                }
+            ],
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="PipelineRunStarted"):
+        CogneeStore._ensure_pipeline_run_succeeded(result, "知识图谱构建")
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "COMPLETED",
+        "PipelineRunCompleted",
+        "PipelineRunAlreadyCompleted",
+        "DATASET_PROCESSING_COMPLETED",
+    ],
+)
+def test_cognee_pipeline_accepts_known_completed_statuses(status):
+    from novelvideo.cognee.store import CogneeStore
+
+    CogneeStore._ensure_pipeline_run_succeeded(
+        SimpleNamespace(status=status, payload=None),
+        "知识图谱构建",
+    )
+
+
 @pytest.mark.parametrize(
     "result",
     [

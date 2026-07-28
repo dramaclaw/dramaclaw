@@ -350,25 +350,44 @@ class CogneeStore:
                 return value.get(field_name, default)
             return getattr(value, field_name, default)
 
-        def nested_pipeline_errors(run: Any) -> List[str]:
-            nested_errors: List[str] = []
+        def pipeline_status_text(status: Any) -> str:
+            return str(getattr(status, "value", status) or "").strip()
+
+        def is_completed_status(status: Any) -> bool:
+            normalized = "".join(
+                character
+                for character in pipeline_status_text(status).lower()
+                if character.isalnum()
+            )
+            return normalized in {
+                "completed",
+                "alreadycompleted",
+                "pipelineruncompleted",
+                "pipelinerunalreadycompleted",
+                "datasetprocessingcompleted",
+            }
+
+        def nested_pipeline_failures(run: Any) -> List[str]:
+            nested_failures: List[str] = []
             data_ingestion_info = read_field(run, "data_ingestion_info") or []
             if not isinstance(data_ingestion_info, Iterable) or isinstance(
                 data_ingestion_info, (str, bytes)
             ):
-                return nested_errors
+                return nested_failures
 
             for item in data_ingestion_info:
                 run_info = read_field(item, "run_info")
                 if run_info is None:
                     continue
                 status = read_field(run_info, "status")
-                status_text = str(getattr(status, "value", status) or "")
-                if "error" not in status_text.lower() and "fail" not in status_text.lower():
+                if is_completed_status(status):
                     continue
+                status_text = pipeline_status_text(status) or "unknown status"
                 payload = read_field(run_info, "payload")
-                nested_errors.append(truncate(payload, limit=600))
-            return nested_errors
+                nested_failures.append(
+                    f"{status_text}: {truncate(payload, limit=600)}"
+                )
+            return nested_failures
 
         if isinstance(result, dict):
             runs = list(result.values())
@@ -388,15 +407,14 @@ class CogneeStore:
 
             status = read_field(run, "status")
             payload = read_field(run, "payload")
-            status_text = str(getattr(status, "value", status) or "")
-            normalized_status = status_text.lower()
-            nested = nested_pipeline_errors(run)
+            status_text = pipeline_status_text(status)
+            nested = nested_pipeline_failures(run)
             if nested:
                 detail = truncate(payload)
-                detail = f"{detail}; data item errors: " + " | ".join(nested[:3])
+                detail = f"{detail}; data item failures: " + " | ".join(nested[:3])
                 errors.append(f"{stage_name}失败({status_text}): {detail}")
                 continue
-            if "complete" not in normalized_status:
+            if not is_completed_status(status):
                 detail = truncate(payload)
                 errors.append(
                     f"{stage_name}失败({status_text or 'unknown status'}): {detail}"
