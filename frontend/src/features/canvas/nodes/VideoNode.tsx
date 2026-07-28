@@ -910,6 +910,10 @@ export const VideoNode = memo(
     // rows across the Network tab. Coalesce to one request once the params
     // settle (~350ms). Primitives only — see useDebouncedValue's contract.
     const debouncedBackend = useDebouncedValue(videoBackendForCost, 350);
+    const debouncedCatalogId = useDebouncedValue(
+      selectedVideoModel?.catalogId ?? null,
+      350,
+    );
     const debouncedQuality = useDebouncedValue(quality, 350);
     const debouncedCount = useDebouncedValue(count, 350);
     const debouncedDurationSec = useDebouncedValue(durationSec, 350);
@@ -922,6 +926,7 @@ export const VideoNode = memo(
       {
         surface: "canvas",
         params: {
+          ...(debouncedCatalogId ? { catalog_id: debouncedCatalogId } : {}),
           video_backend: debouncedBackend,
           resolution: qualityToResolution(debouncedQuality),
           pricing_quantity: videoPricingQuantity,
@@ -2262,7 +2267,7 @@ export const VideoNode = memo(
               resolution: qualityToResolution(quality),
               durationSeconds: durationClamped,
               generateAudio,
-              model: modelId,
+              model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
               modelParams: data.modelParams,
               humanReview: supportsHumanReview && humanReview,
@@ -2293,7 +2298,7 @@ export const VideoNode = memo(
               resolution: qualityToResolution(quality),
               durationSeconds: durationClamped,
               generateAudio,
-              model: modelId,
+              model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
               modelParams: data.modelParams,
               humanReview: supportsHumanReview && humanReview,
@@ -2335,7 +2340,7 @@ export const VideoNode = memo(
               durationSeconds: durationClamped,
               audioSetting: "auto",
               generateAudio,
-              model: modelId,
+              model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
               modelParams: data.modelParams,
               canvasId,
@@ -2488,7 +2493,7 @@ export const VideoNode = memo(
               resolution: qualityToResolution(quality),
               durationSeconds: durationClamped,
               generateAudio,
-              model: modelId,
+              model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
               modelParams: data.modelParams,
               humanReview: supportsHumanReview && humanReview,
@@ -2506,7 +2511,7 @@ export const VideoNode = memo(
               resolution: qualityToResolution(quality),
               durationSeconds: durationClamped,
               generateAudio,
-              model: modelId,
+              model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
               modelParams: data.modelParams,
               humanReview: supportsHumanReview && humanReview,

@@ -441,6 +441,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     {
       surface: 'canvas',
       params: {
+        ...(selectedModel?.catalogId ? { catalog_id: selectedModel.catalogId } : {}),
         image_selection: imageSelectionForCost,
         size: effectiveImageSize,
         ...(supportsImageQuality ? { quality: effectiveQuality } : {}),
@@ -942,7 +943,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       referenceUrls,
       provider: selectedModel?.providerId as FreezoneProvider | undefined,
       model: apiModel,
-      modelId,
+      modelId: selectedModel?.catalogId ?? modelId,
       modelParams: data.modelParams,
       camera: hasCamera
         ? {

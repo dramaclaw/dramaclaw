@@ -2728,6 +2728,7 @@ async def test_freezone_celery_image_jobs_preserve_canvas_node_context(
         quality=None,
         canvas_id="canvas_a",
         node_id="node_gen",
+        catalog_id="01IMAGECATALOG",
     )
     edit = await freezone_routes._start_or_enqueue_freezone_edit_job(
         ctx=ctx,
@@ -2747,14 +2748,19 @@ async def test_freezone_celery_image_jobs_preserve_canvas_node_context(
         quality=None,
         canvas_id="canvas_a",
         node_id="node_edit",
+        catalog_id="01IMAGECATALOG",
+        billing_feature_key="freezone.image_edit",
+        billing_operation="edit",
     )
 
     assert gen["data"]["backend"] == "celery"
     assert edit["data"]["backend"] == "celery"
     assert calls[0]["payload"]["canvas_id"] == "canvas_a"
     assert calls[0]["payload"]["node_id"] == "node_gen"
+    assert calls[0]["payload"]["billing"]["catalog_id"] == "01IMAGECATALOG"
     assert calls[1]["payload"]["canvas_id"] == "canvas_a"
     assert calls[1]["payload"]["node_id"] == "node_edit"
+    assert calls[1]["payload"]["billing"]["catalog_id"] == "01IMAGECATALOG"
 
 
 @pytest.mark.asyncio

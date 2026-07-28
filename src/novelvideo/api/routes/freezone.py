@@ -345,6 +345,7 @@ async def _start_or_enqueue_freezone_video_gen(
     canvas_id: str | None = None,
     node_id: str | None = None,
     model_id: str | None = None,
+    catalog_id: str | None = None,
     gen_mode: str | None = None,
     model_params: dict[str, Any] | None = None,
     request_schema: dict[str, Any] | None = None,
@@ -360,6 +361,7 @@ async def _start_or_enqueue_freezone_video_gen(
             "pricing_quantity": duration_seconds,
             "operation": gen_mode or "textToVideo",
             "generate_audio": generate_audio,
+            **({"catalog_id": catalog_id} if catalog_id else {}),
         }
     )
     payload = {
@@ -367,6 +369,7 @@ async def _start_or_enqueue_freezone_video_gen(
         "canvas_id": canvas_id or "",
         "node_id": node_id or "",
         "model_id": model_id or "",
+        "catalog_id": catalog_id or "",
         "gen_mode": gen_mode or "",
         "prompt": prompt,
         "reference_items": reference_items,
@@ -479,6 +482,7 @@ async def _start_or_enqueue_freezone_gen_job(
     canvas_id: str | None = None,
     node_id: str | None = None,
     model_id: str | None = None,
+    catalog_id: str | None = None,
     gen_mode: str | None = None,
     task_display: dict[str, str] | None = None,
     model_params: dict[str, Any] | None = None,
@@ -505,6 +509,7 @@ async def _start_or_enqueue_freezone_gen_job(
             "image_selection": image_selection,
             "size": image_size,
             **({"quality": quality} if quality else {}),
+            **({"catalog_id": catalog_id} if catalog_id else {}),
         }
     )
     prompt_text = _merge_prompt_with_style_and_camera(prompt, style, camera)
@@ -535,6 +540,7 @@ async def _start_or_enqueue_freezone_gen_job(
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
                 "model_id": model_id or "",
+                "catalog_id": catalog_id or "",
                 "gen_mode": gen_mode or "",
                 "model_params": model_params or {},
                 "request_schema": request_schema or {},
@@ -1917,6 +1923,7 @@ async def _start_or_enqueue_freezone_edit_job(
     canvas_id: str | None = None,
     node_id: str | None = None,
     model_id: str | None = None,
+    catalog_id: str | None = None,
     gen_mode: str | None = None,
     task_display: dict[str, str] | None = None,
     billing_feature_key: str = "",
@@ -1955,6 +1962,7 @@ async def _start_or_enqueue_freezone_edit_job(
                 "size": image_size,
                 **({"quality": quality} if quality else {}),
                 **({"operation": billing_operation} if billing_operation else {}),
+                **({"catalog_id": catalog_id} if catalog_id else {}),
             },
         )
     prompt_text = _merge_prompt_with_style_and_camera(prompt, style, camera)
@@ -1985,6 +1993,7 @@ async def _start_or_enqueue_freezone_edit_job(
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
                 "model_id": model_id or "",
+                "catalog_id": catalog_id or "",
                 "gen_mode": gen_mode or "",
                 **({"billing": billing} if billing else {}),
                 **display_payload,
@@ -4187,6 +4196,7 @@ async def freezone_gen(
         canvas_id=body.canvas_id or None,
         node_id=body.node_id or None,
         model_id=body.model_id or None,
+        catalog_id=_catalog_entry_id(catalog_entry) or None,
         gen_mode=body.gen_mode or None,
         model_params=model_params,
         request_schema=request_schema,
@@ -6738,6 +6748,12 @@ def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
     }
 
 
+def _catalog_entry_id(entry: dict[str, Any] | None) -> str:
+    if not entry:
+        return ""
+    return str(entry.get("catalogId") or entry.get("catalog_id") or "").strip()
+
+
 async def _resolve_catalog_request(
     media_type: str,
     model: str | None,
@@ -7389,8 +7405,9 @@ async def freezone_video_gen(
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
             model_id=body.model,
+            catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=body.gen_mode or "text_to_video",
-        model_params=model_params,
+            model_params=model_params,
             request_schema=request_schema,
         )
     except RuntimeError as exc:
@@ -7507,8 +7524,9 @@ async def freezone_video_i2v(
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
             model_id=body.model,
+            catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=requested_mode,
-        model_params=model_params,
+            model_params=model_params,
             request_schema=request_schema,
         )
     except RuntimeError as exc:
@@ -7621,8 +7639,9 @@ async def freezone_video_keyframes(
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
             model_id=body.model,
+            catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=body.gen_mode or "first_last_frame",
-        model_params=model_params,
+            model_params=model_params,
             request_schema=request_schema,
         )
     except RuntimeError as exc:
@@ -7752,8 +7771,9 @@ async def freezone_video_omni_gen(
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
             model_id=body.model,
+            catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=body.gen_mode or "all_reference",
-        model_params=model_params,
+            model_params=model_params,
             request_schema=request_schema,
         )
     except RuntimeError as exc:
@@ -7869,8 +7889,9 @@ async def freezone_video_edit(
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
             model_id=body.model,
+            catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=body.gen_mode or "video_edit",
-        model_params=model_params,
+            model_params=model_params,
             request_schema=request_schema,
         )
     except RuntimeError as exc:
@@ -8341,6 +8362,12 @@ async def freezone_edit(
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
         project, user
     )
+    _, _, catalog_entry = await _resolve_catalog_request(
+        "image",
+        body.model_id or body.model,
+        None,
+        mode=body.gen_mode,
+    )
     return await _start_or_enqueue_freezone_edit_job(
         ctx=ctx,
         username=username,
@@ -8360,7 +8387,10 @@ async def freezone_edit(
         canvas_id=body.canvas_id or None,
         node_id=body.node_id or None,
         model_id=body.model_id or None,
+        catalog_id=_catalog_entry_id(catalog_entry) or None,
         gen_mode=body.gen_mode or None,
+        billing_feature_key="freezone.image_edit",
+        billing_operation=body.gen_mode or "edit",
     )
 
 
