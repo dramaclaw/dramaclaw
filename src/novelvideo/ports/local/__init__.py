@@ -5,8 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
-from novelvideo.ports.egress import EgressClaim
+from novelvideo.ports.authz import (
+    AdmissionContext,
+    AuthzError,
+    AuthzSnapshot,
+    BillingPrincipal,
+)
+from novelvideo.ports.egress import EgressClaim, EgressError, EgressResultReference
 from novelvideo.ports.model_credentials import (
     CredentialReference,
     ModelCredentialError,
@@ -41,6 +46,17 @@ class LocalModelCredentials:
 
 
 class LocalAuthz:
+    async def snapshot(self, *, user_id: str) -> AuthzSnapshot:
+        raise AuthzError("ORG_CONTEXT_REQUIRED")
+
+    async def check(
+        self,
+        *,
+        snapshot: AuthzSnapshot,
+        expected_authz_version: int | None = None,
+    ) -> None:
+        raise AuthzError("ORG_CONTEXT_REQUIRED")
+
     async def admit_model_task(self, *, user_id: str, root_task_id: str) -> AdmissionContext:
         return AdmissionContext(
             requester_user_id=user_id,
@@ -53,11 +69,13 @@ class LocalAuthz:
             admission_id=f"local-{uuid4().hex}",
             root_task_id=root_task_id,
             admitted_at=datetime.now(timezone.utc).isoformat(),
+            authz_version=1,
         )
 
 
 class LocalEgress:
     async def claim(self, *, admission, spec) -> EgressClaim:
+        self._require_local(admission)
         return EgressClaim(
             operation_id=spec.operation_id,
             attempt_id=f"local-{uuid4().hex}",
@@ -65,8 +83,25 @@ class LocalEgress:
             claim_deadline="local",
         )
 
+    async def consume(
+        self,
+        *,
+        admission,
+        result: EgressResultReference,
+    ) -> EgressResultReference:
+        self._require_local(admission)
+        return result
+
     async def record_success(self, *, claim, result) -> None:
         return None
+
+    @staticmethod
+    def _require_local(admission) -> None:
+        if (
+            admission.billing_principal.kind != "local"
+            or admission.credential.source != "local"
+        ):
+            raise EgressError("ORG_CONTEXT_REQUIRED")
 
 
 def register_local_ports() -> None:

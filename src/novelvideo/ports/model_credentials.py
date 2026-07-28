@@ -6,11 +6,19 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 
+_CREDENTIAL_ERROR_MESSAGES = {
+    "ORG_CREDENTIAL_MISSING": "organization credential is missing",
+    "ORG_CREDENTIAL_DISABLED": "organization credential is disabled",
+    "ORG_CREDENTIAL_VERSION_MISMATCH": "organization credential version mismatch",
+    "ORG_CREDENTIAL_DECRYPT_FAILED": "organization credential could not be resolved",
+}
+
+
 class ModelCredentialError(RuntimeError):
     """Stable, secret-free credential resolution failure."""
 
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
+    def __init__(self, code: str, _unsafe_detail: str | None = None) -> None:
+        super().__init__(_CREDENTIAL_ERROR_MESSAGES.get(code, "credential resolution failed"))
         self.code = code
 
 
@@ -26,7 +34,7 @@ class CredentialReference:
             raise ValueError("unsupported credential source")
         if not self.credential_id:
             raise ValueError("credential_id is required")
-        if self.key_version < 1:
+        if type(self.key_version) is not int or self.key_version < 1:
             raise ValueError("key_version must be positive")
         if self.source == "organization" and not self.org_id:
             raise ValueError("organization credential requires org_id")

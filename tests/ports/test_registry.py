@@ -34,6 +34,16 @@ def test_get_port_fails_closed_when_unregistered() -> None:
     assert "ensure_bootstrap" in str(exc.value)
 
 
+@pytest.mark.parametrize("name", ["model_credentials", "authz", "egress"])
+def test_org_runtime_ports_fail_closed_when_unregistered(name) -> None:
+    registry = _registry()
+
+    with pytest.raises(registry.PortNotRegistered) as exc:
+        registry.get_port(name)
+
+    assert exc.value.name == name
+
+
 def test_ensure_bootstrap_registers_local_ports_for_explicit_ce(monkeypatch) -> None:
     registry = _registry()
     monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)

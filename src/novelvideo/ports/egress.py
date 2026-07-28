@@ -6,6 +6,20 @@ from dataclasses import dataclass
 from typing import Protocol
 
 
+_EGRESS_ERROR_MESSAGES = {
+    "ORG_CONTEXT_REQUIRED": "organization egress requires a control plane",
+    "EGRESS_OPERATION_REPLAYED": "egress operation cannot be replayed",
+}
+
+
+class EgressError(RuntimeError):
+    """Stable egress failure without operation or credential details."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(_EGRESS_ERROR_MESSAGES.get(code, "egress operation failed"))
+        self.code = code
+
+
 @dataclass(frozen=True)
 class EgressOperationSpec:
     operation_id: str
@@ -44,6 +58,13 @@ class EgressResultReference:
 
 class EgressPort(Protocol):
     async def claim(self, *, admission, spec: EgressOperationSpec) -> EgressClaim: ...
+
+    async def consume(
+        self,
+        *,
+        admission,
+        result: EgressResultReference,
+    ) -> EgressResultReference: ...
 
     async def record_success(
         self,
