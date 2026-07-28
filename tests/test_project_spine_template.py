@@ -257,15 +257,16 @@ async def test_start_ingest_allows_spine_template_change_during_rebuild(
     (uploads / "novel.txt").write_text("正文", encoding="utf-8")
 
     monkeypatch.setattr(ingest, "resolve_project_scope", _project_scope_resolver(tmp_path))
+
+    def save_in_state_dir(state_dir, config=None, **kwargs):
+        assert state_dir == str(tmp_path / "state")
+        saved.update(config or {})
+        saved.update(kwargs)
+
     monkeypatch.setattr(
         ingest,
-        "load_project_config",
-        lambda username, project: {"visual_style": "chinese_period_drama", **saved},
-    )
-    monkeypatch.setattr(
-        ingest,
-        "save_project_config",
-        lambda username, project, config=None, **kwargs: saved.update(config or {}),
+        "save_project_config_in_state_dir",
+        save_in_state_dir,
     )
 
     response = await ingest.start_ingest(
