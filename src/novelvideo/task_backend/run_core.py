@@ -343,7 +343,7 @@ def _project_task_failure_for_exception(exc: BaseException) -> tuple[str, dict[s
         timeout_seconds = int(getattr(exc, "timeout_seconds", None) or 30 * 60)
         timeout_minutes = max(round(timeout_seconds / 60), 1)
         return (
-            f"Task did not finish within {timeout_minutes} minutes and was automatically abandoned",
+            f"任务超过 {timeout_minutes} 分钟未完成，已自动放弃",
             {"error_code": "TASK_TIMEOUT", "timeout_seconds": timeout_seconds},
             True,
         )
@@ -355,7 +355,7 @@ def _project_task_failure_for_exception(exc: BaseException) -> tuple[str, dict[s
             timeout_seconds = _project_task_timeout_seconds()
             timeout_minutes = max(round(timeout_seconds / 60), 1)
             return (
-                f"Task did not finish within {timeout_minutes} minutes and was automatically abandoned",
+                f"任务超过 {timeout_minutes} 分钟未完成，已自动放弃",
                 {"error_code": "TASK_TIMEOUT", "timeout_seconds": timeout_seconds},
                 True,
             )
@@ -479,7 +479,7 @@ def run_project_task_core_sync(
             beat_num=beat_num,
             scope=scope,
             progress=0.0,
-            current_task="Task cancelled",
+            current_task="任务已取消",
             metadata=run_metadata,
             status="cancelled",
             expected_task_id=run_task_id,
@@ -509,7 +509,7 @@ def run_project_task_core_sync(
                 beat_num=beat_num,
                 scope=scope,
                 progress=0.01,
-                current_task="Task started",
+                current_task="任务已开始",
                 metadata=run_metadata,
             )
 
@@ -556,7 +556,7 @@ def run_project_task_core_sync(
                         beat_num=beat_num,
                         scope=scope,
                         progress=0.0,
-                        current_task="Task cancelled",
+                        current_task="任务已取消",
                         metadata=run_metadata,
                         status="cancelled",
                         expected_task_id=run_task_id,
@@ -620,8 +620,8 @@ def run_project_task_core_sync(
                 beat_num=beat_num,
                 scope=scope,
                 result=result or {"ok": True},
-                current_task="Completed",
-                logs=["Completed"],
+                current_task="完成",
+                logs=["完成"],
                 metadata=_completion_metadata_with_provider_task_id(run_metadata, result),
                 expected_task_id=run_task_id,
             )

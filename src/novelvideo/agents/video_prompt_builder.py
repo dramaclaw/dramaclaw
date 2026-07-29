@@ -209,7 +209,7 @@ class VideoPromptBuilder:
             dialogue_line=dialogue_line,
         )
 
-        log_agent_start("Video Prompt Builder", f"Generating motion description ({duration:.1f}s, Chinese)")
+        log_agent_start("视频提示词生成师", f"生成运动描述 ({duration:.1f}秒, 中文)")
 
         # 存储上下文供调试和优化
         self._last_context = task
@@ -225,7 +225,7 @@ class VideoPromptBuilder:
             try:
                 image_bytes = self._compress_image(frame_image_path)
                 images = [BinaryContent(data=image_bytes, media_type='image/jpeg')]
-                label = "sketch" if color_map_text else "first frame"
+                label = "草图" if color_map_text else "首帧"
                 print(f"[VideoPromptBuilder] Running multimodal analysis on {label}: {os.path.basename(frame_image_path)}")
             except Exception as e:
                 print(f"[VideoPromptBuilder] Failed to load first-frame image, falling back to text-only mode: {e}")
@@ -243,12 +243,12 @@ class VideoPromptBuilder:
             if response.output:
                 result = response.output.strip()
             else:
-                raise RuntimeError("AI returned empty content")
+                raise RuntimeError("AI 返回空内容")
 
             # 长度校验：英文更长，放宽到 500 字符
             max_len = 500 if language == "en" else 200
             if len(result) > max_len:
-                raise RuntimeError(f"AI returned content that is too long ({len(result)} chars), likely a parse error")
+                raise RuntimeError(f"AI 返回内容过长 ({len(result)}字)，可能解析异常")
 
             # 检测错误响应（API 失败时可能返回错误对象而非抛出异常）
             error_indicators = [
@@ -260,16 +260,16 @@ class VideoPromptBuilder:
                 "overloaded",
             ]
             if any(indicator in result for indicator in error_indicators):
-                raise RuntimeError(f"API returned an error response: {result[:200]}")
+                raise RuntimeError(f"API 返回错误响应: {result[:200]}")
 
-            log_agent_end("Video Prompt Builder", success=True, result=f"{len(result)} chars")
+            log_agent_end("视频提示词生成师", success=True, result=f"{len(result)}字")
             # dialogue beat：追加台词内容
             if audio_type == "dialogue" and dialogue_line:
                 result = f"{result}，说：{dialogue_line}"
             return result
 
         except Exception as e:
-            log_agent_end("Video Prompt Builder", success=False, result=str(e))
+            log_agent_end("视频提示词生成师", success=False, result=str(e))
             # 失败时回退到规则映射
             return self._fallback_build(duration, language)
 

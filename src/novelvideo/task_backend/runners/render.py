@@ -232,13 +232,13 @@ async def _run_batch_render_async(
     def log(message: str, *, progress: float | None = None) -> None:
         _log(manager, ctx, "batch_render", episode, message, progress=progress)
 
-    log("Starting Batch Render generation...", progress=0.0)
+    log("开始 Batch Render 生成...", progress=0.0)
 
     beats = list(config.get("beats") or [])
     character_map = config.get("character_map") or {}
     style = config.get("style")
     if not beats:
-        raise ValueError("No beats data")
+        raise ValueError("没有 beats 数据")
 
     scene_ref_stats = await _ensure_scene_refs_for_beats(
         ctx=ctx,
@@ -250,7 +250,7 @@ async def _run_batch_render_async(
         log=log,
     )
     log(
-        "Scene reference check complete: "
+        "场景参考图检查完成: "
         f"requested={scene_ref_stats['requested']}, "
         f"generated={scene_ref_stats['generated']}, "
         f"skipped={scene_ref_stats['skipped']}, "
@@ -259,10 +259,10 @@ async def _run_batch_render_async(
     )
 
     loc_plan = scene_grid_split(beats, character_map=character_map)
-    log(f"Scene grouping (2x2): {len(loc_plan)} grids", progress=0.05)
+    log(f"场景分组 (2x2): {len(loc_plan)} 个网格", progress=0.05)
     for index, entry in enumerate(loc_plan):
         log(
-            f"Grid {index + 1}: {entry['scene_id']} "
+            f"网格 {index + 1}: {entry['scene_id']} "
             f"({entry['rows']}x{entry['cols']}, {len(entry['beats'])} beats)"
         )
 
@@ -308,7 +308,7 @@ async def _run_batch_render_async(
             )
         )
         log(
-            f"Preparing grid {grid_idx + 1}/{len(loc_plan)}: "
+            f"准备网格 {grid_idx + 1}/{len(loc_plan)}: "
             f"{grid_rows}x{grid_cols} ({entry['scene_id']})",
             progress=0.05 + 0.15 * (grid_idx + 1) / max(1, len(loc_plan)),
         )
@@ -334,17 +334,17 @@ async def _run_batch_render_async(
         batch_requests.append(req)
         processed_beats += len(grid_beats)
 
-    log(f"Submitting {len(batch_requests)} requests to the Batch API...", progress=0.2)
+    log(f"提交 {len(batch_requests)} 个请求到 Batch API...", progress=0.2)
 
     def on_status(state):
-        log(f"Batch status: {state}", progress=0.5)
+        log(f"Batch 状态: {state}", progress=0.5)
 
     results = await generator.generate_batch_api(
         requests=batch_requests,
         on_status_change=on_status,
     )
 
-    log("Saving results and adding to pool...", progress=0.8)
+    log("保存结果并入池...", progress=0.8)
     metadata_by_mode = defaultdict(list)
     for grid_idx, (entry, result) in enumerate(zip(loc_plan, results)):
         mk = str(entry["mode_key"])
@@ -402,7 +402,7 @@ async def _run_batch_render_async(
         "successful": successful,
         "grid_results": grid_results,
     }
-    log(f"✅ Batch Render complete! {successful}/{len(loc_plan)} succeeded", progress=1.0)
+    log(f"✅ Batch Render 完成！{successful}/{len(loc_plan)} 成功", progress=1.0)
     return result_payload
 
 
@@ -515,7 +515,7 @@ async def _run_selected_regen_async(
                 continue
         selected_beats = [beat_by_num[beat] for beat in selected_beat_numbers if beat in beat_by_num]
     if not selected_beats:
-        raise ValueError(f"Selected beats not found: {selected_beat_numbers}")
+        raise ValueError(f"未找到选中的 beats: {selected_beat_numbers}")
     if not standalone_beat_context:
         selected_beat_numbers = [
             int(beat.get("beat_number"))
@@ -539,10 +539,10 @@ async def _run_selected_regen_async(
     )
 
     if is_sketch:
-        selected_scene_ids = {beat_scene_id(beat) or "unbound scene" for beat in selected_beats}
+        selected_scene_ids = {beat_scene_id(beat) or "未绑定场景" for beat in selected_beats}
         if len(selected_scene_ids) > 1:
             raise ValueError(
-                "A sketch regen batch can only contain beats from the same scene; current batch contains: "
+                "草图重生一次只能包含同一场景的 beat；当前包含："
                 + ", ".join(sorted(selected_scene_ids))
             )
         output_base_dir = paths.sketch_dir()
@@ -571,7 +571,7 @@ async def _run_selected_regen_async(
             "prop_refs_override": prop_refs_override,
         }
 
-    log(f"Mode: {mode_key}, selected {len(selected_beats)} beats: {selected_beat_numbers}")
+    log(f"模式: {mode_key}, 选中 {len(selected_beats)} 个 beats: {selected_beat_numbers}")
     image_selection = normalize_image_generation_selection(
         config.get("image_generation_selection"),
         fallback=default_selection,
@@ -596,7 +596,7 @@ async def _run_selected_regen_async(
         log=log,
     )
     log(
-        "Scene reference check complete: "
+        "场景参考图检查完成: "
         f"requested={scene_ref_stats['requested']}, "
         f"generated={scene_ref_stats['generated']}, "
         f"skipped={scene_ref_stats['skipped']}, "
@@ -605,7 +605,7 @@ async def _run_selected_regen_async(
         progress=0.15,
     )
 
-    log(f"Generating {mode_key} {'sketch' if is_sketch else 'grid'}...", progress=0.2)
+    log(f"生成 {mode_key} {'草图' if is_sketch else '网格'}...", progress=0.2)
     results = await regenerate_selected_beats(
         selected_beats=selected_beats,
         mode_key=mode_key,
@@ -621,7 +621,7 @@ async def _run_selected_regen_async(
         **force_kwargs,
     )
 
-    log("Splitting grids and updating the image pool...", progress=0.7)
+    log("分割网格并更新图片池...", progress=0.7)
     ts = datetime.now().strftime("%Y%m%d%H%M%S")
     updated_beats: list[int] = []
     grid_paths: dict[int, str] = {}
@@ -632,7 +632,7 @@ async def _run_selected_regen_async(
         if not result.success or not result.grid_image_path:
             error_text = str(result.error or "unknown error")
             failed_errors.append(error_text)
-            log(f"{'Sketch' if is_sketch else 'Grid'} generation failed: {error_text}")
+            log(f"{'草图' if is_sketch else '网格'}生成失败: {error_text}")
             beat_offset += result.beat_count or 0
             continue
 
@@ -682,13 +682,13 @@ async def _run_selected_regen_async(
         save_result = save_grid_and_split(**save_kwargs)
         for bn in grid_beat_nums[: len(save_result["cell_paths"])]:
             updated_beats.append(bn)
-        log(f"Added to pool: {save_result['added']} new, {save_result['skipped']} deduplicated")
+        log(f"入池: {save_result['added']} 新增, {save_result['skipped']} 去重跳过")
 
     if not updated_beats:
-        label = "Sketch regen" if is_sketch else "Render regen"
-        detail = f": {'; '.join(failed_errors[:3])}" if failed_errors else ""
+        label = "草图重生" if is_sketch else "Render 重生"
+        detail = f"：{'; '.join(failed_errors[:3])}" if failed_errors else ""
         raise RuntimeError(
-            f"{label} produced no usable images (mode={mode_key}, beats={selected_beat_numbers}){detail}"
+            f"{label}未生成可用图片（mode={mode_key}, beats={selected_beat_numbers}）{detail}"
         )
 
     result_payload = {
@@ -697,7 +697,7 @@ async def _run_selected_regen_async(
         "grid_paths": grid_paths,
         "grid_results": grid_results,
     }
-    log(f"✅ {'Sketch regen' if is_sketch else 'Render regen'} complete! Updated {len(updated_beats)} beats", progress=1.0)
+    log(f"✅ {'草图再生' if is_sketch else 'Render 再生'}完成！更新了 {len(updated_beats)} 个 beats", progress=1.0)
     return result_payload
 
 
@@ -769,7 +769,7 @@ async def _run_grid_regenerate_async(
     ethnicity = config.get("ethnicity", "Chinese")
     prompt_only = bool(config.get("prompt_only", False))
     if config.get("render_mode", "普通") == "Render" and not paths.has_sketch():
-        raise RuntimeError("Render mode requires sketches, but no sketch files were found in the sketch directory. Please generate sketches first.")
+        raise RuntimeError("Render 模式需要草图，但 sketch 目录中未找到草图文件。请先生成草图。")
 
     render_image_selection = normalize_image_generation_selection(
         config.get("image_generation_selection"),
@@ -825,7 +825,7 @@ async def _run_grid_regenerate_async(
             grid_dir = episode_grids_dir / grid_mode
     grid_dir.mkdir(parents=True, exist_ok=True)
 
-    log(f"Regenerating grid {grid_index + 1}: mode={grid_mode}", progress=0.05)
+    log(f"开始重新生成网格 {grid_index + 1}: mode={grid_mode}", progress=0.05)
     grid_gen = create_grid_generator(config=grid_config)
     log(f"[Render Image] provider={grid_gen.provider}, model={grid_gen.model}")
 
@@ -849,7 +849,7 @@ async def _run_grid_regenerate_async(
         force_image_size="0.5K" if config.get("force_half_k") else None,
     )
     if not result.success:
-        raise RuntimeError(f"Grid regeneration failed: {result.error}")
+        raise RuntimeError(f"网格重新生成失败: {result.error}")
 
     if prompt_only:
         return {"prompt_only": True, "grid_index": grid_index}
@@ -921,7 +921,7 @@ async def _run_grid_regenerate_async(
         ]
         effective_grid_mode = grid_mode
 
-    log("Splitting grids into render/ and updating the image pool...", progress=0.7)
+    log("切割网格到 render/ 并更新图片池...", progress=0.7)
     ts = datetime.now().strftime("%Y%m%d%H%M%S")
     save_grid_and_split(
         grid_image_path=result.grid_image_path,
@@ -943,7 +943,7 @@ async def _run_grid_regenerate_async(
     ]
     if not updated_frames:
         raise RuntimeError(
-            f"Grid regen produced no usable images (mode={effective_grid_mode}, grid_index={grid_index + 1})"
+            f"网格重生未生成可用图片（mode={effective_grid_mode}, grid_index={grid_index + 1}）"
         )
 
     result_payload = {
@@ -953,7 +953,7 @@ async def _run_grid_regenerate_async(
         "beat_start": beat_start,
         "beat_count": len(updated_frames),
     }
-    log(f"✅ Grid {grid_index + 1} regenerated", progress=1.0)
+    log(f"✅ 网格 {grid_index + 1} 重新生成完成", progress=1.0)
     return result_payload
 
 

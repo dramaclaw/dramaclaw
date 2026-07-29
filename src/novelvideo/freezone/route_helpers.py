@@ -445,7 +445,7 @@ def start_freezone_gen_job(
     reference_paths = resolve_url_list(project_dir, reference_urls)
     ensure_existing_paths(reference_paths, field_name="reference")
 
-    raise HTTPException(503, "freezone gen task requires project task backend (current runner: Celery)")
+    raise HTTPException(503, "freezone gen task requires project task backend（当前 runner: Celery）")
 
 
 def start_freezone_edit_job(
@@ -474,7 +474,7 @@ def start_freezone_edit_job(
     extra_paths = resolve_url_list(project_dir, extra_reference_urls)
     ensure_existing_paths(extra_paths, field_name="reference")
 
-    raise HTTPException(503, "freezone edit task requires project task backend (current runner: Celery)")
+    raise HTTPException(503, "freezone edit task requires project task backend（当前 runner: Celery）")
 
 
 def notes_suffix(*, style: str, notes: str, user_prompt: str) -> str:

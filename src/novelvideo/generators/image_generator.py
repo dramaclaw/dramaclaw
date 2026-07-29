@@ -573,7 +573,7 @@ class VolcengineImageGenerator:
                         )
                         return ImageGenResult(
                             success=False,
-                            error="No image data in API response (b64_json/b64/image fields are empty)",
+                            error="API 响应中没有图片数据（b64_json/b64/image 字段为空）",
                             image_path=output_path,
                             generation_time=time.time() - start_time,
                         )
@@ -598,7 +598,7 @@ class VolcengineImageGenerator:
                     )
                     return ImageGenResult(
                         success=False,
-                        error="Image save failed or file is empty",
+                        error="图片保存失败或文件为空",
                         image_path=output_path,
                         generation_time=time.time() - start_time,
                     )
@@ -669,7 +669,7 @@ class VolcengineImageGenerator:
         if not os.path.exists(input_path):
             return ImageGenResult(
                 success=False,
-                error=f"Input file does not exist: {input_path}",
+                error=f"输入文件不存在: {input_path}",
                 generation_time=time.time() - start_time,
             )
 
@@ -809,7 +809,7 @@ class VolcengineImageGenerator:
         if not os.path.exists(input_path):
             return ImageGenResult(
                 success=False,
-                error=f"Input file does not exist: {input_path}",
+                error=f"输入文件不存在: {input_path}",
                 generation_time=time.time() - start_time,
             )
 
@@ -873,11 +873,11 @@ class VolcengineImageGenerator:
                     print(f"[SeedEdit] Downloading result image from URL...", flush=True)
                     dl_response = await client.get(image_url, timeout=60.0)
                     if dl_response.status_code != 200:
-                        raise Exception(f"Failed to download result image: {dl_response.status_code}")
+                        raise Exception(f"下载结果图失败: {dl_response.status_code}")
                     image_bytes = dl_response.content
                     image_base64 = base64.b64encode(image_bytes).decode()
                 elif not image_base64:
-                    raise Exception(f"No image data in API response (no b64_json/url): {list(image_data.keys())}")
+                    raise Exception(f"API 响应中无图片数据 (无 b64_json/url): {list(image_data.keys())}")
 
             # 保存文件
             if output_path and image_base64:
@@ -1172,7 +1172,7 @@ async def generate_character_reference_unified(
                 if is_insufficient_credits_error(message=result.error or ""):
                     raise RuntimeError("INSUFFICIENT_CREDITS")
                 if raise_on_error:
-                    raise RuntimeError(result.error or "NanoBanana generation failed")
+                    raise RuntimeError(result.error or "NanoBanana 生成失败")
                 return []  # 失败就是失败，不回退
         except ImportError as e:
             print(f"[Character] Failed to import NanoBanana generator: {e}")
@@ -1207,7 +1207,7 @@ async def generate_character_reference_unified(
             if is_insufficient_credits_error(message=result.error or ""):
                 raise RuntimeError("INSUFFICIENT_CREDITS")
             if raise_on_error:
-                raise RuntimeError(result.error or f"{model} generation failed")
+                raise RuntimeError(result.error or f"{model} 生成失败")
             return []
         except ImportError as e:
             print(f"[Character] Failed to import unified character generator: {e}")
@@ -1322,7 +1322,7 @@ async def generate_identity_image_unified(
                 if is_insufficient_credits_error(message=result.error or ""):
                     raise RuntimeError("INSUFFICIENT_CREDITS")
                 if raise_on_error:
-                    raise RuntimeError(result.error or "Identity image generation failed")
+                    raise RuntimeError(result.error or "身份图生成失败")
             return result.success
 
         except ImportError as e:
@@ -1362,7 +1362,7 @@ async def generate_identity_image_unified(
                 if is_insufficient_credits_error(message=result.error or ""):
                     raise RuntimeError("INSUFFICIENT_CREDITS")
                 if raise_on_error:
-                    raise RuntimeError(result.error or f"{model} identity image generation failed")
+                    raise RuntimeError(result.error or f"{model} 身份图生成失败")
             return result.success
         except ImportError as e:
             print(f"[Identity] Failed to import unified character generator: {e}")
@@ -1396,5 +1396,5 @@ async def generate_identity_image_unified(
             shutil.copy(first, output_path)
         return True
     if raise_on_error:
-        raise RuntimeError("Identity image generation failed")
+        raise RuntimeError("身份图生成失败")
     return False

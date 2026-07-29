@@ -536,7 +536,7 @@ def combine_to_grid(
         loaded_images.append(img)
 
     if not loaded_images:
-        raise ValueError("No images to combine")
+        raise ValueError("没有图片可合并")
 
     # 确定格子尺寸
     if cell_size is None:

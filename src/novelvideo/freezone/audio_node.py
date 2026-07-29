@@ -136,7 +136,7 @@ def _utc_now() -> str:
 
 
 def _safe_voice_name(value: str) -> str:
-    return re.sub(r"[\x00-\x1f]", "", str(value or "").strip())[:80] or "Unnamed voice"
+    return re.sub(r"[\x00-\x1f]", "", str(value or "").strip())[:80] or "未命名音色"
 
 
 def _safe_extension(filename: str | None) -> str:
@@ -178,7 +178,7 @@ def _user_voice_abs_path(username: str, record: dict) -> Path:
 
 def public_user_voice_payload(username: str, record: dict) -> dict:
     voice_id = str(record.get("voice_id") or "")
-    label = str(record.get("name") or record.get("label") or voice_id or "Unnamed voice")
+    label = str(record.get("name") or record.get("label") or voice_id or "未命名音色")
     path = str(record.get("path") or "")
     abs_path = _user_voice_abs_path(username, record)
     exists = bool(path and abs_path.exists())
@@ -249,10 +249,10 @@ def resolve_user_audio_voice(username: str, voice_id: str) -> FreezoneVoiceRefRe
             continue
         path = _user_voice_abs_path(username, record)
         if not path.exists():
-            raise RuntimeError(f"User voice file not found: {target}")
+            raise RuntimeError(f"用户音色文件不存在: {target}")
         sha = str(record.get("sha256") or "") or file_sha256(path)
         return FreezoneVoiceRefResolution(path, sha, USER_VOICE_SCOPE)
-    raise RuntimeError(f"User voice not found: {target}")
+    raise RuntimeError(f"用户音色不存在: {target}")
 
 
 def _duration_ms(audio_path: Path) -> int:
@@ -323,7 +323,7 @@ async def _resolve_voice_ref(
             project_dir, getattr(character, "reference_audio_path", "") if character else ""
         )
         if path is None:
-            raise RuntimeError(f"Character default voice unavailable: {character_name or '<none>'}")
+            raise RuntimeError(f"角色默认声线不可用: {character_name or '<空>'}")
         sha = str(getattr(character, "reference_audio_sha256", "") or "") or file_sha256(path)
         return FreezoneVoiceRefResolution(path, sha, "character_default")
 
@@ -333,7 +333,7 @@ async def _resolve_voice_ref(
         entry = samples.get(slot) if isinstance(samples, dict) else None
         path = _project_path(project_dir, entry.get("path", "") if isinstance(entry, dict) else "")
         if path is None:
-            raise RuntimeError(f"Character age-group voice unavailable: {character_name or '<none>'}/{slot or '<none>'}")
+            raise RuntimeError(f"角色年龄段声线不可用: {character_name or '<空>'}/{slot or '<空>'}")
         sha = str(entry.get("sha256", "") or "") if isinstance(entry, dict) else ""
         return FreezoneVoiceRefResolution(path, sha or file_sha256(path), "character_age_group")
 
@@ -351,12 +351,12 @@ async def _resolve_voice_ref(
             )
         if character is None or identity is None:
             raise RuntimeError(
-                f"Identity voice unavailable: {character_name or '<none>'}/{identity_id or '<none>'}"
+                f"身份声线不可用: {character_name or '<空>'}/{identity_id or '<空>'}"
             )
         if scope == "identity":
             path = _project_path(project_dir, getattr(identity, "reference_audio_path", ""))
             if path is None:
-                raise RuntimeError(f"Identity voice not configured: {identity_id}")
+                raise RuntimeError(f"身份声线未配置: {identity_id}")
             sha = str(getattr(identity, "reference_audio_sha256", "") or "") or file_sha256(path)
             return FreezoneVoiceRefResolution(path, sha, "identity")
         resolved = resolve_character_voice(
@@ -365,7 +365,7 @@ async def _resolve_voice_ref(
             identity=identity,
         )
         if resolved.audio_path is None:
-            raise RuntimeError(f"Resolved identity voice unavailable: {identity_id}")
+            raise RuntimeError(f"身份实际声线不可用: {identity_id}")
         return FreezoneVoiceRefResolution(
             resolved.audio_path,
             resolved.sha256 or file_sha256(resolved.audio_path),
@@ -410,7 +410,7 @@ async def generate_freezone_audio_speech(
             characters=characters,
         )
         if voice.audio_path is None:
-            raise RuntimeError(voice.error or "Narrator voice is missing")
+            raise RuntimeError(voice.error or "解说声线缺失")
         selected_voice = FreezoneVoiceRefResolution(
             voice.audio_path,
             voice.sha256,

@@ -39,9 +39,8 @@ class DerivedSceneRequirement(BaseModel):
 
 
 PROP_OUTPUT_SCHEMA_HINT = (
-    "Prop planning structured-output validation failed: requirements must be an array of objects, "
-    "each with prop_name and visual_prompt; it cannot be an array of strings; prop_name must come "
-    "verbatim from the current scene block text or the candidate props"
+    "道具规划结构化输出校验失败: requirements 必须是对象数组，每项必须包含 "
+    "prop_name 和 visual_prompt；不能是字符串数组；prop_name 必须逐字来自当前场景块文本或候选道具"
 )
 
 
@@ -89,7 +88,7 @@ class BlockPropRequirements(BaseModel):
             if not prop_name or prop_name in seen:
                 continue
             if prop_name not in allowed_existing_names and prop_name not in block_text:
-                raise ValueError(f"Prop name '{prop_name}' does not appear in the current scene block text")
+                raise ValueError(f"道具名 '{prop_name}' 未在当前场景块文本中出现")
             seen.add(prop_name)
             normalized.append(req)
         self.requirements = normalized
@@ -125,7 +124,7 @@ class NarratedSceneRequirement(BaseModel):
         if source_text and self.scene_name and self.scene_name not in existing_scene_names:
             tokens = [self.scene_name, *self.aliases]
             if not any(token and token in source_text for token in tokens):
-                raise ValueError(f"Scene name '{self.scene_name}' does not appear in this episode's text")
+                raise ValueError(f"场景名 '{self.scene_name}' 未在本集文本中出现")
         return self
 
 
@@ -410,36 +409,36 @@ class AssetCompiler:
 
         source_text = await self._load_source_text(episode)
         if not source_text.strip():
-            raise ValueError("This episode's source text is empty; cannot compile assets")
+            raise ValueError("当前集原文为空，无法编译资产")
 
         lines = split_literal_source_text(source_text)
         if not lines:
-            raise ValueError("Could not split source text into valid lines")
+            raise ValueError("原文无法切分出有效行")
 
         scene_blocks = LiteralScriptWritingWorkflow._build_scene_blocks(lines)
         if not scene_blocks:
-            raise ValueError("Could not split source text into valid scene blocks")
+            raise ValueError("原文无法切分出有效场景块")
 
-        report(0.05, "Parsing scene blocks...")
-        log(f"[AssetCompiler] Identified {len(scene_blocks)} scene blocks")
+        report(0.05, "解析场景块...")
+        log(f"[AssetCompiler] 共识别 {len(scene_blocks)} 个场景块")
 
-        report(0.12, "AI reconciling base scenes...")
+        report(0.12, "AI校对基础场景...")
         await self._reconcile_base_scenes_from_text(source_text, episode, log)
 
-        report(0.2, "Compiling scene assets...")
+        report(0.2, "编译场景资产...")
         scene_menu, pending_scenes = await self._compile_scenes(scene_blocks, episode, log)
         if not scene_menu:
-            report(0.3, "Planning scene assets from narration script...")
+            report(0.3, "从解说稿规划场景资产...")
             scene_menu, pending_scenes = await self._compile_narrated_scenes(
                 source_text, episode, log
             )
         if not scene_menu:
-            raise ValueError("No scenes identified; please generate a line-by-line narration draft or add scene locations first")
+            raise ValueError("未识别到任何场景，请先生成逐行解说工作稿或补充场次地点")
 
-        report(0.55, "Compiling prop assets...")
+        report(0.55, "编译道具资产...")
         prop_menu = await self._compile_props(scene_blocks, episode, log)
 
-        report(0.9, "Writing episode assets...")
+        report(0.9, "写入本集资产...")
         for scene in pending_scenes:
             await self.cognee_store.sqlite_store.add_scene(scene)
         await self.cognee_store.update_episode(
@@ -448,7 +447,7 @@ class AssetCompiler:
             prop_menu=prop_menu,
         )
 
-        report(1.0, "Done")
+        report(1.0, "完成")
         return scene_menu, prop_menu, len(pending_scenes)
 
     async def compile_episode_scenes(
@@ -468,29 +467,29 @@ class AssetCompiler:
                 on_progress(progress, task)
 
         scene_blocks = await self._load_scene_blocks(episode)
-        report(0.1, "Parsing scene blocks...")
-        log(f"[AssetCompiler] Identified {len(scene_blocks)} scene blocks")
+        report(0.1, "解析场景块...")
+        log(f"[AssetCompiler] 共识别 {len(scene_blocks)} 个场景块")
 
         source_text = await self._load_source_text(episode)
-        report(0.18, "AI reconciling base scenes...")
+        report(0.18, "AI校对基础场景...")
         await self._reconcile_base_scenes_from_text(source_text, episode, log)
 
-        report(0.25, "Compiling scene assets...")
+        report(0.25, "编译场景资产...")
         scene_menu, pending_scenes = await self._compile_scenes(scene_blocks, episode, log)
         if not scene_menu:
-            report(0.45, "Planning scene assets from narration script...")
+            report(0.45, "从解说稿规划场景资产...")
             scene_menu, pending_scenes = await self._compile_narrated_scenes(
                 source_text, episode, log
             )
         if not scene_menu:
-            raise ValueError("No scenes identified; please generate a line-by-line narration draft or add scene locations first")
+            raise ValueError("未识别到任何场景，请先生成逐行解说工作稿或补充场次地点")
 
-        report(0.85, "Writing episode scene plan...")
+        report(0.85, "写入本集场景规划...")
         for scene in pending_scenes:
             await self.cognee_store.sqlite_store.add_scene(scene)
         await self.cognee_store.update_episode(episode.number, scene_menu=scene_menu)
 
-        report(1.0, "Done")
+        report(1.0, "完成")
         return scene_menu, len(pending_scenes)
 
     async def compile_episode_props(
@@ -510,16 +509,16 @@ class AssetCompiler:
                 on_progress(progress, task)
 
         scene_blocks = await self._load_scene_blocks(episode)
-        report(0.1, "Parsing scene blocks...")
-        log(f"[AssetCompiler] Identified {len(scene_blocks)} scene blocks")
+        report(0.1, "解析场景块...")
+        log(f"[AssetCompiler] 共识别 {len(scene_blocks)} 个场景块")
 
-        report(0.25, "Compiling prop assets...")
+        report(0.25, "编译道具资产...")
         prop_menu = await self._compile_props(scene_blocks, episode, log)
 
-        report(0.9, "Writing episode prop plan...")
+        report(0.9, "写入本集道具规划...")
         await self.cognee_store.update_episode(episode.number, prop_menu=prop_menu)
 
-        report(1.0, "Done")
+        report(1.0, "完成")
         return prop_menu
 
     async def _reconcile_base_scenes_from_text(
@@ -622,7 +621,7 @@ class AssetCompiler:
             scene.notes = f"由 AssetCompiler AI 校对创建 (ep{episode.number})"
             await self.cognee_store.sqlite_store.add_scene(scene)
             created.append(scene.name)
-            log(f"  AI-added base scene: {scene.name}")
+            log(f"  AI补全基础场景: {scene.name}")
         return created
 
     async def _find_existing_base_scene_by_name_or_alias(
@@ -660,15 +659,15 @@ class AssetCompiler:
     async def _load_scene_blocks(self, episode: Any) -> list[SceneBlock]:
         source_text = await self._load_source_text(episode)
         if not source_text.strip():
-            raise ValueError("This episode's source text is empty; cannot compile assets")
+            raise ValueError("当前集原文为空，无法编译资产")
 
         lines = split_literal_source_text(source_text)
         if not lines:
-            raise ValueError("Could not split source text into valid lines")
+            raise ValueError("原文无法切分出有效行")
 
         scene_blocks = LiteralScriptWritingWorkflow._build_scene_blocks(lines)
         if not scene_blocks:
-            raise ValueError("Could not split source text into valid scene blocks")
+            raise ValueError("原文无法切分出有效场景块")
 
         return scene_blocks
 
@@ -708,7 +707,7 @@ class AssetCompiler:
 
             existing = pending_scene_map.get(location) or await self._find_matching_scene(location)
             if not existing:
-                log(f"  Skipping missing base scene: {location} (AI reconcile did not create or reuse it)")
+                log(f"  跳过缺失基础场景: {location}（AI校对未创建或未复用）")
                 continue
             else:
                 existing = await self._enrich_scene_prompt_from_block(
@@ -754,8 +753,8 @@ class AssetCompiler:
                     base_scene_id=existing.name,
                     variant_id=requirement.label,
                 )
-            extra = f" ({len(normalized_derived)} derived scenes)" if normalized_derived else ""
-            log(f"  Scene: {existing.name}{extra}")
+            extra = f" ({len(normalized_derived)} 派生场景)" if normalized_derived else ""
+            log(f"  场景: {existing.name}{extra}")
 
         return scene_menu, pending_scenes
 
@@ -788,13 +787,13 @@ class AssetCompiler:
                         environment_prompt=scene.environment_prompt,
                         description=scene.description or existing.description,
                     )
-                    log(f"  Filled in narrated scene environment description: {existing.name}")
+                    log(f"  补齐解说场景环境描述: {existing.name}")
             else:
                 pending_scenes.append(scene)
                 pending_scene_map[scene.name] = scene
-                log(f"  New narrated scene: {scene.name}")
+                log(f"  新建解说场景: {scene.name}")
             self._add_to_scene_menu(canonical_name, scene_menu, seen_scene_ids)
-            log(f"  Scene: {canonical_name}")
+            log(f"  场景: {canonical_name}")
 
         return scene_menu, pending_scenes
 
@@ -891,7 +890,7 @@ class AssetCompiler:
             result = await agent.run(task)
             return list(result.output.scenes or [])
         except Exception as exc:
-            log(f"  Narrated scene analysis failed; falling back to text rules: {exc}")
+            log(f"  解说场景分析失败，改用文本规则兜底: {exc}")
             return []
 
     async def _enrich_scene_prompt_from_block(
@@ -928,7 +927,7 @@ class AssetCompiler:
                 environment_prompt=scene.environment_prompt,
                 description=scene.description,
             )
-            log(f"  Filled in scene environment description: {scene.name}")
+            log(f"  补齐场景环境描述: {scene.name}")
 
         return scene
 
@@ -999,24 +998,24 @@ class AssetCompiler:
                         sorted(set(episode_selected_props.values())),
                     )
                 except ValueError as exc:
-                    log(f"  Prop[{block_index + 1}]: {exc}")
+                    log(f"  道具[{block_index + 1}]: {exc}")
                     raise
             requirements = self._filter_background_props(requirements, block_text)
             for req in requirements:
                 existing = await self._find_matching_prop(req.prop_name)
                 if existing:
                     prop_id = existing.name
-                    source = "reuse"
+                    source = "复用"
                 else:
                     prop_id = self._match_selected_prop(req.prop_name, episode_selected_props)
-                    source = "episode reuse" if prop_id else "episode local"
+                    source = "本集复用" if prop_id else "本集局部"
                 prop_id = prop_id or str(req.prop_name or "").strip()
                 if not prop_id:
                     continue
                 episode_selected_props[str(req.prop_name or "").strip()] = prop_id
                 episode_selected_props[prop_id] = prop_id
                 self._add_to_prop_menu(prop_id, prop_menu, seen_prop_ids, existing, req)
-                log(f"  Prop[{block_index + 1}]: {prop_id} [{source}]")
+                log(f"  道具[{block_index + 1}]: {prop_id} [{source}]")
 
         return prop_menu
 
@@ -1138,7 +1137,7 @@ class AssetCompiler:
         try:
             result = await agent.run(task)
         except (UnexpectedModelBehavior, ValidationError) as exc:
-            raise ValueError(f"{PROP_OUTPUT_SCHEMA_HINT}; original error: {exc}") from exc
+            raise ValueError(f"{PROP_OUTPUT_SCHEMA_HINT}；原始错误: {exc}") from exc
         return result.output.requirements
 
     @classmethod

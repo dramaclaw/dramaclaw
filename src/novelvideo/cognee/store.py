@@ -353,7 +353,7 @@ class CogneeStore:
         errors: List[str] = []
         for run in runs:
             if run is None:
-                errors.append(f"{stage_name} returned an empty result")
+                errors.append(f"{stage_name} 返回空结果")
                 continue
 
             status = getattr(run, "status", None)
@@ -364,10 +364,10 @@ class CogneeStore:
                 nested = nested_pipeline_errors(run)
                 if nested:
                     detail = f"{detail}; data item errors: " + " | ".join(nested[:3])
-                errors.append(f"{stage_name} failed ({status_text}): {detail}")
+                errors.append(f"{stage_name}失败({status_text}): {detail}")
 
         if errors:
-            raise RuntimeError("; ".join(errors))
+            raise RuntimeError("；".join(errors))
 
     async def _run_cognee_pipeline_with_retry(
         self,
@@ -389,14 +389,14 @@ class CogneeStore:
             except Exception as exc:
                 last_error = exc
                 if attempt == 0:
-                    log(f"{stage_name} failed, retrying (1/1): {exc}")
+                    log(f"{stage_name}失败，准备重试(1/1): {exc}")
                     await asyncio.sleep(0)
                     continue
                 raise
 
         if last_error is not None:
             raise last_error
-        raise RuntimeError(f"{stage_name} failed: unknown error")
+        raise RuntimeError(f"{stage_name}失败: unknown error")
 
     async def _ensure_db(self):
         """确保数据库连接已建立。
@@ -565,67 +565,67 @@ class CogneeStore:
             console.print(f"[dim]{message}[/dim]")
 
         if not Path(novel_path).exists():
-            raise FileNotFoundError(f"File not found: {novel_path}")
+            raise FileNotFoundError(f"文件不存在: {novel_path}")
 
         if rebuild:
-            report(0.05, "Rebuilding graph...")
-            log("Clearing cognee graph data...")
+            report(0.05, "重建图谱...")
+            log("清除 cognee 图谱数据...")
             await self._prune_cognee_only()
 
         from .config import init_cognee
 
         init_cognee()
 
-        log(f"Reading file: {novel_path}")
+        log(f"读取文件: {novel_path}")
         content = load_novel_text(novel_path)
         if not content.strip():
-            raise ValueError("Novel content is empty, cannot import")
-        log(f"File read: {len(content)} chars")
+            raise ValueError("小说内容为空，无法导入")
+        log(f"文件读取完成: {len(content)} 字符")
         self._novel_content = content
 
         os.environ["COGNEE_TELEMETRY_ENABLED"] = "false"
 
         if not os.getenv("LLM_API_KEY") and not os.getenv("OPENAI_API_KEY"):
             raise ValueError(
-                "LLM API key not set. Add it to your .env file:\n" "  OPENAI_API_KEY=your_key_here"
+                "LLM API key 未设置。请在 .env 文件中添加:\n" "  OPENAI_API_KEY=your_key_here"
             )
 
         # Step 1: 添加原文到 Cognee
-        report(0.1, "Parsing novel text...")
-        log("Step 1/2: Importing novel text into Cognee...")
+        report(0.1, "解析原文...")
+        log("Step 1/2: 导入原文到 Cognee...")
         self._set_cognee_context()
         with self.embedding_model_scope():
             await cognee.add(content, dataset_name=self.dataset_name)
-        log("Novel text imported")
+        log("原文导入完成")
         await asyncio.sleep(0)
 
         # Step 2: 构建知识图谱
-        report(0.3, "Building knowledge graph...")
-        log("Step 2/3: Building knowledge graph (this may take a few minutes)...")
+        report(0.3, "构建知识图谱...")
+        log("Step 2/3: 构建知识图谱（这可能需要几分钟）...")
         await self._run_cognee_pipeline_with_retry(
-            stage_name="Knowledge graph build",
+            stage_name="知识图谱构建",
             operation=lambda: cognee.cognify(datasets=[self.dataset_name]),
             log=log,
         )
-        log("Knowledge graph build complete")
+        log("知识图谱构建完成")
 
         # Step 3: 创建向量索引（memify）
-        report(0.7, "Creating vector index...")
-        log("Step 3/3: Creating vector index (for triplet retrieval)...")
+        report(0.7, "创建向量索引...")
+        log("Step 3/3: 创建向量索引（用于三元组检索）...")
         await self._run_cognee_pipeline_with_retry(
-            stage_name="Vector index creation",
+            stage_name="向量索引创建",
             operation=lambda: cognee.memify(dataset=self.dataset_name),
             log=log,
         )
-        log("Vector index created")
+        log("向量索引创建完成")
 
         # 原文落库放在图谱构建成功之后：失败时不留下"已导入"的痕迹。
         # /chapters 仅凭已存原文判定"导入完成"，若提前落库，cognify/memify 失败
         # 仍会让界面误报导入成功且锁死重新上传入口。
         self.save_novel_content(content)
-        log("Novel text saved to file")
+        log("原文已保存到文件")
 
-        report(1.0, "Import complete")
+        report(1.0, "导入完成")
 
         return {
             "char_count": len(content),
@@ -783,8 +783,8 @@ class CogneeStore:
             console.print(f"[dim]{message}[/dim]")
 
         novel_text = require_imported_novel(self.project_dir)
-        report(0.1, "Extracting character nodes from graph...")
-        log("Extracting character candidates from graph...")
+        report(0.1, "从图谱提取人物节点...")
+        log("从图谱提取角色候选...")
         self._set_cognee_context()
         with self.embedding_model_scope():
             characters = await extract_characters_from_graph(
@@ -796,14 +796,14 @@ class CogneeStore:
             )
 
         if not characters:
-            log("⚠️ Graph extraction returned no results, keeping existing character data")
-            report(1.0, "Extraction returned no results")
+            log("⚠️ 图谱提取无结果，保留现有角色数据")
+            report(1.0, "提取无结果")
             return []
 
-        log(f"Extracted {len(characters)} characters from graph")
+        log(f"从图谱提取了 {len(characters)} 个角色")
 
-        report(0.8, "Saving new characters...")
-        log("Saving new characters to database...")
+        report(0.8, "保存新增角色...")
+        log("保存新增角色到数据库...")
         added: list[NovelCharacter] = []
         skipped = 0
         for char in characters:
@@ -812,10 +812,10 @@ class CogneeStore:
                 continue
             await self.add_character(char)
             added.append(char)
-        log(f"Added {len(added)} characters, skipped {skipped} existing")
+        log(f"已新增 {len(added)} 个角色，跳过已有 {skipped} 个")
 
-        report(1.0, "Character extraction complete")
-        log(f"Character extraction complete: {len(added)} added, {skipped} existing")
+        report(1.0, "角色提取完成")
+        log(f"角色提取完成: 新增 {len(added)} 个，已有 {skipped} 个")
 
         return added
 
@@ -848,17 +848,17 @@ class CogneeStore:
             console.print(f"[dim]{message}[/dim]")
 
         # 获取原文内容
-        log("Loading novel text from file...")
+        log("从文件加载原文...")
         novel_content = require_imported_novel(self.project_dir)
-        log(f"Novel text loaded: {len(novel_content)} chars")
+        log(f"原文加载完成: {len(novel_content)} 字符")
 
         # 获取已确认的角色列表
         character_names = list(self._characters.keys())
-        log(f"Known characters: {len(character_names)}")
+        log(f"已知角色: {len(character_names)} 个")
 
         # P1: 规划
-        report(0.1, "Planning episodes...")
-        log(f"Planning {target_episodes} episodes...")
+        report(0.1, "规划剧集...")
+        log(f"开始规划 {target_episodes} 集...")
 
         episodes = await extract_episodes_with_characters(
             novel_content,
@@ -868,18 +868,18 @@ class CogneeStore:
             project_name=self.project_name,
         )
 
-        log(f"LLM returned {len(episodes)} episodes")
+        log(f"LLM 返回 {len(episodes)} 集")
 
         # P2: 删除旧剧集
-        report(0.8, "Clearing old episode data...")
-        log("Clearing old episode data...")
+        report(0.8, "清理旧剧集数据...")
+        log("清理旧剧集数据...")
         deleted = await self._delete_old_episodes()
-        log(f"Deleted {deleted} old episodes")
+        log(f"已删除 {deleted} 个旧剧集")
         self._episodes.clear()
 
         # P3: 保存新剧集
-        report(0.85, "Saving new episodes...")
-        log("Saving new episodes to database...")
+        report(0.85, "保存新剧集...")
+        log("保存新剧集到数据库...")
         await self.add_episodes(episodes)
 
         # P4: 更新内存缓存
@@ -887,10 +887,10 @@ class CogneeStore:
             self._episodes[ep.number] = ep
 
         if len(self._episodes) != len(episodes):
-            log(f"⚠️ Warning: memory cache ({len(self._episodes)}) does not match returned result ({len(episodes)})")
+            log(f"⚠️ 警告：内存缓存 ({len(self._episodes)}) 与返回结果 ({len(episodes)}) 不一致")
 
-        report(1.0, "Episode planning complete")
-        log(f"Episode planning complete: {len(episodes)} episodes, numbers: {list(self._episodes.keys())}")
+        report(1.0, "剧集规划完成")
+        log(f"剧集规划完成: {len(episodes)} 集，编号: {list(self._episodes.keys())}")
 
         return episodes
 
@@ -915,23 +915,23 @@ class CogneeStore:
 
         # 获取小说原文
         if novel_text is None:
-            log("Loading novel text from file...")
+            log("从文件加载原文...")
             novel_text = require_imported_novel(self.project_dir)
-            log(f"Novel text loaded: {len(novel_text)} chars")
+            log(f"原文加载完成: {len(novel_text)} 字符")
 
         # 清理剧集内容
         await self.clear_episode_contents()
 
         # P1: 检测章节
-        report(0.1, "Detecting chapter structure...")
-        log("Detecting chapter structure...")
+        report(0.1, "检测章节结构...")
+        log("检测章节结构...")
         detector = ChapterDetector()
         chapters = detector.detect(novel_text)
 
         if not chapters:
-            raise ValueError("No chapter markers detected; please use AI planning mode")
+            raise ValueError("未检测到章节标记，请使用 AI 规划模式")
 
-        log(f"Detected {len(chapters)} chapters")
+        log(f"检测到 {len(chapters)} 个章节")
 
         episodes = []
         chapter_contents = {}  # 收集章节内容，最后统一写入
@@ -939,13 +939,13 @@ class CogneeStore:
 
         for i, chapter in enumerate(chapters):
             progress = 0.1 + (i / total) * 0.7
-            report(progress, f"Processing chapter {chapter.number}...")
+            report(progress, f"处理第 {chapter.number} 章...")
 
             # 收集章节内容（稍后写入，避免与 _delete_old_episodes 冲突）
             chapter_contents[chapter.number] = chapter.content
 
             if generate_metadata:
-                log(f"Generating metadata for chapter {chapter.number}...")
+                log(f"为第 {chapter.number} 章生成元数据...")
                 metadata = await self._generate_episode_metadata(chapter.number, chapter.content)
             else:
                 summary = chapter.content[:200].strip()
@@ -974,8 +974,8 @@ class CogneeStore:
             episodes.append(episode)
 
         # P2: 合并剧集（保留已有的已规划资产字段）
-        report(0.82, "Merging episode data...")
-        log("Merging episode data (preserving identities, scenes, props, and colors)...")
+        report(0.82, "合并剧集数据...")
+        log("合并剧集数据（保留身份、场景、道具和颜色）...")
         new_numbers = {ep.number for ep in episodes}
         for ep in episodes:
             old = self._episodes.get(ep.number)
@@ -990,12 +990,12 @@ class CogneeStore:
         removed = old_numbers - new_numbers
         if removed:
             await self.sqlite_store.delete_episodes_by_numbers(removed)
-            log(f"Deleted {len(removed)} old episodes")
+            log(f"已删除 {len(removed)} 个旧剧集")
         self._episodes.clear()
 
         # P3: 保存新剧集
-        report(0.88, "Saving to database...")
-        log("Saving episodes to database...")
+        report(0.88, "保存到数据库...")
+        log("保存剧集到数据库...")
         await self.add_episodes(episodes)
 
         # P3.5: 保存章节原文内容
@@ -1006,8 +1006,8 @@ class CogneeStore:
         for ep in episodes:
             self._episodes[ep.number] = ep
 
-        report(1.0, "Chapter mapping complete")
-        log(f"Chapter mapping complete: {len(episodes)} episodes")
+        report(1.0, "章节映射完成")
+        log(f"章节映射完成: {len(episodes)} 集")
 
         return episodes
 
@@ -1031,22 +1031,22 @@ class CogneeStore:
             console.print(f"[dim]{message}[/dim]")
 
         # 1. 加载原文并检测章节
-        log("Loading novel text from file...")
+        log("从文件加载原文...")
         novel_text = require_imported_novel(self.project_dir)
 
-        log(f"Novel text loaded: {len(novel_text)} chars")
+        log(f"原文加载完成: {len(novel_text)} 字符")
 
         # 清理剧集内容
         await self.clear_episode_contents()
 
-        report(0.1, "Detecting chapter structure...")
+        report(0.1, "检测章节结构...")
         detector = ChapterDetector()
         chapters = detector.detect(novel_text)
 
         if not chapters:
-            raise ValueError("No chapter markers detected; please use chapter mapping mode")
+            raise ValueError("未检测到章节标记，请使用章节映射模式")
 
-        log(f"Detected {len(chapters)} chapters, target {target_episodes} episodes")
+        log(f"检测到 {len(chapters)} 个章节，目标 {target_episodes} 集")
 
         # 提取所有事件
         extractor = EventExtractor()
@@ -1054,7 +1054,7 @@ class CogneeStore:
 
         for i, chapter in enumerate(chapters):
             progress = 0.1 + 0.3 * (i / len(chapters))
-            report(progress, f"Extracting events from chapter {chapter.number}...")
+            report(progress, f"提取第 {chapter.number} 章事件...")
 
             events = await extractor.extract_events(
                 chapter_num=chapter.number,
@@ -1062,16 +1062,16 @@ class CogneeStore:
                 on_log=log,
             )
             all_events.extend(events)
-            log(f"Chapter {chapter.number}: {len(events)} events")
+            log(f"第 {chapter.number} 章: {len(events)} 个事件")
 
-        log(f"Extracted {len(all_events)} events in total")
+        log(f"共提取 {len(all_events)} 个事件")
 
         # 事件存储在内存中（不再写 Redis）
-        report(0.45, "Storing events...")
+        report(0.45, "存储事件...")
 
         # AI 分配事件到剧集
-        report(0.5, "AI planning episode assignments...")
-        log("AI assigning events to episodes...")
+        report(0.5, "AI 规划剧集分配...")
+        log("AI 分配事件到剧集...")
         episode_assignments = await self._assign_events_to_episodes(
             all_events, target_episodes, on_log=log
         )
@@ -1081,12 +1081,12 @@ class CogneeStore:
         episode_contents = {}  # 收集内容，最后统一写入
         for ep_num, event_ids in episode_assignments.items():
             progress = 0.7 + 0.1 * (ep_num / target_episodes)
-            report(progress, f"Creating episode {ep_num}...")
+            report(progress, f"创建第 {ep_num} 集...")
 
             ep_events = [e for e in all_events if e.event_id in event_ids]
 
             if not ep_events:
-                log(f"⚠️ Episode {ep_num} has no assigned events, skipping")
+                log(f"⚠️ 第 {ep_num} 集没有分配到事件，跳过")
                 continue
 
             combined_content = "\n\n---\n\n".join(e.content for e in ep_events if e.content)
@@ -1117,13 +1117,13 @@ class CogneeStore:
             episodes.append(episode)
 
         # P2: 删除旧剧集
-        report(0.82, "Clearing old episode data...")
+        report(0.82, "清理旧剧集数据...")
         deleted = await self._delete_old_episodes()
-        log(f"Deleted {deleted} old episodes")
+        log(f"已删除 {deleted} 个旧剧集")
         self._episodes.clear()
 
         # P3: 保存新数据
-        report(0.88, "Saving to database...")
+        report(0.88, "保存到数据库...")
         await self.add_episodes(episodes)
 
         # P3.5: 保存剧集原文内容
@@ -1134,8 +1134,8 @@ class CogneeStore:
         for ep in episodes:
             self._episodes[ep.number] = ep
 
-        report(1.0, "Event-level planning complete")
-        log(f"Event-level planning complete: {len(episodes)} episodes")
+        report(1.0, "事件级规划完成")
+        log(f"事件级规划完成: {len(episodes)} 集")
 
         return episodes
 
@@ -1188,7 +1188,7 @@ class CogneeStore:
 只返回 JSON，不要有其他内容。"""
 
         try:
-            log("Calling LLM to assign events...")
+            log("调用 LLM 分配事件...")
             response = await litellm.acompletion(
                 model=os.environ.get("LLM_MODEL", "gpt-4o"),
                 messages=[{"role": "user", "content": prompt}],
@@ -1203,11 +1203,11 @@ class CogneeStore:
             result = json.loads(response.choices[0].message.content)
             assignments = {int(k): v for k, v in result.get("assignments", {}).items()}
 
-            log(f"LLM assignment complete: {len(assignments)} episodes")
+            log(f"LLM 分配完成: {len(assignments)} 集")
             return assignments
 
         except Exception as e:
-            log(f"LLM assignment failed: {e}, using even distribution")
+            log(f"LLM 分配失败: {e}，使用均匀分配")
             assignments = {}
             events_per_episode = max(1, len(events) // target_episodes)
             for i, event in enumerate(events):
@@ -1288,7 +1288,7 @@ class CogneeStore:
                 on_progress(progress, task)
 
         if not Path(novel_path).exists():
-            raise FileNotFoundError(f"File not found: {novel_path}")
+            raise FileNotFoundError(f"文件不存在: {novel_path}")
 
         console.print("[bold]Step 1/3: Importing novel text and building Cognee graph...[/bold]")
         fast_result = await self.ingest_novel_fast(
@@ -1297,20 +1297,20 @@ class CogneeStore:
             on_progress=lambda p, t: report(p * 0.3, t),
         )
 
-        report(0.3, "Extracting characters...")
+        report(0.3, "提取角色...")
         console.print("[bold]Step 2/3: Extracting characters from graph...[/bold]")
         characters = await self.build_characters_from_graph(
             on_progress=lambda p, t: report(0.3 + p * 0.3, t),
         )
 
-        report(0.6, "Planning episodes...")
+        report(0.6, "规划剧集...")
         console.print("[bold]Step 3/3: Planning episodes...[/bold]")
         episodes = await self.build_episodes(
             target_episodes=target_episodes,
             on_progress=lambda p, t: report(0.6 + p * 0.4, t),
         )
 
-        report(1.0, "Import complete")
+        report(1.0, "导入完成")
 
         return {
             "char_count": fast_result["char_count"],
@@ -1453,9 +1453,9 @@ class CogneeStore:
                     top_k=top_k,
                 )
         except DatasetNotFoundError:
-            return "No relevant data yet. Run cognee-ingest to import a novel first."
+            return "暂无相关数据，请先运行 cognee-ingest 导入小说"
         except Exception as e:
-            return f"Search error: {str(e)}"
+            return f"搜索出错: {str(e)}"
 
         if isinstance(result, list):
             parts = []
@@ -1526,7 +1526,7 @@ class CogneeStore:
         """更新角色属性。"""
         char = self.get_character(name)
         if not char:
-            raise ValueError(f"Character {name} does not exist")
+            raise ValueError(f"角色 {name} 不存在")
 
         for key, value in updates.items():
             if hasattr(char, key):
@@ -1604,7 +1604,7 @@ class CogneeStore:
         """删除身份图片，保留身份本身。"""
         char = self.get_character(character_name)
         if not char:
-            raise ValueError(f"Character {character_name} does not exist")
+            raise ValueError(f"角色 {character_name} 不存在")
 
         identities = char.identities
         target_identity = None
@@ -1614,7 +1614,7 @@ class CogneeStore:
                 break
 
         if not target_identity:
-            raise ValueError(f"Identity {identity_id} does not exist")
+            raise ValueError(f"身份 {identity_id} 不存在")
 
         image_path = compute_identity_path(
             Path(self.project_dir),
@@ -1755,7 +1755,7 @@ class CogneeStore:
                 f"[update_episode] Episode {episode_number} not in _episodes cache! cache keys={list(self._episodes.keys())}",
                 flush=True,
             )
-            raise ValueError(f"Episode {episode_number} does not exist")
+            raise ValueError(f"剧集 {episode_number} 不存在")
 
         old_number = episode.number
         persisted = await self.sqlite_store.get_episode_from_graph(episode_number)
@@ -1865,23 +1865,23 @@ class CogneeStore:
                 on_log(message)
             console.print(f"[dim]{message}[/dim]")
 
-        report(0.1, "Parsing script to extract scenes...")
+        report(0.1, "解析剧本提取场景...")
         novel_text = require_imported_novel(self.project_dir)
 
-        log(f"Loaded script text: {len(novel_text)} chars")
+        log(f"加载剧本原文: {len(novel_text)} 字符")
         scenes = await extract_scenes_from_script(
             novel_text=novel_text,
             on_progress=lambda p, t: report(0.1 + p * 0.6, t),
         )
 
         if not scenes:
-            log("⚠️ Script parsing returned no results, keeping existing scene data")
-            report(1.0, "Extraction returned no results")
+            log("⚠️ 剧本解析无结果，保留现有场景数据")
+            report(1.0, "提取无结果")
             return []
 
-        log(f"Extracted {len(scenes)} scenes from script")
-        report(0.8, "Saving new scenes...")
-        log("Saving new scenes to database...")
+        log(f"从剧本提取了 {len(scenes)} 个场景")
+        report(0.8, "保存新增场景...")
+        log("保存新增场景到数据库...")
         added: list[NovelScene] = []
         skipped = 0
         for scene in scenes:
@@ -1891,10 +1891,10 @@ class CogneeStore:
                 continue
             await self.sqlite_store.add_scene(scene)
             added.append(scene)
-        log(f"Added {len(added)} scenes, skipped {skipped} existing")
+        log(f"已新增 {len(added)} 个场景，跳过已有 {skipped} 个")
 
-        report(1.0, "Scene extraction complete")
-        log(f"Scene extraction complete: {len(added)} added, {skipped} existing")
+        report(1.0, "场景提取完成")
+        log(f"场景提取完成: 新增 {len(added)} 个，已有 {skipped} 个")
 
         return added
 
@@ -1919,7 +1919,7 @@ class CogneeStore:
                 on_log(message)
             console.print(f"[dim]{message}[/dim]")
 
-        report(0.05, "Collecting existing prop data...")
+        report(0.05, "收集已有道具数据...")
         existing_prop_aliases: dict[str, list[str]] = {}
         canonical_prop_hints: set[str] = set()
         canonical_prop_alias_targets: dict[str, set[str]] = {}
@@ -1946,15 +1946,15 @@ class CogneeStore:
                 for entry in prop_assets_dir.iterdir()
                 if entry.is_dir() and entry.name.strip()
             )
-        log(f"Collected {len(canonical_prop_hints)} existing prop hints")
+        log(f"收集了 {len(canonical_prop_hints)} 个已有道具线索")
 
         # P1: 提取新道具
-        report(0.1, "Extracting prop nodes from graph...")
-        log("Extracting prop candidates from graph...")
+        report(0.1, "从图谱提取道具节点...")
+        log("从图谱提取道具候选...")
         self._set_cognee_context()
         novel_text = self.load_novel_content()
         if novel_text:
-            log(f"Loaded full novel text to aid prop extraction: {len(novel_text)} chars")
+            log(f"已加载原文全文用于辅助道具提取: {len(novel_text)} 字符")
         with self.embedding_model_scope():
             props = await extract_props_from_graph(
                 dataset_name=self.dataset_name,
@@ -1965,11 +1965,11 @@ class CogneeStore:
             )
 
         if not props:
-            log("⚠️ Graph extraction returned no results, keeping existing prop data")
-            report(1.0, "Extraction returned no results")
+            log("⚠️ 图谱提取无结果，保留现有道具数据")
+            report(1.0, "提取无结果")
             return []
 
-        log(f"Extracted {len(props)} props from graph")
+        log(f"从图谱提取了 {len(props)} 个道具")
 
         # P1.5: 保留已有更具体的道具名，避免重建时退化成泛名（如 办公纸箱 -> 纸箱）
         used_prop_names: set[str] = set()
@@ -2010,7 +2010,7 @@ class CogneeStore:
                         ]
                     )
                 )
-                log(f"Keeping more specific existing prop name: {original_name} -> {prop.name}")
+                log(f"保留更具体的已有道具名: {original_name} -> {prop.name}")
             if prop.name in existing_prop_aliases:
                 prop.aliases = list(
                     dict.fromkeys(
@@ -2025,21 +2025,21 @@ class CogneeStore:
                     )
                 )
             used_prop_names.add(prop.name)
-        report(0.8, "Clearing old prop data...")
+        report(0.8, "清理旧道具数据...")
         try:
             deleted = await self.sqlite_store.delete_all_props()
-            log(f"Deleted {deleted} old props")
+            log(f"已删除 {deleted} 个旧道具")
         except Exception as e:
-            log(f"Failed to delete old props: {e}")
+            log(f"删除旧道具失败: {e}")
 
-        report(0.85, "Saving new props...")
-        log("Saving new props to database...")
+        report(0.85, "保存新道具...")
+        log("保存新道具到数据库...")
         for prop in props:
             await self.sqlite_store.add_prop(prop)
-        log(f"Saved {len(props)} props")
+        log(f"已保存 {len(props)} 个道具")
 
-        report(1.0, "Prop extraction complete")
-        log(f"Prop extraction complete: {len(props)} props")
+        report(1.0, "道具提取完成")
+        log(f"道具提取完成: {len(props)} 个")
 
         return props
 

@@ -45,13 +45,13 @@ class StyleService:
     # 预设风格缓存（避免重复读取文件）
     _preset_cache: dict[str, StyleConfig] = {}
     STYLE_FAMILY_LABELS = {
-        "live_action": "Live Action",
-        "animation": "Animation",
+        "live_action": "真人",
+        "animation": "动画",
     }
     ANIMATION_SUBTYPE_LABELS = {
         "2d": "2D",
         "3d": "3D",
-        "hybrid": "Mixed Media",
+        "hybrid": "混合媒介",
     }
     STYLE_PREVIEW_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 
@@ -525,7 +525,7 @@ class StyleService:
 
     @classmethod
     def format_style_family_label(cls, family: str, subtype: str = "") -> str:
-        base = cls.STYLE_FAMILY_LABELS.get(family or "live_action", "Live Action")
+        base = cls.STYLE_FAMILY_LABELS.get(family or "live_action", "真人")
         subtype = (subtype or "").lower()
         if family == "animation" and subtype:
             return f"{base} · {cls.ANIMATION_SUBTYPE_LABELS.get(subtype, subtype.upper())}"

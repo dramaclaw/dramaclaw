@@ -70,7 +70,7 @@ async def _run_episode_asset_planner(
         billing_metadata=billing_metadata if isinstance(billing_metadata, dict) else None,
     )
 
-    label = "Scene" if asset_kind == "scene" else "Prop"
+    label = "场景" if asset_kind == "scene" else "道具"
 
     def update(
         progress: float | None = None,
@@ -87,7 +87,7 @@ async def _run_episode_asset_planner(
             logs=[log] if log else None,
         )
 
-    update(0.05, "Loading project data...")
+    update(0.05, "加载项目数据...")
     sqlite_store = SQLiteStore(
         ctx.owner_project_label,
         output_dir=str(ctx.output_dir),
@@ -109,7 +109,7 @@ async def _run_episode_asset_planner(
     if episode_obj is None:
         raise ValueError(f"Episode {episode} not found")
 
-    update(0.15, f"Planning {label} assets...")
+    update(0.15, f"规划{label}资产...")
     compiler = AssetCompiler(cognee_store)
 
     def on_log(message: str) -> None:
@@ -123,8 +123,8 @@ async def _run_episode_asset_planner(
         )
         scene_menu_data = _dump_items(scene_menu)
         if not scene_menu_data:
-            raise ValueError("No scenes were identified; generate the line-by-line narration draft first or add scene locations")
-        update(0.95, "Scene planning complete", f"Scenes {new_count} new / {len(scene_menu_data)} total")
+            raise ValueError("未识别到任何场景，请先生成逐行解说工作稿或补充场次地点")
+        update(0.95, "场景规划完成", f"场景 {new_count} 新建/{len(scene_menu_data)} 总计")
         return {
             "episode": episode,
             "kind": "scene",
@@ -140,7 +140,7 @@ async def _run_episode_asset_planner(
     )
     promoted_props = await promote_episode_props_to_global(cognee_store, prop_menu)
     prop_menu_data = _dump_items(prop_menu)
-    update(0.95, "Prop planning complete", f"Props {len(prop_menu_data)} total")
+    update(0.95, "道具规划完成", f"道具 {len(prop_menu_data)} 总计")
     return {
         "episode": episode,
         "kind": "prop",

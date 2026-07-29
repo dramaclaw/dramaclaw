@@ -357,7 +357,7 @@ def _load_image_modules():
         import numpy as np
         from PIL import Image, ImageDraw
     except Exception as e:  # pragma: no cover - runtime dependency
-        raise RuntimeError("Pose editing requires Pillow and numpy") from e
+        raise RuntimeError("姿势编辑依赖 Pillow 和 numpy") from e
     return np, Image, ImageDraw
 
 
@@ -480,7 +480,7 @@ def _compute_bbox(mask) -> tuple[int, int, int, int]:
     np, _, _ = _load_image_modules()
     ys, xs = np.where(mask)
     if len(xs) == 0 or len(ys) == 0:
-        raise ValueError("No stick figure found for the specified color")
+        raise ValueError("未找到指定颜色的火柴人")
     return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
 
 
@@ -721,7 +721,7 @@ def save_edited_sketch(image_path: str, data_url: str) -> None:
     _, Image, _ = _load_image_modules()
 
     if not data_url or "," not in data_url:
-        raise ValueError("Invalid sketch export data")
+        raise ValueError("无效的草图导出数据")
 
     _, encoded = data_url.split(",", 1)
     raw = base64.b64decode(encoded)

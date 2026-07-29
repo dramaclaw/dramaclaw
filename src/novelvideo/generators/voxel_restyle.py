@@ -145,7 +145,7 @@ async def render_voxel_shot_styled(
     voxel_shot_path = Path(voxel_shot_path)
     output_path = Path(output_path)
     if not voxel_shot_path.exists():
-        raise FileNotFoundError(f"voxel_shot_path does not exist: {voxel_shot_path}")
+        raise FileNotFoundError(f"voxel_shot_path 不存在: {voxel_shot_path}")
 
     # Resolve style id
     style_id = (visual_style or "").strip()

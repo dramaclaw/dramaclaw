@@ -47,16 +47,16 @@ _EXPLICIT_TIME_RE = re.compile(rf"(?:^|[\s，,、])(?:{TIME_TOKEN_RE})(?:$|[\s�
 _INTERIOR_EXTERIOR_SLOT_RE = re.compile(r"(?:^|[\s，,、])(内|外)\s*$")
 
 FIX_HINTS = {
-    "duplicate_chapter_number": "Check sentences in the body that look like chapter titles to avoid splitting one chapter number into multiple chapters.",
-    "scene_headers_missing_time": "Add an explicit time to scene headers, such as “日/夜/深夜”.",
-    "multi_speaker_lines": "Reformat to one line of dialogue per line, keeping a single speaker per line.",
-    "ambiguous_speakers": "Replace vague speakers like “他/她/对方” with specific character names.",
-    "heavy_parenthetical_dialogue": "Move parenthetical stage directions to action lines and keep only dialogue on dialogue lines.",
-    "many_long_dialogues": "Split overly long dialogue to reduce the length of individual dialogue lines.",
-    "missing_scene_headers": "Add scene headers to the body, such as “1-1 地点 时间 内/外”.",
-    "non_increasing_chapter_number": "Check that chapter numbers increase, or confirm that chapter-like text in the body was not mistakenly split as a title.",
-    "too_few_dialogue_lines": "Add recognizable dialogue lines, formatted like “角色：台词”.",
-    "sparse_scene_headers": "Add scene headers per scene (one scene header per scene).",
+    "duplicate_chapter_number": "建议检查正文中疑似章节标题的句子，避免同一章节号被切成多个章节。",
+    "scene_headers_missing_time": "建议在场景头中补充明确时间，如“日/夜/深夜”。",
+    "multi_speaker_lines": "建议整理为一句台词一行，每行只保留一个说话人。",
+    "ambiguous_speakers": "建议把“他/她/对方”等模糊说话人改为具体角色名。",
+    "heavy_parenthetical_dialogue": "建议把括号舞台说明拆到动作行，台词行只保留对白。",
+    "many_long_dialogues": "建议拆分超长台词，减少单行对白长度。",
+    "missing_scene_headers": "建议为正文补充分场头，如“1-1 地点 时间 内/外”。",
+    "non_increasing_chapter_number": "建议检查章节序号是否递增，或确认正文中的章节字样不是误切标题。",
+    "too_few_dialogue_lines": "建议补充可识别对白行，格式如“角色：台词”。",
+    "sparse_scene_headers": "建议按场景补充分场头（每场一个场景头）。",
 }
 
 
@@ -154,7 +154,7 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             ScreenplayQualityIssue(
                 severity="warning",
                 code="not_screenplay_like",
-                message="The text reads more like novel prose than a scene-based screenplay. This precheck will not block the import, but downstream structuring may be less effective.",
+                message="文本整体更像小说正文而不是分场剧本，本预检不会阻断导入，但后续结构化效果可能较差。",
             )
         )
         return report
@@ -164,7 +164,7 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             ScreenplayQualityIssue(
                 severity="blocking",
                 code="missing_scene_headers",
-                message="No recognizable scene header detected (e.g. “商场一层入口处 日 内” or “场次（1）地点：兰州拉面馆，夜，内”); does not meet the 2.0 screenplay import requirements.",
+                message="未检测到可识别的场景头（如“商场一层入口处 日 内”或“场次（1）地点：兰州拉面馆，夜，内”），不符合 2.0 剧本导入要求。",
             )
         )
     elif total_scene_headers < max(1, dialogue_line_count // 12):
@@ -172,7 +172,7 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             ScreenplayQualityIssue(
                 severity="warning",
                 code="sparse_scene_headers",
-                message="Few scene headers; continuous scenes and time inheritance may be unstable.",
+                message="场景头偏少，连续场景和时间继承可能不稳定。",
             )
         )
 
@@ -181,7 +181,7 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             ScreenplayQualityIssue(
                 severity="warning",
                 code="scene_headers_missing_time",
-                message="Detected scene/scene-block headers without an explicit time anchor; downstream time_of_day and scene variant inheritance may be unstable.",
+                message="检测到缺少明确时间锚点的场景头/场次头；后续 time_of_day 与 scene variant 继承可能不稳定。",
             )
         )
 
@@ -190,7 +190,7 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             ScreenplayQualityIssue(
                 severity="blocking",
                 code="too_few_dialogue_lines",
-                message="Too few valid dialogue lines; the text does not look like a structurable screenplay.",
+                message="有效对白行过少，文本不像可结构化剧本。",
             )
         )
 
@@ -199,7 +199,7 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             ScreenplayQualityIssue(
                 severity="warning",
                 code="multi_speaker_lines",
-                message="Found dialogue lines that mix multiple speakers/colons on a single line; the system will try to normalize them under the tier-B screenplay rules, but it is better to reformat to one line of dialogue per line first.",
+                message="存在多行“同一行混多个说话人/多个冒号”的对白格式，系统会尝试按 B 档剧本规范化，但建议先整理成一句台词一行。",
             )
         )
 
@@ -208,7 +208,7 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             ScreenplayQualityIssue(
                 severity="warning",
                 code="ambiguous_speakers",
-                message="Many vague speakers found (e.g. “他/她/对方/电话那头”); downstream identity normalization may be unstable.",
+                message="存在较多模糊 speaker（如“他/她/对方/电话那头”），后续 identity 归一会不稳定。",
             )
         )
 
@@ -217,7 +217,7 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             ScreenplayQualityIssue(
                 severity="warning",
                 code="heavy_parenthetical_dialogue",
-                message="Dialogue contains many parenthetical stage directions; import will rely on cleanup logic, so it is better to tidy them up beforehand.",
+                message="台词里括号舞台说明较多，导入后会依赖清洗逻辑，建议提前整理。",
             )
         )
 
@@ -226,7 +226,7 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             ScreenplayQualityIssue(
                 severity="warning",
                 code="many_long_dialogues",
-                message="Many overly long single-sentence lines; this tends to cause long single-unit dialogue problems downstream.",
+                message="超长单句台词较多，后续容易产生单 unit 长对白问题。",
             )
         )
 
@@ -269,13 +269,13 @@ def build_import_format_check(
 
     if not has_chapters:
         level = "blocking"
-        summary = "No valid chapters or recognizable body text detected; cannot be used for screenplay structuring."
+        summary = "未检测到有效章节或可识别正文，无法用于剧本结构化。"
     elif issues:
         level = "warning"
-        summary = f"Upload succeeded, but {len(issues)} formatting risks were detected that may affect scene recognition."
+        summary = f"上传成功，但检测到 {len(issues)} 个格式风险，可能影响场景识别。"
     else:
         level = "ok"
-        summary = "Upload succeeded; screenplay format validation passed."
+        summary = "上传成功，剧本格式校验通过。"
 
     return {
         "level": level,
@@ -301,8 +301,8 @@ def _build_line_aware_format_issues(text: str) -> list[dict]:
                 {
                     "code": "scene_marker_colon_number",
                     "line": idx,
-                    "message": f"“场次：{number}” is not a stable scene-number format.",
-                    "fix": "Change it to “场次（1）” or “1-1”.",
+                    "message": f"“场次：{number}”不是稳定场次格式。",
+                    "fix": "建议改为“场次（1）”或“1-1”。",
                 }
             )
 
@@ -316,8 +316,8 @@ def _build_line_aware_format_issues(text: str) -> list[dict]:
                 {
                     "code": "split_location_time",
                     "line": idx,
-                    "message": "Location and time are entered separately; the system may not merge them correctly.",
-                    "fix": "Change it to “地点：人类城池，日，内/外”.",
+                    "message": "地点和时间分开填写，系统可能无法合并识别。",
+                    "fix": "建议改为“地点：人类城池，日，内/外”。",
                 }
             )
 
@@ -329,8 +329,8 @@ def _build_line_aware_format_issues(text: str) -> list[dict]:
                 {
                     "code": "missing_interior_exterior",
                     "line": idx,
-                    "message": "Scene header is missing “内/外”.",
-                    "fix": "Add “内/外”, such as “地点 时间 内/外”.",
+                    "message": "场景头缺少“内/外”。",
+                    "fix": "建议补上“内/外”，如“地点 时间 内/外”。",
                 }
             )
 
@@ -355,7 +355,7 @@ def _build_chapter_structure_issues(chapters: list[dict]) -> list[dict]:
                 {
                     "code": "duplicate_chapter_number",
                     "line": line_number,
-                    "message": f"Duplicate chapter number detected {number}: {title or 'Untitled chapter'}.",
+                    "message": f"检测到重复章节序号 {number}：{title or '未命名章节'}。",
                     "fix": FIX_HINTS["duplicate_chapter_number"],
                 }
             )
@@ -366,7 +366,7 @@ def _build_chapter_structure_issues(chapters: list[dict]) -> list[dict]:
                 {
                     "code": "non_increasing_chapter_number",
                     "line": line_number,
-                    "message": f"Chapter number jumped back or repeated from {previous_number} to {number}.",
+                    "message": f"章节序号从 {previous_number} 跳回或重复为 {number}。",
                     "fix": FIX_HINTS["non_increasing_chapter_number"],
                 }
             )

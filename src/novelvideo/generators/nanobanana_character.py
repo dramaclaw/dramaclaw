@@ -303,12 +303,12 @@ class NanoBananaCharacterGenerator:
                         project_output_dir=project_output_dir,
                         request_id=request_id,
                         status="failed",
-                        error_message="Failed to generate front baseline image",
+                        error_message="生成正面基准图失败",
                     )
                 return CharacterReferenceResult(
                     success=False,
                     character_name=character_name,
-                    error="Failed to generate front baseline image",
+                    error="生成正面基准图失败",
                     generation_time=time.time() - start_time,
                 )
 
@@ -337,12 +337,12 @@ class NanoBananaCharacterGenerator:
                     project_output_dir=project_output_dir,
                     request_id=request_id,
                     status="failed",
-                    error_message="Please install google-genai: pip install google-genai",
+                    error_message="请安装 google-genai: pip install google-genai",
                 )
             return CharacterReferenceResult(
                 success=False,
                 character_name=character_name,
-                error="Please install google-genai: pip install google-genai",
+                error="请安装 google-genai: pip install google-genai",
                 generation_time=time.time() - start_time,
             )
         except Exception as e:
@@ -527,7 +527,7 @@ class NanoBananaCharacterGenerator:
                     return CharacterReferenceResult(
                         success=False,
                         character_name=character_name,
-                        error=f"Failed to load reference image: {reference_image_path}",
+                        error=f"无法加载参考图: {reference_image_path}",
                         generation_time=time.time() - start_time,
                     )
                 with open(reference_image_path, "rb") as f:
@@ -547,7 +547,7 @@ class NanoBananaCharacterGenerator:
             # 统一流程：生成 body 到临时文件 → 拼接 portrait → 删 temp
             aspect_ratio = "16:9"  # 4面板: 全脸+正+三分+背面
             image_size = "1K"
-            body_label = "4-panel reference sheet"
+            body_label = "4面板 reference sheet"
 
             temp_body_path = output_path.replace(".png", "_body_temp.png")
             print(f"[NanoBanana Character] Generating {body_label} to temp file: {temp_body_path}")
@@ -596,12 +596,12 @@ class NanoBananaCharacterGenerator:
                         project_output_dir=project_output_dir,
                         request_id=request_id,
                         status="failed",
-                        error_message=f"Failed to generate {body_label}",
+                        error_message=f"生成{body_label}失败",
                     )
                 return CharacterReferenceResult(
                     success=False,
                     character_name=character_name,
-                    error=f"Failed to generate {body_label}",
+                    error=f"生成{body_label}失败",
                     generation_time=time.time() - start_time,
                 )
 
@@ -761,7 +761,7 @@ MUST AVOID:
                 return CharacterReferenceResult(
                     success=False,
                     character_name=character_name,
-                    error="API returned no image data",
+                    error="API 未返回图像数据",
                     generation_time=time.time() - start_time,
                 )
 
@@ -782,7 +782,7 @@ MUST AVOID:
             return CharacterReferenceResult(
                 success=False,
                 character_name=character_name,
-                error="Please install google-genai: pip install google-genai",
+                error="请安装 google-genai: pip install google-genai",
                 generation_time=time.time() - start_time,
             )
         except Exception as e:

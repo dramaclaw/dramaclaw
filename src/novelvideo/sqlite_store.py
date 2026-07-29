@@ -511,7 +511,7 @@ class SQLiteStore:
             (content, ep_num),
         )
         if cursor.rowcount == 0:
-            raise ValueError(f"Episode {ep_num} does not exist; cannot save adapted script")
+            raise ValueError(f"剧集 {ep_num} 不存在，无法保存改写稿")
         await db.commit()
         episode = self._episodes.get(ep_num)
         if episode is not None:
@@ -628,7 +628,7 @@ class SQLiteStore:
     async def update_character(self, name: str, **updates) -> None:
         char = self.get_character(name)
         if not char:
-            raise ValueError(f"Character {name} does not exist")
+            raise ValueError(f"角色 {name} 不存在")
         for key, value in updates.items():
             if hasattr(char, key):
                 setattr(char, key, value)
@@ -658,11 +658,11 @@ class SQLiteStore:
     async def rename_character(self, old_name: str, new_name: str) -> None:
         char = self.get_character(old_name)
         if not char:
-            raise ValueError(f"Character {old_name} does not exist")
+            raise ValueError(f"角色 {old_name} 不存在")
         if old_name == new_name:
             return
         if self.get_character(new_name):
-            raise ValueError(f"Character {new_name} already exists")
+            raise ValueError(f"角色 {new_name} 已存在")
         db = await self._ensure_db()
         await db.execute("DELETE FROM characters WHERE name = ?", (old_name,))
         identities = char.identities
@@ -983,13 +983,13 @@ class SQLiteStore:
     ) -> None:
         char = self.get_character(character_name)
         if not char:
-            raise ValueError(f"Character {character_name} does not exist")
+            raise ValueError(f"角色 {character_name} 不存在")
         identity.character_name = char.name
         if not identity.identity_id:
             identity.identity_id = f"{char.name}_{identity.identity_name}"
         for existing in char.identities:
             if existing.identity_id == identity.identity_id:
-                raise ValueError(f"Identity {identity.identity_id} already exists")
+                raise ValueError(f"身份 {identity.identity_id} 已存在")
         identities = char.identities
         identities.append(identity)
         char.identities = identities
@@ -1014,7 +1014,7 @@ class SQLiteStore:
     ) -> None:
         char = self.get_character(character_name)
         if not char:
-            raise ValueError(f"Character {character_name} does not exist")
+            raise ValueError(f"角色 {character_name} 不存在")
         identities = char.identities
         target_identity = None
         for identity in identities:
@@ -1022,7 +1022,7 @@ class SQLiteStore:
                 target_identity = identity
                 break
         if not target_identity:
-            raise ValueError(f"Identity {identity_id} does not exist")
+            raise ValueError(f"身份 {identity_id} 不存在")
         for key, value in updates.items():
             if hasattr(target_identity, key):
                 setattr(target_identity, key, value)
@@ -1064,7 +1064,7 @@ class SQLiteStore:
     async def delete_character_identity(self, character_name: str, identity_id: str) -> None:
         char = self.get_character(character_name)
         if not char:
-            raise ValueError(f"Character {character_name} does not exist")
+            raise ValueError(f"角色 {character_name} 不存在")
         identities = char.identities
         target_identity = None
         for i, identity in enumerate(identities):
@@ -1072,7 +1072,7 @@ class SQLiteStore:
                 target_identity = identities.pop(i)
                 break
         if not target_identity:
-            raise ValueError(f"Identity {identity_id} does not exist")
+            raise ValueError(f"身份 {identity_id} 不存在")
         char.identities = identities
         await self._cascade_identity_change(identity_id, None)
         await self._update_character_field(char.name, "identities_json", char.identities_json)
@@ -1081,10 +1081,10 @@ class SQLiteStore:
     async def delete_identity_image(self, character_name: str, identity_id: str) -> bool:
         char = self.get_character(character_name)
         if not char:
-            raise ValueError(f"Character {character_name} does not exist")
+            raise ValueError(f"角色 {character_name} 不存在")
         target_identity = next((i for i in char.identities if i.identity_id == identity_id), None)
         if not target_identity:
-            raise ValueError(f"Identity {identity_id} does not exist")
+            raise ValueError(f"身份 {identity_id} 不存在")
         image_path = compute_identity_path(
             Path(self.project_dir), character_name, target_identity.identity_name
         )
@@ -1149,7 +1149,7 @@ class SQLiteStore:
     async def update_episode(self, episode_number: int, **updates) -> None:
         episode = self.get_episode(episode_number)
         if not episode:
-            raise ValueError(f"Episode {episode_number} does not exist")
+            raise ValueError(f"剧集 {episode_number} 不存在")
         old_number = episode.number
         for key, value in updates.items():
             if key == "scene_menu":

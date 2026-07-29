@@ -105,8 +105,7 @@ def extract_char_identities_from_markers(
             result[char_name] = marker
         elif strict:
             raise ValueError(
-                f"marker '{{{{{marker}}}}}' is missing an identity suffix; "
-                f"expected format '{{{{{marker}_identity}}}}'"
+                f"marker '{{{{{marker}}}}}' 缺少身份后缀，" f"应为 '{{{{{marker}_身份名}}}}' 格式"
             )
     return result
 
@@ -119,7 +118,7 @@ def extract_prop_ids_from_markers(visual_desc: str, *, strict: bool = False) -> 
         prop_id = str(marker or "").strip()
         if not prop_id:
             if strict:
-                raise ValueError("marker '[[ ]]' cannot be empty")
+                raise ValueError("marker '[[ ]]' 不能为空")
             continue
         if prop_id in seen:
             continue

@@ -45,15 +45,15 @@ def decode_recorded_audio_data_url(data_url: str) -> tuple[bytes, str]:
     """
     prefix, separator, payload = str(data_url or "").partition(",")
     if not separator or not prefix.startswith("data:") or ";base64" not in prefix:
-        raise ValueError("Invalid recording data format")
+        raise ValueError("录音数据格式不正确")
     mime_type = prefix[5:].split(";", 1)[0].lower()
     extension = RECORDED_AUDIO_EXTENSION_BY_MIME.get(mime_type, ".webm")
     try:
         content = base64.b64decode(payload, validate=True)
     except binascii.Error as exc:
-        raise ValueError("Recording data is not valid base64") from exc
+        raise ValueError("录音数据不是有效的 base64") from exc
     if not content:
-        raise ValueError("Recording data is empty")
+        raise ValueError("录音数据为空")
     if extension not in VOICE_SAMPLE_EXTENSIONS:
         content = _transcode_to_mp3(content)
         extension = ".mp3"
@@ -63,7 +63,7 @@ def decode_recorded_audio_data_url(data_url: str) -> tuple[bytes, str]:
 def _transcode_to_mp3(content: bytes) -> bytes:
     """Pipe *content* through ffmpeg and return mp3 bytes."""
     if not shutil.which("ffmpeg"):
-        raise ValueError("ffmpeg is not installed; cannot transcode the recording to mp3")
+        raise ValueError("系统未安装 ffmpeg，无法转码录音为 mp3")
     try:
         result = subprocess.run(
             [
@@ -88,9 +88,9 @@ def _transcode_to_mp3(content: bytes) -> bytes:
         )
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or b"").decode("utf-8", "ignore").strip()
-        raise ValueError(f"ffmpeg transcoding failed: {stderr or exc}") from exc
+        raise ValueError(f"ffmpeg 转码失败：{stderr or exc}") from exc
     if not result.stdout:
-        raise ValueError("ffmpeg produced empty output after transcoding")
+        raise ValueError("ffmpeg 转码后输出为空")
     return result.stdout
 
 
@@ -98,7 +98,7 @@ def probe_voice_sample_duration_seconds(path: str | Path) -> float:
     """Return audio duration in seconds using ffprobe."""
 
     if not shutil.which("ffprobe"):
-        raise ValueError("ffprobe is not installed; cannot read audio duration")
+        raise ValueError("系统未安装 ffprobe，无法读取音频时长")
     result = subprocess.run(
         [
             "ffprobe",
@@ -118,9 +118,9 @@ def probe_voice_sample_duration_seconds(path: str | Path) -> float:
         duration = float((result.stdout or "").strip())
     except (TypeError, ValueError) as exc:
         stderr = (result.stderr or "").strip()
-        raise ValueError(f"Unable to read audio duration: {stderr or path}") from exc
+        raise ValueError(f"无法读取音频时长：{stderr or path}") from exc
     if duration <= 0:
-        raise ValueError("Invalid audio duration")
+        raise ValueError("音频时长无效")
     return duration
 
 
@@ -134,20 +134,20 @@ def trim_voice_sample_content(
     """Trim uploaded/recorded voice content to a Seedance2-friendly MP3 clip."""
 
     if not content:
-        raise ValueError("Audio content is empty")
+        raise ValueError("音频内容为空")
     if not is_supported_voice_sample(filename):
-        raise ValueError("Only mp3 / wav / m4a / aac / ogg are supported")
+        raise ValueError("仅支持 mp3 / wav / m4a / aac / ogg")
     if not shutil.which("ffmpeg"):
-        raise ValueError("ffmpeg is not installed; cannot trim the voice sample")
+        raise ValueError("系统未安装 ffmpeg，无法裁剪声线")
     try:
         start = max(0.0, float(start_seconds))
         duration = float(duration_seconds)
     except (TypeError, ValueError) as exc:
-        raise ValueError("Invalid trim time parameters") from exc
+        raise ValueError("裁剪时间参数无效") from exc
     if duration <= 0:
-        raise ValueError("Trim duration must be greater than 0 seconds")
+        raise ValueError("裁剪时长必须大于 0 秒")
     if duration > 15:
-        raise ValueError("A Seedance2 reference voice segment can be at most 15 seconds")
+        raise ValueError("Seedance2 参考声线单段最长 15 秒")
 
     suffix = voice_sample_extension(filename)
     with tempfile.TemporaryDirectory() as tmp:
@@ -184,10 +184,10 @@ def trim_voice_sample_content(
             )
         except subprocess.CalledProcessError as exc:
             stderr = (exc.stderr or b"").decode("utf-8", "ignore").strip()
-            raise ValueError(f"ffmpeg trimming failed: {stderr or exc}") from exc
+            raise ValueError(f"ffmpeg 裁剪失败：{stderr or exc}") from exc
         output = output_path.read_bytes() if output_path.exists() else b""
         if not output:
-            raise ValueError("ffmpeg produced empty output after trimming")
+            raise ValueError("ffmpeg 裁剪后输出为空")
         return output, "voice_trimmed.mp3"
 
 
@@ -204,10 +204,10 @@ def voice_recorder_bootstrap_js(recorder_key: str) -> str:
         startedAt: 0,
         async start() {{
           if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
-            throw new Error('This browser does not support microphone recording');
+            throw new Error('当前浏览器不支持麦克风录音');
           }}
           if (typeof MediaRecorder === 'undefined') {{
-            throw new Error('This browser does not support MediaRecorder');
+            throw new Error('当前浏览器不支持 MediaRecorder');
           }}
           const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
             ? 'audio/webm;codecs=opus'
@@ -227,7 +227,7 @@ def voice_recorder_bootstrap_js(recorder_key: str) -> str:
         }},
         async stop() {{
           const recorder = this.recorder;
-          if (!recorder) throw new Error('Recording has not started yet');
+          if (!recorder) throw new Error('尚未开始录音');
           const chunks = this.chunks;
           const mimeType = recorder.mimeType || 'audio/webm';
           const durationMs = Date.now() - this.startedAt;
@@ -325,9 +325,9 @@ def persist_character_voice_file(
     the freshly written file.
     """
     if not is_supported_voice_sample(filename):
-        raise ValueError("Only mp3 / wav / m4a / aac / ogg are supported")
+        raise ValueError("仅支持 mp3 / wav / m4a / aac / ogg")
     if not content:
-        raise ValueError("Audio file is empty")
+        raise ValueError("音频文件为空")
 
     target = character_voice_path(
         project_dir=project_dir,
@@ -363,7 +363,7 @@ def trim_existing_character_voice_file(
     if not source.is_absolute():
         source = Path(project_dir) / source
     if not source.exists():
-        raise ValueError(f"Voice file not found: {source_path}")
+        raise ValueError(f"声线文件不存在：{source_path}")
 
     content, filename = trim_voice_sample_content(
         source.read_bytes(),

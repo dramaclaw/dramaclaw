@@ -125,7 +125,7 @@ async def _run_freezone_gen_async(envelope: dict[str, Any], ctx: ProjectContext)
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, task_type, job_id, 0.1, "Calling image generator...")
+    _update(ctx, task_type, job_id, 0.1, "调用图像生成器...")
     out_path = await _await_with_cancel_watch(
         run_freezone_gen(
             project_dir=project_dir,
@@ -178,7 +178,7 @@ async def _run_freezone_edit_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, task_type, job_id, 0.1, "Calling image editor...")
+    _update(ctx, task_type, job_id, 0.1, "调用图像编辑器...")
     out_path = await _await_with_cancel_watch(
         run_freezone_edit(
             project_dir=project_dir,
@@ -232,7 +232,7 @@ async def _run_freezone_mask_edit_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     provider = str(payload.get("provider") or "newapi")
-    _update(ctx, "freezone_mask_edit", job_id, 0.1, f"Calling {provider} image erase...")
+    _update(ctx, "freezone_mask_edit", job_id, 0.1, f"调用 {provider} 图片擦除...")
     out_path = await run_freezone_mask_edit(
         project_dir=project_dir,
         job_id=job_id,
@@ -264,7 +264,7 @@ async def _run_freezone_extract_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_extract", job_id, 0.1, "Extracting frames with ffmpeg...")
+    _update(ctx, "freezone_extract", job_id, 0.1, "ffmpeg 抽帧中...")
     frame_paths = await run_freezone_extract_frames(
         project_dir=project_dir,
         job_id=job_id,
@@ -295,7 +295,7 @@ async def _run_freezone_analyze_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     frame_paths = [str(path) for path in payload.get("frame_paths") or []]
-    _update(ctx, "freezone_analyze", job_id, 0.1, f"Vision analyzing {len(frame_paths)} frames...")
+    _update(ctx, "freezone_analyze", job_id, 0.1, f"Vision 分析 {len(frame_paths)} 帧...")
     result = await run_freezone_analyze_shots(
         project_dir=project_dir,
         job_id=job_id,
@@ -336,7 +336,7 @@ async def _run_freezone_video_story_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_video_story", job_id, 0.1, "Extracting key frames with ffmpeg...")
+    _update(ctx, "freezone_video_story", job_id, 0.1, "ffmpeg 抽取关键帧...")
     frame_paths = await run_freezone_extract_frames(
         project_dir=project_dir,
         job_id=job_id,
@@ -353,7 +353,7 @@ async def _run_freezone_video_story_async(
         "freezone_video_story",
         job_id,
         0.55,
-        f"Vision parsing {len(frame_paths)} frames into a video story...",
+        f"Vision 解析 {len(frame_paths)} 帧为视频故事...",
     )
     result = await run_freezone_analyze_shots(
         project_dir=project_dir,
@@ -524,7 +524,7 @@ async def _run_mainline_director_control_sketch_async(
         task_type,
         scope,
         0.05,
-        f"Starting Beat {beat_num} director composite to sketch candidate...",
+        f"开始 Beat {beat_num} 导演合成图转草图候选...",
         episode=episode,
     )
     result = await _await_with_cancel_watch(
@@ -572,7 +572,7 @@ async def _run_mainline_director_control_sketch_async(
     )
     if history_record:
         response["generation_history_record"] = history_record
-    _update(ctx, task_type, scope, 1.0, "Director composite sketch candidate generated", episode=episode)
+    _update(ctx, task_type, scope, 1.0, "导演合成图草图候选已生成", episode=episode)
     return response
 
 
@@ -609,7 +609,7 @@ async def _run_freezone_video_erase_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_video_erase", job_id, 0.1, "Starting video erase processing...")
+    _update(ctx, "freezone_video_erase", job_id, 0.1, "开始视频擦除处理...")
     output_path, meta = await run_freezone_video_erase(
         project_dir=project_dir,
         job_id=job_id,
@@ -641,7 +641,7 @@ async def _run_freezone_video_upscale_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_video_upscale", job_id, 0.1, "Starting video upscale processing...")
+    _update(ctx, "freezone_video_upscale", job_id, 0.1, "开始视频高清处理...")
     output_path, meta = await run_freezone_video_upscale(
         project_dir=project_dir,
         job_id=job_id,
@@ -671,7 +671,7 @@ async def _run_freezone_audio_separate_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_audio_separate", job_id, 0.1, "Starting audio-video separation...")
+    _update(ctx, "freezone_audio_separate", job_id, 0.1, "开始音视频分离...")
     outputs = await run_freezone_audio_separate(
         project_dir=project_dir,
         job_id=job_id,
@@ -709,7 +709,7 @@ async def _run_freezone_video_compose_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_video_compose", job_id, 0.1, "Starting video timeline composition...")
+    _update(ctx, "freezone_video_compose", job_id, 0.1, "开始合成视频时间线...")
     output_path = await run_freezone_video_compose(
         project_dir=project_dir,
         job_id=job_id,
@@ -760,7 +760,7 @@ async def _run_freezone_text_translate_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     node_type = str(payload.get("node_type") or "generic")
-    _update(ctx, "freezone_text_translate", job_id, 0.1, "Starting text translation...")
+    _update(ctx, "freezone_text_translate", job_id, 0.1, "开始翻译文本...")
     translated_text, source_language, target_language = await translate_freezone_text(
         text=str(payload.get("text") or ""),
         node_type=node_type,
@@ -813,7 +813,7 @@ async def _run_freezone_story_script_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_story_script", job_id, 0.1, "Starting story script generation...")
+    _update(ctx, "freezone_story_script", job_id, 0.1, "开始生成故事脚本...")
     data = await generate_freezone_story_script(
         source_text=str(payload.get("source_text") or ""),
         prompt=str(payload.get("prompt") or ""),
@@ -864,7 +864,7 @@ async def _run_freezone_image_reverse_prompt_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     source_path = Path(str(payload["source_path"]))
-    _update(ctx, "freezone_image_reverse_prompt", job_id, 0.1, "Starting reverse prompt from image...")
+    _update(ctx, "freezone_image_reverse_prompt", job_id, 0.1, "开始反推图片提示词...")
     prompt = await reverse_prompt_from_image(image_path=source_path)
     out = outputs_dir(project_dir, "freezone_image_reverse_prompt") / f"{job_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -921,7 +921,7 @@ async def _run_freezone_audio_speech_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_audio_speech", job_id, 0.1, "Starting text-to-speech...")
+    _update(ctx, "freezone_audio_speech", job_id, 0.1, "开始文本生成语音...")
     store = await make_sqlite_store_for_context(ctx)
     try:
         result = await generate_freezone_audio_speech(
@@ -984,7 +984,7 @@ async def _run_freezone_audio_eleven_music_async(
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_audio_eleven_music", job_id, 0.1, "Starting text-to-music...")
+    _update(ctx, "freezone_audio_eleven_music", job_id, 0.1, "开始文本生成音乐...")
     result = await generate_freezone_audio_eleven_music(
         project_dir=project_dir,
         job_id=job_id,

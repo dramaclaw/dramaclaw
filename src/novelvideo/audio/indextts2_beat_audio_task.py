@@ -179,31 +179,31 @@ async def _resolve_dialogue_voice(beat: dict, store) -> tuple[Path, str] | None:
 async def _diagnose_missing_dialogue_voice(speaker: str, store) -> str:
     """Build a human-readable hint explaining why no voice was resolved."""
     if not speaker:
-        return "beat has no speaker set; please specify the speaking identity in the beat editor"
+        return "beat 未设置 speaker，请在 beat 编辑器里指定说话身份"
     try:
         characters = await store.list_characters()
     except Exception as exc:  # pragma: no cover - defensive
-        return f"Failed to read characters: {exc}"
+        return f"读取角色失败：{exc}"
     matched = next((c for c in characters if speaker.startswith(c.name)), None)
     if matched is None:
-        names = ", ".join(c.name for c in characters) or "<none>"
-        return f"No matching character found (existing characters: {names})"
+        names = "、".join(c.name for c in characters) or "<无>"
+        return f"未找到匹配角色（已存在角色：{names}）"
     identity = next(
         (i for i in matched.identities if i.identity_id == speaker),
         None,
     )
-    parts: list[str] = [f"Found character '{matched.name}'"]
+    parts: list[str] = [f"找到角色「{matched.name}」"]
     if identity is not None:
         parts.append(
-            f"matched identity '{identity.identity_name}' (age_group={identity.age_group or '<empty>'})"
+            f"匹配身份「{identity.identity_name}」(age_group={identity.age_group or '<空>'})"
         )
     samples = matched.voice_samples_by_age_group or {}
     parts.append(
-        f"character default reference_audio_path={matched.reference_audio_path or '<empty>'}; "
-        f"age-group slot keys={sorted(samples.keys()) or '<none>'}"
+        f"角色默认 reference_audio_path={matched.reference_audio_path or '<空>'}; "
+        f"年龄段插槽 keys={sorted(samples.keys()) or '<无>'}"
     )
-    parts.append("please upload a 'default' or matching age-group voice in the character workspace")
-    return "; ".join(parts)
+    parts.append("请在角色工作区上传「默认」或对应年龄段声线")
+    return "；".join(parts)
 
 
 async def _resolve_narrator_voice(
@@ -319,15 +319,15 @@ async def collect_indextts2_voice_prereq_errors(
                 == "current"
             ):
                 continue
-            narrator_error = "" if voice_path is not None else voice_error or "narrator voice missing"
+            narrator_error = "" if voice_path is not None else voice_error or "解说声线缺失"
             if narrator_error:
-                errors.append(f"Beat {beat_num:02d} narrator voice missing: {narrator_error}")
+                errors.append(f"Beat {beat_num:02d} 解说声线缺失：{narrator_error}")
             continue
 
         resolved_voice = await _resolve_dialogue_voice(beat, store)
         if resolved_voice is None:
-            speaker = str(beat.get("speaker") or "").strip() or "no speaking identity specified"
-            errors.append(f"Beat {beat_num:02d} character voice missing: {speaker}")
+            speaker = str(beat.get("speaker") or "").strip() or "未指定说话身份"
+            errors.append(f"Beat {beat_num:02d} 角色声线缺失：{speaker}")
             continue
         speaker = str(beat.get("speaker") or "").strip()
         _voice_path, voice_sha256 = resolved_voice
@@ -417,13 +417,13 @@ async def run_indextts2_beat_audio_generation(
                 )
                 speaker = NARRATOR_SPEAKER
                 if voice_path is None:
-                    raise ValueError(voice_error or "narrator voice missing")
+                    raise ValueError(voice_error or "解说声线缺失")
             else:
                 resolved_voice = await _resolve_dialogue_voice(beat, store)
                 speaker = str(beat.get("speaker") or "").strip()
                 if resolved_voice is None:
                     diag = await _diagnose_missing_dialogue_voice(speaker, store)
-                    raise ValueError(f"Character voice missing (speaker={speaker or '<empty>'}): {diag}")
+                    raise ValueError(f"角色声线缺失（speaker={speaker or '<空>'}）：{diag}")
                 voice_path, voice_sha256 = resolved_voice
 
             if (
@@ -485,9 +485,9 @@ async def run_indextts2_beat_audio_generation(
                     project_output_dir=store.project_dir,
                     request_id=request_id,
                     status="failed",
-                    error_message="voice missing",
+                    error_message="声线缺失",
                 )
-                raise ValueError("voice missing")
+                raise ValueError("声线缺失")
             if not item_result.success:
                 update_audio_generation_attempt(
                     project_output_dir=store.project_dir,

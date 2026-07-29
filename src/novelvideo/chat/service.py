@@ -738,13 +738,13 @@ def _acquire_chat_run_lock(username: str, project: str) -> str:
                 lock_path
             )
             if not existing_lock_id and _chat_run_lock_file_is_new(lock_path):
-                raise RuntimeError("You already have an AI conversation in progress. Please try again later.")
+                raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
             if (
                 existing_lock_id
                 and _pid_is_alive(owner_pid)
                 and not _chat_run_lock_is_stale(started_at, updated_at)
             ):
-                raise RuntimeError("You already have an AI conversation in progress. Please try again later.")
+                raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
             _remove_chat_run_lock_file(lock_path)
             continue
         try:
@@ -758,7 +758,7 @@ def _acquire_chat_run_lock(username: str, project: str) -> str:
                 pass
             _remove_chat_run_lock_file(lock_path)
             raise
-    raise RuntimeError("You already have an AI conversation in progress. Please try again later.")
+    raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
 
 
 def _release_chat_run_lock(username: str, project: str, lock_id: str) -> None:
@@ -1189,7 +1189,7 @@ def _normalize_single_ui_spec_block(body: str) -> str:
         spec = _canonicalize_ui_spec(value)
     except ValueError as exc:
         _log_json_render_error(exc, body)
-        return "(json-render validation failed: the model returned a ui-spec that is not valid canonical JSON; display was blocked. Please regenerate.)"
+        return "（json-render 格式校验失败：模型返回的 ui-spec 不是合法 canonical JSON，已阻止展示。请重新生成。）"
 
     spec_type = spec.get("type") if isinstance(spec.get("type"), str) else "ui_spec"
     json_text = json.dumps(spec, ensure_ascii=False, indent=2)
@@ -1254,7 +1254,7 @@ def _redact_local_filesystem_paths(content: str) -> str:
     text = str(content or "")
     if not text:
         return ""
-    return _LOCAL_FILESYSTEM_PATH_RE.sub("[local path]", text)
+    return _LOCAL_FILESYSTEM_PATH_RE.sub("[本地路径]", text)
 
 
 def _strip_media_rendering_leaks(content: str) -> str:
@@ -1385,9 +1385,9 @@ def _extract_tool_chat_error(value: Any) -> str | None:
             return None
         if "Render 模式需要草图" in raw or "未生成可用图片" in raw:
             return (
-                "The Render task produced no usable image: the required upstream sketch is missing. "
-                "Please generate or confirm the corresponding Beat's sketch in Shrimp Pond first, then re-run Render."
-                f"\n\nError reason: {raw[:1200]}"
+                "Render 任务没有生成可用图片：当前缺少必要草图前置。"
+                "请先在「虾塘」生成或确认对应 Beat 的草图后，再重新生成 Render。"
+                f"\n\n错误原因：{raw[:1200]}"
             )
         return None
 
@@ -1398,7 +1398,7 @@ def _extract_tool_chat_error(value: Any) -> str | None:
         lowered = raw.casefold()
         if "provider_response_id" in lowered and "content_filter" in lowered:
             return None
-        return f"Task execution failed: {raw}"
+        return f"任务执行失败：{raw}"
 
     def parse_jsonish(text: str) -> Any | None:
         raw = str(text or "").strip()
@@ -1446,8 +1446,8 @@ def _extract_tool_chat_error(value: Any) -> str | None:
                 if generic:
                     return generic
             if failed_status:
-                return f"Task execution failed: current status is {status}."
-            return "Task execution failed: the API returned ok=false without a specific error reason."
+                return f"任务执行失败：当前状态为 {status}。"
+            return "任务执行失败：接口返回 ok=false，但没有提供具体错误原因。"
 
         for key in ("result", "message", "content", "data", "output"):
             found = visit(node.get(key))
@@ -1596,7 +1596,7 @@ def _append_tool_ui_specs(content: str, specs: list[dict[str, Any]]) -> str:
             _log_json_render_error(exc, json.dumps(spec, ensure_ascii=False))
     if not blocks:
         return text
-    prefix = text or "Here is the related media."
+    prefix = text or "已为你展示相关媒体。"
     return f"{prefix}\n\n" + "\n\n".join(blocks)
 
 
@@ -1618,7 +1618,7 @@ def _split_ui_specs_from_text(content: str) -> tuple[str, list[dict[str, Any]]]:
                 specs.append(_canonicalize_ui_spec(value))
         except ValueError as exc:
             _log_json_render_error(exc, body)
-            return "(json-render validation failed: the model returned a ui-spec that is not valid canonical JSON; display was blocked. Please regenerate.)"
+            return "（json-render 格式校验失败：模型返回的 ui-spec 不是合法 canonical JSON，已阻止展示。请重新生成。）"
         return ""
 
     display_text = _UI_SPEC_BLOCK_RE.sub(replace_block, text)
@@ -1869,7 +1869,7 @@ def _media_ui_spec(spec_type: str, component_type: str, items: list[dict[str, An
         if not src:
             continue
         key = f"media_{index}"
-        title = str(item.get("title") or item.get("label") or f"Media {index}").strip()
+        title = str(item.get("title") or item.get("label") or f"媒体 {index}").strip()
         description = str(item.get("description") or "").strip()
         props: dict[str, Any] = {"src": src, "alt": title, "title": title}
         if description:
@@ -2099,8 +2099,8 @@ async def _fallback_display_tool_ui_specs(
                     media_items.append(
                         {
                             "src": sketch_url,
-                            "title": f"Beat {beat_number} sketch",
-                            "description": "Sketch",
+                            "title": f"Beat {beat_number} 草图",
+                            "description": "草图",
                             "aspectRatio": "3/4",
                         }
                     )
@@ -2108,8 +2108,8 @@ async def _fallback_display_tool_ui_specs(
                     media_items.append(
                         {
                             "src": frame_url,
-                            "title": f"Beat {beat_number} first frame",
-                            "description": "First frame",
+                            "title": f"Beat {beat_number} 首帧",
+                            "description": "首帧",
                             "aspectRatio": "3/4",
                         }
                     )
@@ -2140,8 +2140,8 @@ async def _fallback_display_tool_ui_specs(
                 media_items.append(
                     {
                         "src": src,
-                        "title": f"Beat {beat} sketch candidate",
-                        "description": "Stale candidate" if candidate.get("stale") else "Sketch candidate",
+                        "title": f"Beat {beat} 草图候选",
+                        "description": "过期候选" if candidate.get("stale") else "草图候选",
                         "aspectRatio": "3/4",
                     }
                 )
@@ -2179,7 +2179,7 @@ async def _fallback_display_tool_ui_specs(
                         media_items.append(
                             {
                                 "src": src,
-                                "title": f"{scene_name or 'Scene'} · {kind}",
+                                "title": f"{scene_name or '场景'} · {kind}",
                                 "description": scene.get("description") or scene.get("environment_prompt") or "",
                                 "aspectRatio": "16/9" if kind == "pano" else "3/4",
                             }
@@ -2223,7 +2223,7 @@ async def _fallback_display_tool_ui_specs(
                         media_items.append(
                             {
                                 "src": portrait_url,
-                                "title": name or "Character portrait",
+                                "title": name or "角色肖像",
                                 "description": role,
                                 "aspectRatio": "3/4",
                             }
@@ -2263,7 +2263,7 @@ async def _fallback_display_tool_ui_specs(
                                 or identity.get("name")
                                 or identity.get("identity_id")
                                 or name
-                                or "Identity image"
+                                or "身份图"
                             )
                             identity_name_match = _matches_any_display_text(
                                 [
@@ -2352,10 +2352,10 @@ async def _fallback_display_tool_ui_specs(
                 frame_url = str(beat.get("frame_url") or beat.get("sketch_url") or "").strip()
                 if video_url:
                     video_items.append(
-                        {"src": video_url, "poster": frame_url, "title": f"Beat {beat_number} video"}
+                        {"src": video_url, "poster": frame_url, "title": f"Beat {beat_number} 视频"}
                     )
                 if audio_url:
-                    audio_items.append({"src": audio_url, "title": f"Beat {beat_number} audio"})
+                    audio_items.append({"src": audio_url, "title": f"Beat {beat_number} 音频"})
             if media_type == "audio":
                 limited = _limit_display_items(audio_items, args, 20)
                 return [_media_ui_spec("audio_list", "Audio", limited)] if limited else []
@@ -3268,12 +3268,12 @@ def _frontend_context_reply(prompt: str) -> str | None:
         body = confirmation.group(1)
         if re.search(r"(?m)^\s*stage:\s*confirm_clear\s*$", body):
             return (
-                "Overwriting will clear/rebuild this project's existing characters, episodes, scripts, "
-                "sketches, audio, video, and other pipeline results. Continue?\n\nReply `确定` or `继续` to start overwriting."
+                "覆盖会清空/重建当前项目已有角色、分集、脚本、草图、音频、视频等"
+                "流水线结果。是否继续？\n\n请回复 `确定` 或 `继续` 后才会开始覆盖。"
             )
         return (
-            "This project already has ingested content; continuing will overwrite the existing project. Overwrite this project?\n\n"
-            "Reply `覆盖` to proceed to the next confirmation step."
+            "当前项目已有摄入内容，继续会覆盖现有项目。是否要覆盖当前项目？\n\n"
+            "请回复 `覆盖` 进入下一步确认。"
         )
 
     return None
@@ -3633,7 +3633,7 @@ async def _stream_assistant_reply_claude(
                     _set_claude_session_id(username, project, thread_id)
                 assistant_text = _completion_text_or_existing(event.text, assistant_text)
 
-        assistant_text = assistant_text.strip() or "Done, but no body text was returned."
+        assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
         assistant_text = _normalize_json_render_reply(assistant_text)
         if tool_text.strip():
             add_trace_messages(
@@ -3709,7 +3709,7 @@ async def _stream_assistant_reply_codex(
                 _set_codex_thread_id(username, project, thread_id)
             assistant_text = _completion_text_or_existing(event.text, assistant_text)
 
-    assistant_text = assistant_text.strip() or "Done, but no body text was returned."
+    assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
     assistant_text = _normalize_json_render_reply(assistant_text)
     if tool_text.strip():
         add_trace_messages(

@@ -70,8 +70,8 @@ logger = logging.getLogger("novelvideo.api.projects")
 
 router = APIRouter()
 VOICE_SOURCE_ROOTS = ("audio", "seedance2_uploads", "assets", "uploads")
-NARRATOR_VOICE_MODE_EXPLANATION = "First-person narration uses the protagonist's voice line; third-person narration uses the project narration voice line."
-SUPPORTED_VOICE_SAMPLE_COPY = "Only mp3 / wav / m4a / aac / ogg are supported"
+NARRATOR_VOICE_MODE_EXPLANATION = "第一人称解说使用解说主角声线；第三人称解说使用项目解说声线。"
+SUPPORTED_VOICE_SAMPLE_COPY = "仅支持 mp3 / wav / m4a / aac / ogg"
 
 
 def _now_iso() -> str:
@@ -181,11 +181,11 @@ def _cleanup_uncommitted_project_dirs(record: ProjectRecord) -> None:
 
 def _narrator_identity_detail(resolution) -> str:
     if not resolution.character_name:
-        return "No narration protagonist configured"
+        return "未配置解说主角"
     if resolution.identity_name:
-        return f"{resolution.character_name} ({resolution.identity_name})"
+        return f"{resolution.character_name}（{resolution.identity_name}）"
     if resolution.identity_id:
-        return f"{resolution.character_name} ({resolution.identity_id})"
+        return f"{resolution.character_name}（{resolution.identity_id}）"
     return resolution.character_name
 
 
@@ -197,19 +197,19 @@ def _narrator_voice_display_lines(
     if style == "first_person":
         detail = _narrator_identity_detail(resolution)
         return {
-            "heading": "First-person narration protagonist voice line",
-            "detail": f"Currently first-person: using {detail}",
+            "heading": "第一人称解说主角声线",
+            "detail": f"当前为第一人称：使用 {detail}",
             "explanation": NARRATOR_VOICE_MODE_EXPLANATION,
         }
 
     if resolution.audio_path:
         detail = _project_relative_path(project_dir, resolution.audio_path)
     else:
-        detail = resolution.error or "Third-person project narration voice line not configured"
+        detail = resolution.error or "第三人称项目解说声线未配置"
     return {
-        "heading": "Third-person project narration voice line",
+        "heading": "第三人称项目解说声线",
         "detail": detail,
-        "explanation": "Third-person narration uses a project-level voice line; all non-dialogue beats use the same voice line.",
+        "explanation": "第三人称解说使用项目级声线；所有非对白 Beat 使用同一声线。",
     }
 
 
@@ -273,9 +273,9 @@ def _persist_narrator_voice_content(
     content: bytes,
 ) -> Path:
     if not is_supported_voice_sample(filename):
-        raise ValueError(f"{SUPPORTED_VOICE_SAMPLE_COPY} (received: {filename or 'unknown file'})")
+        raise ValueError(f"{SUPPORTED_VOICE_SAMPLE_COPY}（收到：{filename or '未知文件'}）")
     if not content:
-        raise ValueError("Audio content is empty")
+        raise ValueError("音频内容为空")
 
     target = _narrator_voice_sample_path(project_dir, filename)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -306,20 +306,20 @@ def _trim_narrator_voice_content(
     stored = load_narrator_reference_audio(username, project)
     source = Path(stored.get("path", ""))
     if not str(source):
-        raise ValueError("Please upload a narration voice line first")
+        raise ValueError("请先上传解说声线")
     if not source.is_absolute():
         source = project_dir / source
     source = source.resolve()
     try:
         source.relative_to(project_dir.resolve())
     except ValueError as exc:
-        raise ValueError("Please select a valid audio file within the project") from exc
+        raise ValueError("请选择项目内有效的音频文件") from exc
     if (
         not source.exists()
         or not source.is_file()
         or source.suffix.lower() not in VOICE_SAMPLE_EXTENSIONS
     ):
-        raise ValueError("Please select a valid audio file within the project")
+        raise ValueError("请选择项目内有效的音频文件")
 
     content, _filename = trim_voice_sample_content(
         source.read_bytes(),
@@ -346,9 +346,9 @@ def _trim_narrator_voice_content(
 def _project_voice_source_label(rel_path: str) -> str:
     filename = Path(rel_path).name
     if rel_path.startswith("audio/"):
-        return f"Generated audio · {filename}"
+        return f"已生成音频 · {filename}"
     if rel_path.startswith("assets/"):
-        return f"Asset audio · {filename}"
+        return f"资产音频 · {filename}"
     return f"{filename} · {rel_path}"
 
 
@@ -553,7 +553,7 @@ async def update_project(
                 status_code=400,
                 content={
                     "ok": False,
-                    "error": "Project type is locked; re-import to switch",
+                    "error": "项目类型已锁定；如需切换请重新导入",
                 },
             )
         if body.aspect_ratio is None:
@@ -678,7 +678,7 @@ async def copy_project_audio_as_narrator_voice(
         source_path = source_path.resolve()
         source_path.relative_to(ctx.output_dir.resolve())
         if not source_path.exists() or source_path.suffix.lower() not in VOICE_SAMPLE_EXTENSIONS:
-            return {"ok": False, "error": "Please select a valid audio file within the project"}
+            return {"ok": False, "error": "请选择项目内有效的音频文件"}
         _persist_narrator_voice_content(
             username=ctx.owner_username,
             project=ctx.project_name,

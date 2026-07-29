@@ -52,7 +52,7 @@ def _merge_age_group_values(existing: str, incoming: str) -> str:
     existing_norm = _normalize_age_group_value(existing)
     incoming_norm = _normalize_age_group_value(incoming)
     if existing_norm and incoming_norm and existing_norm != incoming_norm:
-        raise ValueError(f"Conflicting age_group: {existing_norm!r} vs {incoming_norm!r}")
+        raise ValueError(f"冲突 age_group: {existing_norm!r} vs {incoming_norm!r}")
     return existing_norm or incoming_norm
 
 
@@ -124,17 +124,17 @@ def _appearance_corruption_reason(value: object, field_name: str) -> str | None:
         return None
     lowered = text.casefold()
     if "\ufffd" in text:
-        return "contains a Unicode replacement character"
+        return "包含 Unicode replacement character"
     if any(token in lowered for token in _APPEARANCE_SCHEMA_TOKENS):
-        return "contains a structured-output field name"
+        return "包含结构化输出字段名"
     if lowered == "/* empty */":
-        return "contains a model null-value sentinel"
+        return "包含模型空值哨兵"
     if "```" in text or "<tool" in lowered or "</tool" in lowered or "@returns" in lowered:
-        return "contains tool-call scaffolding"
+        return "包含工具调用框架"
     if field_name in {"face_description", "body_type"} and ("\n" in text or "\r" in text):
-        return "short description contains multiple lines"
+        return "短描述包含多行内容"
     if _APPEARANCE_REASONING_RE.search(text):
-        return "contains model reasoning text"
+        return "包含模型推理文本"
     return None
 
 
@@ -173,11 +173,11 @@ class AppearanceDescription(BaseModel):
             raise ValueError(f"{field_name} {reason}")
         if field_name == "appearance_details":
             if not 10 <= len(value) <= 200:
-                raise ValueError("appearance_details length must be 10–200 characters")
+                raise ValueError("appearance_details 长度必须为 10–200 字符")
         elif field_name == "face_description" and value and not 10 <= len(value) <= 100:
-            raise ValueError("face_description length must be 10–100 characters")
+            raise ValueError("face_description 长度必须为 10–100 字符")
         elif field_name == "body_type" and value and not 2 <= len(value) <= 80:
-            raise ValueError("body_type length must be 2–80 characters")
+            raise ValueError("body_type 长度必须为 2–80 字符")
         return value
 
     @field_validator("age_group", mode="before")
@@ -190,7 +190,7 @@ class AppearanceDescription(BaseModel):
         variant_fields = (self.face_description, self.age_group, self.body_type)
         if any(variant_fields) and not all(variant_fields):
             raise ValueError(
-                "face_description, age_group, and body_type must all be empty or all be filled"
+                "face_description、age_group、body_type 必须同时为空或同时填写"
             )
         context = info.context if isinstance(info.context, dict) else {}
         planned_age_group = _normalize_age_group_value(
@@ -198,7 +198,7 @@ class AppearanceDescription(BaseModel):
         )
         if planned_age_group and self.age_group != planned_age_group:
             raise ValueError(
-                f"age_group={planned_age_group} was planned; the appearance output must include matching age-variant fields"
+                f"已规划 age_group={planned_age_group}，外观输出必须填写匹配的年龄变体字段"
             )
         return self
 
@@ -358,7 +358,7 @@ class IdentityPlanner:
         inferred_age_group = self._infer_age_group_from_visual_state(visual_state)
         if inferred_age_group and normalized_age_group and inferred_age_group != normalized_age_group:
             raise ValueError(
-                f"Identity `{visual_state}` age_group conflict: AI={normalized_age_group}, inferred-from-name={inferred_age_group}"
+                f"身份 `{visual_state}` 的 age_group 冲突: AI={normalized_age_group}, 名称推断={inferred_age_group}"
             )
         final_age_group = normalized_age_group or inferred_age_group
         if not inferred_age_group and final_age_group == getattr(char, "age_group", ""):
@@ -404,7 +404,7 @@ class IdentityPlanner:
         all_names = [c.name for c in all_chars]
         cast_names, graph_context = await self._filter_cast(all_names, content_text, episode, on_log)
         if not cast_names:
-            raise ValueError("Pass 0 could not reliably identify this episode's cast; planning aborted to avoid corrupting existing identity results")
+            raise ValueError("Pass 0 未能稳定识别本集出场角色，已中止规划以避免污染已有身份结果")
 
         # Pass A: 默认身份分析 + resolve
         default_requirements = await self._analyze_default_identities(
@@ -443,7 +443,7 @@ class IdentityPlanner:
                 if identity_id:
                     identity_default_map[char_name] = identity_id
                     if on_log:
-                        on_log(f"  default identity: {char_name} -> {identity_id}")
+                        on_log(f"  默认身份: {char_name} -> {identity_id}")
 
         canonical_cast_names = list(
             dict.fromkeys(
@@ -460,11 +460,11 @@ class IdentityPlanner:
         if missing_default_chars:
             if on_log:
                 on_log(
-                    f"[EP{episode.number:03d}] Pass A default identities missing: "
+                    f"[EP{episode.number:03d}] Pass A 默认身份缺失: "
                     + ", ".join(missing_default_chars)
                 )
             raise ValueError(
-                "Pass A default identity coverage incomplete: "
+                "Pass A 默认身份覆盖不完整: "
                 + ", ".join(missing_default_chars)
             )
 
@@ -520,17 +520,17 @@ class IdentityPlanner:
             if on_progress:
                 on_progress(
                     (i + 1) / len(sorted_eps),
-                    f"Planning identities for episode {episode.number}..."
+                    f"规划第 {episode.number} 集身份..."
                 )
             try:
                 new_count, resolved_count = await self.plan_single_episode(episode, on_log)
                 results[episode.number] = new_count
                 if on_log:
-                    on_log(f"[EP{episode.number:03d}] done, created {new_count} / reused {resolved_count - new_count} identities")
+                    on_log(f"[EP{episode.number:03d}] 完成, 新建 {new_count} / 复用 {resolved_count - new_count} 个身份")
             except Exception as e:
                 results[episode.number] = -1
                 if on_log:
-                    on_log(f"[EP{episode.number:03d}] failed: {e}")
+                    on_log(f"[EP{episode.number:03d}] 失败: {e}")
 
         return results
 
@@ -578,7 +578,7 @@ class IdentityPlanner:
                     graph_context = "\n".join(parts)
             except Exception as e:
                 if on_log:
-                    on_log(f"[EP{episode.number:03d}] failed to fetch graph context (non-fatal): {e}")
+                    on_log(f"[EP{episode.number:03d}] 图谱上下文获取失败（非致命）: {e}")
 
             # 用 AI 结构化输出筛选出场角色（结合图谱上下文）
             graph_section = ""
@@ -612,12 +612,12 @@ class IdentityPlanner:
             cast = cast_result.output
             filtered = self._normalize_cast_names(cast.character_names)
             if on_log:
-                on_log(f"[EP{episode.number:03d}] graph+AI cast selection: {', '.join(filtered)}")
+                on_log(f"[EP{episode.number:03d}] 图谱+AI 筛选出场角色: {', '.join(filtered)}")
             return filtered, graph_context
         except Exception as e:
             if on_log:
-                on_log(f"[EP{episode.number:03d}] AI cast selection failed: {e}")
-            raise RuntimeError(f"Pass 0 cast selection failed: {e}") from e
+                on_log(f"[EP{episode.number:03d}] AI 筛选出场角色失败: {e}")
+            raise RuntimeError(f"Pass 0 出场角色筛选失败: {e}") from e
 
     def _build_character_info(self, characters: list[str]) -> str:
         """构建角色基础信息 + 已有身份信息文本。"""
@@ -695,7 +695,7 @@ class IdentityPlanner:
             existing_item = seen_char_to_item.get(char_name)
             if existing_item and existing_item.visual_state != visual_state:
                 raise ValueError(
-                    f"Pass A produced multiple default identities for character {char_name}: {existing_item.visual_state}, {visual_state}"
+                    f"Pass A 为角色 {char_name} 输出了多个默认身份: {existing_item.visual_state}, {visual_state}"
                 )
             if existing_item:
                 try:
@@ -703,8 +703,8 @@ class IdentityPlanner:
                 except ValueError:
                     if on_log:
                         on_log(
-                            f"[Pass A] {char_name}_{visual_state} age_group conflict: "
-                            f"{existing_item.age_group!r} vs {item.age_group!r}, keeping the former"
+                            f"[Pass A] {char_name}_{visual_state} age_group 冲突: "
+                            f"{existing_item.age_group!r} vs {item.age_group!r}，保留前者"
                         )
                     merged_age_group = existing_item.age_group
                 if merged_age_group != existing_item.age_group:
@@ -719,7 +719,7 @@ class IdentityPlanner:
 
         missing_chars = [char_name for char_name in canonical_cast_names if char_name not in seen_char_to_item]
         if missing_chars:
-            raise ValueError("Pass A default identity coverage incomplete: " + ", ".join(missing_chars))
+            raise ValueError("Pass A 默认身份覆盖不完整: " + ", ".join(missing_chars))
         return list(seen_char_to_item.values())
 
     def _normalize_other_requirements(
@@ -761,8 +761,8 @@ class IdentityPlanner:
                 except ValueError:
                     if on_log:
                         on_log(
-                            f"[Pass B] {char_name}_{visual_state} age_group conflict: "
-                            f"{existing_item.age_group!r} vs {item.age_group!r}, keeping the former"
+                            f"[Pass B] {char_name}_{visual_state} age_group 冲突: "
+                            f"{existing_item.age_group!r} vs {item.age_group!r}，保留前者"
                         )
                     merged_age_group = existing_item.age_group
                 if merged_age_group != existing_item.age_group:
@@ -841,8 +841,8 @@ class IdentityPlanner:
             return result.output
         except Exception as e:
             if on_log:
-                on_log(f"[EP{episode.number:03d}] Pass A default identity analysis failed: {e}")
-            raise RuntimeError(f"Pass A default identity analysis failed: {e}") from e
+                on_log(f"[EP{episode.number:03d}] Pass A 默认身份分析失败: {e}")
+            raise RuntimeError(f"Pass A 默认身份分析失败: {e}") from e
 
     async def _analyze_special_identities(
         self,
@@ -923,7 +923,7 @@ class IdentityPlanner:
             return result.output
         except Exception as e:
             if on_log:
-                on_log(f"[EP{episode.number:03d}] Pass B other-identity analysis failed: {e}")
+                on_log(f"[EP{episode.number:03d}] Pass B 其他身份分析失败: {e}")
             return EpisodeIdentityRequirements()
 
     @staticmethod
@@ -984,8 +984,8 @@ class IdentityPlanner:
             ):
                 if on_log:
                     on_log(
-                        f"  ⚠ {char.name}_{visual_state}: appearance-stage age_group={appearance_age_group} "
-                        f"conflicts with planned age_group={resolved_age_group}; using the planned value"
+                        f"  ⚠ {char.name}_{visual_state}: 外观阶段 age_group={appearance_age_group} "
+                        f"与身份规划 age_group={resolved_age_group} 冲突，采用身份规划值"
                     )
                 appearance_age_group = resolved_age_group
             voice_age_group = appearance_age_group or resolved_age_group
@@ -1003,7 +1003,7 @@ class IdentityPlanner:
             if on_log:
                 on_log(
                     f"  ⚠ {char.name}_{visual_state}: age_group={voice_age_group} "
-                    "matches the character; clearing age-variant fields"
+                    "与角色相同，清空年龄变体字段"
                 )
             face_description = ""
             voice_age_group = ""
@@ -1058,11 +1058,11 @@ class IdentityPlanner:
                 )
                 if on_log:
                     on_log(
-                        f"  ⚠ repair failed; cleared corrupted fields: {identity.identity_id} "
+                        f"  ⚠ 修复失败，已清空污染字段: {identity.identity_id} "
                         f"({', '.join(sorted(corrupted_fields))})"
                     )
             elif on_log:
-                on_log(f"  kept: {identity.identity_id} created, appearance pending")
+                on_log(f"  保留: {identity.identity_id} 已创建，外观待补")
             return False
 
         if pending:
@@ -1073,7 +1073,7 @@ class IdentityPlanner:
             )
             if on_log:
                 on_log(
-                    f"  filled: {identity.identity_id} — "
+                    f"  补全: {identity.identity_id} — "
                     f"{generated['appearance_details'][:40]}..."
                 )
             return True
@@ -1097,8 +1097,8 @@ class IdentityPlanner:
             repair_updates = {field: "" for field in corrupted_fields}
             if on_log:
                 on_log(
-                    f"  ⚠ could not repair {identity.identity_id} while keeping valid fields; "
-                    "cleared corrupted fields and fell back to character level"
+                    f"  ⚠ 无法在保留有效字段的前提下修复 {identity.identity_id}，"
+                    "已清空污染字段并使用角色级回退"
                 )
 
         await self.cognee_store.update_character_identity(
@@ -1108,7 +1108,7 @@ class IdentityPlanner:
         )
         if on_log:
             on_log(
-                f"  repaired: {identity.identity_id} "
+                f"  修复: {identity.identity_id} "
                 f"({', '.join(sorted(corrupted_fields))})"
             )
         return True
@@ -1134,7 +1134,7 @@ class IdentityPlanner:
             char = self.cognee_store.get_character(resolved_name)
             if not char:
                 if on_log:
-                    on_log(f"  skipped: character {req.character_name} does not exist")
+                    on_log(f"  跳过: 角色 {req.character_name} 不存在")
                 continue
 
             # 构建候选 identity_id（去掉 visual_state 中重复的角色名前缀）
@@ -1147,7 +1147,7 @@ class IdentityPlanner:
                 )
             except ValueError as e:
                 if on_log:
-                    on_log(f"  skipped: {candidate_id} field conflict ({e})")
+                    on_log(f"  跳过: {candidate_id} 字段冲突 ({e})")
                 continue
 
             # 1. 精确匹配 identity_id
@@ -1193,15 +1193,15 @@ class IdentityPlanner:
                             )
                             if on_log:
                                 on_log(
-                                    f"  backfilled structured fields: {matched.identity_id}"
+                                    f"  回填结构字段: {matched.identity_id}"
                                     f" age_group={updates.get('age_group', getattr(matched, 'age_group', ''))}"
                                 )
                         except Exception as e:
                             if on_log:
-                                on_log(f"  failed to backfill structured fields ({matched.identity_id}): {e}")
+                                on_log(f"  回填结构字段失败({matched.identity_id}): {e}")
                     if on_log:
                         on_log(
-                            f"  reused: {matched.identity_id} (ep{episode_number})"
+                            f"  复用: {matched.identity_id} (ep{episode_number})"
                         )
             else:
                 from novelvideo.utils.identity_resolver import compute_char_tag
@@ -1223,17 +1223,17 @@ class IdentityPlanner:
                     resolved_ids.append(candidate_id)
                     resolved_identity_map[(char.name, vs)] = candidate_id
                     if on_log:
-                        on_log(f"  created: {candidate_id} — appearance pending")
+                        on_log(f"  新建: {candidate_id} — 外观待补")
                 except ValueError as e:
                     # 身份已存在（幂等性）
                     if "已存在" in str(e):
                         resolved_ids.append(candidate_id)
                         resolved_identity_map[(char.name, vs)] = candidate_id
                         if on_log:
-                            on_log(f"  skipped: {candidate_id} already exists")
+                            on_log(f"  跳过: {candidate_id} 已存在")
                     else:
                         if on_log:
-                            on_log(f"  error: {e}")
+                            on_log(f"  错误: {e}")
                         continue
 
                 try:
@@ -1251,7 +1251,7 @@ class IdentityPlanner:
                     )
                 except Exception as e:
                     if on_log:
-                        on_log(f"  appearance save failed ({candidate_id}): {e}; identity kept")
+                        on_log(f"  外观保存失败({candidate_id}): {e}，身份已保留")
 
         return new_count, resolved_ids, resolved_identity_map
 
@@ -1351,5 +1351,5 @@ class IdentityPlanner:
             return ai_result.output
         except Exception as e:
             if on_log:
-                on_log(f"  appearance generation failed ({character_name}/{visual_state}): {e}")
+                on_log(f"  外观生成失败({character_name}/{visual_state}): {e}")
             raise
