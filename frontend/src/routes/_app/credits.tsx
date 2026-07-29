@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Clock3, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -62,6 +62,7 @@ function TransactionStatus({ item }: { item: CreditTransaction }) {
 
 function CreditsPage() {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const language = i18n.resolvedLanguage ?? i18n.language ?? "zh";
   const [category, setCategory] = useState<CreditTransactionCategory>("all");
   const [page, setPage] = useState(1);
@@ -98,11 +99,27 @@ function CreditsPage() {
     setPage(1);
   };
 
+  const goBack = () => {
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    void navigate({ to: "/" });
+  };
+
   return (
     <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 pb-10">
       <section className="rounded-2xl border border-white/8 bg-card/70 p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
+            <button
+              type="button"
+              onClick={goBack}
+              className="mb-3 inline-flex items-center gap-1 text-sm text-white/55 transition-colors hover:text-white"
+            >
+              <ChevronLeft className="size-4" />
+              {t("credits.back")}
+            </button>
             <h1 className="text-xl font-semibold text-white">{t("credits.centerTitle")}</h1>
             <p className="mt-1 text-sm text-white/45">{t("credits.centerDescription")}</p>
           </div>

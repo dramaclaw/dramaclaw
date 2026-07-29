@@ -507,6 +507,7 @@
     "promotions": "Available promotions",
     "promotionCount": "{{count}} potentially applicable promotions",
     "viewTransactions": "View credit activity",
+    "back": "Back",
     "centerTitle": "Credit center",
     "centerDescription": "Review your unified balance, settlements, refunds, and available promotions.",
     "pendingAmount": "{{amount}} credits are pending settlement",

@@ -507,6 +507,7 @@
     "promotions": "可用促销",
     "promotionCount": "当前有 {{count}} 项可能适用的优惠",
     "viewTransactions": "查看积分明细",
+    "back": "返回",
     "centerTitle": "积分中心",
     "centerDescription": "查看统一积分余额、消费结算、退款和当前可用促销。",
     "pendingAmount": "{{amount}} 积分正在预扣结算",

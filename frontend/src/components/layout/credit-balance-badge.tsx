@@ -3,7 +3,7 @@
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { CREDIT_VALUE_CLASS, CreditSparkIcon } from "@/components/credits/credit-visual";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -24,6 +24,7 @@ export function CreditBalanceBadge() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const username = useAuthStore((s) => s.username);
   const { data, isLoading, isError } = useCurrentUser(Boolean(username) && !ce);
   const summaryQuery = useCreditSummary(Boolean(username) && !ce);
@@ -31,9 +32,39 @@ export function CreditBalanceBadge() {
   const balance = summary?.balance ?? data?.data.credit_balance;
   const language = i18n?.resolvedLanguage ?? i18n?.language ?? "en";
 
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current !== null) {
+        clearTimeout(closeTimerRef.current);
+      }
+    },
+    [],
+  );
+
   if (ce || !username || isError) return null;
 
+  const cancelScheduledClose = () => {
+    if (closeTimerRef.current !== null) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const openPanel = () => {
+    cancelScheduledClose();
+    setOpen(true);
+  };
+
+  const scheduleClosePanel = () => {
+    cancelScheduledClose();
+    closeTimerRef.current = setTimeout(() => {
+      setOpen(false);
+      closeTimerRef.current = null;
+    }, 160);
+  };
+
   const openCredits = () => {
+    cancelScheduledClose();
     setOpen(false);
     void navigate({ to: "/credits" });
   };
@@ -52,6 +83,8 @@ export function CreditBalanceBadge() {
             type="button"
             className="group/credits ml-1 flex h-9 min-w-0 items-center gap-1 rounded-md px-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-white/[0.05] hover:text-white"
             aria-label={t("credits.openPanel")}
+            onMouseEnter={openPanel}
+            onMouseLeave={scheduleClosePanel}
           />
         }
       >
@@ -71,6 +104,8 @@ export function CreditBalanceBadge() {
         align="end"
         sideOffset={10}
         className="w-[330px] overflow-hidden border border-white/10 bg-[#17191d] p-0 text-white shadow-2xl"
+        onMouseEnter={openPanel}
+        onMouseLeave={scheduleClosePanel}
       >
         <div className="border-b border-white/8 px-4 py-3.5">
           <div className="flex items-center justify-between">
