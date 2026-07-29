@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, TypeVar
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from novelvideo.shared.env_guard import preserve_st_env
@@ -33,6 +33,7 @@ from novelvideo.time_of_day import LlmTimeOfDay
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
 from . import config as _cognee_config  # noqa: F401
 from .config import apply_cognee_project_storage_context
+from .ladybug_access import ladybug_graph_access
 
 # cognee 重量级模块延迟导入（避免 reload 时拉起整个初始化链）
 # LLMGateway, Task, run_pipeline, setup
@@ -65,6 +66,23 @@ class EpisodeList(BaseModel):
     """剧集列表容器。"""
 
     episodes: List[NovelEpisode]
+
+
+_GraphReadResult = TypeVar("_GraphReadResult")
+
+
+async def _run_graph_read(
+    state_dir: Optional[str],
+    operation: Callable[[], Awaitable[_GraphReadResult]],
+) -> _GraphReadResult:
+    """Run only the actual Ladybug query under the project read scope."""
+
+    if not state_dir:
+        # Test doubles can operate without project storage. A real Ladybug
+        # adapter fails closed because it requires an explicit access scope.
+        return await operation()
+    async with ladybug_graph_access(state_dir, read_only=True):
+        return await operation()
 
 
 def _set_cognee_project_context(
@@ -351,6 +369,7 @@ async def extract_characters_from_graph(
     dataset_name: str = "novel",
     project_name: str = "",
     project_dir: Optional[str] = None,
+    state_dir: Optional[str] = None,
     novel_text: Optional[str] = None,
     on_progress: Optional[Any] = None,
     on_log: Optional[Any] = None,
@@ -393,12 +412,15 @@ async def extract_characters_from_graph(
 
     context_text = ""
     try:
-        results = await cognee.search(
-            query_text="列出小说中所有人物角色，包括他们的关系、别名、身份特征和外貌描述",
-            query_type=SearchType.GRAPH_COMPLETION,
-            datasets=[dataset_name],
-            only_context=True,
-            top_k=30,
+        results = await _run_graph_read(
+            state_dir,
+            lambda: cognee.search(
+                query_text="列出小说中所有人物角色，包括他们的关系、别名、身份特征和外貌描述",
+                query_type=SearchType.GRAPH_COMPLETION,
+                datasets=[dataset_name],
+                only_context=True,
+                top_k=30,
+            ),
         )
         if results:
             parts = []
@@ -985,6 +1007,7 @@ async def extract_scenes_from_graph(
     dataset_name: str = "novel",
     project_name: str = "",
     project_dir: Optional[str] = None,
+    state_dir: Optional[str] = None,
     on_progress: Optional[Any] = None,
     on_log: Optional[Any] = None,
 ) -> List[NovelScene]:
@@ -1016,15 +1039,18 @@ async def extract_scenes_from_graph(
     report(0.1, "通过图谱检索场景信息...")
     context_text = ""
     try:
-        results = await cognee.search(
-            query_text=(
-                "列出作品中反复出现或对剧情重要的稳定物理地点，包括地点别名、"
-                "空间环境、建筑结构和地点之间的关系；不要列人物、事件、情绪或抽象概念"
+        results = await _run_graph_read(
+            state_dir,
+            lambda: cognee.search(
+                query_text=(
+                    "列出作品中反复出现或对剧情重要的稳定物理地点，包括地点别名、"
+                    "空间环境、建筑结构和地点之间的关系；不要列人物、事件、情绪或抽象概念"
+                ),
+                query_type=SearchType.GRAPH_COMPLETION,
+                datasets=[dataset_name],
+                only_context=True,
+                top_k=50,
             ),
-            query_type=SearchType.GRAPH_COMPLETION,
-            datasets=[dataset_name],
-            only_context=True,
-            top_k=50,
         )
         if results:
             context_text = "\n".join(
@@ -1441,6 +1467,7 @@ async def extract_props_from_graph(
     dataset_name: str = "novel",
     project_name: str = "",
     project_dir: Optional[str] = None,
+    state_dir: Optional[str] = None,
     novel_text: Optional[str] = None,
     on_progress: Optional[Any] = None,
     on_log: Optional[Any] = None,
@@ -1467,12 +1494,15 @@ async def extract_props_from_graph(
 
     context_text = ""
     try:
-        results = await cognee.search(
-            query_text="列出小说中所有重要道具物件，包括武器、信物、文书、法宝等有情节意义的物品",
-            query_type=SearchType.GRAPH_COMPLETION,
-            datasets=[dataset_name],
-            only_context=True,
-            top_k=30,
+        results = await _run_graph_read(
+            state_dir,
+            lambda: cognee.search(
+                query_text="列出小说中所有重要道具物件，包括武器、信物、文书、法宝等有情节意义的物品",
+                query_type=SearchType.GRAPH_COMPLETION,
+                datasets=[dataset_name],
+                only_context=True,
+                top_k=30,
+            ),
         )
         if results:
             parts = []

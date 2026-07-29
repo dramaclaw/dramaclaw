@@ -1,5 +1,7 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -71,10 +73,110 @@ async def test_cached_ladybug_adapter_switches_between_read_only_and_writer(tmp_
                 "MATCH (n:Node) RETURN n.name ORDER BY n.name"
             ) == [("Alice",), ("Bob",)]
         assert adapter.db is None
+
+        with pytest.raises(RuntimeError, match="explicit ladybug_graph_access scope"):
+            await adapter.query("MATCH (n:Node) RETURN n.name")
     finally:
         if adapter is not None:
             adapter.close()
             adapter.executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_only", [True, False])
+async def test_ladybug_query_cancellation_keeps_database_and_lock_until_native_query_stops(
+    tmp_path,
+    read_only,
+):
+    from cognee.infrastructure.databases.graph.ladybug.adapter import LadybugAdapter
+    from ladybug import Connection
+    from ladybug.database import Database
+    from novelvideo.cognee.ladybug_access import ladybug_graph_access
+    from novelvideo.graph_preview import (
+        acquire_graph_preview_lock_async,
+        release_graph_preview_lock,
+    )
+
+    database_path = tmp_path / "graph.lbdb"
+    database = Database(str(database_path))
+    connection = Connection(database)
+    connection.execute(
+        "CREATE NODE TABLE Node(id STRING PRIMARY KEY, name STRING, type STRING, "
+        "created_at TIMESTAMP, updated_at TIMESTAMP, properties STRING)"
+    )
+    connection.execute(
+        "CREATE REL TABLE EDGE(FROM Node TO Node, relationship_name STRING, "
+        "created_at TIMESTAMP, updated_at TIMESTAMP, properties STRING)"
+    )
+    connection.execute(
+        "CREATE (:Node {id: '1', name: 'Alice', type: 'person', properties: '{}'});"
+    )
+    connection.close()
+    database.close()
+
+    adapter = None
+    query_task = None
+    conflicting_lock_task = None
+    conflicting_lock = None
+    started = Event()
+    release_query = Event()
+    gated_executor = ThreadPoolExecutor(max_workers=1)
+
+    def gated_submit(function, *args, **kwargs):
+        def run():
+            started.set()
+            assert release_query.wait(timeout=5)
+            return function(*args, **kwargs)
+
+        return original_submit(run)
+
+    original_submit = gated_executor.submit
+    gated_executor.submit = gated_submit
+
+    try:
+        async with ladybug_graph_access(str(tmp_path), read_only=True):
+            adapter = LadybugAdapter(str(database_path))
+        adapter.executor.shutdown(wait=True)
+        adapter.executor = gated_executor
+
+        async def run_query():
+            async with ladybug_graph_access(str(tmp_path), read_only=read_only):
+                return await adapter.query("MATCH (n:Node) RETURN n.name")
+
+        query_task = asyncio.create_task(run_query())
+        assert await asyncio.to_thread(started.wait, 2)
+
+        query_task.cancel()
+        conflicting_lock_task = asyncio.create_task(
+            acquire_graph_preview_lock_async(
+                str(tmp_path),
+                shared=not read_only,
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert not query_task.done()
+        assert not conflicting_lock_task.done()
+        assert adapter.db is not None
+
+        release_query.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(query_task, timeout=2)
+        assert adapter.db is None
+
+        conflicting_lock = await asyncio.wait_for(conflicting_lock_task, timeout=2)
+    finally:
+        release_query.set()
+        if conflicting_lock is not None:
+            release_graph_preview_lock(conflicting_lock)
+        if conflicting_lock_task is not None and not conflicting_lock_task.done():
+            conflicting_lock_task.cancel()
+            await asyncio.gather(conflicting_lock_task, return_exceptions=True)
+        if query_task is not None and not query_task.done():
+            query_task.cancel()
+            await asyncio.gather(query_task, return_exceptions=True)
+        if adapter is not None:
+            adapter.close()
+        gated_executor.shutdown(wait=True)
 
 
 @pytest.mark.asyncio

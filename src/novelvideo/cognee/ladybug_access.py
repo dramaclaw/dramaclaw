@@ -40,7 +40,36 @@ _patch_installed = False
 
 def _current_read_only() -> bool:
     state = _graph_access_state.get()
-    return bool(state and state.read_only)
+    if state is None:
+        raise RuntimeError(
+            "Ladybug graph access requires an explicit ladybug_graph_access scope"
+        )
+    return state.read_only
+
+
+async def _await_query_completion(awaitable):
+    """Delay cancellation until a Ladybug executor operation has really stopped."""
+
+    future = asyncio.ensure_future(awaitable)
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError as cancelled:
+        # Cancelling an asyncio wrapper does not stop work that is already
+        # running in ThreadPoolExecutor. Keep the graph scope (and its file
+        # lock/database handle) alive until the native query has completed.
+        while not future.done():
+            try:
+                await asyncio.shield(future)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if future.done() and not future.cancelled():
+            try:
+                future.result()
+            except BaseException:
+                pass
+        raise cancelled
 
 
 def _register_adapter(adapter: Any) -> None:
@@ -240,7 +269,9 @@ def install_cognee_ladybug_access_patch() -> None:
                 database = self.db
 
             if not desired_read_only:
-                return await original_query(self, query_text, params)
+                return await _await_query_completion(
+                    asyncio.create_task(original_query(self, query_text, params))
+                )
 
             loop = asyncio.get_running_loop()
             query_params = params or {}
@@ -262,7 +293,9 @@ def install_cognee_ladybug_access_patch() -> None:
                 finally:
                     connection.close()
 
-            return await loop.run_in_executor(self.executor, blocking_read_query)
+            return await _await_query_completion(
+                loop.run_in_executor(self.executor, blocking_read_query)
+            )
 
         def close(self) -> None:
             _close_adapter(self)

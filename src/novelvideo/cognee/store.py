@@ -918,16 +918,16 @@ class CogneeStore:
         novel_text = require_imported_novel(self.project_dir)
         report(0.1, "从图谱提取人物节点...")
         log("从图谱提取角色候选...")
-        async with ladybug_graph_access(self.state_dir, read_only=True):
-            self._set_cognee_context()
-            with self.embedding_model_scope():
-                characters = await extract_characters_from_graph(
-                    dataset_name=self.dataset_name,
-                    project_name=self.project_name,
-                    project_dir=str(self.project_dir),
-                    novel_text=novel_text,
-                    on_progress=lambda p, t: report(0.1 + p * 0.6, t),
-                )
+        self._set_cognee_context()
+        with self.embedding_model_scope():
+            characters = await extract_characters_from_graph(
+                dataset_name=self.dataset_name,
+                project_name=self.project_name,
+                project_dir=str(self.project_dir),
+                state_dir=self.state_dir,
+                novel_text=novel_text,
+                on_progress=lambda p, t: report(0.1 + p * 0.6, t),
+            )
 
         if not characters:
             log("⚠️ 图谱提取无结果，保留现有角色数据")
@@ -2009,16 +2009,16 @@ class CogneeStore:
         require_imported_novel(self.project_dir)
         report(0.1, "从图谱提取场景节点...")
         log("从图谱提取基础场景候选...")
-        async with ladybug_graph_access(self.state_dir, read_only=True):
-            self._set_cognee_context()
-            with self.embedding_model_scope():
-                scenes = await extract_scenes_from_graph(
-                    dataset_name=self.dataset_name,
-                    project_name=self.project_name,
-                    project_dir=str(self.project_dir),
-                    on_progress=lambda p, t: report(0.1 + p * 0.6, t),
-                    on_log=on_log,
-                )
+        self._set_cognee_context()
+        with self.embedding_model_scope():
+            scenes = await extract_scenes_from_graph(
+                dataset_name=self.dataset_name,
+                project_name=self.project_name,
+                project_dir=str(self.project_dir),
+                state_dir=self.state_dir,
+                on_progress=lambda p, t: report(0.1 + p * 0.6, t),
+                on_log=on_log,
+            )
 
         if not scenes:
             log("⚠️ 图谱提取无结果，保留现有场景数据")
@@ -2101,15 +2101,15 @@ class CogneeStore:
         novel_text = self.load_novel_content()
         if novel_text:
             log(f"已加载原文全文用于辅助道具提取: {len(novel_text)} 字符")
-        async with ladybug_graph_access(self.state_dir, read_only=True):
-            with self.embedding_model_scope():
-                props = await extract_props_from_graph(
-                    dataset_name=self.dataset_name,
-                    project_name=self.project_name,
-                    project_dir=self.project_dir,
-                    novel_text=novel_text,
-                    on_progress=lambda p, t: report(0.1 + p * 0.6, t),
-                )
+        with self.embedding_model_scope():
+            props = await extract_props_from_graph(
+                dataset_name=self.dataset_name,
+                project_name=self.project_name,
+                project_dir=self.project_dir,
+                state_dir=self.state_dir,
+                novel_text=novel_text,
+                on_progress=lambda p, t: report(0.1 + p * 0.6, t),
+            )
 
         if not props:
             log("⚠️ 图谱提取无结果，保留现有道具数据")
