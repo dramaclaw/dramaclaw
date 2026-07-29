@@ -184,7 +184,10 @@ async def test_build_scenes_from_graph_only_adds_missing_base_scenes(tmp_project
         )
     )
 
-    async def fake_extract_scenes_from_script(**_kwargs):
+    graph_calls = []
+
+    async def fake_extract_scenes_from_graph(**kwargs):
+        graph_calls.append(kwargs)
         return [
             NovelScene(
                 name="城市街道",
@@ -194,11 +197,14 @@ async def test_build_scenes_from_graph_only_adds_missing_base_scenes(tmp_project
             NovelScene(name="新场景", scene_type="interior", environment_prompt="新增场景"),
         ]
 
-    monkeypatch.setattr(pipeline, "extract_scenes_from_script", fake_extract_scenes_from_script)
+    monkeypatch.setattr(pipeline, "extract_scenes_from_graph", fake_extract_scenes_from_graph)
     tmp_project.save_novel_content("剧本文本")
 
     added = await tmp_project.build_scenes_from_graph()
 
+    assert len(graph_calls) == 1
+    assert graph_calls[0]["dataset_name"] == tmp_project.dataset_name
+    assert graph_calls[0]["project_name"] == tmp_project.project_name
     assert [scene.name for scene in added] == ["新场景"]
     base = await tmp_project.sqlite_store.get_scene("城市街道")
     assert base is not None

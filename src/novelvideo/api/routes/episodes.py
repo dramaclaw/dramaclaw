@@ -115,6 +115,13 @@ async def _plan_episode_assets(
         logs.append(message)
 
     compiler = _asset_compiler_cls()(store)
+    state_dir = str(getattr(store, "state_dir", "") or "")
+    project_config = (
+        load_project_config_file_from_state_dir(state_dir)
+        if state_dir
+        else {}
+    )
+    compiler.spine_template = str(project_config.get("spine_template") or "drama")
     try:
         if asset_kind == "scene":
             scene_menu, new_count = await compiler.compile_episode_scenes(episode, on_log=log_fn)

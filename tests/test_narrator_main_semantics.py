@@ -29,6 +29,60 @@ async def test_character_extraction_keeps_single_narrator_main(monkeypatch):
     assert all(isinstance(c, NovelCharacter) for c in characters)
 
 
+@pytest.mark.asyncio
+async def test_scene_extraction_uses_graph_context_without_raw_novel(monkeypatch):
+    from cognee.infrastructure.llm.LLMGateway import LLMGateway
+    from novelvideo.cognee import pipeline
+    from novelvideo.models import NovelScene
+
+    search_calls = []
+    structured_inputs = []
+
+    async def fake_search(**kwargs):
+        search_calls.append(kwargs)
+        return [{"search_result": "菩提寝房是菩提祖师居住和授课的重要室内地点。"}]
+
+    async def fake_structured_output(context_text, _prompt, _output_type, **_kwargs):
+        structured_inputs.append(context_text)
+        return pipeline.GraphSceneCandidateList(
+            scenes=[
+                pipeline.GraphSceneCandidate(
+                    name="菩提寝房",
+                    aliases=["祖师寝房"],
+                    scene_type="interior",
+                    evidence_lines=["菩提寝房是菩提祖师居住和授课的重要室内地点。"],
+                )
+            ]
+        )
+
+    async def fake_enrich(**kwargs):
+        assert kwargs["scene_name"] == "菩提寝房"
+        assert kwargs["context_lines"] == ["菩提寝房是菩提祖师居住和授课的重要室内地点。"]
+        return NovelScene(
+            name="菩提寝房",
+            aliases=kwargs["aliases"],
+            scene_type="interior",
+            environment_prompt="正面：床榻\n左侧：书架\n右侧：窗户\n背面：房门",
+        )
+
+    monkeypatch.setattr("cognee.search", fake_search)
+    monkeypatch.setattr(LLMGateway, "acreate_structured_output", fake_structured_output)
+    monkeypatch.setattr(pipeline, "enrich_scene_environment_from_context", fake_enrich)
+    monkeypatch.setattr(pipeline, "_create_scene_build_agent", lambda *_args: object())
+
+    scenes = await pipeline.extract_scenes_from_graph(
+        dataset_name="novel-demo",
+        project_name="admin/demo",
+    )
+
+    assert search_calls[0]["datasets"] == ["novel-demo"]
+    assert search_calls[0]["only_context"] is True
+    assert structured_inputs == ["菩提寝房是菩提祖师居住和授课的重要室内地点。"]
+    assert [scene.name for scene in scenes] == ["菩提寝房"]
+    assert scenes[0].aliases == ["祖师寝房"]
+    assert "Cognee 图谱" in scenes[0].notes
+
+
 def test_first_person_narrator_copy_uses_narrator_main_terms(tmp_path):
     from novelvideo.models import CharacterIdentity, NovelCharacter
     from novelvideo.seedance2_i2v.voice_clone import NARRATION_STYLES, resolve_narrator_source

@@ -70,6 +70,60 @@ def _block(location: str = "咖啡馆", time_of_day: str = "夜"):
 
 
 @pytest.mark.asyncio
+async def test_drama_scene_planning_uses_screenplay_normalizer_as_primary(monkeypatch):
+    import novelvideo.agents.asset_compiler as asset_compiler
+    from novelvideo.cognee.screenplay_normalizer import NormalizedSceneBlock
+
+    calls = []
+
+    async def fake_normalize(source_text):
+        calls.append(source_text)
+        return [
+            NormalizedSceneBlock(
+                episode_number=1,
+                scene_no="2",
+                raw_header="1-2 菩提寝房 夜 内",
+                location="菩提寝房",
+                time_of_day="夜",
+                interior_exterior="内",
+                characters=["孙悟空", "菩提祖师"],
+                content_lines=["孙悟空跪坐在蒲团上。"],
+            )
+        ]
+
+    monkeypatch.setattr(asset_compiler, "normalize_screenplay_scenes", fake_normalize)
+
+    compiler = asset_compiler.AssetCompiler(_FakeCogneeStore())
+    blocks = await compiler._load_normalized_screenplay_blocks(
+        "1-2 菩提寝房 夜 内\n孙悟空跪坐在蒲团上。",
+        lambda _message: None,
+    )
+
+    assert calls == ["1-2 菩提寝房 夜 内\n孙悟空跪坐在蒲团上。"]
+    assert len(blocks) == 1
+    assert blocks[0].location == "菩提寝房"
+    assert blocks[0].characters == ["孙悟空", "菩提祖师"]
+    assert blocks[0].lines == ["孙悟空跪坐在蒲团上。"]
+
+
+@pytest.mark.asyncio
+async def test_drama_scene_planning_rejects_empty_normalizer_output(monkeypatch):
+    import novelvideo.agents.asset_compiler as asset_compiler
+
+    async def fake_normalize(_source_text):
+        return []
+
+    monkeypatch.setattr(asset_compiler, "normalize_screenplay_scenes", fake_normalize)
+
+    compiler = asset_compiler.AssetCompiler(_FakeCogneeStore())
+    with pytest.raises(ValueError, match="AI 未识别到有效场景"):
+        await compiler._load_normalized_screenplay_blocks(
+            "这是一份格式不规则、尚未被识别的剧本文本。",
+            lambda _message: None,
+        )
+
+
+@pytest.mark.asyncio
 async def test_compile_episode_scenes_reconciles_base_scene_before_planning(monkeypatch):
     import novelvideo.agents.asset_compiler as asset_compiler
 
@@ -95,12 +149,16 @@ async def test_compile_episode_scenes_reconciles_base_scene_before_planning(monk
         log("  AI补全基础场景: 咖啡馆")
         return ["咖啡馆"]
 
-    async def fake_load_scene_blocks(self, episode):
+    async def fake_load_scene_blocks(self, source_text, log):
         return [_block()]
 
     monkeypatch.setattr(asset_compiler, "enrich_scene_environment_from_context", fake_enrich)
     monkeypatch.setattr(asset_compiler.AssetCompiler, "_analyze_derived_scenes", fake_derived)
-    monkeypatch.setattr(asset_compiler.AssetCompiler, "_load_scene_blocks", fake_load_scene_blocks)
+    monkeypatch.setattr(
+        asset_compiler.AssetCompiler,
+        "_load_normalized_screenplay_blocks",
+        fake_load_scene_blocks,
+    )
     monkeypatch.setattr(
         asset_compiler.AssetCompiler,
         "_reconcile_base_scenes_from_text",
@@ -269,9 +327,6 @@ async def test_compile_episode_scenes_uses_narrated_fallback_without_scene_heade
             )
         ]
 
-    async def fake_reconcile(self, source_text, episode, log):
-        return []
-
     monkeypatch.setattr(
         asset_compiler.AssetCompiler,
         "_extract_narrated_episode_scenes",
@@ -279,9 +334,9 @@ async def test_compile_episode_scenes_uses_narrated_fallback_without_scene_heade
         raising=False,
     )
     monkeypatch.setattr(
-        asset_compiler.AssetCompiler,
-        "_reconcile_base_scenes_from_text",
-        fake_reconcile,
+        asset_compiler,
+        "normalize_screenplay_scenes",
+        lambda *_args, **_kwargs: pytest.fail("解说剧不应调用 screenplay normalizer"),
     )
 
     store = _FakeCogneeStore(
@@ -289,6 +344,7 @@ async def test_compile_episode_scenes_uses_narrated_fallback_without_scene_heade
         project_dir=str(tmp_path),
     )
     compiler = asset_compiler.AssetCompiler(store)
+    compiler.spine_template = "narrated"
     episode = SimpleNamespace(number=1, title="第一集", beat_source_text="")
 
     scene_menu, new_count = await compiler.compile_episode_scenes(episode, lambda _message: None)
@@ -408,7 +464,7 @@ async def test_compile_episode_scenes_persists_base_and_derived_as_normal_scenes
 ):
     import novelvideo.agents.asset_compiler as asset_compiler
 
-    async def fake_load_scene_blocks(self, episode):
+    async def fake_load_scene_blocks(self, source_text, log):
         return [_block()]
 
     async def fake_enrich(**kwargs):
@@ -438,7 +494,11 @@ async def test_compile_episode_scenes_persists_base_and_derived_as_normal_scenes
         await self.cognee_store.sqlite_store.add_scene(scene)
         return ["咖啡馆"]
 
-    monkeypatch.setattr(asset_compiler.AssetCompiler, "_load_scene_blocks", fake_load_scene_blocks)
+    monkeypatch.setattr(
+        asset_compiler.AssetCompiler,
+        "_load_normalized_screenplay_blocks",
+        fake_load_scene_blocks,
+    )
     monkeypatch.setattr(asset_compiler, "enrich_scene_environment_from_context", fake_enrich)
     monkeypatch.setattr(asset_compiler.AssetCompiler, "_analyze_derived_scenes", fake_derived)
     monkeypatch.setattr(

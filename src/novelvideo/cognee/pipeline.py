@@ -662,6 +662,24 @@ class SceneEnrichmentList(BaseModel):
     scenes: List[SceneEnrichment]
 
 
+class GraphSceneCandidate(BaseModel):
+    """Stable physical scene discovered from Cognee graph context."""
+
+    name: str = Field(..., description="稳定物理地点名称，不包含时间、人物、事件或镜头词")
+    aliases: List[str] = Field(default_factory=list, description="图谱中出现的地点别名")
+    scene_type: str = Field(default="interior", description="interior/exterior/nature")
+    evidence_lines: List[str] = Field(
+        default_factory=list,
+        description="图谱上下文中支持该地点存在及其固定环境特征的短句",
+    )
+
+
+class GraphSceneCandidateList(BaseModel):
+    """Stable physical scenes extracted from Cognee graph context."""
+
+    scenes: List[GraphSceneCandidate] = Field(default_factory=list)
+
+
 SCENE_ENVIRONMENT_REQUIRED_HEADINGS = ("正面", "左侧", "右侧", "背面")
 
 
@@ -962,6 +980,163 @@ def _episode_number_from_normalized_block(block: NormalizedSceneBlock) -> int:
     if header_match:
         return int(header_match.group("episode"))
     return 1
+
+
+async def extract_scenes_from_graph(
+    dataset_name: str = "novel",
+    project_name: str = "",
+    project_dir: Optional[str] = None,
+    on_progress: Optional[Any] = None,
+    on_log: Optional[Any] = None,
+) -> List[NovelScene]:
+    """Discover reusable base scenes from Cognee graph context.
+
+    Project-level scene discovery must mirror character/prop discovery. Script
+    normalization belongs to per-episode drama planning, not this graph path.
+    """
+    with preserve_st_env():
+        import cognee
+        from cognee.api.v1.search import SearchType
+        from cognee.infrastructure.llm.LLMGateway import LLMGateway
+
+    def report(progress: float, task: str) -> None:
+        if on_progress:
+            on_progress(progress, task)
+
+    def log(message: str) -> None:
+        print(f"[extract_scenes] {message}")
+        if on_log:
+            on_log(message)
+
+    _set_cognee_project_context(
+        project_name=project_name,
+        project_dir=project_dir,
+        verbose=True,
+    )
+
+    report(0.1, "通过图谱检索场景信息...")
+    context_text = ""
+    try:
+        results = await cognee.search(
+            query_text=(
+                "列出作品中反复出现或对剧情重要的稳定物理地点，包括地点别名、"
+                "空间环境、建筑结构和地点之间的关系；不要列人物、事件、情绪或抽象概念"
+            ),
+            query_type=SearchType.GRAPH_COMPLETION,
+            datasets=[dataset_name],
+            only_context=True,
+            top_k=50,
+        )
+        if results:
+            context_text = "\n".join(
+                _stringify_search_fragment(
+                    item.search_result if hasattr(item, "search_result") else item
+                )
+                for item in results
+            )
+            log(f"图谱场景上下文获取成功: {len(context_text)} 字符")
+    except Exception as exc:
+        import logging
+
+        logging.warning("cognee 场景搜索失败: %s", exc)
+        log(f"图谱场景搜索失败: {exc}")
+
+    if not context_text.strip():
+        log("⚠️ 图谱搜索无场景数据，请先完成知识图谱构建")
+        return []
+
+    report(0.3, "从图谱结构化提取基础场景...")
+    system_prompt = """你是影视项目的全局场景资产分析师。
+输入是知识图谱检索得到的上下文。请只提取可以跨镜头复用的稳定物理地点。
+
+规则：
+- name 必须是具体物理地点，例如“菩提寝房”“镇国公府前院”，不能是“家里”“现场”“回忆”等泛称。
+- 合并同一地点的别名；不同时间、天气、损毁状态不要拆成新的基础场景。
+- 排除人物、组织、事件、动作、情绪、章节标题和抽象概念。
+- scene_type 只能是 interior、exterior、nature。
+- evidence_lines 必须来自输入图谱上下文，不得编造。
+- 图谱证据不足时宁缺毋滥，不要猜测地点。"""
+    try:
+        result = await LLMGateway.acreate_structured_output(
+            context_text,
+            system_prompt,
+            GraphSceneCandidateList,
+            **get_newapi_reasoning_kwargs(
+                thinking_env="COGNEE_LLM_THINKING_LEVEL",
+                default_thinking_level="high",
+            ),
+        )
+    except Exception as exc:
+        import logging
+
+        logging.error("LLM 图谱场景提取失败: %s", exc)
+        log(f"LLM 图谱场景提取失败: {exc}")
+        return []
+
+    candidates: list[GraphSceneCandidate] = []
+    seen: set[str] = set()
+    generic_names = {"场景", "地点", "室内", "外景", "内景", "现场", "家里", "回忆"}
+    for candidate in result.scenes:
+        name = str(candidate.name or "").strip()
+        if not name or name in seen or name in generic_names:
+            continue
+        aliases = _clean_aliases(name, candidate.aliases)
+        evidence_lines = [
+            str(line or "").strip()
+            for line in candidate.evidence_lines
+            if str(line or "").strip() and str(line or "").strip() in context_text
+        ]
+        if not evidence_lines:
+            location_tokens = [name, *aliases]
+            evidence_lines = [
+                line.strip()
+                for line in context_text.splitlines()
+                if line.strip()
+                and any(token and token in line for token in location_tokens)
+            ][:8]
+        if not evidence_lines:
+            log(f"  跳过缺少图谱证据的场景候选: {name}")
+            continue
+        candidate.aliases = aliases
+        candidate.evidence_lines = evidence_lines
+        seen.add(name)
+        candidates.append(candidate)
+
+    if not candidates:
+        log("⚠️ 图谱上下文未提取到稳定物理场景")
+        return []
+
+    report(0.5, "生成场景环境描述...")
+    enrichment_agent = _create_scene_build_agent(
+        SCENE_ENRICHMENT_SYSTEM_PROMPT,
+        SceneEnrichmentList,
+        "Scene Build Enricher",
+    )
+    scenes: list[NovelScene] = []
+    total = len(candidates)
+    for index, candidate in enumerate(candidates, start=1):
+        report(
+            0.5 + 0.45 * ((index - 1) / max(total, 1)),
+            f"生成场景描述 ({index}/{total}): {candidate.name}",
+        )
+        scene_type = str(candidate.scene_type or "interior").strip().lower()
+        if scene_type not in {"interior", "exterior", "nature"}:
+            scene_type = "interior"
+        scene = await enrich_scene_environment_from_context(
+            scene_name=candidate.name,
+            aliases=candidate.aliases,
+            scene_type=scene_type,
+            interior=scene_type == "interior",
+            context_lines=list(candidate.evidence_lines),
+            enrichment_agent=enrichment_agent,
+        )
+        scene.notes = _append_scene_note(scene.notes, "由 Cognee 图谱提取的基础场景")
+        scenes.append(scene)
+        log(f"  ✓ {scene.name}")
+
+    report(1.0, "完成")
+    log(f"图谱场景提取完成: {len(scenes)} 个")
+    return scenes
 
 
 async def extract_scenes_from_script(

@@ -3997,7 +3997,7 @@
           "FREEZONE_VISION": "图片与视频内容解析",
           "STYLE_ANALYZER": "从参考图分析自定义风格",
           "CONTENT_REWRITER": "将原文改写为短视频口播",
-          "SCREENPLAY_NORMALIZER": "导入剧本时解析场景结构",
+          "SCREENPLAY_NORMALIZER": "规划精品剧时解析本集场景结构",
           "EPISODE_SCENE_RECONCILE": "校对并补充基础场景资产",
           "NARRATED_SCENE_ASSET": "规划解说剧场景资产",
           "STAGING_PROP": "规划导演世界临时道具",

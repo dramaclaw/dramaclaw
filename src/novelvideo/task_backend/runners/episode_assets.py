@@ -46,6 +46,7 @@ async def _run_episode_asset_planner(
 ) -> dict[str, Any]:
     from novelvideo.agents.asset_compiler import AssetCompiler
     from novelvideo.cognee import CogneeStore
+    from novelvideo.project_config import load_project_config_file_from_state_dir
     from novelvideo.services.prop_promotion_service import promote_episode_props_to_global
     from novelvideo.sqlite_store import SQLiteStore
 
@@ -111,6 +112,8 @@ async def _run_episode_asset_planner(
 
     update(0.15, f"规划{label}资产...")
     compiler = AssetCompiler(cognee_store)
+    project_config = load_project_config_file_from_state_dir(ctx.state_dir)
+    compiler.spine_template = str(project_config.get("spine_template") or "drama")
 
     def on_log(message: str) -> None:
         update(log=message)

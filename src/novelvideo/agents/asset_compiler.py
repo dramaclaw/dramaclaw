@@ -19,7 +19,10 @@ from novelvideo.models import (
     PropMenuItem,
     SceneMenuItem,
 )
-from novelvideo.cognee.screenplay_normalizer import normalize_time_of_day
+from novelvideo.cognee.screenplay_normalizer import (
+    normalize_screenplay_scenes,
+    normalize_time_of_day,
+)
 from novelvideo.utils.derived_scenes import compose_derived_scene_name
 from novelvideo.workflows.literal_script_writing import (
     LiteralScriptWritingWorkflow,
@@ -390,6 +393,7 @@ class AssetCompiler:
 
     def __init__(self, cognee_store: Any):
         self.cognee_store = cognee_store
+        self.spine_template = "drama"
 
     async def compile_single_episode(
         self,
@@ -466,20 +470,28 @@ class AssetCompiler:
             if on_progress:
                 on_progress(progress, task)
 
-        scene_blocks = await self._load_scene_blocks(episode)
-        report(0.1, "解析场景块...")
-        log(f"[AssetCompiler] 共识别 {len(scene_blocks)} 个场景块")
-
         source_text = await self._load_source_text(episode)
-        report(0.18, "AI校对基础场景...")
-        await self._reconcile_base_scenes_from_text(source_text, episode, log)
-
-        report(0.25, "编译场景资产...")
-        scene_menu, pending_scenes = await self._compile_scenes(scene_blocks, episode, log)
-        if not scene_menu:
-            report(0.45, "从解说稿规划场景资产...")
+        if str(self.spine_template or "drama").strip() == "narrated":
+            report(0.2, "从解说稿规划场景资产...")
             scene_menu, pending_scenes = await self._compile_narrated_scenes(
                 source_text, episode, log
+            )
+        else:
+            report(0.1, "AI 规范化本集剧本场景...")
+            scene_blocks = await self._load_normalized_screenplay_blocks(
+                source_text,
+                log,
+            )
+            log(f"[AssetCompiler] 共识别 {len(scene_blocks)} 个场景块")
+
+            report(0.18, "AI校对基础场景...")
+            await self._reconcile_base_scenes_from_text(source_text, episode, log)
+
+            report(0.25, "编译场景资产...")
+            scene_menu, pending_scenes = await self._compile_scenes(
+                scene_blocks,
+                episode,
+                log,
             )
         if not scene_menu:
             raise ValueError("未识别到任何场景，请先生成逐行解说工作稿或补充场次地点")
@@ -491,6 +503,39 @@ class AssetCompiler:
 
         report(1.0, "完成")
         return scene_menu, len(pending_scenes)
+
+    async def _load_normalized_screenplay_blocks(
+        self,
+        source_text: str,
+        log: Callable[[str], None],
+    ) -> list[SceneBlock]:
+        """Use the screenplay normalizer as the authoritative drama scene parser."""
+        source_text = str(source_text or "").strip()
+        if not source_text:
+            raise ValueError("当前集原文为空，无法编译资产")
+
+        try:
+            normalized = await normalize_screenplay_scenes(source_text)
+        except Exception as exc:
+            log(f"  AI 剧本场景规范化失败: {exc}")
+            raise ValueError("AI 剧本场景规范化失败，请重试") from exc
+
+        blocks = [
+            SceneBlock(
+                header_line=block.raw_header or block.scene_no or block.location,
+                location=block.location,
+                time_of_day=normalize_time_of_day(block.time_of_day),
+                interior_exterior=block.interior_exterior,
+                characters=list(block.characters),
+                lines=list(block.content_lines or block.evidence_lines),
+            )
+            for block in normalized
+            if str(block.location or "").strip()
+        ]
+        if blocks:
+            return blocks
+
+        raise ValueError("AI 未识别到有效场景，请检查本集剧本内容后重试")
 
     async def compile_episode_props(
         self,

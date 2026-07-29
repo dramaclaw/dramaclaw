@@ -2066,12 +2066,12 @@ class CogneeStore:
         on_progress: Optional[Callable[[float, str], None]] = None,
         on_log: Optional[Callable[[str], None]] = None,
     ) -> List[NovelScene]:
-        """从剧本补充基础场景（程序解析 + LLM enrichment）。
+        """从 Cognee 图谱补充基础场景。
 
         这里只补缺失的基础场景；已有基础场景和派生 plate 都是资产事实，
-        不能被一次重新解析清空或覆盖。
+        不能被一次图谱重扫清空或覆盖。
         """
-        from .pipeline import extract_scenes_from_script
+        from .pipeline import extract_scenes_from_graph
 
         def report(progress: float, task: str):
             if on_progress:
@@ -2082,21 +2082,25 @@ class CogneeStore:
                 on_log(message)
             console.print(f"[dim]{message}[/dim]")
 
-        report(0.1, "解析剧本提取场景...")
-        novel_text = require_imported_novel(self.project_dir)
-
-        log(f"加载剧本原文: {len(novel_text)} 字符")
-        scenes = await extract_scenes_from_script(
-            novel_text=novel_text,
-            on_progress=lambda p, t: report(0.1 + p * 0.6, t),
-        )
+        require_imported_novel(self.project_dir)
+        report(0.1, "从图谱提取场景节点...")
+        log("从图谱提取基础场景候选...")
+        self._set_cognee_context()
+        with self.embedding_model_scope():
+            scenes = await extract_scenes_from_graph(
+                dataset_name=self.dataset_name,
+                project_name=self.project_name,
+                project_dir=str(self.project_dir),
+                on_progress=lambda p, t: report(0.1 + p * 0.6, t),
+                on_log=on_log,
+            )
 
         if not scenes:
-            log("⚠️ 剧本解析无结果，保留现有场景数据")
+            log("⚠️ 图谱提取无结果，保留现有场景数据")
             report(1.0, "提取无结果")
             return []
 
-        log(f"从剧本提取了 {len(scenes)} 个场景")
+        log(f"从图谱提取了 {len(scenes)} 个场景")
         report(0.8, "保存新增场景...")
         log("保存新增场景到数据库...")
         added: list[NovelScene] = []
