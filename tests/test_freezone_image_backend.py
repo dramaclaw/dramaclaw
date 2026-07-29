@@ -243,6 +243,35 @@ async def test_freezone_omni_video_limit_exception_bubbles_to_global_handler(
     assert exc.value.queue_kind == "video"
 
 
+def test_freezone_omni_video_limit_returns_429_envelope_through_asgi(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo.api.app import create_app
+
+    _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_limit_exceeded_enqueue(monkeypatch, queue_kind="video")
+    app = create_app()
+
+    async def fake_user():
+        return {"username": "admin"}
+
+    _patch_freezone_endpoint_globals(app, monkeypatch)
+    _override_api_user(app, fake_user)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/projects/58/freezone/video/omni-gen",
+        json={"prompt": "雨夜街头，人物缓慢回头。"},
+    )
+
+    assert response.status_code == 429
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["data"]["limit_scope"] == "user"
+    assert payload["data"]["queue_kind"] == "video"
+
+
 @pytest.mark.asyncio
 async def test_freezone_image_edit_limit_exception_bubbles_to_global_handler(
     monkeypatch: pytest.MonkeyPatch,

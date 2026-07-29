@@ -1915,3 +1915,46 @@ async def test_batch_generate_prop_references_starts_batch_task(tmp_path, monkey
 
     assert res["ok"] is False
     assert "project context" in res["error"]
+
+
+def test_single_face_sharp_compresses_generated_ply_to_sog(tmp_path, monkeypatch):
+    from novelvideo import stage_asset_tasks
+    from novelvideo.director_world import pano_sharp
+    from novelvideo.director_world import stage_manifest
+
+    scene_dir = tmp_path / "assets" / "scenes" / "Hall"
+    scene_dir.mkdir(parents=True)
+    (scene_dir / "master.png").write_bytes(b"master")
+    monkeypatch.setattr(pano_sharp, "sharp_available", lambda: True)
+    monkeypatch.delenv("KEEP_RAW_3GS_PLY", raising=False)
+
+    def fake_run(cmd, **_kwargs):
+        if "--output-dir" in cmd:
+            run_dir = Path(cmd[cmd.index("--output-dir") + 1])
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "pano_sharp_merged.ply").write_bytes(b"large ply")
+        else:
+            Path(cmd[-1]).write_bytes(b"small sog")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(stage_asset_tasks, "run_project_subprocess", fake_run)
+    monkeypatch.setattr(
+        stage_asset_tasks,
+        "splat_transform_executable",
+        lambda: tmp_path / "splat-transform",
+    )
+
+    result = stage_asset_tasks.run_single_face_sharp(
+        tmp_path,
+        "Hall",
+        source_kind="master",
+    )
+    manifest = stage_manifest.load_manifest(tmp_path, "Hall")
+
+    assert result["ply_path"].endswith("/master_sharp.sog")
+    assert result["sog_path"].endswith("/master_sharp.sog")
+    assert result["raw_ply_path"] is None
+    assert (stage_manifest.stage_dir(tmp_path, "Hall") / "master_sharp.sog").exists()
+    assert not (stage_manifest.stage_dir(tmp_path, "Hall") / "master_sharp.ply").exists()
+    assert manifest["ply_path"] == "master_sharp.sog"
+    assert manifest["master_ply_path"] == "master_sharp.sog"

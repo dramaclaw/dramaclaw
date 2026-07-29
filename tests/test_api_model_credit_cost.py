@@ -119,6 +119,29 @@ async def test_generation_credit_cost_route_resolves_model_kind(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_resolves_feature_kind(monkeypatch):
+    from novelvideo.api.routes import model_credits
+
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="ingest_fast",
+        expected_params={},
+        expected_quantity=1,
+        cost=6,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        value=" ingest_fast ",
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 6, "display": "6"}}
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_passes_params_and_quantity(monkeypatch):
     from novelvideo.api.routes import model_credits
 

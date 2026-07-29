@@ -1499,3 +1499,87 @@ def test_append_tool_ui_specs_does_not_duplicate_existing_ui_spec():
     assert "已有展示" in content
     assert "/static/projects/demo/portrait.png" in content
     assert "/static/projects/demo/sketch.png" not in content
+
+
+def test_dramaclaw_get_sketch_candidates_displays_pool_candidates(monkeypatch):
+    from novelvideo.chat import dramaclaw_mcp
+
+    plugin = dramaclaw_mcp.PLUGIN
+
+    def fake_request(method, path, **kwargs):
+        assert method == "GET"
+        assert path == "/api/v1/projects/project-a/episodes/1/beats/3/sketch-candidates"
+        return {
+            "ok": True,
+            "data": {
+                "episode": 1,
+                "beat": 3,
+                "current_sketch_url": "/static/current.png",
+                "candidate_count": 1,
+                "candidates": [
+                    {
+                        "id": "sketch_pool",
+                        "url": "/static/candidate.png",
+                        "generated_at": "2026-01-01T00:00:00",
+                        "stale": False,
+                    }
+                ],
+            },
+        }
+
+    monkeypatch.setattr(plugin, "_request", fake_request)
+
+    payload = json.loads(
+        plugin._handle_get_sketch_candidates(
+            {
+                "project_id": "project-a",
+                "episode": 1,
+                "beat": 3,
+            }
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["media_kind"] == "sketch_candidate"
+    assert payload["candidate_count"] == 1
+    assert payload["ui_spec"]["type"] == "sketch_gallery"
+    assert "candidate.png" in json.dumps(payload["ui_spec"], ensure_ascii=False)
+
+
+def test_dramaclaw_get_sketches_does_not_use_pool_candidates(monkeypatch, tmp_path):
+    from novelvideo.chat import dramaclaw_mcp
+
+    plugin = dramaclaw_mcp.PLUGIN
+    project_dir = tmp_path / "project"
+    sketch_dir = project_dir / "grids" / "ep001" / "sketch"
+    sketch_dir.mkdir(parents=True)
+    (sketch_dir / "beat_01_t123.png").write_bytes(b"fake")
+
+    monkeypatch.setenv("DRAMACLAW_PROJECT_OUTPUT_DIR", str(project_dir))
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda method, path, **kwargs: {
+            "ok": True,
+            "beats": [
+                {
+                    "beat_number": 1,
+                    "sketch_url": "",
+                    "frame_url": "",
+                }
+            ],
+        },
+    )
+
+    payload = json.loads(
+        plugin._handle_get_sketches(
+            {
+                "project_id": "project-a",
+                "episode": 1,
+            }
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["sketches"][0]["sketch_url"] == ""
+    assert payload["ui_spec"] is None
