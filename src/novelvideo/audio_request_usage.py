@@ -9,6 +9,7 @@ from pathlib import Path
 
 from novelvideo.config import OUTPUT_DIR, STATE_DIR
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+from novelvideo.sqlite_schema import ensure_sqlite_schema
 
 
 _SCHEMA_SQL = """
@@ -30,6 +31,10 @@ CREATE INDEX IF NOT EXISTS idx_audio_request_usage_scope
 ON audio_request_usage(task_type, scope, accepted_at DESC);
 """
 
+_SCHEMA_COMPONENT = "audio_request_usage"
+# MIGRATION CONTRACT: increment this whenever _SCHEMA_SQL changes.
+_SCHEMA_VERSION = 1
+
 
 def get_audio_request_usage_db_path(project_output_dir: str | Path) -> Path:
     project_output_dir = Path(project_output_dir).resolve()
@@ -46,10 +51,14 @@ def get_audio_request_usage_db_path(project_output_dir: str | Path) -> Path:
 def _connect(project_output_dir: str | Path):
     db_path = get_audio_request_usage_db_path(project_output_dir)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=5, check_same_thread=False)
-    configure_sqlite_connection(conn)
-    conn.executescript(_SCHEMA_SQL)
-    conn.commit()
+    ensure_sqlite_schema(
+        db_path,
+        component=_SCHEMA_COMPONENT,
+        version=_SCHEMA_VERSION,
+        initialize=lambda schema_conn: schema_conn.executescript(_SCHEMA_SQL),
+    )
+    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+    configure_sqlite_connection(conn, set_journal_mode=False)
     try:
         yield conn
         conn.commit()

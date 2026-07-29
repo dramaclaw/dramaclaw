@@ -32,6 +32,7 @@ from novelvideo.models import (
 )
 from novelvideo.novel_source import load_imported_novel_content
 from novelvideo.sqlite_pragmas import configure_sqlite_connection_async
+from novelvideo.sqlite_schema import ensure_sqlite_schema_async
 from novelvideo.utils.path_resolver import compute_identity_path
 
 console = Console()
@@ -207,6 +208,12 @@ CREATE INDEX IF NOT EXISTS idx_seedance2_voice_audio_speaker
     ON seedance2_voice_audio_records(episode_number, speaker);
 """
 
+_PROJECT_STORE_SCHEMA_COMPONENT = "project_store"
+# MIGRATION CONTRACT: increment this whenever SQLITE_SCHEMA_SQL or any
+# _ensure_*_columns migration above changes. Existing databases skip the
+# initializer after this version has been recorded.
+_PROJECT_STORE_SCHEMA_VERSION = 1
+
 
 async def _table_columns(db: aiosqlite.Connection, table: str) -> set[str]:
     async with db.execute(f"PRAGMA table_info({table})") as cursor:
@@ -318,23 +325,38 @@ class SQLiteStore:
         if self._db is None:
             if self._closing:
                 raise StoreClosedError(self.project_dir)
-            self._db = await aiosqlite.connect(self.db_path)
+            await self._ensure_project_schema()
+            self._db = await aiosqlite.connect(self.db_path, timeout=10)
             self._db.row_factory = aiosqlite.Row
-            await configure_sqlite_connection_async(self._db)
-            await self._db.executescript(SQLITE_SCHEMA_SQL)
-            await self._ensure_episode_planning_columns(self._db)
-            await self._ensure_beat_current_columns(self._db)
-            await self._ensure_scene_columns(self._db)
-            await self._ensure_indextts2_columns(self._db)
-            await self._db.commit()
-            # Phase 2 DB split: failure-mode *definitions* live in the
-            # user-shared verification.db (not this project DB). They are
-            # seeded lazily by `failure_registry.load_negative_clause_for_project`
-            # / `open_defs_db_for_project` the first time any caller needs
-            # them. This project DB holds only per-project hits +
-            # convergence facts — the schema above already creates
-            # `sketch_failure_mode_hits`, which stays project-local.
+            await configure_sqlite_connection_async(
+                self._db,
+                set_journal_mode=False,
+            )
         return self._db
+
+    async def _ensure_project_schema(self) -> None:
+        """Initialize/upgrade project tables once, serialized across processes."""
+
+        path = Path(self.db_path)
+
+        async def initialize(db) -> None:
+            db.row_factory = aiosqlite.Row
+            await db.executescript(SQLITE_SCHEMA_SQL)
+            await self._ensure_episode_planning_columns(db)
+            await self._ensure_beat_current_columns(db)
+            await self._ensure_scene_columns(db)
+            await self._ensure_indextts2_columns(db)
+
+        await ensure_sqlite_schema_async(
+            path,
+            component=_PROJECT_STORE_SCHEMA_COMPONENT,
+            version=_PROJECT_STORE_SCHEMA_VERSION,
+            initialize=initialize,
+        )
+
+        # Phase 2 DB split: failure-mode *definitions* live in the user-shared
+        # verification.db. This project DB holds only per-project hits and
+        # convergence facts.
 
     async def _ensure_scene_columns(self, db: aiosqlite.Connection) -> None:
         await _add_column_if_missing(

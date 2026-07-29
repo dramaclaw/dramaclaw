@@ -29,7 +29,11 @@ async def _run_ingest_fast(envelope: dict[str, Any], ctx: ProjectContext) -> dic
     config = dict(payload.get("config") or {})
     manager = get_task_manager()
 
-    store = CogneeStore(ctx.owner_project_label, output_dir=str(ctx.output_dir))
+    store = CogneeStore(
+        ctx.owner_project_label,
+        output_dir=str(ctx.output_dir),
+        state_dir=str(ctx.state_dir),
+    )
     await store.initialize()
 
     def update(progress: float, task: str) -> None:

@@ -33,6 +33,12 @@ from novelvideo.embedding_models import (
     embedding_model_for_legacy_project,
     embedding_model_scope as project_embedding_model_scope,
 )
+from novelvideo.graph_preview import (
+    acquire_graph_preview_lock_async,
+    delete_graph_preview,
+    release_graph_preview_lock,
+    write_graph_preview,
+)
 from novelvideo.official_defaults import DEFAULT_COGNEE_LLM_MODEL
 from novelvideo.novel_source import require_imported_novel
 from novelvideo.project_config import ensure_cognee_embedding_binding_in_state_dir
@@ -644,12 +650,20 @@ class CogneeStore:
 
         if rebuild:
             report(0.05, "重建图谱...")
-            # novel.txt 是前端和后续流水线判断“已导入”的持久标志。旧图谱已经
-            # 清除前必须先让旧标志失效：即使清理中途失败，也不能继续显示成功。
-            imported_novel_path = Path(self.project_dir) / "novel.txt"
-            imported_novel_path.unlink(missing_ok=True)
-            log("清除 cognee 图谱数据...")
-            await self._prune_cognee_only()
+            # Serialize invalidation/pruning with the one-time legacy preview
+            # reader. Without this cross-process lock an API worker could open
+            # Ladybug while the ingest worker is pruning the same files.
+            graph_lock = await acquire_graph_preview_lock_async(self.state_dir)
+            try:
+                # novel.txt 是前端和后续流水线判断“已导入”的持久标志。旧图谱已经
+                # 清除前必须先让旧标志失效：即使清理中途失败，也不能继续显示成功。
+                imported_novel_path = Path(self.project_dir) / "novel.txt"
+                imported_novel_path.unlink(missing_ok=True)
+                delete_graph_preview(self.state_dir)
+                log("清除 cognee 图谱数据...")
+                await self._prune_cognee_only()
+            finally:
+                release_graph_preview_lock(graph_lock)
 
         # 重建时必须先清理旧存储，再初始化 Cognee 的数据库连接。
         init_cognee()
@@ -689,6 +703,12 @@ class CogneeStore:
         )
         log("向量索引创建完成")
 
+        # API workers render this bounded sidecar and never open Ladybug merely
+        # for graph visualization.  Persist it before novel.txt, because the
+        # latter is the public "import succeeded" marker.
+        await self.materialize_graph_preview()
+        log("知识图谱预览已保存")
+
         # 原文落库放在图谱构建成功之后：失败时不留下"已导入"的痕迹。
         # /chapters 仅凭已存原文判定"导入完成"，若提前落库，cognify/memify 失败
         # 仍会让界面误报导入成功且锁死重新上传入口。
@@ -702,6 +722,13 @@ class CogneeStore:
             "dataset": self.dataset_name,
             "status": "graph_ready",
         }
+
+    async def materialize_graph_preview(self, max_nodes: int = 48) -> dict:
+        snapshot = await self.get_graph_snapshot(max_nodes=max_nodes)
+        if not snapshot.get("nodes"):
+            raise RuntimeError("知识图谱预览生成失败：未读取到任何图谱节点")
+        write_graph_preview(self.state_dir, snapshot)
+        return snapshot
 
     async def get_graph_snapshot(self, max_nodes: int = 48) -> dict:
         """Return a bounded, JSON-safe snapshot for the project graph viewer.

@@ -30,6 +30,7 @@ from typing import List, Optional
 from novelvideo.config import OUTPUT_DIR, STATE_DIR
 from novelvideo.project_context import ProjectContext, require_project_home_node
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+from novelvideo.sqlite_schema import ensure_sqlite_schema
 from novelvideo.task_backend.queues import normalize_queue_kind
 from novelvideo.task_identity import (
     project_task_scope_from_key,
@@ -120,6 +121,12 @@ _TASK_STATE_COLUMN_UPGRADES = {
     "owner_username": "ALTER TABLE task_states ADD COLUMN owner_username TEXT NOT NULL DEFAULT ''",
     "project_name": "ALTER TABLE task_states ADD COLUMN project_name TEXT NOT NULL DEFAULT ''",
 }
+
+_TASK_STATE_SCHEMA_COMPONENT = "task_state"
+# MIGRATION CONTRACT: increment this whenever _TASK_STATE_SCHEMA_SQL,
+# _TASK_STATE_COLUMN_UPGRADES, or schema indexes change. Existing databases
+# skip the initializer after this version has been recorded.
+_TASK_STATE_SCHEMA_VERSION = 1
 
 
 def compute_expiry(ttl_seconds: int | None) -> str | None:
@@ -337,31 +344,49 @@ class TaskStateManager:
     @contextmanager
     def _connect_path(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(db_path, timeout=5, check_same_thread=False)
+        self._ensure_task_schema(db_path)
+        conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        configure_sqlite_connection(conn)
-        conn.executescript(_TASK_STATE_SCHEMA_SQL)
-        existing_columns = {
-            str(row[1]) for row in conn.execute("PRAGMA table_info(task_states)").fetchall()
-        }
-        for column, sql in _TASK_STATE_COLUMN_UPGRADES.items():
-            if column not in existing_columns:
-                conn.execute(sql)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_task_states_project_updated "
-            "ON task_states(project_id, updated_at DESC)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_task_states_project_queue_status "
-            "ON task_states(project_id, queue_kind, status)"
-        )
-        conn.commit()
+        # journal_mode is persistent and was established by the coordinated
+        # schema initializer. Normal read/write connections must not request a
+        # journal-mode transition or execute DDL.
+        configure_sqlite_connection(conn, set_journal_mode=False)
         self._sweep_interrupted_inline_tasks_once(conn, db_path)
         try:
             yield conn
             conn.commit()
         finally:
             conn.close()
+
+    @staticmethod
+    def _ensure_task_schema(db_path: Path) -> None:
+        """Initialize/upgrade task tables once, serialized across processes."""
+
+        def initialize(conn: sqlite3.Connection) -> None:
+            conn.row_factory = sqlite3.Row
+            conn.executescript(_TASK_STATE_SCHEMA_SQL)
+            existing_columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(task_states)").fetchall()
+            }
+            for column, sql in _TASK_STATE_COLUMN_UPGRADES.items():
+                if column not in existing_columns:
+                    conn.execute(sql)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_task_states_project_updated "
+                "ON task_states(project_id, updated_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_task_states_project_queue_status "
+                "ON task_states(project_id, queue_kind, status)"
+            )
+
+        ensure_sqlite_schema(
+            db_path,
+            component=_TASK_STATE_SCHEMA_COMPONENT,
+            version=_TASK_STATE_SCHEMA_VERSION,
+            initialize=initialize,
+        )
 
     @contextmanager
     def _connect(self, username: str, project: str):
