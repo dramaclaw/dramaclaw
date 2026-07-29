@@ -76,6 +76,27 @@ async def test_cancelled_async_lock_wait_does_not_leak_lock(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_shared_graph_readers_overlap_and_writer_waits(tmp_path):
+    first_reader = await acquire_graph_preview_lock_async(tmp_path, shared=True)
+    second_reader = await asyncio.wait_for(
+        acquire_graph_preview_lock_async(tmp_path, shared=True),
+        timeout=1,
+    )
+
+    writer = asyncio.create_task(acquire_graph_preview_lock_async(tmp_path))
+    await asyncio.sleep(0.1)
+    assert not writer.done()
+
+    release_graph_preview_lock(first_reader)
+    await asyncio.sleep(0.05)
+    assert not writer.done()
+
+    release_graph_preview_lock(second_reader)
+    writer_lock = await asyncio.wait_for(writer, timeout=1)
+    release_graph_preview_lock(writer_lock)
+
+
+@pytest.mark.asyncio
 async def test_ingest_holds_project_graph_lock_for_complete_operation(
     tmp_path,
     monkeypatch,
@@ -97,7 +118,9 @@ async def test_ingest_holds_project_graph_lock_for_complete_operation(
     ingest_task = asyncio.create_task(store.ingest_novel_fast("unused.txt"))
     await asyncio.wait_for(ingest_started.wait(), timeout=1)
 
-    reader_lock_task = asyncio.create_task(acquire_graph_preview_lock_async(tmp_path))
+    reader_lock_task = asyncio.create_task(
+        acquire_graph_preview_lock_async(tmp_path, shared=True)
+    )
     await asyncio.sleep(0.1)
     assert not reader_lock_task.done()
 

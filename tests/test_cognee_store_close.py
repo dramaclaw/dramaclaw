@@ -1,116 +1,80 @@
-import pytest
+import asyncio
 from importlib import import_module
 from types import SimpleNamespace
 
+import pytest
+
 
 @pytest.mark.asyncio
-async def test_close_releases_cached_cognee_graph_engine(monkeypatch):
+async def test_store_close_only_releases_owned_sqlite_store():
     from novelvideo.cognee.store import CogneeStore
-
-    graph_config_module = import_module("cognee.infrastructure.databases.graph.config")
-    graph_engine_module = import_module("cognee.infrastructure.databases.graph.get_graph_engine")
 
     calls = []
 
     class FakeSQLiteStore:
         async def close(self):
             calls.append("sqlite.close")
-
-    class FakeGraphConnection:
-        def close(self):
-            calls.append("graph.connection.close")
-
-    class FakeGraphDatabase:
-        def close(self):
-            calls.append("graph.db.close")
-
-    class FakeGraphEngine:
-        def __init__(self):
-            self.connection = FakeGraphConnection()
-            self.db = FakeGraphDatabase()
-
-        def close(self):
-            calls.append("graph.close")
-
-    class FakeCachedFactory:
-        def cache_clear(self):
-            calls.append("graph.cache_clear")
-
-    fake_engine = FakeGraphEngine()
-    monkeypatch.setattr(
-        graph_config_module,
-        "get_graph_context_config",
-        lambda: {"graph_database_provider": "kuzu", "graph_file_path": "/tmp/project.pkl"},
-    )
-    monkeypatch.setattr(
-        graph_engine_module,
-        "create_graph_engine",
-        lambda **config: fake_engine,
-    )
-    monkeypatch.setattr(graph_engine_module, "_create_graph_engine", FakeCachedFactory())
 
     store = CogneeStore.__new__(CogneeStore)
     store._owns_sqlite_store = True
     store.sqlite_store = FakeSQLiteStore()
 
     await store.close()
-
-    assert calls == [
-        "sqlite.close",
-        "graph.connection.close",
-        "graph.db.close",
-        "graph.close",
-        "graph.cache_clear",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_close_does_not_release_graph_engine_with_an_active_reader(monkeypatch):
-    from novelvideo.cognee import store as store_module
-    from novelvideo.cognee.store import CogneeStore
-
-    graph_config_module = import_module("cognee.infrastructure.databases.graph.config")
-    graph_engine_module = import_module("cognee.infrastructure.databases.graph.get_graph_engine")
-    calls = []
-
-    class FakeSQLiteStore:
-        async def close(self):
-            calls.append("sqlite.close")
-
-    class FakeGraphEngine:
-        connection = None
-        db = None
-
-        def close(self):
-            calls.append("graph.close")
-
-    class FakeCachedFactory:
-        def cache_clear(self):
-            calls.append("graph.cache_clear")
-
-    fake_engine = FakeGraphEngine()
-    monkeypatch.setattr(graph_config_module, "get_graph_context_config", lambda: {})
-    monkeypatch.setattr(
-        graph_engine_module, "create_graph_engine", lambda **config: fake_engine
-    )
-    monkeypatch.setattr(graph_engine_module, "_create_graph_engine", FakeCachedFactory())
-
-    store = CogneeStore.__new__(CogneeStore)
-    store._owns_sqlite_store = True
-    store.sqlite_store = FakeSQLiteStore()
-
-    with store_module._track_graph_engine_reader(fake_engine):
-        await store.close()
 
     assert calls == ["sqlite.close"]
 
-    await store.close()
-    assert calls == [
-        "sqlite.close",
-        "sqlite.close",
-        "graph.close",
-        "graph.cache_clear",
-    ]
+
+@pytest.mark.asyncio
+async def test_cached_ladybug_adapter_switches_between_read_only_and_writer(tmp_path):
+    from cognee.infrastructure.databases.graph.ladybug.adapter import LadybugAdapter
+    from ladybug import Connection
+    from ladybug.database import Database
+    from novelvideo.cognee.ladybug_access import ladybug_graph_access
+
+    database_path = tmp_path / "graph.lbdb"
+    database = Database(str(database_path))
+    connection = Connection(database)
+    connection.execute(
+        "CREATE NODE TABLE Node(id STRING PRIMARY KEY, name STRING, type STRING, "
+        "created_at TIMESTAMP, updated_at TIMESTAMP, properties STRING)"
+    )
+    connection.execute(
+        "CREATE REL TABLE EDGE(FROM Node TO Node, relationship_name STRING, "
+        "created_at TIMESTAMP, updated_at TIMESTAMP, properties STRING)"
+    )
+    connection.execute(
+        "CREATE (:Node {id: '1', name: 'Alice', type: 'person', properties: '{}'});"
+    )
+    connection.close()
+    database.close()
+
+    adapter = None
+    try:
+        async with ladybug_graph_access(str(tmp_path), read_only=True):
+            adapter = LadybugAdapter(str(database_path))
+            results = await asyncio.gather(
+                *(adapter.query("MATCH (n:Node) RETURN n.name") for _ in range(4))
+            )
+            assert results == [[("Alice",)]] * 4
+            assert adapter.db.read_only is True
+        assert adapter.db is None
+
+        async with ladybug_graph_access(str(tmp_path), read_only=False):
+            await adapter.query(
+                "CREATE (:Node {id: '2', name: 'Bob', type: 'person', properties: '{}'});"
+            )
+            assert adapter.db.read_only is False
+        assert adapter.db is None
+
+        async with ladybug_graph_access(str(tmp_path), read_only=True):
+            assert await adapter.query(
+                "MATCH (n:Node) RETURN n.name ORDER BY n.name"
+            ) == [("Alice",), ("Bob",)]
+        assert adapter.db is None
+    finally:
+        if adapter is not None:
+            adapter.close()
+            adapter.executor.shutdown(wait=True)
 
 
 @pytest.mark.asyncio

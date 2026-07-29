@@ -15,11 +15,10 @@ from novelvideo.api.chapter_preview import (
 )
 from novelvideo.api.deps import make_cognee_store_for_context, resolve_project_scope
 from novelvideo.api.schemas import IngestStart
+from novelvideo.cognee.ladybug_access import ladybug_graph_access
 from novelvideo.graph_preview import (
-    acquire_graph_preview_lock_async,
     empty_graph_preview,
     load_graph_preview,
-    release_graph_preview_lock,
 )
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
@@ -68,33 +67,33 @@ async def get_ingest_knowledge_graph(
 
     # Legacy projects predate graph-preview.json. Materialize exactly once
     # under a cross-process lock, then all future requests are sidecar reads.
-    lock_handle = await acquire_graph_preview_lock_async(ctx.state_dir)
     try:
-        # A rebuild may have invalidated the project while this request waited
-        # for the lock. Never open Ladybug after the success marker disappears.
-        if not (ctx.output_dir / "novel.txt").is_file():
-            return {"ok": True, "data": empty_graph_preview()}
+        async with ladybug_graph_access(str(ctx.state_dir), read_only=True):
+            # A rebuild may have invalidated the project while this request waited
+            # for the lock. Never open Ladybug after the success marker disappears.
+            if not (ctx.output_dir / "novel.txt").is_file():
+                return {"ok": True, "data": empty_graph_preview()}
 
-        snapshot = load_graph_preview(ctx.state_dir)
-        if snapshot is not None:
-            return {"ok": True, "data": snapshot}
+            snapshot = load_graph_preview(ctx.state_dir)
+            if snapshot is not None:
+                return {"ok": True, "data": snapshot}
 
-        store = await make_cognee_store_for_context(ctx)
-        try:
-            snapshot_task = asyncio.create_task(store.materialize_graph_preview())
+            store = await make_cognee_store_for_context(ctx)
             try:
-                snapshot = await asyncio.shield(snapshot_task)
-            except asyncio.CancelledError:
-                logger.info(
-                    "[%s] legacy graph preview request cancelled; "
-                    "waiting for materialization cleanup",
-                    project,
-                )
-                await snapshot_task
-                raise
-        finally:
-            await store.close()
-        return {"ok": True, "data": snapshot}
+                snapshot_task = asyncio.create_task(store.materialize_graph_preview())
+                try:
+                    snapshot = await asyncio.shield(snapshot_task)
+                except asyncio.CancelledError:
+                    logger.info(
+                        "[%s] legacy graph preview request cancelled; "
+                        "waiting for materialization cleanup",
+                        project,
+                    )
+                    await snapshot_task
+                    raise
+            finally:
+                await store.close()
+            return {"ok": True, "data": snapshot}
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -104,8 +103,6 @@ async def get_ingest_knowledge_graph(
             detail="知识图谱预览暂时不可用，请稍后重试",
             headers={"Retry-After": "3"},
         ) from exc
-    finally:
-        release_graph_preview_lock(lock_handle)
 
 
 def _unsupported_format_response(filename: str) -> dict:

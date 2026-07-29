@@ -11,15 +11,13 @@ import os
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, List, Optional, Any, Iterable
 import json
-from contextlib import contextmanager
-from importlib import import_module
 from datetime import date, datetime
-from threading import Lock
 from uuid import UUID
 
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
 from .config import apply_cognee_project_storage_context, init_cognee  # noqa: F401
 from .concurrency import cognee_pipeline_concurrency
+from .ladybug_access import ladybug_graph_access
 
 from novelvideo.shared.env_guard import preserve_st_env
 
@@ -34,9 +32,7 @@ from novelvideo.embedding_models import (
     embedding_model_scope as project_embedding_model_scope,
 )
 from novelvideo.graph_preview import (
-    acquire_graph_preview_lock_async,
     delete_graph_preview,
-    release_graph_preview_lock,
     write_graph_preview,
 )
 from novelvideo.official_defaults import DEFAULT_COGNEE_LLM_MODEL
@@ -72,31 +68,6 @@ from novelvideo.models import (
 )
 
 console = Console()
-
-_GRAPH_ENGINE_READERS_LOCK = Lock()
-_GRAPH_ENGINE_READERS: Dict[int, int] = {}
-
-
-@contextmanager
-def _track_graph_engine_reader(graph_engine):
-    """Prevent request cleanup from closing an engine used by another reader."""
-    engine_id = id(graph_engine)
-    with _GRAPH_ENGINE_READERS_LOCK:
-        _GRAPH_ENGINE_READERS[engine_id] = _GRAPH_ENGINE_READERS.get(engine_id, 0) + 1
-    try:
-        yield
-    finally:
-        with _GRAPH_ENGINE_READERS_LOCK:
-            remaining = _GRAPH_ENGINE_READERS.get(engine_id, 1) - 1
-            if remaining > 0:
-                _GRAPH_ENGINE_READERS[engine_id] = remaining
-            else:
-                _GRAPH_ENGINE_READERS.pop(engine_id, None)
-
-
-def _graph_engine_has_active_reader(graph_engine) -> bool:
-    with _GRAPH_ENGINE_READERS_LOCK:
-        return _GRAPH_ENGINE_READERS.get(id(graph_engine), 0) > 0
 
 
 def _json_list_payload(values: list[str]) -> str:
@@ -510,72 +481,9 @@ class CogneeStore:
         )
 
     async def close(self) -> None:
-        """Release project-scoped SQLite and Cognee graph resources."""
+        """Release the project-scoped SQLite resource."""
         if self.__dict__.get("_owns_sqlite_store", True):
             await self._ensure_sqlite_store().close()
-        self._release_cognee_graph_engine()
-
-    @staticmethod
-    def _release_cognee_graph_engine() -> None:
-        """Close Cognee's cached graph engine so worker processes release file locks."""
-        try:
-            graph_config_module = import_module("cognee.infrastructure.databases.graph.config")
-            graph_engine_module = import_module(
-                "cognee.infrastructure.databases.graph.get_graph_engine"
-            )
-        except Exception:
-            return
-
-        cached_factory = getattr(graph_engine_module, "_create_graph_engine", None)
-        cache_info = getattr(cached_factory, "cache_info", None)
-        has_cached_engine = True
-        if callable(cache_info):
-            try:
-                has_cached_engine = cache_info().currsize > 0
-            except Exception:
-                has_cached_engine = True
-
-        graph_engine = None
-        if has_cached_engine:
-            try:
-                config = graph_config_module.get_graph_context_config()
-                graph_engine = graph_engine_module.create_graph_engine(**config)
-            except Exception:
-                graph_engine = None
-
-        # Cognee caches graph engines across request-scoped CogneeStore objects.
-        # Another request may still be executing against the same engine.
-        if graph_engine is not None and _graph_engine_has_active_reader(graph_engine):
-            return
-
-        if graph_engine is not None:
-            for attr_name in ("connection", "db"):
-                handle = getattr(graph_engine, attr_name, None)
-                close = getattr(handle, "close", None)
-                if callable(close):
-                    try:
-                        close()
-                    except Exception:
-                        pass
-            close_engine = getattr(graph_engine, "close", None)
-            if callable(close_engine):
-                try:
-                    close_engine()
-                except Exception:
-                    pass
-            executor = getattr(graph_engine, "executor", None)
-            shutdown = getattr(executor, "shutdown", None)
-            if callable(shutdown):
-                try:
-                    shutdown(wait=False, cancel_futures=True)
-                except TypeError:
-                    shutdown(wait=False)
-                except Exception:
-                    pass
-
-        cache_clear = getattr(cached_factory, "cache_clear", None)
-        if callable(cache_clear):
-            cache_clear()
 
     # ============================================================
     # 内容存储（替代 Redis）
@@ -618,17 +526,14 @@ class CogneeStore:
         on_progress: Optional[Callable[[float, str], None]] = None,
         on_log: Optional[Callable[[str], None]] = None,
     ) -> dict:
-        """快速导入，并与同项目受保护的 Cognee 图谱读取串行化。"""
-        graph_lock = await acquire_graph_preview_lock_async(self.state_dir)
-        try:
+        """快速导入，并独占当前项目的 Cognee/Ladybug 图谱。"""
+        async with ladybug_graph_access(self.state_dir, read_only=False):
             return await self._ingest_novel_fast_locked(
                 novel_path,
                 rebuild=rebuild,
                 on_progress=on_progress,
                 on_log=on_log,
             )
-        finally:
-            release_graph_preview_lock(graph_lock)
 
     async def _ingest_novel_fast_locked(
         self,
@@ -736,11 +641,12 @@ class CogneeStore:
         }
 
     async def materialize_graph_preview(self, max_nodes: int = 48) -> dict:
-        snapshot = await self.get_graph_snapshot(max_nodes=max_nodes)
-        if not snapshot.get("nodes"):
-            raise RuntimeError("知识图谱预览生成失败：未读取到任何图谱节点")
-        write_graph_preview(self.state_dir, snapshot)
-        return snapshot
+        async with ladybug_graph_access(self.state_dir, read_only=True):
+            snapshot = await self.get_graph_snapshot(max_nodes=max_nodes)
+            if not snapshot.get("nodes"):
+                raise RuntimeError("知识图谱预览生成失败：未读取到任何图谱节点")
+            write_graph_preview(self.state_dir, snapshot)
+            return snapshot
 
     async def get_graph_snapshot(self, max_nodes: int = 48) -> dict:
         """Return a bounded, JSON-safe snapshot for the project graph viewer.
@@ -878,95 +784,94 @@ class CogneeStore:
         dataset = datasets[0]
         async with set_database_global_context_variables(dataset.id, dataset.owner_id):
             graph_engine = await get_graph_engine()
-            with _track_graph_engine_reader(graph_engine):
-                query = getattr(graph_engine, "query", None)
-                if not callable(query):
-                    # Compatibility fallback for graph adapters that only expose
-                    # Cognee's all-graph interface.
-                    nodes, edges = await graph_engine.get_graph_data()
-                    return nodes[:max_nodes], edges[:max_edges]
+            query = getattr(graph_engine, "query", None)
+            if not callable(query):
+                # Compatibility fallback for graph adapters that only expose
+                # Cognee's all-graph interface.
+                nodes, edges = await graph_engine.get_graph_data()
+                return nodes[:max_nodes], edges[:max_edges]
 
-                max_nodes = max(1, min(int(max_nodes), 80))
-                max_edges = max(1, min(int(max_edges), 160))
-                edge_rows = await query(
-                    f"""
+            max_nodes = max(1, min(int(max_nodes), 80))
+            max_edges = max(1, min(int(max_edges), 160))
+            edge_rows = await query(
+                f"""
                     MATCH (n:Node)-[r]->(m:Node)
                     WHERE n.type <> 'DocumentChunk' AND m.type <> 'DocumentChunk'
                     RETURN n.id, n.name, n.type, n.properties,
                            m.id, m.name, m.type, m.properties,
                            r.relationship_name, r.properties
                     LIMIT {max_edges}
-                    """
-                )
-                node_rows = await query(
-                    f"""
+                """
+            )
+            node_rows = await query(
+                f"""
                     MATCH (n:Node)
                     WHERE n.type <> 'DocumentChunk'
                     RETURN n.id, n.name, n.type, n.properties
                     LIMIT {max_nodes}
-                    """
+                """
+            )
+
+            def parse_properties(raw: Any) -> dict:
+                if not raw:
+                    return {}
+                if isinstance(raw, dict):
+                    return dict(raw)
+                if isinstance(raw, str):
+                    try:
+                        parsed = json.loads(raw)
+                        return parsed if isinstance(parsed, dict) else {}
+                    except (TypeError, json.JSONDecodeError):
+                        return {}
+                return {}
+
+            nodes_by_id: dict[str, dict] = {}
+
+            def add_node(row: Any, offset: int = 0) -> None:
+                if (
+                    not row
+                    or len(row) < offset + 4
+                    or not row[offset]
+                    or len(nodes_by_id) >= max_nodes
+                ):
+                    return
+                node_id = str(row[offset])
+                nodes_by_id.setdefault(
+                    node_id,
+                    {
+                        "name": row[offset + 1],
+                        "type": row[offset + 2],
+                        **parse_properties(row[offset + 3]),
+                    },
                 )
 
-                def parse_properties(raw: Any) -> dict:
-                    if not raw:
-                        return {}
-                    if isinstance(raw, dict):
-                        return dict(raw)
-                    if isinstance(raw, str):
-                        try:
-                            parsed = json.loads(raw)
-                            return parsed if isinstance(parsed, dict) else {}
-                        except (TypeError, json.JSONDecodeError):
-                            return {}
-                    return {}
+            # Take connected endpoints first so the preview remains a useful
+            # subgraph instead of a collection of unrelated nodes.
+            for row in edge_rows:
+                add_node(row)
+                add_node(row, 4)
+            for row in node_rows:
+                add_node(row)
 
-                nodes_by_id: dict[str, dict] = {}
-
-                def add_node(row: Any, offset: int = 0) -> None:
-                    if (
-                        not row
-                        or len(row) < offset + 4
-                        or not row[offset]
-                        or len(nodes_by_id) >= max_nodes
-                    ):
-                        return
-                    node_id = str(row[offset])
-                    nodes_by_id.setdefault(
-                        node_id,
-                        {
-                            "name": row[offset + 1],
-                            "type": row[offset + 2],
-                            **parse_properties(row[offset + 3]),
-                        },
+            selected_ids = set(nodes_by_id)
+            edges = []
+            for row in edge_rows:
+                if not row or len(row) < 10:
+                    continue
+                source_id = str(row[0])
+                target_id = str(row[4])
+                if source_id not in selected_ids or target_id not in selected_ids:
+                    continue
+                edges.append(
+                    (
+                        source_id,
+                        target_id,
+                        str(row[8] or "related_to"),
+                        parse_properties(row[9]),
                     )
-
-                # Take connected endpoints first so the preview remains a useful
-                # subgraph instead of a collection of unrelated nodes.
-                for row in edge_rows:
-                    add_node(row)
-                    add_node(row, 4)
-                for row in node_rows:
-                    add_node(row)
-
-                selected_ids = set(nodes_by_id)
-                edges = []
-                for row in edge_rows:
-                    if not row or len(row) < 10:
-                        continue
-                    source_id = str(row[0])
-                    target_id = str(row[4])
-                    if source_id not in selected_ids or target_id not in selected_ids:
-                        continue
-                    edges.append(
-                        (
-                            source_id,
-                            target_id,
-                            str(row[8] or "related_to"),
-                            parse_properties(row[9]),
-                        )
-                    )
-                nodes = list(nodes_by_id.items())
-                return nodes, edges
+                )
+            nodes = list(nodes_by_id.items())
+            return nodes, edges
 
     async def _dataset_graph_has_nodes(self) -> bool:
         """Check graph existence without loading every node and edge."""
@@ -987,8 +892,7 @@ class CogneeStore:
         dataset = datasets[0]
         async with set_database_global_context_variables(dataset.id, dataset.owner_id):
             graph_engine = await get_graph_engine()
-            with _track_graph_engine_reader(graph_engine):
-                return not await graph_engine.is_empty()
+            return not await graph_engine.is_empty()
 
     async def build_characters_from_graph(
         self,
@@ -1014,8 +918,7 @@ class CogneeStore:
         novel_text = require_imported_novel(self.project_dir)
         report(0.1, "从图谱提取人物节点...")
         log("从图谱提取角色候选...")
-        graph_lock = await acquire_graph_preview_lock_async(self.state_dir)
-        try:
+        async with ladybug_graph_access(self.state_dir, read_only=True):
             self._set_cognee_context()
             with self.embedding_model_scope():
                 characters = await extract_characters_from_graph(
@@ -1025,8 +928,6 @@ class CogneeStore:
                     novel_text=novel_text,
                     on_progress=lambda p, t: report(0.1 + p * 0.6, t),
                 )
-        finally:
-            release_graph_preview_lock(graph_lock)
 
         if not characters:
             log("⚠️ 图谱提取无结果，保留现有角色数据")
@@ -1669,32 +1570,33 @@ class CogneeStore:
 
     async def search(self, query: str, mode: str = "graph", top_k: int = 10) -> str:
         """语义检索。"""
-        self._set_cognee_context()
+        async with ladybug_graph_access(self.state_dir, read_only=True):
+            self._set_cognee_context()
 
-        with preserve_st_env():
-            from cognee.modules.data.exceptions.exceptions import DatasetNotFoundError
+            with preserve_st_env():
+                from cognee.modules.data.exceptions.exceptions import DatasetNotFoundError
 
-        mode_map = {
-            "graph": SearchType.GRAPH_COMPLETION,
-            "chunks": SearchType.CHUNKS,
-            "triplet": SearchType.TRIPLET_COMPLETION,
-            "context_ext": SearchType.GRAPH_COMPLETION_CONTEXT_EXTENSION,
-            "summaries": SearchType.SUMMARIES,
-            "graph_cot": SearchType.GRAPH_COMPLETION_COT,
-        }
-        search_type = mode_map.get(mode, SearchType.GRAPH_COMPLETION)
+            mode_map = {
+                "graph": SearchType.GRAPH_COMPLETION,
+                "chunks": SearchType.CHUNKS,
+                "triplet": SearchType.TRIPLET_COMPLETION,
+                "context_ext": SearchType.GRAPH_COMPLETION_CONTEXT_EXTENSION,
+                "summaries": SearchType.SUMMARIES,
+                "graph_cot": SearchType.GRAPH_COMPLETION_COT,
+            }
+            search_type = mode_map.get(mode, SearchType.GRAPH_COMPLETION)
 
-        try:
-            with self.embedding_model_scope():
-                result = await cognee.search(
-                    query_type=search_type,
-                    query_text=query,
-                    top_k=top_k,
-                )
-        except DatasetNotFoundError:
-            return "暂无相关数据，请先运行 cognee-ingest 导入小说"
-        except Exception as e:
-            return f"搜索出错: {str(e)}"
+            try:
+                with self.embedding_model_scope():
+                    result = await cognee.search(
+                        query_type=search_type,
+                        query_text=query,
+                        top_k=top_k,
+                    )
+            except DatasetNotFoundError:
+                return "暂无相关数据，请先运行 cognee-ingest 导入小说"
+            except Exception as e:
+                return f"搜索出错: {str(e)}"
 
         if isinstance(result, list):
             parts = []
@@ -2107,8 +2009,7 @@ class CogneeStore:
         require_imported_novel(self.project_dir)
         report(0.1, "从图谱提取场景节点...")
         log("从图谱提取基础场景候选...")
-        graph_lock = await acquire_graph_preview_lock_async(self.state_dir)
-        try:
+        async with ladybug_graph_access(self.state_dir, read_only=True):
             self._set_cognee_context()
             with self.embedding_model_scope():
                 scenes = await extract_scenes_from_graph(
@@ -2118,8 +2019,6 @@ class CogneeStore:
                     on_progress=lambda p, t: report(0.1 + p * 0.6, t),
                     on_log=on_log,
                 )
-        finally:
-            release_graph_preview_lock(graph_lock)
 
         if not scenes:
             log("⚠️ 图谱提取无结果，保留现有场景数据")
@@ -2202,8 +2101,7 @@ class CogneeStore:
         novel_text = self.load_novel_content()
         if novel_text:
             log(f"已加载原文全文用于辅助道具提取: {len(novel_text)} 字符")
-        graph_lock = await acquire_graph_preview_lock_async(self.state_dir)
-        try:
+        async with ladybug_graph_access(self.state_dir, read_only=True):
             with self.embedding_model_scope():
                 props = await extract_props_from_graph(
                     dataset_name=self.dataset_name,
@@ -2212,8 +2110,6 @@ class CogneeStore:
                     novel_text=novel_text,
                     on_progress=lambda p, t: report(0.1 + p * 0.6, t),
                 )
-        finally:
-            release_graph_preview_lock(graph_lock)
 
         if not props:
             log("⚠️ 图谱提取无结果，保留现有道具数据")

@@ -1317,6 +1317,7 @@ src/novelvideo/cognee/chapter_detector.py,Elastic-2.0,2026 SuperTale contributor
 src/novelvideo/cognee/concurrency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/cognee/config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/cognee/event_extractor.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/cognee/ladybug_access.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/cognee/pipeline.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/cognee/scene_name_migration.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/cognee/screenplay_normalizer.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

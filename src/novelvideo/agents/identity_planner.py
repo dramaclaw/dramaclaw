@@ -21,6 +21,7 @@ from novelvideo.config import (
 )
 from novelvideo.models import CharacterIdentity
 from novelvideo.shared.env_guard import preserve_st_env
+from novelvideo.cognee.ladybug_access import ladybug_graph_access
 from novelvideo.sqlite_store import load_episode_planning_content
 
 if TYPE_CHECKING:
@@ -559,14 +560,18 @@ class IdentityPlanner:
 
             # 获取与本集相关的图谱上下文（人物关系、别名、背景信息）
             try:
-                with self.cognee_store.embedding_model_scope():
-                    graph_results = await cognee.search(
-                        query_text=f"第{episode.number}集出场的人物角色，以及他们的别名、称谓和关系",
-                        query_type=SearchType.GRAPH_COMPLETION,
-                        datasets=[self.cognee_store.dataset_name],
-                        only_context=True,
-                        top_k=20,
-                    )
+                async with ladybug_graph_access(
+                    self.cognee_store.state_dir,
+                    read_only=True,
+                ):
+                    with self.cognee_store.embedding_model_scope():
+                        graph_results = await cognee.search(
+                            query_text=f"第{episode.number}集出场的人物角色，以及他们的别名、称谓和关系",
+                            query_type=SearchType.GRAPH_COMPLETION,
+                            datasets=[self.cognee_store.dataset_name],
+                            only_context=True,
+                            top_k=20,
+                        )
                 if graph_results:
                     parts = []
                     for item in graph_results:

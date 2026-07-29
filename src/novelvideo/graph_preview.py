@@ -91,7 +91,11 @@ def delete_graph_preview(state_dir: str | Path) -> None:
     graph_preview_path(state_dir).unlink(missing_ok=True)
 
 
-def acquire_graph_preview_lock(state_dir: str | Path) -> IO[str]:
+def acquire_graph_preview_lock(
+    state_dir: str | Path,
+    *,
+    shared: bool = False,
+) -> IO[str]:
     """Acquire the cross-process project graph lock.
 
     The filename is retained for compatibility. Cooperating Ladybug readers
@@ -102,11 +106,16 @@ def acquire_graph_preview_lock(state_dir: str | Path) -> IO[str]:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = path.open("a+", encoding="utf-8")
     if fcntl is not None:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        operation = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+        fcntl.flock(handle.fileno(), operation)
     return handle
 
 
-async def acquire_graph_preview_lock_async(state_dir: str | Path) -> IO[str]:
+async def acquire_graph_preview_lock_async(
+    state_dir: str | Path,
+    *,
+    shared: bool = False,
+) -> IO[str]:
     """Acquire the project graph lock without blocking the event loop."""
 
     path = graph_preview_lock_path(state_dir)
@@ -118,7 +127,8 @@ async def acquire_graph_preview_lock_async(state_dir: str | Path) -> IO[str]:
     try:
         while True:
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                operation = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+                fcntl.flock(handle.fileno(), operation | fcntl.LOCK_NB)
                 return handle
             except OSError as exc:
                 if exc.errno not in (errno.EACCES, errno.EAGAIN):
