@@ -209,6 +209,10 @@ def _video_backend_cost_model(backend: str) -> str:
         from novelvideo.generators.video_generator import GrokVideoGenerator
 
         return GrokVideoGenerator.MODEL
+    if backend_enum == VideoBackend.HIGGSFIELD:
+        from novelvideo.generators.video_generator import HiggsfieldVideoGenerator
+
+        return HiggsfieldVideoGenerator.MODEL
 
     raise HTTPException(status_code=400, detail="video backend has no credit model")
 

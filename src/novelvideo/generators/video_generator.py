@@ -1250,6 +1250,22 @@ class HiggsfieldVideoGenerator(VideoGeneratorBase):
     MODEL = "dop-turbo"
     DEFAULT_ENDPOINT = "https://platform.higgsfield.ai"
 
+    # Capability declaration for this provider. Higgsfield DoP is a
+    # first-frame image-to-video model: no keyframe (first+last) mode, no
+    # native audio, and it produces fixed-length clips. generate() validates
+    # its aspect_ratio/duration arguments against these before submitting so
+    # we never silently fall back to provider defaults (see review issue #1).
+    SUPPORTED_ASPECT_RATIOS = ("9:16", "16:9", "1:1")
+    SUPPORTED_DURATIONS = (3, 5)  # seconds; Higgsfield DoP clip lengths
+    CAPABILITIES = {
+        "provider": "higgsfield",
+        "flow": "image2video/dop",
+        "supported_aspect_ratios": SUPPORTED_ASPECT_RATIOS,
+        "supported_durations_seconds": SUPPORTED_DURATIONS,
+        "keyframe_mode": False,
+        "native_audio": False,
+    }
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -1313,6 +1329,98 @@ class HiggsfieldVideoGenerator(VideoGeneratorBase):
                 return raw["url"]
         return None
 
+    @staticmethod
+    def _extract_duration(data: dict) -> Optional[float]:
+        """Read the *actual* output duration reported by the provider.
+
+        Higgsfield may surface the clip length as ``video.duration`` or, for
+        the job-style payloads, ``jobs[].results.raw.duration``; some responses
+        put it at the top level. Returns ``None`` when the provider does not
+        report a duration so callers can fall back to probing the file.
+        """
+
+        def _coerce(value) -> Optional[float]:
+            if value is None:
+                return None
+            try:
+                out = float(value)
+            except (TypeError, ValueError):
+                return None
+            return out if out > 0 else None
+
+        video = data.get("video")
+        if isinstance(video, dict):
+            found = _coerce(video.get("duration"))
+            if found is not None:
+                return found
+        for job in data.get("jobs") or []:
+            results = (job or {}).get("results") or {}
+            raw = results.get("raw") if isinstance(results, dict) else None
+            if isinstance(raw, dict):
+                found = _coerce(raw.get("duration"))
+                if found is not None:
+                    return found
+        return _coerce(data.get("duration"))
+
+    @staticmethod
+    def _probe_file_duration(path: str) -> Optional[float]:
+        """Best-effort probe of a downloaded clip's real duration via ffprobe.
+
+        Used only when the provider response omits a duration. Never raises;
+        returns ``None`` if ffprobe is unavailable or the probe fails.
+        """
+        try:
+            proc = _run_video_subprocess(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    path,
+                ],
+                timeout=30,
+            )
+            if proc.returncode == 0:
+                text = (proc.stdout or "").strip()
+                if text:
+                    value = float(text)
+                    return value if value > 0 else None
+        except Exception:
+            pass
+        return None
+
+    def _map_and_validate_params(
+        self, aspect_ratio: str, duration: float
+    ) -> tuple[str, int]:
+        """Map generate() args onto the provider's fields and validate them.
+
+        Raises ``ValueError`` (a clear, provider-specific message) rather than
+        silently letting Higgsfield apply its own defaults for an unsupported
+        aspect ratio or duration — the core of blocking review issue #1.
+        """
+        ratio = str(aspect_ratio or "").strip()
+        if ratio not in self.SUPPORTED_ASPECT_RATIOS:
+            raise ValueError(
+                f"Unsupported aspect_ratio {aspect_ratio!r} for Higgsfield "
+                f"{self.model}; supported: {', '.join(self.SUPPORTED_ASPECT_RATIOS)}"
+            )
+        try:
+            dur = int(round(float(duration)))
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Invalid duration {duration!r} for Higgsfield {self.model}"
+            ) from None
+        if dur not in self.SUPPORTED_DURATIONS:
+            supported = ", ".join(str(d) for d in self.SUPPORTED_DURATIONS)
+            raise ValueError(
+                f"Unsupported duration {duration!r} for Higgsfield {self.model}; "
+                f"supported: {supported} seconds"
+            )
+        return ratio, dur
+
     async def generate(
         self,
         image_path: str,
@@ -1341,6 +1449,19 @@ class HiggsfieldVideoGenerator(VideoGeneratorBase):
                 error="Higgsfield DoP does not support keyframe/first-last-frame mode",
             )
 
+        # Blocking review fix #1: validate + map the requested framing/length
+        # up front so an unsupported value is a clear error, never a silent
+        # provider default that we would then mis-record as the real duration.
+        try:
+            mapped_ratio, mapped_duration = self._map_and_validate_params(
+                aspect_ratio, duration
+            )
+        except ValueError as exc:
+            return VideoGenResult(
+                status=VideoGenStatus.FAILED,
+                error=str(exc),
+            )
+
         if image_path and image_path.startswith(("http://", "https://", "data:")):
             image_url = image_path
         elif image_path and os.path.exists(image_path):
@@ -1356,13 +1477,24 @@ class HiggsfieldVideoGenerator(VideoGeneratorBase):
             "Authorization": f"Key {self.api_key}",
             "Content-Type": "application/json",
         }
+        # NOTE: aspect_ratio + duration are forwarded here (field names follow
+        # the Higgsfield DoP image2video params) so the clip matches the
+        # request. TODO(v2-migration): the official SDK marks this V1
+        # ``/v1/image2video/dop`` flow as deprecated for new integrations.
+        # Migrating to the V2 job model is pending live-credential/API-doc
+        # verification of the exact endpoint + payload; do not guess it here.
         request_body = {
             "model": self.model,
             "prompt": prompt,
             "input_images": [{"type": "image_url", "image_url": image_url}],
+            "aspect_ratio": mapped_ratio,
+            "duration": mapped_duration,
         }
 
-        log(f"Submitting Higgsfield video task ({self.model})...")
+        log(
+            f"Submitting Higgsfield video task "
+            f"({self.model}, {mapped_ratio}, {mapped_duration}s)..."
+        )
         progress(0.1)
 
         try:
@@ -1390,7 +1522,13 @@ class HiggsfieldVideoGenerator(VideoGeneratorBase):
             f"{self.endpoint}/requests/{request_id}/status" if request_id else None
         )
 
-        def _finish(payload: dict) -> Optional[VideoGenResult]:
+        async def _complete(payload: dict) -> VideoGenResult:
+            """Download the finished clip and record its *actual* duration.
+
+            Review fix #2: the recorded duration is probed from the provider
+            response (or the downloaded file) instead of assuming the requested
+            duration is what was produced.
+            """
             video_url = self._extract_video_url(payload)
             if not video_url:
                 return VideoGenResult(
@@ -1400,27 +1538,37 @@ class HiggsfieldVideoGenerator(VideoGeneratorBase):
                 )
             log("Video ready, downloading...")
             progress(0.9)
-            return VideoGenResult(
-                status=VideoGenStatus.DONE,
-                video_url=video_url,
-                video_path=output_path,
-                task_id=request_id,
-                duration_seconds=float(duration),
-            )
-
-        # Some requests complete synchronously and already carry the video.
-        if (data.get("status") or "").lower() == "completed":
-            done = _finish(data)
-            if done and done.status == VideoGenStatus.DONE:
-                if await self._download_video(done.video_url, output_path):
-                    progress(1.0)
-                    return done
+            if not await self._download_video(video_url, output_path):
                 return VideoGenResult(
                     status=VideoGenStatus.FAILED,
                     error="Download failed",
                     task_id=request_id,
                 )
-            return done
+
+            actual_duration = self._extract_duration(payload)
+            duration_source = "provider response"
+            if actual_duration is None:
+                actual_duration = self._probe_file_duration(output_path)
+                duration_source = "ffprobe"
+            if actual_duration is None:
+                actual_duration = float(mapped_duration)
+                duration_source = "requested (provider did not report duration)"
+            log(
+                f"Output duration: {actual_duration:.2f}s (from {duration_source})"
+            )
+
+            progress(1.0)
+            return VideoGenResult(
+                status=VideoGenStatus.DONE,
+                video_url=video_url,
+                video_path=output_path,
+                task_id=request_id,
+                duration_seconds=float(actual_duration),
+            )
+
+        # Some requests complete synchronously and already carry the video.
+        if (data.get("status") or "").lower() == "completed":
+            return await _complete(data)
 
         if not status_url:
             return VideoGenResult(
@@ -1450,16 +1598,7 @@ class HiggsfieldVideoGenerator(VideoGeneratorBase):
             progress(0.2 + (poll_count / max_polls) * 0.7)
 
             if status_str == "completed":
-                done = _finish(data)
-                if done and done.status == VideoGenStatus.DONE:
-                    if not await self._download_video(done.video_url, output_path):
-                        return VideoGenResult(
-                            status=VideoGenStatus.FAILED,
-                            error="Download failed",
-                            task_id=request_id,
-                        )
-                    progress(1.0)
-                return done
+                return await _complete(data)
 
             if status_str in {"failed", "nsfw"}:
                 return VideoGenResult(
