@@ -137,6 +137,8 @@ async def _run_build_episodes(envelope: dict[str, Any], ctx: ProjectContext) -> 
                     on_progress=update,
                     on_log=lambda message: update(0.0, message),
                 )
+            else:
+                await store.replace_episodes(episodes)
         else:
             episodes = await store.build_episodes(
                 target_episodes=target,

@@ -223,9 +223,6 @@ class EpisodePlannerAgent:
         """
         from novelvideo.models import NovelEpisode
 
-        with preserve_st_env():
-            from cognee.tasks.storage import add_data_points
-
         def report(progress: float, task: str):
             if on_progress:
                 on_progress(progress, task)
@@ -308,10 +305,6 @@ class EpisodePlannerAgent:
 
             # 验证和修正编号
             episodes = self._validate_and_fix_episodes(episodes, target_episodes, log)
-
-            report(0.9, "存入图谱...")
-            log("存入 Cognee 图谱...")
-            await add_data_points(episodes)
 
             log_agent_end("剧集规划师", success=True, result=f"规划 {len(episodes)} 集")
             report(1.0, "完成")

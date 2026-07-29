@@ -1507,6 +1507,12 @@ class CogneeStore:
         await self.sqlite_store.add_episodes(episodes)
         self._sync_sqlite_caches()
 
+    async def replace_episodes(self, episodes: List[NovelEpisode]) -> None:
+        """Replace planned episodes in SQLite without writing them to Cognee."""
+        await self._delete_old_episodes()
+        self._episodes.clear()
+        await self.add_episodes(episodes)
+
     async def ingest_novel(
         self,
         novel_path: str,

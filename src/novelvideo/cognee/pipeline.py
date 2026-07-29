@@ -1,9 +1,9 @@
 """NovelVideo 自定义 Cognee Pipeline。
 
-实现真正统一的存储架构：
-- 自定义实体类型（Character, Episode 等）直接存入图谱
-- 不依赖默认 cognify() 的固定实体类型
-- 所有属性（包括 face_prompt, asset_id）都在图谱中
+实现小说知识图谱的检索与结构化提取：
+- 原始小说由 Cognee 构建知识图谱
+- 角色、剧集、场景和道具等产品数据由 SQLite 持久化
+- 规划和提取流程只读取 Cognee，不把派生产品数据回写图谱
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from . import config as _cognee_config  # noqa: F401
 from .config import apply_cognee_project_storage_context
 
 # cognee 重量级模块延迟导入（避免 reload 时拉起整个初始化链）
-# LLMGateway, Task, run_pipeline, add_data_points, setup
+# LLMGateway, Task, run_pipeline, setup
 # 在各函数内部按需 import
 
 # 业务模型已迁移到 novelvideo.models
@@ -282,7 +282,6 @@ async def run_episode_planning_pipeline(
     """运行剧集规划 Pipeline。"""
     with preserve_st_env():
         from cognee.modules.pipelines import Task, run_pipeline
-        from cognee.tasks.storage import add_data_points
         from cognee.modules.engine.operations.setup import setup
 
     await setup()
@@ -296,17 +295,16 @@ async def run_episode_planning_pipeline(
     # 用于捕获中间结果的包装函数
     captured_episodes: List[NovelEpisode] = []
 
-    async def capture_and_store(episodes: List[NovelEpisode]) -> List[NovelEpisode]:
-        """捕获剧集列表并存入图谱。"""
+    async def capture_episodes(episodes: List[NovelEpisode]) -> List[NovelEpisode]:
+        """Capture planner output; the caller persists episodes to SQLite."""
         nonlocal captured_episodes
         captured_episodes = episodes
-        await add_data_points(episodes)
         return episodes
 
     tasks = [
         Task(extract_with_count),
         Task(attach_metadata),
-        Task(capture_and_store),
+        Task(capture_episodes),
     ]
 
     async for result in run_pipeline(tasks=tasks, data=text, datasets=[dataset_name]):
@@ -363,7 +361,7 @@ async def extract_characters_from_graph(
     1. 通过 cognee.search(only_context=True) 获取图谱上下文（人物+关系的摘要）
     2. 用 LLM 结构化输出提取角色信息
     3. 后处理去重
-    4. 存入图谱
+    4. 返回调用方，由 SQLite 持久化
 
     Args:
         dataset_name: Cognee 数据集名称
