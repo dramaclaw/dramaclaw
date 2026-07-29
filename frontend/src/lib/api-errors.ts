@@ -276,9 +276,21 @@ function providerErrorPayload(raw: string): unknown | null {
   }
 
   const bodyMatch = /\bbody\s*=\s*/gi.exec(text);
-  if (!bodyMatch) return null;
-  const jsonStart = bodyMatch.index + bodyMatch[0].length;
-  return parseJsonValueAt(text, jsonStart);
+  if (bodyMatch) {
+    const jsonStart = bodyMatch.index + bodyMatch[0].length;
+    const payload = parseJsonValueAt(text, jsonStart);
+    if (payload) return payload;
+  }
+
+  // Video task errors use `HTTP <status> - {...}` rather than `body={...}`.
+  // Scan JSON object boundaries so the structured gateway error survives the
+  // Python task wrapper and remains available for localization.
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] !== "{") continue;
+    const payload = parseJsonValueAt(text, index);
+    if (payload) return payload;
+  }
+  return null;
 }
 
 function messageFromPayload(payload: unknown): string | null {
@@ -298,6 +310,54 @@ function messageFromPayload(payload: unknown): string | null {
 export function providerErrorMessage(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return messageFromPayload(providerErrorPayload(raw));
+}
+
+interface HumanReviewAssetFailure {
+  index: number;
+  reasonCode: string;
+}
+
+function humanReviewAssetFailure(payload: unknown): HumanReviewAssetFailure | null {
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  if (record.code === "human_review_asset_failed") {
+    const data =
+      record.data && typeof record.data === "object"
+        ? (record.data as Record<string, unknown>)
+        : {};
+    return {
+      index:
+        typeof data.asset_index === "number" && Number.isFinite(data.asset_index)
+          ? Math.max(1, Math.floor(data.asset_index))
+          : 1,
+      reasonCode:
+        typeof data.reason_code === "string" && data.reason_code.trim()
+          ? data.reason_code
+          : "unknown_review_error",
+    };
+  }
+  for (const nested of Object.values(record)) {
+    const found = humanReviewAssetFailure(nested);
+    if (found) return found;
+  }
+  return null;
+}
+
+function humanReviewAssetMessage(raw: string, t: TFunction): string | null {
+  const failure = humanReviewAssetFailure(providerErrorPayload(raw));
+  if (!failure) return null;
+  const keyByReason: Record<string, string> = {
+    asset_fetch_failed: "assetFetchFailed",
+    asset_expired: "assetExpired",
+    unsupported_image: "unsupportedImage",
+    content_rejected: "contentRejected",
+    review_timeout: "reviewTimeout",
+    unknown_review_error: "unknownReviewError",
+  };
+  const reasonKey = keyByReason[failure.reasonCode] ?? "unknownReviewError";
+  return t(`node.videoNode.humanReviewErrors.${reasonKey}`, {
+    index: failure.index,
+  });
 }
 
 export function classifyGatewayError(
@@ -331,6 +391,8 @@ export function humanizeTaskError(
       defaultValue: "计费规则未配置，请联系管理员设置积分规则",
     });
   }
+  const reviewMessage = raw ? humanReviewAssetMessage(raw, t) : null;
+  if (reviewMessage) return reviewMessage;
   switch (classifyGatewayError(raw)) {
     case "channel_policy":
       return t("common.generationChannelPolicyBlocked", { defaultValue: fallback });
@@ -368,6 +430,8 @@ export function backendErrorToastMessage(error: unknown, t: TFunction): string {
     });
   }
   if (error instanceof Error && error.message) {
+    const reviewMessage = humanReviewAssetMessage(error.message, t);
+    if (reviewMessage) return reviewMessage;
     return providerErrorMessage(error.message) ?? error.message;
   }
   return t("common.error");

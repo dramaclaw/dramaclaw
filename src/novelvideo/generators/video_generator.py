@@ -2895,7 +2895,14 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         duration_seconds=float(duration),
                     )
 
-                if status in {"failed", "error", "canceled", "cancelled", "expired"}:
+                if status in {
+                    "failure",
+                    "failed",
+                    "error",
+                    "canceled",
+                    "cancelled",
+                    "expired",
+                }:
                     error = (
                         task.get("error") or task.get("fail_reason") or "DramaClawAPI video task failed"
                     )

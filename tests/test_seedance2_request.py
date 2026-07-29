@@ -625,6 +625,56 @@ async def test_newapi_seedance2_generator_preserves_config_resolution_and_scene_
     assert "seconds" not in payload
 
 
+async def test_newapi_video_generator_handles_wrapped_failure_status(
+    tmp_path, monkeypatch
+):
+    from novelvideo.generators import video_generator as video_module
+    from novelvideo.generators.video_generator import NewApiVideoGenerator, VideoGenStatus
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="seedance-2.0-fast",
+    )
+    refunded: dict[str, object] = {}
+
+    async def fake_reserve(*_args, **_kwargs):
+        return "reservation-1"
+
+    async def fake_refund(*_args, **kwargs):
+        refunded.update(kwargs)
+
+    async def fake_post_json(_url: str, _payload: dict):
+        return {"task_id": "task-1"}
+
+    async def fake_get_json(_url: str):
+        return {
+            "code": "success",
+            "data": {
+                "task_id": "task-1",
+                "status": "FAILURE",
+                "fail_reason": "InputImageSensitiveContentDetected.PolicyViolation",
+            },
+        }
+
+    monkeypatch.setattr(video_module, "_reserve_video_model_call", fake_reserve)
+    monkeypatch.setattr(video_module, "_refund_video_model_call", fake_refund)
+    monkeypatch.setattr(generator, "_post_json", fake_post_json)
+    monkeypatch.setattr(generator, "_get_json", fake_get_json)
+
+    result = await generator.generate(
+        image_path=None,
+        prompt="测试视频",
+        output_path=str(tmp_path / "out.mp4"),
+        poll_interval=0,
+        max_polls=2,
+    )
+
+    assert result.status == VideoGenStatus.FAILED
+    assert result.error == "InputImageSensitiveContentDetected.PolicyViolation"
+    assert refunded["error"] == "InputImageSensitiveContentDetected.PolicyViolation"
+
+
 async def test_newapi_seedance1_generator_preserves_adaptive_ratio(tmp_path, monkeypatch):
     from novelvideo.generators import video_generator as video_module
     from novelvideo.generators.video_generator import NewApiVideoGenerator

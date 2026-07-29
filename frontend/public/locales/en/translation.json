@@ -3538,6 +3538,14 @@
       "submit": "Submit",
       "submitBusy": "Generating, please wait",
       "partialBatchFailed": "Generated {{ok}}/{{total}}, the rest failed",
+      "humanReviewErrors": {
+        "assetFetchFailed": "Reference image {{index}} could not be accessed. Upload it again and retry.",
+        "assetExpired": "The link for reference image {{index}} has expired. Upload it again.",
+        "unsupportedImage": "Reference image {{index}} has an unsupported format or size.",
+        "contentRejected": "Reference image {{index}} did not pass content review. Try another image.",
+        "reviewTimeout": "Reference image review timed out. Try again later.",
+        "unknownReviewError": "Reference image {{index}} failed review and the upstream service provided no reason. Try another image or contact an administrator."
+      },
       "aspect": {
         "title": "Aspect Ratio",
         "auto": "Auto"

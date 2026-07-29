@@ -3538,6 +3538,14 @@
       "submit": "提交",
       "submitBusy": "生成中，请稍候",
       "partialBatchFailed": "已生成 {{ok}}/{{total}} 条，其余生成失败",
+      "humanReviewErrors": {
+        "assetFetchFailed": "第 {{index}} 张参考图片无法读取，请重新上传后重试。",
+        "assetExpired": "第 {{index}} 张参考图片链接已过期，请重新上传。",
+        "unsupportedImage": "第 {{index}} 张参考图片的格式或尺寸不受支持。",
+        "contentRejected": "第 {{index}} 张参考图片未通过内容审核，请更换图片。",
+        "reviewTimeout": "参考图片审核超时，请稍后重试。",
+        "unknownReviewError": "第 {{index}} 张参考图片审核失败，上游未返回具体原因。请更换图片或联系管理员。"
+      },
       "aspect": {
         "title": "比例",
         "auto": "Auto"

@@ -11,10 +11,16 @@ import {
 
 // A stub TFunction: return the key, unless a `defaultValue` is supplied and
 // the key is unknown. Our two keys are "known", so return a marker per key.
-const t = ((key: string, opts?: { defaultValue?: string }) => {
+const t = ((key: string, opts?: { defaultValue?: string; index?: number }) => {
   if (key === "common.generationChannelPolicyBlocked") return "POLICY_MSG";
   if (key === "common.generationRateLimited") return "RATE_MSG";
   if (key === "common.error") return "GENERIC_ERROR";
+  if (key === "node.videoNode.humanReviewErrors.contentRejected") {
+    return `IMAGE_${opts?.index}_REJECTED`;
+  }
+  if (key === "node.videoNode.humanReviewErrors.unknownReviewError") {
+    return `IMAGE_${opts?.index}_UNKNOWN`;
+  }
   return opts?.defaultValue ?? key;
 }) as unknown as Parameters<typeof humanizeTaskError>[1];
 
@@ -100,6 +106,24 @@ describe("humanizeTaskError", () => {
     expect(backendErrorToastMessage(new Error(MODERATION_RAW), t)).toBe(
       "Content failed safety review. / 内容未通过安全审核。",
     );
+  });
+
+  it("localizes a structured human-review failure embedded in a video task error", () => {
+    const raw =
+      'freezone video generation failed: DramaClawAPI submit failed: HTTP 422 - ' +
+      '{"code":"human_review_asset_failed","message":"TokenHub asset review failed",' +
+      '"data":{"asset_index":2,"reason_code":"content_rejected"}}';
+
+    expect(humanizeTaskError(raw, t)).toBe("IMAGE_2_REJECTED");
+    expect(backendErrorToastMessage(new Error(raw), t)).toBe("IMAGE_2_REJECTED");
+  });
+
+  it("uses the localized unknown-reason fallback for incomplete upstream errors", () => {
+    const raw =
+      'HTTP 422 - {"code":"human_review_asset_failed",' +
+      '"data":{"asset_index":1,"reason_code":"unknown_review_error"}}';
+
+    expect(backendErrorToastMessage(new Error(raw), t)).toBe("IMAGE_1_UNKNOWN");
   });
 
   it("falls back to the generic error label when input is empty", () => {
