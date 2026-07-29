@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { act, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Connection, FinalConnectionState, OnConnectStartParams } from "@xyflow/react";
+import type { Connection, Edge, FinalConnectionState, OnConnectStartParams } from "@xyflow/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
@@ -397,5 +397,79 @@ describe("Canvas manual skill connections", () => {
         reference_target: { kind: "identity", identity_id: "GREEN" },
       },
     });
+  });
+});
+
+// 拖线时的落点校验(isValidConnection)和松手时的建边判定(onConnect)是两处独立代码,
+// 一旦口径不一致,用户看到的是「拖过去高亮成合法、一松手什么也没有」。这里不去断言
+// 某个具体规则,而是断言这两处**对同一对节点给出同一个答案** —— 规则以后怎么改都行,
+// 两边一起改就行。
+describe("Canvas 拖线落点校验与建边判定对齐", () => {
+  const NODES = [
+    { id: "text", type: CANVAS_NODE_TYPES.textAnnotation, data: { text: "旁白" } },
+    { id: "audio", type: CANVAS_NODE_TYPES.audio, data: { audioUrl: "/a.mp3" } },
+    { id: "image", type: CANVAS_NODE_TYPES.imageGen, data: { imageUrl: "/i.png" } },
+    { id: "video", type: CANVAS_NODE_TYPES.video, data: { videoUrl: "/v.mp4" } },
+  ];
+
+  // 至少要覆盖到一对「建边规则放行、但不开放手工创建」的边(视频→音频那条溯源边),
+  // 否则两处都用宽松规则也能让测试全绿。
+  const PAIRS: { source: string; target: string; expected: boolean }[] = [
+    { source: "text", target: "audio", expected: true },
+    { source: "audio", target: "video", expected: true },
+    { source: "audio", target: "image", expected: false },
+    { source: "video", target: "audio", expected: false },
+  ];
+
+  function resetCanvas() {
+    useCanvasStore.getState().setCanvasData(
+      NODES.map((node, index) => ({
+        ...node,
+        position: { x: index * 400, y: 0 },
+      })),
+      [],
+    );
+  }
+
+  beforeEach(() => {
+    capturedOnConnect = null;
+    capturedReactFlowProps = null;
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    resetCanvas();
+  });
+
+  it("两处判定对每一对节点给出同一个答案", async () => {
+    renderCanvas();
+    await waitFor(() => expect(capturedOnConnect).toBeTruthy());
+
+    for (const pair of PAIRS) {
+      act(() => {
+        resetCanvas();
+      });
+      const connection: Connection = {
+        source: pair.source,
+        sourceHandle: "source",
+        target: pair.target,
+        targetHandle: "target",
+      };
+
+      const isValidConnection = capturedReactFlowProps?.isValidConnection as
+        | ((connection: Connection | Edge) => boolean)
+        | undefined;
+      const highlightedAsValid = isValidConnection?.(connection);
+
+      act(() => {
+        capturedOnConnect?.(connection);
+      });
+      const edgeCreated = useCanvasStore
+        .getState()
+        .edges.some((edge) => edge.source === pair.source && edge.target === pair.target);
+
+      expect({ ...pair, highlightedAsValid, edgeCreated }).toEqual({
+        ...pair,
+        highlightedAsValid: pair.expected,
+        edgeCreated: pair.expected,
+      });
+    }
   });
 });
