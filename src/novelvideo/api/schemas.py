@@ -248,6 +248,11 @@ class VideoBackendOption(BaseModel):
 class VideoComposeRequest(BaseModel):
     add_subtitles: bool = True
     add_bgm: bool = False
+    # Provider-neutral BGM selection. When add_bgm is true, the caller must name
+    # an explicit source (e.g. "artlist"); "none" is an explicit opt-out. Left
+    # unset, add_bgm=true is rejected rather than defaulting to a vendor.
+    bgm_source: Optional[str] = None
+    bgm_query: Optional[str] = None
     resolution: str = "720x1280"
 
 

@@ -1847,6 +1847,10 @@ async def compose_video(
         "beats": beats,
         "add_subtitles": body.add_subtitles,
         "add_bgm": body.add_bgm,
+        # Provider-neutral: pass the explicit BGM source/query through so the
+        # runner never has to assume a vendor from add_bgm alone.
+        "bgm_source": body.bgm_source,
+        "bgm_query": body.bgm_query,
     }
 
     if ctx is not None:
