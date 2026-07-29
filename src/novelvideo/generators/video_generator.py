@@ -29,6 +29,7 @@ from novelvideo.video_request_usage import (
     update_video_request_status,
 )
 from novelvideo.shared.billing_errors import is_insufficient_credits_error
+from novelvideo.shared.provider_costs import is_definite_no_cost_http_rejection
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
     media_relay_ttl_seconds,
@@ -1743,9 +1744,16 @@ class HuimengVideoGenerator(VideoGeneratorBase):
 class NewApiVideoError(RuntimeError):
     """newAPI video request failure with gateway request id when available."""
 
-    def __init__(self, message: str, *, request_id: str = ""):
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_id: str = "",
+        status_code: int | None = None,
+    ):
         super().__init__(message)
         self.request_id = request_id
+        self.status_code = status_code
 
 
 class NewApiVideoGenerator(VideoGeneratorBase):
@@ -1868,6 +1876,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     raise NewApiVideoError(
                         f"DramaClawAPI submit failed: HTTP {resp.status} - {text}",
                         request_id=request_id,
+                        status_code=resp.status,
                     )
                 try:
                     data = json.loads(text)
@@ -1886,6 +1895,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     raise NewApiVideoError(
                         f"DramaClawAPI task query failed: HTTP {resp.status} - {text}",
                         request_id=request_id,
+                        status_code=resp.status,
                     )
                 try:
                     return json.loads(text)
@@ -2799,6 +2809,15 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     status=VideoGenStatus.FAILED,
                     error=f"No task_id in DramaClawAPI response: {submitted}",
                 )
+            try:
+                await get_usage_meter().mark_current_paid_execution_attempt(
+                    status="accepted",
+                    provider_request_id=provider_request_id,
+                    provider_task_id=task_id,
+                    metadata={"source": "newapi_video_generation"},
+                )
+            except Exception as exc:  # noqa: BLE001
+                log(f"计费调用证据暂存失败，将由对账核实: {exc}")
             record_accepted(task_id)
             log(f"任务已提交: {task_id}")
             progress(0.2)
@@ -2917,6 +2936,19 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             if task_id:
                 log(f"DramaClawAPI task_id: {task_id}")
                 update_request_status(task_id, "failed", str(exc))
+            elif is_definite_no_cost_http_rejection(exc.status_code):
+                try:
+                    await get_usage_meter().mark_current_paid_execution_attempt(
+                        status="rejected_no_cost",
+                        provider_request_id=exc.request_id or provider_request_id,
+                        metadata={
+                            "source": "newapi_video_generation",
+                            "http_status": exc.status_code,
+                            "error": "provider_request_rejected",
+                        },
+                    )
+                except Exception as evidence_exc:  # noqa: BLE001
+                    log(f"计费无成本拒绝证据暂存失败，将由对账核实: {evidence_exc}")
             await _refund_video_model_call(
                 reservation_id,
                 source="newapi_video_generation",

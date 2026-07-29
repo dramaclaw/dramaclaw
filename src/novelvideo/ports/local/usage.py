@@ -104,6 +104,29 @@ class NoOpUsageMeter:
             "status": "completed",
         }
 
+    async def settle_cancelled_feature_credit_reservation(
+        self,
+        reservation_id: str,
+        *,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        return {
+            "reservation_id": reservation_id,
+            "decision": "refund",
+            "status": "completed",
+        }
+
+    async def mark_current_paid_execution_attempt(
+        self,
+        *,
+        status: str,
+        provider_request_id: str = "",
+        provider_task_id: str = "",
+        provider_response_id: str = "",
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        return None
+
     async def bump_model_call(
         self,
         *,

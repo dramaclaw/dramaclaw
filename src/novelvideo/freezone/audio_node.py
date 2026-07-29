@@ -109,11 +109,14 @@ async def _confirm_music_model_call(
     model: str,
     reservation_id: str,
 ) -> None:
-    if not reservation_id:
-        return
     try:
         from novelvideo.ports import get_usage_meter
 
+        if not reservation_id:
+            await get_usage_meter().mark_current_paid_execution_attempt(
+                status="completed",
+            )
+            return
         await get_usage_meter().bump_model_call(
             user_id=None,
             model=model,

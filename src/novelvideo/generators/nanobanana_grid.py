@@ -38,6 +38,7 @@ from novelvideo.config import (
 )
 from novelvideo.ports import get_usage_meter
 from novelvideo.shared.billing_errors import is_insufficient_credits_error
+from novelvideo.shared.provider_costs import is_definite_no_cost_http_rejection
 from novelvideo.generators.huimengi import (
     HuimengTaskFailed,
     HuimengiTaskClient,
@@ -113,6 +114,21 @@ class scene_reference_feature_billing:
 
 def _scene_reference_feature_billing_active() -> bool:
     return _SCENE_REFERENCE_FEATURE_BILLING.get()
+
+
+async def _mark_paid_image_attempt_accepted(
+    *,
+    provider_request_id: str = "",
+    response_id: str = "",
+) -> None:
+    try:
+        await get_usage_meter().mark_current_paid_execution_attempt(
+            status="accepted",
+            provider_request_id=provider_request_id,
+            provider_response_id=response_id,
+        )
+    except Exception:
+        pass
 
 
 def _newapi_request_id_from_headers(headers: Any) -> str:
@@ -3207,8 +3223,6 @@ async def _call_openai_image_api(
         request_options["input_fidelity"] = input_fidelity
 
     async def _reserve(source: str) -> str:
-        if _scene_reference_feature_billing_active():
-            return ""
         return await get_usage_meter().reserve_current_model_call_credit(
             model=model,
             billing_kind="image",
@@ -3236,9 +3250,14 @@ async def _call_openai_image_api(
         provider_request_id: str = "",
         response_id: str = "",
     ) -> None:
-        if _scene_reference_feature_billing_active() or not reservation_id:
-            return
         try:
+            if not reservation_id:
+                await get_usage_meter().mark_current_paid_execution_attempt(
+                    status="completed",
+                    provider_request_id=provider_request_id,
+                    provider_response_id=response_id,
+                )
+                return
             await get_usage_meter().bump_model_call(
                 user_id=None,
                 model=model,
@@ -3321,6 +3340,12 @@ async def _call_openai_image_api(
             await _refund(reservation_id, "openai_image_api", "empty_response")
             return None, "", "OpenAI Image API returned no response"
 
+        provider_request_id = str(getattr(result, "_request_id", "") or "").strip()
+        response_id = str(getattr(result, "id", "") or "").strip()
+        await _mark_paid_image_attempt_accepted(
+            provider_request_id=provider_request_id,
+            response_id=response_id,
+        )
         if not result.data:
             await _refund(reservation_id, "openai_image_api", "missing_data")
             return None, "", "OpenAI Image API returned no data"
@@ -3332,10 +3357,9 @@ async def _call_openai_image_api(
             return None, "", f"OpenAI Image API returned no b64_json: {image_item}"
 
         image_bytes = base64.b64decode(image_base64)
-        response_id = str(getattr(result, "id", "") or "").strip()
         await _confirm(
             reservation_id,
-            provider_request_id=str(getattr(result, "_request_id", "") or "").strip(),
+            provider_request_id=provider_request_id,
             response_id=response_id,
         )
         return image_bytes, "", ""
@@ -3437,8 +3461,6 @@ async def _call_newapi_image_api(
     }
 
     async def _reserve(source: str) -> str:
-        if _scene_reference_feature_billing_active():
-            return ""
         return await get_usage_meter().reserve_current_model_call_credit(
             model=model,
             billing_kind="image",
@@ -3481,9 +3503,14 @@ async def _call_newapi_image_api(
         provider_request_id: str = "",
         response_id: str = "",
     ) -> None:
-        if _scene_reference_feature_billing_active() or not reservation_id:
-            return
         try:
+            if not reservation_id:
+                await get_usage_meter().mark_current_paid_execution_attempt(
+                    status="completed",
+                    provider_request_id=provider_request_id,
+                    provider_response_id=response_id,
+                )
+                return
             await get_usage_meter().bump_model_call(
                 user_id=None,
                 model=model,
@@ -3541,6 +3568,10 @@ async def _call_newapi_image_api(
             )
             response_id = str(result.get("id") or "").strip()
             _record_trace(provider_request_id=provider_request_id, response_id=response_id)
+            await _mark_paid_image_attempt_accepted(
+                provider_request_id=provider_request_id,
+                response_id=response_id,
+            )
 
             data = result.get("data") or []
             if not data:
@@ -3607,6 +3638,19 @@ async def _call_newapi_image_api(
         response_headers = getattr(exc.response, "headers", {}) or {}
         safe_headers = _newapi_safe_header_summary(response_headers)
         request_id = _newapi_request_id_from_headers(response_headers) or provider_request_id
+        if is_definite_no_cost_http_rejection(exc.response.status_code):
+            try:
+                await get_usage_meter().mark_current_paid_execution_attempt(
+                    status="rejected_no_cost",
+                    provider_request_id=request_id,
+                    metadata={
+                        "source": "newapi_image_api",
+                        "http_status": exc.response.status_code,
+                        "error": "provider_request_rejected",
+                    },
+                )
+            except Exception:
+                pass
         await _refund(
             reservation_id,
             "newapi_image_api",

@@ -177,10 +177,19 @@ def _confirm_scene_360_model_call(
     provider_task_id: str = "",
     provider_response_id: str = "",
 ) -> None:
-    if not reservation_id:
-        return
-
     async def _confirm() -> None:
+        if not reservation_id:
+            await get_usage_meter().mark_current_paid_execution_attempt(
+                status="completed",
+                provider_request_id=provider_request_id,
+                provider_task_id=provider_task_id,
+                provider_response_id=provider_response_id,
+                metadata={
+                    "source": "scene_360_subprocess",
+                    "provider": provider,
+                },
+            )
+            return
         await get_usage_meter().bump_model_call(
             user_id=None,
             model=model,
