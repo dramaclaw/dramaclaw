@@ -735,6 +735,47 @@ def test_newapi_video_task_response_accepts_flat_and_data_wrapped_contracts():
     }
 
 
+def test_newapi_video_result_url_prefers_normalized_task_result():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    task = NewApiVideoGenerator._task_response_data(
+        {
+            "code": "success",
+            "data": {
+                "task_id": "task-wrapped",
+                "status": "SUCCESS",
+                "result_url": " https://example.com/normalized.mp4 ",
+                "metadata": {"url": "https://example.com/legacy-metadata.mp4"},
+                "url": "https://example.com/legacy-top-level.mp4",
+            },
+        }
+    )
+
+    assert (
+        NewApiVideoGenerator._extract_video_url(task)
+        == "https://example.com/normalized.mp4"
+    )
+
+
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [
+        (
+            {"metadata": {"url": "https://example.com/metadata.mp4"}},
+            "https://example.com/metadata.mp4",
+        ),
+        (
+            {"video_url": "https://example.com/top-level.mp4"},
+            "https://example.com/top-level.mp4",
+        ),
+    ],
+)
+def test_newapi_video_result_url_keeps_legacy_fallbacks(task, expected):
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    assert NewApiVideoGenerator._extract_video_url(task) == expected
+
+
 async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_path, monkeypatch):
     from pathlib import Path
 
