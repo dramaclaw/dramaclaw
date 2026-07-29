@@ -6,6 +6,10 @@ from dataclasses import dataclass
 
 from novelvideo.official_defaults import DEFAULT_FREEZONE_VISION_MODEL
 
+FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS = 300.0
+FREEZONE_IMAGE_REVERSE_PROMPT_TIMEOUT_SECONDS = 180.0
+FREEZONE_MARK_TIMEOUT_SECONDS = 90.0
+
 
 @dataclass(frozen=True)
 class VisionInput:
@@ -43,8 +47,8 @@ async def call_freezone_vision_model(
     *,
     prompt: str,
     images: list[VisionInput],
+    timeout_seconds: float,
     model_override: str | None = None,
-    timeout_seconds: float = 120.0,
 ) -> tuple[str, str]:
     """Run a PydanticAI vision Agent through the effective NewAPI gateway."""
     if not images:

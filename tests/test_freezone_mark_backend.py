@@ -3,6 +3,7 @@ from PIL import Image
 
 from novelvideo.freezone import mark_node
 from novelvideo.freezone.mark_node import build_mark_detection_task, crop_mark_focus_image
+from novelvideo.freezone.vision_gateway import FREEZONE_MARK_TIMEOUT_SECONDS
 
 
 def test_build_mark_detection_task_includes_point() -> None:
@@ -61,6 +62,7 @@ async def test_mark_detection_uses_shared_freezone_vision_model(
         "model": "DC-freezone-vision-LLM",
     }
     assert len(captured["images"]) == 2
+    assert captured["timeout_seconds"] == FREEZONE_MARK_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio

@@ -120,6 +120,25 @@ def test_hermes_initialize_timeout_allows_cold_start():
     assert hermes_sdk.INITIALIZE_TIMEOUT == 30.0
 
 
+def test_hermes_stream_timeout_allows_long_active_turns():
+    assert hermes_sdk.STREAM_IDLE_TIMEOUT == 300.0
+    assert hermes_sdk.STREAM_TOTAL_TIMEOUT == 1800.0
+    assert (
+        hermes_sdk._refresh_stream_idle_deadline(
+            now=100.0,
+            total_deadline=1800.0,
+        )
+        == 400.0
+    )
+    assert (
+        hermes_sdk._refresh_stream_idle_deadline(
+            now=1700.0,
+            total_deadline=1800.0,
+        )
+        == 1800.0
+    )
+
+
 def test_hermes_detects_content_filter_finish_reason():
     payload = {
         "result": {

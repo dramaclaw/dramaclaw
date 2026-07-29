@@ -113,6 +113,9 @@ export async function generateAiStagingProp(
     {
       method: "POST",
       json: payload,
+      // Backend model timeout is 120s; leave transport margin so the UI can
+      // receive its structured timeout response instead of aborting first.
+      timeout: 130_000,
     },
   );
 }

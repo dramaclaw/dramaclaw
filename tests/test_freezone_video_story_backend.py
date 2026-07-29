@@ -8,6 +8,9 @@ from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.freezone import vision_gateway
 from novelvideo.freezone.jobs import build_video_story_analysis_prompt
 from novelvideo.freezone.jobs import run_freezone_analyze_shots
+from novelvideo.freezone.vision_gateway import (
+    FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+)
 
 
 def _patch_project_resolution(
@@ -73,6 +76,7 @@ async def test_video_story_analysis_uses_shared_freezone_vision_model(
     assert result["model"] == "DC-freezone-vision-LLM"
     assert result["video_story"] == {"shots": []}
     assert len(captured["images"]) == 1
+    assert captured["timeout_seconds"] == FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio

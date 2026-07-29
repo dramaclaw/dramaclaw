@@ -7045,3 +7045,7 @@ async def test_reverse_prompt_uses_shared_freezone_vision_model(
 
     assert prompt == "白色方形主体，极简构图"
     assert len(captured["images"]) == 1
+    assert (
+        captured["timeout_seconds"]
+        == image_node.FREEZONE_IMAGE_REVERSE_PROMPT_TIMEOUT_SECONDS
+    )

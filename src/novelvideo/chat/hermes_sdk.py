@@ -32,8 +32,11 @@ _log = logging.getLogger(__name__)
 INITIALIZE_TIMEOUT = 30.0
 # How long to wait for hermes to produce a session/new response.
 SESSION_NEW_TIMEOUT = 90.0  # cold start runs startup probes (vision/aux); allow them to finish
-# Per-line stdout read timeout while streaming a prompt.
-STREAM_READ_TIMEOUT = 120.0
+# A healthy long-running ACP turn may emit planning/tool updates for many
+# minutes. Treat silence as the failure signal instead of capping the whole
+# turn at the old two-minute read deadline.
+STREAM_IDLE_TIMEOUT = 300.0
+STREAM_TOTAL_TIMEOUT = 1800.0
 try:
     TURN_TOOL_CALL_LIMIT = max(1, int(os.environ.get("HERMES_TURN_TOOL_CALL_LIMIT", "20")))
 except ValueError:
@@ -75,6 +78,11 @@ _DRAMACLAW_WRITE_TOOLS = {
     "dramaclaw_generate_identity_image",
     "dramaclaw_start_single_video",
 }
+
+
+def _refresh_stream_idle_deadline(*, now: float, total_deadline: float) -> float:
+    """Refresh ACP inactivity without extending the hard turn deadline."""
+    return min(total_deadline, now + STREAM_IDLE_TIMEOUT)
 
 _TOOL_DETAIL_FIELDS = (
     ("command", "命令"),
@@ -443,13 +451,26 @@ class HermesSdkThread:
             # Along the way emit assistant_delta / tool_update for any
             # session/update notifications hermes sends.
             assert self._proc.stdout is not None
-            deadline = asyncio.get_event_loop().time() + STREAM_READ_TIMEOUT
+            loop = asyncio.get_running_loop()
+            total_deadline = loop.time() + STREAM_TOTAL_TIMEOUT
+            idle_deadline = _refresh_stream_idle_deadline(
+                now=loop.time(),
+                total_deadline=total_deadline,
+            )
             tool_call_count = 0
             first_write_tool: str | None = None
             active_tool_name: str | None = None
             first_write_failed = False
             while True:
-                remaining = max(0.1, deadline - asyncio.get_event_loop().time())
+                deadline = min(total_deadline, idle_deadline)
+                now = loop.time()
+                if now >= deadline:
+                    yield ChatBackendEvent(
+                        type="complete", thread_id=self.id, turn_id=turn_id,
+                        text="(hermes timed out)",
+                    )
+                    return
+                remaining = deadline - now
                 try:
                     line = await asyncio.wait_for(
                         self._proc.stdout.readline(), timeout=remaining
@@ -466,6 +487,10 @@ class HermesSdkThread:
                     msg = json.loads(line.decode("utf-8"))
                 except json.JSONDecodeError:
                     continue
+                idle_deadline = _refresh_stream_idle_deadline(
+                    now=loop.time(),
+                    total_deadline=total_deadline,
+                )
 
                 # Final response for our session/prompt call
                 if msg.get("id") == req_id:
