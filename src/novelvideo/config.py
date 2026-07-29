@@ -972,12 +972,12 @@ IMAGE_GENERATION_SELECTIONS: dict[str, dict[str, str]] = {
 VISIBLE_IMAGE_GENERATION_SELECTION_KEYS = (
     "newapi_gpt_image2",
     "newapi_nanobanana2",
-    "openai_gpt_image2",
 )
 
 LEGACY_IMAGE_GENERATION_SELECTION_ALIASES = {
     "huimeng_gpt_image2": "newapi_gpt_image2",
     "huimeng_image2_official": "newapi_gpt_image2",
+    "openai_gpt_image2": "newapi_gpt_image2",
     "openrouter_gpt_image2": "newapi_gpt_image2",
     "huimeng_nanobanana2": "newapi_nanobanana2",
     "openrouter_nanobanana2": "newapi_nanobanana2",
