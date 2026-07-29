@@ -1,6 +1,3 @@
-<!-- lang-switch -->
-**English** · [简体中文](../../zh/guides/mcp-claude-code.md)
-
 # Driving DramaClaw from an AI agent (MCP)
 
 DramaClaw ships an [MCP](https://modelcontextprotocol.io) server that exposes the
@@ -27,13 +24,24 @@ The server authenticates to the API with two environment variables:
 | Variable | Purpose |
 |---|---|
 | `DRAMACLAW_API_URL` | Base URL of your instance, e.g. `http://localhost:8780` |
-| `DRAMACLAW_CE_OWNER` | Set to `1` for **CE** (self-host): calls are made as the local owner, no token needed |
+| `DRAMACLAW_CE_OWNER` | Set to `1` for **CE** (self-host): calls are made as the local owner, no token needed. The target **must be loopback** (`localhost`, `127.0.0.1`, `::1`, `[::1]`) |
+| `DRAMACLAW_CE_OWNER_ALLOW_REMOTE` | Unsafe override: set to `1` to allow tokenless CE-owner mode against a **non-loopback** `DRAMACLAW_API_URL` (see the warning below) |
 | `DRAMACLAW_AGENT_TOKEN` | **EE / multi-user** only: a scoped agent-session bearer token |
 | `DRAMACLAW_PROJECT_ID` | Optional: default project so tools can omit `project_id` |
 
 **Community Edition** trusts local requests as the owner, so `DRAMACLAW_CE_OWNER=1`
 is all you need — no token to mint. On EE, set `DRAMACLAW_AGENT_TOKEN` instead;
-CE-owner mode is ignored when a token is present.
+CE-owner mode is ignored when a token is present (the token always takes
+precedence and its `Authorization` header is sent).
+
+**Loopback is enforced.** Because tokenless owner mode sends *unauthenticated,
+owner-level* requests, the bridge refuses any `DRAMACLAW_API_URL` whose host is
+not a loopback address (`localhost`, `127.0.0.1`, `::1`, `[::1]`) with a clear
+error. If you genuinely must reach a remote CE without a token — e.g. an SSH
+tunnel you fully control — opt in explicitly with
+`DRAMACLAW_CE_OWNER_ALLOW_REMOTE=1`. This is deliberately a separate variable so
+it can never be enabled by accident; prefer a scoped `DRAMACLAW_AGENT_TOKEN` for
+any non-local target.
 
 ## Connect Claude Code
 
@@ -86,5 +94,8 @@ are an escape hatch for any endpoint not covered by a curated verb.
 
 - CE-owner mode grants **full owner access** to the instance it points at — only
   use it against a **local** CE you control. Never point it at a shared instance.
+- The bridge enforces this: tokenless CE-owner mode only accepts a **loopback**
+  `DRAMACLAW_API_URL` and errors out on any remote host unless you set the
+  explicit `DRAMACLAW_CE_OWNER_ALLOW_REMOTE=1` override.
 - On EE, use a scoped `DRAMACLAW_AGENT_TOKEN`; the server enforces the token's
   project boundary and write scopes.

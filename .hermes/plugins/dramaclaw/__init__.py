@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from tools.registry import tool_error, tool_result
@@ -170,6 +170,48 @@ def _ce_owner_mode() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+# Hosts trusted as the local CE owner in tokenless owner mode. ``urlparse``
+# lowercases the hostname and strips the brackets from ``[::1]``, so the bare
+# forms below cover the bracketed IPv6 literal too.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _ce_owner_allow_remote() -> bool:
+    """Explicit, separately-named unsafe override for CE-owner mode.
+
+    Tokenless CE-owner mode drops the ``Authorization`` header entirely, so it
+    must only target a local CE the caller controls. Pointing it at a remote
+    host would send owner-level, unauthenticated requests across the network;
+    that is refused unless the operator opts in via
+    ``DRAMACLAW_CE_OWNER_ALLOW_REMOTE`` (deliberately a different variable from
+    ``DRAMACLAW_CE_OWNER`` so it cannot be enabled by accident).
+    """
+    raw = os.environ.get("DRAMACLAW_CE_OWNER_ALLOW_REMOTE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _enforce_ce_owner_target(url: str) -> None:
+    """Require a loopback ``DRAMACLAW_API_URL`` in tokenless CE-owner mode.
+
+    Called only when owner mode is active and no bearer token is present. The
+    host must be a loopback address (``localhost``/``127.0.0.1``/``::1``/
+    ``[::1]``) unless the operator has set the explicit unsafe override
+    ``DRAMACLAW_CE_OWNER_ALLOW_REMOTE=1``.
+    """
+    if _ce_owner_allow_remote():
+        return
+    host = (urlparse(url).hostname or "").strip().lower()
+    if host in _LOOPBACK_HOSTS:
+        return
+    raise ValueError(
+        "DRAMACLAW_CE_OWNER=1 refuses non-loopback DRAMACLAW_API_URL "
+        f"(host {host!r}): tokenless owner mode sends unauthenticated, "
+        "owner-level requests and must point at a local CE "
+        "(localhost, 127.0.0.1, ::1). Set DRAMACLAW_CE_OWNER_ALLOW_REMOTE=1 "
+        "to override (unsafe), or provide DRAMACLAW_AGENT_TOKEN."
+    )
+
+
 def _available() -> bool:
     if not os.environ.get("DRAMACLAW_API_URL"):
         return False
@@ -274,8 +316,12 @@ def _request(method: str, path: str, *, query: Any = None, body: Any = None) -> 
         "User-Agent": "dramaclaw-plugin/0.1.0",
     }
     token = os.environ.get("DRAMACLAW_AGENT_TOKEN", "").strip()
-    if not token and not _ce_owner_mode():
-        _token()  # raise the standard "DRAMACLAW_AGENT_TOKEN is not set" error
+    if not token:
+        if not _ce_owner_mode():
+            _token()  # raise the standard "DRAMACLAW_AGENT_TOKEN is not set" error
+        # Tokenless owner mode drops Authorization entirely, so it must only
+        # ever target a loopback CE unless explicitly overridden.
+        _enforce_ce_owner_target(_base_url())
     if token:
         headers["Authorization"] = f"Bearer {token}"
     if body is not None:

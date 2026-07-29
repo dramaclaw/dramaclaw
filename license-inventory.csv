@@ -34,6 +34,7 @@ path,license_expression,copyright,evidence
 .hermes/skills/dramaclaw/references/read-behavior.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/skills/dramaclaw/references/run-modes.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/skills/dramaclaw/references/update-behavior.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+.mcp.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .pre-commit-config.yaml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 AGENTS.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 CODE_OF_CONDUCT.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -77,6 +78,7 @@ docs/en/getting-started/configuring-models.md,Elastic-2.0,2026 SuperTale contrib
 docs/en/getting-started/installation.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/en/getting-started/quickstart.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/en/guides/ffmpeg.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/en/guides/mcp-claude-code.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/en/guides/self-hosting.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/en/guides/telemetry.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/en/guides/troubleshooting.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1761,6 +1763,7 @@ tests/test_indextts2_fal_smoke.py,Elastic-2.0,2026 SuperTale contributors,REUSE.
 tests/test_literal_script_writing_audio_type.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_m10_final_gate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_manual_shots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_mcp_ce_owner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_model_request_schema.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_relay.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_model_gateway_settings.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
