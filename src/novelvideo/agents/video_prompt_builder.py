@@ -137,9 +137,9 @@ class VideoPromptBuilder:
 
         compressed_size = len(image_bytes)
         ratio = (1 - compressed_size / original_size) * 100
-        print(f"[VideoPromptBuilder] 压缩图片: {os.path.basename(image_path)}: "
+        print(f"[VideoPromptBuilder] Compressing image: {os.path.basename(image_path)}: "
               f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-              f"({ratio:.0f}% 压缩)")
+              f"({ratio:.0f}% smaller)")
 
         return image_bytes
 
@@ -226,9 +226,9 @@ class VideoPromptBuilder:
                 image_bytes = self._compress_image(frame_image_path)
                 images = [BinaryContent(data=image_bytes, media_type='image/jpeg')]
                 label = "草图" if color_map_text else "首帧"
-                print(f"[VideoPromptBuilder] 使用多模态分析{label}: {os.path.basename(frame_image_path)}")
+                print(f"[VideoPromptBuilder] Running multimodal analysis on {label}: {os.path.basename(frame_image_path)}")
             except Exception as e:
-                print(f"[VideoPromptBuilder] 加载首帧图片失败，回退到纯文本模式: {e}")
+                print(f"[VideoPromptBuilder] Failed to load first-frame image, falling back to text-only mode: {e}")
                 images = None
 
         try:

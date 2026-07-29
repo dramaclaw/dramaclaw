@@ -266,7 +266,7 @@ async def get_script(project: str, episode_num: int, user: dict = Depends(get_ap
         if script_data:
             return {"ok": True, "data": script_data}
     except Exception as exc:
-        logger.exception("从 store 读取剧本失败: episode=%s", episode_num)
+        logger.exception("Failed to read script from store: episode=%s", episode_num)
         raise HTTPException(status_code=500, detail=f"Script store read failed: {exc}") from exc
 
     return {"ok": True, "data": None, "message": "Script not generated yet"}
@@ -391,7 +391,7 @@ async def update_beat(
             raise RuntimeError(f"Beat {beat_num} was not updated")
     except Exception as exc:
         logger.exception(
-            "Beat 保存失败: episode=%s beat=%s", episode_num, beat_num
+            "Failed to save beat: episode=%s beat=%s", episode_num, beat_num
         )
         raise HTTPException(status_code=500, detail=f"Beat store update failed: {exc}") from exc
 
@@ -473,7 +473,7 @@ async def generate_beat_video_prompt(
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
         logger.exception(
-            "Beat 视频提示词生成失败: episode=%s beat=%s", episode_num, beat_num
+            "Beat video prompt generation failed: episode=%s beat=%s", episode_num, beat_num
         )
         raise HTTPException(status_code=500, detail=f"Beat video prompt generation failed: {exc}") from exc
 
@@ -681,7 +681,7 @@ async def save_script(
     try:
         await store.persist_beats_from_script(episode_num, normalized_beats)
     except Exception as e:
-        logger.exception("完整脚本保存后回写图谱失败: episode=%s", episode_num)
+        logger.exception("Failed to sync graph after saving full script: episode=%s", episode_num)
         raise HTTPException(
             status_code=500,
             detail=f"Script store sync failed: {e}",

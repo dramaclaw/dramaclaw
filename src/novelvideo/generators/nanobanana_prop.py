@@ -187,7 +187,7 @@ async def generate_prop_reference(
         project_dir=project_dir,
     )
 
-    print(f"[PropRefGen] 生成道具三视图: {visual_prompt[:60]}...")
+    print(f"[PropRefGen] Generating prop three-view sheet: {visual_prompt[:60]}...")
     print(f"[PropRefGen] Provider: {provider}, Model: {model}")
 
     try:
@@ -225,16 +225,16 @@ async def generate_prop_reference(
 
         elapsed = time.time() - start_time
         if result_path:
-            print(f"[PropRefGen] 三视图已生成: {result_path}，耗时 {elapsed:.1f}s")
+            print(f"[PropRefGen] Three-view sheet generated: {result_path} (took {elapsed:.1f}s)")
         else:
-            print(f"[PropRefGen] 生成失败，耗时 {elapsed:.1f}s")
+            print(f"[PropRefGen] Generation failed (took {elapsed:.1f}s)")
         return result_path
 
     except Exception as e:
         if is_insufficient_credits_error(e):
             raise
         elapsed = time.time() - start_time
-        print(f"[PropRefGen] 生成异常: {e}，耗时 {elapsed:.1f}s")
+        print(f"[PropRefGen] Generation error: {e} (took {elapsed:.1f}s)")
         return None
 
 
@@ -249,7 +249,7 @@ async def _generate_via_google(
         from google import genai
         from google.genai import types
     except ImportError:
-        print("[PropRefGen] 请安装 google-genai: pip install google-genai")
+        print("[PropRefGen] Please install google-genai: pip install google-genai")
         return None
 
     client = genai.Client(api_key=api_key)
@@ -299,7 +299,7 @@ async def _generate_via_openrouter(
     )
 
     if not image_bytes and requested_size == "0.5K":
-        print("[PropRefGen] OpenRouter 0.5K 被 provider 拒绝，回退到 1K 重试")
+        print("[PropRefGen] OpenRouter rejected 0.5K; falling back to 1K and retrying")
         image_bytes, _text_content, error_text = await _call_openrouter_image_api(
             api_key=api_key,
             model=model,
@@ -316,7 +316,7 @@ async def _generate_via_openrouter(
             f.write(image_bytes)
         return output_path
 
-    print(f"[PropRefGen] OpenRouter 生成失败: {error_text or 'No response'}")
+    print(f"[PropRefGen] OpenRouter generation failed: {error_text or 'No response'}")
     return None
 
 
@@ -347,7 +347,7 @@ async def _generate_via_openai(
             f.write(image_bytes)
         return output_path
 
-    print(f"[PropRefGen] OpenAI 生成失败: {error_text or 'No response'}")
+    print(f"[PropRefGen] OpenAI generation failed: {error_text or 'No response'}")
     return None
 
 
@@ -380,20 +380,20 @@ async def _generate_via_newapi(
             f.write(image_bytes)
         return output_path
 
-    print(f"[PropRefGen] DramaClawAPI 生成失败: {error_text or 'No response'}")
+    print(f"[PropRefGen] DramaClawAPI generation failed: {error_text or 'No response'}")
     return None
 
 
 def _extract_and_save_image(response, output_path: str) -> Optional[str]:
     """从 Gemini API 响应中提取图像并保存。"""
     if not response.candidates:
-        print(f"[PropRefGen] API 响应无 candidates")
+        print(f"[PropRefGen] API response has no candidates")
         return None
 
     candidate = response.candidates[0]
     if not candidate.content or not candidate.content.parts:
         finish_reason = getattr(candidate, "finish_reason", "unknown")
-        print(f"[PropRefGen] API 响应无 content, finish_reason={finish_reason}")
+        print(f"[PropRefGen] API response has no content, finish_reason={finish_reason}")
         return None
 
     for part in candidate.content.parts:
@@ -405,7 +405,7 @@ def _extract_and_save_image(response, output_path: str) -> Optional[str]:
             return output_path
 
         if hasattr(part, "text") and part.text:
-            print(f"[PropRefGen] API 文本响应: {part.text[:200]}")
+            print(f"[PropRefGen] API text response: {part.text[:200]}")
 
-    print("[PropRefGen] API 未返回图像数据")
+    print("[PropRefGen] API returned no image data")
     return None

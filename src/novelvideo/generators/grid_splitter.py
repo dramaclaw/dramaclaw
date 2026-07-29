@@ -303,15 +303,15 @@ def split_grid(
     try:
         img = remove_grid_gaps(img, rows, cols)
     except Exception as e:
-        print(f"[GridSplitter] Gap removal 失败，使用原图: {e}")
+        print(f"[GridSplitter] Gap removal failed, using original image: {e}")
 
     width, height = img.size
-    print(f"[GridSplitter] 网格图尺寸: {width}x{height}")
+    print(f"[GridSplitter] Grid image size: {width}x{height}")
 
     # 计算每个格子的尺寸
     cell_width = width // cols
     cell_height = height // rows
-    print(f"[GridSplitter] 分镜尺寸: {cell_width}x{cell_height}, 网格: {rows}x{cols}")
+    print(f"[GridSplitter] Panel size: {cell_width}x{cell_height}, grid: {rows}x{cols}")
 
     # 确保输出目录存在
     output_dir = Path(output_dir)
@@ -337,9 +337,9 @@ def split_grid(
             cell.save(output_path)
             output_paths.append(output_path)
 
-            print(f"[GridSplitter] 分镜 {beat_num}/{rows * cols}: {output_path}")
+            print(f"[GridSplitter] Panel {beat_num}/{rows * cols}: {output_path}")
 
-    print(f"[GridSplitter] 分割完成，共 {len(output_paths)} 个分镜")
+    print(f"[GridSplitter] Split complete: {len(output_paths)} panels total")
     return output_paths
 
 
@@ -380,8 +380,8 @@ def split_grid_with_padding(
     cell_width = (width - (cols - 1) * padding) // cols
     cell_height = (height - (rows - 1) * padding) // rows
 
-    print(f"[GridSplitter] 网格图尺寸: {width}x{height}, padding={padding}")
-    print(f"[GridSplitter] 分镜尺寸: {cell_width}x{cell_height}")
+    print(f"[GridSplitter] Grid image size: {width}x{height}, padding={padding}")
+    print(f"[GridSplitter] Panel size: {cell_width}x{cell_height}")
 
     # 确保输出目录存在
     output_dir = Path(output_dir)
@@ -407,7 +407,7 @@ def split_grid_with_padding(
             cell.save(output_path)
             output_paths.append(output_path)
 
-    print(f"[GridSplitter] 分割完成，共 {len(output_paths)} 个分镜")
+    print(f"[GridSplitter] Split complete: {len(output_paths)} panels total")
     return output_paths
 
 
@@ -501,7 +501,7 @@ def resize_frames_to_portrait(
         img.save(output_path)
         output_paths.append(output_path)
 
-    print(f"[GridSplitter] 竖屏调整完成，共 {len(output_paths)} 张")
+    print(f"[GridSplitter] Portrait resize complete: {len(output_paths)} images total")
     return output_paths
 
 
@@ -571,5 +571,5 @@ def combine_to_grid(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     grid_img.save(output_path)
 
-    print(f"[GridSplitter] 合并完成: {output_path}")
+    print(f"[GridSplitter] Combine complete: {output_path}")
     return output_path

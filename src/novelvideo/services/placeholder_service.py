@@ -23,7 +23,7 @@ async def resolve_character_names(
             else:
                 name_map[alias] = alias
         except Exception as exc:
-            print(f"[resolve_character_names] 获取角色 '{alias}' 失败: {exc}", flush=True)
+            print(f"[resolve_character_names] Failed to fetch character '{alias}': {exc}", flush=True)
             name_map[alias] = alias
 
     return name_map

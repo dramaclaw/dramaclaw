@@ -235,9 +235,9 @@ class GlobalVideoPromptOptimizer:
         compressed_size = len(image_bytes)
         ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
         print(
-            f"[GlobalVideoOptimizer] 压缩图片: {os.path.basename(image_path)}: "
+            f"[GlobalVideoOptimizer] compressing image: {os.path.basename(image_path)}: "
             f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-            f"({ratio:.0f}% 压缩)"
+            f"({ratio:.0f}% smaller)"
         )
         return image_bytes
 
@@ -451,7 +451,7 @@ Output JSON array with one element directly."""
                         break
 
             if not sketch_path:
-                print(f"[GlobalVideoOptimizer] Beat {bn}: 无单帧草图，跳过")
+                print(f"[GlobalVideoOptimizer] Beat {bn}: no single-frame sketch, skipping")
                 continue
 
             # prev/next beat for continuity
@@ -472,7 +472,7 @@ Output JSON array with one element directly."""
                 validated.append(result)
                 prev_prompt = result["prompt"]
             except Exception as e:
-                print(f"[GlobalVideoOptimizer] Beat {bn}: 优化失败 ({e})")
+                print(f"[GlobalVideoOptimizer] Beat {bn}: optimization failed ({e})")
 
             if progress_callback:
                 progress_callback(bn, len(sorted_beats), i + 1)
@@ -652,11 +652,11 @@ def _try_combine_frames_to_grid(resolver, beats, output_dir, episode) -> list[st
             sketch_pool_dir.mkdir(parents=True, exist_ok=True)
             combine_to_grid(frame_paths, grid_path, rows=rows, cols=cols)
             print(
-                f"[GlobalOptimizer] 草图网格已保存: {grid_path} ({len(frame_paths)} 帧, {rows}x{cols})"
+                f"[GlobalOptimizer] sketch grid saved: {grid_path} ({len(frame_paths)} frames, {rows}x{cols})"
             )
             return [str(grid_path)]
     except Exception as e:
-        print(f"[prepare_global_optimizer_input] 拼接草图失败: {e}")
+        print(f"[prepare_global_optimizer_input] failed to combine sketches: {e}")
 
     return []
 
@@ -810,12 +810,12 @@ Use an empty identities array for panels with no colored markers."""
                 img.save(buffer, format="JPEG", quality=70, optimize=True)
                 images.append(BinaryContent(data=buffer.getvalue(), media_type="image/jpeg"))
             except Exception as e:
-                print(f"[detect_identities_by_ai] 加载图片失败: {path}, {e}")
+                print(f"[detect_identities_by_ai] failed to load image: {path}, {e}")
 
     if not images:
         raise RuntimeError("没有可用的草图网格图片")
 
-    print(f"[detect_identities_by_ai] 发送 {len(images)} 张网格图片, {total_beats} beats")
+    print(f"[detect_identities_by_ai] sending {len(images)} grid images, {total_beats} beats")
     response = await agent.run([task] + images)
 
     if not response.output:
@@ -825,7 +825,7 @@ Use an empty identities array for panels with no colored markers."""
     beat_identities: list[BeatIdentity] = response.output
     result: dict[int, list[str]] = {bi.beat_number: bi.identities for bi in beat_identities}
 
-    print(f"[detect_identities_by_ai] 识别结果: { {k: v for k, v in sorted(result.items())} }")
+    print(f"[detect_identities_by_ai] detection result: { {k: v for k, v in sorted(result.items())} }")
     return result
 
 

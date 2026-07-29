@@ -128,9 +128,9 @@ class KeyframePromptBuilder:
         compressed_size = len(image_bytes)
         ratio = (1 - compressed_size / original_size) * 100
         print(
-            f"[KeyframePromptBuilder] 压缩图片: {os.path.basename(image_path)}: "
+            f"[KeyframePromptBuilder] Compressed image: {os.path.basename(image_path)}: "
             f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-            f"({ratio:.0f}% 压缩)"
+            f"({ratio:.0f}% reduction)"
         )
 
         return image_bytes

@@ -191,7 +191,7 @@ class StyleService:
     ) -> bool:
         username, project = cls._resolve_project_context(username, project, project_dir)
         if not username or not project:
-            print("[StyleService] 保存自定义风格失败: 缺少项目上下文")
+            print("[StyleService] Failed to save custom style: missing project context")
             return False
 
         def _apply(existing: dict) -> None:
@@ -226,7 +226,7 @@ class StyleService:
             cls._preset_cache[style_id] = config
             return config
         except Exception as e:
-            print(f"[StyleService] 加载预设失败: {style_id}, {e}")
+            print(f"[StyleService] Failed to load preset: {style_id}, {e}")
             return None
 
     @classmethod
@@ -252,7 +252,7 @@ class StyleService:
                 config_data["is_preset"] = False
                 return StyleConfig(**config_data)
         except Exception as e:
-            print(f"[StyleService] 加载自定义风格失败: {style_id}, {e}")
+            print(f"[StyleService] Failed to load custom style: {style_id}, {e}")
 
         return None
 
@@ -290,10 +290,10 @@ class StyleService:
             ):
                 return False
 
-            print(f"[StyleService] 自定义风格已保存: {style_id}")
+            print(f"[StyleService] Custom style saved: {style_id}")
             return True
         except Exception as e:
-            print(f"[StyleService] 保存自定义风格失败: {style_id}, {e}")
+            print(f"[StyleService] Failed to save custom style: {style_id}, {e}")
             return False
 
     @classmethod
@@ -326,10 +326,10 @@ class StyleService:
                 return False
             root = Path(project_dir) if project_dir else Path(OUTPUT_DIR) / str(username) / str(project)
             cls.remove_style_previews(root, style_id)
-            print(f"[StyleService] 自定义风格已删除: {style_id}")
+            print(f"[StyleService] Custom style deleted: {style_id}")
             return True
         except Exception as e:
-            print(f"[StyleService] 删除自定义风格失败: {style_id}, {e}")
+            print(f"[StyleService] Failed to delete custom style: {style_id}, {e}")
             return False
 
     @classmethod
@@ -348,7 +348,7 @@ class StyleService:
             styles = cls._load_project_custom_style_map(username, project, project_dir)
             return sorted(styles.keys())
         except Exception as e:
-            print(f"[StyleService] 列出自定义风格失败: {e}")
+            print(f"[StyleService] Failed to list custom styles: {e}")
 
         return []
 

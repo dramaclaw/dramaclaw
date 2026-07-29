@@ -1262,7 +1262,7 @@ async def translate_prompt_to_english(prompt: str) -> str:
 
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            print("[VIDEO] 警告: 未配置 GOOGLE_API_KEY，跳过翻译")
+            print("[VIDEO] Warning: GOOGLE_API_KEY not configured, skipping translation")
             return prompt
 
         client = genai.Client(api_key=api_key)
@@ -1297,11 +1297,11 @@ Convert this Chinese video motion description into an optimized English prompt f
         # 移除可能的引号包裹
         if english_prompt.startswith('"') and english_prompt.endswith('"'):
             english_prompt = english_prompt[1:-1]
-        print(f"[VIDEO] 优化提示词: {prompt} -> {english_prompt}")
+        print(f"[VIDEO] Optimized prompt: {prompt} -> {english_prompt}")
         return english_prompt
 
     except Exception as e:
-        print(f"[VIDEO] 翻译失败，使用原文: {e}")
+        print(f"[VIDEO] Translation failed, using original: {e}")
         return prompt
 
 

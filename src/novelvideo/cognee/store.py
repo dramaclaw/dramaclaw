@@ -497,10 +497,10 @@ class CogneeStore:
             if "UNIQUE constraint failed: datasets.id" in str(e):
                 pass
             else:
-                console.print(f"[yellow]⚠️ dataset 权限注册失败（非致命）: {e}[/yellow]")
+                console.print(f"[yellow]⚠️ dataset permission registration failed (non-fatal): {e}[/yellow]")
 
         console.print(
-            f"[dim]存储层已初始化 (dataset: {self.dataset_name}, db: {self.db_path})[/dim]"
+            f"[dim]Storage layer initialized (dataset: {self.dataset_name}, db: {self.db_path})[/dim]"
         )
 
     async def close(self) -> None:
@@ -579,7 +579,7 @@ class CogneeStore:
         """将小说原文保存到文件。"""
         self.sqlite_store.save_novel_content(content)
         novel_path = Path(self.project_dir) / "novel.txt"
-        print(f"[store] 原文已保存: {novel_path} ({len(content)} 字符)")
+        print(f"[store] Novel text saved: {novel_path} ({len(content)} chars)")
 
     def load_novel_content(self) -> Optional[str]:
         """从文件加载小说原文。"""
@@ -1449,7 +1449,7 @@ class CogneeStore:
             return result
 
         except Exception as e:
-            console.print(f"[yellow]元数据生成失败: {e}，使用默认值[/yellow]")
+            console.print(f"[yellow]Metadata generation failed: {e}, using defaults[/yellow]")
             return {
                 "title": f"第{episode_num}集",
                 "summary": content[:200] + "..." if len(content) > 200 else content,
@@ -1480,7 +1480,7 @@ class CogneeStore:
         if not Path(novel_path).exists():
             raise FileNotFoundError(f"文件不存在: {novel_path}")
 
-        console.print("[bold]Step 1/3: 导入原文并构建 Cognee 图谱...[/bold]")
+        console.print("[bold]Step 1/3: Importing novel text and building Cognee graph...[/bold]")
         fast_result = await self.ingest_novel_fast(
             novel_path,
             rebuild=rebuild,
@@ -1488,13 +1488,13 @@ class CogneeStore:
         )
 
         report(0.3, "提取角色...")
-        console.print("[bold]Step 2/3: 从图谱提取角色...[/bold]")
+        console.print("[bold]Step 2/3: Extracting characters from graph...[/bold]")
         characters = await self.build_characters_from_graph(
             on_progress=lambda p, t: report(0.3 + p * 0.3, t),
         )
 
         report(0.6, "规划剧集...")
-        console.print("[bold]Step 3/3: 规划剧集...[/bold]")
+        console.print("[bold]Step 3/3: Planning episodes...[/bold]")
         episodes = await self.build_episodes(
             target_episodes=target_episodes,
             on_progress=lambda p, t: report(0.6 + p * 0.4, t),
@@ -1680,7 +1680,7 @@ class CogneeStore:
 
     async def load_graph_state(self) -> None:
         """从 SQLite 加载角色和剧集到内存缓存。"""
-        print("[load_graph_state] 从 SQLite 加载...")
+        print("[load_graph_state] Loading from SQLite...")
         try:
             await self.sqlite_store.load_graph_state()
             self._sync_sqlite_caches()
@@ -1693,10 +1693,10 @@ class CogneeStore:
                 episode.prop_menu = self._normalize_prop_menu_items(episode.prop_menu)
 
             print(
-                f"[load_graph_state] 加载完成: 角色={len(self._characters)}, 剧集={len(self._episodes)}, 道具={len(self._props)}"
+                f"[load_graph_state] Load complete: characters={len(self._characters)}, episodes={len(self._episodes)}, props={len(self._props)}"
             )
         except Exception as e:
-            print(f"[load_graph_state] 加载失败: {e}，使用空数据")
+            print(f"[load_graph_state] Load failed: {e}, using empty data")
             self._characters.clear()
             self._episodes.clear()
             self._props.clear()
@@ -1731,7 +1731,7 @@ class CogneeStore:
 
         # Re-save entire character
         await self.add_character(char)
-        console.print(f"[green]已更新角色: {name}[/green]")
+        console.print(f"[green]Character updated: {name}[/green]")
 
     async def rename_character(self, old_name: str, new_name: str) -> None:
         """重命名角色。"""
@@ -1812,16 +1812,16 @@ class CogneeStore:
             target_identity.identity_name,
         )
         if not image_path:
-            console.print(f"[yellow]身份 {identity_id} 没有图片[/yellow]")
+            console.print(f"[yellow]Identity {identity_id} has no image[/yellow]")
             return False
 
         image_file = Path(image_path)
         if image_file.exists():
             image_file.unlink()
-            console.print(f"[green]已删除图片文件: {image_path}[/green]")
+            console.print(f"[green]Image file deleted: {image_path}[/green]")
             return True
 
-        console.print(f"[yellow]图片文件不存在: {image_path}[/yellow]")
+        console.print(f"[yellow]Image file not found: {image_path}[/yellow]")
         return False
 
     def get_identity_for_alias(
@@ -1922,13 +1922,13 @@ class CogneeStore:
                     if 0 <= idx < len(identities):
                         selected = identities[idx]
                         console.print(
-                            f"[dim]AI 身份选择: {character_name} → {selected.identity_name}[/dim]"
+                            f"[dim]AI identity selection: {character_name} → {selected.identity_name}[/dim]"
                         )
                         return selected
                     break
 
         except Exception as e:
-            console.print(f"[yellow]AI 身份选择失败: {e}[/yellow]")
+            console.print(f"[yellow]AI identity selection failed: {e}[/yellow]")
 
         return None
 
@@ -1942,7 +1942,7 @@ class CogneeStore:
         episode = self.get_episode(episode_number)
         if not episode:
             print(
-                f"[update_episode] 剧集 {episode_number} 不在 _episodes 缓存中! 缓存 keys={list(self._episodes.keys())}",
+                f"[update_episode] Episode {episode_number} not in _episodes cache! cache keys={list(self._episodes.keys())}",
                 flush=True,
             )
             raise ValueError(f"剧集 {episode_number} 不存在")
@@ -1962,7 +1962,7 @@ class CogneeStore:
                     setattr(episode, field_name, getattr(persisted, field_name))
 
         print(
-            f"[update_episode] ep{episode_number} 更新前: identity_ids={episode.identity_ids}, updates={list(updates.keys())}",
+            f"[update_episode] ep{episode_number} before update: identity_ids={episode.identity_ids}, updates={list(updates.keys())}",
             flush=True,
         )
 
@@ -1974,10 +1974,10 @@ class CogneeStore:
             elif hasattr(episode, key):
                 setattr(episode, key, value)
             else:
-                print(f"[update_episode] 警告: ep{episode_number} 没有属性 {key}", flush=True)
+                print(f"[update_episode] Warning: ep{episode_number} has no attribute {key}", flush=True)
 
         print(
-            f"[update_episode] ep{episode_number} 更新后: identity_ids={episode.identity_ids}",
+            f"[update_episode] ep{episode_number} after update: identity_ids={episode.identity_ids}",
             flush=True,
         )
 
@@ -1987,7 +1987,7 @@ class CogneeStore:
             self._episodes[new_number] = episode
 
         await self.add_episodes([episode])
-        console.print(f"[green]已更新剧集: 第{episode.number}集[/green]")
+        console.print(f"[green]Episode updated: episode {episode.number}[/green]")
 
     def get_sketch_colors(self, episode_number: int) -> dict:
         """从 episode 读取 sketch_colors。"""
@@ -2027,7 +2027,7 @@ class CogneeStore:
         """删除指定剧集的所有 Beat。"""
         deleted = await self.sqlite_store.delete_beats_for_episode(episode_number)
         if deleted > 0:
-            console.print(f"[dim]已删除第 {episode_number} 集的 {deleted} 个旧 Beat[/dim]")
+            console.print(f"[dim]Deleted {deleted} old beats for episode {episode_number}[/dim]")
         return deleted
 
     # ============================================================
@@ -2597,7 +2597,7 @@ class CogneeStore:
         cognee_dir = os.path.join(self.state_dir, "cognee_system")
         if os.path.exists(cognee_dir):
             shutil.rmtree(cognee_dir)
-            console.print(f"[green]已清理 cognee 数据: {cognee_dir}[/green]")
+            console.print(f"[green]Cleared cognee data: {cognee_dir}[/green]")
 
     async def delete_project_data(self):
         """删除当前项目的所有 SQLite 数据。"""
@@ -2605,9 +2605,9 @@ class CogneeStore:
             await self.sqlite_store.delete_project_data()
             self._sync_sqlite_caches()
 
-            console.print(f"[green]已删除项目 '{self.project_name}' 的所有数据[/green]")
+            console.print(f"[green]Deleted all data for project '{self.project_name}'[/green]")
         except Exception as e:
-            console.print(f"[red]删除数据失败: {e}[/red]")
+            console.print(f"[red]Failed to delete data: {e}[/red]")
             self._characters.clear()
             self._episodes.clear()
             self._props.clear()
