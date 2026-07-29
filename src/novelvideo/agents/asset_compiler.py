@@ -21,7 +21,7 @@ from novelvideo.models import (
 )
 from novelvideo.sqlite_store import load_episode_planning_content
 from novelvideo.cognee.screenplay_normalizer import (
-    normalize_screenplay_scenes,
+    normalize_screenplay_scene_header,
     normalize_time_of_day,
 )
 from novelvideo.utils.derived_scenes import compose_derived_scene_name
@@ -478,11 +478,10 @@ class AssetCompiler:
                 source_text, episode, log
             )
         else:
-            report(0.1, "AI 规范化本集剧本场景...")
-            scene_blocks = await self._load_normalized_screenplay_blocks(
-                source_text,
-                log,
-            )
+            report(0.08, "解析本集剧本场景...")
+            scene_blocks = await self._load_scene_blocks(episode)
+            report(0.1, "AI 逐场校对场景元数据...")
+            scene_blocks = await self._normalize_scene_block_headers(scene_blocks, log)
             log(f"[AssetCompiler] 共识别 {len(scene_blocks)} 个场景块")
 
             report(0.18, "AI校对基础场景...")
@@ -505,38 +504,46 @@ class AssetCompiler:
         report(1.0, "完成")
         return scene_menu, len(pending_scenes)
 
-    async def _load_normalized_screenplay_blocks(
+    async def _normalize_scene_block_headers(
         self,
-        source_text: str,
+        scene_blocks: list[SceneBlock],
         log: Callable[[str], None],
     ) -> list[SceneBlock]:
-        """Use the screenplay normalizer as the authoritative drama scene parser."""
-        source_text = str(source_text or "").strip()
-        if not source_text:
-            raise ValueError("当前集原文为空，无法编译资产")
+        """Normalize one parsed scene at a time while preserving local body data."""
 
-        try:
-            normalized = await normalize_screenplay_scenes(source_text)
-        except Exception as exc:
-            log(f"  AI 剧本场景规范化失败: {exc}")
-            raise ValueError("AI 剧本场景规范化失败，请重试") from exc
-
-        blocks = [
-            SceneBlock(
-                header_line=block.raw_header or block.scene_no or block.location,
-                location=block.location,
-                time_of_day=normalize_time_of_day(block.time_of_day),
-                interior_exterior=block.interior_exterior,
-                characters=list(block.characters),
-                lines=list(block.content_lines or block.evidence_lines),
+        normalized_blocks: list[SceneBlock] = []
+        for index, block in enumerate(scene_blocks, start=1):
+            header_line = str(block.header_line or "").strip()
+            if not header_line:
+                continue
+            try:
+                normalized = await normalize_screenplay_scene_header(
+                    header_line,
+                    location_hint=block.location,
+                    time_of_day_hint=block.time_of_day,
+                    interior_exterior_hint=block.interior_exterior,
+                    context_lines=block.lines,
+                )
+            except Exception as exc:
+                log(f"  第 {index} 个场景头 AI 规范化失败: {exc}")
+                raise ValueError(f"第 {index} 个场景头 AI 规范化失败，请重试") from exc
+            if not normalized:
+                raise ValueError(
+                    f"AI 未识别到第 {index} 个有效场景头，请检查本集剧本内容后重试"
+                )
+            normalized_blocks.append(
+                SceneBlock(
+                    header_line=block.header_line,
+                    location=normalized.location,
+                    time_of_day=normalize_time_of_day(normalized.time_of_day),
+                    interior_exterior=normalized.interior_exterior,
+                    characters=list(block.characters),
+                    lines=list(block.lines),
+                )
             )
-            for block in normalized
-            if str(block.location or "").strip()
-        ]
-        if blocks:
-            return blocks
-
-        raise ValueError("AI 未识别到有效场景，请检查本集剧本内容后重试")
+        if not normalized_blocks:
+            raise ValueError("AI 未识别到有效场景，请检查本集剧本内容后重试")
+        return normalized_blocks
 
     async def compile_episode_props(
         self,
