@@ -115,6 +115,32 @@ def test_newapi_runtime_credentials_allow_explicit_override(monkeypatch, tmp_pat
     assert base_url == "https://request.example/v1"
 
 
+def test_newapi_text_model_defaults_to_300_second_timeout(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.delenv("NEWAPI_TEXT_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("DC_TEST_MODEL_TIMEOUT_SECONDS", raising=False)
+    save_custom_newapi_gateway(
+        base_url="http://127.0.0.1:3000",
+        api_key="sk-custom-secret",
+        activate=True,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_model(model_name, **kwargs):
+        captured.update(model_name=model_name, **kwargs)
+        return "newapi-model"
+
+    monkeypatch.setattr(config, "_newapi_text_openai_model", fake_model)
+
+    result = config.get_newapi_text_pydantic_model(
+        "DC_TEST_MODEL",
+        "DC-test-LLM",
+    )
+
+    assert result == "newapi-model"
+    assert captured["timeout_seconds"] == 300.0
+
+
 def test_legacy_pydantic_factory_uses_ce_gateway_settings(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
     monkeypatch.setenv("MODEL_API_KEY", "sk-stale-env-secret")

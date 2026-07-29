@@ -256,7 +256,7 @@ def get_newapi_text_pydantic_model(
         if timeout_seconds_override is not None
         else _env_float(
             f"{model_env}_TIMEOUT_SECONDS",
-            _env_float("NEWAPI_TEXT_TIMEOUT_SECONDS", 120.0),
+            _env_float("NEWAPI_TEXT_TIMEOUT_SECONDS", 300.0),
         )
     )
     return _newapi_text_openai_model(
