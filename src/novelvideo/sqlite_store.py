@@ -32,7 +32,7 @@ from novelvideo.models import (
 )
 from novelvideo.novel_source import load_imported_novel_content
 from novelvideo.sqlite_pragmas import configure_sqlite_connection_async
-from novelvideo.sqlite_schema import ensure_sqlite_schema_async
+from novelvideo.sqlite_schema import ensure_sqlite_schema
 from novelvideo.utils.path_resolver import compute_identity_path
 
 console = Console()
@@ -215,14 +215,13 @@ _PROJECT_STORE_SCHEMA_COMPONENT = "project_store"
 _PROJECT_STORE_SCHEMA_VERSION = 1
 
 
-async def _table_columns(db: aiosqlite.Connection, table: str) -> set[str]:
-    async with db.execute(f"PRAGMA table_info({table})") as cursor:
-        rows = await cursor.fetchall()
+def _table_columns(db: sqlite3.Connection, table: str) -> set[str]:
+    rows = db.execute(f"PRAGMA table_info({table})").fetchall()
     return {str(row["name"]) for row in rows}
 
 
-async def _add_column_if_missing(
-    db: aiosqlite.Connection,
+def _add_column_if_missing(
+    db: sqlite3.Connection,
     table: str,
     name: str,
     definition: str,
@@ -233,15 +232,15 @@ async def _add_column_if_missing(
     processes can initialize the same project DB at once, so a column may be
     added after our ``PRAGMA table_info`` read but before ``ALTER TABLE``.
     """
-    if name in await _table_columns(db, table):
+    if name in _table_columns(db, table):
         return
 
     try:
-        await db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
     except sqlite3.OperationalError as exc:
         if "duplicate column name" not in str(exc).lower():
             raise
-        if name not in await _table_columns(db, table):
+        if name not in _table_columns(db, table):
             raise
         logger.debug("SQLite column already added concurrently: %s.%s", table, name)
 
@@ -337,17 +336,22 @@ class SQLiteStore:
     async def _ensure_project_schema(self) -> None:
         """Initialize/upgrade project tables once, serialized across processes."""
 
+        await asyncio.to_thread(self._ensure_project_schema_sync)
+
+    def _ensure_project_schema_sync(self) -> None:
+        """Run blocking schema migration outside the asyncio event loop."""
+
         path = Path(self.db_path)
 
-        async def initialize(db) -> None:
-            db.row_factory = aiosqlite.Row
-            await db.executescript(SQLITE_SCHEMA_SQL)
-            await self._ensure_episode_planning_columns(db)
-            await self._ensure_beat_current_columns(db)
-            await self._ensure_scene_columns(db)
-            await self._ensure_indextts2_columns(db)
+        def initialize(db: sqlite3.Connection) -> None:
+            db.row_factory = sqlite3.Row
+            db.executescript(SQLITE_SCHEMA_SQL)
+            self._ensure_episode_planning_columns(db)
+            self._ensure_beat_current_columns(db)
+            self._ensure_scene_columns(db)
+            self._ensure_indextts2_columns(db)
 
-        await ensure_sqlite_schema_async(
+        ensure_sqlite_schema(
             path,
             component=_PROJECT_STORE_SCHEMA_COMPONENT,
             version=_PROJECT_STORE_SCHEMA_VERSION,
@@ -358,19 +362,19 @@ class SQLiteStore:
         # verification.db. This project DB holds only per-project hits and
         # convergence facts.
 
-    async def _ensure_scene_columns(self, db: aiosqlite.Connection) -> None:
-        await _add_column_if_missing(
+    def _ensure_scene_columns(self, db: sqlite3.Connection) -> None:
+        _add_column_if_missing(
             db,
             "scenes",
             "spatial_layout_image",
             "TEXT DEFAULT ''",
         )
         for name in ("base_scene_id", "variant_id", "time_of_day", "variant_prompt"):
-            await _add_column_if_missing(db, "scenes", name, "TEXT DEFAULT ''")
+            _add_column_if_missing(db, "scenes", name, "TEXT DEFAULT ''")
 
-    async def _ensure_indextts2_columns(self, db: aiosqlite.Connection) -> None:
+    def _ensure_indextts2_columns(self, db: sqlite3.Connection) -> None:
         """Add IndexTTS2 / Seedance 2.0 voice columns introduced in Stage A."""
-        await _add_column_if_missing(
+        _add_column_if_missing(
             db,
             "beats",
             "seedance2_config_json",
@@ -384,9 +388,9 @@ class SQLiteStore:
             "voice_samples_by_age_group_json": "TEXT DEFAULT '{}'",
         }
         for name, definition in char_columns.items():
-            await _add_column_if_missing(db, "characters", name, definition)
+            _add_column_if_missing(db, "characters", name, definition)
 
-    async def _ensure_episode_planning_columns(self, db: aiosqlite.Connection) -> None:
+    def _ensure_episode_planning_columns(self, db: sqlite3.Connection) -> None:
         """Add episode columns introduced after early project databases were created."""
         columns = {
             "beat_source_text": "TEXT DEFAULT ''",
@@ -396,9 +400,9 @@ class SQLiteStore:
             "identity_default_map_json": "TEXT DEFAULT '{}'",
         }
         for name, definition in columns.items():
-            await _add_column_if_missing(db, "episodes", name, definition)
+            _add_column_if_missing(db, "episodes", name, definition)
 
-    async def _ensure_beat_current_columns(self, db: aiosqlite.Connection) -> None:
+    def _ensure_beat_current_columns(self, db: sqlite3.Connection) -> None:
         """Add beat columns required by the current script/render pipeline."""
         columns = {
             "detected_identities_json": "TEXT DEFAULT '[]'",
@@ -416,7 +420,7 @@ class SQLiteStore:
             "is_manual_shot": "INTEGER DEFAULT 0",
         }
         for name, definition in columns.items():
-            await _add_column_if_missing(db, "beats", name, definition)
+            _add_column_if_missing(db, "beats", name, definition)
 
     async def initialize(self) -> None:
         await self._ensure_db()

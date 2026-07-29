@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import get_sqlite_store, resolve_project_scope
@@ -88,9 +89,20 @@ async def pipeline_status(
     main_chars = [c for c in characters if getattr(c, "is_main", False)]
 
     ingest_task = (
-        mgr.get_task_for_project(resolved.ctx, "ingest_fast", 0)
+        await run_in_threadpool(
+            mgr.get_task_for_project,
+            resolved.ctx,
+            "ingest_fast",
+            0,
+        )
         if resolved.ctx
-        else mgr.get_task("ingest_fast", username, project_name, 0)
+        else await run_in_threadpool(
+            mgr.get_task,
+            "ingest_fast",
+            username,
+            project_name,
+            0,
+        )
     )
     ingested = (
         bool(ingest_task and ingest_task.status == "completed")

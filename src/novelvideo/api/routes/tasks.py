@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import (
     get_api_user,
@@ -272,7 +273,7 @@ async def list_project_tasks(project: str, user: dict = Depends(get_api_user)):
     """列出单个项目的任务。生产多节点路径由 OpenResty 路由到项目 home node。"""
     ctx = await resolve_project_context(user=user, project_id=project, required_role="viewer")
     mgr = get_task_manager()
-    tasks = mgr.list_tasks_for_project(ctx)
+    tasks = await run_in_threadpool(mgr.list_tasks_for_project, ctx)
     tasks.sort(key=lambda task: task.updated_at or task.created_at or "", reverse=True)
     return {"ok": True, "data": [_serialize_task(t, ctx=ctx) for t in tasks]}
 
@@ -293,9 +294,13 @@ async def get_project_task_limits(project: str, user: dict = Depends(get_api_use
             queue_kind,
             eligible_user_count=eligible_user_count,
         )
-        active = mgr.count_active_tasks_for_project_lane(ctx, queue_kind)
         user_limit = project_user_lane_active_limit(queue_kind)
-        user_active = mgr.count_active_tasks_for_project_user_lane(ctx, queue_kind)
+        active, user_active = await run_in_threadpool(
+            lambda: (
+                mgr.count_active_tasks_for_project_lane(ctx, queue_kind),
+                mgr.count_active_tasks_for_project_user_lane(ctx, queue_kind),
+            )
+        )
         data[queue_kind] = {
             "limit": limit,
             "active": active,
@@ -312,17 +317,22 @@ async def clear_project_completed_tasks(project: str, user: dict = Depends(get_a
     """删除单个项目的已完成任务记录。"""
     ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
     mgr = get_task_manager()
-    deleted = 0
-    for t in mgr.list_tasks_for_project(ctx):
-        if _effective_task_status(t) == "completed":
-            mgr.delete_task_for_project(
-                ctx,
-                t.task_type,
-                t.episode,
-                beat_num=t.beat_num,
-                scope=t.scope,
-            )
-            deleted += 1
+
+    def clear_completed() -> int:
+        deleted = 0
+        for task in mgr.list_tasks_for_project(ctx):
+            if _effective_task_status(task) == "completed":
+                mgr.delete_task_for_project(
+                    ctx,
+                    task.task_type,
+                    task.episode,
+                    beat_num=task.beat_num,
+                    scope=task.scope,
+                )
+                deleted += 1
+        return deleted
+
+    deleted = await run_in_threadpool(clear_completed)
     return {"ok": True, "data": {"deleted": deleted}}
 
 
@@ -338,7 +348,14 @@ async def get_project_task(
     """查询单个项目内指定任务的状态。"""
     ctx = await resolve_project_context(user=user, project_id=project, required_role="viewer")
     mgr = get_task_manager()
-    task = mgr.get_task_for_project(ctx, task_type, episode, beat_num=beat_num, scope=scope)
+    task = await run_in_threadpool(
+        mgr.get_task_for_project,
+        ctx,
+        task_type,
+        episode,
+        beat_num=beat_num,
+        scope=scope,
+    )
     if not task:
         return {"ok": True, "data": None, "message": "Task not found"}
     return {"ok": True, "data": _serialize_task(task, ctx=ctx)}
@@ -368,7 +385,7 @@ async def stream_project_tasks(
         last_heartbeat = asyncio.get_event_loop().time()
         last_auth_check = last_heartbeat
 
-        for t in mgr.list_tasks_for_project(ctx):
+        for t in await run_in_threadpool(mgr.list_tasks_for_project, ctx):
             payload = _serialize_task(t, ctx=ctx)
             key = payload["task_key"]
             last[key] = (t.status, round(t.progress, 3), t.updated_at)
@@ -384,7 +401,7 @@ async def stream_project_tasks(
         }
 
         while True:
-            tasks = mgr.list_tasks_for_project(ctx)
+            tasks = await run_in_threadpool(mgr.list_tasks_for_project, ctx)
             seen: set[str] = set()
             for t in tasks:
                 payload = _serialize_task(t, ctx=ctx)
@@ -456,7 +473,14 @@ async def stream_project_task(
                 return
 
             mgr = get_task_manager()
-            task = mgr.get_task_for_project(ctx, task_type, episode, beat_num=beat_num, scope=scope)
+            task = await run_in_threadpool(
+                mgr.get_task_for_project,
+                ctx,
+                task_type,
+                episode,
+                beat_num=beat_num,
+                scope=scope,
+            )
 
             if not task:
                 import time
@@ -543,7 +567,14 @@ async def cancel_project_task_route(
         scope,
     )
     mgr = get_task_manager()
-    task = mgr.get_task_for_project(ctx, task_type, episode, beat_num=beat_num, scope=scope)
+    task = await run_in_threadpool(
+        mgr.get_task_for_project,
+        ctx,
+        task_type,
+        episode,
+        beat_num=beat_num,
+        scope=scope,
+    )
     if not task:
         logger.warning(
             "[%s] cancel_project_task: task not found (type=%s episode=%s beat=%s scope=%s)",
