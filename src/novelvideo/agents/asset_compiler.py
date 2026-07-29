@@ -19,6 +19,7 @@ from novelvideo.models import (
     PropMenuItem,
     SceneMenuItem,
 )
+from novelvideo.sqlite_store import load_episode_planning_content
 from novelvideo.cognee.screenplay_normalizer import (
     normalize_screenplay_scenes,
     normalize_time_of_day,
@@ -717,21 +718,7 @@ class AssetCompiler:
         return scene_blocks
 
     async def _load_source_text(self, episode: Any) -> str:
-        working_content = ""
-        working_loader = getattr(
-            getattr(self.cognee_store, "sqlite_store", None),
-            "load_working_content",
-            None,
-        )
-        if callable(working_loader):
-            working_content = await working_loader(episode.number)
-        return (
-            getattr(episode, "beat_source_text", "")
-            or working_content
-            or await self.cognee_store.load_episode_content(episode.number)
-            or getattr(episode, "content_summary", "")
-            or ""
-        )
+        return await load_episode_planning_content(self.cognee_store, episode)
 
     async def _compile_scenes(
         self,

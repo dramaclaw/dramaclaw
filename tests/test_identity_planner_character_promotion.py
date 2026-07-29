@@ -10,13 +10,18 @@ from novelvideo.models import NovelCharacter, NovelEpisode
 
 
 class FakeIdentityStore:
-    def __init__(self, content):
+    def __init__(self, content, working_content=""):
         self.content = content
+        self.working_content = working_content
+        self.sqlite_store = self
         self._characters = {}
         self.updated_episode = None
 
     def get_all_characters(self):
         return list(self._characters.values())
+
+    async def load_working_content(self, episode_number):
+        return self.working_content
 
     async def load_episode_content(self, episode_number):
         return self.content
@@ -37,6 +42,7 @@ class FakeIdentityStore:
 class ExistingCharacterIdentityPlanner(IdentityPlanner):
     async def _filter_cast(self, all_names, content_text, episode, on_log=None):
         assert "陆辰" in all_names
+        self.filtered_content_text = content_text
         return ["陆辰"], ""
 
     async def _analyze_default_identities(
@@ -113,6 +119,26 @@ async def test_identity_planner_uses_existing_characters_without_auto_creation()
             "identity_default_map": {"陆辰": "陆辰_默认"},
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_identity_planner_prefers_current_production_text():
+    store = FakeIdentityStore(
+        "原始剧本中的陆辰。",
+        working_content="改写工作稿中的陆辰。",
+    )
+    await store.add_character(NovelCharacter(name="陆辰"))
+    planner = ExistingCharacterIdentityPlanner(store)
+
+    await planner.plan_single_episode(
+        NovelEpisode(
+            number=1,
+            title="命运之书",
+            beat_source_text="最终制作稿中的陆辰。",
+        )
+    )
+
+    assert planner.filtered_content_text == "最终制作稿中的陆辰。"
 
 
 @pytest.mark.asyncio

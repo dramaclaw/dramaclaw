@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from novelvideo.models import NovelEpisode
-from novelvideo.sqlite_store import SQLiteStore
+from novelvideo.sqlite_store import SQLiteStore, load_episode_planning_content
 
 pytestmark = pytest.mark.m03
 
@@ -31,11 +31,37 @@ async def test_adapted_content_overrides_raw_working_content(tmp_path) -> None:
 
         assert await store.load_adapted_content(1) == "改写第一行\n改写第二行"
         assert await store.load_working_content(1) == "改写第一行\n改写第二行"
+        assert (
+            await load_episode_planning_content(
+                store,
+                NovelEpisode(number=1, title="第一集"),
+            )
+            == "改写第一行\n改写第二行"
+        )
+
+        assert (
+            await load_episode_planning_content(
+                store,
+                NovelEpisode(
+                    number=1,
+                    title="第一集",
+                    beat_source_text="最终制作稿第一行\n最终制作稿第二行",
+                ),
+            )
+            == "最终制作稿第一行\n最终制作稿第二行"
+        )
 
         await store.save_adapted_content(1, "")
 
         assert await store.load_adapted_content(1) == ""
         assert await store.load_working_content(1) == "原文第一行\n原文第二行"
+        assert (
+            await load_episode_planning_content(
+                store,
+                NovelEpisode(number=1, title="第一集"),
+            )
+            == "原文第一行\n原文第二行"
+        )
     finally:
         await store.close()
 

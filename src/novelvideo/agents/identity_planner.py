@@ -21,6 +21,7 @@ from novelvideo.config import (
 )
 from novelvideo.models import CharacterIdentity
 from novelvideo.shared.env_guard import preserve_st_env
+from novelvideo.sqlite_store import load_episode_planning_content
 
 if TYPE_CHECKING:
     from novelvideo.cognee import CogneeStore
@@ -395,7 +396,7 @@ class IdentityPlanner:
             (new_count, resolved_count): 新建身份数 和 总解析身份数
         """
         self.auto_promoted_characters = []
-        content_text = await self.cognee_store.load_episode_content(episode.number)
+        content_text = await load_episode_planning_content(self.cognee_store, episode)
         if not content_text or not content_text.strip():
             return 0, 0
 
