@@ -556,6 +556,82 @@ async def test_episode_and_beats(tmp_project):
 
 
 @pytest.mark.asyncio
+async def test_replace_episodes_rolls_back_delete_when_new_plan_write_fails(
+    tmp_path,
+    monkeypatch,
+):
+    from novelvideo.models import NovelEpisode
+    from novelvideo.sqlite_store import SQLiteStore
+
+    store = SQLiteStore(
+        "admin/demo",
+        output_dir=str(tmp_path / "output"),
+        state_dir=str(tmp_path / "state"),
+    )
+    old_episode = NovelEpisode(
+        number=1,
+        title="旧规划",
+        content_summary="必须在替换失败后保留。",
+    )
+    new_episodes = [
+        NovelEpisode(number=1, title="新规划一"),
+        NovelEpisode(number=2, title="新规划二"),
+    ]
+    try:
+        await store.add_episodes([old_episode])
+        original_upsert = store._upsert_episodes
+
+        async def fail_after_partial_write(db, episodes):
+            await original_upsert(db, episodes[:1])
+            raise RuntimeError("simulated planner persistence failure")
+
+        monkeypatch.setattr(store, "_upsert_episodes", fail_after_partial_write)
+
+        with pytest.raises(RuntimeError, match="simulated planner persistence failure"):
+            await store.replace_episodes(new_episodes)
+
+        persisted = await store.list_episodes()
+        assert [(episode.number, episode.title) for episode in persisted] == [
+            (1, "旧规划")
+        ]
+        assert store.get_episode(1) is old_episode
+        assert store.get_episode(2) is None
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_replace_episodes_commits_new_plan_and_refreshes_cache(tmp_path):
+    from novelvideo.models import NovelEpisode
+    from novelvideo.sqlite_store import SQLiteStore
+
+    store = SQLiteStore(
+        "admin/demo",
+        output_dir=str(tmp_path / "output"),
+        state_dir=str(tmp_path / "state"),
+    )
+    replacement = [
+        NovelEpisode(number=2, title="第二集"),
+        NovelEpisode(number=3, title="第三集"),
+    ]
+    try:
+        await store.add_episodes([NovelEpisode(number=1, title="旧第一集")])
+
+        await store.replace_episodes(replacement)
+
+        persisted = await store.list_episodes()
+        assert [(episode.number, episode.title) for episode in persisted] == [
+            (2, "第二集"),
+            (3, "第三集"),
+        ]
+        assert store.get_episode(1) is None
+        assert store.get_episode(2) is replacement[0]
+        assert store.get_episode(3) is replacement[1]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_episode_schema_migration_adds_planning_columns(tmp_path):
     import aiosqlite
 

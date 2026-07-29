@@ -418,6 +418,17 @@ class HermesSdkThread:
         except Exception as e:  # noqa: BLE001 - best-effort prewarm
             _log.warning("hermes warm() failed for user=%s: %s", self._username, e)
 
+    async def _stream_timeout_event(self, turn_id: str) -> ChatBackendEvent:
+        """Retire a timed-out worker before returning control to the pool."""
+
+        await self.close()
+        return ChatBackendEvent(
+            type="complete",
+            thread_id=self.id,
+            turn_id=turn_id,
+            text="(hermes timed out)",
+        )
+
     async def stream(self, prompt: str, *, current_project: str | None = None) \
             -> AsyncIterator[ChatBackendEvent]:
         """Send a prompt and yield ChatBackendEvent items as hermes streams them.
@@ -465,10 +476,7 @@ class HermesSdkThread:
                 deadline = min(total_deadline, idle_deadline)
                 now = loop.time()
                 if now >= deadline:
-                    yield ChatBackendEvent(
-                        type="complete", thread_id=self.id, turn_id=turn_id,
-                        text="(hermes timed out)",
-                    )
+                    yield await self._stream_timeout_event(turn_id)
                     return
                 remaining = deadline - now
                 try:
@@ -476,10 +484,7 @@ class HermesSdkThread:
                         self._proc.stdout.readline(), timeout=remaining
                     )
                 except asyncio.TimeoutError:
-                    yield ChatBackendEvent(
-                        type="complete", thread_id=self.id, turn_id=turn_id,
-                        text="(hermes timed out)",
-                    )
+                    yield await self._stream_timeout_event(turn_id)
                     return
                 if not line:
                     break

@@ -958,11 +958,6 @@ class CogneeStore:
         await self._ensure_db()
         return await self.sqlite_store.delete_all_characters()
 
-    async def _delete_old_episodes(self) -> int:
-        """删除所有剧集。"""
-        await self._ensure_db()
-        return await self.sqlite_store.delete_all_episodes()
-
     async def build_episodes(
         self,
         target_episodes: int = 10,
@@ -1004,21 +999,13 @@ class CogneeStore:
 
         log(f"LLM 返回 {len(episodes)} 集")
 
-        # P2: 删除旧剧集
-        report(0.8, "清理旧剧集数据...")
-        log("清理旧剧集数据...")
-        deleted = await self._delete_old_episodes()
-        log(f"已删除 {deleted} 个旧剧集")
-        self._episodes.clear()
-
-        # P3: 保存新剧集
+        # P2: 原子替换旧规划。删除和写入必须在同一事务中完成，避免任务
+        # 取消或 Worker 退出后只剩一张空 episodes 表。
+        old_episode_count = len(self._episodes)
         report(0.85, "保存新剧集...")
         log("保存新剧集到数据库...")
-        await self.add_episodes(episodes)
-
-        # P4: 更新内存缓存
-        for ep in episodes:
-            self._episodes[ep.number] = ep
+        await self.replace_episodes(episodes)
+        log(f"已原子替换 {old_episode_count} 个旧剧集")
 
         if len(self._episodes) != len(episodes):
             log(f"⚠️ 警告：内存缓存 ({len(self._episodes)}) 与返回结果 ({len(episodes)}) 不一致")
@@ -1212,7 +1199,6 @@ class CogneeStore:
 
         # 创建 NovelEpisode 并合并原文
         episodes = []
-        episode_contents = {}  # 收集内容，最后统一写入
         for ep_num, event_ids in episode_assignments.items():
             progress = 0.7 + 0.1 * (ep_num / target_episodes)
             report(progress, f"创建第 {ep_num} 集...")
@@ -1224,7 +1210,6 @@ class CogneeStore:
                 continue
 
             combined_content = "\n\n---\n\n".join(e.content for e in ep_events if e.content)
-            episode_contents[ep_num] = combined_content
 
             key_events = [e.description for e in ep_events]
             characters = list(set(c for e in ep_events for c in e.characters))
@@ -1238,6 +1223,7 @@ class CogneeStore:
                 title=f"第{ep_num}集",
                 chapter_start=chapter_start,
                 chapter_end=chapter_end,
+                raw_content=combined_content,
                 event_ids=event_ids,
                 content_summary=(
                     combined_content[:2000] + "..."
@@ -1250,23 +1236,11 @@ class CogneeStore:
             )
             episodes.append(episode)
 
-        # P2: 删除旧剧集
-        report(0.82, "清理旧剧集数据...")
-        deleted = await self._delete_old_episodes()
-        log(f"已删除 {deleted} 个旧剧集")
-        self._episodes.clear()
-
-        # P3: 保存新数据
+        # P2: 剧集与对应原文一起原子替换。
+        old_episode_count = len(self._episodes)
         report(0.88, "保存到数据库...")
-        await self.add_episodes(episodes)
-
-        # P3.5: 保存剧集原文内容
-        for ep_num, content in episode_contents.items():
-            await self.save_episode_content(ep_num, content)
-
-        # P4: 更新内存缓存
-        for ep in episodes:
-            self._episodes[ep.number] = ep
+        await self.replace_episodes(episodes)
+        log(f"已原子替换 {old_episode_count} 个旧剧集")
 
         report(1.0, "事件级规划完成")
         log(f"事件级规划完成: {len(episodes)} 集")
@@ -1410,9 +1384,8 @@ class CogneeStore:
 
     async def replace_episodes(self, episodes: List[NovelEpisode]) -> None:
         """Replace planned episodes in SQLite without writing them to Cognee."""
-        await self._delete_old_episodes()
-        self._episodes.clear()
-        await self.add_episodes(episodes)
+        await self.sqlite_store.replace_episodes(episodes)
+        self._sync_sqlite_caches()
 
     async def ingest_novel(
         self,

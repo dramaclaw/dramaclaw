@@ -83,6 +83,26 @@ async def test_cached_ladybug_adapter_switches_between_read_only_and_writer(tmp_
 
 
 @pytest.mark.asyncio
+async def test_ladybug_nested_scope_rejects_different_project(tmp_path):
+    from novelvideo.cognee.ladybug_access import ladybug_graph_access
+
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+
+    async with ladybug_graph_access(str(project_a), read_only=True):
+        # Equivalent paths for the same project may safely reuse the scope.
+        async with ladybug_graph_access(
+            str(project_a / ".." / "project-a"),
+            read_only=True,
+        ):
+            pass
+
+        with pytest.raises(RuntimeError, match="different project"):
+            async with ladybug_graph_access(str(project_b), read_only=True):
+                pass
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("read_only", [True, False])
 async def test_ladybug_query_cancellation_keeps_database_and_lock_until_native_query_stops(
     tmp_path,

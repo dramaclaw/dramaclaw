@@ -139,6 +139,26 @@ def test_hermes_stream_timeout_allows_long_active_turns():
     )
 
 
+@pytest.mark.asyncio
+async def test_hermes_stream_timeout_retires_worker_before_completion(monkeypatch):
+    thread = hermes_sdk.HermesSdkThread.__new__(hermes_sdk.HermesSdkThread)
+    thread.id = "hermes-session"
+    closed = []
+
+    async def fake_close():
+        closed.append(True)
+
+    monkeypatch.setattr(thread, "close", fake_close)
+
+    event = await thread._stream_timeout_event("turn-timeout")
+
+    assert closed == [True]
+    assert event.type == "complete"
+    assert event.thread_id == "hermes-session"
+    assert event.turn_id == "turn-timeout"
+    assert event.text == "(hermes timed out)"
+
+
 def test_hermes_detects_content_filter_finish_reason():
     payload = {
         "result": {

@@ -14,6 +14,7 @@ import asyncio
 import contextvars
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from threading import RLock
 from typing import Any, AsyncIterator
 
@@ -25,6 +26,7 @@ from novelvideo.graph_preview import (
 
 @dataclass
 class _GraphAccessState:
+    state_dir: str
     read_only: bool
     adapters: set[Any] = field(default_factory=set)
 
@@ -153,8 +155,13 @@ async def ladybug_graph_access(
     reuses the writer connection. Escalating a read scope to write is rejected.
     """
 
+    resolved_state_dir = str(Path(state_dir).expanduser().resolve())
     current = _graph_access_state.get()
     if current is not None:
+        if current.state_dir != resolved_state_dir:
+            raise RuntimeError(
+                "cannot access a different project inside the current Ladybug scope"
+            )
         if current.read_only and not read_only:
             raise RuntimeError("cannot open Ladybug for writing inside a read-only scope")
         yield
@@ -162,10 +169,13 @@ async def ladybug_graph_access(
 
     install_cognee_ladybug_access_patch()
     lock_handle = await acquire_graph_preview_lock_async(
-        state_dir,
+        resolved_state_dir,
         shared=read_only,
     )
-    state = _GraphAccessState(read_only=read_only)
+    state = _GraphAccessState(
+        state_dir=resolved_state_dir,
+        read_only=read_only,
+    )
     token = _graph_access_state.set(state)
     try:
         yield

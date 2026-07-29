@@ -1164,8 +1164,13 @@ class SQLiteStore:
         console.print(f"[yellow]图片文件不存在: {image_path}[/yellow]")
         return False
 
-    async def add_episodes(self, episodes: List[NovelEpisode]) -> None:
-        db = await self._ensure_db()
+    async def _upsert_episodes(
+        self,
+        db: aiosqlite.Connection,
+        episodes: List[NovelEpisode],
+    ) -> None:
+        """Write episode rows on the caller's current transaction."""
+
         for ep in episodes:
             await db.execute(
                 """INSERT INTO episodes (number, title, chapter_start, chapter_end,
@@ -1205,7 +1210,32 @@ class SQLiteStore:
                     ep.sketch_colors_json,
                 ),
             )
-        await db.commit()
+
+    async def add_episodes(self, episodes: List[NovelEpisode]) -> None:
+        db = await self._ensure_db()
+        try:
+            await self._upsert_episodes(db, episodes)
+            await db.commit()
+        except BaseException:
+            await asyncio.shield(db.rollback())
+            raise
+        self._episodes.update({episode.number: episode for episode in episodes})
+
+    async def replace_episodes(self, episodes: List[NovelEpisode]) -> None:
+        """Atomically replace every episode row and refresh the cache."""
+
+        db = await self._ensure_db()
+        try:
+            await db.execute("DELETE FROM episodes")
+            await self._upsert_episodes(db, episodes)
+            await db.commit()
+        except BaseException:
+            await asyncio.shield(db.rollback())
+            raise
+
+        # Do not mutate the shared in-memory cache until the transaction commits.
+        self._episodes.clear()
+        self._episodes.update({episode.number: episode for episode in episodes})
 
     async def add_episode(self, episode: NovelEpisode) -> None:
         await self.add_episodes([episode])
