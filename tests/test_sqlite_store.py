@@ -52,6 +52,7 @@ async def tmp_project(tmp_path):
     store._episodes = {}
     store._alias_index = {}
     store.project_dir = str(project_dir)
+    store.state_dir = str(project_dir)
     store.db_path = str(project_dir / "data.db")
 
     try:
@@ -214,6 +215,47 @@ async def test_build_scenes_from_graph_only_adds_missing_base_scenes(tmp_project
     assert derived.base_scene_id == "城市街道"
     assert derived.variant_prompt == "用户修过的雨夜增量"
     assert await tmp_project.sqlite_store.get_scene("新场景") is not None
+
+
+@pytest.mark.asyncio
+async def test_graph_rebuild_waits_for_inflight_scene_graph_read(
+    tmp_project,
+    monkeypatch,
+):
+    from novelvideo.cognee import pipeline
+    from novelvideo.graph_preview import (
+        acquire_graph_preview_lock_async,
+        release_graph_preview_lock,
+    )
+
+    read_started = asyncio.Event()
+    finish_read = asyncio.Event()
+
+    async def blocked_extract_scenes_from_graph(**_kwargs):
+        read_started.set()
+        await finish_read.wait()
+        return []
+
+    monkeypatch.setattr(
+        pipeline,
+        "extract_scenes_from_graph",
+        blocked_extract_scenes_from_graph,
+    )
+    tmp_project.save_novel_content("剧本文本")
+
+    read_task = asyncio.create_task(tmp_project.build_scenes_from_graph())
+    await asyncio.wait_for(read_started.wait(), timeout=1)
+
+    rebuild_lock_task = asyncio.create_task(
+        acquire_graph_preview_lock_async(tmp_project.state_dir)
+    )
+    await asyncio.sleep(0.1)
+    assert not rebuild_lock_task.done()
+
+    finish_read.set()
+    assert await asyncio.wait_for(read_task, timeout=1) == []
+    rebuild_lock = await asyncio.wait_for(rebuild_lock_task, timeout=1)
+    release_graph_preview_lock(rebuild_lock)
 
 
 @pytest.mark.asyncio

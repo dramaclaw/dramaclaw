@@ -73,3 +73,37 @@ async def test_cancelled_async_lock_wait_does_not_leak_lock(tmp_path):
         timeout=1,
     )
     release_graph_preview_lock(acquired)
+
+
+@pytest.mark.asyncio
+async def test_ingest_holds_project_graph_lock_for_complete_operation(
+    tmp_path,
+    monkeypatch,
+):
+    from novelvideo.cognee.store import CogneeStore
+
+    store = object.__new__(CogneeStore)
+    store.state_dir = str(tmp_path)
+    ingest_started = asyncio.Event()
+    finish_ingest = asyncio.Event()
+
+    async def blocked_ingest(*_args, **_kwargs):
+        ingest_started.set()
+        await finish_ingest.wait()
+        return {"status": "graph_ready"}
+
+    monkeypatch.setattr(store, "_ingest_novel_fast_locked", blocked_ingest)
+
+    ingest_task = asyncio.create_task(store.ingest_novel_fast("unused.txt"))
+    await asyncio.wait_for(ingest_started.wait(), timeout=1)
+
+    reader_lock_task = asyncio.create_task(acquire_graph_preview_lock_async(tmp_path))
+    await asyncio.sleep(0.1)
+    assert not reader_lock_task.done()
+
+    finish_ingest.set()
+    assert await asyncio.wait_for(ingest_task, timeout=1) == {
+        "status": "graph_ready"
+    }
+    reader_lock = await asyncio.wait_for(reader_lock_task, timeout=1)
+    release_graph_preview_lock(reader_lock)

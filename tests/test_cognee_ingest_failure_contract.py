@@ -140,6 +140,7 @@ async def test_failed_graph_build_leaves_project_unimported(tmp_path, monkeypatc
 
     store = object.__new__(CogneeStore)
     store.dataset_name = "test_ds"
+    store.state_dir = str(tmp_path)
     saved: dict[str, str] = {}
     monkeypatch.setattr(
         store, "save_novel_content", lambda content: saved.__setitem__("content", content)
@@ -172,6 +173,7 @@ async def test_successful_ingest_persists_novel_content(tmp_path, monkeypatch):
 
     store = object.__new__(CogneeStore)
     store.dataset_name = "test_ds"
+    store.state_dir = str(tmp_path)
     saved: dict[str, str] = {}
     monkeypatch.setattr(
         store, "save_novel_content", lambda content: saved.__setitem__("content", content)
@@ -211,6 +213,7 @@ async def test_preview_failure_does_not_mark_ingest_successful(tmp_path, monkeyp
     novel.write_text("第一章\n内容内容内容。\n", encoding="utf-8")
     store = object.__new__(CogneeStore)
     store.dataset_name = "test_ds"
+    store.state_dir = str(tmp_path)
     saved: dict[str, str] = {}
     monkeypatch.setattr(
         store, "save_novel_content", lambda content: saved.__setitem__("content", content)
@@ -271,6 +274,7 @@ async def test_empty_graph_is_not_reported_as_success(tmp_path, monkeypatch):
 
     store = object.__new__(CogneeStore)
     store.dataset_name = "test_ds"
+    store.state_dir = str(tmp_path)
     saved: dict[str, str] = {}
     monkeypatch.setattr(
         store, "save_novel_content", lambda content: saved.__setitem__("content", content)

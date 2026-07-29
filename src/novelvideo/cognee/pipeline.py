@@ -418,6 +418,7 @@ async def extract_characters_from_graph(
 
         logging.warning(f"cognee.search 失败: {e}")
         log(f"cognee.search 失败: {e}")
+        raise RuntimeError("Cognee 图谱角色搜索失败") from e
 
     if not context_text.strip():
         log("⚠️ 图谱搜索无数据，请先构建图谱（cognify）")
@@ -516,7 +517,7 @@ async def extract_characters_from_graph(
 
         logging.error(f"LLM 结构化提取失败: {e}")
         log(f"⚠️ LLM 结构化提取失败: {e}")
-        return []
+        raise RuntimeError("LLM 图谱角色提取失败") from e
 
     report(0.9, "提取完成")
 
@@ -1040,6 +1041,7 @@ async def extract_scenes_from_graph(
 
         logging.warning("cognee 场景搜索失败: %s", exc)
         log(f"图谱场景搜索失败: {exc}")
+        raise RuntimeError("Cognee 图谱场景搜索失败") from exc
 
     if not context_text.strip():
         log("⚠️ 图谱搜索无场景数据，请先完成知识图谱构建")
@@ -1071,7 +1073,7 @@ async def extract_scenes_from_graph(
 
         logging.error("LLM 图谱场景提取失败: %s", exc)
         log(f"LLM 图谱场景提取失败: {exc}")
-        return []
+        raise RuntimeError("LLM 图谱场景提取失败") from exc
 
     candidates: list[GraphSceneCandidate] = []
     seen: set[str] = set()
@@ -1489,6 +1491,7 @@ async def extract_props_from_graph(
         import logging
 
         logging.warning(f"cognee.search 失败: {e}")
+        raise RuntimeError("Cognee 图谱道具搜索失败") from e
 
     if not context_text.strip():
         log("⚠️ 图谱搜索无数据，请先构建图谱")
@@ -1552,7 +1555,7 @@ async def extract_props_from_graph(
         import logging
 
         logging.error(f"LLM 道具提取失败: {e}")
-        return []
+        raise RuntimeError("LLM 图谱道具提取失败") from e
 
     report(1.0, "完成")
     return props

@@ -1,6 +1,84 @@
 import pytest
 
 
+@pytest.mark.parametrize(
+    ("extractor_name", "error_pattern"),
+    [
+        ("extract_characters_from_graph", "Cognee 图谱角色搜索失败"),
+        ("extract_scenes_from_graph", "Cognee 图谱场景搜索失败"),
+        ("extract_props_from_graph", "Cognee 图谱道具搜索失败"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_graph_asset_extraction_raises_when_search_fails(
+    monkeypatch,
+    extractor_name,
+    error_pattern,
+):
+    from novelvideo.cognee import pipeline
+
+    async def fake_search(**_kwargs):
+        raise ConnectionError("gateway unavailable")
+
+    monkeypatch.setattr("cognee.search", fake_search)
+
+    with pytest.raises(RuntimeError, match=error_pattern):
+        await getattr(pipeline, extractor_name)()
+
+
+@pytest.mark.parametrize(
+    ("extractor_name", "error_pattern"),
+    [
+        ("extract_characters_from_graph", "LLM 图谱角色提取失败"),
+        ("extract_scenes_from_graph", "LLM 图谱场景提取失败"),
+        ("extract_props_from_graph", "LLM 图谱道具提取失败"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_graph_asset_extraction_raises_when_structured_llm_fails(
+    monkeypatch,
+    extractor_name,
+    error_pattern,
+):
+    from cognee.infrastructure.llm.LLMGateway import LLMGateway
+    from novelvideo.cognee import pipeline
+
+    async def fake_search(**_kwargs):
+        return [{"search_result": "图谱中存在有效上下文。"}]
+
+    async def fake_structured_output(*_args, **_kwargs):
+        raise TimeoutError("model timed out")
+
+    monkeypatch.setattr("cognee.search", fake_search)
+    monkeypatch.setattr(LLMGateway, "acreate_structured_output", fake_structured_output)
+
+    with pytest.raises(RuntimeError, match=error_pattern):
+        await getattr(pipeline, extractor_name)()
+
+
+@pytest.mark.parametrize(
+    "extractor_name",
+    [
+        "extract_characters_from_graph",
+        "extract_scenes_from_graph",
+        "extract_props_from_graph",
+    ],
+)
+@pytest.mark.asyncio
+async def test_graph_asset_extraction_keeps_successful_empty_search_as_empty_result(
+    monkeypatch,
+    extractor_name,
+):
+    from novelvideo.cognee import pipeline
+
+    async def fake_search(**_kwargs):
+        return []
+
+    monkeypatch.setattr("cognee.search", fake_search)
+
+    assert await getattr(pipeline, extractor_name)() == []
+
+
 @pytest.mark.asyncio
 async def test_character_extraction_keeps_single_narrator_main(monkeypatch):
     from cognee.infrastructure.llm.LLMGateway import LLMGateway

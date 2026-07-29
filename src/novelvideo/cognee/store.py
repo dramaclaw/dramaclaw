@@ -618,7 +618,26 @@ class CogneeStore:
         on_progress: Optional[Callable[[float, str], None]] = None,
         on_log: Optional[Callable[[str], None]] = None,
     ) -> dict:
-        """快速导入：只构建 Cognee 图谱，不提取角色/剧集。"""
+        """快速导入，并与同项目受保护的 Cognee 图谱读取串行化。"""
+        graph_lock = await acquire_graph_preview_lock_async(self.state_dir)
+        try:
+            return await self._ingest_novel_fast_locked(
+                novel_path,
+                rebuild=rebuild,
+                on_progress=on_progress,
+                on_log=on_log,
+            )
+        finally:
+            release_graph_preview_lock(graph_lock)
+
+    async def _ingest_novel_fast_locked(
+        self,
+        novel_path: str,
+        rebuild: bool = False,
+        on_progress: Optional[Callable[[float, str], None]] = None,
+        on_log: Optional[Callable[[str], None]] = None,
+    ) -> dict:
+        """在项目图谱锁内构建 Cognee 图谱，不提取角色/剧集。"""
 
         def report(progress: float, task: str):
             if on_progress:
@@ -650,20 +669,13 @@ class CogneeStore:
 
         if rebuild:
             report(0.05, "重建图谱...")
-            # Serialize invalidation/pruning with the one-time legacy preview
-            # reader. Without this cross-process lock an API worker could open
-            # Ladybug while the ingest worker is pruning the same files.
-            graph_lock = await acquire_graph_preview_lock_async(self.state_dir)
-            try:
-                # novel.txt 是前端和后续流水线判断“已导入”的持久标志。旧图谱已经
-                # 清除前必须先让旧标志失效：即使清理中途失败，也不能继续显示成功。
-                imported_novel_path = Path(self.project_dir) / "novel.txt"
-                imported_novel_path.unlink(missing_ok=True)
-                delete_graph_preview(self.state_dir)
-                log("清除 cognee 图谱数据...")
-                await self._prune_cognee_only()
-            finally:
-                release_graph_preview_lock(graph_lock)
+            # novel.txt 是前端和后续流水线判断“已导入”的持久标志。旧图谱已经
+            # 清除前必须先让旧标志失效：即使清理中途失败，也不能继续显示成功。
+            imported_novel_path = Path(self.project_dir) / "novel.txt"
+            imported_novel_path.unlink(missing_ok=True)
+            delete_graph_preview(self.state_dir)
+            log("清除 cognee 图谱数据...")
+            await self._prune_cognee_only()
 
         # 重建时必须先清理旧存储，再初始化 Cognee 的数据库连接。
         init_cognee()
@@ -1002,15 +1014,19 @@ class CogneeStore:
         novel_text = require_imported_novel(self.project_dir)
         report(0.1, "从图谱提取人物节点...")
         log("从图谱提取角色候选...")
-        self._set_cognee_context()
-        with self.embedding_model_scope():
-            characters = await extract_characters_from_graph(
-                dataset_name=self.dataset_name,
-                project_name=self.project_name,
-                project_dir=str(self.project_dir),
-                novel_text=novel_text,
-                on_progress=lambda p, t: report(0.1 + p * 0.6, t),
-            )
+        graph_lock = await acquire_graph_preview_lock_async(self.state_dir)
+        try:
+            self._set_cognee_context()
+            with self.embedding_model_scope():
+                characters = await extract_characters_from_graph(
+                    dataset_name=self.dataset_name,
+                    project_name=self.project_name,
+                    project_dir=str(self.project_dir),
+                    novel_text=novel_text,
+                    on_progress=lambda p, t: report(0.1 + p * 0.6, t),
+                )
+        finally:
+            release_graph_preview_lock(graph_lock)
 
         if not characters:
             log("⚠️ 图谱提取无结果，保留现有角色数据")
@@ -2085,15 +2101,19 @@ class CogneeStore:
         require_imported_novel(self.project_dir)
         report(0.1, "从图谱提取场景节点...")
         log("从图谱提取基础场景候选...")
-        self._set_cognee_context()
-        with self.embedding_model_scope():
-            scenes = await extract_scenes_from_graph(
-                dataset_name=self.dataset_name,
-                project_name=self.project_name,
-                project_dir=str(self.project_dir),
-                on_progress=lambda p, t: report(0.1 + p * 0.6, t),
-                on_log=on_log,
-            )
+        graph_lock = await acquire_graph_preview_lock_async(self.state_dir)
+        try:
+            self._set_cognee_context()
+            with self.embedding_model_scope():
+                scenes = await extract_scenes_from_graph(
+                    dataset_name=self.dataset_name,
+                    project_name=self.project_name,
+                    project_dir=str(self.project_dir),
+                    on_progress=lambda p, t: report(0.1 + p * 0.6, t),
+                    on_log=on_log,
+                )
+        finally:
+            release_graph_preview_lock(graph_lock)
 
         if not scenes:
             log("⚠️ 图谱提取无结果，保留现有场景数据")
@@ -2176,14 +2196,18 @@ class CogneeStore:
         novel_text = self.load_novel_content()
         if novel_text:
             log(f"已加载原文全文用于辅助道具提取: {len(novel_text)} 字符")
-        with self.embedding_model_scope():
-            props = await extract_props_from_graph(
-                dataset_name=self.dataset_name,
-                project_name=self.project_name,
-                project_dir=self.project_dir,
-                novel_text=novel_text,
-                on_progress=lambda p, t: report(0.1 + p * 0.6, t),
-            )
+        graph_lock = await acquire_graph_preview_lock_async(self.state_dir)
+        try:
+            with self.embedding_model_scope():
+                props = await extract_props_from_graph(
+                    dataset_name=self.dataset_name,
+                    project_name=self.project_name,
+                    project_dir=self.project_dir,
+                    novel_text=novel_text,
+                    on_progress=lambda p, t: report(0.1 + p * 0.6, t),
+                )
+        finally:
+            release_graph_preview_lock(graph_lock)
 
         if not props:
             log("⚠️ 图谱提取无结果，保留现有道具数据")

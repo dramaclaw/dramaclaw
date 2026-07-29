@@ -92,7 +92,11 @@ def delete_graph_preview(state_dir: str | Path) -> None:
 
 
 def acquire_graph_preview_lock(state_dir: str | Path) -> IO[str]:
-    """Acquire the cross-process lock used for one-time legacy materialization."""
+    """Acquire the cross-process project graph lock.
+
+    The filename is retained for compatibility. Cooperating Ladybug readers
+    and mutations use this lock, including legacy preview materialization.
+    """
 
     path = graph_preview_lock_path(state_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +107,7 @@ def acquire_graph_preview_lock(state_dir: str | Path) -> IO[str]:
 
 
 async def acquire_graph_preview_lock_async(state_dir: str | Path) -> IO[str]:
-    """Acquire the preview lock without blocking or leaking it on cancellation."""
+    """Acquire the project graph lock without blocking the event loop."""
 
     path = graph_preview_lock_path(state_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
