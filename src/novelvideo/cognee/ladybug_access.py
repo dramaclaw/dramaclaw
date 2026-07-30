@@ -139,6 +139,8 @@ def cognee_project_context(state_dir: str) -> Iterator[None]:
     install_cognee_project_context_patch()
 
     import cognee.context_global_variables as context_module
+    from cognee.infrastructure.databases.graph.config import get_graph_config
+    from cognee.infrastructure.databases.vector.config import get_vectordb_config
 
     system_root = Path(resolved_state_dir) / "cognee_system"
     data_root = Path(resolved_state_dir) / "cognee_data"
@@ -163,10 +165,24 @@ def cognee_project_context(state_dir: str) -> Iterator[None]:
         ),
     )
 
+    # Never leave Cognee's native storage ContextVars empty. Their fallback
+    # getters import and cache the process-global base config independently, so
+    # a concurrent writer for project B could otherwise retarget a project A
+    # reader even though the base/relational getters above are task-local.
+    graph_config = get_graph_config().to_hashable_dict()
+    graph_filename = Path(str(graph_config["graph_file_path"])).name
+    graph_config["graph_file_path"] = str(databases_root / graph_filename)
+
+    vector_config = get_vectordb_config().to_dict()
+    if vector_config["vector_db_provider"] == "lancedb":
+        vector_config["vector_db_url"] = str(databases_root / "cognee.lancedb")
+
+    storage_config = {"data_root_directory": str(data_root)}
+
     project_token = _cognee_project_context_state.set(state)
-    graph_token = context_module.graph_db_config.set(None)
-    vector_token = context_module.vector_db_config.set(None)
-    storage_token = context_module.file_storage_config.set(None)
+    graph_token = context_module.graph_db_config.set(graph_config)
+    vector_token = context_module.vector_db_config.set(vector_config)
+    storage_token = context_module.file_storage_config.set(storage_config)
     try:
         yield
     finally:

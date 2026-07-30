@@ -114,8 +114,15 @@ async def test_ladybug_nested_scope_rejects_different_project(tmp_path):
 @pytest.mark.asyncio
 async def test_cognee_project_context_isolates_concurrent_project_configs(tmp_path):
     import cognee.context_global_variables as context_module
+    from cognee.infrastructure.databases.graph.config import get_graph_context_config
     from cognee.infrastructure.databases.relational.get_relational_engine import (
         get_relational_engine,
+    )
+    from cognee.infrastructure.databases.vector.config import (
+        get_vectordb_context_config,
+    )
+    from cognee.infrastructure.files.storage.get_storage_config import (
+        get_storage_config,
     )
     from novelvideo.cognee.ladybug_access import cognee_project_context
 
@@ -130,12 +137,18 @@ async def test_cognee_project_context_isolates_concurrent_project_configs(tmp_pa
             first = (
                 relational_getter().db_path,
                 context_module.get_base_config().system_root_directory,
+                get_graph_context_config()["graph_file_path"],
+                get_vectordb_context_config()["vector_db_url"],
+                get_storage_config()["data_root_directory"],
             )
             ready[index].set()
             await release.wait()
             second = (
                 relational_getter().db_path,
                 context_module.get_base_config().system_root_directory,
+                get_graph_context_config()["graph_file_path"],
+                get_vectordb_context_config()["vector_db_url"],
+                get_storage_config()["data_root_directory"],
             )
             return first, second
 
@@ -151,13 +164,29 @@ async def test_cognee_project_context_isolates_concurrent_project_configs(tmp_pa
     expected_a = (
         str(project_a.resolve() / "cognee_system" / "databases"),
         str(project_a.resolve() / "cognee_system"),
+        str(project_a.resolve() / "cognee_system" / "databases"),
+        str(project_a.resolve() / "cognee_system" / "databases" / "cognee.lancedb"),
+        str(project_a.resolve() / "cognee_data"),
     )
     expected_b = (
         str(project_b.resolve() / "cognee_system" / "databases"),
         str(project_b.resolve() / "cognee_system"),
+        str(project_b.resolve() / "cognee_system" / "databases"),
+        str(project_b.resolve() / "cognee_system" / "databases" / "cognee.lancedb"),
+        str(project_b.resolve() / "cognee_data"),
     )
-    assert result_a == (expected_a, expected_a)
-    assert result_b == (expected_b, expected_b)
+    assert result_a[0][:2] == expected_a[:2]
+    assert result_a[1][:2] == expected_a[:2]
+    assert Path(result_a[0][2]).parent == Path(expected_a[2])
+    assert Path(result_a[1][2]).parent == Path(expected_a[2])
+    assert result_a[0][3:] == expected_a[3:]
+    assert result_a[1][3:] == expected_a[3:]
+    assert result_b[0][:2] == expected_b[:2]
+    assert result_b[1][:2] == expected_b[:2]
+    assert Path(result_b[0][2]).parent == Path(expected_b[2])
+    assert Path(result_b[1][2]).parent == Path(expected_b[2])
+    assert result_b[0][3:] == expected_b[3:]
+    assert result_b[1][3:] == expected_b[3:]
 
 
 @pytest.mark.asyncio
@@ -207,8 +236,15 @@ async def test_writer_for_one_project_does_not_block_or_retarget_other_project_r
     tmp_path,
 ):
     import cognee.context_global_variables as context_module
+    from cognee.infrastructure.databases.graph.config import get_graph_context_config
     from cognee.infrastructure.databases.relational.get_relational_engine import (
         get_relational_engine,
+    )
+    from cognee.infrastructure.databases.vector.config import (
+        get_vectordb_context_config,
+    )
+    from cognee.infrastructure.files.storage.get_storage_config import (
+        get_storage_config,
     )
     from novelvideo.cognee.ladybug_access import ladybug_graph_access
 
@@ -226,12 +262,18 @@ async def test_writer_for_one_project_does_not_block_or_retarget_other_project_r
             first = (
                 relational_getter().db_path,
                 context_module.get_base_config().system_root_directory,
+                get_graph_context_config()["graph_file_path"],
+                get_vectordb_context_config()["vector_db_url"],
+                get_storage_config()["data_root_directory"],
             )
             read_ready.set()
             await writer_ready.wait()
             second = (
                 relational_getter().db_path,
                 context_module.get_base_config().system_root_directory,
+                get_graph_context_config()["graph_file_path"],
+                get_vectordb_context_config()["vector_db_url"],
+                get_storage_config()["data_root_directory"],
             )
             read_checked.set()
             return first, second
@@ -250,8 +292,16 @@ async def test_writer_for_one_project_does_not_block_or_retarget_other_project_r
     expected = (
         str(project_b.resolve() / "cognee_system" / "databases"),
         str(project_b.resolve() / "cognee_system"),
+        str(project_b.resolve() / "cognee_system" / "databases"),
+        str(project_b.resolve() / "cognee_system" / "databases" / "cognee.lancedb"),
+        str(project_b.resolve() / "cognee_data"),
     )
-    assert result == (expected, expected)
+    assert result[0][:2] == expected[:2]
+    assert result[1][:2] == expected[:2]
+    assert Path(result[0][2]).parent == Path(expected[2])
+    assert Path(result[1][2]).parent == Path(expected[2])
+    assert result[0][3:] == expected[3:]
+    assert result[1][3:] == expected[3:]
 
 
 def test_ladybug_reads_overlap_across_thread_event_loops(tmp_path):
@@ -338,9 +388,15 @@ async def test_project_context_restores_native_cognee_contextvars(tmp_path):
     storage_token = context_module.file_storage_config.set(outer_storage)
     try:
         with cognee_project_context(str(tmp_path)):
-            assert context_module.graph_db_config.get() is None
-            assert context_module.vector_db_config.get() is None
-            assert context_module.file_storage_config.get() is None
+            assert Path(
+                context_module.graph_db_config.get()["graph_file_path"]
+            ).parent == tmp_path / "cognee_system" / "databases"
+            assert context_module.vector_db_config.get()["vector_db_url"] == str(
+                tmp_path / "cognee_system" / "databases" / "cognee.lancedb"
+            )
+            assert context_module.file_storage_config.get() == {
+                "data_root_directory": str(tmp_path / "cognee_data")
+            }
             context_module.graph_db_config.set({"graph_file_path": "project"})
             context_module.vector_db_config.set({"vector_db_url": "project"})
             context_module.file_storage_config.set(
