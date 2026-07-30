@@ -8,6 +8,7 @@ from typing import Any
 
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
+    TaskCancelled,
     TaskTimedOut,
     await_envelope_with_cancel_watch,
     raise_if_envelope_cancel_requested,
@@ -848,6 +849,11 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
                 manager.update_progress_for_project(
                     ctx, "compose_episode", episode, logs=[status]
                 )
+            except (TaskCancelled, TaskTimedOut):
+                # Control-flow exceptions (user cancellation / cooperative
+                # timeout) must propagate — never mask them as a skipped BGM,
+                # or a cancelled/timed-out compose would report success.
+                raise
             except Exception as exc:
                 # BGM is best-effort: never fail delivery over it.
                 bgm_provenance = None

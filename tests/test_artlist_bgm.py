@@ -320,3 +320,61 @@ def test_compose_episode_cancellation(monkeypatch, tmp_path):
 
     with pytest.raises(TaskCancelled):
         video.run_compose_episode(envelope, MagicMock())
+
+
+# --- runner: cancel/timeout during the BGM step propagates -------------------
+
+
+@pytest.mark.parametrize("exc_factory", ["cancelled", "timed_out"])
+def test_compose_episode_bgm_control_flow_propagates(monkeypatch, tmp_path, exc_factory):
+    """A cancellation/timeout raised *inside* the BGM step must propagate.
+
+    Regression: the BGM block caught bare ``Exception`` and converted every
+    failure into a "Background music skipped" log line, so ``TaskCancelled`` /
+    ``TaskTimedOut`` (both subclasses of ``Exception``) raised during the
+    Artlist fetch or ffmpeg mix were silently swallowed and the compose was
+    reported as a success. The step must re-raise these control-flow signals.
+    """
+    from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
+    from novelvideo.task_backend.runners import video
+
+    if exc_factory == "cancelled":
+        control_exc: Exception = TaskCancelled()
+        expected = TaskCancelled
+    else:
+        control_exc = TaskTimedOut(timeout_seconds=30 * 60)
+        expected = TaskTimedOut
+
+    # A single beat with a real video file so composition reaches the BGM step.
+    video_dir = tmp_path / "videos" / "beats" / "ep001"
+    video_dir.mkdir(parents=True)
+    (video_dir / "beat_01.mp4").write_bytes(b"video")
+
+    def fake_run(cmd, **_kwargs):
+        # ffprobe (audio-stream detection) reports no audio; ffmpeg succeeds.
+        if cmd and cmd[0] == "ffprobe":
+            return SimpleNamespace(returncode=0, stdout="\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(video, "get_task_manager", lambda: MagicMock())
+    monkeypatch.setattr(video, "run_project_subprocess", fake_run)
+    monkeypatch.setattr(video, "raise_if_envelope_cancel_requested", lambda *a, **k: None)
+
+    def _raise_during_bgm(*_a, **_k):
+        raise control_exc
+
+    monkeypatch.setattr(video, "_apply_artlist_bgm", _raise_during_bgm)
+
+    envelope = {
+        "episode": 1,
+        "payload": {
+            "output_dir": str(tmp_path),
+            "beats": [{"beat_number": 1}],
+            "add_bgm": True,
+            "bgm_source": "artlist",
+        },
+    }
+
+    # Must propagate — NOT be converted into a successful compose / skip result.
+    with pytest.raises(expected):
+        video.run_compose_episode(envelope, MagicMock())
