@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1219,6 +1221,24 @@ async def run_freezone_video_gen(
 # ============================================================
 
 
+def sort_extracted_frames_by_pts(paths: Iterable[Path]) -> list[Path]:
+    """按文件名尾部的数值排序抽帧结果，而不是按字典序。
+
+    ``-frame_pts true`` 让 ffmpeg 把 ``%03d`` 填成该帧的 PTS 而不是递增计数，
+    于是文件名位数不固定：字典序会把 ``scene_1000.png`` 排到 ``scene_900.png``
+    前面，送进模型的关键帧顺序和 ``keyframe_index`` 映射就全乱了。
+    """
+
+    def sort_key(path: Path) -> tuple[int, int, str]:
+        match = re.search(r"(\d+)$", path.stem)
+        if match is None:
+            # 没有数字后缀的（理论上不该出现）排到最后，按名字兜底。
+            return (1, 0, path.name)
+        return (0, int(match.group(1)), path.name)
+
+    return sorted(paths, key=sort_key)
+
+
 async def run_freezone_extract_frames(
     *,
     project_dir: Path,
@@ -1269,7 +1289,7 @@ async def run_freezone_extract_frames(
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg scene detect failed: {proc.stderr[-500:]}")
 
-    scene_files = sorted(out_dir.glob("scene_*.png"))
+    scene_files = sort_extracted_frames_by_pts(out_dir.glob("scene_*.png"))
 
     # Fallback: if too few scene cuts (e.g. talking head static video),
     # sample evenly-spaced frames so the user always gets *something*.
@@ -1507,7 +1527,7 @@ async def _sample_evenly(video_path: Path, out_dir: Path, max_frames: int) -> li
         str(out_dir / "even_%03d.png"),
     ]
     await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=300)
-    return sorted(out_dir.glob("even_*.png"))
+    return sort_extracted_frames_by_pts(out_dir.glob("even_*.png"))
 
 
 _SIZE_BASE = {

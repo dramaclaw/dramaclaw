@@ -2157,13 +2157,30 @@ export async function submitFreezoneStoryScript(
   );
 }
 
+/**
+ * 故事脚本表的一行。字段名必须和后端 `FreezoneStoryScriptRow`
+ * （`src/novelvideo/api/schemas.py`）逐字对齐 —— 早期前端用的是
+ * `character` / `action` 这类简写，后端从来没发过这些 key，表格里就只显示
+ * 「-」（issue #207）。
+ */
 export interface FreezoneStoryScriptRow {
   shot_no?: string | number | null;
   duration?: string | number | null;
   visual_description?: string | null;
-  character?: string | null;
+  character_1?: string | null;
+  character_description_1?: string | null;
+  /** 角色图1 URL，由后端按角色名匹配 character_refs 回填。 */
+  character_image_1?: string | null;
+  character_2?: string | null;
+  character_description_2?: string | null;
+  /** 角色图2 URL，由后端按角色名匹配 character_refs 回填。 */
+  character_image_2?: string | null;
+  /** 参考图 URL，视频参考模式下由后端按 keyframe_index 回填对应关键帧。 */
+  reference?: string | null;
+  /** 视频参考模式下这一镜对应的输入关键帧序号（1-based，0 表示无）。 */
+  keyframe_index?: number | null;
   shot?: string | null;
-  action?: string | null;
+  character_action?: string | null;
   emotion?: string | null;
   scene_tags?: string | null;
   lighting_mood?: string | null;
@@ -2177,6 +2194,8 @@ export interface FreezoneStoryScriptRow {
 export interface FreezoneStoryScriptResult {
   title?: string | null;
   rows: FreezoneStoryScriptRow[];
+  /** 视频参考模式下抽出的关键帧静态 URL，按顺序对应 keyframe_index。 */
+  frame_urls?: string[] | null;
 }
 
 export async function fetchFreezoneStoryScriptResult(
