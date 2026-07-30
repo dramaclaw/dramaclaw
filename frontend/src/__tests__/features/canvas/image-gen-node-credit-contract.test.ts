@@ -13,7 +13,9 @@ describe("canvas image generation credit contract", () => {
     expect(nodeSource).toContain(
       "imageSelectionForCost ? IMAGE_GENERATE_FEATURE_KEY : null",
     );
-    expect(nodeSource).toContain("image_selection: imageSelectionForCost");
+    expect(nodeSource).toContain(
+      "params: buildImageFeatureBillingParams(selectedModel",
+    );
     expect(nodeSource).toContain("pricing_quantity: imageQuantity");
     expect(nodeSource).toContain("quantity: imageQuantity");
   });
