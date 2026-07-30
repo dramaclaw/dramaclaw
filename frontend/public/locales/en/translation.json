@@ -1420,6 +1420,8 @@
     "globalOptimize": "Global Optimize",
     "videoGenerating": "Generating video...",
     "addSubtitles": "Add Subtitles",
+    "addBgm": "Background music",
+    "bgmQueryPlaceholder": "Mood or genre (optional)",
     "composeVideo": "Compose Video",
     "composing": "Composing...",
     "composeHint": "Configure options and click \"Compose Video\" to generate final video",

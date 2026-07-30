@@ -19,16 +19,19 @@ describe("compose export API alignment", () => {
     expect(compose).not.toContain("export/${suffix}");
   });
 
-  it("drops the BGM toggle but still sends add_bgm:false to /videos/compose", () => {
+  it("wires the BGM toggle into the /videos/compose payload", () => {
     const compose = read(
       "src/routes/_app/projects.$project/episodes.$episode/compose.lazy.tsx",
     );
 
-    // The 添加背景音乐 toggle was removed from the UI; the compose payload keeps
-    // the flag explicitly off so the backend default never re-enables it.
-    expect(compose).toContain("add_bgm: false");
-    expect(compose).not.toContain("setAddBgm");
-    expect(compose).not.toContain("video.addBgm");
+    // The 背景音乐 toggle is the supported caller: when on it names an explicit
+    // provider so the provider-neutral backend contract is reachable; when off
+    // the payload keeps add_bgm driven by state (default false).
+    expect(compose).toContain("add_bgm: addBgm");
+    expect(compose).toContain("setAddBgm");
+    expect(compose).toContain('bgm_source: "artlist"');
+    expect(compose).toContain("bgm_query:");
+    expect(compose).toContain('t("video.addBgm")');
   });
 
   it("hydrates and persists NiceGUI compose preferences from project config", () => {

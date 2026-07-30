@@ -10,6 +10,7 @@ import {
   FileText,
   Film,
   Loader2,
+  Music,
   Subtitles,
 } from "lucide-react";
 
@@ -29,6 +30,7 @@ import {
 import { EpisodeEmptyState } from "@/components/episode/episode-empty-state";
 import { StageProgressPanel } from "@/components/stage-progress-panel";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -135,6 +137,10 @@ function ComposeTabContent() {
   const orientation = orientationForAspectRatio(projectConfig?.aspect_ratio) ?? "portrait";
 
   const [addSubtitles, setAddSubtitles] = useState(true);
+  // Background music is opt-in. When on, compose sends the only implemented
+  // provider (`bgm_source: "artlist"`); the optional query narrows mood/genre.
+  const [addBgm, setAddBgm] = useState(false);
+  const [bgmQuery, setBgmQuery] = useState("");
   const [resolution, setResolution] = useState<Resolution>("720x1280");
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [composeConfirm, setComposeConfirm] = useState(false);
@@ -238,9 +244,14 @@ function ComposeTabContent() {
   const handleCompose = async () => {
     try {
       setResultUrl(null);
+      const trimmedBgmQuery = bgmQuery.trim();
       await composeEpisode.mutateAsync({
         add_subtitles: addSubtitles,
-        add_bgm: false,
+        add_bgm: addBgm,
+        // Provider-neutral contract: add_bgm alone never picks a vendor, so name
+        // the only implemented source when the toggle is on.
+        ...(addBgm ? { bgm_source: "artlist" } : {}),
+        ...(addBgm && trimmedBgmQuery ? { bgm_query: trimmedBgmQuery } : {}),
         resolution,
       });
       task.start();
@@ -499,6 +510,24 @@ function ComposeTabContent() {
                   icon={Subtitles}
                   label={t("video.addSubtitles")}
                 />
+
+                {/* Background music: opt-in, with optional mood/genre query */}
+                <div className="flex items-center gap-2">
+                  <InlineSwitch
+                    checked={addBgm}
+                    onChange={() => setAddBgm((v) => !v)}
+                    icon={Music}
+                    label={t("video.addBgm")}
+                  />
+                  {addBgm && (
+                    <Input
+                      value={bgmQuery}
+                      onChange={(e) => setBgmQuery(e.target.value)}
+                      placeholder={t("video.bgmQueryPlaceholder")}
+                      className="!h-7 w-44 rounded-[6px] border-white/10 text-[12px]"
+                    />
+                  )}
+                </div>
               </div>
             </div>
           )}

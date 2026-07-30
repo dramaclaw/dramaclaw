@@ -181,6 +181,11 @@ export function useComposeEpisode(project: string, episode: number) {
     mutationFn: (params: {
       add_subtitles?: boolean;
       add_bgm?: boolean;
+      // Provider-neutral BGM selection. When add_bgm is true the backend
+      // requires an explicit source (e.g. "artlist"); bgm_query narrows
+      // mood/genre. Both omitted when the toggle is off.
+      bgm_source?: string;
+      bgm_query?: string;
       resolution?: string;
     }) =>
       api
