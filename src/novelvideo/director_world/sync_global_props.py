@@ -11,7 +11,12 @@ from typing import Any
 
 from novelvideo.models import build_prop_menu
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+from novelvideo.sqlite_schema import ensure_sqlite_schema
 from novelvideo.utils.project_paths import ProjectPaths
+
+_SCHEMA_COMPONENT = "director_world_props"
+# MIGRATION CONTRACT: increment this whenever _ensure_props_table changes.
+_SCHEMA_VERSION = 1
 
 
 def _safe_text(value: Any) -> str:
@@ -160,11 +165,16 @@ def sync_global_props(
     beat_synced = False
     beat_added_prop_ids: list[str] = []
     beat_detected_props: list[Any] = []
-    conn = sqlite3.connect(str(db_path))
+    ensure_sqlite_schema(
+        db_path,
+        component=_SCHEMA_COMPONENT,
+        version=_SCHEMA_VERSION,
+        initialize=_ensure_props_table,
+    )
+    conn = sqlite3.connect(str(db_path), timeout=10)
     try:
         conn.row_factory = sqlite3.Row
-        configure_sqlite_connection(conn)
-        _ensure_props_table(conn)
+        configure_sqlite_connection(conn, set_journal_mode=False)
         row = conn.execute(
             "SELECT prop_menu_json FROM episodes WHERE number = ?",
             (episode,),

@@ -1,16 +1,16 @@
 """NovelVideo 自定义 Cognee Pipeline。
 
-实现真正统一的存储架构：
-- 自定义实体类型（Character, Episode 等）直接存入图谱
-- 不依赖默认 cognify() 的固定实体类型
-- 所有属性（包括 face_prompt, asset_id）都在图谱中
+实现小说知识图谱的检索与结构化提取：
+- 原始小说由 Cognee 构建知识图谱
+- 角色、剧集、场景和道具等产品数据由 SQLite 持久化
+- 规划和提取流程只读取 Cognee，不把派生产品数据回写图谱
 """
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, TypeVar
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from novelvideo.shared.env_guard import preserve_st_env
@@ -21,7 +21,7 @@ from novelvideo.models import (
     NovelEvent,
     NovelVisualBeat,
 )
-from novelvideo.config import ensure_project_dirs, get_newapi_reasoning_kwargs
+from novelvideo.config import get_newapi_reasoning_kwargs
 from novelvideo.cognee.screenplay_normalizer import (
     NormalizedSceneBlock,
     clean_scene_name_and_time,
@@ -32,10 +32,10 @@ from novelvideo.time_of_day import LlmTimeOfDay
 
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
 from . import config as _cognee_config  # noqa: F401
-from .config import apply_cognee_project_storage_context
+from .ladybug_access import ladybug_graph_access
 
 # cognee 重量级模块延迟导入（避免 reload 时拉起整个初始化链）
-# LLMGateway, Task, run_pipeline, add_data_points, setup
+# LLMGateway, Task, run_pipeline, setup
 # 在各函数内部按需 import
 
 # 业务模型已迁移到 novelvideo.models
@@ -67,38 +67,21 @@ class EpisodeList(BaseModel):
     episodes: List[NovelEpisode]
 
 
-def _set_cognee_project_context(
-    project_name: str = "",
-    project_dir: Optional[str] = None,
-    verbose: bool = False,
-) -> None:
-    """Point Cognee search at the current project's isolated graph/vector store."""
-    if not project_dir and project_name:
-        project_dir = ensure_project_dirs(project_name)["base"]
-    if not project_dir:
-        return
+_GraphReadResult = TypeVar("_GraphReadResult")
 
-    state_dir = project_dir
-    parts = project_name.split("/", 1)
-    if len(parts) == 2:
-        from novelvideo.utils.project_paths import ProjectPaths
 
-        paths = ProjectPaths(parts[0], parts[1])
-        paths.bootstrap_from_legacy_output()
-        state_dir = str(paths.state_dir)
+async def _run_graph_read(
+    state_dir: Optional[str],
+    operation: Callable[[], Awaitable[_GraphReadResult]],
+) -> _GraphReadResult:
+    """Run only the actual Ladybug query under the project read scope."""
 
-    with preserve_st_env():
-        import cognee
-
-    cognee_system_dir, cognee_data_dir = apply_cognee_project_storage_context(state_dir, cognee)
-    if verbose:
-        print(
-            f"[cognee_context] project={project_name} "
-            f"project_dir={project_dir} "
-            f"system_root_directory={cognee_system_dir} "
-            f"data_root_directory={cognee_data_dir}",
-            flush=True,
-        )
+    if not state_dir:
+        # Test doubles can operate without project storage. A real Ladybug
+        # adapter fails closed because it requires an explicit access scope.
+        return await operation()
+    async with ladybug_graph_access(state_dir, read_only=True):
+        return await operation()
 
 
 def _stringify_search_fragment(value) -> str:
@@ -282,7 +265,6 @@ async def run_episode_planning_pipeline(
     """运行剧集规划 Pipeline。"""
     with preserve_st_env():
         from cognee.modules.pipelines import Task, run_pipeline
-        from cognee.tasks.storage import add_data_points
         from cognee.modules.engine.operations.setup import setup
 
     await setup()
@@ -296,17 +278,16 @@ async def run_episode_planning_pipeline(
     # 用于捕获中间结果的包装函数
     captured_episodes: List[NovelEpisode] = []
 
-    async def capture_and_store(episodes: List[NovelEpisode]) -> List[NovelEpisode]:
-        """捕获剧集列表并存入图谱。"""
+    async def capture_episodes(episodes: List[NovelEpisode]) -> List[NovelEpisode]:
+        """Capture planner output; the caller persists episodes to SQLite."""
         nonlocal captured_episodes
         captured_episodes = episodes
-        await add_data_points(episodes)
         return episodes
 
     tasks = [
         Task(extract_with_count),
         Task(attach_metadata),
-        Task(capture_and_store),
+        Task(capture_episodes),
     ]
 
     async for result in run_pipeline(tasks=tasks, data=text, datasets=[dataset_name]):
@@ -353,6 +334,7 @@ async def extract_characters_from_graph(
     dataset_name: str = "novel",
     project_name: str = "",
     project_dir: Optional[str] = None,
+    state_dir: Optional[str] = None,
     novel_text: Optional[str] = None,
     on_progress: Optional[Any] = None,
     on_log: Optional[Any] = None,
@@ -363,7 +345,7 @@ async def extract_characters_from_graph(
     1. 通过 cognee.search(only_context=True) 获取图谱上下文（人物+关系的摘要）
     2. 用 LLM 结构化输出提取角色信息
     3. 后处理去重
-    4. 存入图谱
+    4. 返回调用方，由 SQLite 持久化
 
     Args:
         dataset_name: Cognee 数据集名称
@@ -387,20 +369,21 @@ async def extract_characters_from_graph(
     def log(message: str):
         print(f"[extract_characters] {message}")
 
-    _set_cognee_project_context(project_name=project_name, project_dir=project_dir, verbose=True)
-
     # Step 1: 通过 cognee.search 获取图谱上下文
     report(0.1, "通过图谱检索人物信息...")
     log("使用 cognee.search(only_context=True) 获取图谱上下文...")
 
     context_text = ""
     try:
-        results = await cognee.search(
-            query_text="列出小说中所有人物角色，包括他们的关系、别名、身份特征和外貌描述",
-            query_type=SearchType.GRAPH_COMPLETION,
-            datasets=[dataset_name],
-            only_context=True,
-            top_k=30,
+        results = await _run_graph_read(
+            state_dir,
+            lambda: cognee.search(
+                query_text="列出小说中所有人物角色，包括他们的关系、别名、身份特征和外貌描述",
+                query_type=SearchType.GRAPH_COMPLETION,
+                datasets=[dataset_name],
+                only_context=True,
+                top_k=30,
+            ),
         )
         if results:
             parts = []
@@ -418,6 +401,7 @@ async def extract_characters_from_graph(
 
         logging.warning(f"cognee.search 失败: {e}")
         log(f"cognee.search 失败: {e}")
+        raise RuntimeError("Cognee 图谱角色搜索失败") from e
 
     if not context_text.strip():
         log("⚠️ 图谱搜索无数据，请先构建图谱（cognify）")
@@ -516,7 +500,7 @@ async def extract_characters_from_graph(
 
         logging.error(f"LLM 结构化提取失败: {e}")
         log(f"⚠️ LLM 结构化提取失败: {e}")
-        return []
+        raise RuntimeError("LLM 图谱角色提取失败") from e
 
     report(0.9, "提取完成")
 
@@ -660,6 +644,24 @@ class SceneEnrichmentList(BaseModel):
     """场景补充信息列表。"""
 
     scenes: List[SceneEnrichment]
+
+
+class GraphSceneCandidate(BaseModel):
+    """Stable physical scene discovered from Cognee graph context."""
+
+    name: str = Field(..., description="稳定物理地点名称，不包含时间、人物、事件或镜头词")
+    aliases: List[str] = Field(default_factory=list, description="图谱中出现的地点别名")
+    scene_type: str = Field(default="interior", description="interior/exterior/nature")
+    evidence_lines: List[str] = Field(
+        default_factory=list,
+        description="图谱上下文中支持该地点存在及其固定环境特征的短句",
+    )
+
+
+class GraphSceneCandidateList(BaseModel):
+    """Stable physical scenes extracted from Cognee graph context."""
+
+    scenes: List[GraphSceneCandidate] = Field(default_factory=list)
 
 
 SCENE_ENVIRONMENT_REQUIRED_HEADINGS = ("正面", "左侧", "右侧", "背面")
@@ -964,6 +966,162 @@ def _episode_number_from_normalized_block(block: NormalizedSceneBlock) -> int:
     return 1
 
 
+async def extract_scenes_from_graph(
+    dataset_name: str = "novel",
+    project_name: str = "",
+    project_dir: Optional[str] = None,
+    state_dir: Optional[str] = None,
+    on_progress: Optional[Any] = None,
+    on_log: Optional[Any] = None,
+) -> List[NovelScene]:
+    """Discover reusable base scenes from Cognee graph context.
+
+    Project-level scene discovery must mirror character/prop discovery. Script
+    normalization belongs to per-episode drama planning, not this graph path.
+    """
+    with preserve_st_env():
+        import cognee
+        from cognee.api.v1.search import SearchType
+        from cognee.infrastructure.llm.LLMGateway import LLMGateway
+
+    def report(progress: float, task: str) -> None:
+        if on_progress:
+            on_progress(progress, task)
+
+    def log(message: str) -> None:
+        print(f"[extract_scenes] {message}")
+        if on_log:
+            on_log(message)
+
+    report(0.1, "通过图谱检索场景信息...")
+    context_text = ""
+    try:
+        results = await _run_graph_read(
+            state_dir,
+            lambda: cognee.search(
+                query_text=(
+                    "列出作品中反复出现或对剧情重要的稳定物理地点，包括地点别名、"
+                    "空间环境、建筑结构和地点之间的关系；不要列人物、事件、情绪或抽象概念"
+                ),
+                query_type=SearchType.GRAPH_COMPLETION,
+                datasets=[dataset_name],
+                only_context=True,
+                top_k=50,
+            ),
+        )
+        if results:
+            context_text = "\n".join(
+                _stringify_search_fragment(
+                    item.search_result if hasattr(item, "search_result") else item
+                )
+                for item in results
+            )
+            log(f"图谱场景上下文获取成功: {len(context_text)} 字符")
+    except Exception as exc:
+        import logging
+
+        logging.warning("cognee 场景搜索失败: %s", exc)
+        log(f"图谱场景搜索失败: {exc}")
+        raise RuntimeError("Cognee 图谱场景搜索失败") from exc
+
+    if not context_text.strip():
+        log("⚠️ 图谱搜索无场景数据，请先完成知识图谱构建")
+        return []
+
+    report(0.3, "从图谱结构化提取基础场景...")
+    system_prompt = """你是影视项目的全局场景资产分析师。
+输入是知识图谱检索得到的上下文。请只提取可以跨镜头复用的稳定物理地点。
+
+规则：
+- name 必须是具体物理地点，例如“菩提寝房”“镇国公府前院”，不能是“家里”“现场”“回忆”等泛称。
+- 合并同一地点的别名；不同时间、天气、损毁状态不要拆成新的基础场景。
+- 排除人物、组织、事件、动作、情绪、章节标题和抽象概念。
+- scene_type 只能是 interior、exterior、nature。
+- evidence_lines 必须来自输入图谱上下文，不得编造。
+- 图谱证据不足时宁缺毋滥，不要猜测地点。"""
+    try:
+        result = await LLMGateway.acreate_structured_output(
+            context_text,
+            system_prompt,
+            GraphSceneCandidateList,
+            **get_newapi_reasoning_kwargs(
+                thinking_env="COGNEE_LLM_THINKING_LEVEL",
+                default_thinking_level="high",
+            ),
+        )
+    except Exception as exc:
+        import logging
+
+        logging.error("LLM 图谱场景提取失败: %s", exc)
+        log(f"LLM 图谱场景提取失败: {exc}")
+        raise RuntimeError("LLM 图谱场景提取失败") from exc
+
+    candidates: list[GraphSceneCandidate] = []
+    seen: set[str] = set()
+    generic_names = {"场景", "地点", "室内", "外景", "内景", "现场", "家里", "回忆"}
+    for candidate in result.scenes:
+        name = str(candidate.name or "").strip()
+        if not name or name in seen or name in generic_names:
+            continue
+        aliases = _clean_aliases(name, candidate.aliases)
+        evidence_lines = [
+            str(line or "").strip()
+            for line in candidate.evidence_lines
+            if str(line or "").strip() and str(line or "").strip() in context_text
+        ]
+        if not evidence_lines:
+            location_tokens = [name, *aliases]
+            evidence_lines = [
+                line.strip()
+                for line in context_text.splitlines()
+                if line.strip()
+                and any(token and token in line for token in location_tokens)
+            ][:8]
+        if not evidence_lines:
+            log(f"  跳过缺少图谱证据的场景候选: {name}")
+            continue
+        candidate.aliases = aliases
+        candidate.evidence_lines = evidence_lines
+        seen.add(name)
+        candidates.append(candidate)
+
+    if not candidates:
+        log("⚠️ 图谱上下文未提取到稳定物理场景")
+        return []
+
+    report(0.5, "生成场景环境描述...")
+    enrichment_agent = _create_scene_build_agent(
+        SCENE_ENRICHMENT_SYSTEM_PROMPT,
+        SceneEnrichmentList,
+        "Scene Build Enricher",
+    )
+    scenes: list[NovelScene] = []
+    total = len(candidates)
+    for index, candidate in enumerate(candidates, start=1):
+        report(
+            0.5 + 0.45 * ((index - 1) / max(total, 1)),
+            f"生成场景描述 ({index}/{total}): {candidate.name}",
+        )
+        scene_type = str(candidate.scene_type or "interior").strip().lower()
+        if scene_type not in {"interior", "exterior", "nature"}:
+            scene_type = "interior"
+        scene = await enrich_scene_environment_from_context(
+            scene_name=candidate.name,
+            aliases=candidate.aliases,
+            scene_type=scene_type,
+            interior=scene_type == "interior",
+            context_lines=list(candidate.evidence_lines),
+            enrichment_agent=enrichment_agent,
+        )
+        scene.notes = _append_scene_note(scene.notes, "由 Cognee 图谱提取的基础场景")
+        scenes.append(scene)
+        log(f"  ✓ {scene.name}")
+
+    report(1.0, "完成")
+    log(f"图谱场景提取完成: {len(scenes)} 个")
+    return scenes
+
+
 async def extract_scenes_from_script(
     novel_text: str,
     on_progress: Optional[Any] = None,
@@ -1266,6 +1424,7 @@ async def extract_props_from_graph(
     dataset_name: str = "novel",
     project_name: str = "",
     project_dir: Optional[str] = None,
+    state_dir: Optional[str] = None,
     novel_text: Optional[str] = None,
     on_progress: Optional[Any] = None,
     on_log: Optional[Any] = None,
@@ -1286,18 +1445,19 @@ async def extract_props_from_graph(
     def log(message: str):
         print(f"[extract_props] {message}")
 
-    _set_cognee_project_context(project_name=project_name, project_dir=project_dir, verbose=True)
-
     report(0.1, "通过图谱检索道具信息...")
 
     context_text = ""
     try:
-        results = await cognee.search(
-            query_text="列出小说中所有重要道具物件，包括武器、信物、文书、法宝等有情节意义的物品",
-            query_type=SearchType.GRAPH_COMPLETION,
-            datasets=[dataset_name],
-            only_context=True,
-            top_k=30,
+        results = await _run_graph_read(
+            state_dir,
+            lambda: cognee.search(
+                query_text="列出小说中所有重要道具物件，包括武器、信物、文书、法宝等有情节意义的物品",
+                query_type=SearchType.GRAPH_COMPLETION,
+                datasets=[dataset_name],
+                only_context=True,
+                top_k=30,
+            ),
         )
         if results:
             parts = []
@@ -1314,6 +1474,7 @@ async def extract_props_from_graph(
         import logging
 
         logging.warning(f"cognee.search 失败: {e}")
+        raise RuntimeError("Cognee 图谱道具搜索失败") from e
 
     if not context_text.strip():
         log("⚠️ 图谱搜索无数据，请先构建图谱")
@@ -1377,7 +1538,7 @@ async def extract_props_from_graph(
         import logging
 
         logging.error(f"LLM 道具提取失败: {e}")
-        return []
+        raise RuntimeError("LLM 图谱道具提取失败") from e
 
     report(1.0, "完成")
     return props

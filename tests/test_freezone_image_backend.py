@@ -7468,3 +7468,7 @@ async def test_reverse_prompt_uses_shared_freezone_vision_model(
     assert len(captured["images"]) == 1
     assert "用户补充要求" in captured["prompt"]
     assert "突出电影感光影" in captured["prompt"]
+    assert (
+        captured["timeout_seconds"]
+        == image_node.FREEZONE_IMAGE_REVERSE_PROMPT_TIMEOUT_SECONDS
+    )

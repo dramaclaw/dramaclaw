@@ -9,6 +9,10 @@ from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.freezone import vision_gateway
 from novelvideo.freezone.jobs import build_video_story_analysis_prompt
 from novelvideo.freezone.jobs import run_freezone_analyze_shots
+from novelvideo.freezone.jobs import sort_extracted_frames_by_pts
+from novelvideo.freezone.vision_gateway import (
+    FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+)
 
 
 def _patch_project_resolution(
@@ -22,6 +26,40 @@ def _patch_project_resolution(
         return None, username, project, project_dir, str(project_dir)
 
     monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", _fake_resolve)
+
+
+def test_extracted_frames_sort_by_numeric_pts_not_lexicographically() -> None:
+    # `-frame_pts true` 让文件名里的数字是 PTS 而不是计数，位数不固定：
+    # 字典序会把 scene_1000 排到 scene_900 前面，关键帧顺序和 keyframe_index 全乱。
+    out_dir = Path("/tmp/freezone_extract/job")
+    paths = [
+        out_dir / "scene_1000.png",
+        out_dir / "scene_90.png",
+        out_dir / "scene_900.png",
+        out_dir / "scene_1.png",
+    ]
+
+    ordered = sort_extracted_frames_by_pts(paths)
+
+    assert [path.name for path in ordered] == [
+        "scene_1.png",
+        "scene_90.png",
+        "scene_900.png",
+        "scene_1000.png",
+    ]
+
+
+def test_extracted_frames_sort_keeps_zero_padded_even_samples_in_order() -> None:
+    out_dir = Path("/tmp/freezone_extract/job")
+    paths = [out_dir / "even_010.png", out_dir / "even_002.png", out_dir / "even_001.png"]
+
+    ordered = sort_extracted_frames_by_pts(paths)
+
+    assert [path.name for path in ordered] == [
+        "even_001.png",
+        "even_002.png",
+        "even_010.png",
+    ]
 
 
 def test_video_story_prompt_requests_libtv_story_table() -> None:
@@ -122,6 +160,7 @@ async def test_video_story_analysis_uses_shared_freezone_vision_model(
     assert result["model"] == "DC-freezone-vision-LLM"
     assert result["video_story"] == {"shots": []}
     assert len(captured["images"]) == 1
+    assert captured["timeout_seconds"] == FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio

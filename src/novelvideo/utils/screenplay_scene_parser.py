@@ -54,10 +54,17 @@ EPISODE_HEADER_RE = re.compile(r"^第([一二三四五六七八九十百千万\d
 SCENE_MARKER_RE = re.compile(
     r"^(?:场次|第)?[（(]?(?P<scene_no>\d+)[）)]?(?:\s*场)?(?:\s*[:：])?\s*$"
 )
+COLON_SCENE_MARKER_RE = re.compile(r"^场次\s*[:：]\s*(?P<scene_no>\d+)\s*$")
 NUMBERED_SCENE_RE = re.compile(
     r"^(?P<episode>\d+)\s*[-－]\s*(?P<scene>\d+)(?:\s*[、，,.\s]\s*)?(?P<rest>.*)$"
 )
 LABELED_LOCATION_RE = re.compile(r"^(?:地点|环境|场景)[：:]\s*(?P<location>.+)$")
+LABELED_TIME_RE = re.compile(
+    rf"^(?:时间|时段)[：:]\s*(?P<time>{TIME_TOKEN_RE})\s*$"
+)
+LABELED_INTERIOR_EXTERIOR_RE = re.compile(
+    r"^(?:内外景|场景类型)[：:]\s*(?P<interior>内|外)\s*$"
+)
 LABELED_CHARACTER_RE = re.compile(r"^(?:人物|出场人物|角色)[：:]\s*(?P<characters>.+)$")
 INLINE_LABELED_SCENE_RE = re.compile(
     r"^(?:场次|第)?[（(]?(?P<scene_no>\d+)[）)]?(?:\s*场)?"
@@ -131,6 +138,13 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
                 current.episode = current.episode or current_episode
             continue
 
+        colon_marker = COLON_SCENE_MARKER_RE.match(line)
+        if colon_marker:
+            if current_episode <= 0:
+                current_episode = 1
+            start_block(line, scene_no=colon_marker.group("scene_no") or "")
+            continue
+
         inline = INLINE_LABELED_SCENE_RE.match(line)
         if inline:
             if current_episode <= 0:
@@ -163,9 +177,29 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
         if labeled_location:
             if current.header_line and (collecting_header or not current.lines):
                 _apply_location(current, labeled_location.group("location") or "")
+                if not current.location:
+                    current.location = (labeled_location.group("location") or "").strip()
                 collecting_header = True
             else:
                 start_block(line, location_line=labeled_location.group("location") or "")
+                if not current.location:
+                    current.location = (labeled_location.group("location") or "").strip()
+            continue
+
+        labeled_time = LABELED_TIME_RE.match(line)
+        if labeled_time and current.header_line and (collecting_header or not current.lines):
+            current.time_of_day = labeled_time.group("time") or ""
+            collecting_header = True
+            continue
+
+        labeled_interior_exterior = LABELED_INTERIOR_EXTERIOR_RE.match(line)
+        if (
+            labeled_interior_exterior
+            and current.header_line
+            and (collecting_header or not current.lines)
+        ):
+            current.interior_exterior = labeled_interior_exterior.group("interior") or ""
+            collecting_header = True
             continue
 
         labeled_chars = LABELED_CHARACTER_RE.match(line)
@@ -196,6 +230,8 @@ def is_scene_start_line(line: str) -> bool:
     if not stripped:
         return False
     if INLINE_LABELED_SCENE_RE.match(stripped):
+        return True
+    if COLON_SCENE_MARKER_RE.match(stripped):
         return True
     numbered = NUMBERED_SCENE_RE.match(stripped)
     if numbered and _looks_like_scene_number_line(numbered):

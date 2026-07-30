@@ -31,6 +31,11 @@ export function useTasks(filter?: UseTasksFilter) {
         .get(p`api/v1/projects/${project}/tasks`, { signal })
         .json<OkResponse<Task[]>>();
     },
+    // Task state is live operational data, not ordinary page data. Never
+    // inherit the app-wide 30s freshness window: entering a task-aware page
+    // (notably 虾料 during ingest) must reconcile against the server now.
+    staleTime: 0,
+    refetchOnMount: "always",
     // 2s when any task is active for near-real-time updates, 30s otherwise.
     // When the global Task Center owns this project, it is already keeping the
     // query cache fresh via SSE or its own polling fallback.

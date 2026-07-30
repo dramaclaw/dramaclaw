@@ -32,6 +32,7 @@ from novelvideo.models import (
 )
 from novelvideo.novel_source import load_imported_novel_content
 from novelvideo.sqlite_pragmas import configure_sqlite_connection_async
+from novelvideo.sqlite_schema import ensure_sqlite_schema
 from novelvideo.utils.path_resolver import compute_identity_path
 
 console = Console()
@@ -44,6 +45,45 @@ class StoreClosedError(RuntimeError):
     def __init__(self, project_dir: str):
         super().__init__(f"SQLiteStore is closed: {project_dir}")
         self.project_dir = project_dir
+
+
+async def load_episode_planning_content(store: Any, episode: Any) -> str:
+    """Return the current production text shared by episode-level planners.
+
+    The persisted beat source is the most explicit user-approved input. When it
+    is absent, ``load_working_content`` resolves the adapted draft before the
+    imported raw episode. Detached/test stores may not expose that adapter, so
+    the model fields and ``load_episode_content`` remain compatible fallbacks.
+    """
+
+    beat_source_text = str(getattr(episode, "beat_source_text", "") or "")
+    if beat_source_text.strip():
+        return beat_source_text
+
+    content_store = getattr(store, "sqlite_store", None) or store
+    working_loader = getattr(content_store, "load_working_content", None)
+    if callable(working_loader):
+        working_content = str(await working_loader(episode.number) or "")
+        if working_content.strip():
+            return working_content
+
+    adapted_content = str(getattr(episode, "adapted_content", "") or "")
+    if adapted_content.strip():
+        return adapted_content
+
+    raw_loader = getattr(store, "load_episode_content", None)
+    if not callable(raw_loader):
+        raw_loader = getattr(content_store, "load_episode_content", None)
+    if callable(raw_loader):
+        raw_content = str(await raw_loader(episode.number) or "")
+        if raw_content.strip():
+            return raw_content
+
+    raw_content = str(getattr(episode, "raw_content", "") or "")
+    if raw_content.strip():
+        return raw_content
+
+    return str(getattr(episode, "content_summary", "") or "")
 
 
 SQLITE_SCHEMA_SQL = """
@@ -207,15 +247,20 @@ CREATE INDEX IF NOT EXISTS idx_seedance2_voice_audio_speaker
     ON seedance2_voice_audio_records(episode_number, speaker);
 """
 
+_PROJECT_STORE_SCHEMA_COMPONENT = "project_store"
+# MIGRATION CONTRACT: increment this whenever SQLITE_SCHEMA_SQL or any
+# _ensure_*_columns migration above changes. Existing databases skip the
+# initializer after this version has been recorded.
+_PROJECT_STORE_SCHEMA_VERSION = 1
 
-async def _table_columns(db: aiosqlite.Connection, table: str) -> set[str]:
-    async with db.execute(f"PRAGMA table_info({table})") as cursor:
-        rows = await cursor.fetchall()
+
+def _table_columns(db: sqlite3.Connection, table: str) -> set[str]:
+    rows = db.execute(f"PRAGMA table_info({table})").fetchall()
     return {str(row["name"]) for row in rows}
 
 
-async def _add_column_if_missing(
-    db: aiosqlite.Connection,
+def _add_column_if_missing(
+    db: sqlite3.Connection,
     table: str,
     name: str,
     definition: str,
@@ -226,15 +271,15 @@ async def _add_column_if_missing(
     processes can initialize the same project DB at once, so a column may be
     added after our ``PRAGMA table_info`` read but before ``ALTER TABLE``.
     """
-    if name in await _table_columns(db, table):
+    if name in _table_columns(db, table):
         return
 
     try:
-        await db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
     except sqlite3.OperationalError as exc:
         if "duplicate column name" not in str(exc).lower():
             raise
-        if name not in await _table_columns(db, table):
+        if name not in _table_columns(db, table):
             raise
         logger.debug("SQLite column already added concurrently: %s.%s", table, name)
 
@@ -318,37 +363,57 @@ class SQLiteStore:
         if self._db is None:
             if self._closing:
                 raise StoreClosedError(self.project_dir)
-            self._db = await aiosqlite.connect(self.db_path)
+            await self._ensure_project_schema()
+            self._db = await aiosqlite.connect(self.db_path, timeout=10)
             self._db.row_factory = aiosqlite.Row
-            await configure_sqlite_connection_async(self._db)
-            await self._db.executescript(SQLITE_SCHEMA_SQL)
-            await self._ensure_episode_planning_columns(self._db)
-            await self._ensure_beat_current_columns(self._db)
-            await self._ensure_scene_columns(self._db)
-            await self._ensure_indextts2_columns(self._db)
-            await self._db.commit()
-            # Phase 2 DB split: failure-mode *definitions* live in the
-            # user-shared verification.db (not this project DB). They are
-            # seeded lazily by `failure_registry.load_negative_clause_for_project`
-            # / `open_defs_db_for_project` the first time any caller needs
-            # them. This project DB holds only per-project hits +
-            # convergence facts — the schema above already creates
-            # `sketch_failure_mode_hits`, which stays project-local.
+            await configure_sqlite_connection_async(
+                self._db,
+                set_journal_mode=False,
+            )
         return self._db
 
-    async def _ensure_scene_columns(self, db: aiosqlite.Connection) -> None:
-        await _add_column_if_missing(
+    async def _ensure_project_schema(self) -> None:
+        """Initialize/upgrade project tables once, serialized across processes."""
+
+        await asyncio.to_thread(self._ensure_project_schema_sync)
+
+    def _ensure_project_schema_sync(self) -> None:
+        """Run blocking schema migration outside the asyncio event loop."""
+
+        path = Path(self.db_path)
+
+        def initialize(db: sqlite3.Connection) -> None:
+            db.row_factory = sqlite3.Row
+            db.executescript(SQLITE_SCHEMA_SQL)
+            self._ensure_episode_planning_columns(db)
+            self._ensure_beat_current_columns(db)
+            self._ensure_scene_columns(db)
+            self._ensure_indextts2_columns(db)
+
+        ensure_sqlite_schema(
+            path,
+            component=_PROJECT_STORE_SCHEMA_COMPONENT,
+            version=_PROJECT_STORE_SCHEMA_VERSION,
+            initialize=initialize,
+        )
+
+        # Phase 2 DB split: failure-mode *definitions* live in the user-shared
+        # verification.db. This project DB holds only per-project hits and
+        # convergence facts.
+
+    def _ensure_scene_columns(self, db: sqlite3.Connection) -> None:
+        _add_column_if_missing(
             db,
             "scenes",
             "spatial_layout_image",
             "TEXT DEFAULT ''",
         )
         for name in ("base_scene_id", "variant_id", "time_of_day", "variant_prompt"):
-            await _add_column_if_missing(db, "scenes", name, "TEXT DEFAULT ''")
+            _add_column_if_missing(db, "scenes", name, "TEXT DEFAULT ''")
 
-    async def _ensure_indextts2_columns(self, db: aiosqlite.Connection) -> None:
+    def _ensure_indextts2_columns(self, db: sqlite3.Connection) -> None:
         """Add IndexTTS2 / Seedance 2.0 voice columns introduced in Stage A."""
-        await _add_column_if_missing(
+        _add_column_if_missing(
             db,
             "beats",
             "seedance2_config_json",
@@ -362,9 +427,9 @@ class SQLiteStore:
             "voice_samples_by_age_group_json": "TEXT DEFAULT '{}'",
         }
         for name, definition in char_columns.items():
-            await _add_column_if_missing(db, "characters", name, definition)
+            _add_column_if_missing(db, "characters", name, definition)
 
-    async def _ensure_episode_planning_columns(self, db: aiosqlite.Connection) -> None:
+    def _ensure_episode_planning_columns(self, db: sqlite3.Connection) -> None:
         """Add episode columns introduced after early project databases were created."""
         columns = {
             "beat_source_text": "TEXT DEFAULT ''",
@@ -374,9 +439,9 @@ class SQLiteStore:
             "identity_default_map_json": "TEXT DEFAULT '{}'",
         }
         for name, definition in columns.items():
-            await _add_column_if_missing(db, "episodes", name, definition)
+            _add_column_if_missing(db, "episodes", name, definition)
 
-    async def _ensure_beat_current_columns(self, db: aiosqlite.Connection) -> None:
+    def _ensure_beat_current_columns(self, db: sqlite3.Connection) -> None:
         """Add beat columns required by the current script/render pipeline."""
         columns = {
             "detected_identities_json": "TEXT DEFAULT '[]'",
@@ -394,7 +459,7 @@ class SQLiteStore:
             "is_manual_shot": "INTEGER DEFAULT 0",
         }
         for name, definition in columns.items():
-            await _add_column_if_missing(db, "beats", name, definition)
+            _add_column_if_missing(db, "beats", name, definition)
 
     async def initialize(self) -> None:
         await self._ensure_db()
@@ -1099,8 +1164,13 @@ class SQLiteStore:
         console.print(f"[yellow]图片文件不存在: {image_path}[/yellow]")
         return False
 
-    async def add_episodes(self, episodes: List[NovelEpisode]) -> None:
-        db = await self._ensure_db()
+    async def _upsert_episodes(
+        self,
+        db: aiosqlite.Connection,
+        episodes: List[NovelEpisode],
+    ) -> None:
+        """Write episode rows on the caller's current transaction."""
+
         for ep in episodes:
             await db.execute(
                 """INSERT INTO episodes (number, title, chapter_start, chapter_end,
@@ -1140,7 +1210,32 @@ class SQLiteStore:
                     ep.sketch_colors_json,
                 ),
             )
-        await db.commit()
+
+    async def add_episodes(self, episodes: List[NovelEpisode]) -> None:
+        db = await self._ensure_db()
+        try:
+            await self._upsert_episodes(db, episodes)
+            await db.commit()
+        except BaseException:
+            await asyncio.shield(db.rollback())
+            raise
+        self._episodes.update({episode.number: episode for episode in episodes})
+
+    async def replace_episodes(self, episodes: List[NovelEpisode]) -> None:
+        """Atomically replace every episode row and refresh the cache."""
+
+        db = await self._ensure_db()
+        try:
+            await db.execute("DELETE FROM episodes")
+            await self._upsert_episodes(db, episodes)
+            await db.commit()
+        except BaseException:
+            await asyncio.shield(db.rollback())
+            raise
+
+        # Do not mutate the shared in-memory cache until the transaction commits.
+        self._episodes.clear()
+        self._episodes.update({episode.number: episode for episode in episodes})
 
     async def add_episode(self, episode: NovelEpisode) -> None:
         await self.add_episodes([episode])

@@ -5,6 +5,7 @@ from pydantic_ai.models.test import TestModel
 
 from novelvideo import config
 from novelvideo.freezone.vision_gateway import (
+    FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
     VisionInput,
     call_freezone_vision_model,
     image_media_type,
@@ -33,12 +34,17 @@ async def test_vision_gateway_uses_pydantic_agent_and_logical_model(
     model, output = await call_freezone_vision_model(
         prompt="分析图片",
         images=[VisionInput(data=b"image", media_type="image/png")],
+        timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
     )
 
     assert model == "custom-vision-model"
     assert output == "视觉解析结果"
     assert captured["model_env"] == "FREEZONE_VISION_MODEL"
     assert captured["model_name_override"] == "custom-vision-model"
+    assert (
+        captured["timeout_seconds_override"]
+        == FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS
+    )
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
+from novelvideo.sqlite_schema import ensure_sqlite_schema
 
 
 _SCHEMA_SQL = """
@@ -30,6 +31,11 @@ CREATE TABLE IF NOT EXISTS seedance2_voice_audio_records (
 CREATE INDEX IF NOT EXISTS idx_seedance2_voice_audio_speaker
 ON seedance2_voice_audio_records(episode_number, speaker);
 """
+
+_SCHEMA_COMPONENT = "seedance2_voice_audio_records"
+# MIGRATION CONTRACT: increment this whenever _SCHEMA_SQL or
+# _ensure_schema_columns changes.
+_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -58,17 +64,26 @@ class Seedance2VoiceAudioState:
 def _connect(db_path: str | Path):
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=5, check_same_thread=False)
+    ensure_sqlite_schema(
+        path,
+        component=_SCHEMA_COMPONENT,
+        version=_SCHEMA_VERSION,
+        initialize=_initialize_schema,
+    )
+    conn = sqlite3.connect(path, timeout=10, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    configure_sqlite_connection(conn)
-    conn.executescript(_SCHEMA_SQL)
-    _ensure_schema_columns(conn)
-    conn.commit()
+    configure_sqlite_connection(conn, set_journal_mode=False)
     try:
         yield conn
         conn.commit()
     finally:
         conn.close()
+
+
+def _initialize_schema(conn: sqlite3.Connection) -> None:
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_SCHEMA_SQL)
+    _ensure_schema_columns(conn)
 
 
 def _ensure_schema_columns(conn: sqlite3.Connection) -> None:

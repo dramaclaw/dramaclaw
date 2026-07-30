@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from novelvideo.freezone.vision_gateway import (
+    FREEZONE_IMAGE_REVERSE_PROMPT_TIMEOUT_SECONDS,
     VisionInput,
     call_freezone_vision_model,
     image_media_type,
@@ -46,6 +47,7 @@ async def reverse_prompt_from_image(
                 media_type=image_media_type(image_path.name),
             )
         ],
+        timeout_seconds=FREEZONE_IMAGE_REVERSE_PROMPT_TIMEOUT_SECONDS,
     )
     prompt_text = prompt_text.strip()
     if prompt_text.startswith("```"):

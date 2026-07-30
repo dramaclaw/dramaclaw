@@ -32,7 +32,11 @@ def _progress(ctx: ProjectContext, task_type: str, progress: float, task: str) -
 async def _load_store(ctx: ProjectContext):
     from novelvideo.cognee import CogneeStore
 
-    store = CogneeStore(ctx.owner_project_label, output_dir=str(ctx.output_dir))
+    store = CogneeStore(
+        ctx.owner_project_label,
+        output_dir=str(ctx.output_dir),
+        state_dir=str(ctx.state_dir),
+    )
     await store.initialize()
     await store.load_graph_state()
     return store
@@ -133,6 +137,8 @@ async def _run_build_episodes(envelope: dict[str, Any], ctx: ProjectContext) -> 
                     on_progress=update,
                     on_log=lambda message: update(0.0, message),
                 )
+            else:
+                await store.replace_episodes(episodes)
         else:
             episodes = await store.build_episodes(
                 target_episodes=target,

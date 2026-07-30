@@ -52,6 +52,7 @@ async def tmp_project(tmp_path):
     store._episodes = {}
     store._alias_index = {}
     store.project_dir = str(project_dir)
+    store.state_dir = str(project_dir)
     store.db_path = str(project_dir / "data.db")
 
     try:
@@ -184,7 +185,10 @@ async def test_build_scenes_from_graph_only_adds_missing_base_scenes(tmp_project
         )
     )
 
-    async def fake_extract_scenes_from_script(**_kwargs):
+    graph_calls = []
+
+    async def fake_extract_scenes_from_graph(**kwargs):
+        graph_calls.append(kwargs)
         return [
             NovelScene(
                 name="城市街道",
@@ -194,11 +198,15 @@ async def test_build_scenes_from_graph_only_adds_missing_base_scenes(tmp_project
             NovelScene(name="新场景", scene_type="interior", environment_prompt="新增场景"),
         ]
 
-    monkeypatch.setattr(pipeline, "extract_scenes_from_script", fake_extract_scenes_from_script)
+    monkeypatch.setattr(pipeline, "extract_scenes_from_graph", fake_extract_scenes_from_graph)
     tmp_project.save_novel_content("剧本文本")
 
     added = await tmp_project.build_scenes_from_graph()
 
+    assert len(graph_calls) == 1
+    assert graph_calls[0]["dataset_name"] == tmp_project.dataset_name
+    assert graph_calls[0]["project_name"] == tmp_project.project_name
+    assert graph_calls[0]["state_dir"] == tmp_project.state_dir
     assert [scene.name for scene in added] == ["新场景"]
     base = await tmp_project.sqlite_store.get_scene("城市街道")
     assert base is not None
@@ -208,6 +216,57 @@ async def test_build_scenes_from_graph_only_adds_missing_base_scenes(tmp_project
     assert derived.base_scene_id == "城市街道"
     assert derived.variant_prompt == "用户修过的雨夜增量"
     assert await tmp_project.sqlite_store.get_scene("新场景") is not None
+
+
+@pytest.mark.asyncio
+async def test_graph_rebuild_waits_only_for_scene_graph_query(
+    tmp_project,
+    monkeypatch,
+):
+    from novelvideo.cognee import pipeline
+    from novelvideo.cognee.ladybug_access import ladybug_graph_access
+    from novelvideo.graph_preview import (
+        acquire_graph_preview_lock_async,
+        release_graph_preview_lock,
+    )
+
+    graph_read_started = asyncio.Event()
+    finish_graph_read = asyncio.Event()
+    enrichment_started = asyncio.Event()
+    finish_enrichment = asyncio.Event()
+
+    async def staged_extract_scenes_from_graph(**kwargs):
+        async with ladybug_graph_access(kwargs["state_dir"], read_only=True):
+            graph_read_started.set()
+            await finish_graph_read.wait()
+        enrichment_started.set()
+        await finish_enrichment.wait()
+        return []
+
+    monkeypatch.setattr(
+        pipeline,
+        "extract_scenes_from_graph",
+        staged_extract_scenes_from_graph,
+    )
+    tmp_project.save_novel_content("剧本文本")
+
+    read_task = asyncio.create_task(tmp_project.build_scenes_from_graph())
+    await asyncio.wait_for(graph_read_started.wait(), timeout=1)
+
+    rebuild_lock_task = asyncio.create_task(
+        acquire_graph_preview_lock_async(tmp_project.state_dir)
+    )
+    await asyncio.sleep(0.1)
+    assert not rebuild_lock_task.done()
+
+    finish_graph_read.set()
+    await asyncio.wait_for(enrichment_started.wait(), timeout=1)
+    rebuild_lock = await asyncio.wait_for(rebuild_lock_task, timeout=1)
+    assert not read_task.done()
+    release_graph_preview_lock(rebuild_lock)
+
+    finish_enrichment.set()
+    assert await asyncio.wait_for(read_task, timeout=1) == []
 
 
 @pytest.mark.asyncio
@@ -494,6 +553,82 @@ async def test_episode_and_beats(tmp_project):
     dicts = await store.get_beats_as_dicts(1)
     assert len(dicts) == 3
     assert dicts[0]["narration_segment"] == "第0个节拍的旁白"
+
+
+@pytest.mark.asyncio
+async def test_replace_episodes_rolls_back_delete_when_new_plan_write_fails(
+    tmp_path,
+    monkeypatch,
+):
+    from novelvideo.models import NovelEpisode
+    from novelvideo.sqlite_store import SQLiteStore
+
+    store = SQLiteStore(
+        "admin/demo",
+        output_dir=str(tmp_path / "output"),
+        state_dir=str(tmp_path / "state"),
+    )
+    old_episode = NovelEpisode(
+        number=1,
+        title="旧规划",
+        content_summary="必须在替换失败后保留。",
+    )
+    new_episodes = [
+        NovelEpisode(number=1, title="新规划一"),
+        NovelEpisode(number=2, title="新规划二"),
+    ]
+    try:
+        await store.add_episodes([old_episode])
+        original_upsert = store._upsert_episodes
+
+        async def fail_after_partial_write(db, episodes):
+            await original_upsert(db, episodes[:1])
+            raise RuntimeError("simulated planner persistence failure")
+
+        monkeypatch.setattr(store, "_upsert_episodes", fail_after_partial_write)
+
+        with pytest.raises(RuntimeError, match="simulated planner persistence failure"):
+            await store.replace_episodes(new_episodes)
+
+        persisted = await store.list_episodes()
+        assert [(episode.number, episode.title) for episode in persisted] == [
+            (1, "旧规划")
+        ]
+        assert store.get_episode(1) is old_episode
+        assert store.get_episode(2) is None
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_replace_episodes_commits_new_plan_and_refreshes_cache(tmp_path):
+    from novelvideo.models import NovelEpisode
+    from novelvideo.sqlite_store import SQLiteStore
+
+    store = SQLiteStore(
+        "admin/demo",
+        output_dir=str(tmp_path / "output"),
+        state_dir=str(tmp_path / "state"),
+    )
+    replacement = [
+        NovelEpisode(number=2, title="第二集"),
+        NovelEpisode(number=3, title="第三集"),
+    ]
+    try:
+        await store.add_episodes([NovelEpisode(number=1, title="旧第一集")])
+
+        await store.replace_episodes(replacement)
+
+        persisted = await store.list_episodes()
+        assert [(episode.number, episode.title) for episode in persisted] == [
+            (2, "第二集"),
+            (3, "第三集"),
+        ]
+        assert store.get_episode(1) is None
+        assert store.get_episode(2) is replacement[0]
+        assert store.get_episode(3) is replacement[1]
+    finally:
+        await store.close()
 
 
 @pytest.mark.asyncio

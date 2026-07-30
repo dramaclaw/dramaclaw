@@ -5,7 +5,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from novelvideo.api.auth import get_api_user, require_scope
 from novelvideo.api.chapter_preview import (
@@ -13,11 +13,16 @@ from novelvideo.api.chapter_preview import (
     count_billable_novel_chars,
     load_novel_text,
 )
-from novelvideo.api.deps import resolve_project_scope
-from novelvideo.api.deps import get_cognee_store
+from novelvideo.api.deps import make_cognee_store_for_context, resolve_project_scope
 from novelvideo.api.schemas import IngestStart
+from novelvideo.cognee.ladybug_access import ladybug_graph_access
+from novelvideo.graph_preview import (
+    empty_graph_preview,
+    load_graph_preview,
+)
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
+    load_project_config_file_from_state_dir,
     save_project_config_in_state_dir,
 )
 from novelvideo.ports import get_task_backend
@@ -43,24 +48,62 @@ router = APIRouter()
 @router.get("/projects/{project}/ingest/graph")
 async def get_ingest_knowledge_graph(
     project: str,
-    store=Depends(get_cognee_store),
+    user: dict = Depends(get_api_user),
 ):
-    """Return the imported project's real Cognee graph for visualization."""
-    # Ladybug executes queries in an executor thread. If the browser cancels the
-    # request while that thread is still reading, FastAPI would otherwise enter
-    # the dependency cleanup immediately and close the same cached graph engine.
-    # Finish the in-flight read before get_cognee_store releases its resources.
-    snapshot_task = asyncio.create_task(store.get_graph_snapshot())
+    """Return the persisted graph preview without opening Ladybug on normal reads."""
+
+    resolved = await resolve_project_scope(project, user, required_role="viewer")
+    ctx = resolved.ctx
+
+    # A missing novel.txt means an import has not completed (or a rebuild
+    # invalidated the old graph). Do not race the active/failed import by
+    # returning a stale sidecar or opening its embedded graph database from an
+    # API worker.
+    if not (ctx.output_dir / "novel.txt").is_file():
+        return {"ok": True, "data": empty_graph_preview()}
+
+    snapshot = load_graph_preview(ctx.state_dir)
+    if snapshot is not None:
+        return {"ok": True, "data": snapshot}
+
+    # Legacy projects predate graph-preview.json. Materialize exactly once
+    # under a cross-process lock, then all future requests are sidecar reads.
     try:
-        snapshot = await asyncio.shield(snapshot_task)
+        async with ladybug_graph_access(str(ctx.state_dir), read_only=True):
+            # A rebuild may have invalidated the project while this request waited
+            # for the lock. Never open Ladybug after the success marker disappears.
+            if not (ctx.output_dir / "novel.txt").is_file():
+                return {"ok": True, "data": empty_graph_preview()}
+
+            snapshot = load_graph_preview(ctx.state_dir)
+            if snapshot is not None:
+                return {"ok": True, "data": snapshot}
+
+            store = await make_cognee_store_for_context(ctx)
+            try:
+                snapshot_task = asyncio.create_task(store.materialize_graph_preview())
+                try:
+                    snapshot = await asyncio.shield(snapshot_task)
+                except asyncio.CancelledError:
+                    logger.info(
+                        "[%s] legacy graph preview request cancelled; "
+                        "waiting for materialization cleanup",
+                        project,
+                    )
+                    await snapshot_task
+                    raise
+            finally:
+                await store.close()
+            return {"ok": True, "data": snapshot}
     except asyncio.CancelledError:
-        logger.info("[%s] graph request cancelled; waiting for Ladybug read cleanup", project)
-        try:
-            await snapshot_task
-        except Exception:
-            logger.exception("[%s] graph read failed after request cancellation", project)
         raise
-    return {"ok": True, "data": snapshot}
+    except Exception as exc:
+        logger.exception("[%s] failed to materialize legacy graph preview", project)
+        raise HTTPException(
+            status_code=503,
+            detail="知识图谱预览暂时不可用，请稍后重试",
+            headers={"Retry-After": "3"},
+        ) from exc
 
 
 def _unsupported_format_response(filename: str) -> dict:
@@ -170,7 +213,8 @@ async def start_ingest(
         return {"ok": False, "error": f"File '{body.filename}' not found in uploads/"}
 
     try:
-        billable_chars = count_billable_novel_chars(load_novel_text(novel_path))
+        content = load_novel_text(novel_path)
+        billable_chars = count_billable_novel_chars(content)
     except DocumentParseError as exc:
         return {
             "ok": False,
@@ -187,7 +231,35 @@ async def start_ingest(
         )
         return {"ok": False, "error": "解析章节失败"}
 
-    config = {"rebuild": body.rebuild}
+    current_project_config = load_project_config_file_from_state_dir(resolved.state_dir)
+    requested_spine_template = str(
+        body.spine_template
+        or current_project_config.get("spine_template")
+        or "drama"
+    ).strip()
+    effective_spine_template = (
+        "narrated" if requested_spine_template == "narrated" else "drama"
+    )
+    if effective_spine_template == "drama":
+        preview = build_chapter_preview(content)
+        format_check = build_import_format_check(
+            content,
+            has_chapters=bool(preview.get("chapters")),
+            chapters=preview.get("chapters"),
+            require_scene_headers=True,
+        )
+        if format_check["level"] == "blocking":
+            return {
+                "ok": False,
+                "error": format_check["summary"],
+                "error_type": "screenplay_format",
+                "format_check": format_check,
+            }
+
+    config = {
+        "rebuild": body.rebuild,
+        "spine_template": effective_spine_template,
+    }
     # Persist the exact source used by this import. The ingest page can then
     # rebuild from the existing upload without forcing the user to upload again.
     project_config_updates = {"ingest_source_filename": safe_name}
@@ -202,7 +274,6 @@ async def start_ingest(
                 ),
             }
         )
-        config["spine_template"] = body.spine_template
     save_project_config_in_state_dir(resolved.state_dir, config=project_config_updates)
 
     if ctx is not None:

@@ -10,6 +10,7 @@ from typing import Any
 from PIL import Image
 
 from novelvideo.freezone.vision_gateway import (
+    FREEZONE_MARK_TIMEOUT_SECONDS,
     VisionInput,
     call_freezone_vision_model,
     image_media_type,
@@ -148,7 +149,7 @@ async def detect_freezone_mark(
             VisionInput(data=crop_bytes, media_type="image/png"),
         ],
         model_override=model or None,
-        timeout_seconds=90.0,
+        timeout_seconds=FREEZONE_MARK_TIMEOUT_SECONDS,
     )
     payload = _extract_json_object(text)
     label = str(payload.get("label") or "").strip()

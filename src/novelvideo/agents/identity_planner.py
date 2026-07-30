@@ -21,6 +21,8 @@ from novelvideo.config import (
 )
 from novelvideo.models import CharacterIdentity
 from novelvideo.shared.env_guard import preserve_st_env
+from novelvideo.cognee.ladybug_access import ladybug_graph_access
+from novelvideo.sqlite_store import load_episode_planning_content
 
 if TYPE_CHECKING:
     from novelvideo.cognee import CogneeStore
@@ -395,7 +397,7 @@ class IdentityPlanner:
             (new_count, resolved_count): 新建身份数 和 总解析身份数
         """
         self.auto_promoted_characters = []
-        content_text = await self.cognee_store.load_episode_content(episode.number)
+        content_text = await load_episode_planning_content(self.cognee_store, episode)
         if not content_text or not content_text.strip():
             return 0, 0
 
@@ -554,18 +556,20 @@ class IdentityPlanner:
                 import cognee
                 from cognee.api.v1.search import SearchType
 
-            self.cognee_store._set_cognee_context(verbose=True)
-
             # 获取与本集相关的图谱上下文（人物关系、别名、背景信息）
             try:
-                with self.cognee_store.embedding_model_scope():
-                    graph_results = await cognee.search(
-                        query_text=f"第{episode.number}集出场的人物角色，以及他们的别名、称谓和关系",
-                        query_type=SearchType.GRAPH_COMPLETION,
-                        datasets=[self.cognee_store.dataset_name],
-                        only_context=True,
-                        top_k=20,
-                    )
+                async with ladybug_graph_access(
+                    self.cognee_store.state_dir,
+                    read_only=True,
+                ):
+                    with self.cognee_store.embedding_model_scope():
+                        graph_results = await cognee.search(
+                            query_text=f"第{episode.number}集出场的人物角色，以及他们的别名、称谓和关系",
+                            query_type=SearchType.GRAPH_COMPLETION,
+                            datasets=[self.cognee_store.dataset_name],
+                            only_context=True,
+                            top_k=20,
+                        )
                 if graph_results:
                     parts = []
                     for item in graph_results:

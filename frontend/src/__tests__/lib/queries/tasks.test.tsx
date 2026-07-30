@@ -76,4 +76,37 @@ describe("useTasks polling", () => {
 
     expect(requestCount).toBeGreaterThan(1);
   });
+
+  it("refetches tasks when a consumer remounts inside the global stale window", async () => {
+    let requestCount = 0;
+    server.use(
+      http.get("*/api/v1/projects/demo/tasks", () => {
+        requestCount += 1;
+        return HttpResponse.json({ ok: true, data: [] });
+      }),
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: 30_000,
+        },
+      },
+    });
+    const sharedWrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const first = renderHook(() => useTasks({ project: "demo" }), {
+      wrapper: sharedWrapper,
+    });
+    await vi.waitFor(() => expect(requestCount).toBe(1));
+    first.unmount();
+
+    renderHook(() => useTasks({ project: "demo" }), {
+      wrapper: sharedWrapper,
+    });
+    await vi.waitFor(() => expect(requestCount).toBe(2));
+  });
 });

@@ -25,6 +25,36 @@ def test_sync_sets_wal_and_busy_timeout(tmp_path):
     conn.close()
 
 
+def test_busy_timeout_is_applied_before_journal_mode():
+    statements: list[str] = []
+
+    class RecordingConnection:
+        def execute(self, statement):
+            statements.append(statement)
+
+    configure_sqlite_connection(RecordingConnection())
+
+    assert statements.index("PRAGMA busy_timeout=10000") < statements.index(
+        "PRAGMA journal_mode=WAL"
+    )
+
+
+def test_normal_connection_can_skip_persistent_journal_transition():
+    statements: list[str] = []
+
+    class RecordingConnection:
+        def execute(self, statement):
+            statements.append(statement)
+
+    configure_sqlite_connection(
+        RecordingConnection(),
+        set_journal_mode=False,
+    )
+
+    assert "PRAGMA busy_timeout=10000" in statements
+    assert "PRAGMA journal_mode=WAL" not in statements
+
+
 def test_autocheckpoint_zero_when_litestream(tmp_path, monkeypatch):
     monkeypatch.setenv("ST_LITESTREAM_ENABLED", "1")
     conn = sqlite3.connect(tmp_path / "litestream.db")

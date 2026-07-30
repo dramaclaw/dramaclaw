@@ -318,6 +318,166 @@ async def test_embedding_scheduler_logs_once_when_other_provider_is_not_limited(
 
 
 @pytest.mark.asyncio
+async def test_episode_planner_does_not_write_planned_episodes_to_cognee(
+    monkeypatch,
+):
+    from novelvideo.agents import episode_planner
+
+    graph_writes = []
+
+    async def unexpected_graph_write(episodes):
+        graph_writes.append(episodes)
+
+    monkeypatch.setattr(
+        "cognee.tasks.storage.add_data_points",
+        unexpected_graph_write,
+    )
+
+    plan = episode_planner.EpisodePlan(
+        number=1,
+        title="危机初现",
+        content_summary="主角发现异常线索并决定追查事情真相。",
+        main_conflict="主角必须在危险逼近前找到证据",
+        cliffhanger="门外忽然传来熟悉的脚步声",
+        key_events=["发现线索"],
+        character_names=["林昭"],
+    )
+
+    class FakeAgent:
+        async def run(self, _task):
+            return SimpleNamespace(
+                output=episode_planner.EpisodePlannerOutput(episodes=[plan])
+            )
+
+    monkeypatch.setattr(
+        episode_planner,
+        "create_episode_planner_agent",
+        lambda _tools: FakeAgent(),
+    )
+
+    store = SimpleNamespace(project_name="alice/demo")
+    planner = episode_planner.EpisodePlannerAgent(store)
+    episodes = await planner.plan_episodes(
+        target_episodes=1,
+        known_characters=["林昭"],
+    )
+
+    assert [episode.number for episode in episodes] == [1]
+    assert graph_writes == []
+
+
+@pytest.mark.asyncio
+async def test_episode_runner_persists_agent_plan_only_to_sqlite(monkeypatch):
+    from novelvideo.models import NovelEpisode
+    from novelvideo.task_backend.runners import graph_build
+
+    planned = [
+        NovelEpisode(
+            number=1,
+            title="第一集",
+            content_summary="主角发现异常线索。",
+        )
+    ]
+    replaced = []
+
+    class FakeStore:
+        async def replace_episodes(self, episodes):
+            replaced.append(episodes)
+
+        async def close(self):
+            return None
+
+    class FakePlanner:
+        def __init__(self, store):
+            assert isinstance(store, FakeStore)
+
+        async def plan_episodes(self, **_kwargs):
+            return planned
+
+    monkeypatch.setattr(graph_build, "require_imported_novel", lambda _path: "小说正文")
+    monkeypatch.setattr(graph_build, "_load_store", lambda _ctx: _async_value(FakeStore()))
+    monkeypatch.setattr(
+        "novelvideo.agents.episode_planner.EpisodePlannerAgent",
+        FakePlanner,
+    )
+
+    ctx = SimpleNamespace(output_dir="/tmp/output")
+    result = await graph_build._run_build_episodes(
+        {"payload": {"config": {"target_episodes": 1}}},
+        ctx,
+    )
+
+    assert result == {"episodes": 1}
+    assert replaced == [planned]
+
+
+@pytest.mark.asyncio
+async def test_legacy_episode_pipeline_returns_output_without_graph_write(
+    monkeypatch,
+):
+    from cognee.modules import pipelines as cognee_pipelines
+    from cognee.modules.engine.operations import setup as setup_module
+    from novelvideo.cognee import pipeline
+    from novelvideo.models import NovelEpisode
+
+    graph_writes = []
+
+    async def unexpected_graph_write(episodes):
+        graph_writes.append(episodes)
+
+    monkeypatch.setattr(
+        "cognee.tasks.storage.add_data_points",
+        unexpected_graph_write,
+    )
+    monkeypatch.setattr(setup_module, "setup", lambda: _async_none())
+
+    class FakeTask:
+        def __init__(self, operation):
+            self.operation = operation
+
+    async def fake_run_pipeline(*, tasks, data, datasets):
+        assert datasets == ["novel-demo"]
+        value = data
+        for task in tasks:
+            value = await task.operation(value)
+        yield value
+
+    monkeypatch.setattr(cognee_pipelines, "Task", FakeTask)
+    monkeypatch.setattr(cognee_pipelines, "run_pipeline", fake_run_pipeline)
+
+    planned = [
+        NovelEpisode(
+            number=1,
+            title="第一集",
+            content_summary="主角踏上旅程。",
+        )
+    ]
+
+    async def fake_extract(_text, _target):
+        return planned
+
+    monkeypatch.setattr(pipeline, "extract_episodes_from_text", fake_extract)
+
+    result = await pipeline.run_episode_planning_pipeline(
+        "小说正文",
+        target_episodes=1,
+        dataset_name="novel-demo",
+        project_name="alice/demo",
+    )
+
+    assert result == planned
+    assert graph_writes == []
+
+
+async def _async_none():
+    return None
+
+
+async def _async_value(value):
+    return value
+
+
+@pytest.mark.asyncio
 async def test_limiters_are_noops_outside_pipeline_context(monkeypatch):
     from novelvideo.cognee import concurrency
     from novelvideo.cognee.concurrency import (
@@ -568,7 +728,6 @@ async def test_store_wraps_each_cognee_operation_in_pipeline_limits():
     from novelvideo.cognee.store import CogneeStore
 
     store = CogneeStore.__new__(CogneeStore)
-    store._set_cognee_context = lambda: None
     store._ensure_pipeline_run_succeeded = lambda _result, _stage: None
     active = 0
     peak = 0

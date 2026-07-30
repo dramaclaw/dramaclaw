@@ -1,116 +1,610 @@
-import pytest
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
+from pathlib import Path
+from threading import Barrier, Event, Lock
 from types import SimpleNamespace
+
+import pytest
+
+
+def test_read_only_ladybug_installs_missing_json_extension_in_disposable_db(
+    monkeypatch,
+    tmp_path,
+):
+    from novelvideo.cognee import ladybug_access
+
+    calls = []
+    project_database = object()
+    load_attempts = 0
+
+    class FakeDatabase:
+        def __init__(self, path, **kwargs):
+            calls.append(("database", path, kwargs))
+
+        def init_database(self):
+            calls.append(("init_database",))
+
+        def close(self):
+            calls.append(("database.close",))
+
+    class FakeConnection:
+        def __init__(self, database):
+            self.database = database
+            calls.append(("connection", database))
+
+        def execute(self, query):
+            nonlocal load_attempts
+            calls.append(("execute", query))
+            if query == "LOAD EXTENSION JSON;":
+                load_attempts += 1
+                if load_attempts == 1:
+                    raise RuntimeError("extension binary is missing")
+
+        def close(self):
+            calls.append(("connection.close", self.database))
+
+    monkeypatch.setattr(
+        ladybug_access,
+        "_json_extension_lock_path",
+        tmp_path / "json-extension.lock",
+    )
+
+    ladybug_access._load_ladybug_json_extension(
+        project_database,
+        database_class=FakeDatabase,
+        connection_class=FakeConnection,
+    )
+
+    assert [call for call in calls if call == ("execute", "INSTALL JSON;")] == [
+        ("execute", "INSTALL JSON;")
+    ]
+    assert load_attempts == 2
+    assert ("init_database",) in calls
+    assert ("database.close",) in calls
+
+
+def test_read_only_ladybug_reports_json_extension_install_failure(
+    monkeypatch,
+    tmp_path,
+):
+    from novelvideo.cognee import ladybug_access
+
+    project_database = object()
+
+    class FakeDatabase:
+        def __init__(self, path, **kwargs):
+            pass
+
+        def init_database(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeConnection:
+        def __init__(self, database):
+            pass
+
+        def execute(self, query):
+            raise RuntimeError(f"{query} failed")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        ladybug_access,
+        "_json_extension_lock_path",
+        tmp_path / "json-extension.lock",
+    )
+
+    with pytest.raises(RuntimeError, match="JSON extension is unavailable"):
+        ladybug_access._load_ladybug_json_extension(
+            project_database,
+            database_class=FakeDatabase,
+            connection_class=FakeConnection,
+        )
 
 
 @pytest.mark.asyncio
-async def test_close_releases_cached_cognee_graph_engine(monkeypatch):
+async def test_store_close_only_releases_owned_sqlite_store():
     from novelvideo.cognee.store import CogneeStore
-
-    graph_config_module = import_module("cognee.infrastructure.databases.graph.config")
-    graph_engine_module = import_module("cognee.infrastructure.databases.graph.get_graph_engine")
 
     calls = []
 
     class FakeSQLiteStore:
         async def close(self):
             calls.append("sqlite.close")
-
-    class FakeGraphConnection:
-        def close(self):
-            calls.append("graph.connection.close")
-
-    class FakeGraphDatabase:
-        def close(self):
-            calls.append("graph.db.close")
-
-    class FakeGraphEngine:
-        def __init__(self):
-            self.connection = FakeGraphConnection()
-            self.db = FakeGraphDatabase()
-
-        def close(self):
-            calls.append("graph.close")
-
-    class FakeCachedFactory:
-        def cache_clear(self):
-            calls.append("graph.cache_clear")
-
-    fake_engine = FakeGraphEngine()
-    monkeypatch.setattr(
-        graph_config_module,
-        "get_graph_context_config",
-        lambda: {"graph_database_provider": "kuzu", "graph_file_path": "/tmp/project.pkl"},
-    )
-    monkeypatch.setattr(
-        graph_engine_module,
-        "create_graph_engine",
-        lambda **config: fake_engine,
-    )
-    monkeypatch.setattr(graph_engine_module, "_create_graph_engine", FakeCachedFactory())
 
     store = CogneeStore.__new__(CogneeStore)
     store._owns_sqlite_store = True
     store.sqlite_store = FakeSQLiteStore()
 
     await store.close()
-
-    assert calls == [
-        "sqlite.close",
-        "graph.connection.close",
-        "graph.db.close",
-        "graph.close",
-        "graph.cache_clear",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_close_does_not_release_graph_engine_with_an_active_reader(monkeypatch):
-    from novelvideo.cognee import store as store_module
-    from novelvideo.cognee.store import CogneeStore
-
-    graph_config_module = import_module("cognee.infrastructure.databases.graph.config")
-    graph_engine_module = import_module("cognee.infrastructure.databases.graph.get_graph_engine")
-    calls = []
-
-    class FakeSQLiteStore:
-        async def close(self):
-            calls.append("sqlite.close")
-
-    class FakeGraphEngine:
-        connection = None
-        db = None
-
-        def close(self):
-            calls.append("graph.close")
-
-    class FakeCachedFactory:
-        def cache_clear(self):
-            calls.append("graph.cache_clear")
-
-    fake_engine = FakeGraphEngine()
-    monkeypatch.setattr(graph_config_module, "get_graph_context_config", lambda: {})
-    monkeypatch.setattr(
-        graph_engine_module, "create_graph_engine", lambda **config: fake_engine
-    )
-    monkeypatch.setattr(graph_engine_module, "_create_graph_engine", FakeCachedFactory())
-
-    store = CogneeStore.__new__(CogneeStore)
-    store._owns_sqlite_store = True
-    store.sqlite_store = FakeSQLiteStore()
-
-    with store_module._track_graph_engine_reader(fake_engine):
-        await store.close()
 
     assert calls == ["sqlite.close"]
 
-    await store.close()
-    assert calls == [
-        "sqlite.close",
-        "sqlite.close",
-        "graph.close",
-        "graph.cache_clear",
-    ]
+
+@pytest.mark.asyncio
+async def test_cached_ladybug_adapter_switches_between_read_only_and_writer(tmp_path):
+    from cognee.infrastructure.databases.graph.ladybug.adapter import LadybugAdapter
+    from ladybug import Connection
+    from ladybug.database import Database
+    from novelvideo.cognee.ladybug_access import ladybug_graph_access
+
+    database_path = tmp_path / "graph.lbdb"
+    database = Database(str(database_path))
+    connection = Connection(database)
+    connection.execute(
+        "CREATE NODE TABLE Node(id STRING PRIMARY KEY, name STRING, type STRING, "
+        "created_at TIMESTAMP, updated_at TIMESTAMP, properties STRING)"
+    )
+    connection.execute(
+        "CREATE REL TABLE EDGE(FROM Node TO Node, relationship_name STRING, "
+        "created_at TIMESTAMP, updated_at TIMESTAMP, properties STRING)"
+    )
+    connection.execute(
+        "CREATE (:Node {id: '1', name: 'Alice', type: 'person', properties: '{}'});"
+    )
+    connection.close()
+    database.close()
+
+    adapter = None
+    try:
+        async with ladybug_graph_access(str(tmp_path), read_only=True):
+            adapter = LadybugAdapter(str(database_path))
+            results = await asyncio.gather(
+                *(adapter.query("MATCH (n:Node) RETURN n.name") for _ in range(4))
+            )
+            assert results == [[("Alice",)]] * 4
+            assert adapter.db.read_only is True
+        assert adapter.db is None
+
+        async with ladybug_graph_access(str(tmp_path), read_only=False):
+            await adapter.query(
+                "CREATE (:Node {id: '2', name: 'Bob', type: 'person', properties: '{}'});"
+            )
+            assert adapter.db.read_only is False
+        assert adapter.db is None
+
+        async with ladybug_graph_access(str(tmp_path), read_only=True):
+            assert await adapter.query(
+                "MATCH (n:Node) RETURN n.name ORDER BY n.name"
+            ) == [("Alice",), ("Bob",)]
+        assert adapter.db is None
+
+        with pytest.raises(RuntimeError, match="explicit ladybug_graph_access scope"):
+            await adapter.query("MATCH (n:Node) RETURN n.name")
+    finally:
+        if adapter is not None:
+            adapter.close()
+            adapter.executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_ladybug_nested_scope_rejects_different_project(tmp_path):
+    from novelvideo.cognee.ladybug_access import (
+        cognee_project_context,
+        ladybug_graph_access,
+    )
+
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+
+    async with ladybug_graph_access(str(project_a), read_only=True):
+        # Equivalent paths for the same project may safely reuse the scope.
+        async with ladybug_graph_access(
+            str(project_a / ".." / "project-a"),
+            read_only=True,
+        ):
+            pass
+
+        with pytest.raises(RuntimeError, match="different project"):
+            async with ladybug_graph_access(str(project_b), read_only=True):
+                pass
+
+    with cognee_project_context(str(project_a)):
+        with pytest.raises(RuntimeError, match="different project"):
+            async with ladybug_graph_access(str(project_b), read_only=False):
+                pass
+
+
+@pytest.mark.asyncio
+async def test_cognee_project_context_isolates_concurrent_project_configs(tmp_path):
+    import cognee.context_global_variables as context_module
+    from cognee.infrastructure.databases.graph.config import get_graph_context_config
+    from cognee.infrastructure.databases.relational.get_relational_engine import (
+        get_relational_engine,
+    )
+    from cognee.infrastructure.databases.vector.config import (
+        get_vectordb_context_config,
+    )
+    from cognee.infrastructure.files.storage.get_storage_config import (
+        get_storage_config,
+    )
+    from novelvideo.cognee.ladybug_access import cognee_project_context
+
+    release = asyncio.Event()
+    ready = [asyncio.Event(), asyncio.Event()]
+
+    async def inspect_project(index: int, state_dir: Path):
+        with cognee_project_context(str(state_dir)):
+            relational_getter = get_relational_engine.__globals__[
+                "get_relational_config"
+            ]
+            first = (
+                relational_getter().db_path,
+                context_module.get_base_config().system_root_directory,
+                get_graph_context_config()["graph_file_path"],
+                get_vectordb_context_config()["vector_db_url"],
+                get_storage_config()["data_root_directory"],
+            )
+            ready[index].set()
+            await release.wait()
+            second = (
+                relational_getter().db_path,
+                context_module.get_base_config().system_root_directory,
+                get_graph_context_config()["graph_file_path"],
+                get_vectordb_context_config()["vector_db_url"],
+                get_storage_config()["data_root_directory"],
+            )
+            return first, second
+
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    task_a = asyncio.create_task(inspect_project(0, project_a))
+    task_b = asyncio.create_task(inspect_project(1, project_b))
+    await ready[0].wait()
+    await ready[1].wait()
+    release.set()
+    result_a, result_b = await asyncio.gather(task_a, task_b)
+
+    expected_a = (
+        str(project_a.resolve() / "cognee_system" / "databases"),
+        str(project_a.resolve() / "cognee_system"),
+        str(project_a.resolve() / "cognee_system" / "databases"),
+        str(project_a.resolve() / "cognee_system" / "databases" / "cognee.lancedb"),
+        str(project_a.resolve() / "cognee_data"),
+    )
+    expected_b = (
+        str(project_b.resolve() / "cognee_system" / "databases"),
+        str(project_b.resolve() / "cognee_system"),
+        str(project_b.resolve() / "cognee_system" / "databases"),
+        str(project_b.resolve() / "cognee_system" / "databases" / "cognee.lancedb"),
+        str(project_b.resolve() / "cognee_data"),
+    )
+    assert result_a[0][:2] == expected_a[:2]
+    assert result_a[1][:2] == expected_a[:2]
+    assert Path(result_a[0][2]).parent == Path(expected_a[2])
+    assert Path(result_a[1][2]).parent == Path(expected_a[2])
+    assert result_a[0][3:] == expected_a[3:]
+    assert result_a[1][3:] == expected_a[3:]
+    assert result_b[0][:2] == expected_b[:2]
+    assert result_b[1][:2] == expected_b[:2]
+    assert Path(result_b[0][2]).parent == Path(expected_b[2])
+    assert Path(result_b[1][2]).parent == Path(expected_b[2])
+    assert result_b[0][3:] == expected_b[3:]
+    assert result_b[1][3:] == expected_b[3:]
+
+
+@pytest.mark.asyncio
+async def test_cognee_relational_setup_is_physically_isolated_per_project(tmp_path):
+    from cognee.modules.data.methods import get_datasets_by_name
+    from cognee.modules.engine.operations.setup import setup
+    from cognee.modules.pipelines.layers.resolve_authorized_user_datasets import (
+        resolve_authorized_user_datasets,
+    )
+    from cognee.modules.users.methods import get_default_user
+    from novelvideo.cognee.ladybug_access import cognee_project_context
+
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+
+    async def initialize_project(state_dir: Path, dataset_name: str) -> None:
+        with cognee_project_context(str(state_dir)):
+            await setup()
+            await resolve_authorized_user_datasets(dataset_name)
+
+    await asyncio.gather(
+        initialize_project(project_a, "dataset-a"),
+        initialize_project(project_b, "dataset-b"),
+    )
+
+    async def dataset_names(state_dir: Path) -> tuple[list, list]:
+        with cognee_project_context(str(state_dir)):
+            user = await get_default_user()
+            return (
+                await get_datasets_by_name("dataset-a", user.id),
+                await get_datasets_by_name("dataset-b", user.id),
+            )
+
+    datasets_a, datasets_b = await dataset_names(project_a)
+    assert len(datasets_a) == 1
+    assert datasets_b == []
+
+    datasets_a, datasets_b = await dataset_names(project_b)
+    assert datasets_a == []
+    assert len(datasets_b) == 1
+    assert (project_a / "cognee_system" / "databases" / "cognee_db").is_file()
+    assert (project_b / "cognee_system" / "databases" / "cognee_db").is_file()
+
+
+@pytest.mark.asyncio
+async def test_writer_for_one_project_does_not_block_or_retarget_other_project_read(
+    tmp_path,
+):
+    import cognee.context_global_variables as context_module
+    from cognee.infrastructure.databases.graph.config import get_graph_context_config
+    from cognee.infrastructure.databases.relational.get_relational_engine import (
+        get_relational_engine,
+    )
+    from cognee.infrastructure.databases.vector.config import (
+        get_vectordb_context_config,
+    )
+    from cognee.infrastructure.files.storage.get_storage_config import (
+        get_storage_config,
+    )
+    from novelvideo.cognee.ladybug_access import ladybug_graph_access
+
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    read_ready = asyncio.Event()
+    writer_ready = asyncio.Event()
+    read_checked = asyncio.Event()
+
+    async def read_project_b():
+        async with ladybug_graph_access(str(project_b), read_only=True):
+            relational_getter = get_relational_engine.__globals__[
+                "get_relational_config"
+            ]
+            first = (
+                relational_getter().db_path,
+                context_module.get_base_config().system_root_directory,
+                get_graph_context_config()["graph_file_path"],
+                get_vectordb_context_config()["vector_db_url"],
+                get_storage_config()["data_root_directory"],
+            )
+            read_ready.set()
+            await writer_ready.wait()
+            second = (
+                relational_getter().db_path,
+                context_module.get_base_config().system_root_directory,
+                get_graph_context_config()["graph_file_path"],
+                get_vectordb_context_config()["vector_db_url"],
+                get_storage_config()["data_root_directory"],
+            )
+            read_checked.set()
+            return first, second
+
+    async def write_project_a():
+        await read_ready.wait()
+        async with ladybug_graph_access(str(project_a), read_only=False):
+            writer_ready.set()
+            await read_checked.wait()
+
+    read_task = asyncio.create_task(read_project_b())
+    write_task = asyncio.create_task(write_project_a())
+    result = await asyncio.wait_for(read_task, timeout=3)
+    await asyncio.wait_for(write_task, timeout=3)
+
+    expected = (
+        str(project_b.resolve() / "cognee_system" / "databases"),
+        str(project_b.resolve() / "cognee_system"),
+        str(project_b.resolve() / "cognee_system" / "databases"),
+        str(project_b.resolve() / "cognee_system" / "databases" / "cognee.lancedb"),
+        str(project_b.resolve() / "cognee_data"),
+    )
+    assert result[0][:2] == expected[:2]
+    assert result[1][:2] == expected[:2]
+    assert Path(result[0][2]).parent == Path(expected[2])
+    assert Path(result[1][2]).parent == Path(expected[2])
+    assert result[0][3:] == expected[3:]
+    assert result[1][3:] == expected[3:]
+
+
+def test_ladybug_reads_overlap_across_thread_event_loops(tmp_path):
+    from novelvideo.cognee.ladybug_access import ladybug_graph_access
+
+    entered = Barrier(2)
+
+    def read_project(state_dir: Path) -> None:
+        async def run() -> None:
+            async with ladybug_graph_access(str(state_dir), read_only=True):
+                entered.wait(timeout=3)
+
+        asyncio.run(run())
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(read_project, tmp_path / "project-a"),
+            executor.submit(read_project, tmp_path / "project-b"),
+        ]
+        for future in futures:
+            future.result(timeout=5)
+
+
+def test_ladybug_writers_serialize_across_thread_event_loops(tmp_path):
+    from novelvideo.cognee.ladybug_access import ladybug_graph_access
+
+    active = 0
+    peak = 0
+    counter_lock = Lock()
+
+    def write_project(state_dir: Path) -> None:
+        async def run() -> None:
+            nonlocal active, peak
+            async with ladybug_graph_access(str(state_dir), read_only=False):
+                with counter_lock:
+                    active += 1
+                    peak = max(peak, active)
+                await asyncio.sleep(0.08)
+                with counter_lock:
+                    active -= 1
+
+        asyncio.run(run())
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(write_project, tmp_path / "project-a"),
+            executor.submit(write_project, tmp_path / "project-b"),
+        ]
+        for future in futures:
+            future.result(timeout=5)
+
+    assert peak == 1
+
+
+@pytest.mark.asyncio
+async def test_ladybug_writer_error_releases_process_writer_lock(tmp_path):
+    from novelvideo.cognee.ladybug_access import ladybug_graph_access
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        async with ladybug_graph_access(
+            str(tmp_path / "project-a"),
+            read_only=False,
+        ):
+            raise RuntimeError("write failed")
+
+    async with asyncio.timeout(2):
+        async with ladybug_graph_access(
+            str(tmp_path / "project-b"),
+            read_only=False,
+        ):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_project_context_restores_native_cognee_contextvars(tmp_path):
+    import cognee.context_global_variables as context_module
+    from novelvideo.cognee.ladybug_access import cognee_project_context
+
+    outer_graph = {"graph_file_path": "outer"}
+    outer_vector = {"vector_db_url": "outer"}
+    outer_storage = {"data_root_directory": "outer"}
+    graph_token = context_module.graph_db_config.set(outer_graph)
+    vector_token = context_module.vector_db_config.set(outer_vector)
+    storage_token = context_module.file_storage_config.set(outer_storage)
+    try:
+        with cognee_project_context(str(tmp_path)):
+            assert Path(
+                context_module.graph_db_config.get()["graph_file_path"]
+            ).parent == tmp_path / "cognee_system" / "databases"
+            assert context_module.vector_db_config.get()["vector_db_url"] == str(
+                tmp_path / "cognee_system" / "databases" / "cognee.lancedb"
+            )
+            assert context_module.file_storage_config.get() == {
+                "data_root_directory": str(tmp_path / "cognee_data")
+            }
+            context_module.graph_db_config.set({"graph_file_path": "project"})
+            context_module.vector_db_config.set({"vector_db_url": "project"})
+            context_module.file_storage_config.set(
+                {"data_root_directory": "project"}
+            )
+
+        assert context_module.graph_db_config.get() == outer_graph
+        assert context_module.vector_db_config.get() == outer_vector
+        assert context_module.file_storage_config.get() == outer_storage
+    finally:
+        context_module.file_storage_config.reset(storage_token)
+        context_module.vector_db_config.reset(vector_token)
+        context_module.graph_db_config.reset(graph_token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_only", [True, False])
+async def test_ladybug_query_cancellation_keeps_database_and_lock_until_native_query_stops(
+    tmp_path,
+    read_only,
+):
+    from cognee.infrastructure.databases.graph.ladybug.adapter import LadybugAdapter
+    from ladybug import Connection
+    from ladybug.database import Database
+    from novelvideo.cognee.ladybug_access import ladybug_graph_access
+    from novelvideo.graph_preview import (
+        acquire_graph_preview_lock_async,
+        release_graph_preview_lock,
+    )
+
+    database_path = tmp_path / "graph.lbdb"
+    database = Database(str(database_path))
+    connection = Connection(database)
+    connection.execute(
+        "CREATE NODE TABLE Node(id STRING PRIMARY KEY, name STRING, type STRING, "
+        "created_at TIMESTAMP, updated_at TIMESTAMP, properties STRING)"
+    )
+    connection.execute(
+        "CREATE REL TABLE EDGE(FROM Node TO Node, relationship_name STRING, "
+        "created_at TIMESTAMP, updated_at TIMESTAMP, properties STRING)"
+    )
+    connection.execute(
+        "CREATE (:Node {id: '1', name: 'Alice', type: 'person', properties: '{}'});"
+    )
+    connection.close()
+    database.close()
+
+    adapter = None
+    query_task = None
+    conflicting_lock_task = None
+    conflicting_lock = None
+    started = Event()
+    release_query = Event()
+    gated_executor = ThreadPoolExecutor(max_workers=1)
+
+    def gated_submit(function, *args, **kwargs):
+        def run():
+            started.set()
+            assert release_query.wait(timeout=5)
+            return function(*args, **kwargs)
+
+        return original_submit(run)
+
+    original_submit = gated_executor.submit
+    gated_executor.submit = gated_submit
+
+    try:
+        async with ladybug_graph_access(str(tmp_path), read_only=True):
+            adapter = LadybugAdapter(str(database_path))
+        adapter.executor.shutdown(wait=True)
+        adapter.executor = gated_executor
+
+        async def run_query():
+            async with ladybug_graph_access(str(tmp_path), read_only=read_only):
+                return await adapter.query("MATCH (n:Node) RETURN n.name")
+
+        query_task = asyncio.create_task(run_query())
+        assert await asyncio.to_thread(started.wait, 2)
+
+        query_task.cancel()
+        conflicting_lock_task = asyncio.create_task(
+            acquire_graph_preview_lock_async(
+                str(tmp_path),
+                shared=not read_only,
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert not query_task.done()
+        assert not conflicting_lock_task.done()
+        assert adapter.db is not None
+
+        release_query.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(query_task, timeout=2)
+        assert adapter.db is None
+
+        conflicting_lock = await asyncio.wait_for(conflicting_lock_task, timeout=2)
+    finally:
+        release_query.set()
+        if conflicting_lock is not None:
+            release_graph_preview_lock(conflicting_lock)
+        if conflicting_lock_task is not None and not conflicting_lock_task.done():
+            conflicting_lock_task.cancel()
+            await asyncio.gather(conflicting_lock_task, return_exceptions=True)
+        if query_task is not None and not query_task.done():
+            query_task.cancel()
+            await asyncio.gather(query_task, return_exceptions=True)
+        if adapter is not None:
+            adapter.close()
+        gated_executor.shutdown(wait=True)
 
 
 @pytest.mark.asyncio
@@ -188,14 +682,12 @@ async def test_graph_snapshot_reads_the_project_dataset_database(monkeypatch):
 
     store = CogneeStore.__new__(CogneeStore)
     store.dataset_name = "novelvideo_local/test"
-    store._set_cognee_context = lambda: calls.append("project.context")
 
     nodes, edges = await store._get_dataset_graph_data()
 
     assert nodes[0][1]["name"] == "林昭"
     assert edges == []
     assert calls == [
-        "project.context",
         ("dataset.lookup", "novelvideo_local/test", "user-id"),
         ("context.create", "dataset-id", "owner-id"),
         "context.enter",
@@ -254,11 +746,9 @@ async def test_graph_existence_check_uses_lightweight_is_empty(monkeypatch):
 
     store = CogneeStore.__new__(CogneeStore)
     store.dataset_name = "novelvideo_local/test"
-    store._set_cognee_context = lambda: calls.append("project.context")
 
     assert await store._dataset_graph_has_nodes() is True
     assert calls == [
-        "project.context",
         ("dataset.lookup", "novelvideo_local/test", "user-id"),
         ("context.create", "dataset-id", "owner-id"),
         "context.enter",

@@ -252,6 +252,68 @@ function countBillableNovelChars(text: string): number {
   return text ? text.replace(/[\s\u3000]+/g, "").length : 0;
 }
 
+function resolveFormatCheckForSpineTemplate(
+  formatCheck: FormatCheck | null | undefined,
+  spineTemplate: IngestSettingsValues["spine_template"],
+  t: (key: string) => string,
+): FormatCheck | null {
+  if (!formatCheck) return null;
+
+  if (spineTemplate === "narrated") {
+    const issues = (formatCheck.issues ?? []).filter(
+      (issue) =>
+        !["missing_scene_headers", "nonstandard_scene_headers"].includes(
+          issue.code,
+        ),
+    );
+    if (issues.length === 0 && formatCheck.level !== "blocking") {
+      return { ...formatCheck, level: "ok", issues };
+    }
+    return { ...formatCheck, issues };
+  }
+
+  if (formatCheck.scene_header_status === "missing") {
+    const issues = (formatCheck.issues ?? []).filter(
+      (issue) => issue.code !== "missing_scene_headers",
+    );
+    issues.unshift({
+      code: "missing_scene_headers",
+      line: null,
+      message: t("ingest.sceneHeaders.missing"),
+      fix: t("ingest.sceneHeaders.missingFix"),
+    });
+    return {
+      ...formatCheck,
+      level: "blocking",
+      summary: t("ingest.sceneHeaders.missing"),
+      issues,
+    };
+  }
+
+  if (
+    formatCheck.scene_header_status === "repairable" &&
+    formatCheck.level !== "blocking"
+  ) {
+    const issues = (formatCheck.issues ?? []).filter(
+      (issue) => issue.code !== "nonstandard_scene_headers",
+    );
+    issues.unshift({
+      code: "nonstandard_scene_headers",
+      line: null,
+      message: t("ingest.sceneHeaders.repairable"),
+      fix: t("ingest.sceneHeaders.repairableFix"),
+    });
+    return {
+      ...formatCheck,
+      level: "warning",
+      summary: t("ingest.sceneHeaders.repairable"),
+      issues,
+    };
+  }
+
+  return formatCheck;
+}
+
 function hiddenImportedPreviewKey(project: string): string {
   return `${HIDDEN_IMPORTED_PREVIEW_KEY_PREFIX}${encodeURIComponent(project)}`;
 }
@@ -393,8 +455,8 @@ function UploadingOverlay() {
   );
 }
 
-// 格式风险常驻警告：文件在则警告在，替代一闪而过的 toast.warning。
-// boxed = 富卡片里的琥珀色警告条；plain = 上传表单提示行里的一行轻量文字。
+// 格式风险常驻提示：warning 仅提示且允许导入，blocking 使用红色并阻止导入。
+// boxed = 富卡片提示条；plain = 上传表单提示行里的一行轻量文字。
 function FormatCheckWarning({
   formatCheck,
   onViewDetails,
@@ -423,7 +485,14 @@ function FormatCheckWarning({
   if (variant === "plain") {
     return (
       <div className={cn("flex items-start gap-1.5", className)}>
-        <AlertTriangle className="mt-px size-3.5 shrink-0 text-foreground/45" />
+        <AlertTriangle
+          className={cn(
+            "mt-px size-3.5 shrink-0",
+            formatCheck.level === "blocking"
+              ? "text-destructive"
+              : "text-foreground/45",
+          )}
+        />
         <div className="min-w-0">
           <span>{formatCheck.summary || t("aiAssistant.formatCheck.title")}</span>
           {detailsButton}
@@ -435,11 +504,21 @@ function FormatCheckWarning({
   return (
     <div
       className={cn(
-        "flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.04] px-3 py-2",
+        "flex items-start gap-2 rounded-md border px-3 py-2",
+        formatCheck.level === "blocking"
+          ? "border-destructive/35 bg-destructive/10"
+          : "border-white/10 bg-white/[0.04]",
         className,
       )}
     >
-      <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-foreground/45" />
+      <AlertTriangle
+        className={cn(
+          "mt-0.5 size-3.5 shrink-0",
+          formatCheck.level === "blocking"
+            ? "text-destructive"
+            : "text-foreground/45",
+        )}
+      />
       <div className="min-w-0 text-xs leading-5 text-foreground/70">
         <span>{formatCheck.summary || t("aiAssistant.formatCheck.title")}</span>
         {detailsButton}
@@ -493,7 +572,7 @@ function UploadedFileCard({
   const percent = Math.round(progress * 100);
   // 导入完成后风险提示已无行动价值，只在导入前/失败/中止时常驻展示。
   const showFormatWarning =
-    formatCheck?.level === "warning" && status !== "completed";
+    formatCheck?.level !== "ok" && status !== "completed";
   const statusStyles: Record<IngestFileStatus, string> = {
     uploaded: "border-primary/30 bg-primary/10 text-primary",
     importing: "border-primary/30 bg-primary/10 text-primary",
@@ -1100,6 +1179,16 @@ export function IngestPageContent({ project }: { project: string }) {
 
   const formValues = watch();
   const settingsValues = resolveIngestSettings(formValues, normalizedDefaults);
+  const displayedFormatCheck = useMemo(
+    () =>
+      resolveFormatCheckForSpineTemplate(
+        uploadedFile?.format_check,
+        settingsValues.spine_template,
+        t,
+      ),
+    [settingsValues.spine_template, t, uploadedFile?.format_check],
+  );
+  const formatCheckBlocksImport = displayedFormatCheck?.level === "blocking";
   const settingsChanged =
     projectRes?.data !== undefined &&
     hasIngestSettingsChanges(settingsValues, config);
@@ -1200,9 +1289,22 @@ export function IngestPageContent({ project }: { project: string }) {
     setUploadedFileSource("paste");
     setIngestFileStatus("uploaded");
     setIngestError(null);
-    warnFormatCheck(result.data.format_check, result.data.filename);
+    warnFormatCheck(
+      resolveFormatCheckForSpineTemplate(
+        result.data.format_check,
+        settingsValues.spine_template,
+        t,
+      ) ?? undefined,
+      result.data.filename,
+    );
     return result.data;
-  }, [pastedText, uploadMutation, warnFormatCheck]);
+  }, [
+    pastedText,
+    settingsValues.spine_template,
+    t,
+    uploadMutation,
+    warnFormatCheck,
+  ]);
 
   const saveProjectSettings = useCallback(async () => {
     const defaults = normalizeLegacyDefaults(config);
@@ -1286,8 +1388,25 @@ export function IngestPageContent({ project }: { project: string }) {
     const sourceFile =
       inputMode === "upload" ? uploadedFile : await uploadPastedText();
     if (!sourceFile) return;
+    const formatCheck = resolveFormatCheckForSpineTemplate(
+      sourceFile.format_check,
+      settingsValues.spine_template,
+      t,
+    );
+    if (formatCheck?.level === "blocking") {
+      setFormatCheckDetails({ formatCheck, filename: sourceFile.filename });
+      toast.error(formatCheck.summary);
+      return;
+    }
     await startIngestFromFilename(sourceFile.filename);
-  }, [inputMode, uploadedFile, uploadPastedText, startIngestFromFilename]);
+  }, [
+    inputMode,
+    settingsValues.spine_template,
+    startIngestFromFilename,
+    t,
+    uploadedFile,
+    uploadPastedText,
+  ]);
 
   const handleReimportExisting = useCallback(async () => {
     setReuploadConfirmOpen(false);
@@ -1354,7 +1473,8 @@ export function IngestPageContent({ project }: { project: string }) {
   );
 
   const canStartFromCurrentInput =
-    inputMode === "upload" ? !!uploadedFile : pastedText.trim().length > 0;
+    (inputMode === "upload" ? !!uploadedFile : pastedText.trim().length > 0) &&
+    !formatCheckBlocksImport;
   const hasPastedText = pastedText.trim().length > 0;
   const hasUserUploadedFile = uploadedFileSource === "upload" && !!uploadedFile;
   const sourceHint =
@@ -1454,16 +1574,15 @@ export function IngestPageContent({ project }: { project: string }) {
               </div>
               {inputMode === "upload" && (
                 <div className="mt-1.5 min-h-4 px-1 text-xs leading-4 text-muted-foreground/70">
-                  {uploadedFile?.format_check?.level === "warning" ? (
+                  {displayedFormatCheck && displayedFormatCheck.level !== "ok" ? (
                     // 格式风险常驻在提示行（紧邻「开始导入」决策区），替代一闪而过的 toast。
                     <FormatCheckWarning
-                      formatCheck={uploadedFile.format_check}
+                      formatCheck={displayedFormatCheck}
                       variant="plain"
                       onViewDetails={() => {
-                        if (!uploadedFile.format_check) return;
                         setFormatCheckDetails({
-                          formatCheck: uploadedFile.format_check,
-                          filename: uploadedFile.filename,
+                          formatCheck: displayedFormatCheck,
+                          filename: uploadedFile?.filename ?? "",
                         });
                       }}
                     />
@@ -1676,17 +1795,18 @@ export function IngestPageContent({ project }: { project: string }) {
                   progress={taskStream.progress}
                   currentTask={taskStream.currentTask}
                   error={ingestError}
-                  formatCheck={uploadedFile?.format_check ?? null}
+                  formatCheck={displayedFormatCheck}
                   onViewFormatCheck={() => {
-                    if (!uploadedFile?.format_check) return;
+                    if (!displayedFormatCheck) return;
                     setFormatCheckDetails({
-                      formatCheck: uploadedFile.format_check,
-                      filename: uploadedFile.filename,
+                      formatCheck: displayedFormatCheck,
+                      filename: previewFile.filename,
                     });
                   }}
                   isIngesting={ingestStarted}
                   canStart={
                     !ingestSubmitted &&
+                    !formatCheckBlocksImport &&
                     (!!uploadedFile ||
                       (!!reimportSourceFilename &&
                         (previewStatus === "failed" ||

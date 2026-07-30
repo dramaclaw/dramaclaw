@@ -18,7 +18,11 @@ def _runtime_version(api_key: str, base_url: str) -> str:
 def _clear_agent_singletons() -> list[str]:
     cleared: list[str] = []
     targets = {
-        "novelvideo.freezone.text_node": ("_translation_agent", "_story_script_agent"),
+        "novelvideo.freezone.text_node": (
+            "_translation_agent",
+            "_story_script_agent",
+            "_video_story_script_agent",
+        ),
         "novelvideo.agents.global_video_optimizer": ("_global_video_optimizer",),
     }
     for module_name, attrs in targets.items():

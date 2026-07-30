@@ -107,8 +107,7 @@ async def test_idempotent_reinit_does_not_error(tmp_path):
         await store2.close()
 
 
-@pytest.mark.asyncio
-async def test_add_column_if_missing_ignores_duplicate_column_race():
+def test_add_column_if_missing_ignores_duplicate_column_race():
     """A concurrent store init can add a column after our table_info read."""
     from novelvideo.sqlite_store import _add_column_if_missing
 
@@ -116,18 +115,8 @@ async def test_add_column_if_missing_ignores_duplicate_column_race():
         def __init__(self, rows):
             self._rows = rows
 
-        async def fetchall(self):
+        def fetchall(self):
             return self._rows
-
-    class FakeExecuteContext:
-        def __init__(self, cursor):
-            self._cursor = cursor
-
-        async def __aenter__(self):
-            return self._cursor
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
 
     class FakeDb:
         def __init__(self):
@@ -140,7 +129,7 @@ async def test_add_column_if_missing_ignores_duplicate_column_race():
                 rows = [{"name": "id"}]
                 if self.table_info_calls > 1:
                     rows.append({"name": "voice_samples_by_age_group_json"})
-                return FakeExecuteContext(FakeCursor(rows))
+                return FakeCursor(rows)
 
             if sql.startswith("ALTER TABLE characters ADD COLUMN"):
                 self.alter_calls += 1
@@ -152,7 +141,7 @@ async def test_add_column_if_missing_ignores_duplicate_column_race():
 
     db = FakeDb()
 
-    await _add_column_if_missing(
+    _add_column_if_missing(
         db,
         "characters",
         "voice_samples_by_age_group_json",

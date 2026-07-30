@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { AlertTriangle, CheckCircle2, CircleX } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -15,21 +16,31 @@ import { ScrollArea } from "@/components/ui/scroll-area";
  * 这是要按原样展示的样例，任何换行/空格都有意义，不该被译者改动。
  */
 const DRAMA_FORMAT_SPEC = [
-  "第X集",
-  "1-X 场景：【内/外 地点 日/夜】",
-  "人物：",
-  "△ 画面描述：[动作清晰，无多余修饰，直白描述]",
-  "角色A(表情/动作)：台词内容",
-  "△ 画面描述：",
-  "角色B(表情/动作)：台词内容",
-  "△ 画面描述：",
-  "角色A OS：内心独白内容",
+  "第1集",
+  "",
+  "1-1 苏鸾寝殿 深夜 内",
+  "人物：苏糖、锦绣",
+  "△ 漆黑寝殿，烛火摇曳。",
+  "苏糖（大口喘气，声音发颤）：我不能死！",
+  "苏糖 OS：这里是凤鸣大陆。",
+].join("\n");
+
+const DRAMA_REPAIRABLE_FORMAT = [
+  "第1集",
+  "",
+  "场次：1",
+  "地点：苏鸾寝殿",
+  "时间：深夜",
+  "内外景：内",
+  "人物：苏糖、锦绣",
+  "△ 漆黑寝殿，烛火摇曳。",
+  "苏糖：锦绣，几更了？",
 ].join("\n");
 
 const DRAMA_FORMAT_EXAMPLE = [
-  "第 1 集",
-  "1-1 场景：苏鸾寝殿深夜内",
-  "人物：苏糖（附身苏鸾）、锦绣（贴身侍女）",
+  "第1集",
+  "1-1 苏鸾寝殿 深夜 内",
+  "人物：苏糖、锦绣",
   "△【闪回】漆黑寝殿，匕首尖正对跳动的烛火，刀身映出一张布满冷汗、瞳孔骤缩的少女脸。",
   "△苏糖 OS：我不能死！",
   "△【闪出】寒光匕首狠狠刺入少女心口，鲜血瞬间喷溅在锦被上。凶手缓缓抬头，露出贴身侍女锦绣冰冷的脸。",
@@ -70,6 +81,40 @@ export function NovelFormatDialog({
         {/* 滚动条做细做淡：长度由内容/视口比例决定，改不动，只能让它别抢戏。 */}
         <ScrollArea className="max-h-[58vh] [&_[data-slot=scroll-area-scrollbar]]:w-1.5 [&_[data-slot=scroll-area-thumb]]:bg-white/15">
           <div className="space-y-5 pr-3">
+            <p className="text-sm leading-6 text-foreground/75">
+              {t("ingest.novelFormat.intro")}
+            </p>
+
+            <section className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded-md border border-emerald-500/20 bg-emerald-500/[0.06] p-3">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+                  <CheckCircle2 className="size-3.5" />
+                  {t("ingest.novelFormat.standardStatus")}
+                </div>
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  {t("ingest.novelFormat.standardStatusHint")}
+                </p>
+              </div>
+              <div className="rounded-md border border-amber-500/20 bg-amber-500/[0.06] p-3">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-amber-400">
+                  <AlertTriangle className="size-3.5" />
+                  {t("ingest.novelFormat.warningStatus")}
+                </div>
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  {t("ingest.novelFormat.warningStatusHint")}
+                </p>
+              </div>
+              <div className="rounded-md border border-destructive/25 bg-destructive/[0.07] p-3">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-destructive">
+                  <CircleX className="size-3.5" />
+                  {t("ingest.novelFormat.blockingStatus")}
+                </div>
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  {t("ingest.novelFormat.blockingStatusHint")}
+                </p>
+              </div>
+            </section>
+
             <section className="space-y-2">
               <h3 className="text-xs font-medium text-muted-foreground">
                 {t("ingest.novelFormat.specLabel")}
@@ -77,6 +122,32 @@ export function NovelFormatDialog({
               <pre className="whitespace-pre-wrap rounded-md border border-white/10 bg-white/[0.03] px-3.5 py-3 text-[13px] leading-7 text-foreground/90">
                 {DRAMA_FORMAT_SPEC}
               </pre>
+            </section>
+
+            <section className="space-y-2">
+              <h3 className="text-xs font-medium text-muted-foreground">
+                {t("ingest.novelFormat.repairableLabel")}
+              </h3>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {t("ingest.novelFormat.repairableHint")}
+              </p>
+              <pre className="whitespace-pre-wrap rounded-md border border-amber-500/15 bg-amber-500/[0.04] px-3.5 py-3 text-[13px] leading-7 text-foreground/80">
+                {DRAMA_REPAIRABLE_FORMAT}
+              </pre>
+            </section>
+
+            <section className="space-y-2">
+              <h3 className="text-xs font-medium text-muted-foreground">
+                {t("ingest.novelFormat.rulesLabel")}
+              </h3>
+              <ul className="list-disc space-y-1.5 pl-5 text-xs leading-5 text-foreground/70">
+                <li>{t("ingest.novelFormat.ruleEpisode")}</li>
+                <li>{t("ingest.novelFormat.ruleScene")}</li>
+                <li>{t("ingest.novelFormat.ruleCharacters")}</li>
+                <li>{t("ingest.novelFormat.ruleBody")}</li>
+                <li>{t("ingest.novelFormat.ruleDialogue")}</li>
+                <li>{t("ingest.novelFormat.ruleLocationChange")}</li>
+              </ul>
             </section>
 
             <section className="space-y-2">

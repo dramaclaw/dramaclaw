@@ -31,6 +31,7 @@ from novelvideo.llm_instrumentation import (
     reset_model_call_reservation_active,
     set_model_call_reservation_active,
 )
+from novelvideo.cognee.ladybug_access import install_cognee_ladybug_access_patch
 from novelvideo.official_defaults import (
     DEFAULT_COGNEE_LLM_MODEL,
     DEFAULT_COGNEE_LLM_PROVIDER,
@@ -927,6 +928,7 @@ try:
     _patch_cognee_embedding_timeout()
     _install_insufficient_credits_log_filter()
     _patch_cognee_embedding_gateway()
+    install_cognee_ladybug_access_patch()
     _install_cognee_pipeline_concurrency_on_import()
 
     COGNEE_AVAILABLE = True
@@ -1016,6 +1018,7 @@ def init_cognee() -> None:
     _patch_cognee_embedding_timeout()
     _install_insufficient_credits_log_filter()
     _patch_cognee_embedding_gateway()
+    install_cognee_ladybug_access_patch()
     _install_cognee_pipeline_concurrency()
     if is_ce_effective():
         _active_gateway_fingerprint = _current_gateway_fingerprint()

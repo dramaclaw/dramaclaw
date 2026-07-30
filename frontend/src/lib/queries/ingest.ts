@@ -21,6 +21,7 @@ export interface FormatCheck {
   summary: string;
   issues?: FormatCheckIssue[];
   metrics?: Record<string, number>;
+  scene_header_status?: "standard" | "repairable" | "missing";
 }
 
 export interface UploadResult {
