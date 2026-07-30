@@ -1,4 +1,8 @@
 import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 from types import SimpleNamespace
 
 
@@ -12,6 +16,74 @@ class _FakeCogneeConfig:
 
     def data_root_directory(self, value: str) -> None:
         self.data_root = value
+
+
+def test_cognee_import_preserves_host_logging_and_disables_private_log(tmp_path):
+    logs_dir = tmp_path / "cognee-logs"
+    script = textwrap.dedent(
+        """
+        import io
+        import logging
+        import os
+        import sys
+        from contextlib import redirect_stderr
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+        marker_filter = logging.Filter("application")
+        root = logging.getLogger()
+        root.handlers[:] = [handler]
+        root.filters[:] = [marker_filter]
+        root.setLevel(logging.WARNING)
+        original_excepthook = sys.excepthook
+
+        import novelvideo.cognee.config  # noqa: F401
+        from cognee.shared.logging_utils import setup_logging
+
+        late_setup_stderr = io.StringIO()
+        with redirect_stderr(late_setup_stderr):
+            setup_logging()
+
+        assert root.handlers == [handler]
+        assert root.filters == [marker_filter]
+        assert root.level == logging.WARNING
+        assert sys.excepthook is original_excepthook
+        assert "COGNEE_LOG_FILE" not in os.environ
+        assert late_setup_stderr.getvalue() == ""
+
+        try:
+            large_pipeline_local = [{"text": "x" * 1000} for _ in range(1000)]
+            raise RuntimeError("bounded traceback probe")
+        except RuntimeError:
+            from cognee.shared.logging_utils import get_logger
+
+            get_logger("application.probe").exception("pipeline failed")
+
+        output = stream.getvalue()
+        assert "bounded traceback probe" in output
+        assert "large_pipeline_local" not in output
+        assert len(output) < 20_000
+        """
+    )
+    env = os.environ.copy()
+    env.pop("COGNEE_LOG_FILE", None)
+    env.pop("LOG_FILE_NAME", None)
+    env["COGNEE_LOGS_DIR"] = str(logs_dir)
+    env["ST_EDITION"] = "ce"
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not list(Path(logs_dir).glob("*.log"))
 
 
 def test_project_storage_context_forces_kuzu_over_legacy_neo4j_env(tmp_path, monkeypatch):

@@ -13,8 +13,11 @@ import logging
 import os
 import sys
 import warnings
+from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
+from threading import RLock
+from typing import Awaitable, Callable, Iterator, Optional
 
 from dotenv import load_dotenv
 
@@ -62,6 +65,113 @@ _embedding_headers_capture: contextvars.ContextVar[dict[str, str] | None] = (
     contextvars.ContextVar("novelvideo_embedding_headers_capture", default=None)
 )
 logger = logging.getLogger(__name__)
+_cognee_logging_setup_lock = RLock()
+_MISSING_ENV = object()
+
+
+@contextmanager
+def _preserve_application_logging() -> Iterator[None]:
+    """Restore process logging after a side-effectful Cognee setup call."""
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_filters = list(root_logger.filters)
+    original_level = root_logger.level
+    original_disabled = root_logger.disabled
+    original_excepthook = sys.excepthook
+    original_log_file_setting = os.environ.get("COGNEE_LOG_FILE", _MISSING_ENV)
+    os.environ["COGNEE_LOG_FILE"] = "false"
+
+    try:
+        yield
+    finally:
+        original_handler_ids = {id(handler) for handler in original_handlers}
+        cognee_handlers = [
+            handler
+            for handler in root_logger.handlers
+            if id(handler) not in original_handler_ids
+        ]
+
+        root_logger.handlers[:] = original_handlers
+        root_logger.filters[:] = original_filters
+        root_logger.setLevel(original_level)
+        root_logger.disabled = original_disabled
+        sys.excepthook = original_excepthook
+        if original_log_file_setting is _MISSING_ENV:
+            os.environ.pop("COGNEE_LOG_FILE", None)
+        else:
+            os.environ["COGNEE_LOG_FILE"] = original_log_file_setting
+
+        for handler in cognee_handlers:
+            try:
+                handler.close()
+            except Exception:
+                # Logging cleanup must never hide the original import failure.
+                pass
+
+
+def _install_cognee_logging_guard() -> None:
+    """Guard every later Cognee ``setup_logging()`` invocation.
+
+    Cognee modules such as the embedding utilities call ``setup_logging`` again
+    when they are imported, after the package-level import has completed.
+    Guarding only ``import cognee`` therefore does not protect Celery.
+    """
+
+    logging_utils = sys.modules.get("cognee.shared.logging_utils")
+    if logging_utils is None:
+        return
+    original_setup = getattr(logging_utils, "setup_logging", None)
+    if not callable(original_setup) or getattr(
+        original_setup, "_novelvideo_logging_guard", False
+    ):
+        return
+
+    @wraps(original_setup)
+    def guarded_setup_logging(log_level=None, name=None):
+        # The package import has already configured structlog. Re-running
+        # Cognee's process-wide setup from a lazily imported submodule is both
+        # redundant and unsafe in a live thread worker because it temporarily
+        # clears the application's root handlers.
+        del log_level
+        return logging_utils.structlog.get_logger(name or logging_utils.__name__)
+
+    guarded_setup_logging._novelvideo_logging_guard = True
+    guarded_setup_logging._novelvideo_original = original_setup
+    logging_utils.setup_logging = guarded_setup_logging
+
+    # Replace aliases cached by Cognee modules imported during package
+    # initialization. Future modules import the guarded function directly.
+    for module_name, module in tuple(sys.modules.items()):
+        if not module_name.startswith("cognee.") or module is None:
+            continue
+        module_globals = vars(module)
+        for name, value in tuple(module_globals.items()):
+            if value is original_setup:
+                module_globals[name] = guarded_setup_logging
+
+
+def _import_cognee_without_logging_takeover():
+    """Import Cognee without letting it replace application logging.
+
+    Cognee 1.0.5 configures logging from its package ``__init__``. That setup
+    clears every root handler, installs a Rich traceback renderer with
+    ``show_locals=True``, and adds its own file handler. In a Celery thread
+    worker this can remove the worker handlers and spend long periods rendering
+    large pipeline locals while the broker heartbeat is starved.
+
+    Keep Cognee's internal structlog configuration, which its own loggers
+    expect, but restore the host process' root logger and exception hook after
+    Cognee logging setup. Cognee logs then flow through the logging policy owned
+    by the API, CLI, or Celery process.
+    """
+
+    with _cognee_logging_setup_lock:
+        loaded = sys.modules.get("cognee")
+        if loaded is None:
+            with _preserve_application_logging():
+                loaded = importlib.import_module("cognee")
+        _install_cognee_logging_guard()
+    return loaded
 
 
 # 在导入 cognee 之前设置环境变量（Cognee 在导入时会读取）
@@ -743,7 +853,7 @@ def apply_cognee_project_storage_context(
 
     if cognee_module is None:
         with preserve_st_env():
-            import cognee as cognee_module
+            cognee_module = _import_cognee_without_logging_takeover()
 
     cognee_module.config.system_root_directory(cognee_system_dir)
     if hasattr(cognee_module.config, "data_root_directory"):
@@ -911,7 +1021,7 @@ _apply_cognee_runtime_defaults()
 
 try:
     with preserve_st_env():
-        import cognee
+        cognee = _import_cognee_without_logging_takeover()
 
     cognee_llm_provider = _to_cognee_provider(llm_provider)
     os.environ["LLM_MODEL"] = llm_model
