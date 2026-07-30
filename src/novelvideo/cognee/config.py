@@ -154,6 +154,32 @@ def _install_cognee_logging_guard() -> None:
                 module_globals[name] = guarded_setup_logging
 
 
+def _detach_cognee_private_file_handlers(logging_utils) -> int:
+    """Detach file handlers created by Cognee before the guard was installed."""
+
+    handler_type = getattr(logging_utils, "PlainFileHandler", None)
+    if not isinstance(handler_type, type):
+        logger.warning(
+            "Cognee private file handlers could not be identified because "
+            "PlainFileHandler is unavailable"
+        )
+        return 0
+
+    root_logger = logging.getLogger()
+    handlers = [
+        handler for handler in root_logger.handlers if isinstance(handler, handler_type)
+    ]
+    for handler in handlers:
+        root_logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            # Do not leave a dangerous handler attached just because closing
+            # its underlying stream failed.
+            logger.warning("Failed to close a detached Cognee private file handler")
+    return len(handlers)
+
+
 def _import_cognee_without_logging_takeover():
     """Import Cognee without letting it replace application logging.
 
@@ -173,16 +199,25 @@ def _import_cognee_without_logging_takeover():
         loaded = sys.modules.get("cognee")
         if loaded is not None:
             logging_utils = sys.modules.get("cognee.shared.logging_utils")
-            existing_setup = getattr(logging_utils, "setup_logging", None)
-            if not getattr(existing_setup, "_novelvideo_logging_guard", False):
+            if logging_utils is not None:
+                existing_setup = getattr(logging_utils, "setup_logging", None)
+            else:
+                existing_setup = None
+            if logging_utils is not None and not getattr(
+                existing_setup, "_novelvideo_logging_guard", False
+            ):
                 # The original host handlers are no longer recoverable after
                 # Cognee has configured process-wide logging. Keep this
-                # failure mode observable, then guard every later setup call.
+                # failure mode observable, detach its private file output, then
+                # guard every later setup call.
+                detached_handlers = _detach_cognee_private_file_handlers(logging_utils)
                 logger.warning(
                     "Cognee was imported before DramaClaw installed its logging "
-                    "guard; application logging may already have been replaced"
+                    "guard; application logging may already have been replaced; "
+                    "detached %d private file handler(s)",
+                    detached_handlers,
                 )
-        if loaded is None:
+        else:
             # Cognee mutates the root logger during package import. Other
             # application threads can observe that short import-time window,
             # but restoring the host state immediately afterwards prevents the

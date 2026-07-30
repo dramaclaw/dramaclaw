@@ -87,20 +87,23 @@ def test_cognee_import_preserves_host_logging_and_disables_private_log(tmp_path)
 
 
 def test_cognee_preimport_is_observable_and_later_setup_is_guarded(tmp_path):
+    logs_dir = tmp_path / "cognee-logs"
     script = textwrap.dedent(
         """
         import io
         import logging
         import os
+        from pathlib import Path
 
         # Simulate an integration importing the dependency before DramaClaw.
         import cognee  # noqa: F401
+        from cognee.shared.logging_utils import PlainFileHandler
 
         stream = io.StringIO()
         handler = logging.StreamHandler(stream)
         handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
         root = logging.getLogger()
-        root.handlers[:] = [handler]
+        root.addHandler(handler)
         root.setLevel(logging.WARNING)
 
         import novelvideo.cognee.config  # noqa: F401
@@ -109,14 +112,27 @@ def test_cognee_preimport_is_observable_and_later_setup_is_guarded(tmp_path):
         assert "Cognee was imported before DramaClaw installed its logging guard" in (
             stream.getvalue()
         )
+        assert not any(isinstance(item, PlainFileHandler) for item in root.handlers)
         assert getattr(setup_logging, "_novelvideo_logging_guard", False)
 
         setup_logging()
-        assert root.handlers == [handler]
+        logging.getLogger("application.probe").warning(
+            "post-guard-private-file-probe"
+        )
+        for item in root.handlers:
+            item.flush()
+
+        private_logs = list(Path(os.environ["COGNEE_LOGS_DIR"]).glob("*.log"))
+        assert private_logs
+        assert all(
+            "post-guard-private-file-probe" not in path.read_text(encoding="utf-8")
+            for path in private_logs
+        )
         """
     )
     env = os.environ.copy()
-    env["COGNEE_LOG_FILE"] = "false"
+    env["COGNEE_LOG_FILE"] = "true"
+    env["COGNEE_LOGS_DIR"] = str(logs_dir)
     env.pop("LOG_FILE_NAME", None)
     env["ST_EDITION"] = "ce"
 
