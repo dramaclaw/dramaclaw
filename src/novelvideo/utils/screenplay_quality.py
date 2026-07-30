@@ -54,7 +54,6 @@ FIX_HINTS = {
     "scene_headers_missing_time": "建议在场景头中补充明确时间，如“日/夜/深夜”。",
     "multi_speaker_lines": "建议整理为一句台词一行，每行只保留一个说话人。",
     "ambiguous_speakers": "建议把“他/她/对方”等模糊说话人改为具体角色名。",
-    "heavy_parenthetical_dialogue": "建议把括号舞台说明拆到动作行，台词行只保留对白。",
     "many_long_dialogues": "建议拆分超长台词，减少单行对白长度。",
     "missing_scene_headers": "建议为正文补充分场头，如“1-1 地点 时间 内/外”。",
     "nonstandard_scene_headers": "系统会在场景规划时规范化场景元数据；也可提前整理为“1-1 地点 时间 内/外”。",
@@ -117,7 +116,11 @@ def assess_screenplay_scene_headers(text: str) -> SceneHeaderAssessment:
     for block in detected_blocks:
         header = str(block.header_line or "").strip()
         if (
-            (SCENE_HEADER_RE.fullmatch(header) or SCENE_BLOCK_HEADER_RE.fullmatch(header))
+            (
+                SCENE_HEADER_RE.fullmatch(header)
+                or SCENE_BLOCK_HEADER_RE.fullmatch(header)
+                or BRACKETED_LABELED_SCENE_RE.fullmatch(header)
+            )
             and bool(block.location)
             and bool(block.time_of_day)
             and block.interior_exterior in INTERIOR_EXTERIOR
@@ -301,15 +304,6 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
                 severity="warning",
                 code="ambiguous_speakers",
                 message="存在较多模糊 speaker（如“他/她/对方/电话那头”），后续 identity 归一会不稳定。",
-            )
-        )
-
-    if parenthetical_dialogue_count >= max(4, dialogue_line_count // 3):
-        report.warnings.append(
-            ScreenplayQualityIssue(
-                severity="warning",
-                code="heavy_parenthetical_dialogue",
-                message="台词里括号舞台说明较多，导入后会依赖清洗逻辑，建议提前整理。",
             )
         )
 
