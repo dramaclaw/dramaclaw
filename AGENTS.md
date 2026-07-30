@@ -17,6 +17,8 @@ This repository contains the SuperTale Community Edition backend and video pipel
 
 Use Python 3.11-compatible code and keep imports/package paths rooted in `src/novelvideo`. Follow the existing style: 4-space indentation, type hints for public interfaces and dataclass/Pydantic models, snake_case for functions and modules, PascalCase for classes, and uppercase names for constants. Keep route handlers thin and move reusable behavior into services, ports, or task runners matching nearby modules. Avoid committing generated media or local runtime state.
 
+For any frontend visual change, read `DESIGN.md` first — it is the source of truth for colors, typography, spacing, radii, elevation, and motion, and mirrors the CSS variables in `frontend/src/index.css`. When those variables change, update `DESIGN.md` in the same commit and keep `npx @google/design.md lint DESIGN.md` at 0 errors.
+
 ## Testing Guidelines
 
 Tests use `pytest` with `pytest-asyncio` set to auto mode. Name test files `test_*.py` and colocate fixtures in `tests/conftest.py` unless they are narrowly scoped. Mark enterprise-only or full end-to-end tests with `@pytest.mark.ee` or `@pytest.mark.e2e` so default runs stay community-edition friendly. Add focused regression tests for API contracts, task lifecycle changes, storage migrations, and provider error handling.
