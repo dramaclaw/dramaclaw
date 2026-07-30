@@ -8,4 +8,3 @@ export const FREEZONE_IMAGE_FEATURES = {
   edit: 'freezone.image_edit',
   grid: 'freezone.image_grid',
 } as const;
-

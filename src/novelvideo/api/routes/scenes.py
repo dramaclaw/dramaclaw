@@ -210,12 +210,15 @@ def _scene_pano_billing_metadata(params: dict[str, Any]) -> dict[str, Any]:
 
 async def _start_or_enqueue_scene_pano(
     *,
-    ctx: ProjectContext,
+    ctx: ProjectContext | None,
     project_dir: Path,
     scene_name: str,
     step: str,
     params: dict[str, Any],
 ) -> tuple[str, dict[str, Any]]:
+    if ctx is None:
+        raise RuntimeError("场景全景生成需要 project context")
+
     scope = stage_asset_scope(scene_name, step)
     queued = await get_task_backend().enqueue_project_task(
         ctx,

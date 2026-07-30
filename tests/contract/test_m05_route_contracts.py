@@ -851,7 +851,7 @@ def test_m05_l2_exercises_happy_path_route_contracts(m05_client_factory):
             f"/api/v1/projects/{_PROJECT}/episodes/1/beats/1/director-control-to-sketch"
         ).json(),
         backend="inline",
-        task_type="sketch_generation",
+        task_type="director_control_to_sketch",
     )
     _assert_ok(
         client.get(f"/api/v1/projects/{_PROJECT}/episodes/1/beats/1/background-anchors")
