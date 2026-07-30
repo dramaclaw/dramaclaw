@@ -111,6 +111,8 @@ def test_headerless_short_drama_is_blocking_when_scene_headers_are_required():
     [
         "孙悟空快步走到门外",
         "孙悟空推门走进屋内",
+        "孙悟空快步走到门外（闪回）",
+        "孙悟空推门走进屋内（雨）",
     ],
 )
 def test_prose_ending_in_interior_or_exterior_is_not_a_repairable_scene_header(
@@ -137,6 +139,32 @@ def test_unnumbered_header_with_explicit_time_and_commas_is_repairable():
     text = """
 第一集
 菩提寝房，夜，内
+孙悟空：师父。
+"""
+
+    result = build_import_format_check(
+        text,
+        has_chapters=True,
+        require_scene_headers=True,
+    )
+
+    assert result["level"] == "warning"
+    assert result["scene_header_status"] == "repairable"
+    assert "nonstandard_scene_headers" in _codes(result)
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "菩提寝房 夜 内（闪回）",
+        "菩提寝房，夜，内（梦境）",
+        "菩提寝房 夜 内（闪回）（雨）",
+    ],
+)
+def test_unnumbered_header_with_trailing_parenthetical_is_repairable(header):
+    text = f"""
+第一集
+{header}
 孙悟空：师父。
 """
 

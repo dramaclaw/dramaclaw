@@ -148,6 +148,11 @@ def _has_source_scene_header_evidence(header_line: str) -> bool:
     header = str(header_line or "").strip()
     if not header:
         return False
+    header = re.sub(
+        r"(?:\s*（[^（）]*）)+\s*$",
+        "",
+        header,
+    ).strip()
     if NUMBERED_SCENE_PREFIX_RE.match(header):
         return True
     if header.startswith(("场次", "地点：", "地点:", "环境：", "环境:", "场景：", "场景:")):
