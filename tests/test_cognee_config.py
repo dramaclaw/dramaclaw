@@ -86,6 +86,53 @@ def test_cognee_import_preserves_host_logging_and_disables_private_log(tmp_path)
     assert not list(Path(logs_dir).glob("*.log"))
 
 
+def test_cognee_preimport_is_observable_and_later_setup_is_guarded(tmp_path):
+    script = textwrap.dedent(
+        """
+        import io
+        import logging
+        import os
+
+        # Simulate an integration importing the dependency before DramaClaw.
+        import cognee  # noqa: F401
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+        root = logging.getLogger()
+        root.handlers[:] = [handler]
+        root.setLevel(logging.WARNING)
+
+        import novelvideo.cognee.config  # noqa: F401
+        from cognee.shared.logging_utils import setup_logging
+
+        assert "Cognee was imported before DramaClaw installed its logging guard" in (
+            stream.getvalue()
+        )
+        assert getattr(setup_logging, "_novelvideo_logging_guard", False)
+
+        setup_logging()
+        assert root.handlers == [handler]
+        """
+    )
+    env = os.environ.copy()
+    env["COGNEE_LOG_FILE"] = "false"
+    env.pop("LOG_FILE_NAME", None)
+    env["ST_EDITION"] = "ce"
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_project_storage_context_forces_kuzu_over_legacy_neo4j_env(tmp_path, monkeypatch):
     from novelvideo.cognee.config import apply_cognee_project_storage_context
 

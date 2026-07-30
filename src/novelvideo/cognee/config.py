@@ -119,6 +119,10 @@ def _install_cognee_logging_guard() -> None:
 
     logging_utils = sys.modules.get("cognee.shared.logging_utils")
     if logging_utils is None:
+        logger.warning(
+            "Cognee logging guard could not be installed because "
+            "cognee.shared.logging_utils is not loaded"
+        )
         return
     original_setup = getattr(logging_utils, "setup_logging", None)
     if not callable(original_setup) or getattr(
@@ -167,7 +171,22 @@ def _import_cognee_without_logging_takeover():
 
     with _cognee_logging_setup_lock:
         loaded = sys.modules.get("cognee")
+        if loaded is not None:
+            logging_utils = sys.modules.get("cognee.shared.logging_utils")
+            existing_setup = getattr(logging_utils, "setup_logging", None)
+            if not getattr(existing_setup, "_novelvideo_logging_guard", False):
+                # The original host handlers are no longer recoverable after
+                # Cognee has configured process-wide logging. Keep this
+                # failure mode observable, then guard every later setup call.
+                logger.warning(
+                    "Cognee was imported before DramaClaw installed its logging "
+                    "guard; application logging may already have been replaced"
+                )
         if loaded is None:
+            # Cognee mutates the root logger during package import. Other
+            # application threads can observe that short import-time window,
+            # but restoring the host state immediately afterwards prevents the
+            # takeover from persisting for the worker lifetime.
             with _preserve_application_logging():
                 loaded = importlib.import_module("cognee")
         _install_cognee_logging_guard()

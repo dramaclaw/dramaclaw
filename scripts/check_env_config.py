@@ -67,8 +67,8 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(r"^COGNEE_LOG_FILE$"),
-        "Internal dependency guard: DramaClaw temporarily disables Cognee's process-wide "
-        "file handler during logging setup; this is not operator configuration.",
+        "Internal dependency guard: DramaClaw disables Cognee's private file handler and "
+        "routes dependency logs through host-process logging; this is not operator configuration.",
     ),
     (
         re.compile(r"^DA2_.*$"),
