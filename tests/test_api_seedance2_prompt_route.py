@@ -51,6 +51,7 @@ class DummyUsageMeter:
         self.reserve_calls: list[dict] = []
         self.confirm_calls: list[tuple[str, dict | None]] = []
         self.refund_calls: list[tuple[str, dict | None]] = []
+        self.interrupted_calls: list[tuple[str, dict | None]] = []
         self.contexts: list[dict] = []
         self.clear_count = 0
 
@@ -58,21 +59,20 @@ class DummyUsageMeter:
         self.reserve_calls.append(kwargs)
         return {"id": "seedance2-prompt-reservation", "cost": 9}
 
-    async def confirm_feature_credit_reservation(
+    async def settle_feature_credit_reservation(
         self,
         reservation_id: str,
         *,
+        action: str,
         metadata=None,
     ):
-        self.confirm_calls.append((reservation_id, metadata))
+        target = self.confirm_calls if action == "confirm" else self.refund_calls
+        target.append((reservation_id, metadata))
 
-    async def refund_feature_credit_reservation(
-        self,
-        reservation_id: str,
-        *,
-        metadata=None,
+    async def settle_cancelled_feature_credit_reservation(
+        self, reservation_id: str, *, metadata=None
     ):
-        self.refund_calls.append((reservation_id, metadata))
+        self.interrupted_calls.append((reservation_id, metadata))
 
     def set_llm_usage_context(
         self,
@@ -299,7 +299,8 @@ def test_generate_seedance2_prompt_reserves_feature_credit_and_confirms(
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert usage_meter.reserve_calls[0]["feature_key"] == "seedance2_prompt"
+    assert usage_meter.reserve_calls[0]["feature_key"] == "mainline.seedance2_prompt"
+    assert usage_meter.reserve_calls[0]["task_type"] == "seedance2_prompt"
     assert usage_meter.reserve_calls[0]["resource_kind"] == "script"
     assert usage_meter.reserve_calls[0]["require_price_rule"] is True
     assert usage_meter.reserve_calls[0]["require_positive_cost"] is True
@@ -314,7 +315,7 @@ def test_generate_seedance2_prompt_reserves_feature_credit_and_confirms(
     assert usage_meter.clear_count == 1
 
 
-def test_generate_seedance2_prompt_refunds_feature_credit_on_failure(
+def test_generate_seedance2_prompt_uses_evidence_settlement_on_failure(
     monkeypatch,
     tmp_path,
 ):
@@ -357,7 +358,8 @@ def test_generate_seedance2_prompt_refunds_feature_credit_on_failure(
     assert response.status_code == 200
     assert response.json() == {"ok": False, "error": "seedance2 prompt invalid"}
     assert usage_meter.confirm_calls == []
-    assert usage_meter.refund_calls[0][0] == "seedance2-prompt-reservation"
+    assert usage_meter.refund_calls == []
+    assert usage_meter.interrupted_calls[0][0] == "seedance2-prompt-reservation"
     assert usage_meter.clear_count == 1
 
 

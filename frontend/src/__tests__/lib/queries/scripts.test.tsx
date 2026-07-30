@@ -77,7 +77,7 @@ describe("script generation query", () => {
               data: {
                 error_code: "BILLING_RULE_NOT_CONFIGURED",
                 billing_kind: "feature",
-                billing_key: "script_writer",
+                billing_key: "mainline.script_writer",
               },
             },
             { status: 409 },

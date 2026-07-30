@@ -41,6 +41,7 @@ export const EPISODE_STAGE_REGISTRY: readonly StageDef[] = [
     icon: Pencil,
     taskTypes: [
       TASK_TYPES.SKETCH_GENERATION,
+      TASK_TYPES.SKETCH_GRID_GENERATION,
       TASK_TYPES.BATCH_SKETCH,
       TASK_TYPES.SKETCH_REGEN,
       TASK_TYPES.GRID_REGENERATE,

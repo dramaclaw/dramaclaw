@@ -113,6 +113,7 @@ import {
 
 const SEEDANCE2_REFERENCE_DRAG_TYPE =
   "application/x-supertale-seedance2-reference";
+const BEAT_VIDEO_GENERATION_FEATURE_KEY = "mainline.beat_video_generation";
 const SEEDANCE2_PROMPT_GUIDANCE_TEMPLATES = [
   {
     key: "subject",
@@ -298,8 +299,8 @@ export function VideoPane({
   const { data: poolRes } = useVideoPool(project, episode);
   const { data: videoBackendsRes } = useVideoBackends(project);
   const videoBackends = videoBackendsRes?.data ?? [];
-  const beatVideoPromptCost = useGenerationCreditCost("feature", "beat_video_prompt");
-  const seedance2PromptCost = useGenerationCreditCost("feature", "seedance2_prompt");
+  const beatVideoPromptCost = useGenerationCreditCost("feature", "mainline.beat_video_prompt");
+  const seedance2PromptCost = useGenerationCreditCost("feature", "mainline.seedance2_prompt");
   const now = useNow();
   const seedance2UploadInputRef = useRef<HTMLInputElement>(null);
   const [regenConfirm, setRegenConfirm] = useState(false);
@@ -534,21 +535,34 @@ export function VideoPane({
     [beat.seedance2_config_json, spec.renderAspect],
   );
   const [seedance2Draft, setSeedance2Draft] = useState(seedance2Config);
-  const videoCost = useGenerationCreditCost("video_backend", defaultBackend, {
-    surface: "supertale",
-    params: {
-      resolution: showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
-        ? seedance2Draft.resolution
-        : isSd15ProConfig
-          ? sd15Resolution
-          : "720p",
-    },
-    quantity: showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
+  const videoPricingResolution =
+    showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
+      ? seedance2Draft.resolution
+      : isSd15ProConfig
+        ? sd15Resolution
+        : "720p";
+  const configuredVideoPricingQuantity =
+    showSeedance2Config || showHappyHorseConfig || showGrokVideoConfig
       ? seedance2Draft.duration
       : isSd15ProConfig
         ? sd15Duration
-        : 5,
-  });
+        : 5;
+  const videoPricingQuantity = Math.max(
+    configuredVideoPricingQuantity,
+    audioFloorSeconds ?? 0,
+  );
+  const videoCost = useGenerationCreditCost(
+    "feature",
+    BEAT_VIDEO_GENERATION_FEATURE_KEY,
+    {
+      surface: "supertale",
+      params: {
+        video_backend: defaultBackend,
+        resolution: videoPricingResolution,
+        pricing_quantity: videoPricingQuantity,
+      },
+    },
+  );
   const beatVideoPromptCostDisplay =
     beatVideoPromptCost.data?.data.display ??
     (beatVideoPromptCost.error instanceof BillingRuleNotConfiguredError
@@ -557,6 +571,11 @@ export function VideoPane({
   const seedance2PromptCostDisplay =
     seedance2PromptCost.data?.data.display ??
     (seedance2PromptCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
+  const videoCostDisplay =
+    videoCost.data?.data.display ??
+    (videoCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
   const seedance2DraftRef = useRef(seedance2Config);
@@ -1519,7 +1538,10 @@ export function VideoPane({
                 <WandSparkles className="size-3" />
               )}
               {t("episode.workbench.video.generateBeatVideoPrompt")}
-              <CreditCostInline display={beatVideoPromptCostDisplay} />
+              <CreditCostInline
+                display={beatVideoPromptCostDisplay}
+                promotion={beatVideoPromptCost.data?.data.promotion}
+              />
             </Button>
           </div>
         </div>
@@ -1730,7 +1752,10 @@ export function VideoPane({
                   <Film className="size-3" />
                 )}
                 {videoActionLabel}
-                <CreditCostInline display={videoCost.data?.data.display} />
+                <CreditCostInline
+                  display={videoCostDisplay}
+                  promotion={videoCost.data?.data.promotion}
+                />
               </Button>
             )}
           </VideoParamField>
@@ -2504,7 +2529,10 @@ export function VideoPane({
                     : showHappyHorseConfig
                     ? t("episode.workbench.video.generateSubjectPrompt")
                     : t("episode.workbench.video.seedance2GeneratePrompt")}
-                  <CreditCostInline display={seedance2PromptCostDisplay} />
+                  <CreditCostInline
+                    display={seedance2PromptCostDisplay}
+                    promotion={seedance2PromptCost.data?.data.promotion}
+                  />
                 </Button>
                 {regenTask.started ? (
                   <Button
@@ -2537,7 +2565,10 @@ export function VideoPane({
                       <Film className="size-3" />
                     )}
                     {videoActionLabel}
-                    <CreditCostInline display={videoCost.data?.data.display} />
+                    <CreditCostInline
+                      display={videoCostDisplay}
+                      promotion={videoCost.data?.data.promotion}
+                    />
                   </Button>
                 )}
               </div>

@@ -28,6 +28,10 @@ TASK_IDENTITY_SPECS: dict[str, TaskIdentitySpec] = {
     "single_video": TaskIdentitySpec("single_video", include_episode=True, include_beat=True),
     "global_optimize_video": TaskIdentitySpec("global_optimize_video", include_episode=True),
     "sketch_generation": TaskIdentitySpec("sketch_gen", include_episode=True, scope_mode="raw"),
+    "director_control_to_sketch": TaskIdentitySpec(
+        "director_control_to_sketch", include_episode=True, include_beat=True, scope_mode="raw"
+    ),
+    "sketch_grid_generation": TaskIdentitySpec("sketch_grid_gen", include_episode=True, scope_mode="raw"),
     "selected_regen": TaskIdentitySpec("selected_regen", include_episode=True, scope_mode="raw"),
     "sketch_regen": TaskIdentitySpec("sketch_regen", include_episode=True, scope_mode="raw"),
     "sketch_edit_execute": TaskIdentitySpec(

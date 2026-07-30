@@ -55,7 +55,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useTaskController } from "@/hooks/use-task-controller";
 import { propReferenceAssetScope } from "@/lib/task-scope";
-import { backendErrorToastMessage } from "@/lib/api-errors";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 import {
   useBatchGeneratePropReferences,
@@ -91,10 +94,6 @@ const PROP_TYPE_VALUES = [
 
 function isErrorResponse(value: unknown): value is ErrorResponse {
   return Boolean(value && typeof value === "object" && (value as { ok?: unknown }).ok === false);
-}
-
-function formatCreditCost(value: number) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
 }
 
 async function openPropFreezoneCanvas(project: string, propName: string) {
@@ -257,7 +256,19 @@ function PropAssetCardController({
   const { t } = useTranslation();
   const generateReference = useGeneratePropReferenceAsync(project, prop.name);
   const uploadReference = useUploadPropReference(project, prop.name);
-  const referenceCost = useGenerationCreditCost("fixed_image", "prop_reference");
+  const referenceCost = useGenerationCreditCost(
+    "feature",
+    "mainline.prop_reference_image",
+    {
+      surface: "supertale",
+      params: imageSourceSelection ? { image_selection: imageSourceSelection } : null,
+    },
+  );
+  const referenceCostDisplay =
+    referenceCost.data?.data.display ??
+    (referenceCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : undefined);
   const [freezonePending, setFreezonePending] = useState(false);
   const refTask = useTaskController({
     key: {
@@ -311,7 +322,8 @@ function PropAssetCardController({
       generating={generateReference.isPending || refTask.started}
       uploading={uploadReference.isPending}
       referenceCount={referenceCount}
-      referenceCost={referenceCost.data?.data.display}
+      referenceCost={referenceCostDisplay}
+      referencePromotion={referenceCost.data?.data.promotion}
       freezonePending={freezonePending}
       onEdit={onEdit}
       onDelete={onDelete}
@@ -337,10 +349,9 @@ export function PropsPanel({
   const updateProp = useUpdateProp(project, editing?.name ?? "");
   const deleteProp = useDeleteProp(project);
   const refIndex = useAssetReferenceIndex(project);
-  const referenceCost = useGenerationCreditCost("fixed_image", "prop_reference");
-  const batchGenerate = useBatchGeneratePropReferences(project);
   const imageSourceQuery = useAssetImageSourceSelection(project, "prop");
   const imageSourceSelection = imageSourceQuery.data?.data.image_source_selection ?? "";
+  const batchGenerate = useBatchGeneratePropReferences(project);
   const batchTask = useTaskController({
     key: { taskType: "batch_prop_ref", project, episode: 0 },
     invalidateKeys: [queryKeys.props(project)],
@@ -350,11 +361,29 @@ export function PropsPanel({
     () => allItems.filter((prop) => !prop.reference_url && !prop.reference_path).length,
     [allItems],
   );
+  const batchReferenceCostQuery = useGenerationCreditCost(
+    "feature",
+    "mainline.prop_reference_image",
+    {
+      surface: "supertale",
+      quantity: missingReferenceCount,
+      params: imageSourceSelection ? { image_selection: imageSourceSelection } : null,
+    },
+  );
   const batchReferenceCost = useMemo(() => {
-    const unitCost = referenceCost.data?.data.cost;
-    if (!unitCost || missingReferenceCount <= 0) return null;
-    return formatCreditCost(unitCost * missingReferenceCount);
-  }, [missingReferenceCount, referenceCost.data?.data.cost]);
+    if (missingReferenceCount <= 0) return null;
+    return (
+      batchReferenceCostQuery.data?.data.display ??
+      (batchReferenceCostQuery.error instanceof BillingRuleNotConfiguredError
+        ? t("common.billingRuleNotConfiguredShort")
+        : null)
+    );
+  }, [
+    batchReferenceCostQuery.data?.data.display,
+    batchReferenceCostQuery.error,
+    missingReferenceCount,
+    t,
+  ]);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<AssetSortKey>("name");
   const items = useMemo(() => {
@@ -449,7 +478,10 @@ export function PropsPanel({
             <Sparkles className="size-3.5" />
           )}
           {t("assets.props.batchGenerate")}
-          <CreditCostInline display={batchReferenceCost} />
+          <CreditCostInline
+            display={batchReferenceCost}
+            promotion={batchReferenceCostQuery.data?.data.promotion}
+          />
         </Button>
         <TooltipProvider delay={80}>
           <Tooltip>

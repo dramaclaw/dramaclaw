@@ -15,11 +15,15 @@ import { CreditCostPill } from '@/components/credits/credit-visual';
 import { UiTextArea } from '@/components/ui';
 import { Slider } from '@/components/shadcn/slider';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import {
   NODE_CREDIT_PILL_FLAT_CLASS,
   NODE_FLOATING_PANEL_SURFACE_CLASS,
   NODE_GENERATE_BUTTON_BASE_CLASS,
+  NODE_GENERATE_BUTTON_DISABLED_CLASS,
   NODE_GENERATE_BUTTON_ENABLED_CLASS,
 } from '@/features/canvas/ui/nodeControlStyles';
 import {
@@ -416,12 +420,25 @@ export function MultiAngleEditorPanel({ imageSource, onClose, onSubmit }: MultiA
   const [imageSize, setImageSize] = useState<MultiAngleImageSize>(DEFAULT_MULTI_ANGLE_IMAGE_SIZE);
   const { models: imageModels } = useFreezoneImageModels();
   const selectedModel = imageModels[0];
-  const creditCost = useGenerationCreditCost('image_selection', selectedModel?.apiModel ?? null, {
-    surface: 'canvas',
-    params: imageModelSupportsQuality(selectedModel?.apiModel)
-      ? { size: imageSize, quality: 'medium' }
-      : { size: imageSize },
-  });
+  const creditCost = useGenerationCreditCost(
+    'feature',
+    selectedModel ? FREEZONE_IMAGE_FEATURES.multiView : null,
+    {
+      surface: 'canvas',
+      params: buildImageFeatureBillingParams(selectedModel, {
+        size: imageSize,
+        ...(imageModelSupportsQuality(selectedModel?.apiModel)
+          ? { quality: 'medium' }
+          : {}),
+        operation: 'multi_view',
+      }),
+    },
+  );
+  const billingRuleMissing =
+    creditCost.error instanceof BillingRuleNotConfiguredError;
+  const costDisplay =
+    creditCost.data?.data.display ??
+    (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
@@ -664,12 +681,18 @@ export function MultiAngleEditorPanel({ imageSource, onClose, onSubmit }: MultiA
 
           <div className="mt-auto flex items-center justify-end gap-5">
             <CreditCostPill
-              display={creditCost.data?.data.display}
+              display={costDisplay}
+              promotion={creditCost.data?.data.promotion}
               className={NODE_CREDIT_PILL_FLAT_CLASS}
             />
             <button
               type="button"
-              className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${NODE_GENERATE_BUTTON_ENABLED_CLASS}`}
+              disabled={billingRuleMissing || !selectedModel}
+              className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
+                billingRuleMissing || !selectedModel
+                  ? NODE_GENERATE_BUTTON_DISABLED_CLASS
+                  : NODE_GENERATE_BUTTON_ENABLED_CLASS
+              }`}
               onClick={handleSubmit}
               aria-label={t('multiAngleEditor.submit')}
             >

@@ -196,6 +196,11 @@ def test_render_selected_regen_returns_scope_and_passes_render_settings(
     assert calls[0]["payload"]["config"]["image_generation_selection"] == "newapi_nanobanana2"
     assert calls[0]["payload"]["config"]["sketch_aspect_padding"] is True
     assert "force_half_k" not in calls[0]["payload"]["config"]
+    billing = calls[0]["payload"]["billing"]
+    assert billing["image_selection"] == "newapi_nanobanana2"
+    assert billing["pricing_kind"] == "image"
+    assert billing["pricing_model"]
+    assert billing["pricing_params"]
 
 
 @pytest.mark.parametrize(
@@ -300,6 +305,11 @@ def test_render_plan_execute_checks_only_selected_beat_detection(monkeypatch, tm
     execute_body = execute_response.json()
     assert execute_body["ok"] is True
     assert calls[0]["payload"]["config"]["selected_beat_numbers"] == [2]
+    billing = calls[0]["payload"]["billing"]
+    assert billing["image_selection"]
+    assert billing["pricing_kind"] == "image"
+    assert billing["pricing_model"]
+    assert billing["pricing_params"]
     assert seen_character_map_beats == [[2], [2]]
 
 
@@ -310,7 +320,13 @@ def test_render_grid_regen_passes_render_settings(monkeypatch, tmp_path):
         nanobanana_grid,
         "scene_grid_split",
         lambda beats, character_map=None: [
-            {"rows": 1, "cols": 1, "scene_id": "A", "beat_numbers": [1, 3]}
+            {
+                "rows": 1,
+                "cols": 1,
+                "mode_key": "1x1_2-3",
+                "scene_id": "A",
+                "beat_numbers": [1, 3],
+            }
         ],
     )
     client, calls = _client(monkeypatch, tmp_path)
@@ -332,6 +348,11 @@ def test_render_grid_regen_passes_render_settings(monkeypatch, tmp_path):
     assert calls[0]["payload"]["config"]["image_generation_selection"] == "newapi_nanobanana2"
     assert calls[0]["payload"]["config"]["sketch_aspect_padding"] is True
     assert "force_half_k" not in calls[0]["payload"]["config"]
+    billing = calls[0]["payload"]["billing"]
+    assert billing["image_selection"] == "newapi_nanobanana2"
+    assert billing["pricing_kind"] == "image"
+    assert billing["pricing_model"]
+    assert billing["pricing_params"]
 
 
 def test_render_grid_regen_checks_only_selected_grid_detection(monkeypatch, tmp_path):
@@ -341,7 +362,13 @@ def test_render_grid_regen_checks_only_selected_grid_detection(monkeypatch, tmp_
         nanobanana_grid,
         "scene_grid_split",
         lambda beats, character_map=None: [
-            {"rows": 1, "cols": 1, "scene_id": "B", "beat_numbers": [2]}
+            {
+                "rows": 1,
+                "cols": 1,
+                "mode_key": "1x1_2-3",
+                "scene_id": "B",
+                "beat_numbers": [2],
+            }
         ],
     )
     client, calls, _seen_character_map_beats = _client_with_real_detection_guard(

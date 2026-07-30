@@ -497,7 +497,66 @@
   },
   "credits": {
     "balance": "Current credit balance",
-    "short": "Credits"
+    "short": "Credits",
+    "openPanel": "Open credit panel",
+    "personalAccount": "Personal credit account",
+    "details": "View details",
+    "earned": "Earned",
+    "spent": "Spent",
+    "refunded": "Refunded",
+    "promotions": "Available promotions",
+    "promotionCount": "{{count}} potentially applicable promotions",
+    "viewTransactions": "View credit activity",
+    "back": "Back",
+    "centerTitle": "Credit center",
+    "centerDescription": "Review your unified balance, settlements, refunds, and available promotions.",
+    "pendingAmount": "{{amount}} credits are pending settlement",
+    "availablePromotions": "Available promotions",
+    "promotionDisclaimer": "Final discounts depend on the live quote for the feature, model, and domain.",
+    "endsAt": "Ends {{time}}",
+    "longTerm": "No end date",
+    "startDate": "Start date",
+    "endDate": "End date",
+    "projectFilter": "Filter by project",
+    "allProjects": "All projects",
+    "featureFilter": "Filter by feature",
+    "allFeatures": "All features",
+    "modelFilter": "Filter by model",
+    "allModels": "All models",
+    "adjustment": "Credit adjustment",
+    "promotionalPrice": "Promotional price",
+    "empty": "No credit activity",
+    "filtering": "Filtering…",
+    "filteredRecords": "{{count}} matching records",
+    "totalRecords": "{{count}} records",
+    "previousPage": "Previous page",
+    "nextPage": "Next page",
+    "pageOf": "Page {{page}} of {{total}}",
+    "category": {
+      "all": "All",
+      "earned": "Earned",
+      "spent": "Spent",
+      "refunded": "Refunded"
+    },
+    "status": {
+      "pending": "Pending",
+      "confirmed": "Charged",
+      "refunded": "Refunded",
+      "completed": "Completed"
+    },
+    "domain": {
+      "mainline": "Mainline",
+      "freezone": "Freezone",
+      "all": "Mainline & Freezone"
+    },
+    "columns": {
+      "time": "Time",
+      "feature": "Feature / model",
+      "project": "Project",
+      "status": "Status",
+      "change": "Change",
+      "balance": "Balance after"
+    }
   },
   "nav": {
     "home": "Home",

@@ -809,7 +809,7 @@ NEWAPI_VIDEO_DURATION_BOUNDS = os.environ.get(
 ).strip()
 
 # 视频生成后端: newapi_seedance-1.0-pro-fast (默认), newapi_seedance-2.0-fast,
-# comfyui, seedance_fast, seedance_pro, seedance_pro_silent, wan26, grok_720
+# comfyui, seedance_fast, seedance_pro, seedance_pro_silent, grok_720
 VIDEO_BACKEND = os.environ.get("VIDEO_BACKEND", f"newapi_{DEFAULT_VIDEO_MODEL}")
 
 # Seedance 模型（火山方舟）

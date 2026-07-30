@@ -8,6 +8,10 @@ import { Accessibility, Box, Crop, Download, ExternalLink, ImageIcon, Loader2, P
 import { isNoReferenceMarker } from "@/lib/beat-markers";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
+import {
   useBeatBackgroundAnchors,
   useBeatDirectorStageManifest,
   useDirectorControlFrameStatus,
@@ -42,6 +46,7 @@ import { useNow } from "@/hooks/use-now";
 import { useNavigateToAsset } from "@/hooks/use-assets-deep-link";
 import { useTaskController } from "@/hooks/use-task-controller";
 import { queryKeys } from "@/lib/query-keys";
+import { TASK_TYPES } from "@/lib/task-types";
 import { useSeenPoolStore } from "@/stores/seen-pool-store";
 import { Button } from "@/components/ui/button";
 import {
@@ -86,6 +91,7 @@ const SKETCH_EMPTY_CLASS =
 const SKETCH_CANDIDATES_CLASS =
   "flex max-h-[220px] flex-wrap content-start gap-2 overflow-y-auto pr-1";
 const BACKGROUND_ANCHOR_PREVIEW_ASPECT = "16 / 9";
+const SKETCH_REGEN_FEATURE_KEY = "mainline.sketch_regen";
 
 interface SketchSectionProps {
   beat: Beat;
@@ -114,10 +120,16 @@ export function SketchSection({
   const sketchSettings = useSketchSettings(project);
   const singleSketchModeKey =
     spec.sketchAspect === "16:9" ? "1x1_16-9_sketch" : "1x1_2-3_sketch";
+  const sketchImageSelection = sketchSettings.data?.data.sketch_image_selection;
   const sketchRegenCost = useGenerationCreditCost(
-    "image_selection",
-    sketchSettings.data?.data.sketch_image_selection,
-    { surface: "supertale", imageRole: "sketch", modeKey: singleSketchModeKey },
+    "feature",
+    SKETCH_REGEN_FEATURE_KEY,
+    {
+      surface: "supertale",
+      imageRole: "sketch",
+      modeKey: singleSketchModeKey,
+      params: sketchImageSelection ? { image_selection: sketchImageSelection } : null,
+    },
   );
   const uploadSketch = useUploadBeatImage(project, episode, "sketch");
   const [stageDialogOpen, setStageDialogOpen] = useState(false);
@@ -154,9 +166,10 @@ export function SketchSection({
   });
   const directorTask = useTaskController({
     key: {
-      taskType: "sketch_generation",
+      taskType: TASK_TYPES.DIRECTOR_CONTROL_TO_SKETCH,
       project,
       episode,
+      beatNum: beat.beat_number,
     },
     invalidateKeys: [
       queryKeys.grids(project, episode),
@@ -247,6 +260,18 @@ export function SketchSection({
   const directorControlUrl = resolvedDirectorControlUrl
     ? withImageCacheBust(resolvedDirectorControlUrl, directorStatus.dataUpdatedAt)
     : null;
+  const directorControlCost = useGenerationCreditCost(
+    "feature",
+    directorControlUrl ? "mainline.director_control_to_sketch" : null,
+    {
+      surface: "supertale",
+      imageRole: "sketch",
+      modeKey: directorControl?.mode_key || singleSketchModeKey,
+      params: sketchImageSelection
+        ? { image_selection: sketchImageSelection }
+        : null,
+    },
+  );
   const backgroundData =
     backgroundAnchors.data?.ok === true ? backgroundAnchors.data.data : null;
   const visibleBackgroundData = backgroundDialogData ?? backgroundData;
@@ -311,6 +336,7 @@ export function SketchSection({
       const res = await regenerate.mutateAsync({
         beatIndices: [beat.beat_number],
         modeKey: singleSketchModeKey,
+        imageGenerationSelection: sketchImageSelection,
       });
       if (res.ok === false) {
         toast.error(res.error || t("episode.workbench.sketch.regenFailed"));
@@ -318,8 +344,8 @@ export function SketchSection({
       }
       regenTask.start({ scope: res.scope });
       toast.success(t("episode.workbench.sketch.regenStarted"));
-    } catch {
-      toast.error(t("episode.workbench.sketch.regenFailed"));
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -352,14 +378,10 @@ export function SketchSection({
         toast.error(res.error || t("episode.workbench.sketch.convertDirectorFailed"));
         return;
       }
-      directorTask.start({ scope: res.scope });
+      directorTask.start({ scope: res.scope, taskId: res.task_id });
       toast.success(t("episode.workbench.sketch.convertDirectorStarted"));
     } catch (err) {
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : t("episode.workbench.sketch.convertDirectorFailed"),
-      );
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -608,6 +630,15 @@ export function SketchSection({
                   <Sparkles className="size-3" />
                 )}
                 {t("episode.workbench.sketch.convertDirectorControl")}
+                <CreditCostInline
+                  display={
+                    directorControlCost.data?.data.display ??
+                    (directorControlCost.error instanceof BillingRuleNotConfiguredError
+                      ? t("common.billingRuleNotConfiguredShort")
+                      : null)
+                  }
+                  promotion={directorControlCost.data?.data.promotion}
+                />
               </Button>
             )}
           </div>
@@ -688,8 +719,16 @@ export function SketchSection({
               {regenerate.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
               {hasSketch
                 ? t("common.regenerate")
-                : t("common.generateNew")}
-              <CreditCostInline display={sketchRegenCost.data?.data.display} />
+                : t("episode.workbench.sketch.generateNow")}
+              <CreditCostInline
+                display={
+                  sketchRegenCost.data?.data.display ??
+                  (sketchRegenCost.error instanceof BillingRuleNotConfiguredError
+                    ? t("common.billingRuleNotConfiguredShort")
+                    : null)
+                }
+                promotion={sketchRegenCost.data?.data.promotion}
+              />
             </Button>
           )}
         </div>

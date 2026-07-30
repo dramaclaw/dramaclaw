@@ -31,6 +31,7 @@ async def _run_prop_reference_asset(
 ) -> dict[str, Any] | None:
     from novelvideo.cognee import CogneeStore
     from novelvideo.generators.nanobanana_prop import generate_prop_reference
+    from novelvideo.generators.nanobanana_grid import scene_reference_feature_billing
 
     payload = envelope.get("payload") or {}
     prop_name = str(payload["prop_name"])
@@ -58,13 +59,14 @@ async def _run_prop_reference_asset(
             progress=0.50,
             current_task="调用图像模型生成三视图...",
         )
-        result_path = await generate_prop_reference(
-            visual_prompt=visual_prompt,
-            output_path=str(output_path),
-            style=style,
-            project_dir=str(output_dir),
-            model=model,
-        )
+        with scene_reference_feature_billing():
+            result_path = await generate_prop_reference(
+                visual_prompt=visual_prompt,
+                output_path=str(output_path),
+                style=style,
+                project_dir=str(output_dir),
+                model=model,
+            )
         if not result_path:
             raise RuntimeError("图像 API 未返回有效图像")
         return {"prop_name": prop.name, "path": str(result_path), "style": style}
@@ -85,6 +87,7 @@ def run_batch_prop_ref(envelope: dict[str, Any], ctx: ProjectContext) -> dict[st
 async def _run_batch_prop_ref(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
     from novelvideo.cognee import CogneeStore
     from novelvideo.generators.nanobanana_prop import generate_prop_reference
+    from novelvideo.generators.nanobanana_grid import scene_reference_feature_billing
 
     payload = envelope.get("payload") or {}
     style = str(payload.get("style") or "")
@@ -118,13 +121,14 @@ async def _run_batch_prop_ref(envelope: dict[str, Any], ctx: ProjectContext) -> 
             )
             prop_dir = output_dir / "assets" / "props" / prop.name
             prop_dir.mkdir(parents=True, exist_ok=True)
-            result = await generate_prop_reference(
-                visual_prompt=prop.visual_prompt or prop.description or prop.name,
-                output_path=str(prop_dir / "reference_3view.png"),
-                style=style,
-                project_dir=str(output_dir),
-                model=model,
-            )
+            with scene_reference_feature_billing():
+                result = await generate_prop_reference(
+                    visual_prompt=prop.visual_prompt or prop.description or prop.name,
+                    output_path=str(prop_dir / "reference_3view.png"),
+                    style=style,
+                    project_dir=str(output_dir),
+                    model=model,
+                )
             if result:
                 generated += 1
         return {"generated": generated}

@@ -25,7 +25,7 @@ def _ctx(tmp_path: Path) -> ProjectContext:
 
 
 @pytest.mark.asyncio
-async def test_director_control_to_sketch_runner_logs_to_sketch_generation_task(
+async def test_director_control_to_sketch_runner_logs_to_dedicated_task(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -68,7 +68,7 @@ async def test_director_control_to_sketch_runner_logs_to_sketch_generation_task(
 
     result = await sketch_runner._run_control_frame_to_sketch_async(
         {
-            "task_type": "sketch_generation",
+            "task_type": "director_control_to_sketch",
             "episode": 2,
             "beat_num": 3,
             "scope": "director_control_to_sketch:ep002:beat_03",
@@ -80,9 +80,9 @@ async def test_director_control_to_sketch_runner_logs_to_sketch_generation_task(
     assert result["sketch_path"] == str(promoted_sketch)
     assert result["beat_numbers"] == [3]
     assert [update["task_type"] for update in manager.updates] == [
-        "sketch_generation",
-        "sketch_generation",
-        "sketch_generation",
+        "director_control_to_sketch",
+        "director_control_to_sketch",
+        "director_control_to_sketch",
     ]
     assert [update["current_task"] for update in manager.updates] == [
         "开始 Beat 3 Direct Render 转草图...",

@@ -12,7 +12,11 @@ vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
-import { useGenerateAudio, useRegenerateBeatAudio } from "@/lib/queries/audio";
+import {
+  useAudioBillingQuote,
+  useGenerateAudio,
+  useRegenerateBeatAudio,
+} from "@/lib/queries/audio";
 
 const server = setupServer();
 
@@ -26,6 +30,46 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe("IndexTTS2 audio query contract", () => {
+  it("quotes the exact selected Beat quantity through the audio feature endpoint", async () => {
+    let receivedBody: unknown = undefined;
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/projects/demo/episodes/1/audio/billing-quote",
+        async ({ request }) => {
+          receivedBody = await request.clone().json();
+          return HttpResponse.json({
+            ok: true,
+            data: {
+              beat_numbers: [2, 4],
+              quantity: 2,
+              unit_cost: 3,
+              cost: 6,
+              display: "6",
+              prereq_errors: [],
+            },
+          });
+        },
+      ),
+    );
+
+    const { result } = renderHook(
+      () =>
+        useAudioBillingQuote("demo", 1, {
+          beatNumbers: [2, 4],
+          mode: "redo_selected",
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(receivedBody).toEqual({
+      beat_numbers: [2, 4],
+      mode: "redo_selected",
+    });
+    expect(result.current.data?.data.quantity).toBe(2);
+    expect(result.current.data?.data.cost).toBe(6);
+  });
+
   it("posts selected beat audio generation to /audio/generate as an async IndexTTS2 task", async () => {
     let requestedPath = "";
     let receivedBody: unknown = undefined;

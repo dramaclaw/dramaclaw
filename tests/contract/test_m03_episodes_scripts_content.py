@@ -196,6 +196,7 @@ def m03_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from novelvideo.api import auth as api_auth
     from novelvideo.api.deps import ProjectResolution
     from novelvideo.api.routes import content, episodes, scripts
+    from novelvideo.ports.local.usage import NoOpUsageMeter
 
     store = _M03Store(tmp_path)
     ctx = SimpleNamespace(project_id="proj_m03", output_dir=tmp_path, state_dir=tmp_path / "state")
@@ -240,6 +241,9 @@ def m03_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "get_task_backend",
             lambda: SimpleNamespace(enqueue_project_task=enqueue_project_task),
         )
+
+    monkeypatch.setattr(content, "resolve_project_scope", resolve_project_scope)
+    monkeypatch.setattr(content, "get_usage_meter", NoOpUsageMeter)
 
     async def fake_rewrite_episode_content(*args, **kwargs):
         return "改写第一行\n改写第二行"

@@ -14,8 +14,8 @@ import {
 } from "lucide-react";
 
 import { useRegenerateSketches } from "@/lib/queries/sketches";
-import { useGenerateAudio } from "@/lib/queries/audio";
-import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
+import { useAudioBillingQuote, useGenerateAudio } from "@/lib/queries/audio";
+import { useGenerationCreditCostPlan } from "@/lib/queries/generation-credit-cost";
 import { useSketchSettings } from "@/lib/queries/sketch-settings";
 import {
   SKETCH_REGEN_MODES,
@@ -48,6 +48,10 @@ import {
 } from "@/lib/queries/sketch-regen-queue";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { formatCreditCost } from "@/components/credits/credit-visual";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { RenderPlanDialog } from "./render-plan-dialog";
 import type { Beat } from "@/types/episode";
 import type { Task } from "@/types/task";
@@ -385,12 +389,6 @@ export function BatchPanel({
   const regenSketches = useRegenerateSketches(project, episode);
   const generateAudio = useGenerateAudio(project, episode);
   const sketchSettings = useSketchSettings(project);
-  const sketchCostMode = singleSketchModeForAspect(spec.sketchAspect);
-  const sketchCost = useGenerationCreditCost(
-    "image_selection",
-    sketchSettings.data?.data.sketch_image_selection,
-    { surface: "supertale", imageRole: "sketch", modeKey: sketchCostMode.key },
-  );
   const tasks = useTasks({ project, episode });
   const queueQuery = useSketchRegenQueue(project, episode);
   const saveQueue = useSaveSketchRegenQueue(project, episode);
@@ -464,6 +462,33 @@ export function BatchPanel({
 
   const beatList = [...checkedBeats].sort((a, b) => a - b);
   const count = beatList.length;
+  const audioRevision = useMemo(
+    () =>
+      beats
+        .filter((beat) => beatList.includes(Number(beat.beat_number)))
+        .map((beat) =>
+          [
+            beat.beat_number,
+            beat.audio_type,
+            beat.speaker,
+            beat.audio_url,
+            beat.narration_segment,
+          ].join(":"),
+        )
+        .join(","),
+    [beatList, beats],
+  );
+  const audioBillingQuote = useAudioBillingQuote(
+    project,
+    episode,
+    { beatNumbers: beatList, mode: "redo_selected" },
+    audioRevision,
+  );
+  const audioCostDisplay =
+    audioBillingQuote.data?.data.display ??
+    (audioBillingQuote.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : "");
   const sketchPlanItems = useMemo(
     () => createSketchRegenPlanItems(
       beats,
@@ -471,6 +496,18 @@ export function BatchPanel({
       spec.sketchAspect,
     ),
     [beatList, beats, spec.sketchAspect],
+  );
+  const sketchPlanCost = useGenerationCreditCostPlan(
+    "feature",
+    "mainline.sketch_regen",
+    sketchPlanItems,
+    {
+      surface: "supertale",
+      imageRole: "sketch",
+      params: sketchSettings.data?.data.sketch_image_selection
+        ? { image_selection: sketchSettings.data.data.sketch_image_selection }
+        : null,
+    },
   );
   const singleSketchPlanItems = useMemo(
     () => createSingleSketchRegenQueueItems(beats, beatList, spec.sketchAspect),
@@ -491,10 +528,17 @@ export function BatchPanel({
     (item) => !lockedSketchItemIds.has(item.id),
   ).length;
   const sketchPlanCostDisplay = useMemo(() => {
-    const unitCost = sketchCost.data?.data.cost;
-    if (typeof unitCost !== "number") return null;
-    return formatCreditCost(unitCost * sketchRegenModelCallCount(sketchPlanItems));
-  }, [sketchCost.data?.data.cost, sketchPlanItems]);
+    if (typeof sketchPlanCost.cost !== "number") return null;
+    if (
+      typeof sketchPlanCost.originalCost === "number"
+      && sketchPlanCost.originalCost > sketchPlanCost.cost
+    ) {
+      return `${formatCreditCost(sketchPlanCost.originalCost)}→${formatCreditCost(
+        sketchPlanCost.cost,
+      )}`;
+    }
+    return formatCreditCost(sketchPlanCost.cost);
+  }, [sketchPlanCost.cost, sketchPlanCost.originalCost]);
   const selectedVideoRunning = useMemo(() => {
     if (beatList.length === 0) return false;
     const selectedBeatNumbers = new Set(beatList);
@@ -630,8 +674,8 @@ export function BatchPanel({
       audioTask.start({ scope: res.scope });
       toast.success(t("episode.workbench.batch.audioDispatched", { count }));
       onClearSelection();
-    } catch {
-      toast.error(t("episode.workbench.batch.dispatchFailed"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
     }
   };
 
@@ -718,7 +762,10 @@ export function BatchPanel({
                 {t("episode.workbench.batch.autoCombine", {
                   defaultValue: "批量重抽",
                 })}
-                <CreditCostInline display={sketchPlanCostDisplay} />
+                <CreditCostInline
+                  display={sketchPlanCostDisplay}
+                  promotion={sketchPlanCost.promotion}
+                />
               </Button>
             </div>
           </div>
@@ -796,7 +843,10 @@ export function BatchPanel({
                     grids: sketchPlanItems.length,
                     defaultValue: `确认草图 ${sketchPlanItems.length} 个网格`,
                   })}
-                  <CreditCostInline display={sketchPlanCostDisplay} />
+                  <CreditCostInline
+                    display={sketchPlanCostDisplay}
+                    promotion={sketchPlanCost.promotion}
+                  />
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -872,6 +922,10 @@ export function BatchPanel({
                   <Loader2 className="size-3 animate-spin" />
                 ) : null}
                 {t("episode.workbench.batch.genBatchAudio", { count })}
+                <CreditCostInline
+                  display={audioCostDisplay}
+                  promotion={audioBillingQuote.data?.data.promotion}
+                />
               </Button>
             </div>
           )}

@@ -497,7 +497,66 @@
   },
   "credits": {
     "balance": "当前积分余额",
-    "short": "积分"
+    "short": "积分",
+    "openPanel": "打开积分面板",
+    "personalAccount": "个人积分账户",
+    "details": "查看明细",
+    "earned": "已获得",
+    "spent": "已消费",
+    "refunded": "已退款",
+    "promotions": "可用促销",
+    "promotionCount": "当前有 {{count}} 项可能适用的优惠",
+    "viewTransactions": "查看积分明细",
+    "back": "返回",
+    "centerTitle": "积分中心",
+    "centerDescription": "查看统一积分余额、消费结算、退款和当前可用促销。",
+    "pendingAmount": "{{amount}} 积分正在预扣结算",
+    "availablePromotions": "当前可用促销",
+    "promotionDisclaimer": "最终优惠以具体功能、模型和业务区域的实时报价为准。",
+    "endsAt": "{{time}} 结束",
+    "longTerm": "长期有效",
+    "startDate": "开始日期",
+    "endDate": "结束日期",
+    "projectFilter": "项目筛选",
+    "allProjects": "全部项目",
+    "featureFilter": "功能筛选",
+    "allFeatures": "全部功能",
+    "modelFilter": "模型筛选",
+    "allModels": "全部模型",
+    "adjustment": "积分调整",
+    "promotionalPrice": "促销价",
+    "empty": "暂无积分记录",
+    "filtering": "正在筛选…",
+    "filteredRecords": "筛选结果 {{count}} 条",
+    "totalRecords": "共 {{count}} 条记录",
+    "previousPage": "上一页",
+    "nextPage": "下一页",
+    "pageOf": "第 {{page}} / {{total}} 页",
+    "category": {
+      "all": "全部",
+      "earned": "已获得",
+      "spent": "已消费",
+      "refunded": "已退款"
+    },
+    "status": {
+      "pending": "预扣中",
+      "confirmed": "扣费成功",
+      "refunded": "已退款",
+      "completed": "已完成"
+    },
+    "domain": {
+      "mainline": "主线",
+      "freezone": "Freezone",
+      "all": "主线与 Freezone"
+    },
+    "columns": {
+      "time": "时间",
+      "feature": "功能 / 模型",
+      "project": "项目",
+      "status": "状态",
+      "change": "积分变动",
+      "balance": "变动后余额"
+    }
   },
   "nav": {
     "home": "首页",

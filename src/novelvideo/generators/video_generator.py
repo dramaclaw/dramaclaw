@@ -10,14 +10,13 @@ import os
 import random
 import re
 import subprocess
-import tempfile
 import urllib.parse
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import aiohttp
 import websockets
@@ -29,8 +28,10 @@ from novelvideo.video_request_usage import (
     update_video_request_status,
 )
 from novelvideo.shared.billing_errors import is_insufficient_credits_error
+from novelvideo.shared.provider_costs import is_definite_no_cost_http_rejection
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
+    media_relay_ttl_seconds,
     upload_image_bytes,
 )
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
@@ -40,6 +41,7 @@ from novelvideo.task_backend.subprocesses import run_project_subprocess
 load_dotenv()
 
 NEWAPI_VIDEO_HTTP_TIMEOUT_SECONDS = 1800.0
+NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS = 2 * 60 * 60
 
 
 def _run_video_subprocess(cmd: list[str], *, timeout: int = 30 * 60) -> subprocess.CompletedProcess:
@@ -127,7 +129,6 @@ class VideoBackend(Enum):
     SEEDANCE_PRO_SILENT = "seedance_pro_silent"  # Seedance 1.5 Pro 无声
     SEEDANCE_2 = "seedance_2"  # Seedance 2.0（v2.0 主力）
     COMFYUI = "comfyui"  # Claymore 1.0
-    WAN26 = "wan26"  # 阿里云 DashScope Wan2.6-i2v-flash
     LTX23 = "ltx23"  # Lightricks LTX-Video 2.3 22B
     GROK_720 = "grok_720"  # xAI Grok Imagine Video 720p
 
@@ -464,8 +465,10 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
             except Exception as e:
                 log(f"记账失败({status}): {e}")
 
-        # 限制 duration 在 4-12 范围；向上取整保证视频不短于音频
-        duration = max(4, min(12, math.ceil(duration)))
+        # 与报价/预扣共享同一套时长边界。
+        from novelvideo.video_duration import normalize_video_duration_for_backend
+
+        duration = normalize_video_duration_for_backend("seedance_fast", duration)
 
         # 映射 aspect_ratio 格式
         ratio_text = str(aspect_ratio or "").strip().lower()
@@ -838,8 +841,9 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
         if image_path and not refs:
             refs = [ShotReference("image", image_path, "首帧")]
 
-        # 限制 duration 在 5-15 范围
-        duration = max(5, min(15, int(duration)))
+        from novelvideo.video_duration import normalize_video_duration_for_backend
+
+        duration = normalize_video_duration_for_backend("seedance_2", duration)
 
         # 映射 aspect_ratio 格式
         ratio = aspect_ratio if ":" in aspect_ratio else "9:16"
@@ -1115,7 +1119,9 @@ class GrokVideoGenerator(VideoGeneratorBase):
                 error="Grok 720 does not support keyframe/首尾帧模式",
             )
 
-        duration = max(1, min(15, int(duration)))
+        from novelvideo.video_duration import normalize_video_duration_for_backend
+
+        duration = normalize_video_duration_for_backend("grok_720", duration)
         ratio = aspect_ratio if ":" in aspect_ratio else "9:16"
 
         if image_path.startswith(("http://", "https://", "data:")):
@@ -1357,13 +1363,12 @@ class HuimengVideoGenerator(VideoGeneratorBase):
         self.client = client or HuimengiTaskClient(api_key=api_key, base_url=endpoint)
 
     def _duration_bounds(self) -> tuple[int, int]:
-        if self._is_happyhorse_model():
-            return 3, 15
-        if self.model.startswith("seedance-2.0"):
-            return 4, 15
-        if self.model == "seedance-1.5-pro":
-            return 4, 12
-        return 2, 12
+        from novelvideo.video_duration import video_duration_bounds_for_backend
+
+        bounds = video_duration_bounds_for_backend(f"huimeng_{self.model}")
+        if bounds[0] is None or bounds[1] is None:
+            return 2, 12
+        return int(bounds[0]), int(bounds[1])
 
     def _supports_audio_param(self) -> bool:
         return self.model in {"seedance-2.0", "seedance-2.0-fast", "seedance-1.5-pro"}
@@ -1527,9 +1532,13 @@ class HuimengVideoGenerator(VideoGeneratorBase):
             _seedance2_config_mapping(kwargs.get("seedance2_config")) if is_seedance2_model else {}
         )
         duration = _seedance2_duration_from_config(seedance2_config, duration)
-        min_duration, max_duration = self._duration_bounds()
         original_duration = duration
-        duration = max(min_duration, min(max_duration, math.ceil(duration)))
+        from novelvideo.video_duration import normalize_video_duration_for_backend
+
+        duration = normalize_video_duration_for_backend(
+            f"huimeng_{self.model}",
+            duration,
+        )
         if duration != original_duration:
             log(f"时长已调整: {original_duration:.1f}s -> {duration:.0f}s")
 
@@ -1741,9 +1750,16 @@ class HuimengVideoGenerator(VideoGeneratorBase):
 class NewApiVideoError(RuntimeError):
     """newAPI video request failure with gateway request id when available."""
 
-    def __init__(self, message: str, *, request_id: str = ""):
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_id: str = "",
+        status_code: int | None = None,
+    ):
         super().__init__(message)
         self.request_id = request_id
+        self.status_code = status_code
 
 
 class NewApiVideoGenerator(VideoGeneratorBase):
@@ -1755,21 +1771,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
     @staticmethod
     def _parse_duration_bounds_config(raw: str) -> dict[str, tuple[int, int]]:
-        bounds: dict[str, tuple[int, int]] = {}
-        for item in raw.split(","):
-            entry = item.strip()
-            if not entry or ":" not in entry or "-" not in entry:
-                continue
-            model, raw_bounds = entry.split(":", 1)
-            raw_min, raw_max = raw_bounds.split("-", 1)
-            try:
-                min_seconds = int(raw_min.strip())
-                max_seconds = int(raw_max.strip())
-            except ValueError:
-                continue
-            if min_seconds > 0 and max_seconds >= min_seconds:
-                bounds[model.strip()] = (min_seconds, max_seconds)
-        return bounds
+        from novelvideo.video_duration import parse_video_duration_bounds
+
+        return parse_video_duration_bounds(raw)
 
     @classmethod
     def _default_generate_audio_for_model(cls, model: str) -> bool:
@@ -1784,6 +1788,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         model: Optional[str] = None,
         resolution: Optional[str] = None,
         generate_audio: Optional[bool] = None,
+    model_params: Optional[dict[str, Any]] = None,
+        request_schema: Optional[dict[str, Any]] = None,
     ):
         from novelvideo.config import (
             NEWAPI_VIDEO_MODEL,
@@ -1796,7 +1802,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         self.base_url = (endpoint or gateway.base_url).rstrip("/")
         self.model = model or NEWAPI_VIDEO_MODEL
         self.resolution = resolution or NEWAPI_VIDEO_RESOLUTION
-        raw_generate_audio = os.environ.get("NEWAPI_VIDEO_GENERATE_AUDIO", "").strip().lower()
+        self.model_params = model_params or {}
+        self.request_schema = request_schema or {}
+        raw_generate_audio = (
+            os.environ.get("NEWAPI_VIDEO_GENERATE_AUDIO", "").strip().lower()
+        )
         if generate_audio is not None:
             self.generate_audio = generate_audio
         elif raw_generate_audio == "auto" or not raw_generate_audio:
@@ -1805,7 +1815,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             self.generate_audio = raw_generate_audio in {"true", "1", "yes", "on"}
 
         if not self.api_key:
-            raise ValueError("DramaClawAPI key must be set for DramaClawAPI video generation")
+            raise ValueError(
+                "DramaClawAPI key must be set for DramaClawAPI video generation"
+            )
 
     @staticmethod
     def _extract_request_id(text: str = "", headers: object | None = None) -> str:
@@ -1858,6 +1870,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     raise NewApiVideoError(
                         f"DramaClawAPI submit failed: HTTP {resp.status} - {text}",
                         request_id=request_id,
+                        status_code=resp.status,
                     )
                 try:
                     data = json.loads(text)
@@ -1876,6 +1889,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     raise NewApiVideoError(
                         f"DramaClawAPI task query failed: HTTP {resp.status} - {text}",
                         request_id=request_id,
+                        status_code=resp.status,
                     )
                 try:
                     return json.loads(text)
@@ -1953,6 +1967,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 upload_image_bytes,
                 data,
                 ext=ext,
+                ttl=media_relay_ttl_seconds(
+                    minimum=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+                ),
                 image_transform=image_transform,
             )
 
@@ -1962,16 +1979,118 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             upload_image_bytes,
             media_path.read_bytes(),
             ext=ext,
+            ttl=media_relay_ttl_seconds(
+                minimum=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+            ),
             image_transform=image_transform,
         )
 
-    def _duration_bounds(self) -> tuple[int, int]:
-        from novelvideo.config import NEWAPI_VIDEO_DURATION_BOUNDS
+    async def _apply_huimeng_protocol_media_inputs(
+        self,
+        metadata: dict[str, object],
+        *,
+        mode: str,
+        image_path: str,
+        last_frame_path: str | None,
+        references: object,
+        log: Callable[[str], None],
+    ) -> None:
+        """Populate the stable DramaClaw-to-RelayClaw video media protocol."""
 
-        configured = self._parse_duration_bounds_config(NEWAPI_VIDEO_DURATION_BOUNDS)
-        if self._is_happyhorse_model():
-            return configured.get(self.model.strip(), (1, 15))
-        return configured.get(self.model.strip(), (2, 12))
+        normalized_mode = {
+            "textToVideo": "text_to_video",
+            "imageToVideo": "first_frame",
+            "firstLastFrame": "first_last_frame",
+            "imageReference": "image_reference",
+            "allReference": "all_reference",
+            "videoEdit": "video_edit",
+        }.get(str(mode or "").strip(), str(mode or "").strip())
+
+        if normalized_mode == "text_to_video":
+            return
+
+        if normalized_mode == "first_frame":
+            first_frame_path = image_path
+            if not first_frame_path:
+                first_frame_path = next(
+                    (
+                        str(getattr(ref, "path", "") or "").strip()
+                        for ref in (
+                            references if isinstance(references, list) else []
+                        )
+                        if str(getattr(ref, "type", "") or "image").strip().lower()
+                        == "image"
+                    ),
+                    "",
+                )
+            if not first_frame_path:
+                raise ValueError("first frame is required for first_frame mode")
+            metadata["image_url"] = await self._relay_frame_input(first_frame_path)
+            return
+
+        if normalized_mode == "first_last_frame":
+            if not image_path:
+                raise ValueError("first frame is required for first_last_frame mode")
+            if not last_frame_path:
+                raise ValueError("last frame is required for first_last_frame mode")
+            metadata["first_frame_image"] = await self._relay_frame_input(image_path)
+            metadata["last_frame_image"] = await self._relay_frame_input(
+                str(last_frame_path)
+            )
+            return
+
+        raw_items: list[tuple[str, str, str]] = []
+        for ref in references if isinstance(references, list) else []:
+            media_type = str(getattr(ref, "type", "") or "image").strip().lower()
+            path = str(getattr(ref, "path", "") or "").strip()
+            role = str(getattr(ref, "role", "") or "").strip()
+            if path and media_type in {"image", "video", "audio"}:
+                raw_items.append((media_type, path, role))
+
+        seen: set[tuple[str, str]] = set()
+        relayed: dict[str, list[tuple[str, str]]] = {
+            "image": [],
+            "video": [],
+            "audio": [],
+        }
+        for media_type, path, role in raw_items:
+            identity = (media_type, path)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if media_type == "image":
+                url = await self._relay_frame_input(path)
+            else:
+                url = await self._relay_media_input(
+                    path,
+                    default_ext="mp4" if media_type == "video" else "mp3",
+                )
+            if not path.startswith(("http://", "https://")):
+                log(f"{media_type} 参考素材已上传到媒体中转")
+            relayed[media_type].append((url, role))
+
+        image_urls = [url for url, _role in relayed["image"]]
+        video_urls = [url for url, _role in relayed["video"]]
+        audio_urls = [url for url, _role in relayed["audio"]]
+
+        if normalized_mode in {"image_reference", "all_reference", "video_edit"}:
+            if image_urls:
+                metadata["reference_images"] = image_urls
+            if video_urls:
+                metadata["reference_videos"] = video_urls
+            if audio_urls:
+                metadata["reference_audios"] = audio_urls
+            return
+
+        raise ValueError(f"unsupported video generation mode: {normalized_mode}")
+
+    def _duration_bounds(self) -> tuple[int, int]:
+        from novelvideo.video_duration import video_duration_bounds_for_backend
+
+        bounds = video_duration_bounds_for_backend(f"newapi_{self.model}")
+        if bounds[0] is None or bounds[1] is None:
+            return 2, 12
+        return int(bounds[0]), int(bounds[1])
 
     def _is_seedance2_model(self) -> bool:
         return self.model.strip().startswith("seedance-2.0")
@@ -1998,6 +2117,154 @@ class NewApiVideoGenerator(VideoGeneratorBase):
     def _happyhorse_audio_setting(value: str | None) -> str:
         text = str(value or "").strip().lower()
         return text if text in {"auto", "origin"} else "auto"
+
+    @staticmethod
+    def _video_dimensions(
+        resolution: object,
+        ratio: object,
+    ) -> tuple[int, int] | None:
+        """Convert a resolution tier and aspect ratio to exact pixel dimensions."""
+
+        resolution_match = re.search(r"(\d+)", str(resolution or ""))
+        ratio_text = str(ratio or "").strip().lower()
+        if not resolution_match or ratio_text == "adaptive" or ":" not in ratio_text:
+            return None
+        try:
+            tier = int(resolution_match.group(1))
+            ratio_width, ratio_height = (
+                float(part.strip()) for part in ratio_text.split(":", 1)
+            )
+        except (TypeError, ValueError):
+            return None
+        if tier <= 0 or ratio_width <= 0 or ratio_height <= 0:
+            return None
+
+        if ratio_width >= ratio_height:
+            height = tier
+            width = round(tier * ratio_width / ratio_height)
+        else:
+            width = tier
+            height = round(tier * ratio_height / ratio_width)
+
+        # Video encoders generally require even dimensions.
+        width += width % 2
+        height += height % 2
+        return width, height
+
+    @classmethod
+    def _canonicalize_video_payload(
+        cls,
+        payload: dict[str, object],
+        metadata: dict[str, object],
+    ) -> None:
+        """Translate legacy channel-shaped fields into the generic NewAPI contract.
+
+        Existing model-specific branches still validate and collect their inputs
+        during phase one. Only the final wire representation is normalized here.
+        """
+
+        resolution = metadata.pop("resolution", "")
+        ratio = metadata.pop("ratio", "")
+
+        duration_value = payload.pop("duration", None)
+        legacy_seconds = payload.pop("seconds", None)
+        if duration_value is None:
+            duration_value = legacy_seconds
+        try:
+            duration_number = float(str(duration_value))
+        except (TypeError, ValueError):
+            duration_number = 0
+        if duration_number > 0:
+            payload["duration"] = (
+                int(duration_number) if duration_number.is_integer() else duration_number
+            )
+
+        first_frame = ""
+        for key in ("first_frame_image", "image_url"):
+            value = metadata.pop(key, "")
+            if not first_frame and isinstance(value, str) and value.strip():
+                first_frame = value.strip()
+
+        last_frame = metadata.pop("last_frame_image", "")
+        if not isinstance(last_frame, str):
+            last_frame = ""
+
+        legacy_images = payload.pop("images", None)
+        if isinstance(legacy_images, list):
+            image_values = [
+                str(value).strip()
+                for value in legacy_images
+                if isinstance(value, str) and str(value).strip()
+            ]
+            if image_values and not first_frame:
+                first_frame = image_values[0]
+            if len(image_values) > 1:
+                references = metadata.get("reference_images")
+                existing = list(references) if isinstance(references, list) else []
+                metadata["reference_images"] = [*image_values[1:], *existing]
+
+        content = metadata.pop("content", None)
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict) or item.get("type") != "image_url":
+                    continue
+                image_url = item.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                if not isinstance(url, str) or not url.strip():
+                    continue
+                role = str(item.get("role") or "").strip().lower()
+                if role == "last_frame" and not last_frame:
+                    last_frame = url.strip()
+                elif role == "first_frame" and not first_frame:
+                    first_frame = url.strip()
+
+        legacy_video = metadata.pop("video_url", "")
+        if isinstance(legacy_video, str) and legacy_video.strip():
+            references = metadata.get("reference_videos")
+            existing = list(references) if isinstance(references, list) else []
+            metadata["reference_videos"] = [legacy_video.strip(), *existing]
+
+        if first_frame:
+            payload["image"] = first_frame
+        if last_frame.strip():
+            metadata["last_frame_image"] = last_frame.strip()
+
+        dimensions = cls._video_dimensions(resolution, ratio)
+        if dimensions:
+            payload["width"], payload["height"] = dimensions
+        else:
+            ratio_text = str(ratio or "").strip()
+            resolution_text = str(resolution or "").strip()
+            if ratio_text:
+                metadata["aspect_ratio"] = ratio_text
+            if resolution_text:
+                metadata["resolution"] = resolution_text
+
+        payload["n"] = 1
+        payload["response_format"] = "url"
+        if metadata:
+            payload["metadata"] = metadata
+        else:
+            payload.pop("metadata", None)
+
+    @staticmethod
+    def _task_response_data(task: dict) -> dict:
+        """Accept both flat and wrapped generic task responses."""
+
+        if not isinstance(task, dict):
+            return {}
+        data = task.get("data")
+        if isinstance(data, dict):
+            merged = dict(data)
+            if "_newapi_request_id" not in merged and task.get("_newapi_request_id"):
+                merged["_newapi_request_id"] = task["_newapi_request_id"]
+            return merged
+        return task
+
+    @classmethod
+    def _task_id_from_submit_response(cls, submitted: dict) -> str:
+        task = cls._task_response_data(submitted)
+        return str(task.get("task_id") or task.get("id") or "").strip()
 
     async def _relay_seedance2_references(
         self,
@@ -2199,9 +2466,13 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             _seedance2_config_mapping(kwargs.get("seedance2_config")) if is_seedance2_model else {}
         )
         duration = _seedance2_duration_from_config(seedance2_config, duration)
-        min_duration, max_duration = self._duration_bounds()
         original_duration = duration
-        duration = max(min_duration, min(max_duration, math.ceil(duration)))
+        from novelvideo.video_duration import normalize_video_duration_for_backend
+
+        duration = normalize_video_duration_for_backend(
+            f"newapi_{self.model}",
+            duration,
+        )
         if duration != original_duration:
             log(f"时长已调整: {original_duration:.1f}s -> {duration:.0f}s")
 
@@ -2210,6 +2481,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         # The old colon-only guard accidentally converted it back to 9:16.
         ratio = ratio_text if ":" in ratio_text or ratio_text == "adaptive" else "9:16"
         image_path = str(image_path or "").strip()
+        requested_mode = str(kwargs.get("gen_mode") or "").strip()
 
         metadata: dict[str, object] = {
             "resolution": self.resolution,
@@ -2224,7 +2496,34 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             "metadata": metadata,
         }
 
-        if self._is_happyhorse_model():
+        if requested_mode:
+            try:
+                await self._apply_huimeng_protocol_media_inputs(
+                    metadata,
+                    mode=requested_mode,
+                    image_path=image_path,
+                    last_frame_path=last_frame_path,
+                    references=kwargs.get("references"),
+                    log=log,
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error=str(exc),
+                )
+            seedance2_config = _seedance2_config_mapping(kwargs.get("seedance2_config"))
+            scene_optimize = str(seedance2_config.get("scene_optimize") or "").strip()
+            if scene_optimize:
+                metadata["scene_optimize"] = scene_optimize
+            if kwargs.get("human_review"):
+                metadata["human_review"] = True
+            audio_setting = str(kwargs.get("audio_setting") or "").strip()
+            if audio_setting:
+                metadata["audio_setting"] = audio_setting
+            metadata["return_last_frame"] = bool(
+                seedance2_config.get("return_last_frame", False)
+            )
+        elif self._is_happyhorse_model():
             if len(prompt) > 2500:
                 prompt = prompt[:2500]
                 payload["prompt"] = prompt
@@ -2259,7 +2558,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             # image_path 是 run_freezone_video_gen 无条件传进来的「首张图」。仅当它
             # 还没作为参考图存在时，才把它被动提升为首帧——否则参考模式(所有图都在
             # reference_image_paths 里)会把首张图重复算一次（首帧位 + 参考位）。
-            if not first_frame_path and image_path and image_path not in reference_image_paths:
+            if (
+                not first_frame_path and image_path and image_path not in reference_image_paths
+            ):
                 first_frame_path = image_path
 
             # HappyHorse 没有尾帧能力，且把尾帧混进 reference_images 会误触发 r2v，
@@ -2361,13 +2662,17 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
         elif is_seedance2_model:
             try:
-                first_frame = await self._relay_frame_input(image_path) if image_path else ""
+                first_frame = (
+                    await self._relay_frame_input(image_path) if image_path else ""
+                )
                 if image_path and not image_path.startswith(("http://", "https://")):
                     log("首帧已上传到媒体中转")
                 last_frame = (
                     await self._relay_frame_input(str(last_frame_path)) if last_frame_path else ""
                 )
-                if last_frame_path and not str(last_frame_path).startswith(("http://", "https://")):
+                if last_frame_path and not str(last_frame_path).startswith(
+                    ("http://", "https://")
+                ):
                     log("尾帧已上传到媒体中转")
                 reference_params = await self._relay_seedance2_references(
                     kwargs.get("references") or [],
@@ -2413,7 +2718,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             if "return_last_frame" not in seedance2_config:
                 seedance2_config["return_last_frame"] = False
             if "human_review" not in seedance2_config:
-                seedance2_config["human_review"] = bool(kwargs.get("human_review", False))
+                seedance2_config["human_review"] = bool(
+                    kwargs.get("human_review", False)
+                )
                 seedance2_config["human_review_user_set"] = True
             elif "human_review_user_set" not in seedance2_config:
                 seedance2_config["human_review_user_set"] = True
@@ -2437,61 +2744,40 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             payload["seconds"] = str(seedance2_params.pop("duration"))
             metadata.update(seedance2_params)
         else:
-            if last_frame_path:
-                if not image_path:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error="First frame is required when last_frame_path is provided",
-                    )
-                try:
-                    first_frame = await self._relay_frame_input(image_path)
-                    if not image_path.startswith(("http://", "https://")):
-                        log("首帧已上传到媒体中转")
-                except Exception as exc:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error=f"media relay upload failed: {exc}",
-                    )
-                try:
-                    last_frame = await self._relay_frame_input(str(last_frame_path))
-                    if not str(last_frame_path).startswith(("http://", "https://")):
-                        log("尾帧已上传到媒体中转")
-                except Exception as exc:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error=f"media relay upload failed: {exc}",
-                    )
-                metadata["content"] = [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": first_frame},
-                        "role": "first_frame",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": last_frame},
-                        "role": "last_frame",
-                    },
-                ]
-            elif image_path:
-                try:
-                    first_frame = await self._relay_frame_input(image_path)
-                    if not image_path.startswith(("http://", "https://")):
-                        log("首帧已上传到媒体中转")
-                except Exception as exc:
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error=f"media relay upload failed: {exc}",
-                    )
-                payload["images"] = [first_frame]
+            try:
+                await self._apply_huimeng_protocol_media_inputs(
+                    metadata,
+                    mode=(
+                        "first_last_frame"
+                        if last_frame_path
+                        else "first_frame"
+                        if image_path
+                        else "all_reference"
+                        if kwargs.get("references")
+                        else "text_to_video"
+                    ),
+                    image_path=image_path,
+                    last_frame_path=last_frame_path,
+                    references=kwargs.get("references"),
+                    log=log,
+                )
+            except Exception as exc:
+                return VideoGenResult(
+                    status=VideoGenStatus.FAILED,
+                    error=f"media relay upload failed: {exc}",
+                )
 
         task_id: str | None = None
         provider_request_id = ""
         reservation_id = ""
         try:
             model_label = self._model_label(self.model)
-            request_resolution = str(metadata.get("resolution") or self.resolution or "").strip()
-            log(f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})...")
+            request_resolution = str(
+                metadata.get("resolution") or self.resolution or ""
+            ).strip()
+            log(
+                f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})..."
+            )
             progress(0.1)
             reservation_id = await _reserve_video_model_call(
                 self.model,
@@ -2499,8 +2785,16 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 resolution=request_resolution,
                 duration_seconds=duration,
             )
-            submitted = await self._post_json(f"{self.base_url}/video/generations", payload)
-            task_id = str(submitted.get("id") or submitted.get("task_id") or "")
+            from novelvideo.media_model_request_schema import apply_media_request_schema
+
+            self._canonicalize_video_payload(payload, metadata)
+            payload = apply_media_request_schema(
+                payload, self.request_schema, self.model_params
+            )
+            submitted = await self._post_json(
+                f"{self.base_url}/video/generations", payload
+            )
+            task_id = self._task_id_from_submit_response(submitted)
             provider_request_id = str(submitted.get("_newapi_request_id") or "").strip()
             if not task_id:
                 await _refund_video_model_call(
@@ -2513,12 +2807,23 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     status=VideoGenStatus.FAILED,
                     error=f"No task_id in DramaClawAPI response: {submitted}",
                 )
+            try:
+                await get_usage_meter().mark_current_paid_execution_attempt(
+                    status="accepted",
+                    provider_request_id=provider_request_id,
+                    provider_task_id=task_id,
+                    metadata={"source": "newapi_video_generation"},
+                )
+            except Exception as exc:  # noqa: BLE001
+                log(f"计费调用证据暂存失败，将由对账核实: {exc}")
             record_accepted(task_id)
             log(f"任务已提交: {task_id}")
             progress(0.2)
 
             for poll_count in range(max_polls):
-                task = await self._get_json(f"{self.base_url}/videos/{task_id}")
+                task = self._task_response_data(
+                    await self._get_json(f"{self.base_url}/video/generations/{task_id}")
+                )
                 status = str(task.get("status") or "").lower()
                 progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
 
@@ -2526,7 +2831,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     progress(0.9)
                     video_url = self._extract_video_url(task)
                     if not video_url:
-                        update_request_status(task_id, "failed", "No video url in DramaClawAPI result")
+                        update_request_status(
+                            task_id, "failed", "No video url in DramaClawAPI result"
+                        )
                         await _refund_video_model_call(
                             reservation_id,
                             source="newapi_video_generation",
@@ -2550,9 +2857,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     if bool(metadata.get("return_last_frame")):
                         last_frame_url = self._extract_returned_last_frame_url(task)
                         if last_frame_url:
-                            last_frame_output_path = self._returned_last_frame_output_path(
+                            last_frame_output_path = (
+                                self._returned_last_frame_output_path(
                                 output_path,
                                 last_frame_url,
+                            )
                             )
                             await self._download_video(
                                 last_frame_url,
@@ -2604,7 +2913,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     )
                 await asyncio.sleep(poll_interval)
 
-            update_request_status(task_id, "failed", "Timeout waiting for DramaClawAPI video task")
+            update_request_status(
+                task_id, "failed", "Timeout waiting for DramaClawAPI video task"
+            )
             await _refund_video_model_call(
                 reservation_id,
                 source="newapi_video_generation",
@@ -2623,6 +2934,19 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             if task_id:
                 log(f"DramaClawAPI task_id: {task_id}")
                 update_request_status(task_id, "failed", str(exc))
+            elif is_definite_no_cost_http_rejection(exc.status_code):
+                try:
+                    await get_usage_meter().mark_current_paid_execution_attempt(
+                        status="rejected_no_cost",
+                        provider_request_id=exc.request_id or provider_request_id,
+                        metadata={
+                            "source": "newapi_video_generation",
+                            "http_status": exc.status_code,
+                            "error": "provider_request_rejected",
+                        },
+                    )
+                except Exception as evidence_exc:  # noqa: BLE001
+                    log(f"计费无成本拒绝证据暂存失败，将由对账核实: {evidence_exc}")
             await _refund_video_model_call(
                 reservation_id,
                 source="newapi_video_generation",
@@ -3139,408 +3463,6 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
             )
 
 
-class Wan26VideoGenerator(VideoGeneratorBase):
-    """阿里云 DashScope Wan2.6-i2v-flash 视频生成器。
-
-    优势：
-    - 时长灵活：2-15 秒，可根据 TTS 时长动态调整
-    - 有声视频：audio=True，720P 约 0.3 元/秒，1080P 约 0.5 元/秒
-    - 高质量：基于 Wan 2.6 模型
-
-    支持两种模式：
-    - 普通 I2V 模式（wan2.6-i2v-flash）：单帧输入，2-15 秒
-    - 首尾帧模式（wan2.2-kf2v-flash）：首尾帧输入，固定 5 秒
-
-    API 文档: https://www.alibabacloud.com/help/en/model-studio/image-to-video-api-reference
-
-    示例:
-        >>> generator = Wan26VideoGenerator()
-        >>> # 普通 I2V 模式
-        >>> result = await generator.generate(
-        ...     image_path="frame.png",
-        ...     prompt="character smiling and waving",
-        ...     output_path="output.mp4",
-        ...     duration=8.0,
-        ... )
-        >>> # 首尾帧模式
-        >>> result = await generator.generate(
-        ...     image_path="frame_start.png",
-        ...     prompt="transition motion description",
-        ...     output_path="output.mp4",
-        ...     last_frame_path="frame_end.png",  # 启用首尾帧模式
-        ... )
-    """
-
-    # 模型配置
-    MODEL_I2V = "wan2.6-i2v-flash"  # 普通单帧模式
-    MODEL_KF2V = "wan2.2-kf2v-flash"  # 首尾帧模式
-    MODEL = MODEL_I2V  # 默认模型（向后兼容）
-    MIN_DURATION = 2.0
-    MAX_DURATION = 15.0  # API 限制 2-15 秒（仅普通模式）
-    KF2V_DURATION = 5.0  # 首尾帧模式固定 5 秒
-    DEFAULT_RESOLUTION = "720P"
-
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        region: str = "cn",  # "cn" 或 "intl"
-    ):
-        """初始化 Wan2.6 生成器。
-
-        Args:
-            api_key: DashScope API Key（默认从环境变量读取）
-            region: 区域，"cn" 为中国区，"intl" 为国际区（新加坡）
-        """
-        self.api_key = api_key or os.environ.get("DASHSCOPE_API_KEY")
-        self.region = region
-
-        if not self.api_key:
-            raise ValueError("DASHSCOPE_API_KEY must be set for Wan2.6 video generation")
-
-    async def _download_video(self, url: str, output_path: str, max_retries: int = 3) -> bool:
-        """下载视频文件，失败自动重试。"""
-        for attempt in range(1, max_retries + 1):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as resp:
-                        if resp.status != 200:
-                            print(
-                                f"[download] attempt {attempt}/{max_retries} failed: HTTP {resp.status}"
-                            )
-                            if attempt < max_retries:
-                                await asyncio.sleep(2 * attempt)
-                                continue
-                            return False
-
-                        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                        with open(output_path, "wb") as f:
-                            f.write(await resp.read())
-
-                        return True
-            except Exception as e:
-                print(f"[download] attempt {attempt}/{max_retries} error: {e}")
-                if attempt < max_retries:
-                    await asyncio.sleep(2 * attempt)
-        return False
-
-    def _compress_image_for_upload(
-        self,
-        image_path: str,
-        quality: int = 95,
-        on_log: Optional[Callable[[str], None]] = None,
-    ) -> Optional[str]:
-        """压缩图片为 JPEG 格式以减少上传时间。
-
-        quality 默认 95：视频模型逐像素参考首帧，需保留足够细节。
-
-        Args:
-            image_path: 原始图片路径
-            quality: JPEG 压缩质量 (1-100)
-            on_log: 日志回调函数
-
-        Returns:
-            压缩后的临时文件路径，失败返回 None
-        """
-        try:
-            from PIL import Image
-
-            log = on_log or (lambda x: None)
-
-            # 获取原始文件大小
-            original_size = os.path.getsize(image_path)
-
-            # 读取图片并转换为 RGB（JPEG 不支持 RGBA）
-            img = Image.open(image_path)
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-
-            # 创建临时文件
-            fd, temp_path = tempfile.mkstemp(suffix=".jpg")
-            os.close(fd)
-
-            # 保存为 JPEG
-            img.save(temp_path, "JPEG", quality=quality, optimize=True)
-
-            # 获取压缩后文件大小
-            compressed_size = os.path.getsize(temp_path)
-
-            # 格式化文件大小
-            def format_size(size_bytes: int) -> str:
-                if size_bytes >= 1024 * 1024:
-                    return f"{size_bytes / (1024 * 1024):.1f}MB"
-                elif size_bytes >= 1024:
-                    return f"{size_bytes / 1024:.0f}KB"
-                else:
-                    return f"{size_bytes}B"
-
-            log(f"图片压缩: {format_size(original_size)} → {format_size(compressed_size)}")
-
-            return temp_path
-
-        except Exception as e:
-            if on_log:
-                on_log(f"图片压缩失败，使用原图: {e}")
-            return None
-
-    async def generate(
-        self,
-        image_path: str,
-        prompt: str,
-        output_path: str,
-        aspect_ratio: str = "9:16",
-        duration: float = 5.0,
-        poll_interval: float = 5.0,
-        max_polls: int = 120,
-        on_log: Optional[Callable[[str], None]] = None,
-        on_progress: Optional[Callable[[float], None]] = None,
-        last_frame_path: Optional[str] = None,
-        **kwargs,
-    ) -> VideoGenResult:
-        """完整生成流程：上传 + 提交 + 轮询 + 下载。
-
-        Args:
-            image_path: 首帧图像路径（本地路径或 URL）
-            prompt: 动作描述
-            output_path: 输出视频路径
-            aspect_ratio: 宽高比（由输入图像决定）
-            duration: 目标时长（普通模式 2-15 秒，首尾帧模式固定 5 秒）
-            poll_interval: 轮询间隔（秒）
-            max_polls: 最大轮询次数
-            on_log: 日志回调函数
-            on_progress: 进度回调函数 (0.0 - 1.0)
-            last_frame_path: 尾帧图像路径（可选，提供时启用首尾帧模式）
-
-        Returns:
-            生成结果
-        """
-
-        def log(msg: str):
-            if on_log:
-                on_log(msg)
-
-        def progress(value: float):
-            if on_progress:
-                on_progress(value)
-
-        try:
-            import dashscope
-            from dashscope import VideoSynthesis
-            from http import HTTPStatus
-        except ImportError:
-            log("错误: 请安装 dashscope SDK: pip install dashscope>=1.25.2")
-            return VideoGenResult(
-                status=VideoGenStatus.FAILED,
-                error="dashscope SDK not installed",
-            )
-
-        # 设置区域
-        if self.region == "intl":
-            dashscope.base_http_api_url = "https://dashscope-intl.aliyuncs.com/api/v1"
-
-        # 判断是否使用首尾帧模式
-        use_keyframe_mode = last_frame_path is not None
-
-        if use_keyframe_mode:
-            # 首尾帧模式：固定 5 秒
-            duration = self.KF2V_DURATION
-            model = self.MODEL_KF2V
-            log(f"使用首尾帧模式 ({model})，固定时长 {duration:.0f}s")
-        else:
-            # 普通 I2V 模式：限制时长在有效范围内
-            model = self.MODEL_I2V
-            original_duration = duration
-            duration = max(self.MIN_DURATION, min(duration, self.MAX_DURATION))
-            if duration != original_duration:
-                log(
-                    f"时长已调整: {original_duration:.1f}s -> {duration:.1f}s (API 限制 {self.MIN_DURATION}-{self.MAX_DURATION}s)"
-                )
-
-        # 临时压缩文件列表，用于最后清理
-        temp_files: list[str] = []
-
-        # 1. 准备首帧图像 URL
-        # DashScope 支持本地文件路径、URL 和 Base64
-        if image_path.startswith(("http://", "https://")):
-            image_url = image_path
-        elif os.path.exists(image_path):
-            # 本地文件 - 压缩后上传以节省带宽
-            compressed_path = self._compress_image_for_upload(image_path, on_log=log)
-            if compressed_path:
-                image_url = compressed_path
-                temp_files.append(compressed_path)
-            else:
-                image_url = image_path
-            log(f"使用本地首帧: {image_path}")
-        else:
-            return VideoGenResult(
-                status=VideoGenStatus.FAILED,
-                error=f"First frame not found: {image_path}",
-            )
-
-        # 2. 如果是首尾帧模式，准备尾帧图像 URL
-        last_frame_url = None
-        if use_keyframe_mode:
-            if last_frame_path.startswith(("http://", "https://")):
-                last_frame_url = last_frame_path
-            elif os.path.exists(last_frame_path):
-                # 本地文件 - 压缩后上传以节省带宽
-                compressed_path = self._compress_image_for_upload(last_frame_path, on_log=log)
-                if compressed_path:
-                    last_frame_url = compressed_path
-                    temp_files.append(compressed_path)
-                else:
-                    last_frame_url = last_frame_path
-                log(f"使用本地尾帧: {last_frame_path}")
-            else:
-                return VideoGenResult(
-                    status=VideoGenStatus.FAILED,
-                    error=f"Last frame not found: {last_frame_path}",
-                )
-
-        # 3. 提交任务
-        mode_desc = f"首尾帧模式 ({model})" if use_keyframe_mode else f"I2V 模式 ({model})"
-        log(f"正在提交视频生成任务 ({mode_desc}, {duration:.0f}s)...")
-        progress(0.1)
-
-        try:
-            if use_keyframe_mode:
-                # 首尾帧模式
-                rsp = VideoSynthesis.async_call(
-                    api_key=self.api_key,
-                    model=model,
-                    prompt=prompt,
-                    first_frame_url=image_url,
-                    last_frame_url=last_frame_url,
-                    resolution=self.DEFAULT_RESOLUTION,
-                    prompt_extend=True,
-                    watermark=False,
-                    audio=True,
-                )
-            else:
-                # 普通 I2V 模式
-                rsp = VideoSynthesis.async_call(
-                    api_key=self.api_key,
-                    model=model,
-                    prompt=prompt,
-                    img_url=image_url,
-                    resolution=self.DEFAULT_RESOLUTION,
-                    duration=int(duration),
-                    prompt_extend=True,
-                    watermark=False,
-                    audio=True,
-                )
-
-            if rsp.status_code != 200:
-                log(f"任务提交失败: {rsp.code} - {rsp.message}")
-                for f in temp_files:
-                    if os.path.exists(f):
-                        os.remove(f)
-                return VideoGenResult(
-                    status=VideoGenStatus.FAILED,
-                    error=f"Submit failed: {rsp.code} - {rsp.message}",
-                )
-
-            task_id = rsp.output.task_id
-            log(f"任务已提交: {task_id}")
-
-        except Exception as e:
-            log(f"任务提交异常: {e}")
-            for f in temp_files:
-                if os.path.exists(f):
-                    os.remove(f)
-            return VideoGenResult(
-                status=VideoGenStatus.FAILED,
-                error=f"Submit exception: {e}",
-            )
-
-        # 3. 轮询结果
-        progress(0.2)
-        for poll_count in range(max_polls):
-            try:
-                rsp = VideoSynthesis.fetch(task=task_id, api_key=self.api_key)
-            except Exception as e:
-                log(f"查询状态异常: {e}")
-                await asyncio.sleep(poll_interval)
-                continue
-
-            # 进度从 0.2 到 0.9
-            poll_progress = 0.2 + (poll_count / max_polls) * 0.7
-            progress(poll_progress)
-
-            if rsp.status_code == HTTPStatus.OK:
-                task_status = rsp.output.task_status
-
-                if task_status == "SUCCEEDED":
-                    log("视频生成完成，正在下载...")
-                    progress(0.9)
-
-                    # 4. 下载视频
-                    video_url = rsp.output.video_url
-                    if video_url:
-                        success = await self._download_video(video_url, output_path)
-                        if success:
-                            log(f"视频已保存: {output_path}")
-                            progress(1.0)
-                            for f in temp_files:
-                                if os.path.exists(f):
-                                    os.remove(f)
-                            return VideoGenResult(
-                                status=VideoGenStatus.DONE,
-                                video_path=output_path,
-                                video_url=video_url,
-                                task_id=task_id,
-                                duration_seconds=duration,
-                            )
-                        else:
-                            log("视频下载失败")
-                            for f in temp_files:
-                                if os.path.exists(f):
-                                    os.remove(f)
-                            return VideoGenResult(
-                                status=VideoGenStatus.FAILED,
-                                error="Download failed",
-                                task_id=task_id,
-                            )
-                    else:
-                        log("API 未返回视频 URL")
-                        for f in temp_files:
-                            if os.path.exists(f):
-                                os.remove(f)
-                        return VideoGenResult(
-                            status=VideoGenStatus.FAILED,
-                            error="No video URL in response",
-                            task_id=task_id,
-                        )
-
-                elif task_status == "FAILED":
-                    error_msg = getattr(rsp.output, "message", "Unknown error")
-                    log(f"视频生成失败: {error_msg}")
-                    for f in temp_files:
-                        if os.path.exists(f):
-                            os.remove(f)
-                    return VideoGenResult(
-                        status=VideoGenStatus.FAILED,
-                        error=f"Generation failed: {error_msg}",
-                        task_id=task_id,
-                    )
-
-                # PENDING, RUNNING - 继续轮询
-                if poll_count % 6 == 0:  # 每 30 秒输出一次
-                    log(f"正在生成中... ({task_status}, {poll_count}/{max_polls})")
-
-            await asyncio.sleep(poll_interval)
-
-        log("视频生成超时")
-        for f in temp_files:
-            if os.path.exists(f):
-                os.remove(f)
-        return VideoGenResult(
-            status=VideoGenStatus.FAILED,
-            error="Timeout waiting for video generation",
-            task_id=task_id,
-        )
-
-
 NEWAPI_VIDEO_BACKEND_PREFIX = "newapi_"
 NEWAPI_VIDEO_DISPLAY_LABELS = {
     "seedance-1.0-pro-fast": "Seedance1.0 Pro Fast",
@@ -3562,12 +3484,13 @@ NEWAPI_DISABLED_VIDEO_MODELS = {"grok-video-channel"}
 
 
 def parse_newapi_video_backend(backend: str | None) -> str | None:
-    value = str(backend or "").strip().lower()
-    if value == "newapi":
+    value = str(backend or "").strip()
+    lowered = value.lower()
+    if lowered == "newapi":
         from novelvideo.config import NEWAPI_VIDEO_MODEL
 
         return NEWAPI_VIDEO_MODEL
-    if value.startswith(NEWAPI_VIDEO_BACKEND_PREFIX):
+    if lowered.startswith(NEWAPI_VIDEO_BACKEND_PREFIX):
         model = value[len(NEWAPI_VIDEO_BACKEND_PREFIX) :].strip()
         return model or None
     return None
@@ -3592,8 +3515,13 @@ def _coerce_video_backend_value(backend: VideoBackend | str | None) -> str:
         backend = os.environ.get("VIDEO_BACKEND", "comfyui")
     if isinstance(backend, VideoBackend):
         return backend.value
-    value = str(backend).strip().lower()
-    return "comfyui" if value == "jimeng" else value
+    value = str(backend).strip()
+    lowered = value.lower()
+    if lowered.startswith(NEWAPI_VIDEO_BACKEND_PREFIX):
+        return (
+            f"{NEWAPI_VIDEO_BACKEND_PREFIX}{value[len(NEWAPI_VIDEO_BACKEND_PREFIX) :]}"
+        )
+    return "comfyui" if lowered == "jimeng" else lowered
 
 
 def create_video_generator(
@@ -3612,7 +3540,6 @@ def create_video_generator(
             - SEEDANCE_PRO: Seedance 1.5 Pro 有声（火山方舟）
             - SEEDANCE_PRO_SILENT: Seedance 1.5 Pro 无声（火山方舟）
             - COMFYUI: Claymore 1.0 本地服务
-            - WAN26: 阿里云 DashScope Wan2.6-i2v-flash
             - GROK_720: xAI Grok Imagine Video 720p
         use_mock: 兼容旧接口，True 时使用 MockVideoGenerator
         workflow_type: ComfyUI 工作流类型 ("gguf" 或 "fp8")，默认从环境变量读取
@@ -3626,7 +3553,6 @@ def create_video_generator(
             (newapi_seedance-1.0-pro-fast/huimeng_seedance-2.0-fast/comfyui/...)
         HUIMENGI_API_KEY: HuiMeng API 密钥
         COMFYUI_WORKFLOW: ComfyUI 工作流类型 (gguf/fp8)
-        DASHSCOPE_API_KEY: Wan2.6 API 密钥
         VOLCENGINE_VISUAL_API_KEY: Seedance API 密钥
         COMFYUI_ADDRESS: ComfyUI 服务器地址
         XAI_API_KEY: Grok 视频生成 API 密钥
@@ -3672,8 +3598,6 @@ def create_video_generator(
         return Seedance2VideoGenerator(**kwargs)
     elif backend_enum == VideoBackend.LTX23:
         return ComfyUIVideoGenerator(workflow_type="ltx23", **kwargs)
-    elif backend_enum == VideoBackend.WAN26:
-        return Wan26VideoGenerator(**kwargs)
     elif backend_enum == VideoBackend.GROK_720:
         return GrokVideoGenerator(**kwargs)
     else:

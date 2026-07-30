@@ -21,6 +21,25 @@ export function formatCreditCost(value: number): string {
     : value.toFixed(2).replace(/\.?0+$/, "");
 }
 
+export type CreditPromotionDisplay = {
+  name?: string;
+  discount_basis_points?: number;
+  ends_at?: string | null;
+};
+
+export function formatCreditPromotionLabel(
+  promotion?: CreditPromotionDisplay | null,
+): string | null {
+  const basisPoints = Number(promotion?.discount_basis_points);
+  if (!Number.isFinite(basisPoints) || basisPoints <= 0 || basisPoints >= 10_000) {
+    return null;
+  }
+  const discount = (basisPoints / 1_000)
+    .toFixed(2)
+    .replace(/\.?0+$/, "");
+  return promotion?.ends_at ? `限时 ${discount} 折` : `${discount} 折优惠`;
+}
+
 type CreditSparkIconProps = {
   className?: string;
   muted?: boolean;
@@ -82,10 +101,12 @@ export function CreditSparkIcon({
 
 export function CreditCostPill({
   display,
+  promotion,
   disabled = false,
   className,
 }: {
   display?: string | null;
+  promotion?: CreditPromotionDisplay | null;
   disabled?: boolean;
   className?: string;
 }) {
@@ -93,18 +114,40 @@ export function CreditCostPill({
   // next to canvas node buttons; unaffected everywhere else.
   if (useCreditDisplayHidden()) return null;
   if (!display) return null;
+  const [originalDisplay, payableDisplay] = display.includes("→")
+    ? display.split("→", 2)
+    : [null, display];
+  const promotionLabel = originalDisplay
+    ? (formatCreditPromotionLabel(promotion) ?? "促销中")
+    : null;
 
   return (
-    <span
-      className={cn(
-        "pointer-events-none inline-flex h-7 items-center gap-0.5 rounded-md px-1.5 text-[11px] font-medium",
-        disabled ? "bg-white/5 text-text-muted/40" : "bg-white/[0.08]",
-        !disabled && CREDIT_VALUE_CLASS,
-        className,
+    <span className="pointer-events-none inline-flex shrink-0 flex-col items-end gap-0.5">
+      {promotionLabel && (
+        <span
+          className={cn(
+            "whitespace-nowrap text-[9px] font-semibold leading-none text-amber-400",
+            disabled && "opacity-40",
+          )}
+          title={promotion?.name}
+        >
+          {promotionLabel}
+        </span>
       )}
-    >
-      <CreditSparkIcon className="h-3.5 w-3.5" muted={disabled} />
-      {display}
+      <span
+        className={cn(
+          "inline-flex h-7 items-center gap-0.5 rounded-md px-1.5 text-[11px] font-medium",
+          disabled ? "bg-white/5 text-text-muted/40" : "bg-white/[0.08]",
+          !disabled && CREDIT_VALUE_CLASS,
+          className,
+        )}
+      >
+        <CreditSparkIcon className="h-3.5 w-3.5" muted={disabled} />
+        {originalDisplay && (
+          <span className="text-text-muted line-through">{originalDisplay}</span>
+        )}
+        <span>{payableDisplay}</span>
+      </span>
     </span>
   );
 }

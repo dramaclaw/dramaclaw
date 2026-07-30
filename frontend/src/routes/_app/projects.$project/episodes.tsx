@@ -63,6 +63,7 @@ import {
 } from "@/components/episode/header-collapse";
 import { StageProgressPanel } from "@/components/stage-progress-panel";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
 import { EpisodeListSkeleton } from "@/components/skeletons";
 import { Button } from "@/components/ui/button";
 import { SUBTLE_HEADER_ACTION_BUTTON_CLASS } from "@/components/ui/header-action-styles";
@@ -256,6 +257,7 @@ function TopBar({
   onPlan,
   planPending,
   planCostDisplay,
+  planPromotion,
   showRefresh,
   onRefresh,
   refreshPending,
@@ -271,6 +273,7 @@ function TopBar({
   onPlan: () => void;
   planPending: boolean;
   planCostDisplay?: string | null;
+  planPromotion?: CreditPromotionDisplay | null;
   showRefresh: boolean;
   onRefresh: () => Promise<boolean>;
   refreshPending: boolean;
@@ -354,6 +357,7 @@ function TopBar({
             {t("episode.list.replanEpisodes")}
             <CreditCostInline
               display={planCostDisplay}
+              promotion={planPromotion}
               className="text-black"
               iconClassName="text-black drop-shadow-none [&_path]:fill-current"
             />
@@ -374,6 +378,7 @@ function TopBar({
             {t("episode.list.planEpisodes")}
             <CreditCostInline
               display={planCostDisplay}
+              promotion={planPromotion}
               className="text-black"
               iconClassName="text-black drop-shadow-none [&_path]:fill-current"
             />
@@ -480,6 +485,7 @@ function EpisodePlanShortcut({
   summary,
   actionLabel,
   costDisplay,
+  promotion,
   pending,
   disabled = false,
   onClick,
@@ -488,6 +494,7 @@ function EpisodePlanShortcut({
   summary: string;
   actionLabel: string;
   costDisplay?: string | null;
+  promotion?: CreditPromotionDisplay | null;
   pending: boolean;
   disabled?: boolean;
   onClick: () => void;
@@ -519,7 +526,7 @@ function EpisodePlanShortcut({
           <Sparkles className="size-3" />
         )}
         {actionLabel}
-        <CreditCostInline display={costDisplay} />
+        <CreditCostInline display={costDisplay} promotion={promotion} />
       </Button>
     </div>
   );
@@ -532,15 +539,21 @@ function EpisodeListItem({
   episode,
   onSelect,
   identityCostDisplay,
+  identityPromotion,
   sceneCostDisplay,
+  scenePromotion,
   propCostDisplay,
+  propPromotion,
 }: {
   project: string;
   episode: Episode;
   onSelect: () => void;
   identityCostDisplay?: string | null;
+  identityPromotion?: CreditPromotionDisplay | null;
   sceneCostDisplay?: string | null;
+  scenePromotion?: CreditPromotionDisplay | null;
   propCostDisplay?: string | null;
+  propPromotion?: CreditPromotionDisplay | null;
 }) {
   const { t } = useTranslation();
   // 镜头数量 = 该集 beats 数。复用既有的 beats 查询（无需后端新增字段）；react-query
@@ -751,6 +764,7 @@ function EpisodeListItem({
           pending={identityPending}
           disabled={identityPending}
           costDisplay={identityCostDisplay}
+          promotion={identityPromotion}
           onClick={handlePlanIdentities}
         />
         <EpisodePlanShortcut
@@ -764,6 +778,7 @@ function EpisodeListItem({
           pending={scenePending}
           disabled={scenePending}
           costDisplay={sceneCostDisplay}
+          promotion={scenePromotion}
           onClick={handlePlanScenes}
         />
         <EpisodePlanShortcut
@@ -777,6 +792,7 @@ function EpisodeListItem({
           pending={propPending}
           disabled={propPending}
           costDisplay={propCostDisplay}
+          promotion={propPromotion}
           onClick={handlePlanProps}
         />
       </div>
@@ -871,25 +887,25 @@ function EpisodesPage() {
 
   // Plan-episodes SSE — global task, not per-episode (episode sentinel = 0).
   const planEpisodes = usePlanEpisodes(project);
-  const planEpisodesCost = useGenerationCreditCost("feature", "build_episodes");
+  const planEpisodesCost = useGenerationCreditCost("feature", "mainline.build_episodes");
   const planEpisodesCostDisplay =
     planEpisodesCost.data?.data.display ??
     (planEpisodesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
-  const planIdentitiesCost = useGenerationCreditCost("feature", "identity_planner");
+  const planIdentitiesCost = useGenerationCreditCost("feature", "mainline.identity_planner");
   const planIdentitiesCostDisplay =
     planIdentitiesCost.data?.data.display ??
     (planIdentitiesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
-  const planScenesCost = useGenerationCreditCost("feature", "episode_scene_planner");
+  const planScenesCost = useGenerationCreditCost("feature", "mainline.episode_scene_planner");
   const planScenesCostDisplay =
     planScenesCost.data?.data.display ??
     (planScenesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
-  const planPropsCost = useGenerationCreditCost("feature", "episode_prop_planner");
+  const planPropsCost = useGenerationCreditCost("feature", "mainline.episode_prop_planner");
   const planPropsCostDisplay =
     planPropsCost.data?.data.display ??
     (planPropsCost.error instanceof BillingRuleNotConfiguredError
@@ -960,6 +976,7 @@ function EpisodesPage() {
       onPlan={handlePlan}
       planPending={planPending}
       planCostDisplay={planEpisodesCostDisplay}
+      planPromotion={planEpisodesCost.data?.data.promotion}
       showRefresh={!selectedEpisode}
       onRefresh={handleRefresh}
       refreshPending={refreshPending}
@@ -1046,7 +1063,10 @@ function EpisodesPage() {
                       <Play className="size-3.5" />
                     )}
                     {t("episode.list.planEpisodes")}
-                    <CreditCostInline display={planEpisodesCostDisplay} />
+                    <CreditCostInline
+                      display={planEpisodesCostDisplay}
+                      promotion={planEpisodesCost.data?.data.promotion}
+                    />
                   </Button>
                 </div>
               ) : (
@@ -1062,8 +1082,11 @@ function EpisodesPage() {
                         episode={ep}
                         onSelect={() => handleSelectEpisode(ep.number)}
                         identityCostDisplay={planIdentitiesCostDisplay}
+                        identityPromotion={planIdentitiesCost.data?.data.promotion}
                         sceneCostDisplay={planScenesCostDisplay}
+                        scenePromotion={planScenesCost.data?.data.promotion}
                         propCostDisplay={planPropsCostDisplay}
+                        propPromotion={planPropsCost.data?.data.promotion}
                       />
                     ))}
                   </div>

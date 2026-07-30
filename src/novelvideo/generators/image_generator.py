@@ -89,6 +89,21 @@ async def _confirm_image_model_call(
         pass
 
 
+async def _mark_image_model_call_accepted(
+    *,
+    provider_request_id: str = "",
+    response_id: str = "",
+) -> None:
+    try:
+        await get_usage_meter().mark_current_paid_execution_attempt(
+            status="accepted",
+            provider_request_id=provider_request_id,
+            provider_response_id=response_id,
+        )
+    except Exception:
+        pass
+
+
 class ImageGenParams(BaseModel):
     """图像生成参数（旧版，保留兼容）。"""
 
@@ -387,6 +402,10 @@ class VolcengineImageGenerator:
                 result = response.json()
                 provider_request_id = _provider_request_id_from_response(response, result)
                 response_id = str(result.get("id") or "").strip()
+                await _mark_image_model_call_accepted(
+                    provider_request_id=provider_request_id,
+                    response_id=response_id,
+                )
 
                 # 提取图像数据
                 if "data" in result and len(result["data"]) > 0:
@@ -546,6 +565,10 @@ class VolcengineImageGenerator:
                 result = response.json()
                 provider_request_id = _provider_request_id_from_response(response, result)
                 response_id = str(result.get("id") or "").strip()
+                await _mark_image_model_call_accepted(
+                    provider_request_id=provider_request_id,
+                    response_id=response_id,
+                )
 
                 # 诊断日志：打印响应结构
                 print(f"[Seedream] API 响应字段: {list(result.keys())}", flush=True)
@@ -738,6 +761,10 @@ class VolcengineImageGenerator:
                 result = response.json()
                 provider_request_id = _provider_request_id_from_response(response, result)
                 response_id = str(result.get("id") or "").strip()
+                await _mark_image_model_call_accepted(
+                    provider_request_id=provider_request_id,
+                    response_id=response_id,
+                )
 
                 if "data" in result and len(result["data"]) > 0:
                     image_base64 = result["data"][0].get("b64_json", "")
@@ -857,6 +884,10 @@ class VolcengineImageGenerator:
                 result = response.json()
                 provider_request_id = _provider_request_id_from_response(response, result)
                 response_id = str(result.get("id") or "").strip()
+                await _mark_image_model_call_accepted(
+                    provider_request_id=provider_request_id,
+                    response_id=response_id,
+                )
                 print(f"[SeedEdit] API 响应字段: {list(result.keys())}", flush=True)
 
                 if "data" not in result or len(result["data"]) == 0:

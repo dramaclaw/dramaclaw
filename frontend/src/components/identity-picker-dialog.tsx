@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Save, Sparkles } from "lucide-react";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -122,6 +123,7 @@ export function IdentityPickerDialog({
   onPlan,
   planPending,
   planCostDisplay,
+  planPromotion,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -133,6 +135,7 @@ export function IdentityPickerDialog({
   onPlan: () => void;
   planPending: boolean;
   planCostDisplay?: string | null;
+  planPromotion?: CreditPromotionDisplay | null;
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<{
@@ -225,7 +228,10 @@ export function IdentityPickerDialog({
               <Sparkles className="size-3.5" />
             )}
             {t("identityPicker.aiPlan")}
-            <CreditCostInline display={planCostDisplay} />
+            <CreditCostInline
+              display={planCostDisplay}
+              promotion={planPromotion}
+            />
           </Button>
           <Button
             variant="ghost"

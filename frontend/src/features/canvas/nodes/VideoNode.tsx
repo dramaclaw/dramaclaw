@@ -113,7 +113,10 @@ import {
   resolveErrorContent,
   showErrorDialog,
 } from "@/features/canvas/application/errorDialog";
-import { backendErrorToastMessage } from "@/lib/api-errors";
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { resolveGenerationErrorDiagnostics } from "@/features/canvas/application/generationErrorReport";
 import {
   PromptMentionEditor,
@@ -151,6 +154,10 @@ import {
   NodeContextBadges,
 } from "@/features/freezone/context/NodeContextBadges";
 import { RegenerateButton } from "@/features/canvas/ui/RegenerateButton";
+import {
+  filterMediaModelParamsForMode,
+  MediaModelParameterChip,
+} from "@/features/canvas/ui/MediaModelParameterChip";
 import {
   NODE_COUNT_POPOVER_CLASS,
   NODE_CONTEXT_CONTROL_TRIGGER_CLASS,
@@ -215,14 +222,11 @@ import {
 import type { FreezoneGenerationHistoryRecord } from "@/api/ops";
 import { readUrl } from "@/lib/url-params";
 import {
-  DEFAULT_VIDEO_MODEL_ID,
   ProviderModelPicker,
+  type ModelOption,
 } from "@/features/canvas/ui/ProviderModelPicker";
 import { writeLastVideoModel } from "@/features/canvas/domain/lastVideoModel";
-import {
-  CreditCostPill,
-  formatCreditCost,
-} from "@/components/credits/credit-visual";
+import { CreditCostPill } from "@/components/credits/credit-visual";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
@@ -299,6 +303,9 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
 const REFERENCE_CAPS_BY_MODE: Partial<
   Record<VideoGenMode, { image: number; video: number; audio: number }>
 > = {
+  imageToVideo: { image: 9, video: 0, audio: 0 },
+  imageReference: { image: 9, video: 0, audio: 0 },
+  videoEdit: { image: 5, video: 1, audio: 0 },
   allReference: { image: 9, video: 3, audio: 3 },
   firstLastFrame: { image: 2, video: 0, audio: 0 },
 };
@@ -312,7 +319,7 @@ const ASPECT_RATIOS: ReadonlyArray<FreezoneVideoAspectRatio> = [
   "9:16",
   "21:9",
 ];
-const QUALITIES: ReadonlyArray<VideoGenQuality> = ["480P", "720P", "1080P"];
+const QUALITIES: ReadonlyArray<VideoGenQuality> = ["480p", "720p", "1080p"];
 const COUNT_OPTIONS: ReadonlyArray<VideoGenCount> = [1, 2, 4];
 const SCENE_OPTIMIZE_OPTIONS: ReadonlyArray<Seedance2SceneOptimize> = ["anime", "realistic"];
 const VIDEO_PARAM_POPOVER_CLASS =
@@ -337,25 +344,16 @@ const VIDEO_MODE_TOOLTIP_CLASS =
   "text-white/90 shadow-lg ring-1 ring-white/10";
 const DEFAULT_DURATION_MIN = 5;
 const DEFAULT_DURATION_MAX = 15;
+const VIDEO_GENERATE_FEATURE_KEY = "freezone.video_generate";
 
 function qualityToResolution(q: VideoGenQuality): FreezoneVideoResolution {
-  return q.toLowerCase() as FreezoneVideoResolution;
-}
-
-function resolutionToQuality(resolution: string): VideoGenQuality | null {
-  const normalized = resolution.trim().toLowerCase();
-  if (normalized === "480p") return "480P";
-  if (normalized === "720p") return "720P";
-  if (normalized === "1080p") return "1080P";
-  return null;
+  return q;
 }
 
 function videoQualityOptionsForModel(
   model: { resolutionOptions?: string[] } | null | undefined,
 ): readonly VideoGenQuality[] {
-  const options = (model?.resolutionOptions ?? [])
-    .map(resolutionToQuality)
-    .filter((item): item is VideoGenQuality => Boolean(item));
+  const options = (model?.resolutionOptions ?? []).map((item) => item.trim()).filter(Boolean);
   return options.length > 0 ? options : QUALITIES;
 }
 
@@ -363,8 +361,12 @@ function normalizeVideoQuality(
   value: VideoGenQuality | undefined,
   options: readonly VideoGenQuality[],
 ): VideoGenQuality {
-  const fallback = options.includes("720P") ? "720P" : options[0] ?? "720P";
-  return value && options.includes(value) ? value : fallback;
+  const configured = value
+    ? options.find((option) => option.toLowerCase() === value.toLowerCase())
+    : undefined;
+  const fallback =
+    options.find((option) => option.toLowerCase() === "720p") ?? options[0] ?? "720p";
+  return configured ?? fallback;
 }
 
 function videoDurationBoundsForModel(
@@ -423,10 +425,55 @@ function isSeedance2ValueModel(modelId: string | null | undefined): boolean {
 
 // 模型能力判定（isHappyHorseVideoModel / isSeedance1xVideoModel /
 // isSeedance2VideoModel / isGrokVideoChannelModel / isVideoModeSupportedByModel）
-// 以及两条素材守卫（选择器置灰 videoModelReferenceDisabledReason / 提交拦截
-// videoSubmitMediaRejectionReason）统一收敛到 nodes/shared/videoModelCapabilities.ts，
-// 作为 CTA / tab / 提交校验的单一事实来源，避免「非 HappyHorse 一律当 Seedance 2.0」
-// 的假设散落在组件里，也避免两条守卫的阈值各写一份后悄悄漂开。
+// 统一收敛到 nodes/shared/videoModelCapabilities.ts，作为 CTA / tab / 提交校验的
+// 单一事实来源；这里仅额外叠加媒体目录声明的逐模式素材上限。
+
+function selectedVideoModelReferenceDisabledReason(
+  model: ModelOption | null | undefined,
+  counts: { images: number; videos: number; audios: number },
+  mode: VideoGenMode,
+): string | null {
+  const modelId = model?.apiModel ?? model?.id;
+  const capabilityReason = videoModelReferenceDisabledReason(modelId, counts);
+  if (capabilityReason) return capabilityReason;
+  const caps = referenceCapsForMode(model, mode);
+  if (!caps) return null;
+  if (counts.images > caps.image) {
+    return `该模型最多支持 ${caps.image} 张图片素材`;
+  }
+  if (counts.videos > caps.video) {
+    return caps.video === 0
+      ? "该模型不支持视频素材"
+      : `该模型最多支持 ${caps.video} 个视频素材`;
+  }
+  if (counts.audios > caps.audio) {
+    return caps.audio === 0
+      ? "该模型不支持音频素材"
+      : `该模型最多支持 ${caps.audio} 个音频素材`;
+  }
+  return null;
+}
+
+function referenceCapsForMode(
+  model: ModelOption | null | undefined,
+  mode: VideoGenMode,
+): { image: number; video: number; audio: number } | null {
+  const defaults = REFERENCE_CAPS_BY_MODE[mode];
+  if (!defaults) return null;
+  return {
+    image: model?.referenceImageMax ?? defaults.image,
+    video: model?.referenceVideoMax ?? defaults.video,
+    audio: model?.referenceAudioMax ?? defaults.audio,
+  };
+}
+
+function hasConfiguredReferenceCaps(model: ModelOption | null | undefined): boolean {
+  return (
+    model?.referenceImageMax != null ||
+    model?.referenceVideoMax != null ||
+    model?.referenceAudioMax != null
+  );
+}
 
 function sceneOptimizeOptionsForModel(
   model: {
@@ -758,25 +805,29 @@ export const VideoNode = memo(
           : undefined) ?? availableVideoModels[0]
       );
     }, [availableVideoModels, data.model]);
-    const modelId = selectedVideoModel?.id ?? DEFAULT_VIDEO_MODEL_ID;
+    const modelId = selectedVideoModel?.id ?? "";
     const selectedVideoModelId = selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId;
     const isHappyHorseModel = isHappyHorseVideoModel(selectedVideoModelId);
-    // aspectRatio 只认合法的比例预设（含 "auto"）；历史上曾被写成像素串(如
-    // "1248:704")的旧节点在这里吸附到最接近的合法视频比例，保证 chip 显示干净。
-    const aspectRatio: FreezoneVideoAspectRatio = (
-      ASPECT_RATIOS as readonly string[]
-    ).includes(String(data.aspectRatio))
-      ? (data.aspectRatio as FreezoneVideoAspectRatio)
-      : (snapToAllowedAspectRatio(
-          String(data.aspectRatio ?? ""),
-          VIDEO_GENERATION_ASPECT_RATIOS,
-          "16:9",
-        ) as FreezoneVideoAspectRatio);
-    // 提交给后端的比例必须是 6 个合法视频比例之一、绝不发 "auto"：auto 时按节点
-    // 真实像素(若有)推导最接近的比例，否则回退 16:9。
+    const configuredAspectRatios = useMemo(
+      () => (selectedVideoModel?.ratioOptions ?? []).map((ratio) => ratio.trim()).filter(Boolean),
+      [selectedVideoModel],
+    );
+    const hasConfiguredAspectRatios = configuredAspectRatios.length > 0;
+    const aspectRatio: FreezoneVideoAspectRatio = hasConfiguredAspectRatios
+      ? configuredAspectRatios.includes(String(data.aspectRatio))
+        ? String(data.aspectRatio)
+        : configuredAspectRatios[0]
+      : (ASPECT_RATIOS as readonly string[]).includes(String(data.aspectRatio))
+        ? String(data.aspectRatio)
+        : snapToAllowedAspectRatio(
+            String(data.aspectRatio ?? ""),
+            VIDEO_GENERATION_ASPECT_RATIOS,
+            "16:9",
+          );
+    // Admin 配置存在时原样提交模型声明的比例；未配置时保留旧版 auto 推导逻辑。
     const submitAspectRatio: FreezoneVideoAspectRatio =
-      aspectRatio === "auto"
-        ? (snapToAllowedAspectRatio(
+      !hasConfiguredAspectRatios && aspectRatio === "auto"
+        ? snapToAllowedAspectRatio(
             typeof data.widthPx === "number" &&
               typeof data.heightPx === "number" &&
               data.widthPx > 0 &&
@@ -785,12 +836,15 @@ export const VideoNode = memo(
               : "",
             VIDEO_GENERATION_ASPECT_RATIOS,
             "16:9",
-          ) as FreezoneVideoAspectRatio)
+          )
         : aspectRatio;
     const qualityOptions = useMemo(
       () => videoQualityOptionsForModel(selectedVideoModel),
       [selectedVideoModel],
     );
+    const aspectRatioOptions = useMemo(() => {
+      return configuredAspectRatios.length > 0 ? configuredAspectRatios : ASPECT_RATIOS;
+    }, [configuredAspectRatios]);
     const quality = normalizeVideoQuality(data.quality, qualityOptions);
     const durationBounds = useMemo(
       () => videoDurationBoundsForModel(selectedVideoModel),
@@ -812,6 +866,7 @@ export const VideoNode = memo(
     const generateAudio = Boolean(data.generateAudio);
     // 真人素材审核开关只对 Seedance 2.0 系列模型生效（口径同能力模块）。
     const isSeedance20Model = isSeedance2VideoModel(modelId);
+    const supportsHumanReview = selectedVideoModel?.humanReview === true;
     const humanReview = Boolean(data.humanReview);
     const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
     useEffect(() => {
@@ -843,23 +898,39 @@ export const VideoNode = memo(
     // rows across the Network tab. Coalesce to one request once the params
     // settle (~350ms). Primitives only — see useDebouncedValue's contract.
     const debouncedBackend = useDebouncedValue(videoBackendForCost, 350);
+    const debouncedCatalogId = useDebouncedValue(
+      selectedVideoModel?.catalogId ?? null,
+      350,
+    );
     const debouncedQuality = useDebouncedValue(quality, 350);
     const debouncedCount = useDebouncedValue(count, 350);
     const debouncedDurationSec = useDebouncedValue(durationSec, 350);
+    const videoCount = Math.min(Math.max(debouncedCount, 1), 4);
+    const videoPricingQuantity =
+      videoCount * debouncedDurationSec;
     const videoCreditCost = useGenerationCreditCost(
-      "video_backend",
-      debouncedBackend,
+      "feature",
+      debouncedBackend ? VIDEO_GENERATE_FEATURE_KEY : null,
       {
         surface: "canvas",
-        params: { resolution: qualityToResolution(debouncedQuality) },
-        quantity: Math.min(Math.max(debouncedCount, 1), 4) * debouncedDurationSec,
+        params: {
+          ...(debouncedCatalogId ? { catalog_id: debouncedCatalogId } : {}),
+          video_backend: debouncedBackend,
+          resolution: qualityToResolution(debouncedQuality),
+          pricing_quantity: videoPricingQuantity,
+          operation: genMode,
+          generate_audio: generateAudio,
+        },
+        quantity: videoCount,
       },
     );
-    const totalCreditCostDisplay = useMemo(() => {
-      const total = videoCreditCost.data?.data.cost;
-      if (typeof total !== "number") return null;
-      return formatCreditCost(total);
-    }, [videoCreditCost.data?.data.cost]);
+    const videoBillingRuleMissing =
+      videoCreditCost.error instanceof BillingRuleNotConfiguredError;
+    const totalCreditCostDisplay =
+      videoCreditCost.data?.data.display ??
+      (videoBillingRuleMissing
+        ? t("common.billingRuleNotConfiguredShort")
+        : null);
     const cameraMovementId =
       typeof data.cameraMovement === "string" ? data.cameraMovement : null;
     // Pull the camera-template catalog from `/freezone/video/camera-templates`.
@@ -1051,32 +1122,33 @@ export const VideoNode = memo(
     // 当前 genMode 在 REFERENCE_CAPS_BY_MODE 里没有条目（如 textToVideo /
     // imageToVideo / imageReference），统一按 within=true 处理；下游 chip /
     // mention 候选会决定是否消费 within。
+    const referenceCaps = useMemo(
+      () => referenceCapsForMode(selectedVideoModel, genMode),
+      [genMode, selectedVideoModel],
+    );
     const referenceMediaCapInfo = useMemo(() => {
       const counts = { image: 0, video: 0, audio: 0 };
-      const caps = REFERENCE_CAPS_BY_MODE[genMode];
       return referenceMedia.map((item) => {
         counts[item.kind] += 1;
-        const cap = caps?.[item.kind];
+        const cap = referenceCaps?.[item.kind];
         const withinCap = cap == null || counts[item.kind] <= cap;
         return { item, typeIndex: counts[item.kind], withinCap };
       });
-    }, [referenceMedia, genMode]);
+    }, [referenceCaps, referenceMedia]);
 
     // @ 提及候选 —— 图片、音频都可引用，但编号按 *各自类型* 的序号走，
     // *不* 按行内混合位置。后端按上传的图片数量来对应 图片N，若用混合位置编号
     // （音频排第一时图片就成了「图片2」），后端只看到 1 张图却被要求引用图片2
     // 会报错。所以图片用图片序号、音频用音频序号，各自独立计数。
     //
-    // 在 REFERENCE_CAPS_BY_MODE 表里有条目的模式（当前是 allReference /
-    // firstLastFrame），超过 cap 的条目不能进 @ 候选 —— 服务端会直接丢弃，留
-    // 在候选里只会让用户选了之后被静默忽略。其它模式（imageReference 等）各自
-    // 已有提交时 `.slice(0, N)` 兜底，本次不动。
+    // 在 REFERENCE_CAPS_BY_MODE 表里有条目的模式，超过 cap 的条目不能进
+    // @ 候选 —— 服务端会直接丢弃，留在候选里只会让用户选了之后被静默忽略。
     const mentionCandidates = useMemo<MentionCandidate[]>(() => {
       const out: MentionCandidate[] = [];
       let imageIdx = 0;
       let videoIdx = 0;
       let audioIdx = 0;
-      const enforceCap = REFERENCE_CAPS_BY_MODE[genMode] != null;
+      const enforceCap = referenceCaps != null;
       for (const info of referenceMediaCapInfo) {
         const item = info.item;
         if (item.kind === "image") {
@@ -1112,7 +1184,7 @@ export const VideoNode = memo(
         }
       }
       return out;
-    }, [referenceMediaCapInfo, genMode]);
+    }, [referenceCaps, referenceMediaCapInfo]);
 
     // 取消关联某个上游素材：删掉「该上游节点 → 本节点」的连线。collectInputContents
     // 只走一跳，item.nodeId 就是直接相连的上游节点，可精确定位要删的边。
@@ -1985,7 +2057,7 @@ export const VideoNode = memo(
           return;
         }
         // Compose only supports 720p / 1080p — fall back to 720p for 480P sources.
-        const composeResolution = quality === "1080P" ? "1080p" : "720p";
+        const composeResolution = quality.toLowerCase() === "1080p" ? "1080p" : "720p";
         setIsComposingClip(true);
         setClipError(null);
         try {
@@ -2118,8 +2190,16 @@ export const VideoNode = memo(
       selectedVideoModelId,
       upstreamCounts,
     );
+    const selectedModelReferenceError = selectedVideoModelReferenceDisabledReason(
+      selectedVideoModel,
+      upstreamCounts,
+      genMode,
+    );
     const submitDisabled =
       isGenerating ||
+      videoBillingRuleMissing ||
+      !selectedVideoModel ||
+      selectedModelReferenceError !== null ||
       mediaRejectionReason != null ||
       (videoModeRequiresPrompt(genMode)
         ? !hasPromptText
@@ -2192,7 +2272,10 @@ export const VideoNode = memo(
         // genMode 组装出一个「调一次接口」的闭包 doSubmit，校验失败则置空提前返回。
         let doSubmit: ((targetId: string) => Promise<FreezoneJobRef>) | null = null;
         if (genMode === "firstLastFrame") {
-          const imageUrls = collectUpstreamImageUrls();
+          const imageUrls = collectUpstreamImageUrls().slice(
+            0,
+            referenceCaps?.image ?? 2,
+          );
           const firstFrameUrl = imageUrls[0] ?? null;
           const lastFrameUrl = imageUrls[1] ?? null;
           if (!firstFrameUrl && !lastFrameUrl) {
@@ -2215,16 +2298,20 @@ export const VideoNode = memo(
               resolution: qualityToResolution(quality),
               durationSeconds: durationClamped,
               generateAudio,
-              model: modelId,
+              model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
-              humanReview: isSeedance20Model && humanReview,
+              modelParams: data.modelParams,
+              humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
               canvasId,
               nodeId: targetId,
             });
         } else if (genMode === "imageToVideo" || genMode === "imageReference") {
           // Unified i2v endpoint: 1 image = 图生视频, 2-9 images = 图片参考视频.
-          const imageUrls = collectUpstreamImageUrls().slice(0, 9);
+          const imageUrls = collectUpstreamImageUrls().slice(
+            0,
+            referenceCaps?.image ?? 9,
+          );
           if (imageUrls.length === 0) {
             console.warn("[video-node] i2v submit without any upstream image");
             updateNodeData(id, {
@@ -2242,9 +2329,10 @@ export const VideoNode = memo(
               resolution: qualityToResolution(quality),
               durationSeconds: durationClamped,
               generateAudio,
-              model: modelId,
+              model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
-              humanReview: isSeedance20Model && humanReview,
+              modelParams: data.modelParams,
+              humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
               canvasId,
               nodeId: targetId,
@@ -2265,13 +2353,13 @@ export const VideoNode = memo(
             return;
           }
           const allImageUrls = collectUpstreamImageUrls();
-          if (allImageUrls.length > 5) {
-            // 视频编辑上游硬上限 5 张参考图；超出的静默截断会让用户以为全用上了。
+          const imageLimit = referenceCaps?.image ?? 5;
+          if (allImageUrls.length > imageLimit) {
             toast.warning(
-              `视频编辑最多支持 5 张参考图，已使用前 5 张（忽略其余 ${allImageUrls.length - 5} 张）`,
+              `视频编辑最多支持 ${imageLimit} 张参考图，已使用前 ${imageLimit} 张（忽略其余 ${allImageUrls.length - imageLimit} 张）`,
             );
           }
-          const imageUrls = allImageUrls.slice(0, 5);
+          const imageUrls = allImageUrls.slice(0, imageLimit);
           doSubmit = (targetId) =>
             submitFreezoneVideoEdit(projectId, {
               videoUrl,
@@ -2283,8 +2371,9 @@ export const VideoNode = memo(
               durationSeconds: durationClamped,
               audioSetting: "auto",
               generateAudio,
-              model: modelId,
+              model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
+              modelParams: data.modelParams,
               canvasId,
               nodeId: targetId,
             });
@@ -2306,7 +2395,10 @@ export const VideoNode = memo(
             return;
           }
           // Omni-gen: classify each upstream node by its media type.
-          // backend caps: image≤9, video≤3, audio≤3, total≤12.
+          const caps = referenceCaps ?? { image: 9, video: 3, audio: 3 };
+          const totalReferenceLimit = hasConfiguredReferenceCaps(selectedVideoModel)
+            ? caps.image + caps.video + caps.audio
+            : 12;
           const upstream = collectUpstream();
           const references: FreezoneVideoReferenceItem[] = [];
           // 与 references 里 type==="audio" 的项一一对应，用于提交前逐条校验音频时长。
@@ -2319,11 +2411,11 @@ export const VideoNode = memo(
           let videoCount = 0;
           let audioCount = 0;
           for (const node of upstream) {
-            if (references.length >= 12) break;
+            if (references.length >= totalReferenceLimit) break;
             const videoRefUrl = referenceVideoUrl(node);
             if (videoRefUrl) {
               // 视频节点或携带 videoUrl 的 upload 节点（资产库视频）统一收集。
-              if (videoCount < 3) {
+              if (videoCount < caps.video) {
                 references.push({ type: "video", url: videoRefUrl });
                 videoCount += 1;
               }
@@ -2332,7 +2424,7 @@ export const VideoNode = memo(
                 typeof node.data.audioUrl === "string"
                   ? node.data.audioUrl
                   : "";
-              if (url && audioCount < 3) {
+              if (url && audioCount < caps.audio) {
                 // 音频引用默认走「配乐参考」语义；label 用 sourceFileName /
                 // displayName 之一，方便后端日志和后续 UI 展示对得上。
                 const rawLabel =
@@ -2368,7 +2460,7 @@ export const VideoNode = memo(
               }
             } else {
               const url = submittableImageUrl(node);
-              if (url && imageCount < 9) {
+              if (url && imageCount < caps.image) {
                 references.push({ type: "image", url });
                 imageCount += 1;
               }
@@ -2432,9 +2524,10 @@ export const VideoNode = memo(
               resolution: qualityToResolution(quality),
               durationSeconds: durationClamped,
               generateAudio,
-              model: modelId,
+              model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
-              humanReview: isSeedance20Model && humanReview,
+              modelParams: data.modelParams,
+              humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
               canvasId,
               nodeId: targetId,
@@ -2449,9 +2542,10 @@ export const VideoNode = memo(
               resolution: qualityToResolution(quality),
               durationSeconds: durationClamped,
               generateAudio,
-              model: modelId,
+              model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
-              humanReview: isSeedance20Model && humanReview,
+              modelParams: data.modelParams,
+              humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
               canvasId,
               nodeId: targetId,
@@ -2628,6 +2722,7 @@ export const VideoNode = memo(
       humanReview,
       id,
       isSeedance20Model,
+      supportsHumanReview,
       modelId,
       prompt,
       quality,
@@ -3281,12 +3376,22 @@ export const VideoNode = memo(
                   <GenModeSelect
                     value={genMode}
                     modelId={selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId}
+                    supportedModes={selectedVideoModel?.supportedModes}
                     // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
                     // 其余模型仍按已解析素材 URL 计数。
                     upstreamCounts={
                       isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
                     }
-                    onChange={(nextMode) => updateNodeData(id, { genMode: nextMode })}
+                    onChange={(nextMode) =>
+                      updateNodeData(id, {
+                        genMode: nextMode,
+                        modelParams: filterMediaModelParamsForMode(
+                          selectedVideoModel?.request?.parameters,
+                          data.modelParams,
+                          nextMode,
+                        ),
+                      })
+                    }
                   />
                   <NodeContextPromptPaletteButton
                     nodeId={id}
@@ -3305,7 +3410,7 @@ export const VideoNode = memo(
                 {referenceMedia.length > 0 && (
                   <ReferenceMediaRow
                     items={referenceMediaCapInfo}
-                    enforceCap={REFERENCE_CAPS_BY_MODE[genMode] != null}
+                    caps={referenceCaps}
                     genMode={genMode}
                     onFocus={(nodeId) => setSelectedNode(nodeId)}
                     onDetach={handleDetachUpstream}
@@ -3354,9 +3459,13 @@ export const VideoNode = memo(
                       // 不支持的端点被后端 400（界面还停在错误的 tab）。
                       const resetGenMode =
                         data.genMode != null &&
-                        !isVideoModeSupportedByModel(data.genMode, nextModelId);
+                        !isVideoModeSupportedByModel(
+                          data.genMode,
+                          availableVideoModels.find((item) => item.id === nextModelId),
+                        );
                       updateNodeData(id, {
                         model: nextModelId,
+                        modelParams: {},
                         ...(resetGenMode
                           ? { genMode: "textToVideo" as VideoGenMode }
                           : {}),
@@ -3379,6 +3488,7 @@ export const VideoNode = memo(
                   />
                   <VideoConfigChip
                     aspectRatio={aspectRatio}
+                    aspectRatioOptions={aspectRatioOptions}
                     quality={quality}
                     qualityOptions={qualityOptions}
                     durationSec={durationSec}
@@ -3388,7 +3498,13 @@ export const VideoNode = memo(
                     generateAudio={generateAudio}
                     onChange={(patch) => updateNodeData(id, patch)}
                   />
-                  {isSeedance20Model && (
+                  <MediaModelParameterChip
+                    parameters={selectedVideoModel?.request?.parameters}
+                    values={data.modelParams}
+                    mode={genMode}
+                    onChange={(modelParams) => updateNodeData(id, { modelParams })}
+                  />
+                  {supportsHumanReview && (
                     <button
                       type="button"
                       role="switch"
@@ -3454,6 +3570,7 @@ export const VideoNode = memo(
                 <div className="flex shrink-0 items-center gap-2">
                   <CreditCostPill
                     display={totalCreditCostDisplay}
+                    promotion={videoCreditCost.data?.data.promotion}
                     disabled={submitDisabled}
                     className={NODE_CREDIT_PILL_FLAT_CLASS}
                   />
@@ -3461,9 +3578,9 @@ export const VideoNode = memo(
                     type="button"
                     disabled={submitDisabled}
                     title={
-                      isGenerating
+                      selectedModelReferenceError ?? (isGenerating
                         ? t("node.videoNode.submitBusy")
-                        : (mediaRejectionReason ?? t("node.videoNode.submit"))
+                        : (mediaRejectionReason ?? t("node.videoNode.submit")))
                     }
                     onClick={(event) => {
                       event.stopPropagation();
@@ -3567,6 +3684,7 @@ VideoNode.displayName = "VideoNode";
 interface GenModeSelectProps {
   value: VideoGenMode;
   modelId: string | null | undefined;
+  supportedModes?: string[];
   upstreamCounts: { videos: number; images: number; audios: number };
   onChange: (next: VideoGenMode) => void;
 }
@@ -3625,7 +3743,7 @@ function videoModeDisabledReason(
   return null;
 }
 
-function GenModeSelect({ value, modelId, upstreamCounts, onChange }: GenModeSelectProps) {
+function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChange }: GenModeSelectProps) {
   const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -3643,6 +3761,17 @@ function GenModeSelect({ value, modelId, upstreamCounts, onChange }: GenModeSele
   //     选项），只保留「文生视频」(禁用) 与「视频编辑」。
   // 非 HappyHorse 不暴露「视频编辑」(它是 HappyHorse 专属功能)。
   const visibleTabs = useMemo(() => {
+    if (supportedModes?.length) {
+      const keyMap: Record<VideoGenMode, string> = {
+        textToVideo: "text_to_video",
+        imageToVideo: "first_frame",
+        firstLastFrame: "first_last_frame",
+        imageReference: "image_reference",
+        allReference: "all_reference",
+        videoEdit: "video_edit",
+      };
+      return MODE_TABS.filter((tab) => supportedModes.includes(keyMap[tab.key]));
+    }
     if (!isHappyHorseVideoModel(modelId)) {
       // 按模型能力过滤，而非「非 HappyHorse 一律给全部」：Seedance 1.x 不支持
       // 全能参考(400)与真尾帧首尾帧(静默丢尾帧)，这两个 tab 对它不可见。
@@ -3660,7 +3789,7 @@ function GenModeSelect({ value, modelId, upstreamCounts, onChange }: GenModeSele
           ? { ...tab, labelKey: "node.videoNode.tabs.firstFrame" }
           : tab,
       );
-  }, [modelId, upstreamCounts.videos]);
+  }, [modelId, supportedModes, upstreamCounts.videos]);
   const activeTab = visibleTabs.find((tab) => tab.key === value) ?? visibleTabs[0];
 
   const syncPopoverPosition = useCallback(() => {
@@ -3775,6 +3904,7 @@ function GenModeSelect({ value, modelId, upstreamCounts, onChange }: GenModeSele
 
 interface VideoConfigChipProps {
   aspectRatio: FreezoneVideoAspectRatio;
+  aspectRatioOptions: readonly FreezoneVideoAspectRatio[];
   quality: VideoGenQuality;
   qualityOptions: readonly VideoGenQuality[];
   durationSec: number;
@@ -3787,6 +3917,7 @@ interface VideoConfigChipProps {
 
 function VideoConfigChip({
   aspectRatio,
+  aspectRatioOptions,
   quality,
   qualityOptions,
   durationSec,
@@ -3888,7 +4019,7 @@ function VideoConfigChip({
             {t("node.videoNode.aspect.title")}
           </div>
           <div className={`grid grid-cols-5 ${VIDEO_PARAM_ROW_CLASS}`}>
-            {ASPECT_RATIOS.map((ratio) => {
+            {aspectRatioOptions.map((ratio) => {
               const isActive = aspectRatio === ratio;
               return (
                 <button
@@ -4297,9 +4428,7 @@ interface ReferenceMediaCapEntry {
 
 interface ReferenceMediaRowProps {
   items: ReadonlyArray<ReferenceMediaCapEntry>;
-  /** 当前 genMode 是否在 REFERENCE_CAPS_BY_MODE 表里 —— 只有有 cap 的模式
-   *  才把超额 chip 标灰。 */
-  enforceCap: boolean;
+  caps: { image: number; video: number; audio: number } | null;
   /** 当前 genMode；用来决定 firstLastFrame 模式下给前两张图片打 首帧/尾帧 角标。 */
   genMode: VideoGenMode;
   onFocus: (nodeId: string) => void;
@@ -4310,7 +4439,7 @@ interface ReferenceMediaRowProps {
 
 function ReferenceMediaRow({
   items,
-  enforceCap,
+  caps,
   genMode,
   onFocus,
   onDetach,
@@ -4350,14 +4479,18 @@ function ReferenceMediaRow({
     <div className="ml-4 flex shrink-0 items-center gap-1.5">
       {items.map((entry) => {
         const { item, typeIndex, withinCap } = entry;
-        // 「超出当前模式上限」只在 REFERENCE_CAPS_BY_MODE 里登记过的模式生效
-        // （目前是 allReference / firstLastFrame）；其它模式即便挂了 12 张图，
-        // imageReference / firstLastFrame 自己有 slice 兜底，不在 chip 行额
-        // 外标记。
-        const overCap = enforceCap && !withinCap;
-        const modeCap = REFERENCE_CAPS_BY_MODE[genMode]?.[item.kind] ?? 0;
+        // 「超出当前模式上限」只在 REFERENCE_CAPS_BY_MODE 里登记过的模式生效。
+        const overCap = caps != null && !withinCap;
+        const modeCap = caps?.[item.kind] ?? 0;
         const modeLabel =
-          genMode === "firstLastFrame" ? "首尾帧" : "全能参考";
+          {
+            textToVideo: "文生视频",
+            imageToVideo: "图生视频",
+            imageReference: "多图参考",
+            firstLastFrame: "首尾帧",
+            videoEdit: "视频编辑",
+            allReference: "全能参考",
+          }[genMode] ?? "当前模式";
         const overCapTitle = overCap
           ? `${
               item.kind === "image"

@@ -12,7 +12,7 @@ const routeSource = readFileSync(
 describe("ingest feature credit contract", () => {
   it("shows the strict feature billing configuration fallback", () => {
     expect(routeSource).toContain(
-      'useGenerationCreditCost("feature", "ingest_fast", {',
+      'useGenerationCreditCost("feature", "mainline.ingest_fast", {',
     );
     expect(routeSource).toContain("quantity: billingBillableChars");
     expect(routeSource).toContain(

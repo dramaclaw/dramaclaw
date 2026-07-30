@@ -16,6 +16,10 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.freezone.paths import freezone_root
+from novelvideo.video_duration import (
+    normalize_video_duration_for_backend as normalize_video_duration_for_backend,
+    video_duration_bounds_for_backend,
+)
 
 
 VIDEO_CAMERA_TEMPLATES: list[dict[str, str]] = [
@@ -199,8 +203,28 @@ def normalize_freezone_seedance2_scene_optimize(
     return default_freezone_seedance2_scene_optimize(backend)
 
 
-def normalize_video_resolution_for_backend(backend: str | None, value: str | None) -> str:
+def normalize_video_resolution_for_backend(
+    backend: str | None, value: str | None,
+    configured_options: list[str] | tuple[str, ...] | None = None,
+) -> str:
     resolution = normalize_video_resolution(value)
+    configured = tuple(
+        str(option).strip()
+        for option in (configured_options or ())
+        if str(option).strip()
+    )
+    if configured:
+        matched = next(
+            (option for option in configured if option.lower() == resolution.lower()),
+            None,
+        )
+        if matched is not None:
+            return matched
+        preferred = next(
+            (option for option in configured if option.lower() == "720p"),
+            None,
+        )
+        return preferred or configured[0]
     options = freezone_video_resolution_options(backend)
     if resolution in options:
         return resolution
@@ -210,37 +234,7 @@ def normalize_video_resolution_for_backend(backend: str | None, value: str | Non
 
 
 def freezone_video_duration_bounds(backend: str | None) -> tuple[int | None, int | None]:
-    from novelvideo.config import NEWAPI_VIDEO_DURATION_BOUNDS
-    from novelvideo.generators.video_generator import (
-        NewApiVideoGenerator,
-        parse_newapi_video_backend,
-    )
-
-    model = parse_newapi_video_backend(backend) or _freezone_video_model_from_backend(backend)
-    bounds = NewApiVideoGenerator._parse_duration_bounds_config(NEWAPI_VIDEO_DURATION_BOUNDS).get(
-        model
-    )
-    if bounds:
-        return bounds
-    if model == "grok-video-channel":
-        return (6, 30)
-    if model == "happyhorse-1.0":
-        return (3, 15)
-    return (None, None)
-
-
-def normalize_video_duration_for_backend(backend: str | None, value: int | None) -> int:
-    try:
-        duration = int(value or 5)
-    except (TypeError, ValueError):
-        duration = 5
-    duration = max(duration, 1)
-    min_duration, max_duration = freezone_video_duration_bounds(backend)
-    if min_duration is not None:
-        duration = max(duration, min_duration)
-    if max_duration is not None:
-        duration = min(duration, max_duration)
-    return duration
+    return video_duration_bounds_for_backend(backend)
 
 
 def _freezone_newapi_video_options() -> dict[str, str]:
@@ -525,16 +519,23 @@ def summarize_omni_reference_counts(items: list[dict[str, Any]]) -> dict[str, in
     }
 
 
-def validate_omni_reference_limits(items: list[dict[str, Any]]) -> None:
+def validate_omni_reference_limits(
+    items: list[dict[str, Any]],
+    *,
+    image_max: int = 9,
+    video_max: int = 3,
+    audio_max: int = 3,
+    total_max: int = 12,
+) -> None:
     counts = summarize_omni_reference_counts(items)
-    if counts["total_count"] > 12:
-        raise ValueError("references total count must be <= 12")
-    if counts["image_count"] > 9:
-        raise ValueError("image references count must be <= 9")
-    if counts["video_count"] > 3:
-        raise ValueError("video references count must be <= 3")
-    if counts["audio_count"] > 3:
-        raise ValueError("audio references count must be <= 3")
+    if counts["total_count"] > total_max:
+        raise ValueError(f"references total count must be <= {total_max}")
+    if counts["image_count"] > image_max:
+        raise ValueError(f"image references count must be <= {image_max}")
+    if counts["video_count"] > video_max:
+        raise ValueError(f"video references count must be <= {video_max}")
+    if counts["audio_count"] > audio_max:
+        raise ValueError(f"audio references count must be <= {audio_max}")
 
 
 def video_character_library_path(project_dir: Path) -> Path:

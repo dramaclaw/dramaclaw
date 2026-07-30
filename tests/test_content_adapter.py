@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from novelvideo.models import NovelEpisode
@@ -12,7 +14,9 @@ pytestmark = pytest.mark.m03
 async def test_adapted_content_overrides_raw_working_content(tmp_path) -> None:
     output_dir = tmp_path / "output" / "admin" / "demo"
     state_dir = tmp_path / "state" / "admin" / "demo"
-    store = SQLiteStore("admin/demo", output_dir=str(output_dir), state_dir=str(state_dir))
+    store = SQLiteStore(
+        "admin/demo", output_dir=str(output_dir), state_dir=str(state_dir)
+    )
     try:
         await store.initialize()
         await store.add_episodes(
@@ -109,6 +113,37 @@ class _RewriteRouteStore:
             setattr(self.episode, key, value)
 
 
+class _UsageMeter:
+    def __init__(self):
+        self.reserved: list[dict] = []
+        self.confirmed: list[tuple[str, dict]] = []
+        self.refunded: list[tuple[str, dict]] = []
+        self.interrupted: list[tuple[str, dict]] = []
+        self.contexts: list[tuple[str, dict]] = []
+        self.clear_count = 0
+
+    async def reserve_feature_start_credits(self, **kwargs):
+        self.reserved.append(kwargs)
+        return {"id": "reservation-1", "cost": 6}
+
+    async def settle_feature_credit_reservation(
+        self, reservation_id: str, *, action: str, metadata=None
+    ):
+        target = self.confirmed if action == "confirm" else self.refunded
+        target.append((reservation_id, metadata or {}))
+
+    async def settle_cancelled_feature_credit_reservation(
+        self, reservation_id: str, *, metadata=None
+    ):
+        self.interrupted.append((reservation_id, metadata or {}))
+
+    def set_llm_usage_context(self, user_id: str, **kwargs):
+        self.contexts.append((user_id, kwargs))
+
+    def clear_llm_usage_context(self):
+        self.clear_count += 1
+
+
 @pytest.mark.asyncio
 async def test_generate_rewrite_applies_output_to_beat_source_text(monkeypatch) -> None:
     from novelvideo.agents import content_rewriter
@@ -123,6 +158,15 @@ async def test_generate_rewrite_applies_output_to_beat_source_text(monkeypatch) 
         "rewrite_episode_content",
         fake_rewrite_episode_content,
     )
+    meter = _UsageMeter()
+    monkeypatch.setattr(content, "get_usage_meter", lambda: meter)
+
+    async def fake_resolve_project_scope(*args, **kwargs):
+        return SimpleNamespace(
+            ctx=SimpleNamespace(project_id="project-1", requester_user_id="user-1")
+        )
+
+    monkeypatch.setattr(content, "resolve_project_scope", fake_resolve_project_scope)
 
     store = _RewriteRouteStore()
     response = await content.generate_rewrite(
@@ -139,6 +183,107 @@ async def test_generate_rewrite_applies_output_to_beat_source_text(monkeypatch) 
     assert store.episode_updates == [
         (1, {"beat_source_text": "改写第一行\n改写第二行"})
     ]
+    assert meter.reserved[0]["feature_key"] == "mainline.content_rewrite"
+    assert meter.reserved[0]["task_type"] == "content_rewrite"
+    assert meter.reserved[0]["require_price_rule"] is True
+    assert meter.reserved[0]["require_positive_cost"] is True
+    assert meter.contexts[0][1]["billing_metadata"]["model_call_credit_policy"] == (
+        "feature_included"
+    )
+    assert meter.confirmed[0][0] == "reservation-1"
+    assert meter.refunded == []
+    assert meter.clear_count == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_rewrite_uses_evidence_settlement_on_failure(monkeypatch) -> None:
+    from novelvideo.agents import content_rewriter
+    from novelvideo.api.routes import content
+    from novelvideo.api.schemas import RewriteGenerateRequest
+
+    async def fail_rewrite_episode_content(*args, **kwargs):
+        raise RuntimeError("rewrite failed")
+
+    monkeypatch.setattr(
+        content_rewriter,
+        "rewrite_episode_content",
+        fail_rewrite_episode_content,
+    )
+    meter = _UsageMeter()
+    monkeypatch.setattr(content, "get_usage_meter", lambda: meter)
+
+    async def fake_resolve_project_scope(*args, **kwargs):
+        return SimpleNamespace(
+            ctx=SimpleNamespace(project_id="project-1", requester_user_id="user-1")
+        )
+
+    monkeypatch.setattr(content, "resolve_project_scope", fake_resolve_project_scope)
+
+    with pytest.raises(RuntimeError, match="rewrite failed"):
+        await content.generate_rewrite(
+            project="demo",
+            episode_num=1,
+            body=RewriteGenerateRequest(),
+            user={"username": "admin"},
+            store=_RewriteRouteStore(),
+        )
+
+    assert meter.confirmed == []
+    assert meter.refunded == []
+    assert meter.interrupted[0][0] == "reservation-1"
+    assert meter.interrupted[0][1]["source"] == "sync_api"
+    assert meter.clear_count == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_rewrite_does_not_refund_success_when_confirm_is_pending(
+    monkeypatch,
+) -> None:
+    from novelvideo.agents import content_rewriter
+    from novelvideo.api.routes import content
+    from novelvideo.api.schemas import RewriteGenerateRequest
+
+    async def fake_rewrite_episode_content(*args, **kwargs):
+        return "已成功改写"
+
+    class ConfirmPendingMeter(_UsageMeter):
+        async def settle_feature_credit_reservation(
+            self, reservation_id: str, *, action: str, metadata=None
+        ):
+            if action == "confirm":
+                raise RuntimeError("settlement unavailable")
+            await super().settle_feature_credit_reservation(
+                reservation_id,
+                action=action,
+                metadata=metadata,
+            )
+
+    monkeypatch.setattr(
+        content_rewriter,
+        "rewrite_episode_content",
+        fake_rewrite_episode_content,
+    )
+    meter = ConfirmPendingMeter()
+    monkeypatch.setattr(content, "get_usage_meter", lambda: meter)
+
+    async def fake_resolve_project_scope(*args, **kwargs):
+        return SimpleNamespace(
+            ctx=SimpleNamespace(project_id="project-1", requester_user_id="user-1")
+        )
+
+    monkeypatch.setattr(content, "resolve_project_scope", fake_resolve_project_scope)
+
+    response = await content.generate_rewrite(
+        project="demo",
+        episode_num=1,
+        body=RewriteGenerateRequest(),
+        user={"username": "admin"},
+        store=_RewriteRouteStore(),
+    )
+
+    assert response["ok"] is True
+    assert response["data"]["adapted_content"] == "已成功改写"
+    assert meter.refunded == []
 
 
 @pytest.mark.asyncio

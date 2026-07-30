@@ -24,6 +24,10 @@ import {
   X,
 } from "lucide-react";
 
+import {
+  backendErrorToastMessage,
+  BillingRuleNotConfiguredError,
+} from "@/lib/api-errors";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import {
   StalePoolSelectError,
@@ -102,6 +106,7 @@ const RENDER_BACKGROUND_ANCHOR_LABEL_KEYS: Record<string, string> = {
   master: "episode.workbench.render.backgroundAnchorLabels.master",
   reverse: "episode.workbench.render.backgroundAnchorLabels.reverse",
 };
+const RENDER_REGEN_FEATURE_KEY = "mainline.render_regen";
 
 function clampCropBox(
   crop: { x: number; y: number; width: number; height: number },
@@ -160,6 +165,7 @@ export function RenderSection({
   const poolSelect = usePoolSelect(project, episode);
   const regenerate = useRegenerateRenderBeats(project, episode);
   const renderSettings = useRenderSettings(project);
+  const renderImageSelection = renderSettings.data?.data.render_image_selection;
   const renderSceneId =
     beat.scene_ref?.scene_id?.trim() || beat.location?.trim() || "";
   const renderVariantId = beat.scene_ref?.variant_id?.trim() || "";
@@ -172,9 +178,14 @@ export function RenderSection({
   const renderPlatePreview =
     scenePlatePreview.data?.ok === true ? scenePlatePreview.data.data.render : null;
   const renderRegenCost = useGenerationCreditCost(
-    "image_selection",
-    renderSettings.data?.data.render_image_selection,
-    { surface: "supertale", imageRole: "render", modeKey: singleRenderModeKey },
+    "feature",
+    RENDER_REGEN_FEATURE_KEY,
+    {
+      surface: "supertale",
+      imageRole: "render",
+      modeKey: singleRenderModeKey,
+      params: renderImageSelection ? { image_selection: renderImageSelection } : null,
+    },
   );
   const uploadRender = useUploadBeatImage(project, episode, "render");
   const backgroundAnchors = useBeatBackgroundAnchors(project, episode, beat.beat_number);
@@ -284,6 +295,7 @@ export function RenderSection({
       const res = await regenerate.mutateAsync({
         beatIndices: [beat.beat_number],
         modeKey: singleRenderModeKey,
+        imageGenerationSelection: renderImageSelection,
       });
       if (res.ok === false) {
         toast.error(res.error || t("episode.workbench.render.regenFailed"));
@@ -291,8 +303,8 @@ export function RenderSection({
       }
       regenTask.start({ scope: res.scope });
       toast.success(t("episode.workbench.render.regenStarted"));
-    } catch {
-      toast.error(t("episode.workbench.render.regenFailed"));
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
     }
   };
 
@@ -552,7 +564,15 @@ export function RenderSection({
                   {previewUrl
                     ? t("common.regenerate")
                     : t("episode.workbench.render.generateNew")}
-                  <CreditCostInline display={renderRegenCost.data?.data.display} />
+                  <CreditCostInline
+                    display={
+                      renderRegenCost.data?.data.display ??
+                      (renderRegenCost.error instanceof BillingRuleNotConfiguredError
+                        ? t("common.billingRuleNotConfiguredShort")
+                        : null)
+                    }
+                    promotion={renderRegenCost.data?.data.promotion}
+                  />
                 </Button>
               )}
               {renderPlatePreview ? (

@@ -77,7 +77,13 @@ describe("beats sketch/render v2 contract", () => {
     const superpowerAction = renderedActions.indexOf("episode.workbench.batch.aiOptimizeTitle");
 
     expect(batchBar).toContain("useGlobalOptimize");
+    expect(batchBar).toContain("useGlobalOptimizeBillingQuote");
+    expect(batchBar).toContain("globalOptimizeCostDisplay");
     expect(videoQueries).toContain("optimize/video-global");
+    expect(videoQueries).toContain("optimize/video-global/billing-quote");
+    expect(videoQueries).toMatch(
+      /optimize\/video-global[\s\S]*?throwHttpErrors: false/,
+    );
     expect(superpowerAction).toBeGreaterThan(-1);
     expect(renderedActions).not.toContain("openRenderPlan(false)");
     expect(renderedActions).not.toContain("episode.workbench.batch.genVideoTitle");

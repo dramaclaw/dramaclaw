@@ -150,6 +150,11 @@ export function errorFromBackendBody(status: number, body: unknown, fallback: st
   if (errorCode === "BILLING_RULE_NOT_CONFIGURED") {
     return new BillingRuleNotConfiguredError(message, status, body);
   }
+  // Some older EE responses leaked the internal exception text without the
+  // structured error code. Keep those responses on the same safe UI path.
+  if (message.toLowerCase().includes("billing rule is not configured")) {
+    return new BillingRuleNotConfiguredError(message, status, body);
+  }
 
   if (status === 429 && typeof queueKind === "string" && queueKind.trim()) {
     const normalizedScope = limitScope === "user" ? "user" : "project";
@@ -321,6 +326,11 @@ export function humanizeTaskError(
   t: TFunction,
 ): string {
   const fallback = raw && raw.trim() ? raw : t("common.error");
+  if (raw && /billing rule is not configured/i.test(raw)) {
+    return t("common.billingRuleNotConfigured", {
+      defaultValue: "计费规则未配置，请联系管理员设置积分规则",
+    });
+  }
   switch (classifyGatewayError(raw)) {
     case "channel_policy":
       return t("common.generationChannelPolicyBlocked", { defaultValue: fallback });

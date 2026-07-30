@@ -11,10 +11,13 @@ import {
   EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import { CreditCostInline } from '@/components/credit-cost-inline';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
 import {
   fetchFreezoneJobResult,
   submitFreezoneScene360,
@@ -31,6 +34,7 @@ import { ZoomScaledToolbar } from './ZoomScaledToolbar';
 import {
   NODE_FLOATING_PANEL_SURFACE_CLASS,
   NODE_GENERATE_BUTTON_BASE_CLASS,
+  NODE_GENERATE_BUTTON_DISABLED_CLASS,
   NODE_GENERATE_BUTTON_ENABLED_CLASS,
 } from './nodeControlStyles';
 
@@ -54,13 +58,21 @@ export const Scene360Overlay = memo(
     const { models: imageModels } = useFreezoneImageModels();
     const selectedModel = imageModels[0];
     const panoCost = useGenerationCreditCost(
-      'image_selection',
-      selectedModel?.apiModel ?? null,
+      'feature',
+      selectedModel ? FREEZONE_IMAGE_FEATURES.panorama : null,
       {
         surface: 'canvas',
-        params: { size: '2K', quality: 'medium' },
+        params: buildImageFeatureBillingParams(selectedModel, {
+          size: '2K',
+          quality: 'medium',
+        }),
       },
     );
+    const billingRuleMissing =
+      panoCost.error instanceof BillingRuleNotConfiguredError;
+    const costDisplay =
+      panoCost.data?.data.display ??
+      (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
 
     // 全景输出比例（生成参数，仅影响本次出图，不改节点的展示比例）。
     const [aspectRatio, setAspectRatio] = useState<FreezoneScene360AspectRatio>(
@@ -186,11 +198,19 @@ export const Scene360Overlay = memo(
             onChange={setAspectRatio}
             label={t('scene360.aspectRatioLabel')}
           />
-          <CreditCostInline display={panoCost.data?.data.display} />
+          <CreditCostInline
+            display={costDisplay}
+            promotion={panoCost.data?.data.promotion}
+          />
 
           <button
             type="button"
-            className={`${NODE_GENERATE_BUTTON_BASE_CLASS} shrink-0 ${NODE_GENERATE_BUTTON_ENABLED_CLASS}`}
+            disabled={billingRuleMissing}
+            className={`${NODE_GENERATE_BUTTON_BASE_CLASS} shrink-0 ${
+              billingRuleMissing
+                ? NODE_GENERATE_BUTTON_DISABLED_CLASS
+                : NODE_GENERATE_BUTTON_ENABLED_CLASS
+            }`}
             onClick={handleSubmit}
             title={t('scene360.submit')}
           >

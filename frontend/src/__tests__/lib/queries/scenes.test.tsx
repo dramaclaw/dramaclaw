@@ -105,7 +105,7 @@ describe("build scenes mutation", () => {
             data: {
               error_code: "BILLING_RULE_NOT_CONFIGURED",
               billing_kind: "feature",
-              billing_key: "build_scenes",
+              billing_key: "mainline.build_scenes",
             },
           },
           { status: 409 },

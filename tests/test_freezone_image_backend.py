@@ -358,6 +358,177 @@ async def test_freezone_video_start_runtime_error_is_logged(
     assert "broker unavailable" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_freezone_video_generation_enqueues_feature_billing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        captured["payload"] = kwargs.get("payload") or {}
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_video"),
+            backend="celery",
+            queue="node.node_a.video",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    result = await freezone_routes._start_or_enqueue_freezone_video_gen(
+        ctx=_project_ctx(tmp_path),
+        username="admin",
+        project="demo",
+        project_dir=tmp_path / "project",
+        output_dir=str(tmp_path / "output"),
+        job_id="job_video",
+        prompt="雨夜街头",
+        reference_items=[],
+        aspect_ratio="16:9",
+        resolution="1080p",
+        duration_seconds=8,
+        generate_audio=True,
+        human_review=False,
+        scene_optimize=None,
+        backend="newapi_seedance-1.0-pro-fast",
+        gen_mode="imageToVideo",
+    )
+
+    assert result["data"]["task_type"] == "freezone_video_gen"
+    assert captured["task_type"] == "freezone_video_gen"
+    assert captured["queue_kind"] == "video"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "freezone.video_generate",
+        "video_backend": "newapi_seedance-1.0-pro-fast",
+        "resolution": "1080p",
+        "pricing_quantity": 8,
+        "operation": "imageToVideo",
+        "generate_audio": True,
+        "pricing_kind": "video",
+        "pricing_model": "seedance-1.0-pro-fast",
+        "pricing_params": {"resolution": "1080p"},
+        "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
+    }
+
+
+@pytest.mark.asyncio
+async def test_freezone_audio_generation_enqueues_two_feature_billings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo.config import INDEXTTS2_RECORD_MODEL
+
+    _patch_freezone_project(monkeypatch, tmp_path)
+    captured: list[dict] = []
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.append(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id=f"task_audio_{len(captured)}"),
+            backend="celery",
+            queue="node.node_a.default",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    await freezone_routes.freezone_audio_speech(
+        project="58",
+        body=freezone_routes.FreezoneAudioSpeechRequest(text="她终于回来了。"),
+        user={"username": "admin"},
+    )
+    await freezone_routes.freezone_audio_eleven_music(
+        project="58",
+        body=freezone_routes.FreezoneAudioMusicRequest(
+            input="雨夜悬疑配乐",
+            music_length_ms=30_500,
+        ),
+        user={"username": "admin"},
+    )
+
+    speech_billing = captured[0]["payload"]["billing"]
+    assert captured[0]["task_type"] == "freezone_audio_speech"
+    assert speech_billing == {
+        "feature_key": "freezone.audio_speech",
+        "operation": "speech",
+        "billable_chars": 7,
+        "pricing_quantity": 7,
+        "pricing_kind": "audio",
+        "pricing_model": INDEXTTS2_RECORD_MODEL,
+        "pricing_params": {},
+        "items": 7,
+    }
+
+    music_billing = captured[1]["payload"]["billing"]
+    assert captured[1]["task_type"] == "freezone_audio_eleven_music"
+    assert music_billing == {
+        "feature_key": "freezone.audio_music",
+        "operation": "music",
+        "model": "LingShan-MU-11",
+        "music_length_ms": 30_500,
+        "pricing_kind": "audio",
+        "pricing_model": "LingShan-MU-11",
+        "pricing_params": {},
+        "pricing_quantity": 31,
+    }
+
+
+@pytest.mark.asyncio
+async def test_freezone_image_reverse_prompt_enqueues_feature_billing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("FREEZONE_VISION_MODEL", "freezone-vision-model")
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    source = project_dir / "freezone" / "_uploads" / "source.png"
+    _write_image(source)
+    captured: dict[str, object] = {}
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_reverse_prompt"),
+            backend="celery",
+            queue="node.node_a.default",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    result = await freezone_routes.freezone_image_reverse_prompt(
+        project="58",
+        body=freezone_routes.FreezoneImageReversePromptRequest(
+            source_url="/static/admin/58/freezone/_uploads/source.png",
+            instruction="电影感光影",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["data"]["task_type"] == "freezone_image_reverse_prompt"
+    assert captured["task_type"] == "freezone_image_reverse_prompt"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "freezone.image_reverse_prompt",
+        "operation": "image_reverse_prompt",
+        "billable_chars": 5,
+        "pricing_quantity": 5,
+        "pricing_kind": "text",
+        "pricing_model": "freezone-vision-model",
+        "pricing_params": {},
+    }
+    assert captured["payload"]["instruction"] == "电影感光影"
+
+
 def test_infer_scene_id_from_master_path_uses_scene_folder(tmp_path: Path) -> None:
     project_dir = tmp_path / "project"
     source = project_dir / "assets" / "scenes" / "小区" / "master.png"
@@ -2158,6 +2329,9 @@ async def test_masked_redraw_uses_default_newapi_model(
     assert captured["provider"] == "newapi"
     assert captured["model"] == NEWAPI_IMAGE_MODEL
     assert captured["quality"] == "low"
+    assert captured["billing"]["feature_key"] == "freezone.image_edit"
+    assert captured["billing"]["operation"] == "erase"
+    assert captured["billing"]["pricing_kind"] == "image"
 
 
 @pytest.mark.asyncio
@@ -2271,6 +2445,211 @@ async def test_freezone_gen_route_passes_output_dir_and_quality(
     assert result["data"]["task_type"] == "freezone_gen"
     assert captured["payload"]["project_dir"] == str(project_dir)
     assert captured["payload"]["quality"] == "low"
+    billing = captured["payload"]["billing"]
+    assert billing["image_selection"] == "newapi_gpt_image2"
+    assert billing["size"] == "1K"
+    assert billing["quality"] == "low"
+    assert billing["pricing_kind"] == "image"
+    assert billing["pricing_model"] == freezone_routes.IMAGE_GENERATION_SELECTIONS[
+        "newapi_gpt_image2"
+    ]["model"]
+    assert billing["pricing_params"] == {"size": "1K", "quality": "low"}
+    assert billing["pricing_quantity"] == 1
+
+
+@pytest.mark.asyncio
+async def test_freezone_gen_rejects_references_above_catalog_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(
+        monkeypatch,
+        tmp_path,
+        username="admin",
+        project="58",
+    )
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {"endpoint": "images/generations", "parameters": []},
+            {},
+            {
+                "catalogId": "custom-catalog",
+                "id": "custom-image",
+                "providerId": "newapi",
+                "apiModel": "custom-image",
+                "referenceImageMax": 1,
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_gen(
+            project="proj_freezone",
+            body=freezone_routes.FreezoneGenRequest(
+                prompt="generate",
+                model="custom-image",
+                model_id="custom-image",
+                reference_urls=["/static/ref-1.png", "/static/ref-2.png"],
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "at most 1 reference images" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_freezone_gen_rejects_catalog_and_execution_model_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, username="admin", project="58")
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {"endpoint": "images/generations", "parameters": []},
+            {},
+            {
+                "catalogId": "cheap-catalog",
+                "id": "cheap-image",
+                "providerId": "newapi",
+                "apiModel": "cheap-image",
+                "gatewayModel": "cheap-image",
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_gen(
+            project="proj_freezone",
+            body=freezone_routes.FreezoneGenRequest(
+                prompt="generate",
+                model_id="cheap-catalog",
+                model="expensive-image",
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "does not match" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_freezone_gen_derives_execution_and_billing_model_from_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, username="admin", project="58")
+    captured: dict[str, object] = {}
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {"endpoint": "images/generations", "parameters": []},
+            {},
+            {
+                "catalogId": "catalog-image",
+                "id": "catalog-image-legacy",
+                "providerId": "newapi",
+                "apiModel": "LingShan-G2",
+                "gatewayModel": "LingShan-G2",
+            },
+        )
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured["payload"] = kwargs.get("payload") or {}
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_gen"),
+            backend="celery",
+            queue="node.node_a.default",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    result = await freezone_routes.freezone_gen(
+        project="proj_freezone",
+        body=freezone_routes.FreezoneGenRequest(
+            prompt="generate",
+            model_id="catalog-image",
+            image_size="2K",
+            quality="high",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["ok"] is True
+    payload = captured["payload"]
+    assert payload["provider"] == "newapi"
+    assert payload["model"] == "LingShan-G2"
+    assert payload["model_id"] == "catalog-image"
+    assert payload["catalog_id"] == "catalog-image"
+    assert payload["billing"]["catalog_id"] == "catalog-image"
+    assert payload["billing"]["pricing_model"] == "LingShan-G2"
+    assert payload["billing"]["pricing_params"] == {
+        "quality": "high",
+        "size": "2K",
+    }
+
+
+@pytest.mark.asyncio
+async def test_freezone_edit_rejects_catalog_and_execution_model_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, username="admin", project="58")
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {"endpoint": "images/generations", "parameters": []},
+            {},
+            {
+                "catalogId": "cheap-catalog",
+                "id": "cheap-image",
+                "providerId": "newapi",
+                "apiModel": "cheap-image",
+                "gatewayModel": "cheap-image",
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_edit(
+            project="proj_freezone",
+            body=freezone_routes.FreezoneEditRequest(
+                prompt="edit",
+                base_url="/static/base.png",
+                model_id="cheap-catalog",
+                model="expensive-image",
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "does not match" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio
@@ -2375,6 +2754,48 @@ async def test_freezone_celery_text_runner_records_project_node_history(
         "task:freezone_text_translate:project:proj_freezone:0:job_text"
     )
     assert history[-1]["result"]["translated_text"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_freezone_image_to_3gs_task_includes_fixed_feature_billing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _project_ctx(tmp_path)
+    source_path = ctx.output_dir / "source.png"
+    _write_image(source_path)
+    captured: dict[str, object] = {}
+
+    async def fake_enqueue_project_task(*_args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_3gs"),
+            backend="celery",
+            queue="node.world",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    await freezone_routes._start_or_enqueue_freezone_image_to_3gs(
+        ctx=ctx,
+        username="admin",
+        project=ctx.project_id,
+        project_dir=ctx.output_dir,
+        job_id="job_3gs",
+        scene_id="scene_1",
+        source_path=source_path,
+        source_kind="pano",
+        params={},
+    )
+
+    assert captured["payload"]["billing"] == {
+        "feature_key": "freezone.image_to_3gs",
+        "operation": "pano",
+    }
 
 
 def test_freezone_image_to_3gs_runner_records_project_node_history(
@@ -2490,6 +2911,7 @@ async def test_freezone_celery_image_jobs_preserve_canvas_node_context(
         quality=None,
         canvas_id="canvas_a",
         node_id="node_gen",
+        catalog_id="01IMAGECATALOG",
     )
     edit = await freezone_routes._start_or_enqueue_freezone_edit_job(
         ctx=ctx,
@@ -2509,14 +2931,19 @@ async def test_freezone_celery_image_jobs_preserve_canvas_node_context(
         quality=None,
         canvas_id="canvas_a",
         node_id="node_edit",
+        catalog_id="01IMAGECATALOG",
+        billing_feature_key="freezone.image_edit",
+        billing_operation="edit",
     )
 
     assert gen["data"]["backend"] == "celery"
     assert edit["data"]["backend"] == "celery"
     assert calls[0]["payload"]["canvas_id"] == "canvas_a"
     assert calls[0]["payload"]["node_id"] == "node_gen"
+    assert calls[0]["payload"]["billing"]["catalog_id"] == "01IMAGECATALOG"
     assert calls[1]["payload"]["canvas_id"] == "canvas_a"
     assert calls[1]["payload"]["node_id"] == "node_edit"
+    assert calls[1]["payload"]["billing"]["catalog_id"] == "01IMAGECATALOG"
 
 
 @pytest.mark.asyncio
@@ -2555,6 +2982,45 @@ async def test_freezone_text_job_preserves_canvas_node_context_in_celery_payload
     assert captured["task_type"] == "freezone_text_translate"
     assert captured["payload"]["canvas_id"] == "canvas_a"
     assert captured["payload"]["node_id"] == "node_text"
+    assert captured["payload"]["billing"] == {"billable_chars": 2}
+
+
+@pytest.mark.asyncio
+async def test_freezone_story_script_job_uses_model_visible_chars_for_billing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _project_ctx(tmp_path)
+    captured: dict = {}
+
+    async def fake_resolve_freezone_project(*_args, **_kwargs):
+        return ctx, "admin", "demo", ctx.output_dir, str(ctx.output_dir)
+
+    async def fake_enqueue_freezone_background_job(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "data": {"task_key": "task_key"}}
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve_freezone_project)
+    monkeypatch.setattr(
+        freezone_routes,
+        "_enqueue_freezone_background_job",
+        fake_enqueue_freezone_background_job,
+    )
+    monkeypatch.setattr(freezone_routes, "_new_job_id", lambda: "job_story")
+
+    await freezone_routes.freezone_story_script_generate(
+        project="proj_freezone",
+        body=freezone_routes.FreezoneStoryScriptGenerateRequest(
+            source_text="第一幕 雨夜",
+            prompt="节奏 要快",
+            canvas_id="canvas_a",
+            node_id="node_script",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert captured["task_type"] == "freezone_story_script"
+    assert captured["payload"]["billing"] == {"billable_chars": 9}
 
 
 @pytest.mark.asyncio
@@ -2752,6 +3218,10 @@ async def test_scene_360_endpoint_caps_mainline_image_size_to_2k(
     assert captured["payload"]["params"]["quality"] == "low"
     assert captured["payload"]["params"]["update_manifest"] is False
     assert captured["payload"]["params"]["artifact_dir"]
+    assert captured["payload"]["billing"]["feature_key"] == "freezone.image_panorama"
+    assert captured["payload"]["billing"]["size"] == "2K"
+    assert captured["payload"]["billing"]["quality"] == "low"
+    assert captured["payload"]["billing"]["pricing_kind"] == "image"
 
 
 def _skill_beat_input() -> dict:
@@ -3277,6 +3747,9 @@ async def test_skill_run_frame_accepts_plain_canvas_image_as_sketch_input(
     )
 
     assert captured["task_type"] == "mainline_frame_from_context"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "mainline.render_regen"
+    }
     assert captured["payload"]["config"]["canvas_sketch_paths"]["8"].endswith(
         "/freezone/plain_sketch.png"
     )
@@ -3419,6 +3892,9 @@ async def test_skill_run_normalizes_project_media_url_before_dispatch(
     )
 
     assert captured["task_type"] == "mainline_sketch_from_context"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "mainline.sketch_regen"
+    }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
     assert captured["payload"]["config"]["canvas_scene_refs"][0]["image_path"].endswith(
@@ -4648,6 +5124,9 @@ async def test_skill_run_sketch_accepts_director_combined_background(
 
     assert response.run_id == "mainline_director_control_sketch:job_director"
     assert captured["task_type"] == "mainline_director_control_sketch"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "mainline.director_control_to_sketch"
+    }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
     assert captured["payload"]["control_frame_path"].endswith("/freezone/_uploads/combined.png")
@@ -4732,6 +5211,9 @@ async def test_skill_run_sketch_prefers_director_combined_over_background(
     )
 
     assert captured["task_type"] == "mainline_director_control_sketch"
+    assert captured["payload"]["billing"] == {
+        "feature_key": "mainline.director_control_to_sketch"
+    }
     assert captured["episode"] == 1
     assert captured["beat_num"] == 8
     assert captured["payload"]["control_frame_path"].endswith("/freezone/_uploads/combined.png")
@@ -5794,6 +6276,90 @@ async def test_freezone_image_models_returns_selection_keys(
 
 
 @pytest.mark.asyncio
+async def test_freezone_image_models_prefers_ee_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, project="58")
+    catalog = [
+        {
+            "id": "custom-image",
+            "providerId": "huimeng",
+            "apiModel": "custom-upstream",
+            "label": "Custom Image",
+            "resolutionOptions": ["1K", "2K"],
+            "ratioOptions": ["1:1", "16:9"],
+        }
+    ]
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return catalog
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+    result = await freezone_routes.freezone_image_models(
+        project="58",
+        user={"username": "admin"},
+    )
+
+    assert result == {"ok": True, "data": catalog}
+
+
+@pytest.mark.asyncio
+async def test_catalog_id_resolves_without_breaking_legacy_model_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = [
+        {
+            "catalogId": "01TESTCATALOG0000000000000",
+            "catalog_id": "01TESTCATALOG0000000000000",
+            "id": "newapi_seedance-2.0",
+            "apiModel": "newapi_seedance-2.0",
+            "gatewayModel": "seedance-2.0",
+        }
+    ]
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "video"
+        return catalog
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+
+    assert (
+        await freezone_routes._resolve_catalog_video_backend(
+            "01TESTCATALOG0000000000000"
+        )
+        == "newapi_seedance-2.0"
+    )
+    assert (
+        await freezone_routes._resolve_catalog_video_backend(
+            "newapi_seedance-2.0"
+        )
+        == "newapi_seedance-2.0"
+    )
+
+
+@pytest.mark.asyncio
+async def test_freezone_image_models_preserves_empty_ee_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, project="58")
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return []
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+    result = await freezone_routes.freezone_image_models(
+        project="58",
+        user={"username": "admin"},
+    )
+
+    assert result == {"ok": True, "data": []}
+
+
+@pytest.mark.asyncio
 async def test_freezone_job_result_returns_task_error_when_failed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5936,6 +6502,9 @@ async def test_freezone_upscale_resolves_original_ratio_before_model_call(
     assert result["ok"] is True
     assert captured["aspect_ratio"] == "16:9"
     assert captured["quality"] == "low"
+    assert captured["billing"]["feature_key"] == "freezone.image_edit"
+    assert captured["billing"]["operation"] == "upscale"
+    assert captured["billing"]["pricing_kind"] == "image"
     assert "新古典插画" in captured["prompt"]
     assert "Panavision DXL2" in captured["prompt"]
     assert "Arri Signature Prime" in captured["prompt"]
@@ -5975,6 +6544,9 @@ async def test_template_edit_projection_preserves_source_aspect_ratio(
     assert result["data"]["task_type"] == "freezone_edit"
     assert captured["aspect_ratio"] == "9:16"
     assert captured["quality"] == "high"
+    assert captured["billing"]["feature_key"] == "freezone.image_grid"
+    assert captured["billing"]["operation"] == "image_projection_after_3s"
+    assert captured["billing"]["pricing_kind"] == "image"
     assert "Preserve the source image aspect ratio" in captured["prompt"]
     assert "Within the same frame size" in captured["prompt"]
     assert "different action phase" in captured["prompt"]
@@ -7041,10 +7613,15 @@ async def test_reverse_prompt_uses_shared_freezone_vision_model(
         fake_call_freezone_vision_model,
     )
 
-    prompt = await image_node.reverse_prompt_from_image(image_path=image_path)
+    prompt = await image_node.reverse_prompt_from_image(
+        image_path=image_path,
+        instruction="突出电影感光影",
+    )
 
     assert prompt == "白色方形主体，极简构图"
     assert len(captured["images"]) == 1
+    assert "用户补充要求" in captured["prompt"]
+    assert "突出电影感光影" in captured["prompt"]
     assert (
         captured["timeout_seconds"]
         == image_node.FREEZONE_IMAGE_REVERSE_PROMPT_TIMEOUT_SECONDS

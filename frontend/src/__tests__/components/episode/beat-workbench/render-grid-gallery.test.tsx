@@ -25,6 +25,7 @@ beforeAll(async () => {
             stop: "停止",
             upload: "上传",
             copy: "复制",
+            billingRuleNotConfiguredShort: "需配置",
           },
           episode: {
             workbench: {
@@ -120,6 +121,19 @@ vi.mock("@/hooks/use-task-controller", () => ({
     stop: taskStopMock,
     started: false,
     stopping: false,
+  }),
+}));
+
+vi.mock("@/lib/queries/generation-credit-cost", () => ({
+  useGenerationCreditCost: () => ({
+    data: { data: { display: "8" } },
+    error: null,
+  }),
+}));
+
+vi.mock("@/lib/queries/render-settings", () => ({
+  useRenderSettings: () => ({
+    data: { data: { render_image_selection: "newapi_gpt_image_2" } },
   }),
 }));
 
@@ -416,6 +430,7 @@ describe("RenderGridGallery", () => {
       </I18nextProvider>,
     );
 
+    expect(screen.getByText("8")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重新生成" }));
     expect(regenerateGridMock).toHaveBeenCalledWith({
       gridIndex: 2,

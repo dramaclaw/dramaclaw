@@ -2,6 +2,19 @@
 // Copyright (c) 2026 ClaymoreLab
 export const queryKeys = {
   currentUser: () => ["auth", "me"] as const,
+  creditSummary: () => ["credits", "summary"] as const,
+  creditPromotions: () => ["credits", "promotions"] as const,
+  creditFilterOptions: () => ["credits", "filter-options"] as const,
+  creditTransactions: (filters: {
+    category: string;
+    page: number;
+    pageSize: number;
+    startAt?: string;
+    endAt?: string;
+    projectId?: string;
+    featureKey?: string;
+    model?: string;
+  }) => ["credits", "transactions", filters] as const,
   projects: () => ["projects"] as const,
   projectSummaries: () => ["projects", "summaries"] as const,
   project: (p: string) => ["projects", p] as const,

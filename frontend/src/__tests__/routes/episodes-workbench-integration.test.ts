@@ -31,20 +31,20 @@ describe("episodes workbench integration", () => {
   });
 
   it("shows feature credit cost on list-card identity planning actions", () => {
-    expect(routeSource).toContain('useGenerationCreditCost("feature", "identity_planner")');
+    expect(routeSource).toContain('useGenerationCreditCost("feature", "mainline.identity_planner")');
     expect(routeSource).toContain(
       "planIdentitiesCost.error instanceof BillingRuleNotConfiguredError",
     );
     expect(routeSource).toContain("identityCostDisplay={planIdentitiesCostDisplay}");
-    expect(routeSource).toContain("<CreditCostInline display={costDisplay} />");
+    expect(routeSource).toMatch(/<CreditCostInline\s+display=\{costDisplay\}/);
   });
 
   it("shows feature credit cost on list-card scene and prop planning actions", () => {
     expect(routeSource).toContain(
-      'useGenerationCreditCost("feature", "episode_scene_planner")',
+      'useGenerationCreditCost("feature", "mainline.episode_scene_planner")',
     );
     expect(routeSource).toContain(
-      'useGenerationCreditCost("feature", "episode_prop_planner")',
+      'useGenerationCreditCost("feature", "mainline.episode_prop_planner")',
     );
     expect(routeSource).toContain(
       "planScenesCost.error instanceof BillingRuleNotConfiguredError",
@@ -83,7 +83,7 @@ describe("episodes workbench integration", () => {
   });
 
   it("shows feature credit cost on episode planning actions", () => {
-    expect(routeSource).toContain('useGenerationCreditCost("feature", "build_episodes")');
+    expect(routeSource).toContain('useGenerationCreditCost("feature", "mainline.build_episodes")');
     expect(routeSource).toContain("planEpisodesCost.error instanceof BillingRuleNotConfiguredError");
     expect(routeSource).toContain("planCostDisplay={planEpisodesCostDisplay}");
     expect(routeSource).toMatch(/<CreditCostInline\s+display=\{planCostDisplay\}/);

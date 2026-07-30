@@ -130,25 +130,25 @@ describe("M05 CE generation credit cost gating", () => {
 
   it("routes every named M05 cost display through CreditCostInline", () => {
     expect(source("src/components/assets/scene-asset-card.tsx")).toEqual(
-      expect.stringContaining("<CreditCostInline display={masterCost} />"),
+      expect.stringMatching(/<CreditCostInline\s+display=\{masterCost\}/),
     );
     expect(source("src/components/assets/scene-asset-card.tsx")).toEqual(
-      expect.stringContaining("<CreditCostInline display={reverseCost} />"),
+      expect.stringMatching(/<CreditCostInline\s+display=\{reverseCost\}/),
     );
     expect(source("src/components/assets/scene-asset-card.tsx")).toEqual(
-      expect.stringContaining("<CreditCostInline display={panoCost} />"),
+      expect.stringMatching(/<CreditCostInline\s+display=\{panoCost\}/),
     );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
-      expect.stringContaining("masterCost={masterCost.data?.data.display}"),
+      expect.stringContaining("masterCost={sceneReferenceCostDisplay}"),
     );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
-      expect.stringContaining("reverseCost={reverseCost.data?.data.display}"),
+      expect.stringContaining("reverseCost={sceneReferenceCostDisplay}"),
     );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
-      expect.stringContaining("panoCost={panoCost.data?.data.display}"),
+      expect.stringContaining("panoCost={panoCostDisplay}"),
     );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
-      expect.stringContaining('useGenerationCreditCost("feature", "build_scenes")'),
+      expect.stringContaining('useGenerationCreditCost("feature", "mainline.build_scenes")'),
     );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
       expect.stringContaining("buildScenesCost.error instanceof BillingRuleNotConfiguredError"),
@@ -157,21 +157,21 @@ describe("M05 CE generation credit cost gating", () => {
       expect.stringMatching(/<CreditCostInline\s+display=\{buildScenesCostDisplay\}/),
     );
     expect(source("src/components/episode/beat-workbench/sketch-section.tsx")).toEqual(
-      expect.stringContaining("<CreditCostInline display={sketchRegenCost.data?.data.display} />"),
+      expect.stringContaining("sketchRegenCost.data?.data.display"),
     );
     expect(source("src/components/episode/beat-workbench/render-section.tsx")).toEqual(
-      expect.stringContaining("<CreditCostInline display={renderRegenCost.data?.data.display} />"),
+      expect.stringContaining("renderRegenCost.data?.data.display"),
     );
     expect(source("src/components/episode/beat-workbench/batch-panel.tsx")).toEqual(
-      expect.stringContaining("<CreditCostInline display={sketchPlanCostDisplay} />"),
+      expect.stringMatching(/<CreditCostInline\s+display=\{sketchPlanCostDisplay\}/),
     );
     expect(source("src/components/episode/beat-workbench/render-plan-dialog.tsx")).toEqual(
-      expect.stringContaining("<CreditCostInline display={renderPlanCostDisplay} />"),
+      expect.stringMatching(/<CreditCostInline\s+display=\{renderPlanCostDisplay\}/),
     );
     expect(
       source("src/routes/_app/projects.$project/episodes.$episode/beats.lazy.tsx"),
     ).toEqual(
-      expect.stringContaining("<CreditCostInline display={sketchPlanCostDisplay} />"),
+      expect.stringMatching(/<CreditCostInline\s+display=\{sketchPlanCostDisplay\}/),
     );
   });
 
