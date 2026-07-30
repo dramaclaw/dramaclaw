@@ -21,7 +21,7 @@ from novelvideo.models import (
     NovelEvent,
     NovelVisualBeat,
 )
-from novelvideo.config import ensure_project_dirs, get_newapi_reasoning_kwargs
+from novelvideo.config import get_newapi_reasoning_kwargs
 from novelvideo.cognee.screenplay_normalizer import (
     NormalizedSceneBlock,
     clean_scene_name_and_time,
@@ -32,7 +32,6 @@ from novelvideo.time_of_day import LlmTimeOfDay
 
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
 from . import config as _cognee_config  # noqa: F401
-from .config import apply_cognee_project_storage_context
 from .ladybug_access import ladybug_graph_access
 
 # cognee 重量级模块延迟导入（避免 reload 时拉起整个初始化链）
@@ -83,40 +82,6 @@ async def _run_graph_read(
         return await operation()
     async with ladybug_graph_access(state_dir, read_only=True):
         return await operation()
-
-
-def _set_cognee_project_context(
-    project_name: str = "",
-    project_dir: Optional[str] = None,
-    verbose: bool = False,
-) -> None:
-    """Point Cognee search at the current project's isolated graph/vector store."""
-    if not project_dir and project_name:
-        project_dir = ensure_project_dirs(project_name)["base"]
-    if not project_dir:
-        return
-
-    state_dir = project_dir
-    parts = project_name.split("/", 1)
-    if len(parts) == 2:
-        from novelvideo.utils.project_paths import ProjectPaths
-
-        paths = ProjectPaths(parts[0], parts[1])
-        paths.bootstrap_from_legacy_output()
-        state_dir = str(paths.state_dir)
-
-    with preserve_st_env():
-        import cognee
-
-    cognee_system_dir, cognee_data_dir = apply_cognee_project_storage_context(state_dir, cognee)
-    if verbose:
-        print(
-            f"[cognee_context] project={project_name} "
-            f"project_dir={project_dir} "
-            f"system_root_directory={cognee_system_dir} "
-            f"data_root_directory={cognee_data_dir}",
-            flush=True,
-        )
 
 
 def _stringify_search_fragment(value) -> str:
@@ -403,8 +368,6 @@ async def extract_characters_from_graph(
 
     def log(message: str):
         print(f"[extract_characters] {message}")
-
-    _set_cognee_project_context(project_name=project_name, project_dir=project_dir, verbose=True)
 
     # Step 1: 通过 cognee.search 获取图谱上下文
     report(0.1, "通过图谱检索人物信息...")
@@ -1030,12 +993,6 @@ async def extract_scenes_from_graph(
         if on_log:
             on_log(message)
 
-    _set_cognee_project_context(
-        project_name=project_name,
-        project_dir=project_dir,
-        verbose=True,
-    )
-
     report(0.1, "通过图谱检索场景信息...")
     context_text = ""
     try:
@@ -1487,8 +1444,6 @@ async def extract_props_from_graph(
 
     def log(message: str):
         print(f"[extract_props] {message}")
-
-    _set_cognee_project_context(project_name=project_name, project_dir=project_dir, verbose=True)
 
     report(0.1, "通过图谱检索道具信息...")
 

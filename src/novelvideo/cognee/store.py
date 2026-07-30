@@ -15,9 +15,9 @@ from datetime import date, datetime
 from uuid import UUID
 
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
-from .config import apply_cognee_project_storage_context, init_cognee  # noqa: F401
+from .config import init_cognee  # noqa: F401
 from .concurrency import cognee_pipeline_concurrency
-from .ladybug_access import ladybug_graph_access
+from .ladybug_access import cognee_project_context, ladybug_graph_access
 
 from novelvideo.shared.env_guard import preserve_st_env
 
@@ -167,9 +167,6 @@ class CogneeStore:
         self.cognee_embedding_model: str | None = None
         self.cognee_embedding_dimensions: int | None = None
 
-        # 立即设置 Cognee 上下文
-        self._set_cognee_context()
-
     def __getattr__(self, name: str):
         """Lazily restore SQLiteStore for legacy/test objects built via __new__."""
         # TODO: remove this legacy __new__ compatibility path after old tests and
@@ -277,25 +274,6 @@ class CogneeStore:
     def _normalize_alias_lookup(value: str) -> str:
         """统一别名查找键，降低空格/大小写差异导致的失配。"""
         return " ".join((value or "").replace("\u3000", " ").strip().lower().split())
-
-    def _set_cognee_context(self, verbose: bool = False) -> None:
-        """设置 Cognee 的数据库上下文为当前项目。
-
-        切换 Cognee system/data 路径，
-        确保多项目切换时 search() 和 cognify() 都指向正确的项目。
-        """
-        cognee_system_dir, cognee_data_dir = apply_cognee_project_storage_context(
-            self.state_dir,
-            cognee,
-        )
-        if verbose:
-            print(
-                f"[cognee_context] project={self.project_name} "
-                f"project_dir={self.project_dir} "
-                f"system_root_directory={cognee_system_dir} "
-                f"data_root_directory={cognee_data_dir}",
-                flush=True,
-            )
 
     def embedding_model_scope(self):
         model = getattr(self, "cognee_embedding_model", None)
@@ -410,7 +388,6 @@ class CogneeStore:
         """Run a Cognee pipeline stage once, retrying one transient failure."""
         last_error: Exception | None = None
         for attempt in range(2):
-            self._set_cognee_context()
             try:
                 async with cognee_pipeline_concurrency():
                     with self.embedding_model_scope():
@@ -448,33 +425,36 @@ class CogneeStore:
         # 初始化项目 SQLite；Cognee 图谱上下文独立设置。
         await self._ensure_db()
 
-        # 设置 Cognee 上下文（包含 project-local system/data 路径）
-        self._set_cognee_context(verbose=True)
+        # Cognee's graph/vector contexts are task-local, while DramaClaw adds
+        # the missing project-local base/relational contexts for Cognee 1.0.5.
+        # Different projects can therefore initialize safely in Celery threads.
+        with cognee_project_context(self.state_dir):
+            try:
+                with self.embedding_model_scope():
+                    await setup()
+            except Exception as e:
+                # cognee 0.5.3 bug: 重复初始化时 CREATE TABLE data 报 already exists
+                if "already exists" in str(e):
+                    pass
+                else:
+                    raise
 
-        try:
-            with self.embedding_model_scope():
-                await setup()
-        except Exception as e:
-            # cognee 0.5.3 bug: 重复初始化时 CREATE TABLE data 报 already exists
-            if "already exists" in str(e):
-                pass
-            else:
-                raise
+            # 确保当前用户拥有该 dataset
+            with preserve_st_env():
+                from cognee.modules.pipelines.layers.resolve_authorized_user_datasets import (
+                    resolve_authorized_user_datasets,
+                )
 
-        # 确保当前用户拥有该 dataset
-        with preserve_st_env():
-            from cognee.modules.pipelines.layers.resolve_authorized_user_datasets import (
-                resolve_authorized_user_datasets,
-            )
-
-        try:
-            with self.embedding_model_scope():
-                await resolve_authorized_user_datasets(datasets=self.dataset_name)
-        except Exception as e:
-            if "UNIQUE constraint failed: datasets.id" in str(e):
-                pass
-            else:
-                console.print(f"[yellow]⚠️ dataset 权限注册失败（非致命）: {e}[/yellow]")
+            try:
+                with self.embedding_model_scope():
+                    await resolve_authorized_user_datasets(datasets=self.dataset_name)
+            except Exception as e:
+                if "UNIQUE constraint failed: datasets.id" in str(e):
+                    pass
+                else:
+                    console.print(
+                        f"[yellow]⚠️ dataset 权限注册失败（非致命）: {e}[/yellow]"
+                    )
 
         console.print(
             f"[dim]存储层已初始化 (dataset: {self.dataset_name}, db: {self.db_path})[/dim]"
@@ -767,7 +747,6 @@ class CogneeStore:
         expensive and could block the API worker.
         """
 
-        self._set_cognee_context()
         with preserve_st_env():
             from cognee.context_global_variables import (
                 set_database_global_context_variables,
@@ -875,7 +854,6 @@ class CogneeStore:
 
     async def _dataset_graph_has_nodes(self) -> bool:
         """Check graph existence without loading every node and edge."""
-        self._set_cognee_context()
         with preserve_st_env():
             from cognee.context_global_variables import (
                 set_database_global_context_variables,
@@ -918,7 +896,6 @@ class CogneeStore:
         novel_text = require_imported_novel(self.project_dir)
         report(0.1, "从图谱提取人物节点...")
         log("从图谱提取角色候选...")
-        self._set_cognee_context()
         with self.embedding_model_scope():
             characters = await extract_characters_from_graph(
                 dataset_name=self.dataset_name,
@@ -1544,8 +1521,6 @@ class CogneeStore:
     async def search(self, query: str, mode: str = "graph", top_k: int = 10) -> str:
         """语义检索。"""
         async with ladybug_graph_access(self.state_dir, read_only=True):
-            self._set_cognee_context()
-
             with preserve_st_env():
                 from cognee.modules.data.exceptions.exceptions import DatasetNotFoundError
 
@@ -1982,7 +1957,6 @@ class CogneeStore:
         require_imported_novel(self.project_dir)
         report(0.1, "从图谱提取场景节点...")
         log("从图谱提取基础场景候选...")
-        self._set_cognee_context()
         with self.embedding_model_scope():
             scenes = await extract_scenes_from_graph(
                 dataset_name=self.dataset_name,
@@ -2070,7 +2044,6 @@ class CogneeStore:
         # P1: 提取新道具
         report(0.1, "从图谱提取道具节点...")
         log("从图谱提取道具候选...")
-        self._set_cognee_context()
         novel_text = self.load_novel_content()
         if novel_text:
             log(f"已加载原文全文用于辅助道具提取: {len(novel_text)} 字符")

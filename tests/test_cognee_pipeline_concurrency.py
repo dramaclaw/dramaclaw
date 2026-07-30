@@ -728,7 +728,6 @@ async def test_store_wraps_each_cognee_operation_in_pipeline_limits():
     from novelvideo.cognee.store import CogneeStore
 
     store = CogneeStore.__new__(CogneeStore)
-    store._set_cognee_context = lambda: None
     store._ensure_pipeline_run_succeeded = lambda _result, _stage: None
     active = 0
     peak = 0

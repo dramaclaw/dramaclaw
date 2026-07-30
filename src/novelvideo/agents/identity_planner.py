@@ -556,8 +556,6 @@ class IdentityPlanner:
                 import cognee
                 from cognee.api.v1.search import SearchType
 
-            self.cognee_store._set_cognee_context(verbose=True)
-
             # 获取与本集相关的图谱上下文（人物关系、别名、背景信息）
             try:
                 async with ladybug_graph_access(

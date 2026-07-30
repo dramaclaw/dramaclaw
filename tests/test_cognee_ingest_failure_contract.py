@@ -146,7 +146,6 @@ async def test_failed_graph_build_leaves_project_unimported(tmp_path, monkeypatc
         store, "save_novel_content", lambda content: saved.__setitem__("content", content)
     )
     monkeypatch.setattr(store, "load_novel_content", lambda: saved.get("content"))
-    monkeypatch.setattr(store, "_set_cognee_context", lambda *a, **k: None)
     monkeypatch.setattr("novelvideo.cognee.config.init_cognee", lambda *a, **k: None)
     monkeypatch.setenv("LLM_API_KEY", "test-key")
 
@@ -179,7 +178,6 @@ async def test_successful_ingest_persists_novel_content(tmp_path, monkeypatch):
         store, "save_novel_content", lambda content: saved.__setitem__("content", content)
     )
     monkeypatch.setattr(store, "load_novel_content", lambda: saved.get("content"))
-    monkeypatch.setattr(store, "_set_cognee_context", lambda *a, **k: None)
     monkeypatch.setattr("novelvideo.cognee.config.init_cognee", lambda *a, **k: None)
     monkeypatch.setenv("LLM_API_KEY", "test-key")
 
@@ -218,7 +216,6 @@ async def test_preview_failure_does_not_mark_ingest_successful(tmp_path, monkeyp
     monkeypatch.setattr(
         store, "save_novel_content", lambda content: saved.__setitem__("content", content)
     )
-    monkeypatch.setattr(store, "_set_cognee_context", lambda *a, **k: None)
     monkeypatch.setattr("novelvideo.cognee.config.init_cognee", lambda *a, **k: None)
     monkeypatch.setenv("LLM_API_KEY", "test-key")
     monkeypatch.setattr(
@@ -279,7 +276,6 @@ async def test_empty_graph_is_not_reported_as_success(tmp_path, monkeypatch):
     monkeypatch.setattr(
         store, "save_novel_content", lambda content: saved.__setitem__("content", content)
     )
-    monkeypatch.setattr(store, "_set_cognee_context", lambda *a, **k: None)
     monkeypatch.setattr("novelvideo.cognee.config.init_cognee", lambda *a, **k: None)
     monkeypatch.setenv("LLM_API_KEY", "test-key")
 
@@ -316,7 +312,6 @@ async def test_failed_rebuild_invalidates_old_import_but_keeps_upload(
     store.dataset_name = "test_ds"
     store.project_dir = str(project_dir)
     store.state_dir = str(tmp_path / "state")
-    monkeypatch.setattr(store, "_set_cognee_context", lambda *a, **k: None)
     monkeypatch.setattr("novelvideo.cognee.config.init_cognee", lambda *a, **k: None)
     monkeypatch.setenv("LLM_API_KEY", "test-key")
 
@@ -342,13 +337,6 @@ async def test_cognee_pipeline_retry_succeeds_after_one_pipeline_error(monkeypat
     from novelvideo.cognee.store import CogneeStore
 
     store = object.__new__(CogneeStore)
-    context_calls = 0
-
-    def count_context():
-        nonlocal context_calls
-        context_calls += 1
-
-    monkeypatch.setattr(store, "_set_cognee_context", count_context)
     results = [
         SimpleNamespace(status=_FakePipelineStatus(), payload="temporary provider error"),
         SimpleNamespace(status=_FakeCompletedPipelineStatus(), payload=None),
@@ -369,7 +357,6 @@ async def test_cognee_pipeline_retry_succeeds_after_one_pipeline_error(monkeypat
     )
 
     assert attempts == 2
-    assert context_calls == 2
     assert any("知识图谱构建失败，准备重试" in item for item in logs)
 
 
@@ -378,13 +365,6 @@ async def test_cognee_pipeline_retry_raises_after_second_pipeline_error(monkeypa
     from novelvideo.cognee.store import CogneeStore
 
     store = object.__new__(CogneeStore)
-    context_calls = 0
-
-    def count_context():
-        nonlocal context_calls
-        context_calls += 1
-
-    monkeypatch.setattr(store, "_set_cognee_context", count_context)
     attempts = 0
     logs: list[str] = []
 
@@ -401,6 +381,5 @@ async def test_cognee_pipeline_retry_raises_after_second_pipeline_error(monkeypa
         )
 
     assert attempts == 2
-    assert context_calls == 2
     assert "provider error 2" in str(exc_info.value)
     assert any("知识图谱构建失败，准备重试" in item for item in logs)

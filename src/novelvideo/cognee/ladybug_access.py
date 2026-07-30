@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
+from importlib.metadata import version
 from pathlib import Path
-from threading import RLock
-from typing import Any, AsyncIterator
+from threading import Lock, RLock
+from typing import Any, AsyncIterator, Iterator
 
 from novelvideo.graph_preview import (
     acquire_graph_preview_lock_async,
@@ -31,13 +32,155 @@ class _GraphAccessState:
     adapters: set[Any] = field(default_factory=set)
 
 
+@dataclass(frozen=True)
+class _CogneeProjectContextState:
+    state_dir: str
+    base_config: Any
+    relational_config: Any
+
+
 _graph_access_state: contextvars.ContextVar[_GraphAccessState | None] = (
     contextvars.ContextVar("novelvideo_ladybug_access_state", default=None)
 )
+_cognee_project_context_state: contextvars.ContextVar[
+    _CogneeProjectContextState | None
+] = contextvars.ContextVar("novelvideo_cognee_project_context", default=None)
 _adapter_scope_lock = RLock()
 _adapter_scope_counts: dict[int, tuple[Any, int]] = {}
 _patch_lock = RLock()
 _patch_installed = False
+_project_context_patch_installed = False
+_process_writer_lock = Lock()
+
+
+def _contextual_base_config():
+    state = _cognee_project_context_state.get()
+    if state is not None:
+        return state.base_config
+    return _contextual_base_config._novelvideo_original()
+
+
+def _contextual_relational_config():
+    state = _cognee_project_context_state.get()
+    if state is not None:
+        return state.relational_config
+    return _contextual_relational_config._novelvideo_original()
+
+
+def install_cognee_project_context_patch() -> None:
+    """Add task-local base/relational storage routing to Cognee 1.0.5.
+
+    Cognee already scopes graph, vector, and file storage with ContextVars, but
+    its base and relational configurations are process-global. DramaClaw keeps
+    a complete Cognee database under each project, so concurrent reads need the
+    two missing project-local configuration layers as well.
+    """
+
+    global _project_context_patch_installed
+    with _patch_lock:
+        if _project_context_patch_installed:
+            return
+
+        installed_version = version("cognee")
+        if installed_version != "1.0.5":
+            raise RuntimeError(
+                "DramaClaw's project-scoped Cognee patch only supports cognee==1.0.5; "
+                f"found {installed_version}"
+            )
+
+        import cognee.context_global_variables as context_module
+        from cognee.infrastructure.databases.relational.get_relational_engine import (
+            get_relational_engine,
+        )
+
+        relational_globals = get_relational_engine.__globals__
+        original_relational_getter = relational_globals.get("get_relational_config")
+        original_base_getter = (
+            context_module.DatabaseContextManager.apply_database_context_variables.__globals__.get(
+                "get_base_config"
+            )
+        )
+        if not callable(original_relational_getter) or not callable(
+            original_base_getter
+        ):
+            raise RuntimeError(
+                "Unsupported Cognee internals: project storage getters were not found"
+            )
+
+        if not hasattr(_contextual_relational_config, "_novelvideo_original"):
+            _contextual_relational_config._novelvideo_original = (
+                original_relational_getter
+            )
+        if not hasattr(_contextual_base_config, "_novelvideo_original"):
+            _contextual_base_config._novelvideo_original = original_base_getter
+
+        relational_globals["get_relational_config"] = _contextual_relational_config
+        context_module.DatabaseContextManager.apply_database_context_variables.__globals__[
+            "get_base_config"
+        ] = _contextual_base_config
+        context_module.get_base_config = _contextual_base_config
+        _project_context_patch_installed = True
+
+
+@contextmanager
+def cognee_project_context(state_dir: str) -> Iterator[None]:
+    """Scope Cognee's project-isolated storage configuration to this task."""
+
+    resolved_state_dir = str(Path(state_dir).expanduser().resolve())
+    current = _cognee_project_context_state.get()
+    if current is not None:
+        if current.state_dir != resolved_state_dir:
+            raise RuntimeError(
+                "cannot access a different project inside the current Cognee context"
+            )
+        yield
+        return
+
+    install_cognee_project_context_patch()
+
+    import cognee.context_global_variables as context_module
+
+    system_root = Path(resolved_state_dir) / "cognee_system"
+    data_root = Path(resolved_state_dir) / "cognee_data"
+    databases_root = system_root / "databases"
+    databases_root.mkdir(parents=True, exist_ok=True)
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    original_base = _contextual_base_config._novelvideo_original()
+    original_relational = _contextual_relational_config._novelvideo_original()
+    state = _CogneeProjectContextState(
+        state_dir=resolved_state_dir,
+        base_config=original_base.model_copy(
+            deep=True,
+            update={
+                "system_root_directory": str(system_root),
+                "data_root_directory": str(data_root),
+            },
+        ),
+        relational_config=original_relational.model_copy(
+            deep=True,
+            update={"db_path": str(databases_root)},
+        ),
+    )
+
+    project_token = _cognee_project_context_state.set(state)
+    graph_token = context_module.graph_db_config.set(None)
+    vector_token = context_module.vector_db_config.set(None)
+    storage_token = context_module.file_storage_config.set(None)
+    try:
+        yield
+    finally:
+        context_module.file_storage_config.reset(storage_token)
+        context_module.vector_db_config.reset(vector_token)
+        context_module.graph_db_config.reset(graph_token)
+        _cognee_project_context_state.reset(project_token)
+
+
+async def _acquire_process_writer_lock() -> None:
+    """Acquire the cross-event-loop writer lock without blocking a loop thread."""
+
+    while not _process_writer_lock.acquire(blocking=False):
+        await asyncio.sleep(0.05)
 
 
 def _current_read_only() -> bool:
@@ -167,33 +310,68 @@ async def ladybug_graph_access(
         yield
         return
 
+    current_project = _cognee_project_context_state.get()
+    if (
+        current_project is not None
+        and current_project.state_dir != resolved_state_dir
+    ):
+        raise RuntimeError(
+            "cannot access a different project inside the current Cognee context"
+        )
+
     install_cognee_ladybug_access_patch()
-    lock_handle = await acquire_graph_preview_lock_async(
-        resolved_state_dir,
-        shared=read_only,
-    )
-    state = _GraphAccessState(
-        state_dir=resolved_state_dir,
-        read_only=read_only,
-    )
-    token = _graph_access_state.set(state)
+    writer_lock_acquired = False
+    lock_handle = None
     try:
-        yield
+        if not read_only:
+            await _acquire_process_writer_lock()
+            writer_lock_acquired = True
+
+            # Cognee 1.0.5 still has several write-path imports that read its
+            # process-global base configuration directly. Serialize mutations
+            # and bind those legacy callers only for the duration of a write.
+            from novelvideo.cognee.config import (
+                apply_cognee_project_storage_context,
+            )
+
+            apply_cognee_project_storage_context(resolved_state_dir)
+
+        with cognee_project_context(resolved_state_dir):
+            lock_handle = await acquire_graph_preview_lock_async(
+                resolved_state_dir,
+                shared=read_only,
+            )
+            state = _GraphAccessState(
+                state_dir=resolved_state_dir,
+                read_only=read_only,
+            )
+            token = _graph_access_state.set(state)
+            try:
+                yield
+            finally:
+                try:
+                    # Ladybug database handles must be closed before the
+                    # cooperative lock is released, otherwise a waiting
+                    # process can acquire our lock but still fail Ladybug's
+                    # native file lock.
+                    _release_scope_adapters(state)
+                finally:
+                    _graph_access_state.reset(token)
+                    completed_lock_handle = lock_handle
+                    lock_handle = None
+                    release_graph_preview_lock(completed_lock_handle)
     finally:
-        try:
-            # Ladybug database handles must be closed before the cooperative
-            # lock is released, otherwise a waiting process can acquire our
-            # lock but still fail Ladybug's native file lock.
-            _release_scope_adapters(state)
-        finally:
-            _graph_access_state.reset(token)
+        if lock_handle is not None:
             release_graph_preview_lock(lock_handle)
+        if writer_lock_acquired:
+            _process_writer_lock.release()
 
 
 def install_cognee_ladybug_access_patch() -> None:
     """Teach Cognee's cached Ladybug adapter about scoped read-only access."""
 
     global _patch_installed
+    install_cognee_project_context_patch()
     with _patch_lock:
         if _patch_installed:
             return
