@@ -33,6 +33,7 @@ import {
   type ImageQuality,
   type ImageSize,
 } from '@/features/canvas/domain/canvasNodes';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import {
   parseAspectRatio,
   pickClosestAspectRatio,
@@ -440,13 +441,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     imageSelectionForCost ? IMAGE_GENERATE_FEATURE_KEY : null,
     {
       surface: 'canvas',
-      params: {
-        ...(selectedModel?.catalogId ? { catalog_id: selectedModel.catalogId } : {}),
-        image_selection: imageSelectionForCost,
+      params: buildImageFeatureBillingParams(selectedModel, {
         size: effectiveImageSize,
         ...(supportsImageQuality ? { quality: effectiveQuality } : {}),
         pricing_quantity: imageQuantity,
-      },
+      }),
       quantity: imageQuantity,
     },
   );

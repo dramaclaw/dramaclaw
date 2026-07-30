@@ -11,6 +11,7 @@ import {
   EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import { CreditCostInline } from '@/components/credit-cost-inline';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
@@ -61,11 +62,10 @@ export const Scene360Overlay = memo(
       selectedModel ? FREEZONE_IMAGE_FEATURES.panorama : null,
       {
         surface: 'canvas',
-        params: {
-          image_selection: selectedModel?.apiModel,
+        params: buildImageFeatureBillingParams(selectedModel, {
           size: '2K',
           quality: 'medium',
-        },
+        }),
       },
     );
     const billingRuleMissing =

@@ -19,6 +19,7 @@ import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 import { useFreezoneImageModels } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { FREEZONE_IMAGE_FEATURES } from "@/features/canvas/application/freezoneImageFeatureBilling";
+import { buildImageFeatureBillingParams } from "@/features/canvas/domain/imageBilling";
 import {
   NODE_CREDIT_PILL_FLAT_CLASS,
   NODE_FLOATING_PANEL_SURFACE_CLASS,
@@ -892,14 +893,13 @@ export function LightEditorPanel({
     selectedModel ? FREEZONE_IMAGE_FEATURES.relight : null,
     {
       surface: "canvas",
-      params: {
-        image_selection: selectedModel?.apiModel,
+      params: buildImageFeatureBillingParams(selectedModel, {
         size: imageSize,
         ...(imageModelSupportsQuality(selectedModel?.apiModel)
           ? { quality: "medium" }
           : {}),
         operation: "relight",
-      },
+      }),
     },
   );
   const billingRuleMissing =

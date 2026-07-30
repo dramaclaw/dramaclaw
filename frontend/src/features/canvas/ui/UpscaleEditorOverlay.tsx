@@ -25,6 +25,7 @@ import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
 import { CANVAS_NODE_TOOLBAR_CARD_CLASS } from './nodeFrameStyles';
 import { NODE_CREDIT_PILL_FLAT_CLASS } from './nodeControlStyles';
@@ -94,14 +95,13 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
     selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
     {
       surface: 'canvas',
-      params: {
-        image_selection: selectedModel?.apiModel,
+      params: buildImageFeatureBillingParams(selectedModel, {
         size: persistedImageSize,
         ...(imageModelSupportsQuality(selectedModel?.apiModel)
           ? { quality: 'medium' }
           : {}),
         operation: 'upscale',
-      },
+      }),
     },
   );
   const billingRuleMissing =

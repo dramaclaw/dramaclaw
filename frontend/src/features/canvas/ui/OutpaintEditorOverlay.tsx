@@ -39,6 +39,7 @@ import {
 } from '@/features/canvas/ui/ProviderModelPicker';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { inheritMainlineFields } from '@/features/canvas/domain/inheritMainlineFields';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
@@ -117,15 +118,14 @@ export const OutpaintEditorOverlay = memo(
       selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
       {
         surface: 'canvas',
-        params: {
-          image_selection: selectedModel?.apiModel,
+        params: buildImageFeatureBillingParams(selectedModel, {
           size: imageSize,
           ...(imageModelSupportsQuality(selectedModel?.apiModel)
             ? { quality: 'medium' }
             : {}),
           operation: 'outpaint',
           pricing_quantity: Math.min(Math.max(numImages, 1), 4),
-        },
+        }),
         quantity: Math.min(Math.max(numImages, 1), 4),
       },
     );

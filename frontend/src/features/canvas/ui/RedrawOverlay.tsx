@@ -38,6 +38,7 @@ import {
 import { awaitTaskCompletion } from '@/api/tasks';
 import { buildRedHighlightMaskBlob } from '@/lib/mask-highlight';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
@@ -144,15 +145,14 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
     selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
     {
       surface: 'canvas',
-      params: {
-        image_selection: selectedModel?.apiModel,
+      params: buildImageFeatureBillingParams(selectedModel, {
         size: imageSize,
         ...(imageModelSupportsQuality(selectedModel?.apiModel)
           ? { quality: 'medium' }
           : {}),
         operation: 'redraw',
         pricing_quantity: Math.min(Math.max(numImages, 1), 4),
-      },
+      }),
       quantity: Math.min(Math.max(numImages, 1), 4),
     },
   );

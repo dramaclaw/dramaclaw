@@ -509,6 +509,66 @@ async def test_generation_credit_cost_route_prices_freezone_image_generate_by_mo
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_preserves_dynamic_image_catalog_identity(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="freezone.image_generate",
+        expected_params={
+            "catalog_id": "custom-cat",
+            "image_selection": "custom-image",
+            "size": "2K",
+            "quality": "high",
+            "pricing_quantity": 2,
+            "pricing_kind": "image",
+            "pricing_model": "custom-image",
+            "pricing_params": {"size": "2K", "quality": "high"},
+        },
+        expected_quantity=2,
+        cost=34,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="freezone.image_generate",
+        params=(
+            '{"catalog_id":"custom-cat","image_selection":"custom-image",'
+            '"pricing_model":"custom-image","size":"2K","quality":"high",'
+            '"pricing_quantity":2}'
+        ),
+        quantity=2,
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 34, "display": "34"}}
+
+
+def test_dynamic_image_catalog_does_not_fall_back_to_static_default_model():
+    from novelvideo.api.routes import model_credits
+
+    params = model_credits.freezone_image_feature_billing_params(
+        "freezone.image_generate",
+        {
+            "catalog_id": "custom-cat",
+            "image_selection": "custom-image",
+            "size": "2K",
+            "quality": "high",
+        },
+    )
+
+    assert params["catalog_id"] == "custom-cat"
+    assert "pricing_model" not in params
+    assert params["pricing_kind"] == "image"
+    assert params["pricing_params"] == {"size": "2K", "quality": "high"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("feature_key", "operation"),
     [

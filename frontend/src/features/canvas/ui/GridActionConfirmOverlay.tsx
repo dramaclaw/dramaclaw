@@ -12,6 +12,7 @@ import {
   EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
   fetchFreezoneJobResult,
@@ -105,14 +106,13 @@ export const GridActionConfirmOverlay = memo(
       selectedModel ? FREEZONE_IMAGE_FEATURES.grid : null,
       {
         surface: 'canvas',
-        params: {
-          image_selection: selectedModel?.apiModel,
+        params: buildImageFeatureBillingParams(selectedModel, {
           size: '2K',
           ...(imageModelSupportsQuality(selectedModel?.apiModel)
             ? { quality: 'medium' }
             : {}),
           mode: gridMode,
-        },
+        }),
       },
     );
     const billingRuleMissing =

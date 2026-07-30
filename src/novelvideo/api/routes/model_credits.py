@@ -493,7 +493,37 @@ def freezone_image_feature_billing_params(feature_key: str, params: dict) -> dic
     clean_feature_key = str(feature_key or "").strip()
     if clean_feature_key not in FREEZONE_IMAGE_FEATURE_KEYS:
         raise ValueError(f"unsupported Freezone image feature: {clean_feature_key}")
+    catalog_id = str(
+        params.get("catalog_id")
+        or params.get("catalog_model_id")
+        or params.get("catalogId")
+        or ""
+    ).strip()
     explicit_pricing_model = str(params.get("pricing_model") or "").strip()
+    if catalog_id:
+        try:
+            pricing_quantity = max(int(params.get("pricing_quantity") or 1), 1)
+        except (TypeError, ValueError):
+            pricing_quantity = 1
+        pricing_params = params.get("pricing_params")
+        if not isinstance(pricing_params, dict):
+            pricing_params = {
+                key: str(params.get(key) or "").strip()
+                for key in ("size", "quality")
+                if str(params.get(key) or "").strip()
+            }
+        return {
+            **params,
+            "catalog_id": catalog_id,
+            "pricing_kind": "image",
+            **(
+                {"pricing_model": explicit_pricing_model}
+                if explicit_pricing_model
+                else {}
+            ),
+            "pricing_params": pricing_params,
+            "pricing_quantity": pricing_quantity,
+        }
     if explicit_pricing_model:
         try:
             pricing_quantity = max(int(params.get("pricing_quantity") or 1), 1)
