@@ -289,6 +289,7 @@
       "noIssues": "No specific issues found"
     },
     "title": "Xia Director",
+    "upgrading": "Xia Director is being upgraded. Stay tuned!",
     "description": "Open Xia Director beside the current creation page.",
     "toggle": "Expand or collapse Xia Director",
     "close": "Collapse Xia Director",
