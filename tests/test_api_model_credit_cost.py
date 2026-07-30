@@ -1083,6 +1083,21 @@ async def test_generation_credit_cost_route_rejects_unknown_video_backend():
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_rejects_removed_wan26_backend():
+    from novelvideo.api.routes import model_credits
+
+    with pytest.raises(HTTPException) as exc_info:
+        await model_credits.get_generation_credit_cost(
+            kind="video_backend",
+            value="wan26",
+            user={"user_id": "usr_1"},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "invalid video backend"
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_rejects_unconfigured_fixed_image_model(
     monkeypatch,
 ):

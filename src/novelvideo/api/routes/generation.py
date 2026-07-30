@@ -4671,7 +4671,6 @@ async def generate_single_video(
     video_duration = normalize_video_duration_for_backend(
         body.video_backend,
         video_duration,
-        has_last_frame=bool(last_frame_path),
     )
 
     config = {

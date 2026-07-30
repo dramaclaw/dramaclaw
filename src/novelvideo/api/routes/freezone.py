@@ -513,6 +513,7 @@ async def _start_or_enqueue_freezone_gen_job(
             "size": image_size,
             **({"quality": quality} if quality else {}),
             **({"catalog_id": catalog_id} if catalog_id else {}),
+            **({"pricing_model": resolved_model} if catalog_id else {}),
         }
     )
     prompt_text = _merge_prompt_with_style_and_camera(prompt, style, camera)
@@ -1966,6 +1967,7 @@ async def _start_or_enqueue_freezone_edit_job(
                 **({"quality": quality} if quality else {}),
                 **({"operation": billing_operation} if billing_operation else {}),
                 **({"catalog_id": catalog_id} if catalog_id else {}),
+                **({"pricing_model": resolved_model} if catalog_id else {}),
             },
         )
     prompt_text = _merge_prompt_with_style_and_camera(prompt, style, camera)
@@ -4169,6 +4171,11 @@ async def freezone_gen(
     request_schema, model_params, catalog_entry = await _resolve_catalog_request(
         "image", body.model_id or body.model, body.model_params, mode=body.gen_mode
     )
+    execution_provider, execution_model = _catalog_image_execution_selection(
+        catalog_entry,
+        requested_provider=body.provider,
+        requested_model=body.model,
+    )
     reference_image_max = (
         catalog_entry.get("referenceImageMax") if catalog_entry else None
     )
@@ -4193,12 +4200,12 @@ async def freezone_gen(
         reference_urls=list(body.reference_urls or []),
         camera=body.camera,
         style=body.style,
-        provider=body.provider,
-        model=body.model,
+        provider=execution_provider,
+        model=execution_model,
         quality=body.quality,
         canvas_id=body.canvas_id or None,
         node_id=body.node_id or None,
-        model_id=body.model_id or None,
+        model_id=_catalog_entry_id(catalog_entry) or body.model_id or None,
         catalog_id=_catalog_entry_id(catalog_entry) or None,
         gen_mode=body.gen_mode or None,
         model_params=model_params,
@@ -6825,6 +6832,37 @@ def _catalog_entry_id(entry: dict[str, Any] | None) -> str:
     return str(entry.get("catalogId") or entry.get("catalog_id") or "").strip()
 
 
+def _catalog_image_execution_selection(
+    entry: dict[str, Any] | None,
+    *,
+    requested_provider: str | None,
+    requested_model: str | None,
+) -> tuple[str | None, str | None]:
+    """Derive both execution and billing identity from one catalog row."""
+    if entry is None:
+        return requested_provider, requested_model
+
+    provider = str(entry.get("providerId") or entry.get("provider") or "").strip()
+    model = str(
+        entry.get("apiModel")
+        or entry.get("api_model")
+        or entry.get("gatewayModel")
+        or entry.get("gateway_model")
+        or ""
+    ).strip()
+    if not provider or not model:
+        raise HTTPException(400, "configured media model is missing provider or gateway model")
+
+    clean_provider = str(requested_provider or "").strip()
+    if clean_provider and clean_provider.casefold() != provider.casefold():
+        raise HTTPException(400, "model provider does not match configured media model")
+
+    clean_model = str(requested_model or "").strip()
+    if clean_model and clean_model not in _catalog_entry_identifiers(entry):
+        raise HTTPException(400, "model does not match configured media model")
+    return provider, model
+
+
 async def _resolve_catalog_request(
     media_type: str,
     model: str | None,
@@ -8438,6 +8476,11 @@ async def freezone_edit(
         None,
         mode=body.gen_mode,
     )
+    execution_provider, execution_model = _catalog_image_execution_selection(
+        catalog_entry,
+        requested_provider=body.provider,
+        requested_model=body.model,
+    )
     return await _start_or_enqueue_freezone_edit_job(
         ctx=ctx,
         username=username,
@@ -8451,12 +8494,12 @@ async def freezone_edit(
         image_size=body.image_size,
         camera=body.camera,
         style=body.style,
-        provider=body.provider,
-        model=body.model,
+        provider=execution_provider,
+        model=execution_model,
         quality=body.quality,
         canvas_id=body.canvas_id or None,
         node_id=body.node_id or None,
-        model_id=body.model_id or None,
+        model_id=_catalog_entry_id(catalog_entry) or body.model_id or None,
         catalog_id=_catalog_entry_id(catalog_entry) or None,
         gen_mode=body.gen_mode or None,
         billing_feature_key="freezone.image_edit",

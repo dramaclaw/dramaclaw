@@ -269,6 +269,11 @@ def test_happyhorse_backend_detection_accepts_newapi_value() -> None:
     assert not is_freezone_happyhorse_backend("newapi_seedance-2.0-fast")
 
 
+def test_freezone_rejects_removed_wan26_backend() -> None:
+    with pytest.raises(ValueError, match="unknown video model"):
+        resolve_freezone_video_backend("wan26")
+
+
 @pytest.mark.asyncio
 async def test_freezone_video_gen_allows_newapi_seedance2_text_to_video(
     monkeypatch, tmp_path: Path

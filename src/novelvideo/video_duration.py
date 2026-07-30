@@ -59,7 +59,6 @@ def video_duration_bounds_for_backend(
         "seedance_pro": (4, 12),
         "seedance_pro_silent": (4, 12),
         "seedance_2": (5, 15),
-        "wan26": (2, 15),
         "grok_720": (1, 15),
     }
     return legacy_bounds.get(str(backend or "").strip().lower(), (None, None))
@@ -70,18 +69,12 @@ def normalize_video_duration_for_backend(
     value: int | float | str | None,
     configured_min_duration: int | None = None,
     configured_max_duration: int | None = None,
-    *,
-    has_last_frame: bool = False,
 ) -> int:
     """Resolve the exact integer seconds used for billing and generation."""
     try:
         duration = max(int(math.ceil(float(value if value is not None else 5))), 1)
     except (TypeError, ValueError):
         duration = 5
-
-    clean_backend = str(backend or "").strip().lower()
-    if clean_backend == "wan26" and has_last_frame:
-        return 5
 
     min_duration, max_duration = video_duration_bounds_for_backend(backend)
     if configured_min_duration is not None:

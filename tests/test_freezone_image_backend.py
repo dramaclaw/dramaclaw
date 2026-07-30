@@ -2473,7 +2473,13 @@ async def test_freezone_gen_rejects_references_above_catalog_limit(
         return (
             {"endpoint": "images/generations", "parameters": []},
             {},
-            {"referenceImageMax": 1},
+            {
+                "catalogId": "custom-catalog",
+                "id": "custom-image",
+                "providerId": "newapi",
+                "apiModel": "custom-image",
+                "referenceImageMax": 1,
+            },
         )
 
     monkeypatch.setattr(
@@ -2496,6 +2502,154 @@ async def test_freezone_gen_rejects_references_above_catalog_limit(
 
     assert exc_info.value.status_code == 400
     assert "at most 1 reference images" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_freezone_gen_rejects_catalog_and_execution_model_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, username="admin", project="58")
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {"endpoint": "images/generations", "parameters": []},
+            {},
+            {
+                "catalogId": "cheap-catalog",
+                "id": "cheap-image",
+                "providerId": "newapi",
+                "apiModel": "cheap-image",
+                "gatewayModel": "cheap-image",
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_gen(
+            project="proj_freezone",
+            body=freezone_routes.FreezoneGenRequest(
+                prompt="generate",
+                model_id="cheap-catalog",
+                model="expensive-image",
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "does not match" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_freezone_gen_derives_execution_and_billing_model_from_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, username="admin", project="58")
+    captured: dict[str, object] = {}
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {"endpoint": "images/generations", "parameters": []},
+            {},
+            {
+                "catalogId": "catalog-image",
+                "id": "catalog-image-legacy",
+                "providerId": "newapi",
+                "apiModel": "LingShan-G2",
+                "gatewayModel": "LingShan-G2",
+            },
+        )
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured["payload"] = kwargs.get("payload") or {}
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_gen"),
+            backend="celery",
+            queue="node.node_a.default",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+
+    result = await freezone_routes.freezone_gen(
+        project="proj_freezone",
+        body=freezone_routes.FreezoneGenRequest(
+            prompt="generate",
+            model_id="catalog-image",
+            image_size="2K",
+            quality="high",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["ok"] is True
+    payload = captured["payload"]
+    assert payload["provider"] == "newapi"
+    assert payload["model"] == "LingShan-G2"
+    assert payload["model_id"] == "catalog-image"
+    assert payload["catalog_id"] == "catalog-image"
+    assert payload["billing"]["catalog_id"] == "catalog-image"
+    assert payload["billing"]["pricing_model"] == "LingShan-G2"
+    assert payload["billing"]["pricing_params"] == {
+        "quality": "high",
+        "size": "2K",
+    }
+
+
+@pytest.mark.asyncio
+async def test_freezone_edit_rejects_catalog_and_execution_model_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, username="admin", project="58")
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {"endpoint": "images/generations", "parameters": []},
+            {},
+            {
+                "catalogId": "cheap-catalog",
+                "id": "cheap-image",
+                "providerId": "newapi",
+                "apiModel": "cheap-image",
+                "gatewayModel": "cheap-image",
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_edit(
+            project="proj_freezone",
+            body=freezone_routes.FreezoneEditRequest(
+                prompt="edit",
+                base_url="/static/base.png",
+                model_id="cheap-catalog",
+                model="expensive-image",
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "does not match" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio

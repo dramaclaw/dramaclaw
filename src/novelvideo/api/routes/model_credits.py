@@ -221,10 +221,6 @@ def _video_backend_cost_model(backend: str) -> str:
         from novelvideo.generators.video_generator import Seedance2VideoGenerator
 
         return Seedance2VideoGenerator.MODEL
-    if backend_enum == VideoBackend.WAN26:
-        from novelvideo.generators.video_generator import Wan26VideoGenerator
-
-        return Wan26VideoGenerator.MODEL
     if backend_enum == VideoBackend.GROK_720:
         from novelvideo.generators.video_generator import GrokVideoGenerator
 
@@ -497,8 +493,26 @@ def freezone_image_feature_billing_params(feature_key: str, params: dict) -> dic
     clean_feature_key = str(feature_key or "").strip()
     if clean_feature_key not in FREEZONE_IMAGE_FEATURE_KEYS:
         raise ValueError(f"unsupported Freezone image feature: {clean_feature_key}")
-    if str(params.get("pricing_model") or "").strip():
-        return params
+    explicit_pricing_model = str(params.get("pricing_model") or "").strip()
+    if explicit_pricing_model:
+        try:
+            pricing_quantity = max(int(params.get("pricing_quantity") or 1), 1)
+        except (TypeError, ValueError):
+            pricing_quantity = 1
+        pricing_params = params.get("pricing_params")
+        if not isinstance(pricing_params, dict):
+            pricing_params = _image_billing_params(
+                model=explicit_pricing_model,
+                image_size=str(params.get("size") or ""),
+                quality=str(params.get("quality") or ""),
+            )
+        return {
+            **params,
+            "pricing_kind": "image",
+            "pricing_model": explicit_pricing_model,
+            "pricing_params": pricing_params,
+            "pricing_quantity": pricing_quantity,
+        }
     image_selection = str(params.get("image_selection") or "").strip()
     if not image_selection:
         return params
