@@ -71,8 +71,12 @@ describe("resetUserSessionState", () => {
     // 换账号登录后 projectSummaries 还在 staleTime 内，B 直接看到 A 的项目列表。
     const qc = new QueryClient();
     qc.setQueryData(["projectSummaries"], ["A 的项目"]);
+    qc.setQueryData(["org", "me"], { organization: { org_id: "org-a" } });
+    qc.setQueryData(["org", "members"], [{ user_id: "user-a" }]);
     resetUserSessionState({ queryClient: qc });
     expect(qc.getQueryData(["projectSummaries"])).toBeUndefined();
+    expect(qc.getQueryData(["org", "me"])).toBeUndefined();
+    expect(qc.getQueryData(["org", "members"])).toBeUndefined();
   });
 
   it("sweeps user-scoped localStorage keys like the region reset does", () => {
