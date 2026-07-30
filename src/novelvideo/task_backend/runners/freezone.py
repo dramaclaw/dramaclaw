@@ -805,20 +805,72 @@ async def _run_freezone_story_script_async(
     ctx: ProjectContext,
 ) -> dict[str, Any]:
     from novelvideo.api.deps import make_static_url_for_context
-    from novelvideo.freezone.jobs import ensure_freezone_dirs
+    from novelvideo.freezone.jobs import ensure_freezone_dirs, run_freezone_extract_frames
     from novelvideo.freezone.paths import outputs_dir
-    from novelvideo.freezone.text_node import generate_freezone_story_script
+    from novelvideo.freezone.text_node import (
+        bind_story_script_assets,
+        generate_freezone_story_script,
+        generate_freezone_story_script_with_vision,
+    )
 
     payload = envelope.get("payload") or {}
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
-    _update(ctx, "freezone_story_script", job_id, 0.1, "开始生成故事脚本...")
-    data = await generate_freezone_story_script(
-        source_text=str(payload.get("source_text") or ""),
-        prompt=str(payload.get("prompt") or ""),
-        model=str(payload.get("model") or ""),
-    )
+
+    source_text = str(payload.get("source_text") or "")
+    prompt = str(payload.get("prompt") or "")
+    character_refs = list(payload.get("character_refs") or [])
+    character_image_paths = [str(path) for path in payload.get("character_image_paths") or []]
+    video_path = str(payload.get("video_path") or "")
+    duration_sec = payload.get("duration_sec")
+
+    frame_paths: list[Path] = []
+    frame_urls: list[str] = []
+    if video_path:
+        _update(ctx, "freezone_story_script", job_id, 0.1, "ffmpeg 抽取关键帧...")
+        frame_paths = await run_freezone_extract_frames(
+            project_dir=project_dir,
+            job_id=job_id,
+            video_path=Path(video_path),
+            max_frames=int(payload.get("max_frames") or 20),
+            scene_threshold=float(payload.get("scene_threshold") or 0.3),
+        )
+        frame_urls = [
+            make_static_url_for_context(ctx, path.relative_to(project_dir).as_posix())
+            for path in frame_paths
+        ]
+
+    if frame_paths or character_image_paths:
+        _update(
+            ctx,
+            "freezone_story_script",
+            job_id,
+            0.55,
+            (
+                f"视觉模型解析 {len(frame_paths)} 帧为分镜脚本..."
+                if frame_paths
+                else "视觉模型读取角色参考图生成故事脚本..."
+            ),
+        )
+        data = await generate_freezone_story_script_with_vision(
+            frame_paths=[str(path) for path in frame_paths],
+            character_image_paths=character_image_paths,
+            source_text=source_text,
+            prompt=prompt,
+            duration_sec=float(duration_sec) if duration_sec else None,
+            character_refs=character_refs,
+        )
+    else:
+        _update(ctx, "freezone_story_script", job_id, 0.1, "开始生成故事脚本...")
+        data = await generate_freezone_story_script(
+            source_text=source_text,
+            prompt=prompt,
+            model=str(payload.get("model") or ""),
+            character_refs=character_refs,
+        )
+
+    bind_story_script_assets(data, frame_urls=frame_urls, character_refs=character_refs)
     out = outputs_dir(project_dir, "freezone_story_script") / f"{job_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     import json
@@ -833,6 +885,8 @@ async def _run_freezone_story_script_async(
         "output_url": make_static_url_for_context(ctx, rel),
         **payload_data,
     }
+    if frame_urls:
+        result["frame_urls"] = frame_urls
     history_record = _append_node_history(
         ctx=ctx,
         project_dir=project_dir,

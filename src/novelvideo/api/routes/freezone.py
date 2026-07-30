@@ -58,6 +58,7 @@ from novelvideo.api.schemas import (
     FreezoneScene360Request,
     FreezoneSketchFromContextRequest,
     FreezoneStageAssetAcceptedResponse,
+    FreezoneStoryScriptCharacterRef,
     FreezoneStoryScriptGenerateRequest,
     FreezoneTemplateEditRequest,
     FreezoneTextTranslateRequest,
@@ -212,7 +213,9 @@ from novelvideo.freezone.slots import (
     validate_source_for_slot,
 )
 from novelvideo.freezone.text_node import (
+    bind_story_script_assets,
     generate_freezone_story_script,
+    generate_freezone_story_script_with_vision,
     translate_freezone_text,
 )
 from novelvideo.freezone.video_node import (
@@ -6226,6 +6229,31 @@ async def get_freezone_audio_voice_media(
     return FileResponse(path=str(resolved.audio_path))
 
 
+def _resolve_story_script_character_refs(
+    character_refs: list[FreezoneStoryScriptCharacterRef],
+    project_dir: Path,
+) -> tuple[list[dict], list[str]]:
+    """把角色参考拆成「给模型的角色卡」和「本地图片路径」。
+
+    外链或解析不出本地文件的图片仍然保留在角色卡里（回填 URL 时照样能用），
+    只是不会作为附件送进视觉模型。
+    """
+    refs: list[dict] = []
+    image_paths: list[str] = []
+    for ref in character_refs:
+        refs.append(ref.model_dump())
+        image_url = (ref.image_url or "").strip()
+        if not image_url:
+            continue
+        try:
+            path = resolve_static_url_to_path(image_url, project_dir)
+        except ValueError:
+            continue
+        if path.exists():
+            image_paths.append(path.as_posix())
+    return refs, image_paths
+
+
 def _start_freezone_story_script_task(
     *,
     username: str,
@@ -6237,6 +6265,8 @@ def _start_freezone_story_script_task(
     model: str,
     canvas_id: str | None = None,
     node_id: str | None = None,
+    character_refs: list[dict] | None = None,
+    character_image_paths: list[str] | None = None,
 ) -> None:
     task_type = "freezone_story_script"
     task_manager = get_task_manager()
@@ -6269,11 +6299,23 @@ def _start_freezone_story_script_task(
                 current_task="generating_story_script",
                 logs=logs,
             )
-            data = await generate_freezone_story_script(
-                source_text=source_text,
-                prompt=prompt,
-                model=model,
-            )
+            if character_image_paths:
+                # 有角色参考图就走视觉模型，让角色描述照着图写；
+                # 纯文本模式仍走原来的 story-script 文本别名。
+                data = await generate_freezone_story_script_with_vision(
+                    character_image_paths=character_image_paths,
+                    source_text=source_text,
+                    prompt=prompt,
+                    character_refs=character_refs,
+                )
+            else:
+                data = await generate_freezone_story_script(
+                    source_text=source_text,
+                    prompt=prompt,
+                    model=model,
+                    character_refs=character_refs,
+                )
+            bind_story_script_assets(data, character_refs=character_refs)
             out = _story_script_output_path(project_dir, job_id)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(
@@ -6367,8 +6409,25 @@ async def freezone_story_script_generate(
             raise HTTPException(404, f"source not found: {source_path}")
         source_text = _read_freezone_text_file(source_path).strip()
 
-    if not source_text:
-        raise HTTPException(400, "source_text or source_url is required")
+    video_path: Path | None = None
+    if body.video_url:
+        try:
+            video_path = resolve_static_url_to_path(body.video_url, project_dir)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not video_path.exists():
+            raise HTTPException(404, f"video not found: {video_path}")
+
+    character_refs, character_image_paths = _resolve_story_script_character_refs(
+        body.character_refs, project_dir
+    )
+
+    # 视频 / 角色图本身就是主输入，这时不再强制要求剧本文本
+    # （issue #207：以前只认 source_text，前端只好把提示词当剧本塞进来）。
+    if not source_text and video_path is None and not character_image_paths:
+        raise HTTPException(
+            400, "source_text, source_url, video_url or character_refs is required"
+        )
 
     try:
         job_id = _new_job_id()
@@ -6384,8 +6443,18 @@ async def freezone_story_script_generate(
                     "model": body.model,
                     "canvas_id": body.canvas_id or "",
                     "node_id": body.node_id or "",
+                    "video_path": video_path.as_posix() if video_path else "",
+                    "duration_sec": body.duration_sec,
+                    "max_frames": body.max_frames,
+                    "scene_threshold": body.scene_threshold,
+                    "character_refs": character_refs,
+                    "character_image_paths": character_image_paths,
                 },
             )
+        if video_path is not None:
+            # 抽帧要落盘并生成 /static 地址，没有 ProjectContext 就拼不出 URL。
+            # 与 analyze-video-story 等视频任务保持一致的前置要求。
+            _raise_project_context_required("freezone_story_script")
         _start_freezone_story_script_task(
             username=username,
             project=project_name,
@@ -6396,6 +6465,8 @@ async def freezone_story_script_generate(
             model=body.model,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            character_refs=character_refs,
+            character_image_paths=character_image_paths,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

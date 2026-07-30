@@ -11,8 +11,11 @@ from novelvideo.freezone.text_node import (
     FREEZONE_TRANSLATION_MODEL,
     FREEZONE_TRANSLATION_PROVIDER,
     FreezoneTranslationResult,
+    bind_story_script_assets,
     build_freezone_story_script_task,
     build_freezone_translation_task,
+    build_freezone_video_story_script_task,
+    generate_freezone_story_script_with_vision,
     translate_freezone_text,
 )
 
@@ -261,6 +264,269 @@ async def test_freezone_story_script_route_reads_source_url_file(
     assert result["ok"] is True
     assert result["data"]["task_type"] == "freezone_story_script"
     assert captured["source_text"] == "沈昭昭在深夜办公室醒来。"
+
+
+def test_story_script_request_keeps_video_and_character_fields() -> None:
+    """issue #207 回归：前端发的视频 / 角色参考字段不能再被 Pydantic 静默丢掉。
+
+    这些字段以前没在模型里声明，``extra="ignore"`` 会把它们连同 duration_sec 一起
+    吃掉，于是「视频参考生成分镜脚本」从头到尾都没把视频交给模型。
+    """
+    body = freezone_routes.FreezoneStoryScriptGenerateRequest.model_validate(
+        {
+            "video_url": "/static/admin/58/freezone/_uploads/clip.mp4",
+            "duration_sec": 15.0,
+            "character_refs": [
+                {
+                    "name": "沈昭昭",
+                    "image_url": "/static/admin/58/freezone/_uploads/shen.png",
+                    "role": "女主",
+                }
+            ],
+            "prompt": "生成视频脚本",
+        }
+    )
+
+    assert body.video_url == "/static/admin/58/freezone/_uploads/clip.mp4"
+    assert body.duration_sec == 15.0
+    assert body.character_refs[0].name == "沈昭昭"
+    assert body.character_refs[0].image_url.endswith("shen.png")
+
+
+@pytest.mark.asyncio
+async def test_freezone_story_script_route_enqueues_video_reference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    video = project_dir / "freezone" / "_uploads" / "clip.mp4"
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"fake-mp4")
+
+    async def _fake_resolve(project: str, user: dict, *, required_role: str = "editor"):
+        del user, required_role
+        return object(), "admin", project, project_dir, str(project_dir)
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", _fake_resolve)
+    captured: dict[str, object] = {}
+
+    async def _fake_enqueue(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "data": {"task_type": kwargs["task_type"]}}
+
+    monkeypatch.setattr(
+        freezone_routes, "_enqueue_freezone_background_job", _fake_enqueue
+    )
+
+    result = await freezone_routes.freezone_story_script_generate(
+        project="58",
+        body=freezone_routes.FreezoneStoryScriptGenerateRequest(
+            video_url="/static/admin/58/freezone/_uploads/clip.mp4",
+            duration_sec=15.0,
+            prompt="生成视频脚本",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["ok"] is True
+    payload = captured["payload"]
+    assert payload["video_path"] == video.as_posix()
+    assert payload["duration_sec"] == 15.0
+    assert payload["max_frames"] == 20
+    assert payload["prompt"] == "生成视频脚本"
+    # 视频是主输入，不再要求前端把提示词伪装成剧本正文。
+    assert payload["source_text"] == ""
+
+
+@pytest.mark.asyncio
+async def test_freezone_story_script_route_forwards_character_refs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    portrait = project_dir / "freezone" / "_uploads" / "shen.png"
+    portrait.parent.mkdir(parents=True, exist_ok=True)
+    portrait.write_bytes(b"png")
+
+    _patch_project_resolution(monkeypatch, project_dir)
+    captured: dict[str, object] = {}
+
+    def _fake_start_story_script_task(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        freezone_routes, "_start_freezone_story_script_task", _fake_start_story_script_task
+    )
+
+    result = await freezone_routes.freezone_story_script_generate(
+        project="58",
+        body=freezone_routes.FreezoneStoryScriptGenerateRequest(
+            character_refs=[
+                freezone_routes.FreezoneStoryScriptCharacterRef(
+                    name="沈昭昭",
+                    image_url="/static/admin/58/freezone/_uploads/shen.png",
+                    role="女主",
+                )
+            ],
+            prompt="生成一段职场逆袭脚本",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["ok"] is True
+    assert captured["character_refs"][0]["name"] == "沈昭昭"
+    assert captured["character_image_paths"] == [portrait.as_posix()]
+
+
+@pytest.mark.asyncio
+async def test_freezone_story_script_route_rejects_empty_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    _patch_project_resolution(monkeypatch, tmp_path / "project")
+
+    with pytest.raises(HTTPException) as excinfo:
+        await freezone_routes.freezone_story_script_generate(
+            project="58",
+            body=freezone_routes.FreezoneStoryScriptGenerateRequest(),
+            user={"username": "admin"},
+        )
+
+    assert excinfo.value.status_code == 400
+
+
+def test_build_freezone_video_story_script_task_describes_the_real_video() -> None:
+    task = build_freezone_video_story_script_task(
+        frame_count=6,
+        prompt="生成视频脚本",
+        duration_sec=15.0,
+    )
+
+    assert "6" in task
+    assert "15" in task
+    assert "keyframe_index" in task
+    assert "生成视频脚本" in task
+
+
+@pytest.mark.asyncio
+async def test_generate_story_script_with_vision_attaches_frames(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frames = []
+    for index in range(3):
+        frame = tmp_path / f"frame_{index}.png"
+        frame.write_bytes(b"png-bytes")
+        frames.append(frame)
+    captured: dict[str, object] = {}
+
+    class FakeAgent:
+        async def run(self, messages):
+            captured["messages"] = messages
+
+            class Response:
+                output = FreezoneStoryScriptGenerateData(title="", rows=[])
+
+            return Response()
+
+    monkeypatch.setattr(
+        "novelvideo.freezone.text_node.get_freezone_video_story_script_agent",
+        FakeAgent,
+    )
+
+    await generate_freezone_story_script_with_vision(
+        frame_paths=frames,
+        prompt="生成视频脚本",
+        duration_sec=15.0,
+    )
+
+    messages = captured["messages"]
+    assert isinstance(messages[0], str)
+    # 三张关键帧必须真的作为附件送进模型，而不是只在提示词里被提一句。
+    assert len(messages) == 1 + len(frames)
+    assert all(getattr(item, "data", None) == b"png-bytes" for item in messages[1:])
+
+
+def test_bind_story_script_assets_fills_frames_and_character_images() -> None:
+    data = FreezoneStoryScriptGenerateData(
+        title="猫猫散步",
+        rows=[
+            FreezoneStoryScriptRow(
+                shot_no=1,
+                duration=4,
+                visual_description="猫从画面左侧走入",
+                character_1="香蕉猫",
+                keyframe_index=2,
+            ),
+            FreezoneStoryScriptRow(
+                shot_no=2,
+                duration=4,
+                visual_description="猫停下回头",
+                character_1="香蕉猫_特写",
+                character_2="路人",
+                keyframe_index=1,
+            ),
+        ],
+    )
+
+    bind_story_script_assets(
+        data,
+        frame_urls=["/static/f1.png", "/static/f2.png"],
+        character_refs=[
+            {"name": "香蕉猫", "image_url": "/static/cat.png"},
+            {"name": "路人", "image_url": "/static/passerby.png"},
+        ],
+    )
+
+    assert data.rows[0].reference == "/static/f2.png"
+    assert data.rows[1].reference == "/static/f1.png"
+    assert data.rows[0].character_image_1 == "/static/cat.png"
+    # 模型把角色名写成带后缀的稳定 ID 时仍要匹配上。
+    assert data.rows[1].character_image_1 == "/static/cat.png"
+    assert data.rows[1].character_image_2 == "/static/passerby.png"
+
+
+def test_bind_story_script_assets_falls_back_to_row_order_on_bad_index() -> None:
+    data = FreezoneStoryScriptGenerateData(
+        title="",
+        rows=[
+            FreezoneStoryScriptRow(
+                shot_no=1, duration=3, visual_description="第一镜", keyframe_index=99
+            ),
+            FreezoneStoryScriptRow(
+                shot_no=2, duration=3, visual_description="第二镜", keyframe_index=0
+            ),
+            FreezoneStoryScriptRow(
+                shot_no=3, duration=3, visual_description="第三镜", keyframe_index=0
+            ),
+        ],
+    )
+
+    bind_story_script_assets(data, frame_urls=["/static/f1.png", "/static/f2.png"])
+
+    assert data.rows[0].reference == "/static/f1.png"
+    assert data.rows[1].reference == "/static/f2.png"
+    # 帧数不够时多出来的镜头留空，而不是循环复用一张图。
+    assert data.rows[2].reference == ""
+
+
+def test_bind_story_script_assets_binds_sole_character_image() -> None:
+    data = FreezoneStoryScriptGenerateData(
+        title="",
+        rows=[
+            FreezoneStoryScriptRow(
+                shot_no=1, duration=3, visual_description="第一镜", character_1="女主角"
+            )
+        ],
+    )
+
+    bind_story_script_assets(
+        data, character_refs=[{"name": "沈昭昭", "image_url": "/static/shen.png"}]
+    )
+
+    assert data.rows[0].character_image_1 == "/static/shen.png"
 
 
 @pytest.mark.asyncio
