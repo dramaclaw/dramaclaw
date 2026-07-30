@@ -7,6 +7,7 @@ import re
 from typing import Literal
 
 from novelvideo.utils.screenplay_scene_parser import (
+    BRACKETED_LABELED_SCENE_RE,
     INTERIOR_EXTERIOR,
     INLINE_LABELED_SCENE_RE,
     LABELED_LOCATION_RE,
@@ -153,6 +154,8 @@ def _has_source_scene_header_evidence(header_line: str) -> bool:
         "",
         header,
     ).strip()
+    if BRACKETED_LABELED_SCENE_RE.fullmatch(header):
+        return True
     if INLINE_LABELED_SCENE_RE.fullmatch(header):
         return True
     if NUMBERED_SCENE_PREFIX_RE.match(header):

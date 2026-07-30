@@ -1,6 +1,7 @@
 from novelvideo.cognee.script_parser import parse_scenes
 from novelvideo.utils.screenplay_quality import check_screenplay_import_quality
 from novelvideo.utils.screenplay_scene_parser import parse_scene_blocks
+from novelvideo.utils.screenplay_scene_parser import is_scene_start_line
 from novelvideo.workflows.literal_script_writing import LiteralScriptWritingWorkflow
 
 
@@ -57,6 +58,50 @@ def test_parse_repairable_split_scene_header_without_polluting_body():
     assert blocks[0].interior_exterior == "内"
     assert blocks[0].characters == ["杜晨", "面馆男青年"]
     assert blocks[0].lines == ["杜晨：老板，结账。"]
+
+
+def test_parse_numbered_bracketed_scene_headers_with_characters():
+    text = """
+第一集
+1 场景：【夜 皇宫豹房露台 外】
+人物：正德帝、随行太监
+△ 乾清宫方向烈焰冲天。
+正德帝：好一棚大烟火也。
+2 场景：【夜 乾清宫偏殿・尚宝监值守房 内】
+人物：黑衣刺客（李砚）、尚宝监王奉御
+△ 浓烟顺着窗缝往殿内灌。
+李砚 OS：朱家的天下，早已烂在根里。
+3 场景：【夜 紫禁城宫墙与屋顶 外】
+人物：李砚、锦衣卫众、陆峥
+△ 李砚在飞檐间疾奔。
+陆峥：立刻封锁九门。
+"""
+
+    blocks = parse_scene_blocks(text)
+
+    assert is_scene_start_line("1 场景：【夜 皇宫豹房露台 外】") is True
+    assert len(blocks) == 3
+    assert [
+        (
+            block.episode,
+            block.scene_no,
+            block.location,
+            block.time_of_day,
+            block.interior_exterior,
+            block.characters,
+        )
+        for block in blocks
+    ] == [
+        (1, "1", "皇宫豹房露台", "夜", "外", ["正德帝", "随行太监"]),
+        (1, "2", "乾清宫偏殿・尚宝监值守房", "夜", "内", ["李砚", "尚宝监王奉御"]),
+        (1, "3", "紫禁城宫墙与屋顶", "夜", "外", ["李砚", "锦衣卫众", "陆峥"]),
+    ]
+    assert blocks[0].lines == ["△ 乾清宫方向烈焰冲天。", "正德帝：好一棚大烟火也。"]
+    assert blocks[1].lines == [
+        "△ 浓烟顺着窗缝往殿内灌。",
+        "李砚 OS：朱家的天下，早已烂在根里。",
+    ]
+    assert blocks[2].lines == ["△ 李砚在飞檐间疾奔。", "陆峥：立刻封锁九门。"]
 
 
 def test_parse_numbered_legacy_header_with_people_line():
