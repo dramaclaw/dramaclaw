@@ -527,7 +527,10 @@ def test_m06_ingest_start_task_shape_is_ce_ee_isomorphic(m06_client_factory, bac
     client, task_backend, _task_manager, project_dir, _assets, _store = m06_client_factory(backend)
     upload = project_dir / "uploads" / "novel.txt"
     upload.parent.mkdir(parents=True, exist_ok=True)
-    upload.write_text("第一章 雨巷\n林昭撑伞。", encoding="utf-8")
+    upload.write_text(
+        "第一章 雨巷\n1-1 雨巷 日 外\n林昭撑伞。",
+        encoding="utf-8",
+    )
 
     response = client.post(
         f"/api/v1/projects/{_PROJECT}/ingest/start",

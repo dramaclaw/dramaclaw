@@ -435,7 +435,11 @@ async def test_start_ingest_preserves_legacy_canonical_novel_for_reimport(
 
     response = await ingest.start_ingest(
         project="demo",
-        body=IngestStart(filename="novel.txt", rebuild=True),
+        body=IngestStart(
+            filename="novel.txt",
+            rebuild=True,
+            spine_template="narrated",
+        ),
         user={"username": "admin"},
     )
 

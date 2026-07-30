@@ -38,6 +38,27 @@ def test_parse_three_line_scene_block_header():
     assert blocks[0].lines == ["杜晨：老板，结账。"]
 
 
+def test_parse_repairable_split_scene_header_without_polluting_body():
+    text = """
+场次：1
+地点：兰州拉面馆
+时间：夜
+内外景：内
+人物：杜晨，面馆男青年
+杜晨：老板，结账。
+"""
+
+    blocks = parse_scene_blocks(text)
+
+    assert len(blocks) == 1
+    assert blocks[0].scene_no == "1"
+    assert blocks[0].location == "兰州拉面馆"
+    assert blocks[0].time_of_day == "夜"
+    assert blocks[0].interior_exterior == "内"
+    assert blocks[0].characters == ["杜晨", "面馆男青年"]
+    assert blocks[0].lines == ["杜晨：老板，结账。"]
+
+
 def test_parse_numbered_legacy_header_with_people_line():
     text = """
 1-1、上海老城·封门旧址 深夜 外

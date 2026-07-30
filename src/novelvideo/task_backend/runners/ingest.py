@@ -50,6 +50,7 @@ async def _run_ingest_fast(envelope: dict[str, Any], ctx: ProjectContext) -> dic
         result = await store.ingest_novel_fast(
             novel_path,
             rebuild=bool(config.get("rebuild", False)),
+            spine_template=str(config.get("spine_template") or "").strip() or None,
             on_progress=update,
             on_log=lambda message: update(0.0, message),
         )

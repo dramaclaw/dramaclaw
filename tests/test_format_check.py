@@ -46,6 +46,7 @@ def test_normative_scene_headers_pass_without_issues():
 
     assert result["level"] == "ok"
     assert result["issues"] == []
+    assert result["scene_header_status"] == "standard"
 
 
 def test_not_screenplay_like_is_metric_only():
@@ -88,6 +89,36 @@ def test_missing_scene_headers_is_warning_when_chapters_exist():
     assert result["level"] == "warning"
     assert "missing_scene_headers" in _codes(result)
     assert result["level"] != "blocking"
+    assert result["scene_header_status"] == "missing"
+
+
+def test_headerless_short_drama_is_blocking_when_scene_headers_are_required():
+    text = "第一集\n孙悟空走进寝房，看见师父正在休息。"
+
+    result = build_import_format_check(
+        text,
+        has_chapters=True,
+        require_scene_headers=True,
+    )
+
+    assert result["level"] == "blocking"
+    assert result["scene_header_status"] == "missing"
+    assert "missing_scene_headers" in _codes(result)
+
+
+def test_parseable_nonstandard_scene_headers_are_repairable():
+    text = """
+场次（1）
+地点：兰州拉面馆，夜，内
+人物：杜晨
+杜晨：老板，结账。
+"""
+
+    result = build_import_format_check(text, has_chapters=True)
+
+    assert result["scene_header_status"] == "repairable"
+    assert result["level"] == "warning"
+    assert "nonstandard_scene_headers" in _codes(result)
 
 
 def test_no_chapters_is_blocking():

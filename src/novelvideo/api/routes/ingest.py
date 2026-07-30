@@ -22,6 +22,7 @@ from novelvideo.graph_preview import (
 )
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
+    load_project_config_file_from_state_dir,
     save_project_config_in_state_dir,
 )
 from novelvideo.ports import get_task_backend
@@ -212,7 +213,8 @@ async def start_ingest(
         return {"ok": False, "error": f"File '{body.filename}' not found in uploads/"}
 
     try:
-        billable_chars = count_billable_novel_chars(load_novel_text(novel_path))
+        content = load_novel_text(novel_path)
+        billable_chars = count_billable_novel_chars(content)
     except DocumentParseError as exc:
         return {
             "ok": False,
@@ -229,7 +231,35 @@ async def start_ingest(
         )
         return {"ok": False, "error": "解析章节失败"}
 
-    config = {"rebuild": body.rebuild}
+    current_project_config = load_project_config_file_from_state_dir(resolved.state_dir)
+    requested_spine_template = str(
+        body.spine_template
+        or current_project_config.get("spine_template")
+        or "drama"
+    ).strip()
+    effective_spine_template = (
+        "narrated" if requested_spine_template == "narrated" else "drama"
+    )
+    if effective_spine_template == "drama":
+        preview = build_chapter_preview(content)
+        format_check = build_import_format_check(
+            content,
+            has_chapters=bool(preview.get("chapters")),
+            chapters=preview.get("chapters"),
+            require_scene_headers=True,
+        )
+        if format_check["level"] == "blocking":
+            return {
+                "ok": False,
+                "error": format_check["summary"],
+                "error_type": "screenplay_format",
+                "format_check": format_check,
+            }
+
+    config = {
+        "rebuild": body.rebuild,
+        "spine_template": effective_spine_template,
+    }
     # Persist the exact source used by this import. The ingest page can then
     # rebuild from the existing upload without forcing the user to upload again.
     project_config_updates = {"ingest_source_filename": safe_name}
@@ -244,7 +274,6 @@ async def start_ingest(
                 ),
             }
         )
-        config["spine_template"] = body.spine_template
     save_project_config_in_state_dir(resolved.state_dir, config=project_config_updates)
 
     if ctx is not None:

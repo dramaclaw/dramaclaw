@@ -89,6 +89,34 @@ beforeAll(async () => {
               narrated: "Narrated",
               drama: "Premium drama",
             },
+            novelFormat: {
+              button: "Premium drama format guide",
+              title: "Premium drama format",
+              intro: "Use explicit episode and scene boundaries.",
+              standardStatus: "Standard",
+              standardStatusHint: "Ready to import.",
+              warningStatus: "Repairable",
+              warningStatusHint: "Import is allowed.",
+              blockingStatus: "Blocked",
+              blockingStatusHint: "Add scene headers.",
+              specLabel: "Standard format",
+              repairableLabel: "Automatically repairable format",
+              repairableHint: "The source text is not rewritten.",
+              rulesLabel: "Writing rules",
+              ruleEpisode: "Start every episode with Episode N.",
+              ruleScene: "Give every scene its own header.",
+              ruleCharacters: "List the characters.",
+              ruleBody: "Keep one visible action per line.",
+              ruleDialogue: "Write one speaker per line.",
+              ruleLocationChange: "Create a new header when location changes.",
+              exampleLabel: "Example excerpt",
+            },
+            sceneHeaders: {
+              missing: "Premium drama scripts require scene headers.",
+              missingFix: "Add a scene header to every scene.",
+              repairable: "Non-standard scene headers will be normalized.",
+              repairableFix: "Scene metadata will be normalized.",
+            },
             firstPerson: "First person",
             thirdPerson: "Third person",
             ethnicity: "Default unspecified people",
@@ -353,6 +381,37 @@ describe("IngestPage settings save", () => {
       'input[type="file"]',
     );
     expect(fileInput).toHaveAttribute("accept", ".txt,.md,.docx");
+  });
+
+  it("shows a format guide that matches the canonical scene header parser", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Premium drama format guide" }),
+    );
+
+    expect(screen.getByText("Premium drama format")).toBeInTheDocument();
+    expect(
+      screen.getAllByText(
+        (_content, element) =>
+          element?.tagName === "PRE" &&
+          element.textContent?.includes("1-1 苏鸾寝殿 深夜 内") === true,
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.tagName === "PRE" &&
+          element.textContent?.includes("场次：1") === true,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/1-1 场景：苏鸾寝殿深夜内/)).not.toBeInTheDocument();
   });
 
   it("saves project settings without uploading or starting ingest", async () => {
@@ -655,6 +714,138 @@ describe("IngestPage settings save", () => {
     await waitFor(() =>
       expect(mocks.startIngest).toHaveBeenCalledWith({
         filename: "novel.txt",
+        rebuild: true,
+        spine_template: "drama",
+      }),
+    );
+  });
+
+  it("blocks a headerless premium drama before starting ingest", async () => {
+    const user = userEvent.setup();
+    mocks.uploadNovel.mockResolvedValue({
+      ok: true,
+      data: {
+        filename: "novel.txt",
+        size: 12,
+        format_check: {
+          level: "ok",
+          summary: "Uploaded",
+          scene_header_status: "missing",
+          issues: [],
+        },
+      },
+    });
+
+    const { container } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    await user.upload(
+      fileInput!,
+      new File(["Chapter 1"], "novel.txt", { type: "text/plain" }),
+    );
+
+    expect(
+      screen.getByText("Premium drama scripts require scene headers."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start import/i })).toBeDisabled();
+    expect(mocks.startIngest).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("option", { name: "Narrated" }));
+    expect(screen.getByRole("button", { name: /start import/i })).toBeEnabled();
+  });
+
+  it("does not let a blocking import check disable project settings save", async () => {
+    const user = userEvent.setup();
+    mocks.uploadNovel.mockResolvedValue({
+      ok: true,
+      data: {
+        filename: "novel.txt",
+        size: 12,
+        format_check: {
+          level: "ok",
+          summary: "Uploaded",
+          scene_header_status: "missing",
+          issues: [],
+        },
+      },
+    });
+
+    const { container } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    await user.upload(
+      fileInput!,
+      new File(["Chapter 1"], "novel.txt", { type: "text/plain" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Anime" }));
+
+    const saveButton = screen.getByRole("button", { name: /save settings/i });
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    await waitFor(() =>
+      expect(mocks.updateProject).toHaveBeenCalledWith({
+        spine_template: "drama",
+        visual_style: "anime",
+        ethnicity: "Chinese",
+      }),
+    );
+    expect(mocks.startIngest).not.toHaveBeenCalled();
+  });
+
+  it("allows import when non-standard scene headers can be normalized", async () => {
+    const user = userEvent.setup();
+    mocks.uploadNovel.mockResolvedValue({
+      ok: true,
+      data: {
+        filename: "script.txt",
+        size: 12,
+        format_check: {
+          level: "ok",
+          summary: "Uploaded",
+          scene_header_status: "repairable",
+          issues: [],
+        },
+      },
+    });
+    mocks.startIngest.mockResolvedValue({
+      ok: true,
+      data: { task_id: "task-1" },
+    });
+
+    const { container } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    const fileInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    await user.upload(
+      fileInput!,
+      new File(["Scene 1"], "script.txt", { type: "text/plain" }),
+    );
+
+    expect(
+      screen.getByText("Non-standard scene headers will be normalized."),
+    ).toBeInTheDocument();
+    const startButton = screen.getByRole("button", { name: /start import/i });
+    expect(startButton).toBeEnabled();
+    await user.click(startButton);
+
+    await waitFor(() =>
+      expect(mocks.startIngest).toHaveBeenCalledWith({
+        filename: "script.txt",
         rebuild: true,
         spine_template: "drama",
       }),

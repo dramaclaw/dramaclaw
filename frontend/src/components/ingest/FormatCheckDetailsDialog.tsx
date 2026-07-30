@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { AlertTriangle, Lightbulb } from "lucide-react";
+import { AlertTriangle, CircleX, Lightbulb } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,7 @@ export function FormatCheckDetailsDialog({
 }: FormatCheckDetailsDialogProps) {
   const { t } = useTranslation();
   const issues = formatCheck?.issues ?? [];
+  const isBlocking = formatCheck?.level === "blocking";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -46,10 +47,24 @@ export function FormatCheckDetailsDialog({
 
         <div className="space-y-4">
           {formatCheck?.summary && (
-            <p className="text-sm leading-6 text-foreground">{formatCheck.summary}</p>
+            <p
+              className={
+                isBlocking
+                  ? "text-sm leading-6 text-destructive"
+                  : "text-sm leading-6 text-foreground"
+              }
+            >
+              {formatCheck.summary}
+            </p>
           )}
 
-          <div className="rounded-md border bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">
+          <div
+            className={
+              isBlocking
+                ? "rounded-md border border-destructive/25 bg-destructive/[0.07] px-3 py-2 text-xs leading-5 text-muted-foreground"
+                : "rounded-md border bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground"
+            }
+          >
             {t("aiAssistant.formatCheck.recommended")}
           </div>
 
@@ -62,7 +77,11 @@ export function FormatCheckDetailsDialog({
                     className="rounded-md border bg-black p-3"
                   >
                     <div className="flex items-start gap-2">
-                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+                      {isBlocking ? (
+                        <CircleX className="mt-0.5 size-4 shrink-0 text-destructive" />
+                      ) : (
+                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+                      )}
                       <div className="min-w-0 flex-1">
                         <p className="break-words text-sm leading-6 text-foreground">
                           {issue.message}

@@ -503,6 +503,7 @@ class CogneeStore:
         self,
         novel_path: str,
         rebuild: bool = False,
+        spine_template: str | None = None,
         on_progress: Optional[Callable[[float, str], None]] = None,
         on_log: Optional[Callable[[str], None]] = None,
     ) -> dict:
@@ -511,6 +512,7 @@ class CogneeStore:
             return await self._ingest_novel_fast_locked(
                 novel_path,
                 rebuild=rebuild,
+                spine_template=spine_template,
                 on_progress=on_progress,
                 on_log=on_log,
             )
@@ -519,6 +521,7 @@ class CogneeStore:
         self,
         novel_path: str,
         rebuild: bool = False,
+        spine_template: str | None = None,
         on_progress: Optional[Callable[[float, str], None]] = None,
         on_log: Optional[Callable[[str], None]] = None,
     ) -> dict:
@@ -544,6 +547,14 @@ class CogneeStore:
             raise ValueError("小说内容为空，无法导入")
         log(f"文件读取完成: {len(content)} 字符")
         self._novel_content = content
+
+        if str(spine_template or "").strip() == "drama":
+            from novelvideo.utils.screenplay_quality import (
+                assess_screenplay_scene_headers,
+            )
+
+            if assess_screenplay_scene_headers(content).status == "missing":
+                raise ValueError("精品剧必须包含场景头，请补充后重新导入")
 
         os.environ["COGNEE_TELEMETRY_ENABLED"] = "false"
 

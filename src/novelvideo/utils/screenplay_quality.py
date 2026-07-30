@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
+from typing import Literal
 
 from novelvideo.utils.screenplay_scene_parser import (
     INTERIOR_EXTERIOR,
@@ -16,14 +17,15 @@ from novelvideo.utils.screenplay_scene_parser import (
 
 
 SCENE_HEADER_RE = re.compile(
-    r"^(?:\d+\s*[-－]\s*\d+\s+)?[\u4e00-\u9fffA-Za-z0-9·《》、 ]{2,40}\s+"
-    r"(?:日|夜|晨|晚|午|黄昏|上午|正午|午后|下午|傍晚|夜晚)\s+(?:内|外)$"
+    rf"^(?:\d+\s*[-－]\s*\d+\s*[、，,.\s]\s*)?"
+    rf"[\u4e00-\u9fffA-Za-z0-9·《》、 ]{{2,40}}\s+"
+    rf"(?:{TIME_TOKEN_RE})\s+(?:内|外)$"
 )
 SCENE_BLOCK_HEADER_RE = re.compile(
     r"^场次[（(]?\d+[）)]?"
     r"(?:\s*[:：])?"
     r".*?地点[：:]\s*.+?[，,、]\s*"
-    r"(?:日|夜|晨|晚|午|黄昏|上午|正午|午后|下午|傍晚|夜晚)\s*[，,、]\s*(?:内|外)"
+    rf"(?:{TIME_TOKEN_RE})\s*[，,、]\s*(?:内|外)"
 )
 SCENE_HEADER_WITHOUT_TIME_RE = re.compile(
     r"^(?:\d+\s*[-－]\s*\d+\s+)?[\u4e00-\u9fffA-Za-z0-9·《》、 ]{2,40}\s+(?:内|外)$"
@@ -54,6 +56,7 @@ FIX_HINTS = {
     "heavy_parenthetical_dialogue": "建议把括号舞台说明拆到动作行，台词行只保留对白。",
     "many_long_dialogues": "建议拆分超长台词，减少单行对白长度。",
     "missing_scene_headers": "建议为正文补充分场头，如“1-1 地点 时间 内/外”。",
+    "nonstandard_scene_headers": "系统会在场景规划时规范化场景元数据；也可提前整理为“1-1 地点 时间 内/外”。",
     "non_increasing_chapter_number": "建议检查章节序号是否递增，或确认正文中的章节字样不是误切标题。",
     "too_few_dialogue_lines": "建议补充可识别对白行，格式如“角色：台词”。",
     "sparse_scene_headers": "建议按场景补充分场头（每场一个场景头）。",
@@ -79,10 +82,59 @@ class ScreenplayQualityReport:
         return bool(self.blocking_issues)
 
 
+SceneHeaderStatus = Literal["standard", "repairable", "missing"]
+
+
+@dataclass(frozen=True)
+class SceneHeaderAssessment:
+    """Classify whether a drama screenplay has usable scene boundaries."""
+
+    status: SceneHeaderStatus
+    detected_headers: int = 0
+    standard_headers: int = 0
+
+
+def assess_screenplay_scene_headers(text: str) -> SceneHeaderAssessment:
+    """Return a deterministic scene-header assessment.
+
+    Scene boundaries must come from the source text. AI may normalize an
+    already detected block later, but it must never invent scene boundaries
+    for headerless prose during import.
+    """
+
+    candidate_lines = _extract_screenplay_candidate_lines(text or "")
+    blocks = parse_scene_blocks(candidate_lines)
+    detected_blocks = [block for block in blocks if block.header_line]
+    if not detected_blocks:
+        return SceneHeaderAssessment(status="missing")
+
+    standard_headers = 0
+    for block in detected_blocks:
+        header = str(block.header_line or "").strip()
+        if (
+            (SCENE_HEADER_RE.fullmatch(header) or SCENE_BLOCK_HEADER_RE.fullmatch(header))
+            and bool(block.location)
+            and bool(block.time_of_day)
+            and block.interior_exterior in INTERIOR_EXTERIOR
+        ):
+            standard_headers += 1
+
+    detected_headers = len(detected_blocks)
+    status: SceneHeaderStatus = (
+        "standard" if standard_headers == detected_headers else "repairable"
+    )
+    return SceneHeaderAssessment(
+        status=status,
+        detected_headers=detected_headers,
+        standard_headers=standard_headers,
+    )
+
+
 def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
     lines = _extract_screenplay_candidate_lines(text or "")
     non_empty_lines = [line for line in lines if line]
     scene_blocks = parse_scene_blocks(non_empty_lines)
+    scene_header_assessment = assess_screenplay_scene_headers(text)
 
     scene_block_header_count = len(
         [
@@ -146,6 +198,7 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             "parenthetical_dialogues": parenthetical_dialogue_count,
             "long_dialogue_lines": long_dialogue_count,
             "scene_headers_missing_time": scene_headers_missing_time_count,
+            "standard_scene_headers": scene_header_assessment.standard_headers,
         },
     )
 
@@ -238,8 +291,10 @@ def build_import_format_check(
     *,
     has_chapters: bool,
     chapters: list[dict] | None = None,
+    require_scene_headers: bool = False,
 ) -> dict:
     report = check_screenplay_import_quality(text)
+    scene_header_assessment = assess_screenplay_scene_headers(text)
     metrics = dict(report.metrics)
     issues = _build_line_aware_format_issues(text or "")
     if chapters:
@@ -267,9 +322,35 @@ def build_import_format_check(
             }
         )
 
-    if not has_chapters:
+    if require_scene_headers and scene_header_assessment.status == "missing":
+        if not any(issue["code"] == "missing_scene_headers" for issue in issues):
+            issues.insert(
+                0,
+                {
+                    "code": "missing_scene_headers",
+                    "line": None,
+                    "message": "精品剧未检测到可识别的场景头，无法确定场景边界。",
+                    "fix": FIX_HINTS["missing_scene_headers"],
+                },
+            )
+        level = "blocking"
+        summary = "精品剧必须包含场景头，请补充后重新导入。"
+    elif not has_chapters:
         level = "blocking"
         summary = "未检测到有效章节或可识别正文，无法用于剧本结构化。"
+    elif scene_header_assessment.status == "repairable":
+        if not any(issue["code"] == "nonstandard_scene_headers" for issue in issues):
+            issues.insert(
+                0,
+                {
+                    "code": "nonstandard_scene_headers",
+                    "line": None,
+                    "message": "检测到可识别但不标准的场景头。",
+                    "fix": FIX_HINTS["nonstandard_scene_headers"],
+                },
+            )
+        level = "warning"
+        summary = "检测到非标准场景头，系统将在场景规划时自动规范化。"
     elif issues:
         level = "warning"
         summary = f"上传成功，但检测到 {len(issues)} 个格式风险，可能影响场景识别。"
@@ -282,6 +363,7 @@ def build_import_format_check(
         "summary": summary,
         "issues": issues,
         "metrics": metrics,
+        "scene_header_status": scene_header_assessment.status,
     }
 
 
