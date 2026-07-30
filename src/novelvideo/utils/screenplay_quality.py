@@ -153,6 +153,8 @@ def _has_source_scene_header_evidence(header_line: str) -> bool:
         "",
         header,
     ).strip()
+    if INLINE_LABELED_SCENE_RE.fullmatch(header):
+        return True
     if NUMBERED_SCENE_PREFIX_RE.match(header):
         return True
     if header.startswith(("场次", "地点：", "地点:", "环境：", "环境:", "场景：", "场景:")):

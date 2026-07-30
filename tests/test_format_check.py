@@ -179,6 +179,26 @@ def test_unnumbered_header_with_trailing_parenthetical_is_repairable(header):
     assert "nonstandard_scene_headers" in _codes(result)
 
 
+def test_bare_numbered_labeled_scene_header_is_repairable():
+    text = """
+第一集
+1场 地点：菩提寝房
+时间：夜
+内外景：内
+孙悟空：师父。
+"""
+
+    result = build_import_format_check(
+        text,
+        has_chapters=True,
+        require_scene_headers=True,
+    )
+
+    assert result["level"] == "warning"
+    assert result["scene_header_status"] == "repairable"
+    assert "nonstandard_scene_headers" in _codes(result)
+
+
 def test_parseable_nonstandard_scene_headers_are_repairable():
     text = """
 场次（1）
