@@ -178,7 +178,7 @@ async def test_mark_detection_route_refunds_feature_credit_on_failure(
 ) -> None:
     path = tmp_path / "mark.png"
     Image.new("RGB", (100, 100), color="white").save(path)
-    refunded: list[str] = []
+    interrupted: list[str] = []
 
     class FakeMeter:
         async def reserve_feature_start_credits(self, **_kwargs):
@@ -189,7 +189,12 @@ async def test_mark_detection_route_refunds_feature_credit_on_failure(
         ):
             if action == "confirm":
                 raise AssertionError("failed detection must not confirm")
-            refunded.append(reservation_id)
+            raise AssertionError("failed detection must use evidence settlement")
+
+        async def settle_cancelled_feature_credit_reservation(
+            self, reservation_id, **_kwargs
+        ):
+            interrupted.append(reservation_id)
 
         def set_llm_usage_context(self, *_args, **_kwargs):
             return None
@@ -224,4 +229,4 @@ async def test_mark_detection_route_refunds_feature_credit_on_failure(
         )
 
     assert exc_info.value.status_code == 500
-    assert refunded == ["reservation_mark"]
+    assert interrupted == ["reservation_mark"]

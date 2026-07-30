@@ -7024,14 +7024,13 @@ async def freezone_mark_detect(
     except Exception as exc:
         if reservation_id:
             try:
-                await usage_meter.settle_feature_credit_reservation(
+                await usage_meter.settle_cancelled_feature_credit_reservation(
                     reservation_id,
-                    action="refund",
                     metadata={**billing_context, "error": str(exc)},
                 )
             except Exception:
                 logger.exception(
-                    "Failed to refund Freezone mark detection feature credit reservation"
+                    "Failed to settle interrupted Freezone mark detection feature credit reservation"
                 )
         raise HTTPException(500, f"mark detect failed: {exc}") from exc
     finally:

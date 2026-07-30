@@ -348,9 +348,8 @@ async def analyze_style(
     except Exception as e:
         if reservation_id:
             try:
-                await usage_meter.settle_feature_credit_reservation(
+                await usage_meter.settle_cancelled_feature_credit_reservation(
                     reservation_id,
-                    action="refund",
                     metadata={
                         "source": "sync_api",
                         "endpoint": "analyze_style",
@@ -360,7 +359,7 @@ async def analyze_style(
                 )
             except Exception:
                 logger.exception(
-                    "Failed to refund style analysis feature credit reservation"
+                    "Failed to settle interrupted style analysis feature credit reservation"
                 )
         return {"ok": False, "error": f"Style analysis failed: {e}"}
     finally:

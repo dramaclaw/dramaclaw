@@ -11,6 +11,7 @@ class DummyUsageMeter:
         self.reserve_calls: list[dict] = []
         self.confirm_calls: list[tuple[str, dict | None]] = []
         self.refund_calls: list[tuple[str, dict | None]] = []
+        self.interrupted_calls: list[tuple[str, dict | None]] = []
         self.contexts: list[dict] = []
         self.clear_count = 0
 
@@ -23,6 +24,11 @@ class DummyUsageMeter:
     ):
         target = self.confirm_calls if action == "confirm" else self.refund_calls
         target.append((reservation_id, metadata))
+
+    async def settle_cancelled_feature_credit_reservation(
+        self, reservation_id: str, *, metadata=None
+    ):
+        self.interrupted_calls.append((reservation_id, metadata))
 
     def set_llm_usage_context(
         self,
@@ -130,7 +136,7 @@ def test_style_analysis_reserves_and_confirms_feature_credit(monkeypatch, tmp_pa
     assert usage_meter.clear_count == 1
 
 
-def test_style_analysis_refunds_feature_credit_on_failure(monkeypatch, tmp_path):
+def test_style_analysis_uses_evidence_settlement_on_failure(monkeypatch, tmp_path):
     class FailingAnalyzer:
         async def analyze(self, content: bytes, *, mime_type: str):
             raise RuntimeError("upstream failed")
@@ -149,5 +155,6 @@ def test_style_analysis_refunds_feature_credit_on_failure(monkeypatch, tmp_path)
         "error": "Style analysis failed: upstream failed",
     }
     assert usage_meter.confirm_calls == []
-    assert usage_meter.refund_calls[0][0] == "style-analysis-reservation"
+    assert usage_meter.refund_calls == []
+    assert usage_meter.interrupted_calls[0][0] == "style-analysis-reservation"
     assert usage_meter.clear_count == 1

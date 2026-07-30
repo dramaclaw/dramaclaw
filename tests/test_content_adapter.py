@@ -92,6 +92,7 @@ class _UsageMeter:
         self.reserved: list[dict] = []
         self.confirmed: list[tuple[str, dict]] = []
         self.refunded: list[tuple[str, dict]] = []
+        self.interrupted: list[tuple[str, dict]] = []
         self.contexts: list[tuple[str, dict]] = []
         self.clear_count = 0
 
@@ -104,6 +105,11 @@ class _UsageMeter:
     ):
         target = self.confirmed if action == "confirm" else self.refunded
         target.append((reservation_id, metadata or {}))
+
+    async def settle_cancelled_feature_credit_reservation(
+        self, reservation_id: str, *, metadata=None
+    ):
+        self.interrupted.append((reservation_id, metadata or {}))
 
     def set_llm_usage_context(self, user_id: str, **kwargs):
         self.contexts.append((user_id, kwargs))
@@ -164,7 +170,7 @@ async def test_generate_rewrite_applies_output_to_beat_source_text(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_generate_rewrite_refunds_feature_credit_on_failure(monkeypatch) -> None:
+async def test_generate_rewrite_uses_evidence_settlement_on_failure(monkeypatch) -> None:
     from novelvideo.agents import content_rewriter
     from novelvideo.api.routes import content
     from novelvideo.api.schemas import RewriteGenerateRequest
@@ -197,7 +203,9 @@ async def test_generate_rewrite_refunds_feature_credit_on_failure(monkeypatch) -
         )
 
     assert meter.confirmed == []
-    assert meter.refunded[0][0] == "reservation-1"
+    assert meter.refunded == []
+    assert meter.interrupted[0][0] == "reservation-1"
+    assert meter.interrupted[0][1]["source"] == "sync_api"
     assert meter.clear_count == 1
 
 

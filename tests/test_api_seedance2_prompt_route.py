@@ -51,6 +51,7 @@ class DummyUsageMeter:
         self.reserve_calls: list[dict] = []
         self.confirm_calls: list[tuple[str, dict | None]] = []
         self.refund_calls: list[tuple[str, dict | None]] = []
+        self.interrupted_calls: list[tuple[str, dict | None]] = []
         self.contexts: list[dict] = []
         self.clear_count = 0
 
@@ -67,6 +68,11 @@ class DummyUsageMeter:
     ):
         target = self.confirm_calls if action == "confirm" else self.refund_calls
         target.append((reservation_id, metadata))
+
+    async def settle_cancelled_feature_credit_reservation(
+        self, reservation_id: str, *, metadata=None
+    ):
+        self.interrupted_calls.append((reservation_id, metadata))
 
     def set_llm_usage_context(
         self,
@@ -309,7 +315,7 @@ def test_generate_seedance2_prompt_reserves_feature_credit_and_confirms(
     assert usage_meter.clear_count == 1
 
 
-def test_generate_seedance2_prompt_refunds_feature_credit_on_failure(
+def test_generate_seedance2_prompt_uses_evidence_settlement_on_failure(
     monkeypatch,
     tmp_path,
 ):
@@ -352,7 +358,8 @@ def test_generate_seedance2_prompt_refunds_feature_credit_on_failure(
     assert response.status_code == 200
     assert response.json() == {"ok": False, "error": "seedance2 prompt invalid"}
     assert usage_meter.confirm_calls == []
-    assert usage_meter.refund_calls[0][0] == "seedance2-prompt-reservation"
+    assert usage_meter.refund_calls == []
+    assert usage_meter.interrupted_calls[0][0] == "seedance2-prompt-reservation"
     assert usage_meter.clear_count == 1
 
 

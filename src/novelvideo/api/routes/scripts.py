@@ -579,9 +579,8 @@ async def generate_seedance2_prompt(
     except ValueError as exc:
         if reservation_id:
             try:
-                await usage_meter.settle_feature_credit_reservation(
+                await usage_meter.settle_cancelled_feature_credit_reservation(
                     reservation_id,
-                    action="refund",
                     metadata={
                         "source": "sync_api",
                         "endpoint": "generate_seedance2_prompt",
@@ -592,15 +591,14 @@ async def generate_seedance2_prompt(
                 )
             except Exception:
                 logger.exception(
-                    "Failed to persist Seedance2 prompt refund intent"
+                    "Failed to settle interrupted Seedance2 prompt reservation"
                 )
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
         if reservation_id:
             try:
-                await usage_meter.settle_feature_credit_reservation(
+                await usage_meter.settle_cancelled_feature_credit_reservation(
                     reservation_id,
-                    action="refund",
                     metadata={
                         "source": "sync_api",
                         "endpoint": "generate_seedance2_prompt",
@@ -611,7 +609,7 @@ async def generate_seedance2_prompt(
                 )
             except Exception:
                 logger.exception(
-                    "Failed to refund Seedance2 prompt feature credit reservation"
+                    "Failed to settle interrupted Seedance2 prompt reservation"
                 )
         raise
     finally:
@@ -624,9 +622,8 @@ async def generate_seedance2_prompt(
     except Exception as exc:
         if reservation_id:
             try:
-                await usage_meter.settle_feature_credit_reservation(
+                await usage_meter.settle_cancelled_feature_credit_reservation(
                     reservation_id,
-                    action="refund",
                     metadata={
                         "source": "sync_api",
                         "endpoint": "generate_seedance2_prompt",
@@ -637,7 +634,7 @@ async def generate_seedance2_prompt(
                 )
             except Exception:
                 logger.exception(
-                    "Failed to refund Seedance2 prompt feature credit reservation"
+                    "Failed to settle interrupted Seedance2 prompt reservation"
                 )
         raise
 
