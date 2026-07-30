@@ -12,6 +12,7 @@ from novelvideo.freezone.text_node import (
     FREEZONE_TRANSLATION_PROVIDER,
     FreezoneTranslationResult,
     bind_story_script_assets,
+    build_freezone_character_story_script_task,
     build_freezone_story_script_task,
     build_freezone_translation_task,
     build_freezone_video_story_script_task,
@@ -447,6 +448,63 @@ async def test_generate_story_script_with_vision_attaches_frames(
     # 三张关键帧必须真的作为附件送进模型，而不是只在提示词里被提一句。
     assert len(messages) == 1 + len(frames)
     assert all(getattr(item, "data", None) == b"png-bytes" for item in messages[1:])
+
+
+def test_build_freezone_character_story_script_task_uses_prompt_as_story() -> None:
+    task = build_freezone_character_story_script_task(
+        image_count=2,
+        prompt="以这两个角色生成一段雪山对决",
+        character_refs=[{"name": "宁姚"}, {"name": "青衣剑客"}],
+    )
+
+    assert "2 张角色参考图" in task
+    assert "以这两个角色生成一段雪山对决" in task
+    # 角色图模式没有关键帧，必须明确要求 keyframe_index 填 0，别乱指帧。
+    assert "keyframe_index 一律填 0" in task
+    assert "宁姚" in task
+    assert "青衣剑客" in task
+    assert "关键帧" not in task.replace("没有关键帧可以回填", "")
+
+
+@pytest.mark.asyncio
+async def test_generate_story_script_with_vision_accepts_character_images_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 前端一旦挂了素材就只发提示词、把 source_text 留空；
+    # 「仅角色图」这一路以前会在这里抛 ValueError，任务必挂。
+    portrait = tmp_path / "ningyao.png"
+    portrait.write_bytes(b"png-bytes")
+    captured: dict[str, object] = {}
+
+    class FakeAgent:
+        async def run(self, messages):
+            captured["messages"] = messages
+
+            class Response:
+                output = FreezoneStoryScriptGenerateData(title="", rows=[])
+
+            return Response()
+
+    monkeypatch.setattr(
+        "novelvideo.freezone.text_node.get_freezone_video_story_script_agent",
+        FakeAgent,
+    )
+
+    await generate_freezone_story_script_with_vision(
+        character_image_paths=[portrait],
+        source_text="",
+        prompt="以这个角色生成一段雪山对决",
+        character_refs=[{"name": "宁姚", "image_url": "/static/ningyao.png"}],
+    )
+
+    messages = captured["messages"]
+    task = messages[0]
+    assert isinstance(task, str)
+    assert "角色参考图" in task
+    assert "以这个角色生成一段雪山对决" in task
+    assert len(messages) == 2
+    assert getattr(messages[1], "data", None) == b"png-bytes"
 
 
 def test_bind_story_script_assets_fills_frames_and_character_images() -> None:

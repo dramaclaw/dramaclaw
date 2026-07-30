@@ -138,8 +138,12 @@ Example style for `video_motion_prompt`:
 FREEZONE_VIDEO_STORY_SCRIPT_SYSTEM_PROMPT = (
     FREEZONE_STORY_SCRIPT_SYSTEM_PROMPT
     + """
-## Video-reference mode
-You are additionally given an ordered set of keyframes sampled from a reference video.
+## Vision-reference modes
+Images may be attached to the request. The task message states which mode applies; follow that
+mode and ignore the other one.
+
+### Video-keyframe mode
+You are given an ordered set of keyframes sampled from a reference video.
 - The story script MUST describe what is actually visible in those frames. Do not invent an
   unrelated story, and do not fall back on the examples in this prompt.
 - Read the frames as one continuous clip: identify the real subject(s), setting, wardrobe or
@@ -150,6 +154,18 @@ You are additionally given an ordered set of keyframes sampled from a reference 
 - Set `keyframe_index` on every row to the 1-based index of the input frame that best
   represents that shot. This is how the backend attaches the reference thumbnail.
 - Total duration across rows should stay close to the stated video duration.
+
+### Character-reference mode
+You are given one portrait-style reference image per character, in the order the task message
+lists them. There is no reference video.
+- Read every character's real appearance off their image — face, hair, wardrobe, era, species —
+  and write `character_description_1` / `character_description_2` from what you actually see.
+  Do not describe a character the images do not show.
+- Reuse the exact character names given in the task message so the backend can attach each
+  character's reference image.
+- The story itself comes from the user's request (and the source script, when one is supplied),
+  not from the images. The images only fix who the characters are.
+- Set `keyframe_index` to 0 on every row: there are no keyframes to attach.
 """
 )
 
@@ -406,6 +422,39 @@ def build_freezone_video_story_script_task(
     return "\n\n".join(parts)
 
 
+def build_freezone_character_story_script_task(
+    *,
+    image_count: int,
+    prompt: str,
+    source_text: str = "",
+    character_refs: Sequence[Mapping[str, Any]] | None = None,
+) -> str:
+    """构建「角色参考图生成分镜脚本」任务。
+
+    这一路没有参考视频，只有角色参考图：剧情来自用户提示词（和可选的源剧本），
+    图片只负责钉死角色长相，所以 ``keyframe_index`` 一律为 0。
+    """
+    parts = [
+        f"下面按顺序给你 {image_count} 张角色参考图，请据此生成一张完整的故事脚本表。",
+        "这是角色参考模式，没有参考视频：角色1 / 角色2 的外貌、服饰、年代、气质"
+        "必须照着对应的角色参考图写，不要描述图里没有的人。",
+        "剧情本身来自用户要求（以及可选的源剧本），不要凭空照搬系统提示词里的示例剧情。",
+        "每一行的 keyframe_index 一律填 0：本模式没有关键帧可以回填。",
+        *_STORY_SCRIPT_COMMON_RULES,
+    ]
+    if prompt.strip():
+        parts.append(f"用户要求：\n{prompt.strip()}")
+    else:
+        parts.append("用户没有额外要求，请围绕这些角色自行编排一段结构完整的短剧。")
+    character_block = _character_ref_block(character_refs)
+    if character_block:
+        parts.append(character_block)
+    parts.append(_STORY_SCRIPT_STYLE_HINT)
+    if source_text.strip():
+        parts.append(f"源剧本内容：\n{source_text.strip()}")
+    return "\n\n".join(parts)
+
+
 async def generate_freezone_story_script(
     *,
     source_text: str,
@@ -471,8 +520,9 @@ async def generate_freezone_story_script_with_vision(
     覆盖两种入口：
 
     - 「视频参考生成分镜脚本」：``frame_paths`` 是抽出来的关键帧，走视频拆解任务书。
-    - 「角色生成分镜脚本」：只有 ``character_image_paths``，走普通剧本任务书，
-      但把角色图一并交给模型，这样角色描述才是照着图写的而不是凭空编的。
+    - 「角色生成分镜脚本」：只有 ``character_image_paths``，走角色参考任务书 ——
+      剧情来自 ``prompt``（和可选的 ``source_text``），角色图只负责钉死角色长相。
+      这一路不要求 ``source_text``：前端挂了素材时只会发提示词。
     """
     from pydantic_ai import BinaryContent
 
@@ -495,11 +545,12 @@ async def generate_freezone_story_script_with_vision(
             character_refs=character_refs,
         )
     else:
-        if not source_text.strip():
-            raise ValueError("source_text is required when no keyframes are provided")
-        task = build_freezone_story_script_task(
-            source_text=source_text,
+        # 只有角色图：剧情从提示词 / 可选源剧本来，图片只钉角色长相。
+        # 这里不能要求 source_text —— 前端在挂了素材时就只发提示词。
+        task = build_freezone_character_story_script_task(
+            image_count=len(character_images),
             prompt=prompt,
+            source_text=source_text,
             character_refs=character_refs,
         )
 
