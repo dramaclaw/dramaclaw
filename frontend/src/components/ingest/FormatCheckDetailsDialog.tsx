@@ -83,9 +83,11 @@ export function FormatCheckDetailsDialog({
                         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
                       )}
                       <div className="min-w-0 flex-1">
-                        <p className="break-words text-sm leading-6 text-foreground">
-                          {issue.message}
-                        </p>
+                        {issue.message.trim() !== formatCheck?.summary?.trim() && (
+                          <p className="break-words text-sm leading-6 text-foreground">
+                            {issue.message}
+                          </p>
+                        )}
                         {issue.fix && (
                           <p className="mt-1.5 flex items-start gap-1.5 break-words text-xs leading-5 text-muted-foreground">
                             <Lightbulb className="mt-0.5 size-3.5 shrink-0 text-primary" />

@@ -71,6 +71,12 @@ INLINE_LABELED_SCENE_RE = re.compile(
     r"(?:\s*[:：])?.*?地点[：:]\s*(?P<location>.+?)"
     r"(?:[；;]\s*(?:人物|出场人物|角色)[：:]\s*(?P<characters>.+))?$"
 )
+BRACKETED_LABELED_SCENE_RE = re.compile(
+    rf"^(?P<scene_no>\d+)\s*场景\s*[:：]\s*[【\[]\s*"
+    rf"(?P<time>{TIME_TOKEN_RE})\s+"
+    rf"(?P<location>.+?)\s+"
+    r"(?P<interior>内|外)\s*[】\]]\s*$"
+)
 SIMPLE_LOCATION_RE = re.compile(
     rf"^(?P<location>.+?)\s+(?P<time>{TIME_TOKEN_RE})\s+(?P<interior>内|外)$"
 )
@@ -136,6 +142,17 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
             current_episode = chinese_to_int(episode_match.group(1))
             if current.header_line or current.lines:
                 current.episode = current.episode or current_episode
+            continue
+
+        bracketed_labeled = BRACKETED_LABELED_SCENE_RE.fullmatch(line)
+        if bracketed_labeled:
+            if current_episode <= 0:
+                current_episode = 1
+            start_block(line, scene_no=bracketed_labeled.group("scene_no") or "")
+            current.location = (bracketed_labeled.group("location") or "").strip()
+            current.time_of_day = bracketed_labeled.group("time") or ""
+            current.interior_exterior = bracketed_labeled.group("interior") or ""
+            collecting_header = True
             continue
 
         colon_marker = COLON_SCENE_MARKER_RE.match(line)
@@ -229,6 +246,8 @@ def is_scene_start_line(line: str) -> bool:
     stripped = (line or "").strip()
     if not stripped:
         return False
+    if BRACKETED_LABELED_SCENE_RE.fullmatch(stripped):
+        return True
     if INLINE_LABELED_SCENE_RE.match(stripped):
         return True
     if COLON_SCENE_MARKER_RE.match(stripped):

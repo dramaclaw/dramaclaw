@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider, initReactI18next } from "react-i18next";
@@ -25,6 +25,16 @@ beforeAll(async () => {
     resources: {
       en: {
         translation: {
+          aiAssistant: {
+            formatCheck: {
+              title: "Format check",
+              viewDetails: "View details",
+              recommended: "Recommended format",
+              noIssues: "No issues",
+              close: "Close",
+              lineLabel: "Line {{line}}",
+            },
+          },
           common: {
             loading: "Loading",
             upload: "Upload",
@@ -839,6 +849,17 @@ describe("IngestPage settings save", () => {
     expect(
       screen.getByText("Non-standard scene headers will be normalized."),
     ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "View details" }));
+    expect(
+      within(screen.getByRole("dialog")).getAllByText(
+        "Non-standard scene headers will be normalized.",
+      ),
+    ).toHaveLength(1);
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+
     const startButton = screen.getByRole("button", { name: /start import/i });
     expect(startButton).toBeEnabled();
     await user.click(startButton);

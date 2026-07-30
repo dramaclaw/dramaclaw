@@ -199,6 +199,48 @@ def test_bare_numbered_labeled_scene_header_is_repairable():
     assert "nonstandard_scene_headers" in _codes(result)
 
 
+def test_numbered_bracketed_scene_header_is_standard():
+    text = """
+第一集
+1 场景：【夜 皇宫豹房露台 外】
+人物：正德帝、随行太监
+△ 乾清宫方向烈焰冲天。
+正德帝：好一棚大烟火也。
+"""
+
+    result = build_import_format_check(
+        text,
+        has_chapters=True,
+        require_scene_headers=True,
+    )
+
+    assert result["level"] == "ok"
+    assert result["scene_header_status"] == "standard"
+    assert result["issues"] == []
+
+
+def test_parenthetical_dialogue_directions_do_not_warn():
+    dialogue = "\n".join(
+        f"角色{i % 2}（轻笑，语气平静）：这是第{i + 1}句对白。"
+        for i in range(8)
+    )
+    text = f"""
+第一集
+1 场景：【夜 皇宫豹房露台 外】
+人物：角色0、角色1
+{dialogue}
+"""
+
+    result = build_import_format_check(
+        text,
+        has_chapters=True,
+        require_scene_headers=True,
+    )
+
+    assert result["level"] == "ok"
+    assert "heavy_parenthetical_dialogue" not in _codes(result)
+
+
 def test_parseable_nonstandard_scene_headers_are_repairable():
     text = """
 场次（1）
