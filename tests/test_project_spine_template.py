@@ -336,6 +336,38 @@ async def test_start_ingest_rejects_headerless_premium_drama_before_saving(
 
 
 @pytest.mark.asyncio
+async def test_start_ingest_rejects_prose_ending_in_outside_as_headerless_drama(
+    monkeypatch, tmp_path
+):
+    from novelvideo.api.routes import ingest
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / "novel.txt").write_text(
+        "第一集\n孙悟空快步走到门外\n他发现师父已经离开。",
+        encoding="utf-8",
+    )
+    saved: dict = {}
+    monkeypatch.setattr(ingest, "resolve_project_scope", _project_scope_resolver(tmp_path))
+    monkeypatch.setattr(
+        ingest,
+        "save_project_config_in_state_dir",
+        lambda state_dir, config=None, **kwargs: saved.update(config or {}),
+    )
+
+    response = await ingest.start_ingest(
+        "demo",
+        IngestStart(filename="novel.txt", rebuild=True, spine_template="drama"),
+        {"username": "alice"},
+    )
+
+    assert response["ok"] is False
+    assert response["error_type"] == "screenplay_format"
+    assert response["format_check"]["scene_header_status"] == "missing"
+    assert saved == {}
+
+
+@pytest.mark.asyncio
 async def test_start_ingest_accepts_standard_premium_drama(monkeypatch, tmp_path):
     from novelvideo.api.routes import ingest
 

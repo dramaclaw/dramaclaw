@@ -52,6 +52,38 @@ async def test_worker_rejects_headerless_drama_before_rebuild(tmp_path, monkeypa
     assert pruned is False
 
 
+@pytest.mark.asyncio
+async def test_worker_rejects_prose_ending_in_outside_before_rebuild(
+    tmp_path, monkeypatch
+):
+    from novelvideo.cognee.store import CogneeStore
+
+    novel = tmp_path / "novel.txt"
+    novel.write_text(
+        "第一集\n孙悟空快步走到门外\n他发现师父已经离开。",
+        encoding="utf-8",
+    )
+    store = object.__new__(CogneeStore)
+    store.state_dir = str(tmp_path)
+    store.project_dir = str(tmp_path)
+    pruned = False
+
+    async def record_prune():
+        nonlocal pruned
+        pruned = True
+
+    monkeypatch.setattr(store, "_prune_cognee_only", record_prune)
+
+    with pytest.raises(ValueError, match="精品剧必须包含场景头"):
+        await store._ingest_novel_fast_locked(
+            str(novel),
+            rebuild=True,
+            spine_template="drama",
+        )
+
+    assert pruned is False
+
+
 def test_cognee_pipeline_error_includes_nested_data_item_error():
     from novelvideo.cognee.store import CogneeStore
 

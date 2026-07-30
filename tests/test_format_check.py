@@ -106,6 +106,51 @@ def test_headerless_short_drama_is_blocking_when_scene_headers_are_required():
     assert "missing_scene_headers" in _codes(result)
 
 
+@pytest.mark.parametrize(
+    "action_line",
+    [
+        "孙悟空快步走到门外",
+        "孙悟空推门走进屋内",
+    ],
+)
+def test_prose_ending_in_interior_or_exterior_is_not_a_repairable_scene_header(
+    action_line,
+):
+    text = f"""
+第一集
+{action_line}
+他发现师父已经离开。
+"""
+
+    result = build_import_format_check(
+        text,
+        has_chapters=True,
+        require_scene_headers=True,
+    )
+
+    assert result["level"] == "blocking"
+    assert result["scene_header_status"] == "missing"
+    assert "missing_scene_headers" in _codes(result)
+
+
+def test_unnumbered_header_with_explicit_time_and_commas_is_repairable():
+    text = """
+第一集
+菩提寝房，夜，内
+孙悟空：师父。
+"""
+
+    result = build_import_format_check(
+        text,
+        has_chapters=True,
+        require_scene_headers=True,
+    )
+
+    assert result["level"] == "warning"
+    assert result["scene_header_status"] == "repairable"
+    assert "nonstandard_scene_headers" in _codes(result)
+
+
 def test_parseable_nonstandard_scene_headers_are_repairable():
     text = """
 场次（1）

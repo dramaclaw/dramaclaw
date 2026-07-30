@@ -104,7 +104,11 @@ def assess_screenplay_scene_headers(text: str) -> SceneHeaderAssessment:
 
     candidate_lines = _extract_screenplay_candidate_lines(text or "")
     blocks = parse_scene_blocks(candidate_lines)
-    detected_blocks = [block for block in blocks if block.header_line]
+    detected_blocks = [
+        block
+        for block in blocks
+        if block.header_line and _has_source_scene_header_evidence(block.header_line)
+    ]
     if not detected_blocks:
         return SceneHeaderAssessment(status="missing")
 
@@ -127,6 +131,31 @@ def assess_screenplay_scene_headers(text: str) -> SceneHeaderAssessment:
         status=status,
         detected_headers=detected_headers,
         standard_headers=standard_headers,
+    )
+
+
+def _has_source_scene_header_evidence(header_line: str) -> bool:
+    """Reject scene boundaries inferred solely from prose ending in 内/外.
+
+    The shared parser deliberately accepts loose historical formats and
+    defaults a missing time to ``日``.  That behavior is useful after import,
+    but it is not proof that the source contained a scene header: ordinary
+    prose such as ``孙悟空快步走到门外`` otherwise becomes location
+    ``孙悟空快步走到门``.  Import validation therefore requires a structural
+    marker/label or an explicit time immediately followed by 内/外.
+    """
+
+    header = str(header_line or "").strip()
+    if not header:
+        return False
+    if NUMBERED_SCENE_PREFIX_RE.match(header):
+        return True
+    if header.startswith(("场次", "地点：", "地点:", "环境：", "环境:", "场景：", "场景:")):
+        return True
+    if re.match(r"^第\s*\d+\s*场", header):
+        return True
+    return bool(
+        re.search(rf"(?:{TIME_TOKEN_RE})[\s，,、]*(?:内|外)\s*$", header)
     )
 
 
