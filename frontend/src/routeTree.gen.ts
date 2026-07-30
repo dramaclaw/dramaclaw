@@ -15,7 +15,9 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as WatchWorkRouteImport } from './routes/watch.$work'
+import { Route as AppOrganizationRouteImport } from './routes/_app/organization'
 import { Route as AppCreditsRouteImport } from './routes/_app/credits'
+import { Route as AppOrganizationMembersRouteImport } from './routes/_app/organization.members'
 import { Route as AppProjectsProjectTasksRouteImport } from './routes/_app/projects.$project/tasks'
 import { Route as AppProjectsProjectStylesRouteImport } from './routes/_app/projects.$project/styles'
 import { Route as AppProjectsProjectIngestRouteImport } from './routes/_app/projects.$project/ingest'
@@ -70,10 +72,20 @@ const WatchWorkRoute = WatchWorkRouteImport.update({
   path: '/watch/$work',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppOrganizationRoute = AppOrganizationRouteImport.update({
+  id: '/organization',
+  path: '/organization',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppCreditsRoute = AppCreditsRouteImport.update({
   id: '/credits',
   path: '/credits',
   getParentRoute: () => AppRoute,
+} as any)
+const AppOrganizationMembersRoute = AppOrganizationMembersRouteImport.update({
+  id: '/members',
+  path: '/members',
+  getParentRoute: () => AppOrganizationRoute,
 } as any)
 const AppProjectsProjectFreezoneLazyRoute =
   AppProjectsProjectFreezoneLazyRouteImport.update({
@@ -209,7 +221,9 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/credits': typeof AppCreditsRoute
+  '/organization': typeof AppOrganizationRouteWithChildren
   '/watch/$work': typeof WatchWorkRoute
+  '/organization/members': typeof AppOrganizationMembersRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
   '/projects/$project/ingest': typeof AppProjectsProjectIngestRoute
@@ -229,8 +243,10 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/credits': typeof AppCreditsRoute
+  '/organization': typeof AppOrganizationRouteWithChildren
   '/watch/$work': typeof WatchWorkRoute
   '/': typeof AppIndexRoute
+  '/organization/members': typeof AppOrganizationMembersRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
   '/projects/$project/ingest': typeof AppProjectsProjectIngestRoute
@@ -252,8 +268,10 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/_app/credits': typeof AppCreditsRoute
+  '/_app/organization': typeof AppOrganizationRouteWithChildren
   '/watch/$work': typeof WatchWorkRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/organization/members': typeof AppOrganizationMembersRoute
   '/_app/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/_app/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
   '/_app/projects/$project/ingest': typeof AppProjectsProjectIngestRoute
@@ -276,7 +294,9 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/credits'
+    | '/organization'
     | '/watch/$work'
+    | '/organization/members'
     | '/projects/$project/assistant'
     | '/projects/$project/episodes'
     | '/projects/$project/ingest'
@@ -296,8 +316,10 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/credits'
+    | '/organization'
     | '/watch/$work'
     | '/'
+    | '/organization/members'
     | '/projects/$project/assistant'
     | '/projects/$project/episodes'
     | '/projects/$project/ingest'
@@ -318,8 +340,10 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/_app/credits'
+    | '/_app/organization'
     | '/watch/$work'
     | '/_app/'
+    | '/_app/organization/members'
     | '/_app/projects/$project/assistant'
     | '/_app/projects/$project/episodes'
     | '/_app/projects/$project/ingest'
@@ -373,12 +397,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WatchWorkRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/organization': {
+      id: '/_app/organization'
+      path: '/organization'
+      fullPath: '/organization'
+      preLoaderRoute: typeof AppOrganizationRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/credits': {
       id: '/_app/credits'
       path: '/credits'
       fullPath: '/credits'
       preLoaderRoute: typeof AppCreditsRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/_app/organization/members': {
+      id: '/_app/organization/members'
+      path: '/members'
+      fullPath: '/organization/members'
+      preLoaderRoute: typeof AppOrganizationMembersRouteImport
+      parentRoute: typeof AppOrganizationRoute
     }
     '/_app/projects/$project/freezone': {
       id: '/_app/projects/$project/freezone'
@@ -488,6 +526,18 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AppOrganizationRouteChildren {
+  AppOrganizationMembersRoute: typeof AppOrganizationMembersRoute
+}
+
+const AppOrganizationRouteChildren: AppOrganizationRouteChildren = {
+  AppOrganizationMembersRoute: AppOrganizationMembersRoute,
+}
+
+const AppOrganizationRouteWithChildren = AppOrganizationRoute._addFileChildren(
+  AppOrganizationRouteChildren,
+)
+
 interface AppProjectsProjectEpisodesRouteChildren {
   AppProjectsProjectEpisodesEpisodeAudioLazyRoute: typeof AppProjectsProjectEpisodesEpisodeAudioLazyRoute
   AppProjectsProjectEpisodesEpisodeBeatsLazyRoute: typeof AppProjectsProjectEpisodesEpisodeBeatsLazyRoute
@@ -526,6 +576,7 @@ const AppProjectsProjectEpisodesRouteWithChildren =
 
 interface AppRouteChildren {
   AppCreditsRoute: typeof AppCreditsRoute
+  AppOrganizationRoute: typeof AppOrganizationRouteWithChildren
   AppIndexRoute: typeof AppIndexRoute
   AppProjectsProjectAssistantRoute: typeof AppProjectsProjectAssistantRoute
   AppProjectsProjectEpisodesRoute: typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -538,6 +589,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppCreditsRoute: AppCreditsRoute,
+  AppOrganizationRoute: AppOrganizationRouteWithChildren,
   AppIndexRoute: AppIndexRoute,
   AppProjectsProjectAssistantRoute: AppProjectsProjectAssistantRoute,
   AppProjectsProjectEpisodesRoute: AppProjectsProjectEpisodesRouteWithChildren,

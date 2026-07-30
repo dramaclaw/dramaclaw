@@ -36,6 +36,7 @@
     "notifications": "Notifications",
     "account": {
       "open": "Open account menu",
+      "organization": "Organization",
       "changeAvatar": "Change avatar",
       "selectLanguage": "Select language",
       "languageChinese": "中文",
@@ -50,6 +51,114 @@
         "save": "Save avatar",
         "saving": "Saving…",
         "error": "Avatar upload failed, please try again"
+      }
+    }
+  },
+  "organization": {
+    "title": "Organization",
+    "subtitle": "Review your current organization and membership.",
+    "unavailable": "Organization features are unavailable in this edition.",
+    "loading": "Loading organization",
+    "retry": "Retry",
+    "cards": {
+      "organization": "Current organization",
+      "membership": "Your membership",
+      "management": "Administration"
+    },
+    "fields": {
+      "name": "Name",
+      "status": "Status",
+      "updated": "Updated",
+      "user": "Current user",
+      "role": "Role",
+      "membershipStatus": "Membership status",
+      "entitlement": "Entitlement"
+    },
+    "actions": {
+      "manageMembers": "Manage members"
+    },
+    "empty": {
+      "title": "No current organization",
+      "description": "This account is not currently associated with an organization."
+    },
+    "readOnly": {
+      "title": "Read-only access",
+      "description": "Organization management is unavailable for this membership state."
+    },
+    "roles": {
+      "admin": "Organization administrator",
+      "member": "Organization member"
+    },
+    "status": {
+      "active": "Active",
+      "suspended": "Suspended",
+      "left": "Left"
+    },
+    "entitlement": {
+      "platform": "Platform",
+      "orgSponsored": "Organization sponsored",
+      "disabled": "Disabled"
+    },
+    "values": {
+      "unknown": "Unknown"
+    },
+    "errors": {
+      "generic": "Organization request failed",
+      "alreadyMember": "This user already belongs to the organization.",
+      "otherOrganization": "This user already has another current organization.",
+      "memberLimit": "The organization member limit has been reached.",
+      "lastAdmin": "At least one active organization administrator is required.",
+      "concurrent": "This member changed. Review the refreshed list before trying again.",
+      "forbidden": "You do not have permission to manage organization members.",
+      "inactive": "This organization membership is inactive.",
+      "suspended": "This organization is suspended.",
+      "invalid": "Check the request fields."
+    },
+    "members": {
+      "title": "Organization members",
+      "loading": "Loading organization members",
+      "returning": "Your permissions changed. Returning to the organization overview…",
+      "total": "{{count}} members",
+      "search": "Search members",
+      "filteredEmpty": "No members match these filters",
+      "actions": "Actions",
+      "previous": "Previous page",
+      "next": "Next page",
+      "add": "Add member",
+      "batch": "Batch add",
+      "existing": "Existing user",
+      "create": "Create account",
+      "addDescription": "Add a known user ID or create a sponsored account.",
+      "userId": "User ID",
+      "username": "Username",
+      "password": "Password",
+      "createAndAdd": "Create and add",
+      "addExisting": "Add existing user",
+      "added": "Member added.",
+      "batchRows": "Batch member rows",
+      "batchDescription": "Use one row per member: existing|user_id or create|username|password.",
+      "previewRows": "Preview rows",
+      "submitBatch": "Submit batch",
+      "batchFinished": "Batch finished.",
+      "change": "Change member",
+      "refreshBeforeEdit": "Refresh before editing",
+      "lastAdminProtected": "The last active administrator cannot be demoted, suspended, or removed.",
+      "changed": "Member updated.",
+      "action": {
+        "promote": "Promote to administrator",
+        "demote": "Demote to member",
+        "suspend": "Suspend",
+        "restore": "Restore",
+        "remove": "Remove"
+      },
+      "confirm": {
+        "title": "Confirm member change",
+        "sessions": "Affected sessions will be invalidated."
+      },
+      "result": {
+        "created": "Created",
+        "existing": "Already exists",
+        "rejected": "Rejected"
       }
     }
   },

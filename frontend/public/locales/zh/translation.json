@@ -36,6 +36,7 @@
     "notifications": "通知",
     "account": {
       "open": "打开个人信息",
+      "organization": "组织信息",
       "changeAvatar": "更换头像",
       "selectLanguage": "选择语言",
       "languageChinese": "中文",
@@ -50,6 +51,114 @@
         "save": "保存头像",
         "saving": "保存中…",
         "error": "头像上传失败，请重试"
+      }
+    }
+  },
+  "organization": {
+    "title": "组织信息",
+    "subtitle": "查看当前组织和成员身份。",
+    "unavailable": "当前版本不提供组织功能。",
+    "loading": "正在加载组织信息",
+    "retry": "重试",
+    "cards": {
+      "organization": "当前组织",
+      "membership": "我的成员身份",
+      "management": "组织管理"
+    },
+    "fields": {
+      "name": "名称",
+      "status": "状态",
+      "updated": "更新时间",
+      "user": "当前用户",
+      "role": "角色",
+      "membershipStatus": "成员状态",
+      "entitlement": "资格"
+    },
+    "actions": {
+      "manageMembers": "管理成员"
+    },
+    "empty": {
+      "title": "当前没有组织",
+      "description": "此账号当前未关联任何组织。"
+    },
+    "readOnly": {
+      "title": "只读访问",
+      "description": "当前成员状态不可进行组织管理。"
+    },
+    "roles": {
+      "admin": "组织管理员",
+      "member": "组织成员"
+    },
+    "status": {
+      "active": "正常",
+      "suspended": "已暂停",
+      "left": "已离开"
+    },
+    "entitlement": {
+      "platform": "平台资格",
+      "orgSponsored": "组织赞助",
+      "disabled": "已禁用"
+    },
+    "values": {
+      "unknown": "未知"
+    },
+    "errors": {
+      "generic": "组织请求失败",
+      "alreadyMember": "该用户已属于当前组织。",
+      "otherOrganization": "该用户已有其他当前组织。",
+      "memberLimit": "已达到组织成员上限。",
+      "lastAdmin": "必须保留至少一名有效的组织管理员。",
+      "concurrent": "该成员信息已变化，请基于刷新后的列表重新操作。",
+      "forbidden": "你没有管理组织成员的权限。",
+      "inactive": "当前组织成员身份无效。",
+      "suspended": "当前组织已暂停。",
+      "invalid": "请检查请求字段。"
+    },
+    "members": {
+      "title": "组织成员",
+      "loading": "正在加载组织成员",
+      "returning": "你的权限已变化，正在返回组织概览…",
+      "total": "共 {{count}} 名成员",
+      "search": "搜索成员",
+      "filteredEmpty": "没有符合筛选条件的成员",
+      "actions": "操作",
+      "previous": "上一页",
+      "next": "下一页",
+      "add": "添加成员",
+      "batch": "批量添加",
+      "existing": "已有用户",
+      "create": "创建账号",
+      "addDescription": "输入已知用户 ID，或创建一个组织赞助账号。",
+      "userId": "用户 ID",
+      "username": "用户名",
+      "password": "密码",
+      "createAndAdd": "创建并添加",
+      "addExisting": "添加已有用户",
+      "added": "成员已添加。",
+      "batchRows": "批量成员行",
+      "batchDescription": "每行一名成员：existing|user_id 或 create|username|password。",
+      "previewRows": "预览行",
+      "submitBatch": "提交批量请求",
+      "batchFinished": "批量处理完成。",
+      "change": "修改成员",
+      "refreshBeforeEdit": "刷新后再编辑",
+      "lastAdminProtected": "最后一名有效管理员不能被降级、暂停或移出。",
+      "changed": "成员已更新。",
+      "action": {
+        "promote": "提升为管理员",
+        "demote": "降级为成员",
+        "suspend": "暂停",
+        "restore": "恢复",
+        "remove": "移出"
+      },
+      "confirm": {
+        "title": "确认成员变更",
+        "sessions": "受影响的登录会话将失效。"
+      },
+      "result": {
+        "created": "已创建",
+        "existing": "已存在",
+        "rejected": "已拒绝"
       }
     }
   },

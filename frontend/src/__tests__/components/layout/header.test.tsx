@@ -24,7 +24,13 @@ vi.mock("@/lib/queries/model-gateway", () => ({
 }));
 
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children, ...props }: React.ComponentProps<"a">) => <a {...props}>{children}</a>,
+  Link: ({
+    children,
+    to,
+    ...props
+  }: React.ComponentProps<"a"> & { to?: string }) => (
+    <a href={to} {...props}>{children}</a>
+  ),
   useNavigate: () => vi.fn(),
   useParams: () => ({}),
   useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => string }) =>
@@ -147,5 +153,28 @@ describe("Header runtime gating", () => {
       expect(resetUserSessionStateMock).toHaveBeenCalled();
     });
     expect(authState.logout).toHaveBeenCalled();
+  });
+
+  it("hides the organization entry in CE", async () => {
+    runtimeState.isCe = true;
+    renderHeader();
+
+    fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
+
+    await screen.findByText("local");
+    expect(screen.queryByText("header.account.organization")).not.toBeInTheDocument();
+    expect(screen.getByText("Change avatar")).toBeInTheDocument();
+  });
+
+  it("shows the organization entry in EE without requiring a project", async () => {
+    runtimeState.isCe = false;
+    renderHeader();
+
+    fireEvent.mouseEnter(screen.getByLabelText("Open account").parentElement!);
+
+    expect((await screen.findByText("header.account.organization")).closest("a")).toHaveAttribute(
+      "href",
+      "/organization",
+    );
   });
 });
