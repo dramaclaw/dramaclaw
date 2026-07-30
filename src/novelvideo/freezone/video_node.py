@@ -16,6 +16,10 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.freezone.paths import freezone_root
+from novelvideo.video_duration import (
+    normalize_video_duration_for_backend as normalize_video_duration_for_backend,
+    video_duration_bounds_for_backend,
+)
 
 
 VIDEO_CAMERA_TEMPLATES: list[dict[str, str]] = [
@@ -230,46 +234,7 @@ def normalize_video_resolution_for_backend(
 
 
 def freezone_video_duration_bounds(backend: str | None) -> tuple[int | None, int | None]:
-    from novelvideo.config import NEWAPI_VIDEO_DURATION_BOUNDS
-    from novelvideo.generators.video_generator import (
-        NewApiVideoGenerator,
-        parse_newapi_video_backend,
-    )
-
-    model = parse_newapi_video_backend(backend) or _freezone_video_model_from_backend(backend)
-    bounds = NewApiVideoGenerator._parse_duration_bounds_config(NEWAPI_VIDEO_DURATION_BOUNDS).get(
-        model
-    )
-    if bounds:
-        return bounds
-    if model == "grok-video-channel":
-        return (6, 30)
-    if model == "happyhorse-1.0":
-        return (3, 15)
-    return (None, None)
-
-
-def normalize_video_duration_for_backend(
-    backend: str | None,
-    value: int | None,
-    configured_min_duration: int | None = None,
-    configured_max_duration: int | None = None,
-) -> int:
-    try:
-        duration = int(value or 5)
-    except (TypeError, ValueError):
-        duration = 5
-    duration = max(duration, 1)
-    min_duration, max_duration = freezone_video_duration_bounds(backend)
-    if configured_min_duration is not None:
-        min_duration = configured_min_duration
-    if configured_max_duration is not None:
-        max_duration = configured_max_duration
-    if min_duration is not None:
-        duration = max(duration, min_duration)
-    if max_duration is not None:
-        duration = min(duration, max_duration)
-    return duration
+    return video_duration_bounds_for_backend(backend)
 
 
 def _freezone_newapi_video_options() -> dict[str, str]:

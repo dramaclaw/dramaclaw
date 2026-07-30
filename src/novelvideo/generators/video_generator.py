@@ -467,8 +467,10 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
             except Exception as e:
                 log(f"记账失败({status}): {e}")
 
-        # 限制 duration 在 4-12 范围；向上取整保证视频不短于音频
-        duration = max(4, min(12, math.ceil(duration)))
+        # 与报价/预扣共享同一套时长边界。
+        from novelvideo.video_duration import normalize_video_duration_for_backend
+
+        duration = normalize_video_duration_for_backend("seedance_fast", duration)
 
         # 映射 aspect_ratio 格式
         ratio_text = str(aspect_ratio or "").strip().lower()
@@ -841,8 +843,9 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
         if image_path and not refs:
             refs = [ShotReference("image", image_path, "首帧")]
 
-        # 限制 duration 在 5-15 范围
-        duration = max(5, min(15, int(duration)))
+        from novelvideo.video_duration import normalize_video_duration_for_backend
+
+        duration = normalize_video_duration_for_backend("seedance_2", duration)
 
         # 映射 aspect_ratio 格式
         ratio = aspect_ratio if ":" in aspect_ratio else "9:16"
@@ -1118,7 +1121,9 @@ class GrokVideoGenerator(VideoGeneratorBase):
                 error="Grok 720 does not support keyframe/首尾帧模式",
             )
 
-        duration = max(1, min(15, int(duration)))
+        from novelvideo.video_duration import normalize_video_duration_for_backend
+
+        duration = normalize_video_duration_for_backend("grok_720", duration)
         ratio = aspect_ratio if ":" in aspect_ratio else "9:16"
 
         if image_path.startswith(("http://", "https://", "data:")):
@@ -1360,13 +1365,12 @@ class HuimengVideoGenerator(VideoGeneratorBase):
         self.client = client or HuimengiTaskClient(api_key=api_key, base_url=endpoint)
 
     def _duration_bounds(self) -> tuple[int, int]:
-        if self._is_happyhorse_model():
-            return 3, 15
-        if self.model.startswith("seedance-2.0"):
-            return 4, 15
-        if self.model == "seedance-1.5-pro":
-            return 4, 12
-        return 2, 12
+        from novelvideo.video_duration import video_duration_bounds_for_backend
+
+        bounds = video_duration_bounds_for_backend(f"huimeng_{self.model}")
+        if bounds[0] is None or bounds[1] is None:
+            return 2, 12
+        return int(bounds[0]), int(bounds[1])
 
     def _supports_audio_param(self) -> bool:
         return self.model in {"seedance-2.0", "seedance-2.0-fast", "seedance-1.5-pro"}
@@ -1530,9 +1534,13 @@ class HuimengVideoGenerator(VideoGeneratorBase):
             _seedance2_config_mapping(kwargs.get("seedance2_config")) if is_seedance2_model else {}
         )
         duration = _seedance2_duration_from_config(seedance2_config, duration)
-        min_duration, max_duration = self._duration_bounds()
         original_duration = duration
-        duration = max(min_duration, min(max_duration, math.ceil(duration)))
+        from novelvideo.video_duration import normalize_video_duration_for_backend
+
+        duration = normalize_video_duration_for_backend(
+            f"huimeng_{self.model}",
+            duration,
+        )
         if duration != original_duration:
             log(f"时长已调整: {original_duration:.1f}s -> {duration:.0f}s")
 
@@ -1765,21 +1773,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
     @staticmethod
     def _parse_duration_bounds_config(raw: str) -> dict[str, tuple[int, int]]:
-        bounds: dict[str, tuple[int, int]] = {}
-        for item in raw.split(","):
-            entry = item.strip()
-            if not entry or ":" not in entry or "-" not in entry:
-                continue
-            model, raw_bounds = entry.split(":", 1)
-            raw_min, raw_max = raw_bounds.split("-", 1)
-            try:
-                min_seconds = int(raw_min.strip())
-                max_seconds = int(raw_max.strip())
-            except ValueError:
-                continue
-            if min_seconds > 0 and max_seconds >= min_seconds:
-                bounds[model.strip()] = (min_seconds, max_seconds)
-        return bounds
+        from novelvideo.video_duration import parse_video_duration_bounds
+
+        return parse_video_duration_bounds(raw)
 
     @classmethod
     def _default_generate_audio_for_model(cls, model: str) -> bool:
@@ -2091,12 +2087,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         raise ValueError(f"unsupported video generation mode: {normalized_mode}")
 
     def _duration_bounds(self) -> tuple[int, int]:
-        from novelvideo.config import NEWAPI_VIDEO_DURATION_BOUNDS
+        from novelvideo.video_duration import video_duration_bounds_for_backend
 
-        configured = self._parse_duration_bounds_config(NEWAPI_VIDEO_DURATION_BOUNDS)
-        if self._is_happyhorse_model():
-            return configured.get(self.model.strip(), (1, 15))
-        return configured.get(self.model.strip(), (2, 12))
+        bounds = video_duration_bounds_for_backend(f"newapi_{self.model}")
+        if bounds[0] is None or bounds[1] is None:
+            return 2, 12
+        return int(bounds[0]), int(bounds[1])
 
     def _is_seedance2_model(self) -> bool:
         return self.model.strip().startswith("seedance-2.0")
@@ -2472,9 +2468,13 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             _seedance2_config_mapping(kwargs.get("seedance2_config")) if is_seedance2_model else {}
         )
         duration = _seedance2_duration_from_config(seedance2_config, duration)
-        min_duration, max_duration = self._duration_bounds()
         original_duration = duration
-        duration = max(min_duration, min(max_duration, math.ceil(duration)))
+        from novelvideo.video_duration import normalize_video_duration_for_backend
+
+        duration = normalize_video_duration_for_backend(
+            f"newapi_{self.model}",
+            duration,
+        )
         if duration != original_duration:
             log(f"时长已调整: {original_duration:.1f}s -> {duration:.0f}s")
 
@@ -3665,17 +3665,22 @@ class Wan26VideoGenerator(VideoGeneratorBase):
 
         # 判断是否使用首尾帧模式
         use_keyframe_mode = last_frame_path is not None
+        from novelvideo.video_duration import normalize_video_duration_for_backend
 
         if use_keyframe_mode:
             # 首尾帧模式：固定 5 秒
-            duration = self.KF2V_DURATION
+            duration = normalize_video_duration_for_backend(
+                "wan26",
+                duration,
+                has_last_frame=True,
+            )
             model = self.MODEL_KF2V
             log(f"使用首尾帧模式 ({model})，固定时长 {duration:.0f}s")
         else:
             # 普通 I2V 模式：限制时长在有效范围内
             model = self.MODEL_I2V
             original_duration = duration
-            duration = max(self.MIN_DURATION, min(duration, self.MAX_DURATION))
+            duration = normalize_video_duration_for_backend("wan26", duration)
             if duration != original_duration:
                 log(
                     f"时长已调整: {original_duration:.1f}s -> {duration:.1f}s (API 限制 {self.MIN_DURATION}-{self.MAX_DURATION}s)"

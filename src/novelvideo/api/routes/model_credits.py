@@ -362,16 +362,19 @@ def _video_backend_billing_params(params: dict) -> dict:
 
 
 def _video_backend_feature_billing_params(params: dict) -> dict:
-    if str(params.get("pricing_model") or "").strip():
-        return params
     video_backend = str(params.get("video_backend") or "").strip()
     if not video_backend:
         return params
+    from novelvideo.video_duration import normalize_video_duration_for_backend
+
+    # Never trust a client-provided pricing model. The backend selection is
+    # resolved server-side so callers cannot pair cheap pricing with another
+    # provider model.
     pricing_model = _video_backend_cost_model(video_backend)
-    try:
-        pricing_quantity = max(int(params.get("pricing_quantity") or 1), 1)
-    except (TypeError, ValueError):
-        pricing_quantity = 1
+    pricing_quantity = normalize_video_duration_for_backend(
+        video_backend,
+        params.get("pricing_quantity"),
+    )
     return {
         **params,
         "pricing_kind": "video",

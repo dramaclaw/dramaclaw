@@ -209,6 +209,21 @@ def test_catalog_duration_bounds_override_legacy_video_bounds() -> None:
     )
 
 
+def test_video_duration_normalization_uses_ceiling_and_backend_bounds() -> None:
+    assert normalize_video_duration_for_backend(
+        "newapi_seedance-1.0-pro-fast",
+        1,
+    ) == 2
+    assert normalize_video_duration_for_backend(
+        "newapi_seedance-1.0-pro-fast",
+        100,
+    ) == 12
+    assert normalize_video_duration_for_backend(
+        "newapi_seedance-1.0-pro-fast",
+        5.1,
+    ) == 6
+
+
 def test_newapi_video_backend_preserves_gateway_model_case() -> None:
     from novelvideo.generators.video_generator import parse_newapi_video_backend
 

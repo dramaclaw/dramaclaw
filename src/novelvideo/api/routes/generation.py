@@ -265,21 +265,14 @@ def _single_video_billing_metadata(
     resolution: str | None,
     duration: int | float | str | None,
 ) -> dict:
-    import math
-
     from novelvideo.api.routes.model_credits import (
         _video_backend_feature_billing_params,
     )
-
-    try:
-        pricing_quantity = max(int(math.ceil(float(duration or 1))), 1)
-    except (TypeError, ValueError):
-        pricing_quantity = 1
     return _video_backend_feature_billing_params(
         {
             "video_backend": video_backend,
             "resolution": str(resolution or "").strip(),
-            "pricing_quantity": pricing_quantity,
+            "pricing_quantity": duration,
         }
     )
 
@@ -4672,6 +4665,14 @@ async def generate_single_video(
             single_video_resolution = _seedance2_resolution_for_backend(
                 body.video_backend, body.resolution
             )
+
+    from novelvideo.video_duration import normalize_video_duration_for_backend
+
+    video_duration = normalize_video_duration_for_backend(
+        body.video_backend,
+        video_duration,
+        has_last_frame=bool(last_frame_path),
+    )
 
     config = {
         "beat": dict(beat),

@@ -479,6 +479,62 @@ async def test_seedance2_single_video_passes_prepared_config_and_duration(
     }
 
 
+@pytest.mark.parametrize(
+    ("requested_duration", "expected_duration"),
+    [(1, 2), (100, 12)],
+)
+@pytest.mark.asyncio
+async def test_single_video_normalizes_duration_before_billing_and_enqueue(
+    monkeypatch,
+    tmp_path,
+    requested_duration,
+    expected_duration,
+):
+    from novelvideo.api.routes import generation
+    from novelvideo.api.schemas import SingleVideoRequest
+
+    calls = []
+    store = _FakeSeedance2Store(
+        [
+            {
+                "beat_number": 2,
+                "video_mode": "first_frame",
+                "video_prompt": "镜头从角色正面缓慢推近。",
+            }
+        ]
+    )
+    frame = tmp_path / "frames" / "ep003" / "beat_02.png"
+    frame.parent.mkdir(parents=True)
+    frame.write_bytes(b"frame")
+
+    async def fake_audio_duration(*_args, **_kwargs):
+        return 0.0
+
+    _patch_generation_celery(monkeypatch, generation, tmp_path, store)
+    monkeypatch.setattr(
+        generation,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=_fake_enqueue(calls)),
+    )
+    monkeypatch.setattr(generation, "_api_audio_duration_seconds", fake_audio_duration)
+
+    response = await generation.generate_single_video(
+        project="demo",
+        episode_num=3,
+        beat_num=2,
+        body=SingleVideoRequest(
+            video_backend="newapi_seedance-1.0-pro-fast",
+            duration=requested_duration,
+        ),
+        user={"username": "alice"},
+    )
+
+    assert response["ok"] is True
+    payload = calls[0]["payload"]
+    assert payload["config"]["video_duration"] == expected_duration
+    assert payload["billing"]["pricing_quantity"] == expected_duration
+
+
 @pytest.mark.asyncio
 async def test_seedance2_single_video_applies_return_last_frame_request_override(
     monkeypatch, tmp_path

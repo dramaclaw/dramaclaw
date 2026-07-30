@@ -854,6 +854,42 @@ async def test_generation_credit_cost_route_prices_video_feature_by_backend_and_
     assert result == {"ok": True, "data": {"cost": 25, "display": "25"}}
 
 
+@pytest.mark.parametrize(
+    ("requested_duration", "expected_duration"),
+    [(1, 2), (100, 12)],
+)
+def test_single_video_billing_uses_backend_normalized_duration(
+    requested_duration,
+    expected_duration,
+):
+    from novelvideo.api.routes.generation import _single_video_billing_metadata
+
+    billing = _single_video_billing_metadata(
+        "newapi_seedance-1.0-pro-fast",
+        resolution="720p",
+        duration=requested_duration,
+    )
+
+    assert billing["pricing_quantity"] == expected_duration
+
+
+def test_video_feature_billing_ignores_client_pricing_model_override():
+    from novelvideo.api.routes.model_credits import (
+        _video_backend_feature_billing_params,
+    )
+
+    billing = _video_backend_feature_billing_params(
+        {
+            "video_backend": "newapi_seedance-1.0-pro-fast",
+            "pricing_model": "attacker-cheap-model",
+            "pricing_quantity": 100,
+        }
+    )
+
+    assert billing["pricing_model"] == "seedance-1.0-pro-fast"
+    assert billing["pricing_quantity"] == 12
+
+
 @pytest.mark.asyncio
 async def test_generation_credit_cost_route_prices_freezone_video_generate_by_feature(
     monkeypatch,
@@ -868,7 +904,7 @@ async def test_generation_credit_cost_route_prices_freezone_video_generate_by_fe
         expected_params={
             "video_backend": "newapi_seedance-1.0-pro-fast",
             "resolution": "1080p",
-            "pricing_quantity": 16,
+            "pricing_quantity": 12,
             "operation": "imageToVideo",
             "generate_audio": True,
             "pricing_kind": "video",
