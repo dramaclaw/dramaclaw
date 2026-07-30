@@ -8,6 +8,104 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_read_only_ladybug_installs_missing_json_extension_in_disposable_db(
+    monkeypatch,
+    tmp_path,
+):
+    from novelvideo.cognee import ladybug_access
+
+    calls = []
+    project_database = object()
+    load_attempts = 0
+
+    class FakeDatabase:
+        def __init__(self, path, **kwargs):
+            calls.append(("database", path, kwargs))
+
+        def init_database(self):
+            calls.append(("init_database",))
+
+        def close(self):
+            calls.append(("database.close",))
+
+    class FakeConnection:
+        def __init__(self, database):
+            self.database = database
+            calls.append(("connection", database))
+
+        def execute(self, query):
+            nonlocal load_attempts
+            calls.append(("execute", query))
+            if query == "LOAD EXTENSION JSON;":
+                load_attempts += 1
+                if load_attempts == 1:
+                    raise RuntimeError("extension binary is missing")
+
+        def close(self):
+            calls.append(("connection.close", self.database))
+
+    monkeypatch.setattr(
+        ladybug_access,
+        "_json_extension_lock_path",
+        tmp_path / "json-extension.lock",
+    )
+
+    ladybug_access._load_ladybug_json_extension(
+        project_database,
+        database_class=FakeDatabase,
+        connection_class=FakeConnection,
+    )
+
+    assert [call for call in calls if call == ("execute", "INSTALL JSON;")] == [
+        ("execute", "INSTALL JSON;")
+    ]
+    assert load_attempts == 2
+    assert ("init_database",) in calls
+    assert ("database.close",) in calls
+
+
+def test_read_only_ladybug_reports_json_extension_install_failure(
+    monkeypatch,
+    tmp_path,
+):
+    from novelvideo.cognee import ladybug_access
+
+    project_database = object()
+
+    class FakeDatabase:
+        def __init__(self, path, **kwargs):
+            pass
+
+        def init_database(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeConnection:
+        def __init__(self, database):
+            pass
+
+        def execute(self, query):
+            raise RuntimeError(f"{query} failed")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        ladybug_access,
+        "_json_extension_lock_path",
+        tmp_path / "json-extension.lock",
+    )
+
+    with pytest.raises(RuntimeError, match="JSON extension is unavailable"):
+        ladybug_access._load_ladybug_json_extension(
+            project_database,
+            database_class=FakeDatabase,
+            connection_class=FakeConnection,
+        )
+
+
 @pytest.mark.asyncio
 async def test_store_close_only_releases_owned_sqlite_store():
     from novelvideo.cognee.store import CogneeStore

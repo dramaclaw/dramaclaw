@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import tempfile
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from importlib.metadata import version
@@ -51,6 +52,10 @@ _patch_lock = RLock()
 _patch_installed = False
 _project_context_patch_installed = False
 _process_writer_lock = Lock()
+_json_extension_install_lock = Lock()
+_json_extension_lock_path = (
+    Path(tempfile.gettempdir()) / "dramaclaw-ladybug-json-extension.lock"
+)
 
 
 def _contextual_base_config():
@@ -277,6 +282,72 @@ def _close_adapter(adapter: Any) -> None:
         raise RuntimeError("failed to close Ladybug graph resources") from close_errors[0]
 
 
+def _install_ladybug_json_extension(database_class: type, connection_class: type) -> None:
+    """Install Ladybug's JSON extension without mutating a project graph.
+
+    Extension binaries live in the container/user cache rather than the project
+    volume. A recreated container can therefore open an existing graph before
+    the JSON binary has been installed locally. Use a disposable writable
+    database because ``INSTALL`` cannot run against the read-only project graph.
+    """
+
+    import portalocker
+
+    with _json_extension_install_lock:
+        _json_extension_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with portalocker.Lock(str(_json_extension_lock_path), timeout=120):
+            with tempfile.TemporaryDirectory(
+                prefix="dramaclaw-ladybug-json-"
+            ) as temp_dir:
+                extension_db = None
+                extension_connection = None
+                try:
+                    extension_db = database_class(
+                        str(Path(temp_dir) / "extension-installer"),
+                        buffer_pool_size=2048 * 1024 * 1024,
+                        max_db_size=4096 * 1024 * 1024,
+                    )
+                    extension_db.init_database()
+                    extension_connection = connection_class(extension_db)
+                    extension_connection.execute("INSTALL JSON;")
+                finally:
+                    if extension_connection is not None:
+                        extension_connection.close()
+                    if extension_db is not None:
+                        extension_db.close()
+
+
+def _load_ladybug_json_extension(
+    database: Any,
+    *,
+    database_class: type,
+    connection_class: type,
+) -> None:
+    """Load JSON, installing its process-host binary on first use if needed."""
+
+    connection = connection_class(database)
+    try:
+        connection.execute("LOAD EXTENSION JSON;")
+    except Exception:
+        connection.close()
+        connection = None
+    else:
+        connection.close()
+        return
+
+    try:
+        _install_ladybug_json_extension(database_class, connection_class)
+        connection = connection_class(database)
+        connection.execute("LOAD EXTENSION JSON;")
+    except Exception as exc:
+        raise RuntimeError(
+            "Ladybug JSON extension is unavailable; installation or loading failed"
+        ) from exc
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 def _release_scope_adapters(state: _GraphAccessState) -> None:
     to_close: list[Any] = []
     with _adapter_scope_lock:
@@ -438,15 +509,11 @@ def install_cognee_ladybug_access_patch() -> None:
                         max_db_size=4096 * 1024 * 1024,
                         read_only=True,
                     )
-                    # Loading an already-installed extension is connection-local
-                    # and does not mutate the graph database.
-                    connection = Connection(self.db)
-                    try:
-                        connection.execute("LOAD EXTENSION JSON;")
-                    except Exception:
-                        pass
-                    finally:
-                        connection.close()
+                    _load_ladybug_json_extension(
+                        self.db,
+                        database_class=Database,
+                        connection_class=Connection,
+                    )
                     self.connection = None
                 except Exception:
                     _close_adapter(self)
