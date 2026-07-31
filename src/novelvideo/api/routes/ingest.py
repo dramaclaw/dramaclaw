@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import os
 import shutil
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -134,47 +136,78 @@ async def upload_novel(
     if not is_supported_novel_path(safe_name):
         return _unsupported_format_response(safe_name)
     dest = uploads_dir / safe_name
-    try:
-        size = stream_to_file_with_limit(file.file, dest)
-    except UploadTooLargeError:
-        return {
-            "ok": False,
-            "error": f"文件超过上限 ({MAX_UPLOAD_BYTES // (1024 * 1024)}MB)",
-        }
-
-    data = {"filename": safe_name, "size": size}
-    try:
-        content = load_novel_text(dest)
-        preview = build_chapter_preview(content)
-    except DocumentParseError as exc:
-        logger.warning("[%s] failed to parse uploaded novel: %s: %s", project, safe_name, exc)
-        return {
-            "ok": False,
-            "error": f"解析章节失败: {exc}",
-            "error_type": "parse",
-            "format": exc.source_format,
-            "detail": str(exc),
-        }
-    except Exception:
-        logger.warning("[%s] failed to build chapter preview", project, exc_info=True)
-        return {"ok": False, "error": "解析章节失败"}
-
-    has_chapters = bool(preview.get("chapters"))
-    format_check = build_import_format_check(
-        content,
-        has_chapters=has_chapters,
-        chapters=preview.get("chapters"),
+    staging_dir = uploads_dir / ".staging"
+    staging_dir.mkdir(exist_ok=True)
+    fd, staged_name = tempfile.mkstemp(
+        prefix="upload-",
+        suffix=Path(safe_name).suffix,
+        dir=staging_dir,
     )
-    if not has_chapters:
-        return {
-            "ok": False,
-            "error": "解析章节失败: 未检测到有效章节内容",
-            "format_check": format_check,
-        }
-    data.update(preview)
-    data["format_check"] = format_check
+    os.close(fd)
+    staged_path = Path(staged_name)
+    try:
+        try:
+            size = stream_to_file_with_limit(file.file, staged_path)
+        except UploadTooLargeError:
+            return {
+                "ok": False,
+                "error": f"文件超过上限 ({MAX_UPLOAD_BYTES // (1024 * 1024)}MB)",
+            }
 
-    return {"ok": True, "data": data}
+        data = {"filename": safe_name, "size": size}
+        try:
+            content = load_novel_text(staged_path)
+            preview = build_chapter_preview(content)
+        except DocumentParseError as exc:
+            logger.warning(
+                "[%s] failed to parse uploaded novel: %s: %s",
+                project,
+                safe_name,
+                exc,
+            )
+            return {
+                "ok": False,
+                "error": f"解析章节失败: {exc}",
+                "error_type": "parse",
+                "format": exc.source_format,
+                "detail": str(exc),
+            }
+        except Exception:
+            logger.warning("[%s] failed to build chapter preview", project, exc_info=True)
+            return {"ok": False, "error": "解析章节失败"}
+
+        has_chapters = bool(preview.get("chapters"))
+        format_check = build_import_format_check(
+            content,
+            has_chapters=has_chapters,
+            chapters=preview.get("chapters"),
+        )
+        if not has_chapters:
+            return {
+                "ok": False,
+                "error": "解析章节失败: 未检测到有效章节内容",
+                "format_check": format_check,
+            }
+
+        try:
+            os.replace(staged_path, dest)
+        except OSError:
+            logger.exception("[%s] failed to persist uploaded novel: %s", project, safe_name)
+            return {"ok": False, "error": "保存上传文件失败"}
+
+        data.update(preview)
+        data["format_check"] = format_check
+        return {"ok": True, "data": data}
+    finally:
+        try:
+            staged_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "[%s] failed to remove staged upload: %s",
+                project,
+                staged_path.name,
+                exc_info=True,
+            )
 
 
 @router.post("/projects/{project}/ingest/start")

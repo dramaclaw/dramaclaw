@@ -1512,7 +1512,24 @@
       "missing": "Premium drama scripts require scene headers. Add them before importing.",
       "missingFix": "Add a “1-1 Location Time INT/EXT” header to every scene.",
       "repairable": "Non-standard scene headers detected. They will be normalized during scene planning.",
-      "repairableFix": "The source stays unchanged while location, time, and INT/EXT metadata are normalized scene by scene."
+      "repairableFix": "The source stays unchanged while location, time, and INT/EXT metadata are normalized scene by scene.",
+      "open": "View scenes for {{chapter}}",
+      "rowCount_one": "{{count}} scene",
+      "rowCount_other": "{{count}} scenes",
+      "count_one": "{{count}} scene",
+      "count_other": "{{count}} scenes",
+      "scene": "Scene {{number}}",
+      "characters": "Characters",
+      "unknownLocation": "Scene location not detected",
+      "empty": "No scene text is available in this chapter"
+    },
+    "chapterDetails": {
+      "open": "View the text of {{chapter}}",
+      "description": "Chapter text preview",
+      "sceneHeaders": "Scenes",
+      "body": "Text",
+      "empty": "No chapter text is available",
+      "emptyScene": "No text is available for this scene"
     },
     "projectType": "Project type",
     "projectTypeLocked": "Project type is locked after import. Re-import to switch.",

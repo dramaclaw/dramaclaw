@@ -45,6 +45,17 @@ export interface Chapter {
   content?: string;
   word_count?: number;
   char_count?: number;
+  scene_blocks?: ChapterSceneBlock[];
+}
+
+export interface ChapterSceneBlock {
+  header: string;
+  scene_no?: string;
+  location?: string;
+  time_of_day?: string;
+  interior_exterior?: string;
+  characters?: string[];
+  content?: string;
 }
 
 export interface Beat {

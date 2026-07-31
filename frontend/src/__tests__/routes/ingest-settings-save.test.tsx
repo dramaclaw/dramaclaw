@@ -126,6 +126,23 @@ beforeAll(async () => {
               missingFix: "Add a scene header to every scene.",
               repairable: "Non-standard scene headers will be normalized.",
               repairableFix: "Scene metadata will be normalized.",
+              open: "View scenes for {{chapter}}",
+              rowCount_one: "{{count}} scene",
+              rowCount_other: "{{count}} scenes",
+              count_one: "{{count}} scene",
+              count_other: "{{count}} scenes",
+              scene: "Scene {{number}}",
+              characters: "Characters",
+              unknownLocation: "Scene location not detected",
+              empty: "No scene text is available",
+            },
+            chapterDetails: {
+              open: "View the text of {{chapter}}",
+              description: "Chapter text preview",
+              sceneHeaders: "Scene headers",
+              body: "Text",
+              empty: "No chapter text is available",
+              emptyScene: "No text is available for this scene",
             },
             firstPerson: "First person",
             thirdPerson: "Third person",
@@ -175,6 +192,15 @@ const mocks = vi.hoisted(() => ({
             content?: string;
             word_count?: number;
             char_count?: number;
+            scene_blocks?: {
+              header: string;
+              scene_no?: string;
+              location?: string;
+              time_of_day?: string;
+              interior_exterior?: string;
+              characters?: string[];
+              content?: string;
+            }[];
           }[];
         };
       }
@@ -691,6 +717,159 @@ describe("IngestPage settings save", () => {
     expect(screen.getByText("第一章 启程")).toBeInTheDocument();
     expect(screen.getByText("第二章 风起")).toBeInTheDocument();
     expect(screen.getAllByText("12").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps the current upload preview when the replacement picker is cancelled", async () => {
+    const user = userEvent.setup();
+    mocks.uploadNovel.mockImplementation(async () => {
+      mocks.chaptersData = {
+        ok: true,
+        data: {
+          total_chars: 12,
+          count: 1,
+          preview_only: true,
+          source_filename: "novel.txt",
+          chapters: [
+            {
+              number: 1,
+              title: "第一章 初遇",
+              char_count: 12,
+              scene_blocks: [],
+            },
+          ],
+        },
+      };
+      return {
+        ok: true,
+        data: {
+          filename: "novel.txt",
+          size: 12,
+          total_chars: 12,
+          count: 1,
+          chapters: mocks.chaptersData.data.chapters,
+        },
+      };
+    });
+
+    const { container } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    const initialInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    await user.upload(
+      initialInput!,
+      new File(["第一章 初遇"], "novel.txt", { type: "text/plain" }),
+    );
+
+    expect(screen.getByText("第一章 初遇")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reupload" }));
+
+    // Cancelling the native picker emits no change event. The existing file
+    // and parsed chapter preview must therefore remain untouched.
+    expect(screen.getAllByText("novel.txt")).toHaveLength(2);
+    expect(screen.getByText("第一章 初遇")).toBeInTheDocument();
+    expect(mocks.uploadNovel).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens premium drama scene blocks from a chapter row", async () => {
+    const user = userEvent.setup();
+    mocks.chaptersData = {
+      ok: true,
+      data: {
+        total_chars: 36,
+        count: 1,
+        chapters: [
+          {
+            number: 1,
+            title: "第一集 初遇",
+            char_count: 36,
+            content: "第一集 初遇\n1-1 雨巷 夜 外\n人物：林昭、苏然",
+            scene_blocks: [
+              {
+                header: "1-1 雨巷 夜 外",
+                scene_no: "1",
+                location: "雨巷",
+                time_of_day: "夜",
+                interior_exterior: "外",
+                characters: ["林昭", "苏然"],
+                content: "△ 林昭停在屋檐下。",
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    expect(screen.getByText("1 scene")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: "View the text of 第一集 初遇",
+      }),
+    );
+
+    expect(screen.getAllByText("1 scene")).toHaveLength(2);
+    expect(screen.getByText("Scene 1")).toBeInTheDocument();
+    expect(screen.getAllByText("雨巷").length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getByText((_content, element) =>
+        element?.tagName === "P"
+          ? element.textContent?.includes("林昭、苏然") ?? false
+          : false,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1-1 雨巷 夜 外")).toBeInTheDocument();
+    expect(screen.getByText("△ 林昭停在屋檐下。")).toBeInTheDocument();
+    expect(screen.queryByTestId("chapter-body")).not.toBeInTheDocument();
+  });
+
+  it("opens chapter text in the same drawer for narrated projects", async () => {
+    const user = userEvent.setup();
+    mocks.projectConfig = {
+      ...mocks.projectConfig,
+      spine_template: "narrated",
+    };
+    mocks.chaptersData = {
+      ok: true,
+      data: {
+        total_chars: 24,
+        count: 1,
+        chapters: [
+          {
+            number: 1,
+            title: "第一章 山雨",
+            char_count: 24,
+            content: "第一章 山雨\n雨从傍晚一直下到深夜。",
+          },
+        ],
+      },
+    };
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "View the text of 第一章 山雨",
+      }),
+    );
+
+    expect(screen.getByText("Chapter text preview")).toBeInTheDocument();
+    expect(screen.getByTestId("chapter-body")).toHaveTextContent(
+      "第一章 山雨 雨从傍晚一直下到深夜。",
+    );
+    expect(screen.queryByText("Scene headers")).not.toBeInTheDocument();
   });
 
   it("starts ingest with NiceGUI-compatible rebuild enabled", async () => {

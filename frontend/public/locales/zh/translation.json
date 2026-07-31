@@ -1512,7 +1512,22 @@
       "missing": "精品剧必须包含场景头，请补充后重新导入。",
       "missingFix": "请为每个场景补充“1-1 地点 时间 内/外”格式的场景头。",
       "repairable": "检测到非标准场景头，系统将在场景规划时自动规范化。",
-      "repairableFix": "原文会保持不变，系统将逐场提取并规范化地点、时间和内外景信息。"
+      "repairableFix": "原文会保持不变，系统将逐场提取并规范化地点、时间和内外景信息。",
+      "open": "查看 {{chapter}} 的分场正文",
+      "rowCount": "{{count}} 场",
+      "count": "共 {{count}} 场",
+      "scene": "场景 {{number}}",
+      "characters": "出场人物",
+      "unknownLocation": "未识别场景地点",
+      "empty": "该章节暂无可显示的分场正文"
+    },
+    "chapterDetails": {
+      "open": "查看 {{chapter}} 的正文",
+      "description": "章节正文预览",
+      "sceneHeaders": "分场正文",
+      "body": "正文",
+      "empty": "该章节暂无可显示的正文",
+      "emptyScene": "该场景暂无正文"
     },
     "projectType": "项目类型",
     "projectTypeLocked": "项目类型已锁定，如需切换请重新导入",
