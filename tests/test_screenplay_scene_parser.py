@@ -227,10 +227,8 @@ def test_parse_insert_scene_and_standalone_insert_annotation():
     blocks = parse_scene_blocks(text)
 
     assert len(blocks) == 2
-    assert blocks[0].modifier == "insert"
     assert blocks[0].location == "李家厨房"
     assert blocks[0].time_of_day == "夜"
-    assert blocks[1].modifier == "insert"
     assert blocks[1].scene_no == "2"
     assert blocks[1].location == "学校实验室"
 
@@ -241,11 +239,32 @@ def test_incomplete_insert_scene_keeps_boundary_for_warning_and_normalization():
     )
 
     assert len(blocks) == 1
-    assert blocks[0].modifier == "insert"
     assert blocks[0].location == "舞蹈室照镜子"
     assert blocks[0].time_of_day == "日"
     assert blocks[0].interior_exterior == ""
     assert is_scene_start_line("+场 舞蹈室照镜子 日") is True
+
+
+def test_insert_scene_with_handwritten_punctuation_never_drops_the_heading():
+    text = """
++场 医院走廊。
++场（3）学校礼堂！
++场 操场？
+"""
+
+    blocks = parse_scene_blocks(text)
+
+    assert [block.header_line for block in blocks] == [
+        "+场 医院走廊。",
+        "+场（3）学校礼堂！",
+        "+场 操场？",
+    ]
+    assert [block.location for block in blocks] == [
+        "医院走廊",
+        "学校礼堂",
+        "操场",
+    ]
+    assert blocks[1].scene_no == "3"
 
 
 def test_version_number_is_not_treated_as_partial_chinese_scene_header():
@@ -273,6 +292,37 @@ LUCY: WAIT FOR ME.
         ("客厅", "夜", "内"),
         ("SCHOOL YARD", "日", "外"),
     ]
+
+
+def test_parse_chinese_fountain_heading_without_space_after_dot():
+    blocks = parse_scene_blocks(
+        "内景.咖啡馆 - 日\n张三：你好。\n内景茶室 - 夜\n李四：请坐。"
+    )
+
+    assert [
+        (block.location, block.time_of_day, block.interior_exterior)
+        for block in blocks
+    ] == [
+        ("咖啡馆", "日", "内"),
+        ("茶室", "夜", "内"),
+    ]
+
+
+def test_chinese_fountain_short_prefix_does_not_match_prose():
+    blocks = parse_scene_blocks("内心独白 - 日\n张三想起了往事。")
+
+    assert len(blocks) == 1
+    assert blocks[0].header_line == ""
+    assert blocks[0].lines == ["内心独白 - 日", "张三想起了往事。"]
+
+
+def test_mixed_international_heading_is_repairable_by_design():
+    blocks = parse_scene_blocks("INT./EXT. CAR - NIGHT\nThe car crosses a tunnel.")
+
+    assert len(blocks) == 1
+    assert blocks[0].location == "CAR"
+    assert blocks[0].time_of_day == "夜"
+    assert blocks[0].interior_exterior == ""
 
 
 def test_parse_numbered_marker_then_location_line():

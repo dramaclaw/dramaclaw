@@ -118,6 +118,7 @@ def assess_screenplay_scene_headers(text: str) -> SceneHeaderAssessment:
         if (
             bool(block.location)
             and bool(block.time_of_day)
+            and not block.time_inferred
             and block.interior_exterior in INTERIOR_EXTERIOR
         ):
             standard_headers += 1
@@ -196,7 +197,12 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
     parenthetical_dialogue_count = 0
     long_dialogue_count = 0
     scene_headers_missing_time_count = len(
-        [block for block in scene_blocks if block.header_line and not block.time_of_day]
+        [
+            block
+            for block in scene_blocks
+            if block.header_line
+            and (not block.time_of_day or block.time_inferred)
+        ]
     )
 
     for line in non_empty_lines:

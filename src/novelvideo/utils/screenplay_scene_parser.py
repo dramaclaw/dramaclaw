@@ -99,7 +99,8 @@ SIMPLE_LOCATION_RE = re.compile(
     rf"|(?P<interior_first>内|外)[\s，,]+(?P<time_last>{TIME_TOKEN_RE}))$"
 )
 CHINESE_FOUNTAIN_SCENE_RE = re.compile(
-    rf"^(?P<intro>内景|外景|内|外)\s*[.。]?\s+"
+    rf"^(?:(?P<long_intro>内景|外景)[\s.。]*"
+    rf"|(?P<short_intro>内|外)(?:[.。]\s*|\s+))"
     rf"(?P<location>.+?)\s*[-–—－]\s*(?P<time>{TIME_TOKEN_RE})$",
     re.IGNORECASE,
 )
@@ -123,7 +124,9 @@ class ParsedSceneBlock:
     lines: list[str] = field(default_factory=list)
     episode: int = 0
     scene_no: str = ""
-    modifier: str = ""
+    # Keep the legacy runtime default ("日") without hiding that the source
+    # omitted its time anchor from import quality checks.
+    time_inferred: bool = False
 
 
 def split_screenplay_lines(text: str) -> list[str]:
@@ -141,7 +144,6 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
     current = ParsedSceneBlock()
     current_episode = 0
     collecting_header = False
-    pending_modifier = ""
 
     def flush_current() -> None:
         nonlocal current, collecting_header
@@ -156,17 +158,14 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
         scene_no: str = "",
         location_line: str = "",
         chars: str = "",
-        modifier: str = "",
     ) -> None:
-        nonlocal current, collecting_header, current_episode, pending_modifier
+        nonlocal current, collecting_header, current_episode
         flush_current()
         current = ParsedSceneBlock(
             header_line=line,
             episode=current_episode,
             scene_no=scene_no,
-            modifier=modifier or pending_modifier,
         )
-        pending_modifier = ""
         if location_line:
             _apply_location(current, location_line)
             if not current.location:
@@ -214,26 +213,22 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
         if insert_scene:
             rest = (insert_scene.group("rest") or "").strip()
             next_line = lines[line_index + 1] if line_index + 1 < len(lines) else ""
-            if rest and _looks_like_partial_location(rest):
+            if rest:
+                if current_episode <= 0:
+                    current_episode = 1
+                location_line = _strip_handwritten_heading_punctuation(rest)
+                start_block(
+                    line,
+                    scene_no=insert_scene.group("scene_no") or "",
+                    location_line=location_line,
+                )
+            elif not is_scene_start_line(next_line):
                 if current_episode <= 0:
                     current_episode = 1
                 start_block(
                     line,
                     scene_no=insert_scene.group("scene_no") or "",
-                    location_line=rest,
-                    modifier="insert",
                 )
-            elif not rest:
-                if is_scene_start_line(next_line):
-                    pending_modifier = "insert"
-                else:
-                    if current_episode <= 0:
-                        current_episode = 1
-                    start_block(
-                        line,
-                        scene_no=insert_scene.group("scene_no") or "",
-                        modifier="insert",
-                    )
             # A standalone "+场" immediately before a complete scene heading is
             # only a production annotation. The following heading owns the block.
             continue
@@ -293,6 +288,7 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
         labeled_time = LABELED_TIME_RE.match(line)
         if labeled_time and current.header_line and (collecting_header or not current.lines):
             current.time_of_day = labeled_time.group("time") or ""
+            current.time_inferred = False
             collecting_header = True
             continue
 
@@ -338,10 +334,7 @@ def is_scene_start_line(line: str) -> bool:
     if _parse_international_scene_header(stripped):
         return True
     insert_scene = INSERT_SCENE_RE.fullmatch(stripped)
-    if insert_scene and (
-        not (insert_scene.group("rest") or "").strip()
-        or _looks_like_partial_location(insert_scene.group("rest") or "")
-    ):
+    if insert_scene:
         return True
     if INLINE_LABELED_SCENE_RE.match(stripped):
         return True
@@ -422,6 +415,10 @@ def parse_location_line(line: str) -> list[tuple[str, str, bool]]:
 
     if not interior_exterior:
         return []
+    if not tod:
+        # Preserve the historical scene-plate behavior for headings that omit
+        # time. ParsedSceneBlock.time_inferred keeps validation honest.
+        tod = "日"
     if not text:
         return []
 
@@ -481,6 +478,7 @@ def _apply_location(block: ParsedSceneBlock, location_line: str) -> None:
     if not loc:
         return
     block.location, block.time_of_day, block.interior_exterior = loc
+    block.time_inferred = not _has_explicit_time_token(location_line)
 
 
 def _apply_partial_location(block: ParsedSceneBlock, location_line: str) -> None:
@@ -497,6 +495,7 @@ def _apply_partial_location(block: ParsedSceneBlock, location_line: str) -> None
     time_match = re.search(rf"({TIME_TOKEN_RE})\s*$", text)
     if time_match:
         block.time_of_day = time_match.group(1)
+        block.time_inferred = False
         text = text[: time_match.start()].strip()
 
     interior_matches = list(re.finditer(r"(?:^|[\s，,（(屋])(内|外)(?=$|[\s，,）)])", text))
@@ -549,6 +548,21 @@ def _looks_like_partial_location(text: str) -> bool:
     return bool(re.search(r"[\u4e00-\u9fff]", candidate))
 
 
+def _strip_handwritten_heading_punctuation(text: str) -> str:
+    return (text or "").strip().rstrip("。！？，；：.!?;:").strip()
+
+
+def _has_explicit_time_token(text: str) -> bool:
+    candidate = _strip_location_prefix(text)
+    candidate = _strip_numbered_scene_prefix(candidate)
+    return bool(
+        re.search(
+            rf"(?:^|[\s，,、])(?:{TIME_TOKEN_RE})(?=$|[\s，,、])",
+            candidate,
+        )
+    )
+
+
 def _looks_like_bare_scene_marker(line: str) -> bool:
     stripped = (line or "").strip()
     return stripped.startswith(("场次", "场", "第"))
@@ -574,7 +588,11 @@ def _parse_international_scene_header(line: str) -> tuple[str, str, str] | None:
     text = (line or "").strip()
     chinese = CHINESE_FOUNTAIN_SCENE_RE.fullmatch(text)
     if chinese:
-        intro = (chinese.group("intro") or "").upper()
+        intro = (
+            chinese.group("long_intro")
+            or chinese.group("short_intro")
+            or ""
+        ).upper()
         interior = "内" if intro in {"内", "内景"} else "外"
         return (
             (chinese.group("location") or "").strip(),
