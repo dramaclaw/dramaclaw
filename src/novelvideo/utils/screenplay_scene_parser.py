@@ -132,7 +132,7 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
             _extend_unique(current.characters, parse_character_line(chars))
         collecting_header = True
 
-    for raw_line in lines:
+    for line_index, raw_line in enumerate(lines):
         line = raw_line.strip()
         if not line:
             continue
@@ -184,7 +184,11 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
             continue
 
         marker = SCENE_MARKER_RE.match(line)
-        if marker and _looks_like_bare_scene_marker(line):
+        next_line = lines[line_index + 1] if line_index + 1 < len(lines) else ""
+        if marker and (
+            _looks_like_bare_scene_marker(line)
+            or bool(parse_location_header(next_line))
+        ):
             if current_episode <= 0:
                 current_episode = 1
             start_block(line, scene_no=marker.group("scene_no") or "")

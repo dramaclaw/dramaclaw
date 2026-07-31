@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import stat
 import zipfile
 from types import SimpleNamespace
@@ -93,6 +94,10 @@ def _docx_bytes(paragraphs: list[str]) -> bytes:
         )
         archive.writestr("word/document.xml", document_xml)
     return buffer.getvalue()
+
+
+def _preview_lines(content: str) -> list[str]:
+    return content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
 def test_chapter_preview_ignores_embedded_chapter_references():
@@ -247,7 +252,7 @@ def test_chapter_preview_includes_scene_blocks_within_each_episode():
         "content_end_line": 4,
     }
     assert (
-        data["chapters"][0]["content"].splitlines()[
+        _preview_lines(data["chapters"][0]["content"])[
             first_scenes[0]["content_start_line"]
             : first_scenes[0]["content_end_line"]
         ]
@@ -288,7 +293,7 @@ def test_chapter_preview_keeps_text_before_first_scene_header():
     chapter = data["chapters"][0]
     start = chapter["unparsed_content_start_line"]
     end = chapter["unparsed_content_end_line"]
-    assert chapter["content"].splitlines()[start:end] == [
+    assert _preview_lines(chapter["content"])[start:end] == [
         "这段说明还没有归入任何场景。"
     ]
 
@@ -311,7 +316,7 @@ def test_chapter_preview_scene_ranges_keep_blank_lines():
 
     chapter = data["chapters"][0]
     scene = chapter["scene_blocks"][0]
-    assert chapter["content"].splitlines()[
+    assert _preview_lines(chapter["content"])[
         scene["content_start_line"] : scene["content_end_line"]
     ] == ["△ 林昭停在屋檐下。", "", "林昭：雨还没有停。"]
 
@@ -348,8 +353,36 @@ async def test_upload_novel_returns_nicegui_chapter_preview(tmp_path, monkeypatc
     assert data["chapters"][0]["word_count"] == len(data["chapters"][0]["content"])
     uploads_dir = tmp_path / "uploads"
     assert (uploads_dir / "novel.txt").read_bytes() == raw
-    assert stat.S_IMODE((uploads_dir / "novel.txt").stat().st_mode) == 0o644
     assert list((uploads_dir / ".staging").glob("upload-*")) == []
+
+
+@pytest.mark.asyncio
+async def test_upload_novel_new_file_respects_restrictive_umask(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import ingest
+
+    monkeypatch.setattr(
+        ingest,
+        "resolve_project_scope",
+        _project_scope_resolver(tmp_path),
+    )
+    previous_umask = os.umask(0o077)
+    try:
+        response = await ingest.upload_novel(
+            project="demo",
+            file=UploadFile(
+                file=io.BytesIO(NOVEL_TEXT.encode("utf-8")),
+                filename="novel.txt",
+            ),
+            user={"username": "admin"},
+        )
+    finally:
+        os.umask(previous_umask)
+
+    assert response["ok"] is True
+    uploaded = tmp_path / "uploads" / "novel.txt"
+    assert stat.S_IMODE(uploaded.stat().st_mode) == 0o600
 
 
 @pytest.mark.asyncio
@@ -647,6 +680,39 @@ async def test_detect_chapters_skips_scene_preview_for_narrated_project(
 
     assert response["ok"] is True
     assert "scene_blocks" not in response["data"]["chapters"][0]
+
+
+@pytest.mark.asyncio
+async def test_detect_chapters_query_template_overrides_saved_project_type(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import episodes
+
+    screenplay = "第一章 初遇\n1-1 雨巷 夜 外\n人物：林昭\n△ 林昭停在屋檐下。"
+    monkeypatch.setattr(
+        episodes,
+        "resolve_project_scope",
+        _project_scope_resolver(tmp_path),
+    )
+    monkeypatch.setattr(
+        episodes,
+        "load_project_config_file_from_state_dir",
+        lambda _state_dir: {"spine_template": "narrated"},
+    )
+
+    async def make_store(username: str, project: str):
+        return _NovelStore(screenplay)
+
+    monkeypatch.setattr(episodes, "make_sqlite_store", make_store)
+
+    response = await episodes.detect_chapters(
+        project="demo",
+        spine_template="drama",
+        user={"username": "admin"},
+    )
+
+    assert response["ok"] is True
+    assert response["data"]["chapters"][0]["scene_blocks"][0]["location"] == "雨巷"
 
 
 @pytest.mark.asyncio

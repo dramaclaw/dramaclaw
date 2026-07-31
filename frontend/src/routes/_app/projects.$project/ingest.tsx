@@ -124,7 +124,9 @@ function chapterContentSlice(
   startLine: number,
   endLine: number,
 ): string {
-  const lines = (chapter.content ?? "").split(/\r?\n/);
+  const lines = (chapter.content ?? "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n");
   const start = Math.max(0, Math.min(startLine, lines.length));
   const end = Math.max(start, Math.min(endLine, lines.length));
   return lines.slice(start, end).join("\n").trim();
@@ -1010,6 +1012,18 @@ export function IngestPageContent({ project }: { project: string }) {
   const logsScrollRef = useRef<HTMLDivElement>(null);
   const replacementFileInputRef = useRef<HTMLInputElement>(null);
 
+  // The chapter preview representation depends on the currently selected
+  // project type, so initialize the form before creating that query.
+  const { data: projectRes } = useProject(project);
+  const config = projectRes?.data;
+  const normalizedDefaults = normalizeLegacyDefaults(config);
+  const { watch, setValue, getValues } = useForm<SettingsForm>({
+    resolver: zodResolver(settingsSchema),
+    values: normalizedDefaults,
+  });
+  const formValues = watch();
+  const settingsValues = resolveIngestSettings(formValues, normalizedDefaults);
+
   const uploadMutation = useUploadNovel(project);
   const startIngestMutation = useStartIngest(project);
 
@@ -1021,6 +1035,7 @@ export function IngestPageContent({ project }: { project: string }) {
   // route changes. Upload filename/size is only local session metadata.
   const { data: chaptersRes, isFetching: chaptersFetching } = useChapters(
     project,
+    settingsValues.spine_template,
     true,
   );
   const chaptersData = chaptersRes?.data;
@@ -1211,11 +1226,8 @@ export function IngestPageContent({ project }: { project: string }) {
   }, [ingestLogs]);
 
   // Project config & form
-  const { data: projectRes } = useProject(project);
   const { data: stylesRes } = useStyles(project);
   const updateProject = useUpdateProject(project);
-  const config = projectRes?.data;
-  const normalizedDefaults = normalizeLegacyDefaults(config);
   const visualStyleOptions = useMemo(() => {
     const styles = stylesRes?.data ?? [];
     if (styles.length > 0) {
@@ -1230,13 +1242,6 @@ export function IngestPageContent({ project }: { project: string }) {
     }));
   }, [stylesRes?.data, t]);
 
-  const { watch, setValue, getValues } = useForm<SettingsForm>({
-    resolver: zodResolver(settingsSchema),
-    values: normalizedDefaults,
-  });
-
-  const formValues = watch();
-  const settingsValues = resolveIngestSettings(formValues, normalizedDefaults);
   const displayedFormatCheck = useMemo(
     () =>
       resolveFormatCheckForSpineTemplate(

@@ -858,7 +858,7 @@ describe("IngestPage settings save", () => {
             title: "第一集 初遇",
             char_count: 36,
             content:
-              "第一集 初遇\n1-1 雨巷 夜 外\n人物：林昭、苏然\n△ 林昭停在屋檐下。",
+              "第一集 初遇\r1-1 雨巷 夜 外\r人物：林昭、苏然\r△ 林昭停在屋檐下。",
             scene_blocks: [
               {
                 header: "1-1 雨巷 夜 外",

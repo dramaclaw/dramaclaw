@@ -3,9 +3,9 @@
 import asyncio
 import logging
 import os
+import secrets
 import shutil
 import stat
-import tempfile
 from pathlib import Path
 from typing import Annotated
 
@@ -119,6 +119,24 @@ def _unsupported_format_response(filename: str) -> dict:
     }
 
 
+def _create_staged_upload(staging_dir: Path, suffix: str) -> Path:
+    """Create a unique staging file whose mode respects the process umask."""
+
+    for _ in range(10):
+        staged_path = staging_dir / f"upload-{secrets.token_hex(16)}{suffix}"
+        try:
+            fd = os.open(
+                staged_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o666,
+            )
+        except FileExistsError:
+            continue
+        os.close(fd)
+        return staged_path
+    raise OSError("failed to allocate upload staging file")
+
+
 @router.post("/projects/{project}/ingest/upload")
 async def upload_novel(
     project: str,
@@ -141,13 +159,7 @@ async def upload_novel(
     dest = uploads_dir / safe_name
     staging_dir = uploads_dir / ".staging"
     staging_dir.mkdir(exist_ok=True)
-    fd, staged_name = tempfile.mkstemp(
-        prefix="upload-",
-        suffix=Path(safe_name).suffix,
-        dir=staging_dir,
-    )
-    os.close(fd)
-    staged_path = Path(staged_name)
+    staged_path = _create_staged_upload(staging_dir, Path(safe_name).suffix)
     try:
         try:
             size = stream_to_file_with_limit(file.file, staged_path)
@@ -204,15 +216,15 @@ async def upload_novel(
             }
 
         try:
-            # ``mkstemp`` deliberately creates mode 0600.  Preserve the mode of
-            # an existing upload when replacing it; for a new upload retain the
-            # historical 0644 behavior of ``open(path, "wb")`` under the
-            # repository's normal umask.
+            # Replacements preserve their existing mode. New staging files were
+            # created with mode 0666 filtered through the process umask, matching
+            # the historical ``open(path, "wb")`` behavior.
             try:
                 destination_mode = stat.S_IMODE(dest.stat().st_mode)
             except FileNotFoundError:
-                destination_mode = 0o644
-            staged_path.chmod(destination_mode)
+                pass
+            else:
+                staged_path.chmod(destination_mode)
             os.replace(staged_path, dest)
         except OSError:
             logger.exception("[%s] failed to persist uploaded novel: %s", project, safe_name)

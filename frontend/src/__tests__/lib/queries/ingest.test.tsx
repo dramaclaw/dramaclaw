@@ -13,7 +13,11 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
-import { useStartIngest, useUploadNovel } from "@/lib/queries/ingest";
+import {
+  useChapters,
+  useStartIngest,
+  useUploadNovel,
+} from "@/lib/queries/ingest";
 
 const server = setupServer();
 
@@ -27,6 +31,26 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe("ingest query error contract", () => {
+  it("requests and caches chapter previews by spine template", async () => {
+    let requestedTemplate = "";
+    server.use(
+      http.get("http://localhost:3000/api/v1/projects/demo/chapters", ({ request }) => {
+        requestedTemplate = new URL(request.url).searchParams.get("spine_template") ?? "";
+        return HttpResponse.json({
+          ok: true,
+          data: { chapters: [], total_chars: 0, count: 0 },
+        });
+      }),
+    );
+
+    const { result } = renderHook(() => useChapters("demo", "drama"), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestedTemplate).toBe("drama");
+  });
+
   it("rejects upload responses that return ok:false with a backend error", async () => {
     server.use(
       http.post("http://localhost:3000/api/v1/projects/demo/ingest/upload", async ({ request }) => {

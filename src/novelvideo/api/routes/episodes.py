@@ -1,6 +1,8 @@
 """分集列表 & 规划 & 身份端点。"""
 
 import logging
+from typing import Literal
+
 from fastapi import APIRouter, Depends
 
 from novelvideo.api.auth import get_api_user
@@ -624,7 +626,11 @@ async def update_episode(
 
 
 @router.get("/projects/{project}/chapters")
-async def detect_chapters(project: str, user: dict = Depends(get_api_user)):
+async def detect_chapters(
+    project: str,
+    spine_template: Literal["drama", "narrated"] | None = None,
+    user: dict = Depends(get_api_user),
+):
     """检测已上传小说的章节结构。"""
     resolved = await resolve_project_scope(project, user, required_role="viewer")
 
@@ -638,10 +644,12 @@ async def detect_chapters(project: str, user: dict = Depends(get_api_user)):
         return {"ok": False, "error": "No novel file found. Upload a novel first."}
 
     config = load_project_config_file_from_state_dir(resolved.state_dir)
+    requested_spine_template = spine_template or str(
+        config.get("spine_template") or "drama"
+    ).strip()
     preview = build_chapter_preview(
         novel_text,
-        include_scene_blocks=str(config.get("spine_template") or "drama").strip()
-        != "narrated",
+        include_scene_blocks=requested_spine_template != "narrated",
     )
     source_filename = resolve_uploaded_novel_filename(
         resolved.project_dir,
