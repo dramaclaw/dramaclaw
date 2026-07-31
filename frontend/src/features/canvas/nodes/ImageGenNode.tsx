@@ -131,6 +131,7 @@ import {
 } from '@/features/canvas/nodes/CameraPickerPopover';
 import {
   buildImageGenerationSuccessPatch,
+  GENERATION_ERROR_CLEARED_PATCH,
   isStaleGenerationTask,
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
@@ -371,6 +372,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         // 恢复的是单张历史结果，旧批次画册已与主图脱钩（没有任何一张会命中
         // 「主图」标记，点画册格还会静默丢掉刚恢复的图）——一并清掉。
         generationBatch: null,
+        // 节点上已经换成历史里那张成功的图了，上一次失败的横幅不能再盖着。
+        ...GENERATION_ERROR_CLEARED_PATCH,
       });
     },
     [id, isGenerating, updateNodeData],
@@ -735,7 +738,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
 
   const handleSetAlbumMainImage = useCallback(
     (url: string) => {
-      updateNodeData(id, { imageUrl: url, previewImageUrl: url });
+      updateNodeData(id, {
+        imageUrl: url,
+        previewImageUrl: url,
+        ...GENERATION_ERROR_CLEARED_PATCH,
+      });
       setAlbumExpanded(false);
     },
     [id, updateNodeData],
@@ -814,7 +821,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       setIsUploading(true);
       try {
         const result = await uploadFreezoneImage(projectId, file, file.name);
-        updateNodeData(id, { referenceImageUrl: result.url });
+        // 上传的参考图会直接顶到节点主体上显示，旧的失败横幅得跟着清掉。
+        updateNodeData(id, { referenceImageUrl: result.url, ...GENERATION_ERROR_CLEARED_PATCH });
       } catch (error) {
         console.error('[image-gen] upload failed', error);
       } finally {
@@ -1206,6 +1214,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           episode: effectiveEpisode,
           beat: effectiveBeat,
         },
+        ...GENERATION_ERROR_CLEARED_PATCH,
       });
       canvasEventBus.publish('freezone/assets-updated', undefined);
     },
