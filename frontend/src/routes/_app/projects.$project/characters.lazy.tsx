@@ -3246,7 +3246,7 @@ function CharactersPageContent() {
         toast.error(backendErrorResponseToastMessage(res, t));
         return;
       }
-      buildActivity.markStarted();
+      buildActivity.markStarted({ taskId: res.task_id });
     } catch (error) {
       toast.error(backendErrorToastMessage(error, t));
     }

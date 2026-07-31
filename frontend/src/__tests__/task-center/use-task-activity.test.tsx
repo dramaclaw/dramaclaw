@@ -150,6 +150,62 @@ describe("useTaskActivity", () => {
     expect(result.current.isActive).toBe(false);
   });
 
+  it("首轮采样就撞上终态时，凭 task_id 立刻收回 loading", () => {
+    const { result } = render();
+    hydrateWith([]);
+
+    act(() => result.current.markStarted({ taskId: "run-2" }));
+    expect(result.current.isActive).toBe(true);
+
+    // 轮询兜底（5s）下任务在两次采样之间跑完：这一轮 GET /tasks 回来时
+    // 已经是终态，活跃态从头到尾没被观察到。
+    act(() => {
+      useTaskCenterStore
+        .getState()
+        .hydrate([buildScenes({ task_id: "run-2", status: "completed", progress: 1 })]);
+    });
+
+    expect(result.current.isActive).toBe(false);
+  });
+
+  it("任务入队后立刻失败时，凭 task_id 立刻收回 loading", () => {
+    const { result } = render();
+    hydrateWith([]);
+
+    act(() => result.current.markStarted({ taskId: "run-2" }));
+    act(() => {
+      useTaskCenterStore
+        .getState()
+        .upsert(buildScenes({ task_id: "run-2", status: "failed", error: "boom" }));
+    });
+
+    expect(result.current.isActive).toBe(false);
+  });
+
+  it("上一轮的旧终态记录不该把新一轮的乐观窗口提前清掉", () => {
+    const { result } = render();
+    // task_key 跨轮复用，上一轮跑完的记录会在 store 里躺到被 prune 为止。
+    hydrateWith([buildScenes({ task_id: "run-1", status: "completed", progress: 1 })]);
+
+    act(() => result.current.markStarted({ taskId: "run-2" }));
+
+    // 新一轮刚入队、任务中心还没更新：loading 必须继续。
+    expect(result.current.isActive).toBe(true);
+  });
+
+  it("没拿到 task_id 时退回 15 秒兜底，不误伤旧调用方", () => {
+    const { result } = render();
+    hydrateWith([buildScenes({ task_id: "run-1", status: "completed", progress: 1 })]);
+
+    act(() => result.current.markStarted());
+    expect(result.current.isActive).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(15_000);
+    });
+    expect(result.current.isActive).toBe(false);
+  });
+
   it("任务正常跑完后收回 loading", () => {
     const { result } = render();
     hydrateWith([buildScenes()]);

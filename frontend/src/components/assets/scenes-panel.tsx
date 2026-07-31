@@ -1288,7 +1288,7 @@ export function ScenesPanel({
       toast.error(backendErrorResponseToastMessage(res, t));
       return;
     }
-    buildActivity.markStarted();
+    buildActivity.markStarted({ taskId: res.task_id });
     toast.success(res.message);
   }
 
