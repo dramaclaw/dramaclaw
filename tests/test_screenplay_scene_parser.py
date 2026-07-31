@@ -171,6 +171,110 @@ def test_parse_numbered_legacy_header_with_people_line():
     ]
 
 
+def test_parse_dot_numbered_scene_with_interior_before_time():
+    text = """
+第11集
+11.1 李家客厅 内 日
+人物：李梅、王芳
+▲ 李梅把书包放到桌上。
+李梅：我回来了。
+11.2 学校实验室 外 夜
+人物：李梅、老师
+▲ 夜风吹过实验楼。
+"""
+
+    blocks = parse_scene_blocks(text)
+
+    assert [
+        (
+            block.episode,
+            block.scene_no,
+            block.location,
+            block.time_of_day,
+            block.interior_exterior,
+        )
+        for block in blocks
+    ] == [
+        (11, "1", "李家客厅", "日", "内"),
+        (11, "2", "学校实验室", "夜", "外"),
+    ]
+    assert blocks[0].lines == ["▲ 李梅把书包放到桌上。", "李梅：我回来了。"]
+
+
+def test_scene_boundary_preserves_adjacent_sublocations_for_later_scene_planning():
+    blocks = parse_scene_blocks(
+        "第一集\n1.2 名门高级人才学院教室/楼梯间 内 日\n人物：李梅\n李梅：快走。"
+    )
+
+    assert len(blocks) == 1
+    assert blocks[0].location == "名门高级人才学院教室/楼梯间"
+    assert blocks[0].time_of_day == "日"
+    assert blocks[0].interior_exterior == "内"
+
+
+def test_parse_insert_scene_and_standalone_insert_annotation():
+    text = """
+第11集
++场 李家厨房 内 夜
+人物：奶奶
+▲ 奶奶关上灶火。
++场
+11.2 学校实验室 内 日
+人物：李梅
+李梅：实验完成了。
+"""
+
+    blocks = parse_scene_blocks(text)
+
+    assert len(blocks) == 2
+    assert blocks[0].modifier == "insert"
+    assert blocks[0].location == "李家厨房"
+    assert blocks[0].time_of_day == "夜"
+    assert blocks[1].modifier == "insert"
+    assert blocks[1].scene_no == "2"
+    assert blocks[1].location == "学校实验室"
+
+
+def test_incomplete_insert_scene_keeps_boundary_for_warning_and_normalization():
+    blocks = parse_scene_blocks(
+        "第一集\n+场 舞蹈室照镜子 日\n人物：李梅\n▲ 李梅看向镜中的自己。"
+    )
+
+    assert len(blocks) == 1
+    assert blocks[0].modifier == "insert"
+    assert blocks[0].location == "舞蹈室照镜子"
+    assert blocks[0].time_of_day == "日"
+    assert blocks[0].interior_exterior == ""
+    assert is_scene_start_line("+场 舞蹈室照镜子 日") is True
+
+
+def test_version_number_is_not_treated_as_partial_chinese_scene_header():
+    blocks = parse_scene_blocks("第一集\n1.2 release notes\n这是普通说明。")
+
+    assert len(blocks) == 1
+    assert blocks[0].header_line == ""
+    assert blocks[0].lines == ["1.2 release notes", "这是普通说明。"]
+
+
+def test_parse_chinese_and_english_fountain_scene_headers():
+    text = """
+内景 客厅 - 夜
+张三：回来了。
+EXT. SCHOOL YARD - DAY #2A#
+LUCY: WAIT FOR ME.
+"""
+
+    blocks = parse_scene_blocks(text)
+
+    assert [
+        (block.location, block.time_of_day, block.interior_exterior)
+        for block in blocks
+    ] == [
+        ("客厅", "夜", "内"),
+        ("SCHOOL YARD", "日", "外"),
+    ]
+
+
 def test_parse_numbered_marker_then_location_line():
     text = """
 1-1

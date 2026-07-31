@@ -35,6 +35,15 @@ MODERN_TIME_TOKEN_RE = "|".join(
 )
 TIME_TOKEN_RE = rf"(?:{CLASSICAL_TIME_RE}|{MODERN_TIME_TOKEN_RE})"
 INTERIOR_EXTERIOR = {"内", "外"}
+ENGLISH_TIME_TOKENS = {
+    "DAY": "日",
+    "NIGHT": "夜",
+    "MORNING": "上午",
+    "AFTERNOON": "下午",
+    "EVENING": "傍晚",
+    "DAWN": "清晨",
+    "DUSK": "黄昏",
+}
 ROOM_TYPES = {
     "客厅",
     "厨房",
@@ -52,11 +61,18 @@ ROOM_TYPES = {
 
 EPISODE_HEADER_RE = re.compile(r"^第([一二三四五六七八九十百千万\d]+)集")
 SCENE_MARKER_RE = re.compile(
-    r"^(?:场次|第)?[（(]?(?P<scene_no>\d+)[）)]?(?:\s*场)?(?:\s*[:：])?\s*$"
+    r"^(?:(?:场次|场)\s*|第\s*)?[（(]?(?P<scene_no>\d+)[）)]?"
+    r"(?:\s*场)?(?:\s*[:：])?\s*$"
 )
 COLON_SCENE_MARKER_RE = re.compile(r"^场次\s*[:：]\s*(?P<scene_no>\d+)\s*$")
 NUMBERED_SCENE_RE = re.compile(
-    r"^(?P<episode>\d+)\s*[-－]\s*(?P<scene>\d+)(?:\s*[、，,.\s]\s*)?(?P<rest>.*)$"
+    r"^(?P<episode>\d+)\s*(?P<separator>[-－.．])\s*(?P<scene>\d+)"
+    r"(?:\s*[、，,\s]\s*)?(?P<rest>.*)$"
+)
+INSERT_SCENE_RE = re.compile(
+    r"^[+＋]\s*场(?:次)?"
+    r"(?:\s*[（(]?(?P<scene_no>\d+)[）)]?)?"
+    r"(?:\s*[:：])?\s*(?P<rest>.*)$"
 )
 LABELED_LOCATION_RE = re.compile(r"^(?:地点|环境|场景)[：:]\s*(?P<location>.+)$")
 LABELED_TIME_RE = re.compile(
@@ -78,7 +94,21 @@ BRACKETED_LABELED_SCENE_RE = re.compile(
     r"(?P<interior>内|外)\s*[】\]]\s*$"
 )
 SIMPLE_LOCATION_RE = re.compile(
-    rf"^(?P<location>.+?)\s+(?P<time>{TIME_TOKEN_RE})\s+(?P<interior>内|外)$"
+    rf"^(?P<location>.+?)[\s，,]+"
+    rf"(?:(?P<time_first>{TIME_TOKEN_RE})[\s，,]+(?P<interior_last>内|外)"
+    rf"|(?P<interior_first>内|外)[\s，,]+(?P<time_last>{TIME_TOKEN_RE}))$"
+)
+CHINESE_FOUNTAIN_SCENE_RE = re.compile(
+    rf"^(?P<intro>内景|外景|内|外)\s*[.。]?\s+"
+    rf"(?P<location>.+?)\s*[-–—－]\s*(?P<time>{TIME_TOKEN_RE})$",
+    re.IGNORECASE,
+)
+INTERNATIONAL_SCENE_RE = re.compile(
+    r"^(?P<intro>INT|EXT|EST|INT\./EXT|INT/EXT|I/E)\.?\s+"
+    r"(?P<location>.+?)\s*[-–—]\s*"
+    r"(?P<time>DAY|NIGHT|MORNING|AFTERNOON|EVENING|DAWN|DUSK)"
+    r"(?:\s+#[A-Za-z0-9.\-]+#)?$",
+    re.IGNORECASE,
 )
 SPEAKER_LINE_RE = re.compile(r"^[^\n：:]{1,24}[：:].+$")
 
@@ -93,6 +123,7 @@ class ParsedSceneBlock:
     lines: list[str] = field(default_factory=list)
     episode: int = 0
     scene_no: str = ""
+    modifier: str = ""
 
 
 def split_screenplay_lines(text: str) -> list[str]:
@@ -110,6 +141,7 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
     current = ParsedSceneBlock()
     current_episode = 0
     collecting_header = False
+    pending_modifier = ""
 
     def flush_current() -> None:
         nonlocal current, collecting_header
@@ -118,16 +150,27 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
         current = ParsedSceneBlock()
         collecting_header = False
 
-    def start_block(line: str, *, scene_no: str = "", location_line: str = "", chars: str = "") -> None:
-        nonlocal current, collecting_header, current_episode
+    def start_block(
+        line: str,
+        *,
+        scene_no: str = "",
+        location_line: str = "",
+        chars: str = "",
+        modifier: str = "",
+    ) -> None:
+        nonlocal current, collecting_header, current_episode, pending_modifier
         flush_current()
         current = ParsedSceneBlock(
             header_line=line,
             episode=current_episode,
             scene_no=scene_no,
+            modifier=modifier or pending_modifier,
         )
+        pending_modifier = ""
         if location_line:
             _apply_location(current, location_line)
+            if not current.location:
+                _apply_partial_location(current, location_line)
         if chars:
             _extend_unique(current.characters, parse_character_line(chars))
         collecting_header = True
@@ -153,6 +196,46 @@ def parse_scene_blocks(text_or_lines: str | list[str]) -> list[ParsedSceneBlock]
             current.time_of_day = bracketed_labeled.group("time") or ""
             current.interior_exterior = bracketed_labeled.group("interior") or ""
             collecting_header = True
+            continue
+
+        international = _parse_international_scene_header(line)
+        if international:
+            if current_episode <= 0:
+                current_episode = 1
+            location, time_of_day, interior_exterior = international
+            start_block(line)
+            current.location = location
+            current.time_of_day = time_of_day
+            current.interior_exterior = interior_exterior
+            collecting_header = True
+            continue
+
+        insert_scene = INSERT_SCENE_RE.fullmatch(line)
+        if insert_scene:
+            rest = (insert_scene.group("rest") or "").strip()
+            next_line = lines[line_index + 1] if line_index + 1 < len(lines) else ""
+            if rest and _looks_like_partial_location(rest):
+                if current_episode <= 0:
+                    current_episode = 1
+                start_block(
+                    line,
+                    scene_no=insert_scene.group("scene_no") or "",
+                    location_line=rest,
+                    modifier="insert",
+                )
+            elif not rest:
+                if is_scene_start_line(next_line):
+                    pending_modifier = "insert"
+                else:
+                    if current_episode <= 0:
+                        current_episode = 1
+                    start_block(
+                        line,
+                        scene_no=insert_scene.group("scene_no") or "",
+                        modifier="insert",
+                    )
+            # A standalone "+场" immediately before a complete scene heading is
+            # only a production annotation. The following heading owns the block.
             continue
 
         colon_marker = COLON_SCENE_MARKER_RE.match(line)
@@ -252,6 +335,14 @@ def is_scene_start_line(line: str) -> bool:
         return False
     if BRACKETED_LABELED_SCENE_RE.fullmatch(stripped):
         return True
+    if _parse_international_scene_header(stripped):
+        return True
+    insert_scene = INSERT_SCENE_RE.fullmatch(stripped)
+    if insert_scene and (
+        not (insert_scene.group("rest") or "").strip()
+        or _looks_like_partial_location(insert_scene.group("rest") or "")
+    ):
+        return True
     if INLINE_LABELED_SCENE_RE.match(stripped):
         return True
     if COLON_SCENE_MARKER_RE.match(stripped):
@@ -270,9 +361,21 @@ def parse_location_header(line: str) -> tuple[str, str, str] | None:
     locs = parse_location_line(line)
     if not locs:
         return None
-    if len(locs) != 1:
+    if len(locs) == 1:
+        name, time_of_day, interior = locs[0]
+        return name, time_of_day, "内" if interior else "外"
+
+    # A slash in a production scene heading commonly means that one written
+    # scene spans adjacent sub-locations (for example "教室/楼梯间"). Preserve
+    # that composite boundary here; Cognee may split it into physical places
+    # later through parse_location_line().
+    times = {time_of_day for _, time_of_day, _ in locs}
+    interiors = {interior for _, _, interior in locs}
+    if len(times) != 1 or len(interiors) != 1:
         return None
-    name, time_of_day, interior = locs[0]
+    name = "/".join(name for name, _, _ in locs)
+    time_of_day = next(iter(times))
+    interior = next(iter(interiors))
     return name, time_of_day, "内" if interior else "外"
 
 
@@ -297,8 +400,12 @@ def parse_location_line(line: str) -> list[tuple[str, str, bool]]:
     if not tod:
         simple = SIMPLE_LOCATION_RE.match(text)
         if simple:
-            tod = simple.group("time")
-            interior_exterior = simple.group("interior")
+            tod = simple.group("time_first") or simple.group("time_last") or ""
+            interior_exterior = (
+                simple.group("interior_last")
+                or simple.group("interior_first")
+                or ""
+            )
             text = simple.group("location").strip()
 
     if not interior_exterior:
@@ -315,8 +422,6 @@ def parse_location_line(line: str) -> list[tuple[str, str, bool]]:
 
     if not interior_exterior:
         return []
-    if not tod:
-        tod = "日"
     if not text:
         return []
 
@@ -378,6 +483,33 @@ def _apply_location(block: ParsedSceneBlock, location_line: str) -> None:
     block.location, block.time_of_day, block.interior_exterior = loc
 
 
+def _apply_partial_location(block: ParsedSceneBlock, location_line: str) -> None:
+    """Keep incomplete metadata after an explicit scene marker.
+
+    This helper is never used to discover a boundary by itself. It only
+    extracts best-effort hints once a numbered/``+场`` marker has already made
+    the boundary explicit, leaving missing fields empty for the warning and AI
+    normalization path.
+    """
+
+    text = _strip_location_prefix(location_line)
+    text = _strip_numbered_scene_prefix(text)
+    time_match = re.search(rf"({TIME_TOKEN_RE})\s*$", text)
+    if time_match:
+        block.time_of_day = time_match.group(1)
+        text = text[: time_match.start()].strip()
+
+    interior_matches = list(re.finditer(r"(?:^|[\s，,（(屋])(内|外)(?=$|[\s，,）)])", text))
+    if interior_matches:
+        interior_match = interior_matches[-1]
+        block.interior_exterior = interior_match.group(1)
+
+    text = re.sub(r"[（(][^）)]*[）)]", "", text).strip()
+    text = re.sub(r"(?:^|[\s，,])(内|外)\s*$", "", text).strip()
+    if text:
+        block.location = text
+
+
 def _extend_unique(items: list[str], new_items: list[str]) -> None:
     for item in new_items:
         if item and item not in items:
@@ -403,21 +535,66 @@ def _looks_like_scene_number_line(match: re.Match[str]) -> bool:
     rest = (match.group("rest") or "").strip()
     if not rest:
         return True
-    return bool(parse_location_line(rest))
+    return bool(parse_location_line(rest)) or _looks_like_partial_location(rest)
+
+
+def _looks_like_partial_location(text: str) -> bool:
+    candidate = (text or "").strip()
+    if not candidate or len(candidate) > 60:
+        return False
+    if SPEAKER_LINE_RE.match(candidate) or candidate.startswith(("△", "▲", "【", "[")):
+        return False
+    if candidate.endswith(("。", "！", "？", "!", "?")):
+        return False
+    return bool(re.search(r"[\u4e00-\u9fff]", candidate))
 
 
 def _looks_like_bare_scene_marker(line: str) -> bool:
     stripped = (line or "").strip()
-    return stripped.startswith("场次") or stripped.startswith("第")
+    return stripped.startswith(("场次", "场", "第"))
 
 
 def _looks_like_content_line(line: str) -> bool:
     stripped = (line or "").strip()
     if not stripped:
         return False
-    if stripped.startswith(("△", "【", "[")):
+    if stripped.startswith(("△", "▲", "【", "[")):
         return True
     return bool(SPEAKER_LINE_RE.match(stripped))
+
+
+def _parse_international_scene_header(line: str) -> tuple[str, str, str] | None:
+    """Parse supported Chinese/English Fountain-style scene headings.
+
+    Mixed INT/EXT and EST headings are valid boundaries but do not provide a
+    single reliable interior/exterior value. They are intentionally returned
+    with an empty value so the import check can mark them repairable.
+    """
+
+    text = (line or "").strip()
+    chinese = CHINESE_FOUNTAIN_SCENE_RE.fullmatch(text)
+    if chinese:
+        intro = (chinese.group("intro") or "").upper()
+        interior = "内" if intro in {"内", "内景"} else "外"
+        return (
+            (chinese.group("location") or "").strip(),
+            chinese.group("time") or "",
+            interior,
+        )
+
+    international = INTERNATIONAL_SCENE_RE.fullmatch(text)
+    if not international:
+        return None
+    intro = (international.group("intro") or "").upper()
+    interior = "内" if intro == "INT" else "外" if intro == "EXT" else ""
+    return (
+        (international.group("location") or "").strip(),
+        ENGLISH_TIME_TOKENS.get(
+            (international.group("time") or "").upper(),
+            "",
+        ),
+        interior,
+    )
 
 
 def _is_time_token(text: str) -> bool:
