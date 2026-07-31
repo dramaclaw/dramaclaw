@@ -1221,6 +1221,7 @@ frontend/src/task-center/store.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.
 frontend/src/task-center/stream-client.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/task-center/task-errors.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/task-center/types.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/task-center/use-task-activity.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/task-center/use-task-subscribe.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/types/api.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/types/beat-state.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

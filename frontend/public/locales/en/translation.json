@@ -1222,6 +1222,11 @@
       "derivedFrom": "Derived from {{base}}",
       "emptyTitle": "No scenes yet",
       "emptyDescription": "Create a scene or extract scenes from the project graph.",
+      "building": "Building scenes...",
+      "buildingEmpty": {
+        "title": "Building scenes",
+        "description": "The system is extracting scenes from the graph. They will appear here when ready."
+      },
       "confirmDelete": "Delete scene \"{{name}}\"?",
       "deleted": "Scene deleted",
       "master": "Master",
