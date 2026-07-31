@@ -3481,6 +3481,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-xdist" },
+    { name = "pyyaml" },
     { name = "respx" },
     { name = "ruff" },
 ]
@@ -3543,6 +3544,7 @@ dev = [
     { name = "pytest", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
+    { name = "pyyaml", specifier = "==6.0.3" },
     { name = "respx", specifier = ">=0.22.0" },
     { name = "ruff", specifier = "==0.15.20" },
 ]

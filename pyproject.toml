@@ -85,7 +85,11 @@ dev = [
     "fakeredis>=2.20.0",
     "respx>=0.22.0",
     "ruff==0.15.20",
+    "pyyaml==6.0.3",
 ]
+
+[tool.uv]
+required-version = "==0.11.31"
 
 [tool.ruff]
 target-version = "py311"
