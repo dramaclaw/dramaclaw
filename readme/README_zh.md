@@ -220,6 +220,10 @@ docker compose -f docker-compose.release.yml up -d
 ### 本地开发（uv + Python 3.11+）
 
 ```bash
+# 本仓库严格要求 uv 0.11.31。
+curl -LsSf https://astral.sh/uv/0.11.31/install.sh | sh
+uv --version   # 必须以 uv 0.11.31 开头
+
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
@@ -228,6 +232,10 @@ cp .env.example .env && $EDITOR .env
 
 uv run novelvideo api --port 8780   # 启动 REST API（CE 默认 inline 任务，无需 Ray/Redis）
 ```
+
+Windows 用户请使用[安装文档](../docs/zh/getting-started/installation.md)中的固定版本
+PowerShell 命令。不要通过包管理器为本 checkout 安装 latest uv；
+`pyproject.toml` 会有意拒绝 0.11.31 之外的版本。
 
 <br/>
 

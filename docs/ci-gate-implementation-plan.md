@@ -65,6 +65,8 @@ Code Owner 保护。必须按以下顺序执行：
 - uv 固定为 `0.11.31`；
 - `pyproject.toml` 使用 `required-version = "==0.11.31"`；
 - `setup-uv` 显式安装 `0.11.31`，治理脚本同时校验两处；
+- 治理脚本同时校验 README、CONTRIBUTING 及中英文安装/排错文档中的版本化
+  安装 URL，并拒绝 Homebrew、Winget 或无版本 installer 的浮动安装命令；
 - 所有 checkout step 使用封闭 `with` 集合并设置
   `persist-credentials: false`；
 - DCO 和 gitleaks checkout 额外保留 `fetch-depth: 0`。
@@ -110,7 +112,7 @@ P95 数据单独调整。
 - frontend tests：297 files、1956 tests 全部通过
 - actionlint v1.7.12：`pr-gate.yml` 通过
 - gitleaks v8.30.1：433 commits 全历史扫描，无发现
-- CI 治理测试：31 passed
+- CI 治理测试：32 passed
 
 ## 5. 测试 PR 验收
 

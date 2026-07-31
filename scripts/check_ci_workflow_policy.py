@@ -34,6 +34,29 @@ DEPENDENCY_REVIEW_CONFIG = "./.github/dependency-review-config.yml"
 GATE_NAME = "dramaclaw-pr-gate"
 UV_VERSION = "0.11.31"
 UV_REQUIRED_VERSION = f"=={UV_VERSION}"
+UV_UNIX_INSTALL_URL = f"https://astral.sh/uv/{UV_VERSION}/install.sh"
+UV_WINDOWS_INSTALL_URL = f"https://astral.sh/uv/{UV_VERSION}/install.ps1"
+UV_DOCUMENT_REQUIREMENTS = {
+    Path("README.md"): (UV_UNIX_INSTALL_URL,),
+    Path("readme/README_zh.md"): (UV_UNIX_INSTALL_URL,),
+    Path("CONTRIBUTING.md"): (UV_UNIX_INSTALL_URL, UV_WINDOWS_INSTALL_URL),
+    Path("docs/en/getting-started/installation.md"): (
+        UV_UNIX_INSTALL_URL,
+        UV_WINDOWS_INSTALL_URL,
+    ),
+    Path("docs/zh/getting-started/installation.md"): (
+        UV_UNIX_INSTALL_URL,
+        UV_WINDOWS_INSTALL_URL,
+    ),
+    Path("docs/en/guides/troubleshooting.md"): (UV_UNIX_INSTALL_URL,),
+    Path("docs/zh/guides/troubleshooting.md"): (UV_UNIX_INSTALL_URL,),
+}
+FORBIDDEN_FLOATING_UV_INSTALLS = {
+    "brew install uv",
+    "winget install astral-sh.uv",
+    "https://astral.sh/uv/install.sh",
+    "https://astral.sh/uv/install.ps1",
+}
 GITLEAKS_VERSION = "8.30.1"
 GITLEAKS_SHA256 = (
     "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
@@ -443,6 +466,27 @@ def _validate_uv_required_version(root: Path) -> None:
         )
 
 
+def _validate_uv_documentation(root: Path) -> None:
+    for relative_path, required_snippets in UV_DOCUMENT_REQUIREMENTS.items():
+        path = root / relative_path
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise WorkflowPolicyError(f"cannot read {path}: {exc}") from exc
+
+        missing = [
+            snippet for snippet in required_snippets if snippet not in text
+        ]
+        forbidden = [
+            snippet for snippet in FORBIDDEN_FLOATING_UV_INSTALLS if snippet in text
+        ]
+        if missing or forbidden:
+            raise WorkflowPolicyError(
+                f"{relative_path} must document pinned uv {UV_VERSION}; "
+                f"missing={missing!r}, forbidden={forbidden!r}"
+            )
+
+
 def _validate_trigger_and_permissions(workflow: dict[Any, Any]) -> None:
     if workflow.get("name") != "pr-gate":
         raise WorkflowPolicyError("pr-gate workflow name must remain 'pr-gate'")
@@ -778,6 +822,7 @@ def _validate_gate(
 
 def validate_workflow_policy(root: Path) -> None:
     _validate_uv_required_version(root)
+    _validate_uv_documentation(root)
     workflows, _actions = _load_reachable_documents(root)
     entry = (root / PR_GATE_PATH).resolve()
     workflow = workflows.get(entry)

@@ -14,6 +14,7 @@ from check_ci_gate_uniqueness import (  # noqa: E402
     validate_gate_uniqueness,
 )
 from check_ci_workflow_policy import (  # noqa: E402
+    UV_DOCUMENT_REQUIREMENTS,
     WorkflowPolicyError,
     validate_workflow_policy,
 )
@@ -52,6 +53,10 @@ def _copy_pr_gate(root: Path) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(REPO_ROOT / ".github/workflows/pr-gate.yml", target)
     shutil.copyfile(REPO_ROOT / "pyproject.toml", root / "pyproject.toml")
+    for relative_path in UV_DOCUMENT_REQUIREMENTS:
+        document_target = root / relative_path
+        document_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPO_ROOT / relative_path, document_target)
     return target
 
 
@@ -358,6 +363,22 @@ def test_workflow_policy_rejects_local_uv_version_drift(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(WorkflowPolicyError, match=r"\[tool\.uv\]\.required-version"):
+        validate_workflow_policy(tmp_path)
+
+
+def test_workflow_policy_rejects_floating_uv_install_docs(tmp_path: Path) -> None:
+    _copy_pr_gate(tmp_path)
+    path = tmp_path / "README.md"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.replace(
+            "https://astral.sh/uv/0.11.31/install.sh",
+            "https://astral.sh/uv/install.sh",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(WorkflowPolicyError, match="must document pinned uv 0.11.31"):
         validate_workflow_policy(tmp_path)
 
 

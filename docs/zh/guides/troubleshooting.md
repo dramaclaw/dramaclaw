@@ -13,6 +13,7 @@
 | **`8780` 端口被占用** | 改 compose `ports` 左值,如 `8888:8780`;或停掉占用进程(`lsof -i :8780`)。 |
 | **健康检查一直 unhealthy** | 探活打 `/api/v1/config`;若 API 自身报错,看启动日志定位真正异常。 |
 | **本地开发起不来:Python 版本** | 需 **3.11–3.12**(`>=3.11,<3.13`)。`uv python pin 3.12` 或装对应版本后 `uv sync`。 |
+| **`uv sync` 报 required-version 错误** | 本 checkout 严格要求 **uv 0.11.31**。macOS/Linux/WSL2 执行 `curl -LsSf https://astral.sh/uv/0.11.31/install.sh \| sh`;Windows 使用[安装文档](../getting-started/installation.md)中的固定版本 PowerShell 命令。确认 `uv --version` 后重试。 |
 
 ## 模型 / 网关类
 
