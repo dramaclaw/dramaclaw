@@ -1,4 +1,5 @@
 from novelvideo.models import NovelScene, resolve_scene_plate, resolve_scene_plate_from_records
+from novelvideo.utils.screenplay_scene_parser import parse_scene_blocks
 
 
 def test_resolve_scene_plate_prefers_variant_time_plate() -> None:
@@ -10,6 +11,23 @@ def test_resolve_scene_plate_prefers_variant_time_plate() -> None:
     )
 
     assert record_name == "卫生间_漏水_夜"
+    assert time_baked is True
+
+
+def test_missing_scene_time_keeps_legacy_day_plate_resolution() -> None:
+    block = parse_scene_blocks("1-1 咖啡馆 内\n张三：你好。")[0]
+
+    assert block.time_of_day == "日"
+    assert block.time_inferred is True
+
+    record_name, time_baked = resolve_scene_plate(
+        block.location,
+        "",
+        block.time_of_day,
+        {"咖啡馆", "咖啡馆_日"},
+    )
+
+    assert record_name == "咖啡馆_日"
     assert time_baked is True
 
 

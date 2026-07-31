@@ -133,6 +133,19 @@ function CreditsPage() {
           ) : null}
         </div>
 
+        {summaryQuery.isError ? (
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-rose-400/15 bg-rose-400/[0.06] px-4 py-3 text-sm text-rose-200">
+            <span>{t("credits.summaryLoadFailed")}</span>
+            <button
+              type="button"
+              onClick={() => void summaryQuery.refetch()}
+              className="shrink-0 rounded-full border border-rose-300/20 px-3 py-1 text-xs font-medium transition-colors hover:bg-rose-300/10"
+            >
+              {t("credits.retry")}
+            </button>
+          </div>
+        ) : null}
+
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
             ["balance", summary?.balance, "text-sky-300"],
@@ -341,7 +354,9 @@ function CreditsPage() {
           </table>
         </div>
 
-        {!transactionsQuery.isLoading && (transactions?.items.length ?? 0) === 0 ? (
+        {!transactionsQuery.isLoading &&
+        !transactionsQuery.isError &&
+        (transactions?.items.length ?? 0) === 0 ? (
           <div className="flex h-64 items-center justify-center text-sm text-white/35">
             {t("credits.empty")}
           </div>
@@ -349,6 +364,18 @@ function CreditsPage() {
         {transactionsQuery.isLoading ? (
           <div className="flex h-64 items-center justify-center text-sm text-white/35">
             {t("common.loading")}
+          </div>
+        ) : null}
+        {transactionsQuery.isError ? (
+          <div className="flex h-64 flex-col items-center justify-center gap-3 text-sm text-rose-200">
+            <span>{t("credits.transactionsLoadFailed")}</span>
+            <button
+              type="button"
+              onClick={() => void transactionsQuery.refetch()}
+              className="rounded-full border border-rose-300/20 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-rose-300/10"
+            >
+              {t("credits.retry")}
+            </button>
           </div>
         ) : null}
 
