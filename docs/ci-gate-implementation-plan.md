@@ -10,9 +10,9 @@
 ## 1. 本轮边界
 
 本轮只新增仓库内 Gate 实现，保留全部 legacy workflows，不修改远端 required
-checks、branch protection 或 ruleset。`.github/CODEOWNERS` 必须作为独立
-bootstrap PR 先合并；其余文件随后进入 Gate PR，新旧 CI 在测试 PR 中双轨
-运行。
+checks、branch protection 或 ruleset。`.github/CODEOWNERS` 及其机械生成的
+`license-inventory.csv` 记录必须作为独立 bootstrap PR 先合并；其余文件随后
+进入 Gate PR，新旧 CI 在测试 PR 中双轨运行。
 
 本轮新增或修改：
 
@@ -34,8 +34,9 @@ Code Owner 保护。必须按以下顺序执行：
 
 1. 组织管理员创建或确认 `@dramaclaw/maintainers`；
 2. team 至少两名活跃成员、组织内可见，并对仓库拥有 write 权限；
-3. 提交只包含 `.github/CODEOWNERS` 的 bootstrap PR；首个 PR 在现有保护下
-   由两名已确认维护者人工批准后合并；
+3. 提交只包含 `.github/CODEOWNERS` 及其机械生成
+   `license-inventory.csv` 记录的 bootstrap PR；首个 PR 在现有保护下由两名
+   已确认维护者人工批准后合并；
 4. 启用或确认 require Code Owner review；
 5. 新建一个修改 `.github/CODEOWNERS` 的测试 PR，确认自动请求 team review
    且未审批时不可合并，然后关闭而不合并；

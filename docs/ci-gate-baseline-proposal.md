@@ -792,7 +792,8 @@ API 结果必须证明 team slug、visibility/privacy 和仓库 permission 符�
 不存在该文件，bootstrap 必须单独完成：
 
 1. 先创建并验证 `@dramaclaw/maintainers`；
-2. 提交一个只新增 `.github/CODEOWNERS` 的 bootstrap PR；
+2. 提交一个只新增 `.github/CODEOWNERS` 及其机械生成
+   `license-inventory.csv` 记录的 bootstrap PR；
 3. 首个 PR 无法由尚未位于 base branch 的 CODEOWNERS 自我保护，因此必须在
    现有 branch protection 下由两名已确认维护者人工批准；
 4. 合并 bootstrap PR，并启用或确认 require Code Owner review；
