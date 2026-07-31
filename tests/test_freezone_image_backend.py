@@ -6306,6 +6306,40 @@ async def test_freezone_image_models_prefers_ee_catalog(
 
 
 @pytest.mark.asyncio
+async def test_image_catalog_pixel_floor_is_added_to_execution_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = [
+        {
+            "catalogId": "01TESTIMAGECATALOG000000000",
+            "id": "custom-image-id",
+            "apiModel": "arbitrary-upstream-model",
+            "minPixels": 3_686_400,
+            "request": {
+                "endpoint": "images/generations",
+                "parameters": [],
+            },
+        }
+    ]
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return catalog
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+
+    schema, values, entry = await freezone_routes._resolve_catalog_request(
+        "image",
+        "custom-image-id",
+        {},
+    )
+
+    assert schema["minPixels"] == 3_686_400
+    assert values == {}
+    assert entry is catalog[0]
+
+
+@pytest.mark.asyncio
 async def test_catalog_id_resolves_without_breaking_legacy_model_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

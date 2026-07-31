@@ -321,6 +321,7 @@ def test_parameter_schema_rejects_unsafe_javascript_numbers(field, value):
         ("image", "referenceVideoMax", 1),
         ("image", "humanReview", True),
         ("video", "qualityOptions", ["high"]),
+        ("video", "minPixels", 3_686_400),
     ],
 )
 def test_catalog_config_rejects_incompatible_media_fields(
@@ -339,10 +340,23 @@ def test_catalog_config_rejects_incompatible_media_fields(
         )
 
 
-def test_image_catalog_accepts_reference_image_limit():
+def test_image_catalog_accepts_reference_image_limit_and_pixel_floor():
     config = {
         "referenceImageMax": 3,
+        "minPixels": 3_686_400,
         "request": {"endpoint": "images/generations", "parameters": []},
     }
 
     assert validate_media_model_catalog_config(config, "image") is config
+
+
+@pytest.mark.parametrize("value", [0, -1, 1.5, True, 16_777_217, 2**53])
+def test_image_catalog_rejects_invalid_min_pixels(value):
+    with pytest.raises(MediaModelSchemaError, match="minPixels"):
+        validate_media_model_catalog_config(
+            {
+                "minPixels": value,
+                "request": {"endpoint": "images/generations", "parameters": []},
+            },
+            "image",
+        )

@@ -11,6 +11,7 @@ KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 PATH_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*){0,3}$")
 CONTROL_TYPES = {"select", "number", "switch", "text", "multiselect"}
 JS_MAX_SAFE_INTEGER = 2**53 - 1
+MAX_MEDIA_IMAGE_PIXELS = 16_777_216
 BLOCKED_ROOTS = {
     "model",
     "prompt",
@@ -239,7 +240,7 @@ def validate_media_model_catalog_config(
             "defaultSceneOptimize",
         }
         if media_type == "image"
-        else {"qualityOptions"}
+        else {"qualityOptions", "minPixels"}
     )
     configured_incompatible = sorted(
         field for field in incompatible_fields if config.get(field) is not None
@@ -284,6 +285,16 @@ def validate_media_model_catalog_config(
         value = config.get(field)
         if value is not None and (type(value) is not int or value < 0):
             raise MediaModelSchemaError(f"{field} must be a non-negative integer")
+
+    min_pixels = config.get("minPixels")
+    if min_pixels is not None and (
+        type(min_pixels) is not int
+        or min_pixels <= 0
+        or min_pixels > MAX_MEDIA_IMAGE_PIXELS
+    ):
+        raise MediaModelSchemaError(
+            f"minPixels must be between 1 and {MAX_MEDIA_IMAGE_PIXELS}"
+        )
 
     human_review = config.get("humanReview")
     if human_review is not None and not isinstance(human_review, bool):

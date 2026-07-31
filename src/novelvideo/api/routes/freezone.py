@@ -6906,6 +6906,8 @@ async def _resolve_catalog_request(
         }
         if media_type == "image" and entry.get("qualityOptions"):
             schema = {**schema, "includeQuality": True}
+        if media_type == "image" and entry.get("minPixels") is not None:
+            schema = {**schema, "minPixels": entry["minPixels"]}
         values = validate_media_model_params(schema, filtered_params)
     except MediaModelSchemaError as exc:
         raise HTTPException(400, str(exc)) from exc
