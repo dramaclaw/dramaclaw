@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { isActive as isActiveTask } from "./derivations";
 import { useTaskCenterStore } from "./store";
@@ -41,6 +41,15 @@ export interface TaskActivity {
   task: TaskState | null;
   /** 是否应该展示 loading。 */
   isActive: boolean;
+  /**
+   * 任务中心已经接管本项目、但首轮 `GET /tasks` 还没回来，`isActive` 此刻不可信
+   * （硬刷新后 store 初始为空，任何任务都会被判成「没在跑」）。触发类控件应该一并
+   * 禁用，避免重复入队。
+   *
+   * 没有 TaskCenterProvider 在跑时恒为 false——那种场景下永远等不到补水，
+   * 认它只会把按钮永久禁死。
+   */
+  isRestoring: boolean;
   /** 0~1。 */
   progress: number;
   /** 后端回报的当前步骤文案。 */
@@ -60,12 +69,30 @@ export function useTaskActivity(
   options: { episode?: number } = {},
 ): TaskActivity {
   const task = useActiveTaskOfType(taskType, options);
+  // provider 在开始补水前就会 setProject，所以 projectId 非空即代表「有人在管，
+  // 补水一定会到」；为空则说明压根没挂 provider，不能靠这个标志禁按钮。
+  const isRestoring = useTaskCenterStore(
+    (state) => state.projectId != null && !state.isHydrated,
+  );
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  // 本轮乐观窗口里是否已经认领过任务中心的记录。
+  const sawTaskRef = useRef(false);
 
-  // 任务一旦真出现在任务中心，本地乐观标记就退场，之后完全以任务中心为准
-  // （包括它变成终态时的收尾）。
   useEffect(() => {
-    if (task) setStartedAt(null);
+    if (task) {
+      // 任务真出现在任务中心，本地乐观标记退场，之后完全以任务中心为准。
+      sawTaskRef.current = true;
+      setStartedAt(null);
+      return;
+    }
+    // 认领过的任务又消失了 = 它已经跑完/失败/被取消。这里必须主动收尾：
+    // SSE 有可能比入队接口的响应先到，那样 markStarted() 是在任务出现之后才被
+    // 调用的，`task` 不会再变化，光靠上面那条分支清不掉乐观标记，按钮会一直转
+    // 到 15s 超时。
+    if (sawTaskRef.current) {
+      sawTaskRef.current = false;
+      setStartedAt(null);
+    }
   }, [task]);
 
   useEffect(() => {
@@ -79,6 +106,7 @@ export function useTaskActivity(
   return {
     task,
     isActive: task != null || startedAt != null,
+    isRestoring,
     progress: task?.progress ?? 0,
     currentTask: task?.current_task ?? "",
     markStarted,

@@ -3169,6 +3169,10 @@ function CharactersPageContent() {
     progress: taskStream.status === "idle" ? buildActivity.progress : taskStream.progress,
     label: taskStream.currentTask || buildActivity.currentTask,
   };
+  // 补水完成前 isActive 还不可信，按钮先禁用，避免硬刷新后重复入队。
+  // 提取中的进度条/空态不看这个标志，否则补水那一瞬会闪一下假的「提取中」。
+  const rebuildDisabled =
+    buildChars.isPending || buildActivity.isActive || buildActivity.isRestoring;
 
   const characters = charsRes?.data ?? [];
   const projectConfig = projectRes?.data;
@@ -3264,7 +3268,7 @@ function CharactersPageContent() {
       <div className="-m-6 flex h-[calc(100%+3rem)] flex-col overflow-hidden">
       <CharactersPageHeader
         onRebuild={() => setRebuildDialogOpen(true)}
-        rebuildDisabled={buildChars.isPending || buildActivity.isActive}
+        rebuildDisabled={rebuildDisabled}
         buildCharactersCostDisplay={buildCharactersCostDisplay}
         buildCharactersPromotion={buildCharactersCost.data?.data.promotion}
         onAdd={() => setAddDialogOpen(true)}
@@ -3300,7 +3304,7 @@ function CharactersPageContent() {
             attempts={attempts}
             handleAttempt={handleAttempt}
             onRebuild={() => setRebuildDialogOpen(true)}
-            rebuildDisabled={buildChars.isPending || buildActivity.isActive}
+            rebuildDisabled={rebuildDisabled}
             buildCharactersCostDisplay={buildCharactersCostDisplay}
             buildCharactersPromotion={buildCharactersCost.data?.data.promotion}
           />

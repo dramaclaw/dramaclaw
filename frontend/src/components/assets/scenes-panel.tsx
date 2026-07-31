@@ -1158,6 +1158,9 @@ export function ScenesPanel({
   // 真正的构建在后台跑，刷新后也只有任务中心还认得它。
   const buildActivity = useTaskActivity("build_scenes", { episode: 0 });
   const isBuildingScenes = buildScenes.isPending || buildActivity.isActive;
+  // 补水完成前 isActive 还不可信，按钮先禁用，避免硬刷新后重复入队。进度条和
+  // 「构建中」空态不看这个标志，否则补水那一瞬会闪一下假的构建中。
+  const buildDisabled = isBuildingScenes || buildActivity.isRestoring;
   const imageSourceQuery = useAssetImageSourceSelection(project, "scene");
   const imageSourceSelection = imageSourceQuery.data?.data.image_source_selection ?? "";
   const buildScenesCost = useGenerationCreditCost("feature", "mainline.build_scenes");
@@ -1348,7 +1351,7 @@ export function ScenesPanel({
         <Button
           size="sm"
           onClick={handleBuildScenes}
-          disabled={isBuildingScenes}
+          disabled={buildDisabled}
           className="h-8 gap-1.5 rounded-[8px] bg-primary px-3 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
         >
           {isBuildingScenes ? (
