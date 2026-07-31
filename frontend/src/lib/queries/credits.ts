@@ -94,7 +94,9 @@ export function useCreditSummary(enabled = true) {
     // may otherwise leave pending/refund totals stale indefinitely.
     staleTime: 60_000,
     refetchInterval: (query) =>
-      (query.state.data?.data.pending ?? 0) > 0 ? 60_000 : false,
+      query.state.error == null && (query.state.data?.data.pending ?? 0) > 0
+        ? 60_000
+        : false,
     refetchIntervalInBackground: false,
     refetchOnMount: "always",
     refetchOnWindowFocus: false,

@@ -62,6 +62,7 @@ describe("credit summary query", () => {
             pending: number;
           };
         };
+        error?: Error | null;
       };
     };
     const options = query?.options as {
@@ -78,6 +79,8 @@ describe("credit summary query", () => {
       intervalQuery.state.data.data.pending = 8;
     }
     expect(options.refetchInterval?.(intervalQuery)).toBe(60_000);
+    intervalQuery.state.error = new Error("summary refresh failed");
+    expect(options.refetchInterval?.(intervalQuery)).toBe(false);
     expect(options.refetchIntervalInBackground).toBe(false);
     expect(options.refetchOnMount).toBe("always");
     expect(options.refetchOnWindowFocus).toBe(false);
