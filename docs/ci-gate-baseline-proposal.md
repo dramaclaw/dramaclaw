@@ -5,7 +5,7 @@
 > 日期：2026-07-31
 >
 > 范围：先在 `dramaclaw/dramaclaw` 落地并验证，再作为
-> `claymorelab/SuperTale`、`claymorelab/supertale-admin-fe`、
+> `claymorelab/SuperTale`、`claymorelab/supertale-admin-fe`、 <!-- banned-word-allow -->
 > `claymorelab/claymore-llm-gateway` 的 CI 架构基线。
 >
 > 本文只讨论方案，不代表已经修改 GitHub 分支保护或工作流。
@@ -1065,7 +1065,7 @@ ruleset，并按 `main-branch-protection-before.json` 恢复原配置。
 | 仓库 | 必须 job |
 | --- | --- |
 | SuperTale | EE backend/test、CE compatibility、secret、dependency、gate |
-| supertale-admin-fe | npm build、可选 worker build、secret、dependency、gate |
+| supertale-admin-fe | npm build、可选 worker build、secret、dependency、gate | <!-- banned-word-allow -->
 | claymore-llm-gateway | Go build/vet/test、frontend、secret、dependency、gate |
 
 ## 13. 已关闭决策与责任
