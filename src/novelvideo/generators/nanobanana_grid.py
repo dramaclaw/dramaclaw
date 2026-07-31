@@ -165,7 +165,7 @@ def _newapi_safe_request_context(
     payload: dict[str, object],
     prompt: str,
 ) -> dict[str, object]:
-    reference_images = payload.get("images")
+    reference_images = payload.get("image")
     reference_image_count = len(reference_images) if isinstance(reference_images, list) else 0
     return {
         "endpoint": f"{endpoint}{request_path}",
@@ -440,7 +440,7 @@ def resolve_openai_image_size(
 
     normalized_size = normalize_image_size(str(image_size or "1K"), provider="openai")
     model_name = str(model or "").strip().lower()
-    is_seedream5 = model_name.startswith("seedream-5")
+    uses_seedream_pixel_floor = model_name.startswith(("seedream-4.5", "seedream-5"))
     long_edges = {
         "512": 1024,
         "0.5K": 1024,
@@ -449,8 +449,8 @@ def resolve_openai_image_size(
         "3K": 3072,
         "4K": 3840,
     }
-    if is_seedream5:
-        # Volcengine Seedream 5 defines 2K with a 3,686,400-pixel floor
+    if uses_seedream_pixel_floor:
+        # Volcengine Seedream 4.5/5 defines 2K with a 3,686,400-pixel floor
         # (2560x1440 at 16:9), rather than a literal 2048px long edge.
         long_edges["2K"] = 2560
     long_edge = long_edges.get(normalized_size)
@@ -475,10 +475,10 @@ def resolve_openai_image_size(
             )
     if long_edge is None:
         long_edge = 1024
-    min_pixels = 3_686_400 if is_seedream5 else _OPENAI_MIN_PIXELS
+    min_pixels = 3_686_400 if uses_seedream_pixel_floor else _OPENAI_MIN_PIXELS
     max_pixels = (
         16_777_216
-        if is_seedream5
+        if uses_seedream_pixel_floor
         else dynamic_max_pixels
     )
 
@@ -3407,6 +3407,7 @@ async def _call_newapi_image_api(
         "size": size,
         "n": 1,
         "response_format": "b64_json",
+        "watermark": False,
     }
     include_quality = bool(
         (image_config.get("request_schema") or {}).get("includeQuality")
@@ -3426,7 +3427,7 @@ async def _call_newapi_image_api(
 
     if reference_images:
         try:
-            payload["images"] = await _relay_reference_images_for_newapi(reference_images)
+            payload["image"] = await _relay_reference_images_for_newapi(reference_images)
         except Exception as exc:
             return None, "", f"media relay upload failed: {exc}"
         request_path = "/images/edits"
