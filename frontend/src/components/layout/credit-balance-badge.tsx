@@ -74,7 +74,7 @@ export function CreditBalanceBadge() {
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
-        if (nextOpen) void summaryQuery.refetch();
+        if (nextOpen && summaryQuery.isStale) void summaryQuery.refetch();
       }}
     >
       <PopoverTrigger

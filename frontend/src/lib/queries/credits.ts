@@ -86,12 +86,15 @@ export function useCreditSummary(enabled = true) {
     queryKey: queryKeys.creditSummary(),
     queryFn: ({ signal }) =>
       api
-        .get("api/v1/credits/me/summary", { signal })
+        .get("api/v1/credits/me/summary", { signal, retry: 0 })
         .json<OkResponse<CreditSummary>>(),
     enabled,
-    staleTime: 5_000,
-    refetchInterval: 15_000,
-    refetchOnWindowFocus: true,
+    // Task lifecycle events invalidate this query at every balance-changing
+    // boundary. Keep a short cache for navigation/open-panel reads, but do not
+    // poll every signed-in browser forever.
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
   });
 }
 
