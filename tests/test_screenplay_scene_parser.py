@@ -60,6 +60,49 @@ def test_parse_repairable_split_scene_header_without_polluting_body():
     assert blocks[0].lines == ["杜晨：老板，结账。"]
 
 
+def test_parse_bare_scene_numbers_when_followed_by_location_headers():
+    text = """
+第一集 初遇
+1
+咖啡馆 日 内
+人物：张三
+张三：我到了。
+（2）
+办公室 夜 内
+人物：李四
+李四：进来吧。
+"""
+
+    blocks = parse_scene_blocks(text)
+
+    assert [(block.scene_no, block.location) for block in blocks] == [
+        ("1", "咖啡馆"),
+        ("2", "办公室"),
+    ]
+    assert blocks[0].lines == ["张三：我到了。"]
+    assert blocks[1].lines == ["李四：进来吧。"]
+
+
+def test_do_not_treat_standalone_number_as_scene_without_location_header():
+    text = """
+第一集 初遇
+1-1 咖啡馆 日 内
+人物：张三
+张三：年份是多少？
+2026
+张三：原来如此。
+"""
+
+    blocks = parse_scene_blocks(text)
+
+    assert len(blocks) == 1
+    assert blocks[0].lines == [
+        "张三：年份是多少？",
+        "2026",
+        "张三：原来如此。",
+    ]
+
+
 def test_parse_numbered_bracketed_scene_headers_with_characters():
     text = """
 第一集

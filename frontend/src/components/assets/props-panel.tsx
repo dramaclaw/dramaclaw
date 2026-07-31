@@ -405,6 +405,9 @@ export function PropsPanel({
   const gridRef = useAssetFocus(focusId, !props.isLoading && items.length > 0);
   const showBatchTask =
     batchTask.started || batchTask.stream.status !== "idle" || batchTask.logs.length > 0;
+  // isPending 只覆盖入队那一次 POST，批量生成本身在后台跑；按钮要跟着任务态走，
+  // 否则 POST 一返回就恢复可点，刷新后更是完全不知道任务还在跑。
+  const isBatchGenerating = batchGenerate.isPending || batchTask.started;
   const lastBatchLog = batchTask.logs[batchTask.logs.length - 1];
   const batchLogs =
     lastBatchLog === batchTask.stream.currentTask
@@ -469,10 +472,10 @@ export function PropsPanel({
           variant="outline"
           size="sm"
           onClick={handleBatchGenerate}
-          disabled={batchGenerate.isPending}
+          disabled={isBatchGenerating}
           className={cn(SUBTLE_HEADER_ACTION_BUTTON_CLASS, "relative")}
         >
-          {batchGenerate.isPending ? (
+          {isBatchGenerating ? (
             <Loader2 className="size-3.5 animate-spin" />
           ) : (
             <Sparkles className="size-3.5" />

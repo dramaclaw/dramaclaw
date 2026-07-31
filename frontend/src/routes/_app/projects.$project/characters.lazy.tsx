@@ -70,6 +70,7 @@ import { isCeRuntime } from "@/lib/runtime-config";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useTaskController } from "@/hooks/use-task-controller";
 import { useTaskStream } from "@/hooks/use-task-stream";
+import { useTaskActivity } from "@/task-center/use-task-activity";
 import { TaskControllerProvider } from "@/components/episode/task-controller-provider";
 import { SlidingTabs } from "@/components/nav/sliding-tabs";
 import { CharacterSearch, filterCharacters } from "@/components/assets/character-search";
@@ -607,7 +608,11 @@ function CharactersPageHeader({
               disabled={rebuildDisabled}
               className="h-8 gap-1.5 rounded-[8px] bg-primary px-3 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
             >
-              <RefreshCw className="size-3.5" />
+              {rebuildDisabled ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
               {t("characters.autoExtract")}
               <CreditCostInline
                 display={buildCharactersCostDisplay}
@@ -2903,6 +2908,13 @@ function AddCharacterDialog({
 
 // ─── Main page ───────────────────────────────────────────────────────────────
 
+/** 角色提取的展示态：活跃与否取自任务中心，进度/步骤文案优先取自 SSE。 */
+interface ExtractionState {
+  active: boolean;
+  progress: number;
+  label: string;
+}
+
 /**
  * Character-list / detail split.
  *
@@ -2912,8 +2924,7 @@ function AddCharacterDialog({
 function CharactersSplit({
   project,
   isDesktop,
-  buildStarted,
-  taskStream,
+  extraction,
   isLoading,
   characters,
   totalCharacters,
@@ -2933,8 +2944,7 @@ function CharactersSplit({
 }: {
   project: string;
   isDesktop: boolean;
-  buildStarted: boolean;
-  taskStream: ReturnType<typeof useTaskStream>;
+  extraction: ExtractionState;
   isLoading: boolean;
   characters: Character[];
   totalCharacters: number;
@@ -2953,7 +2963,7 @@ function CharactersSplit({
   buildCharactersPromotion?: CreditPromotionDisplay | null;
 }) {
   const { t } = useTranslation();
-  const isExtracting = buildStarted && taskStream.status !== "idle";
+  const isExtracting = extraction.active;
   const searchActive = searchQuery.trim().length > 0;
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const previousCharacterCountRef = useRef(characters.length);
@@ -2971,13 +2981,13 @@ function CharactersSplit({
     >
       <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
         <span className="min-w-0 truncate">
-          {taskStream.currentTask || t("characters.extracting")}
+          {extraction.label || t("characters.extracting")}
         </span>
         <span className="shrink-0 font-mono tabular-nums text-foreground/80">
-          {Math.round(taskStream.progress * 100)}%
+          {Math.round(extraction.progress * 100)}%
         </span>
       </div>
-      <Progress value={taskStream.progress * 100} className="mt-3 h-1.5" />
+      <Progress value={extraction.progress * 100} className="mt-3 h-1.5" />
     </div>
   );
 
@@ -3030,7 +3040,11 @@ function CharactersSplit({
               disabled={rebuildDisabled}
               className={EMPTY_STATE_ACTION_BUTTON_CLASS}
             >
-              <RefreshCw className="size-3.5" />
+              {rebuildDisabled ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
               {t("characters.autoExtract")}
               <CreditCostInline
                 display={buildCharactersCostDisplay}
@@ -3126,7 +3140,8 @@ function CharactersPageContent() {
       : null);
 
   const [selectedName, setSelectedName] = useState<string | null>(null);
-  const [buildStarted, setBuildStarted] = useState(false);
+  // loading 绑任务中心而不是组件本地 state：刷新后后台还在跑的提取任务仍能认出来。
+  const buildActivity = useTaskActivity("build_characters", { episode: 0 });
   const [rebuildDialogOpen, setRebuildDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [attempts, setAttempts] = useState<Record<string, number>>({});
@@ -3139,15 +3154,25 @@ function CharactersPageContent() {
   const [searchQuery, setSearchQuery] = useState("");
   const [imageModel, setImageModel] = useState("");
 
+  // SSE 只用来拿细粒度进度/步骤文案；活跃与否由任务中心裁决。
   const taskStream = useTaskStream({
     taskType: "build_characters",
     project,
     episode: 0,
-    enabled: buildStarted,
+    enabled: buildActivity.isActive,
     invalidateKeys: [queryKeys.characters(project)],
-    onComplete: () => setBuildStarted(false),
-    onError: () => setBuildStarted(false),
   });
+
+  const extraction: ExtractionState = {
+    active: buildActivity.isActive,
+    // SSE 还没吐出第一帧时退回任务中心记录的进度，避免刷新后进度条从 0 重来。
+    progress: taskStream.status === "idle" ? buildActivity.progress : taskStream.progress,
+    label: taskStream.currentTask || buildActivity.currentTask,
+  };
+  // 补水完成前 isActive 还不可信，按钮先禁用，避免硬刷新后重复入队。
+  // 提取中的进度条/空态不看这个标志，否则补水那一瞬会闪一下假的「提取中」。
+  const rebuildDisabled =
+    buildChars.isPending || buildActivity.isActive || buildActivity.isRestoring;
 
   const characters = charsRes?.data ?? [];
   const projectConfig = projectRes?.data;
@@ -3221,7 +3246,7 @@ function CharactersPageContent() {
         toast.error(backendErrorResponseToastMessage(res, t));
         return;
       }
-      setBuildStarted(true);
+      buildActivity.markStarted({ taskId: res.task_id });
     } catch (error) {
       toast.error(backendErrorToastMessage(error, t));
     }
@@ -3243,7 +3268,7 @@ function CharactersPageContent() {
       <div className="-m-6 flex h-[calc(100%+3rem)] flex-col overflow-hidden">
       <CharactersPageHeader
         onRebuild={() => setRebuildDialogOpen(true)}
-        rebuildDisabled={buildChars.isPending || buildStarted}
+        rebuildDisabled={rebuildDisabled}
         buildCharactersCostDisplay={buildCharactersCostDisplay}
         buildCharactersPromotion={buildCharactersCost.data?.data.promotion}
         onAdd={() => setAddDialogOpen(true)}
@@ -3265,8 +3290,7 @@ function CharactersPageContent() {
           <CharactersSplit
             project={project}
             isDesktop={isDesktop}
-            buildStarted={buildStarted}
-            taskStream={taskStream}
+            extraction={extraction}
             isLoading={isLoading}
             characters={filteredCharacters}
             totalCharacters={characters.length}
@@ -3280,7 +3304,7 @@ function CharactersPageContent() {
             attempts={attempts}
             handleAttempt={handleAttempt}
             onRebuild={() => setRebuildDialogOpen(true)}
-            rebuildDisabled={buildChars.isPending || buildStarted}
+            rebuildDisabled={rebuildDisabled}
             buildCharactersCostDisplay={buildCharactersCostDisplay}
             buildCharactersPromotion={buildCharactersCost.data?.data.promotion}
           />

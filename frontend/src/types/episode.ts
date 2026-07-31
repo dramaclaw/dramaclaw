@@ -45,6 +45,24 @@ export interface Chapter {
   content?: string;
   word_count?: number;
   char_count?: number;
+  scene_blocks?: ChapterSceneBlock[];
+  /** Zero-based slice offsets for text before the first recognized scene. */
+  unparsed_content_start_line?: number;
+  unparsed_content_end_line?: number;
+}
+
+export interface ChapterSceneBlock {
+  header: string;
+  scene_no?: string;
+  location?: string;
+  time_of_day?: string;
+  interior_exterior?: string;
+  characters?: string[];
+  /** Legacy payload field retained for compatibility with older backends. */
+  content?: string;
+  /** Zero-based slice offsets into Chapter.content.splitlines(). */
+  content_start_line?: number;
+  content_end_line?: number;
 }
 
 export interface Beat {
