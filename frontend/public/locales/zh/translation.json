@@ -1222,6 +1222,11 @@
       "derivedFrom": "派生自 {{base}}",
       "emptyTitle": "暂无场景数据",
       "emptyDescription": "新建场景，或从图谱自动提取项目场景。",
+      "building": "构建场景中...",
+      "buildingEmpty": {
+        "title": "正在构建场景",
+        "description": "系统正在从图谱中提取场景，完成后会显示在这里。"
+      },
       "confirmDelete": "删除场景「{{name}}」？",
       "deleted": "场景已删除",
       "master": "源图",
