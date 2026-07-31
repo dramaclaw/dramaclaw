@@ -661,6 +661,83 @@ async def test_start_ingest_rejects_unsupported_extension_before_ray(tmp_path, m
 
 
 @pytest.mark.asyncio
+async def test_start_ingest_rejects_existing_file_over_character_limit(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import ingest
+
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+    oversized_text = "第一章\n" + "字" * 100_001
+    (uploads_dir / "novel.txt").write_text(oversized_text, encoding="utf-8")
+    monkeypatch.setattr(
+        ingest,
+        "resolve_project_scope",
+        _project_scope_resolver(tmp_path),
+    )
+    monkeypatch.setattr(
+        ingest,
+        "save_project_config_in_state_dir",
+        lambda *_args, **_kwargs: pytest.fail("oversized text must not save config"),
+    )
+
+    response = await ingest.start_ingest(
+        project="demo",
+        body=IngestStart(
+            filename="novel.txt",
+            rebuild=True,
+            spine_template="narrated",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert response["ok"] is False
+    assert response["error_type"] == "text_too_large"
+    assert response["data"] == {
+        "limit_chars": 100_000,
+        "actual_chars": 100_004,
+    }
+
+
+@pytest.mark.asyncio
+async def test_start_ingest_rejects_existing_file_over_size_limit_before_parse(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import ingest
+
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+    (uploads_dir / "novel.txt").write_bytes(b"x" * (1024 * 1024 + 1))
+    monkeypatch.setattr(
+        ingest,
+        "resolve_project_scope",
+        _project_scope_resolver(tmp_path),
+    )
+    monkeypatch.setattr(
+        ingest,
+        "load_novel_text",
+        lambda _path: pytest.fail("oversized file must not be parsed"),
+    )
+
+    response = await ingest.start_ingest(
+        project="demo",
+        body=IngestStart(
+            filename="novel.txt",
+            rebuild=True,
+            spine_template="narrated",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert response == {
+        "ok": False,
+        "error": "文件超过 1MB 上限，请压缩文件或拆分正文后重新上传。",
+        "error_type": "file_too_large",
+        "data": {"limit_bytes": 1024 * 1024},
+    }
+
+
+@pytest.mark.asyncio
 async def test_detect_chapters_returns_content_and_total_chars(tmp_path, monkeypatch):
     from novelvideo.api.routes import episodes
 

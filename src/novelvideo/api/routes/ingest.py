@@ -120,6 +120,30 @@ def _unsupported_format_response(filename: str) -> dict:
     }
 
 
+def _file_too_large_response() -> dict:
+    return {
+        "ok": False,
+        "error": "文件超过 1MB 上限，请压缩文件或拆分正文后重新上传。",
+        "error_type": "file_too_large",
+        "data": {"limit_bytes": MAX_NOVEL_UPLOAD_BYTES},
+    }
+
+
+def _text_too_large_response(actual_chars: int) -> dict:
+    return {
+        "ok": False,
+        "error": (
+            f"正文共 {actual_chars:,} 字，超过单次导入上限 "
+            f"{MAX_NOVEL_IMPORT_CHARS:,} 字。请拆分后重新上传。"
+        ),
+        "error_type": "text_too_large",
+        "data": {
+            "limit_chars": MAX_NOVEL_IMPORT_CHARS,
+            "actual_chars": actual_chars,
+        },
+    }
+
+
 def _create_staged_upload(staging_dir: Path, suffix: str) -> Path:
     """Create a unique staging file whose mode respects the process umask."""
 
@@ -165,32 +189,14 @@ async def upload_novel(
         try:
             size = stream_to_file_with_limit(file.file, staged_path)
         except UploadTooLargeError:
-            return {
-                "ok": False,
-                "error": (
-                    "文件超过 1MB 上限，请压缩文件或拆分正文后重新上传。"
-                ),
-                "error_type": "file_too_large",
-                "data": {"limit_bytes": MAX_NOVEL_UPLOAD_BYTES},
-            }
+            return _file_too_large_response()
 
         data = {"filename": safe_name, "size": size}
         try:
             content = load_novel_text(staged_path)
             billable_chars = count_billable_novel_chars(content)
             if billable_chars > MAX_NOVEL_IMPORT_CHARS:
-                return {
-                    "ok": False,
-                    "error": (
-                        f"正文共 {billable_chars:,} 字，超过单次导入上限 "
-                        f"{MAX_NOVEL_IMPORT_CHARS:,} 字。请拆分后重新上传。"
-                    ),
-                    "error_type": "text_too_large",
-                    "data": {
-                        "limit_chars": MAX_NOVEL_IMPORT_CHARS,
-                        "actual_chars": billable_chars,
-                    },
-                }
+                return _text_too_large_response(billable_chars)
             project_config = load_project_config_file_from_state_dir(
                 resolved.state_dir
             )
@@ -300,8 +306,17 @@ async def start_ingest(
         return {"ok": False, "error": f"File '{body.filename}' not found in uploads/"}
 
     try:
+        if novel_path.stat().st_size > MAX_NOVEL_UPLOAD_BYTES:
+            return _file_too_large_response()
+    except OSError:
+        logger.warning("[%s] failed to stat uploaded novel", project, exc_info=True)
+        return {"ok": False, "error": "无法读取上传文件，请重新上传后再导入"}
+
+    try:
         content = load_novel_text(novel_path)
         billable_chars = count_billable_novel_chars(content)
+        if billable_chars > MAX_NOVEL_IMPORT_CHARS:
+            return _text_too_large_response(billable_chars)
     except DocumentParseError as exc:
         return {
             "ok": False,
