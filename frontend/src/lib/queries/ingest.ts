@@ -71,9 +71,16 @@ export interface KnowledgeGraphSnapshot {
 export function useUploadNovel(project: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({
+      file,
+      spineTemplate,
+    }: {
+      file: File;
+      spineTemplate: SpineTemplate;
+    }) => {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("spine_template", spineTemplate);
       const response = await jsonWithBackendError<OkResponse<UploadResult> | ErrorResponse>(
         api.post(p`api/v1/projects/${project}/ingest/upload`, { body: formData }),
       );

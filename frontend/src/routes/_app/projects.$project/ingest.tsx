@@ -79,7 +79,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { ProjectConfig, SpineTemplate } from "@/types/project";
-import type { Chapter } from "@/types/episode";
+import type { Chapter, ChapterSceneBlock } from "@/types/episode";
 
 // ─── form schema ─────────────────────────────────────────────────────────────
 
@@ -118,6 +118,50 @@ const VISUAL_STYLE_OPTIONS: { value: string; labelKey: string }[] = [
     labelKey: "ingest.visualStyles.republicanEraDrama",
   },
 ];
+
+function chapterContentSlice(
+  chapter: Chapter,
+  startLine: number,
+  endLine: number,
+): string {
+  const lines = (chapter.content ?? "").split(/\r?\n/);
+  const start = Math.max(0, Math.min(startLine, lines.length));
+  const end = Math.max(start, Math.min(endLine, lines.length));
+  return lines.slice(start, end).join("\n").trim();
+}
+
+function sceneBodyFromChapter(
+  chapter: Chapter,
+  scene: ChapterSceneBlock,
+): string {
+  const legacyContent = scene.content?.trim();
+  if (legacyContent) return legacyContent;
+  if (
+    typeof scene.content_start_line !== "number" ||
+    typeof scene.content_end_line !== "number"
+  ) {
+    return "";
+  }
+  return chapterContentSlice(
+    chapter,
+    scene.content_start_line,
+    scene.content_end_line,
+  );
+}
+
+function unparsedBodyFromChapter(chapter: Chapter): string {
+  if (
+    typeof chapter.unparsed_content_start_line !== "number" ||
+    typeof chapter.unparsed_content_end_line !== "number"
+  ) {
+    return "";
+  }
+  return chapterContentSlice(
+    chapter,
+    chapter.unparsed_content_start_line,
+    chapter.unparsed_content_end_line,
+  );
+}
 
 const ETHNICITY_OPTIONS: { value: string; labelKey: string }[] = [
   { value: "Chinese", labelKey: "ingest.ethnicities.chinese" },
@@ -960,7 +1004,9 @@ export function IngestPageContent({ project }: { project: string }) {
     formatCheck: FormatCheck;
     filename: string;
   } | null>(null);
-  const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
+  const [selectedChapterNumber, setSelectedChapterNumber] = useState<number | null>(
+    null,
+  );
   const logsScrollRef = useRef<HTMLDivElement>(null);
   const replacementFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1242,7 +1288,10 @@ export function IngestPageContent({ project }: { project: string }) {
   const handleFile = useCallback(
     async (file: File) => {
       try {
-        const result = await uploadMutation.mutateAsync(file);
+        const result = await uploadMutation.mutateAsync({
+          file,
+          spineTemplate: settingsValues.spine_template,
+        });
         setUploadedFile(result.data);
         setUploadedFileSource("upload");
         setHideImportedPreview(false);
@@ -1257,7 +1306,7 @@ export function IngestPageContent({ project }: { project: string }) {
         return false;
       }
     },
-    [project, uploadMutation, t],
+    [project, settingsValues.spine_template, uploadMutation, t],
   );
 
   const handleReupload = useCallback(() => {
@@ -1307,7 +1356,10 @@ export function IngestPageContent({ project }: { project: string }) {
     const file = new File([text], "pasted-novel.txt", {
       type: "text/plain;charset=utf-8",
     });
-    const result = await uploadMutation.mutateAsync(file);
+    const result = await uploadMutation.mutateAsync({
+      file,
+      spineTemplate: settingsValues.spine_template,
+    });
     setUploadedFile(result.data);
     setUploadedFileSource("paste");
     setIngestFileStatus("uploaded");
@@ -1447,6 +1499,10 @@ export function IngestPageContent({ project }: { project: string }) {
   }, [reimportSourceFilename, startIngestFromFilename]);
 
   const chapters = chaptersData?.chapters ?? [];
+  const selectedChapter =
+    selectedChapterNumber == null
+      ? null
+      : chapters.find((chapter) => chapter.number === selectedChapterNumber) ?? null;
   const chapterCount = chapters.length;
   const shouldRestoreImportedPreview =
     hasImportedContent && !hideImportedPreview;
@@ -1510,20 +1566,18 @@ export function IngestPageContent({ project }: { project: string }) {
   return (
     <div className="-m-6 flex h-[calc(100%+3rem)] flex-col overflow-hidden">
       {uploadMutation.isPending && <UploadingOverlay />}
-      {shouldShowPreview && (
-        <input
-          ref={replacementFileInputRef}
-          type="file"
-          className="hidden"
-          accept=".txt,.md,.docx"
-          aria-label={t("common.reupload")}
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = "";
-            if (file) void handleReplacementFile(file);
-          }}
-        />
-      )}
+      <input
+        ref={replacementFileInputRef}
+        type="file"
+        className="hidden"
+        accept=".txt,.md,.docx"
+        aria-label={t("common.reupload")}
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) void handleReplacementFile(file);
+        }}
+      />
       <div className="flex shrink-0 flex-col gap-3 border-b border-border/30 bg-background px-9 py-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-start gap-3">
           <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
@@ -2070,15 +2124,20 @@ export function IngestPageContent({ project }: { project: string }) {
                           <button
                             key={ch.number}
                             type="button"
-                            onClick={() => setSelectedChapter(ch)}
+                            onClick={() => setSelectedChapterNumber(ch.number)}
                             className="grid w-full grid-cols-[4rem_1fr_5rem] items-center gap-2 px-4 py-2.5 text-left text-xs transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
-                            aria-label={t("ingest.chapterDetails.open", {
-                              chapter: chapterTitle(
-                                ch.number,
-                                ch.title,
-                                ch.content,
-                              ),
-                            })}
+                            aria-label={t(
+                              isDramaChapter
+                                ? "ingest.sceneHeaders.open"
+                                : "ingest.chapterDetails.open",
+                              {
+                                chapter: chapterTitle(
+                                  ch.number,
+                                  ch.title,
+                                  ch.content,
+                                ),
+                              },
+                            )}
                           >
                             <span className="tabular-nums text-muted-foreground">
                               {ch.number}
@@ -2121,14 +2180,14 @@ export function IngestPageContent({ project }: { project: string }) {
                   </div>
 
                   <Sheet
-                    open={selectedChapter !== null}
+                    open={selectedChapterNumber !== null && selectedChapter !== null}
                     onOpenChange={(open) => {
-                      if (!open) setSelectedChapter(null);
+                      if (!open) setSelectedChapterNumber(null);
                     }}
                   >
                     <SheetContent
                       side="right"
-                      className="w-full border-border/50 sm:!max-w-[520px]"
+                      className="data-[side=right]:w-full border-border/50 sm:!max-w-[520px]"
                     >
                       <SheetHeader className="border-b border-border/50 px-6 py-5">
                         <SheetTitle>
@@ -2161,7 +2220,7 @@ export function IngestPageContent({ project }: { project: string }) {
                                   selectedChapter.scene_blocks.map(
                                     (scene, index) => (
                                       <div
-                                        key={`${scene.scene_no || index}-${scene.header}`}
+                                        key={`${index}-${scene.scene_no || "scene"}-${scene.header}`}
                                         className="rounded-lg border border-border/50 bg-muted/20 p-4"
                                       >
                                         <div className="flex items-center justify-between gap-3">
@@ -2200,14 +2259,22 @@ export function IngestPageContent({ project }: { project: string }) {
                                             {t(
                                               "ingest.sceneHeaders.characters",
                                             )}
-                                            : {scene.characters.join("、")}
+                                            :{" "}
+                                            {scene.characters.join(
+                                              t(
+                                                "ingest.sceneHeaders.characterSeparator",
+                                              ),
+                                            )}
                                           </p>
                                         ) : null}
                                         <p className="mt-3 border-t border-border/40 pt-3 font-mono text-xs leading-5 text-muted-foreground">
                                           {scene.header}
                                         </p>
                                         <div className="mt-3 whitespace-pre-wrap border-t border-border/40 pt-3 text-sm leading-7 text-foreground/85">
-                                          {scene.content ||
+                                          {sceneBodyFromChapter(
+                                            selectedChapter,
+                                            scene,
+                                          ) ||
                                             t(
                                               "ingest.chapterDetails.emptyScene",
                                             )}
@@ -2215,6 +2282,13 @@ export function IngestPageContent({ project }: { project: string }) {
                                       </div>
                                     ),
                                   )
+                                ) : selectedChapter?.content?.trim() ? (
+                                  <div
+                                    data-testid="chapter-body"
+                                    className="whitespace-pre-wrap rounded-lg border border-border/50 bg-muted/20 p-4 text-sm leading-7 text-foreground/85"
+                                  >
+                                    {selectedChapter.content.trim()}
+                                  </div>
                                 ) : (
                                   <div className="rounded-lg border border-dashed border-border/50 px-4 py-10 text-center text-sm text-muted-foreground">
                                     {t("ingest.sceneHeaders.empty")}
@@ -2223,6 +2297,19 @@ export function IngestPageContent({ project }: { project: string }) {
                               </div>
                             </section>
                           )}
+
+                          {settingsValues.spine_template === "drama" &&
+                            selectedChapter &&
+                            unparsedBodyFromChapter(selectedChapter) && (
+                              <section>
+                                <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                  {t("ingest.sceneHeaders.unparsedBody")}
+                                </h3>
+                                <div className="whitespace-pre-wrap rounded-lg border border-border/50 bg-muted/20 p-4 text-sm leading-7 text-foreground/85">
+                                  {unparsedBodyFromChapter(selectedChapter)}
+                                </div>
+                              </section>
+                            )}
 
                           {settingsValues.spine_template !== "drama" && (
                             <section>

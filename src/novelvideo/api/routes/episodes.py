@@ -637,8 +637,12 @@ async def detect_chapters(project: str, user: dict = Depends(get_api_user)):
     if not novel_text:
         return {"ok": False, "error": "No novel file found. Upload a novel first."}
 
-    preview = build_chapter_preview(novel_text)
     config = load_project_config_file_from_state_dir(resolved.state_dir)
+    preview = build_chapter_preview(
+        novel_text,
+        include_scene_blocks=str(config.get("spine_template") or "drama").strip()
+        != "narrated",
+    )
     source_filename = resolve_uploaded_novel_filename(
         resolved.project_dir,
         novel_text,

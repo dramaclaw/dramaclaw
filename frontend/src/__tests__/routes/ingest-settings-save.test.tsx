@@ -133,8 +133,10 @@ beforeAll(async () => {
               count_other: "{{count}} scenes",
               scene: "Scene {{number}}",
               characters: "Characters",
+              characterSeparator: ", ",
               unknownLocation: "Scene location not detected",
               empty: "No scene text is available",
+              unparsedBody: "Text outside recognized scenes",
             },
             chapterDetails: {
               open: "View the text of {{chapter}}",
@@ -200,7 +202,11 @@ const mocks = vi.hoisted(() => ({
               interior_exterior?: string;
               characters?: string[];
               content?: string;
+              content_start_line?: number;
+              content_end_line?: number;
             }[];
+            unparsed_content_start_line?: number;
+            unparsed_content_end_line?: number;
           }[];
         };
       }
@@ -774,6 +780,71 @@ describe("IngestPage settings save", () => {
     expect(mocks.uploadNovel).toHaveBeenCalledTimes(1);
   });
 
+  it("replaces the preview after a replacement upload succeeds", async () => {
+    const user = userEvent.setup();
+    mocks.uploadNovel.mockImplementation(
+      async ({ file }: { file: File; spineTemplate: string }) => {
+        const title =
+          file.name === "replacement.txt" ? "第一章 新内容" : "第一章 旧内容";
+        const chapters = [{
+          number: 1,
+          title,
+          content: `${title}\n正文。`,
+          char_count: 8,
+          scene_blocks: [],
+        }];
+        mocks.chaptersData = {
+          ok: true,
+          data: {
+            total_chars: 8,
+            count: 1,
+            preview_only: true,
+            source_filename: file.name,
+            chapters,
+          },
+        };
+        return {
+          ok: true,
+          data: {
+            filename: file.name,
+            size: 8,
+            total_chars: 8,
+            count: 1,
+            chapters,
+          },
+        };
+      },
+    );
+
+    const { container } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    const initialInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]:not([aria-label="Reupload"])',
+    );
+    await user.upload(
+      initialInput!,
+      new File(["第一章 旧内容"], "novel.txt", { type: "text/plain" }),
+    );
+    expect(screen.getByText("第一章 旧内容")).toBeInTheDocument();
+
+    await user.upload(
+      screen.getByLabelText("Reupload"),
+      new File(["第一章 新内容"], "replacement.txt", { type: "text/plain" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("第一章 新内容")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("第一章 旧内容")).not.toBeInTheDocument();
+    expect(mocks.uploadNovel).toHaveBeenLastCalledWith(
+      expect.objectContaining({ spineTemplate: "drama" }),
+    );
+    expect(mocks.uploadNovel).toHaveBeenCalledTimes(2);
+  });
+
   it("opens premium drama scene blocks from a chapter row", async () => {
     const user = userEvent.setup();
     mocks.chaptersData = {
@@ -786,7 +857,8 @@ describe("IngestPage settings save", () => {
             number: 1,
             title: "第一集 初遇",
             char_count: 36,
-            content: "第一集 初遇\n1-1 雨巷 夜 外\n人物：林昭、苏然",
+            content:
+              "第一集 初遇\n1-1 雨巷 夜 外\n人物：林昭、苏然\n△ 林昭停在屋檐下。",
             scene_blocks: [
               {
                 header: "1-1 雨巷 夜 外",
@@ -795,7 +867,8 @@ describe("IngestPage settings save", () => {
                 time_of_day: "夜",
                 interior_exterior: "外",
                 characters: ["林昭", "苏然"],
-                content: "△ 林昭停在屋檐下。",
+                content_start_line: 3,
+                content_end_line: 4,
               },
             ],
           },
@@ -812,7 +885,7 @@ describe("IngestPage settings save", () => {
     expect(screen.getByText("1 scene")).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", {
-        name: "View the text of 第一集 初遇",
+        name: "View scenes for 第一集 初遇",
       }),
     );
 
@@ -822,13 +895,46 @@ describe("IngestPage settings save", () => {
     expect(
       screen.getByText((_content, element) =>
         element?.tagName === "P"
-          ? element.textContent?.includes("林昭、苏然") ?? false
+          ? element.textContent?.includes("林昭, 苏然") ?? false
           : false,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("1-1 雨巷 夜 外")).toBeInTheDocument();
     expect(screen.getByText("△ 林昭停在屋檐下。")).toBeInTheDocument();
     expect(screen.queryByTestId("chapter-body")).not.toBeInTheDocument();
+  });
+
+  it("falls back to raw chapter text when premium drama scenes are missing", async () => {
+    const user = userEvent.setup();
+    mocks.chaptersData = {
+      ok: true,
+      data: {
+        total_chars: 20,
+        count: 1,
+        chapters: [{
+          number: 1,
+          title: "第一集 待修复",
+          char_count: 20,
+          content: "第一集 待修复\n这段原文没有可识别的场景头。",
+          scene_blocks: [],
+        }],
+      },
+    };
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "View scenes for 第一集 待修复",
+      }),
+    );
+
+    expect(screen.getByTestId("chapter-body")).toHaveTextContent(
+      "第一集 待修复 这段原文没有可识别的场景头。",
+    );
   });
 
   it("opens chapter text in the same drawer for narrated projects", async () => {
@@ -869,7 +975,7 @@ describe("IngestPage settings save", () => {
     expect(screen.getByTestId("chapter-body")).toHaveTextContent(
       "第一章 山雨 雨从傍晚一直下到深夜。",
     );
-    expect(screen.queryByText("Scene headers")).not.toBeInTheDocument();
+    expect(screen.queryByText("Scenes")).not.toBeInTheDocument();
   });
 
   it("starts ingest with NiceGUI-compatible rebuild enabled", async () => {

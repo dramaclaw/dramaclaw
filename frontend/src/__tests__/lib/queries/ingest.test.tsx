@@ -29,13 +29,19 @@ function wrapper({ children }: { children: ReactNode }) {
 describe("ingest query error contract", () => {
   it("rejects upload responses that return ok:false with a backend error", async () => {
     server.use(
-      http.post("http://localhost:3000/api/v1/projects/demo/ingest/upload", () =>
-        HttpResponse.json({ ok: false, error: "解析章节失败: 文件编码不支持" }),
-      ),
+      http.post("http://localhost:3000/api/v1/projects/demo/ingest/upload", async ({ request }) => {
+        const body = await request.formData();
+        expect(body.get("spine_template")).toBe("drama");
+        expect(body.get("file")).toMatchObject({ size: 9, type: "text/plain" });
+        return HttpResponse.json({ ok: false, error: "解析章节失败: 文件编码不支持" });
+      }),
     );
 
     const { result } = renderHook(() => useUploadNovel("demo"), { wrapper });
-    result.current.mutate(new File(["bad"], "broken.txt", { type: "text/plain" }));
+    result.current.mutate({
+      file: new File(["bad"], "broken.txt", { type: "text/plain" }),
+      spineTemplate: "drama",
+    });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error).toBeInstanceOf(Error);

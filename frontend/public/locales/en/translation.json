@@ -1520,8 +1520,10 @@
       "count_other": "{{count}} scenes",
       "scene": "Scene {{number}}",
       "characters": "Characters",
+      "characterSeparator": ", ",
       "unknownLocation": "Scene location not detected",
-      "empty": "No scene text is available in this chapter"
+      "empty": "No scene text is available in this chapter",
+      "unparsedBody": "Text outside recognized scenes"
     },
     "chapterDetails": {
       "open": "View the text of {{chapter}}",

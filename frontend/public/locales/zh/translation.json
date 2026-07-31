@@ -1520,8 +1520,10 @@
       "count_other": "共 {{count}} 场",
       "scene": "场景 {{number}}",
       "characters": "出场人物",
+      "characterSeparator": "、",
       "unknownLocation": "未识别场景地点",
-      "empty": "该章节暂无可显示的分场正文"
+      "empty": "该章节暂无可显示的分场正文",
+      "unparsedBody": "未归入场景的原文"
     },
     "chapterDetails": {
       "open": "查看 {{chapter}} 的正文",

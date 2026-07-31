@@ -4,10 +4,12 @@ import asyncio
 import logging
 import os
 import shutil
+import stat
 import tempfile
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from novelvideo.api.auth import get_api_user, require_scope
 from novelvideo.api.chapter_preview import (
@@ -121,6 +123,7 @@ def _unsupported_format_response(filename: str) -> dict:
 async def upload_novel(
     project: str,
     file: UploadFile = File(...),
+    spine_template: Annotated[str | None, Form()] = None,
     user: dict = Depends(get_api_user),
 ):
     """上传小说文件到项目的 uploads/ 目录。"""
@@ -157,7 +160,18 @@ async def upload_novel(
         data = {"filename": safe_name, "size": size}
         try:
             content = load_novel_text(staged_path)
-            preview = build_chapter_preview(content)
+            project_config = load_project_config_file_from_state_dir(
+                resolved.state_dir
+            )
+            requested_spine_template = str(
+                spine_template
+                or project_config.get("spine_template")
+                or "drama"
+            ).strip()
+            preview = build_chapter_preview(
+                content,
+                include_scene_blocks=requested_spine_template != "narrated",
+            )
         except DocumentParseError as exc:
             logger.warning(
                 "[%s] failed to parse uploaded novel: %s: %s",
@@ -190,6 +204,15 @@ async def upload_novel(
             }
 
         try:
+            # ``mkstemp`` deliberately creates mode 0600.  Preserve the mode of
+            # an existing upload when replacing it; for a new upload retain the
+            # historical 0644 behavior of ``open(path, "wb")`` under the
+            # repository's normal umask.
+            try:
+                destination_mode = stat.S_IMODE(dest.stat().st_mode)
+            except FileNotFoundError:
+                destination_mode = 0o644
+            staged_path.chmod(destination_mode)
             os.replace(staged_path, dest)
         except OSError:
             logger.exception("[%s] failed to persist uploaded novel: %s", project, safe_name)
