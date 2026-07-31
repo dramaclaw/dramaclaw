@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { isActive as isActiveTask } from "./derivations";
+import { isActive as isActiveTask, isTerminal } from "./derivations";
 import { useTaskCenterStore } from "./store";
 import type { TaskState } from "./types";
 
@@ -54,8 +54,13 @@ export interface TaskActivity {
   progress: number;
   /** 后端回报的当前步骤文案。 */
   currentTask: string;
-  /** 入队接口成功返回后调用，用于兜住任务进任务中心前的空窗。 */
-  markStarted: () => void;
+  /**
+   * 入队接口成功返回后调用，用于兜住任务进任务中心前的空窗。
+   *
+   * 尽量把入队响应里的 `task_id` 传进来：任务中心一旦见到同 id 的终态记录就能立刻
+   * 收掉空窗，不必空等 15 秒。不传则退回纯超时兜底。
+   */
+  markStarted: (override?: { taskId?: string }) => void;
 }
 
 /**
@@ -75,14 +80,41 @@ export function useTaskActivity(
     (state) => state.projectId != null && !state.isHydrated,
   );
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [startedTaskId, setStartedTaskId] = useState<string | null>(null);
   // 本轮乐观窗口里是否已经认领过任务中心的记录。
   const sawTaskRef = useRef(false);
+
+  const clearOptimistic = useCallback(() => {
+    setStartedAt(null);
+    setStartedTaskId(null);
+  }, []);
+
+  // 本轮任务是否已经以终态出现在任务中心。
+  //
+  // 上面的 `task` 只认活跃任务，所以「第一次采样就撞上终态」时它前后都是 null，
+  // 下面那条 sawTaskRef 的收尾分支根本不会触发。这里改按 task_id 直接盯终态：
+  // task_key 是跨轮复用的，只有 task_id 才唯一标识这一次运行，用它才不会被上一轮
+  // 遗留的终态记录（要到 1 小时后才裁剪）误判成本轮已结束。
+  //
+  // selector 只能返回原始值：返回对象会因每次新引用触发无限重渲染。
+  const startedTaskSettled = useTaskCenterStore(
+    useCallback(
+      (state) => {
+        if (startedTaskId == null) return false;
+        for (const candidate of state.tasks.values()) {
+          if (candidate.task_id === startedTaskId) return isTerminal(candidate);
+        }
+        return false;
+      },
+      [startedTaskId],
+    ),
+  );
 
   useEffect(() => {
     if (task) {
       // 任务真出现在任务中心，本地乐观标记退场，之后完全以任务中心为准。
       sawTaskRef.current = true;
-      setStartedAt(null);
+      clearOptimistic();
       return;
     }
     // 认领过的任务又消失了 = 它已经跑完/失败/被取消。这里必须主动收尾：
@@ -91,17 +123,24 @@ export function useTaskActivity(
     // 到 15s 超时。
     if (sawTaskRef.current) {
       sawTaskRef.current = false;
-      setStartedAt(null);
+      clearOptimistic();
     }
-  }, [task]);
+  }, [task, clearOptimistic]);
+
+  useEffect(() => {
+    if (startedTaskSettled) clearOptimistic();
+  }, [startedTaskSettled, clearOptimistic]);
 
   useEffect(() => {
     if (startedAt == null) return;
-    const timer = window.setTimeout(() => setStartedAt(null), OPTIMISTIC_GRACE_MS);
+    const timer = window.setTimeout(clearOptimistic, OPTIMISTIC_GRACE_MS);
     return () => window.clearTimeout(timer);
-  }, [startedAt]);
+  }, [startedAt, clearOptimistic]);
 
-  const markStarted = useCallback(() => setStartedAt(Date.now()), []);
+  const markStarted = useCallback((override?: { taskId?: string }) => {
+    setStartedTaskId(override?.taskId ?? null);
+    setStartedAt(Date.now());
+  }, []);
 
   return {
     task,

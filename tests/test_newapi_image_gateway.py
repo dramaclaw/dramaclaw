@@ -289,9 +289,17 @@ def test_catalog_can_enable_arbitrary_newapi_image_quality(monkeypatch):
                 "quality": "ultra",
                 "request_schema": {
                     "endpoint": "images/generations",
-                    "parameters": [],
+                    "parameters": [
+                        {
+                            "key": "watermark",
+                            "requestPath": "watermark",
+                            "control": "switch",
+                            "default": False,
+                        }
+                    ],
                     "includeQuality": True,
                 },
+                "model_params": {"watermark": True},
             },
             base_url="http://newapi.test/v1",
         )
@@ -302,18 +310,25 @@ def test_catalog_can_enable_arbitrary_newapi_image_quality(monkeypatch):
     assert posted["json"]["model"] == "Seedream-Custom"
     assert posted["json"]["quality"] == "ultra"
     assert posted["json"]["size"] == "2880x2880"
+    assert posted["json"]["watermark"] is True
     assert "extra_fields" not in posted["json"]
 
 
 @pytest.mark.parametrize(
-    ("resolution", "ratio"),
+    ("model", "resolution", "ratio"),
     [
-        ("2K", "16:9"),
-        ("2K", "21:9"),
-        ("3K", "16:9"),
+        ("custom-seedream-alias", "2K", "3:2"),
+        ("future-image-model", "2K", "16:9"),
+        ("future-image-model", "2K", "21:9"),
+        ("future-image-model", "3K", "16:9"),
+        ("future-image-model", "2048x1376", "3:2"),
     ],
 )
-def test_seedream5_newapi_size_meets_volcengine_pixel_floor(resolution, ratio):
+def test_admin_min_pixels_applies_to_named_and_explicit_resolutions(
+    model,
+    resolution,
+    ratio,
+):
     from novelvideo.generators.nanobanana_grid import resolve_openai_image_size
 
     width, height = (
@@ -321,7 +336,9 @@ def test_seedream5_newapi_size_meets_volcengine_pixel_floor(resolution, ratio):
         for value in resolve_openai_image_size(
             ratio,
             resolution,
-            "seedream-5.0-lite",
+            model,
+            allow_dynamic_resolution=True,
+            min_pixels=3_686_400,
         ).split("x")
     )
 
@@ -371,7 +388,7 @@ def test_newapi_image_call_rejects_unrecognized_admin_resolution():
     assert "unsupported image resolution: ultra" in error
 
 
-def test_newapi_seedream5_sends_3k_resolution(monkeypatch):
+def test_newapi_image_call_applies_admin_min_pixels(monkeypatch):
     import httpx
     from novelvideo.generators import nanobanana_grid
 
@@ -403,9 +420,17 @@ def test_newapi_seedream5_sends_3k_resolution(monkeypatch):
     image_bytes, _text, error = run_async(
         nanobanana_grid._call_newapi_image_api(
             api_key="newapi-token",
-            model="seedream-5.0-lite",
+            model="arbitrary-admin-model-id",
             prompt="prompt",
-            image_config={"aspect_ratio": "16:9", "image_size": "3K"},
+            image_config={
+                "aspect_ratio": "3:2",
+                "image_size": "2048x1376",
+                "request_schema": {
+                    "endpoint": "images/generations",
+                    "parameters": [],
+                    "minPixels": 3_686_400,
+                },
+            },
             base_url="http://newapi.test/v1",
         )
     )
@@ -414,6 +439,7 @@ def test_newapi_seedream5_sends_3k_resolution(monkeypatch):
     assert error == ""
     width, height = (int(value) for value in posted["json"]["size"].split("x"))
     assert width * height >= 3_686_400
+    assert posted["json"]["watermark"] is False
     assert "extra_fields" not in posted["json"]
 
 
@@ -700,10 +726,11 @@ def test_newapi_image_call_relays_reference_images(monkeypatch):
             nanobanana_grid.IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
         ),
     ]
-    assert posted["json"]["images"] == [
+    assert posted["json"]["image"] == [
         "https://relay.test/1.png",
         "https://relay.test/2.png",
     ]
+    assert "images" not in posted["json"]
     assert posted["json"]["output_format"] == "png"
     assert posted["json"]["input_fidelity"] == "high"
     assert "extra_fields" not in posted["json"]
