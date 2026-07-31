@@ -91,6 +91,10 @@ tar -xzf "$archive" -C "$install_dir" gitleaks
 "$install_dir/gitleaks" version
 echo "$install_dir" >> "$GITHUB_PATH"
 """
+GITLEAKS_SCAN_RUN = (
+    'gitleaks git . --log-opts="${{ github.sha }}" -c .gitleaks.toml '
+    "--redact --no-banner --exit-code 1"
+)
 PR_POLICY_ASSERT_RUN = """\
 set -euo pipefail
 if [ "$APPLICABLE" = "true" ]; then
@@ -731,10 +735,7 @@ def _validate_secret_scan(
 
     _require_run(
         steps["scan"],
-        (
-            "gitleaks git . -c .gitleaks.toml --redact --no-banner "
-            "--exit-code 1"
-        ),
+        GITLEAKS_SCAN_RUN,
         f"{label}.steps.scan",
     )
     if "env" in checkout or "env" in steps["scan"]:

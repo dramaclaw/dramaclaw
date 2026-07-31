@@ -92,8 +92,13 @@ P95 数据单独调整。
 - 资产：`gitleaks_8.30.1_linux_x64.tar.gz`
 - SHA256：
   `551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb`
-- 顺序：完整下载 → checksum 校验 → 解压 → 全历史扫描
+- 顺序：完整下载 → checksum 校验 → 解压 → 当前 SHA 可达的完整历史扫描
 - 不使用 `gitleaks-action`
+
+扫描命令固定传入 `--log-opts="${{ github.sha }}"`。这不是 PR 增量扫描：
+PR 合并引用仍覆盖 base 与 head 的完整可达历史，push 仍覆盖 main 的完整可达
+历史；它只排除其他未合并远端分支，避免 `fetch-depth: 0` 与 gitleaks 默认
+`--all` 组合造成跨分支污染。legacy `secret-scan.yml` 同步采用相同边界。
 
 ## 4. 本地验证记录
 
@@ -111,8 +116,8 @@ P95 数据单独调整。
 - frontend production build
 - frontend tests：297 files、1956 tests 全部通过
 - actionlint v1.7.12：`pr-gate.yml` 通过
-- gitleaks v8.30.1：433 commits 全历史扫描，无发现
-- CI 治理测试：32 passed
+- gitleaks v8.30.1：当前 SHA 可达的完整历史扫描，无发现
+- CI 治理测试：33 passed
 
 ## 5. 测试 PR 验收
 

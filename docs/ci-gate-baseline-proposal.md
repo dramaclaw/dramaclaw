@@ -53,7 +53,7 @@ frontend 第一版无条件运行，其成功结果直接证明 build/test 已�
 | 工作流 | Job / 检查 | 主要职责 | 当前 required |
 | --- | --- | --- | --- |
 | `ci.yml` | `deps` | lockfile、冻结安装、port closure、Ruff、Pytest | 是 |
-| `secret-scan.yml` | `gitleaks` | 全历史密钥扫描 | 是 |
+| `secret-scan.yml` | `gitleaks` | 当前 SHA 可达历史密钥扫描 | 是 |
 | `ce-import-lint.yml` | `ce-import-lint` | 禁止 CE 直接导入 EE 包 | 是 |
 | `banned-words.yml` | `banned-words` | ELv2 对外用词规则 | 是 |
 | `ee-terms.yml` | `ee-terms` | CE allowlist 与 EE 包名守栏 | 是 |
@@ -469,9 +469,12 @@ job 禁止使用 job/step 级 `continue-on-error` 或吞错命令。
 
 职责：gitleaks。
 
-本期决策：第一版保持现有全历史扫描语义，以减少同时改变门禁和扫描范围的
-风险。实施者本期不调整为 PR 增量扫描。是否优化扫描范围在稳定运行复盘后
-另立提案。
+本期决策：第一版扫描当前 workflow checkout SHA 可达的完整 Git 历史，不改为
+只检查 PR 增量。PR 事件中的 SHA 是 GitHub 合成的 merge ref，因此同时覆盖
+base 与 head 的可达历史；push 事件覆盖所推送 SHA 的可达历史。必须显式传入
+`--log-opts="${{ github.sha }}"`，不得使用 gitleaks 默认的 `--all`：
+`fetch-depth: 0` 会取回全部远端 heads，默认 `--all` 会让未合并分支中的命中
+污染其他 PR 和 main 的检查结果。
 
 安装方式不再二选一，本期固定为：
 
@@ -482,8 +485,11 @@ job 禁止使用 job/step 级 `continue-on-error` 或吞错命令。
 - 该资产在官方 release checksums 文件中的 SHA256 固定为
   `551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb`；
 - 必须先完整下载压缩包、校验 SHA256，再解压和加入 `PATH`；
-- 继续使用 `fetch-depth: 0` 和 `gitleaks git . -c .gitleaks.toml
-  --redact --no-banner --exit-code 1` 扫描全历史。
+- 继续使用 `fetch-depth: 0`，并运行以下命令扫描当前 SHA 可达的完整历史：
+
+  ```shell
+  gitleaks git . --log-opts="${{ github.sha }}" -c .gitleaks.toml --redact --no-banner --exit-code 1
+  ```
 
 安装 step 示意：
 
@@ -832,7 +838,7 @@ API 结果必须证明 team slug、visibility/privacy 和仓库 permission 符�
 - 所有 checkout steps 使用封闭 `with` 集合并设置
   `persist-credentials: false`；
 - 将 gitleaks 二进制安装迁入 Gate，固定 `v8.30.1`、Linux x64 资产及本文
-  SHA256，并保持全历史扫描；
+  SHA256，并扫描当前 SHA 可达的完整历史；
 - 暂时保留所有旧 workflow；
 - 新 `dramaclaw-pr-gate` 仅作为观察项；
 - 新旧检查并行运行。
@@ -1086,7 +1092,7 @@ ruleset，并按 `main-branch-protection-before.json` 恢复原配置。
 | Dependency Graph | 必须启用；不可用即 fail closed | 仓库管理员 | dependency 测试 PR |
 | 许可证政策 | 封闭三字段 schema、现有 11 项 deny list、固定 Action 与唯一 config-file 输入 | CI 实施人 | 许可证绕过负向测试 |
 | 漏洞检查 | 本期不加入许可证 Gate | CI 实施人 | 方案复核人 |
-| gitleaks | v8.30.1 Linux x64 二进制 + 固定 SHA256；先校验后解压；全历史扫描 | CI 实施人 | 安全复核人 |
+| gitleaks | v8.30.1 Linux x64 二进制 + 固定 SHA256；先校验后解压；扫描当前 SHA 可达的完整历史 | CI 实施人 | 安全复核人 |
 | docs-only PR | 第一版仍全量运行 backend 与 frontend | CI 实施人 | Phase 1 数据复核 |
 | Persistent bypass | 空；管理员规则同样生效 | `@lywaterman` | API 配置复核 |
 | Break-glass | 双组织 owner、事件记录、30 分钟内恢复 | 当值组织 owner | 另一位组织 owner |
@@ -1128,7 +1134,7 @@ v0.4 关闭最后两项小范围 Request changes：
    Action、`config-file` 和唯一 `with` 输入，并加入 `warn-only` 与许可证
    豁免字段的负向测试；
 2. gitleaks 固定为 `v8.30.1` Linux x64 二进制及官方 SHA256，明确先校验后
-   解压、保持全历史扫描，不使用 `gitleaks-action`。
+   解压、扫描当前 SHA 可达的完整历史，不使用 `gitleaks-action`。
 
 进入实施计划阶段的前提：
 

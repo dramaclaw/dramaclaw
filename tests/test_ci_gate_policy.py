@@ -257,6 +257,16 @@ def test_workflow_policy_rejects_checksum_after_extraction(tmp_path: Path) -> No
         validate_workflow_policy(tmp_path)
 
 
+def test_workflow_policy_rejects_gitleaks_all_refs_scan(tmp_path: Path) -> None:
+    _mutate_pr_gate(
+        tmp_path,
+        'gitleaks git . --log-opts="${{ github.sha }}"',
+        "gitleaks git .",
+    )
+    with pytest.raises(WorkflowPolicyError, match="steps.scan.run must be"):
+        validate_workflow_policy(tmp_path)
+
+
 def test_workflow_policy_rejects_early_success_in_gate(tmp_path: Path) -> None:
     _mutate_pr_gate(
         tmp_path,

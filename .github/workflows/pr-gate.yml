@@ -212,9 +212,9 @@ jobs:
           "$install_dir/gitleaks" version
           echo "$install_dir" >> "$GITHUB_PATH"
 
-      - name: Scan full git history
+      - name: Scan reachable git history
         id: scan
-        run: gitleaks git . -c .gitleaks.toml --redact --no-banner --exit-code 1
+        run: gitleaks git . --log-opts="${{ github.sha }}" -c .gitleaks.toml --redact --no-banner --exit-code 1
 
   pr-policy:
     runs-on: ubuntu-24.04
