@@ -515,8 +515,8 @@ base 与 head 的可达历史；push 事件覆盖所推送 SHA 的可达历史�
 ```
 
 版本或 checksum 变化必须由独立升级 PR 完成，附官方 release/checksums
-来源，并经过 `@dramaclaw/maintainers` CODEOWNERS 审批。不得在实施时改选
-Action 安装路线。
+来源，并经过非作者的另一位个人 CODEOWNER 审批。不得在实施时改选 Action
+安装路线。
 
 ### 5.7 `pr-policy`
 
@@ -751,30 +751,33 @@ SHA 的 Check Runs API 验收控制。
 
 单一聚合 Gate 成为 required 后，必须保护定义 Gate 的文件及其调用脚本。
 
-CODEOWNERS team 固定为 `@dramaclaw/maintainers`。当前匿名 GitHub API 无法
-读取组织 team，因此不能把该 team 的存在和权限伪报为已验证。实施责任人
-`@lywaterman` 必须在 Phase 0 创建或确认该 team，并满足：
+CODEOWNERS 固定为两个个人 owner：`@bopy-zou` 与 `@Handanhhhy`。2026-07-31
+已使用认证 GitHub API 验证：前者角色为 Maintain、有效权限为 Write，后者
+角色与有效权限均为 Admin；bootstrap 分支的 CODEOWNERS errors API 返回
+`{"errors":[]}`。
 
-- team 在组织内可见，不是 secret team；
-- team 对 `dramaclaw/dramaclaw` 至少拥有 write 权限；
-- team 至少有两名活跃维护者；
-- ruleset 的 CODEOWNERS review 能识别该 team；
-- 使用已认证 GitHub API 和测试 PR 留下验证证据。
+两位 owner 必须满足：
 
-在以上条件全部满足前，不得进入 Gate Phase 1。唯一允许提前执行的是
-CODEOWNERS bootstrap；这是建立后续保护本身所必需的前置步骤。CODEOWNERS
-内容固定为：
+- 始终至少拥有仓库 write 权限；
+- ruleset 的 CODEOWNERS review 能识别两位账号；
+- PR 作者不得自批，敏感 CI 变更由非作者的另一位 Code Owner 审批；
+- 使用已认证 GitHub API 和双向测试 PR 留下验证证据。
+
+CODEOWNERS 内容固定为：
 
 ```text
-/.github/CODEOWNERS        @dramaclaw/maintainers
-/.github/workflows/        @dramaclaw/maintainers
-/.github/dependency-review-config.yml @dramaclaw/maintainers
-/scripts/check_*.py        @dramaclaw/maintainers
-/scripts/lint_*.py         @dramaclaw/maintainers
-/scripts/ce_allowlist.py   @dramaclaw/maintainers
-/pyproject.toml            @dramaclaw/maintainers
-/.gitleaks.toml            @dramaclaw/maintainers
-/ce-allowlist.toml         @dramaclaw/maintainers
+/.github/CODEOWNERS        @bopy-zou @Handanhhhy
+/.github/workflows/        @bopy-zou @Handanhhhy
+/.github/dependency-review-config.yml @bopy-zou @Handanhhhy
+/scripts/check_*.py        @bopy-zou @Handanhhhy
+/scripts/ci_yaml.py        @bopy-zou @Handanhhhy
+/scripts/lint_*.py         @bopy-zou @Handanhhhy
+/scripts/ce_allowlist.py   @bopy-zou @Handanhhhy
+/pyproject.toml            @bopy-zou @Handanhhhy
+/uv.lock                   @bopy-zou @Handanhhhy
+/.gitleaks.toml            @bopy-zou @Handanhhhy
+/ce-allowlist.toml         @bopy-zou @Handanhhhy
+/docs/ci-gate-*.md         @bopy-zou @Handanhhhy
 ```
 
 同时要求：
@@ -789,23 +792,24 @@ CODEOWNERS bootstrap；这是建立后续保护本身所必需的前置步骤。
 验证命令示意：
 
 ```bash
-gh api orgs/dramaclaw/teams/maintainers
-gh api repos/dramaclaw/dramaclaw/teams
+gh api repos/dramaclaw/dramaclaw/collaborators/bopy-zou/permission
+gh api repos/dramaclaw/dramaclaw/collaborators/Handanhhhy/permission
+gh api 'repos/dramaclaw/dramaclaw/codeowners/errors?ref=codex/codeowners-bootstrap'
 ```
 
-API 结果必须证明 team slug、visibility/privacy 和仓库 permission 符合上述
-要求。由于 GitHub 只读取 PR base branch 上的 CODEOWNERS，而当前 `main`
+API 结果必须证明两位账号的仓库 permission 符合上述要求且 CODEOWNERS 无
+解析错误。由于 GitHub 只读取 PR base branch 上的 CODEOWNERS，而当前 `main`
 不存在该文件，bootstrap 必须单独完成：
 
-1. 先创建并验证 `@dramaclaw/maintainers`；
+1. 先验证 `@bopy-zou` 与 `@Handanhhhy` 的仓库权限和 CODEOWNERS 解析；
 2. 提交一个只新增 `.github/CODEOWNERS` 及其机械生成
    `license-inventory.csv` 记录的 bootstrap PR；
 3. 首个 PR 无法由尚未位于 base branch 的 CODEOWNERS 自我保护，因此必须在
-   现有 branch protection 下由两名已确认维护者人工批准；
+   现有 branch protection 下由非作者的另一位已确认维护者人工批准；
 4. 合并 bootstrap PR，并启用或确认 require Code Owner review；
 5. 再创建一个修改 `.github/CODEOWNERS` 的测试 PR，确认 GitHub 自动请求
-   `@dramaclaw/maintainers` review 且未审批时不可合并；该测试 PR 关闭而不
-   合并；
+   非作者的另一位 Code Owner review 且未审批时不可合并；两位 owner 分别
+   作为作者完成一次测试，测试 PR 关闭而不合并；
 6. 以上证据齐全后才能提交 Gate Phase 1 PR。
 
 ## 9. 迁移计划
@@ -814,8 +818,8 @@ API 结果必须证明 team slug、visibility/privacy 和仓库 permission 符�
 
 架构决策已经在第 13 节关闭。Phase 0 不再重新讨论架构，只完成外部状态核验：
 
-1. `@lywaterman` 创建或确认 `@dramaclaw/maintainers` team；
-2. 验证 team 可见、至少两名成员且对仓库拥有 write 权限；
+1. 验证 `@bopy-zou` 与 `@Handanhhhy` 均可解析且至少拥有 write 权限；
+2. 验证 CODEOWNERS errors API 返回 `{"errors":[]}`；
 3. 按第 8 节独立合并 CODEOWNERS bootstrap PR；
 4. 用后续测试 PR 验证 Code Owner 自动请求与未审批阻断；
 5. 验证 Dependency Graph 已启用；
@@ -1021,7 +1025,8 @@ ruleset，并按 `main-branch-protection-before.json` 恢复原配置。
 - [ ] 同一 SHA 只有一个同名 GitHub Actions check run；
 - [ ] `[skip ci]` 导致 Gate 缺失时 PR 不可合并；
 - [ ] CI 变更受 CODEOWNERS 保护；
-- [ ] `@dramaclaw/maintainers` 已验证可见且拥有 write 权限；
+- [x] `@bopy-zou` 与 `@Handanhhhy` 已验证拥有 write 以上权限，且
+      CODEOWNERS errors API 返回空集合；
 - [ ] CODEOWNERS 已通过独立 bootstrap PR 合并，后续测试 PR 已验证 base
       branch 规则生效；
 - [ ] `.github/CODEOWNERS` 保护自身和全部 Gate 脚本；
@@ -1082,13 +1087,13 @@ ruleset，并按 `main-branch-protection-before.json` 恢复原配置。
 
 | 决策项 | 最终结论 | 执行责任 | 独立复核 |
 | --- | --- | --- | --- |
-| Required check | 仓库唯一 `dramaclaw-pr-gate` | CI 实施人 | `@dramaclaw/maintainers` |
+| Required check | 仓库唯一 `dramaclaw-pr-gate` | CI 实施人 | 非作者的另一位个人 CODEOWNER |
 | Expected source | GitHub Actions；只限定 App，迁移时 API 验证 App ID | `@lywaterman` | CI 实施人之外的 maintainer |
-| 条件 job | dependency-review、pr-policy 使用 assertion + `verified=true` | CI 实施人 | `@dramaclaw/maintainers` |
+| 条件 job | dependency-review、pr-policy 使用 assertion + `verified=true` | CI 实施人 | 非作者的另一位个人 CODEOWNER |
 | Frontend | 第一版所有 PR 与 main push 都完整运行，不做路径优化 | CI 实施人 | Phase 1 测试 PR |
-| 分支保护 | 从 legacy protection 迁移到 repository ruleset | `@lywaterman` | `@dramaclaw/maintainers` |
+| 分支保护 | 从 legacy protection 迁移到 repository ruleset | `@lywaterman` | `@bopy-zou` / `@Handanhhhy` 中的非实施人 |
 | Approval | 1 个 CODEOWNER approval，dismiss stale | `@lywaterman` | 测试 PR 验证 |
-| CODEOWNERS team | 固定 `@dramaclaw/maintainers` | `@lywaterman` 创建/确认 | API + 测试 PR |
+| CODEOWNERS | 固定 `@bopy-zou` 与 `@Handanhhhy` | 两位 owner 维护 | 权限 API + 双向测试 PR |
 | Dependency Graph | 必须启用；不可用即 fail closed | 仓库管理员 | dependency 测试 PR |
 | 许可证政策 | 封闭三字段 schema、现有 11 项 deny list、固定 Action 与唯一 config-file 输入 | CI 实施人 | 许可证绕过负向测试 |
 | 漏洞检查 | 本期不加入许可证 Gate | CI 实施人 | 方案复核人 |
@@ -1103,15 +1108,10 @@ ruleset，并按 `main-branch-protection-before.json` 恢复原配置。
 | Merge queue | 本期不开启；未来先补 `merge_group` | 仓库管理员 | merge-group 测试 |
 | 推广到其他仓库 | DramaClaw 稳定观察 1–2 周并达成指标后开始 | CI 负责人 | 各仓维护者 |
 
-唯一尚需核验的是外部事实，而非架构选择：
-
-- `@dramaclaw/maintainers` 当前是否已经存在；
-- 该 team 是否可见、成员数是否不少于 2、是否拥有 write 权限；
-- `@lywaterman` 是否具备完成组织 team 和 ruleset 配置的管理员权限。
-
-这些事实由 `@lywaterman` 在 Phase 0 用已认证 API 核验；不满足时创建 team
-或由组织 owner 执行配置。核验失败会阻止实施，但不会让实施者重新选择
-CODEOWNERS team 名或放宽保护。
+CODEOWNERS 的外部事实已经核验：`@bopy-zou` 为 Maintain/Write，
+`@Handanhhhy` 为 Admin，errors API 返回空集合。Phase 0 剩余的是合并
+bootstrap、启用规则并完成两位 owner 互为作者/审批人的测试 PR；这些是操作
+验收，不再是架构待决策项。
 
 ## 14. 评审结论与实施入口
 
@@ -1135,6 +1135,10 @@ v0.4 关闭最后两项小范围 Request changes：
    豁免字段的负向测试；
 2. gitleaks 固定为 `v8.30.1` Linux x64 二进制及官方 SHA256，明确先校验后
    解压、扫描当前 SHA 可达的完整历史，不使用 `gitleaks-action`。
+
+v0.5 将无法解析的 team owner 替换为已验证的个人 owner `@bopy-zou` 与
+`@Handanhhhy`，并固定为由非作者的另一位 Code Owner 审批；两位账号的仓库
+权限及 CODEOWNERS errors API 已完成实时验收。
 
 进入实施计划阶段的前提：
 

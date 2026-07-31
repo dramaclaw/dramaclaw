@@ -32,21 +32,23 @@ checks、branch protection 或 ruleset。`.github/CODEOWNERS` 及其机械生成
 CODEOWNERS，因此不得用包含 Gate 和 CODEOWNERS 的同一个首次 PR 宣称已完成
 Code Owner 保护。必须按以下顺序执行：
 
-1. 组织管理员创建或确认 `@dramaclaw/maintainers`；
-2. team 至少两名活跃成员、组织内可见，并对仓库拥有 write 权限；
+1. 确认个人 owner `@bopy-zou` 与 `@Handanhhhy` 均可解析且对仓库至少拥有
+   write 权限；
+2. CODEOWNERS errors API 必须返回 `{"errors":[]}`；
 3. 提交只包含 `.github/CODEOWNERS` 及其机械生成
-   `license-inventory.csv` 记录的 bootstrap PR；首个 PR 在现有保护下由两名
-   已确认维护者人工批准后合并；
+   `license-inventory.csv` 记录的 bootstrap PR；首个 PR 在现有保护下由
+   非作者的另一位已确认维护者人工批准后合并；
 4. 启用或确认 require Code Owner review；
-5. 新建一个修改 `.github/CODEOWNERS` 的测试 PR，确认自动请求 team review
-   且未审批时不可合并，然后关闭而不合并；
+5. 分别由两位 owner 新建修改 `.github/CODEOWNERS` 的测试 PR，确认自动请求
+   另一位 Code Owner 且未审批时不可合并，然后关闭而不合并；
 6. 确认 Dependency Graph 已启用；
 7. 导出当前 branch protection；
 8. 记录 GitHub Actions expected App ID；
 9. 指定切换执行人与独立复核人。
 
-当前已认证账号查询 team 与仓库 team 接口均返回 404，因此第 1–3 项仍是明确
-阻塞项，不得把 CODEOWNERS 标记为已验收。
+2026-07-31 已认证 API 验证：`@bopy-zou` 为 Maintain/Write，
+`@Handanhhhy` 为 Admin，CODEOWNERS errors API 返回 `{"errors":[]}`。Phase 0
+只剩 bootstrap PR 合并及合并后的双向测试 PR 验收。
 
 ## 3. Phase 1 实现参数
 
