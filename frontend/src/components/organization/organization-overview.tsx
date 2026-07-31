@@ -32,10 +32,15 @@ function hasSafeActiveContext(value: unknown): boolean {
       String(value.user.model_billing_entitlement),
     ) &&
     typeof value.organization.org_id === "string" &&
+    value.organization.org_id.trim().length > 0 &&
     typeof value.organization.name === "string" &&
     value.organization.status === "active" &&
+    typeof value.organization.updated_at === "string" &&
+    value.organization.updated_at.trim().length > 0 &&
     ["org_admin", "org_member"].includes(String(value.membership.role)) &&
     value.membership.membership_status === "active" &&
+    typeof value.membership.updated_at === "string" &&
+    value.membership.updated_at.trim().length > 0 &&
     typeof value.capabilities.manage_members === "boolean" &&
     typeof value.capabilities.manage_invites === "boolean"
   );
@@ -88,6 +93,11 @@ export function OrganizationOverview() {
     !query.isFetching &&
     membership?.role === "org_admin" &&
     capabilities?.manage_members === true;
+  const canManageInvites =
+    safeActive &&
+    !query.isFetching &&
+    membership?.role === "org_admin" &&
+    capabilities?.manage_invites === true;
   const readOnly = Boolean(org && membership && (!safeActive || !canManageMembers));
 
   return (
@@ -166,7 +176,7 @@ export function OrganizationOverview() {
               </CardContent>
             </Card>
           </div>
-          {canManageMembers ? (
+          {canManageMembers || canManageInvites ? (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -174,10 +184,17 @@ export function OrganizationOverview() {
                   {t("organization.cards.management")}
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <Button render={<Link to="/organization/members" />}>
-                  {t("organization.actions.manageMembers")}
-                </Button>
+              <CardContent className="flex flex-wrap gap-2">
+                {canManageMembers ? (
+                  <Button render={<Link to="/organization/members" />}>
+                    {t("organization.actions.manageMembers")}
+                  </Button>
+                ) : null}
+                {canManageInvites ? (
+                  <Button render={<Link to="/organization/invites" />}>
+                    {t("organization.actions.manageInvites")}
+                  </Button>
+                ) : null}
               </CardContent>
             </Card>
           ) : null}

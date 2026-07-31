@@ -30,12 +30,31 @@ map $http_x_forwarded_proto $hsts_value {
     default "";
 }
 
+# Invitation links contain one-time credentials in the path. Apply the document
+# policy on the first HTTP response and keep those paths out of this nginx's local
+# access log without disabling logs for ordinary pages or APIs.
+map $request_uri $invite_referrer_policy {
+    ~^/invite/ no-referrer;
+    default    strict-origin-when-cross-origin;
+}
+map $request_uri $invite_cache_control {
+    ~^/invite/ no-store;
+    default    no-cache;
+}
+map $request_uri $invite_access_log {
+    default 1;
+    ~^/invite/ 0;
+    ~^/api/v1/org/invites/[^/?]+/(?:preview|accept)(?:[/?]|$) 0;
+}
+
 server {
     listen 80 default_server;
     server_name _;
 
     root /usr/share/nginx/html;
     index index.html;
+
+    access_log /var/log/nginx/access.log combined if=$invite_access_log;
 
     # Larger upload window for ingest/audio assets posted through /api.
     client_max_body_size 200m;
@@ -50,13 +69,13 @@ server {
         # 放行的图片/视频被旧策略拦掉，直到用户手动硬性重载才好。no-cache = 每次用 ETag
         # 回源校验（命中即 304，开销很小），新外壳/CSP 在下次导航即刻生效。带内容 hash 的
         # /assets/* 不受影响，仍走下面 1 年 immutable 缓存。
-        add_header Cache-Control "no-cache" always;
+        add_header Cache-Control $invite_cache_control always;
 
         add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-LvxLzCeWBZ/DC3ejUm4WcZpQNZXYDUz4p/53gA+dzKk='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com https://nfg-web.oss-cn-chengdu.aliyuncs.com; media-src 'self' blob: https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com; font-src 'self' data:; connect-src 'self' https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com https://nfg-web-assets.cdnfg.com https://api.github.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'${csp_upgrade}" always;
         add_header Strict-Transport-Security $hsts_value always;
         add_header X-Frame-Options "DENY" always;
         add_header X-Content-Type-Options "nosniff" always;
-        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Referrer-Policy $invite_referrer_policy always;
         add_header Permissions-Policy "accelerometer=(), autoplay=(), camera=(), clipboard-read=(), clipboard-write=(self), display-capture=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), picture-in-picture=(self), usb=(), xr-spatial-tracking=()" always;
         add_header Cross-Origin-Opener-Policy "same-origin" always;
         add_header Cross-Origin-Resource-Policy "same-origin" always;

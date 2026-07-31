@@ -75,7 +75,8 @@
       "entitlement": "Entitlement"
     },
     "actions": {
-      "manageMembers": "Manage members"
+      "manageMembers": "Manage members",
+      "manageInvites": "Manage invitations"
     },
     "empty": {
       "title": "No current organization",
@@ -160,6 +161,65 @@
         "existing": "Already exists",
         "rejected": "Rejected"
       }
+    },
+    "invites": {
+      "title": "Organization invitations",
+      "loading": "Loading invitations",
+      "returning": "Your permissions changed. Returning to the organization overview…",
+      "total": "{{count}} invitations",
+      "empty": "No invitations match these filters",
+      "create": "Create invitation",
+      "createDescription": "Invite a specific username as an organization member.",
+      "target": "Username",
+      "submit": "Create",
+      "status": "Invitation status",
+      "allStatuses": "All statuses",
+      "expires": "Expires",
+      "actions": "Actions",
+      "previous": "Previous page",
+      "next": "Next page",
+      "copy": "Copy link",
+      "closeSecret": "Done",
+      "secretTitle": "Copy this invitation link now",
+      "secretDescription": "This link is shown once. Send it only to the intended account.",
+      "secretUnavailableTitle": "Invitation created",
+      "secretUnavailableDescription": "The invitation was created, but its one-time link cannot be shown again. Revoke it and create a new invitation if you need a new link.",
+      "revoke": "Revoke",
+      "confirmRevoke": "Confirm revoke",
+      "revokeDescription": "The intended account will no longer be able to use this invitation.",
+      "statuses": {
+        "pending": "Pending",
+        "expired": "Expired",
+        "revoked": "Revoked",
+        "accepted": "Accepted"
+      },
+      "errors": {
+        "duplicate": "A pending invitation already exists for this account.",
+        "rateLimited": "Too many invitation requests. Try again later.",
+        "forbidden": "You no longer have permission to manage invitations."
+      }
+    }
+  },
+  "invite": {
+    "loading": "Loading invitation",
+    "title": "Organization invitation",
+    "organization": "Organization",
+    "target": "Invited account",
+    "expires": "Expires",
+    "existing": "Use existing account",
+    "create": "Create account",
+    "username": "Username",
+    "password": "Password",
+    "accept": "Accept invitation",
+    "login": "Go to login",
+    "successExisting": "Invitation accepted",
+    "successCreate": "Account created. Sign in to continue.",
+    "errors": {
+      "unavailable": "This invitation is unavailable. It may be expired or revoked.",
+      "used": "This invitation was already used.",
+      "mismatch": "This invitation cannot be accepted by this account.",
+      "rateLimited": "Too many attempts. Try again later.",
+      "generic": "This invitation cannot be processed."
     }
   },
   "notifications": {

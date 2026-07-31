@@ -15,9 +15,11 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as WatchWorkRouteImport } from './routes/watch.$work'
+import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as AppOrganizationRouteImport } from './routes/_app/organization'
 import { Route as AppCreditsRouteImport } from './routes/_app/credits'
 import { Route as AppOrganizationMembersRouteImport } from './routes/_app/organization.members'
+import { Route as AppOrganizationInvitesRouteImport } from './routes/_app/organization.invites'
 import { Route as AppProjectsProjectTasksRouteImport } from './routes/_app/projects.$project/tasks'
 import { Route as AppProjectsProjectStylesRouteImport } from './routes/_app/projects.$project/styles'
 import { Route as AppProjectsProjectIngestRouteImport } from './routes/_app/projects.$project/ingest'
@@ -72,6 +74,11 @@ const WatchWorkRoute = WatchWorkRouteImport.update({
   path: '/watch/$work',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppOrganizationRoute = AppOrganizationRouteImport.update({
   id: '/organization',
   path: '/organization',
@@ -85,6 +92,11 @@ const AppCreditsRoute = AppCreditsRouteImport.update({
 const AppOrganizationMembersRoute = AppOrganizationMembersRouteImport.update({
   id: '/members',
   path: '/members',
+  getParentRoute: () => AppOrganizationRoute,
+} as any)
+const AppOrganizationInvitesRoute = AppOrganizationInvitesRouteImport.update({
+  id: '/invites',
+  path: '/invites',
   getParentRoute: () => AppOrganizationRoute,
 } as any)
 const AppProjectsProjectFreezoneLazyRoute =
@@ -222,7 +234,9 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/credits': typeof AppCreditsRoute
   '/organization': typeof AppOrganizationRouteWithChildren
+  '/invite/$token': typeof InviteTokenRoute
   '/watch/$work': typeof WatchWorkRoute
+  '/organization/invites': typeof AppOrganizationInvitesRoute
   '/organization/members': typeof AppOrganizationMembersRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -244,8 +258,10 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/credits': typeof AppCreditsRoute
   '/organization': typeof AppOrganizationRouteWithChildren
+  '/invite/$token': typeof InviteTokenRoute
   '/watch/$work': typeof WatchWorkRoute
   '/': typeof AppIndexRoute
+  '/organization/invites': typeof AppOrganizationInvitesRoute
   '/organization/members': typeof AppOrganizationMembersRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -269,8 +285,10 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_app/credits': typeof AppCreditsRoute
   '/_app/organization': typeof AppOrganizationRouteWithChildren
+  '/invite/$token': typeof InviteTokenRoute
   '/watch/$work': typeof WatchWorkRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/organization/invites': typeof AppOrganizationInvitesRoute
   '/_app/organization/members': typeof AppOrganizationMembersRoute
   '/_app/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
   '/_app/projects/$project/episodes': typeof AppProjectsProjectEpisodesRouteWithChildren
@@ -295,7 +313,9 @@ export interface FileRouteTypes {
     | '/login'
     | '/credits'
     | '/organization'
+    | '/invite/$token'
     | '/watch/$work'
+    | '/organization/invites'
     | '/organization/members'
     | '/projects/$project/assistant'
     | '/projects/$project/episodes'
@@ -317,8 +337,10 @@ export interface FileRouteTypes {
     | '/login'
     | '/credits'
     | '/organization'
+    | '/invite/$token'
     | '/watch/$work'
     | '/'
+    | '/organization/invites'
     | '/organization/members'
     | '/projects/$project/assistant'
     | '/projects/$project/episodes'
@@ -341,8 +363,10 @@ export interface FileRouteTypes {
     | '/login'
     | '/_app/credits'
     | '/_app/organization'
+    | '/invite/$token'
     | '/watch/$work'
     | '/_app/'
+    | '/_app/organization/invites'
     | '/_app/organization/members'
     | '/_app/projects/$project/assistant'
     | '/_app/projects/$project/episodes'
@@ -364,6 +388,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  InviteTokenRoute: typeof InviteTokenRoute
   WatchWorkRoute: typeof WatchWorkRoute
 }
 
@@ -397,6 +422,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WatchWorkRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/organization': {
       id: '/_app/organization'
       path: '/organization'
@@ -416,6 +448,13 @@ declare module '@tanstack/react-router' {
       path: '/members'
       fullPath: '/organization/members'
       preLoaderRoute: typeof AppOrganizationMembersRouteImport
+      parentRoute: typeof AppOrganizationRoute
+    }
+    '/_app/organization/invites': {
+      id: '/_app/organization/invites'
+      path: '/invites'
+      fullPath: '/organization/invites'
+      preLoaderRoute: typeof AppOrganizationInvitesRouteImport
       parentRoute: typeof AppOrganizationRoute
     }
     '/_app/projects/$project/freezone': {
@@ -527,10 +566,12 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppOrganizationRouteChildren {
+  AppOrganizationInvitesRoute: typeof AppOrganizationInvitesRoute
   AppOrganizationMembersRoute: typeof AppOrganizationMembersRoute
 }
 
 const AppOrganizationRouteChildren: AppOrganizationRouteChildren = {
+  AppOrganizationInvitesRoute: AppOrganizationInvitesRoute,
   AppOrganizationMembersRoute: AppOrganizationMembersRoute,
 }
 
@@ -605,6 +646,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  InviteTokenRoute: InviteTokenRoute,
   WatchWorkRoute: WatchWorkRoute,
 }
 export const routeTree = rootRouteImport

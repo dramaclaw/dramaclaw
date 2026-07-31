@@ -256,12 +256,52 @@ function normalizeInviteListParams(params: InviteListParams): InviteListParams {
   return normalized;
 }
 
+const INVITE_FIELDS = new Set([
+  "invite_id",
+  "target_masked",
+  "role",
+  "status",
+  "expires_at",
+  "accepted_at",
+  "created_at",
+]);
+
+function isDateTime(value: unknown): value is string {
+  return typeof value === "string" &&
+    value.trim().length > 0 &&
+    Number.isFinite(Date.parse(value));
+}
+
+function isOptionalDateTime(value: unknown): boolean {
+  return value === undefined || value === null || isDateTime(value);
+}
+
+function isInvite(value: unknown): value is Invite {
+  if (!isRecord(value) || Object.keys(value).some((key) => !INVITE_FIELDS.has(key))) {
+    return false;
+  }
+  return typeof value.invite_id === "string" &&
+    value.invite_id.trim().length > 0 &&
+    typeof value.target_masked === "string" &&
+    value.target_masked.trim().length > 0 &&
+    (value.role === undefined || value.role === "org_member") &&
+    typeof value.status === "string" &&
+    ["pending", "expired", "revoked", "accepted"].includes(value.status) &&
+    isDateTime(value.expires_at) &&
+    isOptionalDateTime(value.accepted_at) &&
+    isOptionalDateTime(value.created_at);
+}
+
 function totalCount(response: Response): number {
   const raw = response.headers.get("X-Total-Count");
   if (raw === null || !/^\d+$/.test(raw)) {
     throw new OrgApiError({ status: response.status });
   }
-  return Number(raw);
+  const total = Number(raw);
+  if (!Number.isSafeInteger(total) || total < 0) {
+    throw new OrgApiError({ status: response.status });
+  }
+  return total;
 }
 
 function orgUrl(path: string): URL {
@@ -351,8 +391,12 @@ async function listOrgInvitesWithParams(
     api.get(orgUrl("invites"), { searchParams: searchParams(params) }),
   );
   try {
+    const items: unknown = await response.json();
+    if (!Array.isArray(items) || !items.every(isInvite)) {
+      throw new OrgApiError({ status: response.status });
+    }
     return {
-      items: (await response.json()) as Invite[],
+      items,
       total: totalCount(response),
     };
   } catch (error) {
@@ -411,6 +455,7 @@ export function useOrgInvites(params: InviteListParams = {}) {
   return useQuery({
     queryKey: queryKeys.orgInvitesList(normalizedParams),
     queryFn: () => listOrgInvitesWithParams(normalizedParams),
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -457,8 +502,13 @@ export function useRevokeOrgInvite() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: revokeOrgInvite,
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.orgInvites() }),
+    retry: false,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.orgMe() }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.orgInvites() }),
+      ]);
+    },
   });
 }
 

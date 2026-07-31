@@ -28,6 +28,7 @@ const labels: Record<string, string> = {
   "organization.empty.title": "No current organization",
   "organization.readOnly.title": "Read-only access",
   "organization.actions.manageMembers": "Manage members",
+  "organization.actions.manageInvites": "Manage invitations",
 };
 
 vi.mock("react-i18next", () => ({
@@ -83,6 +84,10 @@ describe("organization overview", () => {
       "href",
       "/organization/members",
     );
+    expect(screen.getByRole("link", { name: "Manage invitations" })).toHaveAttribute(
+      "href",
+      "/organization/invites",
+    );
     expect(document.body.textContent).not.toMatch(/key|billing|credit/i);
   });
 
@@ -120,6 +125,7 @@ describe("organization overview", () => {
     expect(await screen.findByText("Acme")).toBeVisible();
     expect(screen.getByText("Read-only access")).toBeVisible();
     expect(screen.queryByRole("link", { name: "Manage members" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manage invitations" })).not.toBeInTheDocument();
   });
 
   it("shows a safe no-organization state even if capabilities are true", async () => {

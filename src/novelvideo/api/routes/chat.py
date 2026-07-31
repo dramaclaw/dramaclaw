@@ -16,10 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from pydantic import BaseModel
 
 from novelvideo.api.auth import (
+    AGENT_WRITE_SCOPES,
     AUTH_COOKIE_NAME,
-    get_api_user,
+    UNSUPPORTED_QUERY_CREDENTIALS,
     _verify_agent_bearer,
     _verify_browser_session,
+    get_api_user,
 )
 from novelvideo.api.deps import list_user_projects
 from novelvideo.chat import service as chat_service
@@ -127,7 +129,9 @@ async def append_chat_notification(
             str(scope.id),
             text,
             project_dir=project_ctx.output_dir if project_ctx is not None else None,
-            project_state_dir=project_ctx.state_dir if project_ctx is not None else None,
+            project_state_dir=(
+                project_ctx.state_dir if project_ctx is not None else None
+            ),
         )
     else:
         message = chat_store.append_message(username, scope, "assistant", text)
@@ -154,14 +158,76 @@ async def append_chat_ui_event(
 
 
 async def _authenticate_ws(websocket: WebSocket) -> dict[str, Any]:
+    if websocket.headers.get("X-API-Key"):
+        raise HTTPException(status_code=401, detail="unsupported credential")
+    if any(name in websocket.query_params for name in UNSUPPORTED_QUERY_CREDENTIALS):
+        raise HTTPException(status_code=401, detail="unsupported credential")
+
     bearer = websocket.headers.get("Authorization", "").strip()
     if bearer:
-        token = bearer.partition(" ")[2].strip() if bearer.lower().startswith("bearer ") else ""
-        if token:
-            return await _verify_agent_bearer(token)
+        token = (
+            bearer.partition(" ")[2].strip()
+            if bearer.lower().startswith("bearer ")
+            else ""
+        )
+        if not token:
+            raise HTTPException(status_code=401, detail="invalid authorization")
+        return await _verify_agent_bearer(token)
 
     cookie_value = websocket.cookies.get(AUTH_COOKIE_NAME)
     return await _verify_browser_session(cookie_value)
+
+
+def _scope_for_authenticated_user(user: dict[str, Any]) -> ChatScope:
+    if user.get("credential_kind") != "agent_session":
+        return ChatScope(kind="home")
+    kind = str(user.get("current_scope_kind") or "home")
+    project_id = user.get("current_project_id")
+    if kind == "project" and project_id:
+        return ChatScope(kind="project", id=str(project_id))
+    if kind == "home":
+        return ChatScope(kind="home")
+    raise HTTPException(status_code=403, detail="agent scope unavailable")
+
+
+def _enforce_agent_chat_scope(
+    user: dict[str, Any],
+    scope: ChatScope,
+    *,
+    require_write: bool,
+) -> None:
+    if user.get("credential_kind") != "agent_session":
+        return
+    current = _scope_for_authenticated_user(user)
+    if current.kind != scope.kind or current.id != scope.id:
+        raise HTTPException(status_code=403, detail="agent scope mismatch")
+    if require_write and set(user.get("scopes") or []).isdisjoint(AGENT_WRITE_SCOPES):
+        raise HTTPException(status_code=403, detail="agent write scope missing")
+
+
+async def _reauthenticate_ws_event(
+    websocket: WebSocket,
+    *,
+    original_user: dict[str, Any],
+    scope: ChatScope,
+    require_write: bool,
+) -> dict[str, Any]:
+    fresh = await _authenticate_ws(websocket)
+    original_id = str(original_user.get("id") or original_user.get("user_id") or "")
+    fresh_id = str(fresh.get("id") or fresh.get("user_id") or "")
+    original_kind = original_user.get("credential_kind") or "browser_session"
+    fresh_kind = fresh.get("credential_kind") or "browser_session"
+    if not original_id or fresh_id != original_id or fresh_kind != original_kind:
+        raise HTTPException(status_code=403, detail="principal changed")
+    _enforce_agent_chat_scope(fresh, scope, require_write=require_write)
+    return fresh
+
+
+async def _close_ws_unauthorized(websocket: WebSocket) -> None:
+    await _send_json_best_effort(
+        websocket, {"type": "error", "message": "unauthorized"}
+    )
+    await websocket.close(code=1008)
 
 
 def _scope_from_model(model: ChatScopePayload | None) -> ChatScope:
@@ -226,7 +292,9 @@ def _attachment_context_block(attachments: list[ChatAttachmentIn]) -> str:
     return "\n".join(lines)
 
 
-def _text_with_attachment_context(text: str, attachments: list[ChatAttachmentIn]) -> str:
+def _text_with_attachment_context(
+    text: str, attachments: list[ChatAttachmentIn]
+) -> str:
     block = _attachment_context_block(attachments)
     return f"{text}\n\n{block}" if block else text
 
@@ -312,7 +380,9 @@ async def _history(
             username,
             str(scope.id),
             project_dir=project_ctx.output_dir if project_ctx is not None else None,
-            project_state_dir=project_ctx.state_dir if project_ctx is not None else None,
+            project_state_dir=(
+                project_ctx.state_dir if project_ctx is not None else None
+            ),
         )
     return chat_store.list_messages(username, scope)
 
@@ -332,7 +402,7 @@ async def _send_scope_changed(
         project_ctx = None
         if not await _send_json_best_effort(
             websocket,
-            {"type": "error", "message": "项目不存在或已删除，已切回首页聊天。"}
+            {"type": "error", "message": "项目不存在或已删除，已切回首页聊天。"},
         ):
             return None
     if not await _send_json_best_effort(
@@ -342,7 +412,7 @@ async def _send_scope_changed(
             "scope": scope.to_dict(),
             "history": await _history(username, scope, project_ctx=project_ctx),
             "busy": chat_service.chat_run_lock_is_active(username),
-        }
+        },
     ):
         return None
     return scope
@@ -453,7 +523,9 @@ async def _stream_project_turn(
                 send_lock,
             )
         elif event_type == "tool_update":
-            tool_name, tool_body = _tool_display_payload(event.get("text"), event.get("name"))
+            tool_name, tool_body = _tool_display_payload(
+                event.get("text"), event.get("name")
+            )
             await _send_json_best_effort(
                 websocket,
                 {
@@ -605,7 +677,9 @@ async def _stream_home_turn(
                     send_lock,
                 )
             elif event.type == "assistant_delta":
-                assistant_text = chat_service._merge_stream_text(assistant_text, event.text)
+                assistant_text = chat_service._merge_stream_text(
+                    assistant_text, event.text
+                )
                 display_text = chat_service._strip_replayed_chat_response(
                     assistant_text,
                     previous_assistant,
@@ -641,7 +715,9 @@ async def _stream_home_turn(
                     send_lock,
                 )
             elif event.type == "complete":
-                assistant_text = _completion_text_or_existing(event.text, assistant_text)
+                assistant_text = _completion_text_or_existing(
+                    event.text, assistant_text
+                )
 
         assistant_text = chat_service._strip_replayed_chat_response(
             assistant_text,
@@ -649,7 +725,9 @@ async def _stream_home_turn(
             text,
         )
         assistant_text = assistant_text.strip() or "(agent returned no content)"
-        message = chat_store.append_message(username, scope, "assistant", assistant_text)
+        message = chat_store.append_message(
+            username, scope, "assistant", assistant_text
+        )
         persisted = True
         await _send_json_best_effort(
             websocket,
@@ -713,13 +791,19 @@ async def chat_ws(websocket: WebSocket) -> None:
     try:
         user = await _authenticate_ws(websocket)
     except Exception:
-        await websocket.send_json({"type": "error", "message": "unauthorized"})
-        await websocket.close(code=1008)
+        await _close_ws_unauthorized(websocket)
         return
 
     username = str(user["username"])
-    current_scope = ChatScope(kind="home")
-    current_scope = await _send_scope_changed(websocket, user, username, current_scope)
+    try:
+        current_scope = _scope_for_authenticated_user(user)
+        _enforce_agent_chat_scope(user, current_scope, require_write=False)
+        current_scope = await _send_scope_changed(
+            websocket, user, username, current_scope
+        )
+    except Exception:
+        await _close_ws_unauthorized(websocket)
+        return
     if current_scope is None:
         return
     # Do not pre-warm the default home scope on connect. The React client often
@@ -743,7 +827,19 @@ async def chat_ws(websocket: WebSocket) -> None:
             if event_type == "scope.set":
                 msg = ScopeSetIn.model_validate(raw)
                 requested_scope = _scope_from_model(msg.scope)
-                current_scope = await _send_scope_changed(websocket, user, username, requested_scope)
+                try:
+                    user = await _reauthenticate_ws_event(
+                        websocket,
+                        original_user=user,
+                        scope=requested_scope,
+                        require_write=False,
+                    )
+                except Exception:
+                    await _close_ws_unauthorized(websocket)
+                    return
+                current_scope = await _send_scope_changed(
+                    websocket, user, username, requested_scope
+                )
                 if current_scope is None:
                     return
                 await _sync_running_agent_scope(username, current_scope)
@@ -751,13 +847,16 @@ async def chat_ws(websocket: WebSocket) -> None:
                 # the first message in the project doesn't cold-start.
                 await chat_service.prewarm_chat_backend(
                     username,
-                    project=current_scope.id if current_scope.kind == "project" else None,
+                    project=(
+                        current_scope.id if current_scope.kind == "project" else None
+                    ),
                 )
                 continue
 
             if event_type != "chat.message":
                 await _send_json_best_effort(
-                    websocket, {"type": "error", "message": f"unsupported event: {event_type}"}
+                    websocket,
+                    {"type": "error", "message": f"unsupported event: {event_type}"},
                 )
                 continue
 
@@ -767,9 +866,21 @@ async def chat_ws(websocket: WebSocket) -> None:
             text = msg.text.strip()
             if not text:
                 await _send_json_best_effort(
-                    websocket, {"type": "error", "turn_id": turn_id, "message": "empty message"}
+                    websocket,
+                    {"type": "error", "turn_id": turn_id, "message": "empty message"},
                 )
                 continue
+
+            try:
+                user = await _reauthenticate_ws_event(
+                    websocket,
+                    original_user=user,
+                    scope=scope,
+                    require_write=True,
+                )
+            except Exception:
+                await _close_ws_unauthorized(websocket)
+                return
 
             try:
                 await _require_ai_assistant_access(user=user, scope=scope)
@@ -822,7 +933,9 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "type": "error",
                             "turn_id": turn_id,
                             "message": BILLING_RULE_NOT_CONFIGURED_MESSAGE,
-                            "data": billing_rule_not_configured_payload(billing_rule_error),
+                            "data": billing_rule_not_configured_payload(
+                                billing_rule_error
+                            ),
                         },
                     )
                     continue
