@@ -33,12 +33,13 @@ from novelvideo.ports import get_task_backend
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.utils.document_parsers import (
     DocumentParseError,
+    MAX_NOVEL_IMPORT_CHARS,
     is_supported_novel_path,
     supported_novel_extensions_label,
 )
 from novelvideo.utils.screenplay_quality import build_import_format_check
 from novelvideo.utils.upload_safety import (
-    MAX_UPLOAD_BYTES,
+    MAX_NOVEL_UPLOAD_BYTES,
     UploadTooLargeError,
     is_safe_upload_target,
     sanitize_upload_filename,
@@ -166,12 +167,30 @@ async def upload_novel(
         except UploadTooLargeError:
             return {
                 "ok": False,
-                "error": f"文件超过上限 ({MAX_UPLOAD_BYTES // (1024 * 1024)}MB)",
+                "error": (
+                    "文件超过 1MB 上限，请压缩文件或拆分正文后重新上传。"
+                ),
+                "error_type": "file_too_large",
+                "data": {"limit_bytes": MAX_NOVEL_UPLOAD_BYTES},
             }
 
         data = {"filename": safe_name, "size": size}
         try:
             content = load_novel_text(staged_path)
+            billable_chars = count_billable_novel_chars(content)
+            if billable_chars > MAX_NOVEL_IMPORT_CHARS:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"正文共 {billable_chars:,} 字，超过单次导入上限 "
+                        f"{MAX_NOVEL_IMPORT_CHARS:,} 字。请拆分后重新上传。"
+                    ),
+                    "error_type": "text_too_large",
+                    "data": {
+                        "limit_chars": MAX_NOVEL_IMPORT_CHARS,
+                        "actual_chars": billable_chars,
+                    },
+                }
             project_config = load_project_config_file_from_state_dir(
                 resolved.state_dir
             )

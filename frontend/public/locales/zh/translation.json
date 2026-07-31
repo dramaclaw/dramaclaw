@@ -284,7 +284,7 @@
       "title": "剧本格式检查",
       "close": "关闭",
       "viewDetails": "查看详情",
-      "recommended": "推荐：1-1、地点 时间 内/外，每句台词一行 角色：台词",
+      "recommended": "标准剧本示例：\n第一集\n1-1 城市咖啡馆 日 内\n人物：林夏、陈默\n△ 午后的阳光透过落地窗，林夏把一封信放在桌上。\n林夏：你要的答案，就在这里。",
       "lineLabel": "第 {{line}} 行",
       "noIssues": "未发现具体问题"
     },
@@ -1414,7 +1414,7 @@
     "title": "虾料",
     "subtitle": "上传剧本，开启你的创意之旅",
     "dropzoneHint": "点击或拖拽上传小说文件",
-    "supportedFormats": "支持 .txt / .md / .docx，建议不超过 10MB",
+    "supportedFormats": "支持 .txt / .md / .docx · 文件不超过 1MB · 正文不超过 10 万字",
     "uploadingTitle": "正在上传小说…",
     "uploadingHint": "上传完成前请勿离开本页面，网络较慢时可能需要多等一会儿。",
     "inputMode": {
@@ -1517,10 +1517,10 @@
       "exampleLabel": "示例片段"
     },
     "sceneHeaders": {
-      "missing": "精品剧必须包含场景头，请补充后重新导入。",
-      "missingFix": "请为每个场景补充“1-1 地点 日 内”“1.1 地点 内 日”或 INT./EXT. 格式的场景头。",
-      "repairable": "已识别场景边界，但部分场景元数据不完整，系统将在场景规划时自动补齐。",
-      "repairableFix": "原文会保持不变，系统将逐场提取并补齐缺失的地点、时间和内外景信息。",
+      "missing": "没有识别到场景头，系统无法判断每个场景从哪里开始。",
+      "missingFix": "请按上方示例编写：每集先写“第N集”，每个场景再单独写“场号 地点 时间 内/外”，然后依次填写人物、动作和对白。",
+      "repairable": "场景边界已识别，但有些场景头缺少时间、地点或内外景。仍可导入，系统会在场景规划时补齐。",
+      "repairableFix": "请对照上方示例补齐场景头中的地点、时间或内外景；如果暂不修改，也可以继续导入。",
       "open": "查看 {{chapter}} 的分场正文",
       "rowCount_one": "{{count}} 场",
       "rowCount_other": "{{count}} 场",

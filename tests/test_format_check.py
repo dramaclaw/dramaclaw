@@ -257,6 +257,41 @@ def test_recognizable_scene_header_with_missing_time_warns_but_does_not_block():
     assert result["level"] == "warning"
     assert "nonstandard_scene_headers" in _codes(result)
     assert "scene_headers_missing_time" in _codes(result)
+    issue = _issue(result, "scene_headers_missing_time")
+    assert issue["line"] == 2
+    assert issue["message"] == "场景头“1.1 李家客厅 内”缺少时间。"
+    assert "1.1 李家客厅 内 [日/夜]" in issue["fix"]
+
+
+def test_incomplete_scene_headers_identify_each_source_line_and_missing_field():
+    result = build_import_format_check(
+        """第一集
+1.1 郑家客厅 内 日
+人物：郑玉琴、刘管家
+郑玉琴：你来了。
+11.2 学校实验室
+人物：小雨
+小雨：实验成功了。
++场 舞蹈室照镜子 日
+人物：小雨
+小雨：再练一次。
+""",
+        has_chapters=True,
+        require_scene_headers=True,
+    )
+
+    incomplete = _issue(result, "incomplete_scene_header")
+    missing_interior = _issue(result, "missing_interior_exterior")
+    assert (incomplete["line"], incomplete["message"]) == (
+        5,
+        "场景头“11.2 学校实验室”缺少时间、内/外。",
+    )
+    assert (missing_interior["line"], missing_interior["message"]) == (
+        8,
+        "场景头“+场 舞蹈室照镜子 日”缺少内/外。",
+    )
+    assert "11.2 学校实验室 [日/夜] [内/外]" in incomplete["fix"]
+    assert "+场 舞蹈室照镜子 日 [内/外]" in missing_interior["fix"]
 
 
 def test_parenthetical_dialogue_directions_do_not_warn():
@@ -407,6 +442,7 @@ async def test_upload_success_includes_format_check_in_data(tmp_path, monkeypatc
     assert response["data"]["format_check"]["level"] == "warning"
     assert _codes(response["data"]["format_check"]) == {
         "nonstandard_scene_headers",
+        "missing_interior_exterior",
     }
     assert "format_check" not in response
 
