@@ -52,6 +52,7 @@ export function CreditBalanceBadge() {
 
   const openPanel = () => {
     cancelScheduledClose();
+    if (!open) void summaryQuery.refetch();
     setOpen(true);
   };
 
@@ -73,8 +74,8 @@ export function CreditBalanceBadge() {
     <Popover
       open={open}
       onOpenChange={(nextOpen) => {
+        if (nextOpen && !open) void summaryQuery.refetch();
         setOpen(nextOpen);
-        if (nextOpen && summaryQuery.isStale) void summaryQuery.refetch();
       }}
     >
       <PopoverTrigger

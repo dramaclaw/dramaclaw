@@ -28,7 +28,7 @@ function wrapper(queryClient: QueryClient) {
 }
 
 describe("credit summary query", () => {
-  it("uses event-driven freshness without a polling interval", async () => {
+  it("only polls while reservations are pending", async () => {
     server.use(
       http.get("http://localhost:3000/api/v1/credits/me/summary", () =>
         HttpResponse.json({
@@ -38,7 +38,7 @@ describe("credit summary query", () => {
             earned: 150,
             spent: 60,
             refunded: 10,
-            pending: 8,
+            pending: 0,
             promotion_count: 2,
             updated_at: null,
           },
@@ -55,13 +55,31 @@ describe("credit summary query", () => {
     const query = queryClient.getQueryCache().find({
       queryKey: queryKeys.creditSummary(),
     });
+    type CreditSummaryQueryState = {
+      state: {
+        data?: {
+          data: {
+            pending: number;
+          };
+        };
+      };
+    };
     const options = query?.options as {
-      refetchInterval?: unknown;
+      refetchInterval?: (query: CreditSummaryQueryState) => number | false;
+      refetchIntervalInBackground?: unknown;
+      refetchOnMount?: unknown;
       refetchOnWindowFocus?: unknown;
       retry?: unknown;
       staleTime?: unknown;
     };
-    expect(options.refetchInterval).toBeUndefined();
+    const intervalQuery = query as unknown as CreditSummaryQueryState;
+    expect(options.refetchInterval?.(intervalQuery)).toBe(false);
+    if (intervalQuery.state.data?.data) {
+      intervalQuery.state.data.data.pending = 8;
+    }
+    expect(options.refetchInterval?.(intervalQuery)).toBe(60_000);
+    expect(options.refetchIntervalInBackground).toBe(false);
+    expect(options.refetchOnMount).toBe("always");
     expect(options.refetchOnWindowFocus).toBe(false);
     expect(options.retry).toBe(false);
     expect(options.staleTime).toBe(60_000);

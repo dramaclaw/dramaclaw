@@ -89,10 +89,14 @@ export function useCreditSummary(enabled = true) {
         .get("api/v1/credits/me/summary", { signal, retry: 0 })
         .json<OkResponse<CreditSummary>>(),
     enabled,
-    // Task lifecycle events invalidate this query at every balance-changing
-    // boundary. Keep a short cache for navigation/open-panel reads, but do not
-    // poll every signed-in browser forever.
+    // Task events invalidate normal lifecycle changes. Only accounts with
+    // unsettled reservations poll: CronJob recovery has no browser event and
+    // may otherwise leave pending/refund totals stale indefinitely.
     staleTime: 60_000,
+    refetchInterval: (query) =>
+      (query.state.data?.data.pending ?? 0) > 0 ? 60_000 : false,
+    refetchIntervalInBackground: false,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     retry: false,
   });
