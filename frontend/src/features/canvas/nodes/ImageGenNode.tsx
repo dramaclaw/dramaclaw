@@ -821,15 +821,21 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       setIsUploading(true);
       try {
         const result = await uploadFreezoneImage(projectId, file, file.name);
-        // 上传的参考图会直接顶到节点主体上显示，旧的失败横幅得跟着清掉。
-        updateNodeData(id, { referenceImageUrl: result.url, ...GENERATION_ERROR_CLEARED_PATCH });
+        // 参考图在显示优先级里排最后（previewImageUrl → imageUrl → referenceImageUrl），
+        // 只有节点还没有生成结果时它才会顶到主体上——这时旧的失败横幅盖的是新图，得清掉。
+        // 已经有生成图时主体不变，失败信息仍然对得上那张图，保留；等用户真正重新提交，
+        // handleSubmit 自己会清。
+        updateNodeData(id, {
+          referenceImageUrl: result.url,
+          ...(hasGeneratedResult ? {} : GENERATION_ERROR_CLEARED_PATCH),
+        });
       } catch (error) {
         console.error('[image-gen] upload failed', error);
       } finally {
         setIsUploading(false);
       }
     },
-    [id, updateNodeData],
+    [hasGeneratedResult, id, updateNodeData],
   );
 
   const handleClearReference = useCallback(() => {

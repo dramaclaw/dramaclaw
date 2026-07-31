@@ -40,6 +40,7 @@ import {
 import { awaitTaskCompletion } from '@/api/tasks';
 import { buildRedHighlightMaskBlob } from '@/lib/mask-highlight';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { GENERATION_ERROR_CLEARED_PATCH } from '@/features/canvas/application/generationTaskArbitration';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import { readUrl } from '@/lib/url-params';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
@@ -501,7 +502,7 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
           previewImageUrl: url,
           isGenerating: false,
           generationStartedAt: null,
-          generationError: null,
+          ...GENERATION_ERROR_CLEARED_PATCH,
           // 清掉任务句柄,避免刷新后被 resume 扫描误判为「仍在生成」而重新轮询。
           generationTaskKey: null,
           generationTaskType: null,
