@@ -34,7 +34,7 @@ from .pipeline import (
     extract_scenes_from_script,
     extract_props_from_graph,
 )
-from .tools import create_script_writer_tools, create_episode_planner_tools
+from .tools import create_episode_planner_tools
 
 __all__ = [
     # 存储
@@ -57,7 +57,6 @@ __all__ = [
     "extract_props_from_graph",
 
     # Tools
-    "create_script_writer_tools",
     "create_episode_planner_tools",
 
     # 配置
