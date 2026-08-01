@@ -126,4 +126,23 @@ describe("stale generation-error banner", () => {
     expect(successPatch).toContain("generationErrorDetails: null,");
     expect(successPatch).toContain("generationErrorRequestId: null,");
   });
+
+  it("invalidates late batch writes when a history image replaces the result", () => {
+    const source = read("src/features/canvas/nodes/ImageGenNode.tsx");
+    const restoreStart = source.indexOf("const handleRestoreHistory = useCallback");
+    const restoreEnd = source.indexOf("// 生成结束（成功/失败）", restoreStart);
+    const restoreHandler = source.slice(restoreStart, restoreEnd);
+    const submitStart = source.indexOf("const handleSubmit = useCallback");
+    const submitEnd = source.indexOf("// ===== Step B", submitStart);
+    const submitHandler = source.slice(submitStart, submitEnd);
+
+    expect(source).toContain("const generationAttemptRef = useRef(0)");
+    expect(restoreHandler).toContain("generationAttemptRef.current += 1");
+    expect(submitHandler).toContain(
+      "generationAttemptRef.current === generationAttempt",
+    );
+    expect(
+      submitHandler.match(/if \(!isCurrentGenerationAttempt\(\)\) return;/g),
+    ).toHaveLength(3);
+  });
 });

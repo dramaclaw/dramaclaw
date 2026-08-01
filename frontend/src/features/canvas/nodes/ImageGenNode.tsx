@@ -277,6 +277,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const isComposingRef = useRef(false);
   const hasUserEditedPromptRef = useRef(false);
   const submittingRef = useRef(false);
+  // A user-selected history image supersedes every still-settling request from
+  // the previous batch. Async completions must match this local generation
+  // attempt before they may write either a result or an error back to the node.
+  const generationAttemptRef = useRef(0);
   useEffect(() => {
     if (isComposingRef.current) return;
     setPromptDraft(externalPrompt);
@@ -364,6 +368,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         return;
       }
       setHistoryPreviewUrl(null);
+      generationAttemptRef.current += 1;
       updateNodeData(id, {
         imageUrl: url,
         previewImageUrl: url,
@@ -921,6 +926,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       console.error('[image-gen] no project in URL');
       return;
     }
+    const generationAttempt = generationAttemptRef.current + 1;
+    generationAttemptRef.current = generationAttempt;
+    const isCurrentGenerationAttempt = () =>
+      generationAttemptRef.current === generationAttempt;
 
     // apiModel comes from the SAME reconciled model the picker displays, so the
     // backend always receives the model the user actually sees.
@@ -1016,6 +1025,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           }
         }
         if (url) {
+          if (!isCurrentGenerationAttempt()) return;
           completedUrls.push(url);
           const isFirstCompleted = completedUrls.length === 1;
           updateNodeData(id, {
@@ -1030,6 +1040,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             });
           }
         } else {
+          if (!isCurrentGenerationAttempt()) return;
           console.warn('[image-gen] generation completed without output url', completed);
           // 只有 run 0（任务句柄的归属者）且尚无任何成功时才终结 loading——
           // 非首个任务先「无 URL 完成」不能把还在跑的整体 loading 提前掐掉。
@@ -1038,6 +1049,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           }
         }
       } catch (error) {
+        if (!isCurrentGenerationAttempt()) return;
         console.error('[image-gen] generation failed', error);
         // 已有同批其它图完成（主图已落）时不覆盖成功态为错误——部分失败只
         // 影响画册张数。
