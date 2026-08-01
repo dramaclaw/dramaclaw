@@ -619,8 +619,8 @@ async def test_newapi_seedance2_generator_preserves_config_resolution_and_scene_
     assert payload["n"] == 1
     assert payload["response_format"] == "url"
     assert metadata["scene_optimize"] == "realistic"
-    assert "resolution" not in metadata
-    assert "ratio" not in metadata
+    assert metadata["resolution"] == "1080p"
+    assert metadata["ratio"] == "16:9"
     assert "image_url" not in metadata
     assert "seconds" not in payload
 
@@ -715,10 +715,10 @@ async def test_newapi_seedance1_generator_preserves_adaptive_ratio(tmp_path, mon
     assert payload["image"] == "https://example.com/first.png"
     assert metadata["aspect_ratio"] == "adaptive"
     assert metadata["resolution"] == "720p"
-    assert "ratio" not in metadata
+    assert metadata["ratio"] == "adaptive"
 
 
-def test_newapi_video_payload_uses_public_fields_and_keeps_only_media_extensions():
+def test_newapi_video_payload_keeps_public_fields_and_model_semantics():
     from novelvideo.generators.video_generator import NewApiVideoGenerator
 
     metadata = {
@@ -751,6 +751,8 @@ def test_newapi_video_payload_uses_public_fields_and_keeps_only_media_extensions
         "n": 1,
         "response_format": "url",
         "metadata": {
+            "resolution": "720p",
+            "ratio": "16:9",
             "last_frame_image": "https://example.com/last.png",
             "reference_images": [
                 f"https://example.com/reference-{index}.png" for index in range(1, 6)
@@ -759,6 +761,71 @@ def test_newapi_video_payload_uses_public_fields_and_keeps_only_media_extensions
             "generate_audio": True,
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("resolution", "ratio", "expected"),
+    [
+        ("480p", "16:9", (854, 480)),
+        ("1080P", "9:16", (1080, 1920)),
+        ("1080", "16:9", (1920, 1080)),
+        ("4k", "16:9", (3840, 2160)),
+        ("4K", "9:16", (2160, 3840)),
+        ("2k", "1:1", (2560, 2560)),
+    ],
+)
+def test_newapi_video_dimensions_distinguish_p_and_k_tiers(
+    resolution: str,
+    ratio: str,
+    expected: tuple[int, int],
+):
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    assert NewApiVideoGenerator._video_dimensions(resolution, ratio) == expected
+
+
+def test_newapi_video_4k_payload_uses_real_dimensions_and_preserves_request_value():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    metadata = {"resolution": "4k", "ratio": "16:9"}
+    payload = {
+        "model": "seedance-2.0",
+        "prompt": "海边日落。",
+        "seconds": "5",
+        "metadata": metadata,
+    }
+
+    NewApiVideoGenerator._canonicalize_video_payload(payload, metadata)
+
+    assert payload["width"] == 3840
+    assert payload["height"] == 2160
+    assert payload["metadata"]["resolution"] == "4k"
+    assert payload["metadata"]["ratio"] == "16:9"
+
+
+def test_newapi_seedance15_payload_preserves_480p_21_9_semantics():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    metadata = {
+        "resolution": "480p",
+        "ratio": "21:9",
+        "image_url": "https://example.com/1281x720.jpg",
+        "generate_audio": True,
+    }
+    payload = {
+        "model": "seedance-1.5-pro",
+        "prompt": "人物缓慢转身。",
+        "seconds": "5",
+        "metadata": metadata,
+    }
+
+    NewApiVideoGenerator._canonicalize_video_payload(payload, metadata)
+
+    assert payload["width"] == 1120
+    assert payload["height"] == 480
+    assert payload["image"] == "https://example.com/1281x720.jpg"
+    assert payload["metadata"]["ratio"] == "21:9"
+    assert payload["metadata"]["resolution"] == "480p"
 
 
 def test_newapi_video_task_response_accepts_flat_and_data_wrapped_contracts():
@@ -992,8 +1059,8 @@ async def test_newapi_grok_video_channel_uses_relayclaw_video_payload(tmp_path, 
     metadata = payload["metadata"]
     assert isinstance(metadata, dict)
     assert metadata["reference_images"] == ["https://example.com/ref.png"]
-    assert "resolution" not in metadata
-    assert "ratio" not in metadata
+    assert metadata["resolution"] == "720p"
+    assert metadata["ratio"] == "9:16"
     assert "image_url" not in metadata
     assert "video_url" not in metadata
     assert "generate_audio" not in metadata
