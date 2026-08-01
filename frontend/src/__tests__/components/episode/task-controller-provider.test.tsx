@@ -208,6 +208,7 @@ describe("ownership transitions emit snapshot updates", () => {
     let snap: TaskControllerSnapshot = {
       started: false,
       activeTaskType: "t",
+      activeTaskId: null,
       activeScope: null,
       streamState: {
         status: "idle",

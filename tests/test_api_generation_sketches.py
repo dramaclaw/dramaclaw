@@ -70,6 +70,7 @@ def _client(monkeypatch, tmp_path):
             {
                 "rows": 1,
                 "cols": 1,
+                "mode_key": "1x1_2-3_sketch",
                 "scene_id": "A",
                 "beat_numbers": [1],
                 "beats": [beats[0]],
@@ -77,6 +78,7 @@ def _client(monkeypatch, tmp_path):
             {
                 "rows": 1,
                 "cols": 1,
+                "mode_key": "1x1_2-3_sketch",
                 "scene_id": "B",
                 "beat_numbers": [2],
                 "beats": [beats[1]],
@@ -126,11 +128,17 @@ def test_generate_sketches_grid_index_minus_one_dispatches_all_scene_grids(
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
-    assert body["task_type"] == "sketch_generation"
+    assert body["task_type"] == "sketch_grid_generation"
     assert body["data"]["dispatched"] == 2
     assert body["data"]["scopes"] == ["grid_0", "grid_1"]
     assert len(clean_calls) == 1
     assert [call["payload"]["config"]["grid_index"] for call in start_calls] == [0, 1]
+    assert {call["task_type"] for call in start_calls} == {"sketch_grid_generation"}
+    for call in start_calls:
+        billing = call["payload"]["billing"]
+        assert billing["pricing_kind"] == "image"
+        assert billing["pricing_model"]
+        assert billing["pricing_params"]
 
 
 def test_generate_sketches_forwards_sketch_model_and_aspect_ratio(
@@ -157,3 +165,6 @@ def test_generate_sketches_forwards_sketch_model_and_aspect_ratio(
         start_calls[0]["payload"]["config"]["image_generation_selection"]
         == "newapi_nanobanana2"
     )
+    billing = start_calls[0]["payload"]["billing"]
+    assert billing["image_selection"] == "newapi_nanobanana2"
+    assert billing["pricing_kind"] == "image"

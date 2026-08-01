@@ -13,7 +13,11 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
-import { useStartIngest, useUploadNovel } from "@/lib/queries/ingest";
+import {
+  useChapters,
+  useStartIngest,
+  useUploadNovel,
+} from "@/lib/queries/ingest";
 
 const server = setupServer();
 
@@ -27,15 +31,41 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe("ingest query error contract", () => {
+  it("requests and caches chapter previews by spine template", async () => {
+    let requestedTemplate = "";
+    server.use(
+      http.get("http://localhost:3000/api/v1/projects/demo/chapters", ({ request }) => {
+        requestedTemplate = new URL(request.url).searchParams.get("spine_template") ?? "";
+        return HttpResponse.json({
+          ok: true,
+          data: { chapters: [], total_chars: 0, count: 0 },
+        });
+      }),
+    );
+
+    const { result } = renderHook(() => useChapters("demo", "drama"), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestedTemplate).toBe("drama");
+  });
+
   it("rejects upload responses that return ok:false with a backend error", async () => {
     server.use(
-      http.post("http://localhost:3000/api/v1/projects/demo/ingest/upload", () =>
-        HttpResponse.json({ ok: false, error: "解析章节失败: 文件编码不支持" }),
-      ),
+      http.post("http://localhost:3000/api/v1/projects/demo/ingest/upload", async ({ request }) => {
+        const body = await request.formData();
+        expect(body.get("spine_template")).toBe("drama");
+        expect(body.get("file")).toMatchObject({ size: 9, type: "text/plain" });
+        return HttpResponse.json({ ok: false, error: "解析章节失败: 文件编码不支持" });
+      }),
     );
 
     const { result } = renderHook(() => useUploadNovel("demo"), { wrapper });
-    result.current.mutate(new File(["bad"], "broken.txt", { type: "text/plain" }));
+    result.current.mutate({
+      file: new File(["bad"], "broken.txt", { type: "text/plain" }),
+      spineTemplate: "drama",
+    });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error).toBeInstanceOf(Error);
@@ -67,7 +97,7 @@ describe("ingest query error contract", () => {
             data: {
               error_code: "BILLING_RULE_NOT_CONFIGURED",
               billing_kind: "feature",
-              billing_key: "ingest_fast",
+              billing_key: "mainline.ingest_fast",
             },
           },
           { status: 409 },

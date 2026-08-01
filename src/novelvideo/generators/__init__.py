@@ -40,7 +40,6 @@ from .video_generator import (
     VideoGeneratorBase,
     SeedanceVideoGenerator,
     ComfyUIVideoGenerator,
-    Wan26VideoGenerator,
     create_video_generator,
 )
 from .nanobanana_grid import (
@@ -103,7 +102,6 @@ __all__ = [
     "MockVideoGenerator",
     "SeedanceVideoGenerator",
     "ComfyUIVideoGenerator",
-    "Wan26VideoGenerator",
     "create_video_generator",
     # NanoBananaPro Grid Generator
     "GridGenerationRequest",

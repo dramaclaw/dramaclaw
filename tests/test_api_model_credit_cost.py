@@ -104,6 +104,41 @@ async def test_generation_credit_cost_route_uses_ce_zero_quote_port(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_returns_promotion_display(monkeypatch):
+    from novelvideo.api.routes import model_credits
+    from novelvideo.ports.credit_quote import CreditQuote
+    from novelvideo.ports.registry import register_port
+
+    class DiscountQuotePort:
+        async def generation_credit_quote(self, **kwargs):
+            assert kwargs["user_id"] == "usr_1"
+            return CreditQuote(
+                total_cost=9,
+                display="9",
+                original_total_cost=12,
+                discount_amount=3,
+                promotion={"id": "promo_1", "name": "模型七五折"},
+            )
+
+    register_port("credit_quote", DiscountQuotePort())
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        value="freezone.image_generate",
+        user={"user_id": "usr_1"},
+    )
+
+    assert result["data"] == {
+        "cost": 9,
+        "display": "12→9",
+        "original_cost": 12,
+        "original_display": "12",
+        "discount_amount": 3,
+        "promotion": {"id": "promo_1", "name": "模型七五折"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_resolves_model_kind(monkeypatch):
     from novelvideo.api.routes import model_credits
 
@@ -205,6 +240,43 @@ async def test_generation_credit_cost_route_resolves_beat_tts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_audio_feature_by_model(monkeypatch):
+    from novelvideo import config
+    from novelvideo.api.routes import model_credits
+
+    monkeypatch.setattr(config, "INDEXTTS2_RECORD_MODEL", "index-tts-2")
+    monkeypatch.setattr(
+        "novelvideo.audio.indextts2_beat_audio_task.INDEXTTS2_RECORD_MODEL",
+        "index-tts-2",
+    )
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="mainline.beat_audio_generation",
+        expected_params={
+            "pricing_kind": "audio",
+            "pricing_model": "index-tts-2",
+            "pricing_params": {},
+            "pricing_quantity": 2,
+            "items": 2,
+        },
+        expected_quantity=2,
+        cost=6,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        value="mainline.beat_audio_generation",
+        params='{"pricing_quantity":2}',
+        quantity=2,
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 6, "display": "6"}}
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_resolves_freezone_audio_music(monkeypatch):
     from novelvideo.api.routes import model_credits
 
@@ -229,43 +301,138 @@ async def test_generation_credit_cost_route_resolves_freezone_audio_music(monkey
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_resolves_freezone_story_script(monkeypatch):
+async def test_generation_credit_cost_route_prices_freezone_audio_speech_by_feature(
+    monkeypatch,
+):
+    from novelvideo import config
     from novelvideo.api.routes import model_credits
 
-    patch_quote(
+    monkeypatch.setattr(config, "INDEXTTS2_RECORD_MODEL", "index-tts-2")
+    monkeypatch.setattr(
+        "novelvideo.audio.indextts2_beat_audio_task.INDEXTTS2_RECORD_MODEL",
+        "index-tts-2",
+    )
+    patch_quote_expect(
         monkeypatch,
         model_credits,
-        expected_model="DC-freezone-story-script-writer-LLM",
-        cost=4,
+        expected_kind="feature",
+        expected_model="freezone.audio_speech",
+        expected_params={
+            "operation": "speech",
+            "billable_chars": 1_201,
+            "pricing_quantity": 1_201,
+            "pricing_kind": "audio",
+            "pricing_model": "index-tts-2",
+            "pricing_params": {},
+            "items": 1_201,
+        },
+        expected_quantity=1_201,
+        cost=3,
     )
 
     result = await model_credits.get_generation_credit_cost(
-        kind="freezone_story_script",
-        value="",
+        kind="feature",
+        surface="canvas",
+        value="freezone.audio_speech",
+        params='{"operation":"speech","billable_chars":1201,"pricing_quantity":1201}',
+        quantity=1_201,
         user={"user_id": "usr_1"},
     )
 
-    assert result == {"ok": True, "data": {"cost": 4, "display": "4"}}
+    assert result == {"ok": True, "data": {"cost": 3, "display": "3"}}
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_resolves_freezone_image_reverse_prompt(monkeypatch):
+async def test_generation_credit_cost_route_prices_freezone_audio_music_by_feature(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="freezone.audio_music",
+        expected_params={
+            "operation": "music",
+            "music_length_ms": 30_500,
+            "pricing_kind": "audio",
+            "pricing_model": "LingShan-MU-11",
+            "pricing_params": {},
+            "pricing_quantity": 31,
+        },
+        expected_quantity=1,
+        cost=93,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="freezone.audio_music",
+        params='{"operation":"music","music_length_ms":30500}',
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 93, "display": "93"}}
+
+
+@pytest.mark.asyncio
+async def test_generation_credit_cost_route_resolves_freezone_story_script(monkeypatch):
+    from novelvideo.api.routes import model_credits
+
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="freezone.story_script",
+        expected_params={},
+        expected_quantity=2501,
+        cost=12,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        value="freezone.story_script",
+        quantity=2501,
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 12, "display": "12"}}
+
+
+@pytest.mark.asyncio
+async def test_generation_credit_cost_route_resolves_freezone_image_reverse_prompt(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
 
     monkeypatch.setenv("FREEZONE_VISION_MODEL", "freezone-vision-model")
     patch_quote_expect(
         monkeypatch,
         model_credits,
-        expected_kind="text",
-        expected_model="freezone-vision-model",
-        expected_params={},
-        expected_quantity=1,
+        expected_kind="feature",
+        expected_model="freezone.image_reverse_prompt",
+        expected_params={
+            "operation": "image_reverse_prompt",
+            "billable_chars": 1_201,
+            "pricing_quantity": 1_201,
+            "pricing_kind": "text",
+            "pricing_model": "freezone-vision-model",
+            "pricing_params": {},
+        },
+        expected_quantity=1_201,
         cost=6,
     )
 
     result = await model_credits.get_generation_credit_cost(
-        kind="freezone_image_reverse_prompt",
-        value="",
+        kind="feature",
+        surface="canvas",
+        value="freezone.image_reverse_prompt",
+        params=(
+            '{"operation":"image_reverse_prompt",'
+            '"billable_chars":1201,"pricing_quantity":1201}'
+        ),
+        quantity=1_201,
         user={"user_id": "usr_1"},
     )
 
@@ -294,6 +461,168 @@ async def test_generation_credit_cost_route_resolves_style_analyzer(monkeypatch)
     )
 
     assert result == {"ok": True, "data": {"cost": 7, "display": "7"}}
+
+
+@pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_freezone_image_generate_by_model(
+    monkeypatch,
+):
+    from novelvideo import config
+    from novelvideo.api.routes import model_credits
+
+    pricing_model = config.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"]
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="freezone.image_generate",
+        expected_params={
+            "image_selection": "newapi_gpt_image2",
+            "size": "2K",
+            "quality": "low",
+            "pricing_quantity": 3,
+            "pricing_kind": "image",
+            "pricing_model": pricing_model,
+            "pricing_params": {"size": "2K", "quality": "low"},
+            "pricing_model_selection": "newapi_gpt_image2",
+            "pricing_model_label": config.IMAGE_GENERATION_SELECTIONS[
+                "newapi_gpt_image2"
+            ]["label"],
+        },
+        expected_quantity=3,
+        cost=21,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="freezone.image_generate",
+        params=(
+            '{"image_selection":"newapi_gpt_image2","size":"2K",'
+            '"quality":"low","pricing_quantity":3}'
+        ),
+        quantity=3,
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 21, "display": "21"}}
+
+
+@pytest.mark.asyncio
+async def test_generation_credit_cost_route_preserves_dynamic_image_catalog_identity(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="freezone.image_generate",
+        expected_params={
+            "catalog_id": "custom-cat",
+            "image_selection": "custom-image",
+            "size": "2K",
+            "quality": "high",
+            "pricing_quantity": 2,
+            "pricing_kind": "image",
+            "pricing_model": "custom-image",
+            "pricing_params": {"size": "2K", "quality": "high"},
+        },
+        expected_quantity=2,
+        cost=34,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="freezone.image_generate",
+        params=(
+            '{"catalog_id":"custom-cat","image_selection":"custom-image",'
+            '"pricing_model":"custom-image","size":"2K","quality":"high",'
+            '"pricing_quantity":2}'
+        ),
+        quantity=2,
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 34, "display": "34"}}
+
+
+def test_dynamic_image_catalog_does_not_fall_back_to_static_default_model():
+    from novelvideo.api.routes import model_credits
+
+    params = model_credits.freezone_image_feature_billing_params(
+        "freezone.image_generate",
+        {
+            "catalog_id": "custom-cat",
+            "image_selection": "custom-image",
+            "size": "2K",
+            "quality": "high",
+        },
+    )
+
+    assert params["catalog_id"] == "custom-cat"
+    assert "pricing_model" not in params
+    assert params["pricing_kind"] == "image"
+    assert params["pricing_params"] == {"size": "2K", "quality": "high"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("feature_key", "operation"),
+    [
+        ("freezone.image_panorama", "panorama"),
+        ("freezone.image_multi_view", "multi_view"),
+        ("freezone.image_relight", "relight"),
+        ("freezone.image_edit", "erase"),
+        ("freezone.image_grid", "multi_angle_nine_grid"),
+    ],
+)
+async def test_generation_credit_cost_route_prices_freezone_image_tools_by_feature(
+    monkeypatch,
+    feature_key,
+    operation,
+):
+    from novelvideo import config
+    from novelvideo.api.routes import model_credits
+
+    pricing_model = config.IMAGE_GENERATION_SELECTIONS["newapi_gpt_image2"]["model"]
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model=feature_key,
+        expected_params={
+            "image_selection": "newapi_gpt_image2",
+            "size": "2K",
+            "quality": "low",
+            "operation": operation,
+            "pricing_quantity": 1,
+            "pricing_kind": "image",
+            "pricing_model": pricing_model,
+            "pricing_params": {"size": "2K", "quality": "low"},
+            "pricing_model_selection": "newapi_gpt_image2",
+            "pricing_model_label": config.IMAGE_GENERATION_SELECTIONS[
+                "newapi_gpt_image2"
+            ]["label"],
+        },
+        expected_quantity=1,
+        cost=12,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value=feature_key,
+        params=(
+            '{"image_selection":"newapi_gpt_image2","size":"2K",'
+            f'"quality":"low","operation":"{operation}"}}'
+        ),
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 12, "display": "12"}}
 
 
 @pytest.mark.asyncio
@@ -383,6 +712,46 @@ async def test_generation_credit_cost_route_adds_scene_pano_params(monkeypatch):
     assert result == {"ok": True, "data": {"cost": 18, "display": "18"}}
 
 
+def test_scene_reference_feature_quote_resolves_selected_bottom_model(monkeypatch):
+    from novelvideo import config
+    from novelvideo.api.routes import model_credits
+
+    monkeypatch.setitem(
+        config.IMAGE_GENERATION_SELECTIONS,
+        "newapi_gpt_image2",
+        {"label": "LingShan-G2", "provider": "newapi", "model": "gpt-image-2"},
+    )
+
+    params = model_credits._feature_billing_params(
+        "mainline.scene_reference_image",
+        {"image_selection": "newapi_gpt_image2"},
+    )
+
+    assert params["pricing_kind"] == "image"
+    assert params["pricing_model"] == "gpt-image-2"
+    assert params["pricing_params"] == {"size": "1K", "quality": "low"}
+    assert params["pricing_model_selection"] == "newapi_gpt_image2"
+
+
+def test_scene_pano_feature_quote_resolves_runtime_model_and_params(monkeypatch):
+    from novelvideo.api.routes import model_credits
+
+    monkeypatch.setenv("SCENE_360_IMAGE_PROVIDER", "newapi")
+    monkeypatch.setenv("SCENE_360_IMAGE_MODEL", "gpt-image-2")
+    monkeypatch.setenv("SCENE_360_IMAGE_SIZE", "2K")
+    monkeypatch.setenv("SCENE_360_IMAGE_QUALITY", "medium")
+
+    params = model_credits._feature_billing_params(
+        "mainline.scene_pano_generation",
+        {},
+    )
+
+    assert params["pricing_kind"] == "image"
+    assert params["pricing_model"] == "gpt-image-2"
+    assert params["pricing_params"] == {"size": "2k", "quality": "medium"}
+    assert params["provider"] == "newapi"
+
+
 @pytest.mark.asyncio
 async def test_generation_credit_cost_route_adds_image_mode_params(monkeypatch):
     from novelvideo import config
@@ -416,7 +785,9 @@ async def test_generation_credit_cost_route_adds_image_mode_params(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_canvas_uses_only_explicit_params(monkeypatch):
+async def test_generation_credit_cost_route_canvas_uses_only_explicit_params(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
 
     monkeypatch.setattr(
@@ -480,7 +851,9 @@ async def test_generation_credit_cost_route_adds_character_image_params(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_keeps_video_params_and_quantity(monkeypatch):
+async def test_generation_credit_cost_route_keeps_video_params_and_quantity(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
 
     patch_quote_expect(
@@ -505,10 +878,157 @@ async def test_generation_credit_cost_route_keeps_video_params_and_quantity(monk
 
 
 @pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_video_feature_by_backend_and_seconds(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="mainline.beat_video_generation",
+        expected_params={
+            "pricing_kind": "video",
+            "pricing_model": "seedance-1.0-pro-fast",
+            "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
+            "pricing_params": {"resolution": "720p"},
+            "pricing_quantity": 5,
+            "resolution": "720p",
+            "video_backend": "newapi_seedance-1.0-pro-fast",
+        },
+        expected_quantity=1,
+        cost=25,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        value="mainline.beat_video_generation",
+        params=(
+            '{"video_backend":"newapi_seedance-1.0-pro-fast",'
+            '"resolution":"720p","pricing_quantity":5}'
+        ),
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 25, "display": "25"}}
+
+
+@pytest.mark.parametrize(
+    ("requested_duration", "expected_duration"),
+    [(1, 2), (100, 12)],
+)
+def test_single_video_billing_uses_backend_normalized_duration(
+    requested_duration,
+    expected_duration,
+):
+    from novelvideo.api.routes.generation import _single_video_billing_metadata
+
+    billing = _single_video_billing_metadata(
+        "newapi_seedance-1.0-pro-fast",
+        resolution="720p",
+        duration=requested_duration,
+    )
+
+    assert billing["pricing_quantity"] == expected_duration
+
+
+def test_video_feature_billing_ignores_client_pricing_model_override():
+    from novelvideo.api.routes.model_credits import (
+        _video_backend_feature_billing_params,
+    )
+
+    billing = _video_backend_feature_billing_params(
+        {
+            "video_backend": "newapi_seedance-1.0-pro-fast",
+            "pricing_model": "attacker-cheap-model",
+            "pricing_quantity": 100,
+        }
+    )
+
+    assert billing["pricing_model"] == "seedance-1.0-pro-fast"
+    assert billing["pricing_quantity"] == 12
+
+
+@pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_freezone_video_generate_by_feature(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="freezone.video_generate",
+        expected_params={
+            "video_backend": "newapi_seedance-1.0-pro-fast",
+            "resolution": "1080p",
+            "pricing_quantity": 12,
+            "operation": "imageToVideo",
+            "generate_audio": True,
+            "pricing_kind": "video",
+            "pricing_model": "seedance-1.0-pro-fast",
+            "pricing_params": {"resolution": "1080p"},
+            "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
+        },
+        expected_quantity=1,
+        cost=48,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="freezone.video_generate",
+        params=(
+            '{"video_backend":"newapi_seedance-1.0-pro-fast",'
+            '"resolution":"1080p","pricing_quantity":16,'
+            '"operation":"imageToVideo","generate_audio":true}'
+        ),
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 48, "display": "48"}}
+
+
+@pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_style_analysis_feature_by_model(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    monkeypatch.setenv("STYLE_ANALYZER_MODEL", "style-analyzer-model")
+    patch_quote_expect(
+        monkeypatch,
+        model_credits,
+        expected_kind="feature",
+        expected_model="mainline.style_analysis",
+        expected_params={
+            "pricing_kind": "text",
+            "pricing_model": "style-analyzer-model",
+            "pricing_params": {},
+            "pricing_quantity": 1,
+        },
+        expected_quantity=1,
+        cost=7,
+    )
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        value="mainline.style_analysis",
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 7, "display": "7"}}
+
+
+@pytest.mark.asyncio
 async def test_generation_credit_cost_route_resolves_newapi_video_backend(monkeypatch):
     from novelvideo.api.routes import model_credits
 
-    patch_quote(monkeypatch, model_credits, expected_model="seedance-1.0-pro-fast", cost=12)
+    patch_quote(
+        monkeypatch, model_credits, expected_model="seedance-1.0-pro-fast", cost=12
+    )
 
     result = await model_credits.get_generation_credit_cost(
         kind="video_backend",
@@ -520,11 +1040,15 @@ async def test_generation_credit_cost_route_resolves_newapi_video_backend(monkey
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_resolves_newapi_video_backend_label(monkeypatch):
+async def test_generation_credit_cost_route_resolves_newapi_video_backend_label(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
     from novelvideo.generators.video_generator import newapi_video_backend_options
 
-    patch_quote(monkeypatch, model_credits, expected_model="seedance-1.0-pro-fast", cost=12)
+    patch_quote(
+        monkeypatch, model_credits, expected_model="seedance-1.0-pro-fast", cost=12
+    )
 
     result = await model_credits.get_generation_credit_cost(
         kind="video_backend",
@@ -551,7 +1075,9 @@ async def test_generation_credit_cost_route_resolves_huimeng_video_backend(monke
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_resolves_huimeng_video_backend_label(monkeypatch):
+async def test_generation_credit_cost_route_resolves_huimeng_video_backend_label(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
     from novelvideo.generators.huimengi import huimeng_video_backend_options
 
@@ -567,7 +1093,9 @@ async def test_generation_credit_cost_route_resolves_huimeng_video_backend_label
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_keeps_legacy_video_backend_values(monkeypatch):
+async def test_generation_credit_cost_route_keeps_legacy_video_backend_values(
+    monkeypatch,
+):
     from novelvideo import config
     from novelvideo.api.routes import model_credits
 
@@ -615,7 +1143,24 @@ async def test_generation_credit_cost_route_rejects_unknown_video_backend():
 
 
 @pytest.mark.asyncio
-async def test_generation_credit_cost_route_rejects_unconfigured_fixed_image_model(monkeypatch):
+async def test_generation_credit_cost_route_rejects_removed_wan26_backend():
+    from novelvideo.api.routes import model_credits
+
+    with pytest.raises(HTTPException) as exc_info:
+        await model_credits.get_generation_credit_cost(
+            kind="video_backend",
+            value="wan26",
+            user={"user_id": "usr_1"},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "invalid video backend"
+
+
+@pytest.mark.asyncio
+async def test_generation_credit_cost_route_rejects_unconfigured_fixed_image_model(
+    monkeypatch,
+):
     from novelvideo.api.routes import model_credits
 
     monkeypatch.setattr(model_credits, "_fixed_image_cost_model", lambda kind: "")

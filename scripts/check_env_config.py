@@ -66,6 +66,11 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
         "Low-level Cognee adapter override; current template documents provider/model/dim controls.",
     ),
     (
+        re.compile(r"^COGNEE_LOG_FILE$"),
+        "Internal dependency guard: DramaClaw disables Cognee's private file handler and "
+        "routes dependency logs through host-process logging; this is not operator configuration.",
+    ),
+    (
         re.compile(r"^DA2_.*$"),
         "DA-2 depth model loading toggle (pano_sharp.build_da2_model), internal model-loading flag.",
     ),

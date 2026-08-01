@@ -577,10 +577,12 @@ vi.mock("@/lib/queries/scripts", () => ({
 vi.mock("@/lib/queries/generation-credit-cost", () => ({
   useGenerationCreditCost: (kind: string, value?: string) => ({
     data:
-      kind === "feature" && value === "beat_video_prompt"
+      kind === "feature" && value === "mainline.beat_video_prompt"
         ? { ok: true, data: { cost: 5, display: "5" } }
-        : kind === "feature" && value === "seedance2_prompt"
+        : kind === "feature" && value === "mainline.seedance2_prompt"
           ? { ok: true, data: { cost: 6, display: "6" } }
+        : kind === "feature" && value === "mainline.beat_video_generation"
+          ? { ok: true, data: { cost: 10, display: "10" } }
         : { ok: true, data: { cost: 0, display: null } },
     isLoading: false,
     isError: false,

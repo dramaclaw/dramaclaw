@@ -323,6 +323,17 @@ async def _run_video_generation_async(
     episode = int(envelope.get("episode") or payload.get("episode") or 0)
     output_dir = str(payload.get("output_dir") or ctx.output_dir)
     beats = list(payload.get("beats") or [])
+    requested_beat_numbers = {
+        int(value)
+        for value in payload.get("beat_numbers") or []
+        if int(value) > 0
+    }
+    if requested_beat_numbers:
+        beats = [
+            beat
+            for beat in beats
+            if int(beat.get("beat_number") or 0) in requested_beat_numbers
+        ]
     video_backend = str(payload.get("video_backend") or "mock")
     resolution = str(payload.get("resolution") or "720p")
     ratio = str(payload.get("ratio") or "9:16")
@@ -805,6 +816,9 @@ async def _run_freezone_video_gen_async(
             backend=str(payload.get("backend") or ""),
             last_frame_path=payload.get("last_frame_path"),
             audio_setting=payload.get("audio_setting") or None,
+            gen_mode=payload.get("gen_mode") or None,
+            model_params=payload.get("model_params") or None,
+            request_schema=payload.get("request_schema") or None,
         )
     except Exception as exc:
         _append_freezone_video_node_history(

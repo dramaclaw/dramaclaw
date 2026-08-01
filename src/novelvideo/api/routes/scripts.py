@@ -32,7 +32,8 @@ from novelvideo.task_identity import project_task_state_key
 
 router = APIRouter()
 
-SEEDANCE2_PROMPT_FEATURE_KEY = "seedance2_prompt"
+SEEDANCE2_PROMPT_FEATURE_KEY = "mainline.seedance2_prompt"
+SEEDANCE2_PROMPT_TASK_TYPE = "seedance2_prompt"
 MODEL_CALL_CREDIT_POLICY_FEATURE_INCLUDED = "feature_included"
 
 
@@ -530,7 +531,7 @@ async def generate_seedance2_prompt(
         feature_key=SEEDANCE2_PROMPT_FEATURE_KEY,
         project_id=project_id,
         resource_kind="script",
-        task_type=SEEDANCE2_PROMPT_FEATURE_KEY,
+        task_type=SEEDANCE2_PROMPT_TASK_TYPE,
         metadata={
             "source": "sync_api",
             "endpoint": "generate_seedance2_prompt",
@@ -577,21 +578,8 @@ async def generate_seedance2_prompt(
         )
     except ValueError as exc:
         if reservation_id:
-            await usage_meter.refund_feature_credit_reservation(
-                reservation_id,
-                metadata={
-                    "source": "sync_api",
-                    "endpoint": "generate_seedance2_prompt",
-                    "episode": episode_num,
-                    "beat_num": beat_num,
-                    "error": str(exc),
-                },
-            )
-        return {"ok": False, "error": str(exc)}
-    except Exception as exc:
-        if reservation_id:
             try:
-                await usage_meter.refund_feature_credit_reservation(
+                await usage_meter.settle_cancelled_feature_credit_reservation(
                     reservation_id,
                     metadata={
                         "source": "sync_api",
@@ -603,7 +591,25 @@ async def generate_seedance2_prompt(
                 )
             except Exception:
                 logger.exception(
-                    "Failed to refund Seedance2 prompt feature credit reservation"
+                    "Failed to settle interrupted Seedance2 prompt reservation"
+                )
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        if reservation_id:
+            try:
+                await usage_meter.settle_cancelled_feature_credit_reservation(
+                    reservation_id,
+                    metadata={
+                        "source": "sync_api",
+                        "endpoint": "generate_seedance2_prompt",
+                        "episode": episode_num,
+                        "beat_num": beat_num,
+                        "error": str(exc),
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to settle interrupted Seedance2 prompt reservation"
                 )
         raise
     finally:
@@ -613,21 +619,10 @@ async def generate_seedance2_prompt(
         target["seedance2_config_json"] = saved_json
         sync_beat_asset_refs(target)
         updated_config = parse_seedance2_config(saved_json)
-        if reservation_id:
-            await usage_meter.confirm_feature_credit_reservation(
-                reservation_id,
-                metadata={
-                    "source": "sync_api",
-                    "endpoint": "generate_seedance2_prompt",
-                    "episode": episode_num,
-                    "beat_num": beat_num,
-                    "mode": mode,
-                },
-            )
     except Exception as exc:
         if reservation_id:
             try:
-                await usage_meter.refund_feature_credit_reservation(
+                await usage_meter.settle_cancelled_feature_credit_reservation(
                     reservation_id,
                     metadata={
                         "source": "sync_api",
@@ -639,9 +634,27 @@ async def generate_seedance2_prompt(
                 )
             except Exception:
                 logger.exception(
-                    "Failed to refund Seedance2 prompt feature credit reservation"
+                    "Failed to settle interrupted Seedance2 prompt reservation"
                 )
         raise
+
+    if reservation_id:
+        try:
+            await usage_meter.settle_feature_credit_reservation(
+                reservation_id,
+                action="confirm",
+                metadata={
+                    "source": "sync_api",
+                    "endpoint": "generate_seedance2_prompt",
+                    "episode": episode_num,
+                    "beat_num": beat_num,
+                    "mode": mode,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Seedance2 prompt succeeded but credit confirmation remains pending"
+            )
 
     return {
         "ok": True,

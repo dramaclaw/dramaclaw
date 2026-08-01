@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -83,7 +84,9 @@ interface EpisodeAssetPlanningProps {
   sceneMenu?: EpisodeSceneMenuItem[] | null;
   propMenu?: EpisodePropMenuItem[] | null;
   sceneCostDisplay?: string | null;
+  scenePromotion?: CreditPromotionDisplay | null;
   propCostDisplay?: string | null;
+  propPromotion?: CreditPromotionDisplay | null;
   identityPending?: boolean;
   scenePending?: boolean;
   propPending?: boolean;
@@ -143,7 +146,9 @@ export function EpisodeAssetPlanning({
   sceneMenu,
   propMenu,
   sceneCostDisplay,
+  scenePromotion,
   propCostDisplay,
+  propPromotion,
   identityPending = false,
   scenePending = false,
   propPending = false,
@@ -226,6 +231,7 @@ export function EpisodeAssetPlanning({
           items={scenes}
           actionLabel={scenes.length > 0 ? labels.replanScenes : labels.planScenes}
           costDisplay={sceneCostDisplay}
+          promotion={scenePromotion}
           pending={scenePending}
           onPlan={onPlanScenes}
         />
@@ -240,6 +246,7 @@ export function EpisodeAssetPlanning({
           items={props.map((item) => item.prop_id.trim())}
           actionLabel={props.length > 0 ? labels.replanProps : labels.planProps}
           costDisplay={propCostDisplay}
+          promotion={propPromotion}
           pending={propPending}
           onPlan={onPlanProps}
           renderItem={(propId) => {
@@ -279,6 +286,7 @@ function AssetPlanningRow({
   items,
   actionLabel,
   costDisplay,
+  promotion,
   pending,
   onPlan,
   renderItem,
@@ -290,6 +298,7 @@ function AssetPlanningRow({
   items: string[];
   actionLabel: string;
   costDisplay?: string | null;
+  promotion?: CreditPromotionDisplay | null;
   pending: boolean;
   onPlan: () => void;
   renderItem?: (item: string) => ReactNode;
@@ -317,7 +326,7 @@ function AssetPlanningRow({
         >
           {pending && <Loader2 className="animate-spin" />}
           {actionLabel}
-          <CreditCostInline display={costDisplay} />
+          <CreditCostInline display={costDisplay} promotion={promotion} />
         </Button>
       </div>
       <div className="flex min-h-0 flex-1 flex-wrap content-start items-center gap-1.5 overflow-y-auto">

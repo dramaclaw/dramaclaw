@@ -71,6 +71,7 @@ import {
 import { useFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
 import { CreditCostInline } from '@/components/credit-cost-inline';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 
 type TextAnnotationNodeProps = NodeProps & {
   id: string;
@@ -86,6 +87,7 @@ const MIN_HEIGHT = 240;
 const COMPACT_MIN_HEIGHT = 240;
 const MAX_WIDTH = 900;
 const MAX_HEIGHT = 1200;
+const IMAGE_REVERSE_PROMPT_FEATURE_KEY = 'freezone.image_reverse_prompt';
 
 const PICKER_INSET = 32;
 const COMPACT_OPS_PANEL_HEIGHT = 140;
@@ -96,6 +98,10 @@ const COMPACT_MODES = new Set<TextNodeMode>(['textToVideo', 'imageToPrompt']);
 
 const IMAGE_TO_PROMPT_DEFAULT_CONTENT =
   '根据图片生成结构化中文提示词，包括主体描述、环境、光影、镜头语言、风格关键词。';
+
+function countBillableTextChars(text: string): number {
+  return text.replace(/[\s\u3000]+/gu, '').length;
+}
 
 // 「文字生成音乐」的默认音乐描述——点击后预填进文本节点，用户可在此基础上改。
 const TEXT_TO_MUSIC_DEFAULT_CONTENT =
@@ -183,11 +189,31 @@ export const TextAnnotationNode = memo(({
     : DEFAULT_SHARED_MODEL_ID;
   // 文生视频默认模型取「视频模型接口返回的第一个」，而非文本节点的图像默认 id。
   const { models: videoModels } = useFreezoneVideoModels();
-  const reversePromptCost = useGenerationCreditCost(
-    mode === 'imageToPrompt' ? 'freezone_image_reverse_prompt' : '',
-    null,
-    { surface: 'canvas' },
+  const reversePromptInstruction =
+    instruction.trim() || IMAGE_TO_PROMPT_DEFAULT_CONTENT;
+  const reversePromptBillableChars = countBillableTextChars(
+    reversePromptInstruction,
   );
+  const reversePromptCost = useGenerationCreditCost(
+    'feature',
+    mode === 'imageToPrompt' ? IMAGE_REVERSE_PROMPT_FEATURE_KEY : null,
+    {
+      surface: 'canvas',
+      quantity: reversePromptBillableChars,
+      params: {
+        operation: 'image_reverse_prompt',
+        billable_chars: reversePromptBillableChars,
+        pricing_quantity: reversePromptBillableChars,
+      },
+    },
+  );
+  const reversePromptBillingRuleMissing =
+    reversePromptCost.error instanceof BillingRuleNotConfiguredError;
+  const reversePromptCostDisplay =
+    reversePromptCost.data?.data.display ??
+    (reversePromptBillingRuleMissing
+      ? t('common.billingRuleNotConfiguredShort')
+      : null);
   const { isGenerating } = useNodeGenerationTaskState(data);
   // referenceOnly: 节点被作为上游引用素材使用（脚本节点 spawn 出来的）。
   // 复用 compact 视图（只渲染编辑卡片），同时 selected ops panel 也不显示。
@@ -351,6 +377,7 @@ export const TextAnnotationNode = memo(({
       const sourceUrl = await ensureBackendImageUrl(projectId, rawUrl);
       const ref = await submitFreezoneReversePrompt(projectId, {
         sourceUrl,
+        instruction: reversePromptInstruction,
         canvasId: readUrl().canvas ?? 'default',
         nodeId: id,
       });
@@ -370,7 +397,7 @@ export const TextAnnotationNode = memo(({
       console.error('[text-node] reverse-prompt failed', error);
       updateNodeData(id, { isGenerating: false, generationStartedAt: null });
     }
-  }, [id, updateNodeData]);
+  }, [id, reversePromptInstruction, updateNodeData]);
 
   const runTextToVideo = useCallback(async () => {
     const promptText = content.trim();
@@ -465,7 +492,7 @@ export const TextAnnotationNode = memo(({
   const hasUserContent = content.trim().length > 0 && content.trim() !== textPlaceholder.trim();
 
   const handleSubmit = useCallback(() => {
-    if (isGenerating) return;
+    if (isGenerating || reversePromptBillingRuleMissing) return;
     if (mode === 'imageToPrompt') {
       void runImageToPrompt();
       return;
@@ -476,9 +503,20 @@ export const TextAnnotationNode = memo(({
     }
     if (!hasUserContent) return;
     console.info('[text-node] submit stub', { id, mode, model: modelId, content });
-  }, [content, hasUserContent, id, isGenerating, mode, modelId, runImageToPrompt, runTextToVideo]);
+  }, [
+    content,
+    hasUserContent,
+    id,
+    isGenerating,
+    mode,
+    modelId,
+    reversePromptBillingRuleMissing,
+    runImageToPrompt,
+    runTextToVideo,
+  ]);
 
   const submitDisabled = isGenerating
+    || (mode === 'imageToPrompt' && reversePromptBillingRuleMissing)
     || (mode !== 'imageToPrompt' && !hasUserContent);
   // Inner panels stay neutral regardless of selection — the React Flow node
   // wrapper already shows the active state as an outer outline. Doubling it
@@ -660,7 +698,10 @@ export const TextAnnotationNode = memo(({
                 )}
                 <div className="flex items-center gap-1.5">
                   {mode === 'imageToPrompt' && (
-                    <CreditCostInline display={reversePromptCost.data?.data.display} />
+                    <CreditCostInline
+                      display={reversePromptCostDisplay}
+                      promotion={reversePromptCost.data?.data.promotion}
+                    />
                   )}
                   <button
                     type="button"

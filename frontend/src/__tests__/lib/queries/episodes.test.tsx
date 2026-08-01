@@ -89,7 +89,7 @@ describe("episode identity planning", () => {
               data: {
                 error_code: "BILLING_RULE_NOT_CONFIGURED",
                 billing_kind: "feature",
-                billing_key: "identity_planner",
+                billing_key: "mainline.identity_planner",
               },
             },
             { status: 409 },
@@ -116,7 +116,7 @@ describe("episode planning", () => {
             data: {
               error_code: "BILLING_RULE_NOT_CONFIGURED",
               billing_kind: "feature",
-              billing_key: "build_episodes",
+              billing_key: "mainline.build_episodes",
             },
           },
           { status: 409 },

@@ -38,6 +38,7 @@ import {
 import { awaitTaskCompletion } from '@/api/tasks';
 import { buildRedHighlightMaskBlob } from '@/lib/mask-highlight';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
@@ -51,6 +52,8 @@ import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImage
 import { inheritMainlineFields } from '@/features/canvas/domain/inheritMainlineFields';
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
+import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
 import { NODE_CREDIT_PILL_FLAT_CLASS } from './nodeControlStyles';
 
 interface RedrawOverlayProps {
@@ -138,16 +141,26 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
     ?? availableModels[0]
     ?? SHARED_MODELS.find((m) => m.id === modelId);
   const creditCost = useGenerationCreditCost(
-    'image_selection',
-    selectedModel?.apiModel ?? null,
+    'feature',
+    selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
     {
       surface: 'canvas',
-      params: imageModelSupportsQuality(selectedModel?.apiModel)
-        ? { size: imageSize, quality: 'medium' }
-        : { size: imageSize },
+      params: buildImageFeatureBillingParams(selectedModel, {
+        size: imageSize,
+        ...(imageModelSupportsQuality(selectedModel?.apiModel)
+          ? { quality: 'medium' }
+          : {}),
+        operation: 'redraw',
+        pricing_quantity: Math.min(Math.max(numImages, 1), 4),
+      }),
       quantity: Math.min(Math.max(numImages, 1), 4),
     },
   );
+  const billingRuleMissing =
+    creditCost.error instanceof BillingRuleNotConfiguredError;
+  const costDisplay =
+    creditCost.data?.data.display ??
+    (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
 
   // Load base image, size all canvases.
   useEffect(() => {
@@ -729,13 +742,14 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
             <div className="ml-auto flex items-center gap-2">
               {error && <span className="text-red-400">{error}</span>}
               <CreditCostPill
-                display={creditCost.data?.data.display}
+                display={costDisplay}
+                promotion={creditCost.data?.data.promotion}
                 className={NODE_CREDIT_PILL_FLAT_CLASS}
               />
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={submitting || !imageReady}
+                disabled={submitting || !imageReady || billingRuleMissing}
                 className={REDRAW_CONFIRM_BUTTON_CLASS}
                 title={submitLabel}
               >

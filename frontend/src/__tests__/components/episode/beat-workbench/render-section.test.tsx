@@ -506,6 +506,7 @@ describe("RenderSection", () => {
     expect(updateBackgroundAnchorMock).toHaveBeenCalledWith({ anchorId: "master" });
     expect(regenerateMock).toHaveBeenCalledWith({
       beatIndices: [5],
+      imageGenerationSelection: "doubao_seedream-3.0-t2i",
       modeKey: "1x1_2-3",
     });
     expect(
@@ -531,9 +532,14 @@ describe("RenderSection", () => {
     );
 
     expect(generationCreditCostMock).toHaveBeenCalledWith(
-      "image_selection",
-      "doubao_seedream-3.0-t2i",
-      { surface: "supertale", imageRole: "render", modeKey: "1x1_16-9" },
+      "feature",
+      "mainline.render_regen",
+      {
+        surface: "supertale",
+        imageRole: "render",
+        modeKey: "1x1_16-9",
+        params: { image_selection: "doubao_seedream-3.0-t2i" },
+      },
     );
 
     await user.click(screen.getByRole("button", { name: /重新生成/ }));
@@ -541,6 +547,7 @@ describe("RenderSection", () => {
 
     expect(regenerateMock).toHaveBeenCalledWith({
       beatIndices: [5],
+      imageGenerationSelection: "doubao_seedream-3.0-t2i",
       modeKey: "1x1_16-9",
     });
   });
@@ -575,9 +582,14 @@ describe("RenderSection", () => {
 
       await waitFor(() =>
         expect(generationCreditCostMock).toHaveBeenLastCalledWith(
-          "image_selection",
-          "doubao_seedream-3.0-t2i",
-          { surface: "supertale", imageRole: "render", modeKey: "1x1_2-3" },
+          "feature",
+          "mainline.render_regen",
+          {
+            surface: "supertale",
+            imageRole: "render",
+            modeKey: "1x1_2-3",
+            params: { image_selection: "doubao_seedream-3.0-t2i" },
+          },
         ),
       );
 
@@ -586,6 +598,7 @@ describe("RenderSection", () => {
 
       expect(regenerateMock).toHaveBeenCalledWith({
         beatIndices: [5],
+        imageGenerationSelection: "doubao_seedream-3.0-t2i",
         modeKey: "1x1_2-3",
       });
     } finally {

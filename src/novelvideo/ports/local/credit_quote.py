@@ -13,5 +13,7 @@ class LocalCreditQuote:
         model: str,
         params: dict,
         quantity: int,
+        user_id: str = "",
     ) -> CreditQuote:
+        del kind, model, params, quantity, user_id
         return CreditQuote(total_cost=0, display="0", unit="call", unit_cost=0, quantity=1, params={})

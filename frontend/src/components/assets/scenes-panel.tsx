@@ -40,6 +40,7 @@ import {
   backendErrorResponseToastMessage,
   backendErrorToastMessage,
   BillingRuleNotConfiguredError,
+  humanizeTaskError,
 } from "@/lib/api-errors";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -70,6 +72,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useTaskController } from "@/hooks/use-task-controller";
+import { useTaskActivity } from "@/task-center/use-task-activity";
 import {
   sceneReferenceAssetScope,
   stageAssetScope,
@@ -615,12 +618,31 @@ function SceneAssetCardController({
   const generateMaster = useGenerateSceneMasterAsync(project, scene.name);
   const generateReverse = useGenerateSceneReverseAsync(project, scene.name);
   const generatePano = useGenerateScenePanoAsync(project, scene.name);
-  const masterCost = useGenerationCreditCost("fixed_image", "scene_master");
-  const reverseCost = useGenerationCreditCost(
-    "fixed_image",
-    "scene_reverse_master",
+  const sceneReferenceCost = useGenerationCreditCost(
+    "feature",
+    "mainline.scene_reference_image",
+    {
+      surface: "supertale",
+      params: imageSourceSelection
+        ? { image_selection: imageSourceSelection }
+        : null,
+    },
   );
-  const panoCost = useGenerationCreditCost("fixed_image", "scene_pano");
+  const panoCost = useGenerationCreditCost(
+    "feature",
+    "mainline.scene_pano_generation",
+    { surface: "supertale" },
+  );
+  const sceneReferenceCostDisplay =
+    sceneReferenceCost.data?.data.display ??
+    (sceneReferenceCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : undefined);
+  const panoCostDisplay =
+    panoCost.data?.data.display ??
+    (panoCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : undefined);
   const generateStagePly = useGenerateScene3gsPlyAsync(project, scene.name);
   const saveDirectorWorld = useSaveSceneDirectorWorld(project, scene.name);
   const clearDirectorWorld = useClearSceneDirectorWorld(project, scene.name);
@@ -643,7 +665,7 @@ function SceneAssetCardController({
   });
   const panoTask = useTaskController({
     key: {
-      taskType: "stage_asset",
+      taskType: "scene_pano_generation",
       project,
       episode: 0,
       scope: stageAssetScope(scene.name, panoStep),
@@ -716,7 +738,7 @@ function SceneAssetCardController({
     try {
       const res = await generateMaster.mutateAsync({ model: imageSourceSelection });
       if (isErrorResponse(res)) {
-        toast.error(res.error);
+        toast.error(humanizeTaskError(res.error, t));
         return;
       }
       masterTask.start({ scope: res.scope });
@@ -730,7 +752,7 @@ function SceneAssetCardController({
     try {
       const res = await generatePano.mutateAsync({ source });
       if (isErrorResponse(res)) {
-        toast.error(res.error);
+        toast.error(humanizeTaskError(res.error, t));
         return;
       }
       panoTask.start({ scope: res.scope });
@@ -744,7 +766,7 @@ function SceneAssetCardController({
     try {
       const res = await generateReverse.mutateAsync({ model: imageSourceSelection });
       if (isErrorResponse(res)) {
-        toast.error(res.error);
+        toast.error(humanizeTaskError(res.error, t));
         return;
       }
       reverseTask.start({ scope: res.scope });
@@ -937,9 +959,12 @@ function SceneAssetCardController({
         }
         customUploading={uploadCustom.isPending}
         customDeleting={deleteCustom.isPending}
-        masterCost={masterCost.data?.data.display}
-        reverseCost={reverseCost.data?.data.display}
-        panoCost={panoCost.data?.data.display}
+        masterCost={sceneReferenceCostDisplay}
+        masterPromotion={sceneReferenceCost.data?.data.promotion}
+        reverseCost={sceneReferenceCostDisplay}
+        reversePromotion={sceneReferenceCost.data?.data.promotion}
+        panoCost={panoCostDisplay}
+        panoPromotion={panoCost.data?.data.promotion}
         onEdit={onEdit}
         onDelete={onDelete}
         onUploadMaster={() => masterInputRef.current?.click()}
@@ -1129,9 +1154,16 @@ export function ScenesPanel({
   const updateScene = useUpdateScene(project, editing?.name ?? "");
   const deleteScene = useDeleteScene(project);
   const buildScenes = useBuildScenes(project);
+  // loading 绑任务中心而不是 mutation.isPending：isPending 只覆盖入队那一次 POST，
+  // 真正的构建在后台跑，刷新后也只有任务中心还认得它。
+  const buildActivity = useTaskActivity("build_scenes", { episode: 0 });
+  const isBuildingScenes = buildScenes.isPending || buildActivity.isActive;
+  // 补水完成前 isActive 还不可信，按钮先禁用，避免硬刷新后重复入队。进度条和
+  // 「构建中」空态不看这个标志，否则补水那一瞬会闪一下假的构建中。
+  const buildDisabled = isBuildingScenes || buildActivity.isRestoring;
   const imageSourceQuery = useAssetImageSourceSelection(project, "scene");
   const imageSourceSelection = imageSourceQuery.data?.data.image_source_selection ?? "";
-  const buildScenesCost = useGenerationCreditCost("feature", "build_scenes");
+  const buildScenesCost = useGenerationCreditCost("feature", "mainline.build_scenes");
   const buildScenesCostDisplay =
     buildScenesCost.data?.data.display ??
     (buildScenesCost.error instanceof BillingRuleNotConfiguredError
@@ -1256,6 +1288,7 @@ export function ScenesPanel({
       toast.error(backendErrorResponseToastMessage(res, t));
       return;
     }
+    buildActivity.markStarted({ taskId: res.task_id });
     toast.success(res.message);
   }
 
@@ -1269,6 +1302,21 @@ export function ScenesPanel({
     }
     toast.success(t("assets.scenes.deleted"));
   }
+
+  // 进度条：任务中心里有记录就用它的进度/步骤文案，乐观空窗期先显示 0% 占位。
+  const buildingProgress = (
+    <div className="w-full max-w-[220px] rounded-[8px] bg-white/[0.05] p-3">
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span className="min-w-0 truncate">
+          {buildActivity.currentTask || t("assets.scenes.building")}
+        </span>
+        <span className="shrink-0 font-mono tabular-nums text-foreground/80">
+          {Math.round(buildActivity.progress * 100)}%
+        </span>
+      </div>
+      <Progress value={buildActivity.progress * 100} className="mt-3 h-1.5" />
+    </div>
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -1303,10 +1351,10 @@ export function ScenesPanel({
         <Button
           size="sm"
           onClick={handleBuildScenes}
-          disabled={buildScenes.isPending}
+          disabled={buildDisabled}
           className="h-8 gap-1.5 rounded-[8px] bg-primary px-3 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
         >
-          {buildScenes.isPending ? (
+          {isBuildingScenes ? (
             <Loader2 className="size-3.5 animate-spin" />
           ) : (
             <Sparkles className="size-3.5" />
@@ -1314,6 +1362,7 @@ export function ScenesPanel({
           {t("assets.scenes.build")}
           <CreditCostInline
             display={buildScenesCostDisplay}
+            promotion={buildScenesCost.data?.data.promotion}
             className="text-black"
             iconClassName="text-black drop-shadow-none [&_path]:fill-current"
           />
@@ -1323,6 +1372,21 @@ export function ScenesPanel({
         <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
           <Loader2 className="mr-2 size-4 animate-spin" />
           {t("common.loading")}
+        </div>
+      ) : allItems.length === 0 && isBuildingScenes ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center text-center">
+          <div className="mb-3 flex size-12 items-center justify-center rounded-full border border-border bg-card">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+          <div>
+            <h3 className="mb-1.5 text-sm font-semibold text-foreground">
+              {t("assets.scenes.buildingEmpty.title")}
+            </h3>
+            <p className="max-w-[15rem] text-xs leading-5 text-muted-foreground">
+              {t("assets.scenes.buildingEmpty.description")}
+            </p>
+          </div>
+          <div className="mt-4 flex justify-center">{buildingProgress}</div>
         </div>
       ) : allItems.length === 0 ? (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center text-center">
@@ -1369,6 +1433,9 @@ export function ScenesPanel({
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-2">
+              {isBuildingScenes && (
+                <div className="mb-2 flex justify-center">{buildingProgress}</div>
+              )}
               {sceneGroups.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                   {t("assets.common.noMatch")}

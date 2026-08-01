@@ -2,6 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import {
   Handle,
   Position,
@@ -78,6 +80,10 @@ import {
   hasCompletedHistoryRecords,
 } from '@/features/canvas/ui/NodeGenerationHistory';
 import { readUrl } from '@/lib/url-params';
+import {
+  BillingRuleNotConfiguredError,
+  backendErrorToastMessage,
+} from '@/lib/api-errors';
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import {
@@ -106,6 +112,8 @@ const MAX_WIDTH = 1600;
 const MAX_HEIGHT = 1200;
 const PANEL_GAP_PX = 12;
 const PANEL_OVERHANG_PX = 60;
+const TEXT_TRANSLATE_FEATURE_KEY = 'freezone.text_translate';
+const STORY_SCRIPT_FEATURE_KEY = 'freezone.story_script';
 // 「放大」后的输入面板尺寸：给提示词编辑区更舒适的高度与宽度（与 ImageGenNode 同款体验）。
 const OPS_PANEL_EXPANDED_WIDTH = 880;
 const OPS_PANEL_EXPANDED_HEIGHT = 560;
@@ -284,6 +292,7 @@ function useScriptStorySubmit(
   onSettled?: () => void,
 ): { submit: () => Promise<void>; isGenerating: boolean } {
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
+  const { t } = useTranslation();
   const { isGenerating } = useNodeGenerationTaskState(data);
 
   const submit = useCallback(async () => {
@@ -301,12 +310,10 @@ function useScriptStorySubmit(
     //  - 视频节点  → video_url (+ duration_sec)
     //  - 角色图节点 → character_refs[]（image_url + 角色名）
     // 文本框内容：有任一素材时作为 steering prompt；否则作为 source_text 主输入。
-    const upstreamText = references
-      .filter((ref) => ref.kind === 'text')
-      .map((ref) => (ref.text ?? '').trim())
-      .filter((text) => text.length > 0)
-      .join('\n\n');
-    const trimmedPrompt = prompt.trim();
+    const { sourceText, steeringPrompt, hasMedia } = resolveStoryScriptTextInput(
+      references,
+      prompt,
+    );
 
     const videoRef = references.find((ref) => ref.kind === 'video' && ref.videoUrl);
     const characterRefs = references
@@ -320,12 +327,6 @@ function useScriptStorySubmit(
     // 视觉模型（issue #207 之前它们被 Pydantic 静默丢弃，模型只能照着系统提示词编）。
     // 所以只有在没有任何素材时，才把输入框内容当 source_text 兜底；有素材时它一律是
     // steering prompt，不再被冒充成剧本正文。
-    const hasMedia = Boolean(videoRef) || characterRefs.length > 0;
-    const sourceText =
-      upstreamText.length > 0 ? upstreamText : hasMedia ? '' : trimmedPrompt;
-    const steeringPrompt =
-      upstreamText.length > 0 || hasMedia ? trimmedPrompt || undefined : undefined;
-
     if (!hasMedia && sourceText.length === 0) {
       updateNodeData(nodeId, {
         generationError: '请输入提示词描述剧情，或连接视频 / 角色图片节点',
@@ -364,12 +365,12 @@ function useScriptStorySubmit(
       updateNodeData(nodeId, {
         isGenerating: false,
         generationStartedAt: null,
-        generationError: error instanceof Error ? error.message : '生成失败',
+        generationError: backendErrorToastMessage(error, t),
       });
     } finally {
       onSettled?.();
     }
-  }, [isGenerating, nodeId, references, prompt, updateNodeData, onSettled]);
+  }, [isGenerating, nodeId, references, prompt, updateNodeData, onSettled, t]);
 
   return { submit, isGenerating };
 }
@@ -1100,10 +1101,26 @@ function ScriptOperationsPanel({
   refreshHistory,
 }: ScriptOperationsPanelProps) {
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
+  const { t } = useTranslation();
   const [isTranslating, setIsTranslating] = useState(false);
   // 收起态是节点下方的浮动面板；点右上角「放大」后改为居中弹窗展示同一份内容。
   const [panelExpanded, setPanelExpanded] = useState(false);
-  const scriptCost = useGenerationCreditCost('freezone_story_script');
+  const prompt = typeof data.prompt === 'string' ? data.prompt : '';
+  const storyInput = resolveStoryScriptTextInput(references, prompt);
+  const storyBillableChars = countBillableTextChars(
+    `${storyInput.sourceText}\n${storyInput.steeringPrompt ?? ''}`,
+  );
+  const translateBillableChars = countBillableTextChars(prompt);
+  const scriptCost = useGenerationCreditCost(
+    'feature',
+    STORY_SCRIPT_FEATURE_KEY,
+    { surface: 'canvas', quantity: storyBillableChars },
+  );
+  const translateCost = useGenerationCreditCost(
+    'feature',
+    translateBillableChars > 0 ? TEXT_TRANSLATE_FEATURE_KEY : null,
+    { surface: 'canvas', quantity: translateBillableChars },
+  );
 
   const handleRestoreHistory = useCallback(
     (record: FreezoneGenerationHistoryRecord) => {
@@ -1118,8 +1135,6 @@ function ScriptOperationsPanel({
     },
     [nodeId, updateNodeData],
   );
-
-  const prompt = typeof data.prompt === 'string' ? data.prompt : '';
 
   const handleTranslate = useCallback(async () => {
     if (isGenerating || isTranslating) return;
@@ -1142,10 +1157,11 @@ function ScriptOperationsPanel({
       updateNodeData(nodeId, { prompt: result.translated_text });
     } catch (error) {
       console.error('[script-node] translate failed', error);
+      toast.error(backendErrorToastMessage(error, t));
     } finally {
       setIsTranslating(false);
     }
-  }, [isGenerating, isTranslating, nodeId, prompt, updateNodeData]);
+  }, [isGenerating, isTranslating, nodeId, prompt, updateNodeData, t]);
 
   // 文本 / 视频 / 角色图任一有内容即可提交（与 useScriptStorySubmit 的分流一致）。
   const hasContent =
@@ -1214,7 +1230,23 @@ function ScriptOperationsPanel({
             )}
           </IconButton>
           <CreditCostPill
-            display={scriptCost.data?.data.display}
+            display={
+              translateCost.data?.data.cost === 0
+                ? null
+                : translateCost.data?.data.display
+            }
+            promotion={translateCost.data?.data.promotion}
+            disabled={isGenerating || isTranslating || prompt.trim().length === 0}
+            className={NODE_CREDIT_PILL_FLAT_CLASS}
+          />
+          <CreditCostPill
+            display={
+              scriptCost.data?.data.display ??
+              (scriptCost.error instanceof BillingRuleNotConfiguredError
+                ? t('common.billingRuleNotConfiguredShort')
+                : null)
+            }
+            promotion={scriptCost.data?.data.promotion}
             disabled={submitDisabled}
             className={NODE_CREDIT_PILL_FLAT_CLASS}
           />
@@ -1256,6 +1288,33 @@ function ScriptOperationsPanel({
       )}
     </OperationPanelShell>
   );
+}
+
+function countBillableTextChars(text: string): number {
+  return text.replace(/[\s\u3000]+/gu, '').length;
+}
+
+function resolveStoryScriptTextInput(
+  references: ScriptReference[],
+  prompt: string,
+): { sourceText: string; steeringPrompt?: string; hasMedia: boolean } {
+  const upstreamText = references
+    .filter((ref) => ref.kind === 'text')
+    .map((ref) => (ref.text ?? '').trim())
+    .filter((text) => text.length > 0)
+    .join('\n\n');
+  const trimmedPrompt = prompt.trim();
+  const hasMedia = references.some(
+    (ref) =>
+      (ref.kind === 'video' && Boolean(ref.videoUrl)) ||
+      (ref.kind === 'image' && Boolean(ref.thumbUrl)),
+  );
+  return {
+    sourceText: upstreamText.length > 0 ? upstreamText : hasMedia ? '' : trimmedPrompt,
+    steeringPrompt:
+      upstreamText.length > 0 || hasMedia ? trimmedPrompt || undefined : undefined,
+    hasMedia,
+  };
 }
 
 interface ScriptReferencesRowProps {

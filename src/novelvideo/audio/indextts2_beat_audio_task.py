@@ -77,6 +77,23 @@ class IndexTTS2BeatAudioTaskResult:
         }
 
 
+@dataclass
+class IndexTTS2AudioGenerationPlan:
+    beat_numbers: list[int] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+def indextts2_audio_billing_params(quantity: int = 1) -> dict:
+    clean_quantity = max(int(quantity or 0), 0)
+    return {
+        "pricing_kind": "audio",
+        "pricing_model": INDEXTTS2_RECORD_MODEL,
+        "pricing_params": {},
+        "pricing_quantity": clean_quantity,
+        "items": clean_quantity,
+    }
+
+
 async def _maybe_call(callback, *args) -> None:
     if callback is None:
         return
@@ -142,7 +159,9 @@ def _is_narrated_project(username: str, project: str) -> bool:
     return is_narrated_project(username, project)
 
 
-def _resolve_beat_uploaded_narration_voice(beat: dict, project_dir: str | Path) -> Path | None:
+def _resolve_beat_uploaded_narration_voice(
+    beat: dict, project_dir: str | Path
+) -> Path | None:
     config = parse_seedance2_config(beat.get("seedance2_config_json"))
     root = Path(project_dir)
     for stored_path in config.reference_audio_paths:
@@ -241,12 +260,16 @@ async def _resolve_narration_voice_for_beat(
     if not _is_narrated_project(username, project):
         beat_voice = _resolve_beat_uploaded_narration_voice(beat, store.project_dir)
         if beat_voice is not None:
-            narration_style = load_effective_narration_style_for_voice(username, project)
+            narration_style = load_effective_narration_style_for_voice(
+                username, project
+            )
             return beat_voice, file_sha256(beat_voice), narration_style, ""
-    return await _resolve_narrator_voice(store=store, username=username, project=project)
+    return await _resolve_narrator_voice(
+        store=store, username=username, project=project
+    )
 
 
-async def collect_indextts2_voice_prereq_errors(
+async def build_indextts2_audio_generation_plan(
     *,
     store,
     username: str,
@@ -254,15 +277,15 @@ async def collect_indextts2_voice_prereq_errors(
     episode: int,
     beat_numbers,
     mode: str = "sync_changed",
-) -> list[str]:
-    """Return missing voice errors before starting a user-facing audio task."""
+) -> IndexTTS2AudioGenerationPlan:
+    """Return the exact model-call plan and prerequisite errors for an audio task."""
 
     normalized_mode = _normalize_mode(mode)
     selected_numbers = _normalize_beat_numbers(beat_numbers)
     all_beats = list(await store.get_beats_as_dicts(episode))
     target_beats = _target_beats_for_audio_generation(all_beats, selected_numbers)
     force_redo = normalized_mode in {"redo_selected", "redo_all"}
-    errors: list[str] = []
+    plan = IndexTTS2AudioGenerationPlan()
     narrator_resolution: tuple[Path | None, str, str, str] | None = None
 
     for beat in target_beats:
@@ -291,7 +314,9 @@ async def collect_indextts2_voice_prereq_errors(
         if is_narration:
             beat_voice = None
             if not _is_narrated_project(username, project):
-                beat_voice = _resolve_beat_uploaded_narration_voice(beat, store.project_dir)
+                beat_voice = _resolve_beat_uploaded_narration_voice(
+                    beat, store.project_dir
+                )
             if beat_voice is not None:
                 voice_path = beat_voice
                 voice_sha256 = file_sha256(beat_voice)
@@ -319,15 +344,21 @@ async def collect_indextts2_voice_prereq_errors(
                 == "current"
             ):
                 continue
-            narrator_error = "" if voice_path is not None else voice_error or "解说声线缺失"
+            narrator_error = (
+                "" if voice_path is not None else voice_error or "解说声线缺失"
+            )
             if narrator_error:
-                errors.append(f"Beat {beat_num:02d} 解说声线缺失：{narrator_error}")
+                plan.errors.append(
+                    f"Beat {beat_num:02d} 解说声线缺失：{narrator_error}"
+                )
+            else:
+                plan.beat_numbers.append(beat_num)
             continue
 
         resolved_voice = await _resolve_dialogue_voice(beat, store)
         if resolved_voice is None:
             speaker = str(beat.get("speaker") or "").strip() or "未指定说话身份"
-            errors.append(f"Beat {beat_num:02d} 角色声线缺失：{speaker}")
+            plan.errors.append(f"Beat {beat_num:02d} 角色声线缺失：{speaker}")
             continue
         speaker = str(beat.get("speaker") or "").strip()
         _voice_path, voice_sha256 = resolved_voice
@@ -346,7 +377,31 @@ async def collect_indextts2_voice_prereq_errors(
         ):
             continue
 
-    return errors
+        plan.beat_numbers.append(beat_num)
+
+    return plan
+
+
+async def collect_indextts2_voice_prereq_errors(
+    *,
+    store,
+    username: str,
+    project: str,
+    episode: int,
+    beat_numbers,
+    mode: str = "sync_changed",
+) -> list[str]:
+    """Return missing voice errors before starting a user-facing audio task."""
+
+    plan = await build_indextts2_audio_generation_plan(
+        store=store,
+        username=username,
+        project=project,
+        episode=episode,
+        beat_numbers=beat_numbers,
+        mode=mode,
+    )
+    return plan.errors
 
 
 async def run_indextts2_beat_audio_generation(
@@ -372,12 +427,16 @@ async def run_indextts2_beat_audio_generation(
     result.total_targets = len(target_beats)
     force_redo = normalized_mode in {"redo_selected", "redo_all"}
 
-    await _maybe_call(log_callback, f"IndexTTS2 audio task started: {len(target_beats)} beats")
+    await _maybe_call(
+        log_callback, f"IndexTTS2 audio task started: {len(target_beats)} beats"
+    )
 
     for index, beat in enumerate(target_beats, start=1):
         beat_num = _beat_number(beat)
         output_path = beat_audio_path(store.project_dir, episode, beat_num)
-        await _maybe_call(progress_callback, index - 1, len(target_beats), f"Beat {beat_num:02d}")
+        await _maybe_call(
+            progress_callback, index - 1, len(target_beats), f"Beat {beat_num:02d}"
+        )
 
         audio_type = normalize_seedance2_audio_type(beat)
         if audio_type == "silence":
@@ -423,7 +482,9 @@ async def run_indextts2_beat_audio_generation(
                 speaker = str(beat.get("speaker") or "").strip()
                 if resolved_voice is None:
                     diag = await _diagnose_missing_dialogue_voice(speaker, store)
-                    raise ValueError(f"角色声线缺失（speaker={speaker or '<空>'}）：{diag}")
+                    raise ValueError(
+                        f"角色声线缺失（speaker={speaker or '<空>'}）：{diag}"
+                    )
                 voice_path, voice_sha256 = resolved_voice
 
             if (
@@ -496,7 +557,9 @@ async def run_indextts2_beat_audio_generation(
                     error_message=item_result.error or "IndexTTS2 generation failed",
                 )
                 if is_insufficient_credits_error(message=item_result.error or ""):
-                    raise RuntimeError(item_result.error or "IndexTTS2 generation failed")
+                    raise RuntimeError(
+                        item_result.error or "IndexTTS2 generation failed"
+                    )
                 raise RuntimeError(item_result.error or "IndexTTS2 generation failed")
 
             result.generated += 1

@@ -9,6 +9,7 @@ import type { TaskState } from "@/task-center/types";
 
 const EPISODE_IMAGE_TASK_TYPES = new Set([
   "sketch_generation",
+  "sketch_grid_generation",
   "sketch_regen",
   "selected_regen",
   "grid_regenerate",

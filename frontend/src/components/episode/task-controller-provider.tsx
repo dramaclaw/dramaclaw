@@ -95,6 +95,12 @@ export interface TaskControllerSnapshot {
   started: boolean;
   activeTaskType: string;
   /**
+   * Server-assigned task id for the currently-running task. Scope can be
+   * reused by later runs, so terminal reconciliation should prefer task id
+   * when the launch response provides it.
+   */
+  activeTaskId: string | null;
+  /**
    * Scope of the currently-running matched task, discovered during reconcile.
    * The scope is derived server-side from content (e.g., selection_scope →
    * mode_key + beats hash) and the caller usually doesn't know it up front.
@@ -173,6 +179,7 @@ function createEntry(key: TaskKey): TaskRegistryEntry {
   let snapshot: TaskControllerSnapshot = {
     started: false,
     activeTaskType: key.taskType,
+    activeTaskId: null,
     activeScope: key.scope ?? null,
     streamState: INITIAL_STREAM_STATE,
     hasOwner: false,

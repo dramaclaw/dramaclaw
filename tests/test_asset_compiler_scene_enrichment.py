@@ -378,6 +378,79 @@ async def test_compile_episode_scenes_uses_narrated_fallback_without_scene_heade
 
 
 @pytest.mark.asyncio
+async def test_drama_without_scene_headers_uses_semantic_scene_planning(monkeypatch, tmp_path):
+    import novelvideo.agents.asset_compiler as asset_compiler
+
+    async def fake_load_scene_blocks(self, episode):
+        return [
+            SimpleNamespace(
+                header_line="",
+                location="",
+                time_of_day="",
+                interior_exterior="",
+                characters=[],
+                lines=["林晚冲进医院走廊，护士站前的灯牌闪烁。"],
+            )
+        ]
+
+    async def fake_extract(self, source_text, episode, log):
+        assert "医院走廊" in source_text
+        return [
+            NovelScene(
+                name="医院走廊",
+                scene_type="interior",
+                environment_prompt="正面：护士站\n左侧：病房门\n右侧：候诊椅\n背面：电梯间",
+                description="急诊楼医院走廊",
+            )
+        ]
+
+    async def fail_normalize(self, scene_blocks, log):
+        pytest.fail("无场景头的历史精品剧不应调用 screenplay normalizer")
+
+    async def fail_reconcile(self, source_text, episode, log):
+        pytest.fail("语义 fallback 不应进入场景头校对链路")
+
+    monkeypatch.setattr(
+        asset_compiler.AssetCompiler,
+        "_load_scene_blocks",
+        fake_load_scene_blocks,
+    )
+    monkeypatch.setattr(
+        asset_compiler.AssetCompiler,
+        "_extract_narrated_episode_scenes",
+        fake_extract,
+    )
+    monkeypatch.setattr(
+        asset_compiler.AssetCompiler,
+        "_normalize_scene_block_headers",
+        fail_normalize,
+    )
+    monkeypatch.setattr(
+        asset_compiler.AssetCompiler,
+        "_reconcile_base_scenes_from_text",
+        fail_reconcile,
+    )
+
+    store = _FakeCogneeStore(
+        raw_content="林晚冲进医院走廊，护士站前的灯牌闪烁。",
+        project_dir=str(tmp_path),
+    )
+    compiler = asset_compiler.AssetCompiler(store)
+    compiler.spine_template = "drama"
+    logs: list[str] = []
+
+    scene_menu, new_count = await compiler.compile_episode_scenes(
+        SimpleNamespace(number=1, title="第一集", beat_source_text=""),
+        logs.append,
+    )
+
+    assert new_count == 1
+    assert [item.scene_id for item in scene_menu] == ["医院走廊"]
+    assert store.updated == [(1, {"scene_menu": scene_menu})]
+    assert any("项目类型仍保持精品剧" in message for message in logs)
+
+
+@pytest.mark.asyncio
 async def test_compile_scenes_promotes_stable_visual_states_to_pending_scenes(monkeypatch):
     import novelvideo.agents.asset_compiler as asset_compiler
 

@@ -18,7 +18,15 @@ def _run_async(coro, envelope: dict[str, Any], task_type: str):
     )
 
 
-def _progress(ctx: ProjectContext, task_type: str, progress: float, task: str) -> None:
+def _progress(
+    ctx: ProjectContext, task_type: str, progress: float | None, task: str
+) -> None:
+    """进度/日志上报。
+
+    `progress=None` 表示「只更新步骤文案和日志，保留原有进度」。普通日志行必须
+    走这条路径：图谱构建的 on_log 回调本身不带进度，早期用 0.0 占位会让前端进
+    度条在 10% → 0% → 80% → 0% 之间反复倒退。
+    """
     get_task_manager().update_progress_for_project(
         ctx,
         task_type,
@@ -52,7 +60,7 @@ async def _run_build_characters(ctx: ProjectContext) -> dict[str, Any]:
     try:
         characters = await store.build_characters_from_graph(
             on_progress=lambda progress, task: _progress(ctx, "build_characters", progress, task),
-            on_log=lambda message: _progress(ctx, "build_characters", 0.0, message),
+            on_log=lambda message: _progress(ctx, "build_characters", None, message),
         )
         return {"characters": len(characters), "added_characters": len(characters)}
     finally:
@@ -69,7 +77,7 @@ async def _run_build_scenes(ctx: ProjectContext) -> dict[str, Any]:
     try:
         scenes = await store.build_scenes_from_graph(
             on_progress=lambda progress, task: _progress(ctx, "build_scenes", progress, task),
-            on_log=lambda message: _progress(ctx, "build_scenes", 0.0, message),
+            on_log=lambda message: _progress(ctx, "build_scenes", None, message),
         )
         return {"scenes": len(scenes), "added_scenes": len(scenes)}
     finally:
@@ -85,7 +93,7 @@ async def _run_build_props(ctx: ProjectContext) -> dict[str, Any]:
     try:
         props = await store.build_props_from_graph(
             on_progress=lambda progress, task: _progress(ctx, "build_props", progress, task),
-            on_log=lambda message: _progress(ctx, "build_props", 0.0, message),
+            on_log=lambda message: _progress(ctx, "build_props", None, message),
         )
         return {"props": len(props)}
     finally:
@@ -108,20 +116,20 @@ async def _run_build_episodes(envelope: dict[str, Any], ctx: ProjectContext) -> 
     require_imported_novel(ctx.output_dir)
     store = await _load_store(ctx)
     try:
-        def update(progress: float, task: str) -> None:
+        def update(progress: float | None, task: str) -> None:
             _progress(ctx, "build_episodes", progress, task)
 
         if planning_mode == "chapters":
             episodes = await store.build_episodes_from_chapters(
                 generate_metadata=generate_metadata,
                 on_progress=update,
-                on_log=lambda message: update(0.0, message),
+                on_log=lambda message: update(None, message),
             )
         elif planning_mode == "ai_events":
             episodes = await store.build_episodes_from_events(
                 target_episodes=target,
                 on_progress=update,
-                on_log=lambda message: update(0.0, message),
+                on_log=lambda message: update(None, message),
             )
         elif use_agent:
             try:
@@ -129,13 +137,13 @@ async def _run_build_episodes(envelope: dict[str, Any], ctx: ProjectContext) -> 
                 episodes = await planner.plan_episodes(
                     target_episodes=target,
                     on_progress=update,
-                    on_log=lambda message: update(0.0, message),
+                    on_log=lambda message: update(None, message),
                 )
             except Exception:
                 episodes = await store.build_episodes(
                     target_episodes=target,
                     on_progress=update,
-                    on_log=lambda message: update(0.0, message),
+                    on_log=lambda message: update(None, message),
                 )
             else:
                 await store.replace_episodes(episodes)
@@ -143,7 +151,7 @@ async def _run_build_episodes(envelope: dict[str, Any], ctx: ProjectContext) -> 
             episodes = await store.build_episodes(
                 target_episodes=target,
                 on_progress=update,
-                on_log=lambda message: update(0.0, message),
+                on_log=lambda message: update(None, message),
             )
         return {"episodes": len(episodes)}
     finally:

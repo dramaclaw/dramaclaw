@@ -70,6 +70,7 @@ import { isCeRuntime } from "@/lib/runtime-config";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useTaskController } from "@/hooks/use-task-controller";
 import { useTaskStream } from "@/hooks/use-task-stream";
+import { useTaskActivity } from "@/task-center/use-task-activity";
 import { TaskControllerProvider } from "@/components/episode/task-controller-provider";
 import { SlidingTabs } from "@/components/nav/sliding-tabs";
 import { CharacterSearch, filterCharacters } from "@/components/assets/character-search";
@@ -92,6 +93,7 @@ import { useAssetsDeepLink } from "@/hooks/use-assets-deep-link";
 import { useAssetFocus } from "@/hooks/use-asset-focus";
 import { LightboxImage } from "@/components/lightbox-image";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
 import { EMPTY_STATE_ACTION_BUTTON_CLASS } from "@/components/ui/empty-state-styles";
 import {
   AssetHeaderActionsSlotProvider,
@@ -202,6 +204,8 @@ const CHARACTER_DIALOG_CANCEL_BUTTON_CLASS =
   "h-10 w-18 rounded-md border-white/18 bg-white/[0.06] px-0 text-sm font-normal text-foreground/80 hover:border-white/28 hover:bg-white/[0.1] hover:text-foreground";
 const CHARACTER_DIALOG_ACTION_BUTTON_CLASS =
   "h-10 w-18 rounded-md bg-primary px-0 text-sm font-normal text-primary-foreground shadow-lg shadow-primary/15 hover:bg-primary/90";
+const CHARACTER_PORTRAIT_FEATURE_KEY = "mainline.character_portrait";
+const IDENTITY_IMAGE_FEATURE_KEY = "mainline.identity_image";
 
 // ─── form schema ─────────────────────────────────────────────────────────────
 
@@ -534,6 +538,7 @@ function CharactersPageHeader({
   onRebuild,
   rebuildDisabled,
   buildCharactersCostDisplay,
+  buildCharactersPromotion,
   onAdd,
   project,
   activeTab,
@@ -542,6 +547,7 @@ function CharactersPageHeader({
   onRebuild: () => void;
   rebuildDisabled: boolean;
   buildCharactersCostDisplay?: string | null;
+  buildCharactersPromotion?: CreditPromotionDisplay | null;
   onAdd: () => void;
   project: string;
   activeTab: AssetTab;
@@ -602,10 +608,15 @@ function CharactersPageHeader({
               disabled={rebuildDisabled}
               className="h-8 gap-1.5 rounded-[8px] bg-primary px-3 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
             >
-              <RefreshCw className="size-3.5" />
+              {rebuildDisabled ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
               {t("characters.autoExtract")}
               <CreditCostInline
                 display={buildCharactersCostDisplay}
+                promotion={buildCharactersPromotion}
                 className="text-primary-foreground"
                 iconClassName="text-primary-foreground drop-shadow-none [&_path]:fill-current"
               />
@@ -913,10 +924,11 @@ function PortraitBlock({
   const { t } = useTranslation();
   const genPortrait = useGeneratePortraitAsync(project, character.name);
   const uploadPortrait = useUploadPortrait(project, character.name);
-  const portraitCostRes = useGenerationCreditCost("image_selection", imageModel, {
-    surface: "supertale",
-    imageRole: "character",
-  });
+  const portraitCostRes = useGenerationCreditCost(
+    "feature",
+    CHARACTER_PORTRAIT_FEATURE_KEY,
+    imageModel ? { params: { image_selection: imageModel } } : {},
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [genConfirm, setGenConfirm] = useState(false);
 
@@ -945,7 +957,7 @@ function PortraitBlock({
         toast.error(res.error || t("common.error"));
         return;
       }
-      portraitTask.start({ scope: res.scope });
+      portraitTask.start({ scope: res.scope, taskId: res.task_id });
       toast.success(t("characters.toasts.imageGenerating"));
     } catch (err) {
       toast.error(backendErrorToastMessage(err, t));
@@ -955,7 +967,9 @@ function PortraitBlock({
   const genBusy = genPortrait.isPending || portraitTask.started;
   const portraitCost = isOkResponse<{ display: string }>(portraitCostRes.data)
     ? portraitCostRes.data.data.display
-    : "";
+    : portraitCostRes.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null;
 
   return (
     <div className="flex w-full flex-col items-start gap-2">
@@ -986,7 +1000,10 @@ function PortraitBlock({
           {character.portrait_url
             ? t("characters.portrait.regenerate")
             : t("characters.summary.generateNew")}
-          <CreditCostInline display={portraitCost} />
+          <CreditCostInline
+            display={portraitCost}
+            promotion={portraitCostRes.data?.data.promotion}
+          />
         </Button>
         <Button
           size="sm"
@@ -1331,10 +1348,16 @@ function IdentityCard({
   const uploadCostume = useUploadCostumeImage(project, characterName);
   const uploadPortrait = useUploadIdentityPortrait(project, characterName);
   const genPortrait = useGenerateIdentityPortraitAsync(project, characterName);
-  const identityCostRes = useGenerationCreditCost("image_selection", imageModel, {
-    surface: "supertale",
-    imageRole: "identity",
-  });
+  const identityImageCostRes = useGenerationCreditCost(
+    "feature",
+    IDENTITY_IMAGE_FEATURE_KEY,
+    imageModel ? { params: { image_selection: imageModel } } : {},
+  );
+  const identityPortraitCostRes = useGenerationCreditCost(
+    "feature",
+    CHARACTER_PORTRAIT_FEATURE_KEY,
+    imageModel ? { params: { image_selection: imageModel } } : {},
+  );
   const identityImageScope = `character:${characterName}:identity:${identity.identity_name}`;
   const identityPortraitScope = `character:${characterName}:identity_portrait:${identity.identity_name}`;
   const identityImageTask = useTaskController({
@@ -1388,9 +1411,20 @@ function IdentityCard({
     : undefined;
   const imageAttempts = identityAttempts?.image_attempts ?? 0;
   const portraitAttempts = identityAttempts?.portrait_attempts ?? 0;
-  const identityCost = isOkResponse<{ display: string }>(identityCostRes.data)
-    ? identityCostRes.data.data.display
-    : "";
+  const identityImageCost = isOkResponse<{ display: string }>(
+    identityImageCostRes.data,
+  )
+    ? identityImageCostRes.data.data.display
+    : identityImageCostRes.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null;
+  const identityPortraitCost = isOkResponse<{ display: string }>(
+    identityPortraitCostRes.data,
+  )
+    ? identityPortraitCostRes.data.data.display
+    : identityPortraitCostRes.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null;
   const identityCreditButtonClass =
     isCeRuntime()
       ? "h-7 gap-1 rounded-[8px] px-2 text-xs transition-transform active:scale-95"
@@ -1485,7 +1519,7 @@ function IdentityCard({
         toast.error(res.error || t("common.error"));
         return;
       }
-      identityImageTask.start({ scope: res.scope });
+      identityImageTask.start({ scope: res.scope, taskId: res.task_id });
       toast.success(t("characters.toasts.imageGenerating"));
     } catch (err) {
       toast.error(backendErrorToastMessage(err, t));
@@ -1508,7 +1542,7 @@ function IdentityCard({
         toast.error(res.error || t("common.error"));
         return;
       }
-      identityPortraitTask.start({ scope: res.scope });
+      identityPortraitTask.start({ scope: res.scope, taskId: res.task_id });
       toast.success(t("characters.toasts.imageGenerating"));
     } catch (err) {
       toast.error(backendErrorToastMessage(err, t));
@@ -1713,7 +1747,10 @@ function IdentityCard({
               {identity.image_url
                 ? t("characters.identities.regenerate")
                 : t("characters.identities.generate")}
-              <CreditCostInline display={identityCost} />
+              <CreditCostInline
+                display={identityImageCost}
+                promotion={identityImageCostRes.data?.data.promotion}
+              />
             </Button>
             <Button
               size="sm"
@@ -1993,7 +2030,12 @@ function IdentityCard({
                                 {identity.portrait_image_url
                                   ? t("characters.identities.regenerate")
                                   : t("characters.identities.generate")}
-                                <CreditCostInline display={identityCost} />
+                                <CreditCostInline
+                                  display={identityPortraitCost}
+                                  promotion={
+                                    identityPortraitCostRes.data?.data.promotion
+                                  }
+                                />
                               </Button>
                             }
                           />
@@ -2188,7 +2230,10 @@ function IdentityCard({
               className={identityCreditDialogActionClass}
             >
               {t("characters.identities.generate")}
-              <CreditCostInline display={identityCost} />
+              <CreditCostInline
+                display={identityImageCost}
+                promotion={identityImageCostRes.data?.data.promotion}
+              />
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2221,7 +2266,10 @@ function IdentityCard({
               className={identityCreditDialogActionClass}
             >
               {t("characters.identities.generate")}
-              <CreditCostInline display={identityCost} />
+              <CreditCostInline
+                display={identityPortraitCost}
+                promotion={identityPortraitCostRes.data?.data.promotion}
+              />
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2860,6 +2908,13 @@ function AddCharacterDialog({
 
 // ─── Main page ───────────────────────────────────────────────────────────────
 
+/** 角色提取的展示态：活跃与否取自任务中心，进度/步骤文案优先取自 SSE。 */
+interface ExtractionState {
+  active: boolean;
+  progress: number;
+  label: string;
+}
+
 /**
  * Character-list / detail split.
  *
@@ -2869,8 +2924,7 @@ function AddCharacterDialog({
 function CharactersSplit({
   project,
   isDesktop,
-  buildStarted,
-  taskStream,
+  extraction,
   isLoading,
   characters,
   totalCharacters,
@@ -2886,11 +2940,11 @@ function CharactersSplit({
   onRebuild,
   rebuildDisabled,
   buildCharactersCostDisplay,
+  buildCharactersPromotion,
 }: {
   project: string;
   isDesktop: boolean;
-  buildStarted: boolean;
-  taskStream: ReturnType<typeof useTaskStream>;
+  extraction: ExtractionState;
   isLoading: boolean;
   characters: Character[];
   totalCharacters: number;
@@ -2906,9 +2960,10 @@ function CharactersSplit({
   onRebuild: () => void;
   rebuildDisabled: boolean;
   buildCharactersCostDisplay?: string | null;
+  buildCharactersPromotion?: CreditPromotionDisplay | null;
 }) {
   const { t } = useTranslation();
-  const isExtracting = buildStarted && taskStream.status !== "idle";
+  const isExtracting = extraction.active;
   const searchActive = searchQuery.trim().length > 0;
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const previousCharacterCountRef = useRef(characters.length);
@@ -2926,13 +2981,13 @@ function CharactersSplit({
     >
       <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
         <span className="min-w-0 truncate">
-          {taskStream.currentTask || t("characters.extracting")}
+          {extraction.label || t("characters.extracting")}
         </span>
         <span className="shrink-0 font-mono tabular-nums text-foreground/80">
-          {Math.round(taskStream.progress * 100)}%
+          {Math.round(extraction.progress * 100)}%
         </span>
       </div>
-      <Progress value={taskStream.progress * 100} className="mt-3 h-1.5" />
+      <Progress value={extraction.progress * 100} className="mt-3 h-1.5" />
     </div>
   );
 
@@ -2985,9 +3040,16 @@ function CharactersSplit({
               disabled={rebuildDisabled}
               className={EMPTY_STATE_ACTION_BUTTON_CLASS}
             >
-              <RefreshCw className="size-3.5" />
+              {rebuildDisabled ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
               {t("characters.autoExtract")}
-              <CreditCostInline display={buildCharactersCostDisplay} />
+              <CreditCostInline
+                display={buildCharactersCostDisplay}
+                promotion={buildCharactersPromotion}
+              />
             </Button>
           </div>
         ) : searchActive && characters.length === 0 ? (
@@ -3070,7 +3132,7 @@ function CharactersPageContent() {
   const { data: imageSelectionRes } = useCharacterImageSelection(project);
   const buildChars = useBuildCharacters(project);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
-  const buildCharactersCost = useGenerationCreditCost("feature", "build_characters");
+  const buildCharactersCost = useGenerationCreditCost("feature", "mainline.build_characters");
   const buildCharactersCostDisplay =
     buildCharactersCost.data?.data.display ??
     (buildCharactersCost.error instanceof BillingRuleNotConfiguredError
@@ -3078,7 +3140,8 @@ function CharactersPageContent() {
       : null);
 
   const [selectedName, setSelectedName] = useState<string | null>(null);
-  const [buildStarted, setBuildStarted] = useState(false);
+  // loading 绑任务中心而不是组件本地 state：刷新后后台还在跑的提取任务仍能认出来。
+  const buildActivity = useTaskActivity("build_characters", { episode: 0 });
   const [rebuildDialogOpen, setRebuildDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [attempts, setAttempts] = useState<Record<string, number>>({});
@@ -3091,15 +3154,25 @@ function CharactersPageContent() {
   const [searchQuery, setSearchQuery] = useState("");
   const [imageModel, setImageModel] = useState("");
 
+  // SSE 只用来拿细粒度进度/步骤文案；活跃与否由任务中心裁决。
   const taskStream = useTaskStream({
     taskType: "build_characters",
     project,
     episode: 0,
-    enabled: buildStarted,
+    enabled: buildActivity.isActive,
     invalidateKeys: [queryKeys.characters(project)],
-    onComplete: () => setBuildStarted(false),
-    onError: () => setBuildStarted(false),
   });
+
+  const extraction: ExtractionState = {
+    active: buildActivity.isActive,
+    // SSE 还没吐出第一帧时退回任务中心记录的进度，避免刷新后进度条从 0 重来。
+    progress: taskStream.status === "idle" ? buildActivity.progress : taskStream.progress,
+    label: taskStream.currentTask || buildActivity.currentTask,
+  };
+  // 补水完成前 isActive 还不可信，按钮先禁用，避免硬刷新后重复入队。
+  // 提取中的进度条/空态不看这个标志，否则补水那一瞬会闪一下假的「提取中」。
+  const rebuildDisabled =
+    buildChars.isPending || buildActivity.isActive || buildActivity.isRestoring;
 
   const characters = charsRes?.data ?? [];
   const projectConfig = projectRes?.data;
@@ -3173,7 +3246,7 @@ function CharactersPageContent() {
         toast.error(backendErrorResponseToastMessage(res, t));
         return;
       }
-      setBuildStarted(true);
+      buildActivity.markStarted({ taskId: res.task_id });
     } catch (error) {
       toast.error(backendErrorToastMessage(error, t));
     }
@@ -3195,8 +3268,9 @@ function CharactersPageContent() {
       <div className="-m-6 flex h-[calc(100%+3rem)] flex-col overflow-hidden">
       <CharactersPageHeader
         onRebuild={() => setRebuildDialogOpen(true)}
-        rebuildDisabled={buildChars.isPending || buildStarted}
+        rebuildDisabled={rebuildDisabled}
         buildCharactersCostDisplay={buildCharactersCostDisplay}
+        buildCharactersPromotion={buildCharactersCost.data?.data.promotion}
         onAdd={() => setAddDialogOpen(true)}
         project={project}
         activeTab={assetTab}
@@ -3216,8 +3290,7 @@ function CharactersPageContent() {
           <CharactersSplit
             project={project}
             isDesktop={isDesktop}
-            buildStarted={buildStarted}
-            taskStream={taskStream}
+            extraction={extraction}
             isLoading={isLoading}
             characters={filteredCharacters}
             totalCharacters={characters.length}
@@ -3231,8 +3304,9 @@ function CharactersPageContent() {
             attempts={attempts}
             handleAttempt={handleAttempt}
             onRebuild={() => setRebuildDialogOpen(true)}
-            rebuildDisabled={buildChars.isPending || buildStarted}
+            rebuildDisabled={rebuildDisabled}
             buildCharactersCostDisplay={buildCharactersCostDisplay}
+            buildCharactersPromotion={buildCharactersCost.data?.data.promotion}
           />
         </>
       ) : assetTab === "voices" ? (

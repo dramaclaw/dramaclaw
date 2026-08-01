@@ -480,19 +480,32 @@ class AssetCompiler:
         else:
             report(0.08, "解析本集剧本场景...")
             scene_blocks = await self._load_scene_blocks(episode)
-            report(0.1, "AI 逐场校对场景元数据...")
-            scene_blocks = await self._normalize_scene_block_headers(scene_blocks, log)
-            log(f"[AssetCompiler] 共识别 {len(scene_blocks)} 个场景块")
-
-            report(0.18, "AI校对基础场景...")
-            await self._reconcile_base_scenes_from_text(source_text, episode, log)
-
-            report(0.25, "编译场景资产...")
-            scene_menu, pending_scenes = await self._compile_scenes(
-                scene_blocks,
-                episode,
-                log,
+            has_scene_headers = any(
+                str(block.header_line or "").strip() for block in scene_blocks
             )
+            if not has_scene_headers:
+                log(
+                    "[AssetCompiler] 当前精品剧未识别到有效场景头，"
+                    "已回退为正文语义场景规划；项目类型仍保持精品剧。"
+                )
+                report(0.2, "从正文语义规划场景资产...")
+                scene_menu, pending_scenes = await self._compile_narrated_scenes(
+                    source_text, episode, log
+                )
+            else:
+                report(0.1, "AI 逐场校对场景元数据...")
+                scene_blocks = await self._normalize_scene_block_headers(scene_blocks, log)
+                log(f"[AssetCompiler] 共识别 {len(scene_blocks)} 个场景块")
+
+                report(0.18, "AI校对基础场景...")
+                await self._reconcile_base_scenes_from_text(source_text, episode, log)
+
+                report(0.25, "编译场景资产...")
+                scene_menu, pending_scenes = await self._compile_scenes(
+                    scene_blocks,
+                    episode,
+                    log,
+                )
         if not scene_menu:
             raise ValueError("未识别到任何场景，请先生成逐行解说工作稿或补充场次地点")
 

@@ -98,12 +98,15 @@ export function useRebuildPoolIndex(project: string, episode: number) {
 export function useGenerateSketches(project: string, episode: number) {
   return useMutation({
     mutationFn: (params?: SketchGenerateParams) =>
-      api
-        .post(
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/sketches/generate`,
-          { json: { grid_index: 0, ...(params ?? {}) } },
-        )
-        .json<TaskResponse | ErrorResponse>(),
+          {
+            json: { grid_index: 0, ...(params ?? {}) },
+            throwHttpErrors: false,
+          },
+        ),
+      ),
   });
 }
 
@@ -124,8 +127,8 @@ export function useRegenerateGrid(project: string, episode: number) {
       sceneGrouping?: boolean;
       characterGrouping?: boolean;
     } & RenderGenerationSettings) =>
-      api
-        .post(
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/grids/${gridIndex}/regenerate`,
           {
             json: {
@@ -138,9 +141,10 @@ export function useRegenerateGrid(project: string, episode: number) {
                 sketchAspectPadding,
               }),
             },
+            throwHttpErrors: false,
           },
-        )
-        .json<TaskResponse | ErrorResponse>(),
+        ),
+      ),
   });
 }
 
@@ -566,6 +570,7 @@ export interface DirectorControlFrameStatus {
   rel_path?: string | null;
   url?: string | null;
   scope: string;
+  mode_key?: string;
 }
 
 export function useDirectorControlFrameStatus(
@@ -594,14 +599,15 @@ export function useDirectorControlToSketch(
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      api
-        .post(
+      jsonWithBackendError<
+        | (TaskResponse & { data?: DirectorControlFrameStatus })
+        | (ErrorResponse & { data?: DirectorControlFrameStatus })
+      >(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/director-control-to-sketch`,
-        )
-        .json<
-          | (TaskResponse & { data?: DirectorControlFrameStatus })
-          | (ErrorResponse & { data?: DirectorControlFrameStatus })
-        >(),
+          { throwHttpErrors: false },
+        ),
+      ),
     onSuccess: (res) => {
       qc.invalidateQueries({
         queryKey: queryKeys.directorControlFrame(project, episode, beatNum),
@@ -618,18 +624,23 @@ export function useRegenerateSketches(project: string, episode: number) {
     mutationFn: (params: {
       beatIndices: number[];
       modeKey?: string;
+      imageGenerationSelection?: string;
     }) =>
-      api
-        .post(
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/sketches/regenerate`,
           {
             json: {
               beat_indices: params.beatIndices,
               mode_key: params.modeKey ?? "1x1_2-3_sketch",
+              ...(params.imageGenerationSelection
+                ? { image_generation_selection: params.imageGenerationSelection }
+                : {}),
             },
+            throwHttpErrors: false,
           },
-        )
-        .json<TaskResponse | ErrorResponse>(),
+        ),
+      ),
   });
 }
 
@@ -639,8 +650,8 @@ export function useRegenerateRenderBeats(project: string, episode: number) {
       beatIndices: number[];
       modeKey?: string;
     } & RenderGenerationSettings) =>
-      api
-        .post(
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/regenerate`,
           {
             json: {
@@ -648,9 +659,10 @@ export function useRegenerateRenderBeats(project: string, episode: number) {
               mode_key: params.modeKey ?? "1x1_2-3",
               ...renderGenerationSettingsJson(params),
             },
+            throwHttpErrors: false,
           },
-        )
-        .json<TaskResponse | ErrorResponse>(),
+        ),
+      ),
   });
 }
 

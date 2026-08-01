@@ -92,7 +92,7 @@ describe("Seedance2 prompt generation query", () => {
               data: {
                 error_code: "BILLING_RULE_NOT_CONFIGURED",
                 billing_kind: "feature",
-                billing_key: "seedance2_prompt",
+                billing_key: "mainline.seedance2_prompt",
               },
             },
             { status: 409 },
@@ -196,7 +196,7 @@ describe("1.x beat video prompt generation query", () => {
               data: {
                 error_code: "BILLING_RULE_NOT_CONFIGURED",
                 billing_kind: "feature",
-                billing_key: "beat_video_prompt",
+                billing_key: "mainline.beat_video_prompt",
               },
             },
             { status: 409 },

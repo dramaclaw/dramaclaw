@@ -14,7 +14,11 @@ from novelvideo.shared.billing_errors import (
     insufficient_credits_payload,
     is_insufficient_credits_error,
 )
-from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut, is_cancel_requested
+from novelvideo.task_backend.cancel import (
+    TaskCancelled,
+    TaskTimedOut,
+    is_cancel_requested,
+)
 from novelvideo.task_backend.registry import get_project_task_runner
 from novelvideo.task_backend.subprocesses import project_task_subprocess_context
 from novelvideo.task_state import project_task_run_context
@@ -40,9 +44,12 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "stage_asset": "render",
     "freezone_image_to_3gs": "render",
     "sketch_generation": "sketch",
+    "director_control_to_sketch": "sketch",
+    "sketch_grid_generation": "sketch",
     "sketch_regen": "sketch",
     "mainline_sketch_from_context": "sketch",
     "mainline_frame_from_context": "render",
+    "mainline_director_control_sketch": "sketch",
     "sketch_edit_execute": "sketch",
     "action_sketch": "sketch",
     "selected_regen": "render",
@@ -197,7 +204,9 @@ def _set_project_task_metrics_context(
         billing_user_id,
         project_id=str(getattr(ctx, "project_id", "") or ""),
         resource_kind=_resource_kind_for_task(task_type),
-        billing_metadata={key: value for key, value in context_metadata.items() if value},
+        billing_metadata={
+            key: value for key, value in context_metadata.items() if value
+        },
     )
 
 
@@ -221,12 +230,16 @@ async def _confirm_feature_credit_reservation(
     if not reservation_id:
         return
     try:
-        await get_usage_meter().confirm_feature_credit_reservation(
+        await get_usage_meter().settle_feature_credit_reservation(
             reservation_id,
+            action="confirm",
             metadata=metadata,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("feature credit confirmation failed: %s", exc)
+        logger.error(
+            "feature credit confirmation intent remains awaiting retry: %s",
+            exc,
+        )
 
 
 async def _refund_feature_credit_reservation(
@@ -237,12 +250,41 @@ async def _refund_feature_credit_reservation(
     if not reservation_id:
         return
     try:
-        await get_usage_meter().refund_feature_credit_reservation(
+        await get_usage_meter().settle_feature_credit_reservation(
             reservation_id,
+            action="refund",
             metadata=metadata,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("feature credit refund failed: %s", exc)
+        logger.error(
+            "feature credit refund intent remains awaiting retry: %s",
+            exc,
+        )
+
+
+async def _settle_interrupted_feature_credit_reservation(
+    reservation_id: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Settle from durable provider evidence instead of assuming no cost."""
+    if not reservation_id:
+        return
+    try:
+        result = await get_usage_meter().settle_cancelled_feature_credit_reservation(
+            reservation_id,
+            metadata=metadata,
+        )
+        if str(result.get("decision") or "") == "review":
+            logger.warning(
+                "feature credit settlement awaits provider evidence: reservation=%s",
+                reservation_id,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "interrupted feature credit settlement remains awaiting review: %s",
+            exc,
+        )
 
 
 async def _emit_project_task_metrics(
@@ -284,7 +326,9 @@ async def _emit_project_task_metrics(
             return
 
         if clean_outcome == "success" and task_type == "script_writer":
-            beats = _positive_int((result or {}).get("beats") if isinstance(result, dict) else None)
+            beats = _positive_int(
+                (result or {}).get("beats") if isinstance(result, dict) else None
+            )
             await usage_meter.bump_content_counter(
                 user_id=user_id,
                 metric="scripts_written",
@@ -329,11 +373,15 @@ def _project_task_timeout_seconds() -> int:
         try:
             return int(raw_value)
         except ValueError:
-            logger.warning("Invalid ST_PROJECT_TASK_TIMEOUT_S=%r; using default", raw_value)
+            logger.warning(
+                "Invalid ST_PROJECT_TASK_TIMEOUT_S=%r; using default", raw_value
+            )
     return 30 * 60
 
 
-def _project_task_failure_for_exception(exc: BaseException) -> tuple[str, dict[str, Any], bool]:
+def _project_task_failure_for_exception(
+    exc: BaseException,
+) -> tuple[str, dict[str, Any], bool]:
     from novelvideo.novel_source import NovelImportRequiredError
 
     if isinstance(exc, NovelImportRequiredError):
@@ -452,7 +500,9 @@ def run_project_task_core_sync(
     run_metadata = {**dict(metadata or {}), **billing_metadata}
     feature_reservation_id = _feature_credit_reservation_id(run_metadata)
     timeout_seconds = _project_task_timeout_seconds()
-    deadline_monotonic = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+    deadline_monotonic = (
+        time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+    )
 
     _clear_project_task_metrics_context()
 
@@ -544,7 +594,7 @@ def run_project_task_core_sync(
             except BaseException as exc:
                 if isinstance(exc, TaskCancelled):
                     asyncio.run(
-                        _refund_feature_credit_reservation(
+                        _settle_interrupted_feature_credit_reservation(
                             feature_reservation_id,
                             metadata={"source": "task_cancelled"},
                         )
@@ -562,9 +612,11 @@ def run_project_task_core_sync(
                         expected_task_id=run_task_id,
                     )
                     return {"cancelled": True}
-                error, failure_payload, handled = _project_task_failure_for_exception(exc)
+                error, failure_payload, handled = _project_task_failure_for_exception(
+                    exc
+                )
                 asyncio.run(
-                    _refund_feature_credit_reservation(
+                    _settle_interrupted_feature_credit_reservation(
                         feature_reservation_id,
                         metadata={
                             "source": "task_failed",
@@ -622,7 +674,9 @@ def run_project_task_core_sync(
                 result=result or {"ok": True},
                 current_task="完成",
                 logs=["完成"],
-                metadata=_completion_metadata_with_provider_task_id(run_metadata, result),
+                metadata=_completion_metadata_with_provider_task_id(
+                    run_metadata, result
+                ),
                 expected_task_id=run_task_id,
             )
         return result or {"ok": True}

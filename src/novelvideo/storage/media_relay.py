@@ -204,6 +204,12 @@ def _default_media_relay_ttl_seconds() -> int:
     ).ttl_seconds
 
 
+def media_relay_ttl_seconds(*, minimum: int = 0) -> int:
+    """Return the configured relay TTL without going below a caller's safety floor."""
+
+    return max(int(minimum), _default_media_relay_ttl_seconds())
+
+
 def upload_image_bytes(
     data: bytes,
     *,

@@ -213,12 +213,15 @@ export function useFinalVideo(project: string, episode: number) {
 export function useGlobalOptimize(project: string, episode: number) {
   return useMutation({
     mutationFn: () =>
-      api
-        .post(
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(
           p`api/v1/projects/${project}/episodes/${episode}/optimize/video-global`,
-          { json: { language: currentPromptLanguage() } },
-        )
-        .json<TaskResponse | ErrorResponse>(),
+          {
+            json: { language: currentPromptLanguage() },
+            throwHttpErrors: false,
+          },
+        ),
+      ),
   });
 }
 
@@ -333,6 +336,40 @@ export interface BeatVideoPromptResult {
   beat: Beat;
   field: "video_prompt" | "keyframe_prompt";
   prompt: string;
+}
+
+export interface GlobalOptimizeBillingQuote {
+  beat_numbers: number[];
+  quantity: number;
+  unit_cost: number;
+  cost: number;
+  display: string;
+  original_cost?: number;
+  discount_amount?: number;
+  promotion?: import("@/lib/queries/generation-credit-cost").GenerationCreditCost["promotion"];
+}
+
+export function useGlobalOptimizeBillingQuote(
+  project: string,
+  episode: number,
+  assetRevision = "",
+) {
+  return useQuery({
+    queryKey: [
+      "global-optimize-billing-quote",
+      project,
+      episode,
+      assetRevision,
+    ] as const,
+    queryFn: ({ signal }) =>
+      jsonWithBackendError<OkResponse<GlobalOptimizeBillingQuote>>(
+        api.get(
+          p`api/v1/projects/${project}/episodes/${episode}/optimize/video-global/billing-quote`,
+          { signal, throwHttpErrors: false },
+        ),
+      ),
+    enabled: !!project && episode > 0,
+  });
 }
 
 export interface Seedance2BeatStatus {

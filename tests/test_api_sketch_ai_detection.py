@@ -83,6 +83,7 @@ class _UsageMeter:
         self.reserve_calls: list[dict] = []
         self.confirm_calls: list[tuple[str, dict | None]] = []
         self.refund_calls: list[tuple[str, dict | None]] = []
+        self.interrupted_calls: list[tuple[str, dict | None]] = []
         self.contexts: list[dict] = []
         self.clear_count = 0
 
@@ -95,21 +96,20 @@ class _UsageMeter:
             "feature_key": kwargs["feature_key"],
         }
 
-    async def confirm_feature_credit_reservation(
+    async def settle_feature_credit_reservation(
         self,
         reservation_id: str,
         *,
+        action: str,
         metadata=None,
     ):
-        self.confirm_calls.append((reservation_id, metadata))
+        target = self.confirm_calls if action == "confirm" else self.refund_calls
+        target.append((reservation_id, metadata))
 
-    async def refund_feature_credit_reservation(
-        self,
-        reservation_id: str,
-        *,
-        metadata=None,
+    async def settle_cancelled_feature_credit_reservation(
+        self, reservation_id: str, *, metadata=None
     ):
-        self.refund_calls.append((reservation_id, metadata))
+        self.interrupted_calls.append((reservation_id, metadata))
 
     def set_llm_usage_context(
         self,
@@ -240,7 +240,7 @@ def test_detect_identities_reserves_feature_credit_and_marks_model_calls_include
     assert usage_meter.reserve_calls == [
         {
             "user_id": "user-1",
-            "feature_key": "ai_identity_detection",
+            "feature_key": "mainline.ai_identity_detection",
             "project_id": "project-1",
             "resource_kind": "sketch",
             "task_type": "ai_identity_detection",
@@ -265,7 +265,7 @@ def test_detect_identities_reserves_feature_credit_and_marks_model_calls_include
     assert usage_meter.clear_count == 1
 
 
-def test_detect_identities_refunds_feature_credit_when_ai_detection_fails(
+def test_detect_identities_uses_evidence_settlement_when_ai_detection_fails(
     monkeypatch,
     tmp_path,
 ):
@@ -299,7 +299,8 @@ def test_detect_identities_refunds_feature_credit_when_ai_detection_fails(
     assert body["ok"] is False
     assert "vision model failed" in body["error"]
     assert usage_meter.confirm_calls == []
-    assert usage_meter.refund_calls[0][0] == "feature-reservation-1"
+    assert usage_meter.refund_calls == []
+    assert usage_meter.interrupted_calls[0][0] == "feature-reservation-1"
     assert usage_meter.clear_count == 1
 
 

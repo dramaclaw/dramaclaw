@@ -26,6 +26,7 @@ import { UsageCountBadge } from "@/components/assets/usage-count-badge";
 import { ASSET_CARD_META_BADGE_CLASS } from "@/components/assets/asset-card-styles";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { sceneTypeLabel } from "@/lib/scene-type";
 import { cn } from "@/lib/utils";
@@ -47,8 +48,11 @@ interface SceneAssetCardProps {
   reversePlyRunning?: boolean;
   panoPlyRunning?: boolean;
   masterCost?: string;
+  masterPromotion?: CreditPromotionDisplay | null;
   reverseCost?: string;
+  reversePromotion?: CreditPromotionDisplay | null;
   panoCost?: string;
+  panoPromotion?: CreditPromotionDisplay | null;
   customUploading?: boolean;
   customDeleting?: boolean;
   onEdit: () => void;
@@ -168,8 +172,11 @@ export function SceneAssetCard({
   reversePlyRunning = false,
   panoPlyRunning = false,
   masterCost,
+  masterPromotion,
   reverseCost,
+  reversePromotion,
   panoCost,
+  panoPromotion,
   customUploading = false,
   customDeleting = false,
   onEdit,
@@ -346,7 +353,10 @@ export function SceneAssetCard({
                 {hasMaster
                   ? t("assets.scenes.regenerateMaster")
                   : t("assets.scenes.generateMaster")}
-                <CreditCostInline display={masterCost} />
+                <CreditCostInline
+                  display={masterCost}
+                  promotion={masterPromotion}
+                />
               </Button>
             </div>
           </div>
@@ -377,7 +387,10 @@ export function SceneAssetCard({
                 {hasReverse
                   ? t("assets.scenes.regenerateReverse")
                   : t("assets.scenes.generateReverse")}
-                <CreditCostInline display={reverseCost} />
+                <CreditCostInline
+                  display={reverseCost}
+                  promotion={reversePromotion}
+                />
               </Button>
             </div>
           </div>
@@ -419,7 +432,10 @@ export function SceneAssetCard({
                   <ImageIcon className="size-3" />
                 )}
                 {panoGenerateLabel}
-                <CreditCostInline display={panoCost} />
+                <CreditCostInline
+                  display={panoCost}
+                  promotion={panoPromotion}
+                />
               </Button>
               <Button
                 type="button"

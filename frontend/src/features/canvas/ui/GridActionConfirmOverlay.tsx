@@ -12,6 +12,7 @@ import {
   EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
   fetchFreezoneJobResult,
@@ -23,7 +24,9 @@ import { awaitTaskCompletion } from '@/api/tasks';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
+import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
 import { CANVAS_NODE_TOOLBAR_PILL_CLASS } from './nodeFrameStyles';
 
@@ -97,16 +100,26 @@ export const GridActionConfirmOverlay = memo(
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const { models: imageModels } = useFreezoneImageModels();
     const selectedModel = imageModels[0];
+    const gridMode = GRID_ACTION_MODE_MAP[request.key];
     const gridActionCost = useGenerationCreditCost(
-      'image_selection',
-      selectedModel?.apiModel ?? null,
+      'feature',
+      selectedModel ? FREEZONE_IMAGE_FEATURES.grid : null,
       {
         surface: 'canvas',
-        params: imageModelSupportsQuality(selectedModel?.apiModel)
-          ? { size: '2K', quality: 'medium' }
-          : { size: '2K' },
+        params: buildImageFeatureBillingParams(selectedModel, {
+          size: '2K',
+          ...(imageModelSupportsQuality(selectedModel?.apiModel)
+            ? { quality: 'medium' }
+            : {}),
+          mode: gridMode,
+        }),
       },
     );
+    const billingRuleMissing =
+      gridActionCost.error instanceof BillingRuleNotConfiguredError;
+    const costDisplay =
+      gridActionCost.data?.data.display ??
+      (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
 
     const handleSubmit = useCallback(async () => {
       const project = readUrl().project;
@@ -145,7 +158,7 @@ export const GridActionConfirmOverlay = memo(
       try {
         const ref = await submitFreezoneTemplateEdit(project, {
           sourceUrl: imageSource.split('?')[0],
-          mode: GRID_ACTION_MODE_MAP[request.key],
+          mode: gridMode,
           prompt: request.label,
         });
         updateNodeData(nextNodeId, generationTaskDescriptor(ref));
@@ -176,6 +189,7 @@ export const GridActionConfirmOverlay = memo(
       addEdge,
       addNode,
       findNodePosition,
+      gridMode,
       imageSource,
       node,
       onClose,
@@ -210,11 +224,15 @@ export const GridActionConfirmOverlay = memo(
             <ImageIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
             <span className="truncate font-medium">{request.label}</span>
           </div>
-          <CreditCostInline display={gridActionCost.data?.data.display} />
+          <CreditCostInline
+            display={costDisplay}
+            promotion={gridActionCost.data?.data.promotion}
+          />
 
           <button
             type="button"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-bg-dark transition-colors hover:bg-white/90"
+            disabled={billingRuleMissing}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-bg-dark transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={handleSubmit}
             title={t('nodeToolbar.gridMenu.confirmBar.submit')}
           >

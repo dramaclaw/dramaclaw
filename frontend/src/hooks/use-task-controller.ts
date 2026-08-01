@@ -27,11 +27,11 @@ export interface TaskControllerHandle {
   stream: TaskStreamState;
   logs: string[];
   /**
-   * Mark the task as started and open the SSE stream. Pass `{ scope }` when
-   * the backend's TaskResponse carried it — lets the first stream request
-   * hit the right row immediately instead of waiting for reconcile.
+   * Mark the task as started and open the SSE stream. Pass `{ scope, taskId }`
+   * from the backend TaskResponse so the first stream request hits the right
+   * row and terminal reconciliation ignores stale rows from older runs.
    */
-  start: (override?: { scope?: string }) => void;
+  start: (override?: { scope?: string; taskId?: string }) => void;
   stop: () => Promise<void>;
   stopping: boolean;
 }
@@ -185,6 +185,7 @@ export function useTaskController(
         ...entry.getSnapshot(),
         started: true,
         activeTaskType: match.task_type,
+        activeTaskId: match.task_id ?? null,
         // Capture the scope the BE assigned to this matched task so the stream
         // URL below hits the correct (scoped) endpoint. Without this the per-
         // task SSE endpoint returns "Task not found" and completion events
@@ -225,6 +226,7 @@ export function useTaskController(
     const match = tasks.find(
       (t) =>
         candidates.includes(t.task_type) &&
+        (!snapshot.activeTaskId || t.task_id === snapshot.activeTaskId) &&
         (key.beatNum === undefined || t.beat_num === key.beatNum) &&
         ((snapshot.activeScope ?? key.scope) === undefined ||
           (t.scope ?? null) === ((snapshot.activeScope ?? key.scope) ?? null)) &&
@@ -263,6 +265,7 @@ export function useTaskController(
     isOwner,
     snapshot.started,
     snapshot.activeTaskType,
+    snapshot.activeTaskId,
     snapshot.activeScope,
     tasksRes,
     entry,
@@ -385,6 +388,7 @@ export function useTaskController(
     const match = tasks.find(
       (t) =>
         t.task_type === snapshot.activeTaskType &&
+        (!snapshot.activeTaskId || t.task_id === snapshot.activeTaskId) &&
         (key.beatNum === undefined || t.beat_num === key.beatNum) &&
         (activeScope === null || (t.scope ?? null) === activeScope) &&
         !isActiveStatus(t.status),
@@ -419,6 +423,7 @@ export function useTaskController(
     snapshot.started,
     snapshot.activeScope,
     snapshot.activeTaskType,
+    snapshot.activeTaskId,
     tasksRes,
     key.scope,
     key.beatNum,
@@ -444,21 +449,20 @@ export function useTaskController(
   const cancelTask = useCancelTask();
 
   const start = useCallback(
-    (override?: { scope?: string }) => {
+    (override?: { scope?: string; taskId?: string }) => {
       logsRef.current = [];
       // Re-open the reconcile window so the NEXT /tasks poll tick can discover
       // the server-assigned scope for this run. Callers that *know* the scope
       // up front (from the TaskResponse returned by the mutation) should pass
-      // it via `start({ scope })` — that way the per-task SSE stream hits the
-      // right row on first open, without racing reconcile. Without it, the
-      // stream initially opens with scope=null and the BE's get_task() fails
-      // until reconcile catches up (sometimes losing if the task completes
-      // fast).
+      // it via `start({ scope, taskId })` — that way the per-task SSE stream
+      // hits the right row on first open, and terminal reconciliation will not
+      // mistake an older task with the same scope for the current run.
       entry.reconciled = false;
       entry.setSnapshot({
         ...entry.getSnapshot(),
         started: true,
         activeTaskType: key.taskType,
+        activeTaskId: override?.taskId ?? null,
         activeScope: override?.scope ?? key.scope ?? null,
         streamState: {
           status: "idle",

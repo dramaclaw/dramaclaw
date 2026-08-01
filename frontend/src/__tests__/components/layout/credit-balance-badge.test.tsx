@@ -13,6 +13,18 @@ const currentUserState = vi.hoisted(() => ({
   balance: 1234 as number | undefined,
 }));
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: false }));
+const summaryState = vi.hoisted(() => ({
+  balance: 1234,
+  earned: 2000,
+  spent: 800,
+  refunded: 34,
+  pending: 0,
+  promotion_count: 2,
+}));
+
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => vi.fn(),
+}));
 
 vi.mock("@/lib/runtime-config", () => ({
   isCeRuntime: () => runtimeState.isCeRuntime,
@@ -45,13 +57,19 @@ vi.mock("@/lib/queries/auth", () => ({
   }),
 }));
 
-// The badge now uses the shadcn/base-ui Tooltip; mock it so the content always
-// renders (base-ui only mounts the portal on hover). Mirrors the header test.
-vi.mock("@/components/ui/tooltip", () => ({
-  TooltipProvider: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  Tooltip: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  TooltipTrigger: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  TooltipContent: ({ children }: React.PropsWithChildren) => <>{children}</>,
+vi.mock("@/lib/queries/credits", () => ({
+  useCreditSummary: () => ({
+    data: { data: summaryState },
+    isStale: false,
+    refetch: vi.fn(),
+  }),
+}));
+
+// Base UI portals only mount while open; keep the panel visible in this unit test.
+vi.mock("@/components/ui/popover", () => ({
+  Popover: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  PopoverTrigger: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  PopoverContent: ({ children }: React.PropsWithChildren) => <>{children}</>,
 }));
 
 vi.mock("react-i18next", () => ({
@@ -60,6 +78,15 @@ vi.mock("react-i18next", () => ({
       ({
         "credits.balance": "当前积分余额",
         "credits.short": "积分",
+        "credits.openPanel": "打开积分面板",
+        "credits.personalAccount": "个人积分账户",
+        "credits.details": "查看明细",
+        "credits.earned": "已获得",
+        "credits.spent": "已消费",
+        "credits.refunded": "已退款",
+        "credits.promotions": "可用促销",
+        "credits.promotionCount": "当前有 2 项可能适用的优惠",
+        "credits.viewTransactions": "查看积分明细",
       })[key] ?? key,
   }),
 }));
@@ -87,8 +114,9 @@ describe("CreditBalanceBadge", () => {
   it("renders the current credit balance", async () => {
     renderBadge();
 
-    expect(screen.getByText("1,234")).toBeInTheDocument();
-    expect(screen.getByText("当前积分余额: 1,234")).toBeInTheDocument();
+    expect(screen.getAllByText("1,234")).toHaveLength(2);
+    expect(screen.getByText("个人积分账户")).toBeInTheDocument();
+    expect(screen.getByText("当前有 2 项可能适用的优惠")).toBeInTheDocument();
   });
 
   it("renders nothing when logged out", () => {

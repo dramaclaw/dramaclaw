@@ -81,7 +81,12 @@ ASSET_IMAGE_SELECTION_CONFIG_KEYS = {
     "prop": "prop_image_selection",
 }
 CHARACTER_IMAGE_USAGE_TASK_TYPES = ("character_portrait", "identity_image")
-CHARACTER_ASSET_KINDS = {"portrait", "identity", "identity_costume", "identity_portrait"}
+CHARACTER_ASSET_KINDS = {
+    "portrait",
+    "identity",
+    "identity_costume",
+    "identity_portrait",
+}
 
 VOICE_SLOT_LABELS = {
     VOICE_DEFAULT_SLOT: "默认（兜底）",
@@ -117,7 +122,9 @@ async def _resolve_character_project(
 def _character_image_selection_payload(username: str, project: str) -> dict:
     options = character_image_selection_options()
     config = load_project_config_file(username, project)
-    saved_selection = str(config.get(CHARACTER_IMAGE_SELECTION_CONFIG_KEY) or "").strip()
+    saved_selection = str(
+        config.get(CHARACTER_IMAGE_SELECTION_CONFIG_KEY) or ""
+    ).strip()
     if saved_selection in options:
         selection = saved_selection
     else:
@@ -149,11 +156,40 @@ def _validate_asset_image_source_kind(asset_kind: str) -> str | None:
     return None
 
 
-def _resolve_character_image_model(username: str, project: str, requested_model: str | None) -> str:
+def _resolve_character_image_model(
+    username: str, project: str, requested_model: str | None
+) -> str:
     model = str(requested_model or "").strip()
     if model:
         return model
-    return _character_image_selection_payload(username, project)["character_image_selection"]
+    return _character_image_selection_payload(username, project)[
+        "character_image_selection"
+    ]
+
+
+def _character_image_billing_metadata(
+    model: str, *, image_role: str = "character"
+) -> dict:
+    from novelvideo.config import IMAGE_GENERATION_SELECTIONS
+
+    selection = normalize_character_image_selection(model)
+    model_cfg = IMAGE_GENERATION_SELECTIONS.get(selection) or {}
+    pricing_model = str(model_cfg.get("model") or "").strip()
+    if not pricing_model:
+        return {}
+    from novelvideo.api.routes.model_credits import _image_selection_billing_params
+
+    pricing_params = _image_selection_billing_params(
+        model=pricing_model,
+        image_role=image_role,
+    )
+    return {
+        "pricing_kind": "image",
+        "pricing_model": pricing_model,
+        "pricing_params": pricing_params,
+        "pricing_model_selection": selection,
+        "pricing_model_label": str(model_cfg.get("label") or selection),
+    }
 
 
 def _safe_asset_name(name: str) -> str:
@@ -204,10 +240,19 @@ def _resolve_character_asset_path(
         raise ValueError(f"Identity '{identity_id}' not found")
     identity_name = getattr(identity, "identity_name", "") or identity_id
     if kind == "identity":
-        return canonical_identity_path(project_dir, character.name, identity_name), identity
+        return (
+            canonical_identity_path(project_dir, character.name, identity_name),
+            identity,
+        )
     if kind == "identity_costume":
-        return canonical_identity_costume_path(project_dir, character.name, identity_name), identity
-    return canonical_identity_portrait_path(project_dir, character.name, identity_name), identity
+        return (
+            canonical_identity_costume_path(project_dir, character.name, identity_name),
+            identity,
+        )
+    return (
+        canonical_identity_portrait_path(project_dir, character.name, identity_name),
+        identity,
+    )
 
 
 def _history_id_for_path(target: Path, path: Path) -> str:
@@ -420,9 +465,16 @@ def _character_voice_fields(ctx: ProjectContext, project_dir: Path, character) -
             project_dir=project_dir,
             rel_path=rel_path,
         ),
-        "reference_audio_sha256": getattr(character, "reference_audio_sha256", "") or "",
-        "reference_audio_updated_at": getattr(character, "reference_audio_updated_at", "") or "",
-        "voice_samples_by_age_group": getattr(character, "voice_samples_by_age_group", {}) or {},
+        "reference_audio_sha256": getattr(character, "reference_audio_sha256", "")
+        or "",
+        "reference_audio_updated_at": getattr(
+            character, "reference_audio_updated_at", ""
+        )
+        or "",
+        "voice_samples_by_age_group": getattr(
+            character, "voice_samples_by_age_group", {}
+        )
+        or {},
     }
 
 
@@ -436,7 +488,10 @@ def _identity_voice_fields(ctx: ProjectContext, project_dir: Path, identity) -> 
             rel_path=rel_path,
         ),
         "reference_audio_sha256": getattr(identity, "reference_audio_sha256", "") or "",
-        "reference_audio_updated_at": getattr(identity, "reference_audio_updated_at", "") or "",
+        "reference_audio_updated_at": getattr(
+            identity, "reference_audio_updated_at", ""
+        )
+        or "",
     }
 
 
@@ -476,7 +531,9 @@ async def _unset_other_main_characters(store: SQLiteStore, name: str) -> None:
             await store.update_character(character.name, is_main=False)
 
 
-async def _repair_duplicate_main_characters(store: SQLiteStore, characters: list) -> list:
+async def _repair_duplicate_main_characters(
+    store: SQLiteStore, characters: list
+) -> list:
     """Repair legacy data that still has multiple narrator-main characters."""
     seen_main = False
     repaired = []
@@ -504,7 +561,9 @@ async def list_characters(
         await _resolve_character_project(project, user, required_role="viewer")
     )
 
-    characters = await _repair_duplicate_main_characters(store, store.get_all_characters())
+    characters = await _repair_duplicate_main_characters(
+        store, store.get_all_characters()
+    )
 
     data = []
     asset_project = getattr(ctx, "project_id", "") or project
@@ -521,7 +580,9 @@ async def list_characters(
             "face_prompt": getattr(c, "face_prompt", ""),
             "is_main": c.is_main if hasattr(c, "is_main") else False,
             "portrait_path": abs_portrait,
-            "portrait_url": _asset_url(ctx, project_dir, abs_portrait) if abs_portrait else "",
+            "portrait_url": (
+                _asset_url(ctx, project_dir, abs_portrait) if abs_portrait else ""
+            ),
             "updated_at": newest_updated_at(
                 getattr(c, "updated_at", ""),
                 tree_updated_at(project_dir / "assets" / "characters" / c.name),
@@ -628,7 +689,10 @@ async def get_project_character_image_selection(
     _ctx, username, project_name, _project_dir, _output_dir, _store = (
         await _resolve_character_project(project, user, required_role="viewer")
     )
-    return {"ok": True, "data": _character_image_selection_payload(username, project_name)}
+    return {
+        "ok": True,
+        "data": _character_image_selection_payload(username, project_name),
+    }
 
 
 @router.patch("/projects/{project}/character-image-selection")
@@ -656,7 +720,10 @@ async def update_project_character_image_selection(
         config[CHARACTER_IMAGE_SELECTION_CONFIG_KEY] = selection
 
     update_project_config_file(username, project_name, _apply)
-    return {"ok": True, "data": _character_image_selection_payload(username, project_name)}
+    return {
+        "ok": True,
+        "data": _character_image_selection_payload(username, project_name),
+    }
 
 
 @router.get("/projects/{project}/image-source-selection/{asset_kind}")
@@ -759,7 +826,9 @@ async def get_character_identities(
     asset_project = getattr(ctx, "project_id", "") or project
     if hasattr(target, "identities"):
         for ident in target.identities:
-            identity_name = ident.identity_name if hasattr(ident, "identity_name") else ""
+            identity_name = (
+                ident.identity_name if hasattr(ident, "identity_name") else ""
+            )
             abs_image = (
                 compute_identity_path(project_dir, target.name, identity_name)
                 if identity_name
@@ -776,14 +845,18 @@ async def get_character_identities(
                 else ""
             )
             item = {
-                "identity_id": ident.identity_id if hasattr(ident, "identity_id") else "",
+                "identity_id": (
+                    ident.identity_id if hasattr(ident, "identity_id") else ""
+                ),
                 "identity_name": identity_name,
                 "appearance_details": getattr(ident, "appearance_details", ""),
                 "face_prompt": getattr(ident, "face_prompt", ""),
                 "age_group": getattr(ident, "age_group", ""),
                 "body_type": getattr(ident, "body_type", ""),
                 "image_path": abs_image,
-                "image_url": _asset_url(ctx, project_dir, abs_image) if abs_image else "",
+                "image_url": (
+                    _asset_url(ctx, project_dir, abs_image) if abs_image else ""
+                ),
                 "costume_image_path": abs_costume,
                 "costume_image_url": (
                     _asset_url(ctx, project_dir, abs_costume) if abs_costume else ""
@@ -894,7 +967,9 @@ async def restore_character_asset_history(
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
-    entries = _character_asset_history_entries(ctx=ctx, project_dir=project_dir, target=target)
+    entries = _character_asset_history_entries(
+        ctx=ctx, project_dir=project_dir, target=target
+    )
     allowed_ids = {str(entry.get("history_id") or "") for entry in entries}
     if history_id not in allowed_ids:
         return {"ok": False, "error": "History asset not found"}
@@ -952,7 +1027,10 @@ async def update_character(
 
     if requested_name and requested_name != name:
         if store.get_character(requested_name) is not None:
-            return {"ok": False, "error": f"Character '{requested_name}' already exists"}
+            return {
+                "ok": False,
+                "error": f"Character '{requested_name}' already exists",
+            }
         try:
             await store.rename_character(name, requested_name)
         except ValueError as exc:
@@ -1073,8 +1151,8 @@ async def record_character_voice_sample(
     user: dict = Depends(get_api_user),
 ):
     """保存浏览器录音为角色 IndexTTS2 声线样本。"""
-    ctx, username, project_name, project_dir, _output_dir, store = await _resolve_character_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir, store = (
+        await _resolve_character_project(project, user)
     )
     character = store.get_character(name)
     if character is None:
@@ -1118,8 +1196,8 @@ async def trim_character_voice_sample(
     user: dict = Depends(get_api_user),
 ):
     """裁剪角色 IndexTTS2 声线样本并写回同一插槽。"""
-    ctx, username, project_name, project_dir, _output_dir, store = await _resolve_character_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir, store = (
+        await _resolve_character_project(project, user)
     )
     character = store.get_character(name)
     if character is None:
@@ -1162,8 +1240,8 @@ async def delete_character_voice_sample(
     user: dict = Depends(get_api_user),
 ):
     """清除角色 IndexTTS2 声线样本。"""
-    ctx, username, project_name, project_dir, _output_dir, store = await _resolve_character_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir, store = (
+        await _resolve_character_project(project, user)
     )
     character = store.get_character(name)
     if character is None:
@@ -1298,6 +1376,7 @@ async def generate_single_portrait_async(
     scope = f"character:{name}:portrait"
     style = body.style or config.get("visual_style", "chinese_period_drama")
     model = _resolve_character_image_model(username, project_name, body.model)
+    billing = _character_image_billing_metadata(model)
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -1313,6 +1392,7 @@ async def generate_single_portrait_async(
                 "model": model,
                 "scope": scope,
                 "output_dir": str(project_dir),
+                "billing": billing,
             },
         )
         return {
@@ -1339,9 +1419,11 @@ async def generate_single_portrait(
     user: dict = Depends(get_api_user),
 ):
     """为单个角色生成肖像（face close-up）。"""
-    logger.info("[%s] generate_single_portrait: %s, model=%s", project, name, body.model)
-    ctx, username, project_name, project_dir, output_dir, store = await _resolve_character_project(
-        project, user
+    logger.info(
+        "[%s] generate_single_portrait: %s, model=%s", project, name, body.model
+    )
+    ctx, username, project_name, project_dir, output_dir, store = (
+        await _resolve_character_project(project, user)
     )
 
     character = store.get_character(name)
@@ -1351,7 +1433,9 @@ async def generate_single_portrait(
     proj_config = load_project_config(username, project_name)
     style = body.style or proj_config.get("visual_style", "chinese_period_drama")
 
-    from novelvideo.generators.image_generator import generate_character_reference_unified
+    from novelvideo.generators.image_generator import (
+        generate_character_reference_unified,
+    )
 
     # 备份旧肖像
     portrait_path = compute_portrait_path(project_dir, name)
@@ -1362,7 +1446,9 @@ async def generate_single_portrait(
 
     paths = await generate_character_reference_unified(
         character_name=name,
-        appearance_prompt=character.face_prompt if hasattr(character, "face_prompt") else "",
+        appearance_prompt=(
+            character.face_prompt if hasattr(character, "face_prompt") else ""
+        ),
         style=style,
         ethnicity=body.ethnicity,
         model=_resolve_character_image_model(username, project_name, body.model),
@@ -1458,7 +1544,9 @@ async def upload_identity_image(
     return {"ok": True, "data": {"image_url": image_url}}
 
 
-@router.post("/projects/{project}/characters/{name}/identities/{identity_id}/image/delete")
+@router.post(
+    "/projects/{project}/characters/{name}/identities/{identity_id}/image/delete"
+)
 async def delete_identity_image(
     project: str,
     name: str,
@@ -1472,7 +1560,9 @@ async def delete_identity_image(
     return {"ok": True, "data": {"deleted": deleted}}
 
 
-@router.post("/projects/{project}/characters/{name}/identities/{identity_id}/costume/upload")
+@router.post(
+    "/projects/{project}/characters/{name}/identities/{identity_id}/costume/upload"
+)
 async def upload_identity_costume(
     project: str,
     name: str,
@@ -1499,7 +1589,9 @@ async def upload_identity_costume(
     identities_dir.mkdir(parents=True, exist_ok=True)
     target = identities_dir / f"{safe_name}_costume.png"
     if target.exists():
-        backup = identities_dir / f"{safe_name}_costume_{datetime.now():%Y%m%d%H%M%S}.png"
+        backup = (
+            identities_dir / f"{safe_name}_costume_{datetime.now():%Y%m%d%H%M%S}.png"
+        )
         shutil.copy(target, backup)
     img.save(str(target), format="PNG")
     await store.update_character_identity(name, identity_id, costume_image=str(target))
@@ -1509,7 +1601,9 @@ async def upload_identity_costume(
     }
 
 
-@router.post("/projects/{project}/characters/{name}/identities/{identity_id}/costume/delete")
+@router.post(
+    "/projects/{project}/characters/{name}/identities/{identity_id}/costume/delete"
+)
 async def delete_identity_costume(
     project: str,
     name: str,
@@ -1550,7 +1644,9 @@ async def delete_identity_costume(
     return {"ok": True, "data": {"deleted": deleted}}
 
 
-@router.post("/projects/{project}/characters/{name}/identities/{identity_id}/portrait/upload")
+@router.post(
+    "/projects/{project}/characters/{name}/identities/{identity_id}/portrait/upload"
+)
 async def upload_identity_portrait(
     project: str,
     name: str,
@@ -1577,7 +1673,10 @@ async def upload_identity_portrait(
     identities_dir.mkdir(parents=True, exist_ok=True)
     target = identities_dir / f"{name}_{safe_name}_portrait.png"
     if target.exists():
-        backup = identities_dir / f"{name}_{safe_name}_portrait_{datetime.now():%Y%m%d%H%M%S}.png"
+        backup = (
+            identities_dir
+            / f"{name}_{safe_name}_portrait_{datetime.now():%Y%m%d%H%M%S}.png"
+        )
         shutil.copy(target, backup)
     img.save(str(target), format="PNG")
     await store.update_character_identity(name, identity_id, portrait_image=str(target))
@@ -1597,8 +1696,8 @@ async def generate_identity_portrait_async(
     body: IdentityImageGenRequest = IdentityImageGenRequest(),
     user: dict = Depends(get_api_user),
 ):
-    ctx, username, project_name, project_dir, _output_dir, store = await _resolve_character_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir, store = (
+        await _resolve_character_project(project, user)
     )
     character = store.get_character(name)
     if character is None:
@@ -1611,6 +1710,7 @@ async def generate_identity_portrait_async(
     scope = f"character:{name}:identity_portrait:{identity.identity_name}"
     style = body.style or config.get("visual_style", "chinese_period_drama")
     model = _resolve_character_image_model(username, project_name, body.model)
+    billing = _character_image_billing_metadata(model)
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -1628,6 +1728,7 @@ async def generate_identity_portrait_async(
                 "model": model,
                 "scope": scope,
                 "output_dir": str(project_dir),
+                "billing": billing,
             },
         )
         return {
@@ -1646,7 +1747,9 @@ async def generate_identity_portrait_async(
     return {"ok": False, "error": "身份 Portrait 生成需要 project context"}
 
 
-@router.post("/projects/{project}/characters/{name}/identities/{identity_id}/portrait/generate")
+@router.post(
+    "/projects/{project}/characters/{name}/identities/{identity_id}/portrait/generate"
+)
 async def generate_identity_portrait(
     project: str,
     name: str,
@@ -1695,11 +1798,14 @@ async def generate_identity_portrait(
             return {"ok": False, "error": "身份 Portrait 生成失败"}
         if target.exists():
             backup = (
-                identities_dir / f"{name}_{safe_name}_portrait_{datetime.now():%Y%m%d%H%M%S}.png"
+                identities_dir
+                / f"{name}_{safe_name}_portrait_{datetime.now():%Y%m%d%H%M%S}.png"
             )
             shutil.copy(target, backup)
         shutil.copy(paths[0], target)
-        await store.update_character_identity(name, identity_id, portrait_image=str(target))
+        await store.update_character_identity(
+            name, identity_id, portrait_image=str(target)
+        )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1709,7 +1815,9 @@ async def generate_identity_portrait(
     }
 
 
-@router.post("/projects/{project}/characters/{name}/identities/{identity_id}/generate-async")
+@router.post(
+    "/projects/{project}/characters/{name}/identities/{identity_id}/generate-async"
+)
 async def generate_identity_image_async(
     project: str,
     name: str,
@@ -1731,6 +1839,7 @@ async def generate_identity_image_async(
     scope = f"character:{name}:identity:{identity.identity_name}"
     style = body.style or config.get("visual_style", "chinese_period_drama")
     model = _resolve_character_image_model(username, project_name, body.model)
+    billing = _character_image_billing_metadata(model, image_role="identity")
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
@@ -1748,6 +1857,7 @@ async def generate_identity_image_async(
                 "model": model,
                 "scope": scope,
                 "output_dir": str(project_dir),
+                "billing": billing,
             },
         )
         return {
@@ -1755,7 +1865,9 @@ async def generate_identity_image_async(
             "task_type": "identity_image",
             "scope": scope,
             "task_id": queued.task_state.task_id,
-            "task_key": project_task_state_key("identity_image", ctx.project_id, 0, scope=scope),
+            "task_key": project_task_state_key(
+                "identity_image", ctx.project_id, 0, scope=scope
+            ),
             "backend": queued.backend,
             "queue": queued.queue,
             "message": f"身份图生成任务已进入队列: {identity.identity_name}",
@@ -1811,10 +1923,14 @@ async def generate_identity_image(
     from novelvideo.generators.image_generator import generate_identity_image_unified
 
     logger.info(
-        "[%s] generate_identity_image: %s/%s, model=%s", project, name, identity_id, body.model
+        "[%s] generate_identity_image: %s/%s, model=%s",
+        project,
+        name,
+        identity_id,
+        body.model,
     )
-    ctx, username, project_name, project_dir, _output_dir, store = await _resolve_character_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir, store = (
+        await _resolve_character_project(project, user)
     )
 
     character = store.get_character(name)
@@ -1830,9 +1946,9 @@ async def generate_identity_image(
     if identity is None:
         return {"ok": False, "error": f"Identity '{identity_id}' not found"}
 
-    costume_image = compute_identity_costume_path(project_dir, name, identity.identity_name) or (
-        getattr(identity, "costume_image", "") or ""
-    )
+    costume_image = compute_identity_costume_path(
+        project_dir, name, identity.identity_name
+    ) or (getattr(identity, "costume_image", "") or "")
     identity_portrait = compute_identity_portrait_path(
         project_dir, name, identity.identity_name
     ) or (getattr(identity, "portrait_image", "") or "")
@@ -1937,7 +2053,12 @@ async def generate_identity_image(
     image_url = _asset_url(
         ctx,
         project_dir,
-        project_dir / "assets" / "characters" / name / "identities" / f"{safe_identity_name}.png",
+        project_dir
+        / "assets"
+        / "characters"
+        / name
+        / "identities"
+        / f"{safe_identity_name}.png",
     )
 
     return {"ok": True, "data": {"image_url": image_url}}

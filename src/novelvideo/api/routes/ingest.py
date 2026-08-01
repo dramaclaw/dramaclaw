@@ -2,10 +2,14 @@
 
 import asyncio
 import logging
+import os
+import secrets
 import shutil
+import stat
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from novelvideo.api.auth import get_api_user, require_scope
 from novelvideo.api.chapter_preview import (
@@ -29,12 +33,13 @@ from novelvideo.ports import get_task_backend
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.utils.document_parsers import (
     DocumentParseError,
+    MAX_NOVEL_IMPORT_CHARS,
     is_supported_novel_path,
     supported_novel_extensions_label,
 )
 from novelvideo.utils.screenplay_quality import build_import_format_check
 from novelvideo.utils.upload_safety import (
-    MAX_UPLOAD_BYTES,
+    MAX_NOVEL_UPLOAD_BYTES,
     UploadTooLargeError,
     is_safe_upload_target,
     sanitize_upload_filename,
@@ -115,10 +120,53 @@ def _unsupported_format_response(filename: str) -> dict:
     }
 
 
+def _file_too_large_response() -> dict:
+    return {
+        "ok": False,
+        "error": "文件超过 1MB 上限，请压缩文件或拆分正文后重新上传。",
+        "error_type": "file_too_large",
+        "data": {"limit_bytes": MAX_NOVEL_UPLOAD_BYTES},
+    }
+
+
+def _text_too_large_response(actual_chars: int) -> dict:
+    return {
+        "ok": False,
+        "error": (
+            f"正文共 {actual_chars:,} 字，超过单次导入上限 "
+            f"{MAX_NOVEL_IMPORT_CHARS:,} 字。请拆分后重新上传。"
+        ),
+        "error_type": "text_too_large",
+        "data": {
+            "limit_chars": MAX_NOVEL_IMPORT_CHARS,
+            "actual_chars": actual_chars,
+        },
+    }
+
+
+def _create_staged_upload(staging_dir: Path, suffix: str) -> Path:
+    """Create a unique staging file whose mode respects the process umask."""
+
+    for _ in range(10):
+        staged_path = staging_dir / f"upload-{secrets.token_hex(16)}{suffix}"
+        try:
+            fd = os.open(
+                staged_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o666,
+            )
+        except FileExistsError:
+            continue
+        os.close(fd)
+        return staged_path
+    raise OSError("failed to allocate upload staging file")
+
+
 @router.post("/projects/{project}/ingest/upload")
 async def upload_novel(
     project: str,
     file: UploadFile = File(...),
+    spine_template: Annotated[str | None, Form()] = None,
     user: dict = Depends(get_api_user),
 ):
     """上传小说文件到项目的 uploads/ 目录。"""
@@ -134,47 +182,92 @@ async def upload_novel(
     if not is_supported_novel_path(safe_name):
         return _unsupported_format_response(safe_name)
     dest = uploads_dir / safe_name
+    staging_dir = uploads_dir / ".staging"
+    staging_dir.mkdir(exist_ok=True)
+    staged_path = _create_staged_upload(staging_dir, Path(safe_name).suffix)
     try:
-        size = stream_to_file_with_limit(file.file, dest)
-    except UploadTooLargeError:
-        return {
-            "ok": False,
-            "error": f"文件超过上限 ({MAX_UPLOAD_BYTES // (1024 * 1024)}MB)",
-        }
+        try:
+            size = stream_to_file_with_limit(file.file, staged_path)
+        except UploadTooLargeError:
+            return _file_too_large_response()
 
-    data = {"filename": safe_name, "size": size}
-    try:
-        content = load_novel_text(dest)
-        preview = build_chapter_preview(content)
-    except DocumentParseError as exc:
-        logger.warning("[%s] failed to parse uploaded novel: %s: %s", project, safe_name, exc)
-        return {
-            "ok": False,
-            "error": f"解析章节失败: {exc}",
-            "error_type": "parse",
-            "format": exc.source_format,
-            "detail": str(exc),
-        }
-    except Exception:
-        logger.warning("[%s] failed to build chapter preview", project, exc_info=True)
-        return {"ok": False, "error": "解析章节失败"}
+        data = {"filename": safe_name, "size": size}
+        try:
+            content = load_novel_text(staged_path)
+            billable_chars = count_billable_novel_chars(content)
+            if billable_chars > MAX_NOVEL_IMPORT_CHARS:
+                return _text_too_large_response(billable_chars)
+            project_config = load_project_config_file_from_state_dir(
+                resolved.state_dir
+            )
+            requested_spine_template = str(
+                spine_template
+                or project_config.get("spine_template")
+                or "drama"
+            ).strip()
+            preview = build_chapter_preview(
+                content,
+                include_scene_blocks=requested_spine_template != "narrated",
+            )
+        except DocumentParseError as exc:
+            logger.warning(
+                "[%s] failed to parse uploaded novel: %s: %s",
+                project,
+                safe_name,
+                exc,
+            )
+            return {
+                "ok": False,
+                "error": f"解析章节失败: {exc}",
+                "error_type": "parse",
+                "format": exc.source_format,
+                "detail": str(exc),
+            }
+        except Exception:
+            logger.warning("[%s] failed to build chapter preview", project, exc_info=True)
+            return {"ok": False, "error": "解析章节失败"}
 
-    has_chapters = bool(preview.get("chapters"))
-    format_check = build_import_format_check(
-        content,
-        has_chapters=has_chapters,
-        chapters=preview.get("chapters"),
-    )
-    if not has_chapters:
-        return {
-            "ok": False,
-            "error": "解析章节失败: 未检测到有效章节内容",
-            "format_check": format_check,
-        }
-    data.update(preview)
-    data["format_check"] = format_check
+        has_chapters = bool(preview.get("chapters"))
+        format_check = build_import_format_check(
+            content,
+            has_chapters=has_chapters,
+            chapters=preview.get("chapters"),
+        )
+        if not has_chapters:
+            return {
+                "ok": False,
+                "error": "解析章节失败: 未检测到有效章节内容",
+                "format_check": format_check,
+            }
 
-    return {"ok": True, "data": data}
+        try:
+            # Replacements preserve their existing mode. New staging files were
+            # created with mode 0666 filtered through the process umask, matching
+            # the historical ``open(path, "wb")`` behavior.
+            try:
+                destination_mode = stat.S_IMODE(dest.stat().st_mode)
+            except FileNotFoundError:
+                pass
+            else:
+                staged_path.chmod(destination_mode)
+            os.replace(staged_path, dest)
+        except OSError:
+            logger.exception("[%s] failed to persist uploaded novel: %s", project, safe_name)
+            return {"ok": False, "error": "保存上传文件失败"}
+
+        data.update(preview)
+        data["format_check"] = format_check
+        return {"ok": True, "data": data}
+    finally:
+        try:
+            staged_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "[%s] failed to remove staged upload: %s",
+                project,
+                staged_path.name,
+                exc_info=True,
+            )
 
 
 @router.post("/projects/{project}/ingest/start")
@@ -213,8 +306,17 @@ async def start_ingest(
         return {"ok": False, "error": f"File '{body.filename}' not found in uploads/"}
 
     try:
+        if novel_path.stat().st_size > MAX_NOVEL_UPLOAD_BYTES:
+            return _file_too_large_response()
+    except OSError:
+        logger.warning("[%s] failed to stat uploaded novel", project, exc_info=True)
+        return {"ok": False, "error": "无法读取上传文件，请重新上传后再导入"}
+
+    try:
         content = load_novel_text(novel_path)
         billable_chars = count_billable_novel_chars(content)
+        if billable_chars > MAX_NOVEL_IMPORT_CHARS:
+            return _text_too_large_response(billable_chars)
     except DocumentParseError as exc:
         return {
             "ok": False,

@@ -24,6 +24,7 @@ beforeAll(async () => {
             download: "下载",
             regenerate: "重新生成",
             stop: "停止",
+            billingRuleNotConfiguredShort: "需配置",
           },
           episode: {
             workbench: {
@@ -116,6 +117,13 @@ vi.mock("@/hooks/use-task-controller", () => ({
   }),
 }));
 
+vi.mock("@/lib/queries/generation-credit-cost", () => ({
+  useGenerationCreditCost: () => ({
+    data: { data: { display: "6" } },
+    error: null,
+  }),
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
@@ -160,7 +168,7 @@ beforeEach(() => {
   generateSketchesMock.mockReset();
   generateSketchesMock.mockResolvedValue({
     ok: true,
-    task_type: "sketch_generation",
+    task_type: "sketch_grid_generation",
     message: "started",
   });
   cutGridMock.mockReset();

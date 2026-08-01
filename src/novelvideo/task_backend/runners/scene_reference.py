@@ -37,6 +37,7 @@ async def _run_scene_reference_asset(
         normalize_image_generation_selection,
     )
     from novelvideo.generators.scene_reference_images import generate_scene_reference_image
+    from novelvideo.generators.nanobanana_grid import scene_reference_feature_billing
 
     payload = envelope.get("payload") or {}
     scene_name = str(payload["scene_name"])
@@ -93,17 +94,18 @@ async def _run_scene_reference_asset(
             selected_image_source = IMAGE_GENERATION_SELECTIONS[normalized_selection]
             provider = selected_image_source["provider"]
             model = selected_image_source["model"]
-        output_path = await generate_scene_reference_image(
-            project_dir=output_dir,
-            scene=scene,
-            kind=kind,  # type: ignore[arg-type]
-            provider=provider,
-            model=model,
-            style_name=style_name,
-            style_prompt=style_prompt,
-            avoid_instructions=avoid_instructions,
-            base_scene=base_scene,
-        )
+        with scene_reference_feature_billing():
+            output_path = await generate_scene_reference_image(
+                project_dir=output_dir,
+                scene=scene,
+                kind=kind,  # type: ignore[arg-type]
+                provider=provider,
+                model=model,
+                style_name=style_name,
+                style_prompt=style_prompt,
+                avoid_instructions=avoid_instructions,
+                base_scene=base_scene,
+            )
         if kind == "spatial_layout":
             rel_path = str(Path(output_path).relative_to(output_dir))
             await store.sqlite_store.update_scene(scene_name, spatial_layout_image=rel_path)
