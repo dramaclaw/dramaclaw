@@ -67,6 +67,7 @@ describe("organization route runtime gating", () => {
     ["overview", "@/routes/_app/organization", "/organization"],
     ["members", "@/routes/_app/organization.members", "/organization/members"],
     ["gateway key", "@/routes/_app/organization.gateway-key", "/organization/gateway-key"],
+    ["access unavailable", "@/routes/_app/access-unavailable", "/access-unavailable"],
   ] as const)("blocks CE %s before any org request, including focus", async (_name, modulePath, path) => {
     let orgRequests = 0;
     server.use(
@@ -80,7 +81,9 @@ describe("organization route runtime gating", () => {
       ? await import("@/routes/_app/organization")
       : modulePath === "@/routes/_app/organization.members"
         ? await import("@/routes/_app/organization.members")
-        : await import("@/routes/_app/organization.gateway-key");
+        : modulePath === "@/routes/_app/organization.gateway-key"
+          ? await import("@/routes/_app/organization.gateway-key")
+          : await import("@/routes/_app/access-unavailable");
     const Component = module.Route.options.component as React.ComponentType;
 
     renderRoute(Component);
@@ -103,14 +106,25 @@ describe("organization route runtime gating", () => {
             username: "alice",
             model_billing_entitlement: "platform",
           },
-          organization: { org_id: "org-1", name: "Acme", status: "active" },
-          membership: { role: "org_member", membership_status: "active" },
+          organization: {
+            org_id: "org-1",
+            name: "Acme",
+            status: "active",
+            updated_at: "2026-08-02T00:00:00Z",
+          },
+          membership: {
+            role: "org_member",
+            membership_status: "active",
+            updated_at: "2026-08-02T00:00:00Z",
+          },
           capabilities: {
             manage_members: false,
             manage_invites: false,
             manage_gateway_key: false,
+            start_model_tasks: false,
           },
           gateway_key: { state: "never_configured", key_version: null },
+          denial_reason: "ORG_CREDENTIAL_MISSING",
         });
       }),
     );
@@ -156,8 +170,10 @@ describe("organization route runtime gating", () => {
             manage_members: false,
             manage_invites: false,
             manage_gateway_key: false,
+            start_model_tasks: true,
           },
           gateway_key: { state: "active", key_version: 3 },
+          denial_reason: null,
         });
       }),
       http.all("*/api/v1/org/gateway/key*", () => {

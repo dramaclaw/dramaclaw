@@ -20,6 +20,7 @@ import {
   revokeOrgInvite,
   useAcceptOrgInvite,
   useCreateOrgInvite,
+  useOrgMe,
   useOrgInvites,
   useOrgMembers,
   usePatchOrgMember,
@@ -388,7 +389,7 @@ describe("organization API contract", () => {
     expect(previewWithoutRole).not.toHaveProperty("role");
   });
 
-  it("reads the bare /org/me DTO without BT4 or BT5 fields", async () => {
+  it("reads the strict authoritative /org/me control snapshot", async () => {
     server.use(
       http.get("*/api/v1/org/me", ({ request }) => {
         expectCookieOnlyRequest(request);
@@ -409,7 +410,13 @@ describe("organization API contract", () => {
             membership_status: "active",
             updated_at: "2026-07-29T00:00:00Z",
           },
-          capabilities: { manage_members: true, manage_invites: true },
+          capabilities: {
+            manage_members: true,
+            manage_invites: true,
+            manage_gateway_key: true,
+            start_model_tasks: true,
+          },
+          gateway_key: { state: "active", key_version: 3 },
           denial_reason: null,
         });
       }),
@@ -418,9 +425,164 @@ describe("organization API contract", () => {
     const result = await getOrgMe();
 
     expect(result.organization?.org_id).toBe("org-1");
-    expect(result.capabilities).toEqual({ manage_members: true, manage_invites: true });
+    expect(result.capabilities).toEqual({
+      manage_members: true,
+      manage_invites: true,
+      manage_gateway_key: true,
+      start_model_tasks: true,
+    });
     expect(result).not.toHaveProperty("current_org");
     expect(result).not.toHaveProperty("key");
+  });
+
+  const authoritativeOrgMe = {
+    user: {
+      user_id: "user-1",
+      username: "alice",
+      model_billing_entitlement: "platform",
+    },
+    organization: {
+      org_id: "org-1",
+      name: "Acme",
+      status: "active",
+      updated_at: "2026-08-02T00:00:00Z",
+    },
+    membership: {
+      role: "org_member",
+      membership_status: "active",
+      updated_at: "2026-08-02T00:00:00Z",
+    },
+    capabilities: {
+      manage_members: false,
+      manage_invites: false,
+      manage_gateway_key: false,
+      start_model_tasks: true,
+    },
+    gateway_key: { state: "active", key_version: 3 },
+    denial_reason: null,
+  };
+
+  it.each([
+    ["disabled entitlement presentation", {
+      ...authoritativeOrgMe,
+      user: {
+        ...authoritativeOrgMe.user,
+        model_billing_entitlement: "disabled",
+      },
+    }],
+    ["never-configured Gateway presentation", {
+      ...authoritativeOrgMe,
+      gateway_key: { state: "never_configured", key_version: null },
+    }],
+    ["suspended organization presentation", {
+      ...authoritativeOrgMe,
+      organization: { ...authoritativeOrgMe.organization, status: "suspended" },
+    }],
+    ["suspended membership presentation", {
+      ...authoritativeOrgMe,
+      membership: {
+        ...authoritativeOrgMe.membership,
+        membership_status: "suspended",
+      },
+    }],
+  ])("accepts authoritative true/null despite %s", async (_name, body) => {
+    server.use(
+      http.get("*/api/v1/org/me", ({ request }) => {
+        expectCookieOnlyRequest(request);
+        return HttpResponse.json(body);
+      }),
+    );
+
+    await expect(getOrgMe()).resolves.toMatchObject({
+      capabilities: { start_model_tasks: true },
+      denial_reason: null,
+    });
+  });
+
+  it.each([
+    ["missing start capability", (body: Record<string, unknown>) => ({
+      ...body,
+      capabilities: {
+        manage_members: true,
+        manage_invites: true,
+        manage_gateway_key: true,
+      },
+    })],
+    ["non-boolean start capability", (body: Record<string, unknown>) => ({
+      ...body,
+      capabilities: { ...(body.capabilities as object), start_model_tasks: "yes" },
+    })],
+    ["extra capability", (body: Record<string, unknown>) => ({
+      ...body,
+      capabilities: { ...(body.capabilities as object), view_existing: true },
+    })],
+    ["extra top-level field", (body: Record<string, unknown>) => ({
+      ...body,
+      credential_id: "SECRET-CREDENTIAL-CANARY",
+    })],
+    ["true with denial", (body: Record<string, unknown>) => ({
+      ...body,
+      denial_reason: "ORG_CREDENTIAL_MISSING",
+    })],
+    ["false without denial", (body: Record<string, unknown>) => ({
+      ...body,
+      capabilities: { ...(body.capabilities as object), start_model_tasks: false },
+    })],
+    ["unknown denial", (body: Record<string, unknown>) => ({
+      ...body,
+      capabilities: { ...(body.capabilities as object), start_model_tasks: false },
+      denial_reason: "PROVIDER-SECRET-CANARY",
+    })],
+    ["malformed gateway summary", (body: Record<string, unknown>) => ({
+      ...body,
+      gateway_key: { state: "active", key_version: null },
+    })],
+    ["invalid organization timestamp", (body: Record<string, unknown>) => ({
+      ...body,
+      organization: {
+        ...(body.organization as object),
+        updated_at: "2026-02-30T12:00:00Z",
+      },
+    })],
+  ])("rejects /org/me with %s before cache", async (_name, mutate) => {
+    const valid = {
+      user: {
+        user_id: "user-1",
+        username: "alice",
+        model_billing_entitlement: "platform",
+      },
+      organization: {
+        org_id: "org-1",
+        name: "Acme",
+        status: "active",
+        updated_at: "2026-08-02T00:00:00Z",
+      },
+      membership: {
+        role: "org_member",
+        membership_status: "active",
+        updated_at: "2026-08-02T00:00:00Z",
+      },
+      capabilities: {
+        manage_members: false,
+        manage_invites: false,
+        manage_gateway_key: false,
+        start_model_tasks: true,
+      },
+      gateway_key: { state: "active", key_version: 3 },
+      denial_reason: null,
+    };
+    server.use(
+      http.get("*/api/v1/org/me", () => HttpResponse.json(mutate(valid))),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook(() => useOrgMe(), { wrapper: wrapperFor(client) });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(client.getQueryData(queryKeys.orgMe())).toBeUndefined();
+    expect(JSON.stringify(client.getQueryCache().getAll())).not.toContain(
+      "SECRET-CREDENTIAL-CANARY",
+    );
   });
 
   it("implements member list, create, batch and patch wire contracts", async () => {

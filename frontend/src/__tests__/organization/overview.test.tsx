@@ -32,6 +32,9 @@ const labels: Record<string, string> = {
   "organization.actions.manageGatewayKey": "Manage gateway key",
   "organization.gatewayKey.available": "Gateway key available",
   "organization.gatewayKey.unavailable": "Gateway key unavailable",
+  "organization.access.available": "Model tasks available",
+  "organization.access.unavailable": "Model tasks unavailable",
+  "organization.actions.viewAccess": "View access details",
 };
 
 vi.mock("react-i18next", () => ({
@@ -62,8 +65,10 @@ const activeAdmin = {
     manage_members: true,
     manage_invites: true,
     manage_gateway_key: true,
+    start_model_tasks: true,
   },
   gateway_key: { state: "active", key_version: 3 },
+  denial_reason: null,
 };
 
 function renderOverview() {
@@ -101,13 +106,14 @@ describe("organization overview", () => {
       "/organization/gateway-key",
     );
     expect(screen.getByText("Gateway key available")).toBeVisible();
+    expect(screen.getByText("Model tasks available")).toBeVisible();
   });
 
   it.each([
     ["active without version", { state: "active", key_version: null }],
     ["never configured with version", { state: "never_configured", key_version: 3 }],
     ["no active without version", { state: "no_active", key_version: null }],
-  ])("hides malformed gateway summary: %s", async (_name, gatewayKey) => {
+  ])("rejects malformed gateway summary: %s", async (_name, gatewayKey) => {
     server.use(
       http.get("*/api/v1/org/me", () =>
         HttpResponse.json({ ...activeAdmin, gateway_key: gatewayKey }),
@@ -115,13 +121,8 @@ describe("organization overview", () => {
     );
     renderOverview();
 
-    expect(await screen.findByText("Acme")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Manage members" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Manage invitations" })).toBeVisible();
-    expect(screen.queryByRole("link", { name: "Manage gateway key" }))
-      .not.toBeInTheDocument();
-    expect(screen.queryByText("Gateway key available")).not.toBeInTheDocument();
-    expect(screen.queryByText("Gateway key unavailable")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeVisible();
+    expect(screen.queryByText("Acme")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -133,7 +134,9 @@ describe("organization overview", () => {
           manage_members: false,
           manage_invites: false,
           manage_gateway_key: false,
+          start_model_tasks: false,
         },
+        denial_reason: "MODEL_ACCESS_DENIED",
       },
     },
     {
@@ -145,7 +148,9 @@ describe("organization overview", () => {
           manage_members: false,
           manage_invites: false,
           manage_gateway_key: false,
+          start_model_tasks: false,
         },
+        denial_reason: "ORG_CREDENTIAL_MISSING",
       },
     },
     {
@@ -153,11 +158,9 @@ describe("organization overview", () => {
       body: {
         ...activeAdmin,
         membership: { ...activeAdmin.membership, membership_status: "suspended" },
+        capabilities: { ...activeAdmin.capabilities, start_model_tasks: false },
+        denial_reason: "ORG_MEMBERSHIP_INACTIVE",
       },
-    },
-    {
-      name: "incomplete DTO",
-      body: { ...activeAdmin, user: null },
     },
   ])("fails closed for $name", async ({ body }) => {
     server.use(http.get("*/api/v1/org/me", () => HttpResponse.json(body)));
@@ -170,6 +173,16 @@ describe("organization overview", () => {
     expect(screen.queryByRole("link", { name: "Manage gateway key" })).not.toBeInTheDocument();
   });
 
+  it("rejects an incomplete DTO instead of rendering partial facts", async () => {
+    server.use(
+      http.get("*/api/v1/org/me", () => HttpResponse.json({ ...activeAdmin, user: null })),
+    );
+    renderOverview();
+
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeVisible();
+    expect(screen.queryByText("Acme")).not.toBeInTheDocument();
+  });
+
   it("shows a safe no-organization state even if capabilities are true", async () => {
     server.use(
       http.get("*/api/v1/org/me", () =>
@@ -177,6 +190,9 @@ describe("organization overview", () => {
           ...activeAdmin,
           organization: null,
           membership: null,
+          capabilities: { ...activeAdmin.capabilities, start_model_tasks: false },
+          gateway_key: { state: "never_configured", key_version: null },
+          denial_reason: "MODEL_ACCESS_DENIED",
         }),
       ),
     );
@@ -184,6 +200,10 @@ describe("organization overview", () => {
 
     expect(await screen.findByText("No current organization")).toBeVisible();
     expect(screen.queryByRole("link", { name: "Manage members" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View access details" })).toHaveAttribute(
+      "href",
+      "/access-unavailable",
+    );
   });
 
   it("does not expose backend error canaries", async () => {

@@ -56,8 +56,10 @@ const admin = {
     manage_members: true,
     manage_invites: true,
     manage_gateway_key: true,
+    start_model_tasks: true,
   },
   gateway_key: { state: "active", key_version: 3 },
+  denial_reason: null,
 };
 
 function renderGateway(client = new QueryClient({

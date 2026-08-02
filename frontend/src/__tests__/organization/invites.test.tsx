@@ -50,7 +50,14 @@ const admin = {
     membership_status: "active",
     updated_at: "2026-07-30T00:00:00Z",
   },
-  capabilities: { manage_members: true, manage_invites: true },
+  capabilities: {
+    manage_members: true,
+    manage_invites: true,
+    manage_gateway_key: true,
+    start_model_tasks: true,
+  },
+  gateway_key: { state: "active", key_version: 3 },
+  denial_reason: null,
 };
 
 function renderInvites(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {

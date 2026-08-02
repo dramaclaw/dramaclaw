@@ -28,7 +28,16 @@ export interface OrgCapabilities {
   manage_members: boolean;
   manage_invites: boolean;
   manage_gateway_key: boolean;
+  start_model_tasks: boolean;
 }
+
+export type OrgAccessDenialReason =
+  | "MODEL_ACCESS_DENIED"
+  | "ORG_MEMBERSHIP_INACTIVE"
+  | "ORG_SUSPENDED"
+  | "ORG_CREDENTIAL_MISSING"
+  | "ORG_CREDENTIAL_DISABLED"
+  | "ORG_AUTHZ_STALE";
 
 export type GatewayKeyState = "never_configured" | "active" | "no_active";
 
@@ -57,7 +66,7 @@ export interface OrgMe {
   membership: OrgMeMembership | null;
   capabilities: OrgCapabilities;
   gateway_key: GatewayKeySummary;
-  denial_reason?: string | null;
+  denial_reason: OrgAccessDenialReason | null;
 }
 
 export interface Member {

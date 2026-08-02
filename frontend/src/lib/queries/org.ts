@@ -229,6 +229,132 @@ async function orgJson<T>(request: () => Promise<Response>): Promise<T> {
   }
 }
 
+const ORG_ME_FIELDS = new Set([
+  "user",
+  "organization",
+  "membership",
+  "capabilities",
+  "gateway_key",
+  "denial_reason",
+]);
+const ORG_ME_USER_FIELDS = new Set([
+  "user_id",
+  "username",
+  "model_billing_entitlement",
+]);
+const ORG_ME_ORGANIZATION_FIELDS = new Set([
+  "org_id",
+  "name",
+  "status",
+  "updated_at",
+]);
+const ORG_ME_MEMBERSHIP_FIELDS = new Set([
+  "role",
+  "membership_status",
+  "updated_at",
+]);
+const ORG_CAPABILITY_FIELDS = new Set([
+  "manage_members",
+  "manage_invites",
+  "manage_gateway_key",
+  "start_model_tasks",
+]);
+const ORG_GATEWAY_SUMMARY_FIELDS = new Set(["state", "key_version"]);
+const ORG_ACCESS_DENIAL_REASONS = new Set([
+  "MODEL_ACCESS_DENIED",
+  "ORG_MEMBERSHIP_INACTIVE",
+  "ORG_SUSPENDED",
+  "ORG_CREDENTIAL_MISSING",
+  "ORG_CREDENTIAL_DISABLED",
+  "ORG_AUTHZ_STALE",
+]);
+
+function hasExactFields(value: Record<string, unknown>, fields: Set<string>): boolean {
+  const keys = Object.keys(value);
+  return keys.length === fields.size && keys.every((key) => fields.has(key));
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isOrgMeUser(value: unknown): boolean {
+  return isRecord(value) &&
+    hasExactFields(value, ORG_ME_USER_FIELDS) &&
+    isNonEmptyString(value.user_id) &&
+    isNonEmptyString(value.username) &&
+    ["platform", "org_sponsored", "disabled"].includes(
+      String(value.model_billing_entitlement),
+    );
+}
+
+function isOrgMeOrganization(value: unknown): boolean {
+  return value === null || (
+    isRecord(value) &&
+    hasExactFields(value, ORG_ME_ORGANIZATION_FIELDS) &&
+    isNonEmptyString(value.org_id) &&
+    isNonEmptyString(value.name) &&
+    ["active", "suspended"].includes(String(value.status)) &&
+    (value.updated_at === null || isGatewayZonedDateTime(value.updated_at))
+  );
+}
+
+function isOrgMeMembership(value: unknown): boolean {
+  return value === null || (
+    isRecord(value) &&
+    hasExactFields(value, ORG_ME_MEMBERSHIP_FIELDS) &&
+    ["org_admin", "org_member"].includes(String(value.role)) &&
+    ["active", "suspended"].includes(String(value.membership_status)) &&
+    (value.updated_at === null || isGatewayZonedDateTime(value.updated_at))
+  );
+}
+
+function isOrgCapabilities(value: unknown): boolean {
+  return isRecord(value) &&
+    hasExactFields(value, ORG_CAPABILITY_FIELDS) &&
+    [...ORG_CAPABILITY_FIELDS].every((field) => typeof value[field] === "boolean");
+}
+
+function isGatewayKeySummary(value: unknown): boolean {
+  return isRecord(value) &&
+    hasExactFields(value, ORG_GATEWAY_SUMMARY_FIELDS) &&
+    hasCoherentGatewayStateVersion(value.state, value.key_version);
+}
+
+function parseOrgMe(value: unknown, status: number): OrgMe {
+  if (
+    !isRecord(value) ||
+    !hasExactFields(value, ORG_ME_FIELDS) ||
+    !isOrgMeUser(value.user) ||
+    !isOrgMeOrganization(value.organization) ||
+    !isOrgMeMembership(value.membership) ||
+    !isOrgCapabilities(value.capabilities) ||
+    !isGatewayKeySummary(value.gateway_key) ||
+    !(value.denial_reason === null ||
+      (typeof value.denial_reason === "string" &&
+        ORG_ACCESS_DENIAL_REASONS.has(value.denial_reason)))
+  ) {
+    throw new OrgApiError({ status });
+  }
+  const capabilities = value.capabilities as Record<string, unknown>;
+  const canStart = capabilities.start_model_tasks === true;
+  if (canStart !== (value.denial_reason === null)) {
+    throw new OrgApiError({ status });
+  }
+  return value as unknown as OrgMe;
+}
+
+async function orgMeJson(request: () => Promise<Response>): Promise<OrgMe> {
+  const response = await orgResponse(request);
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    throw new OrgApiError({ status: response.status });
+  }
+  return parseOrgMe(value, response.status);
+}
+
 function searchParams(values: object): URLSearchParams {
   const result = new URLSearchParams();
   for (const [key, value] of Object.entries(values)) {
@@ -452,7 +578,7 @@ export function deleteOrgGatewayKey(
 }
 
 export function getOrgMe(): Promise<OrgMe> {
-  return orgJson(() => api.get(orgUrl("me")));
+  return orgMeJson(() => api.get(orgUrl("me")));
 }
 
 async function listOrgMembersWithParams(

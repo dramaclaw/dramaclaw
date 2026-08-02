@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { presentOrganizationAccess } from "@/lib/org-access-state";
 import { useOrgMe } from "@/lib/queries/org";
 
 type RuntimeRecord = Record<string, unknown>;
@@ -99,6 +100,7 @@ export function OrganizationOverview() {
     membership?.role === "org_admin" &&
     capabilities?.manage_invites === true;
   const gatewayKey = isRecord(query.data.gateway_key) ? query.data.gateway_key : null;
+  const access = presentOrganizationAccess(query.data);
   const hasSafeGatewaySummary = Boolean(
     gatewayKey &&
     hasCoherentGatewayStateVersion(gatewayKey.state, gatewayKey.key_version),
@@ -130,8 +132,14 @@ export function OrganizationOverview() {
           <CardHeader>
             <CardTitle>{t("organization.empty.title")}</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            {t("organization.empty.description")}
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
+            <p>{t("organization.empty.description")}</p>
+            {!access.canStart ? (
+              <Link className="font-medium text-primary hover:underline"
+                to="/access-unavailable">
+                {t("organization.actions.viewAccess")}
+              </Link>
+            ) : null}
           </CardContent>
         </Card>
       ) : (
@@ -194,6 +202,19 @@ export function OrganizationOverview() {
                 : "organization.gatewayKey.unavailable")}
             </p>
           ) : null}
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border p-4">
+            <p role="status" className="text-sm text-muted-foreground">
+              {t(access.canStart
+                ? "organization.access.available"
+                : "organization.access.unavailable")}
+            </p>
+            {!access.canStart ? (
+              <Link className="text-sm font-medium text-primary hover:underline"
+                to="/access-unavailable">
+                {t("organization.actions.viewAccess")}
+              </Link>
+            ) : null}
+          </div>
           {canManageMembers || canManageInvites || canManageGatewayKey ? (
             <Card>
               <CardHeader>

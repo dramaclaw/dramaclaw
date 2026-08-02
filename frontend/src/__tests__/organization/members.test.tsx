@@ -69,7 +69,14 @@ const orgMe = {
     membership_status: "active",
     updated_at: "2026-07-29T00:00:00Z",
   },
-  capabilities: { manage_members: true, manage_invites: true },
+  capabilities: {
+    manage_members: true,
+    manage_invites: true,
+    manage_gateway_key: true,
+    start_model_tasks: true,
+  },
+  gateway_key: { state: "active", key_version: 3 },
+  denial_reason: null,
 };
 
 const member = {
@@ -159,7 +166,13 @@ describe("organization members", () => {
           membership_status: "active",
           updated_at: "2026-07-29T00:00:00Z",
         },
-        capabilities: { manage_members: false, manage_invites: false },
+        capabilities: {
+          manage_members: false,
+          manage_invites: false,
+          manage_gateway_key: false,
+          start_model_tasks: false,
+        },
+        denial_reason: "ORG_MEMBERSHIP_INACTIVE",
       },
     });
 

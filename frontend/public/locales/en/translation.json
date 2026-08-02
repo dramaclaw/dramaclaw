@@ -77,7 +77,25 @@
     "actions": {
       "manageMembers": "Manage members",
       "manageInvites": "Manage invitations",
-      "manageGatewayKey": "Manage gateway key"
+      "manageGatewayKey": "Manage gateway key",
+      "viewAccess": "View access details"
+    },
+    "access": {
+      "title": "Model access",
+      "loading": "Loading model access",
+      "retry": "Retry access",
+      "back": "Back to organization",
+      "available": "Model tasks available",
+      "unavailable": "Model tasks unavailable",
+      "reasons": {
+        "MODEL_ACCESS_DENIED": "Model access is disabled for this account.",
+        "ORG_MEMBERSHIP_INACTIVE": "Your organization membership is inactive.",
+        "ORG_SUSPENDED": "This organization is suspended.",
+        "ORG_CREDENTIAL_MISSING": "The organization has no available gateway key.",
+        "ORG_CREDENTIAL_DISABLED": "The organization gateway key is unavailable.",
+        "ORG_AUTHZ_STALE": "Your access changed. Refresh before trying again.",
+        "generic": "Model access is currently unavailable."
+      }
     },
     "gatewayKey": {
       "title": "Organization gateway key",

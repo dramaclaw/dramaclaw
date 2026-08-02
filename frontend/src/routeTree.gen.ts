@@ -18,6 +18,7 @@ import { Route as WatchWorkRouteImport } from './routes/watch.$work'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as AppOrganizationRouteImport } from './routes/_app/organization'
 import { Route as AppCreditsRouteImport } from './routes/_app/credits'
+import { Route as AppAccessUnavailableRouteImport } from './routes/_app/access-unavailable'
 import { Route as AppOrganizationMembersRouteImport } from './routes/_app/organization.members'
 import { Route as AppOrganizationInvitesRouteImport } from './routes/_app/organization.invites'
 import { Route as AppOrganizationGatewayKeyRouteImport } from './routes/_app/organization.gateway-key'
@@ -88,6 +89,11 @@ const AppOrganizationRoute = AppOrganizationRouteImport.update({
 const AppCreditsRoute = AppCreditsRouteImport.update({
   id: '/credits',
   path: '/credits',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccessUnavailableRoute = AppAccessUnavailableRouteImport.update({
+  id: '/access-unavailable',
+  path: '/access-unavailable',
   getParentRoute: () => AppRoute,
 } as any)
 const AppOrganizationMembersRoute = AppOrganizationMembersRouteImport.update({
@@ -239,6 +245,7 @@ const AppProjectsProjectEpisodesEpisodeAudioLazyRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
+  '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
   '/organization': typeof AppOrganizationRouteWithChildren
   '/invite/$token': typeof InviteTokenRoute
@@ -264,6 +271,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
   '/organization': typeof AppOrganizationRouteWithChildren
   '/invite/$token': typeof InviteTokenRoute
@@ -292,6 +300,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/_app/access-unavailable': typeof AppAccessUnavailableRoute
   '/_app/credits': typeof AppCreditsRoute
   '/_app/organization': typeof AppOrganizationRouteWithChildren
   '/invite/$token': typeof InviteTokenRoute
@@ -321,6 +330,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/access-unavailable'
     | '/credits'
     | '/organization'
     | '/invite/$token'
@@ -346,6 +356,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/access-unavailable'
     | '/credits'
     | '/organization'
     | '/invite/$token'
@@ -373,6 +384,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_app'
     | '/login'
+    | '/_app/access-unavailable'
     | '/_app/credits'
     | '/_app/organization'
     | '/invite/$token'
@@ -454,6 +466,13 @@ declare module '@tanstack/react-router' {
       path: '/credits'
       fullPath: '/credits'
       preLoaderRoute: typeof AppCreditsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/access-unavailable': {
+      id: '/_app/access-unavailable'
+      path: '/access-unavailable'
+      fullPath: '/access-unavailable'
+      preLoaderRoute: typeof AppAccessUnavailableRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/organization/members': {
@@ -638,6 +657,7 @@ const AppProjectsProjectEpisodesRouteWithChildren =
   )
 
 interface AppRouteChildren {
+  AppAccessUnavailableRoute: typeof AppAccessUnavailableRoute
   AppCreditsRoute: typeof AppCreditsRoute
   AppOrganizationRoute: typeof AppOrganizationRouteWithChildren
   AppIndexRoute: typeof AppIndexRoute
@@ -651,6 +671,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAccessUnavailableRoute: AppAccessUnavailableRoute,
   AppCreditsRoute: AppCreditsRoute,
   AppOrganizationRoute: AppOrganizationRouteWithChildren,
   AppIndexRoute: AppIndexRoute,
