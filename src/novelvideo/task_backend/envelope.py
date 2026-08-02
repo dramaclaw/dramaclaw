@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
+import math
 import re
 from typing import Any, Mapping
 
@@ -14,7 +16,20 @@ from novelvideo.ports.model_credentials import CredentialReference
 
 
 class InvalidTaskEnvelope(ValueError):
-    pass
+    """A fail-closed task envelope error with a stable public code."""
+
+    code = "TASK_ENVELOPE_INVALID"
+    _message = "invalid task envelope"
+
+    def __init__(self) -> None:
+        super().__init__(self._message)
+
+
+class StaleTaskEnvelope(InvalidTaskEnvelope):
+    """A task envelope whose signed time window cannot be accepted."""
+
+    code = "TASK_ENVELOPE_STALE"
+    _message = "stale task envelope"
 
 
 _SENSITIVE_PAYLOAD_FIELDS = {
@@ -31,10 +46,13 @@ _SENSITIVE_PAYLOAD_FIELDS = {
 }
 _ENVELOPE_FIELDS = {
     "schema_version",
+    "envelope_id",
     "admission",
     "task_type",
     "project_id",
     "payload",
+    "issued_at",
+    "expires_at",
     "signing_key_id",
     "signature",
 }
@@ -50,54 +68,193 @@ _ADMISSION_FIELDS = {
 }
 _PRINCIPAL_FIELDS = {"kind", "id"}
 _CREDENTIAL_FIELDS = {"source", "credential_id", "key_version", "org_id"}
+_KEY_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+_SIGNATURE_RE = re.compile(r"[0-9a-f]{64}\Z")
+_UTC_TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
+_MAX_LIFETIME = timedelta(hours=24)
+_CLOCK_SKEW = timedelta(seconds=30)
 
 
-def _reject_sensitive_fields(value: Any) -> None:
-    if isinstance(value, dict):
-        for key, nested_value in value.items():
-            normalized_key = re.sub(r"[^a-z0-9]", "", str(key).casefold())
-            if normalized_key in _SENSITIVE_PAYLOAD_FIELDS:
-                raise InvalidTaskEnvelope(
-                    f"sensitive field {key!r} is not allowed in a task envelope"
-                )
-            _reject_sensitive_fields(nested_value)
-    elif isinstance(value, (list, tuple)):
-        for nested_value in value:
-            _reject_sensitive_fields(nested_value)
+def _invalid() -> InvalidTaskEnvelope:
+    return InvalidTaskEnvelope()
 
 
-def _canonical_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+def _stale() -> StaleTaskEnvelope:
+    return StaleTaskEnvelope()
 
 
 def _require_exact_fields(value: Any, expected: set[str]) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != expected:
-        raise InvalidTaskEnvelope("malformed task envelope")
+    if type(value) is not dict or set(value) != expected:
+        raise _invalid()
     return value
 
 
 def _require_exact_type(value: Any, expected_type: type) -> None:
     if type(value) is not expected_type:
-        raise InvalidTaskEnvelope("malformed task envelope")
+        raise _invalid()
+
+
+def _require_non_empty_string(value: Any) -> None:
+    _require_exact_type(value, str)
+    if not value:
+        raise _invalid()
+
+
+def _validate_json_value(value: Any) -> None:
+    if value is None or type(value) in {str, bool, int}:
+        return
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise _invalid()
+        return
+    if type(value) is list:
+        for nested_value in value:
+            _validate_json_value(nested_value)
+        return
+    if type(value) is dict:
+        for key, nested_value in value.items():
+            _require_exact_type(key, str)
+            normalized_key = re.sub(r"[^a-z0-9]", "", key.casefold())
+            if normalized_key in _SENSITIVE_PAYLOAD_FIELDS:
+                raise _invalid()
+            _validate_json_value(nested_value)
+        return
+    raise _invalid()
+
+
+def _canonical_json(value: Any) -> str:
+    _validate_json_value(value)
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        raise _invalid() from None
+
+
+def _parse_utc_timestamp(value: Any) -> datetime:
+    _require_exact_type(value, str)
+    if _UTC_TIMESTAMP_RE.fullmatch(value) is None:
+        raise _stale()
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        raise _stale() from None
+    return parsed.replace(tzinfo=timezone.utc)
+
+
+def _validate_time_window(issued_at: Any, expires_at: Any) -> tuple[datetime, datetime]:
+    issued = _parse_utc_timestamp(issued_at)
+    expires = _parse_utc_timestamp(expires_at)
+    lifetime = expires - issued
+    if lifetime <= timedelta(0) or lifetime > _MAX_LIFETIME:
+        raise _stale()
+    return issued, expires
+
+
+def _validate_signing_key(signing_key: Any) -> bytes:
+    if type(signing_key) is not bytes or len(signing_key) < 32:
+        raise _invalid()
+    return signing_key
+
+
+def _validate_key_id(signing_key_id: Any) -> None:
+    _require_exact_type(signing_key_id, str)
+    if _KEY_ID_RE.fullmatch(signing_key_id) is None:
+        raise _invalid()
+
+
+def _validate_signature(signature: Any) -> None:
+    _require_exact_type(signature, str)
+    if _SIGNATURE_RE.fullmatch(signature) is None:
+        raise _invalid()
+
+
+def _parse_admission(value: Any) -> AdmissionContext:
+    admission_value = _require_exact_fields(value, _ADMISSION_FIELDS)
+    for field_name in (
+        "requester_user_id",
+        "admission_id",
+        "root_task_id",
+        "admitted_at",
+    ):
+        _require_non_empty_string(admission_value[field_name])
+    if admission_value["membership_id"] is not None:
+        _require_non_empty_string(admission_value["membership_id"])
+    _require_exact_type(admission_value["authz_version"], int)
+
+    credential_value = _require_exact_fields(
+        admission_value["credential"],
+        _CREDENTIAL_FIELDS,
+    )
+    principal_value = _require_exact_fields(
+        admission_value["billing_principal"],
+        _PRINCIPAL_FIELDS,
+    )
+    for field_name in ("source", "credential_id"):
+        _require_non_empty_string(credential_value[field_name])
+    _require_exact_type(credential_value["key_version"], int)
+    if credential_value["org_id"] is not None:
+        _require_non_empty_string(credential_value["org_id"])
+    for field_name in ("kind", "id"):
+        _require_non_empty_string(principal_value[field_name])
+
+    try:
+        credential = CredentialReference(**credential_value)
+        principal = BillingPrincipal(**principal_value)
+        return AdmissionContext(
+            **{
+                **admission_value,
+                "credential": credential,
+                "billing_principal": principal,
+            }
+        )
+    except (TypeError, ValueError):
+        raise _invalid() from None
+
+
+def _serialize_admission(admission: Any) -> dict[str, Any]:
+    if type(admission) is not AdmissionContext:
+        raise _invalid()
+    try:
+        value = asdict(admission)
+    except (TypeError, ValueError):
+        raise _invalid() from None
+    _parse_admission(value)
+    return value
 
 
 @dataclass(frozen=True)
 class SignedTaskEnvelope:
     schema_version: int
+    envelope_id: str = field(repr=False)
     admission: AdmissionContext
     task_type: str
     project_id: str
     payload_json: str = field(repr=False)
-    signing_key_id: str
+    issued_at: str = field(repr=False)
+    expires_at: str = field(repr=False)
+    signing_key_id: str = field(repr=False)
     signature: str = field(repr=False)
 
     def unsigned_dict(self) -> dict[str, Any]:
+        try:
+            payload = json.loads(self.payload_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise _invalid() from None
         return {
             "schema_version": self.schema_version,
-            "admission": asdict(self.admission),
+            "envelope_id": self.envelope_id,
+            "admission": _serialize_admission(self.admission),
             "task_type": self.task_type,
             "project_id": self.project_id,
-            "payload": json.loads(self.payload_json),
+            "payload": payload,
+            "issued_at": self.issued_at,
+            "expires_at": self.expires_at,
             "signing_key_id": self.signing_key_id,
         }
 
@@ -112,116 +269,131 @@ class SignedTaskEnvelope:
         cls,
         *,
         admission: AdmissionContext,
+        envelope_id: str,
         task_type: str,
         project_id: str,
         payload: dict[str, Any],
+        issued_at: str,
+        expires_at: str,
         signing_key_id: str,
         signing_key: bytes,
     ) -> "SignedTaskEnvelope":
-        if not signing_key:
-            raise ValueError("signing_key is required")
-        if not signing_key_id:
-            raise ValueError("signing_key_id is required")
-        if not task_type or not project_id:
-            raise ValueError("task_type and project_id are required")
-        _reject_sensitive_fields(payload)
+        _require_non_empty_string(envelope_id)
+        _require_non_empty_string(task_type)
+        _require_non_empty_string(project_id)
+        _validate_key_id(signing_key_id)
+        key = _validate_signing_key(signing_key)
+        _validate_time_window(issued_at, expires_at)
+        _require_exact_type(payload, dict)
+        payload_json = _canonical_json(payload)
+        _serialize_admission(admission)
+
         envelope = cls(
-            schema_version=1,
+            schema_version=2,
+            envelope_id=envelope_id,
             admission=admission,
             task_type=task_type,
             project_id=project_id,
-            payload_json=_canonical_json(payload),
+            payload_json=payload_json,
+            issued_at=issued_at,
+            expires_at=expires_at,
             signing_key_id=signing_key_id,
             signature="",
         )
         signature = hmac.new(
-            signing_key,
-            envelope.canonical_payload().encode(),
+            key,
+            envelope.canonical_payload().encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
         return cls(**{**envelope.__dict__, "signature": signature})
 
-    def verify(self, signing_keys: Mapping[str, bytes]) -> None:
-        if self.schema_version != 1:
-            raise InvalidTaskEnvelope("unsupported task envelope schema")
-        if not self.signing_key_id:
-            raise InvalidTaskEnvelope("task envelope signing key is unavailable")
+    def verify(
+        self,
+        signing_keys: Mapping[str, bytes],
+        *,
+        now: datetime,
+        expected_task_type: str,
+        expected_project_id: str,
+        expected_root_task_id: str,
+        expected_requester_user_id: str,
+    ) -> None:
+        if self.schema_version != 2:
+            raise _invalid()
+        _require_non_empty_string(self.envelope_id)
+        _require_non_empty_string(self.task_type)
+        _require_non_empty_string(self.project_id)
+        _validate_key_id(self.signing_key_id)
+        _validate_signature(self.signature)
+
         try:
             signing_key = signing_keys[self.signing_key_id]
-        except (KeyError, TypeError):
-            raise InvalidTaskEnvelope("task envelope signing key is unavailable") from None
-        if type(signing_key) is not bytes or not signing_key:
-            raise InvalidTaskEnvelope("task envelope signing key is unavailable")
-        expected = hmac.new(
-            signing_key,
-            self.canonical_payload().encode(),
+        except Exception:
+            signing_key = None
+        key = _validate_signing_key(signing_key)
+        expected_signature = hmac.new(
+            key,
+            self.canonical_payload().encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
-        if not hmac.compare_digest(self.signature, expected):
-            raise InvalidTaskEnvelope("invalid task envelope signature")
+        if not hmac.compare_digest(self.signature, expected_signature):
+            raise _invalid()
+
+        issued, expires = _validate_time_window(self.issued_at, self.expires_at)
+        if (
+            type(now) is not datetime
+            or now.tzinfo is None
+            or now.utcoffset() != timedelta(0)
+        ):
+            raise _invalid()
+        if now < issued - _CLOCK_SKEW or now > expires + _CLOCK_SKEW:
+            raise _stale()
+
+        for expected in (
+            expected_task_type,
+            expected_project_id,
+            expected_root_task_id,
+            expected_requester_user_id,
+        ):
+            _require_non_empty_string(expected)
+        if (
+            self.task_type != expected_task_type
+            or self.project_id != expected_project_id
+            or self.admission.root_task_id != expected_root_task_id
+            or self.admission.requester_user_id != expected_requester_user_id
+        ):
+            raise _invalid()
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "SignedTaskEnvelope":
         try:
-            _reject_sensitive_fields(value)
-            _require_exact_fields(value, _ENVELOPE_FIELDS)
-            _require_exact_type(value["schema_version"], int)
-            if value["schema_version"] != 1:
-                raise InvalidTaskEnvelope("unsupported task envelope schema")
-            for field_name in ("task_type", "project_id", "signing_key_id", "signature"):
-                _require_exact_type(value[field_name], str)
-                if not value[field_name]:
-                    raise InvalidTaskEnvelope("malformed task envelope")
-            _require_exact_type(value["payload"], dict)
-            admission_value = value["admission"]
-            _require_exact_fields(admission_value, _ADMISSION_FIELDS)
-            for field_name in (
-                "requester_user_id",
-                "admission_id",
-                "root_task_id",
-                "admitted_at",
-            ):
-                _require_exact_type(admission_value[field_name], str)
-            if admission_value["membership_id"] is not None:
-                _require_exact_type(admission_value["membership_id"], str)
-            _require_exact_type(admission_value["authz_version"], int)
-
-            credential_value = _require_exact_fields(
-                admission_value["credential"],
-                _CREDENTIAL_FIELDS,
+            envelope_value = _require_exact_fields(value, _ENVELOPE_FIELDS)
+            _require_exact_type(envelope_value["schema_version"], int)
+            if envelope_value["schema_version"] != 2:
+                raise _invalid()
+            _require_non_empty_string(envelope_value["envelope_id"])
+            _require_non_empty_string(envelope_value["task_type"])
+            _require_non_empty_string(envelope_value["project_id"])
+            _validate_key_id(envelope_value["signing_key_id"])
+            _validate_signature(envelope_value["signature"])
+            _validate_time_window(
+                envelope_value["issued_at"], envelope_value["expires_at"]
             )
-            principal_value = _require_exact_fields(
-                admission_value["billing_principal"],
-                _PRINCIPAL_FIELDS,
-            )
-            for field_name in ("source", "credential_id"):
-                _require_exact_type(credential_value[field_name], str)
-            _require_exact_type(credential_value["key_version"], int)
-            if credential_value["org_id"] is not None:
-                _require_exact_type(credential_value["org_id"], str)
-            for field_name in ("kind", "id"):
-                _require_exact_type(principal_value[field_name], str)
-
-            payload = value["payload"]
-            credential = CredentialReference(**credential_value)
-            principal = BillingPrincipal(**principal_value)
-            admission = AdmissionContext(
-                **{
-                    **admission_value,
-                    "credential": credential,
-                    "billing_principal": principal,
-                }
-            )
+            _require_exact_type(envelope_value["payload"], dict)
+            payload_json = _canonical_json(envelope_value["payload"])
+            admission = _parse_admission(envelope_value["admission"])
             return cls(
-                schema_version=value["schema_version"],
+                schema_version=envelope_value["schema_version"],
+                envelope_id=envelope_value["envelope_id"],
                 admission=admission,
-                task_type=value["task_type"],
-                project_id=value["project_id"],
-                payload_json=_canonical_json(payload),
-                signing_key_id=value["signing_key_id"],
-                signature=value["signature"],
+                task_type=envelope_value["task_type"],
+                project_id=envelope_value["project_id"],
+                payload_json=payload_json,
+                issued_at=envelope_value["issued_at"],
+                expires_at=envelope_value["expires_at"],
+                signing_key_id=envelope_value["signing_key_id"],
+                signature=envelope_value["signature"],
             )
         except InvalidTaskEnvelope:
             raise
-        except (KeyError, TypeError, ValueError) as exc:
-            raise InvalidTaskEnvelope("malformed task envelope") from exc
+        except (KeyError, TypeError, ValueError):
+            raise _invalid() from None

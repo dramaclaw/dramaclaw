@@ -1,6 +1,34 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Iterator, Mapping
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 import json
+import logging
+import traceback
 
 import pytest
+
+KEY_CURRENT = b"c" * 32
+KEY_RETIRED = b"r" * 32
+ISSUED_AT = "2026-08-02T00:00:00Z"
+EXPIRES_AT = "2026-08-02T01:00:00Z"
+NOW = datetime(2026, 8, 2, 0, 30, tzinfo=timezone.utc)
+
+
+class _ExplodingKeyring(Mapping[str, bytes]):
+    def __init__(self, error_type: type[BaseException]) -> None:
+        self._error_type = error_type
+
+    def __getitem__(self, key: str) -> bytes:
+        raise self._error_type("KEYRING-LOOKUP-CANARY")
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(("current",))
+
+    def __len__(self) -> int:
+        return 1
 
 
 def _admission():
@@ -19,244 +47,493 @@ def _admission():
     )
 
 
-def test_task_envelope_includes_signing_key_id_for_rotation():
+def _sign(**overrides):
     from novelvideo.task_backend.envelope import SignedTaskEnvelope
 
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
+    values = {
+        "admission": _admission(),
+        "envelope_id": "env_1",
+        "task_type": "image_generation",
+        "project_id": "project_1",
+        "payload": {"prompt": "a story"},
+        "issued_at": ISSUED_AT,
+        "expires_at": EXPIRES_AT,
+        "signing_key_id": "current",
+        "signing_key": KEY_CURRENT,
+    }
+    values.update(overrides)
+    return SignedTaskEnvelope.sign(**values)
+
+
+def _verify(envelope, **overrides):
+    values = {
+        "signing_keys": {"current": KEY_CURRENT, "retired": KEY_RETIRED},
+        "now": NOW,
+        "expected_task_type": "image_generation",
+        "expected_project_id": "project_1",
+        "expected_root_task_id": "task_1",
+        "expected_requester_user_id": "user_1",
+    }
+    values.update(overrides)
+    return envelope.verify(**values)
+
+
+def _resign_transport(transport, *, key=KEY_CURRENT):
+    import hashlib
+    import hmac
+
+    unsigned = {name: value for name, value in transport.items() if name != "signature"}
+    canonical = json.dumps(
+        unsigned,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+        allow_nan=False,
     )
+    transport["signature"] = hmac.new(
+        key, canonical.encode(), hashlib.sha256
+    ).hexdigest()
+    return transport
 
-    assert envelope.signing_key_id == "task-key-v1"
-    assert envelope.to_dict()["signing_key_id"] == "task-key-v1"
 
-
-def test_task_envelope_canonical_serialization_is_stable_and_secret_free():
+def test_task_envelope_v2_round_trip_rotation_and_canonical_stability():
     from novelvideo.task_backend.envelope import SignedTaskEnvelope
 
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={"z": 1, "a": "value"},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
+    current = _sign(payload={"z": 1, "a": "value"})
+    retired = _sign(signing_key_id="retired", signing_key=KEY_RETIRED)
+
+    assert current.schema_version == 2
+    assert current.canonical_payload() == current.canonical_payload()
+    assert current.to_dict()["payload"] == {"a": "value", "z": 1}
+    assert SignedTaskEnvelope.from_dict(current.to_dict()) == current
+    _verify(current)
+    _verify(retired)
+
+
+def test_task_envelope_accepts_exact_24_hour_lifetime_and_clock_skew_boundaries():
+    envelope = _sign(
+        issued_at="2026-08-02T00:00:00Z",
+        expires_at="2026-08-03T00:00:00Z",
     )
 
-    assert envelope.canonical_payload() == envelope.canonical_payload()
-    assert json.loads(envelope.payload_json) == {"a": "value", "z": 1}
-    assert "server-signing-key" not in repr(envelope)
-    envelope.verify({"task-key-v1": b"server-signing-key"})
+    _verify(envelope, now=datetime(2026, 8, 1, 23, 59, 30, tzinfo=timezone.utc))
+    _verify(envelope, now=datetime(2026, 8, 3, 0, 0, 30, tzinfo=timezone.utc))
 
 
-def test_external_or_tampered_task_envelope_fails_verification():
+@pytest.mark.parametrize("schema_version", [1, 3, 0, -1])
+def test_task_envelope_rejects_v1_and_unknown_schema_versions(schema_version):
     from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
 
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
+    transport = _sign().to_dict()
+    transport["schema_version"] = schema_version
 
-    with pytest.raises(InvalidTaskEnvelope):
-        envelope.verify({"task-key-v1": b"attacker-key"})
+    with pytest.raises(InvalidTaskEnvelope) as captured:
+        SignedTaskEnvelope.from_dict(transport)
+    assert captured.value.code == "TASK_ENVELOPE_INVALID"
 
 
 @pytest.mark.parametrize(
-    "payload",
+    "field_name",
     [
-        {"api_key": "secret"},
-        {"request": {"authorization": "Bearer secret"}},
-        {"items": [{"access_token": "secret"}]},
+        "schema_version",
+        "envelope_id",
+        "admission",
+        "task_type",
+        "project_id",
+        "payload",
+        "issued_at",
+        "expires_at",
+        "signing_key_id",
+        "signature",
     ],
 )
-def test_task_envelope_rejects_sensitive_payload_fields(payload):
+def test_task_envelope_rejects_every_missing_v2_field(field_name):
     from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
 
-    with pytest.raises(InvalidTaskEnvelope, match="sensitive"):
-        SignedTaskEnvelope.sign(
-            admission=_admission(),
-            task_type="image_generation",
-            project_id="project_1",
-            payload=payload,
-            signing_key_id="task-key-v1",
-            signing_key=b"server-signing-key",
-        )
-
-
-def test_task_envelope_round_trips_through_transport_dict():
-    from novelvideo.task_backend.envelope import SignedTaskEnvelope
-
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={"prompt": "a story"},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-
-    restored = SignedTaskEnvelope.from_dict(envelope.to_dict())
-
-    assert restored == envelope
-    restored.verify({"task-key-v1": b"server-signing-key"})
-
-
-def test_task_envelope_rejects_unknown_schema_version():
-    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
-
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-    value = envelope.to_dict()
-    value["schema_version"] = 2
-
-    with pytest.raises(InvalidTaskEnvelope, match="schema"):
-        SignedTaskEnvelope.from_dict(value)
-
-
-def test_task_envelope_rejects_missing_required_field():
-    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
-
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-    value = envelope.to_dict()
-    del value["admission"]["membership_id"]
-
-    with pytest.raises(InvalidTaskEnvelope, match="malformed"):
-        SignedTaskEnvelope.from_dict(value)
-
-
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        lambda value: value.update({"api_key": "secret-value"}),
-        lambda value: value.update({"unexpected": "value"}),
-        lambda value: value["admission"].update({"authorization": "Bearer secret-value"}),
-        lambda value: value["admission"]["credential"].update({"unexpected": "value"}),
-    ],
-)
-def test_task_envelope_rejects_extra_fields(mutate):
-    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
-
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-    value = envelope.to_dict()
-    mutate(value)
-
-    with pytest.raises(InvalidTaskEnvelope):
-        SignedTaskEnvelope.from_dict(value)
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("schema_version", "1"),
-        ("task_type", 1),
-        ("project_id", 1),
-        ("payload", []),
-        ("signature", 1),
-    ],
-)
-def test_task_envelope_rejects_coerced_transport_types(field, value):
-    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
-
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-    transport = envelope.to_dict()
-    transport[field] = value
+    transport = _sign().to_dict()
+    del transport[field_name]
 
     with pytest.raises(InvalidTaskEnvelope):
         SignedTaskEnvelope.from_dict(transport)
 
 
 @pytest.mark.parametrize(
-    "payload",
+    ("field_name", "value"),
     [
-        {"ApiKey": "secret"},
-        {"nested": {"api-key": "secret"}},
-        {"nested": [{"API Key": "secret"}]},
-        {"nested": {"accessToken": "secret"}},
-        {"nested": {"refreshToken": "secret"}},
-        {"nested": {"credentialSecret": "secret"}},
-        {"nested": {"Authorization": "Bearer secret"}},
-        {"nested": [{"deeper": {"token": "secret"}}]},
+        ("schema_version", "2"),
+        ("schema_version", True),
+        ("envelope_id", 1),
+        ("task_type", 1),
+        ("project_id", 1),
+        ("payload", []),
+        ("issued_at", 1),
+        ("expires_at", 1),
+        ("signing_key_id", 1),
+        ("signature", 1),
     ],
 )
-def test_task_envelope_rejects_normalized_sensitive_field_variants(payload):
+def test_task_envelope_rejects_coerced_transport_types(field_name, value):
     from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
 
-    with pytest.raises(InvalidTaskEnvelope, match="sensitive"):
-        SignedTaskEnvelope.sign(
-            admission=_admission(),
-            task_type="image_generation",
-            project_id="project_1",
-            payload=payload,
-            signing_key_id="task-key-v1",
-            signing_key=b"server-signing-key",
+    transport = _sign().to_dict()
+    transport[field_name] = value
+
+    with pytest.raises(InvalidTaskEnvelope):
+        SignedTaskEnvelope.from_dict(transport)
+
+
+@pytest.mark.parametrize("transport", [None, [], "json", b"json"])
+def test_task_envelope_rejects_non_object_transport(transport):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope):
+        SignedTaskEnvelope.from_dict(transport)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["admission"].update({"authz_version": True}),
+        lambda value: value["admission"]["credential"].update({"key_version": True}),
+    ],
+)
+def test_task_envelope_rejects_nested_bool_as_integer(mutate):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
+
+    transport = _sign().to_dict()
+    mutate(transport)
+
+    with pytest.raises(InvalidTaskEnvelope):
+        SignedTaskEnvelope.from_dict(transport)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.update({"unexpected": "value"}),
+        lambda value: value["admission"].update({"unexpected": "value"}),
+        lambda value: value["admission"]["credential"].update({"unexpected": "value"}),
+        lambda value: value["admission"]["billing_principal"].update(
+            {"unexpected": "value"}
+        ),
+    ],
+)
+def test_task_envelope_rejects_unknown_fields_at_every_schema_level(mutation):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
+
+    transport = _sign().to_dict()
+    mutation(transport)
+
+    with pytest.raises(InvalidTaskEnvelope):
+        SignedTaskEnvelope.from_dict(transport)
+
+
+@pytest.mark.parametrize("payload", [{"value": float("nan")}, {"value": float("inf")}])
+def test_task_envelope_rejects_non_finite_json_numbers(payload):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope):
+        _sign(payload=payload)
+
+
+@pytest.mark.parametrize("payload", [{"value": {1, 2}}, {"value": b"bytes"}, None, []])
+def test_task_envelope_rejects_non_json_or_non_object_payload(payload):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope):
+        _sign(payload=payload)
+
+
+@pytest.mark.parametrize(
+    ("issued_at", "expires_at"),
+    [
+        ("2026-02-30T00:00:00Z", EXPIRES_AT),
+        ("2026-08-02T24:00:00Z", EXPIRES_AT),
+        ("2026-08-02T00:00:00+00:00", EXPIRES_AT),
+        ("2026-08-02T00:00:00.000Z", EXPIRES_AT),
+        (ISSUED_AT, "2026-08-02T00:00:00Z"),
+        (ISSUED_AT, "2026-08-01T23:59:59Z"),
+        (ISSUED_AT, "2026-08-03T00:00:01Z"),
+    ],
+)
+def test_task_envelope_rejects_invalid_time_windows_as_stale(issued_at, expires_at):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope) as captured:
+        _sign(issued_at=issued_at, expires_at=expires_at)
+    assert captured.value.code == "TASK_ENVELOPE_STALE"
+
+
+@pytest.mark.parametrize(
+    "now",
+    [
+        datetime(2026, 8, 1, 23, 59, 29, tzinfo=timezone.utc),
+        datetime(2026, 8, 2, 1, 0, 31, tzinfo=timezone.utc),
+    ],
+)
+def test_task_envelope_rejects_future_and_expired_envelopes(now):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope) as captured:
+        _verify(_sign(), now=now)
+    assert captured.value.code == "TASK_ENVELOPE_STALE"
+
+
+def test_task_envelope_rejects_non_utc_or_naive_verification_now():
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    for now in (
+        datetime(2026, 8, 2, 0, 30),
+        datetime(2026, 8, 2, 8, 30, tzinfo=timezone(timedelta(hours=8))),
+    ):
+        with pytest.raises(InvalidTaskEnvelope):
+            _verify(_sign(), now=now)
+
+
+@pytest.mark.parametrize("envelope_id", ["", 1, None])
+def test_task_envelope_rejects_empty_or_wrong_type_envelope_id(envelope_id):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope):
+        _sign(envelope_id=envelope_id)
+
+
+@pytest.mark.parametrize(
+    "key_id",
+    ["", "-leading", "contains space", "slash/key", "a" * 65],
+)
+def test_task_envelope_rejects_invalid_signing_key_id(key_id):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope):
+        _sign(signing_key_id=key_id)
+
+
+@pytest.mark.parametrize("signing_key", [b"", b"short", "x" * 32, bytearray(b"x" * 32)])
+def test_task_envelope_rejects_empty_weak_or_wrong_type_signing_key(signing_key):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope):
+        _sign(signing_key=signing_key)
+
+
+@pytest.mark.parametrize(
+    "signature",
+    ["", "0" * 63, "0" * 65, "G" * 64, "A" * 64, 1],
+)
+def test_task_envelope_rejects_invalid_signature_shape(signature):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
+
+    transport = _sign().to_dict()
+    transport["signature"] = signature
+
+    with pytest.raises(InvalidTaskEnvelope):
+        SignedTaskEnvelope.from_dict(transport)
+
+
+@pytest.mark.parametrize(
+    "signing_keys",
+    [
+        {},
+        {"current": b"short"},
+        {"current": "x" * 32},
+        {"current": bytearray(b"x" * 32)},
+        KEY_CURRENT,
+    ],
+)
+def test_task_envelope_rejects_unknown_weak_or_wrong_type_keyring_values(signing_keys):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope):
+        _verify(_sign(), signing_keys=signing_keys)
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, ValueError])
+def test_task_envelope_normalizes_keyring_lookup_exceptions_without_leaking(
+    error_type, caplog, capsys
+):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    caplog.set_level(logging.DEBUG)
+
+    with pytest.raises(InvalidTaskEnvelope) as captured:
+        _verify(_sign(), signing_keys=_ExplodingKeyring(error_type))
+
+    stdout, stderr = capsys.readouterr()
+    error = captured.value
+    sinks = " ".join(
+        (
+            str(error),
+            repr(error),
+            "".join(traceback.format_exception(captured.type, error, captured.tb)),
+            caplog.text,
+            stdout,
+            stderr,
         )
+    )
+
+    assert error.code == "TASK_ENVELOPE_INVALID"
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert "KEYRING-LOOKUP-CANARY" not in sinks
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [KeyboardInterrupt, GeneratorExit, asyncio.CancelledError],
+)
+def test_task_envelope_propagates_keyring_lookup_base_exceptions(error_type):
+    with pytest.raises(error_type):
+        _verify(_sign(), signing_keys=_ExplodingKeyring(error_type))
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("envelope_id", "env_2"),
+        ("task_type", "video_generation"),
+        ("project_id", "project_2"),
+        ("payload", {"prompt": "tampered"}),
+        ("issued_at", "2026-08-02T00:00:01Z"),
+        ("expires_at", "2026-08-02T01:00:01Z"),
+        ("signing_key_id", "retired"),
+    ],
+)
+def test_task_envelope_rejects_tampering_of_every_new_signed_field(field_name, value):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
+
+    transport = _sign().to_dict()
+    transport[field_name] = value
+    tampered = SignedTaskEnvelope.from_dict(transport)
+
+    with pytest.raises(InvalidTaskEnvelope):
+        _verify(tampered)
+
+
+@pytest.mark.parametrize(
+    ("expected_name", "expected_value"),
+    [
+        ("expected_task_type", "video_generation"),
+        ("expected_project_id", "project_2"),
+        ("expected_root_task_id", "task_2"),
+        ("expected_requester_user_id", "user_2"),
+    ],
+)
+def test_task_envelope_rejects_borrowed_consumer_binding(expected_name, expected_value):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope) as captured:
+        _verify(_sign(), **{expected_name: expected_value})
+    assert captured.value.code == "TASK_ENVELOPE_INVALID"
+
+
+@pytest.mark.parametrize(
+    "admission_field",
+    ["requester_user_id", "root_task_id", "admission_id", "authz_version"],
+)
+def test_task_envelope_rejects_signed_admission_tampering(admission_field):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
+
+    transport = _sign().to_dict()
+    transport["admission"][admission_field] = (
+        8 if admission_field == "authz_version" else "tampered"
+    )
+    tampered = SignedTaskEnvelope.from_dict(transport)
+
+    with pytest.raises(InvalidTaskEnvelope):
+        _verify(tampered)
 
 
 @pytest.mark.parametrize(
     "payload",
     [
-        {"X-API-Key": "secret"},
-        {"nested": {"x_api_key": "secret"}},
-        {"nested": [{"deeper": {"bearerToken": "secret"}}]},
-        {"nested": {"bearer-token": "secret"}},
-        {"auth_token": "secret"},
-        {"nested": {"authToken": "secret"}},
-        {"id_token": "secret"},
-        {"nested": [{"deeper": {"idToken": "secret"}}]},
+        {"ApiKey": "CANARY"},
+        {"nested": {"api-key": "CANARY"}},
+        {"nested": [{"API Key": "CANARY"}]},
+        {"nested": {"accessToken": "CANARY"}},
+        {"nested": {"refresh_token": "CANARY"}},
+        {"nested": {"credentialSecret": "CANARY"}},
+        {"nested": {"Authorization": "CANARY"}},
+        {"nested": {"X-API-Key": "CANARY"}},
+        {"nested": {"bearerToken": "CANARY"}},
+        {"nested": {"auth_token": "CANARY"}},
+        {"nested": {"idToken": "CANARY"}},
     ],
 )
-def test_task_envelope_rejects_additional_credential_field_variants(payload):
+def test_task_envelope_rejects_sensitive_field_variants_without_leaking(payload):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    with pytest.raises(InvalidTaskEnvelope) as captured:
+        _sign(payload=payload)
+    rendered = f"{captured.value!s} {captured.value!r}"
+    assert "CANARY" not in rendered
+    assert all(
+        secret_name not in rendered.casefold() for secret_name in ("api", "token")
+    )
+
+
+def test_task_envelope_error_sinks_do_not_leak_sensitive_values(caplog):
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    canaries = [
+        "PAYLOAD-CANARY-7f91",
+        "SIGNATURE-CANARY-7f91",
+        "KEY-ID-CANARY-7f91",
+        "KEY-CANARY-7f91",
+        "TIME-CANARY-7f91",
+    ]
+    caplog.set_level(logging.DEBUG)
+    envelope = _sign(
+        payload={"prompt": canaries[0]},
+        signing_key_id="KEY-ID-CANARY-7f91",
+        signing_key=(canaries[3].encode() + b"x" * 32)[:32],
+    )
+    transport = envelope.to_dict()
+    transport["signature"] = canaries[1]
+    traces = []
+
+    from novelvideo.task_backend.envelope import SignedTaskEnvelope
+
+    for action in (
+        lambda: SignedTaskEnvelope.from_dict(transport),
+        lambda: _sign(issued_at=canaries[4]),
+    ):
+        try:
+            action()
+        except InvalidTaskEnvelope as exc:
+            traces.extend([str(exc), repr(exc), traceback.format_exc()])
+        else:
+            pytest.fail("malformed sensitive input was accepted")
+
+    sinks = " ".join([*traces, repr(envelope), caplog.text])
+
+    for canary in canaries:
+        assert canary not in sinks
+    assert envelope.signature not in sinks
+    assert KEY_CURRENT.hex() not in sinks
+
+
+def test_task_envelope_error_messages_and_codes_are_stable():
     from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
 
-    with pytest.raises(InvalidTaskEnvelope, match="sensitive"):
-        SignedTaskEnvelope.sign(
-            admission=_admission(),
-            task_type="image_generation",
-            project_id="project_1",
-            payload=payload,
-            signing_key_id="task-key-v1",
-            signing_key=b"server-signing-key",
-        )
+    malformed = _sign().to_dict()
+    malformed["signature"] = "bad"
+    with pytest.raises(InvalidTaskEnvelope) as invalid:
+        SignedTaskEnvelope.from_dict(malformed)
+    with pytest.raises(InvalidTaskEnvelope) as stale:
+        _verify(_sign(), now=datetime(2026, 8, 3, tzinfo=timezone.utc))
+
+    assert (invalid.value.code, str(invalid.value)) == (
+        "TASK_ENVELOPE_INVALID",
+        "invalid task envelope",
+    )
+    assert (stale.value.code, str(stale.value)) == (
+        "TASK_ENVELOPE_STALE",
+        "stale task envelope",
+    )
 
 
 def test_task_envelope_allows_non_secret_token_business_fields():
-    from novelvideo.task_backend.envelope import SignedTaskEnvelope
-
     payload = {
         "token_count": 12,
         "max_tokens": 100,
@@ -265,206 +542,30 @@ def test_task_envelope_allows_non_secret_token_business_fields():
         "authorization_status": "pending",
         "id_token_count": 3,
     }
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="text_generation",
-        project_id="project_1",
-        payload=payload,
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
+    envelope = _sign(payload=payload)
 
-    envelope.verify({"task-key-v1": b"server-signing-key"})
+    _verify(envelope)
     assert envelope.to_dict()["payload"] == payload
 
 
-def test_task_envelope_repr_hides_payload_and_signature():
-    from novelvideo.task_backend.envelope import SignedTaskEnvelope
-
-    canary = "BT1-CANARY-SECRET-7f91"
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={"prompt": canary},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-
-    rendered = repr(envelope)
-    assert canary not in rendered
-    assert envelope.signature not in rendered
-    assert "server-signing-key" not in rendered
-
-
-def test_task_envelope_rejects_unknown_signing_key_id():
+def test_task_envelope_payload_tampering_fails_even_after_strict_parse():
     from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
 
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="unknown-key-id",
-        signing_key=b"same-key-bytes",
-    )
-
-    with pytest.raises(InvalidTaskEnvelope, match="signing key"):
-        envelope.verify({"task-key-v1": b"same-key-bytes"})
-
-
-def test_task_envelope_rejects_tampered_key_id_even_when_key_bytes_match():
-    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
-
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="current",
-        signing_key=b"same-key-bytes",
-    )
-    transport = envelope.to_dict()
-    transport["signing_key_id"] = "previous"
+    transport = deepcopy(_sign(payload={"billing": {"mode": "existing"}}).to_dict())
+    transport["payload"]["billing"]["mode"] = "tampered"
     tampered = SignedTaskEnvelope.from_dict(transport)
-
-    with pytest.raises(InvalidTaskEnvelope, match="signature"):
-        tampered.verify(
-            {
-                "current": b"same-key-bytes",
-                "previous": b"same-key-bytes",
-            }
-        )
-
-
-@pytest.mark.parametrize(
-    ("signing_key_id", "signing_key"),
-    [
-        ("current", b"current-key"),
-        ("previous", b"previous-key"),
-    ],
-)
-def test_task_envelope_verifies_current_and_previous_rotation_keys(
-    signing_key_id, signing_key
-):
-    from novelvideo.task_backend.envelope import SignedTaskEnvelope
-
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id=signing_key_id,
-        signing_key=signing_key,
-    )
-
-    envelope.verify(
-        {
-            "current": b"current-key",
-            "previous": b"previous-key",
-        }
-    )
-
-
-def test_task_envelope_rejects_empty_keyring_value():
-    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
-
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-
-    with pytest.raises(InvalidTaskEnvelope, match="signing key"):
-        envelope.verify({"task-key-v1": b""})
-
-
-def test_task_envelope_rejects_direct_key_bytes_during_verification():
-    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
-
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-
-    with pytest.raises(InvalidTaskEnvelope, match="signing key"):
-        envelope.verify(b"server-signing-key")
-
-
-@pytest.mark.parametrize("mutation", ["missing", "empty"])
-def test_task_envelope_rejects_missing_or_empty_signing_key_id(mutation):
-    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
-
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-    transport = envelope.to_dict()
-    if mutation == "missing":
-        del transport["signing_key_id"]
-    else:
-        transport["signing_key_id"] = ""
 
     with pytest.raises(InvalidTaskEnvelope):
-        SignedTaskEnvelope.from_dict(transport)
+        _verify(tampered)
 
 
-@pytest.mark.parametrize(
-    "field_name",
-    ["billing", "reservation_id", "credit_reservation_id", "refund_id"],
-)
-def test_task_envelope_rejects_billing_fields_at_protocol_top_level(field_name):
+def test_task_envelope_valid_signature_cannot_bypass_binding_checks():
     from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
 
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="image_generation",
-        project_id="project_1",
-        payload={},
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-    transport = envelope.to_dict()
-    transport[field_name] = "not-part-of-v1"
+    transport = _sign().to_dict()
+    transport["project_id"] = "borrowed_project"
+    _resign_transport(transport)
+    borrowed = SignedTaskEnvelope.from_dict(transport)
 
-    with pytest.raises(InvalidTaskEnvelope, match="malformed"):
-        SignedTaskEnvelope.from_dict(transport)
-
-
-def test_task_envelope_allows_signed_billing_fields_inside_payload_and_detects_tampering():
-    from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
-
-    payload = {
-        "billing": {"mode": "existing-business-metadata"},
-        "reservation_id": "reservation-1",
-        "credit_reservation_id": "credit-reservation-1",
-        "refund_id": "refund-1",
-    }
-    envelope = SignedTaskEnvelope.sign(
-        admission=_admission(),
-        task_type="existing_business_task",
-        project_id="project_1",
-        payload=payload,
-        signing_key_id="task-key-v1",
-        signing_key=b"server-signing-key",
-    )
-    signing_keys = {"task-key-v1": b"server-signing-key"}
-    envelope.verify(signing_keys)
-
-    transport = envelope.to_dict()
-    transport["payload"]["credit_reservation_id"] = "tampered"
-    tampered = SignedTaskEnvelope.from_dict(transport)
-
-    with pytest.raises(InvalidTaskEnvelope, match="signature"):
-        tampered.verify(signing_keys)
+    with pytest.raises(InvalidTaskEnvelope):
+        _verify(borrowed)
