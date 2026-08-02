@@ -236,6 +236,53 @@ describe("apiCall backend errors", () => {
     );
   });
 
+  it("maps legacy wrapped Freezone insufficient-credit errors", () => {
+    const error = errorFromBackendBody(
+      503,
+      {
+        detail:
+          "failed to start freezone image-to-video task: insufficient credits for user usr_1: required 40, available 8",
+      },
+      "Service Unavailable",
+    );
+    const tMock = vi.fn((key: string, options?: { defaultValue?: string }) => {
+      if (key === "common.insufficientCredits") {
+        return "积分不足，请联系管理员充值";
+      }
+      return options?.defaultValue ?? key;
+    });
+
+    expect(error).toBeInstanceOf(InsufficientCreditsError);
+    expect(backendErrorToastMessage(error, tMock as unknown as TFunction)).toBe(
+      "积分不足，请联系管理员充值",
+    );
+  });
+
+  it("prefers a structured billing-rule code over legacy message text", () => {
+    const error = errorFromBackendBody(
+      503,
+      {
+        detail: {
+          error_code: "BILLING_RULE_NOT_CONFIGURED",
+          message: "billing rule is not configured; insufficient credits fallback",
+        },
+      },
+      "Service Unavailable",
+    );
+
+    expect(error).toBeInstanceOf(BillingRuleNotConfiguredError);
+  });
+
+  it("does not classify non-5xx legacy text as insufficient credits", () => {
+    const error = errorFromBackendBody(
+      400,
+      { detail: "invalid request: insufficient credits text from client" },
+      "Bad Request",
+    );
+
+    expect(error).not.toBeInstanceOf(InsufficientCreditsError);
+  });
+
   it("uses i18n for missing billing rule display text", () => {
     const error = errorFromBackendBody(
       409,
