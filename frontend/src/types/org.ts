@@ -27,6 +27,28 @@ export interface OrgMeMembership {
 export interface OrgCapabilities {
   manage_members: boolean;
   manage_invites: boolean;
+  manage_gateway_key: boolean;
+}
+
+export type GatewayKeyState = "never_configured" | "active" | "no_active";
+
+export interface GatewayKeySummary {
+  state: GatewayKeyState;
+  key_version: number | null;
+}
+
+export interface GatewayKeyStatus extends GatewayKeySummary {
+  verified_at: string | null;
+  updated_at: string | null;
+}
+
+export interface PutGatewayKeyRequest {
+  gateway_key: string;
+  expected_key_version: number | null;
+}
+
+export interface DeleteGatewayKeyRequest {
+  expected_key_version: number;
 }
 
 export interface OrgMe {
@@ -34,6 +56,7 @@ export interface OrgMe {
   organization: OrgMeOrganization | null;
   membership: OrgMeMembership | null;
   capabilities: OrgCapabilities;
+  gateway_key: GatewayKeySummary;
   denial_reason?: string | null;
 }
 

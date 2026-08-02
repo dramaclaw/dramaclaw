@@ -29,6 +29,9 @@ const labels: Record<string, string> = {
   "organization.readOnly.title": "Read-only access",
   "organization.actions.manageMembers": "Manage members",
   "organization.actions.manageInvites": "Manage invitations",
+  "organization.actions.manageGatewayKey": "Manage gateway key",
+  "organization.gatewayKey.available": "Gateway key available",
+  "organization.gatewayKey.unavailable": "Gateway key unavailable",
 };
 
 vi.mock("react-i18next", () => ({
@@ -55,7 +58,12 @@ const activeAdmin = {
     membership_status: "active",
     updated_at: "2026-07-30T00:00:00Z",
   },
-  capabilities: { manage_members: true, manage_invites: true },
+  capabilities: {
+    manage_members: true,
+    manage_invites: true,
+    manage_gateway_key: true,
+  },
+  gateway_key: { state: "active", key_version: 3 },
 };
 
 function renderOverview() {
@@ -88,7 +96,32 @@ describe("organization overview", () => {
       "href",
       "/organization/invites",
     );
-    expect(document.body.textContent).not.toMatch(/key|billing|credit/i);
+    expect(screen.getByRole("link", { name: "Manage gateway key" })).toHaveAttribute(
+      "href",
+      "/organization/gateway-key",
+    );
+    expect(screen.getByText("Gateway key available")).toBeVisible();
+  });
+
+  it.each([
+    ["active without version", { state: "active", key_version: null }],
+    ["never configured with version", { state: "never_configured", key_version: 3 }],
+    ["no active without version", { state: "no_active", key_version: null }],
+  ])("hides malformed gateway summary: %s", async (_name, gatewayKey) => {
+    server.use(
+      http.get("*/api/v1/org/me", () =>
+        HttpResponse.json({ ...activeAdmin, gateway_key: gatewayKey }),
+      ),
+    );
+    renderOverview();
+
+    expect(await screen.findByText("Acme")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Manage members" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Manage invitations" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Manage gateway key" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText("Gateway key available")).not.toBeInTheDocument();
+    expect(screen.queryByText("Gateway key unavailable")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -96,7 +129,11 @@ describe("organization overview", () => {
       name: "capability deny",
       body: {
         ...activeAdmin,
-        capabilities: { manage_members: false, manage_invites: false },
+        capabilities: {
+          manage_members: false,
+          manage_invites: false,
+          manage_gateway_key: false,
+        },
       },
     },
     {
@@ -104,7 +141,11 @@ describe("organization overview", () => {
       body: {
         ...activeAdmin,
         membership: { ...activeAdmin.membership, role: "org_member" },
-        capabilities: { manage_members: false, manage_invites: false },
+        capabilities: {
+          manage_members: false,
+          manage_invites: false,
+          manage_gateway_key: false,
+        },
       },
     },
     {
@@ -126,6 +167,7 @@ describe("organization overview", () => {
     expect(screen.getByText("Read-only access")).toBeVisible();
     expect(screen.queryByRole("link", { name: "Manage members" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Manage invitations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manage gateway key" })).not.toBeInTheDocument();
   });
 
   it("shows a safe no-organization state even if capabilities are true", async () => {

@@ -98,6 +98,17 @@ export function OrganizationOverview() {
     !query.isFetching &&
     membership?.role === "org_admin" &&
     capabilities?.manage_invites === true;
+  const gatewayKey = isRecord(query.data.gateway_key) ? query.data.gateway_key : null;
+  const hasSafeGatewaySummary = Boolean(
+    gatewayKey &&
+    hasCoherentGatewayStateVersion(gatewayKey.state, gatewayKey.key_version),
+  );
+  const canManageGatewayKey =
+    safeActive &&
+    hasSafeGatewaySummary &&
+    !query.isFetching &&
+    membership?.role === "org_admin" &&
+    capabilities?.manage_gateway_key === true;
   const readOnly = Boolean(org && membership && (!safeActive || !canManageMembers));
 
   return (
@@ -176,7 +187,14 @@ export function OrganizationOverview() {
               </CardContent>
             </Card>
           </div>
-          {canManageMembers || canManageInvites ? (
+          {hasSafeGatewaySummary ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              {t(gatewayKey?.state === "active"
+                ? "organization.gatewayKey.available"
+                : "organization.gatewayKey.unavailable")}
+            </p>
+          ) : null}
+          {canManageMembers || canManageInvites || canManageGatewayKey ? (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -195,6 +213,11 @@ export function OrganizationOverview() {
                     {t("organization.actions.manageInvites")}
                   </Button>
                 ) : null}
+                {canManageGatewayKey ? (
+                  <Button render={<Link to="/organization/gateway-key" />}>
+                    {t("organization.actions.manageGatewayKey")}
+                  </Button>
+                ) : null}
               </CardContent>
             </Card>
           ) : null}
@@ -202,6 +225,14 @@ export function OrganizationOverview() {
       )}
     </section>
   );
+}
+
+function hasCoherentGatewayStateVersion(state: unknown, version: unknown): boolean {
+  if (state === "never_configured") return version === null;
+  if (state === "active" || state === "no_active") {
+    return Number.isSafeInteger(version) && Number(version) > 0;
+  }
+  return false;
 }
 
 function Detail({ label, value }: { label: string; value: unknown }) {

@@ -21,6 +21,7 @@ export const queryKeys = {
   orgMembersList: (params: Readonly<object> = {}) =>
     ["org", "members", params] as const,
   orgInvites: () => ["org", "invites"] as const,
+  orgGatewayKey: () => ["org", "gateway-key"] as const,
   orgInvitesList: (params: Readonly<object> = {}) =>
     ["org", "invites", params] as const,
   projects: () => ["projects"] as const,

@@ -10,6 +10,7 @@ import type {
   BatchMemberResult,
   BatchMembersRequest,
   CreateInviteRequest,
+  GatewayKeyStatus,
   IdempotentRequest,
   Invite,
   InviteAcceptResult,
@@ -43,6 +44,10 @@ const KNOWN_ERROR_CODES = new Set([
   "ORG_INVITE_TARGET_MISMATCH",
   "ORG_INVITE_ALREADY_USED",
   "ORG_IDEMPOTENCY_CONFLICT",
+  "ORG_CREDENTIAL_VERSION_MISMATCH",
+  "ORG_CREDENTIAL_INTERNAL_ERROR",
+  "ORG_KEY_VALIDATION_FAILED",
+  "ORG_KEY_VALIDATION_UNAVAILABLE",
   "ORG_RATE_LIMITED",
   "ORG_REQUEST_INVALID",
   "ORG_INTERNAL_ERROR",
@@ -308,6 +313,144 @@ function orgUrl(path: string): URL {
   return new URL(`/api/v1/org/${path}`, window.location.origin);
 }
 
+const GATEWAY_STATUS_FIELDS = new Set([
+  "state",
+  "key_version",
+  "verified_at",
+  "updated_at",
+]);
+const GATEWAY_ZONED_DATETIME =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+
+function isGatewayZonedDateTime(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = GATEWAY_ZONED_DATETIME.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[8] === undefined ? 0 : Number(match[8]);
+  const offsetMinute = match[9] === undefined ? 0 : Number(match[9]);
+  const daysInMonth =
+    month >= 1 && month <= 12
+      ? new Date(Date.UTC(year, month, 0)).getUTCDate()
+      : 0;
+  return year >= 1 &&
+    day >= 1 &&
+    day <= daysInMonth &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    offsetHour <= 14 &&
+    offsetMinute <= 59 &&
+    (offsetHour < 14 || offsetMinute === 0) &&
+    Number.isFinite(Date.parse(value));
+}
+
+function hasCoherentGatewayStateVersion(state: unknown, version: unknown): boolean {
+  if (state === "never_configured") return version === null;
+  if (state === "active" || state === "no_active") {
+    return Number.isSafeInteger(version) && Number(version) > 0;
+  }
+  return false;
+}
+
+function parseGatewayKeyStatus(value: unknown, status: number): GatewayKeyStatus {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== GATEWAY_STATUS_FIELDS.size ||
+    Object.keys(value).some((key) => !GATEWAY_STATUS_FIELDS.has(key)) ||
+    !hasCoherentGatewayStateVersion(value.state, value.key_version) ||
+    !(value.verified_at === null || isGatewayZonedDateTime(value.verified_at)) ||
+    !(value.updated_at === null || isGatewayZonedDateTime(value.updated_at))
+  ) {
+    throw new OrgApiError({ status });
+  }
+  return value as unknown as GatewayKeyStatus;
+}
+
+async function gatewayStatusJson(
+  request: () => Promise<Response>,
+): Promise<GatewayKeyStatus> {
+  const response = await orgResponse(request);
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    throw new OrgApiError({ status: response.status });
+  }
+  return parseGatewayKeyStatus(value, response.status);
+}
+
+function assertGatewayPutInput(
+  expectedKeyVersion: number | null,
+  idempotencyKey: string,
+): void {
+  if (
+    !(expectedKeyVersion === null ||
+      (Number.isSafeInteger(expectedKeyVersion) && expectedKeyVersion > 0)) ||
+    idempotencyKey.trim().length === 0
+  ) {
+    throw new OrgApiError({ status: null });
+  }
+}
+
+function assertGatewayDeleteInput(
+  expectedKeyVersion: number,
+  idempotencyKey: string,
+): void {
+  if (
+    !Number.isSafeInteger(expectedKeyVersion) ||
+    expectedKeyVersion <= 0 ||
+    idempotencyKey.trim().length === 0
+  ) {
+    throw new OrgApiError({ status: null });
+  }
+}
+
+export function getOrgGatewayKeyStatus(): Promise<GatewayKeyStatus> {
+  return gatewayStatusJson(() => api.get(orgUrl("gateway/key/status")));
+}
+
+export function putOrgGatewayKey(
+  gatewayKey: string,
+  expectedKeyVersion: number | null,
+  idempotencyKey: string,
+): Promise<GatewayKeyStatus> {
+  const normalizedKey = gatewayKey.trim();
+  assertGatewayPutInput(expectedKeyVersion, idempotencyKey);
+  if (normalizedKey.length === 0 || normalizedKey.length > 65_536) {
+    throw new OrgApiError({ status: null });
+  }
+  return gatewayStatusJson(() =>
+    api.put(orgUrl("gateway/key"), {
+      retry: 0,
+      json: {
+        gateway_key: normalizedKey,
+        expected_key_version: expectedKeyVersion,
+      },
+      headers: { "Idempotency-Key": idempotencyKey },
+    }),
+  );
+}
+
+export function deleteOrgGatewayKey(
+  expectedKeyVersion: number,
+  idempotencyKey: string,
+): Promise<GatewayKeyStatus> {
+  assertGatewayDeleteInput(expectedKeyVersion, idempotencyKey);
+  return gatewayStatusJson(() =>
+    api.delete(orgUrl("gateway/key"), {
+      retry: 0,
+      json: { expected_key_version: expectedKeyVersion },
+      headers: { "Idempotency-Key": idempotencyKey },
+    }),
+  );
+}
+
 export function getOrgMe(): Promise<OrgMe> {
   return orgJson(() => api.get(orgUrl("me")));
 }
@@ -438,6 +581,15 @@ export function useOrgMe() {
     queryKey: queryKeys.orgMe(),
     queryFn: getOrgMe,
     refetchOnWindowFocus: true,
+  });
+}
+
+export function useOrgGatewayKeyStatus() {
+  return useQuery({
+    queryKey: queryKeys.orgGatewayKey(),
+    queryFn: getOrgGatewayKeyStatus,
+    refetchOnWindowFocus: true,
+    retry: false,
   });
 }
 

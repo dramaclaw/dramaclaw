@@ -4,8 +4,9 @@ import { createElement, type PropsWithChildren } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { server } from "@/__mocks__/msw/server";
+import * as orgQueries from "@/lib/queries/org";
 import {
   acceptOrgInvite,
   addOrgMember,
@@ -77,6 +78,298 @@ beforeEach(() => {
 });
 
 describe("organization API contract", () => {
+  const gatewayStatus = {
+    state: "active" as const,
+    key_version: 3,
+    verified_at: "2026-08-02T08:30:00Z",
+    updated_at: "2026-08-02T08:31:00+00:00",
+  };
+
+  it.each([
+    ["unknown field", { ...gatewayStatus, masked_key: "BT10D-RAW-KEY-CANARY" }],
+    ["missing field", { state: "active", key_version: 3, verified_at: null }],
+    ["invalid state", { ...gatewayStatus, state: "pending" }],
+    ["zero version", { ...gatewayStatus, key_version: 0 }],
+    ["negative version", { ...gatewayStatus, key_version: -1 }],
+    ["unsafe version", { ...gatewayStatus, key_version: Number.MAX_SAFE_INTEGER + 1 }],
+    ["timezone-free datetime", { ...gatewayStatus, updated_at: "2026-08-02T08:31:00" }],
+    ["invalid calendar day", { ...gatewayStatus, updated_at: "2026-02-30T12:00:00Z" }],
+    ["24 hour", { ...gatewayStatus, updated_at: "2026-08-02T24:00:00Z" }],
+    ["offset above 14 hours", { ...gatewayStatus, updated_at: "2026-08-02T12:00:00+14:01" }],
+    ["active without version", { ...gatewayStatus, key_version: null }],
+    ["never configured with version", {
+      ...gatewayStatus,
+      state: "never_configured",
+      key_version: 1,
+      verified_at: null,
+      updated_at: null,
+    }],
+    ["no active without version", {
+      ...gatewayStatus,
+      state: "no_active",
+      key_version: null,
+    }],
+  ])("fail-closes gateway status with %s", async (_name, body) => {
+    server.use(
+      http.get("*/api/v1/org/gateway/key/status", () => HttpResponse.json(body)),
+    );
+    const getStatus = (orgQueries as Record<string, unknown>)
+      .getOrgGatewayKeyStatus as undefined | (() => Promise<unknown>);
+
+    expect(getStatus).toBeTypeOf("function");
+    await expect(getStatus?.()).rejects.toMatchObject({
+      name: "OrgApiError",
+      code: "ORG_REQUEST_FAILED",
+    });
+  });
+
+  it.each([
+    { state: "never_configured", key_version: null, verified_at: null, updated_at: null },
+    gatewayStatus,
+    { ...gatewayStatus, state: "no_active" as const },
+    {
+      ...gatewayStatus,
+      verified_at: "2028-02-29T23:59:59.123456789Z",
+      updated_at: "2026-08-02T12:00:00+14:00",
+    },
+    {
+      ...gatewayStatus,
+      verified_at: "2026-08-02T12:00:00-07:30",
+      updated_at: "2026-08-02T12:00:00-00:45",
+    },
+  ])("accepts strict gateway status $state", async (body) => {
+    server.use(
+      http.get("*/api/v1/org/gateway/key/status", ({ request }) => {
+        expectCookieOnlyRequest(request);
+        return HttpResponse.json(body);
+      }),
+    );
+    const getStatus = (orgQueries as Record<string, unknown>)
+      .getOrgGatewayKeyStatus as undefined | (() => Promise<unknown>);
+
+    expect(getStatus).toBeTypeOf("function");
+    await expect(getStatus?.()).resolves.toEqual(body);
+  });
+
+  it("sends exact gateway PUT and DELETE contracts without tenant selectors", async () => {
+    const observed: Array<{ method: string; body: unknown; key: string | null }> = [];
+    server.use(
+      http.put("*/api/v1/org/gateway/key", async ({ request }) => {
+        expectCookieOnlyRequest(request);
+        observed.push({
+          method: request.method,
+          body: await request.json(),
+          key: request.headers.get("Idempotency-Key"),
+        });
+        return HttpResponse.json(gatewayStatus);
+      }),
+      http.delete("*/api/v1/org/gateway/key", async ({ request }) => {
+        expectCookieOnlyRequest(request);
+        observed.push({
+          method: request.method,
+          body: await request.json(),
+          key: request.headers.get("Idempotency-Key"),
+        });
+        return HttpResponse.json({ ...gatewayStatus, state: "no_active" });
+      }),
+    );
+    const putKey = (orgQueries as Record<string, unknown>).putOrgGatewayKey as
+      | undefined
+      | ((key: string, version: number | null, idempotencyKey: string) => Promise<unknown>);
+    const deleteKey = (orgQueries as Record<string, unknown>).deleteOrgGatewayKey as
+      | undefined
+      | ((version: number, idempotencyKey: string) => Promise<unknown>);
+
+    expect(putKey).toBeTypeOf("function");
+    expect(deleteKey).toBeTypeOf("function");
+    await putKey?.("  BT10D-RAW-KEY-CANARY  ", 3, "gateway-put-1");
+    await deleteKey?.(3, "gateway-delete-1");
+
+    expect(observed).toEqual([
+      {
+        method: "PUT",
+        body: { gateway_key: "BT10D-RAW-KEY-CANARY", expected_key_version: 3 },
+        key: "gateway-put-1",
+      },
+      {
+        method: "DELETE",
+        body: { expected_key_version: 3 },
+        key: "gateway-delete-1",
+      },
+    ]);
+    expect(JSON.stringify(observed)).not.toMatch(/org_id|tenant_id/i);
+  });
+
+  it("keeps null as the first-bind PUT version", async () => {
+    let observed: unknown;
+    server.use(
+      http.put("*/api/v1/org/gateway/key", async ({ request }) => {
+        observed = await request.json();
+        return HttpResponse.json({ ...gatewayStatus, key_version: 1 });
+      }),
+    );
+
+    await expect(
+      orgQueries.putOrgGatewayKey(
+        "BT10D-FIRST-BIND-KEY-CANARY",
+        null,
+        "gateway-first-bind-1",
+      ),
+    ).resolves.toMatchObject({ state: "active", key_version: 1 });
+    expect(observed).toEqual({
+      gateway_key: "BT10D-FIRST-BIND-KEY-CANARY",
+      expected_key_version: null,
+    });
+  });
+
+  it.each([
+    ["null", null],
+    ["zero", 0],
+    ["negative", -1],
+    ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+  ])("rejects gateway DELETE %s versions before fetch", async (_name, version) => {
+    let deletes = 0;
+    server.use(
+      http.delete("*/api/v1/org/gateway/key", () => {
+        deletes += 1;
+        return HttpResponse.json({ ...gatewayStatus, state: "no_active" });
+      }),
+    );
+    const deleteKey = orgQueries.deleteOrgGatewayKey as unknown as (
+      value: unknown,
+      idempotencyKey: string,
+    ) => Promise<unknown>;
+
+    let caught: unknown;
+    try {
+      await deleteKey(version, `gateway-invalid-delete-${_name}`);
+    } catch (error) {
+      caught = error;
+    }
+    expect({ isSafeError: caught instanceof OrgApiError, deletes }).toEqual({
+      isSafeError: true,
+      deletes: 0,
+    });
+  });
+
+  it("exposes a positive-only gateway DELETE version type", () => {
+    expectTypeOf(orgQueries.deleteOrgGatewayKey).parameter(0).toEqualTypeOf<number>();
+  });
+
+  it.each([401, 403, 409, 422, 429, 500, 503])(
+    "maps gateway HTTP %s to a stable safe error",
+    async (status) => {
+      const canary = "BT10D-RAW-KEY-ERROR-CANARY";
+      server.use(
+        http.get("*/api/v1/org/gateway/key/status", () =>
+          HttpResponse.json(
+            {
+              ok: false,
+              error: {
+                code: status === 409
+                  ? "ORG_CREDENTIAL_VERSION_MISMATCH"
+                  : status === 422
+                    ? "ORG_KEY_VALIDATION_FAILED"
+                    : "ORG_INTERNAL_ERROR",
+                message: canary,
+                request_id: `gateway-${status}`,
+              },
+            },
+            { status },
+          ),
+        ),
+      );
+      const getStatus = (orgQueries as Record<string, unknown>)
+        .getOrgGatewayKeyStatus as undefined | (() => Promise<unknown>);
+      const error = await getStatus?.().catch((value: unknown) => value);
+
+      expect(error).toBeInstanceOf(OrgApiError);
+      expect(JSON.stringify(error)).not.toContain(canary);
+      expect(String(error)).not.toContain(canary);
+    },
+  );
+
+  it("keeps malformed and non-JSON gateway responses out of query data", async () => {
+    const canary = "BT10D-GATEWAY-RESPONSE-CANARY";
+    server.use(
+      http.get("*/api/v1/org/gateway/key/status", () =>
+        HttpResponse.json({ ...gatewayStatus, provider: canary }),
+      ),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const useStatus = (orgQueries as Record<string, unknown>)
+      .useOrgGatewayKeyStatus as () => { isError: boolean };
+    const { result } = renderHook(() => useStatus(), {
+      wrapper: wrapperFor(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(queryClient.getQueryData(["org", "gateway-key"])).toBeUndefined();
+    expect(JSON.stringify(queryClient.getQueryCache().getAll())).not.toContain(canary);
+
+    server.use(
+      http.get("*/api/v1/org/gateway/key/status", () =>
+        new HttpResponse(canary, {
+          status: 200,
+          headers: { "Content-Type": "text/plain", "X-Secret": canary },
+        }),
+      ),
+    );
+    await expect(
+      (orgQueries as typeof orgQueries).getOrgGatewayKeyStatus(),
+    ).rejects.toMatchObject({ code: "ORG_REQUEST_FAILED" });
+  });
+
+  it("adds the gateway status query under the organization root", () => {
+    expect(queryKeys.orgGatewayKey()).toEqual(["org", "gateway-key"]);
+  });
+
+  it("never automatically replays gateway PUT or DELETE after server failure", async () => {
+    let puts = 0;
+    let deletes = 0;
+    server.use(
+      http.put("*/api/v1/org/gateway/key", () => {
+        puts += 1;
+        return HttpResponse.json({
+          ok: false,
+          error: {
+            code: "ORG_CREDENTIAL_INTERNAL_ERROR",
+            message: "BT10D-REPLAY-CANARY",
+            request_id: "put-failure",
+          },
+        }, { status: 500 });
+      }),
+      http.delete("*/api/v1/org/gateway/key", () => {
+        deletes += 1;
+        return HttpResponse.json({
+          ok: false,
+          error: {
+            code: "ORG_CREDENTIAL_INTERNAL_ERROR",
+            message: "BT10D-REPLAY-CANARY",
+            request_id: "delete-failure",
+          },
+        }, { status: 503 });
+      }),
+    );
+
+    await expect(
+      (orgQueries as typeof orgQueries).putOrgGatewayKey(
+        "BT10D-RAW-KEY-CANARY",
+        3,
+        "gateway-put-failure",
+      ),
+    ).rejects.toBeInstanceOf(OrgApiError);
+    await expect(
+      (orgQueries as typeof orgQueries).deleteOrgGatewayKey(
+        3,
+        "gateway-delete-failure",
+      ),
+    ).rejects.toBeInstanceOf(OrgApiError);
+    expect(puts).toBe(1);
+    expect(deletes).toBe(1);
+  });
   it("mirrors optional invite role fields from the current OpenAPI", () => {
     const inviteWithoutRole: Invite = {
       invite_id: "invite-without-role",

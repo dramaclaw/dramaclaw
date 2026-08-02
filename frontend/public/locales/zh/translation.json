@@ -76,7 +76,44 @@
     },
     "actions": {
       "manageMembers": "管理成员",
-      "manageInvites": "管理邀请"
+      "manageInvites": "管理邀请",
+      "manageGatewayKey": "管理网关 Key"
+    },
+    "gatewayKey": {
+      "title": "组织网关 Key",
+      "loading": "正在加载网关 Key 状态",
+      "returning": "你的权限已变化，正在返回组织概览…",
+      "retry": "重试",
+      "available": "网关 Key 可用",
+      "unavailable": "网关 Key 不可用",
+      "input": "网关 Key",
+      "verifiedAt": "验证时间",
+      "updatedAt": "更新时间",
+      "reveal": "按住显示网关 Key",
+      "bind": "绑定 Key",
+      "replace": "替换 Key",
+      "unbind": "解绑 Key",
+      "state": {
+        "never_configured": "从未配置",
+        "validating": "正在验证",
+        "active": "可用",
+        "no_active": "当前无可用 Key",
+        "validation_failed": "验证失败"
+      },
+      "confirm": {
+        "bindTitle": "确认绑定 Key",
+        "replaceTitle": "确认替换 Key",
+        "unbindTitle": "确认解绑 Key",
+        "versionBoundary": "新任务使用新的 Key 版本；已经准入的任务继续使用固定的旧版本。",
+        "noFallback": "解绑后成员不能启动新的模型任务，也不会回落到平台 Key。",
+        "cancel": "取消",
+        "submit": "确认"
+      },
+      "errors": {
+        "generic": "网关 Key 请求失败，请重试或联系支持。",
+        "conflict": "网关 Key 状态已变化，请查看刷新后的状态并重新确认。",
+        "validation": "网关 Key 验证失败，请检查后重新输入。"
+      }
     },
     "empty": {
       "title": "当前没有组织",

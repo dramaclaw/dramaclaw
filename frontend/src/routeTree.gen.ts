@@ -20,6 +20,7 @@ import { Route as AppOrganizationRouteImport } from './routes/_app/organization'
 import { Route as AppCreditsRouteImport } from './routes/_app/credits'
 import { Route as AppOrganizationMembersRouteImport } from './routes/_app/organization.members'
 import { Route as AppOrganizationInvitesRouteImport } from './routes/_app/organization.invites'
+import { Route as AppOrganizationGatewayKeyRouteImport } from './routes/_app/organization.gateway-key'
 import { Route as AppProjectsProjectTasksRouteImport } from './routes/_app/projects.$project/tasks'
 import { Route as AppProjectsProjectStylesRouteImport } from './routes/_app/projects.$project/styles'
 import { Route as AppProjectsProjectIngestRouteImport } from './routes/_app/projects.$project/ingest'
@@ -99,6 +100,12 @@ const AppOrganizationInvitesRoute = AppOrganizationInvitesRouteImport.update({
   path: '/invites',
   getParentRoute: () => AppOrganizationRoute,
 } as any)
+const AppOrganizationGatewayKeyRoute =
+  AppOrganizationGatewayKeyRouteImport.update({
+    id: '/gateway-key',
+    path: '/gateway-key',
+    getParentRoute: () => AppOrganizationRoute,
+  } as any)
 const AppProjectsProjectFreezoneLazyRoute =
   AppProjectsProjectFreezoneLazyRouteImport.update({
     id: '/projects/$project/freezone',
@@ -236,6 +243,7 @@ export interface FileRoutesByFullPath {
   '/organization': typeof AppOrganizationRouteWithChildren
   '/invite/$token': typeof InviteTokenRoute
   '/watch/$work': typeof WatchWorkRoute
+  '/organization/gateway-key': typeof AppOrganizationGatewayKeyRoute
   '/organization/invites': typeof AppOrganizationInvitesRoute
   '/organization/members': typeof AppOrganizationMembersRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
@@ -261,6 +269,7 @@ export interface FileRoutesByTo {
   '/invite/$token': typeof InviteTokenRoute
   '/watch/$work': typeof WatchWorkRoute
   '/': typeof AppIndexRoute
+  '/organization/gateway-key': typeof AppOrganizationGatewayKeyRoute
   '/organization/invites': typeof AppOrganizationInvitesRoute
   '/organization/members': typeof AppOrganizationMembersRoute
   '/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
@@ -288,6 +297,7 @@ export interface FileRoutesById {
   '/invite/$token': typeof InviteTokenRoute
   '/watch/$work': typeof WatchWorkRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/organization/gateway-key': typeof AppOrganizationGatewayKeyRoute
   '/_app/organization/invites': typeof AppOrganizationInvitesRoute
   '/_app/organization/members': typeof AppOrganizationMembersRoute
   '/_app/projects/$project/assistant': typeof AppProjectsProjectAssistantRoute
@@ -315,6 +325,7 @@ export interface FileRouteTypes {
     | '/organization'
     | '/invite/$token'
     | '/watch/$work'
+    | '/organization/gateway-key'
     | '/organization/invites'
     | '/organization/members'
     | '/projects/$project/assistant'
@@ -340,6 +351,7 @@ export interface FileRouteTypes {
     | '/invite/$token'
     | '/watch/$work'
     | '/'
+    | '/organization/gateway-key'
     | '/organization/invites'
     | '/organization/members'
     | '/projects/$project/assistant'
@@ -366,6 +378,7 @@ export interface FileRouteTypes {
     | '/invite/$token'
     | '/watch/$work'
     | '/_app/'
+    | '/_app/organization/gateway-key'
     | '/_app/organization/invites'
     | '/_app/organization/members'
     | '/_app/projects/$project/assistant'
@@ -455,6 +468,13 @@ declare module '@tanstack/react-router' {
       path: '/invites'
       fullPath: '/organization/invites'
       preLoaderRoute: typeof AppOrganizationInvitesRouteImport
+      parentRoute: typeof AppOrganizationRoute
+    }
+    '/_app/organization/gateway-key': {
+      id: '/_app/organization/gateway-key'
+      path: '/gateway-key'
+      fullPath: '/organization/gateway-key'
+      preLoaderRoute: typeof AppOrganizationGatewayKeyRouteImport
       parentRoute: typeof AppOrganizationRoute
     }
     '/_app/projects/$project/freezone': {
@@ -566,11 +586,13 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppOrganizationRouteChildren {
+  AppOrganizationGatewayKeyRoute: typeof AppOrganizationGatewayKeyRoute
   AppOrganizationInvitesRoute: typeof AppOrganizationInvitesRoute
   AppOrganizationMembersRoute: typeof AppOrganizationMembersRoute
 }
 
 const AppOrganizationRouteChildren: AppOrganizationRouteChildren = {
+  AppOrganizationGatewayKeyRoute: AppOrganizationGatewayKeyRoute,
   AppOrganizationInvitesRoute: AppOrganizationInvitesRoute,
   AppOrganizationMembersRoute: AppOrganizationMembersRoute,
 }

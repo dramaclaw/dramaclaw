@@ -76,7 +76,44 @@
     },
     "actions": {
       "manageMembers": "Manage members",
-      "manageInvites": "Manage invitations"
+      "manageInvites": "Manage invitations",
+      "manageGatewayKey": "Manage gateway key"
+    },
+    "gatewayKey": {
+      "title": "Organization gateway key",
+      "loading": "Loading gateway key status",
+      "returning": "Your permissions changed. Returning to the organization overview…",
+      "retry": "Retry",
+      "available": "Gateway key available",
+      "unavailable": "Gateway key unavailable",
+      "input": "Gateway key value",
+      "verifiedAt": "Verified",
+      "updatedAt": "Updated",
+      "reveal": "Hold to reveal gateway key",
+      "bind": "Bind key",
+      "replace": "Replace key",
+      "unbind": "Unbind key",
+      "state": {
+        "never_configured": "Never configured",
+        "validating": "Validating",
+        "active": "Active",
+        "no_active": "No active key",
+        "validation_failed": "Validation failed"
+      },
+      "confirm": {
+        "bindTitle": "Confirm key binding",
+        "replaceTitle": "Confirm key replacement",
+        "unbindTitle": "Confirm key removal",
+        "versionBoundary": "New tasks use the new key version; already admitted tasks keep their fixed prior version.",
+        "noFallback": "Members cannot start new model tasks after removal. There is no platform key fallback.",
+        "cancel": "Cancel",
+        "submit": "Confirm"
+      },
+      "errors": {
+        "generic": "Gateway key request failed. Try again or contact support.",
+        "conflict": "Gateway key state changed. Review the refreshed status and confirm again.",
+        "validation": "Gateway key validation failed. Check the key and enter it again."
+      }
     },
     "empty": {
       "title": "No current organization",

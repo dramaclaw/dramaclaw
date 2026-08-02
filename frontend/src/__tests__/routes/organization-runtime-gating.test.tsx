@@ -66,6 +66,7 @@ describe("organization route runtime gating", () => {
   it.each([
     ["overview", "@/routes/_app/organization", "/organization"],
     ["members", "@/routes/_app/organization.members", "/organization/members"],
+    ["gateway key", "@/routes/_app/organization.gateway-key", "/organization/gateway-key"],
   ] as const)("blocks CE %s before any org request, including focus", async (_name, modulePath, path) => {
     let orgRequests = 0;
     server.use(
@@ -75,10 +76,11 @@ describe("organization route runtime gating", () => {
       }),
     );
     routerState.pathname = path;
-    const module =
-      modulePath === "@/routes/_app/organization"
-        ? await import("@/routes/_app/organization")
-        : await import("@/routes/_app/organization.members");
+    const module = modulePath === "@/routes/_app/organization"
+      ? await import("@/routes/_app/organization")
+      : modulePath === "@/routes/_app/organization.members"
+        ? await import("@/routes/_app/organization.members")
+        : await import("@/routes/_app/organization.gateway-key");
     const Component = module.Route.options.component as React.ComponentType;
 
     renderRoute(Component);
@@ -103,7 +105,12 @@ describe("organization route runtime gating", () => {
           },
           organization: { org_id: "org-1", name: "Acme", status: "active" },
           membership: { role: "org_member", membership_status: "active" },
-          capabilities: { manage_members: false, manage_invites: false },
+          capabilities: {
+            manage_members: false,
+            manage_invites: false,
+            manage_gateway_key: false,
+          },
+          gateway_key: { state: "never_configured", key_version: null },
         });
       }),
     );
@@ -118,5 +125,52 @@ describe("organization route runtime gating", () => {
     focusManager.setFocused(true);
 
     await vi.waitFor(() => expect(orgRequests).toBe(2));
+  });
+
+  it("blocks an EE member before the gateway status request is created", async () => {
+    runtimeState.isCe = false;
+    routerState.pathname = "/organization/gateway-key";
+    let orgMeRequests = 0;
+    let gatewayRequests = 0;
+    server.use(
+      http.get("*/api/v1/org/me", () => {
+        orgMeRequests += 1;
+        return HttpResponse.json({
+          user: {
+            user_id: "user-1",
+            username: "alice",
+            model_billing_entitlement: "platform",
+          },
+          organization: {
+            org_id: "org-1",
+            name: "Acme",
+            status: "active",
+            updated_at: "2026-08-02T00:00:00Z",
+          },
+          membership: {
+            role: "org_member",
+            membership_status: "active",
+            updated_at: "2026-08-02T00:00:00Z",
+          },
+          capabilities: {
+            manage_members: false,
+            manage_invites: false,
+            manage_gateway_key: false,
+          },
+          gateway_key: { state: "active", key_version: 3 },
+        });
+      }),
+      http.all("*/api/v1/org/gateway/key*", () => {
+        gatewayRequests += 1;
+        return HttpResponse.json({});
+      }),
+    );
+    const { Route } = await import("@/routes/_app/organization.gateway-key");
+
+    renderRoute(Route.options.component as React.ComponentType);
+
+    expect(await screen.findByText("organization.gatewayKey.returning")).toBeVisible();
+    expect(orgMeRequests).toBe(1);
+    expect(gatewayRequests).toBe(0);
   });
 });
