@@ -41,6 +41,10 @@ from novelvideo.freezone.skill_registry import (
     list_skills,
 )
 from novelvideo.project_context import ProjectContext
+from novelvideo.shared.billing_errors import (
+    BillingRuleNotConfiguredError,
+    InsufficientCreditsError,
+)
 from novelvideo.task_backend.limits import ProjectUserTaskLimitExceeded
 from novelvideo.task_state import get_task_manager
 
@@ -356,6 +360,34 @@ async def test_freezone_video_start_runtime_error_is_logged(
     assert exc.value.status_code == 503
     assert "failed to start freezone omni video gen task" in caplog.text
     assert "broker unavailable" in caplog.text
+
+
+def test_freezone_task_start_preserves_insufficient_credit_error() -> None:
+    billing_error = InsufficientCreditsError(
+        user_id="usr_1",
+        cost=40,
+        balance=8,
+    )
+    wrapper = RuntimeError("failed to start freezone image-to-video task")
+    wrapper.__cause__ = billing_error
+
+    with pytest.raises(InsufficientCreditsError) as exc_info:
+        freezone_routes._handle_task_start_runtime_error("start failed", wrapper)
+
+    assert exc_info.value.cost == 40
+    assert exc_info.value.balance == 8
+
+
+def test_freezone_task_start_preserves_missing_billing_rule_error() -> None:
+    billing_error = BillingRuleNotConfiguredError(
+        kind="feature",
+        key="freezone.video_generate",
+    )
+    wrapper = RuntimeError("failed to start freezone video task")
+    wrapper.__cause__ = billing_error
+
+    with pytest.raises(BillingRuleNotConfiguredError):
+        freezone_routes._handle_task_start_runtime_error("start failed", wrapper)
 
 
 @pytest.mark.asyncio
@@ -6337,6 +6369,27 @@ async def test_image_catalog_pixel_floor_is_added_to_execution_schema(
     assert schema["minPixels"] == 3_686_400
     assert values == {}
     assert entry is catalog[0]
+
+
+@pytest.mark.asyncio
+async def test_disabled_or_removed_catalog_model_is_rejected_without_static_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return []
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes._resolve_catalog_request(
+            "image",
+            "disabled-image-model",
+            {},
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "当前没有可用的图片模型" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio

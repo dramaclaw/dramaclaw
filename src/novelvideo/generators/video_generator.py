@@ -2125,26 +2125,50 @@ class NewApiVideoGenerator(VideoGeneratorBase):
     ) -> tuple[int, int] | None:
         """Convert a resolution tier and aspect ratio to exact pixel dimensions."""
 
-        resolution_match = re.search(r"(\d+)", str(resolution or ""))
+        resolution_text = str(resolution or "").strip().lower()
+        p_match = re.fullmatch(r"(\d+)p", resolution_text)
+        # Preserve compatibility with older catalogs that stored video tiers
+        # as bare values such as "1080" instead of "1080p".
+        if p_match is None:
+            p_match = re.fullmatch(r"(\d{3,4})", resolution_text)
+        video_k_long_edges = {
+            "2k": 2560,
+            "4k": 3840,
+        }
+        long_edge = video_k_long_edges.get(resolution_text)
         ratio_text = str(ratio or "").strip().lower()
-        if not resolution_match or ratio_text == "adaptive" or ":" not in ratio_text:
+        if (
+            (p_match is None and long_edge is None)
+            or ratio_text == "adaptive"
+            or ":" not in ratio_text
+        ):
             return None
         try:
-            tier = int(resolution_match.group(1))
             ratio_width, ratio_height = (
                 float(part.strip()) for part in ratio_text.split(":", 1)
             )
         except (TypeError, ValueError):
             return None
-        if tier <= 0 or ratio_width <= 0 or ratio_height <= 0:
+        if ratio_width <= 0 or ratio_height <= 0:
             return None
 
-        if ratio_width >= ratio_height:
-            height = tier
-            width = round(tier * ratio_width / ratio_height)
+        if long_edge is not None:
+            if ratio_width >= ratio_height:
+                width = long_edge
+                height = round(long_edge * ratio_height / ratio_width)
+            else:
+                height = long_edge
+                width = round(long_edge * ratio_width / ratio_height)
         else:
-            width = tier
-            height = round(tier * ratio_height / ratio_width)
+            short_edge = int(p_match.group(1))
+            if short_edge <= 0:
+                return None
+            if ratio_width >= ratio_height:
+                height = short_edge
+                width = round(short_edge * ratio_width / ratio_height)
+            else:
+                width = short_edge
+                height = round(short_edge * ratio_height / ratio_width)
 
         # Video encoders generally require even dimensions.
         width += width % 2
@@ -2163,8 +2187,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         during phase one. Only the final wire representation is normalized here.
         """
 
-        resolution = metadata.pop("resolution", "")
-        ratio = metadata.pop("ratio", "")
+        # Keep the model-level semantics in metadata even after deriving the
+        # generic width/height fields. NewAPI model adapters may need the
+        # original ratio/resolution (notably for image-to-video) and cannot
+        # reliably reconstruct them from an input image's exact pixel ratio.
+        resolution = metadata.get("resolution", "")
+        ratio = metadata.get("ratio", "")
 
         duration_value = payload.pop("duration", None)
         legacy_seconds = payload.pop("seconds", None)

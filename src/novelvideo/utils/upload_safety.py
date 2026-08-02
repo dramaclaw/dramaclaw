@@ -6,12 +6,11 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
-# Novels are plain text; 50 MiB is generous and bounds any single upload.
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_NOVEL_UPLOAD_BYTES = 1 * 1024 * 1024
 
 
 class UploadTooLargeError(ValueError):
-    """Raised when an upload exceeds MAX_UPLOAD_BYTES."""
+    """Raised when a novel upload exceeds its raw file-size limit."""
 
 
 def sanitize_upload_filename(raw_name: str | None, *, fallback: str = "upload.txt") -> str:
@@ -38,12 +37,13 @@ def stream_to_file_with_limit(
     src: BinaryIO,
     dst_path: Path,
     *,
-    max_bytes: int = MAX_UPLOAD_BYTES,
+    max_bytes: int = MAX_NOVEL_UPLOAD_BYTES,
     chunk_size: int = 1 << 20,
 ) -> int:
-    """Stream *src* into *dst_path*, aborting if size exceeds *max_bytes*.
+    """Stream *src* into *dst_path*, aborting beyond *max_bytes*.
 
-    Returns the number of bytes written. Partial file is removed on overflow.
+    The raw size guard protects document parsing. A separate parsed-character
+    limit protects chapter analysis and knowledge-graph ingestion.
     """
     written = 0
     too_large = False
@@ -60,14 +60,10 @@ def stream_to_file_with_limit(
                 out.write(chunk)
     finally:
         if too_large:
-            # Remove the partial file; swallow unlink failure so the caller
-            # still sees the original UploadTooLargeError below.
             try:
                 dst_path.unlink(missing_ok=True)
             except OSError:
                 pass
     if too_large:
-        raise UploadTooLargeError(
-            f"上传超过 {max_bytes // (1024 * 1024)}MB 上限"
-        )
+        raise UploadTooLargeError(f"上传超过 {max_bytes // (1024 * 1024)}MB 上限")
     return written

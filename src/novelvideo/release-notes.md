@@ -1,40 +1,47 @@
 ---
-version: 1.1.5
-attention: low
+version: 1.2.0
+attention: medium
 ---
-# v1.1.5
+# v1.2.0
 
 ## User-facing Highlights (zh)
 
-- **视频素材工作流更完整**: 视频节点可一次导入多张图片、视频和音频,并按模型能力提供全能参考、图片参考和首尾帧入口,提交前会明确拦截不支持的素材与越界音频。
-- **画布查找与保存更可靠**: 历史资产支持按提示词和名称搜索,并修复自动保存并发造成的虚假 409 冲突。
-- **小说导入可安全重建**: 知识图谱构建会识别上游失败、空图和不完整结果,失败后可复用原小说安全重试或重建。
-- **登录与设置体验更稳定**: 登录过期后会停止重复请求并正确返回登录页,媒体存储凭据支持只更新需要变更的字段,关键界面的中英文显示也更完整。
+- **功能积分更透明**: 统一展示功能价格、预计扣费、账户余额和使用记录,批量创作及图片、视频、音频等任务的扣费状态更清晰。
+- **虾画创作能力升级**: 完善图片参考、视频参考、音频连接和 Seedance 模型模式切换,并修复 NewAPI 图片尺寸、水印、参考图和视频结果兼容问题。
+- **剧本导入更准确**: 导入前可预览原文、章节和场景识别结果,新增对常见中英文场景标题、括号标题和精品短剧格式的支持。
+- **任务执行更稳定**: 构建类任务统一接入任务中心,修复结束任务持续加载、知识图谱日志阻塞队列及多个规划和模型调用超时问题。
+- **外部智能体可连接 CE**: Claude Code 等本地智能体可通过 MCP 直接调用 DramaClaw CE 的项目和创作能力,无需额外配置访问令牌。
 
 ## User-facing Highlights (en)
 
-- **More complete video reference workflows**: Import multiple images, videos, and audio clips directly into a video node, choose model-appropriate reference modes, and catch unsupported media or invalid audio durations before submission.
-- **Faster asset discovery and safer saves**: Search generation history by prompt or name, while serialized canvas saves prevent false 409 conflicts caused by overlapping autosaves.
-- **Safe novel import rebuilds**: Knowledge graph imports now detect provider failures, empty graphs, and incomplete runs, then reuse the original novel for a bounded retry or confirmed rebuild.
-- **More reliable sessions and settings**: Expired sessions stop repeated background requests and return to sign-in, media credentials support partial updates, and key screens provide more complete Chinese and English localization.
+- **More transparent feature credits**: See feature prices, estimated charges, account balances, and usage history consistently across batch creation, image, video, and audio workflows.
+- **Upgraded canvas creation workflows**: Improved image, video, and audio references, automatic Seedance mode selection, and compatibility for NewAPI image sizing, watermarks, references, and normalized video results.
+- **More accurate screenplay imports**: Preview source text, chapters, and detected scenes before import, with broader support for common Chinese and English scene headings, bracketed headings, and premium short-drama formats.
+- **More reliable task execution**: Build operations now report through the task center, while completed-task loading, queue-blocking graph logs, planning failures, and model timeouts are handled more reliably.
+- **External agents can connect to CE**: Local agents such as Claude Code can use MCP to operate DramaClaw CE projects and creation workflows without configuring an additional access token.
 
 ## New Features
 
-- 历史资产支持按提示词和名称搜索,并提供跨分类命中提示 (#178).
-- 视频节点支持一次选择多张本地图片、视频和音频,自动创建上游素材节点和分组 (#181).
-- EE 登录页新增可配置的“更多信息”菜单,支持链接、图片和 Markdown 内容 (#184).
+- 新增统一功能积分价格、预估扣费、余额与使用记录展示 (#210).
+- 虾画底部工具栏新增移动和抓手工具,支持快捷键 V/H (#202).
+- CE 提供无需额外令牌的 MCP 接入,支持外部智能体操作项目与创作流程 (#190).
+- 小说导入页新增原文、章节和场景识别预览 (#220).
+- 支持更多常见中英文剧本场景标题格式 (#227).
 
 ## Bug Fixes
 
-- 修复画布自动保存并发导致的虚假版本冲突和跨画布误写风险 (#179).
-- 修复 Seedance 1.x 静默忽略视频、音频或多图素材的问题,提交前会给出明确原因 (#187).
-- 修复 Seedance 2.0 音频参考时长越界后才由厂商返回错误的问题 (#196).
-- 修复登录过期后任务流和后台请求持续重试,以及无效 cookie 无法清理的问题 (Fixes #197, #198).
-- 修复 Freezone AI 摆件在发送模型请求前因失效导入而失败的问题 (#199).
-- 修复知识图谱构建失败被误报成功,并支持复用原小说安全重试和重建 (#200).
+- Beat 生成与剧集规划统一使用同一正文来源优先级：显式 `beat_source_text` 优先，其次为改编稿、原文和内容摘要；存量项目若已有改编稿且未显式指定 Beat 来源，重新生成时将改用改编稿。
+- 修复 Seedance 1.x 单图模式被错误禁用,并在接入视频或音频时自动切换到 Seedance 2.0 全能参考 (#203).
+- 修复音频节点连接范围和音视频分离后背景音节点孤立的问题 (#204).
+- 修复视频参考生成脚本未读取视频内容,以及角色图和参考列为空的问题 (#209).
+- 修复知识图谱日志阻塞 Celery 心跳和规划任务超时的问题 (#206, #215).
+- 修复括号场景标题及精品短剧场景标题识别问题 (#213, #214).
+- 完善剧本格式错误说明和上传限制校验,避免无效或超限内容进入导入流程 (#229).
+- 修复虾驿标准化视频任务结果无法读取的问题 (#217).
+- 修复构建类任务和已结束任务仍持续显示加载状态的问题 (#219, #222).
+- 修复 NewAPI 图片生成与编辑中的参考图、默认水印和分辨率参数问题 (#221).
 
 ## Improvements
 
-- 视频空态入口按模型能力展示全能参考、图片参考和首尾帧等可用模式 (#185).
-- OSS 与 Cloudinary 媒体存储凭据支持部分更新,无需重复填写整组配置 (Fixes #182, #183).
-- 补齐角色统计、风格、Beat 工作台、分享弹窗和虾画等关键界面的中英文文案 (#191).
+- 降低积分汇总接口的重复请求压力 (#223).
+- 统一界面视觉规范和设计变量,提升页面样式一致性 (#212).

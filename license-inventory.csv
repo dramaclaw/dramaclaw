@@ -1172,6 +1172,7 @@ frontend/src/lib/time-of-day.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.to
 frontend/src/lib/url-params.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/utils.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/version-update-watch.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/xiadao-flag.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/login-posters.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/main.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/pipeline-import/CompareDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

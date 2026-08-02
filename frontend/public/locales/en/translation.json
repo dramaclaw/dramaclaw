@@ -284,11 +284,12 @@
       "title": "Script Format Check",
       "close": "Close",
       "viewDetails": "View details",
-      "recommended": "Recommended: 1-1, Location Time INT/EXT, one line per dialogue Character: line",
+      "recommended": "Standard script example:\nEpisode 1\n1-1 City Cafe DAY INT\nCharacters: Lin Xia, Chen Mo\n△ Afternoon light crosses the window as Lin Xia places a letter on the table.\nLin Xia: The answer you wanted is right here.",
       "lineLabel": "Line {{line}}",
       "noIssues": "No specific issues found"
     },
     "title": "Xia Director",
+    "upgrading": "Xia Director is being upgraded. Stay tuned!",
     "description": "Open Xia Director beside the current creation page.",
     "toggle": "Expand or collapse Xia Director",
     "close": "Collapse Xia Director",
@@ -1414,7 +1415,7 @@
     "title": "Story Source",
     "subtitle": "Upload a script and start your creative journey.",
     "dropzoneHint": "Click or drop your novel file here",
-    "supportedFormats": "Supports .txt / .md / .docx · up to 10MB",
+    "supportedFormats": "Supports .txt / .md / .docx · File up to 1MB · Text up to 100,000 characters",
     "uploadingTitle": "Uploading novel…",
     "uploadingHint": "Please stay on this page until the upload finishes. It may take a moment on a slow connection.",
     "inputMode": {
@@ -1517,10 +1518,10 @@
       "exampleLabel": "Example excerpt"
     },
     "sceneHeaders": {
-      "missing": "Premium drama scripts require scene headers. Add them before importing.",
-      "missingFix": "Add a “1-1 Location Day INT”, “1.1 Location INT Day”, or INT./EXT. heading to every scene.",
-      "repairable": "Scene boundaries were recognized, but some scene metadata is incomplete and will be completed during scene planning.",
-      "repairableFix": "The source stays unchanged while missing location, time, and INT/EXT metadata is completed scene by scene.",
+      "missing": "No scene headings were recognized, so the system cannot tell where each scene begins.",
+      "missingFix": "Follow the example above: start with “Episode N”, then give every scene a separate “scene number, location, time, INT/EXT” heading before its characters, actions, and dialogue.",
+      "repairable": "Scene boundaries were recognized, but some headings are missing a time, location, or INT/EXT value. Import is still allowed and the missing metadata will be completed during scene planning.",
+      "repairableFix": "Use the example above to add the missing location, time, or INT/EXT value. You can also continue importing without editing the source.",
       "open": "View scenes for {{chapter}}",
       "rowCount_one": "{{count}} scene",
       "rowCount_other": "{{count}} scenes",

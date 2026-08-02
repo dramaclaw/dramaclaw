@@ -280,3 +280,41 @@ def test_create_script_workflow_uses_narrated_audio_type_mode():
     )
 
     assert workflow.audio_type_mode == "narrated"
+
+
+@pytest.mark.asyncio
+async def test_literal_workflow_uses_shared_episode_planning_content(monkeypatch):
+    from novelvideo.workflows import literal_script_writing
+
+    episode = SimpleNamespace(number=1, title="第一集")
+
+    class _CogneeStore:
+        async def load_graph_state(self):
+            return None
+
+    class _SQLiteStore:
+        async def get_episode_from_graph(self, episode_num):
+            assert episode_num == 1
+            return episode
+
+    calls = []
+
+    async def fake_load_episode_planning_content(store, selected_episode):
+        calls.append((store, selected_episode))
+        return ""
+
+    monkeypatch.setattr(
+        literal_script_writing,
+        "load_episode_planning_content",
+        fake_load_episode_planning_content,
+    )
+    cognee_store = _CogneeStore()
+    workflow = LiteralScriptWritingWorkflow(
+        cognee_store=cognee_store,
+        sqlite_store=_SQLiteStore(),
+    )
+
+    with pytest.raises(ValueError, match="当前集原文为空"):
+        await workflow.run(episode_num=1)
+
+    assert calls == [(cognee_store, episode)]

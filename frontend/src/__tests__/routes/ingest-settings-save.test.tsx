@@ -15,6 +15,8 @@ import {
 } from "vitest";
 import type { ReactNode } from "react";
 
+const SUPPORTED_FORMATS_LABEL =
+  "Supports .txt / .md / .docx · File up to 1MB · Text up to 100,000 characters";
 const i18n = i18next.createInstance();
 
 beforeAll(async () => {
@@ -50,7 +52,7 @@ beforeAll(async () => {
             title: "Import Novel",
             subtitle: "Upload your novel file.",
             dropzoneHint: "Click or drop your novel file here",
-            supportedFormats: "Supports .txt / .md / .docx",
+            supportedFormats: SUPPORTED_FORMATS_LABEL,
             restoredFilename: "Imported novel",
             reimport: "Re-import",
             reimportSourceMissing: "Original upload missing",
@@ -417,7 +419,7 @@ describe("IngestPage settings save", () => {
     );
 
     expect(
-      screen.getByText("Supports .txt / .md / .docx"),
+      screen.getByText(SUPPORTED_FORMATS_LABEL),
     ).toBeInTheDocument();
     const fileInput = container.querySelector<HTMLInputElement>(
       'input[type="file"]',
@@ -1273,7 +1275,7 @@ describe("IngestPage settings save", () => {
     expect(screen.getByText("Imported novel")).toBeInTheDocument();
     // The empty upload zone must be gone.
     expect(
-      screen.queryByText("Supports .txt / .md / .docx"),
+      screen.queryByText(SUPPORTED_FORMATS_LABEL),
     ).not.toBeInTheDocument();
   });
 
@@ -1290,7 +1292,7 @@ describe("IngestPage settings save", () => {
 
     // Completed (not active) → stays on the normal upload zone.
     expect(
-      screen.getByText("Supports .txt / .md / .docx"),
+      screen.getByText(SUPPORTED_FORMATS_LABEL),
     ).toBeInTheDocument();
     expect(screen.queryByText("Importing")).not.toBeInTheDocument();
   });
@@ -1313,7 +1315,7 @@ describe("IngestPage settings save", () => {
 
     // 数据还是挂载前旧缓存 → 不得对账，仍停在上传区。
     expect(
-      screen.getByText("Supports .txt / .md / .docx"),
+      screen.getByText(SUPPORTED_FORMATS_LABEL),
     ).toBeInTheDocument();
     expect(screen.queryByText("Importing")).not.toBeInTheDocument();
 
@@ -1338,7 +1340,7 @@ describe("IngestPage settings save", () => {
       </Wrapper>,
     );
     expect(
-      screen.getByText("Supports .txt / .md / .docx"),
+      screen.getByText(SUPPORTED_FORMATS_LABEL),
     ).toBeInTheDocument();
 
     // 切到 other 项目，且它有活跃 ingest_fast。
@@ -1380,7 +1382,7 @@ describe("IngestPage settings save", () => {
 
     // 残留的「Importing」必须被清掉，退回上传区。
     expect(
-      await screen.findByText("Supports .txt / .md / .docx"),
+      await screen.findByText(SUPPORTED_FORMATS_LABEL),
     ).toBeInTheDocument();
     expect(screen.queryByText("Importing")).not.toBeInTheDocument();
   });

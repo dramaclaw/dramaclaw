@@ -20,6 +20,7 @@ from novelvideo.models import (
     extract_char_identities_from_markers,
     extract_prop_ids_from_markers,
 )
+from novelvideo.sqlite_store import load_episode_planning_content
 from novelvideo.time_of_day import normalize_time_of_day
 from novelvideo.utils.screenplay_quality import check_screenplay_import_quality
 from novelvideo.utils.screenplay_scene_parser import (
@@ -452,11 +453,9 @@ class LiteralScriptWritingWorkflow:
             raise ValueError(f"未找到第 {episode_num} 集规划")
 
         if source_text is None:
-            source_text = (
-                getattr(episode, "beat_source_text", "")
-                or await self.sqlite_store.load_episode_content(episode_num)
-                or getattr(episode, "content_summary", "")
-                or ""
+            source_text = await load_episode_planning_content(
+                self.cognee_store,
+                episode,
             )
         if not source_text.strip():
             raise ValueError("当前集原文为空，无法逐行生成脚本")

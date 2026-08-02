@@ -56,7 +56,7 @@ FIX_HINTS = {
     "multi_speaker_lines": "建议整理为一句台词一行，每行只保留一个说话人。",
     "ambiguous_speakers": "建议把“他/她/对方”等模糊说话人改为具体角色名。",
     "many_long_dialogues": "建议拆分超长台词，减少单行对白长度。",
-    "missing_scene_headers": "请为每个场景补充分场头，例如“1-1 地点 日 内”“1.1 地点 内 日”或“INT. LOCATION - DAY”。",
+    "missing_scene_headers": "请按标准格式编写：每集先写“第N集”，每个场景再单独写“场号 地点 时间 内/外”，然后依次填写人物、动作和对白。例如：第一集 / 1-1 城市咖啡馆 日 内。",
     "nonstandard_scene_headers": "系统已识别场景边界，并会在场景规划时补齐或规范化缺失的地点、时间和内外景。",
     "non_increasing_chapter_number": "建议检查章节序号是否递增，或确认正文中的章节字样不是误切标题。",
     "too_few_dialogue_lines": "建议补充可识别对白行，格式如“角色：台词”。",
@@ -345,11 +345,17 @@ def build_import_format_check(
     has_missing_interior_exterior = any(
         issue["code"] == "missing_interior_exterior" for issue in issues
     )
+    has_specific_missing_time = any(
+        issue["code"] in {"incomplete_scene_header", "scene_headers_missing_time"}
+        for issue in issues
+    )
 
     for issue in [*report.blocking_issues, *report.warnings]:
         if issue.code == "not_screenplay_like":
             continue
-        if issue.code == "scene_headers_missing_time" and has_missing_interior_exterior:
+        if issue.code == "scene_headers_missing_time" and (
+            has_missing_interior_exterior or has_specific_missing_time
+        ):
             continue
         if issue.code == "sparse_scene_headers" and metrics.get("dialogue_lines", 0) < 24:
             continue
@@ -372,12 +378,12 @@ def build_import_format_check(
                 {
                     "code": "missing_scene_headers",
                     "line": None,
-                    "message": "精品剧未检测到可识别的场景头，无法确定场景边界。",
+                    "message": "没有识别到场景头，系统无法判断每个场景从哪里开始。",
                     "fix": FIX_HINTS["missing_scene_headers"],
                 },
             )
         level = "blocking"
-        summary = "精品剧必须包含场景头，请补充后重新导入。"
+        summary = "精品剧必须包含场景头：系统没有识别到每个场景从哪里开始，请补充后重新导入。"
     elif not has_chapters:
         level = "blocking"
         summary = "未检测到有效章节或可识别正文，无法用于剧本结构化。"
@@ -414,9 +420,65 @@ def _build_line_aware_format_issues(text: str) -> list[dict]:
     lines = text.splitlines()
     issues: list[dict] = []
 
+    blocks = parse_scene_blocks(_extract_screenplay_candidate_lines(text))
+    search_start = 0
+    diagnosed_lines: set[int] = set()
+    for block in blocks:
+        header = str(block.header_line or "").strip()
+        if not header or not _has_source_scene_header_evidence(header):
+            continue
+
+        line_number = None
+        for line_index in range(search_start, len(lines)):
+            if lines[line_index].strip() == header:
+                line_number = line_index + 1
+                search_start = line_index + 1
+                break
+
+        missing: list[str] = []
+        placeholders: list[str] = []
+        if not block.location:
+            missing.append("地点")
+            placeholders.append("[地点]")
+        if not block.time_of_day or block.time_inferred:
+            missing.append("时间")
+            placeholders.append("[日/夜]")
+        if block.interior_exterior not in INTERIOR_EXTERIOR:
+            missing.append("内/外")
+            placeholders.append("[内/外]")
+        if not missing:
+            continue
+
+        if line_number is not None:
+            diagnosed_lines.add(line_number)
+        if header.startswith(("场次", "第")) and block.location:
+            suggestion = (
+                f"{header}；地点：{block.location}，"
+                f"{block.time_of_day if block.time_of_day and not block.time_inferred else '[日/夜]'}，"
+                f"{block.interior_exterior or '[内/外]'}"
+            )
+        else:
+            suggestion = " ".join([header, *placeholders])
+        if len(missing) > 1:
+            code = "incomplete_scene_header"
+        elif missing[0] == "时间":
+            code = "scene_headers_missing_time"
+        elif missing[0] == "内/外":
+            code = "missing_interior_exterior"
+        else:
+            code = "incomplete_scene_header"
+        issues.append(
+            {
+                "code": code,
+                "line": line_number,
+                "message": f"场景头“{header}”缺少{'、'.join(missing)}。",
+                "fix": f"请按实际场景补充，可参考“{suggestion}”。",
+            }
+        )
+
     for idx, raw_line in enumerate(lines, start=1):
         line = raw_line.strip()
-        if not line:
+        if not line or idx in diagnosed_lines:
             continue
 
         location_slot = _format_check_location_slot(line)
