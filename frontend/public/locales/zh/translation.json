@@ -1432,6 +1432,7 @@
     "settingsSaved": "项目设置已保存",
     "settingsSaveFailed": "项目设置保存失败",
     "processing": "处理中...",
+    "elapsed": "已耗时 {{time}}",
     "projectSettings": "项目设置",
     "advancedSettings": "高级设置",
     "visualStyle": "视觉风格",

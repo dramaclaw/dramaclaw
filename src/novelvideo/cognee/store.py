@@ -69,6 +69,21 @@ from novelvideo.models import (
 
 console = Console()
 
+INGEST_PROGRESS_MILESTONES = {
+    "read": 0.02,
+    "prune": 0.06,
+    "parse": 0.10,
+    "parsed": 0.25,
+    "graph": 0.30,
+    "graph_validated": 0.65,
+    "index": 0.70,
+    "indexed": 0.85,
+    "preview": 0.90,
+    "preview_saved": 0.95,
+    "save": 0.98,
+    "complete": 1.0,
+}
+
 
 def _json_list_payload(values: list[str]) -> str:
     return json.dumps(list(values or []), ensure_ascii=False)
@@ -541,6 +556,7 @@ class CogneeStore:
 
         from .config import init_cognee
 
+        report(INGEST_PROGRESS_MILESTONES["read"], "读取并校验原文...")
         log(f"读取文件: {novel_path}")
         content = load_novel_text(novel_path)
         if not content.strip():
@@ -564,7 +580,7 @@ class CogneeStore:
             )
 
         if rebuild:
-            report(0.05, "重建图谱...")
+            report(INGEST_PROGRESS_MILESTONES["prune"], "清理旧图谱...")
             # novel.txt 是前端和后续流水线判断“已导入”的持久标志。旧图谱已经
             # 清除前必须先让旧标志失效：即使清理中途失败，也不能继续显示成功。
             imported_novel_path = Path(self.project_dir) / "novel.txt"
@@ -577,7 +593,7 @@ class CogneeStore:
         init_cognee()
 
         # Step 1: 添加原文到 Cognee
-        report(0.1, "解析原文...")
+        report(INGEST_PROGRESS_MILESTONES["parse"], "解析原文...")
         log("Step 1/3: 导入原文到 Cognee...")
         await self._run_cognee_pipeline_with_retry(
             stage_name="原文导入",
@@ -585,10 +601,11 @@ class CogneeStore:
             log=log,
         )
         log("原文导入完成")
+        report(INGEST_PROGRESS_MILESTONES["parsed"], "原文解析完成")
         await asyncio.sleep(0)
 
         # Step 2: 构建知识图谱
-        report(0.3, "构建知识图谱...")
+        report(INGEST_PROGRESS_MILESTONES["graph"], "构建知识图谱...")
         log("Step 2/3: 构建知识图谱（这可能需要几分钟）...")
         await self._run_cognee_pipeline_with_retry(
             stage_name="知识图谱构建",
@@ -600,9 +617,10 @@ class CogneeStore:
         if not await self._dataset_graph_has_nodes():
             raise RuntimeError("知识图谱构建失败：未生成任何图谱节点")
         log("知识图谱校验完成")
+        report(INGEST_PROGRESS_MILESTONES["graph_validated"], "知识图谱校验完成")
 
         # Step 3: 创建向量索引（memify）
-        report(0.7, "创建向量索引...")
+        report(INGEST_PROGRESS_MILESTONES["index"], "创建向量索引...")
         log("Step 3/3: 创建向量索引（用于三元组检索）...")
         await self._run_cognee_pipeline_with_retry(
             stage_name="向量索引创建",
@@ -610,20 +628,24 @@ class CogneeStore:
             log=log,
         )
         log("向量索引创建完成")
+        report(INGEST_PROGRESS_MILESTONES["indexed"], "向量索引创建完成")
 
         # API workers render this bounded sidecar and never open Ladybug merely
         # for graph visualization.  Persist it before novel.txt, because the
         # latter is the public "import succeeded" marker.
+        report(INGEST_PROGRESS_MILESTONES["preview"], "生成图谱预览...")
         await self.materialize_graph_preview()
         log("知识图谱预览已保存")
+        report(INGEST_PROGRESS_MILESTONES["preview_saved"], "图谱预览已保存")
 
         # 原文落库放在图谱构建成功之后：失败时不留下"已导入"的痕迹。
         # /chapters 仅凭已存原文判定"导入完成"，若提前落库，cognify/memify 失败
         # 仍会让界面误报导入成功且锁死重新上传入口。
+        report(INGEST_PROGRESS_MILESTONES["save"], "保存导入结果...")
         self.save_novel_content(content)
         log("原文已保存到文件")
 
-        report(1.0, "导入完成")
+        report(INGEST_PROGRESS_MILESTONES["complete"], "导入完成")
 
         return {
             "char_count": len(content),

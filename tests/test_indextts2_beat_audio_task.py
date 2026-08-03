@@ -842,6 +842,7 @@ async def test_indextts2_audio_plan_returns_only_billable_beats(tmp_path, monkey
 
     assert plan.beat_numbers == [1]
     assert plan.errors == ["Beat 02 角色声线缺失：谢铮_青年时期"]
+    assert plan.billable_chars == 5
 
 
 @pytest.mark.asyncio

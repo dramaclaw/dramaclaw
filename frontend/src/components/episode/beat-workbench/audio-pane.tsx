@@ -6,8 +6,10 @@ import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Loader2, RefreshCw } from "lucide-react";
 
-import { useRegenerateBeatAudio } from "@/lib/queries/audio";
-import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
+import {
+  useAudioBillingQuote,
+  useRegenerateBeatAudio,
+} from "@/lib/queries/audio";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import {
@@ -43,7 +45,6 @@ interface AudioPaneProps {
 type VoiceConfigTarget = "characters" | "voices";
 
 const ASSET_TAB_STORAGE_KEY_PREFIX = "supertale-asset-tab:";
-const BEAT_AUDIO_GENERATION_FEATURE_KEY = "mainline.beat_audio_generation";
 
 function assetTabStorageKey(project: string): string {
   return `${ASSET_TAB_STORAGE_KEY_PREFIX}${encodeURIComponent(project)}`;
@@ -75,10 +76,11 @@ export function AudioPane({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const regenerate = useRegenerateBeatAudio(project, episode);
-  const audioCost = useGenerationCreditCost(
-    "feature",
-    BEAT_AUDIO_GENERATION_FEATURE_KEY,
-    { quantity: 1 },
+  const audioCost = useAudioBillingQuote(
+    project,
+    episode,
+    { beatNumbers: [beat.beat_number], mode: "redo_selected" },
+    [beat.audio_type, beat.speaker, beat.narration_segment].join(":"),
   );
   const audioCostDisplay =
     audioCost.data?.data.display ??

@@ -34,7 +34,7 @@ def run_sketch_edit_execute(
             scope=scope,
         )
 
-    def update(progress: float, current_task: str) -> None:
+    def update(progress: float | None, current_task: str) -> None:
         check_cancel()
         manager.update_progress_for_project(
             ctx,
@@ -47,7 +47,9 @@ def run_sketch_edit_execute(
         )
 
     def log(message: str) -> None:
-        update(0.0, message)
+        # A log line has no progress semantics. Preserve the last milestone so
+        # batch logs cannot send the task-center progress bar back to zero.
+        update(None, message)
 
     update(0.01, "启动 sketch edit execute...")
     result = execute_sketch_edit_batches(

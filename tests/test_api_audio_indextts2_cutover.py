@@ -190,7 +190,7 @@ async def test_audio_generate_route_dispatches_indextts2(monkeypatch, tmp_path):
                 "beat_numbers": [2],
                 "output_dir": str(tmp_path),
                 "state_dir": str(tmp_path / "state"),
-                "billing": generation._audio_billing_payload([2]),
+                "billing": generation._audio_billing_payload([2], billable_chars=2),
             },
         }
     ]
@@ -230,7 +230,7 @@ def test_audio_generate_http_route_dispatches_indextts2(monkeypatch, tmp_path):
         "beat_numbers": [2],
         "output_dir": str(tmp_path),
         "state_dir": str(tmp_path / "state"),
-        "billing": generation._audio_billing_payload([2]),
+        "billing": generation._audio_billing_payload([2], billable_chars=2),
     }
 
 
@@ -248,7 +248,7 @@ async def test_audio_billing_quote_uses_server_planned_quantity(monkeypatch, tmp
     async def fake_plan(**kwargs):
         assert kwargs["mode"] == "redo_selected"
         assert kwargs["beat_numbers"] == [2, 4]
-        return [2, 4], []
+        return [2, 4], [], 9
 
     class FakeCreditQuote:
         async def generation_credit_quote(self, **kwargs):
@@ -288,7 +288,7 @@ async def test_audio_billing_quote_uses_server_planned_quantity(monkeypatch, tmp
     assert captured == {
         "kind": "feature",
         "model": "mainline.beat_audio_generation",
-        "params": generation._audio_billing_payload([2, 4]),
+        "params": generation._audio_billing_payload([2, 4], billable_chars=9),
         "quantity": 2,
         "user_id": "user_1",
     }
@@ -327,7 +327,7 @@ async def test_single_beat_audio_route_dispatches_indextts2(monkeypatch, tmp_pat
                 "beat_numbers": [2],
                 "output_dir": str(tmp_path),
                 "state_dir": str(tmp_path / "state"),
-                "billing": generation._audio_billing_payload([2]),
+                "billing": generation._audio_billing_payload([2], billable_chars=2),
             },
         }
     ]
@@ -474,6 +474,11 @@ async def test_seedance2_single_video_passes_prepared_config_and_duration(
         "pricing_model_selection": "huimeng_seedance-2.0-fast",
         "pricing_params": {"resolution": "720p"},
         "pricing_quantity": 11,
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "duration_seconds": 11,
+        },
         "resolution": "720p",
         "video_backend": "huimeng_seedance-2.0-fast",
     }
