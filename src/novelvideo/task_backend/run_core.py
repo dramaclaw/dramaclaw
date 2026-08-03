@@ -14,6 +14,8 @@ from novelvideo.shared.billing_errors import (
     insufficient_credits_payload,
     is_insufficient_credits_error,
 )
+from novelvideo.task_backend.consumer import VerifiedTaskDelivery
+from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 from novelvideo.task_backend.cancel import (
     TaskCancelled,
     TaskTimedOut,
@@ -483,18 +485,33 @@ def _ensure_builtin_runners_registered() -> None:
 
 
 def run_project_task_core_sync(
-    envelope: dict[str, Any],
+    delivery: VerifiedTaskDelivery,
     ctx: Any,
     manager: Any,
     *,
     run_task_id: str,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    task_type = str(envelope["task_type"])
-    episode = int(envelope.get("episode") or 0)
-    beat_num = envelope.get("beat_num")
-    scope = envelope.get("scope")
-    billing_metadata = _clean_billing_metadata(envelope.get("billing_metadata"))
+    if type(delivery) is not VerifiedTaskDelivery:
+        raise InvalidTaskEnvelope() from None
+
+    task_type = str(delivery.task_type)
+    episode = int(delivery.episode or 0)
+    beat_num = delivery.beat_num
+    scope = delivery.scope
+    billing_metadata = _clean_billing_metadata(delivery.billing_metadata)
+    envelope = {
+        "project_id": delivery.project_id,
+        "requester_user_id": delivery.requester_user_id,
+        "task_type": task_type,
+        "episode": episode,
+        "beat_num": beat_num,
+        "scope": scope,
+        "queue_kind": delivery.queue_kind,
+        "payload": delivery.payload,
+    }
+    if billing_metadata:
+        envelope["billing_metadata"] = billing_metadata
     run_metadata = {**dict(metadata or {}), **billing_metadata}
     feature_reservation_id = _feature_credit_reservation_id(run_metadata)
     timeout_seconds = _project_task_timeout_seconds()
@@ -535,15 +552,18 @@ def run_project_task_core_sync(
         return {"cancelled": True}
 
     try:
-        with project_task_run_context(run_task_id), project_task_subprocess_context(
-            project_id=str(envelope["project_id"]),
-            task_type=task_type,
-            episode=episode,
-            task_id=run_task_id,
-            beat_num=beat_num,
-            scope=scope,
-            deadline_monotonic=deadline_monotonic,
-            timeout_seconds=timeout_seconds,
+        with (
+            project_task_run_context(run_task_id),
+            project_task_subprocess_context(
+                project_id=str(envelope["project_id"]),
+                task_type=task_type,
+                episode=episode,
+                task_id=run_task_id,
+                beat_num=beat_num,
+                scope=scope,
+                deadline_monotonic=deadline_monotonic,
+                timeout_seconds=timeout_seconds,
+            ),
         ):
             _set_project_task_metrics_context(
                 ctx,

@@ -27,6 +27,7 @@ from novelvideo.ports.local.tasks import InlineTaskBackend, InMemoryCancellation
 from novelvideo.ports.local.usage import NoOpProviderInstrumentation, NoOpUsageMeter
 from novelvideo.ports.registry import get_port, register_port
 from novelvideo.task_backend.producer import TaskEnvelopeProducer
+from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
 from novelvideo.task_backend.signing import load_task_envelope_signing_config
 
 
@@ -118,7 +119,12 @@ def register_local_ports() -> None:
         clock=lambda: datetime.now(timezone.utc),
         envelope_id_factory=lambda: uuid4().hex,
     )
-    task_backend = InlineTaskBackend(producer=producer)
+    consumer = TaskEnvelopeConsumer(
+        keyring=signing_config.keyring,
+        authz=authz,
+        clock=lambda: datetime.now(timezone.utc),
+    )
+    task_backend = InlineTaskBackend(producer=producer, consumer=consumer)
     ports = (
         ("auth", FileAuthPort()),
         ("auth_session", LocalAuthSession()),
@@ -128,6 +134,7 @@ def register_local_ports() -> None:
         ("provider_instrumentation", NoOpProviderInstrumentation()),
         ("credit_quote", LocalCreditQuote()),
         ("task_backend", task_backend),
+        ("task_envelope_consumer", consumer),
         ("cancellation_store", InMemoryCancellationStore()),
         ("audit_sink", NoOpAuditSink()),
         ("lifecycle", NoOpLifecycle()),

@@ -56,8 +56,9 @@ class _InlineLane:
 
 
 class InlineTaskBackend:
-    def __init__(self, *, producer=None) -> None:
+    def __init__(self, *, producer=None, consumer=None) -> None:
         self._producer = producer
+        self._consumer = consumer
         self._background_tasks: set[asyncio.Task] = set()
         self._lanes: dict[str, _InlineLane] = {
             lane: _InlineLane(
@@ -268,12 +269,37 @@ class InlineTaskBackend:
         lane: _InlineLane,
         job: _InlineLaneJob,
     ) -> None:
+        consumer_failure: InvalidTaskEnvelope | None = None
+        verified = None
+        if self._consumer is None:
+            consumer_failure = InvalidTaskEnvelope()
+        else:
+            try:
+                verified = await self._consumer.consume(
+                    job.envelope,
+                    expected_root_task_id=job.run_task_id,
+                )
+            except InvalidTaskEnvelope as exc:
+                consumer_failure = exc
+        if consumer_failure is not None:
+            job.manager.fail_task_for_project(
+                job.ctx,
+                str(job.envelope.get("task_type") or ""),
+                int(job.envelope.get("episode") or 0),
+                beat_num=job.envelope.get("beat_num"),
+                scope=job.envelope.get("scope"),
+                error=str(consumer_failure),
+                metadata={"error_code": consumer_failure.code},
+                expected_task_id=job.run_task_id,
+            )
+            return
+
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             lane.executor,
             partial(
                 run_project_task_core_sync,
-                job.envelope,
+                verified,
                 job.ctx,
                 job.manager,
                 run_task_id=job.run_task_id,

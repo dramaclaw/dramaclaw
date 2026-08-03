@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from datetime import datetime, timezone
 import json
 import time
 from pathlib import Path
@@ -12,11 +13,32 @@ from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
 from novelvideo.ports.local.tasks import InlineTaskBackend, InMemoryCancellationStore
 from novelvideo.ports.model_credentials import CredentialReference
 from novelvideo.task_backend import cancel as cancel_module
-from novelvideo.task_backend.envelope import InvalidTaskEnvelope, SignedTaskEnvelope
+from novelvideo.task_backend.consumer import TaskEnvelopeConsumer, VerifiedTaskDelivery
+from novelvideo.task_backend.envelope import (
+    InvalidTaskEnvelope,
+    SignedTaskEnvelope,
+)
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_state import get_task_manager
 
 SIGNING_KEY = b"t" * 32
+NOW = datetime(2026, 8, 3, 4, 5, 7, tzinfo=timezone.utc)
+
+
+def _admission(*, user_id: str, root_task_id: str, key_version: int = 1):
+    return AdmissionContext(
+        requester_user_id=user_id,
+        billing_principal=BillingPrincipal(kind="local", id=user_id),
+        credential=CredentialReference(
+            source="local",
+            credential_id="local-newapi",
+            key_version=key_version,
+        ),
+        admission_id="admission-1",
+        root_task_id=root_task_id,
+        admitted_at="2026-08-03T04:05:00Z",
+        authz_version=1,
+    )
 
 
 class FakeProducer:
@@ -29,18 +51,9 @@ class FakeProducer:
         await asyncio.sleep(0)
         if self.failure is not None:
             raise self.failure
-        admission = AdmissionContext(
-            requester_user_id=kwargs["user_id"],
-            billing_principal=BillingPrincipal(kind="local", id=kwargs["user_id"]),
-            credential=CredentialReference(
-                source="local",
-                credential_id="local-newapi",
-                key_version=1,
-            ),
-            admission_id="admission-1",
+        admission = _admission(
+            user_id=kwargs["user_id"],
             root_task_id=kwargs["root_task_id"],
-            admitted_at="2026-08-03T04:05:00Z",
-            authz_version=1,
         )
         return SignedTaskEnvelope.sign(
             admission=admission,
@@ -53,6 +66,33 @@ class FakeProducer:
             signing_key_id="test-v1",
             signing_key=SIGNING_KEY,
         )
+
+
+class FakeAuthz:
+    def __init__(self, *, key_version: int = 1):
+        self.key_version = key_version
+        self.calls = []
+
+    async def admit_model_task(self, *, user_id, root_task_id):
+        self.calls.append({"user_id": user_id, "root_task_id": root_task_id})
+        return _admission(
+            user_id=user_id,
+            root_task_id=root_task_id,
+            key_version=self.key_version,
+        )
+
+
+def _inline_backend(*, producer=None, authz=None):
+    authority = authz or FakeAuthz()
+    consumer = TaskEnvelopeConsumer(
+        keyring={"test-v1": SIGNING_KEY},
+        authz=authority,
+        clock=lambda: NOW,
+    )
+    return InlineTaskBackend(
+        producer=producer or FakeProducer(),
+        consumer=consumer,
+    )
 
 
 def _ctx(tmp_path: Path) -> ProjectContext:
@@ -85,7 +125,7 @@ async def _wait_for_status(
     ctx: ProjectContext, task_type: str, expected: str
 ) -> object:
     manager = get_task_manager()
-    deadline = time.monotonic() + 3
+    deadline = time.monotonic() + 6
     while time.monotonic() < deadline:
         task = manager.get_task_for_project(ctx, task_type, 1)
         if task is not None and task.status == expected:
@@ -93,6 +133,54 @@ async def _wait_for_status(
         await asyncio.sleep(0.02)
     task = manager.get_task_for_project(ctx, task_type, 1)
     raise AssertionError(f"timed out waiting for {expected}, got {task}")
+
+
+@pytest.mark.asyncio
+async def test_inline_consumer_precedes_run_core_and_runner(monkeypatch, tmp_path):
+    ctx = _ctx(tmp_path)
+    events: list[str] = []
+    submitted = []
+
+    class FakeConsumer:
+        async def consume(self, raw_delivery, *, expected_root_task_id):
+            events.append("consumer")
+            signed = SignedTaskEnvelope.from_dict(raw_delivery["task_envelope_v2"])
+            payload = signed.to_dict()["payload"]
+            assert expected_root_task_id == signed.admission.root_task_id
+            return VerifiedTaskDelivery(
+                envelope_id=signed.envelope_id,
+                admission=signed.admission,
+                task_type=signed.task_type,
+                project_id=signed.project_id,
+                requester_user_id=signed.admission.requester_user_id,
+                episode=payload["episode"],
+                beat_num=payload["beat_num"],
+                scope=payload["scope"],
+                queue_kind=payload["queue_kind"],
+                payload=payload["payload"],
+            )
+
+    consumer = FakeConsumer()
+    backend = InlineTaskBackend(producer=FakeProducer(), consumer=consumer)
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+
+    await backend.enqueue_project_task(ctx, task_type="single_video", episode=1)
+    job = submitted[0]
+
+    def fake_run_core(verified, *_args, **_kwargs):
+        events.append("run_core")
+        assert verified.__class__ is VerifiedTaskDelivery
+        events.append("runner")
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks.run_project_task_core_sync",
+        fake_run_core,
+    )
+
+    await backend._run_inline(backend._lanes["default"], job)
+
+    assert events == ["consumer", "run_core", "runner"]
 
 
 @pytest.mark.asyncio
@@ -112,7 +200,7 @@ async def test_inline_task_backend_returns_immediately_and_completes_in_backgrou
 
     register_project_task_runner(task_type, runner)
 
-    queued = await InlineTaskBackend(producer=producer).enqueue_project_task(
+    queued = await _inline_backend(producer=producer).enqueue_project_task(
         ctx,
         task_type=task_type,
         episode=1,
@@ -126,14 +214,11 @@ async def test_inline_task_backend_returns_immediately_and_completes_in_backgrou
     completed = await _wait_for_status(ctx, task_type, "completed")
     assert completed.result["ok"] is True
     assert producer.calls[0]["root_task_id"] == queued.task_state.task_id
-    signed = delivered[0]["task_envelope_v2"]
-    assert signed["payload"] == {
-        "episode": 1,
-        "beat_num": None,
-        "scope": None,
-        "queue_kind": "default",
-        "payload": {},
-    }
+    assert "task_envelope_v2" not in delivered[0]
+    assert delivered[0]["project_id"] == "proj_t6"
+    assert delivered[0]["requester_user_id"] == "editor_1"
+    assert delivered[0]["episode"] == 1
+    assert delivered[0]["payload"] == {}
 
 
 @pytest.mark.asyncio
@@ -150,7 +235,7 @@ async def test_inline_task_backend_runs_runner_outside_active_event_loop(tmp_pat
 
     register_project_task_runner(task_type, runner)
 
-    queued = await InlineTaskBackend(producer=FakeProducer()).enqueue_project_task(
+    queued = await _inline_backend().enqueue_project_task(
         ctx, task_type=task_type, episode=1
     )
 
@@ -193,8 +278,63 @@ async def test_inline_signing_failure_marks_task_failed_without_delivery(
 
     state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
     assert state.status == "failed"
-    assert state.metadata == {"error_code": "TASK_ENVELOPE_INVALID"}
+    assert state.metadata["error_code"] == "TASK_ENVELOPE_INVALID"
     assert submitted == []
+
+
+@pytest.mark.asyncio
+async def test_inline_signed_flat_mismatch_has_zero_runner_usage_and_success(
+    monkeypatch, tmp_path
+):
+    ctx = _ctx(tmp_path)
+    authz = FakeAuthz()
+    backend = _inline_backend(authz=authz)
+    submitted = []
+    downstream_calls = []
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks.run_project_task_core_sync",
+        lambda *_args, **_kwargs: downstream_calls.append("run_core"),
+    )
+
+    await backend.enqueue_project_task(ctx, task_type="single_video", episode=1)
+    job = submitted[0]
+    job.envelope["episode"] = True
+
+    await backend._run_inline(backend._lanes["default"], job)
+
+    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
+    assert state.status == "failed"
+    assert state.metadata["error_code"] == "TASK_ENVELOPE_INVALID"
+    assert authz.calls == []
+    assert downstream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_inline_stale_authority_has_zero_runner_usage_and_success(
+    monkeypatch, tmp_path
+):
+    ctx = _ctx(tmp_path)
+    authz = FakeAuthz(key_version=2)
+    backend = _inline_backend(authz=authz)
+    submitted = []
+    downstream_calls = []
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks.run_project_task_core_sync",
+        lambda *_args, **_kwargs: downstream_calls.append("run_core"),
+    )
+
+    await backend.enqueue_project_task(ctx, task_type="single_video", episode=1)
+    job = submitted[0]
+
+    await backend._run_inline(backend._lanes["default"], job)
+
+    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
+    assert state.status == "failed"
+    assert state.metadata["error_code"] == "TASK_ENVELOPE_STALE"
+    assert authz.calls == [{"user_id": "editor_1", "root_task_id": job.run_task_id}]
+    assert downstream_calls == []
 
 
 def test_local_bootstrap_builds_authz_and_producer_before_registering(monkeypatch):
@@ -212,6 +352,8 @@ def test_local_bootstrap_builds_authz_and_producer_before_registering(monkeypatc
     backend = registry.get_port("task_backend")
     authz = registry.get_port("authz")
     assert backend._producer._authz is authz
+    assert backend._consumer is registry.get_port("task_envelope_consumer")
+    assert backend._consumer._authz is authz
 
 
 def test_local_bootstrap_bad_signing_config_registers_zero_ports(monkeypatch):

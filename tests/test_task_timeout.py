@@ -5,7 +5,11 @@ from types import SimpleNamespace
 import pytest
 
 from novelvideo.task_backend import cancel as cancel_module
+from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
+from novelvideo.ports.model_credentials import CredentialReference
 from novelvideo.task_backend.cancel import TaskTimedOut
+from novelvideo.task_backend.consumer import VerifiedTaskDelivery
+from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 
 
 class _FakeTaskManager:
@@ -25,6 +29,36 @@ class _FakeTaskManager:
 
     def fail_task_for_project(self, *_args, **kwargs) -> None:
         self.failed.append(kwargs)
+
+
+def _verified_delivery(
+    *,
+    task_type: str = "timeout_probe",
+    project_id: str = "proj_timeout",
+    billing_metadata: dict | None = None,
+) -> VerifiedTaskDelivery:
+    admission = AdmissionContext(
+        requester_user_id="usr_1",
+        billing_principal=BillingPrincipal(kind="local", id="usr_1"),
+        credential=CredentialReference("local", "local-newapi", 1),
+        admission_id="admission-1",
+        root_task_id="task_1",
+        admitted_at="2026-08-03T04:05:00Z",
+        authz_version=1,
+    )
+    return VerifiedTaskDelivery(
+        envelope_id="envelope-1",
+        admission=admission,
+        task_type=task_type,
+        project_id=project_id,
+        requester_user_id="usr_1",
+        episode=0,
+        beat_num=None,
+        scope=None,
+        queue_kind="default",
+        payload={},
+        billing_metadata=billing_metadata,
+    )
 
 
 @pytest.mark.asyncio
@@ -117,7 +151,9 @@ def test_run_project_task_core_injects_deadline_for_runner(monkeypatch):
 
     monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
     monkeypatch.setattr(run_core, "is_cancel_requested", fake_is_cancel_requested)
-    monkeypatch.setattr(run_core, "_emit_project_task_metrics", fake_emit_project_task_metrics)
+    monkeypatch.setattr(
+        run_core, "_emit_project_task_metrics", fake_emit_project_task_metrics
+    )
     monkeypatch.setattr(
         run_core,
         "_set_project_task_metrics_context",
@@ -129,12 +165,7 @@ def test_run_project_task_core_injects_deadline_for_runner(monkeypatch):
 
     manager = _FakeTaskManager()
     result = run_core.run_project_task_core_sync(
-        {
-            "project_id": "proj_timeout",
-            "requester_user_id": "usr_1",
-            "task_type": "timeout_probe",
-            "episode": 0,
-        },
+        _verified_delivery(),
         SimpleNamespace(project_id="proj_timeout", requester_user_id="usr_1"),
         manager,
         run_task_id="task_1",
@@ -144,6 +175,24 @@ def test_run_project_task_core_injects_deadline_for_runner(monkeypatch):
     assert captured["__run_task_id"] == "task_1"
     assert captured["__timeout_seconds"] == 30 * 60
     assert isinstance(captured["__deadline_monotonic"], float)
+
+
+def test_run_project_task_core_rejects_raw_dict_before_side_effects():
+    from novelvideo.task_backend import run_core
+
+    manager = _FakeTaskManager()
+
+    with pytest.raises(InvalidTaskEnvelope):
+        run_core.run_project_task_core_sync(
+            {"task_type": "timeout_probe"},
+            SimpleNamespace(project_id="proj_timeout", requester_user_id="usr_1"),
+            manager,
+            run_task_id="task_1",
+        )
+
+    assert manager.updates == []
+    assert manager.completed == []
+    assert manager.failed == []
 
 
 def test_run_project_task_core_persists_result_before_confirming_credit(monkeypatch):
@@ -188,15 +237,11 @@ def test_run_project_task_core_persists_result_before_confirming_credit(monkeypa
 
     manager = OrderedTaskManager()
     result = run_core.run_project_task_core_sync(
-        {
-            "project_id": "proj_result",
-            "requester_user_id": "usr_1",
-            "task_type": "result_settlement_order_probe",
-            "episode": 0,
-            "billing_metadata": {
-                "feature_credit_reservation_id": "reservation_1",
-            },
-        },
+        _verified_delivery(
+            task_type="result_settlement_order_probe",
+            project_id="proj_result",
+            billing_metadata={"feature_credit_reservation_id": "reservation_1"},
+        ),
         SimpleNamespace(project_id="proj_result", requester_user_id="usr_1"),
         manager,
         run_task_id="task_1",
@@ -242,15 +287,11 @@ def test_run_project_task_core_confirms_delivered_result_when_task_state_write_f
 
     with pytest.raises(OSError, match="task state write failed"):
         run_core.run_project_task_core_sync(
-            {
-                "project_id": "proj_result",
-                "requester_user_id": "usr_1",
-                "task_type": "result_persistence_failure_probe",
-                "episode": 0,
-                "billing_metadata": {
-                    "feature_credit_reservation_id": "reservation_1",
-                },
-            },
+            _verified_delivery(
+                task_type="result_persistence_failure_probe",
+                project_id="proj_result",
+                billing_metadata={"feature_credit_reservation_id": "reservation_1"},
+            ),
             SimpleNamespace(project_id="proj_result", requester_user_id="usr_1"),
             FailingTaskManager(),
             run_task_id="task_1",
@@ -304,15 +345,11 @@ def test_run_project_task_core_confirms_runner_result_even_when_read_model_ignor
     register_project_task_runner("cancel_race_settlement_probe", fake_runner)
 
     result = run_core.run_project_task_core_sync(
-        {
-            "project_id": "proj_result",
-            "requester_user_id": "usr_1",
-            "task_type": "cancel_race_settlement_probe",
-            "episode": 0,
-            "billing_metadata": {
-                "feature_credit_reservation_id": "reservation_1",
-            },
-        },
+        _verified_delivery(
+            task_type="cancel_race_settlement_probe",
+            project_id="proj_result",
+            billing_metadata={"feature_credit_reservation_id": "reservation_1"},
+        ),
         SimpleNamespace(project_id="proj_result", requester_user_id="usr_1"),
         CancelledTaskManager(),
         run_task_id="task_1",
