@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 
@@ -252,15 +253,22 @@ def test_legacy_pydantic_factory_uses_ee_deployment_gateway(monkeypatch, tmp_pat
     monkeypatch.setattr(config, "NEWAPI_BASE_URL", "https://ee-gateway.example/v1")
     captured: dict[str, object] = {}
 
+    class FakeModel:
+        async def request(self, *_args):
+            return "newapi-response"
+
     def fake_model(model_name, **kwargs):
         captured.update(model_name=model_name, **kwargs)
-        return "newapi-model"
+        return FakeModel()
 
     monkeypatch.setattr(config, "_newapi_text_openai_model", fake_model)
 
-    result = config.get_pydantic_model(model_name_override="DC-legacy-agent-LLM")
+    model = config.get_pydantic_model(model_name_override="DC-legacy-agent-LLM")
 
-    assert result == "newapi-model"
+    assert captured == {}
+    result = asyncio.run(model.request([], None, object()))
+
+    assert result == "newapi-response"
     assert captured["model_name"] == "DC-legacy-agent-LLM"
     assert captured["api_key"] == "sk-ee-secret"
     assert captured["base_url"] == "https://ee-gateway.example/v1"

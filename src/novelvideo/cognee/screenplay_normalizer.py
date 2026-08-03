@@ -76,7 +76,9 @@ def clean_scene_name_and_time(location: str, time_of_day: str = "") -> tuple[str
             tod = normalize_time_of_day(time_match.group("time"))
         name = name[: time_match.start()].strip()
     else:
-        separated_time_match = re.search(rf"[·・,，、]\s*(?P<time>{TIME_TOKEN_RE})$", name)
+        separated_time_match = re.search(
+            rf"[·・,，、]\s*(?P<time>{TIME_TOKEN_RE})$", name
+        )
         if separated_time_match:
             if not tod:
                 tod = normalize_time_of_day(separated_time_match.group("time"))
@@ -107,7 +109,9 @@ class NormalizedSceneHeader(BaseModel):
     )
     interior_exterior: InteriorExterior = Field(default="无", description="内/外/无")
     aliases: list[str] = Field(default_factory=list, description="原文中出现过的别名")
-    scene_type: SceneType = Field(default="interior", description="interior/exterior/nature")
+    scene_type: SceneType = Field(
+        default="interior", description="interior/exterior/nature"
+    )
 
     @field_validator("time_of_day", mode="before")
     @classmethod
@@ -122,13 +126,17 @@ class NormalizedSceneHeader(BaseModel):
 
     @model_validator(mode="after")
     def normalize_location(self) -> "NormalizedSceneHeader":
-        location, time_of_day = clean_scene_name_and_time(self.location, self.time_of_day)
+        location, time_of_day = clean_scene_name_and_time(
+            self.location, self.time_of_day
+        )
         self.location = location
         self.time_of_day = time_of_day if time_of_day != "无" else ""
         if self.interior_exterior == "无":
             self.interior_exterior = ""
         self.aliases = [
-            item.strip() for item in self.aliases if item.strip() and item.strip() != self.location
+            item.strip()
+            for item in self.aliases
+            if item.strip() and item.strip() != self.location
         ]
         return self
 
@@ -137,15 +145,23 @@ class NormalizedSceneBlock(NormalizedSceneHeader):
     """Compatibility shape with locally parsed body content attached."""
 
     raw_header: str = Field(default="", description="原始场景头")
-    characters: list[str] = Field(default_factory=list, description="该场景块明确出场人物")
-    evidence_lines: list[str] = Field(default_factory=list, description="支持该场景的原文证据")
+    characters: list[str] = Field(
+        default_factory=list, description="该场景块明确出场人物"
+    )
+    evidence_lines: list[str] = Field(
+        default_factory=list, description="支持该场景的原文证据"
+    )
     content_lines: list[str] = Field(default_factory=list, description="该场景块正文")
 
     @model_validator(mode="after")
     def normalize_local_content(self) -> "NormalizedSceneBlock":
         self.characters = [item.strip() for item in self.characters if item.strip()]
-        self.evidence_lines = [line.strip() for line in self.evidence_lines if line.strip()]
-        self.content_lines = [line.strip() for line in self.content_lines if line.strip()]
+        self.evidence_lines = [
+            line.strip() for line in self.evidence_lines if line.strip()
+        ]
+        self.content_lines = [
+            line.strip() for line in self.content_lines if line.strip()
+        ]
         return self
 
 
@@ -158,7 +174,11 @@ def _create_screenplay_normalizer_agent():
     )
 
     return Agent(
-        get_newapi_text_pydantic_model("SCREENPLAY_NORMALIZER_MODEL", "gemini-3.5-flash"),
+        get_newapi_text_pydantic_model(
+            "SCREENPLAY_NORMALIZER_MODEL",
+            "gemini-3.5-flash",
+            capability="cognee.llm",
+        ),
         system_prompt=SCREENPLAY_NORMALIZER_SYSTEM_PROMPT,
         model_settings=get_newapi_text_pydantic_model_settings(
             "SCREENPLAY_NORMALIZER_THINKING_LEVEL",

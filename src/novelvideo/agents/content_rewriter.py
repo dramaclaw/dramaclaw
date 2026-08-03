@@ -9,6 +9,7 @@ from novelvideo.config import (
     get_newapi_text_pydantic_model,
     get_newapi_text_pydantic_model_settings,
 )
+from novelvideo.model_gateway_runtime import model_gateway_output_retries
 
 
 class AdaptedContentOutput(BaseModel):
@@ -187,10 +188,14 @@ async def rewrite_episode_content(
 请输出改写后的逐行文本。"""
 
     agent = Agent(
-        get_newapi_text_pydantic_model("CONTENT_REWRITER_MODEL", "gpt-5.4-mini"),
+        get_newapi_text_pydantic_model(
+            "CONTENT_REWRITER_MODEL",
+            "gpt-5.4-mini",
+            capability="text.generate",
+        ),
         system_prompt=REWRITE_PROMPT,
         output_type=AdaptedContentOutput,
-        output_retries=3,
+        output_retries=model_gateway_output_retries(3),
         model_settings=get_newapi_text_pydantic_model_settings(
             "CONTENT_REWRITER_THINKING_LEVEL",
             "medium",

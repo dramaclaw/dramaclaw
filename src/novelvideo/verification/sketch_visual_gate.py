@@ -25,7 +25,7 @@ from typing import Any, Iterable
 import aiosqlite
 
 from novelvideo.verification import failure_registry
-
+from novelvideo.egress_context import TrustedEgressContext
 
 DEFAULT_GATE_MODEL_GOOGLE = "gemini-3.5-flash"
 DEFAULT_GATE_MODEL_OPENROUTER = "gemini-3.5-flash"
@@ -38,8 +38,8 @@ class CellVerdict:
     cell_path: str
     review_image_path: str = ""
     reference_paths: list[str] = field(default_factory=list)
-    hits: list[str] = field(default_factory=list)       # codes voted "yes"
-    unsure: list[str] = field(default_factory=list)     # codes voted "unsure"
+    hits: list[str] = field(default_factory=list)  # codes voted "yes"
+    unsure: list[str] = field(default_factory=list)  # codes voted "unsure"
     raw_response: str = ""
     error: str = ""
 
@@ -82,7 +82,10 @@ def _build_reference_sheet(
     from PIL import Image, ImageDraw
 
     panel_paths = [cell_path, *reference_paths]
-    labels = ["CANDIDATE", *[f"REFERENCE {idx}" for idx in range(1, len(reference_paths) + 1)]]
+    labels = [
+        "CANDIDATE",
+        *[f"REFERENCE {idx}" for idx in range(1, len(reference_paths) + 1)],
+    ]
     cell_w, cell_h, label_h = 420, 260, 28
     sheet_w = cell_w * len(panel_paths)
     sheet_h = cell_h + label_h
@@ -98,7 +101,9 @@ def _build_reference_sheet(
             px = x + (cell_w - panel.width) // 2
             py = label_h + (cell_h - panel.height) // 2
             sheet.paste(panel, (px, py))
-        draw.rectangle([x, label_h, x + cell_w - 1, sheet_h - 1], outline=(0, 0, 0), width=2)
+        draw.rectangle(
+            [x, label_h, x + cell_w - 1, sheet_h - 1], outline=(0, 0, 0), width=2
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(output_path, quality=92)
     return output_path
@@ -120,19 +125,23 @@ def _build_gate_prompt(
     for mode in active_modes:
         lines.append(f"- {mode['code']}: {mode['detection']}")
     if spatial_contract:
-        lines.extend([
+        lines.extend(
+            [
+                "",
+                "Director spatial contract for this beat:",
+                json.dumps(spatial_contract, ensure_ascii=False, indent=2),
+                "When evaluating director failure modes, compare the visible sketch against this contract.",
+                "A legal character movement is allowed only when the contract says the movement path/source is preserved.",
+            ]
+        )
+    lines.extend(
+        [
             "",
-            "Director spatial contract for this beat:",
-            json.dumps(spatial_contract, ensure_ascii=False, indent=2),
-            "When evaluating director failure modes, compare the visible sketch against this contract.",
-            "A legal character movement is allowed only when the contract says the movement path/source is preserved.",
-        ])
-    lines.extend([
-        "",
-        "Respond with a single JSON object mapping each failure code to 'yes', 'no', or 'unsure'.",
-        "Do not include any other text, explanation, or code fences. Just the JSON object.",
-        "Example: {\"code_a\": \"no\", \"code_b\": \"yes\"}",
-    ])
+            "Respond with a single JSON object mapping each failure code to 'yes', 'no', or 'unsure'.",
+            "Do not include any other text, explanation, or code fences. Just the JSON object.",
+            'Example: {"code_a": "no", "code_b": "yes"}',
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -194,7 +203,11 @@ def _resolve_gate_backend() -> tuple[str, str, str]:
     nb_provider = (os.environ.get("NANOBANANA_PROVIDER") or "").strip().lower()
     openrouter_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
     if nb_provider == "openrouter" and openrouter_key:
-        return "openrouter", openrouter_key, explicit_model or DEFAULT_GATE_MODEL_OPENROUTER
+        return (
+            "openrouter",
+            openrouter_key,
+            explicit_model or DEFAULT_GATE_MODEL_OPENROUTER,
+        )
 
     for var in ("GOOGLE_AI_API_KEY", "GOOGLE_API_KEY"):
         value = (os.environ.get(var) or "").strip()
@@ -202,8 +215,30 @@ def _resolve_gate_backend() -> tuple[str, str, str]:
             return "google", value, explicit_model or DEFAULT_GATE_MODEL_GOOGLE
 
     if openrouter_key:
-        return "openrouter", openrouter_key, explicit_model or DEFAULT_GATE_MODEL_OPENROUTER
+        return (
+            "openrouter",
+            openrouter_key,
+            explicit_model or DEFAULT_GATE_MODEL_OPENROUTER,
+        )
     return "", "", ""
+
+
+def resolve_gate_backend_for_context(
+    egress_context: TrustedEgressContext | None,
+) -> tuple[str, str, str]:
+    """Keep platform behavior while denying organization direct vision."""
+
+    if egress_context is not None and type(egress_context) is not TrustedEgressContext:
+        raise TypeError("egress_context must be a TrustedEgressContext or None")
+    if egress_context is None:
+        from novelvideo.model_gateway_runtime import current_model_gateway_context
+
+        egress_context = current_model_gateway_context()
+    if egress_context is not None and egress_context.is_organization:
+        from novelvideo.model_gateway_runtime import ModelGatewayEgressError
+
+        raise ModelGatewayEgressError("ORG_EGRESS_DENIED")
+    return _resolve_gate_backend()
 
 
 async def _ask_vlm_google(
@@ -383,6 +418,7 @@ async def gate_candidate_cells(
     defs_db: aiosqlite.Connection,
     project_hits_db: aiosqlite.Connection | None = None,
     model: str | None = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> GateResult:
     """Run the visual gate against every candidate cell in `summary_path`.
 
@@ -391,6 +427,7 @@ async def gate_candidate_cells(
     project-local data.db — when provided, hit counts are bumped into
     `sketch_failure_mode_hits` so repeat offenders surface per project.
     """
+    provider, api_key, default_model = resolve_gate_backend_for_context(egress_context)
     if not summary_path.exists():
         raise FileNotFoundError(f"execute summary missing: {summary_path}")
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -403,7 +440,6 @@ async def gate_candidate_cells(
             "No gate_enabled failure modes registered; seed the registry first"
         )
 
-    provider, api_key, default_model = _resolve_gate_backend()
     if not provider or not api_key:
         raise RuntimeError(
             "Gate requires a VLM key. Set SKETCH_GATE_API_KEY, or "
@@ -436,7 +472,9 @@ async def gate_candidate_cells(
     # Run cell gating concurrently but bound parallelism for quota safety.
     semaphore = asyncio.Semaphore(4)
 
-    async def _one(beat_number: int, cell_path: Path, reference_paths: list[Path]) -> CellVerdict:
+    async def _one(
+        beat_number: int, cell_path: Path, reference_paths: list[Path]
+    ) -> CellVerdict:
         async with semaphore:
             return await gate_single_cell(
                 cell_path=cell_path,

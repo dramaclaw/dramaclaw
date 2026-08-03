@@ -153,6 +153,7 @@ def test_run_core_constructs_immutable_secret_free_context_from_verified_deliver
     assert context.project_id == "project-1"
     assert context.requester_user_id == "user-1"
     assert context.root_task_id == "task-1"
+    assert context.admitted_at == "2026-08-03T04:05:00Z"
     assert context.billing_principal == BillingPrincipal(
         kind="organization", id="org-1"
     )
@@ -204,6 +205,7 @@ def test_payload_cannot_override_trusted_context(
     forged = {
         "project_id": "project-other",
         "credential": {"credential_id": "forged", "key_version": 99},
+        "admitted_at": "2099-01-01T00:00:00Z",
     }
     captured = _run_core(
         monkeypatch,
@@ -212,6 +214,42 @@ def test_payload_cannot_override_trusted_context(
 
     assert captured["payload"]["__trusted_egress_context"] is forged
     assert captured["__trusted_egress_context"].project_id == "project-1"
+    assert captured["__trusted_egress_context"].admitted_at == "2026-08-03T04:05:00Z"
+
+
+@pytest.mark.parametrize(
+    ("admitted_at", "error_type", "message"),
+    [
+        ("", ValueError, "admitted_at is required"),
+        (123, TypeError, "admitted_at must be a string"),
+    ],
+)
+def test_trusted_egress_context_rejects_invalid_admitted_at(
+    admitted_at,
+    error_type,
+    message,
+) -> None:
+    from novelvideo.egress_context import TrustedEgressContext
+
+    with pytest.raises(error_type, match=message):
+        TrustedEgressContext(
+            envelope_id="envelope-1",
+            project_id="project-1",
+            task_type="p0g4s_probe",
+            requester_user_id="user-1",
+            root_task_id="task-1",
+            admission_id="admission-1",
+            admitted_at=admitted_at,
+            membership_id="membership-1",
+            authz_version=11,
+            billing_principal=BillingPrincipal(kind="organization", id="org-1"),
+            credential=CredentialReference(
+                source="organization",
+                credential_id="credential-1",
+                key_version=7,
+                org_id="org-1",
+            ),
+        )
 
 
 @pytest.mark.asyncio

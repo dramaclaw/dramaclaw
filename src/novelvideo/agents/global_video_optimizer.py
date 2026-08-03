@@ -199,6 +199,7 @@ def create_global_video_optimizer_agent(language: str = "en") -> Agent:
         get_newapi_text_pydantic_model(
             "GLOBAL_VIDEO_OPTIMIZER_MODEL",
             legacy_model or "gemini-3.5-flash",
+            capability="text.generate.agent",
         ),
         system_prompt=GLOBAL_VIDEO_OPTIMIZER_INSTRUCTIONS_EN,
         output_type=NativeOutput(list[BeatVideoStrategy]),
@@ -303,7 +304,9 @@ class GlobalVideoPromptOptimizer:
         if vd:
             context_parts.append(f"- Visual: {vd}")
 
-        beat_context = "\n".join(context_parts) if context_parts else "No additional context."
+        beat_context = (
+            "\n".join(context_parts) if context_parts else "No additional context."
+        )
 
         # Dialogue annotation
         dialogue_hint = ""
@@ -316,19 +319,27 @@ class GlobalVideoPromptOptimizer:
         if prev_beat or next_beat or prev_prompt:
             parts = []
             if prev_prompt:
-                parts.append(f'- Previous beat prompt (for continuity): "{prev_prompt[:150]}..."')
+                parts.append(
+                    f'- Previous beat prompt (for continuity): "{prev_prompt[:150]}..."'
+                )
             if prev_beat:
                 prev_vd = prev_beat.get("visual_description", "")
                 if prev_vd:
-                    prev_vd = re.sub(r"\{\{([^}]*)\}\}", _replace_identity_marker, prev_vd)
+                    prev_vd = re.sub(
+                        r"\{\{([^}]*)\}\}", _replace_identity_marker, prev_vd
+                    )
                 parts.append(
                     f"- Previous beat (B{prev_beat.get('beat_number', '?')}): {prev_vd[:120]}"
                 )
             if next_beat:
                 next_vd = next_beat.get("visual_description", "")
                 if next_vd:
-                    next_vd = re.sub(r"\{\{([^}]*)\}\}", _replace_identity_marker, next_vd)
-                parts.append(f"- Next beat (B{next_beat.get('beat_number', '?')}): {next_vd[:120]}")
+                    next_vd = re.sub(
+                        r"\{\{([^}]*)\}\}", _replace_identity_marker, next_vd
+                    )
+                parts.append(
+                    f"- Next beat (B{next_beat.get('beat_number', '?')}): {next_vd[:120]}"
+                )
             continuity_section = (
                 "\n## Continuity Context (vary your camera work from previous beat)\n"
                 + "\n".join(parts)
@@ -341,13 +352,9 @@ class GlobalVideoPromptOptimizer:
             if bn <= 2:
                 position_hint += "This is an OPENING beat — establish the scene with a wider shot before pushing in."
             elif bn >= total_beats - 1:
-                position_hint += (
-                    "This is a CLOSING beat — build to a final visual climax or cliffhanger moment."
-                )
+                position_hint += "This is a CLOSING beat — build to a final visual climax or cliffhanger moment."
             else:
-                position_hint += (
-                    "Vary shot scale and angle from adjacent beats to create visual rhythm."
-                )
+                position_hint += "Vary shot scale and angle from adjacent beats to create visual rhythm."
 
         task = f"""Generate a first-frame motion prompt for Beat {bn}. You see the sketch frame for this beat.
 {position_hint}
@@ -404,7 +411,9 @@ Output JSON array with one element directly."""
             if line and line not in result["prompt"]:
                 result["prompt"] = f"{result['prompt']} Says: {line}"
 
-        print(f"[GlobalVideoOptimizer] Beat {bn}: prompt generated ({len(result['prompt'])} chars)")
+        print(
+            f"[GlobalVideoOptimizer] Beat {bn}: prompt generated ({len(result['prompt'])} chars)"
+        )
         return result
 
     async def optimize(
@@ -586,7 +595,9 @@ Output JSON array with one element directly."""
             color_name = parts[1] if len(parts) > 1 else ""
             label = f"{color_name} ({hex_code})" if color_name else hex_code
             descriptor = _format_color_mapping_descriptor(info)
-            lines.append(f"- Any figure with a {label} tint (even pale/desaturated) → {descriptor}")
+            lines.append(
+                f"- Any figure with a {label} tint (even pale/desaturated) → {descriptor}"
+            )
         return "\n".join(lines) if lines else "No character color mapping"
 
 
@@ -754,6 +765,7 @@ def _create_identity_detector_agent() -> Agent:
         get_newapi_text_pydantic_model(
             "GLOBAL_VIDEO_IDENTITY_DETECTOR_MODEL",
             legacy_model or "gemini-3.5-flash",
+            capability="text.generate.agent",
         ),
         system_prompt=AI_IDENTITY_DETECTOR_INSTRUCTIONS,
         output_type=NativeOutput(list[BeatIdentity]),
@@ -808,14 +820,18 @@ Use an empty identities array for panels with no colored markers."""
                     img = img.convert("RGB")
                 buffer = io.BytesIO()
                 img.save(buffer, format="JPEG", quality=70, optimize=True)
-                images.append(BinaryContent(data=buffer.getvalue(), media_type="image/jpeg"))
+                images.append(
+                    BinaryContent(data=buffer.getvalue(), media_type="image/jpeg")
+                )
             except Exception as e:
                 print(f"[detect_identities_by_ai] 加载图片失败: {path}, {e}")
 
     if not images:
         raise RuntimeError("没有可用的草图网格图片")
 
-    print(f"[detect_identities_by_ai] 发送 {len(images)} 张网格图片, {total_beats} beats")
+    print(
+        f"[detect_identities_by_ai] 发送 {len(images)} 张网格图片, {total_beats} beats"
+    )
     response = await agent.run([task] + images)
 
     if not response.output:
@@ -823,9 +839,13 @@ Use an empty identities array for panels with no colored markers."""
 
     # structured output: response.output 直接是 list[BeatIdentity]
     beat_identities: list[BeatIdentity] = response.output
-    result: dict[int, list[str]] = {bi.beat_number: bi.identities for bi in beat_identities}
+    result: dict[int, list[str]] = {
+        bi.beat_number: bi.identities for bi in beat_identities
+    }
 
-    print(f"[detect_identities_by_ai] 识别结果: { {k: v for k, v in sorted(result.items())} }")
+    print(
+        f"[detect_identities_by_ai] 识别结果: { {k: v for k, v in sorted(result.items())} }"
+    )
     return result
 
 

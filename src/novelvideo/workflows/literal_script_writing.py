@@ -12,6 +12,7 @@ from novelvideo.config import (
     get_newapi_text_pydantic_model,
     get_newapi_text_pydantic_model_settings,
 )
+from novelvideo.model_gateway_runtime import model_gateway_output_retries
 from novelvideo.models import (
     NarrationScript,
     SceneRef,
@@ -208,7 +209,9 @@ class LiteralBeatMetaOutput(BaseModel):
     @field_validator("visual_description")
     @classmethod
     def validate_visual_description(cls, value: str, info: ValidationInfo) -> str:
-        visual_description = cls._validate_marked_text(value, info, field_name="visual_description")
+        visual_description = cls._validate_marked_text(
+            value, info, field_name="visual_description"
+        )
         if "或者" in visual_description or "二选一" in visual_description:
             raise ValueError(
                 "visual_description 必须是确定画面，不能出现“或者 / 二选一”等备选表达"
@@ -252,10 +255,7 @@ class LiteralBeatMetaOutput(BaseModel):
                 )
 
         for identity_id in sorted(valid_identity_ids):
-            if (
-                identity_id in text
-                and f"{{{{{identity_id}}}}}" not in text
-            ):
+            if identity_id in text and f"{{{{{identity_id}}}}}" not in text:
                 raise ValueError(
                     f"{field_name} 中出现裸 identity_id '{identity_id}'，必须用 {{{{{identity_id}}}}} 包裹"
                 )
@@ -387,7 +387,9 @@ class LiteralScriptWritingWorkflow:
         self.cognee_store = cognee_store
         self.sqlite_store = sqlite_store or cognee_store
         self.output_dir = output_dir
-        self.audio_type_mode = "narrated" if audio_type_mode == "narrated" else "literal"
+        self.audio_type_mode = (
+            "narrated" if audio_type_mode == "narrated" else "literal"
+        )
         self._current_episode = 1
         self._agent: Agent | None = None
         self._valid_identity_ids: set[str] = set()
@@ -408,6 +410,7 @@ class LiteralScriptWritingWorkflow:
                 get_newapi_text_pydantic_model(
                     "LITERAL_BEAT_META_MODEL",
                     "gemini-3.5-flash",
+                    capability="text.generate.workflow",
                 ),
                 system_prompt=LITERAL_SCRIPT_PROMPT,
                 model_settings=get_newapi_text_pydantic_model_settings(
@@ -415,7 +418,7 @@ class LiteralScriptWritingWorkflow:
                     "low",
                 ),
                 output_type=LiteralBeatMetaOutput,
-                output_retries=2,
+                output_retries=model_gateway_output_retries(2),
                 validation_context={
                     "valid_identity_ids": self._valid_identity_ids,
                     "valid_scene_ids": self._valid_scene_ids,
@@ -472,19 +475,23 @@ class LiteralScriptWritingWorkflow:
 
         quality_report = check_screenplay_import_quality(source_text)
         for issue in quality_report.blocking_issues:
-            log(f"[Literal][Quality][blocking-as-warning] {issue.code}: {issue.message}")
+            log(
+                f"[Literal][Quality][blocking-as-warning] {issue.code}: {issue.message}"
+            )
         for issue in quality_report.warnings:
             log(f"[Literal][Quality][warning] {issue.code}: {issue.message}")
 
         # 这些调用当前主要用于填充 episode 级合法集合（_valid_*），
         # block compiler 和 fallback 仍依赖这些全集真值；返回的 *_section 文本仅保留作调试遗留。
-        self._identity_section, self._valid_identity_ids = self._build_identity_menu_for_episode(
-            episode_num
+        self._identity_section, self._valid_identity_ids = (
+            self._build_identity_menu_for_episode(episode_num)
         )
         self._scene_section = self._build_scene_menu_for_episode(episode)
         self._prop_section = self._build_prop_menu_for_episode(episode)
         episode_identity_ids = set(self._valid_identity_ids)
-        episode_identity_default_map = dict(getattr(episode, "identity_default_map", {}) or {})
+        episode_identity_default_map = dict(
+            getattr(episode, "identity_default_map", {}) or {}
+        )
         episode_prop_ids = set(self._valid_prop_ids)
         identity_metadata = self._build_identity_metadata(episode_identity_ids)
         prop_metadata = self._build_prop_metadata(episode)
@@ -506,7 +513,9 @@ class LiteralScriptWritingWorkflow:
                 prop_metadata,
                 on_log=log,
             )
-        line_contexts = self._build_scene_line_contexts(scene_blocks, source_lines=lines)
+        line_contexts = self._build_scene_line_contexts(
+            scene_blocks, source_lines=lines
+        )
         if not line_contexts:
             raise ValueError("原文无法切分出有效场次内容")
 
@@ -552,11 +561,14 @@ class LiteralScriptWritingWorkflow:
 
             current_scene_label = block.location
             current_scene_id = self._resolve_scene_id(block.location, episode)
-            current_allowed_scene_ids = self._allowed_scene_ids_for_block(current_scene_id)
+            current_allowed_scene_ids = self._allowed_scene_ids_for_block(
+                current_scene_id
+            )
             current_time_of_day = block.time_of_day
 
             report_progress(
-                0.08 + ((content_index - 1) / total) * 0.82, f"生成第 {content_index}/{total} 行..."
+                0.08 + ((content_index - 1) / total) * 0.82,
+                f"生成第 {content_index}/{total} 行...",
             )
 
             block_ctx = block.context
@@ -580,7 +592,9 @@ class LiteralScriptWritingWorkflow:
                     "\n\n## 当前场次 scene_id 候选\n"
                     f"当前基础 scene_id 已锁定为 `{current_scene_id}`；"
                     "只能从下列 scene_id 中精确选择一个，或留空让系统回落基础场景。\n"
-                    + "\n".join(f"- `{sid}`" for sid in sorted(current_allowed_scene_ids))
+                    + "\n".join(
+                        f"- `{sid}`" for sid in sorted(current_allowed_scene_ids)
+                    )
                 )
             elif self._valid_scene_ids:
                 scene_id_fallback_section = (
@@ -593,7 +607,9 @@ class LiteralScriptWritingWorkflow:
             prev_beat_anchor = ""
             if beats:
                 last = beats[-1]
-                prev_identities = re.findall(r"\{\{(.+?)\}\}", last.visual_description or "")
+                prev_identities = re.findall(
+                    r"\{\{(.+?)\}\}", last.visual_description or ""
+                )
                 prev_props = extract_prop_ids_from_markers(
                     last.visual_description or "", strict=False
                 )
@@ -730,7 +746,9 @@ class LiteralScriptWritingWorkflow:
                     narration_segment=narration_segment,
                     visual_description=visual_description,
                     time_of_day=time_of_day,
-                    scene_ref=self._canonical_scene_ref_for_menu_choice(resolved_scene_id),
+                    scene_ref=self._canonical_scene_ref_for_menu_choice(
+                        resolved_scene_id
+                    ),
                     audio_type=audio_type,
                     speaker=speaker,
                     speaker_kind=speaker_kind,
@@ -740,7 +758,9 @@ class LiteralScriptWritingWorkflow:
 
             identities_in_beat = re.findall(r"\{\{(.+?)\}\}", visual_description)
             for identity_id in identities_in_beat:
-                char_name = identity_id.split("_", 1)[0] if "_" in identity_id else identity_id
+                char_name = (
+                    identity_id.split("_", 1)[0] if "_" in identity_id else identity_id
+                )
                 if char_name and char_name not in block_sticky_identities:
                     block_sticky_identities[char_name] = identity_id
                 if char_name and char_name not in episode_sticky_identities:
@@ -875,9 +895,13 @@ class LiteralScriptWritingWorkflow:
             scripts.append(await self.run(episode_num=episode.number))
         return scripts
 
-    def _build_identity_menu_for_episode(self, episode_number: int) -> tuple[str, set[str]]:
+    def _build_identity_menu_for_episode(
+        self, episode_number: int
+    ) -> tuple[str, set[str]]:
         episode = self.sqlite_store.get_episode(episode_number)
-        ep_identity_ids = set(episode.identity_ids) if episode and episode.identity_ids else set()
+        ep_identity_ids = (
+            set(episode.identity_ids) if episode and episode.identity_ids else set()
+        )
         if not ep_identity_ids:
             return "", set()
 
@@ -885,7 +909,9 @@ class LiteralScriptWritingWorkflow:
         valid_ids: set[str] = set()
         by_character: dict[str, list[str]] = {}
         for identity_id in sorted(ep_identity_ids):
-            char_name = identity_id.split("_", 1)[0] if "_" in identity_id else identity_id
+            char_name = (
+                identity_id.split("_", 1)[0] if "_" in identity_id else identity_id
+            )
             by_character.setdefault(char_name, []).append(identity_id)
             valid_ids.add(identity_id)
 
@@ -908,7 +934,11 @@ class LiteralScriptWritingWorkflow:
             variant_id = str(getattr(item, "variant_id", "") or "").strip()
             time_of_day = str(getattr(item, "time_of_day", "") or "").strip()
             if base_scene_id and (variant_id or time_of_day):
-                self._scene_menu_split[scene_id] = (base_scene_id, variant_id, time_of_day)
+                self._scene_menu_split[scene_id] = (
+                    base_scene_id,
+                    variant_id,
+                    time_of_day,
+                )
         if not scene_menu:
             return "\n## 本集可用场景菜单\n- 无\n"
         lines = ["\n## 本集可用场景菜单"]
@@ -918,7 +948,11 @@ class LiteralScriptWritingWorkflow:
 
     def _base_ids(self) -> set[str]:
         derived_ids = set(self._scene_menu_split)
-        return {scene_id for scene_id in self._valid_scene_ids if scene_id not in derived_ids}
+        return {
+            scene_id
+            for scene_id in self._valid_scene_ids
+            if scene_id not in derived_ids
+        }
 
     def _allowed_scene_ids_for_block(self, base_id: str) -> set[str]:
         base_id = str(base_id or "").strip()
@@ -936,7 +970,9 @@ class LiteralScriptWritingWorkflow:
         scene_id = str(scene_id or "").strip()
         if not scene_id:
             return None
-        base_scene_id, variant_id, time_of_day = self._scene_menu_split.get(scene_id, ("", "", ""))
+        base_scene_id, variant_id, time_of_day = self._scene_menu_split.get(
+            scene_id, ("", "", "")
+        )
         if base_scene_id and (variant_id or time_of_day):
             return build_scene_ref(base_scene_id, variant_id)
         return build_scene_ref(scene_id)
@@ -962,7 +998,9 @@ class LiteralScriptWritingWorkflow:
     @staticmethod
     def _normalize_match_text(value: str) -> str:
         text = str(value or "").strip()
-        return re.sub(r"[\s\u3000·•．。,:：，、／/（）()\\\-_\[\]{}]+", "", text).lower()
+        return re.sub(
+            r"[\s\u3000·•．。,:：，、／/（）()\\\-_\[\]{}]+", "", text
+        ).lower()
 
     @classmethod
     def _contains_text(cls, haystack: str, needle: str) -> bool:
@@ -971,7 +1009,9 @@ class LiteralScriptWritingWorkflow:
             return False
         return normalized_needle in cls._normalize_match_text(haystack)
 
-    def _build_identity_metadata(self, episode_identity_ids: set[str]) -> dict[str, dict[str, Any]]:
+    def _build_identity_metadata(
+        self, episode_identity_ids: set[str]
+    ) -> dict[str, dict[str, Any]]:
         metadata: dict[str, dict[str, Any]] = {}
         for character in self.cognee_store.get_all_characters():
             aliases = [
@@ -986,7 +1026,9 @@ class LiteralScriptWritingWorkflow:
                 metadata[identity_id] = {
                     "character_name": str(getattr(character, "name", "") or "").strip(),
                     "character_aliases": aliases,
-                    "identity_name": str(getattr(identity, "identity_name", "") or "").strip(),
+                    "identity_name": str(
+                        getattr(identity, "identity_name", "") or ""
+                    ).strip(),
                 }
         return metadata
 
@@ -1023,7 +1065,9 @@ class LiteralScriptWritingWorkflow:
         lines = ["## 当前场次候选身份"]
         grouped: dict[str, list[str]] = {}
         for identity_id in sorted(candidate_identity_ids):
-            character_name = identity_id.split("_", 1)[0] if "_" in identity_id else identity_id
+            character_name = (
+                identity_id.split("_", 1)[0] if "_" in identity_id else identity_id
+            )
             grouped.setdefault(character_name, []).append(identity_id)
         for character_name in sorted(grouped):
             lines.append(f"### {character_name}")
@@ -1053,7 +1097,9 @@ class LiteralScriptWritingWorkflow:
         on_log: Optional[Callable[[str], None]] = None,
     ) -> SceneBlockContext:
         block_text = "\n".join(
-            item for item in [block.header_line, *block.lines] if str(item or "").strip()
+            item
+            for item in [block.header_line, *block.lines]
+            if str(item or "").strip()
         )
         matched_identities_by_character: dict[str, list[str]] = {}
         speaker_candidates: set[str] = set()
@@ -1074,7 +1120,9 @@ class LiteralScriptWritingWorkflow:
             aliases = list(meta.get("character_aliases", []) or [])
             identity_name = str(meta.get("identity_name", "") or "").strip()
             tokens = [character_name, *aliases, identity_id, identity_name]
-            matched = any(self._contains_text(block_text, token) for token in tokens if token)
+            matched = any(
+                self._contains_text(block_text, token) for token in tokens if token
+            )
             matched = matched or any(
                 self._contains_text(token, character_name)
                 or any(self._contains_text(token, alias) for alias in aliases)
@@ -1083,7 +1131,9 @@ class LiteralScriptWritingWorkflow:
             )
             if not matched or not character_name:
                 continue
-            matched_identities_by_character.setdefault(character_name, []).append(identity_id)
+            matched_identities_by_character.setdefault(character_name, []).append(
+                identity_id
+            )
 
         candidate_identity_ids: set[str] = set()
         for character_name, identity_ids in matched_identities_by_character.items():
@@ -1097,12 +1147,16 @@ class LiteralScriptWritingWorkflow:
                 score = 0
                 if identity_name and self._contains_text(block_text, identity_name):
                     score += 2
-                if identity_name and self._contains_text(block.header_line, identity_name):
+                if identity_name and self._contains_text(
+                    block.header_line, identity_name
+                ):
                     score += 1
                 scored.append((score, identity_id))
             max_score = max(score for score, _ in scored)
             narrowed = [
-                identity_id for score, identity_id in scored if score == max_score and score > 0
+                identity_id
+                for score, identity_id in scored
+                if score == max_score and score > 0
             ]
             if narrowed:
                 candidate_identity_ids.update(narrowed)
@@ -1330,7 +1384,9 @@ class LiteralScriptWritingWorkflow:
             "[Literal][ERROR] 说明：上游模型不会返回精确违规规则；以上行号和疑似表达"
             "是 Dramaclaw 根据本次请求上下文本地定位，供修改剧本时参考。"
         )
-        messages.append(f"[Literal][ERROR] 原始模型错误: {_short_log_text(str(error), limit=180)}")
+        messages.append(
+            f"[Literal][ERROR] 原始模型错误: {_short_log_text(str(error), limit=180)}"
+        )
         return messages
 
     def _audio_type_mode_instruction(self) -> str:
@@ -1350,7 +1406,9 @@ class LiteralScriptWritingWorkflow:
             return ""
         if not self._valid_scene_ids:
             scene_menu = list(getattr(episode, "scene_menu", []) or [])
-            self._valid_scene_ids.update(item.scene_id for item in scene_menu if item.scene_id)
+            self._valid_scene_ids.update(
+                item.scene_id for item in scene_menu if item.scene_id
+            )
         base_ids = self._base_ids()
         for scene_id in base_ids:
             if scene_id == location:
@@ -1366,13 +1424,18 @@ class LiteralScriptWritingWorkflow:
             return ""
         if normalized in self._valid_identity_ids:
             return normalized
-        exact_base = [iid for iid in self._valid_identity_ids if iid.split("_", 1)[0] == normalized]
+        exact_base = [
+            iid
+            for iid in self._valid_identity_ids
+            if iid.split("_", 1)[0] == normalized
+        ]
         if exact_base:
             for candidate in exact_base:
                 if candidate.endswith("_默认"):
                     return candidate
             return exact_base[0]
         return normalized
+
 
 def create_literal_script_writing_workflow(
     cognee_store: Any,

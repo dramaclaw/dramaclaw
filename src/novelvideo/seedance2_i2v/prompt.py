@@ -10,7 +10,11 @@ from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel, Field
 
-from novelvideo.models import beat_scene_ref, real_detected_identities, real_detected_props
+from novelvideo.models import (
+    beat_scene_ref,
+    real_detected_identities,
+    real_detected_props,
+)
 from novelvideo.seedance2_i2v.models import Seedance2I2VMode
 from novelvideo.seedance2_i2v.spoken_dialogue import (
     parse_seedance2_spoken_lines,
@@ -56,7 +60,10 @@ def _sentence_text(value: Any) -> str:
 
 def _beat_spoken_text(beat: dict[str, Any]) -> str:
     return _text(
-        beat.get("dialogue") or beat.get("narration_segment") or beat.get("narration") or ""
+        beat.get("dialogue")
+        or beat.get("narration_segment")
+        or beat.get("narration")
+        or ""
     )
 
 
@@ -127,7 +134,12 @@ def _scene_ref_label(beat: dict[str, Any], assets: list[Any] | None = None) -> s
 def normalize_seedance2_editor_prompt(prompt: str) -> str:
     """Convert editor-only @ mentions into model-facing reference labels."""
 
-    return _text(prompt).replace("@图片", "图片").replace("@音频", "音频").replace("@视频", "视频")
+    return (
+        _text(prompt)
+        .replace("@图片", "图片")
+        .replace("@音频", "音频")
+        .replace("@视频", "视频")
+    )
 
 
 def _selected_assets(assets: list[Any] | None) -> list[Any]:
@@ -182,7 +194,9 @@ def build_seedance2_asset_manifest(assets: list[Any] | None) -> list[dict[str, s
     return manifest
 
 
-def build_seedance2_asset_fallback_manifest(assets: list[Any] | None) -> list[dict[str, str]]:
+def build_seedance2_asset_fallback_manifest(
+    assets: list[Any] | None,
+) -> list[dict[str, str]]:
     """Return text-only reference constraints for assets that are not sent to the API."""
 
     manifest: list[dict[str, str]] = []
@@ -388,7 +402,11 @@ def _reference_sentence_for_assets(
     elif mode == Seedance2I2VMode.FIRST_FRAME and image_parts:
         base = f"以{image_parts[0]}生成图生视频"
     else:
-        base = "参考" + "、".join(image_parts) if image_parts else "根据输入参考素材生成图生视频"
+        base = (
+            "参考" + "、".join(image_parts)
+            if image_parts
+            else "根据输入参考素材生成图生视频"
+        )
 
     if audio_parts:
         base = f"{base}，参考{'、'.join(audio_parts)}"
@@ -415,7 +433,9 @@ def build_text_overlay_prompt_fragment(text_overlay: dict[str, Any] | None) -> s
     if speaker:
         character, identity = _split_identity_label(speaker)
         speaker_text = (
-            f"，说话人为{character}（{identity}）" if identity else f"，说话人为{character}"
+            f"，说话人为{character}（{identity}）"
+            if identity
+            else f"，说话人为{character}"
         )
     return (
         f"画面文字使用{kind_label}“{content}”，位置为{placement}，"
@@ -467,7 +487,9 @@ def build_seedance2_prompt_draft(
     if guidance:
         lines.append(_clean_sentence(guidance))
     if manual:
-        lines.append(_clean_sentence(f"用户手动版本可作为改写参考：{_sentence_text(manual)}"))
+        lines.append(
+            _clean_sentence(f"用户手动版本可作为改写参考：{_sentence_text(manual)}")
+        )
 
     return normalize_seedance2_editor_prompt("".join(line for line in lines if line))
 
@@ -539,7 +561,9 @@ def build_seedance2_prompt_composer_task(
         "asset_fallbacks": build_seedance2_asset_fallback_manifest(assets),
         "text_overlay": text_overlay or {},
         "user_prompt_guidance": _text(prompt_guidance),
-        "manual_prompt_reference": normalize_seedance2_editor_prompt(manual_prompt_reference),
+        "manual_prompt_reference": normalize_seedance2_editor_prompt(
+            manual_prompt_reference
+        ),
         "request_params_for_context_only": request_params or {},
         "rule_based_draft_prompt": normalize_seedance2_editor_prompt(draft_prompt),
     }
@@ -580,6 +604,7 @@ def create_seedance2_prompt_composer_agent():
         get_newapi_text_pydantic_model(
             "SEEDANCE2_PROMPT_COMPOSER_MODEL",
             "gemini-3.5-flash",
+            capability="text.generate.workflow",
         ),
         system_prompt=SEEDANCE2_COMPOSER_SYSTEM_PROMPT,
         output_type=Seedance2PromptComposerOutput,

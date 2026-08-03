@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from novelvideo.model_gateway_runtime import model_gateway_scope_for_runner
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
 from novelvideo.task_backend.registry import register_project_task_runner
@@ -28,22 +29,29 @@ def _build_identity_planner_result(
     }
 
 
-def run_identity_planner(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any] | None:
-    return asyncio.run(
-        await_envelope_with_cancel_watch(
-            _run_identity_planner(envelope, ctx),
-            envelope,
-            task_type="identity_planner",
+def run_identity_planner(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any] | None:
+    with model_gateway_scope_for_runner(envelope):
+        return asyncio.run(
+            await_envelope_with_cancel_watch(
+                _run_identity_planner(envelope, ctx),
+                envelope,
+                task_type="identity_planner",
+            )
         )
-    )
 
 
-async def _run_identity_planner(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+async def _run_identity_planner(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     from novelvideo.agents.identity_planner import IdentityPlanner
     from novelvideo.cognee import CogneeStore
     from novelvideo.sqlite_store import SQLiteStore
 
-    episode = int(envelope.get("episode") or (envelope.get("payload") or {}).get("episode") or 0)
+    episode = int(
+        envelope.get("episode") or (envelope.get("payload") or {}).get("episode") or 0
+    )
     manager = get_task_manager()
 
     def update(
@@ -86,7 +94,9 @@ async def _run_identity_planner(envelope: dict[str, Any], ctx: ProjectContext) -
     def on_log(message: str) -> None:
         update(log=message)
 
-    new_count, resolved_count = await planner.plan_single_episode(episode_obj, on_log=on_log)
+    new_count, resolved_count = await planner.plan_single_episode(
+        episode_obj, on_log=on_log
+    )
     refreshed = cognee_store.get_episode(episode) or episode_obj
 
     identities: list[dict[str, str]] = []
@@ -100,18 +110,24 @@ async def _run_identity_planner(envelope: dict[str, Any], ctx: ProjectContext) -
                 {
                     "character_name": character.name,
                     "identity_id": identity_id,
-                    "identity_name": getattr(identity, "identity_name", "") or identity_id,
-                    "appearance_details": getattr(identity, "appearance_details", "") or "",
+                    "identity_name": getattr(identity, "identity_name", "")
+                    or identity_id,
+                    "appearance_details": getattr(identity, "appearance_details", "")
+                    or "",
                 }
             )
 
-    update(0.95, "身份规划完成", f"新增 {new_count} 个身份，复用 {resolved_count} 个身份")
+    update(
+        0.95, "身份规划完成", f"新增 {new_count} 个身份，复用 {resolved_count} 个身份"
+    )
     return _build_identity_planner_result(
         episode=episode,
         new_count=new_count,
         resolved_count=resolved_count,
         identities=identities,
-        auto_promoted_characters=list(getattr(planner, "auto_promoted_characters", []) or []),
+        auto_promoted_characters=list(
+            getattr(planner, "auto_promoted_characters", []) or []
+        ),
     )
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from novelvideo.model_gateway_runtime import model_gateway_scope_for_runner
 from novelvideo.novel_source import require_imported_novel
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
@@ -13,9 +14,10 @@ from novelvideo.task_state import get_task_manager
 
 
 def _run_async(coro, envelope: dict[str, Any], task_type: str):
-    return asyncio.run(
-        await_envelope_with_cancel_watch(coro, envelope, task_type=task_type)
-    )
+    with model_gateway_scope_for_runner(envelope):
+        return asyncio.run(
+            await_envelope_with_cancel_watch(coro, envelope, task_type=task_type)
+        )
 
 
 def _progress(
@@ -50,7 +52,9 @@ async def _load_store(ctx: ProjectContext):
     return store
 
 
-def run_build_characters(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any] | None:
+def run_build_characters(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any] | None:
     return _run_async(_run_build_characters(ctx), envelope, "build_characters")
 
 
@@ -59,7 +63,9 @@ async def _run_build_characters(ctx: ProjectContext) -> dict[str, Any]:
     store = await _load_store(ctx)
     try:
         characters = await store.build_characters_from_graph(
-            on_progress=lambda progress, task: _progress(ctx, "build_characters", progress, task),
+            on_progress=lambda progress, task: _progress(
+                ctx, "build_characters", progress, task
+            ),
             on_log=lambda message: _progress(ctx, "build_characters", None, message),
         )
         return {"characters": len(characters), "added_characters": len(characters)}
@@ -67,7 +73,9 @@ async def _run_build_characters(ctx: ProjectContext) -> dict[str, Any]:
         await store.close()
 
 
-def run_build_scenes(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any] | None:
+def run_build_scenes(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any] | None:
     return _run_async(_run_build_scenes(ctx), envelope, "build_scenes")
 
 
@@ -76,7 +84,9 @@ async def _run_build_scenes(ctx: ProjectContext) -> dict[str, Any]:
     store = await _load_store(ctx)
     try:
         scenes = await store.build_scenes_from_graph(
-            on_progress=lambda progress, task: _progress(ctx, "build_scenes", progress, task),
+            on_progress=lambda progress, task: _progress(
+                ctx, "build_scenes", progress, task
+            ),
             on_log=lambda message: _progress(ctx, "build_scenes", None, message),
         )
         return {"scenes": len(scenes), "added_scenes": len(scenes)}
@@ -84,7 +94,9 @@ async def _run_build_scenes(ctx: ProjectContext) -> dict[str, Any]:
         await store.close()
 
 
-def run_build_props(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any] | None:
+def run_build_props(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any] | None:
     return _run_async(_run_build_props(ctx), envelope, "build_props")
 
 
@@ -92,7 +104,9 @@ async def _run_build_props(ctx: ProjectContext) -> dict[str, Any]:
     store = await _load_store(ctx)
     try:
         props = await store.build_props_from_graph(
-            on_progress=lambda progress, task: _progress(ctx, "build_props", progress, task),
+            on_progress=lambda progress, task: _progress(
+                ctx, "build_props", progress, task
+            ),
             on_log=lambda message: _progress(ctx, "build_props", None, message),
         )
         return {"props": len(props)}
@@ -100,11 +114,15 @@ async def _run_build_props(ctx: ProjectContext) -> dict[str, Any]:
         await store.close()
 
 
-def run_build_episodes(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any] | None:
+def run_build_episodes(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any] | None:
     return _run_async(_run_build_episodes(envelope, ctx), envelope, "build_episodes")
 
 
-async def _run_build_episodes(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+async def _run_build_episodes(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     from novelvideo.agents.episode_planner import EpisodePlannerAgent
 
     payload = envelope.get("payload") or {}
@@ -116,6 +134,7 @@ async def _run_build_episodes(envelope: dict[str, Any], ctx: ProjectContext) -> 
     require_imported_novel(ctx.output_dir)
     store = await _load_store(ctx)
     try:
+
         def update(progress: float | None, task: str) -> None:
             _progress(ctx, "build_episodes", progress, task)
 

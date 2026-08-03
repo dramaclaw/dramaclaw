@@ -5,23 +5,29 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from novelvideo.model_gateway_runtime import model_gateway_scope_for_runner
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_state import get_task_manager
 
 
-def run_ingest_fast(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any] | None:
-    return asyncio.run(
-        await_envelope_with_cancel_watch(
-            _run_ingest_fast(envelope, ctx),
-            envelope,
-            task_type="ingest_fast",
+def run_ingest_fast(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any] | None:
+    with model_gateway_scope_for_runner(envelope):
+        return asyncio.run(
+            await_envelope_with_cancel_watch(
+                _run_ingest_fast(envelope, ctx),
+                envelope,
+                task_type="ingest_fast",
+            )
         )
-    )
 
 
-async def _run_ingest_fast(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+async def _run_ingest_fast(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     from novelvideo.cognee import CogneeStore
 
     payload = envelope.get("payload") or {}

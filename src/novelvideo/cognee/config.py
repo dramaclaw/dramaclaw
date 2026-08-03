@@ -61,6 +61,7 @@ load_dotenv(override=False)
 COGNEE_EMBEDDING_TIMEOUT_SECONDS = float(os.getenv("COGNEE_EMBEDDING_TIMEOUT", "600"))
 _embedding_gateway_patch_installed = False
 _litellm_embedding_header_patch_installed = False
+_cognee_llm_gateway_patch_installed = False
 _embedding_headers_capture: contextvars.ContextVar[dict[str, str] | None] = (
     contextvars.ContextVar("novelvideo_embedding_headers_capture", default=None)
 )
@@ -662,11 +663,24 @@ def _embedding_response_trace(
     return request_id, response_id
 
 
-def _project_embedding_request_kwargs(kwargs: dict) -> dict:
+def _project_embedding_request_kwargs(
+    kwargs: dict,
+    *,
+    request_credential=None,
+) -> dict:
     """Apply the current project's immutable model and gateway to LiteLLM kwargs."""
 
     spec = require_current_embedding_model_spec()
-    api_key, base_url = embedding_gateway_credentials(spec)
+    from novelvideo.model_gateway_runtime import current_model_gateway_context
+
+    context = current_model_gateway_context()
+    if context is not None and context.is_organization:
+        if request_credential is None:
+            raise RuntimeError("organization embedding credential is not resolved")
+        api_key = request_credential.api_key
+        base_url = request_credential.base_url
+    else:
+        api_key, base_url = embedding_gateway_credentials(spec)
     if not api_key or not base_url:
         raise RuntimeError(f"Embedding gateway is not configured for {spec.gateway}")
 
@@ -693,6 +707,167 @@ def _project_embedding_request_kwargs(kwargs: dict) -> dict:
         else:
             routed.pop("allowed_openai_params", None)
     return routed
+
+
+async def _route_project_embedding_transport(
+    transport,
+    args: tuple,
+    kwargs: dict,
+):
+    """Route one embedding submit without placing request credentials in env."""
+
+    from pydantic_core import to_jsonable_python
+
+    from novelvideo.model_gateway_runtime import (
+        current_model_gateway_context,
+        execute_organization_gateway_request,
+        next_model_gateway_business_task_id,
+    )
+    from novelvideo.ports.egress_operations import canonical_request_digest
+
+    context = current_model_gateway_context()
+    if context is None or not context.is_organization:
+        return await transport(*args, **_project_embedding_request_kwargs(kwargs))
+
+    spec = require_current_embedding_model_spec()
+    canonical_payload = to_jsonable_python(
+        {
+            "model": spec.internal_model,
+            "dimensions": spec.dimensions,
+            "args": list(args),
+            "kwargs": {
+                key: value
+                for key, value in kwargs.items()
+                if key not in {"api_key", "api_base", "base_url"}
+            },
+        },
+        bytes_mode="base64",
+    )
+    business_task_id = next_model_gateway_business_task_id("embedding.generate")
+    request_digest = canonical_request_digest(canonical_payload)
+
+    async def submit(credential):
+        routed = _project_embedding_request_kwargs(
+            kwargs,
+            request_credential=credential,
+        )
+        return await transport(*args, **routed)
+
+    return await execute_organization_gateway_request(
+        capability="embedding.generate",
+        business_task_id=business_task_id,
+        request_digest=request_digest,
+        submit=submit,
+    )
+
+
+async def _route_cognee_llm_transport(
+    transport,
+    args: tuple,
+    kwargs: dict,
+):
+    """Route one Cognee LLM submit with no process-environment credential writes."""
+
+    from pydantic_core import to_jsonable_python
+
+    from novelvideo.model_gateway_runtime import (
+        current_model_gateway_context,
+        execute_organization_gateway_request,
+        next_model_gateway_business_task_id,
+    )
+    from novelvideo.ports.egress_operations import canonical_request_digest
+
+    context = current_model_gateway_context()
+    if context is None or not context.is_organization:
+        return await transport(*args, **kwargs)
+
+    clean_kwargs = {
+        key: value
+        for key, value in kwargs.items()
+        if key
+        not in {
+            "api_key",
+            "api_base",
+            "base_url",
+            "fallback_api_key",
+            "fallback_endpoint",
+        }
+    }
+    canonical_payload = to_jsonable_python(
+        {"args": list(args), "kwargs": clean_kwargs},
+        bytes_mode="base64",
+    )
+    business_task_id = next_model_gateway_business_task_id("cognee.llm")
+    request_digest = canonical_request_digest(canonical_payload)
+
+    async def submit(credential):
+        routed = dict(clean_kwargs)
+        routed["api_key"] = credential.api_key
+        routed["api_base"] = credential.base_url
+        routed["max_retries"] = 0
+        return await transport(*args, **routed)
+
+    return await execute_organization_gateway_request(
+        capability="cognee.llm",
+        business_task_id=business_task_id,
+        request_digest=request_digest,
+        submit=submit,
+    )
+
+
+def _patch_cognee_llm_gateway() -> None:
+    """Patch Cognee's LiteLLM leaf once; routing remains ContextVar-scoped."""
+
+    global _cognee_llm_gateway_patch_installed
+    if _cognee_llm_gateway_patch_installed:
+        return
+    try:
+        litellm = importlib.import_module("litellm")
+    except ImportError:
+        return
+    original = litellm.acompletion
+    if getattr(original, "_novelvideo_org_gateway_routed", False):
+        _cognee_llm_gateway_patch_installed = True
+        return
+
+    async def gateway_acompletion(*args, **kwargs):
+        return await _route_cognee_llm_transport(original, args, kwargs)
+
+    gateway_acompletion._novelvideo_org_gateway_routed = True
+    litellm.acompletion = gateway_acompletion
+    _cognee_llm_gateway_patch_installed = True
+
+
+def _disable_cognee_adapter_retries_for_organization() -> None:
+    """Bypass Cognee's Tenacity wrapper only for request-scoped org calls."""
+
+    import inspect
+    from functools import wraps
+
+    try:
+        module = importlib.import_module(
+            "cognee.infrastructure.llm.structured_output_framework."
+            "litellm_instructor.llm.generic_llm_api.adapter"
+        )
+    except ImportError:
+        return
+    adapter_class = module.GenericAPIAdapter
+    original = adapter_class.acreate_structured_output
+    if getattr(original, "_novelvideo_org_retry_disabled", False):
+        return
+    unwrapped = inspect.unwrap(original)
+
+    @wraps(original)
+    async def request_scoped(self, *args, **kwargs):
+        from novelvideo.model_gateway_runtime import current_model_gateway_context
+
+        context = current_model_gateway_context()
+        if context is not None and context.is_organization:
+            return await unwrapped(self, *args, **kwargs)
+        return await original(self, *args, **kwargs)
+
+    request_scoped._novelvideo_org_retry_disabled = True
+    adapter_class.acreate_structured_output = request_scoped
 
 
 def _validate_embedding_vectors(
@@ -734,12 +909,10 @@ async def _run_project_embedding_with_billing(
     }
     try:
         try:
-            reservation_id = (
-                await get_usage_meter().reserve_current_model_call_credit(
-                    model=spec.internal_model,
-                    billing_kind="embedding",
-                    metadata=metadata,
-                )
+            reservation_id = await get_usage_meter().reserve_current_model_call_credit(
+                model=spec.internal_model,
+                billing_kind="embedding",
+                metadata=metadata,
             )
         except Exception as exc:
             insufficient = find_insufficient_credits_error(exc)
@@ -827,8 +1000,10 @@ def _patch_cognee_embedding_gateway() -> None:
     original_aembedding = litellm.aembedding
 
     async def gateway_aembedding(*args, **kwargs):
-        response = await original_aembedding(
-            *args, **_project_embedding_request_kwargs(kwargs)
+        response = await _route_project_embedding_transport(
+            original_aembedding,
+            args,
+            kwargs,
         )
         captured_headers = _embedding_headers_capture.get()
         if captured_headers is not None:
@@ -1092,6 +1267,8 @@ try:
     _patch_cognee_embedding_timeout()
     _install_insufficient_credits_log_filter()
     _patch_cognee_embedding_gateway()
+    _patch_cognee_llm_gateway()
+    _disable_cognee_adapter_retries_for_organization()
     install_cognee_ladybug_access_patch()
     _install_cognee_pipeline_concurrency_on_import()
 
@@ -1126,6 +1303,16 @@ def init_cognee() -> None:
             "模型网关配置已更新，Cognee 仍持有启动时的旧配置；"
             "请重启 DramaClaw 后再使用小说知识库。"
         )
+
+    from novelvideo.model_gateway_runtime import current_model_gateway_context
+
+    request_context = current_model_gateway_context()
+    if request_context is not None and request_context.is_organization:
+        _patch_cognee_embedding_gateway()
+        _patch_cognee_llm_gateway()
+        _disable_cognee_adapter_retries_for_organization()
+        _install_cognee_pipeline_concurrency_on_import()
+        return
 
     llm_provider = _resolve_llm_provider()
 

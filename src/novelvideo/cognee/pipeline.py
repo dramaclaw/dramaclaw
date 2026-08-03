@@ -49,7 +49,6 @@ from novelvideo.models import (
     NovelProp,
 )
 
-
 # ============================================================
 # LLM 输出容器
 # ============================================================
@@ -201,7 +200,9 @@ async def extract_episodes_from_text(
     return result.episodes
 
 
-async def generate_visual_prompts(characters: List[NovelCharacter]) -> List[NovelCharacter]:
+async def generate_visual_prompts(
+    characters: List[NovelCharacter],
+) -> List[NovelCharacter]:
     """为角色生成/优化 face_prompt。
 
     注意：不添加风格前缀，风格在图像生成时动态添加。
@@ -595,11 +596,15 @@ async def extract_episodes_with_characters(
     log(f"剧集编号: {episode_numbers}")
 
     if len(result.episodes) < target_episodes:
-        log(f"⚠️ 警告：LLM 返回的集数 ({len(result.episodes)}) 少于目标 ({target_episodes})")
+        log(
+            f"⚠️ 警告：LLM 返回的集数 ({len(result.episodes)}) 少于目标 ({target_episodes})"
+        )
 
     # 检查是否从 1 开始，如果不是则自动修正
     if episode_numbers and min(episode_numbers) != 1:
-        log(f"⚠️ 警告：剧集编号不是从 1 开始，最小编号: {min(episode_numbers)}，正在自动修正...")
+        log(
+            f"⚠️ 警告：剧集编号不是从 1 开始，最小编号: {min(episode_numbers)}，正在自动修正..."
+        )
         result.episodes.sort(key=lambda ep: ep.number)
         for i, ep in enumerate(result.episodes, start=1):
             if ep.number != i:
@@ -617,7 +622,9 @@ async def extract_episodes_with_characters(
                 log(f"  修正剧集编号: {ep.number} → {i}")
                 ep.number = i
 
-    log(f"剧集规划完成: {len(result.episodes)} 集，编号: {[ep.number for ep in result.episodes]}")
+    log(
+        f"剧集规划完成: {len(result.episodes)} 集，编号: {[ep.number for ep in result.episodes]}"
+    )
 
     return result.episodes
 
@@ -649,7 +656,9 @@ class SceneEnrichmentList(BaseModel):
 class GraphSceneCandidate(BaseModel):
     """Stable physical scene discovered from Cognee graph context."""
 
-    name: str = Field(..., description="稳定物理地点名称，不包含时间、人物、事件或镜头词")
+    name: str = Field(
+        ..., description="稳定物理地点名称，不包含时间、人物、事件或镜头词"
+    )
     aliases: List[str] = Field(default_factory=list, description="图谱中出现的地点别名")
     scene_type: str = Field(default="interior", description="interior/exterior/nature")
     evidence_lines: List[str] = Field(
@@ -703,7 +712,9 @@ def _has_required_scene_environment_headings(prompt: str) -> bool:
     )
 
 
-def _compact_scene_context(lines: list[str] | tuple[str, ...] | str, *, limit: int = 180) -> str:
+def _compact_scene_context(
+    lines: list[str] | tuple[str, ...] | str, *, limit: int = 180
+) -> str:
     if isinstance(lines, str):
         raw = lines
     else:
@@ -753,7 +764,9 @@ class SceneNormalization(BaseModel):
         description="只能输出：无/清晨/上午/正午/午后/白天/黄昏/夜晚",
     )
     interior: bool = Field(default=True, description="是否室内")
-    characters: List[str] = Field(default_factory=list, description="该场景块明确出场的人物")
+    characters: List[str] = Field(
+        default_factory=list, description="该场景块明确出场的人物"
+    )
 
     @field_validator("time_of_day", mode="before")
     @classmethod
@@ -787,7 +800,11 @@ def _create_scene_build_agent(system_prompt: str, output_type: Any, name: str):
     )
 
     return Agent(
-        get_newapi_text_pydantic_model("SCENE_BUILD_MODEL", "gemini-3-flash-preview"),
+        get_newapi_text_pydantic_model(
+            "SCENE_BUILD_MODEL",
+            "gemini-3-flash-preview",
+            capability="cognee.llm",
+        ),
         system_prompt=system_prompt,
         model_settings=get_newapi_text_pydantic_model_settings(
             "SCENE_BUILD_THINKING_LEVEL",
@@ -817,11 +834,15 @@ async def enrich_scene_environment_from_context(
     so they do not drift into separate prompt contracts.
     """
     scene_name = str(scene_name or "").strip()
-    context_lines = [str(line) for line in (context_lines or []) if str(line or "").strip()]
+    context_lines = [
+        str(line) for line in (context_lines or []) if str(line or "").strip()
+    ]
     aliases = list(aliases or [])
     characters = list(characters or [])
     episodes = list(episodes or [])
-    scene_type = str(scene_type or ("interior" if interior else "exterior") or "interior")
+    scene_type = str(
+        scene_type or ("interior" if interior else "exterior") or "interior"
+    )
 
     agent = enrichment_agent or _create_scene_build_agent(
         SCENE_ENRICHMENT_SYSTEM_PROMPT,
@@ -1160,7 +1181,9 @@ async def extract_scenes_from_script(
     report(0.1, "AI 规范化剧本场景块...")
     try:
         normalized_blocks = await normalize_screenplay_scenes(novel_text)
-        normalized_scene_candidates = _scene_candidates_from_normalized_blocks(normalized_blocks)
+        normalized_scene_candidates = _scene_candidates_from_normalized_blocks(
+            normalized_blocks
+        )
         if len(normalized_scene_candidates) < len(legacy_candidates):
             fallback_reason = (
                 "AI normalizer 基础场景不足 "
@@ -1229,7 +1252,9 @@ async def extract_scenes_from_script(
             report(progress, f"规范化场景 ({idx+1}/{total}): {cand.name}")
 
             context = "\n".join(cand.context_lines[:30])
-            synopsis_section = f"\n\n【故事梗概与人物设定】\n{synopsis}" if synopsis else ""
+            synopsis_section = (
+                f"\n\n【故事梗概与人物设定】\n{synopsis}" if synopsis else ""
+            )
             user_text = f"""程序定位到一个场景块，请你将它规范化。
 
 【程序猜测】
@@ -1245,7 +1270,9 @@ async def extract_scenes_from_script(
                 result = (await normalization_agent.run(user_text)).output
                 if result.scenes:
                     normalized = result.scenes[0]
-                    primary_name = _select_scene_primary_name(cand.name, normalized.name.strip())
+                    primary_name = _select_scene_primary_name(
+                        cand.name, normalized.name.strip()
+                    )
                     normalized_time = normalize_time_of_day(
                         normalized.time_of_day.strip() or cand.time_of_day
                     )
@@ -1254,13 +1281,18 @@ async def extract_scenes_from_script(
                             "name": primary_name,
                             "aliases": _clean_aliases(
                                 primary_name,
-                                [cand.name, normalized.name.strip()] + (normalized.aliases or []),
+                                [cand.name, normalized.name.strip()]
+                                + (normalized.aliases or []),
                             ),
                             "scene_type": normalized.scene_type
                             or ("interior" if cand.interior else "exterior"),
                             "time_of_day": normalized_time,
-                            "time_counts": {normalized_time: 1} if normalized_time else {},
-                            "interior": normalized.interior if primary_name else cand.interior,
+                            "time_counts": (
+                                {normalized_time: 1} if normalized_time else {}
+                            ),
+                            "interior": (
+                                normalized.interior if primary_name else cand.interior
+                            ),
                             "episodes": cand.episodes,
                             "characters": normalized.characters or cand.characters,
                             "context_lines": cand.context_lines,
@@ -1275,7 +1307,9 @@ async def extract_scenes_from_script(
                             "aliases": [],
                             "scene_type": "interior" if cand.interior else "exterior",
                             "time_of_day": normalized_time,
-                            "time_counts": {normalized_time: 1} if normalized_time else {},
+                            "time_counts": (
+                                {normalized_time: 1} if normalized_time else {}
+                            ),
                             "interior": cand.interior,
                             "episodes": cand.episodes,
                             "characters": cand.characters,
@@ -1322,7 +1356,9 @@ async def extract_scenes_from_script(
                     "context_lines": list(cand["context_lines"]),
                 }
                 continue
-            existing["aliases"] = list(dict.fromkeys(existing["aliases"] + cand["aliases"]))
+            existing["aliases"] = list(
+                dict.fromkeys(existing["aliases"] + cand["aliases"])
+            )
             existing["episodes"] = sorted(set(existing["episodes"] + cand["episodes"]))
             existing["characters"] = list(
                 dict.fromkeys(existing["characters"] + cand["characters"])
@@ -1355,7 +1391,10 @@ async def extract_scenes_from_script(
         return []
 
     enrichment_agent = None
-    if enrich_scene_environment_from_context is _DEFAULT_ENRICH_SCENE_ENVIRONMENT_FROM_CONTEXT:
+    if (
+        enrich_scene_environment_from_context
+        is _DEFAULT_ENRICH_SCENE_ENVIRONMENT_FROM_CONTEXT
+    ):
         enrichment_agent = _create_scene_build_agent(
             SCENE_ENRICHMENT_SYSTEM_PROMPT,
             SceneEnrichmentList,
@@ -1366,7 +1405,9 @@ async def extract_scenes_from_script(
         progress = 0.5 + 0.4 * (idx / max(total, 1))
         report(progress, f"生成场景描述 ({idx+1}/{total}): {cand['name']}")
 
-        scene_type = cand["scene_type"] or ("interior" if cand["interior"] else "exterior")
+        scene_type = cand["scene_type"] or (
+            "interior" if cand["interior"] else "exterior"
+        )
         scene = await enrich_scene_environment_from_context(
             scene_name=cand["name"],
             aliases=cand["aliases"],

@@ -27,6 +27,7 @@ class TrustedEgressContext:
     requester_user_id: str
     root_task_id: str
     admission_id: str
+    admitted_at: str
     membership_id: str | None
     authz_version: int
     billing_principal: BillingPrincipal
@@ -44,6 +45,10 @@ class TrustedEgressContext:
             value = getattr(self, field_name)
             if type(value) is not str or not value:
                 raise ValueError(f"{field_name} is required")
+        if type(self.admitted_at) is not str:
+            raise TypeError("admitted_at must be a string")
+        if not self.admitted_at:
+            raise ValueError("admitted_at is required")
         if self.membership_id is not None and (
             type(self.membership_id) is not str or not self.membership_id
         ):

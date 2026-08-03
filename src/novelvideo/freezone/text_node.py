@@ -14,6 +14,12 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
+from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.model_gateway_runtime import (
+    current_model_gateway_context,
+    model_gateway_output_retries,
+)
+
 from novelvideo.official_defaults import (
     DEFAULT_FREEZONE_STORY_SCRIPT_MODEL,
     DEFAULT_FREEZONE_TRANSLATION_MODEL,
@@ -135,9 +141,7 @@ Example style for `video_motion_prompt`:
   Reuse the exact same character identifier across rows so the same person keeps one name.
 """
 
-FREEZONE_VIDEO_STORY_SCRIPT_SYSTEM_PROMPT = (
-    FREEZONE_STORY_SCRIPT_SYSTEM_PROMPT
-    + """
+FREEZONE_VIDEO_STORY_SCRIPT_SYSTEM_PROMPT = FREEZONE_STORY_SCRIPT_SYSTEM_PROMPT + """
 ## Vision-reference modes
 Images may be attached to the request. The task message states which mode applies; follow that
 mode and ignore the other one.
@@ -167,7 +171,6 @@ lists them. There is no reference video.
   not from the images. The images only fix who the characters are.
 - Set `keyframe_index` to 0 on every row: there are no keyframes to attach.
 """
-)
 
 FREEZONE_NODE_TYPE_LABELS: dict[str, str] = {
     "generic": "通用提示词",
@@ -201,6 +204,7 @@ def create_freezone_translation_agent() -> Agent:
     model = get_newapi_text_pydantic_model(
         "FREEZONE_TRANSLATION_MODEL",
         FREEZONE_TRANSLATION_MODEL,
+        capability="freezone.text.generate",
     )
     return Agent(
         model,
@@ -213,6 +217,9 @@ def create_freezone_translation_agent() -> Agent:
 def get_freezone_translation_agent() -> Agent:
     """获取翻译 Agent 单例。"""
     global _translation_agent
+    context = current_model_gateway_context()
+    if context is not None and context.is_organization:
+        return create_freezone_translation_agent()
     if _translation_agent is None:
         _translation_agent = create_freezone_translation_agent()
     return _translation_agent
@@ -240,6 +247,7 @@ def create_freezone_story_script_agent(model: str | None = None) -> Agent:
     llm_model = get_newapi_text_pydantic_model(
         "FREEZONE_STORY_SCRIPT_MODEL",
         resolved["model"],
+        capability="freezone.text.generate",
     )
     return Agent(
         llm_model,
@@ -249,7 +257,7 @@ def create_freezone_story_script_agent(model: str | None = None) -> Agent:
         # "2-5"/"3秒" 之类而过不了校验。默认 output_retries=1 只给一次纠正机会不够，
         # 抛 "Exceeded maximum output retries (1)"。对齐本仓其它复杂结构化 agent
         # (episode_planner / content_rewriter)提到 3，让模型按回喂的校验错误自我修正。
-        output_retries=3,
+        output_retries=model_gateway_output_retries(3),
         name="Freezone Story Script Generator",
     )
 
@@ -258,6 +266,9 @@ def get_freezone_story_script_agent(model: str | None = None) -> Agent:
     """获取故事脚本生成 Agent 单例。"""
     global _story_script_agent
     resolved = resolve_freezone_story_script_model(model)
+    context = current_model_gateway_context()
+    if context is not None and context.is_organization:
+        return create_freezone_story_script_agent(resolved["id"])
     if _story_script_agent is None:
         _story_script_agent = create_freezone_story_script_agent(resolved["id"])
     return _story_script_agent
@@ -288,6 +299,7 @@ async def translate_freezone_text(
     *,
     text: str,
     node_type: Literal["generic", "image", "video", "audio", "text"] = "generic",
+    egress_context: TrustedEgressContext | None = None,
 ) -> tuple[str, Literal["zh", "en"], Literal["zh", "en"]]:
     """执行 Freezone 中英互译。"""
     if not text or not text.strip():
@@ -297,7 +309,10 @@ async def translate_freezone_text(
         text=text,
         node_type=node_type,
     )
-    response = await get_freezone_translation_agent().run(task)
+    from novelvideo.model_gateway_runtime import model_gateway_request_scope
+
+    with model_gateway_request_scope(egress_context):
+        response = await get_freezone_translation_agent().run(task)
     result = response.output
     target_language: Literal["zh", "en"] = result.target_language
     if target_language == result.source_language:
@@ -461,6 +476,7 @@ async def generate_freezone_story_script(
     prompt: str = "",
     model: str | None = None,
     character_refs: Sequence[Mapping[str, Any]] | None = None,
+    egress_context: TrustedEgressContext | None = None,
 ):
     """执行故事脚本生成（文本 / 角色图模式）。"""
     if not source_text or not source_text.strip():
@@ -471,7 +487,10 @@ async def generate_freezone_story_script(
         prompt=prompt,
         character_refs=character_refs,
     )
-    response = await get_freezone_story_script_agent(model).run(task)
+    from novelvideo.model_gateway_runtime import model_gateway_request_scope
+
+    with model_gateway_request_scope(egress_context):
+        response = await get_freezone_story_script_agent(model).run(task)
     return response.output
 
 
@@ -490,10 +509,11 @@ def create_freezone_video_story_script_agent() -> Agent:
             "FREEZONE_VISION_MODEL",
             DEFAULT_FREEZONE_VISION_MODEL,
             timeout_seconds_override=300.0,
+            capability="vision.analyze",
         ),
         system_prompt=FREEZONE_VIDEO_STORY_SCRIPT_SYSTEM_PROMPT,
         output_type=FreezoneStoryScriptGenerateData,
-        output_retries=3,
+        output_retries=model_gateway_output_retries(3),
         name="Freezone Video Story Script Generator",
     )
 
@@ -501,6 +521,9 @@ def create_freezone_video_story_script_agent() -> Agent:
 def get_freezone_video_story_script_agent() -> Agent:
     """获取视频分镜脚本 Agent 单例。"""
     global _video_story_script_agent
+    context = current_model_gateway_context()
+    if context is not None and context.is_organization:
+        return create_freezone_video_story_script_agent()
     if _video_story_script_agent is None:
         _video_story_script_agent = create_freezone_video_story_script_agent()
     return _video_story_script_agent
@@ -514,6 +537,7 @@ async def generate_freezone_story_script_with_vision(
     prompt: str = "",
     duration_sec: float | None = None,
     character_refs: Sequence[Mapping[str, Any]] | None = None,
+    egress_context: TrustedEgressContext | None = None,
 ):
     """带图的分镜脚本生成：视频关键帧 / 角色参考图 → 结构化脚本表。
 
@@ -558,7 +582,12 @@ async def generate_freezone_story_script_with_vision(
         BinaryContent(data=path.read_bytes(), media_type=image_media_type(str(path)))
         for path in (*frames, *character_images)
     ]
-    response = await get_freezone_video_story_script_agent().run([task, *attachments])
+    from novelvideo.model_gateway_runtime import model_gateway_request_scope
+
+    with model_gateway_request_scope(egress_context):
+        response = await get_freezone_video_story_script_agent().run(
+            [task, *attachments]
+        )
     return response.output
 
 

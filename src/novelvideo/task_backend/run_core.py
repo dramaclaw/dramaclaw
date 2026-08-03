@@ -220,6 +220,7 @@ def _build_trusted_egress_context(
             requester_user_id=delivery.requester_user_id,
             root_task_id=admission.root_task_id,
             admission_id=admission.admission_id,
+            admitted_at=admission.admitted_at,
             membership_id=admission.membership_id,
             authz_version=admission.authz_version,
             billing_principal=admission.billing_principal,

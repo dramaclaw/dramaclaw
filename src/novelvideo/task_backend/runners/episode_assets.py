@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from novelvideo.model_gateway_runtime import model_gateway_scope_for_runner
 from novelvideo.project_context import ProjectContext
 from novelvideo.ports import get_usage_meter
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
@@ -31,13 +32,14 @@ def run_episode_asset_planner(
     envelope: dict[str, Any],
     ctx: ProjectContext,
 ) -> dict[str, Any] | None:
-    return asyncio.run(
-        await_envelope_with_cancel_watch(
-            _run_episode_asset_planner(envelope, ctx),
-            envelope,
-            task_type=str(envelope.get("task_type") or ""),
+    with model_gateway_scope_for_runner(envelope):
+        return asyncio.run(
+            await_envelope_with_cancel_watch(
+                _run_episode_asset_planner(envelope, ctx),
+                envelope,
+                task_type=str(envelope.get("task_type") or ""),
+            )
         )
-    )
 
 
 async def _run_episode_asset_planner(
@@ -47,7 +49,9 @@ async def _run_episode_asset_planner(
     from novelvideo.agents.asset_compiler import AssetCompiler
     from novelvideo.cognee import CogneeStore
     from novelvideo.project_config import load_project_config_file_from_state_dir
-    from novelvideo.services.prop_promotion_service import promote_episode_props_to_global
+    from novelvideo.services.prop_promotion_service import (
+        promote_episode_props_to_global,
+    )
     from novelvideo.sqlite_store import SQLiteStore
 
     task_type = str(envelope.get("task_type") or "")
@@ -56,7 +60,9 @@ async def _run_episode_asset_planner(
     billing_metadata = envelope.get("billing_metadata") or {}
     asset_kind = str(payload.get("asset_kind") or _TASK_ASSET_KIND.get(task_type, ""))
     expected_kind = _TASK_ASSET_KIND.get(task_type)
-    if asset_kind not in {"scene", "prop"} or (expected_kind and asset_kind != expected_kind):
+    if asset_kind not in {"scene", "prop"} or (
+        expected_kind and asset_kind != expected_kind
+    ):
         raise ValueError(f"Unsupported episode asset planner kind: {asset_kind}")
 
     episode = int(envelope.get("episode") or payload.get("episode") or 0)
@@ -68,7 +74,9 @@ async def _run_episode_asset_planner(
         username=ctx.owner_username,
         project_name=ctx.project_name,
         resource_kind="script",
-        billing_metadata=billing_metadata if isinstance(billing_metadata, dict) else None,
+        billing_metadata=(
+            billing_metadata if isinstance(billing_metadata, dict) else None
+        ),
     )
 
     label = "场景" if asset_kind == "scene" else "道具"
@@ -127,7 +135,9 @@ async def _run_episode_asset_planner(
         scene_menu_data = _dump_items(scene_menu)
         if not scene_menu_data:
             raise ValueError("未识别到任何场景，请先生成逐行解说工作稿或补充场次地点")
-        update(0.95, "场景规划完成", f"场景 {new_count} 新建/{len(scene_menu_data)} 总计")
+        update(
+            0.95, "场景规划完成", f"场景 {new_count} 新建/{len(scene_menu_data)} 总计"
+        )
         return {
             "episode": episode,
             "kind": "scene",

@@ -5,7 +5,7 @@ def test_identity_planner_uses_split_newapi_model_envs(monkeypatch):
     calls = []
     sentinel = object()
 
-    def fake_newapi_model(model_env, default_model):
+    def fake_newapi_model(model_env, default_model, **_kwargs):
         calls.append((model_env, default_model))
         return sentinel
 
@@ -141,7 +141,7 @@ def test_asset_compiler_scene_planner_uses_scene_newapi_env(monkeypatch):
     settings_calls = []
     agent_kwargs = {}
 
-    def fake_newapi_model(model_env, default_model):
+    def fake_newapi_model(model_env, default_model, **_kwargs):
         model_calls.append((model_env, default_model))
         return "scene-model"
 
@@ -157,7 +157,9 @@ def test_asset_compiler_scene_planner_uses_scene_newapi_env(monkeypatch):
         async def run(self, task):
             return SimpleNamespace(output=SimpleNamespace(derived_scenes=[]))
 
-    monkeypatch.setattr(asset_compiler, "get_newapi_text_pydantic_model", fake_newapi_model)
+    monkeypatch.setattr(
+        asset_compiler, "get_newapi_text_pydantic_model", fake_newapi_model
+    )
     monkeypatch.setattr(
         asset_compiler,
         "get_newapi_text_pydantic_model_settings",
@@ -189,7 +191,7 @@ def test_asset_compiler_prop_planner_uses_prop_newapi_env(monkeypatch):
     settings_calls = []
     agent_kwargs = {}
 
-    def fake_newapi_model(model_env, default_model):
+    def fake_newapi_model(model_env, default_model, **_kwargs):
         model_calls.append((model_env, default_model))
         return "prop-model"
 
@@ -205,7 +207,9 @@ def test_asset_compiler_prop_planner_uses_prop_newapi_env(monkeypatch):
         async def run(self, task):
             return SimpleNamespace(output=SimpleNamespace(requirements=[]))
 
-    monkeypatch.setattr(asset_compiler, "get_newapi_text_pydantic_model", fake_newapi_model)
+    monkeypatch.setattr(
+        asset_compiler, "get_newapi_text_pydantic_model", fake_newapi_model
+    )
     monkeypatch.setattr(
         asset_compiler,
         "get_newapi_text_pydantic_model_settings",
@@ -214,7 +218,9 @@ def test_asset_compiler_prop_planner_uses_prop_newapi_env(monkeypatch):
     monkeypatch.setattr(asset_compiler, "Agent", FakeAgent)
 
     compiler = asset_compiler.AssetCompiler(cognee_store=None)
-    block = SimpleNamespace(header_line="古董店 内 日", lines=["李雷拿起龙符咒", "龙符咒发出红光"])
+    block = SimpleNamespace(
+        header_line="古董店 内 日", lines=["李雷拿起龙符咒", "龙符咒发出红光"]
+    )
 
     result = asyncio.run(
         compiler._analyze_block_props(
@@ -238,7 +244,7 @@ def test_literal_script_writer_uses_literal_newapi_env(monkeypatch):
     settings_calls = []
     agent_kwargs = {}
 
-    def fake_newapi_model(model_env, default_model):
+    def fake_newapi_model(model_env, default_model, **_kwargs):
         model_calls.append((model_env, default_model))
         return "literal-model"
 
@@ -282,7 +288,7 @@ def test_ai_identity_detector_uses_newapi_detector_model_env(monkeypatch):
     settings_calls = []
     agent_kwargs = {}
 
-    def fake_newapi_model(model_env, default_model):
+    def fake_newapi_model(model_env, default_model, **_kwargs):
         model_calls.append((model_env, default_model))
         return "detector-model"
 
@@ -297,7 +303,9 @@ def test_ai_identity_detector_uses_newapi_detector_model_env(monkeypatch):
 
     monkeypatch.delenv("GLOBAL_VIDEO_MODEL", raising=False)
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
-    monkeypatch.setattr(config, "get_newapi_text_pydantic_model_settings", fake_settings)
+    monkeypatch.setattr(
+        config, "get_newapi_text_pydantic_model_settings", fake_settings
+    )
     monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
 
     global_video_optimizer._create_identity_detector_agent()
@@ -317,7 +325,7 @@ def test_global_video_optimizer_uses_newapi_optimizer_model_env(monkeypatch):
     settings_calls = []
     agent_kwargs = {}
 
-    def fake_newapi_model(model_env, default_model):
+    def fake_newapi_model(model_env, default_model, **_kwargs):
         model_calls.append((model_env, default_model))
         return "optimizer-model"
 
@@ -332,7 +340,9 @@ def test_global_video_optimizer_uses_newapi_optimizer_model_env(monkeypatch):
 
     monkeypatch.delenv("GLOBAL_VIDEO_MODEL", raising=False)
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
-    monkeypatch.setattr(config, "get_newapi_text_pydantic_model_settings", fake_settings)
+    monkeypatch.setattr(
+        config, "get_newapi_text_pydantic_model_settings", fake_settings
+    )
     monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
 
     global_video_optimizer.create_global_video_optimizer_agent()
@@ -350,7 +360,7 @@ def test_global_video_optimizer_keeps_legacy_global_video_model_fallback(monkeyp
 
     model_calls = []
 
-    def fake_newapi_model(model_env, default_model):
+    def fake_newapi_model(model_env, default_model, **_kwargs):
         model_calls.append((model_env, default_model))
         return "optimizer-model"
 
@@ -386,7 +396,7 @@ def test_global_video_optimizer_empty_thinking_level_disables_settings(monkeypat
     monkeypatch.setattr(
         config,
         "get_newapi_text_pydantic_model",
-        lambda model_env, default_model: "optimizer-model",
+        lambda model_env, default_model, **_kwargs: "optimizer-model",
     )
     monkeypatch.setattr(
         config,
@@ -408,7 +418,7 @@ def test_seedance2_prompt_composer_uses_newapi_composer_model_env(monkeypatch):
     settings_calls = []
     agent_kwargs = {}
 
-    def fake_newapi_model(model_env, default_model):
+    def fake_newapi_model(model_env, default_model, **_kwargs):
         model_calls.append((model_env, default_model))
         return "composer-model"
 
@@ -422,7 +432,9 @@ def test_seedance2_prompt_composer_uses_newapi_composer_model_env(monkeypatch):
             agent_kwargs.update(kwargs)
 
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
-    monkeypatch.setattr(config, "get_newapi_text_pydantic_model_settings", fake_settings)
+    monkeypatch.setattr(
+        config, "get_newapi_text_pydantic_model_settings", fake_settings
+    )
     monkeypatch.setattr("pydantic_ai.Agent", FakeAgent)
 
     seedance2_prompt.create_seedance2_prompt_composer_agent()
@@ -442,7 +454,7 @@ def test_ai_identity_detector_keeps_legacy_global_video_model_fallback(monkeypat
 
     model_calls = []
 
-    def fake_newapi_model(model_env, default_model):
+    def fake_newapi_model(model_env, default_model, **_kwargs):
         model_calls.append((model_env, default_model))
         return "detector-model"
 
@@ -461,7 +473,9 @@ def test_ai_identity_detector_keeps_legacy_global_video_model_fallback(monkeypat
 
     global_video_optimizer._create_identity_detector_agent()
 
-    assert model_calls == [("GLOBAL_VIDEO_IDENTITY_DETECTOR_MODEL", "legacy-gemini-model")]
+    assert model_calls == [
+        ("GLOBAL_VIDEO_IDENTITY_DETECTOR_MODEL", "legacy-gemini-model")
+    ]
 
 
 def test_ai_identity_detector_can_pass_explicit_thinking_level(monkeypatch):
@@ -477,7 +491,7 @@ def test_ai_identity_detector_can_pass_explicit_thinking_level(monkeypatch):
     monkeypatch.setattr(
         config,
         "get_newapi_text_pydantic_model",
-        lambda model_env, default_model: "detector-model",
+        lambda model_env, default_model, **_kwargs: "detector-model",
     )
     monkeypatch.setattr(
         config,
