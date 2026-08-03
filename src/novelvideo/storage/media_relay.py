@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import uuid
 import base64
+import hashlib
 import io
+import inspect
 import logging
 import re
 import mimetypes
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,6 +19,86 @@ logger = logging.getLogger(__name__)
 
 AI_REFERENCE_JPEG_QUALITY = 95
 IMAGE_TRANSFORM_AI_REFERENCE_JPEG = "ai_reference_jpeg"
+
+
+class ServiceEgressDenied(RuntimeError):
+    """Stable denial for an invalid storage service boundary."""
+
+    code = "ORG_SERVICE_EGRESS_DENIED"
+
+    def __init__(self) -> None:
+        super().__init__("organization service egress is denied")
+
+
+class ServiceOperationNotReplayable(RuntimeError):
+    """Raised when a durable service operation was already claimed."""
+
+
+class ServiceInvocationFailed(RuntimeError):
+    """Secret-free failure after a claimed storage invocation."""
+
+    def __init__(self) -> None:
+        super().__init__("service operation failed")
+
+
+@dataclass(frozen=True, slots=True)
+class StorageRelayIdentity:
+    """Secret-free identity binding one relay service to one tenant project."""
+
+    credential_id: str
+    credential_version: int
+    organization_id: str
+    project_id: str
+    allowed_source_hosts: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("credential_id", "organization_id", "project_id"):
+            if type(getattr(self, name)) is not str or not getattr(self, name).strip():
+                raise ValueError(f"{name} is required")
+        if type(self.credential_version) is not int or self.credential_version < 1:
+            raise ValueError("credential_version must be positive")
+        if type(self.allowed_source_hosts) is not tuple or any(
+            type(host) is not str or not host.strip() or "/" in host
+            for host in self.allowed_source_hosts
+        ):
+            raise ValueError("allowed_source_hosts must contain host names")
+
+
+def validate_tenant_source_url(
+    value: str,
+    *,
+    context,
+    identity: StorageRelayIdentity,
+) -> str:
+    """Validate a remote source without fetching it or exposing its URL."""
+
+    from novelvideo.egress_context import TrustedEgressContext
+
+    parsed = urlparse(str(value or "").strip())
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ServiceEgressDenied() from None
+    allowed_hosts = (
+        {host.strip().lower() for host in identity.allowed_source_hosts}
+        if type(identity) is StorageRelayIdentity
+        else set()
+    )
+    if (
+        type(context) is not TrustedEgressContext
+        or not context.is_organization
+        or type(identity) is not StorageRelayIdentity
+        or identity.organization_id != context.billing_principal.id
+        or identity.project_id != context.project_id
+        or parsed.scheme != "https"
+        or parsed.hostname is None
+        or parsed.hostname.lower() not in allowed_hosts
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+    ):
+        raise ServiceEgressDenied()
+    return str(value).strip()
 
 
 class MediaRelayConfigError(RuntimeError):
@@ -68,11 +151,16 @@ class AliyunOSSRelay:
         ext: str = "png",
         ttl: int = 1800,
         resource_type: str = "image",
+        object_key: str | None = None,
     ) -> str:
         if not data:
             raise ValueError("cannot relay empty media bytes")
         ext = _normalize_ext(ext)
-        key = f"relay/{datetime.now(timezone.utc):%Y%m%d}/{uuid.uuid4().hex}.{ext}"
+        key = object_key or (
+            f"relay/{datetime.now(timezone.utc):%Y%m%d}/{uuid.uuid4().hex}.{ext}"
+        )
+        if not _is_safe_object_key(key):
+            raise ServiceEgressDenied()
         self._bucket.put_object(key, data)
         return self._bucket.sign_url("GET", key, int(ttl), slash_safe=True)
 
@@ -122,6 +210,7 @@ class CloudinaryRelay:
         ext: str = "png",
         ttl: int = 1800,
         resource_type: str = "image",
+        object_key: str | None = None,
     ) -> str:
         if not data:
             raise ValueError("cannot relay empty media bytes")
@@ -135,6 +224,10 @@ class CloudinaryRelay:
         filename = f"{uuid.uuid4().hex}.{ext}"
         content_type = mimetypes.types_map.get(f".{ext}", "application/octet-stream")
         payload = {"folder": self._folder} if self._folder else {}
+        if object_key is not None:
+            if not _is_safe_object_key(object_key):
+                raise ServiceEgressDenied()
+            payload["public_id"] = object_key.rsplit(".", 1)[0]
         url = (
             f"https://api.cloudinary.com/v1_1/{self._cloud_name}/"
             f"{resource_type}/upload"
@@ -156,7 +249,9 @@ class CloudinaryRelay:
                 f"(HTTP {exc.response.status_code}){suffix}"
             ) from exc
         except httpx.HTTPError as exc:
-            raise MediaRelayConfigError(f"Cloudinary media relay upload failed: {exc}") from exc
+            raise MediaRelayConfigError(
+                f"Cloudinary media relay upload failed: {exc}"
+            ) from exc
 
         result = response.json()
         secure_url = str(result.get("secure_url") or result.get("url") or "").strip()
@@ -203,7 +298,9 @@ def get_media_relay() -> AliyunOSSRelay | CloudinaryRelay:
             folder=relay_config.cloudinary_folder,
         )
     if provider != "aliyun_oss":
-        raise MediaRelayConfigError(f"unsupported MEDIA_RELAY_PROVIDER: {provider or '-'}")
+        raise MediaRelayConfigError(
+            f"unsupported MEDIA_RELAY_PROVIDER: {provider or '-'}"
+        )
 
     return AliyunOSSRelay(
         endpoint=relay_config.endpoint,
@@ -277,6 +374,139 @@ def upload_image_file(path: str | Path, *, ttl: int | None = None) -> str:
     return get_media_relay().upload_file(path, ttl=ttl_seconds)
 
 
+async def relay_tenant_image_bytes(
+    data: bytes,
+    *,
+    object_id: str,
+    context,
+    identity: StorageRelayIdentity,
+    operations,
+    relay=None,
+    ext: str = "png",
+    ttl: int = 1800,
+) -> str:
+    """Relay bytes through a tenant-bound service identity and durable claim."""
+
+    from novelvideo.egress_context import TrustedEgressContext
+    from novelvideo.ports.egress_operations import (
+        OperationSpec,
+        OperationState,
+        canonical_request_digest,
+    )
+
+    if (
+        type(context) is not TrustedEgressContext
+        or not context.is_organization
+        or type(identity) is not StorageRelayIdentity
+        or identity.organization_id != context.billing_principal.id
+        or identity.project_id != context.project_id
+        or not data
+        or type(object_id) is not str
+        or not object_id.strip()
+    ):
+        raise ServiceEgressDenied()
+
+    normalized_ext = _normalize_ext(ext)
+    object_digest = hashlib.sha256(object_id.encode("utf-8")).hexdigest()
+    object_key = (
+        f"tenants/{identity.organization_id}/projects/{identity.project_id}/"
+        f"objects/{object_digest}.{normalized_ext}"
+    )
+    request_digest = canonical_request_digest(
+        {
+            "content_digest": hashlib.sha256(data).hexdigest(),
+            "object_digest": object_digest,
+            "ext": normalized_ext,
+            "ttl": int(ttl),
+        }
+    )
+    claim = await operations.claim(
+        spec=OperationSpec(
+            organization_id=identity.organization_id,
+            project_id=identity.project_id,
+            root_task_id=context.root_task_id,
+            business_task_id=context.envelope_id,
+            capability="storage.media.relay",
+            credential_id=identity.credential_id,
+            credential_version=identity.credential_version,
+            request_digest=request_digest,
+        )
+    )
+    if not claim.won or claim.operation.state is not OperationState.DISPATCHING:
+        raise ServiceOperationNotReplayable("service operation already claimed")
+
+    try:
+        adapter = relay or get_media_relay()
+        result = adapter.upload_bytes(
+            data,
+            ext=normalized_ext,
+            ttl=int(ttl),
+            object_key=object_key,
+        )
+        if inspect.isawaitable(result):
+            result = await result
+    except Exception:
+        try:
+            await operations.mark_unknown(
+                operation_id=claim.operation.operation_id,
+                transition_token=claim.transition_token,
+                expected_version=claim.operation.version,
+            )
+        except Exception:
+            pass
+        raise ServiceInvocationFailed() from None
+    await operations.mark_completed(
+        operation_id=claim.operation.operation_id,
+        transition_token=claim.transition_token,
+        expected_version=claim.operation.version,
+        result_ref="service-operation-completed",
+    )
+    return str(result)
+
+
+async def relay_tenant_image_bytes_from_context(
+    data: bytes,
+    *,
+    object_id: str,
+    context: object,
+    ext: str = "png",
+    ttl: int = 1800,
+) -> str:
+    """Relay tenant image bytes using only verified context and registered authority."""
+
+    from novelvideo.egress_context import TrustedEgressContext
+    from novelvideo.ports import get_egress_operation_port
+
+    if type(context) is not TrustedEgressContext or not context.is_organization:
+        raise ServiceEgressDenied()
+
+    try:
+        operations = get_egress_operation_port()
+    except Exception:
+        raise ServiceEgressDenied() from None
+    if not all(
+        callable(getattr(operations, method, None))
+        for method in ("claim", "mark_completed", "mark_unknown")
+    ):
+        raise ServiceEgressDenied()
+
+    identity = StorageRelayIdentity(
+        credential_id="svc-media-relay",
+        credential_version=1,
+        organization_id=context.billing_principal.id,
+        project_id=context.project_id,
+    )
+    return await relay_tenant_image_bytes(
+        data,
+        object_id=object_id,
+        context=context,
+        identity=identity,
+        operations=operations,
+        ext=ext,
+        ttl=ttl,
+    )
+
+
 def ensure_image_url(reference: str | Path, *, ttl: int | None = None) -> str:
     """Return a remote URL for an image reference.
 
@@ -320,7 +550,9 @@ def _apply_image_transform(
     raise ValueError(f"unsupported image_transform: {image_transform}")
 
 
-def _normalize_ai_reference_image(data: bytes, *, ext: str = "png") -> tuple[bytes, str]:
+def _normalize_ai_reference_image(
+    data: bytes, *, ext: str = "png"
+) -> tuple[bytes, str]:
     original_ext = _normalize_ext(ext)
 
     try:
@@ -384,6 +616,14 @@ _DATA_IMAGE_URL_RE = re.compile(
 def _is_remote_url(value: str) -> bool:
     parsed = urlparse(value)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _is_safe_object_key(value: str) -> bool:
+    if not value or value.startswith(("/", ".")) or ".." in value.split("/"):
+        return False
+    return all(
+        part and re.fullmatch(r"[A-Za-z0-9._-]+", part) for part in value.split("/")
+    )
 
 
 def _normalize_ext(ext: str) -> str:

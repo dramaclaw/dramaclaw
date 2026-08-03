@@ -8,6 +8,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 import httpx
 from packaging.version import InvalidVersion, Version
@@ -17,7 +18,9 @@ from novelvideo.release_notes import parse, validate_version_marker
 
 PACKAGE_NAME = "supertale-ce"
 TAG_PREFIX = "v"
-GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/dramaclaw/dramaclaw/releases/latest"
+GITHUB_LATEST_RELEASE_URL = (
+    "https://api.github.com/repos/dramaclaw/dramaclaw/releases/latest"
+)
 GITHUB_CACHE_TTL_SECONDS = 6 * 60 * 60
 GITHUB_FAILURE_CACHE_TTL_SECONDS = 60
 
@@ -41,7 +44,9 @@ class LocalReleaseFeed:
         clock: Callable[[], float] | None = None,
     ) -> None:
         self._notes_path = notes_path
-        self._version_reader = version_reader or (lambda: importlib.metadata.version(PACKAGE_NAME))
+        self._version_reader = version_reader or (
+            lambda: importlib.metadata.version(PACKAGE_NAME)
+        )
         self._github_fetcher = github_fetcher or self._fetch_latest_release
         self._clock = clock or time.time
         self._local_cache_key: tuple[Path, int, int] | None = None
@@ -88,7 +93,7 @@ class LocalReleaseFeed:
 
         update_available = _is_newer(latest_version, current_version)
         parsed_latest = parse(str(latest.get("body") or ""), latest_tag, locale=locale)
-        release_url = str(latest.get("html_url") or "") or None
+        release_url = _trusted_github_release_url(latest.get("html_url"))
         latest_published_at = str(latest.get("published_at") or "") or None
         return replace(
             feed,
@@ -97,9 +102,11 @@ class LocalReleaseFeed:
             latest_version=latest_version if update_available else None,
             latest_tag=latest_tag if update_available else None,
             release_url=release_url if update_available else None,
-            update_items=[_to_port_item(item) for item in parsed_latest.items]
-            if update_available
-            else [],
+            update_items=(
+                [_to_port_item(item) for item in parsed_latest.items]
+                if update_available
+                else []
+            ),
             attention=parsed_latest.attention if update_available else "low",
             latest_published_at=latest_published_at if update_available else None,
         )
@@ -164,6 +171,25 @@ class LocalReleaseFeed:
 def _enabled() -> bool:
     value = os.environ.get("RELEASE_NOTIFICATIONS_ENABLED", "true").strip().lower()
     return value not in {"0", "false", "no", "off"}
+
+
+def _trusted_github_release_url(value: Any) -> str | None:
+    clean = str(value or "").strip()
+    try:
+        parsed = urlparse(clean)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "github.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+        or not parsed.path.startswith("/dramaclaw/dramaclaw/releases/")
+    ):
+        return None
+    return clean
 
 
 def _version_from_tag(tag: str | None) -> str | None:

@@ -7,6 +7,11 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from novelvideo.backup.files_sync import (
+    BackupExecutionContext,
+    require_backup_execution_context,
+    trusted_backup_cli_context,
+)
 from novelvideo.backup.wal_migrator import iter_sqlite_files
 
 SNAPSHOT_SUFFIX = ".snapshot"
@@ -41,7 +46,10 @@ def snapshot_state_tree(state_dir: Path) -> tuple[int, int]:
     return ok, failed
 
 
-def main() -> int:
+def main(*, execution_context: BackupExecutionContext | None = None) -> int:
+    require_backup_execution_context(
+        execution_context or trusted_backup_cli_context("db-daily-cli")
+    )
     state_dir = Path(os.environ["NOVELVIDEO_STATE_DIR"])
 
     if not state_dir.is_dir():

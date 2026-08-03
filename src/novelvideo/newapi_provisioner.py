@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import os
 import secrets
 import sqlite3
@@ -200,6 +201,142 @@ class NewApiSetupStatus:
     already_initialized: bool = False
 
 
+class ServiceControlEgressDenied(PermissionError):
+    """Stable denial for an invalid NewAPI management service boundary."""
+
+    code = "ORG_SERVICE_EGRESS_DENIED"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "ORG_SERVICE_EGRESS_DENIED: model gateway management is only available in CE"
+        )
+
+
+class ServiceOperationNotReplayable(RuntimeError):
+    """Raised when a durable service operation was already claimed."""
+
+
+class ServiceInvocationFailed(RuntimeError):
+    """Secret-free failure after a claimed service invocation."""
+
+    def __init__(self) -> None:
+        super().__init__("service operation failed")
+
+
+@dataclass(frozen=True, slots=True)
+class NewApiAdminServiceIdentity:
+    """Secret-free identity for the NewAPI management plane."""
+
+    credential_id: str
+    credential_version: int
+    admin_base_url: str
+
+    def __post_init__(self) -> None:
+        if type(self.credential_id) is not str or not self.credential_id.strip():
+            raise ValueError("credential_id is required")
+        if type(self.credential_version) is not int or self.credential_version < 1:
+            raise ValueError("credential_version must be positive")
+        parsed = urlparse(normalize_admin_base_url(self.admin_base_url))
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("admin_base_url must be an HTTP service URL")
+
+
+def require_newapi_admin_service(
+    cfg: NewApiProvisionerConfig,
+    *,
+    identity: NewApiAdminServiceIdentity | None = None,
+    context=None,
+) -> NewApiAdminServiceIdentity:
+    """Resolve the internal admin identity and reject all request-scoped contexts."""
+
+    if context is not None:
+        raise ServiceControlEgressDenied()
+    resolved = identity or NewApiAdminServiceIdentity(
+        credential_id="svc-newapi-admin",
+        credential_version=1,
+        admin_base_url=cfg.admin_base_url,
+    )
+    if type(resolved) is not NewApiAdminServiceIdentity or normalize_admin_base_url(
+        resolved.admin_base_url
+    ) != normalize_admin_base_url(cfg.admin_base_url):
+        raise ServiceControlEgressDenied()
+    return resolved
+
+
+async def run_newapi_admin_operation(
+    *,
+    identity: NewApiAdminServiceIdentity,
+    admin_base_url: str,
+    capability: str,
+    business_task_id: str,
+    request: Any,
+    operations,
+    invoke,
+    context=None,
+) -> Any:
+    """Run one claimed NewAPI management mutation under its service identity."""
+
+    from novelvideo.egress_context import TrustedEgressContext
+    from novelvideo.ports.egress_operations import (
+        OperationSpec,
+        canonical_request_digest,
+    )
+
+    requested_base = normalize_admin_base_url(admin_base_url)
+    identity_base = normalize_admin_base_url(
+        identity.admin_base_url if type(identity) is NewApiAdminServiceIdentity else ""
+    )
+    if (
+        type(identity) is not NewApiAdminServiceIdentity
+        or context is not None
+        or requested_base != identity_base
+        or type(capability) is not str
+        or not capability.startswith("gateway.provisioning.")
+        or not business_task_id
+        or not callable(getattr(operations, "claim", None))
+    ):
+        raise ServiceControlEgressDenied()
+    if type(context) is TrustedEgressContext and context.is_organization:
+        raise ServiceControlEgressDenied()
+
+    claim = await operations.claim(
+        spec=OperationSpec(
+            organization_id="service:newapi-admin",
+            project_id="service-control",
+            root_task_id=business_task_id,
+            business_task_id=business_task_id,
+            capability=capability,
+            credential_id=identity.credential_id,
+            credential_version=identity.credential_version,
+            request_digest=canonical_request_digest(request),
+        )
+    )
+    if not claim.won:
+        raise ServiceOperationNotReplayable("service operation already claimed")
+
+    try:
+        result = invoke()
+        if inspect.isawaitable(result):
+            result = await result
+    except Exception:
+        try:
+            await operations.mark_unknown(
+                operation_id=claim.operation.operation_id,
+                transition_token=claim.transition_token,
+                expected_version=claim.operation.version,
+            )
+        except Exception:
+            pass
+        raise ServiceInvocationFailed() from None
+    await operations.mark_completed(
+        operation_id=claim.operation.operation_id,
+        transition_token=claim.transition_token,
+        expected_version=claim.operation.version,
+        result_ref="service-operation-completed",
+    )
+    return result
+
+
 class NewApiDB:
     def __init__(self, kind: str, conn: Any):
         self.kind = kind
@@ -336,8 +473,7 @@ def get_provisioner_config(
     else:
         resolved_sql_dsn = env_sql_dsn or "local"
         resolved_sqlite_path = (
-            str(os.environ.get("NEWAPI_SQLITE_PATH", "")).strip()
-            or _ce_sqlite_path()
+            str(os.environ.get("NEWAPI_SQLITE_PATH", "")).strip() or _ce_sqlite_path()
         )
     return NewApiProvisionerConfig(
         admin_base_url=normalize_admin_base_url(
@@ -472,7 +608,15 @@ def get_newapi_setup_status(cfg: NewApiProvisionerConfig) -> NewApiSetupStatus:
 def ensure_newapi_setup(
     cfg: NewApiProvisionerConfig,
     credentials: NewApiSetupCredentials | None = None,
+    *,
+    service_identity: NewApiAdminServiceIdentity | None = None,
+    context=None,
 ) -> NewApiSetupStatus:
+    require_newapi_admin_service(
+        cfg,
+        identity=service_identity,
+        context=context,
+    )
     status = get_newapi_setup_status(cfg)
     if status.initialized:
         return NewApiSetupStatus(
@@ -1216,7 +1360,15 @@ def upsert_channel(
     cfg: NewApiProvisionerConfig,
     admin: AdminToken,
     payload: dict[str, Any],
+    *,
+    service_identity: NewApiAdminServiceIdentity | None = None,
+    context=None,
 ) -> dict[str, Any]:
+    require_newapi_admin_service(
+        cfg,
+        identity=service_identity,
+        context=context,
+    )
     channel = payload["channel"]
     incoming_model_keys = validate_model_mapping(
         _parse_model_mapping(channel.get("model_mapping"))

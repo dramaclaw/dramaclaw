@@ -9,7 +9,12 @@ from pathlib import Path
 
 import typer
 
-from novelvideo.backup.files_sync import RCLONE_FILTER, build_rclone_env
+from novelvideo.backup.files_sync import (
+    RCLONE_FILTER,
+    build_rclone_env,
+    require_backup_execution_context,
+    trusted_backup_cli_context,
+)
 
 backup_app = typer.Typer(name="backup", help="OSS backup/restore")
 
@@ -48,8 +53,7 @@ def build_restore_config(
 ) -> str:
     blocks = []
     for rel in rels:
-        blocks.append(
-            f"""  - path: /restore/{rel}
+        blocks.append(f"""  - path: /restore/{rel}
     replica:
       type: oss
       bucket: {bucket}
@@ -57,8 +61,7 @@ def build_restore_config(
       endpoint: {endpoint}
       region: {region}
       access-key-id: ${{OSS_ACCESS_KEY_ID}}
-      secret-access-key: ${{OSS_SECRET_ACCESS_KEY}}"""
-        )
+      secret-access-key: ${{OSS_SECRET_ACCESS_KEY}}""")
     return "dbs:\n" + "\n".join(blocks) + "\n"
 
 
@@ -87,11 +90,16 @@ def build_rclone_files_cmd(
 def restore_cell(
     user: str = typer.Option(...),
     project: str = typer.Option(...),
-    timestamp: str = typer.Option(None, help="RFC3339 timestamp; default restores latest"),
-    to: Path = typer.Option(None, help="Target dir; default <state>/<user>/<project>.restored"),
+    timestamp: str = typer.Option(
+        None, help="RFC3339 timestamp; default restores latest"
+    ),
+    to: Path = typer.Option(
+        None, help="Target dir; default <state>/<user>/<project>.restored"
+    ),
     include_output: bool = typer.Option(False, help="Also restore output/"),
     dry_run: bool = typer.Option(False, help="Print commands without running them"),
 ) -> None:
+    require_backup_execution_context(trusted_backup_cli_context("restore-cell-cli"))
     bucket = os.environ["BACKUP_OSS_BUCKET"]
     endpoint = os.environ["BACKUP_OSS_ENDPOINT"]
     prefix = (
@@ -128,7 +136,9 @@ def restore_cell(
         cmd += ["-o", str(out), f"/restore/{rel}"]
         plans.append(cmd)
 
-    with tempfile.NamedTemporaryFile("w", suffix=".filter", delete=False) as filter_file_handle:
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".filter", delete=False
+    ) as filter_file_handle:
         filter_file_handle.write(RCLONE_FILTER)
         filter_file = Path(filter_file_handle.name)
     plans.append(
@@ -142,7 +152,9 @@ def restore_cell(
         )
     )
     if include_output:
-        out_root = Path(os.environ["NOVELVIDEO_OUTPUT_DIR"]) / user / f"{project}.restored"
+        out_root = (
+            Path(os.environ["NOVELVIDEO_OUTPUT_DIR"]) / user / f"{project}.restored"
+        )
         plans.append(
             [
                 "rclone",
@@ -165,7 +177,9 @@ def restore_cell(
             failures += 1
 
     typer.echo(f"\nrestored into {target} (failures={failures})")
-    typer.echo(f"after verification, stop writers then mv {target} {state_dir / user / project}")
+    typer.echo(
+        f"after verification, stop writers then mv {target} {state_dir / user / project}"
+    )
 
 
 if __name__ == "__main__":

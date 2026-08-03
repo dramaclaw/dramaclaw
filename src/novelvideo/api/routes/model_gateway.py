@@ -36,6 +36,7 @@ from novelvideo.newapi_provisioner import (
     get_provisioner_config,
     mask_token,
     NewApiSetupCredentials,
+    ServiceControlEgressDenied,
     require_provisioner_enabled,
     upsert_channel,
     update_provider_channel_credentials,
@@ -64,7 +65,7 @@ OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
 def require_ce_gateway_management() -> None:
     """Reject CE-local gateway mutations from an EE-composed process."""
     if not is_ce_effective():
-        raise PermissionError("model gateway management is only available in CE")
+        raise ServiceControlEgressDenied()
     require_provisioner_enabled()
 
 
