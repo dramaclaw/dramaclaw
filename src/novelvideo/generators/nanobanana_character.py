@@ -17,6 +17,7 @@ import asyncio
 import base64
 import mimetypes
 import os
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -41,10 +42,12 @@ from novelvideo.generators.nanobanana_grid import (
     _call_newapi_image_api,
     _call_openai_image_api,
     _call_openrouter_image_api,
+    generate_reference_edit_image,
+    generate_text_to_image,
     normalize_openai_quality,
     normalize_image_size,
 )
-
+from novelvideo.egress_context import TrustedEgressContext
 
 def _default_ethnicity_instruction(ethnicity: str) -> str:
     value = (ethnicity or "").strip()
@@ -149,13 +152,29 @@ class NanoBananaCharacterGenerator:
         api_key: Optional[str] = None,
         config: Optional[dict] = None,
         selection: Optional[str] = None,
+        egress_context: TrustedEgressContext | None = None,
     ):
         """初始化生成器。
 
         Args:
             api_key: API Key，默认从环境变量读取
         """
+        if (
+            egress_context is not None
+            and type(egress_context) is not TrustedEgressContext
+        ):
+            raise TypeError("egress_context must be a TrustedEgressContext")
         config = config or get_grid_generation_config(selection_override=selection)
+        if egress_context is not None and egress_context.is_organization:
+            config = dict(config)
+            config.update(
+                {
+                    "provider": "newapi",
+                    "api_key": "request-scoped",
+                    "base_url": "https://request-scoped.invalid/v1",
+                }
+            )
+        self.egress_context = egress_context
         self.provider = config.get(
             "provider", "google"
         )  # google / openrouter / openai / huimeng / newapi
@@ -1105,6 +1124,29 @@ STRICT REQUIREMENTS (MUST AVOID):
         Returns:
             图像字节数据，失败返回 None
         """
+        if self.egress_context is not None and self.egress_context.is_organization:
+            if not output_path:
+                raise ValueError("organization character image requires an output path")
+            await generate_text_to_image(
+                prompt=prompt,
+                output_path=output_path,
+                aspect_ratio=aspect_ratio,
+                image_size=image_size,
+                config={
+                    "provider": "newapi",
+                    "api_key": "request-scoped",
+                    "base_url": "https://request-scoped.invalid/v1",
+                    "model": self.model,
+                    "mode": "1x1",
+                    "rows": 1,
+                    "cols": 1,
+                    "total_panels": 1,
+                },
+                egress_context=self.egress_context,
+                egress_capability="image.asset.character",
+            )
+            return Path(output_path).read_bytes()
+
         try:
             image_bytes = None
 
@@ -1292,6 +1334,39 @@ STRICT REQUIREMENTS (MUST AVOID):
         Returns:
             图像字节数据，失败返回 None
         """
+
+        if self.egress_context is not None and self.egress_context.is_organization:
+            if not output_path:
+                raise ValueError("organization identity image requires an output path")
+            with tempfile.TemporaryDirectory(prefix="dramaclaw-image-ref-") as temp_dir:
+                reference_paths: list[str] = []
+                for index, data in enumerate(
+                    [reference_image_bytes, *(additional_image_bytes or [])]
+                ):
+                    if data:
+                        path = Path(temp_dir) / f"reference-{index}.png"
+                        path.write_bytes(data)
+                        reference_paths.append(str(path))
+                await generate_reference_edit_image(
+                    prompt=prompt,
+                    reference_images=reference_paths,
+                    output_path=output_path,
+                    aspect_ratio=aspect_ratio,
+                    image_size=image_size,
+                    config={
+                        "provider": "newapi",
+                        "api_key": "request-scoped",
+                        "base_url": "https://request-scoped.invalid/v1",
+                        "model": self.model,
+                        "mode": "1x1",
+                        "rows": 1,
+                        "cols": 1,
+                        "total_panels": 1,
+                    },
+                    egress_context=self.egress_context,
+                    egress_capability="image.asset.character",
+                )
+            return Path(output_path).read_bytes()
 
         def _named_image_ref(data: bytes, name: str) -> tuple[str, bytes, str]:
             filename = Path(str(name or "")).name or "reference.png"

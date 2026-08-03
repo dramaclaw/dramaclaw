@@ -28,6 +28,8 @@ import numpy as np
 from PIL import Image
 
 from novelvideo.freezone.paths import output_path_for_job, outputs_dir
+from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.ports.egress import EgressError
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,7 @@ async def run_freezone_gen(
     model_params: Optional[dict[str, Any]] = None,
     request_schema: Optional[dict[str, Any]] = None,
     output_task_type: str = "freezone_gen",
+    egress_context: TrustedEgressContext | None = None,
 ) -> Path:
     """text → image (with optional reference images).
 
@@ -60,6 +63,14 @@ async def run_freezone_gen(
     #   anything else (including None default) → nanobanana_grid:
     #     - with refs → generate_reference_edit_image
     #     - no refs   → generate_text_to_image  (NEW v1.2)
+    if egress_context is not None and type(egress_context) is not TrustedEgressContext:
+        raise TypeError("egress_context must be a TrustedEgressContext")
+    if (
+        egress_context is not None
+        and egress_context.is_organization
+        and (provider or "").lower() == "volcengine"
+    ):
+        raise EgressError("ORG_EGRESS_DENIED")
     if (provider or "").lower() == "volcengine":
         return await _run_volcengine_text_to_image(
             out=out,
@@ -74,11 +85,23 @@ async def run_freezone_gen(
         generate_text_to_image,
     )
 
-    cfg = get_grid_generation_config(
-        provider_override=provider,
-        model_override=model,
-        image_size_override=image_size,
-    )
+    if egress_context is not None and egress_context.is_organization:
+        cfg = {
+            "provider": "newapi",
+            "api_key": "request-scoped",
+            "base_url": "https://request-scoped.invalid/v1",
+            "model": model or "gpt-image-2",
+            "mode": "1x1",
+            "rows": 1,
+            "cols": 1,
+            "total_panels": 1,
+        }
+    else:
+        cfg = get_grid_generation_config(
+            provider_override=provider,
+            model_override=model,
+            image_size_override=image_size,
+        )
     cfg["newapi_model_params"] = model_params or {}
     cfg["newapi_request_schema"] = request_schema or {}
     if reference_paths:
@@ -91,6 +114,8 @@ async def run_freezone_gen(
             quality=quality,
             api_key=api_key,
             config=cfg,
+            egress_context=egress_context,
+            egress_capability="freezone.image.generate",
         )
     else:
         await generate_text_to_image(
@@ -101,6 +126,8 @@ async def run_freezone_gen(
             quality=quality,
             api_key=api_key,
             config=cfg,
+            egress_context=egress_context,
+            egress_capability="freezone.image.generate",
         )
     return out
 
@@ -254,6 +281,7 @@ async def run_freezone_edit(
     model: Optional[str] = None,
     quality: Optional[str] = None,
     output_task_type: str = "freezone_edit",
+    egress_context: TrustedEgressContext | None = None,
 ) -> Path:
     """image + reference + prompt → new image.
 
@@ -271,11 +299,25 @@ async def run_freezone_edit(
     from novelvideo.config import get_grid_generation_config
     from novelvideo.generators.nanobanana_grid import generate_reference_edit_image
 
-    cfg = get_grid_generation_config(
-        provider_override=provider,
-        model_override=model,
-        image_size_override=image_size,
-    )
+    if egress_context is not None and type(egress_context) is not TrustedEgressContext:
+        raise TypeError("egress_context must be a TrustedEgressContext")
+    if egress_context is not None and egress_context.is_organization:
+        cfg = {
+            "provider": "newapi",
+            "api_key": "request-scoped",
+            "base_url": "https://request-scoped.invalid/v1",
+            "model": model or "gpt-image-2",
+            "mode": "1x1",
+            "rows": 1,
+            "cols": 1,
+            "total_panels": 1,
+        }
+    else:
+        cfg = get_grid_generation_config(
+            provider_override=provider,
+            model_override=model,
+            image_size_override=image_size,
+        )
     await generate_reference_edit_image(
         prompt=prompt,
         reference_images=refs,
@@ -285,6 +327,8 @@ async def run_freezone_edit(
         quality=quality,
         api_key=api_key,
         config=cfg,
+        egress_context=egress_context,
+        egress_capability="freezone.image.generate",
     )
     return out
 

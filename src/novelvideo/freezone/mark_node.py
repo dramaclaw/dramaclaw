@@ -15,7 +15,8 @@ from novelvideo.freezone.vision_gateway import (
     call_freezone_vision_model,
     image_media_type,
 )
-
+from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.official_defaults import DEFAULT_FREEZONE_VISION_MODEL
 
 FREEZONE_MARK_PROVIDER = "newapi"
 
@@ -118,6 +119,7 @@ async def detect_freezone_mark(
     box_height: float | None = None,
     provider: str = FREEZONE_MARK_PROVIDER,
     model: str | None = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> dict[str, Any]:
     prompt = build_mark_detection_task(
         point_x=point_x,
@@ -139,21 +141,38 @@ async def detect_freezone_mark(
     chosen = (provider or FREEZONE_MARK_PROVIDER).lower()
     if chosen != "newapi":
         raise ValueError("Freezone mark detection only supports the NewAPI gateway")
+    full_image = image_path.read_bytes()
+    from novelvideo.freezone.presets import (
+        complete_freezone_vision_egress,
+        prepare_freezone_vision_egress,
+    )
+
+    vision_egress = await prepare_freezone_vision_egress(
+        egress_context=egress_context,
+        model_name=model or DEFAULT_FREEZONE_VISION_MODEL,
+        prompt=prompt,
+        images=[full_image, crop_bytes],
+        timeout_seconds=FREEZONE_MARK_TIMEOUT_SECONDS,
+    )
     used_model, text = await call_freezone_vision_model(
         prompt=prompt,
         images=[
             VisionInput(
-                data=image_path.read_bytes(),
+                data=full_image,
                 media_type=image_media_type(image_path.name),
             ),
             VisionInput(data=crop_bytes, media_type="image/png"),
         ],
         model_override=model or None,
         timeout_seconds=FREEZONE_MARK_TIMEOUT_SECONDS,
+        transport_context=(
+            vision_egress.transport_context if vision_egress is not None else None
+        ),
     )
     payload = _extract_json_object(text)
     label = str(payload.get("label") or "").strip()
     note = str(payload.get("note") or "").strip()
     if not label:
         raise RuntimeError("mark detector returned empty label")
+    await complete_freezone_vision_egress(vision_egress, result=text)
     return {"label": label, "note": note, "provider": chosen, "model": used_model}

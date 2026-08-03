@@ -33,10 +33,11 @@ from novelvideo.generators.nanobanana_grid import (
     _call_newapi_image_api,
     _call_openai_image_api,
     clamp_image_size,
+    generate_text_to_image,
     normalize_image_size,
     normalize_openai_quality,
 )
-
+from novelvideo.egress_context import TrustedEgressContext
 
 PROP_REF_ASPECT_RATIO = "16:9"
 PROP_REF_IMAGE_SIZE = "0.5K"
@@ -128,6 +129,7 @@ async def generate_prop_reference(
     style: str = None,
     project_dir: str = "",
     model: str | None = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> Optional[str]:
     """生成道具三视图参考图。
 
@@ -147,6 +149,36 @@ async def generate_prop_reference(
 
     if style is None:
         style = IMAGE_DEFAULT_STYLE
+
+    if egress_context is not None and type(egress_context) is not TrustedEgressContext:
+        raise TypeError("egress_context must be a TrustedEgressContext")
+    if egress_context is not None and egress_context.is_organization:
+        _selected_provider, selected_model = _prop_reference_image_source(model)
+        prompt = build_prop_reference_prompt(
+            visual_prompt=visual_prompt,
+            style_keywords=style_keywords,
+            style=style,
+            project_dir=project_dir,
+        )
+        await generate_text_to_image(
+            prompt=prompt,
+            output_path=output_path,
+            aspect_ratio=PROP_REF_ASPECT_RATIO,
+            image_size=PROP_REF_IMAGE_SIZE,
+            config={
+                "provider": "newapi",
+                "api_key": "request-scoped",
+                "base_url": "https://request-scoped.invalid/v1",
+                "model": selected_model or (PROP_REF_IMAGE_MODEL or NEWAPI_IMAGE_MODEL),
+                "mode": "1x1",
+                "rows": 1,
+                "cols": 1,
+                "total_panels": 1,
+            },
+            egress_context=egress_context,
+            egress_capability="image.asset.prop",
+        )
+        return output_path
 
     config = get_grid_generation_config()
     selected_provider, selected_model = _prop_reference_image_source(model)

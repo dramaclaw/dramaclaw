@@ -37,6 +37,15 @@ from novelvideo.config import (
     get_style_preset,
 )
 from novelvideo.ports import get_usage_meter
+from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.ports.authz import AdmissionContext
+from novelvideo.ports.egress import EgressError
+from novelvideo.ports.egress_operations import (
+    OperationClaimResult,
+    OperationSpec,
+    canonical_request_digest,
+)
+from novelvideo.ports.model_credentials import ModelCredentialError, RequestCredential
 from novelvideo.shared.billing_errors import is_insufficient_credits_error
 from novelvideo.shared.provider_costs import is_definite_no_cost_http_rejection
 from novelvideo.generators.huimengi import (
@@ -95,6 +104,115 @@ SINGLE_CELL_RENDER_MODE_BY_ASPECT = {
 }
 logger = logging.getLogger(__name__)
 NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS = 2 * 60 * 60
+
+
+@dataclass(frozen=True, slots=True)
+class _OrganizationImageEgress:
+    credential: RequestCredential
+    operation_port: Any
+    claim: OperationClaimResult
+
+
+def _validate_egress_context(
+    egress_context: TrustedEgressContext | None,
+) -> TrustedEgressContext | None:
+    if egress_context is not None and type(egress_context) is not TrustedEgressContext:
+        raise TypeError("egress_context must be a TrustedEgressContext")
+    return egress_context
+
+
+async def _prepare_organization_image_egress(
+    *,
+    egress_context: TrustedEgressContext | None,
+    provider: str,
+    capability: str,
+    request: dict[str, object],
+) -> _OrganizationImageEgress | None:
+    context = _validate_egress_context(egress_context)
+    if context is None or not context.is_organization:
+        return None
+    if provider != "newapi":
+        raise EgressError("ORG_EGRESS_DENIED")
+
+    from novelvideo.ports import get_egress_operation_port, get_model_credentials
+
+    admission = AdmissionContext(
+        requester_user_id=context.requester_user_id,
+        billing_principal=context.billing_principal,
+        credential=context.credential,
+        admission_id=context.admission_id,
+        root_task_id=context.root_task_id,
+        admitted_at=context.admitted_at,
+        membership_id=context.membership_id,
+        authz_version=context.authz_version,
+    )
+    operation_port = get_egress_operation_port()
+    claim = await operation_port.claim(
+        spec=OperationSpec(
+            organization_id=context.billing_principal.id,
+            project_id=context.project_id,
+            root_task_id=context.root_task_id,
+            business_task_id=context.envelope_id,
+            capability=capability,
+            credential_id=context.credential.credential_id,
+            credential_version=context.credential.key_version,
+            request_digest=canonical_request_digest(request),
+        )
+    )
+    if not claim.won:
+        raise EgressError("EGRESS_OPERATION_REPLAYED")
+    try:
+        credential = await get_model_credentials().resolve(admission)
+        if (
+            type(credential) is not RequestCredential
+            or credential.reference != context.credential
+        ):
+            raise ModelCredentialError("ORG_CREDENTIAL_VERSION_MISMATCH")
+    except Exception:
+        await operation_port.mark_rejected_before_submit(
+            operation_id=claim.operation.operation_id,
+            transition_token=claim.transition_token,
+            expected_version=claim.operation.version,
+        )
+        raise
+    return _OrganizationImageEgress(
+        credential=credential,
+        operation_port=operation_port,
+        claim=claim,
+    )
+
+
+async def _complete_organization_image_egress(
+    state: _OrganizationImageEgress | None,
+    *,
+    trace: dict[str, str],
+    result_ref: str,
+) -> None:
+    if state is None:
+        return
+    provider_job_id = str(
+        trace.get("request_id") or trace.get("response_id") or ""
+    ).strip()
+    if not provider_job_id:
+        await state.operation_port.mark_unknown(
+            operation_id=state.claim.operation.operation_id,
+            transition_token=state.claim.transition_token,
+            expected_version=state.claim.operation.version,
+        )
+        raise RuntimeError("gateway response is missing a request id")
+    accepted = await state.operation_port.mark_accepted(
+        operation_id=state.claim.operation.operation_id,
+        transition_token=state.claim.transition_token,
+        expected_version=state.claim.operation.version,
+        provider_job_id=provider_job_id,
+    )
+    await state.operation_port.mark_completed(
+        operation_id=state.claim.operation.operation_id,
+        transition_token=state.claim.transition_token,
+        expected_version=accepted.version,
+        result_ref=result_ref,
+    )
+
 
 _SCENE_REFERENCE_FEATURE_BILLING = contextvars.ContextVar(
     "scene_reference_feature_billing", default=False
@@ -2746,6 +2864,8 @@ async def generate_text_to_image(
     quality: str | None = None,
     api_key: Optional[str] = None,
     config: Optional[dict] = None,
+    egress_context: TrustedEgressContext | None = None,
+    egress_capability: str = "image.generate",
 ) -> Path:
     """Generate one image from a prompt only — no reference images.
 
@@ -2762,6 +2882,8 @@ async def generate_text_to_image(
         quality=quality,
         api_key=api_key,
         config=config,
+        egress_context=egress_context,
+        egress_capability=egress_capability,
     )
 
 
@@ -2775,6 +2897,8 @@ async def generate_reference_edit_image(
     quality: str | None = None,
     api_key: Optional[str] = None,
     config: Optional[dict] = None,
+    egress_context: TrustedEgressContext | None = None,
+    egress_capability: str = "image.edit",
 ) -> Path:
     """Generate one edited image from reference images plus a free-form edit prompt.
 
@@ -2794,6 +2918,8 @@ async def generate_reference_edit_image(
         quality=quality,
         api_key=api_key,
         config=config,
+        egress_context=egress_context,
+        egress_capability=egress_capability,
     )
 
 
@@ -2807,10 +2933,46 @@ async def _generate_image(
     quality: str | None,
     api_key: Optional[str],
     config: Optional[dict],
+    egress_context: TrustedEgressContext | None,
+    egress_capability: str,
 ) -> Path:
     """Shared body for text-only and image-edit single-image generation."""
-    generator = NanoBananaGridGenerator(api_key=api_key, config=config)
     ref_paths = list(reference_image_paths or [])
+    context = _validate_egress_context(egress_context)
+    configured_provider = (
+        str((config or {}).get("provider") or "newapi").strip().lower()
+    )
+    request = {
+        "model": str((config or {}).get("model") or ""),
+        "prompt": prompt,
+        "reference_sha256": [
+            hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in ref_paths
+        ],
+        "aspect_ratio": aspect_ratio,
+        "image_size": image_size,
+        "quality": quality or "",
+    }
+    organization_egress = await _prepare_organization_image_egress(
+        egress_context=context,
+        provider=configured_provider,
+        capability=egress_capability,
+        request=request,
+    )
+    effective_config = config
+    effective_api_key = api_key
+    if organization_egress is not None:
+        effective_config = dict(config or {})
+        effective_config.update(
+            {
+                "provider": "newapi",
+                "api_key": organization_egress.credential.api_key,
+                "base_url": organization_egress.credential.base_url,
+            }
+        )
+        effective_api_key = organization_egress.credential.api_key
+    generator = NanoBananaGridGenerator(
+        api_key=effective_api_key, config=effective_config
+    )
 
     if generator.provider == "openrouter":
         ref_bytes = [Path(path).read_bytes() for path in ref_paths]
@@ -2863,6 +3025,7 @@ async def _generate_image(
             )
     elif generator.provider == "newapi":
         ref_bytes = [Path(path).read_bytes() for path in ref_paths]
+        trace: dict[str, str] = {}
         image_bytes, _, error_detail = await _call_newapi_image_api(
             api_key=generator.api_key,
             model=generator.model,
@@ -2872,10 +3035,11 @@ async def _generate_image(
                 "aspect_ratio": aspect_ratio,
                 "image_size": image_size,
                 "quality": quality or generator.openai_image_quality,
-            "request_schema": generator.newapi_request_schema,
+                "request_schema": generator.newapi_request_schema,
                 "model_params": generator.newapi_model_params,
             },
             base_url=generator.base_url,
+            trace=trace,
         )
         if not image_bytes:
             raise ValueError(
@@ -2922,6 +3086,11 @@ async def _generate_image(
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(image_bytes)
+    await _complete_organization_image_egress(
+        organization_egress,
+        trace=trace if generator.provider == "newapi" else {},
+        result_ref=str(output),
+    )
     return output
 
 

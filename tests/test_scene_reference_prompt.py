@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from novelvideo.generators.scene_reference_images import build_scene_reference_prompt
 from novelvideo.models import NovelScene
 
@@ -58,6 +60,7 @@ def test_scene_reference_prompt_keeps_variant_delta_out_of_scene_description():
 
 
 async def test_scene_reference_newapi_uses_normalized_gateway_base_url(monkeypatch, tmp_path):
+    import novelvideo.config as config
     from novelvideo.generators import scene_reference_images
 
     captured: dict[str, str | None] = {}
@@ -67,10 +70,12 @@ async def test_scene_reference_newapi_uses_normalized_gateway_base_url(monkeypat
         return b"image-bytes", "", ""
 
     monkeypatch.setattr(
-        scene_reference_images,
-        "NEWAPI_BASE_URL",
-        "https://relayclaw.cdnfg.com/",
-        raising=False,
+        config,
+        "get_effective_newapi_gateway_config",
+        lambda: SimpleNamespace(
+            api_key="platform-key",
+            base_url="https://relayclaw.cdnfg.com/v1",
+        ),
     )
     monkeypatch.setattr(
         scene_reference_images,

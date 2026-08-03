@@ -276,6 +276,7 @@ class VolcengineImageGenerator:
         project_dir: str = "",
         reference_image: Optional[str] = None,
         reference_strength: float = 0.7,  # 参考行业最佳实践 70-85%
+        egress_context=None,
     ) -> ImageGenResult:
         """生成图像。
 
@@ -292,6 +293,15 @@ class VolcengineImageGenerator:
         Returns:
             生成结果
         """
+        if egress_context is not None:
+            from novelvideo.egress_context import TrustedEgressContext
+            from novelvideo.ports.egress import EgressError
+
+            if type(egress_context) is not TrustedEgressContext:
+                raise TypeError("egress_context must be a TrustedEgressContext")
+            if egress_context.is_organization:
+                raise EgressError("ORG_EGRESS_DENIED")
+
         start_time = time.time()
 
         params = ImageGenParams(
@@ -1140,6 +1150,7 @@ async def generate_character_reference_unified(
     usage_scope: str = "",
     identity_name: str = "",
     raise_on_error: bool = False,
+    egress_context=None,
 ) -> list[str]:
     """统一的角色参考图生成接口。
 
@@ -1162,6 +1173,15 @@ async def generate_character_reference_unified(
     Returns:
         生成的图片路径列表
     """
+    if egress_context is not None:
+        from novelvideo.egress_context import TrustedEgressContext
+        from novelvideo.ports.egress import EgressError
+
+        if type(egress_context) is not TrustedEgressContext:
+            raise TypeError("egress_context must be a TrustedEgressContext")
+        if egress_context.is_organization and model == "seedream":
+            raise EgressError("ORG_EGRESS_DENIED")
+
     # model 参数优先，否则从配置读取；支持旧值 nanobanana/seedream 和统一 selection key。
     model = normalize_character_image_selection(model or get_character_image_selection())
 
@@ -1180,7 +1200,7 @@ async def generate_character_reference_unified(
         try:
             from novelvideo.generators.nanobanana_character import NanoBananaCharacterGenerator
 
-            generator = NanoBananaCharacterGenerator()
+            generator = NanoBananaCharacterGenerator(egress_context=egress_context)
 
             result = await generator.generate_character_portrait(
                 character_name=character_name,
@@ -1216,7 +1236,10 @@ async def generate_character_reference_unified(
         try:
             from novelvideo.generators.nanobanana_character import NanoBananaCharacterGenerator
 
-            generator = NanoBananaCharacterGenerator(selection=model)
+            generator = NanoBananaCharacterGenerator(
+                selection=model,
+                egress_context=egress_context,
+            )
 
             result = await generator.generate_character_portrait(
                 character_name=character_name,
@@ -1299,6 +1322,7 @@ async def generate_identity_image_unified(
     usage_scope: str = "",
     identity_name: str = "",
     raise_on_error: bool = False,
+    egress_context=None,
 ) -> dict:
     """基于角色基准图生成身份参考图（Identity Locking）。
 
@@ -1320,6 +1344,15 @@ async def generate_identity_image_unified(
         dict: {"success": bool, "prompt": str, "prompt_file": str} (dry_run 模式返回 prompt)
               或 bool (兼容旧代码)
     """
+    if egress_context is not None:
+        from novelvideo.egress_context import TrustedEgressContext
+        from novelvideo.ports.egress import EgressError
+
+        if type(egress_context) is not TrustedEgressContext:
+            raise TypeError("egress_context must be a TrustedEgressContext")
+        if egress_context.is_organization and model == "seedream":
+            raise EgressError("ORG_EGRESS_DENIED")
+
     # model 参数优先，否则从配置读取；支持旧值 nanobanana/seedream 和统一 selection key。
     model = normalize_character_image_selection(model or get_character_image_selection())
 
@@ -1327,7 +1360,7 @@ async def generate_identity_image_unified(
         try:
             from novelvideo.generators.nanobanana_character import NanoBananaCharacterGenerator
 
-            generator = NanoBananaCharacterGenerator()
+            generator = NanoBananaCharacterGenerator(egress_context=egress_context)
             result = await generator.generate_identity_with_reference(
                 character_name=character_name,
                 identity_prompt=identity_prompt,
@@ -1367,7 +1400,10 @@ async def generate_identity_image_unified(
         try:
             from novelvideo.generators.nanobanana_character import NanoBananaCharacterGenerator
 
-            generator = NanoBananaCharacterGenerator(selection=model)
+            generator = NanoBananaCharacterGenerator(
+                selection=model,
+                egress_context=egress_context,
+            )
             result = await generator.generate_identity_with_reference(
                 character_name=character_name,
                 identity_prompt=identity_prompt,
@@ -1418,6 +1454,7 @@ async def generate_identity_image_unified(
         usage_task_type=usage_task_type,
         usage_scope=usage_scope,
         identity_name=identity_name,
+        egress_context=egress_context,
     )
     if paths:
         import shutil

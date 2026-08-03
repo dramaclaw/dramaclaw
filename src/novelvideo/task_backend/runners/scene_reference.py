@@ -10,6 +10,20 @@ from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_state import get_task_manager
+from novelvideo.egress_context import (
+    TRUSTED_EGRESS_CONTEXT_KEY,
+    TrustedEgressContext,
+    TrustedRunnerEnvelope,
+)
+
+
+def _image_egress_context(envelope: dict[str, Any]) -> TrustedEgressContext | None:
+    if type(envelope) is not TrustedRunnerEnvelope:
+        return None
+    context = envelope.get(TRUSTED_EGRESS_CONTEXT_KEY)
+    if type(context) is not TrustedEgressContext:
+        raise TypeError("trusted runner envelope is missing egress context")
+    return context
 
 
 def run_scene_reference_asset(
@@ -47,6 +61,7 @@ async def _run_scene_reference_asset(
     scope = envelope.get("scope")
     output_dir = Path(str(payload.get("output_dir") or ctx.output_dir))
     manager = get_task_manager()
+    egress_context = _image_egress_context(envelope)
 
     if kind not in {"master", "spatial_layout", "reverse_master"}:
         raise ValueError(f"Unsupported scene reference kind: {kind}")
@@ -105,6 +120,7 @@ async def _run_scene_reference_asset(
                 style_prompt=style_prompt,
                 avoid_instructions=avoid_instructions,
                 base_scene=base_scene,
+                egress_context=egress_context,
             )
         if kind == "spatial_layout":
             rel_path = str(Path(output_path).relative_to(output_dir))

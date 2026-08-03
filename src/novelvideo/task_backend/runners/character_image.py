@@ -13,6 +13,20 @@ from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_state import get_task_manager
+from novelvideo.egress_context import (
+    TRUSTED_EGRESS_CONTEXT_KEY,
+    TrustedEgressContext,
+    TrustedRunnerEnvelope,
+)
+
+
+def _image_egress_context(envelope: dict[str, Any]) -> TrustedEgressContext | None:
+    if type(envelope) is not TrustedRunnerEnvelope:
+        return None
+    context = envelope.get(TRUSTED_EGRESS_CONTEXT_KEY)
+    if type(context) is not TrustedEgressContext:
+        raise TypeError("trusted runner envelope is missing egress context")
+    return context
 
 
 def _safe_asset_name(name: str) -> str:
@@ -101,6 +115,7 @@ async def _run_character_image(
     task_type = str(envelope.get("task_type") or payload.get("task_type") or "character_portrait")
     scope = envelope.get("scope") or payload.get("scope")
     manager = get_task_manager()
+    egress_context = _image_egress_context(envelope)
 
     def update(progress: float, current_task: str) -> None:
         manager.update_progress_for_project(
@@ -135,6 +150,7 @@ async def _run_character_image(
                 task_type=task_type,
                 scope=str(scope or ""),
                 update=update,
+                egress_context=egress_context,
             )
         elif mode == "identity_portrait":
             output_path = await _generate_identity_portrait(
@@ -149,6 +165,7 @@ async def _run_character_image(
                 task_type=task_type,
                 scope=str(scope or ""),
                 update=update,
+                egress_context=egress_context,
             )
         elif mode == "identity_image":
             output_path = await _generate_identity_image(
@@ -162,6 +179,7 @@ async def _run_character_image(
                 task_type=task_type,
                 scope=str(scope or ""),
                 update=update,
+                egress_context=egress_context,
             )
         else:
             raise RuntimeError(f"未知角色图像生成模式: {mode}")
@@ -186,6 +204,7 @@ async def _generate_character_portrait(
     task_type: str,
     scope: str,
     update,
+    egress_context: TrustedEgressContext | None = None,
 ) -> Path:
     from novelvideo.generators import generate_character_reference_unified
 
@@ -211,6 +230,7 @@ async def _generate_character_portrait(
             usage_task_type=task_type,
             usage_scope=scope,
             raise_on_error=True,
+            egress_context=egress_context,
         )
         if not paths:
             raise RuntimeError("角色 Portrait 生成失败")
@@ -232,6 +252,7 @@ async def _generate_identity_portrait(
     task_type: str,
     scope: str,
     update,
+    egress_context: TrustedEgressContext | None = None,
 ) -> Path:
     from novelvideo.generators import generate_character_reference_unified
 
@@ -262,6 +283,7 @@ async def _generate_identity_portrait(
             usage_scope=scope,
             identity_name=identity.identity_name,
             raise_on_error=True,
+            egress_context=egress_context,
         )
         if not paths:
             raise RuntimeError("身份 Portrait 生成失败")
@@ -288,6 +310,7 @@ async def _generate_identity_image(
     task_type: str,
     scope: str,
     update,
+    egress_context: TrustedEgressContext | None = None,
 ) -> Path:
     from novelvideo.generators import generate_identity_image_unified
     from novelvideo.utils.path_resolver import (
@@ -356,6 +379,7 @@ async def _generate_identity_image(
             usage_scope=scope,
             identity_name=identity.identity_name,
             raise_on_error=True,
+            egress_context=egress_context,
         )
         success = bool(result.get("success", False)) if isinstance(result, dict) else bool(result)
         if not success:

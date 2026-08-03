@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+import hashlib
 from pathlib import Path
 from typing import Literal
 
@@ -24,11 +25,14 @@ from novelvideo.config import (
     SCENE_REVERSE_MASTER_IMAGE_PROVIDER,
 )
 from novelvideo.generators.nanobanana_grid import (
+    _complete_organization_image_egress,
     _call_huimeng_image_api,
     _call_newapi_image_api,
     _call_openai_image_api,
     _call_openrouter_image_api,
+    _prepare_organization_image_egress,
 )
+from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.director_world.paths import safe_name
 from novelvideo.models import NovelScene, build_scene_effective_prompt
 
@@ -609,6 +613,7 @@ async def generate_scene_reference_image(
     style_prompt: str = "",
     avoid_instructions: str = "",
     base_scene: NovelScene | None = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> Path:
     """Generate one canonical scene reference image and return its path."""
 
@@ -655,10 +660,24 @@ async def generate_scene_reference_image(
         base_scene=base_scene,
     )
     provider = _scene_image_provider(kind, provider)
+    selected_model = _scene_image_model(kind, provider, model)
+    organization_egress = await _prepare_organization_image_egress(
+        egress_context=egress_context,
+        provider="newapi" if provider == "newapi" else provider,
+        capability="image.asset.scene",
+        request={
+            "model": selected_model,
+            "prompt": prompt,
+            "kind": kind,
+            "reference_sha256": [
+                hashlib.sha256(item[1]).hexdigest() for item in references
+            ],
+        },
+    )
+    trace: dict[str, str] = {}
 
     if provider == "openai":
         api_key = OPENAI_API_KEY or ""
-        selected_model = _scene_image_model(kind, provider, model)
         image_bytes, _text, error = await _call_openai_image_api(
             api_key=api_key,
             model=selected_model,
@@ -667,12 +686,15 @@ async def generate_scene_reference_image(
             image_config=_scene_image_config(selected_model),
         )
     elif provider == "newapi":
-        from novelvideo.config import get_effective_newapi_gateway_config
+        if organization_egress is None:
+            from novelvideo.config import get_effective_newapi_gateway_config
 
-        gateway = get_effective_newapi_gateway_config()
-        api_key = gateway.api_key
-        base_url = gateway.base_url
-        selected_model = _scene_image_model(kind, provider, model)
+            gateway = get_effective_newapi_gateway_config()
+            api_key = gateway.api_key
+            base_url = gateway.base_url
+        else:
+            api_key = organization_egress.credential.api_key
+            base_url = organization_egress.credential.base_url
         image_bytes, _text, error = await _call_newapi_image_api(
             api_key=api_key,
             model=selected_model,
@@ -680,10 +702,10 @@ async def generate_scene_reference_image(
             reference_images=references or None,
             image_config=_scene_image_config(selected_model),
             base_url=base_url,
+            trace=trace,
         )
     elif provider in {"huimeng", "huimengi"}:
         api_key = HUIMENGI_API_KEY or ""
-        selected_model = _scene_image_model(kind, provider, model)
         image_bytes, _text, error = await _call_huimeng_image_api(
             api_key=api_key,
             model=selected_model,
@@ -698,7 +720,6 @@ async def generate_scene_reference_image(
         )
     else:
         api_key = OPENROUTER_API_KEY or ""
-        selected_model = _scene_image_model(kind, provider, model)
         image_bytes, _text, error = await _call_openrouter_image_api(
             api_key=api_key,
             model=selected_model,
@@ -717,4 +738,9 @@ async def generate_scene_reference_image(
     _archive_existing(output_path)
     output_path.write_bytes(image_bytes)
     output_path.with_suffix(".prompt.txt").write_text(prompt, encoding="utf-8")
+    await _complete_organization_image_egress(
+        organization_egress,
+        trace=trace,
+        result_ref=str(output_path),
+    )
     return output_path
