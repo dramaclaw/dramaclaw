@@ -117,10 +117,13 @@ def test_sketch_edit_execute_runner_calls_existing_executor(tmp_path, monkeypatc
         "execute_sketch_edit_batches",
         fake_execute_sketch_edit_batches,
     )
+    progress_updates: list[dict] = []
     monkeypatch.setattr(
         runner_module,
         "get_task_manager",
-        lambda: SimpleNamespace(update_progress_for_project=lambda *_args, **_kwargs: None),
+        lambda: SimpleNamespace(
+            update_progress_for_project=lambda *_args, **kwargs: progress_updates.append(kwargs)
+        ),
     )
     ctx = SimpleNamespace(project_id="proj", output_dir=tmp_path)
     task_runner = get_project_task_runner("sketch_edit_execute")
@@ -141,3 +144,4 @@ def test_sketch_edit_execute_runner_calls_existing_executor(tmp_path, monkeypatc
     assert calls[0]["project_dir"] == tmp_path
     assert calls[0]["episode_num"] == 1
     assert calls[0]["labels_path"] == (tmp_path / "verify_reports" / "ep001" / "labels.jsonl")
+    assert [update["progress"] for update in progress_updates] == [0.01, 0.5, None]
