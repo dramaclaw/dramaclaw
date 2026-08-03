@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import ky from "ky";
 import type { ReactNode } from "react";
@@ -13,7 +13,7 @@ vi.mock("@/lib/api", () => ({
 
 import { server } from "@/__mocks__/msw/server";
 import { sampleTask } from "@/__mocks__/msw/handlers/tasks";
-import { useTasks } from "@/lib/queries/tasks";
+import { useCancelTask, useTasks } from "@/lib/queries/tasks";
 import { useTaskCenterStore } from "@/task-center/store";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -108,5 +108,87 @@ describe("useTasks polling", () => {
       wrapper: sharedWrapper,
     });
     await vi.waitFor(() => expect(requestCount).toBe(2));
+  });
+});
+
+describe("useCancelTask running confirmation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps a running task alive when the user declines no-refund termination", async () => {
+    let requestCount = 0;
+    server.use(
+      http.delete("*/api/v1/projects/demo/tasks/video/1", () => {
+        requestCount += 1;
+        return HttpResponse.json(
+          {
+            ok: false,
+            status: "running",
+            requires_confirmation: true,
+            refund_eligible: false,
+            message: "终止不会退还积分",
+          },
+          { status: 409 },
+        );
+      }),
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { result } = renderHook(() => useCancelTask(), { wrapper });
+
+    const response = await act(() =>
+      result.current.mutateAsync({
+        type: "video",
+        project: "demo",
+        episode: 1,
+      }),
+    );
+
+    expect(response).toMatchObject({ ok: false, continued: true });
+    expect(requestCount).toBe(1);
+  });
+
+  it("sends an explicit no-refund acknowledgement after user confirmation", async () => {
+    const requests: URL[] = [];
+    server.use(
+      http.delete("*/api/v1/projects/demo/tasks/video/1", ({ request }) => {
+        const url = new URL(request.url);
+        requests.push(url);
+        if (url.searchParams.get("force") !== "true") {
+          return HttpResponse.json(
+            {
+              ok: false,
+              status: "running",
+              requires_confirmation: true,
+              refund_eligible: false,
+              message: "终止不会退还积分",
+            },
+            { status: 409 },
+          );
+        }
+        return HttpResponse.json({
+          ok: true,
+          status: "cancelled",
+          requires_confirmation: false,
+          refund_eligible: false,
+          refund_status: "not_refunded",
+        });
+      }),
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { result } = renderHook(() => useCancelTask(), { wrapper });
+
+    const response = await act(() =>
+      result.current.mutateAsync({
+        type: "video",
+        project: "demo",
+        episode: 1,
+      }),
+    );
+
+    expect(response).toMatchObject({ ok: true, refund_status: "not_refunded" });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.searchParams.get("force")).toBe("true");
+    expect(requests[1]?.searchParams.get("acknowledge_no_refund")).toBe("true");
   });
 });

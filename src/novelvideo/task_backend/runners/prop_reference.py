@@ -106,9 +106,19 @@ async def _run_batch_prop_ref(envelope: dict[str, Any], ctx: ProjectContext) -> 
             if not (output_dir / "assets" / "props" / prop.name / "reference_3view.png").exists()
         ]
         if not props_to_gen:
-            return {"generated": 0}
+            return {
+                "generated": 0,
+                "billing_outcome": {
+                    "requested_units": 0,
+                    "delivered_units": 0,
+                    "failed_units": 0,
+                    "result_refs": [],
+                },
+            }
 
         generated = 0
+        result_refs: list[str] = []
+        failures: list[str] = []
         for index, prop in enumerate(props_to_gen, start=1):
             current = f"生成三视图: {prop.name}..."
             manager.update_progress_for_project(
@@ -121,17 +131,41 @@ async def _run_batch_prop_ref(envelope: dict[str, Any], ctx: ProjectContext) -> 
             )
             prop_dir = output_dir / "assets" / "props" / prop.name
             prop_dir.mkdir(parents=True, exist_ok=True)
-            with scene_reference_feature_billing():
-                result = await generate_prop_reference(
-                    visual_prompt=prop.visual_prompt or prop.description or prop.name,
-                    output_path=str(prop_dir / "reference_3view.png"),
-                    style=style,
-                    project_dir=str(output_dir),
-                    model=model,
+            try:
+                with scene_reference_feature_billing():
+                    result = await generate_prop_reference(
+                        visual_prompt=prop.visual_prompt or prop.description or prop.name,
+                        output_path=str(prop_dir / "reference_3view.png"),
+                        style=style,
+                        project_dir=str(output_dir),
+                        model=model,
+                    )
+                if result:
+                    generated += 1
+                    result_refs.append(str(result))
+                else:
+                    failures.append(prop.name)
+            except Exception as exc:  # noqa: BLE001
+                failures.append(prop.name)
+                manager.update_progress_for_project(
+                    ctx,
+                    "batch_prop_ref",
+                    0,
+                    logs=[f"道具 {prop.name} 生成失败: {exc}"],
                 )
-            if result:
-                generated += 1
-        return {"generated": generated}
+        if generated == 0:
+            raise RuntimeError("道具参考图批量生成失败：没有生成可用结果")
+        requested = len(props_to_gen)
+        return {
+            "generated": generated,
+            "failed": len(failures),
+            "billing_outcome": {
+                "requested_units": requested,
+                "delivered_units": generated,
+                "failed_units": requested - generated,
+                "result_refs": result_refs,
+            },
+        }
     finally:
         await store.close()
 

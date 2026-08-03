@@ -242,6 +242,26 @@ async def _confirm_feature_credit_reservation(
         )
 
 
+async def _settle_completed_feature_credit_reservation(
+    reservation_id: str,
+    *,
+    metadata: dict[str, Any],
+) -> None:
+    outcome = metadata.get("billing_outcome")
+    delivered = (
+        int(outcome.get("delivered_units") or 0)
+        if isinstance(outcome, dict)
+        else None
+    )
+    if delivered == 0:
+        await _refund_feature_credit_reservation(
+            reservation_id,
+            metadata={**metadata, "business_outcome": "not_delivered"},
+        )
+        return
+    await _confirm_feature_credit_reservation(reservation_id, metadata=metadata)
+
+
 async def _refund_feature_credit_reservation(
     reservation_id: str,
     *,
@@ -463,6 +483,33 @@ def _completion_metadata_with_provider_task_id(
     return completion_metadata
 
 
+def _billing_outcome_metadata(result: Any) -> dict[str, Any]:
+    """Copy a runner's explicit delivery counts into settlement metadata."""
+    if not isinstance(result, dict):
+        return {}
+    raw = result.get("billing_outcome")
+    if not isinstance(raw, dict):
+        return {}
+    try:
+        requested = int(raw.get("requested_units"))
+        delivered = int(raw.get("delivered_units"))
+    except (TypeError, ValueError):
+        return {}
+    if requested < 0 or delivered < 0 or delivered > requested:
+        logger.warning("Ignore invalid runner billing_outcome: %r", raw)
+        return {}
+    refs = raw.get("result_refs")
+    clean_refs = [str(value) for value in refs] if isinstance(refs, list) else []
+    return {
+        "billing_outcome": {
+            "requested_units": requested,
+            "delivered_units": delivered,
+            "failed_units": requested - delivered,
+            "result_refs": clean_refs,
+        }
+    }
+
+
 def _ensure_builtin_runners_registered() -> None:
     from novelvideo.task_backend.runners import (  # noqa: F401
         audio,
@@ -551,16 +598,34 @@ def run_project_task_core_sync(
                 task_type,
                 billing_metadata=billing_metadata,
             )
-            manager.update_progress_for_project(
+            execution_started = manager.begin_task_execution_for_project(
                 ctx,
                 task_type,
                 episode,
                 beat_num=beat_num,
                 scope=scope,
-                progress=0.01,
-                current_task="任务已开始",
+                expected_task_id=run_task_id,
                 metadata=run_metadata,
             )
+            if not execution_started:
+                logger.info(
+                    "Skip project task whose queued state was cancelled or replaced: "
+                    "project=%s task_type=%s task_id=%s",
+                    ctx.project_id,
+                    task_type,
+                    run_task_id,
+                )
+                asyncio.run(
+                    _refund_feature_credit_reservation(
+                        feature_reservation_id,
+                        metadata={
+                            "source": "task_cancelled_before_execution",
+                            "cancel_requested": True,
+                            "business_outcome": "cancelled",
+                        },
+                    )
+                )
+                return {"cancelled": True, "cancelled_before_execution": True}
 
             _ensure_builtin_runners_registered()
             runner = get_project_task_runner(task_type)
@@ -648,8 +713,9 @@ def run_project_task_core_sync(
                     return {"failed": True, **failure_payload}
                 raise
 
+            completion_error: BaseException | None = None
             try:
-                completion_persisted = manager.complete_task_for_project(
+                manager.complete_task_for_project(
                     ctx,
                     task_type,
                     episode,
@@ -663,39 +729,24 @@ def run_project_task_core_sync(
                     ),
                     expected_task_id=run_task_id,
                 )
-            except BaseException:
-                asyncio.run(
-                    _refund_undelivered_feature_credit_reservation(
-                        feature_reservation_id,
-                        metadata={
-                            "source": "task_completion_persist_failed",
-                            "business_outcome": "not_delivered",
-                        },
-                    )
-                )
-                raise
-
-            if completion_persisted is False:
-                asyncio.run(
-                    _refund_undelivered_feature_credit_reservation(
-                        feature_reservation_id,
-                        metadata={
-                            "source": "task_completion_not_persisted",
-                            "business_outcome": "not_delivered",
-                        },
-                    )
-                )
-                return result or {"ok": True}
+            except BaseException as exc:
+                # Runner results are the delivery evidence.  The task-center
+                # SQLite row is only an observability/read-model write and may
+                # fail after an asset has already been durably saved.
+                completion_error = exc
 
             asyncio.run(
-                _confirm_feature_credit_reservation(
+                _settle_completed_feature_credit_reservation(
                     feature_reservation_id,
                     metadata={
                         "source": "task_completed",
                         "business_outcome": "delivered",
+                        **_billing_outcome_metadata(result),
                     },
                 )
             )
+            if completion_error is not None:
+                raise completion_error
             asyncio.run(
                 _emit_project_task_metrics(
                     ctx,

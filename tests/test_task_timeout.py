@@ -17,6 +17,9 @@ class _FakeTaskManager:
     def update_progress_for_project(self, *_args, **kwargs) -> None:
         self.updates.append(kwargs)
 
+    def begin_task_execution_for_project(self, *_args, **_kwargs) -> bool:
+        return True
+
     def complete_task_for_project(self, *_args, **kwargs) -> None:
         self.completed.append(kwargs)
 
@@ -203,7 +206,7 @@ def test_run_project_task_core_persists_result_before_confirming_credit(monkeypa
     assert events == ["persisted", "confirm", "metrics"]
 
 
-def test_run_project_task_core_refunds_when_completion_persistence_fails(monkeypatch):
+def test_run_project_task_core_confirms_delivered_result_when_task_state_write_fails(monkeypatch):
     from novelvideo.task_backend import run_core
     from novelvideo.task_backend.registry import register_project_task_runner
 
@@ -214,11 +217,11 @@ def test_run_project_task_core_refunds_when_completion_persistence_fails(monkeyp
             raise OSError("task state write failed")
 
     class UsageMeter:
-        async def settle_cancelled_feature_credit_reservation(
-            self, _reservation_id, *, metadata=None
+        async def settle_feature_credit_reservation(
+            self, _reservation_id, *, action, metadata=None
         ):
-            events.append(("refund", metadata or {}))
-            return {"decision": "refund"}
+            events.append((action, metadata or {}))
+            return {"decision": action}
 
     def fake_runner(_envelope, _ctx):
         return {"asset_id": "asset_1"}
@@ -255,16 +258,18 @@ def test_run_project_task_core_refunds_when_completion_persistence_fails(monkeyp
 
     assert events == [
         (
-            "refund",
+            "confirm",
             {
-                "source": "task_completion_persist_failed",
-                "business_outcome": "not_delivered",
+                "source": "task_completed",
+                "business_outcome": "delivered",
             },
         )
     ]
 
 
-def test_run_project_task_core_refunds_when_cancel_race_ignores_completion(monkeypatch):
+def test_run_project_task_core_confirms_runner_result_even_when_read_model_ignores_completion(
+    monkeypatch,
+):
     from novelvideo.task_backend import run_core
     from novelvideo.task_backend.registry import register_project_task_runner
 
@@ -275,11 +280,11 @@ def test_run_project_task_core_refunds_when_cancel_race_ignores_completion(monke
             return False
 
     class UsageMeter:
-        async def settle_cancelled_feature_credit_reservation(
-            self, _reservation_id, *, metadata=None
+        async def settle_feature_credit_reservation(
+            self, _reservation_id, *, action, metadata=None
         ):
-            events.append(("refund", metadata or {}))
-            return {"decision": "refund"}
+            events.append((action, metadata or {}))
+            return {"decision": action}
 
     def fake_runner(_envelope, _ctx):
         return {"asset_id": "asset_1"}
@@ -316,10 +321,76 @@ def test_run_project_task_core_refunds_when_cancel_race_ignores_completion(monke
     assert result == {"asset_id": "asset_1"}
     assert events == [
         (
-            "refund",
+            "confirm",
             {
-                "source": "task_completion_not_persisted",
-                "business_outcome": "not_delivered",
+                "source": "task_completed",
+                "business_outcome": "delivered",
             },
         )
     ]
+
+
+@pytest.mark.parametrize(
+    ("delivered_units", "expected_action"),
+    [(7, "confirm"), (0, "refund")],
+)
+def test_run_project_task_core_settles_explicit_batch_delivery_outcome(
+    monkeypatch,
+    delivered_units,
+    expected_action,
+):
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    settlements: list[tuple[str, dict]] = []
+
+    class UsageMeter:
+        async def settle_feature_credit_reservation(
+            self, _reservation_id, *, action, metadata=None
+        ):
+            settlements.append((action, metadata or {}))
+            return {"decision": action}
+
+        def clear_llm_usage_context(self):
+            return None
+
+    def fake_runner(_envelope, _ctx):
+        return {
+            "billing_outcome": {
+                "requested_units": 10,
+                "delivered_units": delivered_units,
+                "failed_units": 10 - delivered_units,
+                "result_refs": [f"asset:{index}" for index in range(delivered_units)],
+            }
+        }
+
+    async def fake_is_cancel_requested(**_kwargs):
+        return False
+
+    async def fake_emit_project_task_metrics(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "is_cancel_requested", fake_is_cancel_requested)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", fake_emit_project_task_metrics)
+    monkeypatch.setattr(run_core, "_set_project_task_metrics_context", lambda *_a, **_k: None)
+    register_project_task_runner("batch_outcome_probe", fake_runner)
+
+    run_core.run_project_task_core_sync(
+        {
+            "project_id": "proj_result",
+            "requester_user_id": "usr_1",
+            "task_type": "batch_outcome_probe",
+            "episode": 0,
+            "billing_metadata": {
+                "feature_credit_reservation_id": "reservation_1",
+            },
+        },
+        SimpleNamespace(project_id="proj_result", requester_user_id="usr_1"),
+        _FakeTaskManager(),
+        run_task_id="task_1",
+    )
+
+    assert settlements[0][0] == expected_action
+    assert settlements[0][1]["billing_outcome"]["delivered_units"] == delivered_units
