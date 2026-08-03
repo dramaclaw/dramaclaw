@@ -45,6 +45,10 @@ def get_task_backend():
     return get_port("task_backend")
 
 
+def get_task_envelope_consumer():
+    return get_port("task_envelope_consumer")
+
+
 def get_cancellation_store():
     return get_port("cancellation_store")
 
@@ -99,5 +103,6 @@ __all__ = [
     "get_provider_instrumentation",
     "get_release_feed_port",
     "get_task_backend",
+    "get_task_envelope_consumer",
     "get_usage_meter",
 ]

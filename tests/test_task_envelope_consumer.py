@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from importlib import import_module
+
+import pytest
+
+from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
+from novelvideo.ports.model_credentials import CredentialReference
+from novelvideo.task_backend.envelope import SignedTaskEnvelope
+
+NOW = datetime(2026, 8, 3, 4, 5, 6, tzinfo=timezone.utc)
+KEYRING = {"active-v1": b"a" * 32, "retired-v1": b"r" * 32}
+
+
+def _admission(
+    *,
+    admission_id: str = "admission-1",
+    admitted_at: str = "2026-08-03T04:05:00Z",
+    key_version: int = 7,
+) -> AdmissionContext:
+    return AdmissionContext(
+        requester_user_id="user-1",
+        billing_principal=BillingPrincipal(kind="organization", id="org-1"),
+        credential=CredentialReference(
+            source="organization",
+            credential_id="credential-1",
+            key_version=key_version,
+            org_id="org-1",
+        ),
+        admission_id=admission_id,
+        root_task_id="task-root",
+        admitted_at=admitted_at,
+        membership_id="membership-1",
+        authz_version=9,
+    )
+
+
+def _delivery() -> dict:
+    payload = {
+        "episode": 3,
+        "beat_num": 2,
+        "scope": "selected",
+        "queue_kind": "video",
+        "payload": {"prompt": "safe business input"},
+    }
+    signed = SignedTaskEnvelope.sign(
+        admission=_admission(),
+        envelope_id="envelope-1",
+        task_type="single_video",
+        project_id="project-1",
+        payload=payload,
+        issued_at="2026-08-03T04:00:00Z",
+        expires_at="2026-08-04T04:00:00Z",
+        signing_key_id="active-v1",
+        signing_key=KEYRING["active-v1"],
+    )
+    return {
+        "project_id": "project-1",
+        "requester_user_id": "user-1",
+        "task_type": "single_video",
+        **payload,
+        "task_envelope_v2": signed.to_dict(),
+    }
+
+
+class FakeAuthz:
+    def __init__(self, admission: AdmissionContext | None = None) -> None:
+        self.admission = admission or _admission(
+            admission_id="fresh-admission",
+            admitted_at="2026-08-03T04:05:05Z",
+        )
+        self.calls: list[dict[str, str]] = []
+
+    async def admit_model_task(self, *, user_id: str, root_task_id: str):
+        self.calls.append({"user_id": user_id, "root_task_id": root_task_id})
+        return self.admission
+
+
+@pytest.mark.asyncio
+async def test_consumer_accepts_valid_delivery_after_authoritative_recheck(monkeypatch):
+    try:
+        consumer_module = import_module("novelvideo.task_backend.consumer")
+    except ModuleNotFoundError:
+        pytest.fail("TaskEnvelopeConsumer behavior contract is missing", pytrace=False)
+    authz = FakeAuthz()
+    consumer = consumer_module.TaskEnvelopeConsumer(
+        keyring=KEYRING,
+        authz=authz,
+        clock=lambda: NOW,
+    )
+    from novelvideo import ports
+    from novelvideo.ports import registry
+
+    assert "task_envelope_consumer" in registry._EE_REQUIRED_PORTS
+    accessor = getattr(ports, "get_task_envelope_consumer", None)
+    assert accessor is not None
+    monkeypatch.setitem(registry._PORTS, "task_envelope_consumer", consumer)
+    assert accessor() is consumer
+
+    verified = await consumer.consume(
+        _delivery(),
+        expected_root_task_id="task-root",
+    )
+
+    assert authz.calls == [{"user_id": "user-1", "root_task_id": "task-root"}]
+    assert verified.envelope_id == "envelope-1"
+    assert verified.admission == _admission()
+    assert verified.task_type == "single_video"
+    assert verified.project_id == "project-1"
+    assert verified.requester_user_id == "user-1"
+    assert verified.episode == 3
+    assert verified.beat_num == 2
+    assert verified.scope == "selected"
+    assert verified.queue_kind == "video"
+    assert verified.payload == {"prompt": "safe business input"}
+
+
+@pytest.mark.asyncio
+async def test_consumer_rejects_signed_flat_payload_mismatch_before_authority_read():
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    authz = FakeAuthz()
+    consumer = TaskEnvelopeConsumer(keyring=KEYRING, authz=authz, clock=lambda: NOW)
+    delivery = _delivery()
+    delivery["episode"] = True
+
+    with pytest.raises(InvalidTaskEnvelope) as captured:
+        await consumer.consume(delivery, expected_root_task_id="task-root")
+
+    assert type(captured.value) is InvalidTaskEnvelope
+    assert captured.value.code == "TASK_ENVELOPE_INVALID"
+    assert str(captured.value) == "invalid task envelope"
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    assert authz.calls == []
+
+
+@pytest.mark.asyncio
+async def test_consumer_rejects_tampered_signature_with_stable_invalid():
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    authz = FakeAuthz()
+    consumer = TaskEnvelopeConsumer(keyring=KEYRING, authz=authz, clock=lambda: NOW)
+    delivery = _delivery()
+    delivery["task_envelope_v2"]["signature"] = "0" * 64
+
+    with pytest.raises(InvalidTaskEnvelope) as captured:
+        await consumer.consume(delivery, expected_root_task_id="task-root")
+
+    assert type(captured.value) is InvalidTaskEnvelope
+    assert captured.value.code == "TASK_ENVELOPE_INVALID"
+    assert str(captured.value) == "invalid task envelope"
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    assert authz.calls == []
+
+
+@pytest.mark.asyncio
+async def test_consumer_rejects_changed_credential_version_as_stale():
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+    from novelvideo.task_backend.envelope import StaleTaskEnvelope
+
+    authz = FakeAuthz(
+        _admission(
+            admission_id="fresh-admission",
+            admitted_at="2026-08-03T04:05:05Z",
+            key_version=8,
+        )
+    )
+    consumer = TaskEnvelopeConsumer(keyring=KEYRING, authz=authz, clock=lambda: NOW)
+
+    with pytest.raises(StaleTaskEnvelope) as captured:
+        await consumer.consume(_delivery(), expected_root_task_id="task-root")
+
+    assert captured.value.code == "TASK_ENVELOPE_STALE"
+    assert str(captured.value) == "stale task envelope"
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    assert authz.calls == [{"user_id": "user-1", "root_task_id": "task-root"}]

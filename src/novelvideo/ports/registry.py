@@ -9,7 +9,9 @@ from typing import Any
 
 class PortNotRegistered(RuntimeError):
     def __init__(self, name: str) -> None:
-        super().__init__(f"port {name!r} is not registered; call ensure_bootstrap() first")
+        super().__init__(
+            f"port {name!r} is not registered; call ensure_bootstrap() first"
+        )
         self.name = name
 
 
@@ -25,6 +27,7 @@ _EE_REQUIRED_PORTS = (
     "usage_meter",
     "provider_instrumentation",
     "task_backend",
+    "task_envelope_consumer",
     "cancellation_store",
     "lifecycle",
     "model_credentials",
