@@ -69,10 +69,14 @@ class StagingPropAgentOutput(BaseModel):
     shape_hint: str = Field(default="", description="DirectorWorld shape_hint preset.")
     position: list[Any] = Field(default_factory=list, description="[x, y, z] position.")
     yaw: Any = Field(default=0.0, description="Yaw in radians.")
-    scale: list[Any] = Field(default_factory=list, description="[width, height, depth] scale.")
+    scale: list[Any] = Field(
+        default_factory=list, description="[width, height, depth] scale."
+    )
     action_hint: str = Field(default="", description="Blocking purpose.")
     relation_intent: str = Field(default="", description="mount_actor or none.")
-    target_actor_hint: str = Field(default="", description="Actor name or identity hint.")
+    target_actor_hint: str = Field(
+        default="", description="Actor name or identity hint."
+    )
 
 
 ALLOWED_SHAPE_HINTS = {
@@ -176,7 +180,9 @@ def _load_file_backed_shape_hints() -> dict[str, dict[str, Any]]:
             "id": shape_hint,
             "default_scale": SHAPE_HINT_DEFAULT_SCALES.get(shape_hint),
             "default_affordances": SHAPE_HINT_DEFAULT_AFFORDANCES.get(shape_hint, []),
-            "default_attachment_points": SHAPE_HINT_DEFAULT_ATTACHMENTS.get(shape_hint, []),
+            "default_attachment_points": SHAPE_HINT_DEFAULT_ATTACHMENTS.get(
+                shape_hint, []
+            ),
         }
         for shape_hint in ALLOWED_SHAPE_HINTS
     }
@@ -218,7 +224,14 @@ SHAPE_HINT_DEFAULT_AFFORDANCES = {
 }
 
 
-def resolve_model_config(request: dict[str, Any]) -> tuple[str, str, str | None]:
+def resolve_model_config(
+    request: dict[str, Any],
+    *,
+    egress_context=None,
+) -> tuple[str, str, str | None]:
+    from novelvideo.task_backend.subprocesses import require_direct_model_egress_allowed
+
+    require_direct_model_egress_allowed(egress_context)
     from novelvideo.config import get_newapi_runtime_credentials
 
     model = (
@@ -301,7 +314,9 @@ def extract_json_object(text: str) -> dict[str, Any]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        fence = re.search(r"```(?:json)?\s*(.*?)```", raw, flags=re.DOTALL | re.IGNORECASE)
+        fence = re.search(
+            r"```(?:json)?\s*(.*?)```", raw, flags=re.DOTALL | re.IGNORECASE
+        )
         if fence:
             try:
                 data = json.loads(fence.group(1))
@@ -365,7 +380,9 @@ def default_scale(user_hint: str, shape_hint: str) -> list[float]:
     ):
         return [2.2, 4.0, 1.2]
     return list(
-        SHAPE_HINT_DEFAULT_SCALES.get(shape_hint, SHAPE_HINT_DEFAULT_SCALES["generic_large"])
+        SHAPE_HINT_DEFAULT_SCALES.get(
+            shape_hint, SHAPE_HINT_DEFAULT_SCALES["generic_large"]
+        )
     )
 
 
@@ -401,7 +418,9 @@ def infer_semantic_label(user_hint: str, generated: dict[str, Any]) -> str:
     return stable_prop_id(user_hint or "staging_prop").lower()
 
 
-def infer_shape_hint(user_hint: str, generated: dict[str, Any], semantic_label: str) -> str:
+def infer_shape_hint(
+    user_hint: str, generated: dict[str, Any], semantic_label: str
+) -> str:
     raw = str(generated.get("shape_hint") or "").strip().lower()
     if raw in ALLOWED_SHAPE_HINTS:
         return raw
@@ -414,14 +433,30 @@ def infer_shape_hint(user_hint: str, generated: dict[str, Any], semantic_label: 
         token in text
         for token in ["马", "horse", "unicorn", "deer", "cow", "dinosaur", "quadruped"]
     ):
-        return "quadruped_mount" if wants_mount or "dinosaur" not in text else "generic_large"
+        return (
+            "quadruped_mount"
+            if wants_mount or "dinosaur" not in text
+            else "generic_large"
+        )
     if any(token in text for token in ["大炮", "火炮", "cannon", "artillery"]):
         return "wheeled_artillery"
     if any(token in text for token in ["飞机", "飞船", "airplane", "plane", "airship"]):
         return "flying_craft"
-    if any(token in text for token in ["法拉利", "ferrari", "跑车", "sports_car", "sports car", "sportscar"]):
+    if any(
+        token in text
+        for token in [
+            "法拉利",
+            "ferrari",
+            "跑车",
+            "sports_car",
+            "sports car",
+            "sportscar",
+        ]
+    ):
         return "sports_car"
-    if any(token in text for token in ["轿子", "马车", "车", "sedan", "carriage", "cart"]):
+    if any(
+        token in text for token in ["轿子", "马车", "车", "sedan", "carriage", "cart"]
+    ):
         return "long_vehicle"
     if any(token in text for token in ["堆", "pile"]):
         return "pile"
@@ -433,7 +468,9 @@ def infer_shape_hint(user_hint: str, generated: dict[str, Any], semantic_label: 
 def shape_hint_defaults(shape_hint: str) -> dict[str, Any]:
     normalized = shape_hint if shape_hint in ALLOWED_SHAPE_HINTS else "generic_large"
     return {
-        "affordances": list(SHAPE_HINT_DEFAULT_AFFORDANCES.get(normalized, ["blocking_mass"])),
+        "affordances": list(
+            SHAPE_HINT_DEFAULT_AFFORDANCES.get(normalized, ["blocking_mass"])
+        ),
         "attachment_points": [
             dict(item) for item in SHAPE_HINT_DEFAULT_ATTACHMENTS.get(normalized, [])
         ],
@@ -458,7 +495,9 @@ def list_or_default(value: Any, fallback: list[Any]) -> list[Any]:
 
 
 def stable_prop_id(value: str) -> str:
-    cleaned = re.sub(r"[^\w\u4e00-\u9fff]+", "_", value.strip(), flags=re.UNICODE).strip("_")
+    cleaned = re.sub(
+        r"[^\w\u4e00-\u9fff]+", "_", value.strip(), flags=re.UNICODE
+    ).strip("_")
     return cleaned or "ai_staging_prop"
 
 
@@ -500,10 +539,14 @@ def build_user_prompt(request: dict[str, Any]) -> str:
     return json.dumps(
         {
             "scene_id": request.get("scene_id") or "director_world",
-            "display_name": request.get("display_name") or request.get("scene_id") or "",
+            "display_name": request.get("display_name")
+            or request.get("scene_id")
+            or "",
             "user_hint": request.get("user_hint") or "",
             "beat_context": {
-                "beat": beat_context.get("beat") or beat_context.get("beat_number") or "",
+                "beat": beat_context.get("beat")
+                or beat_context.get("beat_number")
+                or "",
                 "visual_description": beat_context.get("visual_description") or "",
                 "actors": beat_context.get("actors") or [],
                 "global_props": beat_context.get("global_props") or [],
@@ -517,10 +560,14 @@ def build_user_prompt(request: dict[str, Any]) -> str:
     )
 
 
-def normalize_prop(generated: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+def normalize_prop(
+    generated: dict[str, Any], request: dict[str, Any]
+) -> dict[str, Any]:
     user_hint = str(request.get("user_hint") or "").strip()
     hint_lower = user_hint.lower()
-    name = str(generated.get("name") or generated.get("prop_id") or user_hint or "staging道具")
+    name = str(
+        generated.get("name") or generated.get("prop_id") or user_hint or "staging道具"
+    )
     prop_id = stable_prop_id(str(generated.get("prop_id") or name))
     semantic_label = infer_semantic_label(user_hint, generated)
     shape_hint = infer_shape_hint(user_hint, generated, semantic_label)
@@ -530,7 +577,8 @@ def normalize_prop(generated: dict[str, Any], request: dict[str, Any]) -> dict[s
     )
     scale = clamp_scale_for_shape_hint(
         shape_hint,
-        vector3(generated.get("scale"), positive=True) or default_scale(user_hint, shape_hint),
+        vector3(generated.get("scale"), positive=True)
+        or default_scale(user_hint, shape_hint),
     )
     generated_relation = str(generated.get("relation_intent") or "").strip()
     wants_mount_relation = shape_hint == "quadruped_mount" and (
@@ -544,7 +592,9 @@ def normalize_prop(generated: dict[str, Any], request: dict[str, Any]) -> dict[s
         "category": "staging",
         "semantic_label": semantic_label,
         "shape_hint": shape_hint,
-        "affordances": list_or_default(generated.get("affordances"), defaults["affordances"]),
+        "affordances": list_or_default(
+            generated.get("affordances"), defaults["affordances"]
+        ),
         "attachment_points": list_or_default(
             generated.get("attachment_points"), defaults["attachment_points"]
         ),
@@ -564,13 +614,18 @@ def normalize_prop(generated: dict[str, Any], request: dict[str, Any]) -> dict[s
     }
 
 
-def generate_ai_staging_prop(request: dict[str, Any]) -> dict[str, Any]:
+def generate_ai_staging_prop(
+    request: dict[str, Any],
+    *,
+    egress_context=None,
+) -> dict[str, Any]:
     load_dotenv_files()
-    model, api_key, base_url = resolve_model_config(request)
+    model, api_key, base_url = resolve_model_config(
+        request,
+        egress_context=egress_context,
+    )
     if not api_key:
-        raise RuntimeError(
-            "missing AI api key: set NEWAPI_API_KEY"
-        )
+        raise RuntimeError("missing AI api key: set NEWAPI_API_KEY")
 
     generated = asyncio.run(
         run_staging_prop_agent(
@@ -593,5 +648,8 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:  # noqa: BLE001 - CLI should return JSON error.
-        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False), file=sys.stderr)
+        print(
+            json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False),
+            file=sys.stderr,
+        )
         raise SystemExit(1)

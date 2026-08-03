@@ -29,6 +29,7 @@ class BlockWorldUnavailable(RuntimeError):
 def node_available() -> bool:
     return shutil.which("node") is not None
 
+
 try:
     from .supertale_lanzhou_demo import PALETTE, BlockWorld
     from .supertale_voxel_palette import (
@@ -351,7 +352,9 @@ def call_openai_chat(
     client = OpenAI(**kwargs)
 
     user_content: str | list[dict[str, Any]]
-    resolved_image_paths = image_paths or ([image_path] if image_path is not None else [])
+    resolved_image_paths = image_paths or (
+        [image_path] if image_path is not None else []
+    )
     if resolved_image_paths:
         user_content = [{"type": "text", "text": user_prompt}]
         for path in resolved_image_paths:
@@ -375,7 +378,9 @@ def call_openai_chat(
 
 
 def extract_code(text: str) -> str:
-    tag_match = re.search(r"<code>\s*(.*?)\s*</code>", text, flags=re.DOTALL | re.IGNORECASE)
+    tag_match = re.search(
+        r"<code>\s*(.*?)\s*</code>", text, flags=re.DOTALL | re.IGNORECASE
+    )
     if tag_match:
         return tag_match.group(1)
     fence_match = re.search(r"```(?:javascript|js)?\s*(.*?)```", text, flags=re.DOTALL)
@@ -441,7 +446,9 @@ def parse_int_arg(value: str) -> int:
         value_num = float(offset)
         return int(value_num if sign == "+" else -value_num)
     if not re.fullmatch(r"[-+]?\d+(?:\.\d+)?", clean):
-        raise ValueError(f"Only numeric coordinate literals are supported, got: {value!r}")
+        raise ValueError(
+            f"Only numeric coordinate literals are supported, got: {value!r}"
+        )
     return int(float(clean))
 
 
@@ -469,7 +476,9 @@ def substitute_loop_var(src: str, var_name: str, value: int) -> str:
         return str(base + value if sign == "+" else base - value)
 
     src = re.sub(rf"\b{escaped}\b\s*([+-])\s*([-+]?\d+(?:\.\d+)?)", repl_var_first, src)
-    src = re.sub(rf"([-+]?\d+(?:\.\d+)?)\s*([+-])\s*\b{escaped}\b", repl_number_first, src)
+    src = re.sub(
+        rf"([-+]?\d+(?:\.\d+)?)\s*([+-])\s*\b{escaped}\b", repl_number_first, src
+    )
     return re.sub(rf"\b{escaped}\b", str(value), src)
 
 
@@ -494,7 +503,9 @@ def expand_simple_foreach_loops(code: str) -> str:
     return code
 
 
-def execute_build_code_with_node(code: str, *, timeout_seconds: int = 8) -> list[dict[str, Any]]:
+def execute_build_code_with_node(
+    code: str, *, timeout_seconds: int = 8
+) -> list[dict[str, Any]]:
     """Execute model build JS in a restricted Node VM and return safe build operations."""
     node_path = shutil.which("node")
     if not node_path:
@@ -689,12 +700,18 @@ def normalize_world_floor(world: BlockWorld) -> None:
     if min_y >= 0:
         return
     shift = -min_y
-    world.blocks = {(x, y + shift, z): block_type for (x, y, z), block_type in world.blocks.items()}
+    world.blocks = {
+        (x, y + shift, z): block_type for (x, y, z), block_type in world.blocks.items()
+    }
 
 
-def validate_world(world: BlockWorld, *, max_blocks: int, max_abs_coord: int, max_y: int) -> None:
+def validate_world(
+    world: BlockWorld, *, max_blocks: int, max_abs_coord: int, max_y: int
+) -> None:
     if len(world.blocks) > max_blocks:
-        raise ValueError(f"Generated too many blocks: {len(world.blocks)} > {max_blocks}")
+        raise ValueError(
+            f"Generated too many blocks: {len(world.blocks)} > {max_blocks}"
+        )
     for x, y, z in world.blocks:
         if abs(x) > max_abs_coord or abs(z) > max_abs_coord:
             raise ValueError(f"Coordinate out of range: {(x, y, z)}")
@@ -714,14 +731,22 @@ def camera_presets_from_bounds(bounds: dict[str, list[int]]) -> list[dict[str, A
         {
             "id": "front_overview",
             "label": "正面全景",
-            "position": [round(cx, 2), round(cy + 3, 2), round(min_z - span_z * 0.55, 2)],
+            "position": [
+                round(cx, 2),
+                round(cy + 3, 2),
+                round(min_z - span_z * 0.55, 2),
+            ],
             "target": [round(cx, 2), round(cy, 2), round(cz, 2)],
             "fov": 58,
         },
         {
             "id": "left_side",
             "label": "左侧机位",
-            "position": [round(min_x - span_x * 0.55, 2), round(cy + 2, 2), round(cz, 2)],
+            "position": [
+                round(min_x - span_x * 0.55, 2),
+                round(cy + 2, 2),
+                round(cz, 2),
+            ],
             "target": [round(cx, 2), round(cy, 2), round(cz, 2)],
             "fov": 60,
         },
@@ -735,7 +760,11 @@ def camera_presets_from_bounds(bounds: dict[str, list[int]]) -> list[dict[str, A
         {
             "id": "top_down",
             "label": "俯视布局",
-            "position": [round(cx, 2), round(max_y + max(span_x, span_z) * 0.95, 2), round(cz, 2)],
+            "position": [
+                round(cx, 2),
+                round(max_y + max(span_x, span_z) * 0.95, 2),
+                round(cz, 2),
+            ],
             "target": [round(cx, 2), 0, round(cz, 2)],
             "fov": 45,
         },
@@ -797,9 +826,18 @@ def default_output_path(path: str) -> Path:
     return (Path.cwd() / output_path).resolve()
 
 
-def resolve_model_config(args: argparse.Namespace) -> tuple[str, str, str | None]:
+def resolve_model_config(
+    args: argparse.Namespace,
+    *,
+    egress_context=None,
+) -> tuple[str, str, str | None]:
+    from novelvideo.task_backend.subprocesses import require_direct_model_egress_allowed
+
+    require_direct_model_egress_allowed(egress_context)
     provider = (
-        os.environ.get("BLOCK_WORLD_MODEL_PROVIDER") or os.environ.get("MODEL_PROVIDER") or "openai"
+        os.environ.get("BLOCK_WORLD_MODEL_PROVIDER")
+        or os.environ.get("MODEL_PROVIDER")
+        or "openai"
     ).lower()
     model = (
         args.model
@@ -843,7 +881,9 @@ def main() -> None:
         description="Generate a SuperTale Minecraft-style scene spec from text and optional image."
     )
     parser.add_argument("--description", help="Scene description prompt.")
-    parser.add_argument("--description-file", help="Read scene description from a text file.")
+    parser.add_argument(
+        "--description-file", help="Read scene description from a text file."
+    )
     parser.add_argument("--image", help="Optional reference image path.")
     parser.add_argument(
         "--image2",
@@ -852,7 +892,8 @@ def main() -> None:
         help="Additional reference image path. Can be passed multiple times.",
     )
     parser.add_argument(
-        "--from-code", help="Parse an existing model-output/code file instead of calling AI."
+        "--from-code",
+        help="Parse an existing model-output/code file instead of calling AI.",
     )
     parser.add_argument(
         "--output",
@@ -866,7 +907,9 @@ def main() -> None:
     parser.add_argument("--base-url", default="")
     parser.add_argument("--raw-output", default="")
     parser.add_argument(
-        "--prompt-only", action="store_true", help="Write the prompt and do not call AI."
+        "--prompt-only",
+        action="store_true",
+        help="Write the prompt and do not call AI.",
     )
     parser.add_argument("--max-blocks", type=int, default=80_000)
     parser.add_argument("--max-abs-coord", type=int, default=96)
@@ -879,11 +922,15 @@ def main() -> None:
     if args.description_file:
         description = Path(args.description_file).read_text(encoding="utf-8")
     if not description and not args.from_code:
-        raise SystemExit("--description, --description-file, or --from-code is required")
+        raise SystemExit(
+            "--description, --description-file, or --from-code is required"
+        )
 
     scene_palette = fresh_scene_palette()
     system_prompt = SYSTEM_PROMPT.replace("%PALETTE%", palette_text(scene_palette))
-    user_prompt = build_user_prompt(description or "Build a rich editable DirectorWorld stage.")
+    user_prompt = build_user_prompt(
+        description or "Build a rich editable DirectorWorld stage."
+    )
 
     if args.prompt_only:
         prompt_path = default_output_path(args.output).with_suffix(".prompt.txt")
@@ -912,9 +959,13 @@ def main() -> None:
         for extra_image_path in extra_image_paths:
             if not extra_image_path.exists():
                 raise SystemExit(f"image2 not found: {extra_image_path}")
-        all_image_paths = ([image_path] if image_path is not None else []) + extra_image_paths
+        all_image_paths = (
+            [image_path] if image_path is not None else []
+        ) + extra_image_paths
         reference_image_path = (
-            "; ".join(str(path.resolve()) for path in all_image_paths) if all_image_paths else ""
+            "; ".join(str(path.resolve()) for path in all_image_paths)
+            if all_image_paths
+            else ""
         )
         raw_text = call_openai_chat(
             system_prompt=system_prompt,
@@ -956,7 +1007,9 @@ def main() -> None:
 
     output_path = default_output_path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(scene_spec, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_path.write_text(
+        json.dumps(scene_spec, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"wrote {output_path}")
     print(f"raw_model_output={raw_path}")
     print(f"blocks={len(scene_spec['blocks'])} palette={len(scene_spec['palette'])}")

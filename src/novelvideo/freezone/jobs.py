@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -30,6 +31,11 @@ from PIL import Image
 from novelvideo.freezone.paths import output_path_for_job, outputs_dir
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.ports.egress import EgressError
+from novelvideo.task_backend.subprocesses import (
+    EgressBoundaryError,
+    RestrictedSubprocessPolicy,
+    run_project_subprocess,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +193,9 @@ async def run_freezone_mask_edit(
             config=cfg,
         )
     except Exception as exc:
-        raise RuntimeError(f"{provider_name} 图像擦除失败：{redact_secrets(exc)}") from exc
+        raise RuntimeError(
+            f"{provider_name} 图像擦除失败：{redact_secrets(exc)}"
+        ) from exc
     if not out.exists():
         raise RuntimeError(f"{provider_name} 图像擦除未生成输出文件")
     return out
@@ -340,15 +348,23 @@ def ensure_freezone_dirs(project_dir: Path) -> None:
     outputs_dir(project_dir, "freezone_edit").mkdir(parents=True, exist_ok=True)
     outputs_dir(project_dir, "freezone_upscale").mkdir(parents=True, exist_ok=True)
     outputs_dir(project_dir, "freezone_video_gen").mkdir(parents=True, exist_ok=True)
-    outputs_dir(project_dir, "freezone_video_compose").mkdir(parents=True, exist_ok=True)
+    outputs_dir(project_dir, "freezone_video_compose").mkdir(
+        parents=True, exist_ok=True
+    )
     outputs_dir(project_dir, "freezone_extract").mkdir(parents=True, exist_ok=True)
     outputs_dir(project_dir, "freezone_analyze").mkdir(parents=True, exist_ok=True)
     outputs_dir(project_dir, "freezone_mask_edit").mkdir(parents=True, exist_ok=True)
     outputs_dir(project_dir, "freezone_video_erase").mkdir(parents=True, exist_ok=True)
-    outputs_dir(project_dir, "freezone_video_upscale").mkdir(parents=True, exist_ok=True)
-    outputs_dir(project_dir, "freezone_audio_separate").mkdir(parents=True, exist_ok=True)
+    outputs_dir(project_dir, "freezone_video_upscale").mkdir(
+        parents=True, exist_ok=True
+    )
+    outputs_dir(project_dir, "freezone_audio_separate").mkdir(
+        parents=True, exist_ok=True
+    )
     outputs_dir(project_dir, "freezone_audio_speech").mkdir(parents=True, exist_ok=True)
-    outputs_dir(project_dir, "freezone_audio_eleven_music").mkdir(parents=True, exist_ok=True)
+    outputs_dir(project_dir, "freezone_audio_eleven_music").mkdir(
+        parents=True, exist_ok=True
+    )
     outputs_dir(project_dir, "freezone_image_to_3gs").mkdir(parents=True, exist_ok=True)
 
 
@@ -368,7 +384,10 @@ def _video_upscale_filter(resolution: str, denoise_strength: str) -> str:
     target = FREEZONE_VIDEO_UPSCALE_LONG_EDGE.get(resolution.lower())
     if not target:
         raise ValueError(f"unsupported video upscale resolution: {resolution}")
-    filters = [f"scale='if(gte(iw,ih),{target},-2)':" f"'if(gte(iw,ih),-2,{target})':flags=lanczos"]
+    filters = [
+        f"scale='if(gte(iw,ih),{target},-2)':"
+        f"'if(gte(iw,ih),-2,{target})':flags=lanczos"
+    ]
     denoise = (denoise_strength or "1x").lower()
     if denoise == "1x":
         filters.append("hqdn3d=1.2:1.2:4:4")
@@ -441,15 +460,47 @@ async def run_freezone_video_upscale(
     return out, meta
 
 
-async def _run_cmd(cmd: list[str]) -> None:
-    proc = await asyncio.to_thread(
-        subprocess.run,
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=1800,
-    )
+async def _run_cmd(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    egress_context=None,
+) -> None:
+    if egress_context is None:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
+    else:
+        if cwd is None:
+            raise EgressBoundaryError("ORG_SERVICE_EGRESS_DENIED")
+        minimal_env = {
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+        }
+        policy = RestrictedSubprocessPolicy(
+            command=tuple(cmd),
+            cwd=cwd.resolve(),
+            env=minimal_env,
+        )
+        proc = await asyncio.to_thread(
+            run_project_subprocess,
+            cmd,
+            cwd=cwd,
+            env=minimal_env,
+            egress_context=egress_context,
+            restricted_policy=policy,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
     if proc.returncode != 0:
+        if egress_context is not None:
+            raise EgressBoundaryError("ORG_SERVICE_EGRESS_DENIED")
         stderr = (proc.stderr or "").strip()
         raise RuntimeError(stderr[-1000:] or f"command failed: {' '.join(cmd)}")
 
@@ -535,7 +586,9 @@ async def _render_video_clip(
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={background_color},fps={fps}"
     )
-    has_audio = keep_original_audio and (not muted) and await _probe_has_audio(source_path)
+    has_audio = (
+        keep_original_audio and (not muted) and await _probe_has_audio(source_path)
+    )
 
     if has_audio:
         cmd = [
@@ -642,7 +695,9 @@ async def _render_audio_clip(
 
 
 async def _concat_media_segments(segment_paths: list[Path], output_path: Path) -> None:
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", delete=False) as handle:
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", suffix=".txt", delete=False
+    ) as handle:
         for path in segment_paths:
             safe_path = str(path).replace("'", "'\\''")
             handle.write(f"file '{safe_path}'\n")
@@ -797,7 +852,9 @@ async def run_freezone_video_compose(
         ),
     )
 
-    with tempfile.TemporaryDirectory(prefix=f"freezone_compose_{job_id}_") as temp_dir_str:
+    with tempfile.TemporaryDirectory(
+        prefix=f"freezone_compose_{job_id}_"
+    ) as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         segment_paths: list[Path] = []
         cursor = 0.0
@@ -811,7 +868,9 @@ async def run_freezone_video_compose(
                     f"compose item {item.get('item_id') or index} has invalid source range"
                 )
             if timeline_start < cursor - 1e-6:
-                raise RuntimeError("overlapping video clips are not supported in MVP compose")
+                raise RuntimeError(
+                    "overlapping video clips are not supported in MVP compose"
+                )
             if timeline_start > cursor + 1e-6:
                 gap_path = temp_dir / f"gap_{index:03d}.mp4"
                 await _render_gap_clip(
@@ -903,7 +962,9 @@ async def _probe_video_duration(source_path: str) -> float:
         timeout=120,
     )
     if proc.returncode != 0:
-        raise RuntimeError((proc.stderr or "").strip()[-500:] or "ffprobe duration failed")
+        raise RuntimeError(
+            (proc.stderr or "").strip()[-500:] or "ffprobe duration failed"
+        )
     try:
         return max(0.1, float((proc.stdout or "").strip()))
     except ValueError as exc:
@@ -947,13 +1008,17 @@ def _fallback_subtitle_box(width: int, height: int) -> tuple[int, int, int, int]
     return x, y, box_w, box_h
 
 
-def _detect_subtitle_box_from_image(image_path: Path) -> tuple[int, int, int, int] | None:
+def _detect_subtitle_box_from_image(
+    image_path: Path,
+) -> tuple[int, int, int, int] | None:
     image = Image.open(image_path).convert("RGB")
     arr = np.asarray(image, dtype=np.int16)
     height, width = arr.shape[:2]
     start_y = int(height * 0.55)
     roi = arr[start_y:, :, :]
-    gray = ((roi[:, :, 0] * 299 + roi[:, :, 1] * 587 + roi[:, :, 2] * 114) // 1000).astype(np.int16)
+    gray = (
+        (roi[:, :, 0] * 299 + roi[:, :, 1] * 587 + roi[:, :, 2] * 114) // 1000
+    ).astype(np.int16)
     edge = np.zeros_like(gray)
     edge[:, 1:] += np.abs(gray[:, 1:] - gray[:, :-1])
     edge[1:, :] += np.abs(gray[1:, :] - gray[:-1, :])
@@ -974,7 +1039,9 @@ def _detect_subtitle_box_from_image(image_path: Path) -> tuple[int, int, int, in
     return _safe_box_from_pixels(x0, y0, x1, y1, width, height)
 
 
-async def _extract_sample_frames(video_path: str, temp_dir: Path, count: int = 6) -> list[Path]:
+async def _extract_sample_frames(
+    video_path: str, temp_dir: Path, count: int = 6
+) -> list[Path]:
     duration = await _probe_video_duration(video_path)
     sample_paths: list[Path] = []
     for index in range(count):
@@ -998,10 +1065,16 @@ async def _extract_sample_frames(video_path: str, temp_dir: Path, count: int = 6
     return sample_paths
 
 
-async def _detect_subtitle_box(video_path: str, temp_dir: Path) -> tuple[int, int, int, int]:
+async def _detect_subtitle_box(
+    video_path: str, temp_dir: Path
+) -> tuple[int, int, int, int]:
     width, height = await _probe_video_size(video_path)
     sample_paths = await _extract_sample_frames(video_path, temp_dir)
-    boxes = [box for box in (_detect_subtitle_box_from_image(path) for path in sample_paths) if box]
+    boxes = [
+        box
+        for box in (_detect_subtitle_box_from_image(path) for path in sample_paths)
+        if box
+    ]
     if not boxes:
         return _fallback_subtitle_box(width, height)
 
@@ -1087,13 +1160,17 @@ async def run_freezone_video_erase(
     output_path = output_dir / f"{job_id}.mp4"
 
     width, height = await _probe_video_size(source_path)
-    with tempfile.TemporaryDirectory(prefix=f"freezone_erase_{job_id}_") as temp_dir_str:
+    with tempfile.TemporaryDirectory(
+        prefix=f"freezone_erase_{job_id}_"
+    ) as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         if mode == "smart_subtitle":
             x, y, w, h = await _detect_subtitle_box(source_path, temp_dir)
         elif mode == "box":
             if None in {box_x, box_y, box_width, box_height}:
-                raise RuntimeError("box mode requires box_x, box_y, box_width and box_height")
+                raise RuntimeError(
+                    "box mode requires box_x, box_y, box_width and box_height"
+                )
             x, y, w, h = _normalized_box_to_pixels(
                 box_x=float(box_x),
                 box_y=float(box_y),
@@ -1245,12 +1322,18 @@ async def run_freezone_video_gen(
             and not parse_newapi_video_backend(backend)
             and not is_freezone_seedance2_backend(backend)
         ):
-            raise RuntimeError(f"backend {backend} requires a first-frame image reference")
+            raise RuntimeError(
+                f"backend {backend} requires a first-frame image reference"
+            )
         extra_kwargs: dict[str, object] = {}
         if audio_setting:
             extra_kwargs["audio_setting"] = audio_setting
         result = await video_gen.generate(
-            image_path=first_image_ref.path if first_image_ref and first_image_ref.path else None,
+            image_path=(
+                first_image_ref.path
+                if first_image_ref and first_image_ref.path
+                else None
+            ),
             prompt=prompt,
             output_path=str(out),
             aspect_ratio=aspect_ratio,
@@ -1258,7 +1341,9 @@ async def run_freezone_video_gen(
             last_frame_path=last_frame_path,
             references=references,
             human_review=bool(human_review),
-            seedance2_config={"scene_optimize": scene_optimize} if scene_optimize else None,
+            seedance2_config=(
+                {"scene_optimize": scene_optimize} if scene_optimize else None
+            ),
             gen_mode=gen_mode,
             **extra_kwargs,
         )
@@ -1266,7 +1351,9 @@ async def run_freezone_video_gen(
         err = result.error if result else "unknown error"
         raise RuntimeError(f"freezone video generation failed: {err}")
     if not out.exists():
-        raise RuntimeError("video generation returned success but no output file was written")
+        raise RuntimeError(
+            "video generation returned success but no output file was written"
+        )
     return out
 
 
@@ -1339,7 +1426,9 @@ async def run_freezone_extract_frames(
         "true",
         pattern,
     ]
-    proc = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=600)
+    proc = await asyncio.to_thread(
+        subprocess.run, cmd, capture_output=True, text=True, timeout=600
+    )
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg scene detect failed: {proc.stderr[-500:]}")
 
@@ -1510,7 +1599,9 @@ async def run_freezone_analyze_shots(
         analyses = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         (out_dir / "raw_response.txt").write_text(text, encoding="utf-8")
-        raise RuntimeError(f"{used_provider} returned non-JSON: {exc}; raw saved") from exc
+        raise RuntimeError(
+            f"{used_provider} returned non-JSON: {exc}; raw saved"
+        ) from exc
 
     if mode == "video_story":
         if not isinstance(analyses, dict):
@@ -1530,12 +1621,16 @@ async def run_freezone_analyze_shots(
     else:
         payload["analyses"] = analyses
     out_file = out_dir / "analysis.json"
-    out_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_file.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     payload["output_path"] = str(out_file)
     return payload
 
 
-async def _sample_evenly(video_path: Path, out_dir: Path, max_frames: int) -> list[Path]:
+async def _sample_evenly(
+    video_path: Path, out_dir: Path, max_frames: int
+) -> list[Path]:
     """Fallback when scene detection finds nothing — sample at regular intervals."""
     import asyncio
     import json
@@ -1580,7 +1675,9 @@ async def _sample_evenly(video_path: Path, out_dir: Path, max_frames: int) -> li
         str(n),
         str(out_dir / "even_%03d.png"),
     ]
-    await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=300)
+    await asyncio.to_thread(
+        subprocess.run, cmd, capture_output=True, text=True, timeout=300
+    )
     return sort_extracted_frames_by_pts(out_dir.glob("even_*.png"))
 
 

@@ -1542,12 +1542,17 @@ def run_voxel_world_from_360(
     max_y: int = 64,
     timeout_seconds: int = 1800,
     progress_callback: Callable[[float, str], None] | None = None,
+    egress_context=None,
 ) -> dict[str, Any]:
     """Generate legacy DirectorWorld `world.json` from the scene spatial layout.
 
     This is intentionally synchronous and UI-free. It runs inside a task worker,
     compresses spatial_layout.png, then calls the block-world generator.
     """
+
+    from novelvideo.task_backend.subprocesses import require_direct_model_egress_allowed
+
+    require_direct_model_egress_allowed(egress_context)
 
     def report(progress: float, message: str) -> None:
         if progress_callback:

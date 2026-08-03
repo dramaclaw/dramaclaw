@@ -57,7 +57,9 @@ def _font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def _fit(image: Image.Image, size: tuple[int, int], fill: str = "#111111") -> Image.Image:
+def _fit(
+    image: Image.Image, size: tuple[int, int], fill: str = "#111111"
+) -> Image.Image:
     target_w, target_h = size
     src = image.convert("RGB")
     canvas = Image.new("RGB", size, fill)
@@ -66,7 +68,9 @@ def _fit(image: Image.Image, size: tuple[int, int], fill: str = "#111111") -> Im
         (max(1, round(src.width * scale)), max(1, round(src.height * scale))),
         Image.Resampling.LANCZOS,
     )
-    canvas.paste(resized, ((target_w - resized.width) // 2, (target_h - resized.height) // 2))
+    canvas.paste(
+        resized, ((target_w - resized.width) // 2, (target_h - resized.height) // 2)
+    )
     return canvas
 
 
@@ -75,14 +79,20 @@ def _crop(image: Image.Image, x0: float, x1: float) -> Image.Image:
     return image.crop((round(width * x0), 0, round(width * x1), height))
 
 
-def make_contract_sheet(master_path: Path, reverse_path: Path, output_dir: Path) -> Path:
+def make_contract_sheet(
+    master_path: Path, reverse_path: Path, output_dir: Path
+) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     master = Image.open(master_path).convert("RGB")
     reverse = Image.open(reverse_path).convert("RGB")
     panels: list[tuple[str, Image.Image, str]] = [
         ("FULL MASTER / front-facing reference", master, "#5ac8fa"),
         ("FULL REVERSE / back-facing reference / seam center", reverse, "#ffcc00"),
-        ("MASTER LEFT SIDE -> pano x=0..25 / seam side", _crop(master, 0.0, 0.38), "#5ac8fa"),
+        (
+            "MASTER LEFT SIDE -> pano x=0..25 / seam side",
+            _crop(master, 0.0, 0.38),
+            "#5ac8fa",
+        ),
         ("MASTER CENTER / front wall", _crop(master, 0.31, 0.69), "#5ac8fa"),
         ("MASTER RIGHT SIDE -> pano x=25..50", _crop(master, 0.62, 1.0), "#5ac8fa"),
         ("REVERSE SCREEN-LEFT -> pano x=50..75", _crop(reverse, 0.0, 0.38), "#ffcc00"),
@@ -101,7 +111,10 @@ def make_contract_sheet(master_path: Path, reverse_path: Path, output_dir: Path)
     rows = 4
     canvas = Image.new(
         "RGB",
-        (cols * cell_w + (cols + 1) * gap, rows * (cell_h + label_h) + (rows + 1) * gap),
+        (
+            cols * cell_w + (cols + 1) * gap,
+            rows * (cell_h + label_h) + (rows + 1) * gap,
+        ),
         "#0e0f11",
     )
     draw = ImageDraw.Draw(canvas)
@@ -113,9 +126,16 @@ def make_contract_sheet(master_path: Path, reverse_path: Path, output_dir: Path)
         x = gap + col * (cell_w + gap)
         y = gap + row * (cell_h + label_h + gap)
         draw.rounded_rectangle(
-            (x - 3, y - 3, x + cell_w + 3, y + cell_h + label_h + 3), radius=8, fill="#1a1d22"
+            (x - 3, y - 3, x + cell_w + 3, y + cell_h + label_h + 3),
+            radius=8,
+            fill="#1a1d22",
         )
-        draw.text((x + 10, y + 12), label, fill=color, font=title_font if idx < 2 else label_font)
+        draw.text(
+            (x + 10, y + 12),
+            label,
+            fill=color,
+            font=title_font if idx < 2 else label_font,
+        )
         canvas.paste(_fit(image, (cell_w, cell_h)), (x, y + label_h))
 
     sheet_path = output_dir / "scene_spatial_contract_sheet.jpg"
@@ -144,13 +164,19 @@ def _list_overlap_prompt_lines(overlap_analysis: dict[str, Any] | None) -> list[
             lines.append(f"  overlap anchors / MERGE ONCE: {'; '.join(overlap_names)}.")
         if continuation_names:
             lines.append(f"  continuation zones: {'; '.join(continuation_names)}.")
-    do_not_duplicate = _names(overlap_analysis.get("do_not_duplicate"), include_scale=False)
+    do_not_duplicate = _names(
+        overlap_analysis.get("do_not_duplicate"), include_scale=False
+    )
     if do_not_duplicate:
-        lines.append(f"- GLOBAL DO NOT DUPLICATE / WARNINGS ONLY: {'; '.join(do_not_duplicate)}.")
+        lines.append(
+            f"- GLOBAL DO NOT DUPLICATE / WARNINGS ONLY: {'; '.join(do_not_duplicate)}."
+        )
     return lines
 
 
-def build_prompt(scene_name: str, overlap_analysis: dict[str, Any] | None = None) -> str:
+def build_prompt(
+    scene_name: str, overlap_analysis: dict[str, Any] | None = None
+) -> str:
     overlap_block = "\n".join(_list_overlap_prompt_lines(overlap_analysis))
     return f"""
 You are a spatial set-continuity analyst for a 360 panorama pipeline.
@@ -272,7 +298,9 @@ async def ask_openrouter(
     model: str,
     max_tokens: int,
 ) -> str:
-    data_url = "data:image/jpeg;base64," + base64.b64encode(image_path.read_bytes()).decode("ascii")
+    data_url = "data:image/jpeg;base64," + base64.b64encode(
+        image_path.read_bytes()
+    ).decode("ascii")
     payload = {
         "model": model,
         "temperature": 0.0,
@@ -344,12 +372,16 @@ def load_overlap_analysis(
         analysis_path = repo_path(raw_arg)
     else:
         analysis_path = (
-            master_path.parent / "overlap_continuation_test" / "overlap_continuation_analysis.json"
+            master_path.parent
+            / "overlap_continuation_test"
+            / "overlap_continuation_analysis.json"
         )
     if not analysis_path.exists():
         return None, None
     if not explicit:
-        latest_input_mtime = max(master_path.stat().st_mtime, reverse_path.stat().st_mtime)
+        latest_input_mtime = max(
+            master_path.stat().st_mtime, reverse_path.stat().st_mtime
+        )
         if analysis_path.stat().st_mtime < latest_input_mtime:
             return None, None
     try:
@@ -473,7 +505,11 @@ _DIRECTION_LOCK_NAME_TOKENS = {
 def _tokenize_name(value: Any) -> set[str]:
     text = str(value or "").lower()
     raw_tokens = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", text)
-    return {token for token in raw_tokens if len(token) > 1 and token not in _TOKEN_STOPWORDS}
+    return {
+        token
+        for token in raw_tokens
+        if len(token) > 1 and token not in _TOKEN_STOPWORDS
+    }
 
 
 def _is_name_match(candidate: str, target: str) -> bool:
@@ -576,7 +612,9 @@ def _find_representative_and_remove(
             continue
         remaining: list[Any] = []
         for item in preserved:
-            item_name = str(item.get("name") or "") if isinstance(item, dict) else str(item)
+            item_name = (
+                str(item.get("name") or "") if isinstance(item, dict) else str(item)
+            )
             if _is_name_match(item_name, overlap_name):
                 if representative is None and isinstance(item, dict):
                     representative = dict(item)
@@ -631,7 +669,9 @@ def _clean_shared_overlap(
     kept: list[Any] = []
     removed_names: list[str] = []
     for item in shared:
-        name = str(item.get("name") or "") if isinstance(item, dict) else str(item or "")
+        name = (
+            str(item.get("name") or "") if isinstance(item, dict) else str(item or "")
+        )
         if any(_is_name_match(name, allowed) for allowed in allowed_names):
             kept.append(item)
         elif name:
@@ -665,7 +705,9 @@ def apply_overlap_analysis(
     if not isinstance(joins, list):
         joins = []
         contract["joins"] = joins
-    join_by_id = {str(join.get("id") or ""): join for join in joins if isinstance(join, dict)}
+    join_by_id = {
+        str(join.get("id") or ""): join for join in joins if isinstance(join, dict)
+    }
 
     pair_to_wall = {
         "left_side_join": ("left", ("front", "back")),
@@ -683,7 +725,9 @@ def apply_overlap_analysis(
         if join is None:
             join = {
                 "id": pair_id,
-                "panorama_position": "x=0%/100% seam" if pair_id == "left_side_join" else "x=50%",
+                "panorama_position": (
+                    "x=0%/100% seam" if pair_id == "left_side_join" else "x=50%"
+                ),
                 "source_pair": (
                     "MASTER_LEFT + REVERSE_RIGHT"
                     if pair_id == "left_side_join"
@@ -697,12 +741,16 @@ def apply_overlap_analysis(
             join_by_id[pair_id] = join
 
         overlap_names = _extract_pair_names(pair.get("overlap_items"))
-        merge_anchor_names = [name for name in overlap_names if _is_side_merge_lock_anchor(name)]
+        merge_anchor_names = [
+            name for name in overlap_names if _is_side_merge_lock_anchor(name)
+        ]
         non_anchor_overlap_names = [
             name for name in overlap_names if not _is_side_merge_lock_anchor(name)
         ]
         continuation_names = _extract_pair_names(pair.get("continuation_items"))
-        existing_continuation = _names(join.get("continue_smoothly"), include_scale=False)
+        existing_continuation = _names(
+            join.get("continue_smoothly"), include_scale=False
+        )
         join["merge_once"] = _unique_strings(merge_anchor_names)
         join["do_not_duplicate"] = _unique_strings(merge_anchor_names)
         join["continue_smoothly"] = _unique_strings(
@@ -816,7 +864,10 @@ def add_direction_exclusion_locks(contract: dict[str, Any]) -> None:
         locks = []
         contract["direction_exclusion_locks"] = locks
     existing = {
-        (str(item.get("name") or "").lower(), str(item.get("required_direction") or "").lower())
+        (
+            str(item.get("name") or "").lower(),
+            str(item.get("required_direction") or "").lower(),
+        )
         for item in locks
         if isinstance(item, dict)
     }
@@ -986,7 +1037,10 @@ def synthesize_prompt_insert(contract: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def run(args: argparse.Namespace) -> None:
+async def run(args: argparse.Namespace, *, egress_context=None) -> None:
+    from novelvideo.task_backend.subprocesses import require_direct_model_egress_allowed
+
+    require_direct_model_egress_allowed(egress_context)
     load_env()
     master = repo_path(args.master)
     reverse = repo_path(args.reverse)
@@ -1004,7 +1058,9 @@ async def run(args: argparse.Namespace) -> None:
 
     sheet_path = make_contract_sheet(master, reverse, output_dir)
     prompt = build_prompt(args.scene_name, overlap_analysis=overlap_analysis)
-    (output_dir / "scene_spatial_contract.prompt.txt").write_text(prompt, encoding="utf-8")
+    (output_dir / "scene_spatial_contract.prompt.txt").write_text(
+        prompt, encoding="utf-8"
+    )
 
     api_key = args.api_key or os.environ.get("OPENROUTER_API_KEY") or ""
     if not api_key:
@@ -1016,7 +1072,9 @@ async def run(args: argparse.Namespace) -> None:
         model=args.model,
         max_tokens=max(4000, int(args.max_tokens)),
     )
-    (output_dir / "scene_spatial_contract.raw_response.txt").write_text(raw_text, encoding="utf-8")
+    (output_dir / "scene_spatial_contract.raw_response.txt").write_text(
+        raw_text, encoding="utf-8"
+    )
     contract = parse_json(raw_text)
     contract["schema_version"] = SPATIAL_CONTRACT_SCHEMA_VERSION
     contract = apply_overlap_analysis(contract, overlap_analysis)
@@ -1031,9 +1089,14 @@ async def run(args: argparse.Namespace) -> None:
         "model": args.model,
     }
     contract_path = output_dir / "scene_spatial_contract.json"
-    contract_path.write_text(json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8")
+    contract_path.write_text(
+        json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(
-        json.dumps({"contract": str(contract_path), "sheet": str(sheet_path)}, ensure_ascii=False)
+        json.dumps(
+            {"contract": str(contract_path), "sheet": str(sheet_path)},
+            ensure_ascii=False,
+        )
     )
 
 

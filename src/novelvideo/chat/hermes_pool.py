@@ -28,6 +28,10 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from novelvideo.chat.hermes_sdk import HermesSdkClient, HermesSdkThread
+from novelvideo.chat.hermes_egress import (
+    HermesLaunchAuthorization,
+    build_hermes_child_env,
+)
 from novelvideo.chat.hermes_workspace import (
     effective_gateway_credentials,
     effective_gateway_fingerprint,
@@ -118,6 +122,7 @@ class _WorkerSlot:
     state: str = "active"
     active_turns: int = 0
     authz_generation: int = 0
+    one_shot: bool = False
 
 
 class _ManagedHermesThread:
@@ -198,6 +203,7 @@ class HermesPool:
         model: str | None = None,
         scope_kind: str = "home",
         project_id: str | None = None,
+        authorization: HermesLaunchAuthorization | None = None,
     ) -> HermesSdkThread:
         """Lazily create / return the per-user hermes thread.
 
@@ -207,6 +213,13 @@ class HermesPool:
         authz_generation = await self._authz_generation(username)
         async with self._lock:
             slot = self._slots.get(username)
+            if slot is not None and authorization is not None:
+                slot.state = "draining"
+                if slot.active_turns or not await self._close_slot(slot, strict=True):
+                    raise HermesDrainingError()
+                slot.state = "closed"
+                self._slots.pop(username, None)
+                slot = None
             if slot is not None:
                 if authz_generation > slot.authz_generation:
                     slot.state = "draining"
@@ -261,6 +274,7 @@ class HermesPool:
                 model=model,
                 scope_kind=scope_kind,
                 project_id=project_id,
+                authorization=authorization,
             )
             slot.authz_generation = authz_generation
             self._slots[username] = slot
@@ -287,6 +301,8 @@ class HermesPool:
         async with self._lock:
             if slot.active_turns > 0:
                 slot.active_turns -= 1
+            if slot.one_shot:
+                slot.state = "draining"
             if slot.state == "draining" and slot.active_turns == 0:
                 if await self._close_slot(slot, strict=True):
                     slot.state = "closed"
@@ -301,6 +317,7 @@ class HermesPool:
         scope_kind: str,
         project_id: str | None,
         resume_session_id: str | None = None,
+        authorization: HermesLaunchAuthorization | None = None,
     ) -> _WorkerSlot:
         cli_path = _hermes_cli_path()
         if not cli_path.exists():
@@ -321,7 +338,12 @@ class HermesPool:
         )
         project_env = await self._project_env(username, project_id)
         env = self._build_env(
-            home, username, token, project_id=project_id, project_env=project_env
+            home,
+            username,
+            token,
+            project_id=project_id,
+            project_env=project_env,
+            authorization=authorization,
         )
         client = HermesSdkClient(
             cli_path=cli_path,
@@ -353,7 +375,10 @@ class HermesPool:
             model=model,
             scope_kind=scope_kind,
             project_id=project_id,
-            gateway_fingerprint=effective_gateway_fingerprint(),
+            gateway_fingerprint=(
+                "" if authorization is not None else effective_gateway_fingerprint()
+            ),
+            one_shot=authorization is not None,
         )
 
     def _token_needs_renewal(self, slot: _WorkerSlot) -> bool:
@@ -484,8 +509,29 @@ class HermesPool:
         *,
         project_id: str | None,
         project_env: dict[str, str] | None = None,
+        authorization: HermesLaunchAuthorization | None = None,
     ) -> dict[str, str]:
         """Build the strict environment passed only to this Hermes worker."""
+        if authorization is not None:
+            agent_token_env = {
+                "DRAMACLAW_AGENT_TOKEN": token.value,
+                "DRAMACLAW_AGENT_TOKEN_TYPE": "Bearer",
+                "DRAMACLAW_AGENT_TOKEN_SESSION_ID": token.session_id,
+                "DRAMACLAW_AGENT_TOKEN_EXPIRES_AT": str(token.exp),
+                "SUPERTALE_AGENT_TOKEN": token.value,
+                "SUPERTALE_AGENT_TOKEN_TYPE": "Bearer",
+                "SUPERTALE_AGENT_TOKEN_SESSION_ID": token.session_id,
+                "SUPERTALE_AGENT_TOKEN_EXPIRES_AT": str(token.exp),
+            }
+            return build_hermes_child_env(
+                home=home,
+                username=username,
+                api_url=self._api_url,
+                agent_token_env=agent_token_env,
+                project_id=project_id,
+                project_env=project_env,
+                authorization=authorization,
+            )
         env = {
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "LANG": os.environ.get("LANG", "C.UTF-8"),
