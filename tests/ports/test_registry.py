@@ -1,4 +1,6 @@
+import base64
 import importlib
+import json
 
 import pytest
 
@@ -34,7 +36,9 @@ def test_get_port_fails_closed_when_unregistered() -> None:
     assert "ensure_bootstrap" in str(exc.value)
 
 
-@pytest.mark.parametrize("name", ["model_credentials", "authz", "egress"])
+@pytest.mark.parametrize(
+    "name", ["model_credentials", "authz", "egress", "egress_operations"]
+)
 def test_org_runtime_ports_fail_closed_when_unregistered(name) -> None:
     registry = _registry()
 
@@ -44,10 +48,31 @@ def test_org_runtime_ports_fail_closed_when_unregistered(name) -> None:
     assert exc.value.name == name
 
 
+def test_egress_operation_accessor_uses_the_stable_registry_name() -> None:
+    from novelvideo.ports import get_egress_operation_port
+
+    registry = _registry()
+    implementation = object()
+    registry.register_port("egress_operations", implementation)
+
+    assert get_egress_operation_port() is implementation
+
+
 def test_ensure_bootstrap_registers_local_ports_for_explicit_ce(monkeypatch) -> None:
     registry = _registry()
     monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.setenv("ST_TASK_ENVELOPE_ACTIVE_KEY_ID", "registry-test-v1")
+    monkeypatch.setenv(
+        "ST_TASK_ENVELOPE_KEYRING_B64_JSON",
+        json.dumps(
+            {
+                "registry-test-v1": base64.b64encode(b"registry-test-key" * 2).decode(
+                    "ascii"
+                )
+            }
+        ),
+    )
 
     registry.ensure_bootstrap()
 
@@ -91,7 +116,9 @@ def test_ensure_bootstrap_dsn_without_ce_uses_ee(monkeypatch) -> None:
 
             return register
 
-    monkeypatch.setattr(registry, "entry_points", lambda *, group: [EntryPoint()], raising=False)
+    monkeypatch.setattr(
+        registry, "entry_points", lambda *, group: [EntryPoint()], raising=False
+    )
 
     registry.ensure_bootstrap()
 
@@ -100,7 +127,9 @@ def test_ensure_bootstrap_dsn_without_ce_uses_ee(monkeypatch) -> None:
         assert registry.get_port(name) is not None
 
 
-def test_ensure_bootstrap_reports_all_missing_ee_ports_when_entry_points_empty(monkeypatch) -> None:
+def test_ensure_bootstrap_reports_all_missing_ee_ports_when_entry_points_empty(
+    monkeypatch,
+) -> None:
     registry = _registry()
     monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://example")
     monkeypatch.delenv("ST_EDITION", raising=False)
@@ -134,14 +163,22 @@ def test_ensure_bootstrap_reports_partially_registered_ee_ports(monkeypatch) -> 
         def load(self):
             return lambda: registry.register_port("lifecycle", object())
 
-    monkeypatch.setattr(registry, "entry_points", lambda *, group: [EntryPoint()], raising=False)
+    monkeypatch.setattr(
+        registry, "entry_points", lambda *, group: [EntryPoint()], raising=False
+    )
 
     with pytest.raises(RuntimeError) as exc:
         registry.ensure_bootstrap()
 
     message = str(exc.value)
     assert "lifecycle" not in message
-    for name in ("auth", "auth_session", "project_registry", "project_access", "usage_meter"):
+    for name in (
+        "auth",
+        "auth_session",
+        "project_registry",
+        "project_access",
+        "usage_meter",
+    ):
         assert name in message
 
 
@@ -159,7 +196,9 @@ def test_ensure_bootstrap_requires_provider_instrumentation_for_ee(monkeypatch) 
 
             return register
 
-    monkeypatch.setattr(registry, "entry_points", lambda *, group: [EntryPoint()], raising=False)
+    monkeypatch.setattr(
+        registry, "entry_points", lambda *, group: [EntryPoint()], raising=False
+    )
 
     with pytest.raises(RuntimeError) as exc:
         registry.ensure_bootstrap()
@@ -181,7 +220,9 @@ def test_ensure_bootstrap_requires_task_backend_ports_for_ee(monkeypatch) -> Non
 
             return register
 
-    monkeypatch.setattr(registry, "entry_points", lambda *, group: [EntryPoint()], raising=False)
+    monkeypatch.setattr(
+        registry, "entry_points", lambda *, group: [EntryPoint()], raising=False
+    )
 
     with pytest.raises(RuntimeError) as exc:
         registry.ensure_bootstrap()
@@ -205,7 +246,9 @@ def test_ensure_bootstrap_requires_audit_sink_for_ee(monkeypatch) -> None:
 
             return register
 
-    monkeypatch.setattr(registry, "entry_points", lambda *, group: [EntryPoint()], raising=False)
+    monkeypatch.setattr(
+        registry, "entry_points", lambda *, group: [EntryPoint()], raising=False
+    )
 
     with pytest.raises(RuntimeError) as exc:
         registry.ensure_bootstrap()
@@ -227,7 +270,9 @@ def test_ensure_bootstrap_requires_credit_quote_for_ee(monkeypatch) -> None:
 
             return register
 
-    monkeypatch.setattr(registry, "entry_points", lambda *, group: [EntryPoint()], raising=False)
+    monkeypatch.setattr(
+        registry, "entry_points", lambda *, group: [EntryPoint()], raising=False
+    )
 
     with pytest.raises(RuntimeError) as exc:
         registry.ensure_bootstrap()
@@ -235,7 +280,9 @@ def test_ensure_bootstrap_requires_credit_quote_for_ee(monkeypatch) -> None:
     assert "credit_quote" in str(exc.value)
 
 
-def test_ensure_bootstrap_requires_explicit_ce_without_control_plane(monkeypatch) -> None:
+def test_ensure_bootstrap_requires_explicit_ce_without_control_plane(
+    monkeypatch,
+) -> None:
     registry = _registry()
     monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     monkeypatch.delenv("ST_EDITION", raising=False)

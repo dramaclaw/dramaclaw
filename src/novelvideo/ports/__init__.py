@@ -88,6 +88,10 @@ def get_egress_port():
     return get_port("egress")
 
 
+def get_egress_operation_port():
+    return get_port("egress_operations")
+
+
 __all__ = [
     "get_audit_sink",
     "get_auth_port",
@@ -95,6 +99,7 @@ __all__ = [
     "get_authz_port",
     "get_cancellation_store",
     "get_credit_quote",
+    "get_egress_operation_port",
     "get_egress_port",
     "get_lifecycle_port",
     "get_model_credentials",
