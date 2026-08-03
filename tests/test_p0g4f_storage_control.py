@@ -704,6 +704,9 @@ def test_c1_eg22_org_deny_applies_at_model_gateway_route_boundary(monkeypatch):
     from novelvideo.api.routes import model_gateway
     from novelvideo.newapi_provisioner import ServiceControlEgressDenied
 
+    monkeypatch.setattr(
+        model_gateway, "require_legacy_local_service_operation", lambda: None
+    )
     monkeypatch.setattr(model_gateway, "is_ce_effective", lambda: False)
     monkeypatch.setattr(
         model_gateway,
@@ -934,6 +937,9 @@ def test_c1_eg23_files_sync_entry_denies_request_context_before_env_or_process(
     )
 
     monkeypatch.setattr(
+        files_sync, "require_legacy_local_service_operation", lambda: None
+    )
+    monkeypatch.setattr(
         files_sync.subprocess,
         "run",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
@@ -951,7 +957,7 @@ def test_c1_eg23_files_sync_entry_denies_request_context_before_env_or_process(
         files_sync.main(execution_context=context)
 
 
-def test_c1_eg23_db_daily_entry_denies_request_context_before_storage():
+def test_c1_eg23_db_daily_entry_denies_request_context_before_storage(monkeypatch):
     from novelvideo.backup import db_daily
     from novelvideo.backup.files_sync import (
         BackupExecutionContext,
@@ -966,6 +972,9 @@ def test_c1_eg23_db_daily_entry_denies_request_context_before_storage():
         request_context=_org_context(),
     )
 
+    monkeypatch.setattr(
+        db_daily, "require_legacy_local_service_operation", lambda: None
+    )
     with pytest.raises(BackupServiceEgressDenied):
         db_daily.main(execution_context=context)
 
