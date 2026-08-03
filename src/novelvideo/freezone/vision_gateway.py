@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from novelvideo.official_defaults import DEFAULT_FREEZONE_VISION_MODEL
 
@@ -15,6 +16,20 @@ FREEZONE_MARK_TIMEOUT_SECONDS = 90.0
 class VisionInput:
     data: bytes
     media_type: str = "image/png"
+
+
+@dataclass(frozen=True, slots=True)
+class VisionTransportContext:
+    """A request-scoped PydanticAI model and its logical model name."""
+
+    model_name: str
+    model: Any = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.model_name) is not str or not self.model_name.strip():
+            raise ValueError("model_name is required")
+        if self.model is None:
+            raise ValueError("model is required")
 
 
 def image_media_type(path: str) -> str:
@@ -49,6 +64,7 @@ async def call_freezone_vision_model(
     images: list[VisionInput],
     timeout_seconds: float,
     model_override: str | None = None,
+    transport_context: VisionTransportContext | None = None,
 ) -> tuple[str, str]:
     """Run a PydanticAI vision Agent through the effective NewAPI gateway."""
     if not images:
@@ -56,16 +72,30 @@ async def call_freezone_vision_model(
 
     from pydantic_ai import Agent, BinaryContent
 
-    from novelvideo.config import get_newapi_text_pydantic_model
+    if (
+        transport_context is not None
+        and type(transport_context) is not VisionTransportContext
+    ):
+        raise TypeError("transport_context must be a VisionTransportContext")
 
-    model = resolve_freezone_vision_model(model_override)
-    agent = Agent(
-        get_newapi_text_pydantic_model(
+    if transport_context is None:
+        from novelvideo.config import get_newapi_text_pydantic_model
+
+        model = resolve_freezone_vision_model(model_override)
+        transport_model = get_newapi_text_pydantic_model(
             "FREEZONE_VISION_MODEL",
             DEFAULT_FREEZONE_VISION_MODEL,
             model_name_override=model,
             timeout_seconds_override=timeout_seconds,
-        ),
+        )
+    else:
+        clean_override = str(model_override or "").strip()
+        if clean_override and clean_override != transport_context.model_name:
+            raise ValueError("model_override must match the explicit transport model")
+        model = transport_context.model_name
+        transport_model = transport_context.model
+    agent = Agent(
+        transport_model,
         output_type=str,
         name="Freezone Vision Analyzer",
     )

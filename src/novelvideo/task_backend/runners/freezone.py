@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from pathlib import Path
 from typing import Any
 
+from novelvideo.egress_context import (
+    TRUSTED_EGRESS_CONTEXT_KEY,
+    TrustedEgressContext,
+    TrustedRunnerEnvelope,
+)
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
     await_envelope_with_cancel_watch,
     await_with_cancel_watch as _await_with_cancel_watch,
 )
 from novelvideo.task_backend.registry import register_project_task_runner
+from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
 
@@ -29,6 +36,42 @@ def _run_cancellable(
             task_type=task_type or str(envelope.get("task_type") or ""),
         )
     )
+
+
+def _extract_trusted_egress_context(
+    envelope: dict[str, Any],
+) -> TrustedEgressContext | None:
+    if type(envelope) is TrustedRunnerEnvelope:
+        context = envelope.get(TRUSTED_EGRESS_CONTEXT_KEY)
+        if type(context) is not TrustedEgressContext:
+            raise InvalidTaskEnvelope() from None
+        return context
+    if type(envelope) is not dict or TRUSTED_EGRESS_CONTEXT_KEY in envelope:
+        raise InvalidTaskEnvelope() from None
+    return None
+
+
+def _call_freezone_leaf(
+    envelope: dict[str, Any],
+    leaf,
+    /,
+    **kwargs: Any,
+):
+    context = _extract_trusted_egress_context(envelope)
+    try:
+        parameters = inspect.signature(leaf).parameters.values()
+        accepts_context = any(
+            parameter.name == "egress_context"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+    except (TypeError, ValueError):
+        accepts_context = False
+    if accepts_context:
+        return leaf(egress_context=context, **kwargs)
+    if context is not None and context.is_organization:
+        raise InvalidTaskEnvelope() from None
+    return leaf(**kwargs)
 
 
 def _update(
@@ -116,7 +159,9 @@ def _history_model_mode_extra(payload: dict) -> dict:
     return extra
 
 
-async def _run_freezone_gen_async(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+async def _run_freezone_gen_async(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     from novelvideo.api.deps import make_static_url_for_context
     from novelvideo.freezone.jobs import ensure_freezone_dirs, run_freezone_gen
 
@@ -127,7 +172,9 @@ async def _run_freezone_gen_async(envelope: dict[str, Any], ctx: ProjectContext)
     ensure_freezone_dirs(project_dir)
     _update(ctx, task_type, job_id, 0.1, "调用图像生成器...")
     out_path = await _await_with_cancel_watch(
-        run_freezone_gen(
+        _call_freezone_leaf(
+            envelope,
+            run_freezone_gen,
             project_dir=project_dir,
             job_id=job_id,
             prompt=str(payload.get("prompt") or ""),
@@ -182,7 +229,9 @@ async def _run_freezone_edit_async(
     ensure_freezone_dirs(project_dir)
     _update(ctx, task_type, job_id, 0.1, "调用图像编辑器...")
     out_path = await _await_with_cancel_watch(
-        run_freezone_edit(
+        _call_freezone_leaf(
+            envelope,
+            run_freezone_edit,
             project_dir=project_dir,
             job_id=job_id,
             prompt=str(payload.get("prompt") or ""),
@@ -235,7 +284,9 @@ async def _run_freezone_mask_edit_async(
     ensure_freezone_dirs(project_dir)
     provider = str(payload.get("provider") or "newapi")
     _update(ctx, "freezone_mask_edit", job_id, 0.1, f"调用 {provider} 图片擦除...")
-    out_path = await run_freezone_mask_edit(
+    out_path = await _call_freezone_leaf(
+        envelope,
+        run_freezone_mask_edit,
         project_dir=project_dir,
         job_id=job_id,
         base_path=str(payload["base_path"]),
@@ -260,14 +311,19 @@ async def _run_freezone_extract_async(
     ctx: ProjectContext,
 ) -> dict[str, Any]:
     from novelvideo.api.deps import make_static_url_for_context
-    from novelvideo.freezone.jobs import ensure_freezone_dirs, run_freezone_extract_frames
+    from novelvideo.freezone.jobs import (
+        ensure_freezone_dirs,
+        run_freezone_extract_frames,
+    )
 
     payload = envelope.get("payload") or {}
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, "freezone_extract", job_id, 0.1, "ffmpeg 抽帧中...")
-    frame_paths = await run_freezone_extract_frames(
+    frame_paths = await _call_freezone_leaf(
+        envelope,
+        run_freezone_extract_frames,
         project_dir=project_dir,
         job_id=job_id,
         video_path=Path(str(payload["video_path"])),
@@ -290,15 +346,22 @@ async def _run_freezone_analyze_async(
     ctx: ProjectContext,
 ) -> dict[str, Any]:
     from novelvideo.api.deps import make_static_url_for_context
-    from novelvideo.freezone.jobs import ensure_freezone_dirs, run_freezone_analyze_shots
+    from novelvideo.freezone.jobs import (
+        ensure_freezone_dirs,
+        run_freezone_analyze_shots,
+    )
 
     payload = envelope.get("payload") or {}
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     frame_paths = [str(path) for path in payload.get("frame_paths") or []]
-    _update(ctx, "freezone_analyze", job_id, 0.1, f"Vision 分析 {len(frame_paths)} 帧...")
-    result = await run_freezone_analyze_shots(
+    _update(
+        ctx, "freezone_analyze", job_id, 0.1, f"Vision 分析 {len(frame_paths)} 帧..."
+    )
+    result = await _call_freezone_leaf(
+        envelope,
+        run_freezone_analyze_shots,
         project_dir=project_dir,
         job_id=job_id,
         frame_paths=frame_paths,
@@ -339,7 +402,9 @@ async def _run_freezone_video_story_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, "freezone_video_story", job_id, 0.1, "ffmpeg 抽取关键帧...")
-    frame_paths = await run_freezone_extract_frames(
+    frame_paths = await _call_freezone_leaf(
+        envelope,
+        run_freezone_extract_frames,
         project_dir=project_dir,
         job_id=job_id,
         video_path=Path(str(payload["video_path"])),
@@ -357,7 +422,9 @@ async def _run_freezone_video_story_async(
         0.55,
         f"Vision 解析 {len(frame_paths)} 帧为视频故事...",
     )
-    result = await run_freezone_analyze_shots(
+    result = await _call_freezone_leaf(
+        envelope,
+        run_freezone_analyze_shots,
         project_dir=project_dir,
         job_id=job_id,
         frame_paths=[str(path) for path in frame_paths],
@@ -393,13 +460,17 @@ def run_freezone_edit(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str
 def run_mainline_sketch_from_context(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
-    return _run_cancellable(envelope, _run_mainline_sketch_from_context_async(envelope, ctx))
+    return _run_cancellable(
+        envelope, _run_mainline_sketch_from_context_async(envelope, ctx)
+    )
 
 
 def run_mainline_frame_from_context(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
-    return _run_cancellable(envelope, _run_mainline_frame_from_context_async(envelope, ctx))
+    return _run_cancellable(
+        envelope, _run_mainline_frame_from_context_async(envelope, ctx)
+    )
 
 
 async def _run_mainline_sketch_from_context_async(
@@ -468,7 +539,9 @@ async def _run_mainline_frame_from_context_async(
     result = await _run_selected_regen_async(envelope, ctx, is_sketch=False)
     # Single-beat skill run (1x1): one grid → one rel path under project_dir.
     grid_paths = result.get("grid_paths") or {}
-    rel = grid_paths.get(beat_num) or (next(iter(grid_paths.values())) if grid_paths else "")
+    rel = grid_paths.get(beat_num) or (
+        next(iter(grid_paths.values())) if grid_paths else ""
+    )
     if not rel:
         grid_results = result.get("grid_results") or []
         rel = str(grid_results[0].get("rel_path") or "") if grid_results else ""
@@ -507,7 +580,9 @@ async def _run_mainline_director_control_sketch_async(
     ctx: ProjectContext,
 ) -> dict[str, Any]:
     from novelvideo.api.deps import make_static_url_for_context
-    from novelvideo.director_world.control_frame_to_sketch import convert_control_frame_to_sketch
+    from novelvideo.director_world.control_frame_to_sketch import (
+        convert_control_frame_to_sketch,
+    )
     from novelvideo.freezone.paths import output_path_for_job
 
     payload = envelope.get("payload") or {}
@@ -530,7 +605,9 @@ async def _run_mainline_director_control_sketch_async(
         episode=episode,
     )
     result = await _await_with_cancel_watch(
-        convert_control_frame_to_sketch(
+        _call_freezone_leaf(
+            envelope,
+            convert_control_frame_to_sketch,
             user=ctx.owner_username,
             project=ctx.project_name,
             episode=episode,
@@ -581,22 +658,32 @@ async def _run_mainline_director_control_sketch_async(
 def run_mainline_director_control_sketch(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
-    return _run_cancellable(envelope, _run_mainline_director_control_sketch_async(envelope, ctx))
+    return _run_cancellable(
+        envelope, _run_mainline_director_control_sketch_async(envelope, ctx)
+    )
 
 
-def run_freezone_mask_edit(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_mask_edit(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_mask_edit_async(envelope, ctx))
 
 
-def run_freezone_extract(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_extract(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_extract_async(envelope, ctx))
 
 
-def run_freezone_analyze(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_analyze(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_analyze_async(envelope, ctx))
 
 
-def run_freezone_video_story(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_video_story(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_video_story_async(envelope, ctx))
 
 
@@ -612,7 +699,9 @@ async def _run_freezone_video_erase_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, "freezone_video_erase", job_id, 0.1, "开始视频擦除处理...")
-    output_path, meta = await run_freezone_video_erase(
+    output_path, meta = await _call_freezone_leaf(
+        envelope,
+        run_freezone_video_erase,
         project_dir=project_dir,
         job_id=job_id,
         source_path=str(payload["source_path"]),
@@ -637,14 +726,19 @@ async def _run_freezone_video_upscale_async(
     ctx: ProjectContext,
 ) -> dict[str, Any]:
     from novelvideo.api.deps import make_static_url_for_context
-    from novelvideo.freezone.jobs import ensure_freezone_dirs, run_freezone_video_upscale
+    from novelvideo.freezone.jobs import (
+        ensure_freezone_dirs,
+        run_freezone_video_upscale,
+    )
 
     payload = envelope.get("payload") or {}
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, "freezone_video_upscale", job_id, 0.1, "开始视频高清处理...")
-    output_path, meta = await run_freezone_video_upscale(
+    output_path, meta = await _call_freezone_leaf(
+        envelope,
+        run_freezone_video_upscale,
         project_dir=project_dir,
         job_id=job_id,
         source_path=str(payload["source_path"]),
@@ -667,14 +761,19 @@ async def _run_freezone_audio_separate_async(
     ctx: ProjectContext,
 ) -> dict[str, Any]:
     from novelvideo.api.deps import make_static_url_for_context
-    from novelvideo.freezone.jobs import ensure_freezone_dirs, run_freezone_audio_separate
+    from novelvideo.freezone.jobs import (
+        ensure_freezone_dirs,
+        run_freezone_audio_separate,
+    )
 
     payload = envelope.get("payload") or {}
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, "freezone_audio_separate", job_id, 0.1, "开始音视频分离...")
-    outputs = await run_freezone_audio_separate(
+    outputs = await _call_freezone_leaf(
+        envelope,
+        run_freezone_audio_separate,
         project_dir=project_dir,
         job_id=job_id,
         source_path=str(payload["source_path"]),
@@ -682,11 +781,15 @@ async def _run_freezone_audio_separate_async(
     audio_path = outputs.get("audio_path")
     mute_video_path = outputs.get("mute_video_path")
     audio_rel = audio_path.relative_to(project_dir).as_posix() if audio_path else ""
-    mute_rel = mute_video_path.relative_to(project_dir).as_posix() if mute_video_path else ""
+    mute_rel = (
+        mute_video_path.relative_to(project_dir).as_posix() if mute_video_path else ""
+    )
     response = {
         "job_id": job_id,
         "audio_url": make_static_url_for_context(ctx, audio_rel) if audio_rel else None,
-        "mute_video_url": make_static_url_for_context(ctx, mute_rel) if mute_rel else None,
+        "mute_video_url": (
+            make_static_url_for_context(ctx, mute_rel) if mute_rel else None
+        ),
     }
     target_episode = payload.get("target_episode")
     target_beat = payload.get("target_beat")
@@ -705,14 +808,19 @@ async def _run_freezone_video_compose_async(
     ctx: ProjectContext,
 ) -> dict[str, Any]:
     from novelvideo.api.deps import make_static_url_for_context
-    from novelvideo.freezone.jobs import ensure_freezone_dirs, run_freezone_video_compose
+    from novelvideo.freezone.jobs import (
+        ensure_freezone_dirs,
+        run_freezone_video_compose,
+    )
 
     payload = envelope.get("payload") or {}
     job_id = str(payload["job_id"])
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, "freezone_video_compose", job_id, 0.1, "开始合成视频时间线...")
-    output_path = await run_freezone_video_compose(
+    output_path = await _call_freezone_leaf(
+        envelope,
+        run_freezone_video_compose,
         project_dir=project_dir,
         job_id=job_id,
         title=str(payload.get("title") or ""),
@@ -732,19 +840,27 @@ async def _run_freezone_video_compose_async(
     }
 
 
-def run_freezone_video_erase(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_video_erase(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_video_erase_async(envelope, ctx))
 
 
-def run_freezone_video_upscale(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_video_upscale(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_video_upscale_async(envelope, ctx))
 
 
-def run_freezone_audio_separate(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_audio_separate(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_audio_separate_async(envelope, ctx))
 
 
-def run_freezone_video_compose(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_video_compose(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_video_compose_async(envelope, ctx))
 
 
@@ -763,7 +879,9 @@ async def _run_freezone_text_translate_async(
     ensure_freezone_dirs(project_dir)
     node_type = str(payload.get("node_type") or "generic")
     _update(ctx, "freezone_text_translate", job_id, 0.1, "开始翻译文本...")
-    translated_text, source_language, target_language = await translate_freezone_text(
+    translated_text, source_language, target_language = await _call_freezone_leaf(
+        envelope,
+        translate_freezone_text,
         text=str(payload.get("text") or ""),
         node_type=node_type,
     )
@@ -807,7 +925,10 @@ async def _run_freezone_story_script_async(
     ctx: ProjectContext,
 ) -> dict[str, Any]:
     from novelvideo.api.deps import make_static_url_for_context
-    from novelvideo.freezone.jobs import ensure_freezone_dirs, run_freezone_extract_frames
+    from novelvideo.freezone.jobs import (
+        ensure_freezone_dirs,
+        run_freezone_extract_frames,
+    )
     from novelvideo.freezone.paths import outputs_dir
     from novelvideo.freezone.text_node import (
         bind_story_script_assets,
@@ -823,7 +944,9 @@ async def _run_freezone_story_script_async(
     source_text = str(payload.get("source_text") or "")
     prompt = str(payload.get("prompt") or "")
     character_refs = list(payload.get("character_refs") or [])
-    character_image_paths = [str(path) for path in payload.get("character_image_paths") or []]
+    character_image_paths = [
+        str(path) for path in payload.get("character_image_paths") or []
+    ]
     video_path = str(payload.get("video_path") or "")
     duration_sec = payload.get("duration_sec")
 
@@ -831,7 +954,9 @@ async def _run_freezone_story_script_async(
     frame_urls: list[str] = []
     if video_path:
         _update(ctx, "freezone_story_script", job_id, 0.1, "ffmpeg 抽取关键帧...")
-        frame_paths = await run_freezone_extract_frames(
+        frame_paths = await _call_freezone_leaf(
+            envelope,
+            run_freezone_extract_frames,
             project_dir=project_dir,
             job_id=job_id,
             video_path=Path(video_path),
@@ -855,7 +980,9 @@ async def _run_freezone_story_script_async(
                 else "视觉模型读取角色参考图生成故事脚本..."
             ),
         )
-        data = await generate_freezone_story_script_with_vision(
+        data = await _call_freezone_leaf(
+            envelope,
+            generate_freezone_story_script_with_vision,
             frame_paths=[str(path) for path in frame_paths],
             character_image_paths=character_image_paths,
             source_text=source_text,
@@ -865,7 +992,9 @@ async def _run_freezone_story_script_async(
         )
     else:
         _update(ctx, "freezone_story_script", job_id, 0.1, "开始生成故事脚本...")
-        data = await generate_freezone_story_script(
+        data = await _call_freezone_leaf(
+            envelope,
+            generate_freezone_story_script,
             source_text=source_text,
             prompt=prompt,
             model=str(payload.get("model") or ""),
@@ -878,7 +1007,9 @@ async def _run_freezone_story_script_async(
     import json
 
     payload_data = data.model_dump()
-    out.write_text(json.dumps(payload_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    out.write_text(
+        json.dumps(payload_data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     rel = out.relative_to(project_dir).as_posix()
     result = {
         "job_id": job_id,
@@ -921,7 +1052,9 @@ async def _run_freezone_image_reverse_prompt_async(
     ensure_freezone_dirs(project_dir)
     source_path = Path(str(payload["source_path"]))
     _update(ctx, "freezone_image_reverse_prompt", job_id, 0.1, "开始反推图片提示词...")
-    prompt = await reverse_prompt_from_image(
+    prompt = await _call_freezone_leaf(
+        envelope,
+        reverse_prompt_from_image,
         image_path=source_path,
         instruction=str(payload.get("instruction") or ""),
     )
@@ -929,7 +1062,9 @@ async def _run_freezone_image_reverse_prompt_async(
     out.parent.mkdir(parents=True, exist_ok=True)
     import json
 
-    out.write_text(json.dumps({"prompt": prompt}, ensure_ascii=False, indent=2), encoding="utf-8")
+    out.write_text(
+        json.dumps({"prompt": prompt}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     rel = out.relative_to(project_dir).as_posix()
     result = {
         "job_id": job_id,
@@ -953,11 +1088,15 @@ async def _run_freezone_image_reverse_prompt_async(
     return result
 
 
-def run_freezone_text_translate(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_text_translate(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_text_translate_async(envelope, ctx))
 
 
-def run_freezone_story_script(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_story_script(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_story_script_async(envelope, ctx))
 
 
@@ -965,14 +1104,19 @@ def run_freezone_image_reverse_prompt(
     envelope: dict[str, Any],
     ctx: ProjectContext,
 ) -> dict[str, Any]:
-    return _run_cancellable(envelope, _run_freezone_image_reverse_prompt_async(envelope, ctx))
+    return _run_cancellable(
+        envelope, _run_freezone_image_reverse_prompt_async(envelope, ctx)
+    )
 
 
 async def _run_freezone_audio_speech_async(
     envelope: dict[str, Any],
     ctx: ProjectContext,
 ) -> dict[str, Any]:
-    from novelvideo.api.deps import make_sqlite_store_for_context, make_static_url_for_context
+    from novelvideo.api.deps import (
+        make_sqlite_store_for_context,
+        make_static_url_for_context,
+    )
     from novelvideo.freezone.audio_node import generate_freezone_audio_speech
     from novelvideo.freezone.jobs import ensure_freezone_dirs
 
@@ -983,7 +1127,9 @@ async def _run_freezone_audio_speech_async(
     _update(ctx, "freezone_audio_speech", job_id, 0.1, "开始文本生成语音...")
     store = await make_sqlite_store_for_context(ctx)
     try:
-        result = await generate_freezone_audio_speech(
+        result = await _call_freezone_leaf(
+            envelope,
+            generate_freezone_audio_speech,
             store=store,
             username=ctx.owner_username,
             project=ctx.project_name,
@@ -1027,7 +1173,9 @@ async def _run_freezone_audio_speech_async(
     return response
 
 
-def run_freezone_audio_speech(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_audio_speech(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_audio_speech_async(envelope, ctx))
 
 
@@ -1044,7 +1192,9 @@ async def _run_freezone_audio_eleven_music_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, "freezone_audio_eleven_music", job_id, 0.1, "开始文本生成音乐...")
-    result = await generate_freezone_audio_eleven_music(
+    result = await _call_freezone_leaf(
+        envelope,
+        generate_freezone_audio_eleven_music,
         project_dir=project_dir,
         job_id=job_id,
         prompt=str(payload.get("input") or ""),
@@ -1052,7 +1202,9 @@ async def _run_freezone_audio_eleven_music_async(
         response_format=str(payload.get("response_format") or "mp3"),
         music_length_ms=int(payload.get("music_length_ms") or 30_000),
         force_instrumental=bool(payload.get("force_instrumental", True)),
-        respect_sections_durations=bool(payload.get("respect_sections_durations", True)),
+        respect_sections_durations=bool(
+            payload.get("respect_sections_durations", True)
+        ),
         output_format=str(payload.get("output_format") or "mp3_44100_128"),
     )
     rel = result.audio_path.relative_to(project_dir).as_posix()
@@ -1072,13 +1224,19 @@ def run_freezone_audio_eleven_music(
     envelope: dict[str, Any],
     ctx: ProjectContext,
 ) -> dict[str, Any]:
-    return _run_cancellable(envelope, _run_freezone_audio_eleven_music_async(envelope, ctx))
+    return _run_cancellable(
+        envelope, _run_freezone_audio_eleven_music_async(envelope, ctx)
+    )
 
 
 register_project_task_runner("freezone_gen", run_freezone_gen)
 register_project_task_runner("freezone_edit", run_freezone_edit)
-register_project_task_runner("mainline_sketch_from_context", run_mainline_sketch_from_context)
-register_project_task_runner("mainline_frame_from_context", run_mainline_frame_from_context)
+register_project_task_runner(
+    "mainline_sketch_from_context", run_mainline_sketch_from_context
+)
+register_project_task_runner(
+    "mainline_frame_from_context", run_mainline_frame_from_context
+)
 register_project_task_runner(
     "mainline_director_control_sketch",
     run_mainline_director_control_sketch,
@@ -1098,4 +1256,6 @@ register_project_task_runner(
     run_freezone_image_reverse_prompt,
 )
 register_project_task_runner("freezone_audio_speech", run_freezone_audio_speech)
-register_project_task_runner("freezone_audio_eleven_music", run_freezone_audio_eleven_music)
+register_project_task_runner(
+    "freezone_audio_eleven_music", run_freezone_audio_eleven_music
+)

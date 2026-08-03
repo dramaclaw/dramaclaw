@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 from pydantic_ai.models.test import TestModel
 
@@ -7,9 +9,59 @@ from novelvideo import config
 from novelvideo.freezone.vision_gateway import (
     FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
     VisionInput,
+    VisionTransportContext,
     call_freezone_vision_model,
     image_media_type,
 )
+
+
+@pytest.mark.asyncio
+async def test_vision_gateway_uses_explicit_request_scoped_transport_without_global_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    explicit = VisionTransportContext(
+        model_name="request-vision-model",
+        model=TestModel(custom_output_text="request-scoped-result"),
+    )
+    environment_before = dict(os.environ)
+    monkeypatch.setattr(
+        config,
+        "get_newapi_text_pydantic_model",
+        lambda *_args, **_kwargs: pytest.fail(
+            "explicit transport must bypass global config"
+        ),
+    )
+
+    model, output = await call_freezone_vision_model(
+        prompt="分析图片",
+        images=[VisionInput(data=b"image", media_type="image/png")],
+        timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+        transport_context=explicit,
+    )
+
+    assert model == "request-vision-model"
+    assert output == "request-scoped-result"
+    assert dict(os.environ) == environment_before
+    assert "TestModel" not in repr(explicit)
+
+
+@pytest.mark.asyncio
+async def test_vision_gateway_rejects_untyped_transport_context_before_model_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        config,
+        "get_newapi_text_pydantic_model",
+        lambda *_args, **_kwargs: pytest.fail("malformed context must fail closed"),
+    )
+
+    with pytest.raises(TypeError, match="transport_context"):
+        await call_freezone_vision_model(
+            prompt="分析图片",
+            images=[VisionInput(data=b"image", media_type="image/png")],
+            timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+            transport_context={"model_name": "forged"},
+        )
 
 
 @pytest.mark.asyncio
@@ -42,8 +94,7 @@ async def test_vision_gateway_uses_pydantic_agent_and_logical_model(
     assert captured["model_env"] == "FREEZONE_VISION_MODEL"
     assert captured["model_name_override"] == "custom-vision-model"
     assert (
-        captured["timeout_seconds_override"]
-        == FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS
+        captured["timeout_seconds_override"] == FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS
     )
 
 

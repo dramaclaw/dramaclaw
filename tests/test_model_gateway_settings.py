@@ -10,14 +10,18 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from novelvideo import config
+from novelvideo import model_gateway_settings as gateway_settings
 from novelvideo.api.routes import model_gateway
 from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
 from novelvideo.model_gateway_settings import (
+    EffectiveMediaRelayConfig,
+    EffectiveNewApiConfig,
     MODE_CUSTOM,
     MODE_OFFICIAL,
     build_newapi_database_status,
     build_model_gateway_status,
     get_effective_cognee_embedding_config,
+    get_effective_media_relay_config,
     get_effective_newapi_config,
     normalize_relay_base_url,
     save_official_newapi_key,
@@ -55,6 +59,74 @@ def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
         "NEWAPI_BASE_URL",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+def test_effective_newapi_config_uses_request_scoped_explicit_config_without_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    _isolate_settings_db(monkeypatch, tmp_path)
+    explicit = EffectiveNewApiConfig(
+        mode=MODE_OFFICIAL,
+        source="request",
+        base_url="https://request.example/v1",
+        api_key="sk-request-only",
+    )
+    environment_before = dict(os.environ)
+    monkeypatch.setattr(
+        gateway_settings,
+        "_read_all",
+        lambda: pytest.fail("explicit config must not read SQLite"),
+    )
+
+    result = get_effective_newapi_config(explicit_config=explicit)
+
+    assert result is explicit
+    assert dict(os.environ) == environment_before
+    assert not (tmp_path / "state").exists()
+
+
+def test_effective_media_relay_config_uses_request_scoped_explicit_config_without_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    _isolate_settings_db(monkeypatch, tmp_path)
+    explicit = EffectiveMediaRelayConfig(
+        source="request",
+        provider="aliyun_oss",
+        ttl_seconds=60,
+        endpoint="https://relay.example",
+        bucket="tenant-bucket",
+        access_key_id="request-ak",
+        access_key_secret="request-sk",
+    )
+    environment_before = dict(os.environ)
+    monkeypatch.setattr(
+        gateway_settings,
+        "_read_all",
+        lambda: pytest.fail("explicit config must not read SQLite"),
+    )
+
+    result = get_effective_media_relay_config(explicit_config=explicit)
+
+    assert result is explicit
+    assert dict(os.environ) == environment_before
+    assert not (tmp_path / "state").exists()
+
+
+@pytest.mark.parametrize(
+    ("resolver", "explicit_config"),
+    [
+        (get_effective_newapi_config, {"api_key": "forged"}),
+        (get_effective_media_relay_config, {"access_key_secret": "forged"}),
+    ],
+)
+def test_effective_config_rejects_untyped_explicit_override(
+    resolver,
+    explicit_config,
+) -> None:
+    with pytest.raises(TypeError, match="explicit_config"):
+        resolver(explicit_config=explicit_config)
 
 
 def test_model_gateway_uses_explicit_custom_mode(monkeypatch, tmp_path):
@@ -2196,8 +2268,7 @@ def test_custom_newapi_embedding_model_writes_mapping_and_persists_dimension(
     }
 
 
-def test_custom_newapi_embedding_model_accepts_positive_project_dimension(
-):
+def test_custom_newapi_embedding_model_accepts_positive_project_dimension():
     body = model_gateway.SaveEmbeddingModelBody.model_validate(
         {
             "provider": "openai",

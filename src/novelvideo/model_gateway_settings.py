@@ -503,9 +503,14 @@ def get_model_gateway_settings() -> dict[str, str]:
 
 def get_effective_newapi_config(
     *,
+    explicit_config: EffectiveNewApiConfig | None = None,
     official_base_url: str | None = None,
     official_api_key: str | None = None,
 ) -> EffectiveNewApiConfig:
+    if explicit_config is not None:
+        if type(explicit_config) is not EffectiveNewApiConfig:
+            raise TypeError("explicit_config must be an EffectiveNewApiConfig")
+        return explicit_config
     if not _uses_ce_gateway_settings():
         return EffectiveNewApiConfig(
             mode=MODE_OFFICIAL,
@@ -543,7 +548,9 @@ def get_ce_newapi_config_for_mode(mode: str) -> EffectiveNewApiConfig:
         return EffectiveNewApiConfig(
             mode=MODE_CUSTOM,
             source="custom",
-            base_url=normalize_relay_base_url(settings.get("custom_newapi_base_url", "")),
+            base_url=normalize_relay_base_url(
+                settings.get("custom_newapi_base_url", "")
+            ),
             api_key=normalize_api_key(settings.get("custom_newapi_api_key", "")),
         )
     db_official_api_key = normalize_api_key(settings.get("official_newapi_api_key", ""))
@@ -572,6 +579,7 @@ def _bool_setting(value: Any, default: bool) -> bool:
 
 def get_effective_media_relay_config(
     *,
+    explicit_config: EffectiveMediaRelayConfig | None = None,
     env_provider: str | None = None,
     env_ttl_seconds: int | str | None = None,
     env_endpoint: str | None = None,
@@ -583,6 +591,10 @@ def get_effective_media_relay_config(
     env_cloudinary_api_secret: str | None = None,
     env_cloudinary_folder: str | None = None,
 ) -> EffectiveMediaRelayConfig:
+    if explicit_config is not None:
+        if type(explicit_config) is not EffectiveMediaRelayConfig:
+            raise TypeError("explicit_config must be an EffectiveMediaRelayConfig")
+        return explicit_config
     settings = get_model_gateway_settings() if _uses_ce_gateway_settings() else {}
     db_provider = str(settings.get("media_relay_provider", "")).strip().lower()
     db_endpoint = str(settings.get("oss_relay_endpoint", "")).strip()
@@ -842,14 +854,12 @@ def build_newapi_database_status(
         else "environment"
     )
     configured = bool(
-        effective_sql_dsn
-        and (effective_sql_dsn != "local" or effective_sqlite_path)
+        effective_sql_dsn and (effective_sql_dsn != "local" or effective_sqlite_path)
     )
     available = configured
     if effective_sql_dsn == "local":
         available = bool(
-            effective_sqlite_path
-            and Path(effective_sqlite_path).expanduser().is_file()
+            effective_sqlite_path and Path(effective_sqlite_path).expanduser().is_file()
         )
     return {
         "configured": configured,

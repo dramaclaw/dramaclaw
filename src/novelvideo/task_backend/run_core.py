@@ -8,7 +8,13 @@ import os
 import time
 from typing import Any
 
+from novelvideo.egress_context import (
+    TRUSTED_EGRESS_CONTEXT_KEY,
+    TrustedEgressContext,
+    TrustedRunnerEnvelope,
+)
 from novelvideo.ports import get_usage_meter
+from novelvideo.ports.authz import AdmissionContext
 from novelvideo.shared.billing_errors import (
     INSUFFICIENT_CREDITS_MESSAGE,
     insufficient_credits_payload,
@@ -186,6 +192,41 @@ def _clean_billing_metadata(value: Any) -> dict[str, Any]:
         else:
             cleaned[clean_key] = item
     return cleaned
+
+
+def _build_trusted_egress_context(
+    delivery: VerifiedTaskDelivery,
+    ctx: Any,
+    *,
+    run_task_id: str,
+) -> TrustedEgressContext:
+    admission = delivery.admission
+    if type(admission) is not AdmissionContext:
+        raise InvalidTaskEnvelope() from None
+    if (
+        type(run_task_id) is not str
+        or not run_task_id
+        or admission.requester_user_id != delivery.requester_user_id
+        or admission.root_task_id != run_task_id
+        or getattr(ctx, "project_id", None) != delivery.project_id
+        or getattr(ctx, "requester_user_id", None) != delivery.requester_user_id
+    ):
+        raise InvalidTaskEnvelope() from None
+    try:
+        return TrustedEgressContext(
+            envelope_id=delivery.envelope_id,
+            project_id=delivery.project_id,
+            task_type=delivery.task_type,
+            requester_user_id=delivery.requester_user_id,
+            root_task_id=admission.root_task_id,
+            admission_id=admission.admission_id,
+            membership_id=admission.membership_id,
+            authz_version=admission.authz_version,
+            billing_principal=admission.billing_principal,
+            credential=admission.credential,
+        )
+    except (TypeError, ValueError):
+        raise InvalidTaskEnvelope() from None
 
 
 def _set_project_task_metrics_context(
@@ -495,21 +536,30 @@ def run_project_task_core_sync(
     if type(delivery) is not VerifiedTaskDelivery:
         raise InvalidTaskEnvelope() from None
 
+    trusted_egress_context = _build_trusted_egress_context(
+        delivery,
+        ctx,
+        run_task_id=run_task_id,
+    )
+
     task_type = str(delivery.task_type)
     episode = int(delivery.episode or 0)
     beat_num = delivery.beat_num
     scope = delivery.scope
     billing_metadata = _clean_billing_metadata(delivery.billing_metadata)
-    envelope = {
-        "project_id": delivery.project_id,
-        "requester_user_id": delivery.requester_user_id,
-        "task_type": task_type,
-        "episode": episode,
-        "beat_num": beat_num,
-        "scope": scope,
-        "queue_kind": delivery.queue_kind,
-        "payload": delivery.payload,
-    }
+    envelope = TrustedRunnerEnvelope(
+        {
+            "project_id": delivery.project_id,
+            "requester_user_id": delivery.requester_user_id,
+            "task_type": task_type,
+            "episode": episode,
+            "beat_num": beat_num,
+            "scope": scope,
+            "queue_kind": delivery.queue_kind,
+            "payload": delivery.payload,
+            TRUSTED_EGRESS_CONTEXT_KEY: trusted_egress_context,
+        }
+    )
     if billing_metadata:
         envelope["billing_metadata"] = billing_metadata
     run_metadata = {**dict(metadata or {}), **billing_metadata}
@@ -622,7 +672,7 @@ def run_project_task_core_sync(
                 raise RuntimeError(error)
 
             try:
-                envelope = {**envelope, "__run_task_id": run_task_id}
+                envelope["__run_task_id"] = run_task_id
                 if deadline_monotonic is not None:
                     envelope["__deadline_monotonic"] = deadline_monotonic
                     envelope["__timeout_seconds"] = timeout_seconds
