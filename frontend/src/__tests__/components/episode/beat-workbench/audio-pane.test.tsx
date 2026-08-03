@@ -66,14 +66,11 @@ beforeAll(async () => {
 });
 
 vi.mock("@/lib/queries/audio", () => ({
+  useAudioBillingQuote: () => ({ data: { ok: true, data: { display: "" } } }),
   useRegenerateBeatAudio: () => ({
     mutateAsync: mutateRegenerate,
     isPending: false,
   }),
-}));
-
-vi.mock("@/lib/queries/generation-credit-cost", () => ({
-  useGenerationCreditCost: () => ({ data: { ok: true, data: { display: "" } } }),
 }));
 
 vi.mock("@/hooks/use-task-controller", () => ({

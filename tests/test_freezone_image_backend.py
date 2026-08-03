@@ -444,6 +444,11 @@ async def test_freezone_video_generation_enqueues_feature_billing(
         "pricing_kind": "video",
         "pricing_model": "seedance-1.0-pro-fast",
         "pricing_params": {"resolution": "1080p"},
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "duration_seconds": 8,
+        },
         "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
     }
 
@@ -496,6 +501,11 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
         "pricing_kind": "audio",
         "pricing_model": INDEXTTS2_RECORD_MODEL,
         "pricing_params": {},
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "billable_chars": 7,
+        },
         "items": 7,
     }
 
@@ -510,6 +520,11 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
         "pricing_model": "LingShan-MU-11",
         "pricing_params": {},
         "pricing_quantity": 31,
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "duration_seconds": 31,
+        },
     }
 
 
@@ -557,6 +572,11 @@ async def test_freezone_image_reverse_prompt_enqueues_feature_billing(
         "pricing_kind": "text",
         "pricing_model": "freezone-vision-model",
         "pricing_params": {},
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "billable_chars": 5,
+        },
     }
     assert captured["payload"]["instruction"] == "电影感光影"
 

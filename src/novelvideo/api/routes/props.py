@@ -379,6 +379,10 @@ async def batch_generate_prop_references(
                     "pricing_params": _fixed_image_billing_params(
                         "prop_reference", model=pricing_model
                     ),
+                    "pricing_metrics": {
+                        "call_count": pending_count,
+                        "item_count": pending_count,
+                    },
                 },
             },
         )

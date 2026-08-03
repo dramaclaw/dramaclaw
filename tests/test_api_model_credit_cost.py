@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
@@ -35,6 +37,44 @@ def patch_quote_expect(
     from novelvideo.ports.credit_quote import CreditQuote
     from novelvideo.ports.registry import register_port
 
+    expected_with_metrics = dict(expected_params)
+    if expected_kind == "feature" and expected_params.get("pricing_model"):
+        pricing_kind = expected_params.get("pricing_kind")
+        pricing_quantity = int(expected_params.get("pricing_quantity") or 1)
+        if pricing_kind == "video":
+            metrics = {
+                "call_count": 1,
+                "item_count": 1,
+                "duration_seconds": pricing_quantity,
+            }
+        elif pricing_kind == "audio" and "billable_chars" in expected_params:
+            metrics = {
+                "call_count": 1,
+                "item_count": 1,
+                "billable_chars": int(expected_params["billable_chars"]),
+            }
+        elif pricing_kind == "audio" and "music_length_ms" in expected_params:
+            metrics = {
+                "call_count": 1,
+                "item_count": 1,
+                "duration_seconds": pricing_quantity,
+            }
+        elif pricing_kind == "text" and "billable_chars" in expected_params:
+            metrics = {
+                "call_count": 1,
+                "item_count": 1,
+                "billable_chars": int(expected_params["billable_chars"]),
+            }
+        elif pricing_kind == "image" or "items" in expected_params:
+            metrics = {
+                "call_count": pricing_quantity,
+                "item_count": pricing_quantity,
+            }
+        else:
+            metrics = {"call_count": expected_quantity, "item_count": expected_quantity}
+        if metrics is not None:
+            expected_with_metrics["pricing_metrics"] = metrics
+
     class FakeCreditQuotePort:
         async def generation_credit_quote(
             self,
@@ -46,7 +86,7 @@ def patch_quote_expect(
         ):
             assert kind == expected_kind
             assert model == expected_model
-            assert params == expected_params
+            assert params == expected_with_metrics
             assert quantity == expected_quantity
             return CreditQuote(total_cost=cost, display=str(cost))
 
@@ -374,6 +414,26 @@ async def test_generation_credit_cost_route_prices_freezone_audio_music_by_featu
     )
 
     assert result == {"ok": True, "data": {"cost": 93, "display": "93"}}
+
+
+def test_freezone_audio_music_explicit_model_keeps_duration_metric() -> None:
+    from novelvideo.api.routes.model_credits import freezone_audio_music_billing_params
+
+    params = freezone_audio_music_billing_params(
+        {
+            "pricing_model": "custom-music-model",
+            "music_length_ms": 30_500,
+        }
+    )
+
+    assert params["pricing_kind"] == "audio"
+    assert params["pricing_model"] == "custom-music-model"
+    assert params["pricing_quantity"] == 31
+    assert params["pricing_metrics"] == {
+        "call_count": 1,
+        "item_count": 1,
+        "duration_seconds": 31,
+    }
 
 
 @pytest.mark.asyncio
@@ -989,6 +1049,47 @@ async def test_generation_credit_cost_route_prices_freezone_video_generate_by_fe
     )
 
     assert result == {"ok": True, "data": {"cost": 48, "display": "48"}}
+
+
+@pytest.mark.asyncio
+async def test_generation_credit_cost_route_prices_video_batch_by_calls_and_total_seconds(
+    monkeypatch,
+):
+    from novelvideo.api.routes import model_credits
+
+    captured = {}
+
+    class FakeCreditQuotePort:
+        async def generation_credit_quote(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                total_cost=30,
+                original_total_cost=30,
+                discount_amount=0,
+            )
+
+    monkeypatch.setattr(model_credits, "get_credit_quote", lambda: FakeCreditQuotePort())
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="freezone.video_generate",
+        params=(
+            '{"video_backend":"newapi_seedance-1.0-pro-fast",'
+            '"resolution":"720p","pricing_quantity":15}'
+        ),
+        quantity=3,
+        user={"user_id": "usr_1"},
+    )
+
+    assert result == {"ok": True, "data": {"cost": 30, "display": "30"}}
+    assert captured["params"]["pricing_quantity"] == 5
+    assert captured["params"]["pricing_metrics"] == {
+        "call_count": 3,
+        "item_count": 3,
+        "duration_seconds": 15,
+    }
+    assert captured["quantity"] == 3
 
 
 @pytest.mark.asyncio

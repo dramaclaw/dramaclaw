@@ -37,6 +37,7 @@ from novelvideo.seedance2_i2v.voice_clone import (
     resolve_dialogue_reference_audio,
     resolve_narrator_source,
 )
+from novelvideo.utils.document_parsers import count_billable_text_chars
 
 IndexTTS2BeatAudioMode = Literal[
     "sync_changed",
@@ -81,15 +82,28 @@ class IndexTTS2BeatAudioTaskResult:
 class IndexTTS2AudioGenerationPlan:
     beat_numbers: list[int] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    billable_chars: int = 0
 
 
-def indextts2_audio_billing_params(quantity: int = 1) -> dict:
+def indextts2_audio_billing_params(
+    quantity: int = 1,
+    *,
+    billable_chars: int = 0,
+) -> dict:
     clean_quantity = max(int(quantity or 0), 0)
+    clean_billable_chars = max(int(billable_chars or 0), 0)
+    pricing_metrics = {
+        "call_count": clean_quantity,
+        "item_count": clean_quantity,
+    }
+    if clean_billable_chars > 0:
+        pricing_metrics["billable_chars"] = clean_billable_chars
     return {
         "pricing_kind": "audio",
         "pricing_model": INDEXTTS2_RECORD_MODEL,
         "pricing_params": {},
         "pricing_quantity": clean_quantity,
+        "pricing_metrics": pricing_metrics,
         "items": clean_quantity,
     }
 
@@ -353,6 +367,7 @@ async def build_indextts2_audio_generation_plan(
                 )
             else:
                 plan.beat_numbers.append(beat_num)
+                plan.billable_chars += count_billable_text_chars(text)
             continue
 
         resolved_voice = await _resolve_dialogue_voice(beat, store)
@@ -378,6 +393,7 @@ async def build_indextts2_audio_generation_plan(
             continue
 
         plan.beat_numbers.append(beat_num)
+        plan.billable_chars += count_billable_text_chars(text)
 
     return plan
 
