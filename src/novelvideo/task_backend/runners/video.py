@@ -342,7 +342,6 @@ async def _run_video_generation_async(
     manager = get_task_manager()
     paths = PathResolver(output_dir, episode)
     generated: list[dict[str, Any]] = []
-    failures: list[int] = []
 
     for index, beat in enumerate(beats):
         beat_num = int(beat.get("beat_number") or index + 1)
@@ -411,34 +410,9 @@ async def _run_video_generation_async(
                 },
             },
         }
-        try:
-            generated.append(await _run_single_video_async(single_envelope, ctx))
-        except Exception as exc:  # noqa: BLE001
-            failures.append(beat_num)
-            manager.update_progress_for_project(
-                ctx,
-                "video_generation",
-                episode,
-                logs=[f"Beat {beat_num} 视频生成失败: {exc}"],
-            )
+        generated.append(await _run_single_video_async(single_envelope, ctx))
 
-    if not generated and beats:
-        raise RuntimeError("批量视频生成失败：没有生成可用结果")
-    return {
-        "generated": len(generated),
-        "items": generated,
-        "failed_beats": failures,
-        "billing_outcome": {
-            "requested_units": len(beats),
-            "delivered_units": len(generated),
-            "failed_units": len(beats) - len(generated),
-            "result_refs": [
-                str(item.get("video_path") or item.get("asset_id") or "")
-                for item in generated
-                if item.get("video_path") or item.get("asset_id")
-            ],
-        },
-    }
+    return {"generated": len(generated), "items": generated}
 
 
 def run_video_generation(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
@@ -731,7 +705,6 @@ async def _run_global_optimize_video_async(
         optimizer = get_global_video_optimizer()
         sorted_beats = sorted(beats, key=lambda beat: beat.get("beat_number", 0))
         updated_count = 0
-        updated_beat_numbers: list[int] = []
         failure_messages: list[str] = []
         prev_prompt = None
 
@@ -776,7 +749,6 @@ async def _run_global_optimize_video_async(
                     keyframe_prompt=None,
                 )
                 updated_count += 1
-                updated_beat_numbers.append(beat_num)
                 prev_prompt = prompt
             except Exception as exc:  # noqa: BLE001
                 failure_messages.append(f"Beat {beat_num}: {exc}")
@@ -789,17 +761,7 @@ async def _run_global_optimize_video_async(
             raise RuntimeError(error)
 
         log(f"全局优化完成：成功更新 {updated_count}/{len(sorted_beats)} 个 Beat", progress=1.0)
-        requested_count = len(sketch_paths)
-        return {
-            "optimized": updated_count,
-            "beats": beats,
-            "billing_outcome": {
-                "requested_units": requested_count,
-                "delivered_units": updated_count,
-                "failed_units": requested_count - updated_count,
-                "result_refs": [f"beat:{value}" for value in updated_beat_numbers],
-            },
-        }
+        return {"optimized": updated_count, "beats": beats}
     finally:
         await store.close()
 

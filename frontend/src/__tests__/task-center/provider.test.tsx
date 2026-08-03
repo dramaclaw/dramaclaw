@@ -731,48 +731,6 @@ describe("TaskCenterProvider", () => {
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.episodes("demo") });
   });
 
-  it("invalidates prop asset queries when batch prop reference generation completes", async () => {
-    server.use(
-      http.get("*/api/v1/projects/demo/tasks", () =>
-        HttpResponse.json({
-          ok: true,
-          data: [
-            sampleTask({
-              task_id: "batch-prop-ref-1",
-              task_key: "task:batch_prop_ref:alice:demo:0",
-              task_type: "batch_prop_ref",
-              episode: 0,
-              status: "running",
-            }),
-          ],
-        }),
-      ),
-    );
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-    render(<Harness queryClient={queryClient} />);
-    await vi.waitFor(() => expect(MockEventSource.instances.length).toBe(1));
-
-    act(() => {
-      MockEventSource.instances[0].dispatch(
-        "task_updated",
-        sampleTask({
-          task_id: "batch-prop-ref-1",
-          task_key: "task:batch_prop_ref:alice:demo:0",
-          task_type: "batch_prop_ref",
-          episode: 0,
-          status: "completed",
-          completed_at: new Date().toISOString(),
-        }),
-      );
-    });
-
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.props("demo") });
-    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.episodes("demo") });
-  });
-
   it("invalidates scene asset queries when a scene reference generation task completes", async () => {
     server.use(
       http.get("*/api/v1/projects/demo/tasks", () =>

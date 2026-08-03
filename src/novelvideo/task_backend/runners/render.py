@@ -401,12 +401,6 @@ async def _run_batch_render_async(
         "total_grids": len(loc_plan),
         "successful": successful,
         "grid_results": grid_results,
-        "billing_outcome": {
-            "requested_units": len(loc_plan),
-            "delivered_units": successful,
-            "failed_units": len(loc_plan) - successful,
-            "result_refs": [item["rel_path"] for item in grid_results],
-        },
     }
     log(f"✅ Batch Render 完成！{successful}/{len(loc_plan)} 成功", progress=1.0)
     return result_payload

@@ -76,6 +76,11 @@ async def _run_indextts2_audio(
             progress_callback=on_progress,
             log_callback=on_log,
         )
+        if result.generated == 0 and result.failed:
+            raise RuntimeError(
+                "音频生成失败：没有生成可用结果；"
+                f"最后错误：{result.failed[-1]}"
+            )
         skipped = (
             result.skipped_existing
             + result.skipped_empty
@@ -90,12 +95,6 @@ async def _run_indextts2_audio(
             "failed": len(result.failed),
             "generated_beats": list(result.generated_beats),
             "indextts2_detail": result.to_dict(),
-            "billing_outcome": {
-                "requested_units": result.total_targets,
-                "delivered_units": result.generated,
-                "failed_units": max(result.total_targets - result.generated, 0),
-                "result_refs": [f"beat:{value}" for value in result.generated_beats],
-            },
         }
     finally:
         await store.close()

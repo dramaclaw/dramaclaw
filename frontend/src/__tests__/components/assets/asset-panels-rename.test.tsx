@@ -125,8 +125,6 @@ beforeAll(async () => {
             props: {
               title: "Props",
               count: "{{count}} props",
-              batchGenerate: "Batch generate refs",
-              batchStatusTitle: "Batch reference generation",
               newProp: "New prop",
               editProp: "Edit prop",
               emptyTitle: "No props yet",
@@ -542,79 +540,6 @@ describe("asset panel rename behavior", () => {
 
     await waitFor(() => expect(patchBody).toBeDefined());
     expect(patchBody).toMatchObject({ name: "MoonSword" });
-  });
-
-  it("shows inline batch prop generation progress and logs", async () => {
-    taskControllerMock.mockImplementation((opts: { key?: { taskType?: string } }) => {
-      if (opts.key?.taskType === "batch_prop_ref") {
-        return {
-          started: true,
-          stream: {
-            status: "running",
-            progress: 0.42,
-            currentTask: "Generating Sword reference",
-            result: null,
-            error: null,
-          },
-          logs: ["Queued 3 props", "Generating Sword reference"],
-          start: vi.fn(),
-          stop: vi.fn(),
-          stopping: false,
-        };
-      }
-      return idleTaskController();
-    });
-    server.use(
-      http.get("http://localhost:3000/api/v1/projects/demo/props", () =>
-        HttpResponse.json({
-          ok: true,
-          data: [{ name: "Sword", prop_type: "weapon", visual_prompt: "silver sword" }],
-        }),
-      ),
-    );
-
-    renderWithProviders(<PropsPanel project="demo" />);
-
-    await screen.findByText("Sword");
-    expect(screen.getByText("Batch reference generation")).toBeInTheDocument();
-    expect(screen.getByText("Generating Sword reference")).toBeInTheDocument();
-    expect(screen.getByText("Queued 3 props")).toBeInTheDocument();
-    expect(screen.getByText("42%")).toBeInTheDocument();
-  });
-
-  it("starts the batch prop generation task stream after the API accepts it", async () => {
-    const batchStart = vi.fn();
-    let postCalled = false;
-    taskControllerMock.mockImplementation((opts: { key?: { taskType?: string } }) => {
-      if (opts.key?.taskType === "batch_prop_ref") {
-        return { ...idleTaskController(), start: batchStart };
-      }
-      return idleTaskController();
-    });
-    server.use(
-      http.get("http://localhost:3000/api/v1/projects/demo/props", () =>
-        HttpResponse.json({
-          ok: true,
-          data: [{ name: "Sword", prop_type: "weapon", visual_prompt: "silver sword" }],
-        }),
-      ),
-      http.post("http://localhost:3000/api/v1/projects/demo/props/reference/batch-generate", () => {
-        postCalled = true;
-        return HttpResponse.json({
-          ok: true,
-          task_type: "batch_prop_ref",
-          message: "Batch started",
-        });
-      }),
-    );
-
-    renderWithProviders(<PropsPanel project="demo" />);
-
-    await screen.findByText("Sword");
-    fireEvent.click(screen.getByRole("button", { name: "Batch generate refs" }));
-
-    await waitFor(() => expect(postCalled).toBe(true));
-    expect(batchStart).toHaveBeenCalledTimes(1);
   });
 
   it("shows the NiceGUI prop type select label in the edit dialog", async () => {

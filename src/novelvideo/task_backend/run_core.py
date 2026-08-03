@@ -40,7 +40,6 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "identity_image": "portrait",
     "scene_reference_asset": "render",
     "prop_reference_asset": "render",
-    "batch_prop_ref": "render",
     "stage_asset": "render",
     "freezone_image_to_3gs": "render",
     "sketch_generation": "sketch",
@@ -240,26 +239,6 @@ async def _confirm_feature_credit_reservation(
             "feature credit confirmation intent remains awaiting retry: %s",
             exc,
         )
-
-
-async def _settle_completed_feature_credit_reservation(
-    reservation_id: str,
-    *,
-    metadata: dict[str, Any],
-) -> None:
-    outcome = metadata.get("billing_outcome")
-    delivered = (
-        int(outcome.get("delivered_units") or 0)
-        if isinstance(outcome, dict)
-        else None
-    )
-    if delivered == 0:
-        await _refund_feature_credit_reservation(
-            reservation_id,
-            metadata={**metadata, "business_outcome": "not_delivered"},
-        )
-        return
-    await _confirm_feature_credit_reservation(reservation_id, metadata=metadata)
 
 
 async def _refund_feature_credit_reservation(
@@ -481,33 +460,6 @@ def _completion_metadata_with_provider_task_id(
         if provider_task_id:
             completion_metadata["provider_task_id"] = str(provider_task_id)
     return completion_metadata
-
-
-def _billing_outcome_metadata(result: Any) -> dict[str, Any]:
-    """Copy a runner's explicit delivery counts into settlement metadata."""
-    if not isinstance(result, dict):
-        return {}
-    raw = result.get("billing_outcome")
-    if not isinstance(raw, dict):
-        return {}
-    try:
-        requested = int(raw.get("requested_units"))
-        delivered = int(raw.get("delivered_units"))
-    except (TypeError, ValueError):
-        return {}
-    if requested < 0 or delivered < 0 or delivered > requested:
-        logger.warning("Ignore invalid runner billing_outcome: %r", raw)
-        return {}
-    refs = raw.get("result_refs")
-    clean_refs = [str(value) for value in refs] if isinstance(refs, list) else []
-    return {
-        "billing_outcome": {
-            "requested_units": requested,
-            "delivered_units": delivered,
-            "failed_units": requested - delivered,
-            "result_refs": clean_refs,
-        }
-    }
 
 
 def _ensure_builtin_runners_registered() -> None:
@@ -736,12 +688,11 @@ def run_project_task_core_sync(
                 completion_error = exc
 
             asyncio.run(
-                _settle_completed_feature_credit_reservation(
+                _confirm_feature_credit_reservation(
                     feature_reservation_id,
                     metadata={
                         "source": "task_completed",
                         "business_outcome": "delivered",
-                        **_billing_outcome_metadata(result),
                     },
                 )
             )
