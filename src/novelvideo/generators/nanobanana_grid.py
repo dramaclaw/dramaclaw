@@ -82,6 +82,7 @@ from novelvideo.utils.path_resolver import compute_scoped_grid_filename
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
     media_relay_ttl_seconds,
+    relay_tenant_image_bytes_from_context,
     upload_image_bytes,
 )
 
@@ -3024,7 +3025,7 @@ async def _generate_image(
                 f"OpenAI edit image generation failed: {error_detail or 'empty image'}"
             )
     elif generator.provider == "newapi":
-        ref_bytes = [Path(path).read_bytes() for path in ref_paths]
+        ref_bytes = [(Path(path).read_bytes(), path) for path in ref_paths]
         trace: dict[str, str] = {}
         image_bytes, _, error_detail = await _call_newapi_image_api(
             api_key=generator.api_key,
@@ -3040,6 +3041,7 @@ async def _generate_image(
             },
             base_url=generator.base_url,
             trace=trace,
+            egress_context=context,
         )
         if not image_bytes:
             raise ValueError(
@@ -3555,14 +3557,18 @@ async def _call_newapi_image_api(
     api_key: str,
     model: str,
     prompt: str,
-    reference_images: list[bytes | tuple[bytes, str] | tuple[str, bytes, str]] | None = None,
+    reference_images: (
+        list[bytes | tuple[bytes, str] | tuple[str, bytes, str]] | None
+    ) = None,
     image_config: dict | None = None,
     base_url: str | None = None,
     trace: dict[str, str] | None = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> tuple[bytes | None, str, str]:
     """Call newAPI's OpenAI-compatible Images API."""
     import httpx
 
+    context = _validate_egress_context(egress_context)
     if not api_key:
         return None, "", "DramaClawAPI API key is missing"
 
@@ -3607,8 +3613,17 @@ async def _call_newapi_image_api(
 
     if reference_images:
         try:
-            payload["image"] = await _relay_reference_images_for_newapi(reference_images)
+            relay_helper = _relay_reference_images_for_newapi
+            if relay_helper is _ORIGINAL_RELAY_REFERENCE_IMAGES_FOR_NEWAPI:
+                payload["image"] = await relay_helper(
+                    reference_images,
+                    egress_context=context,
+                )
+            else:
+                payload["image"] = await relay_helper(reference_images)
         except Exception as exc:
+            if context is not None and context.is_organization:
+                return None, "", "media relay upload failed"
             return None, "", f"media relay upload failed: {exc}"
         request_path = "/images/edits"
     else:
@@ -3875,8 +3890,12 @@ async def _call_newapi_image_api(
 
 async def _relay_reference_images_for_newapi(
     reference_images: list[bytes | tuple[bytes, str] | tuple[str, bytes, str]],
+    *,
+    egress_context: TrustedEgressContext | None = None,
 ) -> list[str]:
     """Upload reference image bytes to OSS relay for URL-only upstream channels."""
+
+    context = _validate_egress_context(egress_context)
 
     def _image_bytes(image_ref) -> bytes:
         if isinstance(image_ref, tuple):
@@ -3906,6 +3925,25 @@ async def _relay_reference_images_for_newapi(
                     return suffix
         return "png"
 
+    if context is not None and context.is_organization:
+        urls: list[str] = []
+        for index, image_ref in enumerate(reference_images):
+            data = _image_bytes(image_ref)
+            content_digest = hashlib.sha256(data).hexdigest()
+            object_id = (
+                f"{context.envelope_id}:{context.project_id}:{index}:{content_digest}"
+            )
+            urls.append(
+                await relay_tenant_image_bytes_from_context(
+                    data,
+                    object_id=object_id,
+                    context=context,
+                    ext=_image_ext(image_ref),
+                    ttl=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
+                )
+            )
+        return urls
+
     def upload_all() -> list[str]:
         urls: list[str] = []
         relay_ttl = media_relay_ttl_seconds(
@@ -3923,6 +3961,9 @@ async def _relay_reference_images_for_newapi(
         return urls
 
     return await asyncio.to_thread(upload_all)
+
+
+_ORIGINAL_RELAY_REFERENCE_IMAGES_FOR_NEWAPI = _relay_reference_images_for_newapi
 
 
 async def _call_huimeng_image_api(
