@@ -425,6 +425,272 @@ def run_video_generation(envelope: dict[str, Any], ctx: ProjectContext) -> dict[
     )
 
 
+def _apply_episode_soundtrack(
+    *,
+    ctx: ProjectContext,
+    episode: int,
+    output_path: Path,
+    run_checked,
+    check_cancel,
+) -> dict[str, Any]:
+    """成片合成后的可选整集配乐步骤。
+
+    ``EPISODE_SOUNDTRACK_PROVIDER=sonilo`` 且配置了 ``SONILO_API_KEY`` 时启用：
+    把拼好的成片交给 Sonilo video-to-music 生成一条贯穿整集的配乐，再按
+    ``EPISODE_SOUNDTRACK_MODE`` 叠加（mix，压低配乐、保留原生对白/音效）或
+    替换（replace）原音轨。默认关闭；任何失败只记录日志并保留原成片，
+    不影响合成任务本身。
+    """
+    import os
+
+    from novelvideo import config
+    from novelvideo.task_backend.cancel import TaskCancelled
+
+    manager = get_task_manager()
+
+    def log(message: str) -> None:
+        manager.update_progress_for_project(
+            ctx,
+            "compose_episode",
+            episode,
+            logs=[message],
+        )
+
+    provider = str(getattr(config, "EPISODE_SOUNDTRACK_PROVIDER", "") or "").strip().lower()
+    if not provider:
+        return {"applied": False}
+    if provider != "sonilo":
+        log(f"未知的整集配乐 provider: {provider}，跳过配乐步骤")
+        return {"applied": False, "error": f"unknown provider: {provider}"}
+    if not str(getattr(config, "SONILO_API_KEY", "") or "").strip():
+        log(
+            "已开启整集配乐（EPISODE_SOUNDTRACK_PROVIDER=sonilo），"
+            "但未配置 SONILO_API_KEY，跳过配乐步骤"
+        )
+        return {"applied": False, "error": "SONILO_API_KEY not set"}
+
+    from novelvideo.audio.sonilo_soundtrack import (
+        SONILO_MAX_VIDEO_DURATION_SECONDS,
+        SoniloSoundtrackClient,
+    )
+
+    try:
+        probe = run_checked(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(output_path),
+            ],
+            default_timeout_seconds=60,
+        )
+        try:
+            duration = float(probe.stdout.strip())
+        except (TypeError, ValueError):
+            duration = 0.0
+        if duration > SONILO_MAX_VIDEO_DURATION_SECONDS:
+            log(
+                f"成片时长 {duration:.0f}s 超过配乐接口上限 "
+                f"{SONILO_MAX_VIDEO_DURATION_SECONDS}s，跳过配乐步骤"
+            )
+            return {"applied": False, "error": "episode too long"}
+
+        check_cancel()
+        log("正在为成片生成整集配乐（Sonilo video-to-music）...")
+        soundtrack_path = output_path.with_name(f"ep{episode:03d}_soundtrack.m4a")
+        SoniloSoundtrackClient().generate_soundtrack(
+            output_path,
+            soundtrack_path,
+            prompt=str(getattr(config, "EPISODE_SOUNDTRACK_PROMPT", "") or ""),
+        )
+        check_cancel()
+
+        mode = str(getattr(config, "EPISODE_SOUNDTRACK_MODE", "mix") or "mix").strip().lower()
+        if mode not in {"mix", "replace"}:
+            log(f"未知的 EPISODE_SOUNDTRACK_MODE: {mode}，按 mix 处理")
+            mode = "mix"
+        muxed_path = output_path.with_name(f"{output_path.stem}_soundtrack_tmp.mp4")
+        cmd = ["ffmpeg", "-y", "-i", str(output_path), "-i", str(soundtrack_path)]
+        if mode == "replace":
+            # 配乐整体替换原音轨（适合无对白的内容）。
+            cmd.extend(["-map", "0:v:0", "-map", "1:a:0"])
+        else:
+            # 压低配乐叠加到原音轨上，保留原生对白/音效。
+            music_volume = float(
+                getattr(config, "EPISODE_SOUNDTRACK_MUSIC_VOLUME", 0.35)
+            )
+            cmd.extend(
+                [
+                    "-filter_complex",
+                    f"[1:a]volume={music_volume}[bgm];"
+                    f"[0:a][bgm]amix=inputs=2:duration=first:normalize=0[outa]",
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "[outa]",
+                ]
+            )
+        cmd.extend(["-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", str(muxed_path)])
+        result = run_checked(cmd, default_timeout_seconds=30 * 60)
+        check_cancel()
+        if result.returncode != 0 or not muxed_path.exists():
+            muxed_path.unlink(missing_ok=True)
+            log(f"整集配乐合成失败，保留原音轨: {(result.stderr or '')[:500]}")
+            return {"applied": False, "error": "mux failed"}
+        os.replace(muxed_path, output_path)
+        log(f"整集配乐已合入成片（模式: {mode}）")
+        return {
+            "applied": True,
+            "provider": "sonilo",
+            "mode": mode,
+            "soundtrack_path": soundtrack_path.as_posix(),
+        }
+    except (TaskCancelled, TaskTimedOut):
+        raise
+    except Exception as exc:
+        log(f"整集配乐失败，保留原音轨: {str(exc)[:300]}")
+        return {"applied": False, "error": str(exc)[:300]}
+
+
+def _apply_episode_sfx(
+    *,
+    ctx: ProjectContext,
+    episode: int,
+    output_path: Path,
+    run_checked,
+    check_cancel,
+) -> dict[str, Any]:
+    """成片合成后的可选整集音效步骤。
+
+    ``EPISODE_SFX_PROVIDER=sonilo`` 且配置了 ``SONILO_API_KEY``（与整集配乐
+    共用）时启用：把拼好的成片交给 Sonilo video-to-sfx，根据画面内容生成
+    贴合视频的音效音轨，压低后叠加到原音轨上。
+
+    音效只有 mix 一种合成方式、不提供 replace：每个 clip 的原生音轨带对白，
+    整体替换会把对白一起丢掉。默认关闭；任何失败只记录日志并保留原成片，
+    不影响合成任务本身。
+    """
+    import os
+
+    from novelvideo import config
+    from novelvideo.task_backend.cancel import TaskCancelled
+
+    manager = get_task_manager()
+
+    def log(message: str) -> None:
+        manager.update_progress_for_project(
+            ctx,
+            "compose_episode",
+            episode,
+            logs=[message],
+        )
+
+    provider = str(getattr(config, "EPISODE_SFX_PROVIDER", "") or "").strip().lower()
+    if not provider:
+        return {"applied": False}
+    if provider != "sonilo":
+        log(f"未知的整集音效 provider: {provider}，跳过音效步骤")
+        return {"applied": False, "error": f"unknown provider: {provider}"}
+    if not str(getattr(config, "SONILO_API_KEY", "") or "").strip():
+        log(
+            "已开启整集音效（EPISODE_SFX_PROVIDER=sonilo），"
+            "但未配置 SONILO_API_KEY，跳过音效步骤"
+        )
+        return {"applied": False, "error": "SONILO_API_KEY not set"}
+
+    from novelvideo.audio.sonilo_soundtrack import (
+        SONILO_MAX_SFX_VIDEO_DURATION_SECONDS,
+        SoniloSfxClient,
+    )
+
+    try:
+        probe = run_checked(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(output_path),
+            ],
+            default_timeout_seconds=60,
+        )
+        try:
+            duration = float(probe.stdout.strip())
+        except (TypeError, ValueError):
+            duration = 0.0
+        if duration > SONILO_MAX_SFX_VIDEO_DURATION_SECONDS:
+            # 注意不对称：音效接口上限 3 分钟，比配乐接口的 6 分钟更严。
+            # 两步各自独立校验——成片在 3~6 分钟之间时，配乐照常进行、
+            # 音效在这里跳过，互不影响。
+            log(
+                f"成片时长 {duration:.0f}s 超过音效接口上限 "
+                f"{SONILO_MAX_SFX_VIDEO_DURATION_SECONDS}s，跳过音效步骤"
+            )
+            return {"applied": False, "error": "episode too long"}
+
+        check_cancel()
+        log("正在为成片生成整集音效（Sonilo video-to-sfx）...")
+        sfx_path = output_path.with_name(f"ep{episode:03d}_sfx.m4a")
+        SoniloSfxClient().generate_sfx(
+            output_path,
+            sfx_path,
+            prompt=str(getattr(config, "EPISODE_SFX_PROMPT", "") or ""),
+        )
+        check_cancel()
+
+        # 压低音效叠加到原音轨上，保留原生对白（以及此前已合入的配乐）。
+        sfx_volume = float(getattr(config, "EPISODE_SFX_VOLUME", 0.5))
+        muxed_path = output_path.with_name(f"{output_path.stem}_sfx_tmp.mp4")
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(output_path),
+            "-i",
+            str(sfx_path),
+            "-filter_complex",
+            f"[1:a]volume={sfx_volume}[sfx];"
+            f"[0:a][sfx]amix=inputs=2:duration=first:normalize=0[outa]",
+            "-map",
+            "0:v:0",
+            "-map",
+            "[outa]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-shortest",
+            str(muxed_path),
+        ]
+        result = run_checked(cmd, default_timeout_seconds=30 * 60)
+        check_cancel()
+        if result.returncode != 0 or not muxed_path.exists():
+            muxed_path.unlink(missing_ok=True)
+            log(f"整集音效合成失败，保留原音轨: {(result.stderr or '')[:500]}")
+            return {"applied": False, "error": "mux failed"}
+        os.replace(muxed_path, output_path)
+        log("整集音效已合入成片")
+        return {
+            "applied": True,
+            "provider": "sonilo",
+            "sfx_path": sfx_path.as_posix(),
+        }
+    except (TaskCancelled, TaskTimedOut):
+        raise
+    except Exception as exc:
+        log(f"整集音效失败，保留原音轨: {str(exc)[:300]}")
+        return {"applied": False, "error": str(exc)[:300]}
+
+
 def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
     import subprocess
     import tempfile
@@ -640,10 +906,34 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
         if result.returncode != 0:
             raise RuntimeError(f"拼接失败: {result.stderr[:500]}")
 
-    return {
+    # 可选整集配乐：默认关闭，失败不影响成片。
+    soundtrack = _apply_episode_soundtrack(
+        ctx=ctx,
+        episode=episode,
+        output_path=output_path,
+        run_checked=run_checked,
+        check_cancel=check_cancel,
+    )
+
+    # 可选整集音效：默认关闭，失败不影响成片。放在配乐之后，
+    # 与配乐相互独立（各自开关、各自时长上限）。
+    sfx = _apply_episode_sfx(
+        ctx=ctx,
+        episode=episode,
+        output_path=output_path,
+        run_checked=run_checked,
+        check_cancel=check_cancel,
+    )
+
+    composed: dict[str, Any] = {
         "video_path": output_path.as_posix(),
         "add_subtitles_requested": add_subtitles,
     }
+    if soundtrack.get("applied") or soundtrack.get("error"):
+        composed["episode_soundtrack"] = soundtrack
+    if sfx.get("applied") or sfx.get("error"):
+        composed["episode_sfx"] = sfx
+    return composed
 
 
 register_project_task_runner("compose_episode", run_compose_episode)

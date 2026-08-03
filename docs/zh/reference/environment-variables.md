@@ -53,6 +53,33 @@ CE 的渠道选择、网关地址和 token 由网页「设置 → 模型配置�
 |---|---|---|
 | `FFMPEG_PATH` | `ffmpeg`(从 PATH) | ffmpeg 可执行路径,装在非标准位置时显式指定。 |
 
+## 整集配乐(可选,默认关闭)
+
+成片合成后的可选步骤:把拼好的成片交给配乐模型,生成一条贯穿整集、长度自动匹配的原创配乐,叠加或替换原生音轨。
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `EPISODE_SOUNDTRACK_PROVIDER` | 空(关闭) | 设为 `sonilo` 启用 Sonilo video-to-music。 |
+| `SONILO_API_KEY` | 空 | Sonilo API key,用户自备。未配置时该步骤自动跳过。产出已获授权、可商用(以 Sonilo 条款为准)。 |
+| `EPISODE_SOUNDTRACK_MODE` | `mix` | `mix` 压低配乐叠加,保留原生对白/音效;`replace` 整体替换原音轨,适合无对白内容。 |
+| `EPISODE_SOUNDTRACK_MUSIC_VOLUME` | `0.35` | mix 模式下配乐音量系数(0-1)。 |
+| `EPISODE_SOUNDTRACK_PROMPT` | 空 | 可选的配乐风格提示词,原样透传。 |
+| `SONILO_API_BASE_URL` / `SONILO_TIMEOUT_SECONDS` | `https://api.sonilo.com` / `600` | API 地址与 HTTP 超时(秒),一般无需修改。 |
+
+注:配乐接口目前最长支持 6 分钟成片,超长会记录日志并跳过;生成失败只保留原音轨,不影响成片合成。
+
+## 整集音效(可选,默认关闭)
+
+成片合成后的可选步骤:把拼好的成片交给音效模型,根据画面内容生成贴合视频的音效(免版税,仅音效,以 Sonilo 条款为准),压低后叠加到原音轨上。只有 mix 一种方式、无 replace:原生音轨带对白,整体替换会把对白一起丢掉。
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `EPISODE_SFX_PROVIDER` | 空(关闭) | 设为 `sonilo` 启用 Sonilo video-to-sfx。复用上一节的 `SONILO_API_KEY` / `SONILO_API_BASE_URL` / `SONILO_TIMEOUT_SECONDS`,key 未配置时该步骤自动跳过。 |
+| `EPISODE_SFX_VOLUME` | `0.5` | 音效叠加到原音轨时的音量系数(0-1)。 |
+| `EPISODE_SFX_PROMPT` | 空 | 可选的音效风格提示词,原样透传。 |
+
+注:音效接口目前最长支持 3 分钟成片,比配乐接口的 6 分钟更严——成片在 3~6 分钟之间时,配乐照常进行、音效跳过。超长会记录日志并跳过;生成失败只保留原音轨,不影响成片合成。
+
 ## 安全
 
 | 变量 | 默认 | 说明 |

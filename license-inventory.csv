@@ -1320,6 +1320,7 @@ src/novelvideo/assets/login_bgm.mp3,Elastic-2.0,2026 SuperTale contributors,REUS
 src/novelvideo/assets/to_be_continued.png,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/audio/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/audio/indextts2_beat_audio_task.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/audio/sonilo_soundtrack.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/audio_request_usage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/backup/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/backup/cli.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1720,6 +1721,8 @@ tests/test_cognee_llm_config_refresh.py,Elastic-2.0,2026 SuperTale contributors,
 tests/test_cognee_pipeline_concurrency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_store_close.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_compose_episode_audio_source.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_compose_episode_sfx.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_compose_episode_soundtrack.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_content_adapter.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_control_frame_to_sketch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_dependency_license_gate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1824,6 +1827,8 @@ tests/test_seedance2_voice_audio_records.py,Elastic-2.0,2026 SuperTale contribut
 tests/test_seedance2_voice_audio_task.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_seedance2_voice_clone.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_sketch_edit_execute_celery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_sonilo_sfx_client.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_sonilo_soundtrack_client.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_spa_static_serving.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_sqlite_pragmas.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_sqlite_schema_initialization.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

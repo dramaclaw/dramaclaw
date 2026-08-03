@@ -54,6 +54,33 @@ About **30 `*_MODEL` logical model names** (e.g. `HERMES_MODEL=DC-hermes-LLM`) m
 |---|---|---|
 | `FFMPEG_PATH` | `ffmpeg` (from PATH) | Path to the ffmpeg executable; specify explicitly when installed in a non-standard location. |
 
+## Episode Soundtrack (optional, off by default)
+
+Optional post-compose step: the assembled episode is sent to a soundtrack model, which generates one original track that runs through the whole episode with automatically matched length, laid over or replacing the native audio.
+
+| Variable | Default | Description |
+|---|---|---|
+| `EPISODE_SOUNDTRACK_PROVIDER` | Empty (off) | Set to `sonilo` to enable Sonilo video-to-music. |
+| `SONILO_API_KEY` | Empty | User-supplied Sonilo API key. The step is skipped automatically when unset. Output is licensed and safe for commercial use (terms apply). |
+| `EPISODE_SOUNDTRACK_MODE` | `mix` | `mix` lays the lowered soundtrack over the native audio, keeping native dialogue/SFX; `replace` swaps the audio track entirely, for dialogue-free content. |
+| `EPISODE_SOUNDTRACK_MUSIC_VOLUME` | `0.35` | Soundtrack volume factor (0-1) in `mix` mode. |
+| `EPISODE_SOUNDTRACK_PROMPT` | Empty | Optional style hint passed through to the soundtrack model. |
+| `SONILO_API_BASE_URL` / `SONILO_TIMEOUT_SECONDS` | `https://api.sonilo.com` / `600` | API endpoint and HTTP timeout in seconds; normally no need to change. |
+
+Note: the soundtrack endpoint currently supports episodes up to 6 minutes — longer ones are logged and skipped. A failed generation keeps the original audio and never fails the compose task.
+
+## Episode Sound Effects (optional, off by default)
+
+Optional post-compose step: the assembled episode is sent to a sound-effects model, which generates royalty-free sound effects (SFX only, provider terms apply) from the video, matching what happens on screen. The lowered SFX track is laid over the native audio; there is no replace mode — the native per-clip audio carries dialogue, and replacing it would drop the dialogue too.
+
+| Variable | Default | Description |
+|---|---|---|
+| `EPISODE_SFX_PROVIDER` | Empty (off) | Set to `sonilo` to enable Sonilo video-to-sfx. Reuses `SONILO_API_KEY` / `SONILO_API_BASE_URL` / `SONILO_TIMEOUT_SECONDS` from the section above; the step is skipped automatically when the key is unset. |
+| `EPISODE_SFX_VOLUME` | `0.5` | SFX volume factor (0-1) when laid over the native audio. |
+| `EPISODE_SFX_PROMPT` | Empty | Optional style hint passed through to the SFX model. |
+
+Note: the SFX endpoint currently supports episodes up to 3 minutes — a tighter cap than the soundtrack endpoint's 6 minutes, so an episode between 3 and 6 minutes still gets a soundtrack but skips SFX. Longer episodes are logged and skipped; a failed generation keeps the original audio and never fails the compose task.
+
 ## Security
 
 | Variable | Default | Description |
