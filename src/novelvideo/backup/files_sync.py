@@ -12,6 +12,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from novelvideo.service_operation_gate import (
+    ServiceOperationExcluded,
+    require_legacy_local_service_operation,
+)
+
 # Per-user .hermes dirs hold agent runtime state: keep only config/memory —
 # never sync .env (secrets), caches, logs or tmp to the backup bucket.
 RCLONE_FILTER = """\
@@ -272,6 +277,11 @@ def _run(cmd: list[str], env: dict[str, str]) -> int:
 
 
 def main(*, execution_context: BackupExecutionContext | None = None) -> int:
+    try:
+        require_legacy_local_service_operation()
+    except ServiceOperationExcluded as exc:
+        print(exc.code, file=sys.stderr, flush=True)
+        return 2
     require_backup_execution_context(
         execution_context or trusted_backup_cli_context("files-sync-cli")
     )

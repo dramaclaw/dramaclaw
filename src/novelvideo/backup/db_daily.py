@@ -13,6 +13,10 @@ from novelvideo.backup.files_sync import (
     trusted_backup_cli_context,
 )
 from novelvideo.backup.wal_migrator import iter_sqlite_files
+from novelvideo.service_operation_gate import (
+    ServiceOperationExcluded,
+    require_legacy_local_service_operation,
+)
 
 SNAPSHOT_SUFFIX = ".snapshot"
 
@@ -47,6 +51,11 @@ def snapshot_state_tree(state_dir: Path) -> tuple[int, int]:
 
 
 def main(*, execution_context: BackupExecutionContext | None = None) -> int:
+    try:
+        require_legacy_local_service_operation()
+    except ServiceOperationExcluded as exc:
+        print(exc.code, file=sys.stderr, flush=True)
+        return 2
     require_backup_execution_context(
         execution_context or trusted_backup_cli_context("db-daily-cli")
     )

@@ -26,6 +26,10 @@ from novelvideo.model_gateway_settings import (
     set_model_gateway_mode,
 )
 from novelvideo.model_gateway_runtime import refresh_model_gateway_runtime
+from novelvideo.service_operation_gate import (
+    ServiceOperationExcluded,
+    require_legacy_local_service_operation,
+)
 from novelvideo.shared.runtime_env import is_ce_effective
 from novelvideo.newapi_provisioner import (
     build_channel_payload,
@@ -64,6 +68,10 @@ OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
 
 def require_ce_gateway_management() -> None:
     """Reject CE-local gateway mutations from an EE-composed process."""
+    try:
+        require_legacy_local_service_operation()
+    except ServiceOperationExcluded as exc:
+        raise PermissionError(exc.code) from None
     if not is_ce_effective():
         raise ServiceControlEgressDenied()
     require_provisioner_enabled()

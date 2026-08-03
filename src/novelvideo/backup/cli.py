@@ -15,6 +15,10 @@ from novelvideo.backup.files_sync import (
     require_backup_execution_context,
     trusted_backup_cli_context,
 )
+from novelvideo.service_operation_gate import (
+    ServiceOperationExcluded,
+    require_legacy_local_service_operation,
+)
 
 backup_app = typer.Typer(name="backup", help="OSS backup/restore")
 
@@ -27,6 +31,12 @@ CELL_SQLITE_RELS = (
 @backup_app.callback()
 def _backup_group() -> None:
     """Backup command group."""
+
+    try:
+        require_legacy_local_service_operation()
+    except ServiceOperationExcluded as exc:
+        typer.echo(exc.code, err=True)
+        raise typer.Exit(2) from None
 
 
 def derive_region(endpoint: str) -> str:

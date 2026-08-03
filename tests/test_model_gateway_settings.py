@@ -503,7 +503,7 @@ def test_ee_cannot_mutate_ce_model_gateway_settings(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 403
-    assert "only available in CE" in response.json()["detail"]
+    assert response.json()["detail"] == "ORG_SERVICE_EGRESS_DENIED"
 
 
 def test_ce_runtime_refresh_never_mutates_process_environment(monkeypatch, tmp_path):
