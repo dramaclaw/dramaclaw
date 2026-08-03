@@ -26,6 +26,7 @@ export interface Task {
   metadata?: Record<string, unknown>;
   error?: string;
   logs?: string[];
+  created_at?: string;
   task_type_label?: string;
   display_name?: string;
 }

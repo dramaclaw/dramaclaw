@@ -84,6 +84,7 @@ beforeAll(async () => {
             pastePlaceholder: "Paste novel text here",
             startIngest: "Start Import",
             processing: "Processing...",
+            elapsed: "Elapsed {{time}}",
             status: {
               uploaded: "Uploaded",
               importing: "Importing",
@@ -215,7 +216,12 @@ const mocks = vi.hoisted(() => ({
     | undefined,
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
-  ingestTasks: [] as { task_type: string; episode: number; status: string }[],
+  ingestTasks: [] as {
+    task_type: string;
+    episode: number;
+    status: string;
+    created_at?: string;
+  }[],
   // 模拟 React Query 的 isFetchedAfterMount：默认 true（已挂载后刷到新数据）；
   // stale-cache 竞态用例把它设为 false，表示当前 data 还是挂载前的旧缓存。
   ingestTasksFetchedAfterMount: true,
@@ -1017,6 +1023,46 @@ describe("IngestPage settings save", () => {
     );
   });
 
+  it("starts elapsed timing after project settings finish saving", async () => {
+    const user = userEvent.setup();
+    let nowMs = Date.parse("2026-08-01T00:00:00Z");
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    mocks.uploadNovel.mockResolvedValue({
+      ok: true,
+      data: { filename: "novel.txt", size: 12 },
+    });
+    mocks.updateProject.mockImplementation(async () => {
+      nowMs += 60_000;
+      return { ok: true, data: mocks.projectConfig };
+    });
+    mocks.startIngest.mockResolvedValue({
+      ok: true,
+      data: { task_id: "task-1" },
+    });
+
+    try {
+      const { container } = render(
+        <Wrapper>
+          <IngestPageContent project="demo" />
+        </Wrapper>,
+      );
+      const fileInput = container.querySelector<HTMLInputElement>(
+        'input[type="file"]',
+      );
+      await user.upload(
+        fileInput!,
+        new File(["Chapter 1"], "novel.txt", { type: "text/plain" }),
+      );
+      await user.click(screen.getByRole("option", { name: "Narrated" }));
+      await user.click(screen.getByRole("button", { name: /start import/i }));
+
+      expect(await screen.findByText("Elapsed 00:00")).toBeInTheDocument();
+      expect(mocks.updateProject).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("blocks a headerless premium drama before starting ingest", async () => {
     const user = userEvent.setup();
     mocks.uploadNovel.mockResolvedValue({
@@ -1277,6 +1323,46 @@ describe("IngestPage settings save", () => {
     expect(
       screen.queryByText(SUPPORTED_FORMATS_LABEL),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps the persisted start while task-list completion races the SSE", async () => {
+    const nowMs = Date.parse("2026-08-01T00:05:00Z");
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(nowMs);
+    mocks.ingestTasks = [
+      {
+        task_type: "ingest_fast",
+        episode: 0,
+        status: "running",
+        created_at: "2026-08-01T00:00:00Z",
+      },
+    ];
+
+    try {
+      const view = render(
+        <Wrapper>
+          <IngestPageContent project="demo" />
+        </Wrapper>,
+      );
+      expect(await screen.findByText("Elapsed 05:00")).toBeInTheDocument();
+
+      mocks.ingestTasks = [
+        {
+          task_type: "ingest_fast",
+          episode: 0,
+          status: "completed",
+          created_at: "2026-08-01T00:00:00Z",
+        },
+      ];
+      view.rerender(
+        <Wrapper>
+          <IngestPageContent project="demo" />
+        </Wrapper>,
+      );
+
+      expect(screen.getByText("Elapsed 05:00")).toBeInTheDocument();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("does not restore the import view when no ingest task is active", () => {

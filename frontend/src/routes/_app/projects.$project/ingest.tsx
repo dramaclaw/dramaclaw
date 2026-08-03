@@ -36,6 +36,7 @@ import {
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import { NovelFormatDialog } from "@/components/ingest/NovelFormatDialog";
 import { KnowledgeGraphVisualization } from "@/components/ingest/KnowledgeGraphVisualization";
+import { IngestElapsedTime } from "@/components/ingest/IngestElapsedTime";
 import { useStyles } from "@/lib/queries/styles";
 import { useCancelTask, useTasks } from "@/lib/queries/tasks";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
@@ -589,6 +590,7 @@ function UploadedFileCard({
   status,
   progress,
   currentTask,
+  startedAtMs,
   error,
   formatCheck,
   onViewFormatCheck,
@@ -609,6 +611,7 @@ function UploadedFileCard({
   status: IngestFileStatus;
   progress: number;
   currentTask: string;
+  startedAtMs: number;
   error: string | null;
   formatCheck?: FormatCheck | null;
   onViewFormatCheck?: () => void;
@@ -764,6 +767,7 @@ function UploadedFileCard({
             <span className="min-w-0 flex-1 truncate">
               {currentTask || t("ingest.processing")}
             </span>
+            <IngestElapsedTime startedAtMs={startedAtMs} />
             <span className="shrink-0 font-mono tabular-nums">{percent}%</span>
           </div>
           <Progress value={percent} />
@@ -1085,6 +1089,9 @@ export function IngestPageContent({ project }: { project: string }) {
 
   // SSE task streaming
   const [ingestStarted, setIngestStarted] = useState(false);
+  const [localIngestStartedAtMs, setLocalIngestStartedAtMs] = useState(() =>
+    Date.now(),
+  );
   const [reimporting, setReimporting] = useState(false);
   const [reuploadConfirmOpen, setReuploadConfirmOpen] = useState(false);
   const [reimportSourceFilename, setReimportSourceFilename] = useState<string | null>(
@@ -1163,20 +1170,45 @@ export function IngestPageContent({ project }: { project: string }) {
   // ingestFileStatus)，否则组件被跨项目复用时会错显「Importing」卡片并让
   // useTaskStream 去连一个不存在的 SSE。正常路由下父级会按 project remount 兜底，
   // 单次挂载时 else 分支是无副作用的幂等重置(状态本就是初值)——纯防御。
-  const { data: ingestTasksRes, isFetchedAfterMount: ingestTasksFetchedAfterMount } =
-    useTasks({ project, episode: 0 });
+  const {
+    data: ingestTasksRes,
+    isFetchedAfterMount: ingestTasksFetchedAfterMount,
+  } = useTasks({ project, episode: 0 });
+  const activeIngestTask = (ingestTasksRes?.data ?? []).find(
+    (task) =>
+      task.task_type === "ingest_fast" &&
+      ACTIVE_INGEST_STATUSES.has(task.status),
+  );
+  const persistedIngestStartedAtMs = activeIngestTask?.created_at
+    ? Date.parse(activeIngestTask.created_at)
+    : Number.NaN;
+  const [rememberedIngestStart, setRememberedIngestStart] = useState<{
+    project: string;
+    startedAtMs: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!Number.isFinite(persistedIngestStartedAtMs)) return;
+    setRememberedIngestStart({
+      project,
+      startedAtMs: persistedIngestStartedAtMs,
+    });
+  }, [persistedIngestStartedAtMs, project]);
+  const rememberedIngestStartedAtMs =
+    rememberedIngestStart?.project === project
+      ? rememberedIngestStart.startedAtMs
+      : Number.NaN;
+  const ingestStartedAtMs = Number.isFinite(persistedIngestStartedAtMs)
+    ? persistedIngestStartedAtMs
+    : Number.isFinite(rememberedIngestStartedAtMs)
+      ? rememberedIngestStartedAtMs
+      : localIngestStartedAtMs;
   const ingestReconciledProjectRef = useRef<string | null>(null);
   useEffect(() => {
     if (ingestReconciledProjectRef.current === project) return;
     if (!ingestTasksFetchedAfterMount) return;
     if (ingestTasksRes === undefined) return;
     ingestReconciledProjectRef.current = project;
-    const running = (ingestTasksRes.data ?? []).some(
-      (task) =>
-        task.task_type === "ingest_fast" &&
-        ACTIVE_INGEST_STATUSES.has(task.status),
-    );
-    if (running) {
+    if (activeIngestTask) {
       setIngestSubmitted(true);
       setIngestStarted(true);
       setIngestFileStatus("importing");
@@ -1186,7 +1218,7 @@ export function IngestPageContent({ project }: { project: string }) {
       setIngestStarted(false);
       setIngestFileStatus("uploaded");
     }
-  }, [ingestTasksRes, ingestTasksFetchedAfterMount, project]);
+  }, [activeIngestTask, ingestTasksRes, ingestTasksFetchedAfterMount, project]);
 
   const handleCancelIngest = useCallback(async () => {
     setIngestStarted(false);
@@ -1430,6 +1462,8 @@ export function IngestPageContent({ project }: { project: string }) {
       }
       try {
         await saveProjectSettings();
+        setRememberedIngestStart(null);
+        setLocalIngestStartedAtMs(Date.now());
         setIngestLogs([]);
         setIngestError(null);
         await startIngestMutation.mutateAsync({
@@ -1890,6 +1924,7 @@ export function IngestPageContent({ project }: { project: string }) {
                   status={previewStatus}
                   progress={taskStream.progress}
                   currentTask={taskStream.currentTask}
+                  startedAtMs={ingestStartedAtMs}
                   error={ingestError}
                   formatCheck={displayedFormatCheck}
                   onViewFormatCheck={() => {

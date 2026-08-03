@@ -1432,6 +1432,7 @@
     "settingsSaved": "Project settings saved",
     "settingsSaveFailed": "Failed to save project settings",
     "processing": "Processing...",
+    "elapsed": "Elapsed {{time}}",
     "projectSettings": "Project Settings",
     "advancedSettings": "Advanced settings",
     "visualStyle": "Visual Style",

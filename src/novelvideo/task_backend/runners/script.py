@@ -135,19 +135,10 @@ async def _run_script_writer(envelope: dict[str, Any], ctx: ProjectContext) -> d
             )
 
         try:
-            char_dicts = [
-                {
-                    "name": c.name,
-                    "identities": [
-                        {"identity_id": identity.identity_id} for identity in (c.identities or [])
-                    ],
-                }
-                for c in store.get_all_characters()
-            ]
             beats_data = [beat.model_dump() for beat in script.beats]
             existing_colors = dict(store.get_sketch_colors(episode) or {})
             colors = EpisodeOptimizer.assign_sketch_colors(
-                char_dicts,
+                [],
                 episode_beats=beats_data,
                 existing_colors=existing_colors,
             )
