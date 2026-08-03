@@ -104,9 +104,6 @@ async def _run_script_writer(envelope: dict[str, Any], ctx: ProjectContext) -> d
     store = CogneeStore(ctx.owner_project_label, output_dir=output_dir)
     await store.initialize()
     try:
-        await store.load_graph_state()
-        update_progress(0.10, "图谱状态已加载")
-
         project_config = load_project_config(ctx.owner_username, ctx.project_name)
         merged_config = {**project_config, **config}
         workflow = create_script_writing_workflow(
