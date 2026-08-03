@@ -930,7 +930,7 @@ class TaskStateManager:
         metadata: dict | None = None,
         expected_task_id: str | None = None,
         queue_kind: str | None = None,
-    ):
+    ) -> bool:
         expected_task_id = expected_task_id or _CURRENT_PROJECT_TASK_ID.get()
         state = self.get_task_for_project(ctx, task_type, episode, beat_num, scope)
         if not state:
@@ -944,7 +944,7 @@ class TaskStateManager:
                     expected_task_id,
                     scope,
                 )
-                return
+                return False
             state = self.create_task_for_project(
                 ctx,
                 task_type,
@@ -964,7 +964,7 @@ class TaskStateManager:
                 expected_task_id,
                 state.task_id,
             )
-            return
+            return False
         if state.status == "cancelled":
             logger.warning(
                 "Ignore complete update for cancelled project task: %s/%s/%s",
@@ -972,7 +972,7 @@ class TaskStateManager:
                 ctx.project_id,
                 episode,
             )
-            return
+            return False
         state.status = "completed"
         state.progress = 1.0 if progress is None else progress
         if current_task is not None:
@@ -988,6 +988,7 @@ class TaskStateManager:
         state.updated_at = utc_now_iso()
         self._save_for_context(ctx, state, ttl=self.COMPLETED_TTL)
         logger.info("Project task completed: %s/%s/%s", task_type, ctx.project_id, episode)
+        return True
 
     def fail_task(
         self,
