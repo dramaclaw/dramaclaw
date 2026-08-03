@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from importlib import import_module
 
@@ -180,3 +181,112 @@ async def test_consumer_rejects_changed_credential_version_as_stale():
     assert captured.value.__cause__ is None
     assert captured.value.__context__ is None
     assert authz.calls == [{"user_id": "user-1", "root_task_id": "task-root"}]
+
+
+@pytest.mark.asyncio
+async def test_consumer_runs_policy_after_verification_before_authority_read():
+    from novelvideo.ports.authz import AuthzError
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+
+    authz = FakeAuthz()
+    policy_calls: list[str] = []
+
+    def reject_execution() -> None:
+        policy_calls.append("called")
+        raise RuntimeError("policy-secret-canary")
+
+    consumer = TaskEnvelopeConsumer(
+        keyring=KEYRING,
+        authz=authz,
+        clock=lambda: NOW,
+        pre_execution_policy=reject_execution,
+    )
+
+    with pytest.raises(AuthzError) as captured:
+        await consumer.consume(_delivery(), expected_root_task_id="task-root")
+
+    assert captured.value.code == "P0_GRAY_DISABLED"
+    assert "policy-secret-canary" not in str(captured.value)
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    assert policy_calls == ["called"]
+    assert authz.calls == []
+
+
+@pytest.mark.asyncio
+async def test_consumer_preserves_explicit_falsey_policy_callback():
+    from novelvideo.ports.authz import AuthzError
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+
+    authz = FakeAuthz()
+
+    class FalseyRejectPolicy:
+        def __bool__(self) -> bool:
+            return False
+
+        def __call__(self) -> None:
+            raise RuntimeError("must not be replaced by the default policy")
+
+    consumer = TaskEnvelopeConsumer(
+        keyring=KEYRING,
+        authz=authz,
+        clock=lambda: NOW,
+        pre_execution_policy=FalseyRejectPolicy(),
+    )
+
+    with pytest.raises(AuthzError) as captured:
+        await consumer.consume(_delivery(), expected_root_task_id="task-root")
+
+    assert captured.value.code == "P0_GRAY_DISABLED"
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    assert authz.calls == []
+
+
+@pytest.mark.asyncio
+async def test_consumer_verifies_envelope_before_running_policy():
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    authz = FakeAuthz()
+    policy_calls: list[str] = []
+    consumer = TaskEnvelopeConsumer(
+        keyring=KEYRING,
+        authz=authz,
+        clock=lambda: NOW,
+        pre_execution_policy=lambda: policy_calls.append("called"),
+    )
+    delivery = _delivery()
+    delivery["task_envelope_v2"]["signature"] = "0" * 64
+
+    with pytest.raises(InvalidTaskEnvelope):
+        await consumer.consume(delivery, expected_root_task_id="task-root")
+
+    assert policy_calls == []
+    assert authz.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exit_type",
+    [asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit],
+)
+async def test_consumer_policy_propagates_exit_exceptions(exit_type):
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+
+    authz = FakeAuthz()
+
+    def exit_policy() -> None:
+        raise exit_type()
+
+    consumer = TaskEnvelopeConsumer(
+        keyring=KEYRING,
+        authz=authz,
+        clock=lambda: NOW,
+        pre_execution_policy=exit_policy,
+    )
+
+    with pytest.raises(exit_type):
+        await consumer.consume(_delivery(), expected_root_task_id="task-root")
+
+    assert authz.calls == []

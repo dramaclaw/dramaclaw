@@ -8,7 +8,7 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Any
 
-from novelvideo.ports.authz import AdmissionContext, AuthzPort
+from novelvideo.ports.authz import AdmissionContext, AuthzError, AuthzPort
 from novelvideo.task_backend.envelope import (
     InvalidTaskEnvelope,
     SignedTaskEnvelope,
@@ -27,6 +27,14 @@ _DELIVERY_FIELDS = {
     "task_envelope_v2",
 }
 _SIGNED_PAYLOAD_FIELDS = {"episode", "beat_num", "scope", "queue_kind", "payload"}
+
+
+def _allow_execution() -> None:
+    return None
+
+
+class _PreExecutionPolicyError(AuthzError, InvalidTaskEnvelope):
+    """Stable authz denial compatible with existing inline failure projection."""
 
 
 @dataclass(frozen=True)
@@ -85,6 +93,7 @@ class TaskEnvelopeConsumer:
         keyring: Mapping[str, bytes],
         authz: AuthzPort,
         clock: Callable[[], datetime],
+        pre_execution_policy: Callable[[], None] | None = None,
     ) -> None:
         keyring_failed = False
         try:
@@ -97,6 +106,11 @@ class TaskEnvelopeConsumer:
         self._keyring = MappingProxyType(copied_keyring)
         self._authz = authz
         self._clock = clock
+        self._pre_execution_policy = (
+            pre_execution_policy
+            if pre_execution_policy is not None
+            else _allow_execution
+        )
 
     async def consume(
         self,
@@ -146,6 +160,14 @@ class TaskEnvelopeConsumer:
             parse_failure = InvalidTaskEnvelope
         if parse_failure is not None:
             raise parse_failure() from None
+
+        policy_failed = False
+        try:
+            self._pre_execution_policy()
+        except Exception:
+            policy_failed = True
+        if policy_failed:
+            raise _PreExecutionPolicyError("P0_GRAY_DISABLED") from None
 
         authority_failed = False
         current_admission: AdmissionContext | None = None
