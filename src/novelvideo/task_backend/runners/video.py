@@ -90,7 +90,9 @@ def _append_freezone_video_node_history(
     )
 
 
-async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+async def _run_single_video_async(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     task_type = "single_video"
     episode = int(envelope.get("episode") or 0)
     beat_num = int(envelope.get("beat_num") or 0)
@@ -101,7 +103,10 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
     manager = get_task_manager()
     _log(manager, ctx, envelope, f"开始生成 Beat {beat_num} 视频")
 
-    from novelvideo.generators.video_generator import ShotReference, create_video_generator
+    from novelvideo.generators.video_generator import (
+        ShotReference,
+        create_video_generator,
+    )
     from novelvideo.seedance2_i2v.pipeline import is_huimeng_seedance2_backend
     from novelvideo.utils.path_resolver import PathResolver
 
@@ -112,7 +117,9 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
     video_duration = config.get("video_duration", 5.0)
     backend_str = config.get("video_backend", "comfyui")
     last_frame_path = config.get("last_frame_path")
-    seedance2_config = config.get("seedance2_config") or beat.get("seedance2_config_json")
+    seedance2_config = config.get("seedance2_config") or beat.get(
+        "seedance2_config_json"
+    )
     is_seedance2_backend = is_huimeng_seedance2_backend(backend_str)
 
     paths = PathResolver(output_dir, episode)
@@ -120,6 +127,9 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
     videos_dir.mkdir(parents=True, exist_ok=True)
     video_path = paths.video(beat_num)
     gen_kwargs: dict[str, Any] = {}
+    egress_context = envelope.get("__trusted_egress_context")
+    if egress_context is not None:
+        gen_kwargs["egress_context"] = egress_context
     # 非 seedance2 后端（含 seedance-1.5-pro）的清晰度走构造参数透传；
     # seedance2 的清晰度在 prepare 阶段并入 seedance2_config，无需在此重复。
     single_resolution = config.get("resolution")
@@ -146,7 +156,9 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
     seedance2_references = []
     if is_seedance2_backend:
         from novelvideo.seedance2_i2v.models import Seedance2I2VMode
-        from novelvideo.seedance2_i2v.pipeline import prepare_seedance2_generation_inputs
+        from novelvideo.seedance2_i2v.pipeline import (
+            prepare_seedance2_generation_inputs,
+        )
 
         prepared = await prepare_seedance2_generation_inputs(
             project_output=output_dir,
@@ -157,7 +169,9 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
             prompt=prompt,
             duration=video_duration,
             resolution=(
-                str(config["resolution"]) if config.get("resolution") is not None else None
+                str(config["resolution"])
+                if config.get("resolution") is not None
+                else None
             ),
             ratio=str(config["ratio"]) if config.get("ratio") is not None else None,
             prop_menu=config.get("prop_menu"),
@@ -169,7 +183,9 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
         seedance2_config = prepared.seedance2_config_json
         seedance2_references = prepared.references
         video_mode = (
-            "keyframe" if prepared.mode == Seedance2I2VMode.FIRST_LAST_FRAME else "first_frame"
+            "keyframe"
+            if prepared.mode == Seedance2I2VMode.FIRST_LAST_FRAME
+            else "first_frame"
         )
 
     model_references = seedance2_references
@@ -197,7 +213,10 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
         "episode": episode,
         "beat_num": beat_num,
         "task_type": task_type,
+        "scope": str(envelope.get("scope") or "beat"),
     }
+    if egress_context is not None:
+        generate_kwargs["egress_context"] = egress_context
     if model_references:
         generate_kwargs["references"] = model_references
     if config.get("audio_setting"):
@@ -232,7 +251,9 @@ async def _run_single_video_async(envelope: dict[str, Any], ctx: ProjectContext)
         "beat_num": beat_num,
         "video_pool_id": video_pool_id,
     }
-    provider_task_id = getattr(result, "provider_task_id", None) or getattr(result, "task_id", None)
+    provider_task_id = getattr(result, "provider_task_id", None) or getattr(
+        result, "task_id", None
+    )
     if provider_task_id:
         task_result["provider_task_id"] = provider_task_id
     if result.last_frame_path:
@@ -255,7 +276,9 @@ def run_single_video(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str,
 register_project_task_runner("single_video", run_single_video)
 
 
-def _audio_duration(audio_path: Path, *, timeout_seconds: int | None = 30) -> float | None:
+def _audio_duration(
+    audio_path: Path, *, timeout_seconds: int | None = 30
+) -> float | None:
     if not audio_path.exists():
         return None
     import subprocess
@@ -284,7 +307,9 @@ def _audio_duration(audio_path: Path, *, timeout_seconds: int | None = 30) -> fl
         return None
 
 
-def _video_has_audio_stream(video_path: Path, *, timeout_seconds: int | None = 30) -> bool:
+def _video_has_audio_stream(
+    video_path: Path, *, timeout_seconds: int | None = 30
+) -> bool:
     if not video_path.exists():
         return False
     import subprocess
@@ -324,9 +349,7 @@ async def _run_video_generation_async(
     output_dir = str(payload.get("output_dir") or ctx.output_dir)
     beats = list(payload.get("beats") or [])
     requested_beat_numbers = {
-        int(value)
-        for value in payload.get("beat_numbers") or []
-        if int(value) > 0
+        int(value) for value in payload.get("beat_numbers") or [] if int(value) > 0
     }
     if requested_beat_numbers:
         beats = [
@@ -367,8 +390,9 @@ async def _run_video_generation_async(
 
         video_mode = str(beat.get("video_mode") or "first_frame")
         prompt = str(
-            beat.get("keyframe_prompt") if video_mode == "keyframe" else beat.get("video_prompt")
-            or ""
+            beat.get("keyframe_prompt")
+            if video_mode == "keyframe"
+            else beat.get("video_prompt") or ""
         )
         audio_path = paths.audio(beat_num)
         duration = resolve_target_video_duration(
@@ -415,7 +439,9 @@ async def _run_video_generation_async(
     return {"generated": len(generated), "items": generated}
 
 
-def run_video_generation(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_video_generation(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return asyncio.run(
         await_envelope_with_cancel_watch(
             _run_video_generation_async(envelope, ctx),
@@ -425,7 +451,9 @@ def run_video_generation(envelope: dict[str, Any], ctx: ProjectContext) -> dict[
     )
 
 
-def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_compose_episode(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     import subprocess
     import tempfile
 
@@ -580,7 +608,7 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
                         "yuv420p",
                         "-shortest",
                     ]
-            )
+                )
             cmd.append(str(clip_path))
             result = run_checked(cmd, default_timeout_seconds=30 * 60)
             check_cancel()
@@ -610,8 +638,12 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
                 f"setsar=1,format=yuv420p[v{index}]"
             )
             filter_parts.append(f"[{index}:a]aresample=44100[a{index}]")
-        concat_inputs = "".join(f"[v{index}][a{index}]" for index in range(len(video_clips)))
-        filter_parts.append(f"{concat_inputs}concat=n={len(video_clips)}:v=1:a=1[outv][outa]")
+        concat_inputs = "".join(
+            f"[v{index}][a{index}]" for index in range(len(video_clips))
+        )
+        filter_parts.append(
+            f"{concat_inputs}concat=n={len(video_clips)}:v=1:a=1[outv][outa]"
+        )
         cmd.extend(
             [
                 "-filter_complex",
@@ -725,7 +757,9 @@ async def _run_global_optimize_video_async(
                 continue
 
             prev_beat = sorted_beats[index - 1] if index > 0 else None
-            next_beat = sorted_beats[index + 1] if index < len(sorted_beats) - 1 else None
+            next_beat = (
+                sorted_beats[index + 1] if index < len(sorted_beats) - 1 else None
+            )
             try:
                 result = await optimizer.optimize_single_beat(
                     beat=beat,
@@ -760,13 +794,18 @@ async def _run_global_optimize_video_async(
                 error = f"{error}；最后错误：{failure_messages[-1]}"
             raise RuntimeError(error)
 
-        log(f"全局优化完成：成功更新 {updated_count}/{len(sorted_beats)} 个 Beat", progress=1.0)
+        log(
+            f"全局优化完成：成功更新 {updated_count}/{len(sorted_beats)} 个 Beat",
+            progress=1.0,
+        )
         return {"optimized": updated_count, "beats": beats}
     finally:
         await store.close()
 
 
-def run_global_optimize_video(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_global_optimize_video(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return asyncio.run(
         await_envelope_with_cancel_watch(
             _run_global_optimize_video_async(envelope, ctx),
@@ -801,8 +840,26 @@ async def _run_freezone_video_gen_async(
         logs=["开始 freezone 视频生成"],
     )
 
+    trusted_context = envelope.get("__trusted_egress_context")
+    video_leaf = run_freezone_video_gen
+    trusted_kwargs: dict[str, Any] = {}
+    if trusted_context is not None and trusted_context.billing_principal.kind in {
+        "organization",
+        "local",
+    }:
+        from novelvideo.freezone.video_node import run_trusted_freezone_video_gen
+
+        video_leaf = run_trusted_freezone_video_gen
+        trusted_kwargs = {
+            "egress_context": trusted_context,
+            "task_type": str(envelope.get("task_type") or "freezone_video_gen"),
+            "episode": int(envelope.get("episode") or 0),
+            "beat_num": int(envelope.get("beat_num") or 0),
+            "scope": str(envelope.get("scope") or job_id),
+        }
+
     try:
-        out_path = await run_freezone_video_gen(
+        out_path = await video_leaf(
             project_dir=project_dir,
             job_id=job_id,
             prompt=str(payload.get("prompt") or ""),
@@ -819,6 +876,7 @@ async def _run_freezone_video_gen_async(
             gen_mode=payload.get("gen_mode") or None,
             model_params=payload.get("model_params") or None,
             request_schema=payload.get("request_schema") or None,
+            **trusted_kwargs,
         )
     except Exception as exc:
         _append_freezone_video_node_history(
@@ -848,7 +906,9 @@ async def _run_freezone_video_gen_async(
     return result
 
 
-def run_freezone_video_gen(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+def run_freezone_video_gen(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
     return asyncio.run(
         await_envelope_with_cancel_watch(
             _run_freezone_video_gen_async(envelope, ctx),

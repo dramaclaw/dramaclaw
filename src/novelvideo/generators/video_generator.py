@@ -4,6 +4,8 @@
 """
 
 import asyncio
+import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -43,8 +45,63 @@ load_dotenv()
 NEWAPI_VIDEO_HTTP_TIMEOUT_SECONDS = 1800.0
 NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS = 2 * 60 * 60
 
+_VIDEO_EGRESS_ERROR_MESSAGES = {
+    "TASK_ENVELOPE_INVALID": "trusted video egress context is invalid",
+    "ORG_EGRESS_DENIED": "organization video egress is denied",
+    "ORG_SERVICE_EGRESS_DENIED": "organization video service egress is denied",
+    "EGRESS_OPERATION_REPLAYED": "video egress operation cannot be replayed",
+    "EGRESS_OPERATION_TRANSITION_FAILED": "video egress operation transition failed",
+}
 
-def _run_video_subprocess(cmd: list[str], *, timeout: int = 30 * 60) -> subprocess.CompletedProcess:
+
+class VideoEgressError(RuntimeError):
+    """Stable video egress policy failure without endpoint or secret details."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(_VIDEO_EGRESS_ERROR_MESSAGES.get(code, "video egress failed"))
+        self.code = code
+
+
+def _video_egress_context(value: object):
+    if value is None:
+        return None
+    from novelvideo.egress_context import TrustedEgressContext
+
+    if type(value) is not TrustedEgressContext:
+        raise VideoEgressError("TASK_ENVELOPE_INVALID")
+    return value
+
+
+def _deny_direct_organization_video(kwargs: dict[str, Any]) -> None:
+    context = _video_egress_context(kwargs.get("egress_context"))
+    if context is not None and context.billing_principal.kind != "platform":
+        raise VideoEgressError("ORG_EGRESS_DENIED")
+
+
+def _direct_video_context_denied(context: object | None) -> bool:
+    return bool(context is not None and context.billing_principal.kind != "platform")
+
+
+def _safe_video_error_code(exc: BaseException, fallback: str) -> str:
+    code = getattr(exc, "code", "")
+    if isinstance(code, str) and code in {
+        "P0_GRAY_DISABLED",
+        "ORG_CREDENTIAL_MISSING",
+        "ORG_CREDENTIAL_DISABLED",
+        "ORG_CREDENTIAL_VERSION_MISMATCH",
+        "ORG_CREDENTIAL_DECRYPT_FAILED",
+        "ORG_MEMBERSHIP_INACTIVE",
+        "ORG_AUTHZ_STALE",
+        "EGRESS_OPERATION_CONFLICT",
+        "EGRESS_OPERATION_REPLAYED",
+    }:
+        return code
+    return fallback
+
+
+def _run_video_subprocess(
+    cmd: list[str], *, timeout: int = 30 * 60
+) -> subprocess.CompletedProcess:
     return run_project_subprocess(cmd, capture_output=True, text=True, timeout=timeout)
 
 
@@ -239,7 +296,9 @@ class MockVideoGenerator(VideoGeneratorBase):
             frames = int(duration * self.fps)
 
             # 清理 prompt 中的特殊字符（避免 FFmpeg 命令行问题）
-            safe_prompt = prompt[:40].replace("'", "").replace('"', "").replace(":", " ")
+            safe_prompt = (
+                prompt[:40].replace("'", "").replace('"', "").replace(":", " ")
+            )
 
             # 使用 FFmpeg 生成视频
             # 1. Ken Burns 缩放效果
@@ -333,7 +392,9 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
         self.model = model
         self.generate_audio = generate_audio
         self.api_key = (
-            api_key or os.environ.get("VOLCENGINE_VISUAL_API_KEY") or os.environ.get("ARK_API_KEY")
+            api_key
+            or os.environ.get("VOLCENGINE_VISUAL_API_KEY")
+            or os.environ.get("ARK_API_KEY")
         )
         self.endpoint = endpoint or os.environ.get(
             "VOLCENGINE_VISUAL_ENDPOINT", "https://ark.cn-beijing.volces.com/api/v3"
@@ -358,7 +419,9 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
 
         return f"data:{mime_type};base64,{image_data}"
 
-    async def _download_video(self, url: str, output_path: str, max_retries: int = 3) -> bool:
+    async def _download_video(
+        self, url: str, output_path: str, max_retries: int = 3
+    ) -> bool:
         """下载视频文件，失败自动重试。"""
         import httpx
 
@@ -417,6 +480,8 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
         Returns:
             生成结果
         """
+        _deny_direct_organization_video(kwargs)
+
         import httpx
 
         def log(msg: str):
@@ -452,7 +517,9 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
             except Exception as e:
                 log(f"记账失败(accepted): {e}")
 
-        def _update_request_status(request_id: str, status: str, error_message: str | None = None):
+        def _update_request_status(
+            request_id: str, status: str, error_message: str | None = None
+        ):
             if not project_output_dir or not request_id:
                 return
             try:
@@ -536,7 +603,9 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
         request_body["generate_audio"] = self.generate_audio
 
         mode_desc = "首尾帧模式" if last_frame_url else "首帧模式"
-        log(f"正在提交 Seedance 视频生成任务 ({mode_desc}, {self.model}, {duration}s)...")
+        log(
+            f"正在提交 Seedance 视频生成任务 ({mode_desc}, {self.model}, {duration}s)..."
+        )
         progress(0.1)
 
         # 1. 提交任务
@@ -633,7 +702,9 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                                 )
                             else:
                                 log("视频下载失败")
-                                _update_request_status(task_id, "failed", "Download failed")
+                                _update_request_status(
+                                    task_id, "failed", "Download failed"
+                                )
                                 return VideoGenResult(
                                     status=VideoGenStatus.FAILED,
                                     error="Download failed",
@@ -641,7 +712,9 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                                 )
                         else:
                             log(f"API 未返回视频 URL: {data}")
-                            _update_request_status(task_id, "failed", "No video URL in response")
+                            _update_request_status(
+                                task_id, "failed", "No video URL in response"
+                            )
                             return VideoGenResult(
                                 status=VideoGenStatus.FAILED,
                                 error="No video URL in response",
@@ -649,7 +722,9 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
                             )
 
                     elif status_str == "failed":
-                        error_msg = data.get("error", {}).get("message", "Unknown error")
+                        error_msg = data.get("error", {}).get(
+                            "message", "Unknown error"
+                        )
                         log(f"视频生成失败: {error_msg}")
                         _update_request_status(task_id, "failed", error_msg)
                         return VideoGenResult(
@@ -668,7 +743,9 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
             await asyncio.sleep(poll_interval)
 
         log("视频生成超时")
-        _update_request_status(task_id, "failed", "Timeout waiting for video generation")
+        _update_request_status(
+            task_id, "failed", "Timeout waiting for video generation"
+        )
         return VideoGenResult(
             status=VideoGenStatus.FAILED,
             error="Timeout waiting for video generation",
@@ -736,7 +813,9 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
     ):
         self.model = model or self.MODEL
         self.api_key = (
-            api_key or os.environ.get("VOLCENGINE_VISUAL_API_KEY") or os.environ.get("ARK_API_KEY")
+            api_key
+            or os.environ.get("VOLCENGINE_VISUAL_API_KEY")
+            or os.environ.get("ARK_API_KEY")
         )
         self.endpoint = endpoint or os.environ.get(
             "VOLCENGINE_VISUAL_ENDPOINT", "https://ark.cn-beijing.volces.com/api/v3"
@@ -786,7 +865,9 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
         except Exception:
             return False
 
-    async def submit_task(self, image_url: str, prompt: str, aspect_ratio: str = "9:16") -> str:
+    async def submit_task(
+        self, image_url: str, prompt: str, aspect_ratio: str = "9:16"
+    ) -> str:
         return f"seedance2-{uuid.uuid4().hex[:8]}"
 
     async def get_result(self, task_id: str) -> VideoGenResult:
@@ -825,6 +906,8 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
             on_progress: 进度回调
             image_path: 兼容旧接口的首帧图路径
         """
+        _deny_direct_organization_video(kwargs)
+
         import httpx
 
         def log(msg: str):
@@ -1009,7 +1092,9 @@ class Seedance2VideoGenerator(VideoGeneratorBase):
                             )
 
                     elif status_str == "failed":
-                        error_msg = data.get("error", {}).get("message", "Unknown error")
+                        error_msg = data.get("error", {}).get(
+                            "message", "Unknown error"
+                        )
                         log(f"视频生成失败: {error_msg}")
                         return VideoGenResult(
                             status=VideoGenStatus.FAILED,
@@ -1071,7 +1156,9 @@ class GrokVideoGenerator(VideoGeneratorBase):
             encoded = base64.b64encode(f.read()).decode()
         return f"data:{mime_type};base64,{encoded}"
 
-    async def _download_video(self, url: str, output_path: str, max_retries: int = 3) -> bool:
+    async def _download_video(
+        self, url: str, output_path: str, max_retries: int = 3
+    ) -> bool:
         for attempt in range(1, max_retries + 1):
             try:
                 async with aiohttp.ClientSession() as session:
@@ -1105,6 +1192,8 @@ class GrokVideoGenerator(VideoGeneratorBase):
         last_frame_path: Optional[str] = None,
         **kwargs,
     ) -> VideoGenResult:
+        _deny_direct_organization_video(kwargs)
+
         def log(msg: str):
             if on_log:
                 on_log(msg)
@@ -1148,7 +1237,9 @@ class GrokVideoGenerator(VideoGeneratorBase):
             "resolution": self.resolution,
         }
 
-        log(f"正在提交 Grok 视频生成任务 ({self.model}, {duration}s, {self.resolution})...")
+        log(
+            f"正在提交 Grok 视频生成任务 ({self.model}, {duration}s, {self.resolution})..."
+        )
         progress(0.1)
 
         try:
@@ -1234,7 +1325,9 @@ class GrokVideoGenerator(VideoGeneratorBase):
                 )
 
             if poll_count % 6 == 0:
-                log(f"正在生成中... ({status_str or 'pending'}, {poll_count}/{max_polls})")
+                log(
+                    f"正在生成中... ({status_str or 'pending'}, {poll_count}/{max_polls})"
+                )
             await asyncio.sleep(poll_interval)
 
         return VideoGenResult(
@@ -1478,6 +1571,8 @@ class HuimengVideoGenerator(VideoGeneratorBase):
         last_frame_path: Optional[str] = None,
         **kwargs,
     ) -> VideoGenResult:
+        _deny_direct_organization_video(kwargs)
+
         def log(msg: str):
             if on_log:
                 on_log(msg)
@@ -1529,7 +1624,9 @@ class HuimengVideoGenerator(VideoGeneratorBase):
 
         is_seedance2_model = self._is_seedance2_model()
         seedance2_config = (
-            _seedance2_config_mapping(kwargs.get("seedance2_config")) if is_seedance2_model else {}
+            _seedance2_config_mapping(kwargs.get("seedance2_config"))
+            if is_seedance2_model
+            else {}
         )
         duration = _seedance2_duration_from_config(seedance2_config, duration)
         original_duration = duration
@@ -1591,7 +1688,9 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                 mode = Seedance2I2VMode.TEXT_TO_VIDEO
 
             config = seedance2_config
-            config_resolution = str(config.get("resolution") or self.resolution or "720p").strip()
+            config_resolution = str(
+                config.get("resolution") or self.resolution or "720p"
+            ).strip()
             config_ratio = str(config.get("ratio") or ratio or "adaptive").strip()
             config.update(
                 {
@@ -1657,7 +1756,9 @@ class HuimengVideoGenerator(VideoGeneratorBase):
 
         task_id: str | None = None
         try:
-            request_resolution = str(params.get("resolution") or self.resolution or "").strip()
+            request_resolution = str(
+                params.get("resolution") or self.resolution or ""
+            ).strip()
             log(
                 f"正在提交 HuiMeng 视频任务 "
                 f"({self.model}, refs={ref_counts['image_count']}图/{ref_counts['video_count']}视频/{ref_counts['audio_count']}音频, "
@@ -1688,7 +1789,9 @@ class HuimengVideoGenerator(VideoGeneratorBase):
             task_result_payload = {**result, **task}
             video_url = extract_huimeng_result_url(result, "video_url", "video_urls")
             if not video_url:
-                update_request_status(task_id, "failed", "No video_url in HuiMeng result")
+                update_request_status(
+                    task_id, "failed", "No video_url in HuiMeng result"
+                )
                 return VideoGenResult(
                     status=VideoGenStatus.FAILED,
                     error=f"No video_url in HuiMeng result: {result}",
@@ -1700,7 +1803,9 @@ class HuimengVideoGenerator(VideoGeneratorBase):
             last_frame_url = ""
             last_frame_path = ""
             if bool(params.get("return_last_frame")):
-                last_frame_url = extract_huimeng_result_last_frame_url(task_result_payload)
+                last_frame_url = extract_huimeng_result_last_frame_url(
+                    task_result_payload
+                )
                 if last_frame_url:
                     video_output_path = Path(output_path)
                     parsed_last_frame_url = urllib.parse.urlparse(last_frame_url)
@@ -1734,7 +1839,8 @@ class HuimengVideoGenerator(VideoGeneratorBase):
                 last_frame_path=last_frame_path or None,
                 task_id=task_id,
                 provider_task_id=task_id,
-                duration_seconds=extract_huimeng_result_duration(result) or float(duration),
+                duration_seconds=extract_huimeng_result_duration(result)
+                or float(duration),
             )
 
         except Exception as exc:
@@ -1788,18 +1894,25 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         model: Optional[str] = None,
         resolution: Optional[str] = None,
         generate_audio: Optional[bool] = None,
-    model_params: Optional[dict[str, Any]] = None,
+        model_params: Optional[dict[str, Any]] = None,
         request_schema: Optional[dict[str, Any]] = None,
+        egress_context: object | None = None,
     ):
         from novelvideo.config import (
             NEWAPI_VIDEO_MODEL,
             NEWAPI_VIDEO_RESOLUTION,
-            get_effective_newapi_gateway_config,
         )
 
-        gateway = get_effective_newapi_gateway_config()
-        self.api_key = api_key if api_key is not None else gateway.api_key
-        self.base_url = (endpoint or gateway.base_url).rstrip("/")
+        self.egress_context = _video_egress_context(egress_context)
+        if self.egress_context is not None and self.egress_context.is_organization:
+            self.api_key = ""
+            self.base_url = ""
+        else:
+            from novelvideo.config import get_effective_newapi_gateway_config
+
+            gateway = get_effective_newapi_gateway_config()
+            self.api_key = api_key if api_key is not None else gateway.api_key
+            self.base_url = (endpoint or gateway.base_url).rstrip("/")
         self.model = model or NEWAPI_VIDEO_MODEL
         self.resolution = resolution or NEWAPI_VIDEO_RESOLUTION
         self.model_params = model_params or {}
@@ -1814,7 +1927,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         else:
             self.generate_audio = raw_generate_audio in {"true", "1", "yes", "on"}
 
-        if not self.api_key:
+        if not self.api_key and not (
+            self.egress_context is not None and self.egress_context.is_organization
+        ):
             raise ValueError(
                 "DramaClawAPI key must be set for DramaClawAPI video generation"
             )
@@ -1822,7 +1937,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
     @staticmethod
     def _extract_request_id(text: str = "", headers: object | None = None) -> str:
         if headers:
-            for header_name in ("x-request-id", "x-newapi-request-id", "x-oneapi-request-id"):
+            for header_name in (
+                "x-request-id",
+                "x-newapi-request-id",
+                "x-oneapi-request-id",
+            ):
                 value = getattr(headers, "get", lambda _name: "")(header_name)
                 if value:
                     return str(value)
@@ -1833,7 +1952,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             except json.JSONDecodeError:
                 data = None
             if isinstance(data, dict):
-                error_obj = data.get("error") if isinstance(data.get("error"), dict) else {}
+                error_obj = (
+                    data.get("error") if isinstance(data.get("error"), dict) else {}
+                )
                 for candidate in (
                     data.get("request_id"),
                     data.get("requestId"),
@@ -1844,7 +1965,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         return candidate
                 text = str(error_obj.get("message") or text)
 
-            match = re.search(r"request[\s_-]*id[:：]\s*([A-Za-z0-9_-]+)", text, re.IGNORECASE)
+            match = re.search(
+                r"request[\s_-]*id[:：]\s*([A-Za-z0-9_-]+)", text, re.IGNORECASE
+            )
             if match:
                 return match.group(1)
 
@@ -1861,9 +1984,17 @@ class NewApiVideoGenerator(VideoGeneratorBase):
     def _client_timeout() -> aiohttp.ClientTimeout:
         return aiohttp.ClientTimeout(total=NEWAPI_VIDEO_HTTP_TIMEOUT_SECONDS)
 
-    async def _post_json(self, url: str, payload: dict) -> dict:
+    async def _post_json(
+        self,
+        url: str,
+        payload: dict,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> dict:
         async with aiohttp.ClientSession(timeout=self._client_timeout()) as session:
-            async with session.post(url, json=payload, headers=self.headers) as resp:
+            async with session.post(
+                url, json=payload, headers=headers or self.headers
+            ) as resp:
                 text = await resp.text()
                 if resp.status < 200 or resp.status >= 300:
                     request_id = self._extract_request_id(text, resp.headers)
@@ -1875,14 +2006,23 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 try:
                     data = json.loads(text)
                     if isinstance(data, dict):
-                        data["_newapi_request_id"] = self._extract_request_id(text, resp.headers)
+                        data["_newapi_request_id"] = self._extract_request_id(
+                            text, resp.headers
+                        )
                     return data
                 except json.JSONDecodeError as exc:
-                    raise RuntimeError(f"DramaClawAPI submit returned invalid JSON: {text}") from exc
+                    raise RuntimeError(
+                        f"DramaClawAPI submit returned invalid JSON: {text}"
+                    ) from exc
 
-    async def _get_json(self, url: str) -> dict:
+    async def _get_json(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> dict:
         async with aiohttp.ClientSession(timeout=self._client_timeout()) as session:
-            async with session.get(url, headers=self.headers) as resp:
+            async with session.get(url, headers=headers or self.headers) as resp:
                 text = await resp.text()
                 if resp.status < 200 or resp.status >= 300:
                     request_id = self._extract_request_id(text, resp.headers)
@@ -1894,7 +2034,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 try:
                     return json.loads(text)
                 except json.JSONDecodeError as exc:
-                    raise RuntimeError(f"DramaClawAPI task query returned invalid JSON: {text}") from exc
+                    raise RuntimeError(
+                        f"DramaClawAPI task query returned invalid JSON: {text}"
+                    ) from exc
 
     async def _download_video(self, url: str, output_path: str) -> bytes:
         if url.startswith("data:"):
@@ -1908,7 +2050,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             async with aiohttp.ClientSession(timeout=self._client_timeout()) as session:
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        raise RuntimeError(f"DramaClawAPI result download failed: HTTP {resp.status}")
+                        raise RuntimeError(
+                            f"DramaClawAPI result download failed: HTTP {resp.status}"
+                        )
                     content = await resp.read()
 
         path = Path(output_path)
@@ -1934,7 +2078,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         }.get(mime_type, default)
 
     @classmethod
-    async def _relay_frame_input(cls, image_value: str, *, default_ext: str = "png") -> str:
+    async def _relay_frame_input(
+        cls, image_value: str, *, default_ext: str = "png"
+    ) -> str:
         return await cls._relay_media_input(
             image_value,
             default_ext=default_ext,
@@ -2018,9 +2164,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 first_frame_path = next(
                     (
                         str(getattr(ref, "path", "") or "").strip()
-                        for ref in (
-                            references if isinstance(references, list) else []
-                        )
+                        for ref in (references if isinstance(references, list) else [])
                         if str(getattr(ref, "type", "") or "image").strip().lower()
                         == "image"
                     ),
@@ -2208,7 +2352,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             duration_number = 0
         if duration_number > 0:
             payload["duration"] = (
-                int(duration_number) if duration_number.is_integer() else duration_number
+                int(duration_number)
+                if duration_number.is_integer()
+                else duration_number
             )
 
         first_frame = ""
@@ -2424,7 +2570,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         return fallback
 
     @classmethod
-    def _returned_last_frame_output_path(cls, output_path: str, last_frame_url: str) -> Path:
+    def _returned_last_frame_output_path(
+        cls, output_path: str, last_frame_url: str
+    ) -> Path:
         video_output_path = Path(output_path)
         suffix = ""
         if last_frame_url.startswith("data:"):
@@ -2440,6 +2588,141 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             / "returned_last_frames"
             / f"{video_output_path.stem}{suffix}"
         )
+
+    def _request_egress_context(self, kwargs: dict[str, Any]):
+        supplied = _video_egress_context(kwargs.get("egress_context"))
+        if (
+            supplied is not None
+            and self.egress_context is not None
+            and supplied != self.egress_context
+        ):
+            raise VideoEgressError("TASK_ENVELOPE_INVALID")
+        return supplied or self.egress_context
+
+    @staticmethod
+    def _admission_from_egress_context(context):
+        from novelvideo.ports.authz import AdmissionContext
+
+        return AdmissionContext(
+            requester_user_id=context.requester_user_id,
+            billing_principal=context.billing_principal,
+            credential=context.credential,
+            admission_id=context.admission_id,
+            root_task_id=context.root_task_id,
+            admitted_at=context.admitted_at,
+            membership_id=context.membership_id,
+            authz_version=context.authz_version,
+        )
+
+    @staticmethod
+    def _operation_spec(context, payload: dict[str, object], kwargs: dict[str, Any]):
+        from novelvideo.ports.egress_operations import (
+            OperationSpec,
+            canonical_request_digest,
+        )
+
+        task_type = str(kwargs.get("task_type") or context.task_type).strip()
+        episode = int(kwargs.get("episode") or 0)
+        beat_num = int(kwargs.get("beat_num") or 0)
+        scope = str(kwargs.get("scope") or "task").strip()
+        digest_input = {
+            "request": payload,
+            "requester_user_id": context.requester_user_id,
+            "organization_id": context.billing_principal.id,
+            "membership_id": context.membership_id,
+            "authz_version": context.authz_version,
+            "root_task_id": context.root_task_id,
+            "project_id": context.project_id,
+            "credential_id": context.credential.credential_id,
+            "credential_version": context.credential.key_version,
+        }
+        return OperationSpec(
+            organization_id=context.billing_principal.id,
+            project_id=context.project_id,
+            root_task_id=context.root_task_id,
+            business_task_id=(
+                f"{task_type}:episode:{episode}:beat:{beat_num}:scope:{scope}:generate"
+            ),
+            capability="video.generate.gateway",
+            credential_id=context.credential.credential_id,
+            credential_version=context.credential.key_version,
+            request_digest=canonical_request_digest(digest_input),
+        )
+
+    @staticmethod
+    def _media_request_identity(value: object) -> dict[str, object]:
+        text = str(value or "").strip()
+        if not text:
+            return {"kind": "none"}
+        if text.startswith(("http://", "https://", "data:")):
+            return {"kind": "remote", "value": text}
+        path = Path(text)
+        try:
+            digest = hashlib.sha256()
+            size = 0
+            with path.open("rb") as media_file:
+                while chunk := media_file.read(1024 * 1024):
+                    digest.update(chunk)
+                    size += len(chunk)
+            return {"kind": "local", "sha256": digest.hexdigest(), "size": size}
+        except OSError:
+            return {"kind": "unreadable", "path": text}
+
+    async def _resolve_organization_request(self, context):
+        from novelvideo.ports import get_model_credentials
+
+        resolved = await get_model_credentials().resolve(
+            self._admission_from_egress_context(context)
+        )
+        if resolved.reference != context.credential:
+            from novelvideo.ports.model_credentials import ModelCredentialError
+
+            raise ModelCredentialError("ORG_CREDENTIAL_VERSION_MISMATCH")
+        return resolved
+
+    async def _revalidate_organization(self, context=None) -> None:
+        context = context or self.egress_context
+        if context is None or not context.is_organization:
+            return
+        from novelvideo.ports import get_authz_port
+        from novelvideo.ports.authz import AuthzError
+
+        current = await get_authz_port().admit_model_task(
+            user_id=context.requester_user_id,
+            root_task_id=context.root_task_id,
+        )
+        if (
+            current.requester_user_id != context.requester_user_id
+            or current.billing_principal != context.billing_principal
+            or current.credential != context.credential
+            or current.membership_id != context.membership_id
+            or current.authz_version != context.authz_version
+        ):
+            raise AuthzError("ORG_AUTHZ_STALE")
+
+    @staticmethod
+    async def _mark_operation_unknown(
+        operation_port, claim, *, expected_version: int
+    ) -> None:
+        try:
+            await operation_port.mark_unknown(
+                operation_id=claim.operation.operation_id,
+                transition_token=claim.transition_token,
+                expected_version=expected_version,
+            )
+        except Exception as exc:
+            raise VideoEgressError("EGRESS_OPERATION_TRANSITION_FAILED") from None
+
+    @staticmethod
+    async def _mark_operation_rejected(operation_port, claim) -> None:
+        try:
+            await operation_port.mark_rejected_before_submit(
+                operation_id=claim.operation.operation_id,
+                transition_token=claim.transition_token,
+                expected_version=claim.operation.version,
+            )
+        except Exception as exc:
+            raise VideoEgressError("EGRESS_OPERATION_TRANSITION_FAILED") from None
 
     async def generate(
         self,
@@ -2506,7 +2789,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
         is_seedance2_model = self._is_seedance2_model()
         seedance2_config = (
-            _seedance2_config_mapping(kwargs.get("seedance2_config")) if is_seedance2_model else {}
+            _seedance2_config_mapping(kwargs.get("seedance2_config"))
+            if is_seedance2_model
+            else {}
         )
         duration = _seedance2_duration_from_config(seedance2_config, duration)
         original_duration = duration
@@ -2539,6 +2824,87 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             "metadata": metadata,
         }
 
+        egress_context = self._request_egress_context(kwargs)
+        organization_request = bool(
+            egress_context is not None and egress_context.is_organization
+        )
+        task_id: str | None = None
+        provider_request_id = ""
+        reservation_id = ""
+        operation_port = None
+        operation_claim = None
+        operation_version: int | None = None
+        operation_terminal = False
+        submit_attempted = False
+        request_base_url = self.base_url
+        request_headers = self.headers if not organization_request else None
+
+        if organization_request:
+            from novelvideo.ports import get_egress_operation_port
+
+            references = [
+                {
+                    "type": str(getattr(ref, "type", "") or "image"),
+                    "media": self._media_request_identity(getattr(ref, "path", "")),
+                    "role": str(getattr(ref, "role", "") or ""),
+                }
+                for ref in (kwargs.get("references") or [])
+            ]
+            logical_request = {
+                "model": self.model,
+                "prompt": prompt,
+                "seconds": str(duration),
+                "ratio": ratio,
+                "resolution": self.resolution,
+                "generate_audio": bool(self.generate_audio),
+                "gen_mode": requested_mode,
+                "human_review": bool(kwargs.get("human_review", False)),
+                "audio_setting": str(kwargs.get("audio_setting") or ""),
+                "image": self._media_request_identity(image_path),
+                "last_frame": self._media_request_identity(last_frame_path),
+                "references": references,
+                "seedance2_config": seedance2_config,
+                "model_params": self.model_params,
+                "request_schema": self.request_schema,
+            }
+            operation_port = get_egress_operation_port()
+            try:
+                operation_claim = await operation_port.claim(
+                    spec=self._operation_spec(egress_context, logical_request, kwargs)
+                )
+            except Exception as exc:
+                raise VideoEgressError(
+                    _safe_video_error_code(exc, "EGRESS_OPERATION_TRANSITION_FAILED")
+                ) from None
+            if not operation_claim.won:
+                raise VideoEgressError("EGRESS_OPERATION_REPLAYED")
+            operation_version = operation_claim.operation.version
+            try:
+                resolved = await self._resolve_organization_request(egress_context)
+            except Exception as exc:
+                await self._mark_operation_rejected(operation_port, operation_claim)
+                operation_terminal = True
+                raise VideoEgressError(
+                    _safe_video_error_code(exc, "ORG_CREDENTIAL_DECRYPT_FAILED")
+                ) from None
+            request_base_url = resolved.base_url.rstrip("/")
+            request_headers = {
+                "Authorization": f"Bearer {resolved.api_key}",
+                "Content-Type": "application/json",
+            }
+
+        async def fail_before_submit(error: str) -> VideoGenResult:
+            nonlocal operation_terminal
+            if organization_request and not operation_terminal:
+                await self._mark_operation_rejected(operation_port, operation_claim)
+                operation_terminal = True
+            safe_error = (
+                "EGRESS_OPERATION_REJECTED_BEFORE_SUBMIT"
+                if organization_request
+                else error
+            )
+            return VideoGenResult(status=VideoGenStatus.FAILED, error=safe_error)
+
         if requested_mode:
             try:
                 await self._apply_huimeng_protocol_media_inputs(
@@ -2550,10 +2916,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     log=log,
                 )
             except (ValueError, FileNotFoundError) as exc:
-                return VideoGenResult(
-                    status=VideoGenStatus.FAILED,
-                    error=str(exc),
-                )
+                return await fail_before_submit(str(exc))
             seedance2_config = _seedance2_config_mapping(kwargs.get("seedance2_config"))
             scene_optimize = str(seedance2_config.get("scene_optimize") or "").strip()
             if scene_optimize:
@@ -2602,7 +2965,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             # 还没作为参考图存在时，才把它被动提升为首帧——否则参考模式(所有图都在
             # reference_image_paths 里)会把首张图重复算一次（首帧位 + 参考位）。
             if (
-                not first_frame_path and image_path and image_path not in reference_image_paths
+                not first_frame_path
+                and image_path
+                and image_path not in reference_image_paths
             ):
                 first_frame_path = image_path
 
@@ -2657,10 +3022,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 if relayed_references:
                     metadata["reference_images"] = relayed_references
             except Exception as exc:
-                return VideoGenResult(
-                    status=VideoGenStatus.FAILED,
-                    error=f"media relay upload failed: {exc}",
-                )
+                return await fail_before_submit(f"media relay upload failed: {exc}")
 
         elif self._is_grok_video_channel_model():
             metadata.pop("generate_audio", None)
@@ -2699,10 +3061,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 if relayed_references:
                     metadata["reference_images"] = relayed_references
             except Exception as exc:
-                return VideoGenResult(
-                    status=VideoGenStatus.FAILED,
-                    error=f"media relay upload failed: {exc}",
-                )
+                return await fail_before_submit(f"media relay upload failed: {exc}")
 
         elif is_seedance2_model:
             try:
@@ -2712,7 +3071,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 if image_path and not image_path.startswith(("http://", "https://")):
                     log("首帧已上传到媒体中转")
                 last_frame = (
-                    await self._relay_frame_input(str(last_frame_path)) if last_frame_path else ""
+                    await self._relay_frame_input(str(last_frame_path))
+                    if last_frame_path
+                    else ""
                 )
                 if last_frame_path and not str(last_frame_path).startswith(
                     ("http://", "https://")
@@ -2723,10 +3084,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     log=log,
                 )
             except Exception as exc:
-                return VideoGenResult(
-                    status=VideoGenStatus.FAILED,
-                    error=f"media relay upload failed: {exc}",
-                )
+                return await fail_before_submit(f"media relay upload failed: {exc}")
 
             from novelvideo.seedance2_i2v.models import Seedance2I2VMode
             from novelvideo.seedance2_i2v.request import build_seedance2_huimeng_params
@@ -2779,10 +3137,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     reference_audios=reference_params.get("reference_audios"),
                 )
             except ValueError as exc:
-                return VideoGenResult(
-                    status=VideoGenStatus.FAILED,
-                    error=str(exc),
-                )
+                return await fail_before_submit(str(exc))
 
             payload["prompt"] = seedance2_params.pop("prompt")
             payload["seconds"] = str(seedance2_params.pop("duration"))
@@ -2794,11 +3149,15 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     mode=(
                         "first_last_frame"
                         if last_frame_path
-                        else "first_frame"
-                        if image_path
-                        else "all_reference"
-                        if kwargs.get("references")
-                        else "text_to_video"
+                        else (
+                            "first_frame"
+                            if image_path
+                            else (
+                                "all_reference"
+                                if kwargs.get("references")
+                                else "text_to_video"
+                            )
+                        )
                     ),
                     image_path=image_path,
                     last_frame_path=last_frame_path,
@@ -2806,14 +3165,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     log=log,
                 )
             except Exception as exc:
-                return VideoGenResult(
-                    status=VideoGenStatus.FAILED,
-                    error=f"media relay upload failed: {exc}",
-                )
-
-        task_id: str | None = None
-        provider_request_id = ""
-        reservation_id = ""
+                return await fail_before_submit(f"media relay upload failed: {exc}")
         try:
             model_label = self._model_label(self.model)
             request_resolution = str(
@@ -2823,24 +3175,39 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 f"正在提交 DramaClawAPI 视频任务 ({model_label}, {duration}s, {request_resolution})..."
             )
             progress(0.1)
-            reservation_id = await _reserve_video_model_call(
-                self.model,
-                source="newapi_video_generation",
-                resolution=request_resolution,
-                duration_seconds=duration,
-            )
             from novelvideo.media_model_request_schema import apply_media_request_schema
 
             self._canonicalize_video_payload(payload, metadata)
             payload = apply_media_request_schema(
                 payload, self.request_schema, self.model_params
             )
-            submitted = await self._post_json(
-                f"{self.base_url}/video/generations", payload
+            reservation_id = await _reserve_video_model_call(
+                self.model,
+                source="newapi_video_generation",
+                resolution=request_resolution,
+                duration_seconds=duration,
             )
+            submit_attempted = True
+            if organization_request:
+                submitted = await self._post_json(
+                    f"{request_base_url}/video/generations",
+                    payload,
+                    headers=request_headers,
+                )
+            else:
+                submitted = await self._post_json(
+                    f"{request_base_url}/video/generations", payload
+                )
             task_id = self._task_id_from_submit_response(submitted)
             provider_request_id = str(submitted.get("_newapi_request_id") or "").strip()
             if not task_id:
+                if organization_request:
+                    await self._mark_operation_unknown(
+                        operation_port,
+                        operation_claim,
+                        expected_version=operation_version,
+                    )
+                    operation_terminal = True
                 await _refund_video_model_call(
                     reservation_id,
                     source="newapi_video_generation",
@@ -2849,8 +3216,20 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 )
                 return VideoGenResult(
                     status=VideoGenStatus.FAILED,
-                    error=f"No task_id in DramaClawAPI response: {submitted}",
+                    error=(
+                        "EGRESS_OPERATION_UNKNOWN"
+                        if organization_request
+                        else f"No task_id in DramaClawAPI response: {submitted}"
+                    ),
                 )
+            if organization_request:
+                accepted = await operation_port.mark_accepted(
+                    operation_id=operation_claim.operation.operation_id,
+                    transition_token=operation_claim.transition_token,
+                    expected_version=operation_version,
+                    provider_job_id=task_id,
+                )
+                operation_version = accepted.version
             try:
                 await get_usage_meter().mark_current_paid_execution_attempt(
                     status="accepted",
@@ -2865,9 +3244,30 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             progress(0.2)
 
             for poll_count in range(max_polls):
-                task = self._task_response_data(
-                    await self._get_json(f"{self.base_url}/video/generations/{task_id}")
-                )
+                if organization_request:
+                    try:
+                        await self._revalidate_organization(egress_context)
+                    except Exception as exc:
+                        await self._mark_operation_unknown(
+                            operation_port,
+                            operation_claim,
+                            expected_version=operation_version,
+                        )
+                        operation_terminal = True
+                        return VideoGenResult(
+                            status=VideoGenStatus.FAILED,
+                            error=_safe_video_error_code(exc, "ORG_AUTHZ_STALE"),
+                            task_id=task_id,
+                        )
+                    polled = await self._get_json(
+                        f"{request_base_url}/video/generations/{task_id}",
+                        headers=request_headers,
+                    )
+                else:
+                    polled = await self._get_json(
+                        f"{request_base_url}/video/generations/{task_id}"
+                    )
+                task = self._task_response_data(polled)
                 status = str(task.get("status") or "").lower()
                 progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
 
@@ -2875,23 +3275,54 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     progress(0.9)
                     video_url = self._extract_video_url(task)
                     if not video_url:
+                        safe_missing_result_error = (
+                            "EGRESS_OPERATION_UNKNOWN"
+                            if organization_request
+                            else "No video url in DramaClawAPI result"
+                        )
+                        if organization_request:
+                            await self._mark_operation_unknown(
+                                operation_port,
+                                operation_claim,
+                                expected_version=operation_version,
+                            )
+                            operation_terminal = True
                         update_request_status(
-                            task_id, "failed", "No video url in DramaClawAPI result"
+                            task_id, "failed", safe_missing_result_error
                         )
                         await _refund_video_model_call(
                             reservation_id,
                             source="newapi_video_generation",
-                            error="missing_video_url",
+                            error=safe_missing_result_error,
                             provider_request_id=provider_request_id,
                             provider_task_id=task_id,
                         )
                         return VideoGenResult(
                             status=VideoGenStatus.FAILED,
-                            error=f"No video url in DramaClawAPI result: {task}",
+                            error=(
+                                safe_missing_result_error
+                                if organization_request
+                                else f"No video url in DramaClawAPI result: {task}"
+                            ),
                             task_id=task_id,
                         )
+                    if organization_request:
+                        try:
+                            await self._revalidate_organization(egress_context)
+                        except Exception as exc:
+                            await self._mark_operation_unknown(
+                                operation_port,
+                                operation_claim,
+                                expected_version=operation_version,
+                            )
+                            operation_terminal = True
+                            return VideoGenResult(
+                                status=VideoGenStatus.FAILED,
+                                error=_safe_video_error_code(exc, "ORG_AUTHZ_STALE"),
+                                task_id=task_id,
+                            )
                     log("视频生成完成，正在下载...")
-                    await self._download_video(video_url, output_path)
+                    video_content = await self._download_video(video_url, output_path)
                     provider_task_id = self._extract_provider_task_id(
                         task,
                         fallback=task_id,
@@ -2901,11 +3332,28 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     if bool(metadata.get("return_last_frame")):
                         last_frame_url = self._extract_returned_last_frame_url(task)
                         if last_frame_url:
+                            if organization_request:
+                                try:
+                                    await self._revalidate_organization(egress_context)
+                                except Exception as exc:
+                                    await self._mark_operation_unknown(
+                                        operation_port,
+                                        operation_claim,
+                                        expected_version=operation_version,
+                                    )
+                                    operation_terminal = True
+                                    return VideoGenResult(
+                                        status=VideoGenStatus.FAILED,
+                                        error=_safe_video_error_code(
+                                            exc, "ORG_AUTHZ_STALE"
+                                        ),
+                                        task_id=task_id,
+                                    )
                             last_frame_output_path = (
                                 self._returned_last_frame_output_path(
-                                output_path,
-                                last_frame_url,
-                            )
+                                    output_path,
+                                    last_frame_url,
+                                )
                             )
                             await self._download_video(
                                 last_frame_url,
@@ -2921,6 +3369,18 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         provider_request_id=provider_request_id,
                         provider_task_id=task_id,
                     )
+                    if organization_request:
+                        result_ref = (
+                            "video:sha256:" + hashlib.sha256(video_content).hexdigest()
+                        )
+                        completed = await operation_port.mark_completed(
+                            operation_id=operation_claim.operation.operation_id,
+                            transition_token=operation_claim.transition_token,
+                            expected_version=operation_version,
+                            result_ref=result_ref,
+                        )
+                        operation_version = completed.version
+                        operation_terminal = True
                     return VideoGenResult(
                         status=VideoGenStatus.DONE,
                         video_url=video_url,
@@ -2941,19 +3401,33 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     "expired",
                 }:
                     error = (
-                        task.get("error") or task.get("fail_reason") or "DramaClawAPI video task failed"
+                        task.get("error")
+                        or task.get("fail_reason")
+                        or "DramaClawAPI video task failed"
                     )
-                    update_request_status(task_id, "failed", str(error))
+                    safe_task_error = (
+                        "EGRESS_OPERATION_UNKNOWN"
+                        if organization_request
+                        else str(error)
+                    )
+                    if organization_request:
+                        await self._mark_operation_unknown(
+                            operation_port,
+                            operation_claim,
+                            expected_version=operation_version,
+                        )
+                        operation_terminal = True
+                    update_request_status(task_id, "failed", safe_task_error)
                     await _refund_video_model_call(
                         reservation_id,
                         source="newapi_video_generation",
-                        error=str(error),
+                        error=safe_task_error,
                         provider_request_id=provider_request_id,
                         provider_task_id=task_id,
                     )
                     return VideoGenResult(
                         status=VideoGenStatus.FAILED,
-                        error=str(error),
+                        error=safe_task_error,
                         task_id=task_id,
                     )
 
@@ -2967,6 +3441,13 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             update_request_status(
                 task_id, "failed", "Timeout waiting for DramaClawAPI video task"
             )
+            if organization_request:
+                await self._mark_operation_unknown(
+                    operation_port,
+                    operation_claim,
+                    expected_version=operation_version,
+                )
+                operation_terminal = True
             await _refund_video_model_call(
                 reservation_id,
                 source="newapi_video_generation",
@@ -2979,12 +3460,33 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 error="Timeout waiting for DramaClawAPI video task",
                 task_id=task_id,
             )
+        except VideoEgressError:
+            raise
         except NewApiVideoError as exc:
+            safe_exception_error = (
+                _safe_video_error_code(exc, "EGRESS_OPERATION_UNKNOWN")
+                if organization_request
+                else str(exc)
+            )
+            if (
+                organization_request
+                and operation_claim is not None
+                and not operation_terminal
+            ):
+                if submit_attempted:
+                    await self._mark_operation_unknown(
+                        operation_port,
+                        operation_claim,
+                        expected_version=operation_version,
+                    )
+                else:
+                    await self._mark_operation_rejected(operation_port, operation_claim)
+                operation_terminal = True
             if exc.request_id:
                 log(f"DramaClawAPI request_id: {exc.request_id}")
             if task_id:
                 log(f"DramaClawAPI task_id: {task_id}")
-                update_request_status(task_id, "failed", str(exc))
+                update_request_status(task_id, "failed", safe_exception_error)
             elif is_definite_no_cost_http_rejection(exc.status_code):
                 try:
                     await get_usage_meter().mark_current_paid_execution_attempt(
@@ -3001,32 +3503,51 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             await _refund_video_model_call(
                 reservation_id,
                 source="newapi_video_generation",
-                error=str(exc),
+                error=safe_exception_error,
                 provider_request_id=exc.request_id or provider_request_id,
                 provider_task_id=task_id or "",
             )
-            if is_insufficient_credits_error(exc):
+            if is_insufficient_credits_error(exc) and not organization_request:
                 raise
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
-                error=str(exc),
+                error=safe_exception_error,
                 task_id=task_id,
             )
         except Exception as exc:
+            safe_exception_error = (
+                _safe_video_error_code(exc, "EGRESS_OPERATION_UNKNOWN")
+                if organization_request
+                else str(exc)
+            )
+            if (
+                organization_request
+                and operation_claim is not None
+                and not operation_terminal
+            ):
+                if submit_attempted:
+                    await self._mark_operation_unknown(
+                        operation_port,
+                        operation_claim,
+                        expected_version=operation_version,
+                    )
+                else:
+                    await self._mark_operation_rejected(operation_port, operation_claim)
+                operation_terminal = True
             if task_id:
-                update_request_status(task_id, "failed", str(exc))
+                update_request_status(task_id, "failed", safe_exception_error)
             await _refund_video_model_call(
                 reservation_id,
                 source="newapi_video_generation",
-                error=str(exc),
+                error=safe_exception_error,
                 provider_request_id=provider_request_id,
                 provider_task_id=task_id or "",
             )
-            if is_insufficient_credits_error(exc):
+            if is_insufficient_credits_error(exc) and not organization_request:
                 raise
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
-                error=str(exc),
+                error=safe_exception_error,
                 task_id=task_id,
             )
 
@@ -3150,7 +3671,9 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
                 "COMFYUI_LTX23_ADDRESS", self.LTX23_DEFAULT_ADDRESS
             )
         else:
-            self.server_address = os.environ.get("COMFYUI_ADDRESS", self.DEFAULT_ADDRESS)
+            self.server_address = os.environ.get(
+                "COMFYUI_ADDRESS", self.DEFAULT_ADDRESS
+            )
         self.timeout = timeout
         self.workflow_type = workflow_type.lower()
 
@@ -3199,8 +3722,12 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         """上传图片到 ComfyUI input 文件夹。"""
         async with aiohttp.ClientSession() as session:
             data = aiohttp.FormData()
-            data.add_field("image", image_bytes, filename=filename, content_type="image/png")
-            async with session.post(f"{self.http_url}/upload/image", data=data) as response:
+            data.add_field(
+                "image", image_bytes, filename=filename, content_type="image/png"
+            )
+            async with session.post(
+                f"{self.http_url}/upload/image", data=data
+            ) as response:
                 if response.status != 200:
                     raise Exception(f"上传图片失败: {await response.text()}")
                 return await response.json()
@@ -3264,6 +3791,26 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         Returns:
             生成结果
         """
+
+        context = _video_egress_context(kwargs.get("egress_context"))
+        if context is not None and context.billing_principal.kind in {
+            "organization",
+            "local",
+        }:
+            loopback = _is_loopback_server_address(self.server_address)
+            allowed_remote = self.server_address in {
+                self.DEFAULT_ADDRESS,
+                self.LTX23_DEFAULT_ADDRESS,
+            }
+            if (loopback and context.billing_principal.kind != "local") or (
+                not loopback
+                and (
+                    context.billing_principal.kind != "organization"
+                    or not allowed_remote
+                    or not self.use_ssl
+                )
+            ):
+                raise VideoEgressError("ORG_SERVICE_EGRESS_DENIED")
 
         def log(msg: str):
             if on_log:
@@ -3329,7 +3876,9 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
         if use_flf_mode:
             frames = self.FLF_FRAMES
             actual_duration = frames / self.FPS
-            log(f"开始生成视频 | 模式: {mode_desc} | 固定帧数: {frames} (~{actual_duration:.1f}s)")
+            log(
+                f"开始生成视频 | 模式: {mode_desc} | 固定帧数: {frames} (~{actual_duration:.1f}s)"
+            )
         else:
             fps = self.LTX23_FPS if workflow_key == "ltx23" else self.FPS
             frames = int(duration * fps) + 1  # +1 确保时长足够
@@ -3357,23 +3906,33 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
             # 设置输入图片（根据工作流类型）
             if workflow_key == "fp8_flf":
                 # FLF 模式：设置首尾帧
-                workflow[node_map["first_image"]]["inputs"]["image"] = first_image_filename
-                workflow[node_map["last_image"]]["inputs"]["image"] = last_image_filename
+                workflow[node_map["first_image"]]["inputs"][
+                    "image"
+                ] = first_image_filename
+                workflow[node_map["last_image"]]["inputs"][
+                    "image"
+                ] = last_image_filename
             elif workflow_key == "ltx23":
                 # LTX 2.3 I2V 模式
-                workflow[node_map["input_image"]]["inputs"]["image"] = first_image_filename
+                workflow[node_map["input_image"]]["inputs"][
+                    "image"
+                ] = first_image_filename
                 # 设置帧数（PrimitiveInt.value）
                 workflow[node_map["frame_count"]]["inputs"]["value"] = frames
                 log(f"帧数: {frames} (duration={duration}s, fps={self.LTX23_FPS})")
             elif workflow_key == "fp8_i2v":
                 # fp8 I2V 模式
-                workflow[node_map["input_image"]]["inputs"]["image"] = first_image_filename
+                workflow[node_map["input_image"]]["inputs"][
+                    "image"
+                ] = first_image_filename
                 # 设置帧数
                 workflow[node_map["frame_count"]]["inputs"]["Number"] = frames
                 log(f"帧数: {frames} (duration={duration}s, fps={self.FPS})")
             else:
                 # GGUF 模式
-                workflow[node_map["input_image"]]["inputs"]["image"] = first_image_filename
+                workflow[node_map["input_image"]]["inputs"][
+                    "image"
+                ] = first_image_filename
                 # 设置帧数（WanImageToVideo.length）
                 workflow[node_map["frame_count"]]["inputs"]["length"] = frames
                 log(f"帧数: {frames} (duration={duration}s, fps={self.FPS})")
@@ -3434,7 +3993,9 @@ class ComfyUIVideoGenerator(VideoGeneratorBase):
                                 elif node != current_node:
                                     current_node = node
                                     node_title = (
-                                        workflow.get(node, {}).get("_meta", {}).get("title", node)
+                                        workflow.get(node, {})
+                                        .get("_meta", {})
+                                        .get("title", node)
                                     )
                                     log(f"执行节点: {node_title}")
 
@@ -3547,16 +4108,24 @@ def parse_newapi_video_backend(backend: str | None) -> str | None:
     return None
 
 
-def newapi_video_backend_options(*, include_seedance2_variants: bool = False) -> dict[str, str]:
+def newapi_video_backend_options(
+    *, include_seedance2_variants: bool = False
+) -> dict[str, str]:
     from novelvideo.config import NEWAPI_VIDEO_MODELS
 
-    models = [model for model in NEWAPI_VIDEO_MODELS if model not in NEWAPI_DISABLED_VIDEO_MODELS]
+    models = [
+        model
+        for model in NEWAPI_VIDEO_MODELS
+        if model not in NEWAPI_DISABLED_VIDEO_MODELS
+    ]
     if include_seedance2_variants:
         for model in NEWAPI_MAINLINE_SEEDANCE2_MODELS:
             if model not in models:
                 models.append(model)
     return {
-        f"{NEWAPI_VIDEO_BACKEND_PREFIX}{model}": NEWAPI_VIDEO_DISPLAY_LABELS.get(model, model)
+        f"{NEWAPI_VIDEO_BACKEND_PREFIX}{model}": NEWAPI_VIDEO_DISPLAY_LABELS.get(
+            model, model
+        )
         for model in models
     }
 
@@ -3573,6 +4142,59 @@ def _coerce_video_backend_value(backend: VideoBackend | str | None) -> str:
             f"{NEWAPI_VIDEO_BACKEND_PREFIX}{value[len(NEWAPI_VIDEO_BACKEND_PREFIX) :]}"
         )
     return "comfyui" if lowered == "jimeng" else lowered
+
+
+def _server_address_host(server_address: object) -> str:
+    text = str(server_address or "").strip()
+    parsed = urllib.parse.urlsplit(text if "://" in text else f"//{text}")
+    return str(parsed.hostname or "").strip().lower()
+
+
+def _is_loopback_server_address(server_address: object) -> bool:
+    host = _server_address_host(server_address)
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _trusted_comfy_kwargs(context, workflow_type: str | None, kwargs: dict[str, Any]):
+    protected = {"api_key", "authorization", "token", "credential", "headers"}
+    if any(kwargs.get(name) for name in protected):
+        raise VideoEgressError("ORG_SERVICE_EGRESS_DENIED")
+
+    resolved_workflow = str(workflow_type or "gguf").strip().lower()
+    server_address = kwargs.get("server_address")
+    if not server_address:
+        if context.billing_principal.kind != "organization":
+            raise VideoEgressError("ORG_SERVICE_EGRESS_DENIED")
+        server_address = (
+            ComfyUIVideoGenerator.LTX23_DEFAULT_ADDRESS
+            if resolved_workflow == "ltx23"
+            else ComfyUIVideoGenerator.DEFAULT_ADDRESS
+        )
+        kwargs["server_address"] = server_address
+        kwargs["use_ssl"] = True
+
+    if _is_loopback_server_address(server_address):
+        if context.billing_principal.kind != "local":
+            raise VideoEgressError("ORG_SERVICE_EGRESS_DENIED")
+        kwargs.setdefault("use_ssl", False)
+        return resolved_workflow, kwargs
+
+    allowed = {
+        ComfyUIVideoGenerator.DEFAULT_ADDRESS,
+        ComfyUIVideoGenerator.LTX23_DEFAULT_ADDRESS,
+    }
+    if (
+        context.billing_principal.kind != "organization"
+        or str(server_address).strip() not in allowed
+        or kwargs.get("use_ssl") is not True
+    ):
+        raise VideoEgressError("ORG_SERVICE_EGRESS_DENIED")
+    return resolved_workflow, kwargs
 
 
 def create_video_generator(
@@ -3610,6 +4232,8 @@ def create_video_generator(
     """
     from novelvideo.config import SEEDANCE_FAST_MODEL, SEEDANCE_PRO_MODEL
 
+    egress_context = _video_egress_context(kwargs.get("egress_context"))
+
     # 兼容旧接口
     if use_mock:
         return MockVideoGenerator(**kwargs)
@@ -3623,6 +4247,9 @@ def create_video_generator(
 
     huimeng_model = parse_huimeng_video_backend(backend_str)
     if huimeng_model:
+        if _direct_video_context_denied(egress_context):
+            raise VideoEgressError("ORG_EGRESS_DENIED")
+        kwargs.pop("egress_context", None)
         return HuimengVideoGenerator(model=huimeng_model, **kwargs)
 
     try:
@@ -3635,21 +4262,62 @@ def create_video_generator(
 
     # 创建对应的生成器
     if backend_enum == VideoBackend.SEEDANCE_FAST:
-        return SeedanceVideoGenerator(model=SEEDANCE_FAST_MODEL, generate_audio=False, **kwargs)
+        if _direct_video_context_denied(egress_context):
+            raise VideoEgressError("ORG_EGRESS_DENIED")
+        kwargs.pop("egress_context", None)
+        return SeedanceVideoGenerator(
+            model=SEEDANCE_FAST_MODEL, generate_audio=False, **kwargs
+        )
     elif backend_enum == VideoBackend.SEEDANCE_PRO:
-        return SeedanceVideoGenerator(model=SEEDANCE_PRO_MODEL, generate_audio=True, **kwargs)
+        if _direct_video_context_denied(egress_context):
+            raise VideoEgressError("ORG_EGRESS_DENIED")
+        kwargs.pop("egress_context", None)
+        return SeedanceVideoGenerator(
+            model=SEEDANCE_PRO_MODEL, generate_audio=True, **kwargs
+        )
     elif backend_enum == VideoBackend.SEEDANCE_PRO_SILENT:
-        return SeedanceVideoGenerator(model=SEEDANCE_PRO_MODEL, generate_audio=False, **kwargs)
+        if _direct_video_context_denied(egress_context):
+            raise VideoEgressError("ORG_EGRESS_DENIED")
+        kwargs.pop("egress_context", None)
+        return SeedanceVideoGenerator(
+            model=SEEDANCE_PRO_MODEL, generate_audio=False, **kwargs
+        )
     elif backend_enum == VideoBackend.COMFYUI:
+        if egress_context is not None and egress_context.billing_principal.kind in {
+            "organization",
+            "local",
+        }:
+            kwargs.pop("egress_context", None)
+            workflow_type, kwargs = _trusted_comfy_kwargs(
+                egress_context, workflow_type, kwargs
+            )
+            return ComfyUIVideoGenerator(workflow_type=workflow_type, **kwargs)
+        kwargs.pop("egress_context", None)
         # 从环境变量读取工作流类型
         if workflow_type is None:
             workflow_type = os.environ.get("COMFYUI_WORKFLOW", "gguf")
         return ComfyUIVideoGenerator(workflow_type=workflow_type, **kwargs)
     elif backend_enum == VideoBackend.SEEDANCE_2:
+        if _direct_video_context_denied(egress_context):
+            raise VideoEgressError("ORG_EGRESS_DENIED")
+        kwargs.pop("egress_context", None)
         return Seedance2VideoGenerator(**kwargs)
     elif backend_enum == VideoBackend.LTX23:
+        if egress_context is not None and egress_context.billing_principal.kind in {
+            "organization",
+            "local",
+        }:
+            kwargs.pop("egress_context", None)
+            trusted_workflow, kwargs = _trusted_comfy_kwargs(
+                egress_context, "ltx23", kwargs
+            )
+            return ComfyUIVideoGenerator(workflow_type=trusted_workflow, **kwargs)
+        kwargs.pop("egress_context", None)
         return ComfyUIVideoGenerator(workflow_type="ltx23", **kwargs)
     elif backend_enum == VideoBackend.GROK_720:
+        if _direct_video_context_denied(egress_context):
+            raise VideoEgressError("ORG_EGRESS_DENIED")
+        kwargs.pop("egress_context", None)
         return GrokVideoGenerator(**kwargs)
     else:
         raise ValueError(f"Unknown video backend: {backend_str}")

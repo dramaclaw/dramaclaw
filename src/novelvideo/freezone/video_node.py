@@ -21,7 +21,6 @@ from novelvideo.video_duration import (
     video_duration_bounds_for_backend,
 )
 
-
 VIDEO_CAMERA_TEMPLATES: list[dict[str, str]] = [
     {
         "id": "locked_off",
@@ -204,7 +203,8 @@ def normalize_freezone_seedance2_scene_optimize(
 
 
 def normalize_video_resolution_for_backend(
-    backend: str | None, value: str | None,
+    backend: str | None,
+    value: str | None,
     configured_options: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     resolution = normalize_video_resolution(value)
@@ -233,7 +233,9 @@ def normalize_video_resolution_for_backend(
     return options[0]
 
 
-def freezone_video_duration_bounds(backend: str | None) -> tuple[int | None, int | None]:
+def freezone_video_duration_bounds(
+    backend: str | None,
+) -> tuple[int | None, int | None]:
     return video_duration_bounds_for_backend(backend)
 
 
@@ -250,7 +252,9 @@ def _freezone_newapi_video_options() -> dict[str, str]:
         return options
     ordered = {FREEZONE_DEFAULT_VIDEO_BACKEND: options[FREEZONE_DEFAULT_VIDEO_BACKEND]}
     ordered.update(
-        (key, value) for key, value in options.items() if key != FREEZONE_DEFAULT_VIDEO_BACKEND
+        (key, value)
+        for key, value in options.items()
+        if key != FREEZONE_DEFAULT_VIDEO_BACKEND
     )
     return ordered
 
@@ -279,8 +283,12 @@ def get_freezone_video_model_options() -> list[dict[str, Any]]:
                 {
                     "sceneOptimizeOptions": ["anime", "realistic"],
                     "scene_optimize_options": ["anime", "realistic"],
-                    "defaultSceneOptimize": default_freezone_seedance2_scene_optimize(backend),
-                    "default_scene_optimize": default_freezone_seedance2_scene_optimize(backend),
+                    "defaultSceneOptimize": default_freezone_seedance2_scene_optimize(
+                        backend
+                    ),
+                    "default_scene_optimize": default_freezone_seedance2_scene_optimize(
+                        backend
+                    ),
                 }
             )
         data.append(item)
@@ -319,7 +327,10 @@ def resolve_freezone_video_backend(model: str | None) -> str:
 
     from novelvideo.generators.video_generator import parse_newapi_video_backend
 
-    if parse_newapi_video_backend(text) and text not in FREEZONE_DISABLED_VIDEO_BACKENDS:
+    if (
+        parse_newapi_video_backend(text)
+        and text not in FREEZONE_DISABLED_VIDEO_BACKENDS
+    ):
         return text
     raise ValueError(f"unknown video model: {text}")
 
@@ -339,7 +350,9 @@ def is_freezone_seedance2_backend(backend: str | None) -> bool:
 def is_freezone_happyhorse_backend(backend: str | None) -> bool:
     from novelvideo.generators.video_generator import parse_newapi_video_backend
 
-    model = parse_newapi_video_backend(backend) or _freezone_video_model_from_backend(backend)
+    model = parse_newapi_video_backend(backend) or _freezone_video_model_from_backend(
+        backend
+    )
     return model == "happyhorse-1.0"
 
 
@@ -351,7 +364,10 @@ def _coarse_mark_region(mark: dict[str, Any]) -> str:
         box_y = mark.get("box_y")
         box_width = mark.get("box_width")
         box_height = mark.get("box_height")
-        if all(isinstance(value, (int, float)) for value in [box_x, box_y, box_width, box_height]):
+        if all(
+            isinstance(value, (int, float))
+            for value in [box_x, box_y, box_width, box_height]
+        ):
             px = float(box_x) + float(box_width) / 2.0
             py = float(box_y) + float(box_height) / 2.0
     if isinstance(px, (int, float)) and isinstance(py, (int, float)):
@@ -362,7 +378,9 @@ def _coarse_mark_region(mark: dict[str, Any]) -> str:
 
 
 def format_video_marks(marks: list[dict[str, Any]] | None) -> str:
-    clean_marks = [mark for mark in (marks or []) if str(mark.get("label") or "").strip()]
+    clean_marks = [
+        mark for mark in (marks or []) if str(mark.get("label") or "").strip()
+    ]
     if not clean_marks:
         return ""
 
@@ -393,7 +411,9 @@ def build_freezone_video_prompt(
     if character_names:
         joined = "、".join(name for name in character_names if name)
         if joined:
-            parts.append(f"角色一致性要求：保持 {joined} 的外观、服装和身份特征稳定一致。")
+            parts.append(
+                f"角色一致性要求：保持 {joined} 的外观、服装和身份特征稳定一致。"
+            )
 
     marks_block = format_video_marks(marks)
     if marks_block:
@@ -470,7 +490,9 @@ def build_freezone_keyframe_video_prompt(
             "首帧约束：严格继承输入图片中的主体、构图、服装、光线和场景信息，把输入图作为视频首帧参考。"
         )
     elif has_last_frame:
-        parts.append("尾帧约束：以输入图片作为目标收束画面，确保镜头最终自然落到该主体状态和构图。")
+        parts.append(
+            "尾帧约束：以输入图片作为目标收束画面，确保镜头最终自然落到该主体状态和构图。"
+        )
 
     parts.append(
         "输出要求：生成单条连贯视频镜头，动作自然，运动平滑，避免闪烁、变形、跳帧、主体身份漂移和首尾帧跳变。"
@@ -538,6 +560,89 @@ def validate_omni_reference_limits(
         raise ValueError(f"audio references count must be <= {audio_max}")
 
 
+async def run_trusted_freezone_video_gen(
+    *,
+    project_dir: Path,
+    job_id: str,
+    prompt: str,
+    egress_context: object,
+    task_type: str,
+    episode: int,
+    beat_num: int,
+    scope: str,
+    reference_items: list[dict[str, str]] | None = None,
+    aspect_ratio: str = "16:9",
+    resolution: str = "720p",
+    duration_seconds: int = 5,
+    generate_audio: bool = False,
+    human_review: bool = False,
+    scene_optimize: str | None = None,
+    backend: str = "newapi_seedance-2.0-fast",
+    last_frame_path: str | None = None,
+    audio_setting: str | None = None,
+    gen_mode: str | None = None,
+    model_params: dict[str, Any] | None = None,
+    request_schema: dict[str, Any] | None = None,
+) -> Path:
+    """Run the Freezone video leaf without losing its verified egress context."""
+
+    from novelvideo.freezone.jobs import outputs_dir
+    from novelvideo.generators.video_generator import (
+        ShotReference,
+        VideoGenStatus,
+        create_video_generator,
+    )
+
+    output_path = outputs_dir(project_dir, "freezone_video_gen") / f"{job_id}.mp4"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    references = [
+        ShotReference(
+            str(item.get("type") or "image"),
+            str(item.get("path") or ""),
+            str(item.get("role") or ""),
+        )
+        for item in (reference_items or [])
+        if str(item.get("path") or "").strip()
+    ]
+    generator = create_video_generator(
+        backend=backend,
+        resolution=resolution,
+        generate_audio=generate_audio,
+        model_params=model_params,
+        request_schema=request_schema,
+        egress_context=egress_context,
+    )
+    first_image = next((ref for ref in references if ref.type == "image"), None)
+    generate_kwargs: dict[str, Any] = {
+        "image_path": first_image.path if first_image is not None else None,
+        "prompt": prompt,
+        "output_path": str(output_path),
+        "aspect_ratio": aspect_ratio,
+        "duration": float(duration_seconds),
+        "last_frame_path": last_frame_path,
+        "references": references,
+        "human_review": bool(human_review),
+        "seedance2_config": (
+            {"scene_optimize": scene_optimize} if scene_optimize else None
+        ),
+        "gen_mode": gen_mode,
+        "egress_context": egress_context,
+        "task_type": task_type,
+        "episode": episode,
+        "beat_num": beat_num,
+        "scope": scope,
+    }
+    if audio_setting:
+        generate_kwargs["audio_setting"] = audio_setting
+    result = await generator.generate(**generate_kwargs)
+    if not result or result.status is not VideoGenStatus.DONE:
+        error = result.error if result else "video generation failed"
+        raise RuntimeError(f"freezone video generation failed: {error}")
+    if not output_path.exists():
+        raise RuntimeError("video generation returned success without output")
+    return output_path
+
+
 def video_character_library_path(project_dir: Path) -> Path:
     return freezone_root(project_dir) / "video_character_library.json"
 
@@ -555,7 +660,9 @@ def load_video_character_library(project_dir: Path) -> list[dict[str, Any]]:
     return [item for item in data if isinstance(item, dict)]
 
 
-def save_video_character_library(project_dir: Path, items: list[dict[str, Any]]) -> None:
+def save_video_character_library(
+    project_dir: Path, items: list[dict[str, Any]]
+) -> None:
     path = video_character_library_path(project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
