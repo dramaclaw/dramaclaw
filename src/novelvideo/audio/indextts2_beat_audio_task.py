@@ -13,6 +13,7 @@ from novelvideo.audio_request_usage import (
     update_audio_generation_attempt,
 )
 from novelvideo.config import INDEXTTS2_RECORD_MODEL, INDEXTTS2_RECORD_PROVIDER
+from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.shared.billing_errors import is_insufficient_credits_error
 from novelvideo.project_config import (
     is_narrated_project,
@@ -432,8 +433,17 @@ async def run_indextts2_beat_audio_generation(
     audio_url_builder: AudioUrlBuilder | None = None,
     progress_callback: ProgressCallback | None = None,
     log_callback: LogCallback | None = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> IndexTTS2BeatAudioTaskResult:
     """Generate selected beat MP3s with IndexTTS2 character/narrator references."""
+
+    if generator is None and egress_context is not None:
+        from novelvideo.generators.indextts2_fal import IndexTTS2FalClient
+
+        generator = IndexTTS2FalClient(
+            provider="newapi",
+            egress_context=egress_context,
+        )
 
     normalized_mode = _normalize_mode(mode)
     result = IndexTTS2BeatAudioTaskResult(mode=normalized_mode)
