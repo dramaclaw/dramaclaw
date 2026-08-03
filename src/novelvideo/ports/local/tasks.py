@@ -13,8 +13,10 @@ import time
 from typing import Any
 
 from novelvideo.ports import get_cancellation_store
+from novelvideo.ports.authz import AuthzError
 from novelvideo.ports.tasks import QueuedTask, cancel_key, display_metadata_for_task
 from novelvideo.project_context import require_project_home_node
+from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 from novelvideo.task_backend.limits import (
     GlobalLaneQueueLimitExceeded,
     global_lane_concurrency,
@@ -54,7 +56,8 @@ class _InlineLane:
 
 
 class InlineTaskBackend:
-    def __init__(self) -> None:
+    def __init__(self, *, producer=None) -> None:
+        self._producer = producer
         self._background_tasks: set[asyncio.Task] = set()
         self._lanes: dict[str, _InlineLane] = {
             lane: _InlineLane(
@@ -100,7 +103,7 @@ class InlineTaskBackend:
             episode,
             beat_num=beat_num,
             scope=scope,
-            metadata=metadata,
+            metadata={},
             queue_kind=lane_name,
             project_lane_limit=project_lane_limit,
         )
@@ -113,6 +116,67 @@ class InlineTaskBackend:
                 celery_id=None,
             )
 
+        envelope = {
+            "project_id": ctx.project_id,
+            "requester_user_id": ctx.requester_user_id,
+            "task_type": task_type,
+            "episode": episode,
+            "beat_num": beat_num,
+            "scope": scope,
+            "queue_kind": lane_name,
+            "payload": payload,
+        }
+        if self._producer is not None:
+            failure_code: str | None = None
+            try:
+                signed = await self._producer.sign_top_level(
+                    user_id=ctx.requester_user_id,
+                    root_task_id=state.task_id,
+                    task_type=task_type,
+                    project_id=ctx.project_id,
+                    payload={
+                        "episode": episode,
+                        "beat_num": beat_num,
+                        "scope": scope,
+                        "queue_kind": lane_name,
+                        "payload": payload,
+                    },
+                )
+            except AuthzError as exc:
+                failure_code = exc.code
+                signed = None
+            except Exception:
+                failure_code = "TASK_ENVELOPE_INVALID"
+                signed = None
+            if failure_code is not None or signed is None:
+                safe_code = failure_code or "TASK_ENVELOPE_INVALID"
+                manager.fail_task_for_project(
+                    ctx,
+                    task_type,
+                    episode,
+                    beat_num=beat_num,
+                    scope=scope,
+                    error=(
+                        str(AuthzError(safe_code))
+                        if safe_code != "TASK_ENVELOPE_INVALID"
+                        else "invalid task envelope"
+                    ),
+                    metadata={"error_code": safe_code},
+                    expected_task_id=state.task_id,
+                )
+                if safe_code != "TASK_ENVELOPE_INVALID":
+                    raise AuthzError(safe_code) from None
+                raise InvalidTaskEnvelope from None
+            envelope["task_envelope_v2"] = signed.to_dict()
+        self._submit_lane_job(
+            _InlineLaneJob(
+                envelope=envelope,
+                ctx=ctx,
+                manager=manager,
+                run_task_id=state.task_id,
+                metadata=metadata,
+            )
+        )
         manager.update_progress_for_project(
             ctx,
             task_type,
@@ -124,25 +188,6 @@ class InlineTaskBackend:
             metadata=metadata,
             status="queued",
             expected_task_id=state.task_id,
-        )
-        envelope = {
-            "project_id": ctx.project_id,
-            "requester_user_id": ctx.requester_user_id,
-            "task_type": task_type,
-            "episode": episode,
-            "beat_num": beat_num,
-            "scope": scope,
-            "queue_kind": lane_name,
-            "payload": payload,
-        }
-        self._submit_lane_job(
-            _InlineLaneJob(
-                envelope=envelope,
-                ctx=ctx,
-                manager=manager,
-                run_task_id=state.task_id,
-                metadata=metadata,
-            )
         )
         return QueuedTask(task_state=state, backend="inline")
 
@@ -186,7 +231,9 @@ class InlineTaskBackend:
         task = asyncio.create_task(self._run_inline(lane, job))
         self._background_tasks.add(task)
         task.add_done_callback(
-            lambda done, lane_name=lane.name: self._on_background_task_done(done, lane_name)
+            lambda done, lane_name=lane.name: self._on_background_task_done(
+                done, lane_name
+            )
         )
 
     def _pop_next_lane_job(self, lane: _InlineLane) -> _InlineLaneJob | None:

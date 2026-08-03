@@ -26,6 +26,8 @@ from novelvideo.ports.local.release_feed import LocalReleaseFeed
 from novelvideo.ports.local.tasks import InlineTaskBackend, InMemoryCancellationStore
 from novelvideo.ports.local.usage import NoOpProviderInstrumentation, NoOpUsageMeter
 from novelvideo.ports.registry import get_port, register_port
+from novelvideo.task_backend.producer import TaskEnvelopeProducer
+from novelvideo.task_backend.signing import load_task_envelope_signing_config
 
 
 class LocalModelCredentials:
@@ -57,7 +59,9 @@ class LocalAuthz:
     ) -> None:
         raise AuthzError("ORG_CONTEXT_REQUIRED")
 
-    async def admit_model_task(self, *, user_id: str, root_task_id: str) -> AdmissionContext:
+    async def admit_model_task(
+        self, *, user_id: str, root_task_id: str
+    ) -> AdmissionContext:
         return AdmissionContext(
             requester_user_id=user_id,
             billing_principal=BillingPrincipal(kind="local", id=user_id),
@@ -105,19 +109,33 @@ class LocalEgress:
 
 
 def register_local_ports() -> None:
-    register_port("auth", FileAuthPort())
-    register_port("auth_session", LocalAuthSession())
-    register_port("project_registry", SQLiteProjectRegistry())
-    register_port("project_access", AllowAllProjectAccess())
-    register_port("usage_meter", NoOpUsageMeter())
-    register_port("provider_instrumentation", NoOpProviderInstrumentation())
-    register_port("credit_quote", LocalCreditQuote())
-    register_port("task_backend", InlineTaskBackend())
-    register_port("cancellation_store", InMemoryCancellationStore())
-    register_port("audit_sink", NoOpAuditSink())
-    register_port("lifecycle", NoOpLifecycle())
-    register_port("release_feed", LocalReleaseFeed())
-    register_port("model_credentials", LocalModelCredentials())
-    register_port("authz", LocalAuthz())
-    register_port("egress", LocalEgress())
+    authz = LocalAuthz()
+    signing_config = load_task_envelope_signing_config()
+    producer = TaskEnvelopeProducer(
+        authz=authz,
+        active_key_id=signing_config.active_key_id,
+        keyring=signing_config.keyring,
+        clock=lambda: datetime.now(timezone.utc),
+        envelope_id_factory=lambda: uuid4().hex,
+    )
+    task_backend = InlineTaskBackend(producer=producer)
+    ports = (
+        ("auth", FileAuthPort()),
+        ("auth_session", LocalAuthSession()),
+        ("project_registry", SQLiteProjectRegistry()),
+        ("project_access", AllowAllProjectAccess()),
+        ("usage_meter", NoOpUsageMeter()),
+        ("provider_instrumentation", NoOpProviderInstrumentation()),
+        ("credit_quote", LocalCreditQuote()),
+        ("task_backend", task_backend),
+        ("cancellation_store", InMemoryCancellationStore()),
+        ("audit_sink", NoOpAuditSink()),
+        ("lifecycle", NoOpLifecycle()),
+        ("release_feed", LocalReleaseFeed()),
+        ("model_credentials", LocalModelCredentials()),
+        ("authz", authz),
+        ("egress", LocalEgress()),
+    )
+    for name, port in ports:
+        register_port(name, port)
     get_port("provider_instrumentation").install()

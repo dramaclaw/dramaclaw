@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import subprocess
@@ -12,11 +13,30 @@ from novelvideo.ports.auth_contract import AuthError
 pytestmark = pytest.mark.m08
 
 
+def _task_signing_env() -> dict[str, str]:
+    return {
+        "ST_TASK_ENVELOPE_ACTIVE_KEY_ID": "m08-test-v1",
+        "ST_TASK_ENVELOPE_KEYRING_B64_JSON": json.dumps(
+            {
+                "m08-test-v1": base64.b64encode(
+                    b"m08-task-envelope-test-key-value" * 2
+                ).decode("ascii")
+            }
+        ),
+    }
+
+
+def _set_task_signing_env(monkeypatch) -> None:
+    for name, value in _task_signing_env().items():
+        monkeypatch.setenv(name, value)
+
+
 def _run_ce_agent_route_probe() -> dict:
     env = os.environ.copy()
     env["ST_EDITION"] = "ce"
     env["ST_CONTROL_PLANE_DSN"] = ""
     env["REDIS_URL"] = ""
+    env.update(_task_signing_env())
     code = """
 import json
 
@@ -59,9 +79,12 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
     monkeypatch.setenv("ST_EDITION", "ce")
     monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "")
     monkeypatch.setenv("REDIS_URL", "")
+    _set_task_signing_env(monkeypatch)
     monkeypatch.setattr(registry, "_PORTS", {})
     monkeypatch.setattr(registry, "_BOOTSTRAPPED", False)
-    monkeypatch.setattr(chat_service, "force_release_chat_run_lock", lambda *_args: None)
+    monkeypatch.setattr(
+        chat_service, "force_release_chat_run_lock", lambda *_args: None
+    )
 
     app = create_app()
     with TestClient(app) as client:
@@ -92,6 +115,7 @@ def test_ce_chat_ws_accepts_missing_cookie_via_local_auth(monkeypatch) -> None:
     monkeypatch.setenv("ST_EDITION", "ce")
     monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "")
     monkeypatch.setenv("REDIS_URL", "")
+    _set_task_signing_env(monkeypatch)
     monkeypatch.setattr(registry, "_PORTS", {})
     monkeypatch.setattr(registry, "_BOOTSTRAPPED", False)
     monkeypatch.setattr(chat_service, "prewarm_chat_backend", _no_prewarm)
@@ -120,6 +144,7 @@ def test_chat_ws_auth_failure_reports_unauthorized(monkeypatch) -> None:
     monkeypatch.setenv("ST_EDITION", "ce")
     monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "")
     monkeypatch.setenv("REDIS_URL", "")
+    _set_task_signing_env(monkeypatch)
     monkeypatch.setattr(registry, "_PORTS", {})
     monkeypatch.setattr(registry, "_BOOTSTRAPPED", False)
     monkeypatch.setattr(chat_routes, "_verify_browser_session", _reject_browser_session)
@@ -142,6 +167,7 @@ async def test_ce_chat_page_agent_session_uses_local_auth_session(monkeypatch) -
 
     monkeypatch.setattr(registry, "_PORTS", {})
     monkeypatch.setattr(registry, "_BOOTSTRAPPED", False)
+    _set_task_signing_env(monkeypatch)
     register_local_ports()
 
     token_value = await chat_service._create_page_agent_session_token(
