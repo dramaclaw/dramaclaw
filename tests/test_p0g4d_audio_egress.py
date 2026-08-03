@@ -30,6 +30,7 @@ def _context(kind: str = "organization") -> TrustedEgressContext:
         requester_user_id="user-1",
         root_task_id="root-task-1",
         admission_id="admission-1",
+        admitted_at="2026-08-03T04:05:00Z",
         membership_id="membership-1" if kind == "organization" else None,
         authz_version=7,
         billing_principal=BillingPrincipal(kind=kind, id=principal_id),
