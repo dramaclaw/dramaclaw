@@ -35,6 +35,7 @@ import {
   isNodeMediaActive,
   requestShellUpgrade,
 } from '@/features/canvas/application/canvasLod';
+import { useCanvasStore } from '@/stores/canvasStore';
 import {
   getLodStill,
   requestLodStill,
@@ -173,7 +174,18 @@ export function withLodShell(
   const exempt = LOD_SHELL_EXEMPT_TYPES.has(type);
   const Wrapped = (props: NodeProps) => {
     const lowDetail = useStore(lowDetailSelector);
-    const wantShell = lowDetail && !exempt && !isNodeMediaActive(props.id);
+    // 画布单选中的节点（canvasStore.selectedNodeId）不 shell：
+    //   - 低缩放下新建节点（放置流程会 setSelectedNode(newNodeId)）要立即以完整
+    //     组件出现——shell 是无标题的小灰块，10% 下用户会以为「没创建上」；
+    //   - 低缩放下点选节点（React Flow 选中经 onSelectionChange 同步回
+    //     selectedNodeId）要能唤出完整组件和操作面板，与拆分前行为一致。
+    // 框选/全选不会写 selectedNodeId（多选时同步为 null），不会击穿降级。
+    // selector 返回 boolean 且只在自己被选中/取消时翻转，无重渲染风暴。
+    const isActiveSelection = useCanvasStore(
+      (state) => state.selectedNodeId === props.id
+    );
+    const wantShell =
+      lowDetail && !exempt && !isActiveSelection && !isNodeMediaActive(props.id);
 
     // shell → 完整组件的切换永远经过升级队列（每帧限量放行，手势中不放行）：
     //   - 手势进行中新挂载的节点（视口裁剪把它换进来的）从 shell 起步，避免
@@ -182,7 +194,9 @@ export function withLodShell(
     // 反方向（完整 → shell）立即生效：降档必须与裁剪开关同一提交（见 Canvas
     // 的 applyLowDetailClass 注释），且换成 shell 本身就便宜。
     const [heldShell, setHeldShell] = useState(
-      () => wantShell || (!exempt && isCanvasGestureActive())
+      () =>
+        wantShell ||
+        (!exempt && !isActiveSelection && isCanvasGestureActive())
     );
     if (wantShell && !heldShell) {
       // render 阶段同组件 setState 是 React 认可的「派生状态」写法，立即重渲染。
