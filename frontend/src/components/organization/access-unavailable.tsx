@@ -60,7 +60,7 @@ export function AccessUnavailable() {
             {t(reasonKey)}
           </p>
           <Link className="text-sm font-medium text-primary hover:underline"
-            to="/organization">
+            to="/">
             {t("organization.access.back")}
           </Link>
         </CardContent>

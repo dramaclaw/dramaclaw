@@ -36,7 +36,6 @@
     "notifications": "Notifications",
     "account": {
       "open": "Open account menu",
-      "organization": "Organization",
       "changeAvatar": "Change avatar",
       "selectLanguage": "Select language",
       "languageChinese": "中文",
@@ -55,36 +54,12 @@
     }
   },
   "organization": {
-    "title": "Organization",
-    "subtitle": "Review your current organization and membership.",
-    "unavailable": "Organization features are unavailable in this edition.",
-    "loading": "Loading organization",
-    "retry": "Retry",
-    "cards": {
-      "organization": "Current organization",
-      "membership": "Your membership",
-      "management": "Administration"
-    },
-    "fields": {
-      "name": "Name",
-      "status": "Status",
-      "updated": "Updated",
-      "user": "Current user",
-      "role": "Role",
-      "membershipStatus": "Membership status",
-      "entitlement": "Entitlement"
-    },
-    "actions": {
-      "manageMembers": "Manage members",
-      "manageInvites": "Manage invitations",
-      "manageGatewayKey": "Manage gateway key",
-      "viewAccess": "View access details"
-    },
+    "unavailable": "Organization access checks are unavailable in this edition.",
     "access": {
       "title": "Model access",
       "loading": "Loading model access",
       "retry": "Retry access",
-      "back": "Back to organization",
+      "back": "Back to projects",
       "available": "Model tasks available",
       "unavailable": "Model tasks unavailable",
       "reasons": {
@@ -96,185 +71,6 @@
         "ORG_AUTHZ_STALE": "Your access changed. Refresh before trying again.",
         "generic": "Model access is currently unavailable."
       }
-    },
-    "gatewayKey": {
-      "title": "Organization gateway key",
-      "loading": "Loading gateway key status",
-      "returning": "Your permissions changed. Returning to the organization overview…",
-      "retry": "Retry",
-      "available": "Gateway key available",
-      "unavailable": "Gateway key unavailable",
-      "input": "Gateway key value",
-      "verifiedAt": "Verified",
-      "updatedAt": "Updated",
-      "reveal": "Hold to reveal gateway key",
-      "bind": "Bind key",
-      "replace": "Replace key",
-      "unbind": "Unbind key",
-      "state": {
-        "never_configured": "Never configured",
-        "validating": "Validating",
-        "active": "Active",
-        "no_active": "No active key",
-        "validation_failed": "Validation failed"
-      },
-      "confirm": {
-        "bindTitle": "Confirm key binding",
-        "replaceTitle": "Confirm key replacement",
-        "unbindTitle": "Confirm key removal",
-        "versionBoundary": "New tasks use the new key version; already admitted tasks keep their fixed prior version.",
-        "noFallback": "Members cannot start new model tasks after removal. There is no platform key fallback.",
-        "cancel": "Cancel",
-        "submit": "Confirm"
-      },
-      "errors": {
-        "generic": "Gateway key request failed. Try again or contact support.",
-        "conflict": "Gateway key state changed. Review the refreshed status and confirm again.",
-        "validation": "Gateway key validation failed. Check the key and enter it again."
-      }
-    },
-    "empty": {
-      "title": "No current organization",
-      "description": "This account is not currently associated with an organization."
-    },
-    "readOnly": {
-      "title": "Read-only access",
-      "description": "Organization management is unavailable for this membership state."
-    },
-    "roles": {
-      "admin": "Organization administrator",
-      "member": "Organization member"
-    },
-    "status": {
-      "active": "Active",
-      "suspended": "Suspended",
-      "left": "Left"
-    },
-    "entitlement": {
-      "platform": "Platform",
-      "orgSponsored": "Organization sponsored",
-      "disabled": "Disabled"
-    },
-    "values": {
-      "unknown": "Unknown"
-    },
-    "errors": {
-      "generic": "Organization request failed",
-      "alreadyMember": "This user already belongs to the organization.",
-      "otherOrganization": "This user already has another current organization.",
-      "memberLimit": "The organization member limit has been reached.",
-      "lastAdmin": "At least one active organization administrator is required.",
-      "concurrent": "This member changed. Review the refreshed list before trying again.",
-      "forbidden": "You do not have permission to manage organization members.",
-      "inactive": "This organization membership is inactive.",
-      "suspended": "This organization is suspended.",
-      "invalid": "Check the request fields."
-    },
-    "members": {
-      "title": "Organization members",
-      "loading": "Loading organization members",
-      "returning": "Your permissions changed. Returning to the organization overview…",
-      "total": "{{count}} members",
-      "search": "Search members",
-      "filteredEmpty": "No members match these filters",
-      "actions": "Actions",
-      "previous": "Previous page",
-      "next": "Next page",
-      "add": "Add member",
-      "batch": "Batch add",
-      "existing": "Existing user",
-      "create": "Create account",
-      "addDescription": "Add a known user ID or create a sponsored account.",
-      "userId": "User ID",
-      "username": "Username",
-      "password": "Password",
-      "createAndAdd": "Create and add",
-      "addExisting": "Add existing user",
-      "added": "Member added.",
-      "batchRows": "Batch member rows",
-      "batchDescription": "Use one row per member: existing|user_id or create|username|password.",
-      "previewRows": "Preview rows",
-      "submitBatch": "Submit batch",
-      "batchFinished": "Batch finished.",
-      "change": "Change member",
-      "refreshBeforeEdit": "Refresh before editing",
-      "lastAdminProtected": "The last active administrator cannot be demoted, suspended, or removed.",
-      "changed": "Member updated.",
-      "action": {
-        "promote": "Promote to administrator",
-        "demote": "Demote to member",
-        "suspend": "Suspend",
-        "restore": "Restore",
-        "remove": "Remove"
-      },
-      "confirm": {
-        "title": "Confirm member change",
-        "sessions": "Affected sessions will be invalidated."
-      },
-      "result": {
-        "created": "Created",
-        "existing": "Already exists",
-        "rejected": "Rejected"
-      }
-    },
-    "invites": {
-      "title": "Organization invitations",
-      "loading": "Loading invitations",
-      "returning": "Your permissions changed. Returning to the organization overview…",
-      "total": "{{count}} invitations",
-      "empty": "No invitations match these filters",
-      "create": "Create invitation",
-      "createDescription": "Invite a specific username as an organization member.",
-      "target": "Username",
-      "submit": "Create",
-      "status": "Invitation status",
-      "allStatuses": "All statuses",
-      "expires": "Expires",
-      "actions": "Actions",
-      "previous": "Previous page",
-      "next": "Next page",
-      "copy": "Copy link",
-      "closeSecret": "Done",
-      "secretTitle": "Copy this invitation link now",
-      "secretDescription": "This link is shown once. Send it only to the intended account.",
-      "secretUnavailableTitle": "Invitation created",
-      "secretUnavailableDescription": "The invitation was created, but its one-time link cannot be shown again. Revoke it and create a new invitation if you need a new link.",
-      "revoke": "Revoke",
-      "confirmRevoke": "Confirm revoke",
-      "revokeDescription": "The intended account will no longer be able to use this invitation.",
-      "statuses": {
-        "pending": "Pending",
-        "expired": "Expired",
-        "revoked": "Revoked",
-        "accepted": "Accepted"
-      },
-      "errors": {
-        "duplicate": "A pending invitation already exists for this account.",
-        "rateLimited": "Too many invitation requests. Try again later.",
-        "forbidden": "You no longer have permission to manage invitations."
-      }
-    }
-  },
-  "invite": {
-    "loading": "Loading invitation",
-    "title": "Organization invitation",
-    "organization": "Organization",
-    "target": "Invited account",
-    "expires": "Expires",
-    "existing": "Use existing account",
-    "create": "Create account",
-    "username": "Username",
-    "password": "Password",
-    "accept": "Accept invitation",
-    "login": "Go to login",
-    "successExisting": "Invitation accepted",
-    "successCreate": "Account created. Sign in to continue.",
-    "errors": {
-      "unavailable": "This invitation is unavailable. It may be expired or revoked.",
-      "used": "This invitation was already used.",
-      "mismatch": "This invitation cannot be accepted by this account.",
-      "rateLimited": "Too many attempts. Try again later.",
-      "generic": "This invitation cannot be processed."
     }
   },
   "notifications": {

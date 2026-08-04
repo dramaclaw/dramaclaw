@@ -36,7 +36,6 @@
     "notifications": "通知",
     "account": {
       "open": "打开个人信息",
-      "organization": "组织信息",
       "changeAvatar": "更换头像",
       "selectLanguage": "选择语言",
       "languageChinese": "中文",
@@ -55,36 +54,12 @@
     }
   },
   "organization": {
-    "title": "组织信息",
-    "subtitle": "查看当前组织和成员身份。",
-    "unavailable": "当前版本不提供组织功能。",
-    "loading": "正在加载组织信息",
-    "retry": "重试",
-    "cards": {
-      "organization": "当前组织",
-      "membership": "我的成员身份",
-      "management": "组织管理"
-    },
-    "fields": {
-      "name": "名称",
-      "status": "状态",
-      "updated": "更新时间",
-      "user": "当前用户",
-      "role": "角色",
-      "membershipStatus": "成员状态",
-      "entitlement": "资格"
-    },
-    "actions": {
-      "manageMembers": "管理成员",
-      "manageInvites": "管理邀请",
-      "manageGatewayKey": "管理网关 Key",
-      "viewAccess": "查看访问详情"
-    },
+    "unavailable": "当前版本不提供组织访问检查。",
     "access": {
       "title": "模型访问",
       "loading": "正在加载模型访问状态",
       "retry": "重试访问状态",
-      "back": "返回组织概览",
+      "back": "返回项目主页",
       "available": "可以启动模型任务",
       "unavailable": "当前不能启动模型任务",
       "reasons": {
@@ -96,185 +71,6 @@
         "ORG_AUTHZ_STALE": "访问状态已变化，请刷新后重试。",
         "generic": "模型访问当前不可用。"
       }
-    },
-    "gatewayKey": {
-      "title": "组织网关 Key",
-      "loading": "正在加载网关 Key 状态",
-      "returning": "你的权限已变化，正在返回组织概览…",
-      "retry": "重试",
-      "available": "网关 Key 可用",
-      "unavailable": "网关 Key 不可用",
-      "input": "网关 Key",
-      "verifiedAt": "验证时间",
-      "updatedAt": "更新时间",
-      "reveal": "按住显示网关 Key",
-      "bind": "绑定 Key",
-      "replace": "替换 Key",
-      "unbind": "解绑 Key",
-      "state": {
-        "never_configured": "从未配置",
-        "validating": "正在验证",
-        "active": "可用",
-        "no_active": "当前无可用 Key",
-        "validation_failed": "验证失败"
-      },
-      "confirm": {
-        "bindTitle": "确认绑定 Key",
-        "replaceTitle": "确认替换 Key",
-        "unbindTitle": "确认解绑 Key",
-        "versionBoundary": "新任务使用新的 Key 版本；已经准入的任务继续使用固定的旧版本。",
-        "noFallback": "解绑后成员不能启动新的模型任务，也不会回落到平台 Key。",
-        "cancel": "取消",
-        "submit": "确认"
-      },
-      "errors": {
-        "generic": "网关 Key 请求失败，请重试或联系支持。",
-        "conflict": "网关 Key 状态已变化，请查看刷新后的状态并重新确认。",
-        "validation": "网关 Key 验证失败，请检查后重新输入。"
-      }
-    },
-    "empty": {
-      "title": "当前没有组织",
-      "description": "此账号当前未关联任何组织。"
-    },
-    "readOnly": {
-      "title": "只读访问",
-      "description": "当前成员状态不可进行组织管理。"
-    },
-    "roles": {
-      "admin": "组织管理员",
-      "member": "组织成员"
-    },
-    "status": {
-      "active": "正常",
-      "suspended": "已暂停",
-      "left": "已离开"
-    },
-    "entitlement": {
-      "platform": "平台资格",
-      "orgSponsored": "组织赞助",
-      "disabled": "已禁用"
-    },
-    "values": {
-      "unknown": "未知"
-    },
-    "errors": {
-      "generic": "组织请求失败",
-      "alreadyMember": "该用户已属于当前组织。",
-      "otherOrganization": "该用户已有其他当前组织。",
-      "memberLimit": "已达到组织成员上限。",
-      "lastAdmin": "必须保留至少一名有效的组织管理员。",
-      "concurrent": "该成员信息已变化，请基于刷新后的列表重新操作。",
-      "forbidden": "你没有管理组织成员的权限。",
-      "inactive": "当前组织成员身份无效。",
-      "suspended": "当前组织已暂停。",
-      "invalid": "请检查请求字段。"
-    },
-    "members": {
-      "title": "组织成员",
-      "loading": "正在加载组织成员",
-      "returning": "你的权限已变化，正在返回组织概览…",
-      "total": "共 {{count}} 名成员",
-      "search": "搜索成员",
-      "filteredEmpty": "没有符合筛选条件的成员",
-      "actions": "操作",
-      "previous": "上一页",
-      "next": "下一页",
-      "add": "添加成员",
-      "batch": "批量添加",
-      "existing": "已有用户",
-      "create": "创建账号",
-      "addDescription": "输入已知用户 ID，或创建一个组织赞助账号。",
-      "userId": "用户 ID",
-      "username": "用户名",
-      "password": "密码",
-      "createAndAdd": "创建并添加",
-      "addExisting": "添加已有用户",
-      "added": "成员已添加。",
-      "batchRows": "批量成员行",
-      "batchDescription": "每行一名成员：existing|user_id 或 create|username|password。",
-      "previewRows": "预览行",
-      "submitBatch": "提交批量请求",
-      "batchFinished": "批量处理完成。",
-      "change": "修改成员",
-      "refreshBeforeEdit": "刷新后再编辑",
-      "lastAdminProtected": "最后一名有效管理员不能被降级、暂停或移出。",
-      "changed": "成员已更新。",
-      "action": {
-        "promote": "提升为管理员",
-        "demote": "降级为成员",
-        "suspend": "暂停",
-        "restore": "恢复",
-        "remove": "移出"
-      },
-      "confirm": {
-        "title": "确认成员变更",
-        "sessions": "受影响的登录会话将失效。"
-      },
-      "result": {
-        "created": "已创建",
-        "existing": "已存在",
-        "rejected": "已拒绝"
-      }
-    },
-    "invites": {
-      "title": "组织邀请",
-      "loading": "正在加载邀请",
-      "returning": "你的权限已变化，正在返回组织概览…",
-      "total": "共 {{count}} 条邀请",
-      "empty": "没有符合筛选条件的邀请",
-      "create": "创建邀请",
-      "createDescription": "按指定用户名邀请一名组织成员。",
-      "target": "用户名",
-      "submit": "创建",
-      "status": "邀请状态",
-      "allStatuses": "全部状态",
-      "expires": "到期时间",
-      "actions": "操作",
-      "previous": "上一页",
-      "next": "下一页",
-      "copy": "复制链接",
-      "closeSecret": "完成",
-      "secretTitle": "请立即复制邀请链接",
-      "secretDescription": "此链接只显示一次，请只发送给目标账号。",
-      "secretUnavailableTitle": "邀请已创建",
-      "secretUnavailableDescription": "邀请已创建，但一次性链接无法再次显示；如需新链接请撤销后重新邀请。",
-      "revoke": "撤销",
-      "confirmRevoke": "确认撤销",
-      "revokeDescription": "目标账号将无法再使用此邀请。",
-      "statuses": {
-        "pending": "待接受",
-        "expired": "已过期",
-        "revoked": "已撤销",
-        "accepted": "已接受"
-      },
-      "errors": {
-        "duplicate": "该账号已有一条待接受邀请。",
-        "rateLimited": "邀请请求过于频繁，请稍后再试。",
-        "forbidden": "你已没有管理邀请的权限。"
-      }
-    }
-  },
-  "invite": {
-    "loading": "正在加载邀请",
-    "title": "组织邀请",
-    "organization": "组织",
-    "target": "受邀账号",
-    "expires": "到期时间",
-    "existing": "使用已有账号",
-    "create": "创建账号",
-    "username": "用户名",
-    "password": "密码",
-    "accept": "接受邀请",
-    "login": "前往登录",
-    "successExisting": "邀请已接受",
-    "successCreate": "账号已创建，请登录后继续。",
-    "errors": {
-      "unavailable": "此邀请不可用，可能已过期或被撤销。",
-      "used": "此邀请已被使用。",
-      "mismatch": "当前账号无法接受此邀请。",
-      "rateLimited": "尝试次数过多，请稍后再试。",
-      "generic": "当前无法处理此邀请。"
     }
   },
   "notifications": {

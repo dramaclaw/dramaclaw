@@ -9,7 +9,6 @@ import {
   AlertTriangle,
   Bell,
   Bolt,
-  Building2,
   Camera,
   Check,
   ChevronRight,
@@ -512,13 +511,6 @@ function AccountPanel({
           </span>
         </div>
         <div className="space-y-0.5">
-          {!isCeRuntime() ? (
-            <AccountMenuRow
-              icon={<Building2 className="size-3.5" />}
-              label={t("header.account.organization")}
-              to="/organization"
-            />
-          ) : null}
           <AccountMenuRow
             icon={<Camera className="size-3.5" />}
             label={t("header.account.changeAvatar")}
@@ -564,14 +556,12 @@ function AccountMenuRow({
   label,
   meta,
   onClick,
-  to,
 }: {
   active?: boolean;
   icon: ReactNode;
   label: string;
   meta?: string;
   onClick?: () => void;
-  to?: "/organization";
 }) {
   const content = (
     <>
@@ -591,16 +581,8 @@ function AccountMenuRow({
   );
   const className =
     "flex h-9 w-full items-center gap-2 rounded-[8px] px-1.5 text-left text-[13px] font-normal text-slate-100 transition-colors duration-150 hover:bg-white/[0.05]";
-  return to ? (
-    <Link to={to} className={className}>
-      {content}
-    </Link>
-  ) : (
-    <button
-      type="button"
-      className={className}
-      onClick={onClick}
-    >
+  return (
+    <button type="button" className={className} onClick={onClick}>
       {content}
     </button>
   );

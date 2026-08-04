@@ -18,7 +18,7 @@ const labels: Record<string, string> = {
   "organization.access.title": "Access unavailable",
   "organization.access.loading": "Loading access",
   "organization.access.retry": "Retry access",
-  "organization.access.back": "Back to organization",
+  "organization.access.back": "Back to projects",
   "organization.access.reasons.MODEL_ACCESS_DENIED": "Model access is disabled",
   "organization.access.reasons.ORG_CREDENTIAL_MISSING": "No organization key",
   "organization.access.reasons.ORG_CREDENTIAL_DISABLED": "Organization key unavailable",
@@ -77,9 +77,9 @@ describe("access unavailable", () => {
     renderPage();
 
     expect(await screen.findByText("No organization key")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Back to organization" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Back to projects" })).toHaveAttribute(
       "href",
-      "/organization",
+      "/",
     );
     expect(document.body.textContent).not.toMatch(/credential_id|provider|raw key/i);
     expect(screen.queryByText(/view existing|export existing/i)).not.toBeInTheDocument();

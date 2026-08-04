@@ -17,13 +17,6 @@ export const queryKeys = {
   }) => ["credits", "transactions", filters] as const,
   org: () => ["org"] as const,
   orgMe: () => ["org", "me"] as const,
-  orgMembers: () => ["org", "members"] as const,
-  orgMembersList: (params: Readonly<object> = {}) =>
-    ["org", "members", params] as const,
-  orgInvites: () => ["org", "invites"] as const,
-  orgGatewayKey: () => ["org", "gateway-key"] as const,
-  orgInvitesList: (params: Readonly<object> = {}) =>
-    ["org", "invites", params] as const,
   projects: () => ["projects"] as const,
   projectSummaries: () => ["projects", "summaries"] as const,
   project: (p: string) => ["projects", p] as const,
