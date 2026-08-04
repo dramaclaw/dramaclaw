@@ -211,7 +211,7 @@ import {
   type FreezoneVideoReferenceItem,
   type FreezoneVideoResolution,
 } from "@/api/ops";
-import { awaitTaskCompletion } from "@/api/tasks";
+import { awaitTaskCompletion, isTaskCancelledError } from "@/api/tasks";
 import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
 import { useNodeGenerationHistory } from "@/features/canvas/hooks/useNodeGenerationHistory";
 import {
@@ -2628,6 +2628,13 @@ export const VideoNode = memo(
               }
             }
           } catch (error) {
+            if (isTaskCancelledError(error)) {
+              // 用户已在终止确认里知情：不进 runErrors、不弹错误框、不落错误横幅。
+              if (runIndex === 0 && completedUrls.length === 0) {
+                updateNodeData(id, { isGenerating: false, generationStartedAt: null });
+              }
+              return;
+            }
             console.error("[video-node] video gen failed", error);
             // 先记下错误再决定是否早退 —— settle 后的聚合分支靠 runErrors 判断
             // 「部分失败」并弹 toast；早退前不记会把首个成功之后的失败彻底吞掉。

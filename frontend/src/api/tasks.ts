@@ -50,6 +50,11 @@ export class TaskCompletionError extends Error {
   }
 }
 
+/** 用户主动终止的任务不是错误 —— 用于跳过错误弹窗/错误横幅。 */
+export function isTaskCancelledError(error: unknown): boolean {
+  return error instanceof TaskCompletionError && error.status === "cancelled";
+}
+
 function resolveTaskProjectId(projectId?: string): string {
   const resolved = (projectId ?? readUrl().project ?? "").trim();
   if (!resolved) {

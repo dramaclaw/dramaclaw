@@ -2,6 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { HTTPError } from "ky";
+import i18n from "@/i18n";
+import { confirmDialog } from "@/components/confirm-dialog-host";
 import { api } from "@/lib/api";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
@@ -125,10 +127,13 @@ export function useCancelTask() {
             ? (error.data as CancelTaskResult)
             : null;
         if (!conflict?.requires_confirmation) throw error;
-        const confirmed = window.confirm(
-          conflict.message ??
-            "任务已开始执行。现在终止不会退还积分，是否确认终止？",
-        );
+        const confirmed = await confirmDialog({
+          title: i18n.t("tasks.cancelRunning.title"),
+          description: conflict.message ?? i18n.t("tasks.cancelRunning.fallbackMessage"),
+          confirmText: i18n.t("tasks.cancelRunning.confirm"),
+          cancelText: i18n.t("tasks.cancelRunning.keepRunning"),
+          confirmVariant: "destructive",
+        });
         if (!confirmed) {
           return {
             ...conflict,
