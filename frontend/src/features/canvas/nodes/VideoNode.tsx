@@ -864,8 +864,12 @@ export const VideoNode = memo(
       defaultSceneOptimizeForModel(selectedVideoModel),
     );
     const generateAudio = Boolean(data.generateAudio);
-    // 真人素材审核开关只对 Seedance 2.0 系列模型生效（口径同能力模块）。
-    const isSeedance20Model = isSeedance2VideoModel(modelId);
+    // 家族判定必须喂 `selectedVideoModelId`(apiModel ?? id)，**不能用 `modelId`**：
+    // `modelId` 是 `selectedVideoModel.id`，在 EE 里是 media_model_catalog 的 ULID
+    // 主键（如 `01KZ58VSE52RFFDASY2T9SY4NC`），根本不含模型名，判定恒为 false ——
+    // 选了 Seedance 2.0 也会被「全能参考仅支持 Seedance 2.0」挡下，视频/音频上游
+    // 也不再自动切模式。CE 兜底列表恰好 id === apiModel，所以这个坑只在 EE 显形。
+    const isSeedance20Model = isSeedance2VideoModel(selectedVideoModelId);
     const supportsHumanReview = selectedVideoModel?.humanReview === true;
     const humanReview = Boolean(data.humanReview);
     const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
