@@ -114,7 +114,11 @@ import {
   resolveErrorContent,
   showErrorDialog,
 } from "@/features/canvas/application/errorDialog";
-import { backendErrorToastMessage } from "@/lib/api-errors";
+import {
+  BillingRuleNotConfiguredError,
+  backendErrorToastMessage,
+} from "@/lib/api-errors";
+import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { resolveGenerationErrorDiagnostics } from "@/features/canvas/application/generationErrorReport";
 import {
   NodeHeader,
@@ -195,6 +199,12 @@ type VideoNodeProps = NodeProps & {
 
 const DEFAULT_WIDTH = 580;
 export const DEFAULT_HEIGHT = 380;
+/**
+ * 视频生成的计费 feature key。主体（错误态重试的计费探针）与操作面板（估价
+ * 展示 + 提交置灰）共用，必须同一口径——放主体导出、面板 import。
+ */
+export const VIDEO_GENERATE_FEATURE_KEY = "freezone.video_generate";
+
 const MIN_WIDTH = 480;
 const MIN_HEIGHT = 280;
 const MAX_WIDTH = 1100;
@@ -1742,8 +1752,36 @@ export const VideoNode = memo(
       upstreamCounts,
       genMode,
     );
+    // 错误态重试的计费闸门。估价链随操作面板下沉后（选中才挂载、未选中不发请求），
+    // 失败态的 RegenerateButton 成了唯一在未选中时也能提交的入口——若不在主体拦截，
+    // 计费规则未配置时重试会放行一次注定被后端拒绝的请求。这里用一个仅错误态启用
+    // 的估价探针补回拦截：value 传 null 时 hook 不发请求，未选中且无错误的节点仍然
+    // 零估价开销；错误态与面板同时活跃时参数一致、查询同 key，由 react-query 去重。
+    const retryBillingProbe = useGenerationCreditCost(
+      "feature",
+      hasGenerationError && videoBackendForCost
+        ? VIDEO_GENERATE_FEATURE_KEY
+        : null,
+      {
+        surface: "canvas",
+        params: {
+          ...(selectedVideoModel?.catalogId
+            ? { catalog_id: selectedVideoModel.catalogId }
+            : {}),
+          video_backend: videoBackendForCost,
+          resolution: qualityToResolution(quality),
+          pricing_quantity: Math.min(Math.max(count, 1), 4) * durationSec,
+          operation: genMode,
+          generate_audio: generateAudio,
+        },
+        quantity: Math.min(Math.max(count, 1), 4),
+      },
+    );
+    const videoBillingRuleMissing =
+      retryBillingProbe.error instanceof BillingRuleNotConfiguredError;
     const submitDisabled =
       isGenerating ||
+      videoBillingRuleMissing ||
       !selectedVideoModel ||
       selectedModelReferenceError !== null ||
       mediaRejectionReason != null ||

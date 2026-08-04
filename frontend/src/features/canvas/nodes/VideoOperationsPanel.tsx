@@ -115,6 +115,7 @@ import {
   OPERATIONS_PANEL_HEIGHT,
   OPERATIONS_PANEL_OVERHANG,
   qualityToResolution,
+  VIDEO_GENERATE_FEATURE_KEY,
   type ReferenceMediaItem,
 } from "@/features/canvas/nodes/VideoNode";
 
@@ -162,7 +163,6 @@ const VIDEO_MODE_TOOLTIP_CLASS =
   "pointer-events-none absolute left-full top-1/2 z-[10001] ml-2 -translate-y-1/2 " +
   "whitespace-nowrap rounded-md bg-[#1f1f22] px-2.5 py-1.5 text-[11px] font-medium " +
   "text-white/90 shadow-lg ring-1 ring-white/10";
-const VIDEO_GENERATE_FEATURE_KEY = "freezone.video_generate";
 
 // 音频引用 chip 的展示文件名：优先节点的 displayName，否则从 audioUrl 取末段文件名。
 // 仅用于前端展示（音频_<文件名>），不影响序列化给后端的 @音频N。
