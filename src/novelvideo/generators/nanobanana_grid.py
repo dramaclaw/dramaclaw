@@ -165,7 +165,7 @@ def _newapi_safe_request_context(
     payload: dict[str, object],
     prompt: str,
 ) -> dict[str, object]:
-    reference_images = payload.get("images")
+    reference_images = payload.get("image")
     reference_image_count = len(reference_images) if isinstance(reference_images, list) else 0
     return {
         "endpoint": f"{endpoint}{request_path}",
@@ -415,6 +415,7 @@ def resolve_openai_image_size(
     model: str | None = None,
     *,
     allow_dynamic_resolution: bool = False,
+    min_pixels: int | None = None,
 ) -> str:
     """Map internal aspect/image_size labels to GPT Image 2 size strings.
 
@@ -439,8 +440,6 @@ def resolve_openai_image_size(
         ratio = 1.0 / _OPENAI_MAX_RATIO
 
     normalized_size = normalize_image_size(str(image_size or "1K"), provider="openai")
-    model_name = str(model or "").strip().lower()
-    is_seedream5 = model_name.startswith("seedream-5")
     long_edges = {
         "512": 1024,
         "0.5K": 1024,
@@ -449,22 +448,21 @@ def resolve_openai_image_size(
         "3K": 3072,
         "4K": 3840,
     }
-    if is_seedream5:
-        # Volcengine Seedream 5 defines 2K with a 3,686,400-pixel floor
-        # (2560x1440 at 16:9), rather than a literal 2048px long edge.
-        long_edges["2K"] = 2560
     long_edge = long_edges.get(normalized_size)
     dynamic_max_edge = _OPENAI_MAX_EDGE
     dynamic_max_pixels = _OPENAI_MAX_PIXELS
+    explicit_dimensions: tuple[int, int] | None = None
     if long_edge is None and allow_dynamic_resolution:
         explicit_size = re.fullmatch(r"(\d+)\s*[xX×]\s*(\d+)", normalized_size)
         if explicit_size:
             width_i, height_i = (int(value) for value in explicit_size.groups())
             if width_i <= 0 or height_i <= 0:
                 raise ValueError(f"invalid image resolution: {image_size}")
-            return f"{width_i}x{height_i}"
+            explicit_dimensions = (width_i, height_i)
         k_size = re.fullmatch(r"(\d+(?:\.\d+)?)\s*[kK]", normalized_size)
-        if k_size:
+        if explicit_dimensions is not None:
+            pass
+        elif k_size:
             long_edge = max(16, _round_openai_edge(float(k_size.group(1)) * 1024))
             dynamic_max_edge = long_edge
             dynamic_max_pixels = long_edge * long_edge
@@ -475,14 +473,17 @@ def resolve_openai_image_size(
             )
     if long_edge is None:
         long_edge = 1024
-    min_pixels = 3_686_400 if is_seedream5 else _OPENAI_MIN_PIXELS
-    max_pixels = (
-        16_777_216
-        if is_seedream5
-        else dynamic_max_pixels
+    configured_min_pixels = (
+        min_pixels
+        if type(min_pixels) is int and min_pixels > 0
+        else None
     )
+    effective_min_pixels = configured_min_pixels or _OPENAI_MIN_PIXELS
+    max_pixels = dynamic_max_pixels
 
-    if ratio >= 1:
+    if explicit_dimensions is not None:
+        width, height = (float(value) for value in explicit_dimensions)
+    elif ratio >= 1:
         width = float(long_edge)
         height = width / ratio
     else:
@@ -490,22 +491,30 @@ def resolve_openai_image_size(
         width = height * ratio
 
     pixel_count = width * height
-    if pixel_count < min_pixels:
-        scale = math.sqrt(min_pixels / pixel_count)
+    if pixel_count < effective_min_pixels:
+        scale = math.sqrt(effective_min_pixels / pixel_count)
         width *= scale
         height *= scale
-    elif pixel_count > max_pixels:
+    elif explicit_dimensions is None and pixel_count > max_pixels:
         scale = math.sqrt(max_pixels / pixel_count)
         width *= scale
         height *= scale
 
-    width_i = min(dynamic_max_edge, _round_openai_edge(width))
-    height_i = min(dynamic_max_edge, _round_openai_edge(height))
+    if explicit_dimensions is not None and configured_min_pixels is None:
+        return f"{explicit_dimensions[0]}x{explicit_dimensions[1]}"
 
-    if width_i * height_i < min_pixels:
-        scale = math.sqrt(min_pixels / max(1, width_i * height_i))
-        width_i = min(dynamic_max_edge, _round_openai_edge(width_i * scale))
-        height_i = min(dynamic_max_edge, _round_openai_edge(height_i * scale))
+    max_edge = (
+        max(dynamic_max_edge, _round_openai_edge(width), _round_openai_edge(height))
+        if explicit_dimensions is not None
+        else dynamic_max_edge
+    )
+    width_i = min(max_edge, _round_openai_edge(width))
+    height_i = min(max_edge, _round_openai_edge(height))
+
+    if width_i * height_i < effective_min_pixels:
+        scale = math.sqrt(effective_min_pixels / max(1, width_i * height_i))
+        width_i = min(max_edge, _round_openai_edge(width_i * scale))
+        height_i = min(max_edge, _round_openai_edge(height_i * scale))
 
     return f"{width_i}x{height_i}"
 
@@ -3391,12 +3400,14 @@ async def _call_newapi_image_api(
     image_config = image_config or {}
     aspect_ratio = str(image_config.get("aspect_ratio") or "1:1").strip() or "1:1"
     image_size = normalize_image_size(str(image_config.get("image_size") or "1K"), "newapi")
+    request_schema = image_config.get("request_schema") or {}
     try:
         size = resolve_openai_image_size(
             aspect_ratio,
             image_size,
             model,
             allow_dynamic_resolution=True,
+            min_pixels=request_schema.get("minPixels"),
         )
     except ValueError as exc:
         return None, "", str(exc)
@@ -3407,9 +3418,10 @@ async def _call_newapi_image_api(
         "size": size,
         "n": 1,
         "response_format": "b64_json",
+        "watermark": False,
     }
     include_quality = bool(
-        (image_config.get("request_schema") or {}).get("includeQuality")
+        request_schema.get("includeQuality")
     ) or _newapi_image_model_supports_quality(model)
     if include_quality and str(image_config.get("quality") or "").strip():
         quality = str(image_config["quality"]).strip()
@@ -3426,7 +3438,7 @@ async def _call_newapi_image_api(
 
     if reference_images:
         try:
-            payload["images"] = await _relay_reference_images_for_newapi(reference_images)
+            payload["image"] = await _relay_reference_images_for_newapi(reference_images)
         except Exception as exc:
             return None, "", f"media relay upload failed: {exc}"
         request_path = "/images/edits"
@@ -3437,7 +3449,7 @@ async def _call_newapi_image_api(
 
     payload = apply_media_request_schema(
         payload,
-        image_config.get("request_schema") or {},
+        request_schema,
         image_config.get("model_params") or {},
     )
 

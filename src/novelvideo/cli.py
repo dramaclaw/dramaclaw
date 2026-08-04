@@ -306,7 +306,6 @@ def generate_script(
         store = CogneeStore(project)
         try:
             await store.initialize()
-            await store.load_graph_state()
 
             episode_node = await store.get_episode_from_graph(episode)
             if not episode_node:
@@ -352,7 +351,6 @@ def generate(
         store = CogneeStore(project)
         try:
             await store.initialize()
-            await store.load_graph_state()
 
             episode_node = await store.get_episode_from_graph(episode)
             if not episode_node:

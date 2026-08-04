@@ -15,6 +15,8 @@ import {
 } from "vitest";
 import type { ReactNode } from "react";
 
+const SUPPORTED_FORMATS_LABEL =
+  "Supports .txt / .md / .docx · File up to 1MB · Text up to 100,000 characters";
 const i18n = i18next.createInstance();
 
 beforeAll(async () => {
@@ -50,7 +52,7 @@ beforeAll(async () => {
             title: "Import Novel",
             subtitle: "Upload your novel file.",
             dropzoneHint: "Click or drop your novel file here",
-            supportedFormats: "Supports .txt / .md / .docx",
+            supportedFormats: SUPPORTED_FORMATS_LABEL,
             restoredFilename: "Imported novel",
             reimport: "Re-import",
             reimportSourceMissing: "Original upload missing",
@@ -82,6 +84,7 @@ beforeAll(async () => {
             pastePlaceholder: "Paste novel text here",
             startIngest: "Start Import",
             processing: "Processing...",
+            elapsed: "Elapsed {{time}}",
             status: {
               uploaded: "Uploaded",
               importing: "Importing",
@@ -126,6 +129,25 @@ beforeAll(async () => {
               missingFix: "Add a scene header to every scene.",
               repairable: "Non-standard scene headers will be normalized.",
               repairableFix: "Scene metadata will be normalized.",
+              open: "View scenes for {{chapter}}",
+              rowCount_one: "{{count}} scene",
+              rowCount_other: "{{count}} scenes",
+              count_one: "{{count}} scene",
+              count_other: "{{count}} scenes",
+              scene: "Scene {{number}}",
+              characters: "Characters",
+              characterSeparator: ", ",
+              unknownLocation: "Scene location not detected",
+              empty: "No scene text is available",
+              unparsedBody: "Text outside recognized scenes",
+            },
+            chapterDetails: {
+              open: "View the text of {{chapter}}",
+              description: "Chapter text preview",
+              sceneHeaders: "Scene headers",
+              body: "Text",
+              empty: "No chapter text is available",
+              emptyScene: "No text is available for this scene",
             },
             firstPerson: "First person",
             thirdPerson: "Third person",
@@ -175,13 +197,31 @@ const mocks = vi.hoisted(() => ({
             content?: string;
             word_count?: number;
             char_count?: number;
+            scene_blocks?: {
+              header: string;
+              scene_no?: string;
+              location?: string;
+              time_of_day?: string;
+              interior_exterior?: string;
+              characters?: string[];
+              content?: string;
+              content_start_line?: number;
+              content_end_line?: number;
+            }[];
+            unparsed_content_start_line?: number;
+            unparsed_content_end_line?: number;
           }[];
         };
       }
     | undefined,
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
-  ingestTasks: [] as { task_type: string; episode: number; status: string }[],
+  ingestTasks: [] as {
+    task_type: string;
+    episode: number;
+    status: string;
+    created_at?: string;
+  }[],
   // 模拟 React Query 的 isFetchedAfterMount：默认 true（已挂载后刷到新数据）；
   // stale-cache 竞态用例把它设为 false，表示当前 data 还是挂载前的旧缓存。
   ingestTasksFetchedAfterMount: true,
@@ -385,7 +425,7 @@ describe("IngestPage settings save", () => {
     );
 
     expect(
-      screen.getByText("Supports .txt / .md / .docx"),
+      screen.getByText(SUPPORTED_FORMATS_LABEL),
     ).toBeInTheDocument();
     const fileInput = container.querySelector<HTMLInputElement>(
       'input[type="file"]',
@@ -693,6 +733,259 @@ describe("IngestPage settings save", () => {
     expect(screen.getAllByText("12").length).toBeGreaterThanOrEqual(2);
   });
 
+  it("keeps the current upload preview when the replacement picker is cancelled", async () => {
+    const user = userEvent.setup();
+    mocks.uploadNovel.mockImplementation(async () => {
+      mocks.chaptersData = {
+        ok: true,
+        data: {
+          total_chars: 12,
+          count: 1,
+          preview_only: true,
+          source_filename: "novel.txt",
+          chapters: [
+            {
+              number: 1,
+              title: "第一章 初遇",
+              char_count: 12,
+              scene_blocks: [],
+            },
+          ],
+        },
+      };
+      return {
+        ok: true,
+        data: {
+          filename: "novel.txt",
+          size: 12,
+          total_chars: 12,
+          count: 1,
+          chapters: mocks.chaptersData.data.chapters,
+        },
+      };
+    });
+
+    const { container } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    const initialInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    await user.upload(
+      initialInput!,
+      new File(["第一章 初遇"], "novel.txt", { type: "text/plain" }),
+    );
+
+    expect(screen.getByText("第一章 初遇")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reupload" }));
+
+    // Cancelling the native picker emits no change event. The existing file
+    // and parsed chapter preview must therefore remain untouched.
+    expect(screen.getAllByText("novel.txt")).toHaveLength(2);
+    expect(screen.getByText("第一章 初遇")).toBeInTheDocument();
+    expect(mocks.uploadNovel).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces the preview after a replacement upload succeeds", async () => {
+    const user = userEvent.setup();
+    mocks.uploadNovel.mockImplementation(
+      async ({ file }: { file: File; spineTemplate: string }) => {
+        const title =
+          file.name === "replacement.txt" ? "第一章 新内容" : "第一章 旧内容";
+        const chapters = [{
+          number: 1,
+          title,
+          content: `${title}\n正文。`,
+          char_count: 8,
+          scene_blocks: [],
+        }];
+        mocks.chaptersData = {
+          ok: true,
+          data: {
+            total_chars: 8,
+            count: 1,
+            preview_only: true,
+            source_filename: file.name,
+            chapters,
+          },
+        };
+        return {
+          ok: true,
+          data: {
+            filename: file.name,
+            size: 8,
+            total_chars: 8,
+            count: 1,
+            chapters,
+          },
+        };
+      },
+    );
+
+    const { container } = render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    const initialInput = container.querySelector<HTMLInputElement>(
+      'input[type="file"]:not([aria-label="Reupload"])',
+    );
+    await user.upload(
+      initialInput!,
+      new File(["第一章 旧内容"], "novel.txt", { type: "text/plain" }),
+    );
+    expect(screen.getByText("第一章 旧内容")).toBeInTheDocument();
+
+    await user.upload(
+      screen.getByLabelText("Reupload"),
+      new File(["第一章 新内容"], "replacement.txt", { type: "text/plain" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("第一章 新内容")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("第一章 旧内容")).not.toBeInTheDocument();
+    expect(mocks.uploadNovel).toHaveBeenLastCalledWith(
+      expect.objectContaining({ spineTemplate: "drama" }),
+    );
+    expect(mocks.uploadNovel).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens premium drama scene blocks from a chapter row", async () => {
+    const user = userEvent.setup();
+    mocks.chaptersData = {
+      ok: true,
+      data: {
+        total_chars: 36,
+        count: 1,
+        chapters: [
+          {
+            number: 1,
+            title: "第一集 初遇",
+            char_count: 36,
+            content:
+              "第一集 初遇\r1-1 雨巷 夜 外\r人物：林昭、苏然\r△ 林昭停在屋檐下。",
+            scene_blocks: [
+              {
+                header: "1-1 雨巷 夜 外",
+                scene_no: "1",
+                location: "雨巷",
+                time_of_day: "夜",
+                interior_exterior: "外",
+                characters: ["林昭", "苏然"],
+                content_start_line: 3,
+                content_end_line: 4,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    expect(screen.getByText("1 scene")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: "View scenes for 第一集 初遇",
+      }),
+    );
+
+    expect(screen.getAllByText("1 scene")).toHaveLength(2);
+    expect(screen.getByText("Scene 1")).toBeInTheDocument();
+    expect(screen.getAllByText("雨巷").length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getByText((_content, element) =>
+        element?.tagName === "P"
+          ? element.textContent?.includes("林昭, 苏然") ?? false
+          : false,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1-1 雨巷 夜 外")).toBeInTheDocument();
+    expect(screen.getByText("△ 林昭停在屋檐下。")).toBeInTheDocument();
+    expect(screen.queryByTestId("chapter-body")).not.toBeInTheDocument();
+  });
+
+  it("falls back to raw chapter text when premium drama scenes are missing", async () => {
+    const user = userEvent.setup();
+    mocks.chaptersData = {
+      ok: true,
+      data: {
+        total_chars: 20,
+        count: 1,
+        chapters: [{
+          number: 1,
+          title: "第一集 待修复",
+          char_count: 20,
+          content: "第一集 待修复\n这段原文没有可识别的场景头。",
+          scene_blocks: [],
+        }],
+      },
+    };
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "View scenes for 第一集 待修复",
+      }),
+    );
+
+    expect(screen.getByTestId("chapter-body")).toHaveTextContent(
+      "第一集 待修复 这段原文没有可识别的场景头。",
+    );
+  });
+
+  it("opens chapter text in the same drawer for narrated projects", async () => {
+    const user = userEvent.setup();
+    mocks.projectConfig = {
+      ...mocks.projectConfig,
+      spine_template: "narrated",
+    };
+    mocks.chaptersData = {
+      ok: true,
+      data: {
+        total_chars: 24,
+        count: 1,
+        chapters: [
+          {
+            number: 1,
+            title: "第一章 山雨",
+            char_count: 24,
+            content: "第一章 山雨\n雨从傍晚一直下到深夜。",
+          },
+        ],
+      },
+    };
+
+    render(
+      <Wrapper>
+        <IngestPageContent project="demo" />
+      </Wrapper>,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "View the text of 第一章 山雨",
+      }),
+    );
+
+    expect(screen.getByText("Chapter text preview")).toBeInTheDocument();
+    expect(screen.getByTestId("chapter-body")).toHaveTextContent(
+      "第一章 山雨 雨从傍晚一直下到深夜。",
+    );
+    expect(screen.queryByText("Scenes")).not.toBeInTheDocument();
+  });
+
   it("starts ingest with NiceGUI-compatible rebuild enabled", async () => {
     const user = userEvent.setup();
     mocks.uploadNovel.mockResolvedValue({
@@ -728,6 +1021,46 @@ describe("IngestPage settings save", () => {
         spine_template: "drama",
       }),
     );
+  });
+
+  it("starts elapsed timing after project settings finish saving", async () => {
+    const user = userEvent.setup();
+    let nowMs = Date.parse("2026-08-01T00:00:00Z");
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    mocks.uploadNovel.mockResolvedValue({
+      ok: true,
+      data: { filename: "novel.txt", size: 12 },
+    });
+    mocks.updateProject.mockImplementation(async () => {
+      nowMs += 60_000;
+      return { ok: true, data: mocks.projectConfig };
+    });
+    mocks.startIngest.mockResolvedValue({
+      ok: true,
+      data: { task_id: "task-1" },
+    });
+
+    try {
+      const { container } = render(
+        <Wrapper>
+          <IngestPageContent project="demo" />
+        </Wrapper>,
+      );
+      const fileInput = container.querySelector<HTMLInputElement>(
+        'input[type="file"]',
+      );
+      await user.upload(
+        fileInput!,
+        new File(["Chapter 1"], "novel.txt", { type: "text/plain" }),
+      );
+      await user.click(screen.getByRole("option", { name: "Narrated" }));
+      await user.click(screen.getByRole("button", { name: /start import/i }));
+
+      expect(await screen.findByText("Elapsed 00:00")).toBeInTheDocument();
+      expect(mocks.updateProject).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("blocks a headerless premium drama before starting ingest", async () => {
@@ -988,8 +1321,48 @@ describe("IngestPage settings save", () => {
     expect(screen.getByText("Imported novel")).toBeInTheDocument();
     // The empty upload zone must be gone.
     expect(
-      screen.queryByText("Supports .txt / .md / .docx"),
+      screen.queryByText(SUPPORTED_FORMATS_LABEL),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps the persisted start while task-list completion races the SSE", async () => {
+    const nowMs = Date.parse("2026-08-01T00:05:00Z");
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(nowMs);
+    mocks.ingestTasks = [
+      {
+        task_type: "ingest_fast",
+        episode: 0,
+        status: "running",
+        created_at: "2026-08-01T00:00:00Z",
+      },
+    ];
+
+    try {
+      const view = render(
+        <Wrapper>
+          <IngestPageContent project="demo" />
+        </Wrapper>,
+      );
+      expect(await screen.findByText("Elapsed 05:00")).toBeInTheDocument();
+
+      mocks.ingestTasks = [
+        {
+          task_type: "ingest_fast",
+          episode: 0,
+          status: "completed",
+          created_at: "2026-08-01T00:00:00Z",
+        },
+      ];
+      view.rerender(
+        <Wrapper>
+          <IngestPageContent project="demo" />
+        </Wrapper>,
+      );
+
+      expect(screen.getByText("Elapsed 05:00")).toBeInTheDocument();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("does not restore the import view when no ingest task is active", () => {
@@ -1005,7 +1378,7 @@ describe("IngestPage settings save", () => {
 
     // Completed (not active) → stays on the normal upload zone.
     expect(
-      screen.getByText("Supports .txt / .md / .docx"),
+      screen.getByText(SUPPORTED_FORMATS_LABEL),
     ).toBeInTheDocument();
     expect(screen.queryByText("Importing")).not.toBeInTheDocument();
   });
@@ -1028,7 +1401,7 @@ describe("IngestPage settings save", () => {
 
     // 数据还是挂载前旧缓存 → 不得对账，仍停在上传区。
     expect(
-      screen.getByText("Supports .txt / .md / .docx"),
+      screen.getByText(SUPPORTED_FORMATS_LABEL),
     ).toBeInTheDocument();
     expect(screen.queryByText("Importing")).not.toBeInTheDocument();
 
@@ -1053,7 +1426,7 @@ describe("IngestPage settings save", () => {
       </Wrapper>,
     );
     expect(
-      screen.getByText("Supports .txt / .md / .docx"),
+      screen.getByText(SUPPORTED_FORMATS_LABEL),
     ).toBeInTheDocument();
 
     // 切到 other 项目，且它有活跃 ingest_fast。
@@ -1095,7 +1468,7 @@ describe("IngestPage settings save", () => {
 
     // 残留的「Importing」必须被清掉，退回上传区。
     expect(
-      await screen.findByText("Supports .txt / .md / .docx"),
+      await screen.findByText(SUPPORTED_FORMATS_LABEL),
     ).toBeInTheDocument();
     expect(screen.queryByText("Importing")).not.toBeInTheDocument();
   });

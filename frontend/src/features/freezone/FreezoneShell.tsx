@@ -24,6 +24,7 @@ import { currentCanvasParam } from "@/lib/app-router";
 import { rememberLastCanvas, writeUrl } from "@/lib/url-params";
 import { isCeRuntime } from "@/lib/runtime-config";
 import { cn } from "@/lib/utils";
+import { XIADAO_ENABLED } from "@/lib/xiadao-flag";
 import { SuperChatPanel } from "@/features/superchat/superchat-panel";
 import { CommitDialog } from "./commit/CommitDialog";
 import { promoteToAsset } from "./commit/promoteToAsset";
@@ -400,7 +401,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   const [assetPanelCollapsed, setAssetPanelCollapsed] = useState(true);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const showChatDock = !isCeRuntime();
+  const showChatDock = XIADAO_ENABLED && !isCeRuntime();
   // Re-entrancy guard for in-flight projection sync/remove lives in the refs;
   // there is no UI bound to a syncing/removing value, so no state is kept.
   const syncingProjectionRef = useRef<string | null>(null);

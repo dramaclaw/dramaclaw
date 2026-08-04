@@ -253,7 +253,15 @@ class InlineTaskBackend:
             )
         self._drain_lane(lane_name)
 
-    async def cancel_project_task(self, ctx, task_state) -> bool:
+    async def cancel_project_task(
+        self,
+        ctx,
+        task_state,
+        *,
+        force: bool = False,
+        acknowledge_no_refund: bool = False,
+    ) -> dict:
+        del force, acknowledge_no_refund
         await get_cancellation_store().request_cancel(
             project_id=ctx.project_id,
             task_type=task_state.task_type,
@@ -278,7 +286,12 @@ class InlineTaskBackend:
         await asyncio.get_running_loop().run_in_executor(
             None, kill_task_processes, task_state.task_id
         )
-        return True
+        return {
+            "ok": True,
+            "status": "cancelled",
+            "refund_eligible": True,
+            "refund_status": "not_applicable",
+        }
 
 
 class InMemoryCancellationStore:

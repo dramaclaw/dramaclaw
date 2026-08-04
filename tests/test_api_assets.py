@@ -1902,21 +1902,6 @@ async def test_generate_prop_reference_returns_scope(tmp_path, monkeypatch):
     assert "project context" in res["error"]
 
 
-@pytest.mark.asyncio
-async def test_batch_generate_prop_references_starts_batch_task(tmp_path, monkeypatch):
-    from novelvideo.api.routes import props
-
-    _patch_project(monkeypatch, props, tmp_path, _PropStore([]))
-
-    res = await props.batch_generate_prop_references(
-        project="demo",
-        user={"username": "admin"},
-    )
-
-    assert res["ok"] is False
-    assert "project context" in res["error"]
-
-
 def test_single_face_sharp_compresses_generated_ply_to_sog(tmp_path, monkeypatch):
     from novelvideo import stage_asset_tasks
     from novelvideo.director_world import pano_sharp

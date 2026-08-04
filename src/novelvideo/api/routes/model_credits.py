@@ -377,6 +377,11 @@ def _video_backend_feature_billing_params(params: dict) -> dict:
         "pricing_model": pricing_model,
         "pricing_params": _video_backend_billing_params(params),
         "pricing_quantity": pricing_quantity,
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "duration_seconds": pricing_quantity,
+        },
         "pricing_model_selection": video_backend,
     }
 
@@ -395,8 +400,6 @@ def freezone_video_generate_task_billing(params: dict) -> dict:
 
 def freezone_audio_speech_billing_params(params: dict) -> dict:
     """Resolve Freezone speech metadata for quotes and task reservations."""
-    if str(params.get("pricing_model") or "").strip():
-        return params
     from novelvideo.audio.indextts2_beat_audio_task import (
         indextts2_audio_billing_params,
     )
@@ -405,13 +408,23 @@ def freezone_audio_speech_billing_params(params: dict) -> dict:
         quantity = max(int(params.get("pricing_quantity") or 1), 1)
     except (TypeError, ValueError):
         quantity = 1
-    return {**params, **indextts2_audio_billing_params(quantity)}
+    resolved = (
+        params
+        if str(params.get("pricing_model") or "").strip()
+        else {**params, **indextts2_audio_billing_params(quantity)}
+    )
+    return {
+        **resolved,
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "billable_chars": quantity,
+        },
+    }
 
 
 def freezone_audio_music_billing_params(params: dict) -> dict:
     """Resolve Freezone music metadata for quotes and task reservations."""
-    if str(params.get("pricing_model") or "").strip():
-        return params
     from novelvideo.freezone.audio_node import freezone_audio_music_billing_seconds
 
     try:
@@ -422,16 +435,22 @@ def freezone_audio_music_billing_params(params: dict) -> dict:
         pricing_quantity = freezone_audio_music_billing_seconds(
             int(params.get("music_length_ms") or 0)
         )
-    pricing_model = (
-        str(params.get("model") or "LingShan-MU-11").strip()
+    pricing_model = str(
+        params.get("pricing_model")
+        or params.get("model")
         or "LingShan-MU-11"
-    )
+    ).strip() or "LingShan-MU-11"
     return {
         **params,
         "pricing_kind": "audio",
         "pricing_model": pricing_model,
         "pricing_params": {},
         "pricing_quantity": pricing_quantity,
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "duration_seconds": pricing_quantity,
+        },
     }
 
 
@@ -447,8 +466,6 @@ def freezone_audio_task_billing(feature_key: str, params: dict) -> dict:
 
 def freezone_image_reverse_prompt_billing_params(params: dict) -> dict:
     """Resolve vision-model metadata for reverse-prompt quotes and reservations."""
-    if str(params.get("pricing_model") or "").strip():
-        return params
     from novelvideo.freezone.vision_gateway import resolve_freezone_vision_model
 
     try:
@@ -462,12 +479,23 @@ def freezone_image_reverse_prompt_billing_params(params: dict) -> dict:
         )
     except (TypeError, ValueError):
         pricing_quantity = 1
+    resolved = dict(params)
+    if not str(resolved.get("pricing_model") or "").strip():
+        resolved.update(
+            {
+                "pricing_kind": "text",
+                "pricing_model": resolve_freezone_vision_model(),
+                "pricing_params": {},
+            }
+        )
     return {
-        **params,
-        "pricing_kind": "text",
-        "pricing_model": resolve_freezone_vision_model(),
-        "pricing_params": {},
+        **resolved,
         "pricing_quantity": pricing_quantity,
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "billable_chars": pricing_quantity,
+        },
     }
 
 
@@ -523,6 +551,10 @@ def freezone_image_feature_billing_params(feature_key: str, params: dict) -> dic
             ),
             "pricing_params": pricing_params,
             "pricing_quantity": pricing_quantity,
+            "pricing_metrics": {
+                "call_count": pricing_quantity,
+                "item_count": pricing_quantity,
+            },
         }
     if explicit_pricing_model:
         try:
@@ -542,6 +574,10 @@ def freezone_image_feature_billing_params(feature_key: str, params: dict) -> dic
             "pricing_model": explicit_pricing_model,
             "pricing_params": pricing_params,
             "pricing_quantity": pricing_quantity,
+            "pricing_metrics": {
+                "call_count": pricing_quantity,
+                "item_count": pricing_quantity,
+            },
         }
     image_selection = str(params.get("image_selection") or "").strip()
     if not image_selection:
@@ -570,6 +606,10 @@ def freezone_image_feature_billing_params(feature_key: str, params: dict) -> dic
             quality=str(params.get("quality") or ""),
         ),
         "pricing_quantity": pricing_quantity,
+        "pricing_metrics": {
+            "call_count": pricing_quantity,
+            "item_count": pricing_quantity,
+        },
         "pricing_model_selection": selection,
         "pricing_model_label": str(model_cfg.get("label") or selection),
     }
@@ -608,8 +648,6 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
     if feature_key == "mainline.beat_video_generation":
         return _video_backend_feature_billing_params(params)
     if feature_key == "mainline.beat_audio_generation":
-        if str(params.get("pricing_model") or "").strip():
-            return params
         from novelvideo.audio.indextts2_beat_audio_task import (
             indextts2_audio_billing_params,
         )
@@ -618,6 +656,14 @@ def _feature_billing_params(value: str, params: dict, *, mode_key: str = "") -> 
             quantity = max(int(params.get("pricing_quantity") or 1), 1)
         except (TypeError, ValueError):
             quantity = 1
+        if str(params.get("pricing_model") or "").strip():
+            return {
+                **params,
+                "pricing_metrics": {
+                    "call_count": quantity,
+                    "item_count": quantity,
+                },
+            }
         return {**params, **indextts2_audio_billing_params(quantity)}
     if feature_key == "mainline.scene_pano_generation":
         if str(params.get("pricing_model") or "").strip():
@@ -741,14 +787,57 @@ def _default_billing_params(
     value: str,
     model: str,
     explicit_params: dict,
+    quantity: int = 1,
     mode_key: str = "",
     image_role: str = "",
 ) -> dict:
+    def feature_params(params: dict) -> dict:
+        action_count = max(int(quantity or 0), 1)
+        feature_input = dict(params)
+        feature_key = str(value or "").strip()
+        if feature_key in {
+            "freezone.video_generate",
+            "mainline.beat_video_generation",
+        }:
+            try:
+                total_duration = max(int(feature_input.get("pricing_quantity") or 0), 0)
+            except (TypeError, ValueError):
+                total_duration = 0
+            if total_duration > 0 and action_count > 1:
+                # Canvas asks for N videos with a total duration of N * seconds.
+                # Normalize the duration of one provider request first, then
+                # aggregate it again below. Otherwise a batch total can be
+                # mistaken for one long video and clamped by backend limits.
+                feature_input["pricing_quantity"] = total_duration / action_count
+
+        resolved = _feature_billing_params(value, feature_input, mode_key=mode_key)
+        if not str(resolved.get("pricing_model") or resolved.get("catalog_id") or "").strip():
+            return resolved
+        raw_metrics = resolved.get("pricing_metrics")
+        metrics = dict(raw_metrics) if isinstance(raw_metrics, dict) else {}
+        if "billable_chars" in resolved:
+            metrics.update(
+                {
+                    "call_count": 1,
+                    "item_count": 1,
+                    "billable_chars": max(int(resolved.get("billable_chars") or 0), 1),
+                }
+            )
+        elif "items" in resolved:
+            item_count = max(int(resolved.get("items") or 0), 1)
+            metrics.update({"call_count": item_count, "item_count": item_count})
+        else:
+            metrics.update({"call_count": action_count, "item_count": action_count})
+            if str(resolved.get("pricing_kind") or "").strip() == "video":
+                per_call_duration = max(int(metrics.get("duration_seconds") or 0), 1)
+                metrics["duration_seconds"] = per_call_duration * action_count
+        return {**resolved, "pricing_metrics": metrics}
+
     if surface == "canvas":
         if kind == "video_backend":
             return _video_backend_billing_params(explicit_params)
         if kind == "feature":
-            return _feature_billing_params(value, explicit_params, mode_key=mode_key)
+            return feature_params(explicit_params)
         return explicit_params
 
     if kind == "fixed_image":
@@ -768,7 +857,7 @@ def _default_billing_params(
     if kind == "video_backend":
         return _video_backend_billing_params(explicit_params)
     if kind == "feature":
-        return _feature_billing_params(value, explicit_params, mode_key=mode_key)
+        return feature_params(explicit_params)
     return explicit_params
 
 
@@ -799,6 +888,7 @@ async def get_generation_credit_cost(
             value=value,
             model=model,
             explicit_params=parsed_params,
+            quantity=_clean_quantity(quantity),
             mode_key=_clean_query_value(mode_key),
             image_role=_clean_query_value(image_role),
         ),

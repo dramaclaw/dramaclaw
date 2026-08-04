@@ -38,6 +38,7 @@ import {
 import { awaitTaskCompletion } from '@/api/tasks';
 import { buildRedHighlightMaskBlob } from '@/lib/mask-highlight';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { GENERATION_ERROR_CLEARED_PATCH } from '@/features/canvas/application/generationTaskArbitration';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import { readUrl } from '@/lib/url-params';
 import {
@@ -463,7 +464,7 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
           previewImageUrl: url,
           isGenerating: false,
           generationStartedAt: null,
-          generationError: null,
+          ...GENERATION_ERROR_CLEARED_PATCH,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

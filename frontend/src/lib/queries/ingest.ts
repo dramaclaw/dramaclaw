@@ -71,9 +71,16 @@ export interface KnowledgeGraphSnapshot {
 export function useUploadNovel(project: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({
+      file,
+      spineTemplate,
+    }: {
+      file: File;
+      spineTemplate: SpineTemplate;
+    }) => {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("spine_template", spineTemplate);
       const response = await jsonWithBackendError<OkResponse<UploadResult> | ErrorResponse>(
         api.post(p`api/v1/projects/${project}/ingest/upload`, { body: formData }),
       );
@@ -82,14 +89,14 @@ export function useUploadNovel(project: string) {
       }
       return response;
     },
-    onSuccess: (response) => {
+    onSuccess: (response, variables) => {
       const preview = response.data;
       if (
         Array.isArray(preview.chapters) &&
         typeof preview.total_chars === "number"
       ) {
         queryClient.setQueryData<OkResponse<ChaptersResult>>(
-          queryKeys.chapters(project),
+          queryKeys.chapterPreview(project, variables.spineTemplate),
           {
             ok: true,
             data: {
@@ -110,12 +117,19 @@ export function useUploadNovel(project: string) {
   });
 }
 
-export function useChapters(project: string, enabled = true) {
+export function useChapters(
+  project: string,
+  spineTemplate: SpineTemplate,
+  enabled = true,
+) {
   return useQuery({
-    queryKey: queryKeys.chapters(project),
+    queryKey: queryKeys.chapterPreview(project, spineTemplate),
     queryFn: ({ signal }) =>
       api
-        .get(p`api/v1/projects/${project}/chapters`, { signal })
+        .get(p`api/v1/projects/${project}/chapters`, {
+          signal,
+          searchParams: { spine_template: spineTemplate },
+        })
         .json<OkResponse<ChaptersResult>>(),
     enabled: !!project && enabled,
   });

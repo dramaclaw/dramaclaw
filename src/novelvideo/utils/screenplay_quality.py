@@ -8,9 +8,13 @@ from typing import Literal
 
 from novelvideo.utils.screenplay_scene_parser import (
     BRACKETED_LABELED_SCENE_RE,
+    CHINESE_FOUNTAIN_SCENE_RE,
     INTERIOR_EXTERIOR,
+    INTERNATIONAL_SCENE_RE,
     INLINE_LABELED_SCENE_RE,
+    INSERT_SCENE_RE,
     LABELED_LOCATION_RE,
+    NUMBERED_SCENE_RE,
     TIME_TOKEN_RE,
     is_scene_start_line,
     parse_scene_blocks,
@@ -43,20 +47,17 @@ AMBIGUOUS_SPEAKERS = {
     "他", "她", "他们", "她们", "对方", "对面的人", "男人", "女人", "那人",
     "来人", "某人", "电话那头", "电话里", "声音", "对面", "那头",
 }
-SCENE_MARKER_COLON_NUMBER_RE = re.compile(r"^\s*场次\s*[:：]\s*(\d+)\s*$")
-SPLIT_TIME_LINE_RE = re.compile(r"^(?:时间|时段)[：:].*$")
-NUMBERED_SCENE_PREFIX_RE = re.compile(r"^\s*\d+\s*[-－]\s*\d+")
+NUMBERED_SCENE_PREFIX_RE = re.compile(r"^\s*\d+\s*[-－.．]\s*\d+")
 _EXPLICIT_TIME_RE = re.compile(rf"(?:^|[\s，,、])(?:{TIME_TOKEN_RE})(?:$|[\s，,、])")
-_INTERIOR_EXTERIOR_SLOT_RE = re.compile(r"(?:^|[\s，,、])(内|外)\s*$")
 
 FIX_HINTS = {
     "duplicate_chapter_number": "建议检查正文中疑似章节标题的句子，避免同一章节号被切成多个章节。",
-    "scene_headers_missing_time": "建议在场景头中补充明确时间，如“日/夜/深夜”。",
+    "scene_headers_missing_time": "建议在场景头中补充明确时间，如“日/夜/深夜”；系统仍会保留场景边界并在后续规范化。",
     "multi_speaker_lines": "建议整理为一句台词一行，每行只保留一个说话人。",
     "ambiguous_speakers": "建议把“他/她/对方”等模糊说话人改为具体角色名。",
     "many_long_dialogues": "建议拆分超长台词，减少单行对白长度。",
-    "missing_scene_headers": "建议为正文补充分场头，如“1-1 地点 时间 内/外”。",
-    "nonstandard_scene_headers": "系统会在场景规划时规范化场景元数据；也可提前整理为“1-1 地点 时间 内/外”。",
+    "missing_scene_headers": "请按标准格式编写：每集先写“第N集”，每个场景再单独写“场号 地点 时间 内/外”，然后依次填写人物、动作和对白。例如：第一集 / 1-1 城市咖啡馆 日 内。",
+    "nonstandard_scene_headers": "系统已识别场景边界，并会在场景规划时补齐或规范化缺失的地点、时间和内外景。",
     "non_increasing_chapter_number": "建议检查章节序号是否递增，或确认正文中的章节字样不是误切标题。",
     "too_few_dialogue_lines": "建议补充可识别对白行，格式如“角色：台词”。",
     "sparse_scene_headers": "建议按场景补充分场头（每场一个场景头）。",
@@ -114,15 +115,10 @@ def assess_screenplay_scene_headers(text: str) -> SceneHeaderAssessment:
 
     standard_headers = 0
     for block in detected_blocks:
-        header = str(block.header_line or "").strip()
         if (
-            (
-                SCENE_HEADER_RE.fullmatch(header)
-                or SCENE_BLOCK_HEADER_RE.fullmatch(header)
-                or BRACKETED_LABELED_SCENE_RE.fullmatch(header)
-            )
-            and bool(block.location)
+            bool(block.location)
             and bool(block.time_of_day)
+            and not block.time_inferred
             and block.interior_exterior in INTERIOR_EXTERIOR
         ):
             standard_headers += 1
@@ -141,12 +137,11 @@ def assess_screenplay_scene_headers(text: str) -> SceneHeaderAssessment:
 def _has_source_scene_header_evidence(header_line: str) -> bool:
     """Reject scene boundaries inferred solely from prose ending in 内/外.
 
-    The shared parser deliberately accepts loose historical formats and
-    defaults a missing time to ``日``.  That behavior is useful after import,
-    but it is not proof that the source contained a scene header: ordinary
-    prose such as ``孙悟空快步走到门外`` otherwise becomes location
-    ``孙悟空快步走到门``.  Import validation therefore requires a structural
-    marker/label or an explicit time immediately followed by 内/外.
+    The shared parser deliberately accepts loose historical formats, but that
+    is not proof that the source contained a scene header: ordinary prose such
+    as ``孙悟空快步走到门外`` can otherwise resemble a location ending in
+    ``外``. Import validation therefore requires a structural marker/label or
+    an explicit time and 内/外 pair.
     """
 
     header = str(header_line or "").strip()
@@ -159,9 +154,19 @@ def _has_source_scene_header_evidence(header_line: str) -> bool:
     ).strip()
     if BRACKETED_LABELED_SCENE_RE.fullmatch(header):
         return True
+    if CHINESE_FOUNTAIN_SCENE_RE.fullmatch(header):
+        return True
+    if INTERNATIONAL_SCENE_RE.fullmatch(header):
+        return True
+    if INSERT_SCENE_RE.fullmatch(header):
+        return True
     if INLINE_LABELED_SCENE_RE.fullmatch(header):
         return True
-    if NUMBERED_SCENE_PREFIX_RE.match(header):
+    numbered = NUMBERED_SCENE_RE.match(header)
+    if numbered and (
+        bool((numbered.group("rest") or "").strip())
+        or NUMBERED_SCENE_PREFIX_RE.fullmatch(header)
+    ):
         return True
     if header.startswith(("场次", "地点：", "地点:", "环境：", "环境:", "场景：", "场景:")):
         return True
@@ -192,7 +197,12 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
     parenthetical_dialogue_count = 0
     long_dialogue_count = 0
     scene_headers_missing_time_count = len(
-        [block for block in scene_blocks if block.header_line and not block.time_of_day]
+        [
+            block
+            for block in scene_blocks
+            if block.header_line
+            and (not block.time_of_day or block.time_inferred)
+        ]
     )
 
     for line in non_empty_lines:
@@ -244,6 +254,15 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
         },
     )
 
+    if scene_headers_missing_time_count > 0:
+        report.warnings.append(
+            ScreenplayQualityIssue(
+                severity="warning",
+                code="scene_headers_missing_time",
+                message="检测到缺少明确时间锚点的场景头/场次头；后续 time_of_day 与 scene variant 继承可能不稳定。",
+            )
+        )
+
     if not looks_like_screenplay:
         report.warnings.append(
             ScreenplayQualityIssue(
@@ -271,21 +290,12 @@ def check_screenplay_import_quality(text: str) -> ScreenplayQualityReport:
             )
         )
 
-    if scene_headers_missing_time_count > 0:
+    if dialogue_line_count < 5:
         report.warnings.append(
             ScreenplayQualityIssue(
                 severity="warning",
-                code="scene_headers_missing_time",
-                message="检测到缺少明确时间锚点的场景头/场次头；后续 time_of_day 与 scene variant 继承可能不稳定。",
-            )
-        )
-
-    if dialogue_line_count < 5:
-        report.blocking_issues.append(
-            ScreenplayQualityIssue(
-                severity="blocking",
                 code="too_few_dialogue_lines",
-                message="有效对白行过少，文本不像可结构化剧本。",
+                message="有效对白行较少；如果这是无对白或动作主导场景，可以继续导入。",
             )
         )
 
@@ -335,11 +345,17 @@ def build_import_format_check(
     has_missing_interior_exterior = any(
         issue["code"] == "missing_interior_exterior" for issue in issues
     )
+    has_specific_missing_time = any(
+        issue["code"] in {"incomplete_scene_header", "scene_headers_missing_time"}
+        for issue in issues
+    )
 
     for issue in [*report.blocking_issues, *report.warnings]:
         if issue.code == "not_screenplay_like":
             continue
-        if issue.code == "scene_headers_missing_time" and has_missing_interior_exterior:
+        if issue.code == "scene_headers_missing_time" and (
+            has_missing_interior_exterior or has_specific_missing_time
+        ):
             continue
         if issue.code == "sparse_scene_headers" and metrics.get("dialogue_lines", 0) < 24:
             continue
@@ -362,12 +378,12 @@ def build_import_format_check(
                 {
                     "code": "missing_scene_headers",
                     "line": None,
-                    "message": "精品剧未检测到可识别的场景头，无法确定场景边界。",
+                    "message": "没有识别到场景头，系统无法判断每个场景从哪里开始。",
                     "fix": FIX_HINTS["missing_scene_headers"],
                 },
             )
         level = "blocking"
-        summary = "精品剧必须包含场景头，请补充后重新导入。"
+        summary = "精品剧必须包含场景头：系统没有识别到每个场景从哪里开始，请补充后重新导入。"
     elif not has_chapters:
         level = "blocking"
         summary = "未检测到有效章节或可识别正文，无法用于剧本结构化。"
@@ -378,12 +394,12 @@ def build_import_format_check(
                 {
                     "code": "nonstandard_scene_headers",
                     "line": None,
-                    "message": "检测到可识别但不标准的场景头。",
+                    "message": "已识别场景边界，但部分场景元数据不完整。",
                     "fix": FIX_HINTS["nonstandard_scene_headers"],
                 },
             )
         level = "warning"
-        summary = "检测到非标准场景头，系统将在场景规划时自动规范化。"
+        summary = "已识别场景边界；缺失的场景元数据将在场景规划时补齐。"
     elif issues:
         level = "warning"
         summary = f"上传成功，但检测到 {len(issues)} 个格式风险，可能影响场景识别。"
@@ -404,41 +420,72 @@ def _build_line_aware_format_issues(text: str) -> list[dict]:
     lines = text.splitlines()
     issues: list[dict] = []
 
-    for idx, raw_line in enumerate(lines, start=1):
-        line = raw_line.strip()
-        if not line:
+    blocks = parse_scene_blocks(_extract_screenplay_candidate_lines(text))
+    search_start = 0
+    diagnosed_lines: set[int] = set()
+    for block in blocks:
+        header = str(block.header_line or "").strip()
+        if not header or not _has_source_scene_header_evidence(header):
             continue
 
-        marker_match = SCENE_MARKER_COLON_NUMBER_RE.match(raw_line)
-        if marker_match:
-            number = marker_match.group(1)
-            issues.append(
-                {
-                    "code": "scene_marker_colon_number",
-                    "line": idx,
-                    "message": f"“场次：{number}”不是稳定场次格式。",
-                    "fix": "建议改为“场次（1）”或“1-1”。",
-                }
-            )
+        line_number = None
+        for line_index in range(search_start, len(lines)):
+            if lines[line_index].strip() == header:
+                line_number = line_index + 1
+                search_start = line_index + 1
+                break
 
-        labeled_location = LABELED_LOCATION_RE.match(line)
-        if (
-            labeled_location
-            and not _EXPLICIT_TIME_RE.search(labeled_location.group("location") or "")
-            and _has_split_time_line(lines, idx)
-        ):
-            issues.append(
-                {
-                    "code": "split_location_time",
-                    "line": idx,
-                    "message": "地点和时间分开填写，系统可能无法合并识别。",
-                    "fix": "建议改为“地点：人类城池，日，内/外”。",
-                }
+        missing: list[str] = []
+        placeholders: list[str] = []
+        if not block.location:
+            missing.append("地点")
+            placeholders.append("[地点]")
+        if not block.time_of_day or block.time_inferred:
+            missing.append("时间")
+            placeholders.append("[日/夜]")
+        if block.interior_exterior not in INTERIOR_EXTERIOR:
+            missing.append("内/外")
+            placeholders.append("[内/外]")
+        if not missing:
+            continue
+
+        if line_number is not None:
+            diagnosed_lines.add(line_number)
+        if header.startswith(("场次", "第")) and block.location:
+            suggestion = (
+                f"{header}；地点：{block.location}，"
+                f"{block.time_of_day if block.time_of_day and not block.time_inferred else '[日/夜]'}，"
+                f"{block.interior_exterior or '[内/外]'}"
             )
+        else:
+            suggestion = " ".join([header, *placeholders])
+        if len(missing) > 1:
+            code = "incomplete_scene_header"
+        elif missing[0] == "时间":
+            code = "scene_headers_missing_time"
+        elif missing[0] == "内/外":
+            code = "missing_interior_exterior"
+        else:
+            code = "incomplete_scene_header"
+        issues.append(
+            {
+                "code": code,
+                "line": line_number,
+                "message": f"场景头“{header}”缺少{'、'.join(missing)}。",
+                "fix": f"请按实际场景补充，可参考“{suggestion}”。",
+            }
+        )
+
+    for idx, raw_line in enumerate(lines, start=1):
+        line = raw_line.strip()
+        if not line or idx in diagnosed_lines:
+            continue
 
         location_slot = _format_check_location_slot(line)
-        if location_slot and _EXPLICIT_TIME_RE.search(location_slot) and not _has_interior_exterior_tail(
+        if (
             location_slot
+            and _EXPLICIT_TIME_RE.search(location_slot)
+            and not _has_interior_exterior_slot(location_slot)
         ):
             issues.append(
                 {
@@ -490,20 +537,6 @@ def _build_chapter_structure_issues(chapters: list[dict]) -> list[dict]:
     return issues
 
 
-def _has_split_time_line(lines: list[str], line_number: int) -> bool:
-    checked = 0
-    for raw_line in lines[line_number:]:
-        line = raw_line.strip()
-        if not line:
-            continue
-        checked += 1
-        if SPLIT_TIME_LINE_RE.match(line):
-            return True
-        if checked >= 2:
-            return False
-    return False
-
-
 def _format_check_location_slot(line: str) -> str:
     inline = INLINE_LABELED_SCENE_RE.match(line)
     if inline:
@@ -516,9 +549,10 @@ def _format_check_location_slot(line: str) -> str:
     return ""
 
 
-def _has_interior_exterior_tail(line: str) -> bool:
-    match = _INTERIOR_EXTERIOR_SLOT_RE.search(line)
-    return bool(match and match.group(1) in INTERIOR_EXTERIOR)
+def _has_interior_exterior_slot(line: str) -> bool:
+    return bool(
+        re.search(r"(?:^|[\s，,、])(内|外)(?:$|[\s，,、])", line)
+    )
 
 
 def extract_screenplay_candidate_lines(text: str) -> list[str]:

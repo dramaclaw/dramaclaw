@@ -116,16 +116,15 @@ export function useStageTask(opts: UseStageTaskOptions): StageTask {
   };
 
   const stop = async () => {
-    // Close locally first so the progress panel disappears immediately.
-    setStarted(false);
     try {
-      await cancelTask.mutateAsync({
+      const result = await cancelTask.mutateAsync({
         type: activeTaskType,
         project,
         episode,
       });
+      if (result.ok) setStarted(false);
     } catch {
-      // Swallow — user already sees the panel gone; we don't need to recover.
+      // Keep the panel visible when cancellation did not complete.
     }
   };
 

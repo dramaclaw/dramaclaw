@@ -295,14 +295,14 @@ function TasksPage() {
   const handleCancel = useCallback(
     async (task: Task) => {
       try {
-        await cancelTask.mutateAsync({
+        const result = await cancelTask.mutateAsync({
           type: task.task_type,
           project: task.project_id ?? task.project,
           episode: task.episode,
           beatNum: task.beat_num ?? undefined,
           scope: task.scope ?? undefined,
         });
-        toast.success(t("tasks.cancelled"));
+        if (result.ok) toast.success(result.message ?? t("tasks.cancelled"));
       } catch {
         toast.error(t("common.error"));
       }

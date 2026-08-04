@@ -14,6 +14,7 @@ import {
 } from '@/api/ops';
 import { awaitTaskCompletion } from '@/api/tasks';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { GENERATION_ERROR_CLEARED_PATCH } from '@/features/canvas/application/generationTaskArbitration';
 import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
@@ -154,10 +155,12 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
 
     setIsSubmitting(true);
     const generationStartedAt = Date.now();
+    // 超分是唯一原地改写源节点的编辑器（其余三个都新建结果节点），所以这里必须
+    // 把上一次失败的三个字段一起清掉，否则新一轮开始时旧请求 ID 还挂在节点上。
     updateNodeData(node.id, {
       isGenerating: true,
       generationStartedAt,
-      generationError: null,
+      ...GENERATION_ERROR_CLEARED_PATCH,
     });
 
     try {
@@ -180,7 +183,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
         previewImageUrl: url,
         isGenerating: false,
         generationStartedAt: null,
-        generationError: null,
+        ...GENERATION_ERROR_CLEARED_PATCH,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

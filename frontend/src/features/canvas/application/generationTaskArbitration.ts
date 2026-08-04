@@ -12,15 +12,22 @@ const GENERATED_MEDIA_FIELDS = [
   'audioUrl',
 ] as const;
 
+// 失败横幅是绝对定位盖在图上的（见 ImageGenNode 的错误浮层），只要节点上换了一张
+// 新图却没清这三个字段，上一次的「生成失败 / 请求 ID / 重新生成」就会继续糊在新图
+// 上面。任何原地写 imageUrl / previewImageUrl / referenceImageUrl 的路径都要带上它。
+export const GENERATION_ERROR_CLEARED_PATCH = {
+  generationError: null,
+  generationErrorDetails: null,
+  generationErrorRequestId: null,
+} as const;
+
 export function buildImageGenerationSuccessPatch(url: string): Record<string, unknown> {
   return {
     imageUrl: url,
     previewImageUrl: url,
     isGenerating: false,
     generationStartedAt: null,
-    generationError: null,
-    generationErrorDetails: null,
-    generationErrorRequestId: null,
+    ...GENERATION_ERROR_CLEARED_PATCH,
   };
 }
 

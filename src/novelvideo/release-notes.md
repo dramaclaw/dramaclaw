@@ -1,40 +1,33 @@
 ---
-version: 1.1.5
+version: 1.2.1
 attention: low
 ---
-# v1.1.5
+# v1.2.1
 
 ## User-facing Highlights (zh)
 
-- **视频素材工作流更完整**: 视频节点可一次导入多张图片、视频和音频,并按模型能力提供全能参考、图片参考和首尾帧入口,提交前会明确拦截不支持的素材与越界音频。
-- **画布查找与保存更可靠**: 历史资产支持按提示词和名称搜索,并修复自动保存并发造成的虚假 409 冲突。
-- **小说导入可安全重建**: 知识图谱构建会识别上游失败、空图和不完整结果,失败后可复用原小说安全重试或重建。
-- **登录与设置体验更稳定**: 登录过期后会停止重复请求并正确返回登录页,媒体存储凭据支持只更新需要变更的字段,关键界面的中英文显示也更完整。
+- **媒体生成参数更可靠**: 视频比例、分辨率和模型专用参数会完整传递,并修正 2K、4K 等尺寸换算及积分不足提示。
+- **小说导入进度更清晰**: 构建知识图谱时持续展示当前阶段、完成比例和已用时间,长时间导入不再像卡住一样。
+- **旧项目规划兼容性提升**: 无标准场景标题的历史剧本也可重新规划场景,Beat 生成与资产规划统一使用当前制作正文。
+- **任务与积分界面更稳定**: 修复草图编辑进度回退,积分中心改为更清晰的中性配色并让记录表格独立滚动。
 
 ## User-facing Highlights (en)
 
-- **More complete video reference workflows**: Import multiple images, videos, and audio clips directly into a video node, choose model-appropriate reference modes, and catch unsupported media or invalid audio durations before submission.
-- **Faster asset discovery and safer saves**: Search generation history by prompt or name, while serialized canvas saves prevent false 409 conflicts caused by overlapping autosaves.
-- **Safe novel import rebuilds**: Knowledge graph imports now detect provider failures, empty graphs, and incomplete runs, then reuse the original novel for a bounded retry or confirmed rebuild.
-- **More reliable sessions and settings**: Expired sessions stop repeated background requests and return to sign-in, media credentials support partial updates, and key screens provide more complete Chinese and English localization.
-
-## New Features
-
-- 历史资产支持按提示词和名称搜索,并提供跨分类命中提示 (#178).
-- 视频节点支持一次选择多张本地图片、视频和音频,自动创建上游素材节点和分组 (#181).
-- EE 登录页新增可配置的“更多信息”菜单,支持链接、图片和 Markdown 内容 (#184).
+- **More reliable media parameters**: Video ratios, resolutions, and model-specific options are preserved, with corrected 2K/4K sizing and clearer insufficient-credit errors.
+- **Clearer novel import progress**: Knowledge-graph imports now show live stages, percentage, and elapsed time so long-running work no longer appears stalled.
+- **Better compatibility for existing projects**: Legacy scripts without standard scene headings can be planned again, while Beat generation and asset planning use the same production text.
+- **More stable task and credit screens**: Sketch-edit progress no longer jumps backward, and the credit center gains clearer neutral styling with an independently scrolling history table.
 
 ## Bug Fixes
 
-- 修复画布自动保存并发导致的虚假版本冲突和跨画布误写风险 (#179).
-- 修复 Seedance 1.x 静默忽略视频、音频或多图素材的问题,提交前会给出明确原因 (#187).
-- 修复 Seedance 2.0 音频参考时长越界后才由厂商返回错误的问题 (#196).
-- 修复登录过期后任务流和后台请求持续重试,以及无效 cookie 无法清理的问题 (Fixes #197, #198).
-- 修复 Freezone AI 摆件在发送模型请求前因失效导入而失败的问题 (#199).
-- 修复知识图谱构建失败被误报成功,并支持复用原小说安全重试和重建 (#200).
+- 修复 NewAPI 视频请求丢失比例、分辨率和模型专用参数的问题,并修正 2K、4K 尺寸换算及积分不足提示 (#235).
+- 修复知识图谱导入期间普通日志导致进度归零的问题,新增实时阶段和计时展示 (#232).
+- 修复历史剧本缺少标准场景标题时无法重新规划场景的问题 (#230).
+- 统一 Beat 生成与资产规划的制作正文来源,避免跳过改编稿 (#231).
+- 修复草图编辑任务在输出日志时进度条回退到零的问题 (#233).
 
 ## Improvements
 
-- 视频空态入口按模型能力展示全能参考、图片参考和首尾帧等可用模式 (#185).
-- OSS 与 Cloudinary 媒体存储凭据支持部分更新,无需重复填写整组配置 (Fixes #182, #183).
-- 补齐角色统计、风格、Beat 工作台、分享弹窗和虾画等关键界面的中英文文案 (#191).
+- 移除 Beat 脚本流程中未使用的旧图谱工具和重复状态加载,保持现有生成行为不变 (#234).
+- 优化积分中心配色、筛选控件及长列表滚动体验 (#237).
+- 虾导入口暂时显示升级提示,避免用户进入尚未完成的功能 (#216).

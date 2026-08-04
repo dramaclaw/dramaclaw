@@ -131,6 +131,7 @@ import {
 } from '@/features/canvas/nodes/CameraPickerPopover';
 import {
   buildImageGenerationSuccessPatch,
+  GENERATION_ERROR_CLEARED_PATCH,
   isStaleGenerationTask,
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
@@ -276,6 +277,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const isComposingRef = useRef(false);
   const hasUserEditedPromptRef = useRef(false);
   const submittingRef = useRef(false);
+  // A user-selected history image supersedes every still-settling request from
+  // the previous batch. Async completions must match this local generation
+  // attempt before they may write either a result or an error back to the node.
+  const generationAttemptRef = useRef(0);
   useEffect(() => {
     if (isComposingRef.current) return;
     setPromptDraft(externalPrompt);
@@ -363,6 +368,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         return;
       }
       setHistoryPreviewUrl(null);
+      generationAttemptRef.current += 1;
       updateNodeData(id, {
         imageUrl: url,
         previewImageUrl: url,
@@ -371,6 +377,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         // 恢复的是单张历史结果，旧批次画册已与主图脱钩（没有任何一张会命中
         // 「主图」标记，点画册格还会静默丢掉刚恢复的图）——一并清掉。
         generationBatch: null,
+        // 节点上已经换成历史里那张成功的图了，上一次失败的横幅不能再盖着。
+        ...GENERATION_ERROR_CLEARED_PATCH,
       });
     },
     [id, isGenerating, updateNodeData],
@@ -735,7 +743,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
 
   const handleSetAlbumMainImage = useCallback(
     (url: string) => {
-      updateNodeData(id, { imageUrl: url, previewImageUrl: url });
+      updateNodeData(id, {
+        imageUrl: url,
+        previewImageUrl: url,
+        ...GENERATION_ERROR_CLEARED_PATCH,
+      });
       setAlbumExpanded(false);
     },
     [id, updateNodeData],
@@ -814,14 +826,21 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       setIsUploading(true);
       try {
         const result = await uploadFreezoneImage(projectId, file, file.name);
-        updateNodeData(id, { referenceImageUrl: result.url });
+        // 参考图在显示优先级里排最后（previewImageUrl → imageUrl → referenceImageUrl），
+        // 只有节点还没有生成结果时它才会顶到主体上——这时旧的失败横幅盖的是新图，得清掉。
+        // 已经有生成图时主体不变，失败信息仍然对得上那张图，保留；等用户真正重新提交，
+        // handleSubmit 自己会清。
+        updateNodeData(id, {
+          referenceImageUrl: result.url,
+          ...(hasGeneratedResult ? {} : GENERATION_ERROR_CLEARED_PATCH),
+        });
       } catch (error) {
         console.error('[image-gen] upload failed', error);
       } finally {
         setIsUploading(false);
       }
     },
-    [id, updateNodeData],
+    [hasGeneratedResult, id, updateNodeData],
   );
 
   const handleClearReference = useCallback(() => {
@@ -907,6 +926,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       console.error('[image-gen] no project in URL');
       return;
     }
+    const generationAttempt = generationAttemptRef.current + 1;
+    generationAttemptRef.current = generationAttempt;
+    const isCurrentGenerationAttempt = () =>
+      generationAttemptRef.current === generationAttempt;
 
     // apiModel comes from the SAME reconciled model the picker displays, so the
     // backend always receives the model the user actually sees.
@@ -1002,6 +1025,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           }
         }
         if (url) {
+          if (!isCurrentGenerationAttempt()) return;
           completedUrls.push(url);
           const isFirstCompleted = completedUrls.length === 1;
           updateNodeData(id, {
@@ -1016,6 +1040,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             });
           }
         } else {
+          if (!isCurrentGenerationAttempt()) return;
           console.warn('[image-gen] generation completed without output url', completed);
           // 只有 run 0（任务句柄的归属者）且尚无任何成功时才终结 loading——
           // 非首个任务先「无 URL 完成」不能把还在跑的整体 loading 提前掐掉。
@@ -1024,6 +1049,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           }
         }
       } catch (error) {
+        if (!isCurrentGenerationAttempt()) return;
         console.error('[image-gen] generation failed', error);
         // 已有同批其它图完成（主图已落）时不覆盖成功态为错误——部分失败只
         // 影响画册张数。
@@ -1206,6 +1232,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           episode: effectiveEpisode,
           beat: effectiveBeat,
         },
+        ...GENERATION_ERROR_CLEARED_PATCH,
       });
       canvasEventBus.publish('freezone/assets-updated', undefined);
     },

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Package, Plus, Sparkles } from "lucide-react";
+import { Loader2, Package, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -9,7 +9,6 @@ import { AssetHeaderActions } from "@/components/assets/asset-header-actions-slo
 import { CharacterImageSourceSelect } from "@/components/assets/character-image-source-select";
 import { PropAssetCard } from "@/components/assets/prop-asset-card";
 import { AssetBeatReferences } from "@/components/assets/asset-beat-references";
-import { CreditCostInline } from "@/components/credit-cost-inline";
 import {
   AssetResultCount,
   AssetSearchBox,
@@ -25,9 +24,7 @@ import {
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import { useAssetImageSourceSelection } from "@/lib/queries/character-image-selection";
 import { useAssetFocus } from "@/hooks/use-asset-focus";
-import { StageProgressPanel } from "@/components/stage-progress-panel";
 import { Button } from "@/components/ui/button";
-import { SUBTLE_HEADER_ACTION_BUTTON_CLASS } from "@/components/ui/header-action-styles";
 import { HeaderRefreshButton } from "@/components/ui/header-refresh-button";
 import {
   Tooltip,
@@ -59,9 +56,7 @@ import {
   backendErrorToastMessage,
   BillingRuleNotConfiguredError,
 } from "@/lib/api-errors";
-import { cn } from "@/lib/utils";
 import {
-  useBatchGeneratePropReferences,
   useCreateProp,
   useDeleteProp,
   useGeneratePropReferenceAsync,
@@ -351,39 +346,7 @@ export function PropsPanel({
   const refIndex = useAssetReferenceIndex(project);
   const imageSourceQuery = useAssetImageSourceSelection(project, "prop");
   const imageSourceSelection = imageSourceQuery.data?.data.image_source_selection ?? "";
-  const batchGenerate = useBatchGeneratePropReferences(project);
-  const batchTask = useTaskController({
-    key: { taskType: "batch_prop_ref", project, episode: 0 },
-    invalidateKeys: [queryKeys.props(project)],
-  });
   const allItems = props.data?.data ?? [];
-  const missingReferenceCount = useMemo(
-    () => allItems.filter((prop) => !prop.reference_url && !prop.reference_path).length,
-    [allItems],
-  );
-  const batchReferenceCostQuery = useGenerationCreditCost(
-    "feature",
-    "mainline.prop_reference_image",
-    {
-      surface: "supertale",
-      quantity: missingReferenceCount,
-      params: imageSourceSelection ? { image_selection: imageSourceSelection } : null,
-    },
-  );
-  const batchReferenceCost = useMemo(() => {
-    if (missingReferenceCount <= 0) return null;
-    return (
-      batchReferenceCostQuery.data?.data.display ??
-      (batchReferenceCostQuery.error instanceof BillingRuleNotConfiguredError
-        ? t("common.billingRuleNotConfiguredShort")
-        : null)
-    );
-  }, [
-    batchReferenceCostQuery.data?.data.display,
-    batchReferenceCostQuery.error,
-    missingReferenceCount,
-    t,
-  ]);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<AssetSortKey>("name");
   const items = useMemo(() => {
@@ -403,13 +366,6 @@ export function PropsPanel({
     );
   }, [allItems, searchQuery, sortKey, refIndex]);
   const gridRef = useAssetFocus(focusId, !props.isLoading && items.length > 0);
-  const showBatchTask =
-    batchTask.started || batchTask.stream.status !== "idle" || batchTask.logs.length > 0;
-  const lastBatchLog = batchTask.logs[batchTask.logs.length - 1];
-  const batchLogs =
-    lastBatchLog === batchTask.stream.currentTask
-      ? batchTask.logs.slice(0, -1)
-      : batchTask.logs;
 
   async function handleSave(data: PropPayload) {
     const payload = { ...data, name: data.name.trim() };
@@ -422,20 +378,6 @@ export function PropsPanel({
     }
     setDialogOpen(false);
     setEditing(null);
-  }
-
-  async function handleBatchGenerate() {
-    const res = await batchGenerate.mutateAsync({ model: imageSourceSelection });
-    if (isErrorResponse(res)) {
-      toast.error(res.error);
-      return;
-    }
-    if (res.scope) {
-      batchTask.start({ scope: res.scope });
-    } else {
-      batchTask.start();
-    }
-    toast.success(res.message);
   }
 
   async function handleDelete(prop: PropAsset) {
@@ -465,24 +407,6 @@ export function PropsPanel({
           refreshing={props.isRefetching}
           data-props-refresh
         />
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleBatchGenerate}
-          disabled={batchGenerate.isPending}
-          className={cn(SUBTLE_HEADER_ACTION_BUTTON_CLASS, "relative")}
-        >
-          {batchGenerate.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <Sparkles className="size-3.5" />
-          )}
-          {t("assets.props.batchGenerate")}
-          <CreditCostInline
-            display={batchReferenceCost}
-            promotion={batchReferenceCostQuery.data?.data.promotion}
-          />
-        </Button>
         <TooltipProvider delay={80}>
           <Tooltip>
             <TooltipTrigger
@@ -507,18 +431,6 @@ export function PropsPanel({
         </TooltipProvider>
       </AssetHeaderActions>
       <div className="min-h-0 flex-1 overflow-auto p-6">
-        {showBatchTask && (
-          <div className="mb-4 overflow-hidden rounded-lg border border-border/70">
-            <StageProgressPanel
-              title={t("assets.props.batchStatusTitle")}
-              currentTask={batchTask.stream.currentTask}
-              progress={batchTask.stream.progress}
-              logs={batchLogs}
-              onStop={batchTask.stop}
-              stopping={batchTask.stopping}
-            />
-          </div>
-        )}
         {!props.isLoading && allItems.length > 0 && (
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">

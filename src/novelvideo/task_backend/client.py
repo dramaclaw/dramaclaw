@@ -34,5 +34,13 @@ async def enqueue_project_task(
 async def cancel_project_task(
     ctx: ProjectContext,
     task_state: TaskState,
-) -> bool:
-    return await get_task_backend().cancel_project_task(ctx, task_state)
+    *,
+    force: bool = False,
+    acknowledge_no_refund: bool = False,
+) -> dict[str, Any]:
+    return await get_task_backend().cancel_project_task(
+        ctx,
+        task_state,
+        force=force,
+        acknowledge_no_refund=acknowledge_no_refund,
+    )

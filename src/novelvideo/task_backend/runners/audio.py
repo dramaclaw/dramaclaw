@@ -76,6 +76,11 @@ async def _run_indextts2_audio(
             progress_callback=on_progress,
             log_callback=on_log,
         )
+        if result.generated == 0 and result.failed:
+            raise RuntimeError(
+                "音频生成失败：没有生成可用结果；"
+                f"最后错误：{result.failed[-1]}"
+            )
         skipped = (
             result.skipped_existing
             + result.skipped_empty

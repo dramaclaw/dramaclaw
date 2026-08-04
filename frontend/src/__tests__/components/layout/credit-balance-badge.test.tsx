@@ -60,6 +60,7 @@ vi.mock("@/lib/queries/auth", () => ({
 vi.mock("@/lib/queries/credits", () => ({
   useCreditSummary: () => ({
     data: { data: summaryState },
+    isStale: false,
     refetch: vi.fn(),
   }),
 }));

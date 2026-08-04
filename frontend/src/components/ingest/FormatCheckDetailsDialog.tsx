@@ -61,8 +61,8 @@ export function FormatCheckDetailsDialog({
           <div
             className={
               isBlocking
-                ? "rounded-md border border-destructive/25 bg-destructive/[0.07] px-3 py-2 text-xs leading-5 text-muted-foreground"
-                : "rounded-md border bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground"
+                ? "whitespace-pre-line rounded-md border border-destructive/25 bg-destructive/[0.07] px-3 py-2 text-xs leading-5 text-muted-foreground"
+                : "whitespace-pre-line rounded-md border bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground"
             }
           >
             {t("aiAssistant.formatCheck.recommended")}

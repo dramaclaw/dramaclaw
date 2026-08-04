@@ -40,7 +40,6 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "identity_image": "portrait",
     "scene_reference_asset": "render",
     "prop_reference_asset": "render",
-    "batch_prop_ref": "render",
     "stage_asset": "render",
     "freezone_image_to_3gs": "render",
     "sketch_generation": "sketch",
@@ -262,27 +261,26 @@ async def _refund_feature_credit_reservation(
         )
 
 
-async def _settle_interrupted_feature_credit_reservation(
+async def _refund_undelivered_feature_credit_reservation(
     reservation_id: str,
     *,
     metadata: dict[str, Any] | None = None,
 ) -> None:
-    """Settle from durable provider evidence instead of assuming no cost."""
+    """Refund a failed or cancelled task that delivered no usable result.
+
+    Paid provider attempts are recorded independently for platform cost
+    accounting and do not turn an undelivered user task into a billable result.
+    """
     if not reservation_id:
         return
     try:
-        result = await get_usage_meter().settle_cancelled_feature_credit_reservation(
+        await get_usage_meter().settle_cancelled_feature_credit_reservation(
             reservation_id,
             metadata=metadata,
         )
-        if str(result.get("decision") or "") == "review":
-            logger.warning(
-                "feature credit settlement awaits provider evidence: reservation=%s",
-                reservation_id,
-            )
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "interrupted feature credit settlement remains awaiting review: %s",
+            "undelivered feature credit refund remains awaiting retry: %s",
             exc,
         )
 
@@ -552,16 +550,34 @@ def run_project_task_core_sync(
                 task_type,
                 billing_metadata=billing_metadata,
             )
-            manager.update_progress_for_project(
+            execution_started = manager.begin_task_execution_for_project(
                 ctx,
                 task_type,
                 episode,
                 beat_num=beat_num,
                 scope=scope,
-                progress=0.01,
-                current_task="任务已开始",
+                expected_task_id=run_task_id,
                 metadata=run_metadata,
             )
+            if not execution_started:
+                logger.info(
+                    "Skip project task whose queued state was cancelled or replaced: "
+                    "project=%s task_type=%s task_id=%s",
+                    ctx.project_id,
+                    task_type,
+                    run_task_id,
+                )
+                asyncio.run(
+                    _refund_feature_credit_reservation(
+                        feature_reservation_id,
+                        metadata={
+                            "source": "task_cancelled_before_execution",
+                            "cancel_requested": True,
+                            "business_outcome": "cancelled",
+                        },
+                    )
+                )
+                return {"cancelled": True, "cancelled_before_execution": True}
 
             _ensure_builtin_runners_registered()
             runner = get_project_task_runner(task_type)
@@ -594,7 +610,7 @@ def run_project_task_core_sync(
             except BaseException as exc:
                 if isinstance(exc, TaskCancelled):
                     asyncio.run(
-                        _settle_interrupted_feature_credit_reservation(
+                        _refund_undelivered_feature_credit_reservation(
                             feature_reservation_id,
                             metadata={"source": "task_cancelled"},
                         )
@@ -616,7 +632,7 @@ def run_project_task_core_sync(
                     exc
                 )
                 asyncio.run(
-                    _settle_interrupted_feature_credit_reservation(
+                    _refund_undelivered_feature_credit_reservation(
                         feature_reservation_id,
                         metadata={
                             "source": "task_failed",
@@ -649,6 +665,39 @@ def run_project_task_core_sync(
                     return {"failed": True, **failure_payload}
                 raise
 
+            completion_error: BaseException | None = None
+            try:
+                manager.complete_task_for_project(
+                    ctx,
+                    task_type,
+                    episode,
+                    beat_num=beat_num,
+                    scope=scope,
+                    result=result or {"ok": True},
+                    current_task="完成",
+                    logs=["完成"],
+                    metadata=_completion_metadata_with_provider_task_id(
+                        run_metadata, result
+                    ),
+                    expected_task_id=run_task_id,
+                )
+            except BaseException as exc:
+                # Runner results are the delivery evidence.  The task-center
+                # SQLite row is only an observability/read-model write and may
+                # fail after an asset has already been durably saved.
+                completion_error = exc
+
+            asyncio.run(
+                _confirm_feature_credit_reservation(
+                    feature_reservation_id,
+                    metadata={
+                        "source": "task_completed",
+                        "business_outcome": "delivered",
+                    },
+                )
+            )
+            if completion_error is not None:
+                raise completion_error
             asyncio.run(
                 _emit_project_task_metrics(
                     ctx,
@@ -658,26 +707,6 @@ def run_project_task_core_sync(
                     scope=scope,
                     result=result,
                 )
-            )
-            asyncio.run(
-                _confirm_feature_credit_reservation(
-                    feature_reservation_id,
-                    metadata={"source": "task_completed"},
-                )
-            )
-            manager.complete_task_for_project(
-                ctx,
-                task_type,
-                episode,
-                beat_num=beat_num,
-                scope=scope,
-                result=result or {"ok": True},
-                current_task="完成",
-                logs=["完成"],
-                metadata=_completion_metadata_with_provider_task_id(
-                    run_metadata, result
-                ),
-                expected_task_id=run_task_id,
             )
         return result or {"ok": True}
     finally:

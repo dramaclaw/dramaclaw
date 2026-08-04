@@ -155,6 +155,15 @@ export function errorFromBackendBody(status: number, body: unknown, fallback: st
   if (message.toLowerCase().includes("billing rule is not configured")) {
     return new BillingRuleNotConfiguredError(message, status, body);
   }
+  // Keep legacy/wrapped Freezone 5xx responses on the safe billing path only
+  // after every structured billing code has had a chance to classify them.
+  if (
+    status >= 500 &&
+    status < 600 &&
+    message.toLowerCase().includes("insufficient credits")
+  ) {
+    return new InsufficientCreditsError(message, status, body);
+  }
 
   if (status === 429 && typeof queueKind === "string" && queueKind.trim()) {
     const normalizedScope = limitScope === "user" ? "user" : "project";

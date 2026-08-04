@@ -31,6 +31,7 @@ import {
 } from '@/api/ops';
 import { awaitTaskCompletion } from '@/api/tasks';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { GENERATION_ERROR_CLEARED_PATCH } from '@/features/canvas/application/generationTaskArbitration';
 import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
@@ -223,7 +224,7 @@ export const OutpaintEditorOverlay = memo(
             previewImageUrl: url,
             isGenerating: false,
             generationStartedAt: null,
-            generationError: null,
+            ...GENERATION_ERROR_CLEARED_PATCH,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

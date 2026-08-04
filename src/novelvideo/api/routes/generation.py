@@ -2209,7 +2209,7 @@ async def _audio_generation_plan(
     episode: int,
     beat_numbers,
     mode: str,
-) -> tuple[list[int], list[str]]:
+) -> tuple[list[int], list[str], int]:
     from novelvideo.audio.indextts2_beat_audio_task import (
         build_indextts2_audio_generation_plan,
     )
@@ -2223,7 +2223,11 @@ async def _audio_generation_plan(
             beat_numbers=beat_numbers,
             mode=mode,
         )
-        return list(plan.beat_numbers), list(plan.errors)
+        return (
+            list(plan.beat_numbers),
+            list(plan.errors),
+            int(getattr(plan, "billable_chars", 0) or 0),
+        )
     except AttributeError:
         # Narrow route-test stores do not expose the voice and audio-state
         # surfaces used by the production planner.
@@ -2235,16 +2239,42 @@ async def _audio_generation_plan(
             if int(beat.get("beat_number") or 0) > 0
             and (not selected or int(beat.get("beat_number") or 0) in selected)
         ]
-        return planned, []
+        from novelvideo.seedance2_i2v.voice_clone import (
+            dialogue_text,
+            narration_beat_text,
+            normalize_seedance2_audio_type,
+        )
+        from novelvideo.utils.document_parsers import count_billable_text_chars
+
+        planned_set = set(planned)
+        billable_chars = 0
+        for beat in beats:
+            if int(beat.get("beat_number") or 0) not in planned_set:
+                continue
+            audio_type = normalize_seedance2_audio_type(beat)
+            text = (
+                narration_beat_text(beat)
+                if audio_type == "narration"
+                else dialogue_text(beat)
+            )
+            billable_chars += count_billable_text_chars(text)
+        return planned, [], billable_chars
 
 
-def _audio_billing_payload(beat_numbers: list[int]) -> dict:
+def _audio_billing_payload(
+    beat_numbers: list[int],
+    *,
+    billable_chars: int = 0,
+) -> dict:
     from novelvideo.audio.indextts2_beat_audio_task import (
         indextts2_audio_billing_params,
     )
 
     return {
-        **indextts2_audio_billing_params(len(beat_numbers)),
+        **indextts2_audio_billing_params(
+            len(beat_numbers),
+            billable_chars=billable_chars,
+        ),
         "beat_numbers": list(beat_numbers),
     }
 
@@ -2274,7 +2304,7 @@ async def audio_generation_billing_quote(
         else await make_sqlite_store(resolved.username, resolved.project_name)
     )
     mode = body.mode or "sync_changed"
-    beat_numbers, errors = await _audio_generation_plan(
+    beat_numbers, errors, billable_chars = await _audio_generation_plan(
         store=store,
         username=resolved.username,
         project=resolved.project_name,
@@ -2298,7 +2328,10 @@ async def audio_generation_billing_quote(
     quote_args = {
         "kind": "feature",
         "model": "mainline.beat_audio_generation",
-        "params": _audio_billing_payload(beat_numbers),
+        "params": _audio_billing_payload(
+            beat_numbers,
+            billable_chars=billable_chars,
+        ),
         "quantity": quantity,
     }
     try:
@@ -2357,7 +2390,7 @@ async def generate_audio(
         return {"ok": False, "error": f"No beats found for episode {episode_num}"}
 
     mode = body.mode or "sync_changed"
-    billable_beat_numbers, missing_voice = await _audio_generation_plan(
+    billable_beat_numbers, missing_voice, billable_chars = await _audio_generation_plan(
         store=store,
         username=username,
         project=project_name,
@@ -2386,7 +2419,10 @@ async def generate_audio(
                 "beat_numbers": billable_beat_numbers,
                 "output_dir": output_dir,
                 "state_dir": state_dir,
-                "billing": _audio_billing_payload(billable_beat_numbers),
+                "billing": _audio_billing_payload(
+                    billable_beat_numbers,
+                    billable_chars=billable_chars,
+                ),
             },
         )
         return {
@@ -2464,7 +2500,12 @@ async def global_optimize_video_billing_quote(
     quote_args = {
         "kind": "feature",
         "model": "mainline.beat_video_prompt",
-        "params": {},
+        "params": {
+            "pricing_metrics": {
+                "call_count": quantity,
+                "item_count": quantity,
+            }
+        },
         "quantity": quantity,
     }
     try:
@@ -2563,6 +2604,10 @@ async def global_optimize_video(
                 "billing": {
                     "items": billable_beat_count,
                     "beat_numbers": billable_beat_numbers,
+                    "pricing_metrics": {
+                        "call_count": billable_beat_count,
+                        "item_count": billable_beat_count,
+                    },
                 },
                 "beat_numbers": billable_beat_numbers,
             },
@@ -5250,7 +5295,7 @@ async def regenerate_beat_audio(
         else:
             return {"ok": False, "error": f"Beat {beat_num} not found"}
 
-    billable_beat_numbers, missing_voice = await _audio_generation_plan(
+    billable_beat_numbers, missing_voice, billable_chars = await _audio_generation_plan(
         store=store,
         username=username,
         project=project_name,
@@ -5279,7 +5324,10 @@ async def regenerate_beat_audio(
                 "beat_numbers": billable_beat_numbers,
                 "output_dir": output_dir,
                 "state_dir": state_dir,
-                "billing": _audio_billing_payload(billable_beat_numbers),
+                "billing": _audio_billing_payload(
+                    billable_beat_numbers,
+                    billable_chars=billable_chars,
+                ),
             },
         )
         return {

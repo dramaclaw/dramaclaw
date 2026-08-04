@@ -130,8 +130,7 @@ function invalidateCompletedAssetQueries(
 
   if (
     task.task_type === "build_props" ||
-    task.task_type === "prop_reference_asset" ||
-    task.task_type === "batch_prop_ref"
+    task.task_type === "prop_reference_asset"
   ) {
     queryClient.invalidateQueries({ queryKey: queryKeys.props(projectId) });
     return;

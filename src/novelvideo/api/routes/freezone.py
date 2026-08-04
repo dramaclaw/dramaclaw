@@ -94,6 +94,10 @@ from novelvideo.media_model_request_schema import (
     validate_media_model_params,
     validate_media_request_schema,
 )
+from novelvideo.shared.billing_errors import (
+    find_billing_rule_not_configured_error,
+    find_insufficient_credits_error,
+)
 from novelvideo.freezone.audio_node import (
     create_user_audio_voice,
     freezone_audio_eleven_music_output_path,
@@ -323,6 +327,12 @@ def _raise_if_task_limit_exception(exc: RuntimeError) -> None:
 
 def _handle_task_start_runtime_error(message: str, exc: RuntimeError) -> None:
     _raise_if_task_limit_exception(exc)
+    insufficient_credits = find_insufficient_credits_error(exc)
+    if insufficient_credits is not None:
+        raise insufficient_credits
+    billing_rule_not_configured = find_billing_rule_not_configured_error(exc)
+    if billing_rule_not_configured is not None:
+        raise billing_rule_not_configured
     logger.warning("%s: %s", message, exc, exc_info=True)
 
 
@@ -6871,15 +6881,26 @@ async def _resolve_catalog_request(
     mode: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     requested = str(model or "").strip()
+    catalog = await _ee_media_model_catalog(media_type)
     entry = next(
         (
             item
-            for item in (await _ee_media_model_catalog(media_type)) or []
+            for item in catalog or []
             if requested in _catalog_entry_identifiers(item)
         ),
         None,
     )
     if entry is None:
+        # In EE the catalog is authoritative. Never fall back to CE's static
+        # model map when no enabled model matches the submitted identifier.
+        if catalog is not None and requested:
+            media_label = "图片" if media_type == "image" else "视频"
+            detail = (
+                f"当前没有可用的{media_label}模型，请联系管理员或刷新后重试"
+                if not catalog
+                else "该媒体模型已停用或不存在，请刷新页面后选择其他模型"
+            )
+            raise HTTPException(409, detail)
         if model_params:
             raise HTTPException(
                 400, "model parameters require a configured media model"
@@ -6906,6 +6927,8 @@ async def _resolve_catalog_request(
         }
         if media_type == "image" and entry.get("qualityOptions"):
             schema = {**schema, "includeQuality": True}
+        if media_type == "image" and entry.get("minPixels") is not None:
+            schema = {**schema, "minPixels": entry["minPixels"]}
         values = validate_media_model_params(schema, filtered_params)
     except MediaModelSchemaError as exc:
         raise HTTPException(400, str(exc)) from exc
