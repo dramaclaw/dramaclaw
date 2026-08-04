@@ -26,6 +26,7 @@ from fastapi import (
 from fastapi.responses import FileResponse
 
 from novelvideo.api.auth import get_api_user
+from novelvideo.api.routes.product_surfaces import require_freezone_surface
 from novelvideo.api.deps import (
     make_cognee_store_for_context,
     make_sqlite_store,
@@ -2320,8 +2321,7 @@ async def _enqueue_freezone_background_job(
 
 
 logger = logging.getLogger("novelvideo.api.freezone")
-
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_freezone_surface)])
 
 FrameReviewReviewer = Callable[[str], str | Awaitable[str]]
 _agent_review_frame_reviewer: FrameReviewReviewer | None = None

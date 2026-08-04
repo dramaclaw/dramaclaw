@@ -24,7 +24,8 @@ from novelvideo.api.auth import (
 from novelvideo.api.deps import list_user_projects
 from novelvideo.chat import service as chat_service
 from novelvideo.chat.store import ChatScope, chat_store
-from novelvideo.ports import get_usage_meter
+from novelvideo.ports import get_product_surface_access, get_usage_meter
+from novelvideo.ports.product_surface_access import ProductSurfaceUnavailableError
 from novelvideo.project_context import ProjectContext, resolve_project_context
 from novelvideo.shared.billing_errors import (
     BILLING_RULE_NOT_CONFIGURED_MESSAGE,
@@ -292,6 +293,7 @@ async def _require_ai_assistant_access(
     scope: ChatScope,
 ) -> None:
     user_id = await _requester_user_id_for_chat(user, scope)
+    await get_product_surface_access().require_assistant_access(user_id)
     await get_usage_meter().require_feature_credit_balance(
         user_id=user_id,
         feature_key=AI_ASSISTANT_CHAT_FEATURE_KEY,
@@ -803,6 +805,20 @@ async def chat_ws(websocket: WebSocket) -> None:
                     )
             except Exception as exc:  # noqa: BLE001
                 message = str(exc)
+                if isinstance(exc, ProductSurfaceUnavailableError):
+                    await _send_json_best_effort(
+                        websocket,
+                        {
+                            "type": "error",
+                            "turn_id": turn_id,
+                            "message": exc.message,
+                            "data": {
+                                "error_code": "PRODUCT_SURFACE_UNAVAILABLE",
+                                "surface_code": exc.surface_code,
+                            },
+                        },
+                    )
+                    continue
                 if "当前用户已有 AI 对话正在处理中" in message:
                     await _send_json_best_effort(
                         websocket,

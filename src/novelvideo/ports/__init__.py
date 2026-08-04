@@ -72,6 +72,10 @@ def get_release_feed_port():
         return NoOpReleaseFeed()
 
 
+def get_product_surface_access():
+    return get_port("product_surface_access")
+
+
 __all__ = [
     "get_audit_sink",
     "get_auth_port",
@@ -82,6 +86,7 @@ __all__ = [
     "get_project_access",
     "get_project_registry",
     "get_provider_instrumentation",
+    "get_product_surface_access",
     "get_release_feed_port",
     "get_task_backend",
     "get_usage_meter",

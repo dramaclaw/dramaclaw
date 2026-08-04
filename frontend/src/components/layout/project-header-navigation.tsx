@@ -24,6 +24,7 @@ import { isRememberedSection, useProjectNavStore } from "@/stores/project-nav-st
 import { useAllProjectSummaries } from "@/lib/queries/projects";
 import { getProjectCover } from "@/lib/project-cover";
 import { cn } from "@/lib/utils";
+import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 
 const XIAJI_DEFAULT_ROUTE = PROJECT_SECTION_ROUTES.ingest;
 
@@ -57,6 +58,22 @@ export function ProjectSwitcher({ current }: { current: string }) {
   const { data: summaries } = useAllProjectSummaries();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const targetSection = projectSectionFromPath(pathname) ?? "freezone";
+  const productSurfaces = useProductSurfaces();
+  const mainlineAvailable =
+    surfaceAccess(productSurfaces.data, "mainline")?.available ?? productSurfaces.isPending;
+  const freezoneAvailable =
+    surfaceAccess(productSurfaces.data, "freezone")?.available ?? productSurfaces.isPending;
+  const assistantAvailable = surfaceAccess(productSurfaces.data, "assistant")?.available ?? false;
+  const availableTargetSection =
+    targetSection === "freezone" && !freezoneAvailable
+      ? "ingest"
+      : targetSection === "assistant" && !assistantAvailable
+        ? mainlineAvailable
+          ? "ingest"
+          : "freezone"
+        : targetSection !== "freezone" && !mainlineAvailable
+          ? "freezone"
+          : targetSection;
   const [open, setOpen] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
   const projects = useMemo(
@@ -129,7 +146,7 @@ export function ProjectSwitcher({ current }: { current: string }) {
               key={project.id}
               onClick={() =>
                 navigate({
-                  to: PROJECT_SECTION_ROUTES[targetSection],
+                  to: PROJECT_SECTION_ROUTES[availableTargetSection],
                   params: { project: project.id },
                 })
               }
@@ -158,8 +175,15 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
   const rememberedEpisodeLocation = useEpisodeWorkbenchStore(
     (state) => state.lastEpisodeLocationByProject[project],
   );
+  const productSurfaces = useProductSurfaces();
+  const mainlineAvailable =
+    surfaceAccess(productSurfaces.data, "mainline")?.available ?? productSurfaces.isPending;
+  const assistantAvailable = surfaceAccess(productSurfaces.data, "assistant")?.available ?? false;
 
-  if (projectModeFromPath(pathname) !== "xiaji") return null;
+  if (projectModeFromPath(pathname) !== "xiaji" || !mainlineAvailable) return null;
+  const visibleMenuItems = xiajiMenuItems.filter(
+    (item) => item.to !== PROJECT_SECTION_ROUTES.assistant || assistantAvailable,
+  );
 
   return (
     <div className="flex justify-center px-4 pb-2">
@@ -167,7 +191,7 @@ export function ProjectXiajiMenu({ project }: { project: string }) {
         aria-label={t("nav.xiajiMenu")}
         className="flex items-center gap-3 whitespace-nowrap rounded-full border border-white/[0.08] bg-white/[0.04] px-3.5 py-0.5 text-sidebar-foreground"
       >
-        {xiajiMenuItems.map((item) => {
+        {visibleMenuItems.map((item) => {
           const target =
             "rememberKey" in item && rememberedEpisodeLocation
               ? normalizeLastEpisodeLocation(project, rememberedEpisodeLocation) ?? item.to
@@ -210,6 +234,11 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
   const lastXiajiSection = useProjectNavStore(
     (state) => state.lastXiajiSectionByProject[project],
   );
+  const productSurfaces = useProductSurfaces();
+  const mainlineAvailable =
+    surfaceAccess(productSurfaces.data, "mainline")?.available ?? productSurfaces.isPending;
+  const freezoneAvailable =
+    surfaceAccess(productSurfaces.data, "freezone")?.available ?? productSurfaces.isPending;
 
   // 记住当前停留的区块（虾画 / 虾集子页），进项目和切「虾集」时按此恢复。
   useEffect(() => {
@@ -231,6 +260,9 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
   }, [clearLastEpisodeLocation, pathname, project, setLastEpisodeLocation]);
 
   const changeMode = (mode: "xiahua" | "xiaji") => {
+    if ((mode === "xiahua" && !freezoneAvailable) || (mode === "xiaji" && !mainlineAvailable)) {
+      return;
+    }
     if (mode === activeMode) return;
     if (mode === "xiahua") {
       navigate({ to: PROJECT_SECTION_ROUTES.freezone, params: { project } });
@@ -247,47 +279,42 @@ export function ProjectHeaderNavigation({ project }: { project: string }) {
     navigate({ to: target, params: { project } });
   };
 
+  if (!mainlineAvailable && !freezoneAvailable) return null;
+
   return (
     <nav
       aria-label={t("nav.creationMode")}
       className="absolute left-1/2 top-1/2 z-30 flex -translate-x-1/2 -translate-y-1/2 items-center"
     >
       <div className="relative flex h-8 items-center rounded-full bg-white/[0.07]">
-        <span
-          aria-hidden="true"
-          className={cn(
-            "absolute left-0 top-1/2 h-7 w-[74px] -translate-y-1/2 rounded-full bg-foreground transition-transform duration-300 ease-[var(--ease-out-quint)]",
-            activeMode === "xiaji" && "translate-x-[74px]",
-          )}
-        />
-        <button
+        {freezoneAvailable ? <button
           type="button"
           onClick={() => changeMode("xiahua")}
           className={cn(
             "relative z-10 inline-flex h-8 w-[74px] items-center justify-center gap-1.5 rounded-full text-xs font-semibold transition-colors",
             activeMode === "xiahua"
-              ? "text-background"
+              ? "bg-foreground text-background"
               : "text-muted-foreground hover:text-foreground",
           )}
           aria-pressed={activeMode === "xiahua"}
         >
           <Sparkles className="size-3.5" />
           {t("nav.freezone")}
-        </button>
-        <button
+        </button> : null}
+        {mainlineAvailable ? <button
           type="button"
           onClick={() => changeMode("xiaji")}
           className={cn(
             "relative z-10 inline-flex h-8 w-[74px] items-center justify-center gap-1.5 rounded-full text-xs font-semibold transition-colors",
             activeMode === "xiaji"
-              ? "text-background"
+              ? "bg-foreground text-background"
               : "text-muted-foreground hover:text-foreground",
           )}
           aria-pressed={activeMode === "xiaji"}
         >
           <Clapperboard className="size-3.5" />
           {t("nav.xiaji")}
-        </button>
+        </button> : null}
       </div>
     </nav>
   );
