@@ -11,7 +11,7 @@
 |---|---|---|
 | `ST_EDITION` | `ce` (forced by compose/image) | Edition identifier. CE mode cannot be downgraded. |
 | `NOVELVIDEO_DATA_ROOT` | `.` (set to `/data` under Docker) | Data root directory; the three items below derive from it by default. |
-| `NOVELVIDEO_OUTPUT_DIR` | `$DATA_ROOT/output` | Output directory for finished videos and artifacts. Note: `.env.example` sets it explicitly to `output` (a relative path), which inside Docker lands at `/app/output` rather than the `/data` volume; to persist to the volume, set it to `/data/output` or leave it empty to use the default. |
+| `NOVELVIDEO_OUTPUT_DIR` | `$DATA_ROOT/output` | Output directory for finished videos and artifacts. Docker Compose pins it to `/data/output`, which is persisted in the `ce-data` volume. |
 | `NOVELVIDEO_STATE_DIR` | `$DATA_ROOT/state` | Local state. |
 | `NOVELVIDEO_RUNTIME_DIR` | `$DATA_ROOT/runtime` | Runtime temporary directory. |
 | `ST_CONTROL_PLANE_DSN` / `ST_REDIS_URL` / `ST_CELERY_BROKER_URL` / `ST_CELERY_RESULT_BACKEND` | Empty (forced empty in CE) | Used only by EE/distributed; CE runs tasks inline in-process, so leave empty. |

@@ -28,7 +28,7 @@ Key points in `docker-compose.yml` (already set for you, no changes needed):
 | Services | `api` + `web` | No PG/Redis (the self-hosted-gateway variant adds `newapi`) |
 | Port | `8780:8780` | REST API |
 | Enforced environment | `ST_EDITION=ce`, control-plane/Redis/Celery cleared | CE mode cannot be downgraded |
-| Data volume | `ce-data:/data` (`NOVELVIDEO_DATA_ROOT=/data`) | Persists project data |
+| Data volume | `ce-data:/data` (output at `/data/output`) | Persists project databases, settings, and generated media |
 
 ## 3. Configure `.env`
 
@@ -56,7 +56,7 @@ docker compose down              # stop (keeps the data volume)
 
 ## 5. Where the data lives / Backup, restore & migrate
 
-- Project data lives in the named volume `ce-data` (`/data` inside the container); output is in `NOVELVIDEO_OUTPUT_DIR` (default `output`).
+- Project databases, settings, and generated media live in the named volume `ce-data` (`/data` inside the container); generated media is written to `/data/output`. Removing or rebuilding a container keeps this volume. Only an explicit `docker compose down -v` removes it.
 - Back up the data volume:
 
 ```bash
@@ -73,7 +73,7 @@ docker run --rm -v dramaclaw-ce_ce-data:/data -v "$PWD":/backup alpine \
   tar xzf /backup/ce-data-backup.tar.gz -C /data
 ```
 
-Then bring the stack up as usual (`docker compose -f docker-compose.selfhosted.yml up -d`). Copy the `output` directory (`NOVELVIDEO_OUTPUT_DIR`) and your `.env` across too if you want generated media and settings to carry over.
+Then bring the stack up as usual (`docker compose -f docker-compose.selfhosted.yml up -d`). The volume backup already includes generated media; back up `.env` separately.
 
 ## 6. Upgrades
 
@@ -83,6 +83,24 @@ Then bring the stack up as usual (`docker compose -f docker-compose.selfhosted.y
 git pull
 docker compose up -d --build
 ```
+
+If an older release wrote media to `/app/output` inside the container, run the one-time migration **before** rebuilding that old container:
+
+```bash
+git pull
+docker compose exec -T api python - < scripts/migrate_docker_output.py
+docker compose up -d --build
+```
+
+On Windows PowerShell:
+
+```powershell
+git pull
+Get-Content scripts/migrate_docker_output.py -Raw | docker compose exec -T api python -
+docker compose up -d --build
+```
+
+The script copies only missing files, never overwrites or deletes the source, and backs up `projects.db` before updating project paths. Files that existed only in an already-removed container layer cannot be recovered from the data volume.
 
 After the formal release this will switch to **pulling published, pinned-version images** + env-sync (upgrades preserve your custom `.env` values) — this section will be updated once the release spec lands.
 
