@@ -1024,6 +1024,7 @@ export function Canvas({
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const pendingFocusNodeId = useCanvasStore((state) => state.pendingFocusNodeId);
   const clearPendingFocus = useCanvasStore((state) => state.clearPendingFocus);
+  const requestFocusNode = useCanvasStore((state) => state.requestFocusNode);
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
   const deleteNode = useCanvasStore((state) => state.deleteNode);
   const deleteNodes = useCanvasStore((state) => state.deleteNodes);
@@ -2024,6 +2025,13 @@ export function Canvas({
         pendingNodePlacement.initialData,
       );
       setSelectedNode(newNodeId);
+      // 低缩放档下新节点在屏幕上只有几十像素、深色面板贴深色背景，放置成功也
+      // 近乎不可见（用户会以为「没创建上」）。复用资产拖入的聚焦机制：视口动画
+      // 拉近到新节点（zoom 提到 ≥0.6），落点即所见、且直接可编辑。常用工作缩放
+      // 下不聚焦，避免打断用户的构图视角。
+      if (isLowDetailZoom(reactFlowInstance.getZoom())) {
+        requestFocusNode(newNodeId);
+      }
       if (pendingNodePlacement.skill) {
         bindSingleBeatContextInput(newNodeId, pendingNodePlacement.skill);
       }
@@ -2039,6 +2047,7 @@ export function Canvas({
       bindSingleBeatContextInput,
       pendingNodePlacement,
       reactFlowInstance,
+      requestFocusNode,
       scheduleCanvasPersist,
       setSelectedNode,
       triggerPlacementConfirm,
