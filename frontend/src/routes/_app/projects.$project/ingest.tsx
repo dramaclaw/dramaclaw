@@ -1221,18 +1221,19 @@ export function IngestPageContent({ project }: { project: string }) {
   }, [activeIngestTask, ingestTasksRes, ingestTasksFetchedAfterMount, project]);
 
   const handleCancelIngest = useCallback(async () => {
-    setIngestStarted(false);
-    setIngestFileStatus("stopped");
     try {
-      await cancelTask.mutateAsync({
+      const result = await cancelTask.mutateAsync({
         type: "ingest_fast",
         project,
         episode: 0,
       });
+      if (!result.ok) return;
+      setIngestStarted(false);
+      setIngestFileStatus("stopped");
       setIngestSubmitted(false);
       toast.success(t("ingest.stopped"));
     } catch {
-      // Already hidden locally; swallow.
+      // Keep the ingest progress visible when cancellation failed.
     }
   }, [cancelTask, project, t]);
 

@@ -111,16 +111,3 @@ export function useUploadPropReference(project: string, name: string) {
     },
   });
 }
-
-export function useBatchGeneratePropReferences(project: string) {
-  const qc = useQueryClient();
-  return useMutation<TaskResponse | ErrorResponse, Error, { model?: string } | void>({
-    mutationFn: (data: { model?: string } | void) =>
-      api
-        .post(p`api/v1/projects/${project}/props/reference/batch-generate`, {
-          json: data ?? {},
-        })
-        .json<TaskResponse | ErrorResponse>(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tasks(project) }),
-  });
-}

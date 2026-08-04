@@ -480,10 +480,8 @@ export function useTaskController(
   const stop = useCallback(async () => {
     const snap = entry.getSnapshot();
     const activeTaskType = snap.activeTaskType;
-    // Close locally first so the UI reflects cancellation immediately.
-    entry.setSnapshot({ ...snap, started: false });
     try {
-      await cancelTask.mutateAsync({
+      const result = await cancelTask.mutateAsync({
         type: activeTaskType,
         project: key.project,
         episode: key.episode,
@@ -494,8 +492,9 @@ export function useTaskController(
         // we just fired `.start()` in the same tick).
         scope: snap.activeScope ?? key.scope,
       });
+      if (result.ok) entry.setSnapshot({ ...snap, started: false });
     } catch {
-      // Swallow — UI already reflects cancellation.
+      // Keep tracking the task when cancellation did not complete.
     }
   }, [cancelTask, entry, key.project, key.episode, key.beatNum, key.scope]);
 

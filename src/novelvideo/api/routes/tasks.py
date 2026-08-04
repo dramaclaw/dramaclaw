@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import JSONResponse
 
 from novelvideo.api.auth import (
     get_api_user,
@@ -83,7 +84,6 @@ _TASK_TYPE_LABELS = {
     "freezone_audio_eleven_music": "生成音乐",
     "freezone_image_to_3gs": "图片转世界",
     "freezone_image_reverse_prompt": "图片反推提示词",
-    "batch_prop_ref": "批量道具参考图",
 }
 _STAGE_ASSET_STEP_LABELS = {
     "pano_from_master": "Master 生成全景",
@@ -539,25 +539,14 @@ async def cancel_project_task_route(
     episode: int,
     beat_num: int = Query(None, description="Beat 编号（single_video 等按 beat 区分的任务需要）"),
     scope: str | None = Query(None, description="任务作用域（mode_key、grid_index 等）"),
+    force: bool = Query(False, description="确认终止已开始执行的任务"),
+    acknowledge_no_refund: bool = Query(False, description="确认运行中终止不退积分"),
     user: dict = Depends(get_api_user),
 ):
-    """终止单个项目内指定任务。项目任务后端通路；Ray 已废弃。
+    """终止一个项目任务。
 
-    没有 Ray fallback 判断 — 当前 runner 实现是 Celery，task_states 里有 task
-    就直接走 cancel_project_task(设 Redis 取消 flag + Celery revoke + 标 status)。
-    旧版这里有非 Celery backend fallback,每次 task 找不到都会连接旧任务
-    backend 产生噪音日志,已删。
-
-    **Mid-flight cooperative cancel 的范围限制**:`cancel_project_task` 会:
-      1. 设 Redis cancel flag(等 runner watcher poll)
-      2. Celery revoke(terminate=True)(发 SIGTERM 给 worker)
-      3. 把 task_state 标 cancelled(UI 看到任务消失)
-    其中 (1) 真正中断**已经在 await 外部 API 的 task** 只对**有 watcher 的 runner**
-    生效。当前只有 `runners/freezone.py:_run_freezone_gen/edit_async` 用了
-    `_await_with_cancel_watch` —— 其他 runner(sketch/render/video/audio 等)
-    revoke 后 SIGTERM 不能立即打断 asyncio `await`,会等当前 step 跑完才退出。
-    用户体感是"UI 显示已取消,但后端浪费一段算力"。
-    扩到其他 runner 是后续 cleanup,加 `_await_with_cancel_watch` 包裹即可。
+    队列态任务通过原子状态迁移取消并退款。运行中任务首次请求返回 409，
+    只有再次明确确认“不退款”后才发送协作取消标记和 Celery revoke。
     """
     ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
     logger.info(
@@ -587,5 +576,12 @@ async def cancel_project_task_route(
             scope,
         )
         return {"ok": False, "error": "Task not found"}
-    await get_task_backend().cancel_project_task(ctx, task)
-    return {"ok": True, "message": "Task cancelled"}
+    result = await get_task_backend().cancel_project_task(
+        ctx,
+        task,
+        force=force,
+        acknowledge_no_refund=acknowledge_no_refund,
+    )
+    if result.get("requires_confirmation"):
+        return JSONResponse(status_code=409, content=result)
+    return result

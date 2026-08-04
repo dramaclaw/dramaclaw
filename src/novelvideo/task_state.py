@@ -691,6 +691,143 @@ class TaskStateManager:
             self._save_on_connection(conn, task_key, state, None)
             return state, True
 
+    def begin_task_execution_for_project(
+        self,
+        ctx: ProjectContext,
+        task_type: str,
+        episode: int,
+        *,
+        beat_num: int | None = None,
+        scope: str | None = None,
+        expected_task_id: str,
+        metadata: dict | None = None,
+    ) -> bool:
+        """Atomically move one queued task into ``running``.
+
+        The cancellation API uses the inverse compare-and-set operation.  A
+        worker and a queued-task cancellation therefore cannot both win the
+        queued state, even when they arrive at the same instant.
+        """
+        task_key = project_task_state_key(
+            task_type,
+            ctx.project_id,
+            episode,
+            beat_num=beat_num,
+            scope=scope,
+        )
+        with self._connect_context(ctx) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM task_states WHERE task_key = ? AND project_id = ?",
+                (task_key, ctx.project_id),
+            ).fetchone()
+            if row is None:
+                return False
+            state = self._row_to_state(row)
+            if state.task_id != expected_task_id:
+                return False
+            if state.status == "running":
+                return True
+            if state.status not in {"submitting", "queued"}:
+                return False
+            state.status = "running"
+            state.progress = max(float(state.progress or 0.0), 0.01)
+            state.current_task = "任务已开始"
+            if metadata is not None:
+                state.metadata = self._merge_task_metadata(state.metadata, metadata)
+                state.result = self._merge_metadata_into_result(state.result, state.metadata)
+            state.updated_at = utc_now_iso()
+            self._save_on_connection(conn, task_key, state, None)
+            return True
+
+    def cancel_queued_task_for_project(
+        self,
+        ctx: ProjectContext,
+        task_type: str,
+        episode: int,
+        *,
+        beat_num: int | None = None,
+        scope: str | None = None,
+        expected_task_id: str,
+    ) -> tuple[bool, TaskState | None]:
+        """Atomically cancel only a task that has not started executing."""
+        task_key = project_task_state_key(
+            task_type,
+            ctx.project_id,
+            episode,
+            beat_num=beat_num,
+            scope=scope,
+        )
+        with self._connect_context(ctx) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM task_states WHERE task_key = ? AND project_id = ?",
+                (task_key, ctx.project_id),
+            ).fetchone()
+            if row is None:
+                return False, None
+            state = self._row_to_state(row)
+            if state.task_id != expected_task_id:
+                return False, state
+            if state.status not in {"submitting", "queued"}:
+                return False, state
+            state.status = "cancelled"
+            state.current_task = "任务已取消"
+            state.completed_at = state.completed_at or utc_now_iso()
+            state.updated_at = utc_now_iso()
+            state.metadata = self._merge_task_metadata(
+                state.metadata,
+                {
+                    "cancel_requested": True,
+                    "cancelled_before_execution": True,
+                    "refund_eligible": True,
+                },
+            )
+            state.result = self._merge_metadata_into_result(state.result, state.metadata)
+            self._save_on_connection(conn, task_key, state, self.COMPLETED_TTL)
+            return True, state
+
+    def mark_task_enqueued_for_project(
+        self,
+        ctx: ProjectContext,
+        task_type: str,
+        episode: int,
+        *,
+        beat_num: int | None = None,
+        scope: str | None = None,
+        expected_task_id: str,
+        metadata: dict | None = None,
+    ) -> bool:
+        """Persist broker metadata without regressing ``running`` to ``queued``."""
+        task_key = project_task_state_key(
+            task_type,
+            ctx.project_id,
+            episode,
+            beat_num=beat_num,
+            scope=scope,
+        )
+        with self._connect_context(ctx) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM task_states WHERE task_key = ? AND project_id = ?",
+                (task_key, ctx.project_id),
+            ).fetchone()
+            if row is None:
+                return False
+            state = self._row_to_state(row)
+            if state.task_id != expected_task_id or state.status in TERMINAL_TASK_STATUSES:
+                return False
+            if state.status in {"submitting", "queued"}:
+                state.status = "queued"
+                state.progress = 0.0
+                state.current_task = "任务已进入队列"
+            if metadata is not None:
+                state.metadata = self._merge_task_metadata(state.metadata, metadata)
+                state.result = self._merge_metadata_into_result(state.result, state.metadata)
+            state.updated_at = utc_now_iso()
+            self._save_on_connection(conn, task_key, state, None)
+            return True
+
     def _count_active_project_tasks_on_connection(
         self,
         conn: sqlite3.Connection,
@@ -930,7 +1067,7 @@ class TaskStateManager:
         metadata: dict | None = None,
         expected_task_id: str | None = None,
         queue_kind: str | None = None,
-    ):
+    ) -> bool:
         expected_task_id = expected_task_id or _CURRENT_PROJECT_TASK_ID.get()
         state = self.get_task_for_project(ctx, task_type, episode, beat_num, scope)
         if not state:
@@ -944,7 +1081,7 @@ class TaskStateManager:
                     expected_task_id,
                     scope,
                 )
-                return
+                return False
             state = self.create_task_for_project(
                 ctx,
                 task_type,
@@ -964,7 +1101,7 @@ class TaskStateManager:
                 expected_task_id,
                 state.task_id,
             )
-            return
+            return False
         if state.status == "cancelled":
             logger.warning(
                 "Ignore complete update for cancelled project task: %s/%s/%s",
@@ -972,7 +1109,7 @@ class TaskStateManager:
                 ctx.project_id,
                 episode,
             )
-            return
+            return False
         state.status = "completed"
         state.progress = 1.0 if progress is None else progress
         if current_task is not None:
@@ -988,6 +1125,7 @@ class TaskStateManager:
         state.updated_at = utc_now_iso()
         self._save_for_context(ctx, state, ttl=self.COMPLETED_TTL)
         logger.info("Project task completed: %s/%s/%s", task_type, ctx.project_id, episode)
+        return True
 
     def fail_task(
         self,

@@ -1298,8 +1298,6 @@
     "props": {
       "title": "道具管理",
       "count": "{{count}} 个道具",
-      "batchGenerate": "批量生成参考图",
-      "batchStatusTitle": "批量参考图生成",
       "newProp": "新建道具",
       "newPropHint": "AI自动提取道具需要在虾镜中按集数分集提取",
       "editProp": "编辑道具",

@@ -1298,8 +1298,6 @@
     "props": {
       "title": "Props",
       "count": "{{count}} props",
-      "batchGenerate": "Batch generate refs",
-      "batchStatusTitle": "Batch reference generation",
       "newProp": "New prop",
       "newPropHint": "AI prop extraction runs per episode in Episode Studio",
       "editProp": "Edit prop",

@@ -61,6 +61,78 @@ def test_project_task_timestamps_are_written_as_utc_z(tmp_path: Path) -> None:
     assert completed.updated_at.endswith("Z")
 
 
+def test_queued_cancel_and_worker_start_are_mutually_exclusive(tmp_path: Path) -> None:
+    manager = TaskStateManager()
+    ctx = _ctx(tmp_path)
+    queued = manager.create_task_for_project(ctx, "single_video", 1, status="queued")
+
+    cancelled, state = manager.cancel_queued_task_for_project(
+        ctx,
+        "single_video",
+        1,
+        expected_task_id=queued.task_id,
+    )
+
+    assert cancelled is True
+    assert state is not None and state.status == "cancelled"
+    assert (
+        manager.begin_task_execution_for_project(
+            ctx,
+            "single_video",
+            1,
+            expected_task_id=queued.task_id,
+        )
+        is False
+    )
+
+
+def test_worker_start_prevents_refundable_queued_cancel(tmp_path: Path) -> None:
+    manager = TaskStateManager()
+    ctx = _ctx(tmp_path)
+    queued = manager.create_task_for_project(ctx, "single_video", 1, status="queued")
+
+    assert manager.begin_task_execution_for_project(
+        ctx,
+        "single_video",
+        1,
+        expected_task_id=queued.task_id,
+    )
+    cancelled, state = manager.cancel_queued_task_for_project(
+        ctx,
+        "single_video",
+        1,
+        expected_task_id=queued.task_id,
+    )
+
+    assert cancelled is False
+    assert state is not None and state.status == "running"
+
+
+def test_late_enqueue_metadata_cannot_regress_running_task(tmp_path: Path) -> None:
+    manager = TaskStateManager()
+    ctx = _ctx(tmp_path)
+    queued = manager.create_task_for_project(ctx, "single_video", 1, status="submitting")
+
+    assert manager.begin_task_execution_for_project(
+        ctx,
+        "single_video",
+        1,
+        expected_task_id=queued.task_id,
+    )
+    assert manager.mark_task_enqueued_for_project(
+        ctx,
+        "single_video",
+        1,
+        expected_task_id=queued.task_id,
+        metadata={"celery_task_id": "celery-1"},
+    )
+
+    current = manager.get_task_for_project(ctx, "single_video", 1)
+    assert current is not None
+    assert current.status == "running"
+    assert current.metadata["celery_task_id"] == "celery-1"
+
+
 def test_stale_and_expiry_checks_accept_aware_and_legacy_times() -> None:
     aware_old = TaskState(
         task_id="aware",
