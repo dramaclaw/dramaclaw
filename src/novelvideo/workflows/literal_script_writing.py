@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from pydantic import BaseModel, Field, ValidationError, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior
 
@@ -129,6 +129,14 @@ def _content_filter_hint_matches(text: str) -> list[str]:
         if category_matches:
             matches.append(f"{category}: " + "、".join(dict.fromkeys(category_matches)))
     return matches
+
+
+def _is_output_retry_exhaustion(exc: BaseException) -> bool:
+    """Return whether PydanticAI exhausted only its output-validation budget."""
+
+    return isinstance(exc, UnexpectedModelBehavior) and str(exc).strip().startswith(
+        "Exceeded maximum output retries ("
+    )
 
 
 @dataclass
@@ -510,6 +518,7 @@ class LiteralScriptWritingWorkflow:
         current_block: SceneBlock | None = None
         episode_sticky_identities: dict[str, str] = dict(episode_identity_default_map)
         block_sticky_identities: dict[str, str] = {}
+        safe_prompt_history: list[str] = []
 
         for content_index, line_ctx in enumerate(line_contexts, start=1):
             raw_line = line_ctx.raw_line
@@ -518,6 +527,7 @@ class LiteralScriptWritingWorkflow:
             if block is not current_block:
                 current_block = block
                 block_sticky_identities = dict(episode_sticky_identities)
+                safe_prompt_history = []
                 block_ctx = block.context
                 narrowed_identity_ids = (
                     set(block_ctx.candidate_identity_ids)
@@ -622,13 +632,13 @@ class LiteralScriptWritingWorkflow:
 - 当前 time_of_day: {current_time_of_day or "未锁定"}
 - 当前场次出场人物: {", ".join(block.characters) if block.characters else "未标注"}
 - 当前场次前文（最多 2 行）:
-{chr(10).join(f"  - {item}" for item in line_ctx.prev_window) if line_ctx.prev_window else "  - 无"}
+{chr(10).join(f"  - {item}" for item in safe_prompt_history) if safe_prompt_history else "  - 无"}
 - 下一行: {line_ctx.next_line or "无"}
 {prev_beat_anchor or "- 上一 beat 已选: 无"}
 {sticky_section or "- 当前场次已锁定结果: 无"}
 ## 当前行
 - 行序号: {content_index}/{total}
-- 上一行: {line_ctx.prev_window[-1] if line_ctx.prev_window else "无"}
+- 上一行: {safe_prompt_history[-1] if safe_prompt_history else "无"}
 - 当前行: {raw_line}
 - 下一行复述: {line_ctx.next_line or "无"}
 ## 约束
@@ -737,6 +747,10 @@ class LiteralScriptWritingWorkflow:
                     block_sticky_identities[char_name] = identity_id
                 if char_name and char_name not in episode_sticky_identities:
                     episode_sticky_identities[char_name] = identity_id
+            safe_prompt_history.append(
+                "[上一行因内容审核未提供]" if content_filtered else raw_line
+            )
+            safe_prompt_history = safe_prompt_history[-2:]
             log(f"[Literal] 行 {content_index}/{total} -> {audio_type}")
 
         if self.last_degraded_lines:
@@ -774,13 +788,14 @@ class LiteralScriptWritingWorkflow:
     ) -> tuple[LiteralBeatMetaOutput, bool]:
         """Retry an exhausted structured output once, then preserve the source line."""
 
-        retryable_errors = (UnexpectedModelBehavior, ValidationError)
         try:
             result = await self.agent.run(prompt)
             return result.output, False
         except ContentFilterError:
             raise
-        except retryable_errors as first_error:
+        except UnexpectedModelBehavior as first_error:
+            if not _is_output_retry_exhaustion(first_error):
+                raise
             log(
                 f"[Literal][WARN] 第 {content_index}/{total} 行结构化输出失败，"
                 f"正在重新调用模型: {_short_log_text(str(first_error), limit=180)}"
@@ -791,7 +806,9 @@ class LiteralScriptWritingWorkflow:
             return result.output, False
         except ContentFilterError:
             raise
-        except retryable_errors as second_error:
+        except UnexpectedModelBehavior as second_error:
+            if not _is_output_retry_exhaustion(second_error):
+                raise
             log(
                 f"[Literal][WARN] 第 {content_index}/{total} 行重试仍失败，"
                 "已使用原文生成本地兜底 Beat，后续行继续处理。"

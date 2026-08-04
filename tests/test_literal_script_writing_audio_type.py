@@ -362,9 +362,11 @@ class _SequencedLiteralAgent:
     def __init__(self, outcomes):
         self.outcomes = list(outcomes)
         self.calls = 0
+        self.prompts = []
 
-    async def run(self, _prompt):
+    async def run(self, prompt):
         self.calls += 1
+        self.prompts.append(prompt)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -485,6 +487,8 @@ async def test_literal_workflow_does_not_retry_content_filter_and_uses_placehold
     assert script.beats[0].visual_description == "该行未能生成，请手动补充。"
     assert "匕首" not in script.beats[0].model_dump_json()
     assert script.beats[1].visual_description == "屋内烛火轻轻摇晃。"
+    assert "沈晚握紧匕首。" not in agent.prompts[1]
+    assert "[上一行因内容审核未提供]" in agent.prompts[1]
     assert workflow.last_degraded_lines == [1]
     assert workflow.last_review_passed is False
     assert any("未重试" in message for message in logs)
@@ -510,5 +514,30 @@ async def test_literal_workflow_does_not_degrade_gateway_403(monkeypatch):
         )
 
     assert exc_info.value.status_code == 403
+    assert agent.calls == 1
+    assert store.persisted is None
+
+
+@pytest.mark.asyncio
+async def test_literal_workflow_does_not_degrade_malformed_gateway_response(
+    monkeypatch,
+):
+    store = _LiteralRunStore()
+    agent = _SequencedLiteralAgent(
+        [UnexpectedModelBehavior("Invalid OpenAI-compatible gateway response")]
+    )
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(cognee_store=store, sqlite_store=store)
+
+    with pytest.raises(UnexpectedModelBehavior, match="Invalid OpenAI-compatible"):
+        await workflow.run(
+            episode_num=1,
+            source_text="第1场 苏鸾寝殿 夜 内\n谢铮：走。",
+        )
+
     assert agent.calls == 1
     assert store.persisted is None
