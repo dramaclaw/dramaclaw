@@ -1471,6 +1471,22 @@ export type FreezoneRedrawAspectRatio =
   | "16:9"
   | "9:16";
 
+/**
+ * 重绘接口自身接受的比例取值（与后端 `FreezoneRedrawRequest.aspect_ratio` 的
+ * Literal 保持一致）。
+ *
+ * 这不是某个模型的能力，而是接口契约：即便后台给模型配了别的比例档位，重绘也
+ * 只能提交这几个值，所以前端取「模型配置 ∩ 接口契约」。
+ */
+export const FREEZONE_REDRAW_ASPECT_RATIOS: readonly FreezoneRedrawAspectRatio[] = [
+  "original",
+  "1:1",
+  "4:3",
+  "3:4",
+  "16:9",
+  "9:16",
+];
+
 export interface FreezoneRedrawPayload {
   sourceUrl: string;
   /** Optional mask static URL. Transparent pixels = editable region (局部重绘). */

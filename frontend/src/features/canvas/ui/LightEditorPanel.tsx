@@ -21,6 +21,11 @@ import { useFreezoneImageModels } from "@/features/canvas/hooks/useFreezoneImage
 import { FREEZONE_IMAGE_FEATURES } from "@/features/canvas/application/freezoneImageFeatureBilling";
 import { buildImageFeatureBillingParams } from "@/features/canvas/domain/imageBilling";
 import {
+  pickAllowedOption,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from "@/features/canvas/domain/mediaModelOptions";
+import {
   NODE_CREDIT_PILL_FLAT_CLASS,
   NODE_FLOATING_PANEL_SURFACE_CLASS,
   NODE_GENERATE_BUTTON_BASE_CLASS,
@@ -89,16 +94,6 @@ const DEFAULT_SMART_MODE = false;
 const EDITOR_PROMPT_TEXTAREA_CLASS =
   "mb-5 h-20 rounded-xl !border-white/[0.14] !bg-bg-dark/45 px-3 py-2 text-xs !text-text-dark placeholder:!text-text-dark/52 shadow-inner";
 
-function imageModelSupportsQuality(apiModel: string | null | undefined): boolean {
-  const normalized = String(apiModel ?? "").trim().toLowerCase();
-  return (
-    normalized === "gpt-image-2"
-    || normalized === "image-2"
-    || normalized === "image-2-official"
-    || normalized.includes("gpt-image")
-  );
-}
-
 // 开尔文色温 → 近似 RGB（Tanner Helland 近似，适用 ~1000-40000K）。用于色温滑块
 // 的暖冷渐变轨道、手柄颜色与 3D 光球预览着色；提交给后端的是开尔文整数本身。
 function kelvinToRgb(kelvin: number): [number, number, number] {
@@ -131,10 +126,11 @@ const KELVIN_GRADIENT = `linear-gradient(to right, ${[
   .map((k) => kelvinToHex(k))
   .join(", ")})`;
 
-export type LightProviderId = "huimeng" | "openrouter" | "openai";
+/** 供应商 id 由目录条目下发，前端不枚举。 */
+export type LightProviderId = string;
 
-export const LIGHT_IMAGE_SIZES = ["1K", "2K", "4K"] as const;
-export type LightImageSize = (typeof LIGHT_IMAGE_SIZES)[number];
+/** 分辨率档位由后台「媒体模型」对所选模型的配置下发，前端不枚举。 */
+export type LightImageSize = string;
 const DEFAULT_LIGHT_IMAGE_SIZE: LightImageSize = "2K";
 
 export interface LightMainLightDescriptor {
@@ -692,6 +688,8 @@ interface ToggleProps {
 
 interface QualityPickerProps {
   value: LightImageSize;
+  /** 当前模型允许的分辨率档位，由后台「媒体模型」配置下发。 */
+  options: readonly string[];
   onChange: (value: LightImageSize) => void;
 }
 
@@ -765,7 +763,7 @@ function ColorTemperatureSlider({
   );
 }
 
-function QualityPicker({ value, onChange }: QualityPickerProps) {
+function QualityPicker({ value, options, onChange }: QualityPickerProps) {
   const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -812,7 +810,7 @@ function QualityPicker({ value, onChange }: QualityPickerProps) {
             {title}
           </div>
           <div className="flex gap-1.5">
-            {LIGHT_IMAGE_SIZES.map((size) => {
+            {options.map((size) => {
               const isActive = value === size;
               return (
                 <button
@@ -888,15 +886,25 @@ export function LightEditorPanel({
   );
   const { models: imageModels } = useFreezoneImageModels();
   const selectedModel = imageModels[0];
+  // 分辨率与画质档位跟随后台对该模型的配置。
+  const sizeOptions = useMemo(
+    () => resolveModelSizeOptions(selectedModel),
+    [selectedModel],
+  );
+  const qualityOptions = useMemo(
+    () => resolveModelQualityOptions(selectedModel),
+    [selectedModel],
+  );
+  const effectiveImageSize = pickAllowedOption(imageSize, sizeOptions);
   const creditCost = useGenerationCreditCost(
     "feature",
     selectedModel ? FREEZONE_IMAGE_FEATURES.relight : null,
     {
       surface: "canvas",
       params: buildImageFeatureBillingParams(selectedModel, {
-        size: imageSize,
-        ...(imageModelSupportsQuality(selectedModel?.apiModel)
-          ? { quality: "medium" }
+        size: effectiveImageSize,
+        ...(qualityOptions.length > 0
+          ? { quality: pickAllowedOption("medium", qualityOptions) }
           : {}),
         operation: "relight",
       }),
@@ -998,8 +1006,8 @@ export function LightEditorPanel({
       rimLight,
       smartMode: smart,
       apiModel: selectedModel.apiModel,
-      providerId: selectedModel.providerId as LightProviderId,
-      imageSize,
+      providerId: selectedModel.providerId,
+      imageSize: effectiveImageSize,
     });
   }, [
     activeDirectionPreset,
@@ -1008,7 +1016,7 @@ export function LightEditorPanel({
     color,
     colorTemperatureKelvin,
     directionLabel,
-    imageSize,
+    effectiveImageSize,
     onSubmit,
     rimLight,
     smartMode,
@@ -1084,7 +1092,11 @@ export function LightEditorPanel({
               onChange={handlePickDirection}
               t={t}
             />
-            <QualityPicker value={imageSize} onChange={setImageSize} />
+            <QualityPicker
+              value={effectiveImageSize}
+              options={sizeOptions}
+              onChange={setImageSize}
+            />
           </div>
 
           <div className="mb-3.5 flex items-center gap-2.5">

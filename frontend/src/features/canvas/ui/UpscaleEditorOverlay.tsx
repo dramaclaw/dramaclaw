@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar, Position } from '@xyflow/react';
 import { ArrowUp, Check, ChevronDown, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -28,33 +28,23 @@ import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
+import {
+  pickAllowedOption,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from '@/features/canvas/domain/mediaModelOptions';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
 import { CANVAS_NODE_TOOLBAR_CARD_CLASS } from './nodeFrameStyles';
 import { NODE_CREDIT_PILL_FLAT_CLASS } from './nodeControlStyles';
 import { ZoomScaledToolbar } from './ZoomScaledToolbar';
 
-const UPSCALE_IMAGE_SIZES = ['1K', '2K', '4K'] as const;
-type UpscaleImageSize = (typeof UPSCALE_IMAGE_SIZES)[number];
-const DEFAULT_UPSCALE_IMAGE_SIZE: UpscaleImageSize = '2K';
-
 const SCALE_FACTORS: FreezoneUpscaleScaleFactor[] = [2, 4, 6];
 const DEFAULT_UPSCALE_SCALE_FACTOR: FreezoneUpscaleScaleFactor = 2;
-
-function imageModelSupportsQuality(apiModel: string | null | undefined): boolean {
-  if (!apiModel) return false;
-  const normalized = apiModel.toLowerCase();
-  return (
-    normalized === 'gpt-image-2'
-    || normalized === 'image-2'
-    || normalized === 'image-2-official'
-    || normalized.includes('gpt-image')
-  );
-}
 
 interface UpscalePersistedFields {
   upscaleSourceUrl?: string;
   upscaleModelId?: string;
-  upscaleImageSize?: UpscaleImageSize;
+  upscaleImageSize?: string;
   upscaleScaleFactor?: FreezoneUpscaleScaleFactor;
 }
 
@@ -78,10 +68,6 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
   const persistedModelId =
     typeof persisted.upscaleModelId === 'string' ? persisted.upscaleModelId : DEFAULT_SHARED_MODEL_ID;
   const { models: availableModels } = useFreezoneImageModels();
-  const persistedImageSize: UpscaleImageSize =
-    persisted.upscaleImageSize && (UPSCALE_IMAGE_SIZES as readonly string[]).includes(persisted.upscaleImageSize)
-      ? persisted.upscaleImageSize
-      : DEFAULT_UPSCALE_IMAGE_SIZE;
   const persistedScaleFactor: FreezoneUpscaleScaleFactor =
     persisted.upscaleScaleFactor === 4 || persisted.upscaleScaleFactor === 6
       ? persisted.upscaleScaleFactor
@@ -92,6 +78,17 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
     availableModels.find((m) => m.id === persistedModelId)
     ?? availableModels[0]
     ?? SHARED_MODELS.find((m) => m.id === persistedModelId);
+  // 分辨率与画质档位来自后台对该模型的配置；节点上存的旧值若已不在档位里，
+  // 就收回到首个可用档位。
+  const sizeOptions = useMemo(
+    () => resolveModelSizeOptions(selectedModel),
+    [selectedModel],
+  );
+  const qualityOptions = useMemo(
+    () => resolveModelQualityOptions(selectedModel),
+    [selectedModel],
+  );
+  const persistedImageSize = pickAllowedOption(persisted.upscaleImageSize, sizeOptions);
   const creditCost = useGenerationCreditCost(
     'feature',
     selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
@@ -99,8 +96,8 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
       surface: 'canvas',
       params: buildImageFeatureBillingParams(selectedModel, {
         size: persistedImageSize,
-        ...(imageModelSupportsQuality(selectedModel?.apiModel)
-          ? { quality: 'medium' }
+        ...(qualityOptions.length > 0
+          ? { quality: pickAllowedOption('medium', qualityOptions) }
           : {}),
         operation: 'upscale',
       }),
@@ -120,7 +117,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
   );
 
   const handleImageSizeChange = useCallback(
-    (size: UpscaleImageSize) => {
+    (size: string) => {
       updateNodeData(node.id, { upscaleImageSize: size });
     },
     [node.id, updateNodeData],
@@ -254,7 +251,11 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
           </PanelRow>
 
           <PanelRow label={t('upscaleEditor.qualityLabel')}>
-            <QualityPicker value={persistedImageSize} onChange={handleImageSizeChange} />
+            <QualityPicker
+              value={persistedImageSize}
+              options={sizeOptions}
+              onChange={handleImageSizeChange}
+            />
           </PanelRow>
 
           <PanelRow label={t('upscaleEditor.scaleLabel')}>
@@ -296,11 +297,13 @@ function PanelRow({ label, children }: { label: string; children: React.ReactNod
 }
 
 interface QualityPickerProps {
-  value: UpscaleImageSize;
-  onChange: (value: UpscaleImageSize) => void;
+  value: string;
+  /** 当前模型允许的分辨率档位，由后台「媒体模型」配置下发。 */
+  options: readonly string[];
+  onChange: (value: string) => void;
 }
 
-function QualityPicker({ value, onChange }: QualityPickerProps) {
+function QualityPicker({ value, options, onChange }: QualityPickerProps) {
   const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -345,7 +348,7 @@ function QualityPicker({ value, onChange }: QualityPickerProps) {
         >
           <div className="mb-1 text-[11px] uppercase tracking-wide text-text-muted">{title}</div>
           <div className="flex gap-1.5">
-            {UPSCALE_IMAGE_SIZES.map((size) => {
+            {options.map((size) => {
               const isActive = value === size;
               return (
                 <button

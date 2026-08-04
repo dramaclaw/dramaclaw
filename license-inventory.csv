@@ -812,6 +812,7 @@ frontend/src/features/canvas/domain/assetDragHydrate.ts,Elastic-2.0,2026 SuperTa
 frontend/src/features/canvas/domain/cameraMovementPresets.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/canvasAssets.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/canvasNodes.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/domain/catalogImageModels.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/directorWorldSceneSaveRegistry.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/directorWorldSources.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/groupColors.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -821,6 +822,7 @@ frontend/src/features/canvas/domain/inheritMainlineFields.ts,Elastic-2.0,2026 Su
 frontend/src/features/canvas/domain/lastVideoModel.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/mainlineNodeFlags.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/mainlineNodeTypes.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/domain/mediaModelOptions.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/nodeDisplay.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/nodeRegistry.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/skillConnectionEdges.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -843,9 +845,6 @@ frontend/src/features/canvas/hooks/useNodeGenerationHistory.ts,Elastic-2.0,2026 
 frontend/src/features/canvas/infrastructure/freezoneAiGateway.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/infrastructure/idGenerator.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/infrastructure/webImageSplitGateway.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/src/features/canvas/models/image/huimeng/imageDefault.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/src/features/canvas/models/image/openai/gptImage.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/src/features/canvas/models/image/openrouter/default.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/models/index.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/models/providers/huimeng.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/models/providers/openai.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -12,6 +12,11 @@ import {
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
+import {
+  pickAllowedOption,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from '@/features/canvas/domain/mediaModelOptions';
 import { CreditCostInline } from '@/components/credit-cost-inline';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
@@ -58,14 +63,19 @@ export const Scene360Overlay = memo(
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const { models: imageModels } = useFreezoneImageModels();
     const selectedModel = imageModels[0];
+    // 全景没有尺寸/画质选择器，按后台对该模型配置的档位取默认值；模型没配
+    // 画质就不下发 quality。
+    const panoQualityOptions = resolveModelQualityOptions(selectedModel);
     const panoCost = useGenerationCreditCost(
       'feature',
       selectedModel ? FREEZONE_IMAGE_FEATURES.panorama : null,
       {
         surface: 'canvas',
         params: buildImageFeatureBillingParams(selectedModel, {
-          size: '2K',
-          quality: 'medium',
+          size: pickAllowedOption('2K', resolveModelSizeOptions(selectedModel)),
+          ...(panoQualityOptions.length > 0
+            ? { quality: pickAllowedOption('medium', panoQualityOptions) }
+            : {}),
         }),
       },
     );

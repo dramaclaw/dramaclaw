@@ -13,6 +13,11 @@ import {
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
+import {
+  pickAllowedOption,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from '@/features/canvas/domain/mediaModelOptions';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
   fetchFreezoneJobResult,
@@ -54,16 +59,6 @@ const GRID_ACTION_MODE_MAP: Record<GridActionKey, FreezoneTemplateEditMode> = {
   frameProjection5sEarlier: 'image_projection_before_5s',
 };
 
-function imageModelSupportsQuality(apiModel: string | null | undefined): boolean {
-  const normalized = String(apiModel ?? '').trim().toLowerCase();
-  return (
-    normalized === 'gpt-image-2'
-    || normalized === 'image-2'
-    || normalized === 'image-2-official'
-    || normalized.includes('gpt-image')
-  );
-}
-
 export interface GridActionRequest {
   nodeId: string;
   key: GridActionKey;
@@ -102,15 +97,17 @@ export const GridActionConfirmOverlay = memo(
     const { models: imageModels } = useFreezoneImageModels();
     const selectedModel = imageModels[0];
     const gridMode = GRID_ACTION_MODE_MAP[request.key];
+    // 宫格动作没有尺寸/画质选择器，按后台对该模型配置的档位取默认值。
+    const qualityOptions = resolveModelQualityOptions(selectedModel);
     const gridActionCost = useGenerationCreditCost(
       'feature',
       selectedModel ? FREEZONE_IMAGE_FEATURES.grid : null,
       {
         surface: 'canvas',
         params: buildImageFeatureBillingParams(selectedModel, {
-          size: '2K',
-          ...(imageModelSupportsQuality(selectedModel?.apiModel)
-            ? { quality: 'medium' }
+          size: pickAllowedOption('2K', resolveModelSizeOptions(selectedModel)),
+          ...(qualityOptions.length > 0
+            ? { quality: pickAllowedOption('medium', qualityOptions) }
             : {}),
           mode: gridMode,
         }),

@@ -71,12 +71,10 @@ import {
   resolveReferenceAwareDeleteRange,
 } from '@/features/canvas/application/referenceTokenEditing';
 import {
-  DEFAULT_IMAGE_MODEL_ID,
-  getImageModel,
-  listImageModels,
   resolveImageModelResolution,
   resolveImageModelResolutions,
 } from '@/features/canvas/models';
+import { useCatalogImageModels } from '@/features/canvas/domain/catalogImageModels';
 import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
 import {
   NODE_CONTROL_CHIP_CLASS,
@@ -412,12 +410,10 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     [incomingImageItems]
   );
 
-  const imageModels = useMemo(() => listImageModels(), []);
+  // 模型清单与每个模型的分辨率 / 比例 / 额外参数都来自后台「媒体模型」配置。
+  const { models: imageModels, getModel } = useCatalogImageModels();
 
-  const selectedModel = useMemo(() => {
-    const modelId = data.model ?? DEFAULT_IMAGE_MODEL_ID;
-    return getImageModel(modelId);
-  }, [data.model]);
+  const selectedModel = useMemo(() => getModel(data.model), [getModel, data.model]);
   const effectiveExtraParams = useMemo(
     () => ({ ...(data.extraParams ?? {}) }),
     [data.extraParams]

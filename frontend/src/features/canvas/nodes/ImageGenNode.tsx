@@ -35,6 +35,11 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import {
+  resolveModelAspectOptions,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from '@/features/canvas/domain/mediaModelOptions';
+import {
   parseAspectRatio,
   pickClosestAspectRatio,
   resolveImageDisplayUrl,
@@ -410,22 +415,21 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     );
   }, [data.model, availableModels]);
   const modelId = selectedModel?.id ?? '';
-  const modelSizeOptions = useMemo(() => {
-    const configured = selectedModel?.resolutionOptions
-      ?.map((item) => item.trim())
-      .filter(Boolean);
-    return configured?.length ? configured : SIZE_OPTIONS;
-  }, [selectedModel]);
-  const modelAspectOptions = useMemo(() => {
-    const configured = (selectedModel?.ratioOptions ?? [])
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .map((value) => ({
+  const modelSizeOptions = useMemo(
+    () => resolveModelSizeOptions(selectedModel, SIZE_OPTIONS),
+    [selectedModel],
+  );
+  const modelAspectOptions = useMemo(
+    () =>
+      resolveModelAspectOptions(
+        selectedModel,
+        ASPECT_OPTIONS.map((item) => item.value),
+      ).map((value) => ({
         value,
         label: ASPECT_OPTIONS.find((item) => item.value === value)?.label ?? value,
-      }));
-    return configured.length ? configured : ASPECT_OPTIONS;
-  }, [selectedModel]);
+      })),
+    [selectedModel],
+  );
   const effectiveImageSize = modelSizeOptions.includes(size) ? size : modelSizeOptions[0];
   const effectiveAspectRatio = snapToAllowedAspectRatio(
     aspectRatio,
@@ -433,7 +437,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     modelAspectOptions[0]?.value ?? '1:1',
   );
   const qualityOptions = useMemo(
-    () => (selectedModel?.qualityOptions ?? []).map((item) => item.trim()).filter(Boolean),
+    () => resolveModelQualityOptions(selectedModel),
     [selectedModel],
   );
   const supportsImageQuality = qualityOptions.length > 0;

@@ -60,12 +60,10 @@ import {
   resolveReferenceAwareDeleteRange,
 } from '@/features/canvas/application/referenceTokenEditing';
 import {
-  DEFAULT_IMAGE_MODEL_ID,
-  getImageModel,
-  listImageModels,
   resolveImageModelResolution,
   resolveImageModelResolutions,
 } from '@/features/canvas/models';
+import { useCatalogImageModels } from '@/features/canvas/domain/catalogImageModels';
 import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
 import { ModelParamsControls } from '@/features/canvas/ui/ModelParamsControls';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
@@ -624,12 +622,13 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     [incomingImageItems]
   );
 
-  const imageModels = useMemo(() => listImageModels(), []);
+  // 模型清单与每个模型的分辨率 / 比例 / 额外参数都来自后台「媒体模型」配置。
+  const { models: imageModels, getModel } = useCatalogImageModels();
 
-  const selectedModel = useMemo(() => {
-    const modelId = nodeData.model ?? DEFAULT_IMAGE_MODEL_ID;
-    return getImageModel(modelId);
-  }, [nodeData.model]);
+  const selectedModel = useMemo(
+    () => getModel(nodeData.model),
+    [getModel, nodeData.model]
+  );
   const effectiveExtraParams = useMemo(
     () => ({ ...(nodeData.extraParams ?? {}) }),
     [nodeData.extraParams]

@@ -42,6 +42,12 @@ import {
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { inheritMainlineFields } from '@/features/canvas/domain/inheritMainlineFields';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
+import {
+  pickAllowedOption,
+  resolveModelAspectOptions,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from '@/features/canvas/domain/mediaModelOptions';
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
@@ -55,16 +61,19 @@ import {
   NODE_GENERATE_BUTTON_DISABLED_CLASS,
 } from './nodeControlStyles';
 
-const OUTPAINT_IMAGE_SIZES = ['1K', '2K', '4K'] as const;
-type OutpaintImageSize = (typeof OUTPAINT_IMAGE_SIZES)[number];
-
 const OUTPAINT_NUM_IMAGES = [1, 2, 3, 4] as const;
 type OutpaintNumImages = (typeof OUTPAINT_NUM_IMAGES)[number];
 
 // 数量 > 1 时多个结果节点纵向错开摆放的间距。
 const RESULT_STACK_GAP = 24;
 
-const OUTPAINT_ASPECT_OPTIONS: {
+/**
+ * 扩图比例的展示元数据（图标 / 文案 / 用于画裁剪框的数值比）。
+ *
+ * 这里只描述「某个比例长什么样」，**哪些比例可选**由后台对所选模型配置的
+ * ratioOptions 决定 —— 见 `useOutpaintAspectOptions`。
+ */
+const OUTPAINT_ASPECT_META: {
   value: FreezoneOutpaintAspectRatio;
   ratio: number | null; // null = preserve original
   i18nKey: string;
@@ -77,17 +86,6 @@ const OUTPAINT_ASPECT_OPTIONS: {
   { value: '16:9', ratio: 16 / 9, i18nKey: 'outpaintEditor.aspect.s16_9', Icon: RectangleHorizontal },
   { value: '9:16', ratio: 9 / 16, i18nKey: 'outpaintEditor.aspect.s9_16', Icon: RectangleVertical },
 ];
-
-function imageModelSupportsQuality(apiModel: string | null | undefined): boolean {
-  if (!apiModel) return false;
-  const normalized = apiModel.toLowerCase();
-  return (
-    normalized === 'gpt-image-2'
-    || normalized === 'image-2'
-    || normalized === 'image-2-official'
-    || normalized.includes('gpt-image')
-  );
-}
 
 interface OutpaintEditorOverlayProps {
   node: CanvasNode;
@@ -106,7 +104,7 @@ export const OutpaintEditorOverlay = memo(
 
     const [aspectRatio, setAspectRatio] =
       useState<FreezoneOutpaintAspectRatio>('original');
-    const [imageSize, setImageSize] = useState<OutpaintImageSize>('2K');
+    const [imageSize, setImageSize] = useState<string>('2K');
     const [numImages, setNumImages] = useState<OutpaintNumImages>(1);
     const [modelId, setModelId] = useState<string>(DEFAULT_SHARED_MODEL_ID);
     const { models: availableModels } = useFreezoneImageModels();
@@ -115,15 +113,38 @@ export const OutpaintEditorOverlay = memo(
       availableModels.find((m) => m.id === modelId)
       ?? availableModels[0]
       ?? SHARED_MODELS.find((m) => m.id === modelId);
+    // 分辨率 / 比例 / 画质都跟随后台对该模型的配置，换模型时把越界的旧选择收回。
+    const sizeOptions = useMemo(
+      () => resolveModelSizeOptions(selectedModel),
+      [selectedModel],
+    );
+    const aspectOptions = useMemo(
+      () =>
+        OUTPAINT_ASPECT_META.filter(
+          (option) =>
+            // original 是扩图接口自带的「保持原图比例」语义，恒定可选。
+            option.value === 'original'
+            || resolveModelAspectOptions(selectedModel).includes(option.value),
+        ),
+      [selectedModel],
+    );
+    const qualityOptions = useMemo(
+      () => resolveModelQualityOptions(selectedModel),
+      [selectedModel],
+    );
+    const effectiveImageSize = pickAllowedOption(imageSize, sizeOptions);
+    const effectiveAspectRatio = (aspectOptions.some((o) => o.value === aspectRatio)
+      ? aspectRatio
+      : (aspectOptions[0]?.value ?? 'original')) as FreezoneOutpaintAspectRatio;
     const creditCost = useGenerationCreditCost(
       'feature',
       selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
       {
         surface: 'canvas',
         params: buildImageFeatureBillingParams(selectedModel, {
-          size: imageSize,
-          ...(imageModelSupportsQuality(selectedModel?.apiModel)
-            ? { quality: 'medium' }
+          size: effectiveImageSize,
+          ...(qualityOptions.length > 0
+            ? { quality: pickAllowedOption('medium', qualityOptions) }
             : {}),
           operation: 'outpaint',
           pricing_quantity: Math.min(Math.max(numImages, 1), 4),
@@ -151,7 +172,7 @@ export const OutpaintEditorOverlay = memo(
           : nodeWidth;
 
     const frame = useMemo(() => {
-      const option = OUTPAINT_ASPECT_OPTIONS.find((o) => o.value === aspectRatio);
+      const option = OUTPAINT_ASPECT_META.find((o) => o.value === effectiveAspectRatio);
       const targetRatio = option?.ratio ?? null;
       if (targetRatio === null) {
         return { width: nodeWidth, height: nodeHeight };
@@ -165,7 +186,7 @@ export const OutpaintEditorOverlay = memo(
       }
       // Target is taller → grow vertically.
       return { width: nodeWidth, height: nodeWidth / targetRatio };
-    }, [aspectRatio, nodeHeight, nodeWidth]);
+    }, [effectiveAspectRatio, nodeHeight, nodeWidth]);
 
     const verticalExtension = Math.max(0, (frame.height - nodeHeight) / 2);
     const horizontalExtension = Math.max(0, (frame.width - nodeWidth) / 2);
@@ -184,7 +205,8 @@ export const OutpaintEditorOverlay = memo(
             displayName: t('outpaintEditor.title'),
             imageUrl: null,
             previewImageUrl: null,
-            aspectRatio: aspectRatio === 'original' ? sourceAspectRatio : aspectRatio,
+            aspectRatio:
+              effectiveAspectRatio === 'original' ? sourceAspectRatio : effectiveAspectRatio,
             resultKind: 'generic',
             isGenerating: true,
             generationStartedAt,
@@ -198,7 +220,7 @@ export const OutpaintEditorOverlay = memo(
         addEdge(node.id, nextNodeId);
         return nextNodeId;
       },
-      [addEdge, addNode, aspectRatio, node, t],
+      [addEdge, addNode, effectiveAspectRatio, node, t],
     );
 
     // 针对已建好的节点提交单图扩图（num_images=1）→ 轮询 → 回填。
@@ -207,7 +229,7 @@ export const OutpaintEditorOverlay = memo(
         try {
           const ref = await submitFreezoneOutpaint(project, {
             sourceUrl: imageSource.split('?')[0],
-            targetAspectRatio: aspectRatio,
+            targetAspectRatio: effectiveAspectRatio,
             numImages: 1,
             imageSize,
             model: apiModel,
@@ -243,7 +265,7 @@ export const OutpaintEditorOverlay = memo(
           });
         }
       },
-      [aspectRatio, imageSize, imageSource, t, updateNodeData],
+      [effectiveAspectRatio, effectiveImageSize, imageSource, t, updateNodeData],
     );
 
     const handleSubmit = useCallback(async () => {
@@ -368,10 +390,14 @@ export const OutpaintEditorOverlay = memo(
             </button>
 
             <ProviderModelPicker selectedModelId={modelId} onChange={setModelId} />
-            <AspectRatioPicker value={aspectRatio} onChange={setAspectRatio} />
-            <SimpleSegmentedDropdown<OutpaintImageSize>
-              value={imageSize}
-              options={OUTPAINT_IMAGE_SIZES}
+            <AspectRatioPicker
+              value={effectiveAspectRatio}
+              options={aspectOptions}
+              onChange={setAspectRatio}
+            />
+            <SimpleSegmentedDropdown<string>
+              value={effectiveImageSize}
+              options={sizeOptions}
               onChange={setImageSize}
               renderLabel={(v) => v}
               titleI18nKey="outpaintEditor.qualityLabel"
@@ -413,10 +439,12 @@ OutpaintEditorOverlay.displayName = 'OutpaintEditorOverlay';
 
 interface AspectRatioPickerProps {
   value: FreezoneOutpaintAspectRatio;
+  /** 当前模型允许的比例（已按后台配置筛过），不再由本文件写死。 */
+  options: typeof OUTPAINT_ASPECT_META;
   onChange: (next: FreezoneOutpaintAspectRatio) => void;
 }
 
-function AspectRatioPicker({ value, onChange }: AspectRatioPickerProps) {
+function AspectRatioPicker({ value, options, onChange }: AspectRatioPickerProps) {
   const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -437,9 +465,8 @@ function AspectRatioPicker({ value, onChange }: AspectRatioPickerProps) {
     return () => document.removeEventListener('mousedown', onPointerDown, true);
   }, [isOpen]);
 
-  const selected = OUTPAINT_ASPECT_OPTIONS.find((o) => o.value === value)
-    ?? OUTPAINT_ASPECT_OPTIONS[0];
-  const SelectedIcon = selected.Icon;
+  const selected = options.find((o) => o.value === value) ?? options[0];
+  const SelectedIcon = selected?.Icon ?? ImageIcon;
 
   return (
     <div className="relative">
@@ -450,7 +477,7 @@ function AspectRatioPicker({ value, onChange }: AspectRatioPickerProps) {
         className="inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-xs text-text-dark transition-colors hover:bg-white/[0.06]"
       >
         <SelectedIcon className="h-3.5 w-3.5 text-text-muted" />
-        <span className="font-medium">{t(selected.i18nKey)}</span>
+        <span className="font-medium">{selected ? t(selected.i18nKey) : ''}</span>
         <ChevronDown className="h-3 w-3 text-text-muted" />
       </button>
       {isOpen && (
@@ -463,7 +490,7 @@ function AspectRatioPicker({ value, onChange }: AspectRatioPickerProps) {
             {t('outpaintEditor.aspectLabel')}
           </div>
           <div className="flex flex-col">
-            {OUTPAINT_ASPECT_OPTIONS.map((option) => {
+            {options.map((option) => {
               const Icon = option.Icon;
               const isActive = option.value === value;
               return (

@@ -89,6 +89,10 @@ import {
   requestLodStill,
   subscribeLodStills,
 } from "@/features/canvas/application/videoFrameCapture";
+import {
+  FALLBACK_VIDEO_ASPECT_OPTIONS,
+  FALLBACK_VIDEO_RESOLUTION_OPTIONS,
+} from "@/features/canvas/domain/mediaModelOptions";
 import { ensureWebSafeVideo } from "@/features/canvas/application/videoTranscode";
 import { isVideoFile, VIDEO_FILE_ACCEPT } from "@/features/canvas/application/videoFileTypes";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
@@ -261,16 +265,11 @@ const REFERENCE_CAPS_BY_MODE: Partial<
   firstLastFrame: { image: 2, video: 0, audio: 0 },
 };
 
-export const ASPECT_RATIOS: ReadonlyArray<FreezoneVideoAspectRatio> = [
-  "auto",
-  "16:9",
-  "4:3",
-  "1:1",
-  "3:4",
-  "9:16",
-  "21:9",
-];
-const QUALITIES: ReadonlyArray<VideoGenQuality> = ["480p", "720p", "1080p"];
+// 后台「媒体模型」未给该模型配置比例 / 分辨率时的兜底档位。正常路径下这两项
+// 都来自目录条目的 ratioOptions / resolutionOptions。
+export const ASPECT_RATIOS: ReadonlyArray<FreezoneVideoAspectRatio> =
+  FALLBACK_VIDEO_ASPECT_OPTIONS;
+const QUALITIES: ReadonlyArray<VideoGenQuality> = FALLBACK_VIDEO_RESOLUTION_OPTIONS;
 const SCENE_OPTIMIZE_OPTIONS: ReadonlyArray<Seedance2SceneOptimize> = ["anime", "realistic"];
 const DEFAULT_DURATION_MIN = 5;
 const DEFAULT_DURATION_MAX = 15;
