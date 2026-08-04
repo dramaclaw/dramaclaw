@@ -633,14 +633,12 @@ class LiteralScriptWritingWorkflow:
 - 当前场次出场人物: {", ".join(block.characters) if block.characters else "未标注"}
 - 当前场次前文（最多 2 行）:
 {chr(10).join(f"  - {item}" for item in safe_prompt_history) if safe_prompt_history else "  - 无"}
-- 下一行: {line_ctx.next_line or "无"}
 {prev_beat_anchor or "- 上一 beat 已选: 无"}
 {sticky_section or "- 当前场次已锁定结果: 无"}
 ## 当前行
 - 行序号: {content_index}/{total}
 - 上一行: {safe_prompt_history[-1] if safe_prompt_history else "无"}
 - 当前行: {raw_line}
-- 下一行复述: {line_ctx.next_line or "无"}
 ## 约束
 - narration_segment 由系统根据 audio_type 定型：dialogue 提取台词，narration 保留解说文本，silence 留空；你不要输出 narration_segment
 {self._audio_type_mode_instruction()}

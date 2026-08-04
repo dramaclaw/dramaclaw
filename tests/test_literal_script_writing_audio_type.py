@@ -495,6 +495,42 @@ async def test_literal_workflow_does_not_retry_content_filter_and_uses_placehold
 
 
 @pytest.mark.asyncio
+async def test_literal_workflow_does_not_send_unprocessed_next_line(monkeypatch):
+    store = _LiteralRunStore()
+
+    class _FilteringLiteralAgent:
+        def __init__(self):
+            self.calls = 0
+            self.prompts = []
+
+        async def run(self, prompt):
+            self.calls += 1
+            self.prompts.append(prompt)
+            if "沈晚握紧匕首。" in prompt:
+                raise ContentFilterError("Content filter triggered")
+            return SimpleNamespace(output=_valid_literal_output("屋内烛火轻轻摇晃。"))
+
+    agent = _FilteringLiteralAgent()
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(cognee_store=store, sqlite_store=store)
+
+    script = await workflow.run(
+        episode_num=1,
+        source_text="第1场 苏鸾寝殿 夜 内\n△烛火摇晃。\n沈晚握紧匕首。",
+    )
+
+    assert agent.calls == 2
+    assert "沈晚握紧匕首。" not in agent.prompts[0]
+    assert script.beats[0].visual_description == "屋内烛火轻轻摇晃。"
+    assert script.beats[1].visual_description == "该行未能生成，请手动补充。"
+    assert workflow.last_degraded_lines == [2]
+
+
+@pytest.mark.asyncio
 async def test_literal_workflow_does_not_degrade_gateway_403(monkeypatch):
     store = _LiteralRunStore()
     agent = _SequencedLiteralAgent(
