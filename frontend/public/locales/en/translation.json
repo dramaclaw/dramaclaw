@@ -4050,6 +4050,33 @@
         "setupPasswordTooShort": "The setup password must be at least 8 characters.",
         "setupPasswordMismatch": "The setup passwords do not match."
       },
+      "quick": {
+        "title": "Recommended Setup",
+        "description": "Use one profile to initialize Local NewAPI and configure the provider channel, feature models, embedding, and media mappings.",
+        "recommended": "Recommended",
+        "upstreamKey": "Upstream API Key",
+        "upstreamKeyPlaceholder": "Enter the model provider API Key",
+        "channelKeysTitle": "Channel API Keys",
+        "keyHint": "Keys are entered separately for each channel and never stored in the profile JSON. Leave a key empty when that provider already has a saved key.",
+        "savedKeyPlaceholder": "Saved · {{preview}} (enter a new value to replace)",
+        "fixJsonFirst": "Fix the profile JSON first. Channel key fields appear here after it parses successfully.",
+        "editJson": "View or edit profile JSON",
+        "jsonHint": "channels defines providers. Feature models, embedding, and each media model select one through channel. Duplicate providers are not supported yet.",
+        "apply": "Save & Apply All",
+        "applyHint": "Writes the complete setup once. Use Advanced Settings below for individual changes.",
+        "applying": "Working on: {{step}}",
+        "applied": "The recommended setup has been saved and enabled.",
+        "advanced": "Advanced Settings",
+        "invalidJson": "Invalid profile JSON: {{message}}",
+        "missingKeys": "Missing upstream API Key for channel(s): {{channels}}",
+        "steps": {
+          "initialize": "Initialize Local NewAPI",
+          "channel": "Save provider channel",
+          "features": "Save feature models",
+          "embedding": "Save embedding",
+          "media": "Save media models"
+        }
+      },
       "featureModels": {
         "title": "Business Model Mapping",
         "description": "Assign upstream models to text understanding, content generation, and vision understanding features. Unset features use backend defaults.",

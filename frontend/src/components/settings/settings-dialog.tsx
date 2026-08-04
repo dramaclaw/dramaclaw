@@ -26,6 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -339,24 +340,34 @@ function ModelConfigSection({ open }: { open: boolean }) {
       <div className="mt-4">
         {mode === "official" ? (
           <OfficialGatewayPanel config={config} loading={loading} />
-        ) : (
-          <CustomGatewayPanel
-            config={config}
-            loading={loading}
-            baseUrl={customBaseUrl}
-          />
-        )}
+        ) : null}
       </div>
 
       {/* 功能模型映射仅在自定义渠道展示；官方渠道不需要。 */}
       {mode === "custom" ? (
-        <FeatureModelsBlock
-          newApiBaseUrl={customBaseUrl}
-          database={customDatabase}
-          savedProviderChannels={config?.provisioner?.providerChannels ?? []}
-          savedEmbeddingModel={config?.provisioner?.embeddingModel}
-          savedMediaModels={config?.provisioner?.mediaModels ?? {}}
-        />
+        <>
+          <QuickLocalNewApiSetup
+            config={config}
+            loading={loading}
+            newApiBaseUrl={customBaseUrl}
+            database={customDatabase}
+          />
+          <details className="mt-5 rounded-md border border-border/70">
+            <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
+              {t("settings.modelConfig.quick.advanced")}
+            </summary>
+            <div className="border-t border-border/70 px-3 pb-4">
+              <CustomGatewayPanel config={config} loading={loading} baseUrl={customBaseUrl} />
+              <FeatureModelsBlock
+                newApiBaseUrl={customBaseUrl}
+                database={customDatabase}
+                savedProviderChannels={config?.provisioner?.providerChannels ?? []}
+                savedEmbeddingModel={config?.provisioner?.embeddingModel}
+                savedMediaModels={config?.provisioner?.mediaModels ?? {}}
+              />
+            </div>
+          </details>
+        </>
       ) : null}
     </section>
   );
@@ -705,6 +716,421 @@ const MEDIA_ROW_GRID =
 
 const DEFAULT_EMBEDDING_DIMENSION = 1024;
 const DEFAULT_EMBEDDING_BATCH_SIZE = 10;
+
+interface QuickProfileChannel {
+  id: string;
+  provider: FeatureModelProvider;
+  baseUrl: string;
+}
+
+interface QuickProfileModel {
+  channel: string;
+  model: string;
+}
+
+interface QuickModelProfile {
+  version: 2;
+  name: string;
+  channels: QuickProfileChannel[];
+  featureModels: {
+    text: QuickProfileModel;
+    vision: QuickProfileModel;
+    overrides: Record<string, QuickProfileModel>;
+  };
+  embedding: QuickProfileModel & { dimension: number; batchSize: number };
+  mediaModels: Record<string, QuickProfileModel>;
+}
+
+const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
+  version: 2,
+  name: "DramaClaw CE 多渠道推荐配置",
+  channels: [
+    { id: "aliyun", provider: "ali", baseUrl: "" },
+    { id: "volcengine", provider: "volcengine", baseUrl: "" },
+  ],
+  featureModels: {
+    text: { channel: "aliyun", model: "qwen-plus" },
+    vision: { channel: "aliyun", model: "qwen-vl-max" },
+    overrides: {},
+  },
+  embedding: {
+    channel: "aliyun",
+    model: "text-embedding-v3",
+    dimension: 1024,
+    batchSize: 10,
+  },
+  mediaModels: Object.fromEntries(
+    MEDIA_MODEL_ROWS.filter((row) => !row.officialOnly).map((row) => [
+      row.model,
+      {
+        channel: row.model.startsWith("seedance-") ? "volcengine" : "aliyun",
+        model: row.model,
+      },
+    ]),
+  ),
+};
+
+function parseQuickModelProfile(value: string): QuickModelProfile {
+  const profile = JSON.parse(value) as QuickModelProfile;
+  if (profile.version !== 2) throw new Error("unsupported profile version");
+  if (!Array.isArray(profile.channels) || profile.channels.length === 0) {
+    throw new Error("channels must be a non-empty array");
+  }
+  const channelIds = new Set<string>();
+  const providers = new Set<string>();
+  for (const channel of profile.channels) {
+    const id = channel.id?.trim();
+    if (!id) throw new Error("channel.id is required");
+    if (channelIds.has(id)) throw new Error(`duplicate channel id: ${id}`);
+    if (!FEATURE_MODEL_PROVIDERS.includes(channel.provider)) {
+      throw new Error(`unsupported provider: ${channel.provider}`);
+    }
+    if (providers.has(channel.provider)) {
+      throw new Error(`duplicate provider is not supported yet: ${channel.provider}`);
+    }
+    channelIds.add(id);
+    providers.add(channel.provider);
+  }
+  const validateModel = (item: QuickProfileModel | undefined, path: string) => {
+    if (!item?.channel?.trim() || !channelIds.has(item.channel.trim())) {
+      throw new Error(`${path}.channel does not reference a configured channel`);
+    }
+    if (!item.model?.trim()) throw new Error(`${path}.model is required`);
+  };
+  validateModel(profile.featureModels?.text, "featureModels.text");
+  validateModel(profile.featureModels?.vision, "featureModels.vision");
+  for (const [featureId, item] of Object.entries(profile.featureModels?.overrides ?? {})) {
+    validateModel(item, `featureModels.overrides.${featureId}`);
+  }
+  validateModel(profile.embedding, "embedding");
+  if (!Number.isInteger(profile.embedding.dimension) || profile.embedding.dimension <= 0) {
+    throw new Error("embedding.dimension must be a positive integer");
+  }
+  if (!Number.isInteger(profile.embedding.batchSize) || profile.embedding.batchSize <= 0) {
+    throw new Error("embedding.batchSize must be a positive integer");
+  }
+  if (!profile.mediaModels || typeof profile.mediaModels !== "object") {
+    throw new Error("mediaModels must be an object");
+  }
+  for (const [model, item] of Object.entries(profile.mediaModels)) {
+    validateModel(item, `mediaModels.${model}`);
+  }
+  return profile;
+}
+
+function QuickLocalNewApiSetup({
+  config,
+  loading,
+  newApiBaseUrl,
+  database,
+}: {
+  config: ModelGatewayConfig | undefined;
+  loading: boolean;
+  newApiBaseUrl: string;
+  database: NewApiDatabaseConfigInput | undefined;
+}) {
+  const { t } = useTranslation();
+  const initCustom = useInitCustomNewApi();
+  const saveProviderChannels = useSaveProviderChannels();
+  const saveBatch = useSaveCustomChannelsBatch();
+  const saveEmbedding = useSaveEmbeddingModel();
+  const saveMedia = useSaveMediaModels();
+  const addProviderChannel = useSettingsStore((s) => s.addFeatureProviderChannel);
+  const updateProviderChannel = useSettingsStore((s) => s.updateFeatureProviderChannel);
+  const updateFeatureModel = useSettingsStore((s) => s.updateFeatureModel);
+  const setEmbeddingModel = useSettingsStore((s) => s.setEmbeddingModel);
+  const setMediaModels = useSettingsStore((s) => s.setMediaModels);
+  const [upstreamKeys, setUpstreamKeys] = useState<Record<string, string>>({});
+  const [setupPassword, setSetupPassword] = useState("");
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState("");
+  const [profileJson, setProfileJson] = useState(() =>
+    JSON.stringify(RECOMMENDED_LOCAL_NEWAPI_PROFILE, null, 2),
+  );
+  const [applyError, setApplyError] = useState("");
+  const [applyingStep, setApplyingStep] = useState("");
+  const parsedProfile = useMemo(() => {
+    try {
+      return parseQuickModelProfile(profileJson);
+    } catch {
+      return null;
+    }
+  }, [profileJson]);
+  const customConfigured = Boolean(config?.custom?.configured);
+  const isPending = [initCustom, saveProviderChannels, saveBatch, saveEmbedding, saveMedia].some(
+    (mutation) => mutation.isPending,
+  );
+
+  const handleApply = async () => {
+    setApplyError("");
+    let profile: QuickModelProfile;
+    try {
+      profile = parseQuickModelProfile(profileJson);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setApplyError(t("settings.modelConfig.quick.invalidJson", { message }));
+      return;
+    }
+
+    const savedProviderByName = new Map(
+      (config?.provisioner?.providerChannels ?? []).map((channel) => [channel.provider, channel]),
+    );
+    const missingKeyChannels = profile.channels.filter(
+      (channel) =>
+        !upstreamKeys[channel.id]?.trim() && !savedProviderByName.get(channel.provider)?.configured,
+    );
+    if (missingKeyChannels.length > 0) {
+      setApplyError(
+        t("settings.modelConfig.quick.missingKeys", {
+          channels: missingKeyChannels.map((channel) => channel.id).join("、"),
+        }),
+      );
+      return;
+    }
+    const password = setupPassword.trim();
+    const confirmation = setupConfirmPassword.trim();
+    if (!customConfigured && (!password || !confirmation)) {
+      setApplyError(t("settings.modelConfig.custom.setupPasswordIncomplete"));
+      return;
+    }
+    if (password && password.length < 8) {
+      setApplyError(t("settings.modelConfig.custom.setupPasswordTooShort"));
+      return;
+    }
+    if (password !== confirmation) {
+      setApplyError(t("settings.modelConfig.custom.setupPasswordMismatch"));
+      return;
+    }
+
+    const channelById = new Map(profile.channels.map((channel) => [channel.id, channel]));
+    const featureMappingsByChannel = new Map<string, Record<string, string>>();
+    const selectedFeatureModels = new Map<string, QuickProfileModel>();
+    for (const group of FEATURE_MODEL_GROUPS) {
+      for (const feature of group.features) {
+        const selected =
+          profile.featureModels.overrides[feature.id] ??
+          (feature.requiresVision ? profile.featureModels.vision : profile.featureModels.text);
+        selectedFeatureModels.set(feature.id, selected);
+        const mapping = featureMappingsByChannel.get(selected.channel) ?? {};
+        mapping[feature.defaultModel] = selected.model.trim();
+        featureMappingsByChannel.set(selected.channel, mapping);
+      }
+    }
+    const mediaModels: Record<string, { provider: FeatureModelProvider; upstreamModel: string }> = {};
+    for (const [rawModel, item] of Object.entries(profile.mediaModels)) {
+      const model = rawModel.trim();
+      const upstreamModel = item.model.trim();
+      const channel = channelById.get(item.channel)!;
+      if (model && upstreamModel) mediaModels[model] = { provider: channel.provider, upstreamModel };
+    }
+
+    const fail = (step: string, response: unknown): never => {
+      throw new Error(`${step}: ${getResponseErrorMessage(response, t("settings.modelConfig.requestFailed"))}`);
+    };
+    try {
+      setApplyingStep(t("settings.modelConfig.quick.steps.initialize"));
+      const initResult = await initCustom.mutateAsync({
+        ...(newApiBaseUrl.trim() ? { newApiBaseUrl: newApiBaseUrl.trim() } : {}),
+        ...(!customConfigured
+          ? { setupUsername: "root", setupPassword: password, setupConfirmPassword: confirmation }
+          : {}),
+      });
+      if (!initResult.ok) fail(t("settings.modelConfig.quick.steps.initialize"), initResult);
+
+      setApplyingStep(t("settings.modelConfig.quick.steps.channel"));
+      const channelResult = await saveProviderChannels.mutateAsync({
+        channels: profile.channels.map((channel) => ({
+          provider: channel.provider,
+          ...(upstreamKeys[channel.id]?.trim()
+            ? { upstreamKey: upstreamKeys[channel.id].trim() }
+            : {}),
+          baseUrl: channel.baseUrl.trim(),
+        })),
+      });
+      if (!channelResult.ok) fail(t("settings.modelConfig.quick.steps.channel"), channelResult);
+
+      setApplyingStep(t("settings.modelConfig.quick.steps.features"));
+      const featureResult = await saveBatch.mutateAsync({
+        newApiBaseUrl: newApiBaseUrl.trim(),
+        ...(database ? { database } : {}),
+        channels: [...featureMappingsByChannel.entries()].map(([channelId, modelMapping]) => {
+          const channel = channelById.get(channelId)!;
+          return {
+            provider: channel.provider,
+            upstreamKey: upstreamKeys[channel.id]?.trim() ?? "",
+            modelMapping,
+            group: "default",
+            priority: 0,
+            weight: 0,
+            baseUrl: channel.baseUrl.trim(),
+            testModel: "",
+          };
+        }),
+      });
+      if (!featureResult.ok || featureResult.data.failed) {
+        fail(t("settings.modelConfig.quick.steps.features"), featureResult);
+      }
+
+      setApplyingStep(t("settings.modelConfig.quick.steps.embedding"));
+      const embeddingChannel = channelById.get(profile.embedding.channel)!;
+      const embeddingResult = await saveEmbedding.mutateAsync({
+        newApiBaseUrl: newApiBaseUrl.trim(),
+        ...(database ? { database } : {}),
+        provider: embeddingChannel.provider,
+        upstreamModel: profile.embedding.model.trim(),
+        dimension: profile.embedding.dimension,
+        batchSize: profile.embedding.batchSize,
+      });
+      if (!embeddingResult.ok) fail(t("settings.modelConfig.quick.steps.embedding"), embeddingResult);
+
+      if (Object.keys(mediaModels).length) {
+        setApplyingStep(t("settings.modelConfig.quick.steps.media"));
+        const mediaResult = await saveMedia.mutateAsync({
+          newApiBaseUrl: newApiBaseUrl.trim(),
+          ...(database ? { database } : {}),
+          models: mediaModels,
+        });
+        if (!mediaResult.ok || mediaResult.data.failed) {
+          fail(t("settings.modelConfig.quick.steps.media"), mediaResult);
+        }
+      }
+
+      for (const channel of profile.channels) {
+        addProviderChannel(channel.provider);
+        updateProviderChannel(channel.provider, {
+          upstreamKey: upstreamKeys[channel.id]?.trim() ?? "",
+          baseUrl: channel.baseUrl,
+        });
+      }
+      for (const group of FEATURE_MODEL_GROUPS) {
+        for (const feature of group.features) {
+          const selected = selectedFeatureModels.get(feature.id)!;
+          const channel = channelById.get(selected.channel)!;
+          updateFeatureModel(feature.id, {
+            provider: channel.provider,
+            model: selected.model,
+          });
+        }
+      }
+      setEmbeddingModel({
+        provider: embeddingChannel.provider,
+        upstreamModel: profile.embedding.model,
+        dimension: profile.embedding.dimension,
+        batchSize: profile.embedding.batchSize,
+      });
+      setMediaModels(mediaModels);
+      setUpstreamKeys({});
+      setSetupPassword("");
+      setSetupConfirmPassword("");
+      toast.success(t("settings.modelConfig.quick.applied"));
+    } catch (error) {
+      const message = await getRequestErrorMessage(error, t("settings.modelConfig.requestFailed"));
+      setApplyError(message);
+      toast.error(message);
+    } finally {
+      setApplyingStep("");
+    }
+  };
+
+  return (
+    <div className="mt-5 rounded-md border border-border/70 p-3">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h4 className="text-xs font-medium text-foreground">{t("settings.modelConfig.quick.title")}</h4>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            {t("settings.modelConfig.quick.description")}
+          </p>
+        </div>
+        <span className="shrink-0 rounded bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-300">
+          {t("settings.modelConfig.quick.recommended")}
+        </span>
+      </div>
+
+      {!customConfigured ? (
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <FieldRow secret name="quick-newapi-password" autoComplete="new-password"
+            label={t("settings.modelConfig.custom.setupPassword")} value={setupPassword}
+            onChange={setSetupPassword} placeholder={t("settings.modelConfig.custom.setupPasswordPlaceholder")} />
+          <FieldRow secret name="quick-newapi-password-confirmation" autoComplete="new-password"
+            label={t("settings.modelConfig.custom.setupConfirmPassword")} value={setupConfirmPassword}
+            onChange={setSetupConfirmPassword} placeholder={t("settings.modelConfig.custom.setupConfirmPasswordPlaceholder")} />
+        </div>
+      ) : null}
+      <div className="mt-3 rounded-md border border-border/60 p-3">
+        <p className="text-[11px] font-medium text-foreground">
+          {t("settings.modelConfig.quick.channelKeysTitle")}
+        </p>
+        {parsedProfile ? (
+          <div className="mt-3 space-y-3">
+            {parsedProfile.channels.map((channel) => {
+              const saved = config?.provisioner?.providerChannels?.find(
+                (item) => item.provider === channel.provider && item.configured,
+              );
+              return (
+                <div key={channel.id} className="grid grid-cols-[150px_minmax(0,1fr)] items-end gap-3">
+                  <div className="pb-2 text-[11px] text-muted-foreground">
+                    <p className="font-medium text-foreground">{channel.id}</p>
+                    <p>{channel.provider}</p>
+                  </div>
+                  <FieldRow
+                    secret
+                    name={`quick-upstream-key-${channel.id}`}
+                    autoComplete="off"
+                    label={t("settings.modelConfig.quick.upstreamKey")}
+                    value={upstreamKeys[channel.id] ?? ""}
+                    onChange={(value) =>
+                      setUpstreamKeys((current) => ({ ...current, [channel.id]: value }))
+                    }
+                    placeholder={
+                      saved
+                        ? t("settings.modelConfig.quick.savedKeyPlaceholder", {
+                            preview: saved.upstreamKeyPreview,
+                          })
+                        : t("settings.modelConfig.quick.upstreamKeyPlaceholder")
+                    }
+                  />
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-amber-300">
+            {t("settings.modelConfig.quick.fixJsonFirst")}
+          </p>
+        )}
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          {t("settings.modelConfig.quick.keyHint")}
+        </p>
+      </div>
+
+      <details className="mt-3 rounded-md border border-border/60 bg-white/[0.02]">
+        <summary className="cursor-pointer px-3 py-2.5 text-[11px] font-medium text-foreground">
+          {t("settings.modelConfig.quick.editJson")}
+        </summary>
+        <div className="border-t border-border/60 p-3">
+          <Textarea value={profileJson} onChange={(event) => setProfileJson(event.target.value)}
+            spellCheck={false} className="min-h-72 resize-y font-mono text-[11px] leading-relaxed" />
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            {t("settings.modelConfig.quick.jsonHint")}
+          </p>
+        </div>
+      </details>
+      {applyError ? (
+        <p className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] leading-relaxed text-destructive">
+          {applyError}
+        </p>
+      ) : null}
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <p className="text-[11px] text-muted-foreground">
+          {applyingStep ? t("settings.modelConfig.quick.applying", { step: applyingStep }) : t("settings.modelConfig.quick.applyHint")}
+        </p>
+        <Button type="button" size="sm" onClick={handleApply} disabled={loading || isPending}>
+          {isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+          {t("settings.modelConfig.quick.apply")}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 const FEATURE_PROVIDER_LABELS: Record<FeatureModelProvider, string> = {
   openai: "OpenAI",

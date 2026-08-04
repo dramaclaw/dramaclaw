@@ -4050,6 +4050,33 @@
         "setupPasswordTooShort": "初始化密码至少需要 8 位。",
         "setupPasswordMismatch": "两次输入的初始化密码不一致。"
       },
+      "quick": {
+        "title": "推荐配置",
+        "description": "使用一份配置同时完成本地 NewAPI 初始化、供应商渠道、业务模型、Embedding 和媒体模型映射。",
+        "recommended": "推荐",
+        "upstreamKey": "上游 API Key",
+        "upstreamKeyPlaceholder": "输入模型供应商的 API Key",
+        "channelKeysTitle": "渠道 API Key",
+        "keyHint": "Key 按渠道单独填写，不会写入配置 JSON；已保存过对应供应商 Key 时可以留空。",
+        "savedKeyPlaceholder": "已保存 · {{preview}}（重新输入可替换）",
+        "fixJsonFirst": "请先修正配置 JSON，解析成功后会在这里显示渠道 Key 输入框。",
+        "editJson": "查看或编辑推荐配置 JSON",
+        "jsonHint": "channels 定义渠道；业务模型、Embedding 和每个媒体模型通过 channel 字段选择渠道。当前暂不支持重复 provider。",
+        "apply": "保存并应用全部配置",
+        "applyHint": "一次写入全部配置；现有逐项配置可在下方高级配置中继续调整。",
+        "applying": "正在处理：{{step}}",
+        "applied": "推荐配置已全部保存并启用。",
+        "advanced": "高级配置",
+        "invalidJson": "配置 JSON 无效：{{message}}",
+        "missingKeys": "以下渠道缺少上游 API Key：{{channels}}",
+        "steps": {
+          "initialize": "初始化本地 NewAPI",
+          "channel": "保存供应商渠道",
+          "features": "保存业务模型",
+          "embedding": "保存 Embedding",
+          "media": "保存媒体模型"
+        }
+      },
       "featureModels": {
         "title": "业务模型映射",
         "description": "为文本理解、内容生成和视觉理解功能指定上游模型；未设置则使用后端默认。",
