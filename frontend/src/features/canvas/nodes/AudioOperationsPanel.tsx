@@ -26,7 +26,8 @@ import {
   fetchFreezoneTextTranslateResult,
   submitFreezoneTextTranslate,
 } from '@/api/ops';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
+import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { deriveAudioText, useAudioGeneration } from '@/features/canvas/nodes/useAudioGeneration';
 import { readUrl } from '@/lib/url-params';
 import { PanelExpandButton } from '@/features/canvas/ui/PanelExpandButton';
@@ -203,10 +204,16 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
         canvasId: readUrl().canvas ?? 'default',
         nodeId,
       });
-      await awaitTaskCompletion(ref.task_key, project);
+      await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
       const result = await fetchFreezoneTextTranslateResult(project, ref.job_id);
       handleTextChange(result.translated_text);
     } catch (error) {
+      // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
+      // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
+      if (isTaskPollTimeoutError(error)) {
+        notifyTaskStillRunning(t);
+        return;
+      }
       console.error('[audio-node] translate failed', error);
     } finally {
       setIsTranslating(false);

@@ -113,6 +113,7 @@ import { useNodeGenerationTaskState } from "@/features/canvas/application/useNod
 import {
   resolveErrorContent,
   showErrorDialog,
+  notifyTaskStillRunning,
 } from "@/features/canvas/application/errorDialog";
 import {
   BillingRuleNotConfiguredError,
@@ -177,7 +178,10 @@ import {
   type FreezoneVideoReferenceItem,
   type FreezoneVideoResolution,
 } from "@/api/ops";
-import { awaitTaskCompletion } from "@/api/tasks";
+import {
+  awaitTaskCompletion,
+  isTaskPollTimeoutError,
+} from "@/api/tasks";
 import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
 import { useNodeGenerationHistory } from "@/features/canvas/hooks/useNodeGenerationHistory";
 import {
@@ -1638,7 +1642,9 @@ export const VideoNode = memo(
               },
             ],
           });
-          await awaitTaskCompletion(ref.task_key, projectId);
+          await awaitTaskCompletion(ref.task_key, projectId, {
+            taskType: ref.task_type,
+          });
           const result = await fetchFreezoneJobResult(
             projectId,
             "freezone_video_compose",
@@ -1700,7 +1706,9 @@ export const VideoNode = memo(
           mode: subtitleEraseMode === "box" ? "box" : "smart_subtitle",
           box: subtitleEraseMode === "box" ? subtitleEraseBox : null,
         });
-        await awaitTaskCompletion(ref.task_key, projectId);
+        await awaitTaskCompletion(ref.task_key, projectId, {
+          taskType: ref.task_type,
+        });
         const result = await fetchFreezoneJobResult(
           projectId,
           "freezone_video_erase",
@@ -2160,7 +2168,9 @@ export const VideoNode = memo(
             if (runIndex === 0) {
               updateNodeData(id, generationTaskDescriptor(ref));
             }
-            const completed = await awaitTaskCompletion(ref.task_key, projectId);
+            const completed = await awaitTaskCompletion(ref.task_key, projectId, {
+              taskType: ref.task_type,
+            });
             // Prefer the dedicated result endpoint — SSE `task.result` may only
             // carry metadata (same pattern as reverse_prompt + video_erase).
             let url = resolveOutputUrl(completed.result);
@@ -2219,6 +2229,10 @@ export const VideoNode = memo(
             // 已有同批其它视频完成（主视频已落）时不覆盖成功态为错误——
             // 部分失败只影响画册条数。
             if (completedUrls.length > 0) return;
+            // 轮询超时 ≠ 生成失败：后端还在跑。保留 isGenerating 与任务句柄，
+            // 刷新页面时 resumeNodeGeneration 会重新接上并回填结果；这里写错误
+            // 横幅只会把一个还活着的任务标成失败、并清掉可续接的句柄。
+            if (isTaskPollTimeoutError(error)) return;
             const resolved = resolveErrorContent(error, "视频生成失败");
             const displayErrorMessage = backendErrorToastMessage(error, t);
             const diagnostics = resolveGenerationErrorDiagnostics(error, resolved.details);
@@ -2252,6 +2266,13 @@ export const VideoNode = memo(
         // 「先弹上限报错、节点却又冒出加载动画」的矛盾观感。
         if (completedUrls.length === 0 && runErrors.length > 0) {
           const firstError = runErrors[0];
+          // 整批都只是「前端不等了」时走中性提示：后端仍在生成，节点保持生成中
+          // 状态等待刷新续接，不该按报错呈现。真有失败混在里面则仍按失败处理。
+          if (runErrors.every((error) => isTaskPollTimeoutError(error))) {
+            notifyTaskStillRunning(t);
+            void refreshHistory();
+            return;
+          }
           const resolved = resolveErrorContent(firstError, "视频生成失败");
           const displayErrorMessage = backendErrorToastMessage(firstError, t);
           const diagnostics = resolveGenerationErrorDiagnostics(firstError, resolved.details);

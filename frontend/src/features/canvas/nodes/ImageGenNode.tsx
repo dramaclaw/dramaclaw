@@ -99,7 +99,8 @@ import {
   type ThreeDDirectorCaptureMeta,
 } from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
 import type { DirectorStageManifest } from '@/features/viewer-kit/three-d/directorManifest';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
+import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
   BillingRuleNotConfiguredError,
@@ -880,7 +881,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         canvasId: readUrl().canvas ?? 'default',
         nodeId: id,
       });
-      await awaitTaskCompletion(ref.task_key, projectId);
+      await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
       const result = await fetchFreezoneTextTranslateResult(projectId, ref.job_id);
       if (result.translated_text) {
         setPromptDraft(result.translated_text);
@@ -1014,7 +1015,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         if (runIndex === 0) {
           updateNodeData(id, generationTaskDescriptor(ref));
         }
-        const completed = await awaitTaskCompletion(ref.task_key, projectId);
+        const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
         let url = resolveOutputUrl(completed.result as Record<string, unknown> | null);
         if (!url) {
           try {
@@ -1054,6 +1055,13 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         // 已有同批其它图完成（主图已落）时不覆盖成功态为错误——部分失败只
         // 影响画册张数。
         if (completedUrls.length > 0) return;
+        // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接（刷新后
+        // resumeNodeGeneration 会重新接上）。写错误横幅只会把一个还活着的任务
+        // 标成失败、并清掉可续接的句柄。
+        if (isTaskPollTimeoutError(error)) {
+          notifyTaskStillRunning(t);
+          return;
+        }
         // 任务仲裁（stale / shouldWrite）只对 run 0 有意义：节点上只持久化了
         // run 0 的任务句柄，其余 run 的 taskKey 必然对不上，套用仲裁会把
         // 它们的失败全部误判为「过期任务」而静默吞掉。

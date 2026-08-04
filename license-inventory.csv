@@ -262,6 +262,7 @@ frontend/src/__mocks__/msw/handlers/tasks.ts,Elastic-2.0,2026 SuperTale contribu
 frontend/src/__mocks__/msw/server.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/api/canvas.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/api/client.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/api/task-poll-timeout.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/account/avatar-upload-dialog.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/assets/asset-panels-rename.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/assets/character-image-source-select.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

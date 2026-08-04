@@ -383,7 +383,7 @@ export const TextAnnotationNode = memo(({
       });
       // Persist the task handle so a page refresh can resume this job.
       updateNodeData(id, generationTaskDescriptor(ref));
-      await awaitTaskCompletion(ref.task_key, projectId);
+      await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
       // SSE task.result only carries `{ output_format: "json" }`; the prompt
       // text comes from the dedicated job-result endpoint.
       const { prompt } = await fetchFreezoneReversePromptResult(projectId, ref.job_id);
@@ -466,7 +466,7 @@ export const TextAnnotationNode = memo(({
         });
         // Persist the task handle so a page refresh can resume this job.
         updateNodeData(videoNodeId, generationTaskDescriptor(ref));
-        const completed = await awaitTaskCompletion(ref.task_key, projectId);
+        const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
         const url = resolveVideoOutputUrl(completed.result);
         if (url) {
           updateNodeData(videoNodeId, {
@@ -868,7 +868,7 @@ function WritingOpsPanel({
         canvasId: readUrl().canvas ?? 'default',
         nodeId,
       });
-      await awaitTaskCompletion(ref.task_key, project);
+      await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
       const result = await fetchFreezoneTextTranslateResult(project, ref.job_id);
       updateNodeData(nodeId, { content: result.translated_text });
     } catch (error) {

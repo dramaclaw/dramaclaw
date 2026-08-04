@@ -209,7 +209,7 @@ export function MaskEditor({
         prompt,
       });
       setProgressMsg("处理中（30-60s）...");
-      const completed = await awaitTaskCompletion(ref.task_key, project);
+      const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
       const directUrl =
         (completed.result?.["output_url"] as string | undefined) || undefined;
       const url =

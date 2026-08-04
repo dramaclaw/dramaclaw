@@ -67,7 +67,7 @@ async function regenerateFreezoneRedrawNode(
       imageSize: request.imageSize,
     });
     useCanvasStore.getState().updateNodeData(nodeId, generationTaskDescriptor(ref));
-    const completed = await awaitTaskCompletion(ref.task_key, project);
+    const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
     const directUrl = completed.result?.['output_url'] as string | undefined;
     let url = directUrl;
     if (!url) {

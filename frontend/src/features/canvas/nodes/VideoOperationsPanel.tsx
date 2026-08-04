@@ -551,7 +551,7 @@ export function VideoOperationsPanel({
           canvasId: readUrl().canvas ?? "default",
           nodeId: id,
         });
-        await awaitTaskCompletion(ref.task_key, project);
+        await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
         const result = await fetchFreezoneTextTranslateResult(
           project,
           ref.job_id,

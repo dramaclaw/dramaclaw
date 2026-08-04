@@ -205,7 +205,7 @@ async function awaitJobAndFetchUrl(
   ref: FreezoneJobRef,
   projectId: string,
 ): Promise<string> {
-  const completed = await awaitTaskCompletion(ref.task_key, projectId);
+  const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
   // Backend writes the output URL into the result payload directly.
   const directUrl = (completed.result?.["output_url"] as string | undefined) || undefined;
   if (directUrl) return directUrl;

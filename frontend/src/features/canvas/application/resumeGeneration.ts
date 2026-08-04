@@ -17,7 +17,12 @@ import {
   fetchFreezoneStoryScriptResult,
   type FreezoneJobRef,
 } from '@/api/ops';
-import { awaitTaskCompletion, listTasks, type TaskState } from '@/api/tasks';
+import {
+  awaitTaskCompletion,
+  isTaskPollTimeoutError,
+  listTasks,
+  type TaskState,
+} from '@/api/tasks';
 import { resolveErrorContent } from '@/features/canvas/application/errorDialog';
 import { providerErrorMessage } from '@/lib/api-errors';
 import { extractRequestId } from '@/features/canvas/application/generationErrorReport';
@@ -279,10 +284,16 @@ export async function resumeNodeGeneration(params: {
   }
 
   try {
-    const completed = await awaitTaskCompletion(taskKey, projectId);
+    // 按任务类型取预算，跟提交侧同一份口径（见 pollTimeoutForTaskType）。
+    const completed = await awaitTaskCompletion(taskKey, projectId, { taskType });
     updateNodeData(node.id, await buildSuccessPatch(kind, completed, taskType, jobId, projectId));
   } catch (error) {
     console.warn('[resume-generation] task resume failed', { nodeId: node.id, taskKey, error });
+    // 轮询超时只说明这一轮不再等了，任务还在后端跑：保留 isGenerating 与句柄，
+    // 下次刷新再接一轮，别把还活着的任务写成失败。
+    if (isTaskPollTimeoutError(error)) {
+      return;
+    }
     if (kind === 'image' || kind === 'video') {
       const latestNodeData = readLatestNodeData();
       if (isStaleGenerationTask({ nodeData: latestNodeData, taskKey })) {

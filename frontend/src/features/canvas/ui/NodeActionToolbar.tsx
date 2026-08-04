@@ -1770,7 +1770,7 @@ export const NodeActionToolbar = memo(
                       projectId,
                       { sourceUrl: videoUrl },
                     );
-                    const completed = await awaitTaskCompletion(ref.task_key, projectId);
+                    const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
                     console.info(
                       "[audio-separate] task completed",
                       completed.result,

@@ -50,6 +50,25 @@ export class TaskCompletionError extends Error {
   }
 }
 
+/**
+ * The front-end gave up waiting — it does NOT mean the task failed. The backend
+ * job keeps running, so callers must not present this as a generation failure
+ * (see {@link awaitTaskCompletion} for how the budget is picked).
+ */
+export class TaskPollTimeoutError extends Error {
+  constructor(
+    public readonly taskKey: string,
+    public readonly waitedMs: number,
+  ) {
+    super("task polling timed out");
+    this.name = "TaskPollTimeoutError";
+  }
+}
+
+export function isTaskPollTimeoutError(error: unknown): error is TaskPollTimeoutError {
+  return error instanceof TaskPollTimeoutError;
+}
+
 function resolveTaskProjectId(projectId?: string): string {
   const resolved = (projectId ?? readUrl().project ?? "").trim();
   if (!resolved) {
@@ -166,6 +185,7 @@ interface PendingResolver {
   resolve: (task: TaskState) => void;
   reject: (err: Error) => void;
   projectId: string;
+  startedAt: number;
   expiresAt: number;
 }
 
@@ -175,7 +195,42 @@ interface ProjectPoller {
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 4000;
-const DEFAULT_MAX_POLL_MS = 20 * 60 * 1000;
+export const DEFAULT_MAX_POLL_MS = 20 * 60 * 1000;
+
+/**
+ * Budget for jobs whose backend ceiling is 30 minutes — video generation
+ * (`NEWAPI_VIDEO_HTTP_TIMEOUT_SECONDS`, `_run_video_subprocess(timeout=30 * 60)`,
+ * the `max_polls=360 * 5s` loop in `generators/video_generator.py`), image
+ * generation (`NEWAPI_IMAGE_HTTP_TIMEOUT_SECONDS`), the ffmpeg renders behind
+ * compose/erase/upscale (`freezone/jobs.py` `_run_cmd(timeout=1800)`),
+ * `stage_asset_tasks` and image-to-3GS. Under the shared 20-minute budget the UI
+ * gave up 10 minutes before the backend did, so a job that was still generating
+ * surfaced as a failure. 35 minutes = backend ceiling + queue/writeback slack.
+ */
+export const LONG_JOB_MAX_POLL_MS = 35 * 60 * 1000;
+
+/**
+ * Task types whose backend ceiling comfortably fits the default budget: audio
+ * speech / music (900s, `freezone/audio_node.py`), text translate and video
+ * story analysis (300s) and reverse prompt (180s) in `freezone/vision_gateway.py`.
+ * Everything else — known heavy types and any type added later — gets
+ * {@link LONG_JOB_MAX_POLL_MS}: over-waiting merely delays a safety net, while
+ * under-waiting reports a running job as failed.
+ */
+const SHORT_TASK_TYPES = new Set([
+  "freezone_audio_speech",
+  "freezone_audio_eleven_music",
+  "freezone_text_translate",
+  "freezone_analyze_video_story",
+  "freezone_image_reverse_prompt",
+]);
+
+export function pollTimeoutForTaskType(taskType: string | null | undefined): number {
+  if (taskType && SHORT_TASK_TYPES.has(taskType)) {
+    return DEFAULT_MAX_POLL_MS;
+  }
+  return LONG_JOB_MAX_POLL_MS;
+}
 const pendingByTaskKey = new Map<string, PendingResolver>();
 const sharedStreamsByProject = new Map<string, SseHandle>();
 const pollersByProject = new Map<string, ProjectPoller>();
@@ -311,7 +366,7 @@ function ensureProjectPoller(projectId: string): void {
         // pending past its deadline — whether the task went missing OR stays
         // visible but never terminal — time it out so the promise can't hang.
         if (pendingByTaskKey.has(taskKey) && now > pending.expiresAt) {
-          pending.reject(new Error("task polling timed out"));
+          pending.reject(new TaskPollTimeoutError(taskKey, now - pending.startedAt));
           pendingByTaskKey.delete(taskKey);
         }
       }
@@ -331,16 +386,34 @@ function ensureProjectPoller(projectId: string): void {
   schedule();
 }
 
-export function awaitTaskCompletion(taskKey: string, projectId: string): Promise<TaskState> {
+/**
+ * Await a freezone job by task key. Pass the submission's `task_type` so the
+ * budget matches that job's backend ceiling ({@link pollTimeoutForTaskType});
+ * `timeoutMs` overrides it outright. Callers that know neither keep the shared
+ * {@link DEFAULT_MAX_POLL_MS}. Rejects with {@link TaskPollTimeoutError} when
+ * the budget runs out; that is a "stopped watching", not a failed job.
+ */
+export function awaitTaskCompletion(
+  taskKey: string,
+  projectId: string,
+  options?: { timeoutMs?: number; taskType?: string | null },
+): Promise<TaskState> {
   const resolved = resolveTaskProjectId(projectId);
   ensureSharedStream(resolved);
   ensureProjectPoller(resolved);
+  const startedAt = Date.now();
+  const budgetMs =
+    options?.timeoutMs ??
+    (options && "taskType" in options
+      ? pollTimeoutForTaskType(options.taskType)
+      : DEFAULT_MAX_POLL_MS);
   const promise = new Promise<TaskState>((resolve, reject) => {
     pendingByTaskKey.set(taskKey, {
       resolve,
       reject,
       projectId: resolved,
-      expiresAt: Date.now() + DEFAULT_MAX_POLL_MS,
+      startedAt,
+      expiresAt: startedAt + budgetMs,
     });
   });
   return promise.finally(() => {

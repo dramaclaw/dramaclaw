@@ -1525,7 +1525,9 @@ export function VideoComposeModal({
           { canvasId, fps: 30 },
         );
         const ref = await submitFreezoneVideoCompose(project, payload);
-        await awaitTaskCompletion(ref.task_key, project);
+        await awaitTaskCompletion(ref.task_key, project, {
+          taskType: ref.task_type,
+        });
         const result = await fetchFreezoneJobResult(
           project,
           "freezone_video_compose",

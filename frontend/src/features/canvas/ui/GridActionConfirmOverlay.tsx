@@ -20,7 +20,8 @@ import {
   type FreezoneTemplateEditMode,
 } from '@/api/ops';
 import { CreditCostInline } from '@/components/credit-cost-inline';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
+import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
@@ -162,7 +163,7 @@ export const GridActionConfirmOverlay = memo(
           prompt: request.label,
         });
         updateNodeData(nextNodeId, generationTaskDescriptor(ref));
-        const completed = await awaitTaskCompletion(ref.task_key, project);
+        const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
         const directUrl = completed.result?.['output_url'] as string | undefined;
         let url = directUrl;
         if (!url) {
@@ -177,6 +178,12 @@ export const GridActionConfirmOverlay = memo(
           generationError: null,
         });
       } catch (err) {
+        // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
+        // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
+        if (isTaskPollTimeoutError(err)) {
+          notifyTaskStillRunning(t);
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
         console.error('[grid-action] generation failed', err);
         updateNodeData(nextNodeId, {

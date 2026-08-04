@@ -28,7 +28,8 @@ import {
   type FreezoneImageTo3GSKind,
   type FreezoneGenerationHistoryRecord,
 } from '@/api/ops';
-import { awaitTaskCompletion, type TaskState } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError, type TaskState } from '@/api/tasks';
+import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
   uploadAndAutoCommitSelectedBackgroundCandidate,
@@ -1073,7 +1074,7 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
         nodeId: id,
       });
       updateNodeData(id, { taskKey: ref.task_key, ...generationTaskDescriptor(ref) });
-      const completed = await awaitTaskCompletion(ref.task_key, projectId);
+      const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
       const generatedSource = sourceFromImageTo3gsResult(completed.result, {
         id: `generated-sog:${sourceKind}:${Date.now()}`,
         sourceKind,
@@ -1099,6 +1100,12 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
         errorMessage: null,
       });
     } catch (error) {
+      // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
+      // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
+      if (isTaskPollTimeoutError(error)) {
+        notifyTaskStillRunning(t);
+        return;
+      }
       updateNodeData(id, {
         isGenerating: false,
         taskKey: null,

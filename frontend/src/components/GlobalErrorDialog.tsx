@@ -9,7 +9,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { AlertCircle, ChevronDown } from 'lucide-react';
+import type { GlobalErrorDialogVariant } from '@/features/app/errorDialogEvents';
+import { AlertCircle, ChevronDown, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -19,6 +20,7 @@ interface GlobalErrorDialogProps {
   message: string;
   details?: string;
   copyText?: string;
+  variant?: GlobalErrorDialogVariant;
   onClose: () => void;
 }
 
@@ -28,6 +30,7 @@ export function GlobalErrorDialog({
   message,
   details,
   copyText,
+  variant = 'error',
   onClose,
 }: GlobalErrorDialogProps) {
   const { t } = useTranslation();
@@ -52,7 +55,9 @@ export function GlobalErrorDialog({
 
   // 只有真正有东西可复制（后端技术详情 / 显式 copyText）时才显示「复制报错信息」。
   // 纯提示类弹窗（如音频时长校验）没有可复制内容，隐藏该按钮避免多余。
-  const canCopy = Boolean(copyText?.trim() || technicalDetails);
+  // pending 变体不是报错，「复制报错信息」在那里只会误导。
+  const isPending = variant === 'pending';
+  const canCopy = !isPending && Boolean(copyText?.trim() || technicalDetails);
 
   useEffect(() => {
     if (isOpen) {
@@ -89,8 +94,18 @@ export function GlobalErrorDialog({
         className="gap-0 overflow-hidden rounded-md border border-white/12 bg-zinc-900/85 p-0 text-text-dark ring-0 backdrop-blur-2xl sm:max-w-[600px]"
       >
         <DialogHeader className="flex-row items-start gap-3 px-5 pb-4 pr-14 pt-5">
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] text-text-muted">
-            <AlertCircle className="h-4 w-4" aria-hidden="true" />
+          <div
+            className={
+              isPending
+                ? 'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-sky-400/24 bg-sky-400/10 text-sky-300'
+                : 'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] text-text-muted'
+            }
+          >
+            {isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <AlertCircle className="h-4 w-4" aria-hidden="true" />
+            )}
           </div>
           <div className="min-w-0">
             <DialogTitle className="text-[17px] font-semibold leading-6 text-text-dark">
