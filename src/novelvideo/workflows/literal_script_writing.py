@@ -4,9 +4,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, ValidationInfo, field_validator, model_validator
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior
 
 from novelvideo.config import (
     get_newapi_text_pydantic_model,
@@ -391,6 +391,7 @@ class LiteralScriptWritingWorkflow:
         self._prop_section = ""
         self.last_review_passed = True
         self.last_review_summary = "逐行剧本模式"
+        self.last_degraded_lines: list[int] = []
 
     @property
     def agent(self) -> Agent:
@@ -446,6 +447,7 @@ class LiteralScriptWritingWorkflow:
         self._prop_section = ""
         self.last_review_passed = True
         self.last_review_summary = "逐行剧本模式"
+        self.last_degraded_lines = []
 
         await self.cognee_store.load_graph_state()
         episode = await self.sqlite_store.get_episode_from_graph(episode_num)
@@ -511,6 +513,7 @@ class LiteralScriptWritingWorkflow:
 
         for content_index, line_ctx in enumerate(line_contexts, start=1):
             raw_line = line_ctx.raw_line
+            content_filtered = False
             block = line_ctx.scene_block
             if block is not current_block:
                 current_block = block
@@ -642,7 +645,13 @@ class LiteralScriptWritingWorkflow:
 """
 
             try:
-                result = await self.agent.run(prompt)
+                output, degraded = await self._run_line_metadata_with_resilience(
+                    prompt=prompt,
+                    raw_line=raw_line,
+                    content_index=content_index,
+                    total=total,
+                    log=log,
+                )
             except ContentFilterError as exc:
                 for message in self._content_filter_log_messages(
                     content_index=content_index,
@@ -651,12 +660,15 @@ class LiteralScriptWritingWorkflow:
                     error=exc,
                 ):
                     log(message)
-                raise RuntimeError(
-                    f"第 {content_index}/{total} 行触发模型内容安全过滤，剧本生成已停止。"
-                    "请检查该行及前后文是否包含血腥、暴力、胁迫、裸露等高风险表达，"
-                    "或在 RelayClaw 中切换更适合剧本创作的文本模型后重试。"
-                ) from exc
-            output: LiteralBeatMetaOutput = result.output
+                log(
+                    f"[Literal][WARN] 第 {content_index}/{total} 行未重试，"
+                    "已使用安全占位 Beat，后续行继续处理。"
+                )
+                output = self._build_placeholder_line_metadata()
+                degraded = True
+                content_filtered = True
+            if degraded:
+                self.last_degraded_lines.append(content_index)
 
             resolved_scene_id = (current_scene_id or "").strip()
             llm_scene_id = (output.scene_id or "").strip()
@@ -682,7 +694,11 @@ class LiteralScriptWritingWorkflow:
                     )
             time_of_day = (current_time_of_day or "").strip()
             visual_description = output.visual_description.strip()
-            audio_type = self._normalize_audio_type_for_mode(output.audio_type)
+            audio_type = (
+                "silence"
+                if content_filtered
+                else self._normalize_audio_type_for_mode(output.audio_type)
+            )
             speaker_kind = (output.speaker_kind or "character").strip()
             speaker = (output.speaker or "").strip()
             audio_type, speaker = self._normalize_audio_metadata(
@@ -694,7 +710,11 @@ class LiteralScriptWritingWorkflow:
                 speaker_kind = "character"
             if audio_type == "dialogue" and speaker_kind == "character" and speaker:
                 speaker = self._resolve_unit_speaker_label(speaker)
-            narration_segment = self._derive_narration_segment(raw_line, audio_type)
+            narration_segment = (
+                ""
+                if content_filtered
+                else self._derive_narration_segment(raw_line, audio_type)
+            )
 
             beats.append(
                 VisualBeat(
@@ -719,6 +739,14 @@ class LiteralScriptWritingWorkflow:
                     episode_sticky_identities[char_name] = identity_id
             log(f"[Literal] 行 {content_index}/{total} -> {audio_type}")
 
+        if self.last_degraded_lines:
+            self.last_review_passed = False
+            degraded_text = ", ".join(str(index) for index in self.last_degraded_lines)
+            self.last_review_summary = (
+                f"逐行剧本已完成；{len(self.last_degraded_lines)} 行未能由模型正常生成，"
+                f"已使用降级 Beat（内容行: {degraded_text}），建议复核后按需单独重试。"
+            )
+
         self._valid_identity_ids.clear()
         self._valid_identity_ids.update(episode_identity_ids)
         self._valid_prop_ids.clear()
@@ -734,6 +762,96 @@ class LiteralScriptWritingWorkflow:
         await self.cognee_store.persist_narration_script(script)
         report_progress(1.0, "完成")
         return script
+
+    async def _run_line_metadata_with_resilience(
+        self,
+        *,
+        prompt: str,
+        raw_line: str,
+        content_index: int,
+        total: int,
+        log: Callable[[str], None],
+    ) -> tuple[LiteralBeatMetaOutput, bool]:
+        """Retry an exhausted structured output once, then preserve the source line."""
+
+        retryable_errors = (UnexpectedModelBehavior, ValidationError)
+        try:
+            result = await self.agent.run(prompt)
+            return result.output, False
+        except ContentFilterError:
+            raise
+        except retryable_errors as first_error:
+            log(
+                f"[Literal][WARN] 第 {content_index}/{total} 行结构化输出失败，"
+                f"正在重新调用模型: {_short_log_text(str(first_error), limit=180)}"
+            )
+
+        try:
+            result = await self.agent.run(prompt)
+            return result.output, False
+        except ContentFilterError:
+            raise
+        except retryable_errors as second_error:
+            log(
+                f"[Literal][WARN] 第 {content_index}/{total} 行重试仍失败，"
+                "已使用原文生成本地兜底 Beat，后续行继续处理。"
+            )
+            log(
+                f"[Literal][WARN] 第 {content_index}/{total} 行最终模型错误: "
+                f"{_short_log_text(str(second_error), limit=180)}"
+            )
+            return self._build_fallback_line_metadata(raw_line), True
+
+    @staticmethod
+    def _build_placeholder_line_metadata() -> LiteralBeatMetaOutput:
+        """Build a safe beat without reusing content rejected by the provider."""
+
+        return LiteralBeatMetaOutput(
+            audio_type="silence",
+            speaker="",
+            speaker_kind="character",
+            visual_description="该行未能生成，请手动补充。",
+            scene_id="",
+        )
+
+    def _build_fallback_line_metadata(self, raw_line: str) -> LiteralBeatMetaOutput:
+        """Build a minimal usable beat without inventing story information."""
+
+        line = (raw_line or "").strip()
+        speaker, speech = self._split_dialogue_line(line)
+        non_character_tokens = ("旁白", "解说", "画外音", "广播", "系统播报", "字幕")
+        is_non_character = bool(
+            speaker and any(token in speaker for token in non_character_tokens)
+        )
+        if speaker and not is_non_character:
+            audio_type = "dialogue"
+            fallback_speaker = speaker
+            visual_description = f"{speaker}开口说话。"
+        elif speaker and is_non_character:
+            audio_type = "narration"
+            fallback_speaker = ""
+            visual_description = speech or line
+        else:
+            audio_type = "narration" if self.audio_type_mode == "narrated" else "silence"
+            fallback_speaker = ""
+            visual_description = line
+
+        # 不让未经校验的资产标记进入后续生成，但保留原文语义。
+        visual_description = (
+            visual_description.replace("{{", "").replace("}}", "")
+            .replace("[[", "").replace("]]", "")
+            .strip()
+        )
+        if len(visual_description) < 5:
+            visual_description = f"画面保留原文：{visual_description or '空白行'}"
+
+        return LiteralBeatMetaOutput.model_construct(
+            audio_type=audio_type,
+            speaker=fallback_speaker,
+            speaker_kind="non_character" if is_non_character else "character",
+            visual_description=visual_description,
+            scene_id="",
+        )
 
     async def run_all_episodes(self) -> list[NarrationScript]:
         episodes = await self.sqlite_store.list_episodes()

@@ -164,6 +164,9 @@ async def _run_script_writer(envelope: dict[str, Any], ctx: ProjectContext) -> d
             "beats_data": [beat.model_dump() for beat in script.beats],
             "review_passed": workflow.last_review_passed,
             "review_summary": workflow.last_review_summary,
+            "degraded_lines": list(
+                getattr(workflow, "last_degraded_lines", []) or []
+            ),
             "output_dir": str(Path(output_dir)),
         }
         return result
