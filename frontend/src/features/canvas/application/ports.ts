@@ -88,7 +88,9 @@ export interface AiGateway {
   submitGenerateImageJob: (payload: GenerateImagePayload) => Promise<string>;
   getGenerateImageJob: (jobId: string) => Promise<{
     job_id: string;
-    status: 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found';
+    // 'detached': the front-end stopped following the task; it is NOT a
+    // failure and must never be rendered as one (see TaskPollTimeoutError).
+    status: 'queued' | 'running' | 'succeeded' | 'failed' | 'detached' | 'not_found';
     result?: string | null;
     error?: string | null;
   }>;

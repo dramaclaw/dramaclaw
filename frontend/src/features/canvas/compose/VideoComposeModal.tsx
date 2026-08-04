@@ -54,7 +54,8 @@ import {
   uploadFreezoneVideo,
   type FreezoneVideoComposeResolution,
 } from "@/api/ops";
-import { awaitTaskCompletion } from "@/api/tasks";
+import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
+import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
 import { useViewerImmersiveBody } from "@/features/viewer-kit/useViewerImmersiveBody";
 import {
   getCachedAudioPeaks,
@@ -1540,6 +1541,16 @@ export function VideoComposeModal({
         if (target === "local") await exportToLocal(result.url);
         else await exportToCanvas(result.url);
       } catch (error) {
+        // 脱离监听 ≠ 合成失败：不写红色错误区，改中性提示，并把任务句柄留在
+        // 任务中心可查（合成没有节点可挂句柄，这里只能提示用户稍后取回）。
+        if (isTaskPollTimeoutError(error)) {
+          console.warn('[video-compose] detached from a still-running compose', {
+            taskKey: error.taskKey,
+            idleMs: error.idleMs,
+          });
+          notifyTaskStillRunning(t);
+          return;
+        }
         setExportError(error instanceof Error ? error.message : String(error));
       } finally {
         setIsExporting(false);

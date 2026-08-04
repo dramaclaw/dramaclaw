@@ -528,7 +528,7 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
         });
       }
     },
-    [imageSize, updateNodeData],
+    [imageSize, t, updateNodeData],
   );
 
   const handleSubmit = useCallback(async () => {

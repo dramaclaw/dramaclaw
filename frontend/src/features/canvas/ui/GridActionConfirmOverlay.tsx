@@ -202,6 +202,7 @@ export const GridActionConfirmOverlay = memo(
       onClose,
       request,
       setSelectedNode,
+      t,
       updateNodeData,
     ]);
 

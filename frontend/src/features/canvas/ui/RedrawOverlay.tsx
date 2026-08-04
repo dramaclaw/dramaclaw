@@ -483,7 +483,7 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
         });
       }
     },
-    [aspectRatio, imageSize, prompt, updateNodeData],
+    [aspectRatio, imageSize, prompt, t, updateNodeData],
   );
 
   const handleSubmit = useCallback(async () => {

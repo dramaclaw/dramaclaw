@@ -243,7 +243,7 @@ export const OutpaintEditorOverlay = memo(
           });
         }
       },
-      [aspectRatio, imageSize, imageSource, updateNodeData],
+      [aspectRatio, imageSize, imageSource, t, updateNodeData],
     );
 
     const handleSubmit = useCallback(async () => {

@@ -157,7 +157,7 @@ export const VideoUpscaleEditorOverlay = memo(
       } finally {
         setIsSubmitting(false);
       }
-    }, [denoise, isSubmitting, node.id, resolution, sourceUrl, updateNodeData]);
+    }, [denoise, isSubmitting, node.id, resolution, sourceUrl, t, updateNodeData]);
 
     return (
       <ReactFlowNodeToolbar

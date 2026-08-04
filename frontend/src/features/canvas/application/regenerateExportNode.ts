@@ -5,7 +5,7 @@ import {
   submitFreezoneRedraw,
   type FreezoneRedrawAspectRatio,
 } from '@/api/ops';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { canvasAiGateway } from './canvasServices';
@@ -85,6 +85,18 @@ async function regenerateFreezoneRedrawNode(
       generationTaskJobId: null,
     });
   } catch (error) {
+    // Detached ≠ failed. The job may still land, and the descriptor written
+    // above is the only way back to it — keep isGenerating and the handle so
+    // resumeNodeGeneration re-attaches on the next load. Clearing them here
+    // would strand a result the backend still produces.
+    if (isTaskPollTimeoutError(error)) {
+      console.warn('[regenerate] detached from a still-running redraw', {
+        nodeId,
+        taskKey: error.taskKey,
+        idleMs: error.idleMs,
+      });
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     console.error('[regenerate] freezone redraw failed', error);
     useCanvasStore.getState().updateNodeData(nodeId, {

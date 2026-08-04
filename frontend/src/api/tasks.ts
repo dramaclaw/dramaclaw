@@ -51,16 +51,28 @@ export class TaskCompletionError extends Error {
 }
 
 /**
- * The front-end gave up waiting — it does NOT mean the task failed. The backend
- * job keeps running, so callers must not present this as a generation failure
- * (see {@link awaitTaskCompletion} for how the budget is picked).
+ * The third settle state, alongside completed and failed: the front-end
+ * *detached*. It does NOT mean the task failed — it means the server stopped
+ * confirming the task is alive (record gone, or the task list unreachable) for
+ * a whole idle budget, so this page can no longer follow it.
+ *
+ * A job the server still reports as submitting/queued/running never lands here,
+ * no matter how long it takes (see {@link awaitTaskCompletion}). Callers must
+ * therefore treat it as "stopped watching": keep the persisted task handle and
+ * `isGenerating`, never write a generation error, never clear the handle — the
+ * handle is the only way back to a result the backend may still produce.
  */
 export class TaskPollTimeoutError extends Error {
   constructor(
     public readonly taskKey: string,
+    /** Total time from the await call to the detach. */
     public readonly waitedMs: number,
+    /** How long the server said nothing about this task before we detached. */
+    public readonly idleMs: number = waitedMs,
+    /** Last non-terminal status seen, or null if the task was never observed. */
+    public readonly lastStatus: TaskStatus | null = null,
   ) {
-    super("task polling timed out");
+    super("task polling detached: no server activity");
     this.name = "TaskPollTimeoutError";
   }
 }
@@ -186,7 +198,16 @@ interface PendingResolver {
   reject: (err: Error) => void;
   projectId: string;
   startedAt: number;
-  expiresAt: number;
+  /** Idle budget: how long we tolerate hearing *nothing* about this task. */
+  budgetMs: number;
+  /**
+   * Last moment the server confirmed the task exists in a non-terminal state.
+   * The deadline hangs off this, not off submit time — a job that spends 10
+   * minutes queued and then runs for 28 must not be abandoned at minute 35.
+   */
+  lastSeenAt: number;
+  /** Latest non-terminal status the server reported, for the detach report. */
+  lastStatus: TaskStatus | null;
 }
 
 interface ProjectPoller {
@@ -198,14 +219,17 @@ const DEFAULT_POLL_INTERVAL_MS = 4000;
 export const DEFAULT_MAX_POLL_MS = 20 * 60 * 1000;
 
 /**
- * Budget for jobs whose backend ceiling is 30 minutes — video generation
+ * Idle budget for jobs whose backend ceiling is 30 minutes — video generation
  * (`NEWAPI_VIDEO_HTTP_TIMEOUT_SECONDS`, `_run_video_subprocess(timeout=30 * 60)`,
  * the `max_polls=360 * 5s` loop in `generators/video_generator.py`), image
  * generation (`NEWAPI_IMAGE_HTTP_TIMEOUT_SECONDS`), the ffmpeg renders behind
  * compose/erase/upscale (`freezone/jobs.py` `_run_cmd(timeout=1800)`),
- * `stage_asset_tasks` and image-to-3GS. Under the shared 20-minute budget the UI
- * gave up 10 minutes before the backend did, so a job that was still generating
- * surfaced as a failure. 35 minutes = backend ceiling + queue/writeback slack.
+ * `stage_asset_tasks` and image-to-3GS.
+ *
+ * This is how long the task may stay *unheard-of* before we detach, not a cap
+ * on how long it may run: the clock restarts on every queued/running sighting.
+ * Sized past the backend ceiling so that even a job whose only trace is its
+ * start and end records is still being followed when the end record lands.
  */
 export const LONG_JOB_MAX_POLL_MS = 35 * 60 * 1000;
 
@@ -296,6 +320,37 @@ function settleTask(task: TaskState): void {
     pending.reject(new TaskCompletionError(task.error ?? `task ${task.status}`, task.status, task.task_key));
     pendingByTaskKey.delete(task.task_key);
     maybeStopProjectMonitoring(pending.projectId);
+  } else {
+    // submitting / queued / running: the server just told us the job is alive,
+    // so the idle budget starts over. Queue time must not eat execution time.
+    pending.lastSeenAt = Date.now();
+    pending.lastStatus = task.status;
+  }
+}
+
+/**
+ * Detach the jobs this project has heard nothing about for a whole idle budget
+ * — the record vanished from the task list, or the list itself keeps failing.
+ *
+ * A task the server still reports as submitting/queued/running is never
+ * detached here, however long it takes: that was the bug. A 10-minute queue
+ * followed by a 28-minute render is a healthy job, and a wall clock started at
+ * submission called it a timeout.
+ */
+function detachIdlePending(projectId: string): void {
+  const now = Date.now();
+  for (const [taskKey, pending] of pendingByTaskKey) {
+    if (pending.projectId !== projectId) continue;
+    if (now - pending.lastSeenAt <= pending.budgetMs) continue;
+    pending.reject(
+      new TaskPollTimeoutError(
+        taskKey,
+        now - pending.startedAt,
+        now - pending.lastSeenAt,
+        pending.lastStatus,
+      ),
+    );
+    pendingByTaskKey.delete(taskKey);
   }
 }
 
@@ -355,26 +410,22 @@ function ensureProjectPoller(projectId: string): void {
     try {
       const tasks = await listTasks(projectId);
       const tasksByKey = new Map(tasks.map((task) => [task.task_key, task]));
-      const now = Date.now();
       for (const [taskKey, pending] of pendingByTaskKey) {
         if (pending.projectId !== projectId) continue;
         const found = tasksByKey.get(taskKey);
-        if (found) {
-          settleTask(found);
-        }
-        // settleTask only settles terminal statuses. If the entry is still
-        // pending past its deadline — whether the task went missing OR stays
-        // visible but never terminal — time it out so the promise can't hang.
-        if (pendingByTaskKey.has(taskKey) && now > pending.expiresAt) {
-          pending.reject(new TaskPollTimeoutError(taskKey, now - pending.startedAt));
-          pendingByTaskKey.delete(taskKey);
-        }
+        // Terminal → settles; non-terminal → refreshes the idle deadline.
+        if (found) settleTask(found);
       }
     } catch {
-      // transient list failure — try again next tick
+      // Transient list failure. Don't skip the sweep below: "the task list has
+      // been unreachable for a whole budget" is exactly one of the two ways the
+      // server goes quiet, and swallowing it here would leave the caller
+      // awaiting a promise nothing can ever settle.
     } finally {
       poller.inFlight = false;
     }
+
+    detachIdlePending(projectId);
 
     if (pendingCountForProject(projectId) === 0) {
       pollersByProject.delete(projectId);
@@ -387,11 +438,17 @@ function ensureProjectPoller(projectId: string): void {
 }
 
 /**
- * Await a freezone job by task key. Pass the submission's `task_type` so the
- * budget matches that job's backend ceiling ({@link pollTimeoutForTaskType});
- * `timeoutMs` overrides it outright. Callers that know neither keep the shared
- * {@link DEFAULT_MAX_POLL_MS}. Rejects with {@link TaskPollTimeoutError} when
- * the budget runs out; that is a "stopped watching", not a failed job.
+ * Await a freezone job by task key.
+ *
+ * The budget is an **idle** budget, not a deadline: it only runs while the
+ * server says nothing about the task. Every observation of submitting / queued
+ * / running (via SSE or the shared poller) restarts it, so a job that queues
+ * for 10 minutes and then renders for 28 is followed to the end. Pass the
+ * submission's `task_type` to size the budget after that job's backend ceiling
+ * ({@link pollTimeoutForTaskType}); `timeoutMs` overrides it outright.
+ *
+ * Rejects with {@link TaskPollTimeoutError} only when the task goes unheard-of
+ * for a whole budget — a detach, not a failure.
  */
 export function awaitTaskCompletion(
   taskKey: string,
@@ -413,7 +470,9 @@ export function awaitTaskCompletion(
       reject,
       projectId: resolved,
       startedAt,
-      expiresAt: startedAt + budgetMs,
+      budgetMs,
+      lastSeenAt: startedAt,
+      lastStatus: null,
     });
   });
   return promise.finally(() => {

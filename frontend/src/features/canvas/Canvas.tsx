@@ -86,7 +86,7 @@ import {
   CURRENT_RUNTIME_SESSION_ID,
   extractRequestId,
 } from '@/features/canvas/application/generationErrorReport';
-import { showErrorDialog } from '@/features/canvas/application/errorDialog';
+import { notifyTaskStillRunning, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import {
   nodeNeedsGenerationResume,
   resumeNodeGeneration,
@@ -1407,6 +1407,26 @@ export function Canvas({
               break;
             }
 
+            if (status.status === 'detached') {
+              // 前端不再跟这个任务了（后端长时间查不到），但它不是失败：不写
+              // generationError，也保留 generationRequestPayload，让「重新生成」
+              // 仍然可用；只给一个中性提示，避免把可能还在跑的任务标成失败。
+              const detachedSessionId = typeof currentData.generationClientSessionId === 'string'
+                ? currentData.generationClientSessionId
+                : '';
+              if (detachedSessionId === CURRENT_RUNTIME_SESSION_ID) {
+                notifyTaskStillRunning(t);
+              }
+              updateNodeData(pendingNode.id, {
+                isGenerating: false,
+                generationStartedAt: null,
+                generationJobId: null,
+                generationProviderId: null,
+                generationClientSessionId: null,
+              });
+              break;
+            }
+
             const errorMessage = status.error ?? (status.status === 'not_found' ? 'generation job not found' : 'generation failed');
             const generationClientSessionId = typeof currentData.generationClientSessionId === 'string'
               ? currentData.generationClientSessionId
@@ -1442,7 +1462,7 @@ export function Canvas({
         }
       })();
     }
-  }, [pendingJobNodeKey, updateNodeData]);
+  }, [pendingJobNodeKey, t, updateNodeData]);
 
   // Resume task_key-based generations (image / video / audio / 3D / script / 反推提示词)
   // after a page refresh. The submit flows persist a GenerationTaskDescriptor on the

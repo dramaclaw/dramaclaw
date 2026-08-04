@@ -1121,6 +1121,7 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
     refreshHistory,
     selectedImageSourceKind,
     sourceNodeForGeneration,
+    t,
     updateNodeData,
     upstream,
   ]);

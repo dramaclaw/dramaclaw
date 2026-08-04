@@ -218,7 +218,7 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
     } finally {
       setIsTranslating(false);
     }
-  }, [isGenerating, handleTextChange, isTranslating, text]);
+  }, [isGenerating, handleTextChange, isTranslating, t, text]);
 
   // 文本框为空但引用了非空文本时也允许提交（effectivePrompt 会回退到上游引用）。
   const submitDisabled =

@@ -1137,6 +1137,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     styleTemplateId,
     submitDisabled,
     shouldInlineUpstreamTextAsPrompt,
+    t,
     updateNodeData,
     upstreamTextJoined,
     refreshHistory,

@@ -97,7 +97,7 @@ export function GlobalErrorDialog({
           <div
             className={
               isPending
-                ? 'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-sky-400/24 bg-sky-400/10 text-sky-300'
+                ? 'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[rgb(var(--accent-rgb)/0.24)] bg-[rgb(var(--accent-rgb)/0.10)] text-[rgb(var(--accent-rgb))]'
                 : 'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] text-text-muted'
             }
           >

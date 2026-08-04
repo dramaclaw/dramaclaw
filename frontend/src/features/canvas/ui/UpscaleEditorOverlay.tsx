@@ -211,6 +211,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
     persistedScaleFactor,
     selectedModel,
     sourceUrl,
+    t,
     updateNodeData,
   ]);
 

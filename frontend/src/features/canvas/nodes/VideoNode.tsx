@@ -2334,6 +2334,7 @@ export const VideoNode = memo(
       refreshHistory,
       sceneOptimize,
       submitDisabled,
+      t,
       updateNodeData,
       upstreamTextJoined,
     ]);
