@@ -12,9 +12,11 @@ import {
 import {
   Handle,
   Position,
+  useStore,
   useUpdateNodeInternals,
   type NodeProps,
 } from '@xyflow/react';
+import { isLowDetailZoom } from '@/features/canvas/application/canvasLod';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -827,6 +829,16 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
       ? t('common.billingRuleNotConfiguredShort')
       : null);
   const updateNodeInternals = useUpdateNodeInternals();
+  // 入口按钮的循环动效在低缩放档下只有几十像素宽，看不出是动的，却要每帧上传
+  // 一次视频纹理。选择器返回 boolean，只在跨过阈值那一次触发重渲染。
+  const lowDetailZoom = useStore((state) => isLowDetailZoom(state.transform[2]));
+  const entryMotionRef = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    const video = entryMotionRef.current;
+    if (!video) return;
+    if (lowDetailZoom) video.pause();
+    else void video.play().catch(() => {});
+  }, [lowDetailZoom]);
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const addPanoCaptureGroup = useCanvasStore((state) => state.addPanoCaptureGroup);
@@ -1397,10 +1409,11 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
             aria-label={directorBusy ? t('viewer.threeD.openingDirectorWorld') : t('viewer.threeD.enterDirectorWorld')}
           >
             <video
+              ref={entryMotionRef}
               src="/images/btnmotion.mp4"
               className="block h-auto select-none"
               style={{ width: '100%' }}
-              autoPlay
+              autoPlay={!lowDetailZoom}
               loop
               muted
               playsInline

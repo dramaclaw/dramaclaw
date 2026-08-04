@@ -71,6 +71,14 @@ import {
   isPresetManagedNode,
 } from '@/features/canvas/domain/mainlineNodeFlags';
 import { prepareNodeImage } from '@/features/canvas/application/imageData';
+import {
+  CANVAS_LOW_DETAIL_CLASS,
+  CANVAS_PANNING_CLASS,
+  PANNING_CLASS_RELEASE_DELAY_MS,
+  isLowDetailZoom,
+  setCanvasGestureActive,
+  setCanvasLowDetail,
+} from '@/features/canvas/application/canvasLod';
 import { isSupportedMediaFile } from '@/features/canvas/application/videoFileTypes';
 import { uploadLocalImageToBackend } from '@/features/canvas/application/uploadToolOutput';
 import {
@@ -1768,16 +1776,68 @@ export function Canvas({
   // 重跑 selector(如 BackToNodesHint 的 O(n) 可见性判断)。这里节流到 ~8fps,并在
   // onMoveEnd 必定提交最终值,既消除每帧 store 风暴,又保证落库/可见性判断及时收敛。
   const lastViewportCommitRef = useRef(0);
+
+  // LOD 效果类一律走 classList 直改 DOM，不进 React state：平移期间每帧 setState
+  // 会把「省下来的光栅化时间」原样还给 render，得不偿失。
+  //
+  // lowDetailActive 是唯一的例外：它驱动 onlyRenderVisibleElements 的开关（低缩放
+  // 档全部节点都是轻量 shell，视口裁剪只剩挂载/卸载翻腾的坏处，索性关掉），必须是
+  // React state。setState 有值守卫，平移中每帧调用但值不变，不触发重渲染；只有
+  // 缩放跨过阈值那一次会让 Canvas 重渲染一遍。
+  const panningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lowDetailActive, setLowDetailActive] = useState(() =>
+    isLowDetailZoom(initialViewportRef.current.zoom)
+  );
+  const applyLowDetailClass = useCallback((zoom: number) => {
+    const lowDetail = isLowDetailZoom(zoom);
+    wrapperRef.current?.classList.toggle(CANVAS_LOW_DETAIL_CLASS, lowDetail);
+    setCanvasLowDetail(lowDetail);
+    // 升档（退出低缩放）必须与 withLodShell 的 shell→full 交换落在同一次提交：
+    // 此刻裁剪若还停留在「低缩放档全量挂载」，302 个 shell 会同时换成完整组件
+    // （实测 ~960ms 冻结），随后 moveEnd 恢复裁剪又把 ~290 个刚挂上的整批卸掉
+    // （再冻 ~1s）。同一提交生效则裁剪先把可见集收窄到十几个，只有它们挂完整
+    // 组件（实测 ~90ms）。React 对同一事件里的 store 通知和 setState 统一批处理，
+    // 这里的 set 与交换必然同帧。降档方向相反——见 handleMoveEnd 的注释。
+    if (!lowDetail) {
+      setLowDetailActive(false);
+    }
+  }, []);
+
+  const handleMoveStart = useCallback(() => {
+    if (panningReleaseTimerRef.current) {
+      clearTimeout(panningReleaseTimerRef.current);
+      panningReleaseTimerRef.current = null;
+    }
+    wrapperRef.current?.classList.add(CANVAS_PANNING_CLASS);
+    setCanvasGestureActive(true);
+  }, []);
+
   const handleMoveEnd = useCallback(
     (_event: unknown, viewport: Viewport) => {
       lastViewportCommitRef.current = Date.now();
+      applyLowDetailClass(viewport.zoom);
+      // 降档（进入低缩放）的裁剪关闭只在手势结束时提交：全量挂载 ~240 个 shell 的
+      // 波放在缩放手势中途会有可感知的顿挫，推迟到松手后手势保持流畅；中途已跨档
+      // 的可见节点由 withLodShell 的 selector 先行换成 shell，不受此影响。升档方向
+      // 不能等到这里——见 applyLowDetailClass 的注释。
+      setLowDetailActive(isLowDetailZoom(viewport.zoom));
+      if (panningReleaseTimerRef.current) {
+        clearTimeout(panningReleaseTimerRef.current);
+      }
+      panningReleaseTimerRef.current = setTimeout(() => {
+        panningReleaseTimerRef.current = null;
+        wrapperRef.current?.classList.remove(CANVAS_PANNING_CLASS);
+        setCanvasGestureActive(false);
+      }, PANNING_CLASS_RELEASE_DELAY_MS);
       setViewportState(viewport);
     },
-    [setViewportState]
+    [applyLowDetailClass, setViewportState]
   );
 
   const handleMove = useCallback(
     (_event: unknown, viewport: Viewport) => {
+      // 缩放跨档要立刻生效（用户能看见节点内容切换），所以不受下面的节流限制。
+      applyLowDetailClass(viewport.zoom);
       const now = Date.now();
       if (now - lastViewportCommitRef.current < 120) {
         return;
@@ -1785,10 +1845,24 @@ export function Canvas({
       lastViewportCommitRef.current = now;
       setViewportState(viewport);
     },
-    [setViewportState]
+    [applyLowDetailClass, setViewportState]
   );
 
-  const handleMoveStart = useCallback(() => {}, []);
+  // 首屏恢复的视口不会触发 onMove/onMoveEnd，低缩放档要在这里补一次。
+  useEffect(() => {
+    applyLowDetailClass(initialViewportRef.current.zoom);
+    setLowDetailActive(isLowDetailZoom(initialViewportRef.current.zoom));
+    return () => {
+      if (panningReleaseTimerRef.current) {
+        clearTimeout(panningReleaseTimerRef.current);
+        panningReleaseTimerRef.current = null;
+      }
+      // 模块级信号要跟着画布一起复位，否则卸载时若正在手势中，下一次挂载会
+      // 一直以为「还在平移」而永远不测量。
+      setCanvasGestureActive(false);
+      setCanvasLowDetail(false);
+    };
+  }, [applyLowDetailClass]);
 
   useEffect(() => {
     const wrapperElement = wrapperRef.current;
@@ -4496,7 +4570,7 @@ export function Canvas({
     <div
       ref={wrapperRef}
       data-canvas-tool={handToolActive ? 'hand' : 'move'}
-      className="relative h-full w-full bg-background"
+      className="dc-canvas relative h-full w-full bg-background"
       onDragEnter={handleCanvasDragEnter}
       onDragOver={handleCanvasDragOver}
       onDragLeave={handleCanvasDragLeave}
@@ -4548,7 +4622,10 @@ export function Canvas({
         multiSelectionKeyCode={MULTI_SELECTION_KEY_CODES}
         selectionKeyCode={null}
         deleteKeyCode={null}
-        onlyRenderVisibleElements
+        // 低缩放档关掉视口裁剪：此档所有节点都是轻量 shell（见 withLodShell），
+        // 全量挂载的渲染树很小；而裁剪在快速平移时每帧挂/卸边界节点，实测 4 秒
+        // 拖拽 800+ 次翻腾、p99 帧时 470ms——收益早已倒挂。高缩放档维持裁剪。
+        onlyRenderVisibleElements={!lowDetailActive}
         zoomOnDoubleClick={false}
         proOptions={REACT_FLOW_PRO_OPTIONS}
         className="bg-background"
