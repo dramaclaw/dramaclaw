@@ -485,6 +485,13 @@ class FreezoneEditRequest(BaseModel):
         default=None, description="可选：注册表模型 id，用于还原节点时回填 model"
     )
     gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    model_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "媒体模型目录声明的动态参数取值。与 /freezone/gen 同一口径 —— "
+            "带参考图的图编辑走这条路由，少了这个字段目录参数在图编辑侧等于没生效"
+        ),
+    )
 
 
 class FreezoneSketchFromContextRequest(BaseModel):

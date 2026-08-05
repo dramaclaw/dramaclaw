@@ -3371,6 +3371,320 @@ async def test_scene_360_endpoint_keeps_image_size_below_the_cap(
     assert captured["payload"]["billing"]["pricing_model"] == "google/gemini-2.5-flash-image-preview"
 
 
+def _fake_media_model_catalog(entries: list[dict[str, object]]):
+    """权威（EE）图片目录的替身：非空列表 = 目录里只认这几条。"""
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return entries
+
+    return fake_catalog
+
+
+def _patch_scene_360_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    captured: dict,
+) -> ProjectContext:
+    ctx = _project_ctx(tmp_path)
+
+    async def fake_resolve_freezone_project(*_args, **_kwargs):
+        return ctx, "admin", "demo", ctx.output_dir, str(ctx.output_dir)
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        captured["payload"] = kwargs.get("payload") or {}
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_scene_360"),
+            backend="celery",
+            queue="node.node_a.world",
+        )
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve_freezone_project)
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+    _write_image(ctx.output_dir / "assets" / "scenes" / "小区" / "master.png")
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_scene_360_takes_model_and_billing_identity_from_the_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """身份以目录条目为准，不采信 body。
+
+    body 里的 catalog_id 直接决定按哪条目录规则扣费 —— 采信它就等于允许客户端
+    报一个便宜的 catalog_id、配一个贵的 model。
+    """
+    captured: dict = {}
+    _patch_scene_360_enqueue(monkeypatch, tmp_path, captured)
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {},
+            {},
+            {
+                "catalogId": "cat-real",
+                "id": "cat-real",
+                "providerId": "newapi",
+                "apiModel": "real-pano-model",
+                "gatewayModel": "real-pano-model",
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes, "_resolve_catalog_request", fake_resolve_catalog_request
+    )
+
+    await freezone_routes.freezone_scene_360(
+        project="proj_freezone",
+        body=freezone_routes.FreezoneScene360Request(
+            reference_url="/api/v1/projects/proj_freezone/media/assets/scenes/小区/master.png",
+            model="real-pano-model",
+            catalog_id="cat-cheap",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert captured["payload"]["params"]["model"] == "real-pano-model"
+    assert captured["payload"]["billing"]["catalog_id"] == "cat-real"
+    assert captured["payload"]["billing"]["pricing_model"] == "real-pano-model"
+
+
+@pytest.mark.asyncio
+async def test_scene_360_rejects_a_model_the_catalog_does_not_have(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """目录权威时非目录模型必须被拦掉，而不是拿默认模型偷偷跑掉。"""
+    captured: dict = {}
+    _patch_scene_360_enqueue(monkeypatch, tmp_path, captured)
+    monkeypatch.setattr(
+        freezone_routes,
+        "_ee_media_model_catalog",
+        _fake_media_model_catalog([{"catalogId": "cat-real", "apiModel": "real-pano-model"}]),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_scene_360(
+            project="proj_freezone",
+            body=freezone_routes.FreezoneScene360Request(
+                reference_url=(
+                    "/api/v1/projects/proj_freezone/media/assets/scenes/小区/master.png"
+                ),
+                model="not-in-catalog",
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc_info.value.status_code == 409
+    assert not captured
+
+
+@pytest.mark.asyncio
+async def test_template_edit_takes_provider_model_and_identity_from_the_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """宫格动作与 /freezone/edit 共用同一条执行链，provider 也要跟着目录走。
+
+    只发裸 model 的话网关按默认 provider 路由，目录里配的 openrouter 模型会被
+    送错家。
+    """
+    username = "admin"
+    project = "59"
+    project_dir, _output_dir = _patch_freezone_project(
+        monkeypatch, tmp_path, username=username, project=project
+    )
+    source = project_dir / "freezone" / "_uploads" / "portrait.png"
+    _write_image(source, size=(1080, 1920))
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {},
+            {},
+            {
+                "catalogId": "cat-grid",
+                "id": "cat-grid",
+                "providerId": "openrouter",
+                "apiModel": "google/gemini-2.5-flash-image-preview",
+                "gatewayModel": "google/gemini-2.5-flash-image-preview",
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes, "_resolve_catalog_request", fake_resolve_catalog_request
+    )
+    captured: dict[str, object] = {}
+    _patch_celery_edit_enqueue(monkeypatch, captured)
+
+    result = await freezone_routes.freezone_template_edit(
+        project=project,
+        body=freezone_routes.FreezoneTemplateEditRequest(
+            source_url="/static/admin/59/freezone/_uploads/portrait.png",
+            mode="multi_camera_nine_grid",
+            model="google/gemini-2.5-flash-image-preview",
+            catalog_id="cat-cheap",
+        ),
+        user={"username": username},
+    )
+
+    assert result["ok"] is True
+    assert captured["provider"] == "openrouter"
+    assert captured["model"] == "google/gemini-2.5-flash-image-preview"
+    assert captured["catalog_id"] == "cat-grid"
+    assert captured["billing"]["catalog_id"] == "cat-grid"
+
+
+@pytest.mark.asyncio
+async def test_template_edit_rejects_a_model_the_catalog_does_not_have(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    username = "admin"
+    project = "59"
+    project_dir, _output_dir = _patch_freezone_project(
+        monkeypatch, tmp_path, username=username, project=project
+    )
+    _write_image(project_dir / "freezone" / "_uploads" / "portrait.png", size=(1080, 1920))
+    monkeypatch.setattr(
+        freezone_routes,
+        "_ee_media_model_catalog",
+        _fake_media_model_catalog([{"catalogId": "cat-grid", "apiModel": "grid-model"}]),
+    )
+    captured: dict[str, object] = {}
+    _patch_celery_edit_enqueue(monkeypatch, captured)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_template_edit(
+            project=project,
+            body=freezone_routes.FreezoneTemplateEditRequest(
+                source_url="/static/admin/59/freezone/_uploads/portrait.png",
+                mode="multi_camera_nine_grid",
+                model="not-in-catalog",
+            ),
+            user={"username": username},
+        )
+
+    assert exc_info.value.status_code == 409
+    assert not captured
+
+
+@pytest.mark.asyncio
+async def test_freezone_edit_forwards_catalog_model_params_into_task_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """带参考图的图编辑走 /freezone/edit，目录动态参数必须一路到任务负载。
+
+    schema 要和取值一起下发 —— runner 只有拿到 requestPath 才知道把参数写进网关
+    请求体的哪个位置，只带值等于没生效。
+    """
+    username = "admin"
+    project = "58"
+    project_dir, _output_dir = _patch_freezone_project(
+        monkeypatch, tmp_path, username=username, project=project
+    )
+    source = project_dir / "freezone" / "_uploads" / "base.png"
+    _write_image(source, size=(1024, 1024))
+
+    schema = {
+        "endpoint": "images/edits",
+        "parameters": [
+            {"key": "quality", "requestPath": "quality", "modes": ["image_to_image"]},
+        ],
+    }
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            schema,
+            {"quality": "high"},
+            {
+                "catalogId": "cat-edit",
+                "id": "cat-edit",
+                "providerId": "newapi",
+                "apiModel": "custom-edit",
+                "gatewayModel": "custom-edit",
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
+    captured: dict[str, object] = {}
+    _patch_celery_edit_enqueue(monkeypatch, captured)
+
+    result = await freezone_routes.freezone_edit(
+        project=project,
+        body=freezone_routes.FreezoneEditRequest(
+            prompt="换成夜景",
+            base_url="/static/admin/58/freezone/_uploads/base.png",
+            model="custom-edit",
+            model_id="cat-edit",
+            gen_mode="image_to_image",
+            model_params={"quality": "high"},
+        ),
+        user={"username": username},
+    )
+
+    assert result["ok"] is True
+    assert captured["model_params"] == {"quality": "high"}
+    assert captured["request_schema"] == schema
+    assert captured["catalog_id"] == "cat-edit"
+
+
+@pytest.mark.asyncio
+async def test_run_freezone_edit_writes_model_params_into_gateway_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """runner 侧同 run_freezone_gen 一个口径：参数与 schema 都要落到网关 config。"""
+    from novelvideo import config as novelvideo_config
+    from novelvideo.freezone import jobs as freezone_jobs
+    from novelvideo.generators import nanobanana_grid
+
+    base = tmp_path / "base.png"
+    _write_image(base, size=(64, 64))
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        novelvideo_config,
+        "get_grid_generation_config",
+        lambda **_kwargs: {"provider": "newapi", "model": "custom-edit"},
+    )
+
+    async def fake_generate_reference_edit_image(**kwargs):
+        captured.update(kwargs)
+        Path(kwargs["output_path"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(kwargs["output_path"]).write_bytes(b"")
+        return kwargs["output_path"]
+
+    monkeypatch.setattr(
+        nanobanana_grid,
+        "generate_reference_edit_image",
+        fake_generate_reference_edit_image,
+    )
+
+    schema = {"endpoint": "images/edits", "parameters": [{"key": "quality"}]}
+    await freezone_jobs.run_freezone_edit(
+        project_dir=tmp_path,
+        job_id="job_edit",
+        prompt="换成夜景",
+        base_path=str(base),
+        model_params={"quality": "high"},
+        request_schema=schema,
+    )
+
+    assert captured["config"]["newapi_model_params"] == {"quality": "high"}
+    assert captured["config"]["newapi_request_schema"] == schema
+
+
 def _skill_beat_input() -> dict:
     return {
         "role": "beat_context",

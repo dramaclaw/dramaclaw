@@ -253,6 +253,8 @@ async def run_freezone_edit(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     quality: Optional[str] = None,
+    model_params: Optional[dict[str, Any]] = None,
+    request_schema: Optional[dict[str, Any]] = None,
     output_task_type: str = "freezone_edit",
 ) -> Path:
     """image + reference + prompt → new image.
@@ -276,6 +278,10 @@ async def run_freezone_edit(
         model_override=model,
         image_size_override=image_size,
     )
+    # 与 run_freezone_gen 同一口径：目录声明的动态参数按 schema 里的 requestPath
+    # 写进网关请求体。少了这两行，图编辑侧的 model_params 会在这里被丢掉。
+    cfg["newapi_model_params"] = model_params or {}
+    cfg["newapi_request_schema"] = request_schema or {}
     await generate_reference_edit_image(
         prompt=prompt,
         reference_images=refs,
