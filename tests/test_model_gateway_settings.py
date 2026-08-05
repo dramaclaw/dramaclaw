@@ -34,6 +34,7 @@ from novelvideo.newapi_provisioner import (
     build_channel_payload,
     ensure_newapi_setup,
     get_provisioner_config,
+    list_channel_types,
     NewApiSetupCredentials,
     NewApiProvisionerConfig,
     normalize_admin_base_url,
@@ -42,6 +43,67 @@ from novelvideo.newapi_provisioner import (
     update_provider_channel_credentials,
     upsert_channel,
 )
+
+
+@respx.mock
+def test_list_channel_types_normalizes_newapi_metadata():
+    cfg = NewApiProvisionerConfig(
+        admin_base_url="http://new-api:3000",
+        sql_dsn="local",
+        sqlite_path="/tmp/one-api.db",
+        admin_username="root",
+        init_timeout_ms=1000,
+        relay_token_name="dramaclaw-ce-runtime",
+    )
+    admin = AdminToken(
+        admin_user_id=1,
+        admin_username="root",
+        access_token="admin-secret",
+        token_created=False,
+    )
+    route = respx.get(
+        "http://new-api:3000/api/channel/types",
+        params={"status": 1},
+    ).mock(
+        return_value=Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "items": [
+                        {
+                            "type": 62,
+                            "provider": "TokenHub",
+                            "name": "TokenHub",
+                            "description": "Telecom gateway",
+                            "icon": "TokenHub",
+                            "default_base_url": "https://aigw.telecomjs.com",
+                            "status": 1,
+                            "capabilities": ["text", "video"],
+                            "requires_base_url": False,
+                            "supports_base_url_override": True,
+                        }
+                    ]
+                },
+            },
+        )
+    )
+
+    assert list_channel_types(cfg, admin) == [
+        {
+            "type": 62,
+            "provider": "tokenhub",
+            "name": "TokenHub",
+            "description": "Telecom gateway",
+            "icon": "TokenHub",
+            "defaultBaseUrl": "https://aigw.telecomjs.com",
+            "status": 1,
+            "capabilities": ["text", "video"],
+            "requiresBaseUrl": False,
+            "supportsBaseUrlOverride": True,
+        }
+    ]
+    assert route.called
 
 
 def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
@@ -746,6 +808,7 @@ def test_upsert_channel_merges_existing_dc_provider_channel():
     assert channel["name"] == "DC-ali"
     assert channel["key"] == "sk-upstream-new"
     assert channel["base_url"] == "https://dashscope-new.example.com"
+    assert "status" not in channel
     assert channel["models"] == "DC-old-model,DC-screenplay-normalizer-LLM"
     assert json.loads(channel["model_mapping"]) == {
         "DC-old-model": "qwen-old",
@@ -1591,12 +1654,14 @@ def test_custom_newapi_provider_channels_route_persists_and_masks_keys(
     assert channels == [
         {
             "provider": "ali",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "https://dashscope.example.com",
         },
         {
             "provider": "deepseek",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-d...cret",
             "baseUrl": "",
@@ -1694,6 +1759,7 @@ def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(
     assert channels == [
         {
             "provider": "ali",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "https://dashscope-new.example.com",
@@ -1793,6 +1859,7 @@ def test_custom_newapi_provider_channel_sync_allows_clearing_saved_base_url(
     assert channels == [
         {
             "provider": "ali",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "",
@@ -2185,8 +2252,7 @@ def test_custom_newapi_embedding_model_writes_mapping_and_persists_dimension(
     }
 
 
-def test_custom_newapi_embedding_model_accepts_positive_project_dimension(
-):
+def test_custom_newapi_embedding_model_accepts_positive_project_dimension():
     body = model_gateway.SaveEmbeddingModelBody.model_validate(
         {
             "provider": "openai",

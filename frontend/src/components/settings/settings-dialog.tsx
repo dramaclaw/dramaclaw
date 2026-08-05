@@ -36,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { safeLocalStorageSet } from "@/lib/localStorageQuota";
 import { cn } from "@/lib/utils";
 import {
   FEATURE_MODEL_GROUPS,
@@ -45,6 +46,7 @@ import {
 } from "@/lib/feature-models";
 import {
   useModelGatewayConfig,
+  useNewApiChannelTypes,
   useEnableOfficial,
   useSaveOfficialConfig,
   useInitCustomNewApi,
@@ -59,6 +61,7 @@ import {
   type ModelGatewayConfig,
   type CustomChannelInput,
   type NewApiDatabaseConfigInput,
+  type NewApiChannelType,
   type SavedEmbeddingModelConfig,
   type SavedProviderChannelConfig,
 } from "@/lib/queries/model-gateway";
@@ -68,6 +71,7 @@ import {
   type AliyunOssStorageConfig,
   type CloudinaryStorageConfig,
   type EmbeddingModelEntry,
+  type FeatureModelSettings,
   type FeatureModelProvider,
   type MediaStorageProvider,
 } from "@/stores/settingsStore";
@@ -346,6 +350,7 @@ function ModelConfigSection({ open }: { open: boolean }) {
       {/* 功能模型映射仅在自定义渠道展示；官方渠道不需要。 */}
       {mode === "custom" ? (
         <>
+          <CustomGatewayPanel config={config} loading={loading} baseUrl={customBaseUrl} />
           <QuickLocalNewApiSetup
             config={config}
             loading={loading}
@@ -357,7 +362,6 @@ function ModelConfigSection({ open }: { open: boolean }) {
               {t("settings.modelConfig.quick.advanced")}
             </summary>
             <div className="border-t border-border/70 px-3 pb-4">
-              <CustomGatewayPanel config={config} loading={loading} baseUrl={customBaseUrl} />
               <FeatureModelsBlock
                 newApiBaseUrl={customBaseUrl}
                 database={customDatabase}
@@ -707,8 +711,6 @@ const MEDIA_MODEL_ROWS: readonly {
   { model: "happyhorse-1.0", kind: "video" },
   { model: "index-tts-2", kind: "audio" },
   { model: "LingShan-MU-11", kind: "audio" },
-  { model: "seedance-2.0-value", kind: "video", officialOnly: true },
-  { model: "seedance-2.0-fast-value", kind: "video", officialOnly: true },
 ];
 
 const MEDIA_ROW_GRID =
@@ -720,6 +722,7 @@ const DEFAULT_EMBEDDING_BATCH_SIZE = 10;
 interface QuickProfileChannel {
   id: string;
   provider: FeatureModelProvider;
+  type?: number;
   baseUrl: string;
 }
 
@@ -743,19 +746,23 @@ interface QuickModelProfile {
 
 const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
   version: 2,
-  name: "DramaClaw CE 多渠道推荐配置",
+  name: "DramaClaw CE OpenRouter 与火山推荐配置",
   channels: [
-    { id: "aliyun", provider: "ali", baseUrl: "" },
+    {
+      id: "openrouter",
+      provider: "openrouter",
+      baseUrl: "",
+    },
     { id: "volcengine", provider: "volcengine", baseUrl: "" },
   ],
   featureModels: {
-    text: { channel: "aliyun", model: "qwen-plus" },
-    vision: { channel: "aliyun", model: "qwen-vl-max" },
+    text: { channel: "openrouter", model: "openai/gpt-5.6-luna" },
+    vision: { channel: "openrouter", model: "openai/gpt-5.6-luna" },
     overrides: {},
   },
   embedding: {
-    channel: "aliyun",
-    model: "text-embedding-v3",
+    channel: "openrouter",
+    model: "qwen/qwen3-embedding-8b",
     dimension: 1024,
     batchSize: 10,
   },
@@ -763,12 +770,57 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
     MEDIA_MODEL_ROWS.filter((row) => !row.officialOnly).map((row) => [
       row.model,
       {
-        channel: row.model.startsWith("seedance-") ? "volcengine" : "aliyun",
+        channel: row.model.startsWith("seedance-") ? "volcengine" : "openrouter",
         model: row.model,
       },
     ]),
   ),
 };
+
+type QuickProfileKind = "recommended" | "custom";
+
+interface StoredQuickProfiles {
+  version: 1;
+  selected: QuickProfileKind;
+  customProfileJson: string;
+  appliedProfileJson: string;
+}
+
+const QUICK_PROFILES_STORAGE_KEY = "dramaclaw-ce-quick-model-profiles";
+const RECOMMENDED_PROFILE_JSON = JSON.stringify(RECOMMENDED_LOCAL_NEWAPI_PROFILE, null, 2);
+
+function loadStoredQuickProfiles(): StoredQuickProfiles {
+  const fallback: StoredQuickProfiles = {
+    version: 1,
+    selected: "recommended",
+    customProfileJson: "",
+    appliedProfileJson: "",
+  };
+  if (typeof window === "undefined") return fallback;
+  try {
+    const stored = JSON.parse(localStorage.getItem(QUICK_PROFILES_STORAGE_KEY) ?? "null") as
+      | Partial<StoredQuickProfiles>
+      | null;
+    if (!stored || stored.version !== 1) return fallback;
+    return {
+      version: 1,
+      selected: stored.selected === "custom" ? "custom" : "recommended",
+      customProfileJson:
+        typeof stored.customProfileJson === "string" ? stored.customProfileJson : "",
+      appliedProfileJson:
+        typeof stored.appliedProfileJson === "string" ? stored.appliedProfileJson : "",
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveStoredQuickProfiles(value: Omit<StoredQuickProfiles, "version">): void {
+  safeLocalStorageSet(
+    QUICK_PROFILES_STORAGE_KEY,
+    JSON.stringify({ version: 1, ...value } satisfies StoredQuickProfiles),
+  );
+}
 
 function parseQuickModelProfile(value: string): QuickModelProfile {
   const profile = JSON.parse(value) as QuickModelProfile;
@@ -782,8 +834,14 @@ function parseQuickModelProfile(value: string): QuickModelProfile {
     const id = channel.id?.trim();
     if (!id) throw new Error("channel.id is required");
     if (channelIds.has(id)) throw new Error(`duplicate channel id: ${id}`);
-    if (!FEATURE_MODEL_PROVIDERS.includes(channel.provider)) {
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(channel.provider)) {
       throw new Error(`unsupported provider: ${channel.provider}`);
+    }
+    if (
+      channel.type !== undefined &&
+      (!Number.isInteger(channel.type) || channel.type <= 0)
+    ) {
+      throw new Error(`invalid channel type: ${channel.provider}`);
     }
     if (providers.has(channel.provider)) {
       throw new Error(`duplicate provider is not supported yet: ${channel.provider}`);
@@ -818,6 +876,82 @@ function parseQuickModelProfile(value: string): QuickModelProfile {
   return profile;
 }
 
+function syncQuickProfileFromAdvancedSettings(
+  profile: QuickModelProfile,
+  settings: FeatureModelSettings,
+): QuickModelProfile {
+  const channels = [...profile.channels];
+  const channelIdByProvider = new Map(
+    channels.map((channel) => [channel.provider, channel.id]),
+  );
+  const ensureChannel = (provider: FeatureModelProvider): string => {
+    const existing = channelIdByProvider.get(provider);
+    if (existing) return existing;
+    const id = provider;
+    channels.push({
+      id,
+      provider,
+      baseUrl: settings.providerChannels[provider]?.baseUrl ?? "",
+    });
+    channelIdByProvider.set(provider, id);
+    return id;
+  };
+
+  for (const channel of Object.values(settings.providerChannels)) {
+    const id = ensureChannel(channel.provider);
+    const target = channels.find((item) => item.id === id);
+    if (target) target.baseUrl = channel.baseUrl;
+  }
+
+  const overrides: Record<string, QuickProfileModel> = {};
+  for (const group of FEATURE_MODEL_GROUPS) {
+    for (const feature of group.features) {
+      const entry = settings.featureModels[feature.id];
+      if (!entry?.model) continue;
+      const fallback = feature.requiresVision
+        ? profile.featureModels.vision
+        : profile.featureModels.text;
+      const selected = {
+        channel: ensureChannel(entry.provider),
+        model: entry.model,
+      };
+      if (selected.channel !== fallback.channel || selected.model !== fallback.model) {
+        overrides[feature.id] = selected;
+      }
+    }
+  }
+
+  const embedding = settings.embeddingModel
+    ? {
+        channel: ensureChannel(settings.embeddingModel.provider),
+        model: settings.embeddingModel.upstreamModel,
+        dimension: settings.embeddingModel.dimension,
+        batchSize:
+          settings.embeddingModel.batchSize ?? profile.embedding.batchSize,
+      }
+    : profile.embedding;
+  const mediaModels =
+    Object.keys(settings.mediaModels).length > 0
+      ? Object.fromEntries(
+          Object.entries(settings.mediaModels).map(([model, entry]) => [
+            model,
+            {
+              channel: ensureChannel(entry.provider),
+              model: entry.upstreamModel || model,
+            },
+          ]),
+        )
+      : profile.mediaModels;
+
+  return {
+    ...profile,
+    channels,
+    featureModels: { ...profile.featureModels, overrides },
+    embedding,
+    mediaModels,
+  };
+}
+
 function QuickLocalNewApiSetup({
   config,
   loading,
@@ -830,7 +964,6 @@ function QuickLocalNewApiSetup({
   database: NewApiDatabaseConfigInput | undefined;
 }) {
   const { t } = useTranslation();
-  const initCustom = useInitCustomNewApi();
   const saveProviderChannels = useSaveProviderChannels();
   const saveBatch = useSaveCustomChannelsBatch();
   const saveEmbedding = useSaveEmbeddingModel();
@@ -840,14 +973,28 @@ function QuickLocalNewApiSetup({
   const updateFeatureModel = useSettingsStore((s) => s.updateFeatureModel);
   const setEmbeddingModel = useSettingsStore((s) => s.setEmbeddingModel);
   const setMediaModels = useSettingsStore((s) => s.setMediaModels);
+  const advancedSettings = useSettingsStore((s) => s.featureModelConfig);
   const [upstreamKeys, setUpstreamKeys] = useState<Record<string, string>>({});
-  const [setupPassword, setSetupPassword] = useState("");
-  const [setupConfirmPassword, setSetupConfirmPassword] = useState("");
-  const [profileJson, setProfileJson] = useState(() =>
-    JSON.stringify(RECOMMENDED_LOCAL_NEWAPI_PROFILE, null, 2),
+  const [recentlySavedChannels, setRecentlySavedChannels] = useState<
+    SavedProviderChannelConfig[]
+  >([]);
+  const [storedProfiles] = useState(loadStoredQuickProfiles);
+  const [selectedProfileKind, setSelectedProfileKind] = useState<QuickProfileKind>(
+    storedProfiles.selected === "custom" && storedProfiles.customProfileJson
+      ? "custom"
+      : "recommended",
   );
+  const [customProfileJson, setCustomProfileJson] = useState(storedProfiles.customProfileJson);
+  const [appliedProfileJson, setAppliedProfileJson] = useState(storedProfiles.appliedProfileJson);
   const [applyError, setApplyError] = useState("");
   const [applyingStep, setApplyingStep] = useState("");
+  const profileJson =
+    selectedProfileKind === "recommended" ? RECOMMENDED_PROFILE_JSON : customProfileJson;
+  const appliedProfileKind: QuickProfileKind | null = appliedProfileJson
+    ? appliedProfileJson === RECOMMENDED_PROFILE_JSON
+      ? "recommended"
+      : "custom"
+    : null;
   const parsedProfile = useMemo(() => {
     try {
       return parseQuickModelProfile(profileJson);
@@ -855,13 +1002,69 @@ function QuickLocalNewApiSetup({
       return null;
     }
   }, [profileJson]);
-  const customConfigured = Boolean(config?.custom?.configured);
-  const isPending = [initCustom, saveProviderChannels, saveBatch, saveEmbedding, saveMedia].some(
+  const advancedSettingsKey = JSON.stringify(advancedSettings);
+  const previousAdvancedSettingsKey = useRef("");
+  useEffect(() => {
+    if (previousAdvancedSettingsKey.current === advancedSettingsKey) return;
+    previousAdvancedSettingsKey.current = advancedSettingsKey;
+    if (!appliedProfileJson) {
+      const hasExistingAdvancedSettings =
+        Object.keys(advancedSettings.providerChannels).length > 0 ||
+        Object.keys(advancedSettings.featureModels).length > 0 ||
+        Object.keys(advancedSettings.mediaModels).length > 0 ||
+        Boolean(advancedSettings.embeddingModel);
+      if (!hasExistingAdvancedSettings) return;
+      const recoveredJson = JSON.stringify(
+        syncQuickProfileFromAdvancedSettings(
+          RECOMMENDED_LOCAL_NEWAPI_PROFILE,
+          advancedSettings,
+        ),
+        null,
+        2,
+      );
+      setSelectedProfileKind("custom");
+      setCustomProfileJson(recoveredJson);
+      setAppliedProfileJson(recoveredJson);
+      saveStoredQuickProfiles({
+        selected: "custom",
+        customProfileJson: recoveredJson,
+        appliedProfileJson: recoveredJson,
+      });
+      return;
+    }
+    let appliedProfile: QuickModelProfile;
+    try {
+      appliedProfile = parseQuickModelProfile(appliedProfileJson);
+    } catch {
+      return;
+    }
+    const syncedJson = JSON.stringify(
+      syncQuickProfileFromAdvancedSettings(appliedProfile, advancedSettings),
+      null,
+      2,
+    );
+    if (syncedJson === appliedProfileJson) return;
+    setCustomProfileJson(syncedJson);
+    setAppliedProfileJson(syncedJson);
+    saveStoredQuickProfiles({
+      selected: selectedProfileKind,
+      customProfileJson: syncedJson,
+      appliedProfileJson: syncedJson,
+    });
+  }, [advancedSettings, advancedSettingsKey, appliedProfileJson, selectedProfileKind]);
+  const localNewApiReady = Boolean(
+    config?.custom?.configured && config?.provisioner?.database?.available,
+  );
+  const isPending = [saveProviderChannels, saveBatch, saveEmbedding, saveMedia].some(
     (mutation) => mutation.isPending,
   );
 
   const handleApply = async () => {
     setApplyError("");
+    if (!localNewApiReady) {
+      setApplyError(t("settings.modelConfig.quick.initializeFirst"));
+      return;
+    }
     let profile: QuickModelProfile;
     try {
       profile = parseQuickModelProfile(profileJson);
@@ -871,10 +1074,20 @@ function QuickLocalNewApiSetup({
       return;
     }
 
+    const usedChannelIds = new Set<string>([
+      profile.featureModels.text.channel,
+      profile.featureModels.vision.channel,
+      profile.embedding.channel,
+      ...Object.values(profile.featureModels.overrides).map((item) => item.channel),
+      ...Object.values(profile.mediaModels).map((item) => item.channel),
+    ]);
+    const activeChannels = profile.channels.filter((channel) => usedChannelIds.has(channel.id));
     const savedProviderByName = new Map(
-      (config?.provisioner?.providerChannels ?? []).map((channel) => [channel.provider, channel]),
+      [...(config?.provisioner?.providerChannels ?? []), ...recentlySavedChannels].map(
+        (channel) => [channel.provider, channel],
+      ),
     );
-    const missingKeyChannels = profile.channels.filter(
+    const missingKeyChannels = activeChannels.filter(
       (channel) =>
         !upstreamKeys[channel.id]?.trim() && !savedProviderByName.get(channel.provider)?.configured,
     );
@@ -886,21 +1099,6 @@ function QuickLocalNewApiSetup({
       );
       return;
     }
-    const password = setupPassword.trim();
-    const confirmation = setupConfirmPassword.trim();
-    if (!customConfigured && (!password || !confirmation)) {
-      setApplyError(t("settings.modelConfig.custom.setupPasswordIncomplete"));
-      return;
-    }
-    if (password && password.length < 8) {
-      setApplyError(t("settings.modelConfig.custom.setupPasswordTooShort"));
-      return;
-    }
-    if (password !== confirmation) {
-      setApplyError(t("settings.modelConfig.custom.setupPasswordMismatch"));
-      return;
-    }
-
     const channelById = new Map(profile.channels.map((channel) => [channel.id, channel]));
     const featureMappingsByChannel = new Map<string, Record<string, string>>();
     const selectedFeatureModels = new Map<string, QuickProfileModel>();
@@ -927,26 +1125,22 @@ function QuickLocalNewApiSetup({
       throw new Error(`${step}: ${getResponseErrorMessage(response, t("settings.modelConfig.requestFailed"))}`);
     };
     try {
-      setApplyingStep(t("settings.modelConfig.quick.steps.initialize"));
-      const initResult = await initCustom.mutateAsync({
-        ...(newApiBaseUrl.trim() ? { newApiBaseUrl: newApiBaseUrl.trim() } : {}),
-        ...(!customConfigured
-          ? { setupUsername: "root", setupPassword: password, setupConfirmPassword: confirmation }
-          : {}),
-      });
-      if (!initResult.ok) fail(t("settings.modelConfig.quick.steps.initialize"), initResult);
-
       setApplyingStep(t("settings.modelConfig.quick.steps.channel"));
       const channelResult = await saveProviderChannels.mutateAsync({
-        channels: profile.channels.map((channel) => ({
+        channels: activeChannels.map((channel) => ({
           provider: channel.provider,
+          ...(channel.type ? { type: channel.type } : {}),
           ...(upstreamKeys[channel.id]?.trim()
             ? { upstreamKey: upstreamKeys[channel.id].trim() }
             : {}),
           baseUrl: channel.baseUrl.trim(),
         })),
       });
-      if (!channelResult.ok) fail(t("settings.modelConfig.quick.steps.channel"), channelResult);
+      if (channelResult.ok !== true || !("data" in channelResult)) {
+        fail(t("settings.modelConfig.quick.steps.channel"), channelResult);
+      }
+      const savedChannels = "data" in channelResult ? channelResult.data.channels : [];
+      setRecentlySavedChannels(savedChannels);
 
       setApplyingStep(t("settings.modelConfig.quick.steps.features"));
       const featureResult = await saveBatch.mutateAsync({
@@ -956,6 +1150,7 @@ function QuickLocalNewApiSetup({
           const channel = channelById.get(channelId)!;
           return {
             provider: channel.provider,
+            ...(channel.type ? { type: channel.type } : {}),
             upstreamKey: upstreamKeys[channel.id]?.trim() ?? "",
             modelMapping,
             group: "default",
@@ -1018,9 +1213,15 @@ function QuickLocalNewApiSetup({
         batchSize: profile.embedding.batchSize,
       });
       setMediaModels(mediaModels);
+      const nextCustomProfileJson =
+        selectedProfileKind === "custom" ? profileJson : customProfileJson;
+      setAppliedProfileJson(profileJson);
+      saveStoredQuickProfiles({
+        selected: selectedProfileKind,
+        customProfileJson: nextCustomProfileJson,
+        appliedProfileJson: profileJson,
+      });
       setUpstreamKeys({});
-      setSetupPassword("");
-      setSetupConfirmPassword("");
       toast.success(t("settings.modelConfig.quick.applied"));
     } catch (error) {
       const message = await getRequestErrorMessage(error, t("settings.modelConfig.requestFailed"));
@@ -1040,21 +1241,50 @@ function QuickLocalNewApiSetup({
             {t("settings.modelConfig.quick.description")}
           </p>
         </div>
-        <span className="shrink-0 rounded bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-300">
-          {t("settings.modelConfig.quick.recommended")}
-        </span>
+        <div className="flex shrink-0 items-center gap-1 rounded-md border border-border/70 p-1">
+          <Button
+            type="button"
+            size="sm"
+            variant={selectedProfileKind === "recommended" ? "secondary" : "ghost"}
+            className="h-6 px-2 text-[10px]"
+            onClick={() => {
+              setSelectedProfileKind("recommended");
+              saveStoredQuickProfiles({
+                selected: "recommended",
+                customProfileJson,
+                appliedProfileJson,
+              });
+            }}
+          >
+            {t("settings.modelConfig.quick.recommended")}
+            {appliedProfileKind === "recommended"
+              ? ` · ${t("settings.modelConfig.quick.active")}`
+              : ""}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={selectedProfileKind === "custom" ? "secondary" : "ghost"}
+            className="h-6 px-2 text-[10px]"
+            onClick={() => {
+              const nextCustom = customProfileJson || RECOMMENDED_PROFILE_JSON;
+              setCustomProfileJson(nextCustom);
+              setSelectedProfileKind("custom");
+              saveStoredQuickProfiles({
+                selected: "custom",
+                customProfileJson: nextCustom,
+                appliedProfileJson,
+              });
+            }}
+          >
+            {t("settings.modelConfig.quick.custom")}
+            {appliedProfileKind === "custom"
+              ? ` · ${t("settings.modelConfig.quick.active")}`
+              : ""}
+          </Button>
+        </div>
       </div>
 
-      {!customConfigured ? (
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <FieldRow secret name="quick-newapi-password" autoComplete="new-password"
-            label={t("settings.modelConfig.custom.setupPassword")} value={setupPassword}
-            onChange={setSetupPassword} placeholder={t("settings.modelConfig.custom.setupPasswordPlaceholder")} />
-          <FieldRow secret name="quick-newapi-password-confirmation" autoComplete="new-password"
-            label={t("settings.modelConfig.custom.setupConfirmPassword")} value={setupConfirmPassword}
-            onChange={setSetupConfirmPassword} placeholder={t("settings.modelConfig.custom.setupConfirmPasswordPlaceholder")} />
-        </div>
-      ) : null}
       <div className="mt-3 rounded-md border border-border/60 p-3">
         <p className="text-[11px] font-medium text-foreground">
           {t("settings.modelConfig.quick.channelKeysTitle")}
@@ -1062,9 +1292,10 @@ function QuickLocalNewApiSetup({
         {parsedProfile ? (
           <div className="mt-3 space-y-3">
             {parsedProfile.channels.map((channel) => {
-              const saved = config?.provisioner?.providerChannels?.find(
-                (item) => item.provider === channel.provider && item.configured,
-              );
+              const saved = [
+                ...recentlySavedChannels,
+                ...(config?.provisioner?.providerChannels ?? []),
+              ].find((item) => item.provider === channel.provider && item.configured);
               return (
                 <div key={channel.id} className="grid grid-cols-[150px_minmax(0,1fr)] items-end gap-3">
                   <div className="pb-2 text-[11px] text-muted-foreground">
@@ -1107,10 +1338,25 @@ function QuickLocalNewApiSetup({
           {t("settings.modelConfig.quick.editJson")}
         </summary>
         <div className="border-t border-border/60 p-3">
-          <Textarea value={profileJson} onChange={(event) => setProfileJson(event.target.value)}
-            spellCheck={false} className="min-h-72 resize-y font-mono text-[11px] leading-relaxed" />
+          <Textarea
+            value={profileJson}
+            readOnly={selectedProfileKind === "recommended"}
+            onChange={(event) => {
+              const value = event.target.value;
+              setCustomProfileJson(value);
+              saveStoredQuickProfiles({
+                selected: "custom",
+                customProfileJson: value,
+                appliedProfileJson,
+              });
+            }}
+            spellCheck={false}
+            className="min-h-72 resize-y font-mono text-[11px] leading-relaxed"
+          />
           <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-            {t("settings.modelConfig.quick.jsonHint")}
+            {selectedProfileKind === "recommended"
+              ? t("settings.modelConfig.quick.recommendedJsonHint")
+              : t("settings.modelConfig.quick.jsonHint")}
           </p>
         </div>
       </details>
@@ -1121,9 +1367,18 @@ function QuickLocalNewApiSetup({
       ) : null}
       <div className="mt-3 flex items-center justify-between gap-3">
         <p className="text-[11px] text-muted-foreground">
-          {applyingStep ? t("settings.modelConfig.quick.applying", { step: applyingStep }) : t("settings.modelConfig.quick.applyHint")}
+          {applyingStep
+            ? t("settings.modelConfig.quick.applying", { step: applyingStep })
+            : !localNewApiReady
+              ? t("settings.modelConfig.quick.initializeFirst")
+              : t("settings.modelConfig.quick.applyHint")}
         </p>
-        <Button type="button" size="sm" onClick={handleApply} disabled={loading || isPending}>
+        <Button
+          type="button"
+          size="sm"
+          onClick={handleApply}
+          disabled={loading || isPending || !localNewApiReady}
+        >
           {isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
           {t("settings.modelConfig.quick.apply")}
         </Button>
@@ -1132,7 +1387,7 @@ function QuickLocalNewApiSetup({
   );
 }
 
-const FEATURE_PROVIDER_LABELS: Record<FeatureModelProvider, string> = {
+const FEATURE_PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
   midjourney: "Midjourney",
   azure: "Azure",
@@ -1188,6 +1443,13 @@ const FEATURE_PROVIDER_LABELS: Record<FeatureModelProvider, string> = {
   codex: "Codex",
 };
 
+function featureProviderLabel(
+  provider: string,
+  channelTypes?: ReadonlyMap<string, NewApiChannelType>,
+): string {
+  return channelTypes?.get(provider)?.name || FEATURE_PROVIDER_LABELS[provider] || provider;
+}
+
 
 function FeatureModelsBlock({
   newApiBaseUrl,
@@ -1205,12 +1467,22 @@ function FeatureModelsBlock({
   const { t } = useTranslation();
   const featureModels = useSettingsStore((s) => s.featureModelConfig.featureModels);
   const providerChannels = useSettingsStore((s) => s.featureModelConfig.providerChannels);
+  const channelTypesQuery = useNewApiChannelTypes();
+  const channelTypeByProvider = useMemo(
+    () =>
+      new Map(
+        channelTypesQuery.data?.ok
+          ? channelTypesQuery.data.data.items.map((item) => [item.provider, item] as const)
+          : [],
+      ),
+    [channelTypesQuery.data],
+  );
   const saveBatch = useSaveCustomChannelsBatch();
   const addFeatureProviderChannel = useSettingsStore((s) => s.addFeatureProviderChannel);
   const updateFeatureProviderChannel = useSettingsStore((s) => s.updateFeatureProviderChannel);
 
   const configuredProviders = useMemo(
-    () => FEATURE_MODEL_PROVIDERS.filter((p) => Boolean(providerChannels[p])),
+    () => Object.keys(providerChannels).sort(),
     [providerChannels],
   );
   const textFeatureGroups = useMemo(
@@ -1239,7 +1511,6 @@ function FeatureModelsBlock({
     if (lastSyncedProviderChannelsKey.current === savedProviderChannelsKey) return;
     lastSyncedProviderChannelsKey.current = savedProviderChannelsKey;
     for (const channel of savedProviderChannels) {
-      if (!FEATURE_MODEL_PROVIDERS.includes(channel.provider as FeatureModelProvider)) continue;
       const provider = channel.provider as FeatureModelProvider;
       const current = useSettingsStore.getState().featureModelConfig.providerChannels?.[provider];
       const savedBaseUrl = channel.baseUrl ?? "";
@@ -1272,6 +1543,9 @@ function FeatureModelsBlock({
       const channel = providerChannels[provider];
       return {
         provider,
+        type:
+          channelTypeByProvider.get(provider)?.type ||
+          savedChannelByProvider.get(provider)?.type,
         upstreamKey: (channel?.upstreamKey ?? "").trim(),
         modelMapping,
         group: "default",
@@ -1302,7 +1576,7 @@ function FeatureModelsBlock({
         if (c.upstreamKey) return false;
         return !savedChannelByProvider.get(c.provider)?.configured;
       })
-      .map((c) => FEATURE_PROVIDER_LABELS[c.provider as FeatureModelProvider]);
+      .map((c) => featureProviderLabel(c.provider, channelTypeByProvider));
     if (missing.length > 0) {
       toast.error(
         t("settings.modelConfig.featureModels.missingKeys", { providers: missing.join("、") }),
@@ -1338,6 +1612,8 @@ function FeatureModelsBlock({
         savedProviderChannels={savedProviderChannels}
         newApiBaseUrl={newApiBaseUrl}
         database={database}
+        channelTypes={channelTypesQuery.data?.ok ? channelTypesQuery.data.data.items : []}
+        channelTypesLoading={channelTypesQuery.isLoading}
       />
 
       <CogneeModelsBlock
@@ -1537,7 +1813,7 @@ function EmbeddingModelBlock({
     }
     if (!savedChannelByProvider.get(provider)?.configured) {
       const message = t("settings.modelConfig.featureModels.missingKeys", {
-        providers: FEATURE_PROVIDER_LABELS[provider],
+        providers: featureProviderLabel(provider),
       });
       setSaveError(message);
       toast.error(message);
@@ -1621,13 +1897,13 @@ function EmbeddingModelBlock({
           >
             <SelectTrigger size="sm" className="w-full">
               <SelectValue placeholder={t("settings.modelConfig.embeddingModel.defaultProvider")}>
-                {(provider: string) => FEATURE_PROVIDER_LABELS[provider as FeatureModelProvider]}
+                {(provider: string) => featureProviderLabel(provider)}
               </SelectValue>
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
               {configuredProviders.map((provider) => (
                 <SelectItem key={provider} value={provider}>
-                  {FEATURE_PROVIDER_LABELS[provider]}
+                  {featureProviderLabel(provider)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1769,7 +2045,7 @@ function MediaModelsBlock({
     if (missingProviders.length > 0) {
       const message = t("settings.modelConfig.featureModels.missingKeys", {
         providers: missingProviders
-          .map((provider) => FEATURE_PROVIDER_LABELS[provider])
+          .map((provider) => featureProviderLabel(provider))
           .join("、"),
       });
       setSaveError(message);
@@ -1880,13 +2156,13 @@ function MediaModelsBlock({
                 >
                   <SelectTrigger size="sm" className="w-full">
                     <SelectValue placeholder={t("settings.modelConfig.mediaModels.defaultProvider")}>
-                      {(provider: string) => FEATURE_PROVIDER_LABELS[provider as FeatureModelProvider]}
+                      {(provider: string) => featureProviderLabel(provider)}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent alignItemWithTrigger={false}>
                     {configuredProviders.map((provider) => (
                       <SelectItem key={provider} value={provider}>
-                        {FEATURE_PROVIDER_LABELS[provider]}
+                        {featureProviderLabel(provider)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1951,37 +2227,63 @@ function ProviderChannelsBlock({
   savedProviderChannels,
   newApiBaseUrl,
   database,
+  channelTypes,
+  channelTypesLoading,
 }: {
   savedProviderChannels: SavedProviderChannelConfig[];
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
+  channelTypes: NewApiChannelType[];
+  channelTypesLoading: boolean;
 }) {
   const { t } = useTranslation();
   const providerChannels = useSettingsStore((s) => s.featureModelConfig.providerChannels);
   const addFeatureProviderChannel = useSettingsStore((s) => s.addFeatureProviderChannel);
+  const updateFeatureProviderChannel = useSettingsStore((s) => s.updateFeatureProviderChannel);
   const saveProviderChannels = useSaveProviderChannels();
+  const channelTypeByProvider = useMemo(
+    () => new Map(channelTypes.map((item) => [item.provider, item])),
+    [channelTypes],
+  );
 
   const configuredProviders = useMemo(
-    () => FEATURE_MODEL_PROVIDERS.filter((p) => Boolean(providerChannels[p])),
+    () => Object.keys(providerChannels).sort(),
     [providerChannels],
   );
-  const availableProviders = FEATURE_MODEL_PROVIDERS.filter((p) => !providerChannels[p]);
+  const providerOptions = channelTypes.length > 0
+    ? channelTypes.filter((item) => item.status === 1)
+    : FEATURE_MODEL_PROVIDERS.map((provider) => ({
+        provider,
+        name: featureProviderLabel(provider),
+      }));
+  const availableProviders = providerOptions.filter(
+    (item) => !providerChannels[item.provider],
+  );
   const savedChannelByProvider = useMemo(() => {
     return new Map(savedProviderChannels.map((channel) => [channel.provider, channel]));
   }, [savedProviderChannels]);
   const [selectedProvider, setSelectedProvider] = useState<FeatureModelProvider>(
-    availableProviders[0] ?? FEATURE_MODEL_PROVIDERS[0],
+    availableProviders[0]?.provider ?? FEATURE_MODEL_PROVIDERS[0],
   );
 
   useEffect(() => {
-    if (!availableProviders.includes(selectedProvider) && availableProviders[0]) {
-      setSelectedProvider(availableProviders[0]);
+    if (
+      !availableProviders.some((item) => item.provider === selectedProvider) &&
+      availableProviders[0]
+    ) {
+      setSelectedProvider(availableProviders[0].provider);
     }
   }, [availableProviders, selectedProvider]);
 
   const handleAdd = () => {
-    if (!availableProviders.includes(selectedProvider)) return;
+    if (!availableProviders.some((item) => item.provider === selectedProvider)) return;
     addFeatureProviderChannel(selectedProvider);
+    const channelType = channelTypeByProvider.get(selectedProvider);
+    if (channelType?.requiresBaseUrl && channelType.defaultBaseUrl) {
+      updateFeatureProviderChannel(selectedProvider, {
+        baseUrl: channelType.defaultBaseUrl,
+      });
+    }
   };
 
   const handleSaveChannels = () => {
@@ -1996,13 +2298,18 @@ function ProviderChannelsBlock({
       })
       .map((provider) => ({
         provider,
+        type:
+          channelTypeByProvider.get(provider)?.type ||
+          savedChannelByProvider.get(provider)?.type,
         upstreamKey: (providerChannels[provider]?.upstreamKey ?? "").trim() || undefined,
         baseUrl: (providerChannels[provider]?.baseUrl ?? "").trim(),
       }));
     if (channelsToSave.length === 0) {
       toast.error(
         t("settings.modelConfig.featureModels.missingKeys", {
-          providers: configuredProviders.map((provider) => FEATURE_PROVIDER_LABELS[provider]).join("、"),
+          providers: configuredProviders
+            .map((provider) => featureProviderLabel(provider, channelTypeByProvider))
+            .join("、"),
         }),
       );
       return;
@@ -2046,17 +2353,17 @@ function ProviderChannelsBlock({
           <Select
             value={selectedProvider}
             onValueChange={(value) => setSelectedProvider(value as FeatureModelProvider)}
-            disabled={availableProviders.length === 0}
+            disabled={channelTypesLoading || availableProviders.length === 0}
           >
             <SelectTrigger size="sm" className="min-w-[170px] flex-1">
               <SelectValue>
-                {(value: string) => FEATURE_PROVIDER_LABELS[value as FeatureModelProvider]}
+                {(value: string) => featureProviderLabel(value, channelTypeByProvider)}
               </SelectValue>
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
-              {availableProviders.map((p) => (
-                <SelectItem key={p} value={p}>
-                  {FEATURE_PROVIDER_LABELS[p]}
+              {availableProviders.map((item) => (
+                <SelectItem key={item.provider} value={item.provider}>
+                  {item.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -2067,7 +2374,7 @@ function ProviderChannelsBlock({
             variant="outline"
             className="shrink-0"
             onClick={handleAdd}
-            disabled={availableProviders.length === 0}
+            disabled={channelTypesLoading || availableProviders.length === 0}
           >
             <Plus className="size-3.5" />
             {t("settings.modelConfig.featureModels.addChannel")}
@@ -2082,6 +2389,7 @@ function ProviderChannelsBlock({
               <ProviderChannelRow
                 key={provider}
                 provider={provider}
+                channelType={channelTypeByProvider.get(provider)}
                 savedChannel={savedChannelByProvider.get(provider)}
                 newApiBaseUrl={newApiBaseUrl}
                 database={database}
@@ -2114,11 +2422,13 @@ function ProviderChannelsBlock({
 
 function ProviderChannelRow({
   provider,
+  channelType,
   savedChannel,
   newApiBaseUrl,
   database,
 }: {
   provider: FeatureModelProvider;
+  channelType: NewApiChannelType | undefined;
   savedChannel: SavedProviderChannelConfig | undefined;
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
@@ -2145,7 +2455,7 @@ function ProviderChannelRow({
     if (!upstreamKey && !savedChannel?.configured) {
       toast.error(
         t("settings.modelConfig.featureModels.missingKeys", {
-          providers: FEATURE_PROVIDER_LABELS[provider],
+          providers: channelType?.name || featureProviderLabel(provider),
         }),
       );
       return;
@@ -2179,7 +2489,7 @@ function ProviderChannelRow({
           {t("settings.modelConfig.featureModels.channelProvider")}
         </Label>
         <div className="mt-1.5 h-9 rounded-md border border-border/70 bg-white/[0.03] px-3 py-2 text-xs text-foreground">
-          {FEATURE_PROVIDER_LABELS[provider]}
+          {channelType?.name || featureProviderLabel(provider)}
         </div>
       </div>
       <div>
@@ -2234,7 +2544,11 @@ function ProviderChannelRow({
         <Input
           value={channel?.baseUrl ?? ""}
           onChange={(e) => updateFeatureProviderChannel(provider, { baseUrl: e.target.value })}
-          placeholder={t("settings.modelConfig.featureModels.baseUrlPlaceholder")}
+          placeholder={
+            channelType?.defaultBaseUrl ||
+            t("settings.modelConfig.featureModels.baseUrlPlaceholder")
+          }
+          disabled={channelType?.supportsBaseUrlOverride === false}
           className="mt-1.5 h-9 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
         />
       </div>
@@ -2341,13 +2655,13 @@ function FeatureModelCapabilitySection({
         >
           <SelectTrigger size="sm" className="w-full">
             <SelectValue placeholder={t("settings.modelConfig.featureModels.noChannelsShort")}>
-              {(value: string) => FEATURE_PROVIDER_LABELS[value as FeatureModelProvider]}
+              {(value: string) => featureProviderLabel(value)}
             </SelectValue>
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false}>
             {configuredProviders.map((provider) => (
               <SelectItem key={provider} value={provider}>
-                {FEATURE_PROVIDER_LABELS[provider]}
+                {featureProviderLabel(provider)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -2506,7 +2820,7 @@ function FeatureModelRow({
     if (!upstreamKey && !savedChannelByProvider.get(provider)?.configured) {
       toast.error(
         t("settings.modelConfig.featureModels.missingKeys", {
-          providers: FEATURE_PROVIDER_LABELS[provider],
+          providers: featureProviderLabel(provider),
         }),
       );
       return;
@@ -2553,13 +2867,13 @@ function FeatureModelRow({
       >
         <SelectTrigger size="sm" className="w-full">
           <SelectValue placeholder={t("settings.modelConfig.featureModels.noChannelsShort")}>
-            {(value: string) => FEATURE_PROVIDER_LABELS[value as FeatureModelProvider]}
+            {(value: string) => featureProviderLabel(value)}
           </SelectValue>
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
           {configuredProviders.map((p) => (
             <SelectItem key={p} value={p}>
-              {FEATURE_PROVIDER_LABELS[p]}
+              {featureProviderLabel(p)}
             </SelectItem>
           ))}
         </SelectContent>

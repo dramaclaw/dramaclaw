@@ -45,9 +45,23 @@ export interface NewApiDatabaseStatus {
 
 export interface SavedProviderChannelConfig {
   provider: string;
+  type?: number;
   configured: boolean;
   upstreamKeyPreview: string;
   baseUrl: string;
+}
+
+export interface NewApiChannelType {
+  type: number;
+  provider: string;
+  name: string;
+  description: string;
+  icon: string;
+  defaultBaseUrl: string;
+  status: number;
+  capabilities: string[];
+  requiresBaseUrl: boolean;
+  supportsBaseUrlOverride: boolean;
 }
 
 export interface SavedMediaModelConfig {
@@ -146,6 +160,7 @@ export interface FastApiErrorResponse {
 /** 一个 NewAPI 渠道：provider + 上游 Key + DC 模型名→上游模型名映射。 */
 export interface CustomChannelInput {
   provider: string;
+  type?: number;
   /** 渠道名，可选；不填后端自动生成。 */
   name?: string;
   upstreamKey: string;
@@ -161,7 +176,7 @@ export interface CustomChannelInput {
 }
 
 export interface SaveProviderChannelsInput {
-  channels: Array<{ provider: string; upstreamKey?: string; baseUrl?: string }>;
+  channels: Array<{ provider: string; type?: number; upstreamKey?: string; baseUrl?: string }>;
 }
 
 export interface SyncProviderChannelInput {
@@ -252,6 +267,21 @@ export function useModelGatewayConfig(enabled = true) {
   });
 }
 
+export function useNewApiChannelTypes(enabled = true) {
+  return useQuery({
+    queryKey: [...queryKeys.modelGateway(), "channel-types"],
+    queryFn: ({ signal }) =>
+      api
+        .get("api/v1/model-gateway/custom/newapi/channel-types", {
+          signal,
+          throwHttpErrors: false,
+        })
+        .json<OkResponse<{ items: NewApiChannelType[] }> | ErrorResponse>(),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useSaveOfficialConfig() {
   const qc = useQueryClient();
   return useMutation({
@@ -310,7 +340,28 @@ export function useSaveProviderChannels() {
           timeout: 60_000,
         })
         .json<OkResponse<{ channels: SavedProviderChannelConfig[] }> | ErrorResponse>(),
-    onSuccess: () => {
+    onSuccess: async (response) => {
+      if (response.ok === true) {
+        await qc.cancelQueries({ queryKey: queryKeys.modelGateway() });
+        qc.setQueryData<OkResponse<ModelGatewayConfig>>(
+          queryKeys.modelGateway(),
+          (current) =>
+            current
+              ? {
+                  ...current,
+                  data: {
+                    ...current.data,
+                    provisioner: current.data.provisioner
+                      ? {
+                          ...current.data.provisioner,
+                          providerChannels: response.data.channels,
+                        }
+                      : current.data.provisioner,
+                  },
+                }
+              : current,
+        );
+      }
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
     },
   });

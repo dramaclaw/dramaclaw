@@ -34,6 +34,7 @@ from novelvideo.newapi_provisioner import (
     ensure_newapi_setup,
     ensure_admin_access_token,
     get_provisioner_config,
+    list_channel_types,
     mask_token,
     NewApiSetupCredentials,
     require_provisioner_enabled,
@@ -143,6 +144,7 @@ class CreateChannelsBatchBody(BaseModel):
 
 class ProviderChannelConfigBody(BaseModel):
     provider: str
+    type: int | None = None
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     base_url: str | None = Field(default=None, alias="baseUrl")
 
@@ -228,7 +230,7 @@ def _build_channel_payload_from_spec(
     saved_channel = get_newapi_provider_channel(spec.provider) or {}
     return build_channel_payload(
         provider=spec.provider,
-        channel_type=spec.type,
+        channel_type=spec.type or int(saved_channel.get("type") or 0) or None,
         name=spec.name,
         upstream_key=spec.upstream_key or saved_channel.get("upstreamKey", ""),
         model_mapping=spec.model_mapping,
@@ -559,6 +561,7 @@ async def save_custom_newapi_provider_channels(
             [
                 {
                     "provider": channel.provider,
+                    "type": channel.type or 0,
                     "upstreamKey": channel.upstream_key or "",
                     "baseUrl": channel.base_url or "",
                 }
@@ -578,6 +581,7 @@ async def save_custom_newapi_provider_channels(
             "channels": [
                 {
                     "provider": channel["provider"],
+                    "type": channel.get("type", 0),
                     "configured": bool(channel["upstreamKey"]),
                     "upstreamKeyPreview": mask_token(channel["upstreamKey"]),
                     "baseUrl": channel["baseUrl"],
@@ -586,6 +590,20 @@ async def save_custom_newapi_provider_channels(
             ]
         },
     }
+
+
+@router.get("/custom/newapi/channel-types")
+async def get_custom_newapi_channel_types() -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+        cfg = get_provisioner_config()
+        admin = ensure_admin_access_token(cfg)
+        items = list_channel_types(cfg, admin)
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "data": {"items": items}}
 
 
 @router.post("/custom/newapi/provider-channel/sync")
@@ -610,13 +628,15 @@ async def sync_custom_newapi_provider_channel(
         )
         cfg = _get_provisioner_config_from_request(body.new_api_base_url, body.database)
         admin = ensure_admin_access_token(cfg)
-        result = update_provider_channel_credentials(
-            cfg,
-            admin,
-            provider=provider,
-            upstream_key=upstream_key,
-            base_url=base_url,
-        )
+        update_kwargs: dict[str, Any] = {
+            "provider": provider,
+            "upstream_key": upstream_key,
+            "base_url": base_url,
+        }
+        saved_channel_type = int(saved_channel.get("type") or 0)
+        if saved_channel_type > 0:
+            update_kwargs["channel_type"] = saved_channel_type
+        result = update_provider_channel_credentials(cfg, admin, **update_kwargs)
         saved = []
         if result.get("ok"):
             saved = save_newapi_provider_channels(

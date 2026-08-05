@@ -23,60 +23,7 @@ export const DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL = 'nano-banana-pro';
 
 export type MediaStorageProvider = 'aliyun_oss' | 'cloudinary';
 
-export type FeatureModelProvider =
-  | 'openai'
-  | 'midjourney'
-  | 'azure'
-  | 'ollama'
-  | 'midjourneyplus'
-  | 'openaimax'
-  | 'ohmygpt'
-  | 'custom'
-  | 'ails'
-  | 'aiproxy'
-  | 'palm'
-  | 'api2gpt'
-  | 'aigc2d'
-  | 'anthropic'
-  | 'baidu'
-  | 'zhipu'
-  | 'ali'
-  | 'xunfei'
-  | '360'
-  | 'openrouter'
-  | 'aiproxylibrary'
-  | 'fastgpt'
-  | 'tencent'
-  | 'gemini'
-  | 'moonshot'
-  | 'zhipuv4'
-  | 'perplexity'
-  | 'lingyiwanwu'
-  | 'aws'
-  | 'cohere'
-  | 'minimax'
-  | 'sunoapi'
-  | 'dify'
-  | 'jina'
-  | 'cloudflare'
-  | 'siliconflow'
-  | 'vertexai'
-  | 'mistral'
-  | 'deepseek'
-  | 'mokaai'
-  | 'volcengine'
-  | 'baiduv2'
-  | 'xinference'
-  | 'xai'
-  | 'coze'
-  | 'kling'
-  | 'jimeng'
-  | 'vidu'
-  | 'submodel'
-  | 'doubaovideo'
-  | 'sora'
-  | 'replicate'
-  | 'codex';
+export type FeatureModelProvider = string;
 
 export const FEATURE_MODEL_PROVIDERS: readonly FeatureModelProvider[] = [
   'openai',
@@ -312,8 +259,9 @@ function normalizeApiKey(input: string): string {
 function normalizeFeatureModelProvider(
   input: FeatureModelProvider | string | null | undefined
 ): FeatureModelProvider {
-  return FEATURE_MODEL_PROVIDERS.includes(input as FeatureModelProvider)
-    ? (input as FeatureModelProvider)
+  const normalized = String(input ?? '').trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]*$/.test(normalized)
+    ? normalized
     : DEFAULT_FEATURE_MODEL_PROVIDER;
 }
 

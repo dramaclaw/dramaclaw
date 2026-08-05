@@ -223,7 +223,7 @@ def save_newapi_database_config(
     )
 
 
-def _decode_provider_channels(value: str | None) -> list[dict[str, str]]:
+def _decode_provider_channels(value: str | None) -> list[dict[str, Any]]:
     if not value:
         return []
     try:
@@ -233,7 +233,7 @@ def _decode_provider_channels(value: str | None) -> list[dict[str, str]]:
     if not isinstance(raw, list):
         return []
 
-    channels: list[dict[str, str]] = []
+    channels: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in raw:
         if not isinstance(item, dict):
@@ -245,6 +245,7 @@ def _decode_provider_channels(value: str | None) -> list[dict[str, str]]:
         channels.append(
             {
                 "provider": provider,
+                "type": max(0, int(item.get("type") or 0)),
                 "upstreamKey": str(item.get("upstreamKey") or "").strip(),
                 "baseUrl": str(item.get("baseUrl") or "").strip().rstrip("/"),
             }
@@ -311,12 +312,12 @@ def _decode_embedding_model_config(value: str | None) -> dict[str, Any]:
     return result
 
 
-def get_newapi_provider_channels() -> list[dict[str, str]]:
+def get_newapi_provider_channels() -> list[dict[str, Any]]:
     settings = get_model_gateway_settings()
     return _decode_provider_channels(settings.get("custom_newapi_provider_channels"))
 
 
-def get_newapi_provider_channel(provider: str) -> dict[str, str] | None:
+def get_newapi_provider_channel(provider: str) -> dict[str, Any] | None:
     wanted = str(provider or "").strip().lower()
     if not wanted:
         return None
@@ -327,12 +328,12 @@ def get_newapi_provider_channel(provider: str) -> dict[str, str] | None:
 
 
 def save_newapi_provider_channels(
-    channels: list[dict[str, str]],
-) -> list[dict[str, str]]:
+    channels: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     existing_by_provider = {
         channel["provider"]: channel for channel in get_newapi_provider_channels()
     }
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in channels:
         provider = str(item.get("provider") or "").strip().lower()
@@ -345,11 +346,16 @@ def save_newapi_provider_channels(
             "",
         )
         base_url = str(item.get("baseUrl") or "").strip().rstrip("/")
+        channel_type = max(
+            0,
+            int(item.get("type") or previous.get("type") or 0),
+        )
         if not upstream_key:
             raise ValueError(f"upstreamKey is required for provider {provider}")
         normalized.append(
             {
                 "provider": provider,
+                "type": channel_type,
                 "upstreamKey": upstream_key,
                 "baseUrl": base_url,
             }
@@ -458,6 +464,7 @@ def build_newapi_provider_channels_status() -> list[dict[str, Any]]:
     return [
         {
             "provider": channel["provider"],
+            "type": channel.get("type", 0),
             "configured": bool(channel["upstreamKey"]),
             "upstreamKeyPreview": mask_secret(channel["upstreamKey"]),
             "baseUrl": channel["baseUrl"],
@@ -543,7 +550,9 @@ def get_ce_newapi_config_for_mode(mode: str) -> EffectiveNewApiConfig:
         return EffectiveNewApiConfig(
             mode=MODE_CUSTOM,
             source="custom",
-            base_url=normalize_relay_base_url(settings.get("custom_newapi_base_url", "")),
+            base_url=normalize_relay_base_url(
+                settings.get("custom_newapi_base_url", "")
+            ),
             api_key=normalize_api_key(settings.get("custom_newapi_api_key", "")),
         )
     db_official_api_key = normalize_api_key(settings.get("official_newapi_api_key", ""))
@@ -842,14 +851,12 @@ def build_newapi_database_status(
         else "environment"
     )
     configured = bool(
-        effective_sql_dsn
-        and (effective_sql_dsn != "local" or effective_sqlite_path)
+        effective_sql_dsn and (effective_sql_dsn != "local" or effective_sqlite_path)
     )
     available = configured
     if effective_sql_dsn == "local":
         available = bool(
-            effective_sqlite_path
-            and Path(effective_sqlite_path).expanduser().is_file()
+            effective_sqlite_path and Path(effective_sqlite_path).expanduser().is_file()
         )
     return {
         "configured": configured,
