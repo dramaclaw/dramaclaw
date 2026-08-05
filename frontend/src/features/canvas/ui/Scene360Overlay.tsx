@@ -25,7 +25,8 @@ import {
   DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO,
   type FreezoneScene360AspectRatio,
 } from '@/api/ops';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
+import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { readUrl } from '@/lib/url-params';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
@@ -117,7 +118,7 @@ export const Scene360Overlay = memo(
           aspectRatio,
         });
         updateNodeData(nextNodeId, generationTaskDescriptor(ref));
-        const completed = await awaitTaskCompletion(ref.task_key, project);
+        const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
         const directUrl = completed.result?.['output_url'] as string | undefined;
         let url = directUrl;
         if (!url) {
@@ -143,6 +144,12 @@ export const Scene360Overlay = memo(
         const viewerNodeId = addNode(CANVAS_NODE_TYPES.pano360Viewer, viewerPosition);
         addEdge(nextNodeId, viewerNodeId);
       } catch (err) {
+        // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
+        // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
+        if (isTaskPollTimeoutError(err)) {
+          notifyTaskStillRunning(t);
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
         console.error('[scene-360] generation failed', err);
         updateNodeData(nextNodeId, {

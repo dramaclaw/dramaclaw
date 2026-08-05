@@ -30,7 +30,9 @@ describe("freezone viewer contracts", () => {
     expect(registry).toContain("node.menu.pano360Viewer");
     expect(nodeSelectionMenu).toContain("CANVAS_NODE_TYPES.pano360Viewer");
     expect(spawnOverlay).toContain("CANVAS_NODE_TYPES.pano360Viewer");
-    expect(nodesIndex).toContain("pano360ViewerNode: Pano360ViewerNode");
+    expect(nodesIndex).toContain(
+      "pano360ViewerNode: withLodShell('pano360ViewerNode', Pano360ViewerNode)"
+    );
     expect(nodesIndex).toContain("Pano360ViewerNode");
   });
 

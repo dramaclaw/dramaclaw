@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useCallback } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar, Position } from '@xyflow/react';
+import { useTranslation } from 'react-i18next';
 
 import {
   CANVAS_NODE_TYPES,
@@ -21,7 +22,8 @@ import {
   submitFreezoneMultiView,
   type FreezoneMultiViewPreset,
 } from '@/api/ops';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
+import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { readUrl } from '@/lib/url-params';
 import { inheritMainlineFields } from '@/features/canvas/domain/inheritMainlineFields';
@@ -52,6 +54,7 @@ function normalizeYaw(deg: number): number {
 
 export const MultiAngleEditorOverlay = memo(
   ({ node, imageSource, onClose }: MultiAngleEditorOverlayProps) => {
+    const { t } = useTranslation();
     const addNode = useCanvasStore((state) => state.addNode);
     const addEdge = useCanvasStore((state) => state.addEdge);
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
@@ -115,7 +118,7 @@ export const MultiAngleEditorOverlay = memo(
             imageSize: payload.imageSize,
           });
           updateNodeData(nextNodeId, generationTaskDescriptor(ref));
-          const completed = await awaitTaskCompletion(ref.task_key, project);
+          const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
           const directUrl = completed.result?.['output_url'] as string | undefined;
           let url = directUrl;
           if (!url) {
@@ -130,6 +133,12 @@ export const MultiAngleEditorOverlay = memo(
             generationError: null,
           });
         } catch (err) {
+          // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
+          // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
+          if (isTaskPollTimeoutError(err)) {
+            notifyTaskStillRunning(t);
+            return;
+          }
           const message = err instanceof Error ? err.message : String(err);
           console.error('[multi-angle] generation failed', err);
           updateNodeData(nextNodeId, {
@@ -147,6 +156,7 @@ export const MultiAngleEditorOverlay = memo(
         node,
         onClose,
         setSelectedNode,
+        t,
         updateNodeData,
       ],
     );

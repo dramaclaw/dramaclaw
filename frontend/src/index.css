@@ -754,6 +754,75 @@
   }
 }
 
+/* ---- 画布 LOD：平移期 / 低缩放的合成开销降级 --------------------------------
+ *
+ * 实测（69 节点 / zoom 0.1）：基线 p90 帧时 26.6ms —— 正好两个 vsync 周期，
+ * 即每 10 帧固定丢 1 帧。backdrop-filter 每帧要重采样背景，无法缓存成静态贴图；
+ * box-shadow / filter 同样吃光栅化预算。关掉这三样 + 视频层后 p90 回到 14.1ms。
+ *
+ * 只在手势进行中和低缩放档生效，稳态高缩放下画面完全不变。
+ */
+.dc-canvas--panning .react-flow__viewport *,
+.dc-canvas--low-detail .react-flow__viewport * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+/* filter 单独放：节点里有用 filter 做「生成中」灰度/亮度反馈的，手势期间照样
+ * 可以省掉，但低缩放档下节点太小、状态色块是唯一可读信息，保留不砍。 */
+.dc-canvas--panning .react-flow__viewport * {
+  filter: none !important;
+}
+
+/* 手势期间连线的虚线流动动画照样在跑，每帧都要重画一次路径。停掉。 */
+.dc-canvas--panning .react-flow__edge-path {
+  animation: none !important;
+}
+
+/* 低缩放档节点外壳（withLodShell）。刻意朴素：整块画布此档下每帧的渲染树遍历
+ * 成本与元素数量成正比，外壳保持每节点 ≤4 个元素。 */
+.dc-lod-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgba(64, 64, 68, 0.55);
+}
+
+.dc-lod-shell--selected {
+  outline: 3px solid rgba(96, 165, 250, 0.9);
+}
+
+.dc-lod-shell__thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* 生成/上传中角标：低缩放下节点本体只有几十像素，用醒目的呼吸圆点表达状态。 */
+.dc-lod-shell__busy {
+  position: absolute;
+  top: 8%;
+  right: 8%;
+  width: 18%;
+  max-width: 28px;
+  aspect-ratio: 1;
+  border-radius: 9999px;
+  background: rgba(96, 165, 250, 0.9);
+  animation: dc-lod-busy-pulse 1.2s ease-in-out infinite;
+}
+
+/* 手势期间统一停掉动画（同上面 edge 动画的理由）。 */
+.dc-canvas--panning .dc-lod-shell__busy {
+  animation: none;
+}
+
+@keyframes dc-lod-busy-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
 .canvas-minimap {
   border-radius: 12px;
   overflow: hidden;

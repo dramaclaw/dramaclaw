@@ -4335,7 +4335,9 @@
     "copyReport": "Copy error report",
     "technicalDetails": "Technical details",
     "serviceConfigTitle": "Generation service is not configured",
-    "openRouterConfigMessage": "This model requires OpenRouter, but the backend API key is not configured. Please contact an administrator."
+    "openRouterConfigMessage": "This model requires OpenRouter, but the backend API key is not configured. Please contact an administrator.",
+    "stillRunningTitle": "Still generating",
+    "stillRunningMessage": "This generation is taking longer than usual. The page stopped waiting, but the job is still running in the background — refresh later to pick up the result, or check its progress in the task center."
   },
   "videoCompose": {
     "title": "Video Compose",
