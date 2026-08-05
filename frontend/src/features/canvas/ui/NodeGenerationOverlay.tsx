@@ -23,7 +23,7 @@ const DEFAULT_DURATION_MS = 60000;
 const PROGRESS_CEILING = 0.995;
 /**
  * 曲线陡峭度。真实生成常比预估时长慢一截,所以整体推进要比线性更保守:
- * 走到预估时长时约 75%,2 倍时长约 93%,3 倍约 98%,之后仍在极慢地爬。
+ * 走到预估时长时约 75%,2 倍时长约 93%,3 倍约 98%,约 3.8 倍后定在 99%。
  */
 const PROGRESS_CURVE = 1.4;
 
@@ -54,8 +54,13 @@ export function NodeGenerationOverlay({
     const begin = typeof startedAt === 'number' ? startedAt : mountedAt;
     const duration = Math.max(1000, durationMs);
     const elapsed = Math.max(0, now - begin);
-    // 指数饱和曲线:超时后不会像线性那样撞到硬顶卡死,而是继续以越来越小的
-    // 步幅往上挪,视觉上始终"还在动"。
+    // 指数饱和曲线:旧的线性版本走到预估时长就撞上 0.96 硬顶,而真实生成常比
+    // 预估慢一截,于是几乎每次都停在 96%。改成饱和曲线后停下来的位置推到了
+    // 约 3.8 倍预估时长(此时才 floor 到 99),常规超时区间里仍在缓慢推进。
+    //
+    // 注意这不是"永远在动":渐近值 0.995 floor 后就是 99,跑得足够久仍会定在
+    // 99% 不再变化。要彻底去掉静止点,得在接近上限时换成不定式等待动效或
+    // elapsed-time 文案,那是另一件事。
     const progress =
       PROGRESS_CEILING * (1 - Math.exp((-PROGRESS_CURVE * elapsed) / duration));
     return Math.min(99, Math.floor(progress * 100));
