@@ -109,6 +109,7 @@ import {
 import { nodeCatalog } from '@/features/canvas/application/nodeCatalog';
 import { applySkillRoleBindingConnection } from '@/features/canvas/domain/skillConnectionEdges';
 import { videoReferenceConnectionRejection } from '@/features/canvas/domain/videoReferenceLimits';
+import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import { embedStoryboardImageMetadata } from '@/commands/image';
 import { nodeTypes as canvasNodeTypes } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
@@ -1808,7 +1809,14 @@ export function Canvas({
       }
       // 视频节点的素材已经满到能力包络（图 9 / 视频 3 / 音频 3 / 总数 12）时，
       // 拖线落点变灰、不成边。与 store 的 onConnect 收口同一把尺子。
-      if (videoReferenceConnectionRejection(nodes, edges, connection) != null) {
+      if (
+        videoReferenceConnectionRejection(
+          nodes,
+          edges,
+          connection,
+          videoReferenceEnvelopeForNode,
+        ) != null
+      ) {
         return false;
       }
       if (targetNode.type !== CANVAS_NODE_TYPES.threeDWorld) return true;
@@ -3906,10 +3914,12 @@ export function Canvas({
       if (!dropNodeId || dropNodeId === pending.nodeId) return null;
       const sourceId = pending.handleType === 'source' ? pending.nodeId : dropNodeId;
       const targetId = pending.handleType === 'source' ? dropNodeId : pending.nodeId;
-      return videoReferenceConnectionRejection(nodes, edges, {
-        source: sourceId,
-        target: targetId,
-      });
+      return videoReferenceConnectionRejection(
+        nodes,
+        edges,
+        { source: sourceId, target: targetId },
+        videoReferenceEnvelopeForNode,
+      );
     },
     [edges, nodes],
   );

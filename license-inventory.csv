@@ -799,6 +799,7 @@ frontend/src/features/canvas/application/useUpstreamGraph.ts,Elastic-2.0,2026 Su
 frontend/src/features/canvas/application/videoFileTypes.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/videoFileTypes.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/videoFrameCapture.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/application/videoReferenceEnvelope.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/videoStoryNormalizer.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/videoTranscode.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/videoTranscodeFfmpeg.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

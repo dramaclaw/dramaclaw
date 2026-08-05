@@ -51,6 +51,7 @@ import {
   overflowingVideoReferenceEdgeIds,
   videoReferenceConnectionRejection,
 } from '@/features/canvas/domain/videoReferenceLimits';
+import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import {
   type ViewportBookmark,
   type ViewportBookmarks,
@@ -1407,7 +1408,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // 视频节点素材上限收口：素材已满到能力包络（图 9 / 视频 3 / 音频 3 /
       // 总数 12）时拒绝新连接。手动拖线在 isValidConnection 就变灰了，这里兜住
       // 拖到空白生成节点等其它建边路径。
-      if (videoReferenceConnectionRejection(state.nodes, state.edges, connection) != null) {
+      if (
+        videoReferenceConnectionRejection(
+          state.nodes,
+          state.edges,
+          connection,
+          videoReferenceEnvelopeForNode,
+        ) != null
+      ) {
         return {};
       }
       return {
@@ -1957,7 +1965,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 素材上限同样要收口在这里：资产库选参考、外部文件导入
     // （spawnExternalAssetNodes）都是往一个**已存在**的视频节点上接素材，走的正是
     // addEdge。只在 onConnect 拦等于这条上限只在手动拖线时成立。
-    if (videoReferenceConnectionRejection(state.nodes, state.edges, { source, target }) != null) {
+    if (
+      videoReferenceConnectionRejection(
+        state.nodes,
+        state.edges,
+        { source, target },
+        videoReferenceEnvelopeForNode,
+      ) != null
+    ) {
       return null;
     }
 
@@ -2001,7 +2016,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 与 addEdge 同一把尺子：目前这条路径的 target 都是刚建出来的新节点（技能输出、
     // 背景候选），够不到上限；放在这里是为了「所有公开建边入口口径一致」，将来谁把
     // 带数据的边接到已有视频节点上也不会漏。
-    if (videoReferenceConnectionRejection(state.nodes, state.edges, { source, target }) != null) {
+    if (
+      videoReferenceConnectionRejection(
+        state.nodes,
+        state.edges,
+        { source, target },
+        videoReferenceEnvelopeForNode,
+      ) != null
+    ) {
       return null;
     }
 
@@ -2392,6 +2414,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nextNodes,
         nextEdges,
         videoTargetId,
+        videoReferenceEnvelopeForNode,
       )) {
         overflowEdgeIds.add(edgeId);
       }

@@ -26,6 +26,9 @@ import {
  *
  * 表里更小的那些数字（首帧 1 / 首尾帧 2 / 视频编辑 5 张参考图）继续由「自动切模式」
  * 和提交守卫负责，不在建边这层拦。
+ *
+ * 9/3/3/12 只是**没有媒体目录配置时的默认值**，不是所有模型的硬上限 ——
+ * 见 `videoReferenceEnvelopeForModel`。
  */
 export const VIDEO_REFERENCE_ENVELOPE = {
   image: 9,
@@ -33,6 +36,66 @@ export const VIDEO_REFERENCE_ENVELOPE = {
   audio: 3,
   total: 12,
 } as const;
+
+export interface VideoReferenceEnvelope {
+  image: number;
+  video: number;
+  audio: number;
+  total: number;
+}
+
+/** 媒体目录里与引用上限相关的那几个字段（`ModelOption` 的子集）。 */
+export interface VideoReferenceLimitModel {
+  referenceImageMax?: number | null;
+  referenceVideoMax?: number | null;
+  referenceAudioMax?: number | null;
+}
+
+/**
+ * 所选模型的**有效**包络：媒体目录配置优先，没配才用 9/3/3/12。
+ *
+ * 与后端 `_catalog_reference_limits`（api/routes/freezone.py:7004）逐条对齐，包括
+ * total 的算法：三项里只要有任意一项来自目录，总数就取三项之和；一项都没配才是 12。
+ * 不这么算的话，一个目录里配了 image=10 的合法模型会在第 10 张被前端拦掉，请求永远
+ * 到不了本来会接受它的后端 —— 上限比后端严等于把管理员配出来的能力吞掉。
+ *
+ * 只认非负整数，与后端 `type(value) is int and value >= 0` 同一口径：null / 负数 /
+ * 小数一律当作没配。
+ */
+export function videoReferenceEnvelopeForModel(
+  model: VideoReferenceLimitModel | null | undefined,
+): VideoReferenceEnvelope {
+  const fromCatalog = (value: number | null | undefined): number | null =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+
+  const image = fromCatalog(model?.referenceImageMax);
+  const video = fromCatalog(model?.referenceVideoMax);
+  const audio = fromCatalog(model?.referenceAudioMax);
+  const resolved = {
+    image: image ?? VIDEO_REFERENCE_ENVELOPE.image,
+    video: video ?? VIDEO_REFERENCE_ENVELOPE.video,
+    audio: audio ?? VIDEO_REFERENCE_ENVELOPE.audio,
+  };
+  const hasCatalogValue = image !== null || video !== null || audio !== null;
+  return {
+    ...resolved,
+    total: hasCatalogValue
+      ? resolved.image + resolved.video + resolved.audio
+      : VIDEO_REFERENCE_ENVELOPE.total,
+  };
+}
+
+/**
+ * 建边校验拿不到 React 上下文，模型只能由调用方解析后喂进来。默认值保持 9/3/3/12：
+ * 传不进模型时（测试、还没加载出目录）行为与改动之前一致。
+ */
+export type VideoReferenceEnvelopeResolver = (
+  videoNode: CanvasNode,
+) => VideoReferenceEnvelope;
+
+const DEFAULT_ENVELOPE_RESOLVER: VideoReferenceEnvelopeResolver = () => ({
+  ...VIDEO_REFERENCE_ENVELOPE,
+});
 
 export type VideoReferenceMediaKind = 'image' | 'video' | 'audio';
 
@@ -83,11 +146,13 @@ export function videoReferenceConnectionRejection(
   nodes: readonly CanvasNode[],
   edges: readonly { source: string; target: string }[],
   connection: { source?: string | null; target?: string | null },
+  resolveEnvelope: VideoReferenceEnvelopeResolver = DEFAULT_ENVELOPE_RESOLVER,
 ): string | null {
   const { source, target } = connection;
   if (!source || !target) return null;
   const targetNode = nodes.find((node) => node.id === target);
   if (!isVideoNode(targetNode)) return null;
+  const envelope = resolveEnvelope(targetNode);
   const incoming = classifyVideoReferenceMedia(
     nodes.find((node) => node.id === source),
   );
@@ -107,12 +172,12 @@ export function videoReferenceConnectionRejection(
     if (kind) counts[kind] += 1;
   }
 
-  if (counts[incoming] + 1 > VIDEO_REFERENCE_ENVELOPE[incoming]) {
-    return `视频节点最多引用 ${VIDEO_REFERENCE_ENVELOPE[incoming]} ${KIND_LABEL[incoming]}`;
+  if (counts[incoming] + 1 > envelope[incoming]) {
+    return `视频节点最多引用 ${envelope[incoming]} ${KIND_LABEL[incoming]}`;
   }
   const total = counts.image + counts.video + counts.audio;
-  if (total + 1 > VIDEO_REFERENCE_ENVELOPE.total) {
-    return `视频节点最多引用 ${VIDEO_REFERENCE_ENVELOPE.total} 个素材`;
+  if (total + 1 > envelope.total) {
+    return `视频节点最多引用 ${envelope.total} 个素材`;
   }
   return null;
 }
@@ -133,9 +198,11 @@ export function overflowingVideoReferenceEdgeIds(
   nodes: readonly CanvasNode[],
   edges: readonly { id: string; source: string; target: string }[],
   videoTargetId: string,
+  resolveEnvelope: VideoReferenceEnvelopeResolver = DEFAULT_ENVELOPE_RESOLVER,
 ): string[] {
   const targetNode = nodes.find((node) => node.id === videoTargetId);
   if (!isVideoNode(targetNode)) return [];
+  const envelope = resolveEnvelope(targetNode);
 
   const counts = { image: 0, video: 0, audio: 0 };
   let total = 0;
@@ -149,10 +216,7 @@ export function overflowingVideoReferenceEdgeIds(
       nodes.find((node) => node.id === edge.source),
     );
     if (!kind) continue;
-    if (
-      counts[kind] + 1 > VIDEO_REFERENCE_ENVELOPE[kind] ||
-      total + 1 > VIDEO_REFERENCE_ENVELOPE.total
-    ) {
+    if (counts[kind] + 1 > envelope[kind] || total + 1 > envelope.total) {
       overflow.push(edge.id);
       continue;
     }
