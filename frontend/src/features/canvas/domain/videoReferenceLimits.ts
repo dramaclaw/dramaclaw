@@ -116,3 +116,48 @@ export function videoReferenceConnectionRejection(
   }
   return null;
 }
+
+/**
+ * 某个视频节点当前**已经**超出包络的入边（返回要清掉的边 id）。
+ *
+ * 建边时校验挡不住类型后变的情况：外部文件导入是「先建空 Upload 并连边、再按 MIME
+ * 转成 video/audio 节点」，连边那一刻空 Upload 只能按图片计数，4 个视频文件因此全落
+ * 在图片上限(9)以内 —— 等转换完成就成了 4 条视频引用，超出视频上限(3)。所以
+ * `convertNodeType` 这类会改变素材类型的操作之后必须拿这个函数重算一遍。
+ *
+ * 保留策略是**先来后到**：按边的插入顺序装桶，装不下的才算溢出。刚转换完的那条边是
+ * 最新的，于是被清掉的就是它 —— 用户看到的是「最后拖进来的那个没接上」，而不是
+ * 随机少一条老连线。
+ */
+export function overflowingVideoReferenceEdgeIds(
+  nodes: readonly CanvasNode[],
+  edges: readonly { id: string; source: string; target: string }[],
+  videoTargetId: string,
+): string[] {
+  const targetNode = nodes.find((node) => node.id === videoTargetId);
+  if (!isVideoNode(targetNode)) return [];
+
+  const counts = { image: 0, video: 0, audio: 0 };
+  let total = 0;
+  const counted = new Set<string>();
+  const overflow: string[] = [];
+  for (const edge of edges) {
+    if (edge.target !== videoTargetId) continue;
+    if (counted.has(edge.source)) continue;
+    counted.add(edge.source);
+    const kind = classifyVideoReferenceMedia(
+      nodes.find((node) => node.id === edge.source),
+    );
+    if (!kind) continue;
+    if (
+      counts[kind] + 1 > VIDEO_REFERENCE_ENVELOPE[kind] ||
+      total + 1 > VIDEO_REFERENCE_ENVELOPE.total
+    ) {
+      overflow.push(edge.id);
+      continue;
+    }
+    counts[kind] += 1;
+    total += 1;
+  }
+  return overflow;
+}

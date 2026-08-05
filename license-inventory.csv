@@ -543,6 +543,7 @@ frontend/src/__tests__/stores/auth-store.test.ts,Elastic-2.0,2026 SuperTale cont
 frontend/src/__tests__/stores/canvas-store-3d-upstream.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-auto-group-spawn.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-convert-node-type.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/stores/canvas-store-video-reference-limits.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-draft-hydrate.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-group-grow.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-image-resize-aspect.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

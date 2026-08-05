@@ -10,6 +10,7 @@ import {
 import {
   VIDEO_REFERENCE_ENVELOPE,
   classifyVideoReferenceMedia,
+  overflowingVideoReferenceEdgeIds,
   videoReferenceConnectionRejection,
 } from "@/features/canvas/domain/videoReferenceLimits";
 
@@ -149,5 +150,60 @@ describe("videoReferenceConnectionRejection — 建边时的素材上限", () =>
     // 同样这批 upload 节点没占图片额度，图片还能继续连。
     const extraImage = node("extra-image", CANVAS_NODE_TYPES.imageGen);
     expect(connect([...nodes, extraImage], edges, extraImage.id)).toBeNull();
+  });
+});
+
+// 建边时的校验挡不住「先连边、后变类型」：外部文件导入先落空 Upload 并连边（按图片
+// 计数），再按 MIME 转成 video/audio。类型定下来之后必须能重算出溢出的那几条。
+describe("overflowingVideoReferenceEdgeIds — 类型变了之后的重算", () => {
+  function graph(kinds: readonly CanvasNodeType[]) {
+    const target = node("video-target", CANVAS_NODE_TYPES.video);
+    const sources = kinds.map((type, index) => node(`src-${index}`, type));
+    return {
+      nodes: [target, ...sources],
+      edges: sources.map((source) => ({
+        id: `e-${source.id}`,
+        source: source.id,
+        target: target.id,
+      })),
+    };
+  }
+
+  it("没超时返回空", () => {
+    const { nodes, edges } = graph(fill(CANVAS_NODE_TYPES.video, VIDEO_REFERENCE_ENVELOPE.video));
+    expect(overflowingVideoReferenceEdgeIds(nodes, edges, "video-target")).toEqual([]);
+  });
+
+  it("超出的按先来后到只溢出最后几条", () => {
+    const { nodes, edges } = graph(
+      fill(CANVAS_NODE_TYPES.video, VIDEO_REFERENCE_ENVELOPE.video + 2),
+    );
+    expect(overflowingVideoReferenceEdgeIds(nodes, edges, "video-target")).toEqual([
+      `e-src-${VIDEO_REFERENCE_ENVELOPE.video}`,
+      `e-src-${VIDEO_REFERENCE_ENVELOPE.video + 1}`,
+    ]);
+  });
+
+  it("逐项没超但总数超 12 时也算溢出", () => {
+    const { nodes, edges } = graph([
+      ...fill(CANVAS_NODE_TYPES.imageGen, VIDEO_REFERENCE_ENVELOPE.image),
+      ...fill(CANVAS_NODE_TYPES.video, VIDEO_REFERENCE_ENVELOPE.video),
+      CANVAS_NODE_TYPES.audio,
+    ]);
+    expect(overflowingVideoReferenceEdgeIds(nodes, edges, "video-target")).toEqual([
+      `e-src-${VIDEO_REFERENCE_ENVELOPE.total}`,
+    ]);
+  });
+
+  it("目标不是视频节点时不管", () => {
+    const { nodes, edges } = graph(fill(CANVAS_NODE_TYPES.video, VIDEO_REFERENCE_ENVELOPE.video + 2));
+    const imageTarget = node("image-target", CANVAS_NODE_TYPES.imageGen);
+    expect(
+      overflowingVideoReferenceEdgeIds(
+        [...nodes, imageTarget],
+        edges.map((edge) => ({ ...edge, target: imageTarget.id })),
+        imageTarget.id,
+      ),
+    ).toEqual([]);
   });
 });
