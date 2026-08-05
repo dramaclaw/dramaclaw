@@ -17,7 +17,10 @@ import { useMemo } from 'react';
 import type { MediaModelRequestSchema } from '@/api/ops';
 import type { ImageModelDefinition } from '@/features/canvas/models';
 import { normalizeImageModelId } from '@/features/canvas/models';
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { SHARED_MODELS } from '@/features/canvas/ui/ProviderModelPicker';
 import {
   resolveModelAspectOptions,
@@ -122,7 +125,11 @@ export function useCatalogImageModels(): CatalogImageModels {
     // - 成功但返回空（isFallback=false 且非加载中）→ 这是后台的**权威答案**。
     //   此前这里无条件回落到 SHARED_MODELS，等于把「没配模型」伪装成「有模型」，
     //   用户选中一个前端硬编码的模型、点生成，才被后端 409 顶回来。
-    const isEmpty = !isLoading && !isFallback && catalog.length === 0;
+    const isEmpty = isAuthoritativeEmptyCatalog({
+      models: catalog,
+      isLoading,
+      isFallback,
+    });
     const source = isEmpty ? [] : catalog.length > 0 ? catalog : SHARED_MODELS;
     const models = source.map(toImageModelDefinition);
     const byId = new Map(models.map((model) => [model.id, model]));

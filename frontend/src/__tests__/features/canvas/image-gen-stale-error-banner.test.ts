@@ -73,7 +73,10 @@ vi.mock("@/stores/canvasStore", async () => {
   return { useCanvasStore, useIsBoxSelecting: () => false };
 });
 
-vi.mock("@/features/canvas/hooks/useFreezoneImageModels", () => ({
+vi.mock("@/features/canvas/hooks/useFreezoneImageModels", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/features/canvas/hooks/useFreezoneImageModels")
+  >()),
   useFreezoneImageModels: () => ({
     models: [{ id: "test-model", apiModel: "test-model", label: "Test" }],
     isLoading: false,

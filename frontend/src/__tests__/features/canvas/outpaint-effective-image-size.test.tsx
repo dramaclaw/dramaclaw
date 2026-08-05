@@ -32,13 +32,30 @@ const CATALOG_MODEL = {
   resolutionOptions: ["1K", "4K"],
 };
 
-vi.mock("@/features/canvas/hooks/useFreezoneImageModels", () => ({
-  useFreezoneImageModels: () => ({
-    models: [CATALOG_MODEL],
-    isLoading: false,
-    isFallback: false,
-    error: null,
-  }),
+type ImageCatalogState = {
+  models: (typeof CATALOG_MODEL)[];
+  isLoading: boolean;
+  isFallback: boolean;
+  error: Error | null;
+};
+
+/** 默认给一条正常目录；单个用例可以改成加载中 / 拉取失败 / 权威空目录。 */
+const LOADED_CATALOG: ImageCatalogState = {
+  models: [CATALOG_MODEL],
+  isLoading: false,
+  isFallback: false,
+  error: null,
+};
+
+let imageCatalogState: ImageCatalogState = LOADED_CATALOG;
+
+// 只替换取数的 hook；`isAuthoritativeEmptyCatalog` 是纯函数判据，面板正是
+// 靠它决定禁不禁用提交，必须留真实实现。
+vi.mock("@/features/canvas/hooks/useFreezoneImageModels", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/features/canvas/hooks/useFreezoneImageModels")
+  >()),
+  useFreezoneImageModels: () => imageCatalogState,
   prefetchFreezoneImageModels: () => {},
 }));
 
@@ -94,6 +111,7 @@ function renderOverlay() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  imageCatalogState = LOADED_CATALOG;
   submitFreezoneOutpaint.mockResolvedValue({
     task_type: "freezone_image",
     job_id: "out-1",
@@ -138,5 +156,30 @@ describe("扩图面板的分辨率档位", () => {
     await waitFor(() => expect(submitFreezoneOutpaint).toHaveBeenCalled());
     const body = submitFreezoneOutpaint.mock.calls[0][1] as Record<string, unknown>;
     expect(body.imageSize).toBe("4K");
+  });
+});
+
+describe("扩图面板的权威空目录", () => {
+  it("后台一个图片模型都没配时禁用提交，点了也不发请求", () => {
+    imageCatalogState = { models: [], isLoading: false, isFallback: false, error: null };
+    renderOverlay();
+    // 原来这里还挂着 `?? SHARED_MODELS.find(...)`：目录明明是空的，面板却拿前端
+    // 硬编码的模型顶上去，用户点下去只会收到后端 409。
+    const button = screen.getByTitle("modelParams.noModelsAvailable");
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(submitFreezoneOutpaint).not.toHaveBeenCalled();
+  });
+
+  it("拉取失败回落到兜底列表时照常可提交", async () => {
+    imageCatalogState = {
+      models: [CATALOG_MODEL],
+      isLoading: false,
+      isFallback: true,
+      error: new Error("boom"),
+    };
+    renderOverlay();
+    fireEvent.click(screen.getByTitle("outpaintEditor.submit"));
+    await waitFor(() => expect(submitFreezoneOutpaint).toHaveBeenCalled());
   });
 });

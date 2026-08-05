@@ -16,7 +16,12 @@ import { SHARED_MODELS } from "@/features/canvas/ui/ProviderModelPicker";
 
 let hookState: UseFreezoneImageModelsResult;
 
-vi.mock("@/features/canvas/hooks/useFreezoneImageModels", () => ({
+// 只替换取数的 hook；`isAuthoritativeEmptyCatalog` 是纯函数判据，
+// `useCatalogImageModels` 正是靠它算 isEmpty，必须留真实实现。
+vi.mock("@/features/canvas/hooks/useFreezoneImageModels", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/features/canvas/hooks/useFreezoneImageModels")
+  >()),
   useFreezoneImageModels: () => hookState,
   prefetchFreezoneImageModels: () => {},
 }));

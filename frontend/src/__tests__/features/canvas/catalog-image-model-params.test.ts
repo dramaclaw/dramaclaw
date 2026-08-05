@@ -174,6 +174,35 @@ describe("目录动态参数的端到端往返", () => {
     expect(body.modelParams).toBeUndefined();
   });
 
+  it("没给模式时按有无参考图推导：文生图走 text_to_image", async () => {
+    // 图片节点没有模式选择器。模式为空的话后端按「无模式」过滤，
+    // 声明了 modes 的目录参数会被整批丢掉 —— 用户填了等于没填。
+    const body = await submittedBody({ steps: 4 });
+    expect(body.genMode).toBe("text_to_image");
+  });
+
+  it("没给模式时按有无参考图推导：带参考图走 image_to_image", async () => {
+    const body = await submittedBody({ only_edit: "a" }, ["https://x/base.png"]);
+    expect(body.genMode).toBe("image_to_image");
+  });
+
+  it("调用方显式给了模式就用它的，不被推导覆盖", async () => {
+    // ImageEditNode 有模式选择器，全能参考 / 图片参考都是目录认的模式，
+    // 不能被这里的二选一推导抹平。
+    const definition = toImageModelDefinition(CATALOG_ENTRY);
+    await freezoneAiGateway.generateImage({
+      prompt: "hi",
+      model: definition.resolveRequest({ referenceImageCount: 1 }).requestModel,
+      modelId: definition.id,
+      size: "2K",
+      aspectRatio: "1:1",
+      referenceImages: ["https://x/base.png"],
+      generationMode: "all_reference",
+    });
+    const body = submitFreezoneEdit.mock.calls[0][1] as Record<string, unknown>;
+    expect(body.genMode).toBe("all_reference");
+  });
+
   it("按模式失活的参数照样上送，由后端按 modes 过滤", async () => {
     // 与 ImageGenNode 既有口径一致：前端不做 modes 裁剪，后端
     // `_resolve_catalog_request` 会静默过滤掉当前模式用不上的键。

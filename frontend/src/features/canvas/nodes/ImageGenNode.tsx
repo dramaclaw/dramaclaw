@@ -530,6 +530,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     () => orderedReferenceUrlsWithOwnFirst(referenceImageUrl, upstreamReferenceUrls),
     [referenceImageUrl, upstreamReferenceUrls],
   );
+  // 图片节点没有模式选择器，模式完全由「有没有参考图」决定 —— 提交时
+  // freezoneAiGateway 也是按这个分流去 /freezone/gen 还是 /freezone/edit。
+  // 目录参数按 modes 过滤，缺了它声明了 modes 的参数在控件里根本不显示、
+  // 提交时又会被后端整批丢掉。
+  const generationMode = orderedReferenceUrls.length > 0 ? 'image_to_image' : 'text_to_image';
   // collectCandidateBindingsForNode 只关心连到 this node 的边。用 useShallow 只订阅
   // 本节点相连的边(逐元素比较),拖动无关节点时边引用稳定,本节点不再重渲染。
   const connectedEdges = useCanvasStore(
@@ -972,6 +977,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       model: apiModel,
       modelId: selectedModel?.catalogId ?? modelId,
       modelParams: data.modelParams,
+      generationMode,
       camera: hasCamera
         ? {
             cameraBodyId: cameraSelection?.cameraBodyId ?? null,
@@ -1925,7 +1931,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               <MediaModelParameterChip
                 parameters={selectedModel?.request?.parameters}
                 values={data.modelParams}
-                mode={typeof data.generationMode === 'string' ? data.generationMode : undefined}
+                mode={generationMode}
                 onChange={(modelParams) => updateNodeData(id, { modelParams })}
               />
               <CameraChip

@@ -20,9 +20,11 @@ import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
   ProviderModelPicker,
-  SHARED_MODELS,
 } from '@/features/canvas/ui/ProviderModelPicker';
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
@@ -67,17 +69,22 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
   const sourceUrl = persisted.upscaleSourceUrl ?? '';
   const persistedModelId =
     typeof persisted.upscaleModelId === 'string' ? persisted.upscaleModelId : DEFAULT_SHARED_MODEL_ID;
-  const { models: availableModels } = useFreezoneImageModels();
+  const imageCatalog = useFreezoneImageModels();
+  const availableModels = imageCatalog.models;
+  // 后台确实一个图片模型都没配时禁止提交：后端 `_resolve_catalog_request`
+  // 对空目录直接 409，让用户点一下再收报错是最糟的体验。
+  const catalogIsEmpty = isAuthoritativeEmptyCatalog(imageCatalog);
   const persistedScaleFactor: FreezoneUpscaleScaleFactor =
     persisted.upscaleScaleFactor === 4 || persisted.upscaleScaleFactor === 6
       ? persisted.upscaleScaleFactor
       : DEFAULT_UPSCALE_SCALE_FACTOR;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 目录为空时故意让 selectedModel 保持 undefined。原来这里尾巴上还挂着
+  // `?? SHARED_MODELS.find(...)`，等于把前端硬编码的模型当成可用模型复活，
+  // 正是「后台没配模型，界面照样显示能用」的来源。
   const selectedModel =
-    availableModels.find((m) => m.id === persistedModelId)
-    ?? availableModels[0]
-    ?? SHARED_MODELS.find((m) => m.id === persistedModelId);
+    availableModels.find((m) => m.id === persistedModelId) ?? availableModels[0];
   // 分辨率与画质档位来自后台对该模型的配置；节点上存的旧值若已不在档位里，
   // 就收回到首个可用档位。
   const sizeOptions = useMemo(
@@ -105,6 +112,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
   );
   const billingRuleMissing =
     creditCost.error instanceof BillingRuleNotConfiguredError;
+  const submitDisabled = isSubmitting || billingRuleMissing || catalogIsEmpty;
   const costDisplay =
     creditCost.data?.data.display ??
     (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
@@ -136,7 +144,8 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
   }, [deleteNode, node.id, setSelectedNode]);
 
   const handleSubmit = useCallback(async () => {
-    if (isSubmitting) return;
+    // 按钮已经禁用，这里再挡一道：没有可用模型就绝不该发出请求。
+    if (isSubmitting || catalogIsEmpty) return;
     if (!sourceUrl) {
       console.error('[upscale] missing upscaleSourceUrl on node.data — cannot submit');
       return;
@@ -201,6 +210,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
       setIsSubmitting(false);
     }
   }, [
+    catalogIsEmpty,
     isSubmitting,
     node.id,
     persistedImageSize,
@@ -272,9 +282,13 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={isSubmitting || billingRuleMissing}
+            disabled={submitDisabled}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-bg-dark transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            title={t('upscaleEditor.submit')}
+            title={
+              catalogIsEmpty
+                ? t('modelParams.noModelsAvailable')
+                : t('upscaleEditor.submit')
+            }
           >
             <ArrowUp className="h-4 w-4" />
           </button>

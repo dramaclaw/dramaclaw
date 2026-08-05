@@ -16,7 +16,10 @@ import { CreditCostInline } from '@/components/credit-cost-inline';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
 import {
   fetchFreezoneJobResult,
@@ -56,8 +59,12 @@ export const Scene360Overlay = memo(
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const findNodePosition = useCanvasStore((state) => state.findNodePosition);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
-    const { models: imageModels } = useFreezoneImageModels();
+    const imageCatalog = useFreezoneImageModels();
+    const imageModels = imageCatalog.models;
     const selectedModel = imageModels[0];
+    // 后台确实一个图片模型都没配时禁止提交：这个面板没有模型选择器，提交下去
+    // 后端拿不到目录条目会直接 409，先让用户点一下再报错是最糟的体验。
+    const catalogIsEmpty = isAuthoritativeEmptyCatalog(imageCatalog);
     // 全景没有尺寸/画质选择器，按后台对该模型配置的档位取默认值；模型没配
     // 画质就不下发 quality。报价与提交必须来自同一次解析，见
     // `resolveFixedFeatureModelRequest` 的注释。
@@ -75,6 +82,7 @@ export const Scene360Overlay = memo(
     );
     const billingRuleMissing =
       panoCost.error instanceof BillingRuleNotConfiguredError;
+    const submitDisabled = billingRuleMissing || catalogIsEmpty;
     const costDisplay =
       panoCost.data?.data.display ??
       (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
@@ -85,6 +93,8 @@ export const Scene360Overlay = memo(
     );
 
     const handleSubmit = useCallback(async () => {
+      // 按钮已经禁用，这里再挡一道：没有模型就绝不该发出请求。
+      if (catalogIsEmpty) return;
       const project = readUrl().project;
       if (!project) {
         console.error('[scene-360] no project in URL — cannot submit');
@@ -167,6 +177,7 @@ export const Scene360Overlay = memo(
       addEdge,
       addNode,
       aspectRatio,
+      catalogIsEmpty,
       findNodePosition,
       imageSource,
       modelRequest,
@@ -218,14 +229,18 @@ export const Scene360Overlay = memo(
 
           <button
             type="button"
-            disabled={billingRuleMissing}
+            disabled={submitDisabled}
             className={`${NODE_GENERATE_BUTTON_BASE_CLASS} shrink-0 ${
-              billingRuleMissing
+              submitDisabled
                 ? NODE_GENERATE_BUTTON_DISABLED_CLASS
                 : NODE_GENERATE_BUTTON_ENABLED_CLASS
             }`}
             onClick={handleSubmit}
-            title={t('scene360.submit')}
+            title={
+              catalogIsEmpty
+                ? t('modelParams.noModelsAvailable')
+                : t('scene360.submit')
+            }
           >
             <ArrowUp className="h-4 w-4" />
           </button>

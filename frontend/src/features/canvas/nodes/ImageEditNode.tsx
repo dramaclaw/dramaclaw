@@ -725,7 +725,10 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       prompt,
       model: requestResolution.requestModel,
       modelId: selectedModel.id,
-      generationMode: data.generationMode,
+      // 用推导后的模式，不是裸 `data.generationMode` —— 没手动选过模式时后者是
+      // undefined，后端拿不到模式就按「无模式」过滤，声明了 modes 的目录参数会被
+      // 整批丢掉。UI 上高亮的也是这个推导值，两边必须同一个口径。
+      generationMode,
       size: selectedResolution.value,
       aspectRatio: resolvedRequestAspectRatio,
       referenceImages: mergedReferenceImages,
@@ -1501,7 +1504,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         <MediaModelParameterChip
           parameters={selectedModel.requestParameters}
           values={data.modelParams}
-          mode={typeof data.generationMode === 'string' ? data.generationMode : undefined}
+          mode={generationMode}
           onChange={(modelParams) => updateNodeData(id, { modelParams })}
         />
 

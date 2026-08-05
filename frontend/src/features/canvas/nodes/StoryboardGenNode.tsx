@@ -110,6 +110,11 @@ const AUTO_ASPECT_RATIO_OPTION: AspectRatioChoice = {
 };
 const PICKER_FALLBACK_ANCHOR: PickerAnchor = { left: 8, top: 8 };
 
+// 分镜节点永远把渲染好的宫格图作为参考图一起提交，所以模式恒为图生图。
+// 目录参数按 modes 过滤，不给模式的话声明了 modes 的参数在控件里不显示、
+// 提交时也会被后端丢掉。
+const STORYBOARD_GENERATION_MODE = 'image_to_image';
+
 const STORYBOARD_NODE_HORIZONTAL_PADDING_PX = 24;
 const STORYBOARD_GRID_BASE_CELL_HEIGHT_PX = 118;
 const STORYBOARD_GRID_MAX_WIDTH_PX = 420;
@@ -1171,6 +1176,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       // 目录声明的动态参数（model_params），与 ImageGenNode 同一口径：原样提交，
       // 模式不匹配的键由后端 `_resolve_catalog_request` 过滤。
       modelParams: nodeData.modelParams,
+      generationMode: STORYBOARD_GENERATION_MODE,
       nodeId: id,
     };
     const storyboardMetadata = {
@@ -1758,6 +1764,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
           <MediaModelParameterChip
             parameters={selectedModel.requestParameters}
             values={nodeData.modelParams}
+            mode={STORYBOARD_GENERATION_MODE}
             onChange={(modelParams) => updateNodeData(id, { modelParams })}
           />
         </div>

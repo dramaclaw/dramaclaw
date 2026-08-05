@@ -23,7 +23,10 @@ import { CreditCostInline } from '@/components/credit-cost-inline';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
@@ -89,8 +92,12 @@ export const GridActionConfirmOverlay = memo(
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const findNodePosition = useCanvasStore((state) => state.findNodePosition);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
-    const { models: imageModels } = useFreezoneImageModels();
+    const imageCatalog = useFreezoneImageModels();
+    const imageModels = imageCatalog.models;
     const selectedModel = imageModels[0];
+    // 后台确实一个图片模型都没配时禁止提交：这个面板没有模型选择器，提交下去
+    // 后端拿不到目录条目会直接 409，先让用户点一下再报错是最糟的体验。
+    const catalogIsEmpty = isAuthoritativeEmptyCatalog(imageCatalog);
     const gridMode = GRID_ACTION_MODE_MAP[request.key];
     // 宫格动作没有尺寸/画质选择器，按后台对该模型配置的档位取默认值。报价与提交
     // 必须来自同一次解析，见 `resolveFixedFeatureModelRequest` 的注释。
@@ -108,11 +115,14 @@ export const GridActionConfirmOverlay = memo(
     );
     const billingRuleMissing =
       gridActionCost.error instanceof BillingRuleNotConfiguredError;
+    const submitDisabled = billingRuleMissing || catalogIsEmpty;
     const costDisplay =
       gridActionCost.data?.data.display ??
       (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
 
     const handleSubmit = useCallback(async () => {
+      // 按钮已经禁用，这里再挡一道：没有模型就绝不该发出请求。
+      if (catalogIsEmpty) return;
       const project = readUrl().project;
       if (!project) {
         console.error('[grid-action] no project in URL — cannot submit');
@@ -186,6 +196,7 @@ export const GridActionConfirmOverlay = memo(
     }, [
       addEdge,
       addNode,
+      catalogIsEmpty,
       findNodePosition,
       gridMode,
       imageSource,
@@ -231,10 +242,14 @@ export const GridActionConfirmOverlay = memo(
 
           <button
             type="button"
-            disabled={billingRuleMissing}
+            disabled={submitDisabled}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-bg-dark transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={handleSubmit}
-            title={t('nodeToolbar.gridMenu.confirmBar.submit')}
+            title={
+              catalogIsEmpty
+                ? t('modelParams.noModelsAvailable')
+                : t('nodeToolbar.gridMenu.confirmBar.submit')
+            }
           >
             <ArrowUp className="h-4 w-4" />
           </button>

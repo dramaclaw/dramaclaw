@@ -52,12 +52,14 @@ import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
   ProviderModelPicker,
-  SHARED_MODELS,
 } from '@/features/canvas/ui/ProviderModelPicker';
 import {
   CANVAS_NODE_INPUT_PLACEHOLDER_CLASS,
 } from '@/features/canvas/ui/nodeFrameStyles';
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { inheritMainlineFields } from '@/features/canvas/domain/inheritMainlineFields';
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
@@ -124,16 +126,21 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
 
   const [prompt, setPrompt] = useState('');
   const [modelId, setModelId] = useState<string>(DEFAULT_SHARED_MODEL_ID);
-  const { models: availableModels } = useFreezoneImageModels();
+  const imageCatalog = useFreezoneImageModels();
+  const availableModels = imageCatalog.models;
+  // 后台确实一个图片模型都没配时禁止提交：后端 `_resolve_catalog_request`
+  // 对空目录直接 409，让用户点一下再收报错是最糟的体验。
+  const catalogIsEmpty = isAuthoritativeEmptyCatalog(imageCatalog);
   const [imageSize, setImageSize] = useState<string>('2K');
   const [numImages, setNumImages] = useState<number>(1);
   const [aspectRatio, setAspectRatio] = useState<FreezoneRedrawAspectRatio>(
     ORIGINAL_ASPECT_RATIO,
   );
+  // 目录为空时故意让 selectedModel 保持 undefined。原来这里尾巴上还挂着
+  // `?? SHARED_MODELS.find(...)`，等于把前端硬编码的模型当成可用模型复活，
+  // 正是「后台没配模型，界面照样显示能用」的来源。
   const selectedModel =
-    availableModels.find((m) => m.id === modelId)
-    ?? availableModels[0]
-    ?? SHARED_MODELS.find((m) => m.id === modelId);
+    availableModels.find((m) => m.id === modelId) ?? availableModels[0];
   // 尺寸 / 比例 / 画质全部跟随后台对该模型的配置，换模型时把越界的旧选择收回。
   const sizeOptions = useMemo(() => resolveModelSizeOptions(selectedModel), [selectedModel]);
   const aspectRatioOptions = useMemo<FreezoneRedrawAspectRatio[]>(() => {
@@ -171,6 +178,8 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
   );
   const billingRuleMissing =
     creditCost.error instanceof BillingRuleNotConfiguredError;
+  const submitDisabled =
+    submitting || !imageReady || billingRuleMissing || catalogIsEmpty;
   const costDisplay =
     creditCost.data?.data.display ??
     (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
@@ -499,6 +508,11 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
 
   const handleSubmit = useCallback(async () => {
     if (submitting) return;
+    // 按钮已经禁用，这里再挡一道：没有可用模型就绝不该发出请求。
+    if (catalogIsEmpty) {
+      setError(t('modelParams.noModelsAvailable'));
+      return;
+    }
     const project = readUrl().project;
     if (!project) {
       setError('当前 URL 没有 project，无法提交');
@@ -565,6 +579,7 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
     }
   }, [
     buildMaskBlob,
+    catalogIsEmpty,
     createRedrawNode,
     findNodePosition,
     hasMask,
@@ -577,6 +592,7 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
     selectedModel,
     setSelectedNode,
     submitting,
+    t,
     updateNodeData,
   ]);
 
@@ -768,9 +784,11 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={submitting || !imageReady || billingRuleMissing}
+                disabled={submitDisabled}
                 className={REDRAW_CONFIRM_BUTTON_CLASS}
-                title={submitLabel}
+                title={
+                  catalogIsEmpty ? t('modelParams.noModelsAvailable') : submitLabel
+                }
               >
                 {t('toolDialog.confirm')}
               </button>

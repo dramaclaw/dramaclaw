@@ -11,7 +11,10 @@ import {
   FALLBACK_IMAGE_SIZE_OPTIONS,
   FALLBACK_VIDEO_ASPECT_OPTIONS,
 } from '@/features/canvas/domain/mediaModelOptions';
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { useFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
 import {
   NODE_FLOATING_PANEL_SURFACE_CLASS,
@@ -226,8 +229,12 @@ export function ProviderModelPicker({
   const skipFetch = models ? null : undefined;
   const imageHook = useFreezoneImageModels(domain === 'image' ? skipFetch : null);
   const videoHook = useFreezoneVideoModels(domain === 'video' ? skipFetch : null);
-  const apiModels = domain === 'video' ? videoHook.models : imageHook.models;
-  const effectiveModels = models ?? apiModels;
+  const apiHook = domain === 'video' ? videoHook : imageHook;
+  const effectiveModels = models ?? apiHook.models;
+  // 后台**确实**一个模型都没配（接口成功返回空列表，不是拉取失败兜底、也不是
+  // 还在加载）。此时触发器上原来会直接显示 `selectedModelId` —— 一个前端硬编码
+  // 的默认 id，看着像有个模型可用，点开却是空列表。
+  const catalogIsEmpty = !models && isAuthoritativeEmptyCatalog(apiHook);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -294,7 +301,10 @@ export function ProviderModelPicker({
         className={NODE_TEXT_CONTROL_TRIGGER_CLASS}
       >
         <Box className={NODE_TEXT_CONTROL_ICON_CLASS} />
-        <span className="font-medium">{selectedModel?.label ?? selectedModelId}</span>
+        <span className="font-medium">
+          {selectedModel?.label
+            ?? (catalogIsEmpty ? t('modelParams.noModelsAvailable') : selectedModelId)}
+        </span>
         <ChevronDown className="h-3 w-3 text-text-muted/90" />
       </button>
       {isOpen && popoverPosition && createPortal(

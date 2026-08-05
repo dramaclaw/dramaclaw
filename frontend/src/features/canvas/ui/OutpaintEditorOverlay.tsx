@@ -37,9 +37,11 @@ import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
   ProviderModelPicker,
-  SHARED_MODELS,
 } from '@/features/canvas/ui/ProviderModelPicker';
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { inheritMainlineFields } from '@/features/canvas/domain/inheritMainlineFields';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import {
@@ -107,12 +109,17 @@ export const OutpaintEditorOverlay = memo(
     const [imageSize, setImageSize] = useState<string>('2K');
     const [numImages, setNumImages] = useState<OutpaintNumImages>(1);
     const [modelId, setModelId] = useState<string>(DEFAULT_SHARED_MODEL_ID);
-    const { models: availableModels } = useFreezoneImageModels();
+    const imageCatalog = useFreezoneImageModels();
+    const availableModels = imageCatalog.models;
+    // 后台确实一个图片模型都没配时禁止提交：后端 `_resolve_catalog_request`
+    // 对空目录直接 409，让用户点一下再收报错是最糟的体验。
+    const catalogIsEmpty = isAuthoritativeEmptyCatalog(imageCatalog);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    // 目录为空时故意让 selectedModel 保持 undefined。原来这里尾巴上还挂着
+    // `?? SHARED_MODELS.find(...)`，等于把前端硬编码的模型当成可用模型复活，
+    // 正是「后台没配模型，界面照样显示能用」的来源。
     const selectedModel =
-      availableModels.find((m) => m.id === modelId)
-      ?? availableModels[0]
-      ?? SHARED_MODELS.find((m) => m.id === modelId);
+      availableModels.find((m) => m.id === modelId) ?? availableModels[0];
     // 分辨率 / 比例 / 画质都跟随后台对该模型的配置，换模型时把越界的旧选择收回。
     const sizeOptions = useMemo(
       () => resolveModelSizeOptions(selectedModel),
@@ -154,6 +161,7 @@ export const OutpaintEditorOverlay = memo(
     );
     const billingRuleMissing =
       creditCost.error instanceof BillingRuleNotConfiguredError;
+    const submitDisabled = isSubmitting || billingRuleMissing || catalogIsEmpty;
     const costDisplay =
       creditCost.data?.data.display ??
       (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
@@ -274,7 +282,8 @@ export const OutpaintEditorOverlay = memo(
     );
 
     const handleSubmit = useCallback(async () => {
-      if (isSubmitting) return;
+      // 按钮已经禁用，这里再挡一道：没有可用模型就绝不该发出请求。
+      if (isSubmitting || catalogIsEmpty) return;
       const project = readUrl().project;
       if (!project) {
         console.error('[outpaint] no project in URL — cannot submit');
@@ -310,6 +319,7 @@ export const OutpaintEditorOverlay = memo(
         setIsSubmitting(false);
       }
     }, [
+      catalogIsEmpty,
       createOutpaintNode,
       findNodePosition,
       isSubmitting,
@@ -423,13 +433,17 @@ export const OutpaintEditorOverlay = memo(
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={isSubmitting || billingRuleMissing}
+              disabled={submitDisabled}
               className={`shrink-0 ${NODE_GENERATE_BUTTON_BASE_CLASS} ${
-                isSubmitting || billingRuleMissing
+                submitDisabled
                   ? NODE_GENERATE_BUTTON_DISABLED_CLASS
                   : NODE_GENERATE_BUTTON_ENABLED_CLASS
               }`}
-              title={t('outpaintEditor.submit')}
+              title={
+                catalogIsEmpty
+                  ? t('modelParams.noModelsAvailable')
+                  : t('outpaintEditor.submit')
+              }
             >
               <ArrowUp className="h-4 w-4" />
             </button>

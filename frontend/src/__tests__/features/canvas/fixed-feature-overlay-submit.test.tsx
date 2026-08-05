@@ -33,13 +33,30 @@ const CATALOG_MODEL = {
   qualityOptions: ["low", "high"],
 };
 
-vi.mock("@/features/canvas/hooks/useFreezoneImageModels", () => ({
-  useFreezoneImageModels: () => ({
-    models: [CATALOG_MODEL],
-    isLoading: false,
-    isFallback: false,
-    error: null,
-  }),
+type ImageCatalogState = {
+  models: (typeof CATALOG_MODEL)[];
+  isLoading: boolean;
+  isFallback: boolean;
+  error: Error | null;
+};
+
+/** 默认给一条正常目录；单个用例可以改成加载中 / 拉取失败 / 权威空目录。 */
+const LOADED_CATALOG: ImageCatalogState = {
+  models: [CATALOG_MODEL],
+  isLoading: false,
+  isFallback: false,
+  error: null,
+};
+
+let imageCatalogState: ImageCatalogState = LOADED_CATALOG;
+
+// 只替换取数的 hook；`isAuthoritativeEmptyCatalog` 是纯函数判据，面板正是
+// 靠它决定禁不禁用提交，必须留真实实现。
+vi.mock("@/features/canvas/hooks/useFreezoneImageModels", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/features/canvas/hooks/useFreezoneImageModels")
+  >()),
+  useFreezoneImageModels: () => imageCatalogState,
   prefetchFreezoneImageModels: () => {},
 }));
 
@@ -98,6 +115,7 @@ function quotedParams(): Record<string, unknown> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  imageCatalogState = LOADED_CATALOG;
   submitFreezoneScene360.mockResolvedValue(JOB_REF);
   submitFreezoneTemplateEdit.mockResolvedValue({ ...JOB_REF, task_type: "freezone_edit" });
   awaitTaskCompletion.mockResolvedValue({ result: { output_url: "https://x/out.png" } });
@@ -124,6 +142,31 @@ describe("360 全景面板", () => {
     expect(payload.quality).toBe(quoted.quality);
     expect(payload.model).toBe(quoted.image_selection);
     expect(payload.catalogId).toBe(quoted.catalog_id);
+  });
+
+  it("后台一个图片模型都没配时禁用提交，点了也不发请求", () => {
+    imageCatalogState = { models: [], isLoading: false, isFallback: false, error: null };
+    render(
+      <Scene360Overlay node={NODE} imageSource="https://x/src.png?t=1" onClose={() => {}} />,
+    );
+    // 这个面板没有模型选择器，提交下去后端 `_resolve_catalog_request` 只会回 409。
+    const button = screen.getByTitle("modelParams.noModelsAvailable");
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(submitFreezoneScene360).not.toHaveBeenCalled();
+  });
+
+  it("目录还在路上时不算「没模型」，不许闪一下不可用", () => {
+    imageCatalogState = {
+      models: [CATALOG_MODEL],
+      isLoading: true,
+      isFallback: true,
+      error: null,
+    };
+    render(
+      <Scene360Overlay node={NODE} imageSource="https://x/src.png?t=1" onClose={() => {}} />,
+    );
+    expect(screen.getByTitle("scene360.submit")).not.toBeDisabled();
   });
 });
 
@@ -161,5 +204,40 @@ describe("宫格动作面板", () => {
     // mode 只属于报价维度，不能混进模型字段。
     expect(payload.mode).toBe("multi_camera_nine_grid");
     expect(quoted.mode).toBe("multi_camera_nine_grid");
+  });
+
+  it("后台一个图片模型都没配时禁用提交，点了也不发请求", () => {
+    imageCatalogState = { models: [], isLoading: false, isFallback: false, error: null };
+    render(
+      <GridActionConfirmOverlay
+        node={NODE}
+        imageSource="https://x/src.png?t=1"
+        request={REQUEST}
+        onClose={() => {}}
+      />,
+    );
+    const button = screen.getByTitle("modelParams.noModelsAvailable");
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(submitFreezoneTemplateEdit).not.toHaveBeenCalled();
+  });
+
+  it("拉取失败回落到兜底列表时照常可提交", async () => {
+    imageCatalogState = {
+      models: [CATALOG_MODEL],
+      isLoading: false,
+      isFallback: true,
+      error: new Error("boom"),
+    };
+    render(
+      <GridActionConfirmOverlay
+        node={NODE}
+        imageSource="https://x/src.png?t=1"
+        request={REQUEST}
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTitle("nodeToolbar.gridMenu.confirmBar.submit"));
+    await waitFor(() => expect(submitFreezoneTemplateEdit).toHaveBeenCalled());
   });
 });
