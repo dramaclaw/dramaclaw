@@ -72,6 +72,9 @@ class BillingRuleNotConfiguredError(BillingError):
             f"billing rule is not configured for {self.kind or 'billing'}:{self.key}"
         )
 
+    def details(self) -> dict[str, Any]:
+        return {"billing_kind": self.kind, "billing_key": self.key}
+
 
 def iter_exception_chain(exc: BaseException | None):
     """Yield an exception and its explicit/implicit causes once each."""

@@ -20,6 +20,8 @@ from novelvideo.shared.billing_errors import (
     BillingError,
     BillingRuleNotConfiguredError,
     InsufficientCreditsError,
+    billing_error_payload,
+    billing_rule_not_configured_payload,
     is_fatal_billing_error,
     is_insufficient_credits_error,
 )
@@ -202,9 +204,13 @@ def test_task_failure_mapper_handles_billing_rule_not_configured(caplog) -> None
 
     assert handled is True
     assert error == BILLING_RULE_NOT_CONFIGURED_MESSAGE
+    # K56: intentional contract change — this whole-packet assertion was 2 fields
+    # (Task C) and is tightened to 4 here. Never relax `==` to `in`/`.get()`.
     assert metadata == {
         "error_code": BILLING_RULE_NOT_CONFIGURED_CODE,
         "message": BILLING_RULE_NOT_CONFIGURED_MESSAGE,
+        "billing_kind": "model",
+        "billing_key": "doubao/seedance",
     }
     assert [
         record.getMessage()
@@ -214,6 +220,48 @@ def test_task_failure_mapper_handles_billing_rule_not_configured(caplog) -> None
         "typed billing failure in project task: "
         "billing rule is not configured for model:doubao/seedance"
     ]
+
+
+def test_billing_rule_not_configured_payload_is_identical_across_constructors() -> None:
+    """K56: the generic and the dedicated constructor must produce the same packet.
+
+    Whole-packet equality is the definition of "same shape" here; asserting
+    field-by-field would let a future divergence drift in unnoticed.
+    """
+    exc = BillingRuleNotConfiguredError(kind="model", key="doubao/seedance")
+
+    assert billing_error_payload(exc) == billing_rule_not_configured_payload(exc)
+    assert billing_error_payload(exc) == {
+        "error_code": BILLING_RULE_NOT_CONFIGURED_CODE,
+        "message": BILLING_RULE_NOT_CONFIGURED_MESSAGE,
+        "billing_kind": "model",
+        "billing_key": "doubao/seedance",
+    }
+
+
+def test_billing_rule_not_configured_r2_packet_grew_from_two_to_four_fields() -> None:
+    """K56: R2's triple no longer carries a thinner packet than R1/R3/R4."""
+    exc = BillingRuleNotConfiguredError(kind="model", key="doubao/seedance")
+
+    _error, metadata, _handled = run_core._project_task_failure_for_exception(exc)
+
+    assert len(metadata) == 4
+    assert set(metadata) == {
+        "error_code",
+        "message",
+        "billing_kind",
+        "billing_key",
+    }
+
+
+def test_insufficient_credits_payload_shape_is_untouched_by_k56() -> None:
+    """K56 negative guard: the sibling class must not grow `details()` fields."""
+    exc = InsufficientCreditsError(user_id="user-k56", cost=10, balance=1)
+
+    assert billing_error_payload(exc) == {
+        "error_code": INSUFFICIENT_CREDITS_CODE,
+        "message": INSUFFICIENT_CREDITS_MESSAGE,
+    }
 
 
 @pytest.mark.asyncio
