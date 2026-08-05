@@ -108,6 +108,7 @@ import {
 } from '@/features/canvas/domain/nodeRegistry';
 import { nodeCatalog } from '@/features/canvas/application/nodeCatalog';
 import { applySkillRoleBindingConnection } from '@/features/canvas/domain/skillConnectionEdges';
+import { videoReferenceConnectionRejection } from '@/features/canvas/domain/videoReferenceLimits';
 import { embedStoryboardImageMetadata } from '@/commands/image';
 import { nodeTypes as canvasNodeTypes } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
@@ -1803,6 +1804,11 @@ export function Canvas({
         ? nodes.find((node) => node.id === connection.source)
         : undefined;
       if (sourceNode && !canNodeTypeBeManualConnectionSource(sourceNode.type, targetNode.type)) {
+        return false;
+      }
+      // 视频节点的素材已经满到能力包络（图 9 / 视频 3 / 音频 3 / 总数 12）时，
+      // 拖线落点变灰、不成边。与 store 的 onConnect 收口同一把尺子。
+      if (videoReferenceConnectionRejection(nodes, edges, connection) != null) {
         return false;
       }
       if (targetNode.type !== CANVAS_NODE_TYPES.threeDWorld) return true;
@@ -3892,6 +3898,22 @@ export function Canvas({
     }
   }, []);
 
+  // 手动建边落到某个节点上时，这条边会不会把视频节点的素材撑过能力包络？非空即拒绝。
+  // 三条手动路径（React Flow 拖线松手、"+" 拖拽的落点高亮、"+" 松手建边）共用同一把
+  // 尺子——少一处就会出现「拖过去高亮成合法、一松手什么也没有」。
+  const manualDropReferenceRejection = useCallback(
+    (pending: PendingConnectStart, dropNodeId: string | null): string | null => {
+      if (!dropNodeId || dropNodeId === pending.nodeId) return null;
+      const sourceId = pending.handleType === 'source' ? pending.nodeId : dropNodeId;
+      const targetId = pending.handleType === 'source' ? dropNodeId : pending.nodeId;
+      return videoReferenceConnectionRejection(nodes, edges, {
+        source: sourceId,
+        target: targetId,
+      });
+    },
+    [edges, nodes],
+  );
+
   const handleConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
       if (connectionState.isValid || !pendingConnectStart) {
@@ -3916,6 +3938,21 @@ export function Canvas({
       const dropNodeId = dropNodeElement?.dataset?.id ?? null;
 
       if (dropNodeId && dropNodeId !== pendingConnectStart.nodeId) {
+        // 素材撑过能力包络：这条分支是 connectionState.isValid 为 false 才走到的
+        // 补救路径，**不看** isValidConnection，必须自己拦。不拦就会一路掉进下面
+        // 「拖到空白处 → 弹新建节点菜单」，用户明明松手在节点上却弹出个菜单。
+        // 顺带 toast 出原因——落点变灰本身不解释「为什么」。
+        const referenceRejection = manualDropReferenceRejection(
+          pendingConnectStart,
+          dropNodeId,
+        );
+        if (referenceRejection) {
+          toast.warning(referenceRejection);
+          setPendingConnectStart(null);
+          setPreviewConnectionVisual(null);
+          return;
+        }
+
         const sourceNode =
           pendingConnectStart.handleType === 'source'
             ? nodes.find((node) => node.id === pendingConnectStart.nodeId)
@@ -4036,6 +4073,7 @@ export function Canvas({
     },
     [
       connectGraphNodes,
+      manualDropReferenceRejection,
       nodes,
       pendingConnectStart,
       reactFlowInstance,
@@ -4110,6 +4148,9 @@ export function Canvas({
       const validate = (el: HTMLElement | null): HTMLElement | null => {
         const dropNodeId = el?.dataset?.id ?? null;
         if (!el || !dropNodeId || dropNodeId === pending.nodeId) return null;
+        // 素材已满的视频节点不高亮成落点（与拖线时落点变灰同一口径）；松手那一下
+        // 由 handlePlusConnectDragEnd 再 toast 出原因。
+        if (manualDropReferenceRejection(pending, dropNodeId)) return null;
         const sourceNode =
           pending.handleType === 'source'
             ? nodes.find((node) => node.id === pending.nodeId)
@@ -4168,7 +4209,7 @@ export function Canvas({
         });
       return best;
     },
-    [nodes],
+    [manualDropReferenceRejection, nodes],
   );
 
   const handlePlusConnectDragStart = useCallback((params: PlusConnectDragParams) => {
@@ -4258,6 +4299,23 @@ export function Canvas({
 
       const containerRect = wrapperRef.current?.getBoundingClientRect();
       if (!pending || !containerRect) {
+        setPendingConnectStart(null);
+        setPreviewConnectionVisual(null);
+        return;
+      }
+
+      // 素材已满的视频节点上面 resolveManualDropTargetEl 不会认作落点（不高亮），
+      // 松手就会掉进「拖到空白处 → 弹新建节点菜单」。所以先单独看光标正下方压着
+      // 谁：确实是被素材上限挡下的，就 toast 出原因并收工，别弹那个菜单。
+      const hoveredNodeId =
+        (
+          document
+            .elementFromPoint(params.clientPosition.x, params.clientPosition.y)
+            ?.closest?.('.react-flow__node[data-id]') as HTMLElement | null
+        )?.dataset?.id ?? null;
+      const hoveredRejection = manualDropReferenceRejection(pending, hoveredNodeId);
+      if (hoveredRejection) {
+        toast.warning(hoveredRejection);
         setPendingConnectStart(null);
         setPreviewConnectionVisual(null);
         return;
@@ -4355,6 +4413,7 @@ export function Canvas({
     },
     [
       connectGraphNodes,
+      manualDropReferenceRejection,
       nodes,
       reactFlowInstance,
       scheduleCanvasPersist,

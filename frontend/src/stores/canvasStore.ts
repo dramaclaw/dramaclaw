@@ -47,6 +47,7 @@ import {
   isUpstreamConnectionAllowed,
 } from '@/features/canvas/domain/nodeRegistry';
 import { EXPORT_RESULT_DISPLAY_NAME } from '@/features/canvas/domain/nodeDisplay';
+import { videoReferenceConnectionRejection } from '@/features/canvas/domain/videoReferenceLimits';
 import {
   type ViewportBookmark,
   type ViewportBookmarks,
@@ -1398,6 +1399,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         targetNode &&
         !isUpstreamConnectionAllowed(sourceNode.type, targetNode.type)
       ) {
+        return {};
+      }
+      // 视频节点素材上限收口：素材已满到能力包络（图 9 / 视频 3 / 音频 3 /
+      // 总数 12）时拒绝新连接。手动拖线在 isValidConnection 就变灰了，这里兜住
+      // 拖到空白生成节点等其它建边路径。
+      if (videoReferenceConnectionRejection(state.nodes, state.edges, connection) != null) {
         return {};
       }
       return {
