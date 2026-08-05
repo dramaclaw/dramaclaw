@@ -763,6 +763,50 @@ def test_newapi_video_payload_keeps_public_fields_and_model_semantics():
     }
 
 
+def test_newapi_image_reference_payload_does_not_promote_reference_to_first_frame():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    metadata = {
+        "resolution": "720p",
+        "ratio": "16:9",
+        "reference_images": ["https://example.com/reference.png"],
+    }
+    payload = {
+        "model": "video-model",
+        "prompt": "animate the reference",
+        "seconds": "5",
+        "metadata": metadata,
+    }
+
+    NewApiVideoGenerator._canonicalize_video_payload(payload, metadata)
+
+    assert "image" not in payload
+    assert payload["metadata"]["reference_images"] == [
+        "https://example.com/reference.png"
+    ]
+
+
+def test_newapi_last_only_payload_keeps_tail_without_top_level_first_frame():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    metadata = {
+        "resolution": "720p",
+        "ratio": "16:9",
+        "last_frame_image": "https://example.com/last.png",
+    }
+    payload = {
+        "model": "video-model",
+        "prompt": "finish at the target frame",
+        "seconds": "5",
+        "metadata": metadata,
+    }
+
+    NewApiVideoGenerator._canonicalize_video_payload(payload, metadata)
+
+    assert "image" not in payload
+    assert payload["metadata"]["last_frame_image"] == "https://example.com/last.png"
+
+
 @pytest.mark.parametrize(
     ("resolution", "ratio", "expected"),
     [
@@ -1098,6 +1142,67 @@ async def test_newapi_catalog_model_builds_huimeng_protocol_multimedia_reference
         "reference_videos",
         "reference_audios",
     }
+
+
+async def test_newapi_image_to_video_uses_single_reference_image_not_first_frame():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator, ShotReference
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="seedance-2-0-mini",
+    )
+    metadata: dict[str, object] = {}
+
+    await generator._apply_huimeng_protocol_media_inputs(
+        metadata,
+        mode="imageToVideo",
+        image_path="https://example.com/ref.png",
+        last_frame_path=None,
+        references=[ShotReference("image", "https://example.com/ref.png", "图片参考")],
+        log=lambda _message: None,
+    )
+
+    assert metadata == {"reference_images": ["https://example.com/ref.png"]}
+
+
+@pytest.mark.parametrize(
+    ("first_frame", "last_frame", "expected"),
+    [
+        (
+            "https://example.com/first.png",
+            None,
+            {"first_frame_image": "https://example.com/first.png"},
+        ),
+        (
+            None,
+            "https://example.com/last.png",
+            {"last_frame_image": "https://example.com/last.png"},
+        ),
+    ],
+)
+async def test_newapi_keyframe_protocol_accepts_single_first_or_last_frame(
+    first_frame, last_frame, expected
+):
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="seedance-2-0-mini",
+    )
+    metadata: dict[str, object] = {}
+
+    await generator._apply_huimeng_protocol_media_inputs(
+        metadata,
+        mode="first_last_frame",
+        image_path=first_frame or "",
+        last_frame_path=last_frame,
+        references=[],
+        log=lambda _message: None,
+    )
+
+    assert metadata == expected
 
 
 @pytest.mark.parametrize("model", ["seedance-2-0-mini", "kling-v3-omni"])

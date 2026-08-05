@@ -1200,7 +1200,22 @@ async def run_freezone_video_gen(
             resolution=resolution,
         )
     else:
-        first_image_ref = next((ref for ref in references if ref.type == "image"), None)
+        normalized_mode = {
+            "firstLastFrame": "first_last_frame",
+            "imageToVideo": "image_reference",
+            "imageReference": "image_reference",
+        }.get(str(gen_mode or "").strip(), str(gen_mode or "").strip())
+        if normalized_mode in {"first_frame", "first_last_frame"}:
+            first_image_ref = next(
+                (
+                    ref
+                    for ref in references
+                    if ref.type == "image" and "首帧" in str(ref.role or "")
+                ),
+                None,
+            )
+        else:
+            first_image_ref = next((ref for ref in references if ref.type == "image"), None)
         if (
             (first_image_ref is None or not first_image_ref.path)
             and not str(backend).startswith("huimeng_")
