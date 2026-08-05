@@ -349,6 +349,8 @@ def get_newapi_provider_channel(provider: str) -> dict[str, Any] | None:
 
 def save_newapi_provider_channels(
     channels: list[dict[str, Any]],
+    *,
+    preserve_unmentioned: bool = False,
 ) -> list[dict[str, Any]]:
     existing_by_provider = {
         channel["provider"]: channel for channel in get_newapi_provider_channels()
@@ -370,6 +372,8 @@ def save_newapi_provider_channels(
             0,
             int(item.get("type") or previous.get("type") or 0),
         )
+        if provider == "comfyui" and channel_type == 0:
+            channel_type = 63
         priority = int(item.get("priority") or previous.get("priority") or 0)
         raw_settings = item.get("settings", previous.get("settings", {}))
         channel_settings = raw_settings if isinstance(raw_settings, dict) else {}
@@ -410,6 +414,12 @@ def save_newapi_provider_channels(
                 "priority": priority,
                 "settings": channel_settings,
             }
+        )
+    if preserve_unmentioned:
+        normalized.extend(
+            channel
+            for provider, channel in existing_by_provider.items()
+            if provider not in seen
         )
     _write_many(
         {
@@ -481,15 +491,33 @@ def build_newapi_media_model_mappings_status() -> dict[str, dict[str, Any]]:
     return get_newapi_media_model_mappings()
 
 
-def get_ce_media_model_catalog(
-    media_type: str, *, provider: str | None = None
+def get_official_media_model_mappings() -> dict[str, dict[str, Any]]:
+    config_path = Path(__file__).with_name("official_media_models.json")
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("official media model configuration is invalid") from exc
+    models = payload.get("mediaModels") if isinstance(payload, dict) else None
+    if not isinstance(models, dict):
+        raise RuntimeError("official media model configuration has no mediaModels")
+    return {
+        str(model): dict(item)
+        for model, item in models.items()
+        if str(model).strip() and isinstance(item, dict)
+    }
+
+
+def _media_model_catalog(
+    mappings: dict[str, dict[str, Any]],
+    media_type: str,
+    *,
+    provider: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Expose CE-local media settings using the EE catalog response contract."""
     wanted = str(media_type or "").strip().lower()
     if wanted not in {"image", "video"}:
         return []
     result: list[dict[str, Any]] = []
-    for model, item in get_newapi_media_model_mappings().items():
+    for model, item in mappings.items():
         if provider and item.get("provider") != provider:
             continue
         if item.get("mediaType") != wanted or item.get("enabled") is False:
@@ -505,7 +533,9 @@ def get_ce_media_model_catalog(
                 "parameters": [],
             },
         )
+        gateway_model = str(item.get("upstreamModel") or model)
         api_model = model if wanted == "image" else f"newapi_{model}"
+        aliases = item.get("aliases") if isinstance(item.get("aliases"), list) else []
         result.append(
             {
                 **config,
@@ -516,13 +546,27 @@ def get_ce_media_model_catalog(
                 "provider": "newapi",
                 "apiModel": api_model,
                 "api_model": api_model,
-                "gatewayModel": model,
-                "gateway_model": model,
+                "gatewayModel": gateway_model,
+                "gateway_model": gateway_model,
+                "aliases": [str(alias) for alias in aliases if str(alias).strip()],
                 "label": str(item.get("label") or model),
                 "sortOrder": int(item.get("sortOrder") or 100),
             }
         )
     return sorted(result, key=lambda entry: (int(entry["sortOrder"]), str(entry["id"])))
+
+
+def get_official_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
+    return _media_model_catalog(get_official_media_model_mappings(), media_type)
+
+
+def get_ce_media_model_catalog(
+    media_type: str, *, provider: str | None = None
+) -> list[dict[str, Any]]:
+    """Expose CE-local media settings using the EE catalog response contract."""
+    return _media_model_catalog(
+        get_newapi_media_model_mappings(), media_type, provider=provider
+    )
 
 
 def get_newapi_embedding_model_config() -> dict[str, Any]:

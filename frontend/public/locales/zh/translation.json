@@ -3994,6 +3994,7 @@
       "description": "选择模型网关渠道：使用平台官方网关，或自配本地 NewAPI。",
       "baseUrlHint": "本地 NewAPI 地址由 CE 运行环境自动配置。",
       "effectiveBadge": "当前生效：{{channel}}",
+      "guide": "配置手册",
       "loading": "加载中…",
       "requestFailed": "请求失败，请重试。",
       "activateMode": "设为当前配置",

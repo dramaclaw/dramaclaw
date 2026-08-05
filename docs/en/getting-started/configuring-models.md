@@ -1,45 +1,227 @@
 <!-- lang-switch -->
 **English** · [简体中文](../../zh/getting-started/configuring-models.md)
 
-# Configuring Model Providers
+# Configuring Models
 
-> Configure the official RelayClaw channel or the local NewAPI bundled with CE.
+DramaClaw CE uses a NewAPI-compatible gateway for text, vision, embedding, image, video, and audio models. Model settings are stored in the local CE `settings.db`. Secrets are never returned to the browser; only masked saved-state previews are shown.
 
-DramaClaw CE connects text, image, video, audio, and embedding models through an OpenAI-compatible NewAPI gateway. Channel selection, gateway address, and runtime token are saved from the web UI to local `settings.db`; CE does not read them from environment variables.
+After startup, open `http://localhost:8080` and go to **Settings → Models & Channels**. The “Active” badge at the top shows the actual runtime mode, not merely the tab currently being viewed.
 
-## A. DC official key (recommended, simplest)
+## Choose a gateway mode
 
-The default `docker-compose.yml` already routes models through the "Official Channel". After `docker compose up -d --build` is running:
+| Mode | Use case | What you configure |
+|---|---|---|
+| Official | Use the models provided by RelayClaw | DC Key only |
+| Local | Route every model through Local NewAPI | NewAPI initialization, providers, feature models, embedding, and media models |
+| Local + Official Hybrid | Keep official models, but override matching official video models with Local ComfyUI | Official DC Key, Local NewAPI, ComfyUI URL, and workflows |
 
-1. Open **`http://localhost:8080`** in your browser and go to Settings → **Model Configuration → Official Channel**.
-2. The official gateway address is fixed as `https://relayclaw.cdnfg.com/v1`; **paste your DC key** and click "Save and Enable".
-3. It works immediately — RelayClaw has all of DramaClaw's logical models configured on its backend, so **no `*_MODEL` mapping is required**.
+Enable the intended mode after configuring it. New jobs read the latest mode, key, and mappings. Jobs already running do not switch gateways midway.
 
-> Don't have a DC key yet? Sign up / purchase at **<https://relayclaw.cdnfg.com>**.
+## Official mode
 
-## B. Local NewAPI
+Official mode is the shortest setup path:
 
-Fully local with no dependency on an external gateway: use the selfhosted orchestration, which additionally brings up a built-in `newapi` container:
+1. Open **Official**.
+2. Enter your RelayClaw DC Key.
+3. Click **Save & Enable**.
+
+DramaClaw manages the official gateway URL. RelayClaw already provides the `DC-*-LLM`, `DC-cognee-embedding`, and official media model mappings, so CE-side upstream mappings are unnecessary.
+
+The official image/video list and its resolutions, aspect ratios, durations, and reference-media capabilities come from the bundled `src/novelvideo/official_media_models.json`.
+
+To obtain a DC Key, visit <https://relayclaw.cdnfg.com>.
+
+## Local NewAPI mode
+
+### 1. Start the local stack
+
+Use the repository’s self-hosted stack:
 
 ```bash
 docker compose -f docker-compose.selfhosted.yml up -d --build
 ```
 
-On first start, open Settings → Model Configuration → Local NewAPI. The initialization flow creates the administrator and runtime token, then stores the runtime address and token in `settings.db`. Configure upstream channels and model mappings on the same page. See the [Self-Hosting Handbook](../guides/self-hosting.md) for details.
+It starts the DramaClaw API, web frontend, and bundled NewAPI. DramaClaw normally reaches NewAPI through the container network. The browser-facing host port may differ and does not need to replace the internal URL.
 
-### Mapping logical model names
+The repository compose file enables the setup and channel-management features required by the settings UI. CE uses `${NOVELVIDEO_STATE_DIR}/newapi/one-api.db`; normally you do not enter a SQLite path or DSN manually.
 
-`.env.example` has roughly 30 `*_MODEL` entries that use logical names (e.g. `HERMES_MODEL=DC-hermes-LLM`, `SCENE_BUILD_MODEL=DC-scene-builder-LLM`). Two ways to handle them:
+### 2. Initialize Local NewAPI
 
-1. **Keep the logical names and map them to real upstream models in Local NewAPI** (recommended); or
-2. **Change each `*_MODEL` to a model name your gateway actually provides.**
+Open **Local**. When it shows “Initialization required”:
 
-Grouped by purpose: text (Hermes/Cognee/the various planners/normalizers, etc.), image (`NEWAPI_IMAGE_MODEL`, `NEWAPI_NANOBANANA2_MODEL` and the various `*_IMAGE_*`), video (`VIDEO_BACKEND`, `NEWAPI_VIDEO_MODELS`…), audio (`INDEXTTS2_NEWAPI_MODEL`).
+1. Set and confirm a root account password of at least eight characters for a fresh NewAPI instance.
+2. Click **Initialize Local NewAPI**.
 
-> When using a DC official key, skip this section — RelayClaw already has everything configured.
+Initialization:
 
-After changing the key or channel, new clients use the new settings. Hermes rotates its worker automatically. If Cognee has already initialized in the current process, restart DramaClaw before using the novel knowledge base again.
+- Creates the first NewAPI root account only for a fresh instance.
+- Creates or reuses the `dramaclaw-ce-runtime` token.
+- Stores the runtime URL and token in CE local settings.
+- Verifies the SQLite database and management access.
 
-### Reference media (optional)
+DramaClaw does not store the root password. Keep it for signing in to NewAPI. Entering a password for an already initialized instance does not reset the existing password.
 
-If you use "upload reference image", you need to configure an OSS relay (`OSS_RELAY_ENDPOINT/BUCKET/AK/SK`); plain-text workflows can leave it unconfigured for now.
+### 3. Apply the recommended profile
+
+After initialization, start with **Recommended**. One profile configures:
+
+- Provider channels and upstream keys.
+- DramaClaw feature-model mappings.
+- Cognee embedding model, dimensions, and batch size.
+- Image, video, and audio model mappings.
+
+Enter each provider key separately, then click **Save & Apply All**. Keys are stored separately and never written into profile JSON. Leave an already saved key blank; entering a new value replaces it.
+
+The built-in recommended profile is read-only. Switch to **Custom** to edit and persist your own JSON. The main shape is:
+
+```json
+{
+  "version": 1,
+  "name": "My CE profile",
+  "channels": [
+    {
+      "id": "openrouter",
+      "provider": "openrouter",
+      "baseUrl": "",
+      "priority": 0,
+      "settings": {}
+    }
+  ],
+  "featureModels": {
+    "text": {"channel": "openrouter", "model": "upstream-text-model"},
+    "vision": {"channel": "openrouter", "model": "upstream-vision-model"},
+    "overrides": {}
+  },
+  "embedding": {
+    "channel": "openrouter",
+    "model": "upstream-embedding-model",
+    "dimension": 1024,
+    "batchSize": 10
+  },
+  "mediaModels": {
+    "my-video-model": {
+      "channel": "openrouter",
+      "model": "upstream-video-model",
+      "mediaType": "video",
+      "label": "My Video Model",
+      "enabled": true,
+      "sortOrder": 100,
+      "config": {}
+    }
+  }
+}
+```
+
+Each `channel` references a `channels[].id`. A profile currently supports only one entry per `provider`. Changes in the recommended/custom profile are reflected in Advanced Settings. Saving Advanced Settings updates the active custom profile, so there are not two competing configurations.
+
+### 4. Advanced Settings
+
+Use Advanced Settings to adjust individual results after applying a profile.
+
+#### Provider channels
+
+Provider types are loaded dynamically from the current NewAPI `/api/channel/types` endpoint. Each provider can be added once.
+
+- **Save Channels** stores CE’s local channel presets.
+- **Update NewAPI Channel** immediately replaces the matching NewAPI channel key and Base URL.
+- **Base URL Override** is normally empty. Set it only for a custom proxy or when required by the provider.
+
+After a profile is saved, a channel key should show “Saved” and a masked preview. Password dots without a “Saved” badge indicate an uncommitted browser draft.
+
+#### Feature models
+
+DramaClaw uses stable logical names such as `DC-scene-builder-LLM` and `DC-freezone-vision-LLM`. In Local mode, keep those internal names and map them to real upstream models in NewAPI.
+
+- Text features can use text-only models.
+- Vision features send images or video and require a suitable multimodal model.
+- Bulk fill changes drafts only; click Save Mapping afterward.
+- Hermes may use a separate model. Other `DC-*-LLM` mappings can share one upstream model or be overridden individually.
+
+#### Embedding
+
+`DC-cognee-embedding` powers the novel knowledge graph and semantic retrieval. Configure:
+
+- The upstream embedding model.
+- Its output dimensions.
+- Batch size, defaulting to 10.
+
+The model and dimensions are bound when a project is created. Later changes automatically affect only new projects. Clear and rebuild the graph before changing these values for an existing project.
+
+For embedding HTTP 400/422 errors, verify the model supports the configured dimensions and that batch size does not exceed the upstream `input` limit.
+
+#### Image, video, and audio models
+
+Media model configuration controls:
+
+- Whether the model appears in XiaHua.
+- Label and ordering.
+- The upstream model sent to NewAPI.
+- Resolution, aspect-ratio, image-quality, and duration controls.
+- Text-to-video, first frame, first/last frame, image reference, all-reference, and video-edit modes.
+- Reference image/video/audio limits.
+- Human-review control visibility.
+- Model-specific request parameters.
+
+Built-in mainline models provide the default capability baseline and cannot be removed from the configuration. A custom local profile may add image or video models and edit custom-model capabilities. Save the complete configuration and refresh XiaHua to load the latest catalog and controls.
+
+The **Model ID** is DramaClaw’s stable identifier. **Upstream Model** is the actual model used by the NewAPI channel; the two may differ.
+
+## Local + Official Hybrid mode
+
+Hybrid mode keeps RelayClaw while generating selected video models through Local ComfyUI:
+
+1. Save the DC Key under **Official**.
+2. Initialize NewAPI once under **Local**; the same SQLite database is reused.
+3. Open **Local + Official Hybrid**.
+4. Enter the ComfyUI URL.
+5. For each local video model, enter its model ID and paste a ComfyUI **API Format Workflow** JSON export.
+6. Save video configuration and enable Hybrid mode.
+
+The ComfyUI API key is optional. Workflows must use API Format, not the browser workflow format.
+
+Routing is based on model ID. A local video model overrides an official model with the same ID; all other models continue through RelayClaw. DramaClaw does not automatically fall back to the official model after a local failure. The user chooses whether to retry or switch models. Hybrid mode manages local video overrides only, so it does not require OpenRouter, VolcEngine, or other official upstream provider settings.
+
+## Reference media storage
+
+Image editing, video first/last frames, reference images, and identity images require upstream services to read local files. Go to **Settings → Media Storage** and configure a publicly reachable temporary media relay.
+
+### Aliyun OSS
+
+Provide a Bucket and an AccessKey with read/write permission for that Bucket. A narrowly scoped RAM sub-account is recommended.
+
+| UI field | Environment variable | Example or notes |
+|---|---|---|
+| Endpoint | `OSS_RELAY_ENDPOINT` | `oss-cn-chengdu.aliyuncs.com`, without `https://` |
+| Bucket | `OSS_RELAY_BUCKET` | Temporary-media Bucket |
+| AccessKey ID | `OSS_RELAY_AK` | Bucket-scoped AK |
+| AccessKey Secret | `OSS_RELAY_SK` | Matching SK |
+| TTL | `MEDIA_RELAY_TTL_SECONDS` | Default: 1800 seconds |
+
+The Bucket does not need public-read access. DramaClaw generates temporary signed URLs for upstream access.
+
+### Cloudinary
+
+Enter Cloud name, API Key, API Secret, and an optional folder. Find them under **Product environment settings → API Keys** in Cloudinary. Saved database settings take precedence over environment variables, and full secrets are never returned to the frontend.
+
+## Troubleshooting
+
+| Symptom | What to check |
+|---|---|
+| No “Saved” badge after saving a key | The value may still be a browser draft. Save/update that channel or reapply the complete profile, and ensure the running image contains the latest code. |
+| Adding a media model says its provider key is missing | The provider channel was not persisted to NewAPI. Save/update the channel before saving media models. |
+| NewAPI reports `No available channel for model ...` | Check the logical mapping, channel status, upstream model name, and group. |
+| Local NewAPI initialization fails | Check the NewAPI service, SQLite mount, directory permissions, and `NEWAPI_PROVISIONER_ENABLED`. |
+| A new model is absent from XiaHua | Verify it is enabled, has the correct media type, the complete configuration was saved, and the page was refreshed. |
+| Controls do not match model capabilities | Check the media model `config`, especially resolutions, ratios, modes, and reference limits. |
+| Knowledge-graph embedding fails | Check the key, upstream model, dimensions, and batch size. HTTP 429 means upstream rate limiting. |
+| Reference media cannot be read | Verify media storage and that the upstream service can reach the temporary public URL. |
+| Hybrid local video fails without official fallback | Expected: Hybrid mode has no automatic failure fallback. |
+
+## Related files
+
+- `src/novelvideo/official_media_models.json`: CE official media models and capabilities.
+- `.env.example`: environment variable reference.
+- `docker-compose.yml`: official-mode deployment.
+- `docker-compose.selfhosted.yml`: bundled NewAPI deployment.
+- [Self-Hosting Handbook](../guides/self-hosting.md)
+- [Environment Variable Reference](../reference/environment-variables.md)

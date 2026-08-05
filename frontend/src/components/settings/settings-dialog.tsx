@@ -9,6 +9,7 @@ import {
   Cpu,
   Eye,
   EyeOff,
+  ExternalLink,
   HardDrive,
   Loader2,
   Maximize2,
@@ -95,6 +96,8 @@ const MEDIA_STORAGE_PROVIDERS: MediaStorageProvider[] = [
 
 // Codex 本地桥接暂时隐藏（保留组件代码，后端就绪后改回 true 即可恢复）。
 const SHOW_CODEX_BRIDGE = false;
+const MODEL_CONFIGURATION_GUIDE_URL =
+  "https://github.com/dramaclaw/dramaclaw/blob/main/docs/en/getting-started/configuring-models.md";
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { t } = useTranslation();
@@ -185,16 +188,16 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           {page === "models" ? (
             <div className="min-w-0 flex-1">
-            <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
-              <ModelConfigSection open={open && page === "models"} />
-              {SHOW_CODEX_BRIDGE && <CodexBridgeSection />}
-            </ScrollArea>
+              <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
+                <ModelConfigSection open={open && page === "models"} />
+                {SHOW_CODEX_BRIDGE && <CodexBridgeSection />}
+              </ScrollArea>
             </div>
           ) : (
             <div className="min-w-0 flex-1">
-            <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
-              <MediaStorageSection />
-            </ScrollArea>
+              <ScrollArea className="h-full [&_[data-slot=scroll-area-scrollbar]]:!w-1 [&_[data-slot=scroll-area-scrollbar]]:!border-l-0 [&_[data-slot=scroll-area-scrollbar]]:!p-0">
+                <MediaStorageSection />
+              </ScrollArea>
             </div>
           )}
         </div>
@@ -393,12 +396,21 @@ function ModelConfigSection({ open }: { open: boolean }) {
               channel: t(
                 `settings.modelConfig.modes.${config.effective.source}`,
                 {
-                defaultValue: config.effective.source,
+                  defaultValue: config.effective.source,
                 },
               ),
             })}
           </span>
         ) : null}
+        <a
+          href={MODEL_CONFIGURATION_GUIDE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        >
+          {t("settings.modelConfig.guide")}
+          <ExternalLink className="size-3" aria-hidden />
+        </a>
       </div>
 
       <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
@@ -473,12 +485,12 @@ function ModelConfigSection({ open }: { open: boolean }) {
             activateHybrid={mode === "hybrid"}
           />
           {mode === "custom" ? (
-          <QuickLocalNewApiSetup
-            config={config}
-            loading={loading}
-            newApiBaseUrl={customBaseUrl}
-            database={customDatabase}
-          />
+            <QuickLocalNewApiSetup
+              config={config}
+              loading={loading}
+              newApiBaseUrl={customBaseUrl}
+              database={customDatabase}
+            />
           ) : null}
           <details className="mt-5 rounded-md border border-border/70">
             <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
@@ -743,14 +755,14 @@ function CustomGatewayPanel({
 
     try {
       const response = await initCustom.mutateAsync({
-          ...(baseUrl.trim() ? { newApiBaseUrl: baseUrl.trim() } : {}),
-          ...(hasSetupPassword
-            ? {
-                setupUsername: "root",
-                setupPassword: trimmedSetupPassword,
-                setupConfirmPassword: trimmedSetupConfirmPassword,
-              }
-            : {}),
+        ...(baseUrl.trim() ? { newApiBaseUrl: baseUrl.trim() } : {}),
+        ...(hasSetupPassword
+          ? {
+              setupUsername: "root",
+              setupPassword: trimmedSetupPassword,
+              setupConfirmPassword: trimmedSetupConfirmPassword,
+            }
+          : {}),
       });
       if (response.ok !== true) {
         showInitResponseError(
@@ -916,8 +928,8 @@ function splitFeatureModelGroups(
 ): FeatureModelGroup[] {
   return groups
     .map((group) => ({
-    ...group,
-    features: group.features.filter(predicate),
+      ...group,
+      features: group.features.filter(predicate),
     }))
     .filter((group) => group.features.length > 0);
 }
@@ -930,9 +942,11 @@ const MEDIA_MODEL_ROWS: readonly {
   { model: "LingShan-G2", kind: "image" },
   { model: "LingShan-NB-2", kind: "image" },
   { model: "seedance-1.0-pro-fast", kind: "video" },
+  { model: "seedance-1.0-pro", kind: "video" },
   { model: "seedance-1.5-pro", kind: "video" },
   { model: "seedance-2.0", kind: "video" },
   { model: "seedance-2.0-fast", kind: "video" },
+  { model: "seedance-2.0-mini", kind: "video" },
   { model: "happyhorse-1.0", kind: "video" },
   { model: "index-tts-2", kind: "audio" },
   { model: "LingShan-MU-11", kind: "audio" },
@@ -941,6 +955,13 @@ const MEDIA_MODEL_ROWS: readonly {
 const MAINLINE_MEDIA_MODEL_IDS = new Set(
   MEDIA_MODEL_ROWS.filter((row) => !row.officialOnly).map((row) => row.model),
 );
+
+const RECOMMENDED_MEDIA_UPSTREAM_MODELS: Readonly<Record<string, string>> = {
+  "seedance-1.0-pro": "doubao-seedance-1-0-pro-250528",
+  "seedance-2.0": "doubao-seedance-2-0-260128",
+  "seedance-2.0-fast": "doubao-seedance-2-0-fast-260128",
+  "seedance-2.0-mini": "doubao-seedance-2-0-mini-260615",
+};
 
 const MEDIA_ROW_GRID =
   "grid grid-cols-[70px_minmax(0,1fr)_130px_minmax(0,1fr)_80px] items-center gap-3";
@@ -1017,7 +1038,7 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
         channel: row.model.startsWith("seedance-")
           ? "volcengine"
           : "openrouter",
-        model: row.model,
+        model: RECOMMENDED_MEDIA_UPSTREAM_MODELS[row.model] ?? row.model,
         mediaType: row.kind,
         label: row.model,
         enabled: true,
@@ -1193,6 +1214,7 @@ function syncQuickProfileFromAdvancedSettings(
     channels.push({
       id,
       provider,
+      ...(provider === "comfyui" ? { type: 63 } : {}),
       baseUrl: settings.providerChannels[provider]?.baseUrl ?? "",
       priority: settings.providerChannels[provider]?.priority ?? 0,
       settings: settings.providerChannels[provider]?.settings ?? {},
@@ -1301,10 +1323,10 @@ function QuickLocalNewApiSetup({
   const [storedProfiles] = useState(loadStoredQuickProfiles);
   const [selectedProfileKind, setSelectedProfileKind] =
     useState<QuickProfileKind>(
-    storedProfiles.selected === "custom" && storedProfiles.customProfileJson
-      ? "custom"
-      : "recommended",
-  );
+      storedProfiles.selected === "custom" && storedProfiles.customProfileJson
+        ? "custom"
+        : "recommended",
+    );
   const [customProfileJson, setCustomProfileJson] = useState(
     storedProfiles.customProfileJson,
   );
@@ -1427,8 +1449,15 @@ function QuickLocalNewApiSetup({
         ...recentlySavedChannels,
       ].map((channel) => [channel.provider, channel]),
     );
+    const channelsToSave = profile.channels.filter(
+      (channel) =>
+        usedChannelIds.has(channel.id) ||
+        Boolean(upstreamKeys[channel.id]?.trim()) ||
+        Boolean(savedProviderByName.get(channel.provider)?.configured),
+    );
     const missingKeyChannels = activeChannels.filter(
       (channel) =>
+        channel.provider !== "comfyui" &&
         !upstreamKeys[channel.id]?.trim() &&
         !savedProviderByName.get(channel.provider)?.configured,
     );
@@ -1483,10 +1512,11 @@ function QuickLocalNewApiSetup({
     try {
       setApplyingStep(t("settings.modelConfig.quick.steps.channel"));
       const channelResult = await saveProviderChannels.mutateAsync({
-        channels: activeChannels.map((channel) => ({
+        preserveUnmentioned: true,
+        channels: channelsToSave.map((channel) => ({
           provider: channel.provider,
           ...(channel.type ? { type: channel.type } : {}),
-          ...(upstreamKeys[channel.id]?.trim()
+          ...(channel.provider !== "comfyui" && upstreamKeys[channel.id]?.trim()
             ? { upstreamKey: upstreamKeys[channel.id].trim() }
             : {}),
           baseUrl: channel.baseUrl.trim(),
@@ -1507,19 +1537,19 @@ function QuickLocalNewApiSetup({
         ...(database ? { database } : {}),
         channels: [...featureMappingsByChannel.entries()].map(
           ([channelId, modelMapping]) => {
-          const channel = channelById.get(channelId)!;
-          return {
-            provider: channel.provider,
-            ...(channel.type ? { type: channel.type } : {}),
-            upstreamKey: upstreamKeys[channel.id]?.trim() ?? "",
-            modelMapping,
-            group: "default",
+            const channel = channelById.get(channelId)!;
+            return {
+              provider: channel.provider,
+              ...(channel.type ? { type: channel.type } : {}),
+              upstreamKey: upstreamKeys[channel.id]?.trim() ?? "",
+              modelMapping,
+              group: "default",
               priority: channel.priority ?? 0,
-            weight: 0,
-            baseUrl: channel.baseUrl.trim(),
-            testModel: "",
+              weight: 0,
+              baseUrl: channel.baseUrl.trim(),
+              testModel: "",
               settings: channel.settings ?? {},
-          };
+            };
           },
         ),
       });
@@ -1555,7 +1585,7 @@ function QuickLocalNewApiSetup({
       for (const channel of profile.channels) {
         addProviderChannel(channel.provider);
         updateProviderChannel(channel.provider, {
-          upstreamKey: upstreamKeys[channel.id]?.trim() ?? "",
+          upstreamKey: "",
           baseUrl: channel.baseUrl,
           priority: channel.priority ?? 0,
           settings: channel.settings ?? {},
@@ -1668,45 +1698,55 @@ function QuickLocalNewApiSetup({
         </p>
         {parsedProfile ? (
           <div className="mt-3 space-y-3">
-            {parsedProfile.channels.map((channel) => {
-              const saved = [
-                ...recentlySavedChannels,
-                ...(config?.provisioner?.providerChannels ?? []),
-              ].find(
-                (item) => item.provider === channel.provider && item.configured,
-              );
-              return (
-                <div
-                  key={channel.id}
-                  className="grid grid-cols-[150px_minmax(0,1fr)] items-end gap-3"
-                >
-                  <div className="pb-2 text-[11px] text-muted-foreground">
-                    <p className="font-medium text-foreground">{channel.id}</p>
-                    <p>{channel.provider}</p>
+            {parsedProfile.channels
+              .filter((channel) => channel.provider !== "comfyui")
+              .map((channel) => {
+                const saved = [
+                  ...recentlySavedChannels,
+                  ...(config?.provisioner?.providerChannels ?? []),
+                ].find(
+                  (item) =>
+                    item.provider === channel.provider && item.configured,
+                );
+                return (
+                  <div
+                    key={channel.id}
+                    className="grid grid-cols-[150px_minmax(0,1fr)] items-end gap-3"
+                  >
+                    <div className="pb-2 text-[11px] text-muted-foreground">
+                      <p className="font-medium text-foreground">
+                        {channel.id}
+                      </p>
+                      <p>{channel.provider}</p>
+                    </div>
+                    <FieldRow
+                      secret
+                      name={`quick-upstream-key-${channel.id}`}
+                      autoComplete="off"
+                      label={t("settings.modelConfig.quick.upstreamKey")}
+                      value={upstreamKeys[channel.id] ?? ""}
+                      onChange={(value) =>
+                        setUpstreamKeys((current) => ({
+                          ...current,
+                          [channel.id]: value,
+                        }))
+                      }
+                      placeholder={
+                        saved
+                          ? t(
+                              "settings.modelConfig.quick.savedKeyPlaceholder",
+                              {
+                                preview: saved.upstreamKeyPreview,
+                              },
+                            )
+                          : t(
+                              "settings.modelConfig.quick.upstreamKeyPlaceholder",
+                            )
+                      }
+                    />
                   </div>
-                  <FieldRow
-                    secret
-                    name={`quick-upstream-key-${channel.id}`}
-                    autoComplete="off"
-                    label={t("settings.modelConfig.quick.upstreamKey")}
-                    value={upstreamKeys[channel.id] ?? ""}
-                    onChange={(value) =>
-                      setUpstreamKeys((current) => ({
-                        ...current,
-                        [channel.id]: value,
-                      }))
-                    }
-                    placeholder={
-                      saved
-                        ? t("settings.modelConfig.quick.savedKeyPlaceholder", {
-                            preview: saved.upstreamKeyPreview,
-                          })
-                        : t("settings.modelConfig.quick.upstreamKeyPlaceholder")
-                    }
-                  />
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         ) : (
           <p className="mt-2 text-[11px] text-amber-300">
@@ -2051,66 +2091,66 @@ function FeatureModelsBlock({
       />
 
       {!mediaOnly ? (
-      <CogneeModelsBlock
-        configuredProviders={configuredProviders}
-        newApiBaseUrl={newApiBaseUrl}
-        database={database}
-        providerChannels={providerChannels}
-        savedChannelByProvider={savedChannelByProvider}
-        savedEmbeddingModel={savedEmbeddingModel}
-      />
+        <CogneeModelsBlock
+          configuredProviders={configuredProviders}
+          newApiBaseUrl={newApiBaseUrl}
+          database={database}
+          providerChannels={providerChannels}
+          savedChannelByProvider={savedChannelByProvider}
+          savedEmbeddingModel={savedEmbeddingModel}
+        />
       ) : null}
 
       {/* 功能模型映射 */}
       {!mediaOnly ? (
         <>
-      <h4 className="mt-5 text-xs font-medium text-foreground">
-        {t("settings.modelConfig.featureModels.title")}
-      </h4>
-      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-        {t("settings.modelConfig.featureModels.description")}
-      </p>
+          <h4 className="mt-5 text-xs font-medium text-foreground">
+            {t("settings.modelConfig.featureModels.title")}
+          </h4>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            {t("settings.modelConfig.featureModels.description")}
+          </p>
 
-      <FeatureModelCapabilitySection
-        title={t("settings.modelConfig.featureModels.textModelsTitle")}
-        groups={textFeatureGroups}
-        newApiBaseUrl={newApiBaseUrl}
-        database={database}
-        configuredProviders={configuredProviders}
-        providerChannels={providerChannels}
-        savedChannelByProvider={savedChannelByProvider}
-      />
+          <FeatureModelCapabilitySection
+            title={t("settings.modelConfig.featureModels.textModelsTitle")}
+            groups={textFeatureGroups}
+            newApiBaseUrl={newApiBaseUrl}
+            database={database}
+            configuredProviders={configuredProviders}
+            providerChannels={providerChannels}
+            savedChannelByProvider={savedChannelByProvider}
+          />
 
-      <FeatureModelCapabilitySection
+          <FeatureModelCapabilitySection
             title={t(
               "settings.modelConfig.featureModels.multimodalModelsTitle",
             )}
-        hint={t("settings.modelConfig.featureModels.visionRequiredHint")}
-        groups={visionFeatureGroups}
-        newApiBaseUrl={newApiBaseUrl}
-        database={database}
-        configuredProviders={configuredProviders}
-        providerChannels={providerChannels}
-        savedChannelByProvider={savedChannelByProvider}
-      />
+            hint={t("settings.modelConfig.featureModels.visionRequiredHint")}
+            groups={visionFeatureGroups}
+            newApiBaseUrl={newApiBaseUrl}
+            database={database}
+            configuredProviders={configuredProviders}
+            providerChannels={providerChannels}
+            savedChannelByProvider={savedChannelByProvider}
+          />
 
-      <div className="mt-3 flex items-center justify-end gap-3">
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          {t("settings.modelConfig.featureModels.saveHint")}
-        </p>
-        <Button
-          type="button"
-          size="sm"
-          className="shrink-0"
-          onClick={handleSave}
-          disabled={saveBatch.isPending}
-        >
+          <div className="mt-3 flex items-center justify-end gap-3">
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {t("settings.modelConfig.featureModels.saveHint")}
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              className="shrink-0"
+              onClick={handleSave}
+              disabled={saveBatch.isPending}
+            >
               {saveBatch.isPending ? (
                 <Loader2 className="size-3.5 animate-spin" />
               ) : null}
-          {t("settings.modelConfig.featureModels.save")}
-        </Button>
-      </div>
+              {t("settings.modelConfig.featureModels.save")}
+            </Button>
+          </div>
         </>
       ) : null}
 
@@ -2491,22 +2531,35 @@ function MediaModelsBlock({
   const savedMediaModelsKey = JSON.stringify(savedMediaModels);
   const localSavedMediaModelsKey = JSON.stringify(localSavedMediaModels);
   const mediaModelRows = useMemo(() => {
-    const presetKinds = new Map(MEDIA_MODEL_ROWS.map((row) => [row.model, row.kind]));
+    const presetKinds = new Map(
+      MEDIA_MODEL_ROWS.map((row) => [row.model, row.kind]),
+    );
     const models = comfyOnly
-      ? Object.keys(mediaModels).filter((model) => mediaModels[model]?.provider === "comfyui")
-      : Array.from(new Set([...MEDIA_MODEL_ROWS.map((row) => row.model), ...Object.keys(mediaModels)]));
+      ? Object.keys(mediaModels).filter(
+          (model) => mediaModels[model]?.provider === "comfyui",
+        )
+      : Array.from(
+          new Set([
+            ...MEDIA_MODEL_ROWS.map((row) => row.model),
+            ...Object.keys(mediaModels),
+          ]),
+        );
     return models
       .map((model) => {
         const entry = mediaModels[model];
         return {
-        model,
-        kind: entry?.mediaType ?? presetKinds.get(model) ?? "video",
-        officialOnly: false,
-        mainline: MAINLINE_MEDIA_MODEL_IDS.has(model),
-        sortOrder: entry?.sortOrder ?? 100,
+          model,
+          kind: entry?.mediaType ?? presetKinds.get(model) ?? "video",
+          officialOnly: false,
+          mainline: MAINLINE_MEDIA_MODEL_IDS.has(model),
+          sortOrder: entry?.sortOrder ?? 100,
         };
       })
-      .sort((left, right) => left.sortOrder - right.sortOrder || left.model.localeCompare(right.model));
+      .sort(
+        (left, right) =>
+          left.sortOrder - right.sortOrder ||
+          left.model.localeCompare(right.model),
+      );
   }, [comfyOnly, mediaModels]);
 
   useEffect(() => {
@@ -2647,7 +2700,12 @@ function MediaModelsBlock({
           </p>
         </div>
         {!comfyOnly ? (
-          <Button type="button" size="sm" variant="outline" onClick={() => setCreatingModel(true)}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setCreatingModel(true)}
+          >
             <Plus className="size-3.5" />
             {t("settings.modelConfig.mediaModels.addModel")}
           </Button>
@@ -2746,7 +2804,7 @@ function MediaModelsBlock({
                   placeholder={t(
                     "settings.modelConfig.mediaModels.upstreamModelPlaceholder",
                     {
-                    model: row.model,
+                      model: row.model,
                     },
                   )}
                   className="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
@@ -2759,7 +2817,9 @@ function MediaModelsBlock({
                     type="button"
                     size="icon-sm"
                     variant="ghost"
-                    title={t("settings.modelConfig.mediaModels.editCapabilities")}
+                    title={t(
+                      "settings.modelConfig.mediaModels.editCapabilities",
+                    )}
                     onClick={() => setEditingModel(row.model)}
                   >
                     <Pencil className="size-3.5" />
@@ -2783,7 +2843,9 @@ function MediaModelsBlock({
                     <Trash2 className="size-3.5" />
                   </Button>
                 ) : null}
-                {row.mainline ? <span className="px-2 text-xs text-muted-foreground">-</span> : null}
+                {row.mainline ? (
+                  <span className="px-2 text-xs text-muted-foreground">-</span>
+                ) : null}
               </div>
             </div>
           );
@@ -2823,7 +2885,8 @@ function MediaModelsBlock({
               onSave={(model, entry) => {
                 setLocalMediaModels((current) => {
                   const next = { ...current };
-                  if (editingModel && editingModel !== model) delete next[editingModel];
+                  if (editingModel && editingModel !== model)
+                    delete next[editingModel];
                   next[model] = entry;
                   return next;
                 });
@@ -2893,12 +2956,15 @@ function LocalMediaModelEditor({
   const [provider, setProvider] = useState<FeatureModelProvider>(
     entry?.provider ?? configuredProviders[0] ?? "comfyui",
   );
-  const [upstreamModel, setUpstreamModel] = useState(entry?.upstreamModel ?? originalModel ?? "");
+  const [upstreamModel, setUpstreamModel] = useState(
+    entry?.upstreamModel ?? originalModel ?? "",
+  );
   const [enabled, setEnabled] = useState(entry?.enabled !== false);
   const [sortOrder, setSortOrder] = useState(entry?.sortOrder ?? 100);
   const defaultConfig = {
     request: {
-      endpoint: mediaType === "image" ? "images/generations" : "video/generations",
+      endpoint:
+        mediaType === "image" ? "images/generations" : "video/generations",
       parameters: [],
     },
   };
@@ -2917,7 +2983,9 @@ function LocalMediaModelEditor({
   }, [configJson]);
   const setCapability = (key: string, value: unknown) => {
     if (!parsedConfig) {
-      toast.error(t("settings.modelConfig.mediaModels.invalidCapabilitiesJson"));
+      toast.error(
+        t("settings.modelConfig.mediaModels.invalidCapabilitiesJson"),
+      );
       return;
     }
     const next = { ...parsedConfig };
@@ -2935,7 +3003,9 @@ function LocalMediaModelEditor({
     try {
       const current = JSON.parse(configJson) as Record<string, unknown>;
       const request =
-        current.request && typeof current.request === "object" && !Array.isArray(current.request)
+        current.request &&
+        typeof current.request === "object" &&
+        !Array.isArray(current.request)
           ? (current.request as Record<string, unknown>)
           : {};
       setConfigJson(
@@ -2944,8 +3014,13 @@ function LocalMediaModelEditor({
             ...current,
             request: {
               ...request,
-              endpoint: nextType === "image" ? "images/generations" : "video/generations",
-              parameters: Array.isArray(request.parameters) ? request.parameters : [],
+              endpoint:
+                nextType === "image"
+                  ? "images/generations"
+                  : "video/generations",
+              parameters: Array.isArray(request.parameters)
+                ? request.parameters
+                : [],
             },
           },
           null,
@@ -2966,10 +3041,13 @@ function LocalMediaModelEditor({
     let config: Record<string, unknown>;
     try {
       const parsed = JSON.parse(configJson) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        throw new Error();
       config = parsed as Record<string, unknown>;
     } catch {
-      toast.error(t("settings.modelConfig.mediaModels.invalidCapabilitiesJson"));
+      toast.error(
+        t("settings.modelConfig.mediaModels.invalidCapabilitiesJson"),
+      );
       return;
     }
     onSave(cleanModel, {
@@ -3016,11 +3094,22 @@ function LocalMediaModelEditor({
           <Label className="justify-start text-[11px] font-normal text-muted-foreground">
             {t("settings.modelConfig.mediaModels.mediaType")}
           </Label>
-          <Select value={mediaType} onValueChange={(value) => handleMediaTypeChange(value as "image" | "video")}>
-            <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+          <Select
+            value={mediaType}
+            onValueChange={(value) =>
+              handleMediaTypeChange(value as "image" | "video")
+            }
+          >
+            <SelectTrigger size="sm">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
-              <SelectItem value="image">{t("settings.modelConfig.mediaModels.types.image")}</SelectItem>
-              <SelectItem value="video">{t("settings.modelConfig.mediaModels.types.video")}</SelectItem>
+              <SelectItem value="image">
+                {t("settings.modelConfig.mediaModels.types.image")}
+              </SelectItem>
+              <SelectItem value="video">
+                {t("settings.modelConfig.mediaModels.types.video")}
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -3028,10 +3117,22 @@ function LocalMediaModelEditor({
           <Label className="justify-start text-[11px] font-normal text-muted-foreground">
             {t("settings.modelConfig.mediaModels.colProvider")}
           </Label>
-          <Select value={provider} onValueChange={(value) => setProvider(value as FeatureModelProvider)} disabled={comfyOnly}>
-            <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+          <Select
+            value={provider}
+            onValueChange={(value) =>
+              setProvider(value as FeatureModelProvider)
+            }
+            disabled={comfyOnly}
+          >
+            <SelectTrigger size="sm">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
-              {configuredProviders.map((item) => <SelectItem key={item} value={item}>{featureProviderLabel(item)}</SelectItem>)}
+              {configuredProviders.map((item) => (
+                <SelectItem key={item} value={item}>
+                  {featureProviderLabel(item)}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -3047,10 +3148,19 @@ function LocalMediaModelEditor({
           <Label className="justify-start text-[11px] font-normal text-muted-foreground">
             {t("settings.modelConfig.mediaModels.sortOrder")}
           </Label>
-          <Input type="number" value={sortOrder} onChange={(event) => setSortOrder(Number(event.target.value) || 0)} className="h-8" />
+          <Input
+            type="number"
+            value={sortOrder}
+            onChange={(event) => setSortOrder(Number(event.target.value) || 0)}
+            className="h-8"
+          />
         </div>
         <label className="flex items-center gap-2 text-xs text-foreground">
-          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => setEnabled(event.target.checked)}
+          />
           {t("settings.modelConfig.mediaModels.enabled")}
         </label>
       </div>
@@ -3073,7 +3183,17 @@ function LocalMediaModelEditor({
             label={t("settings.modelConfig.mediaModels.ratioOptions")}
             value={stringOptions("ratioOptions")}
             onChange={(value) => setCapability("ratioOptions", value)}
-            options={["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "adaptive"]}
+            options={[
+              "1:1",
+              "16:9",
+              "9:16",
+              "4:3",
+              "3:4",
+              "3:2",
+              "2:3",
+              "21:9",
+              "adaptive",
+            ]}
           />
           {mediaType === "image" ? (
             <CatalogListField
@@ -3084,13 +3204,42 @@ function LocalMediaModelEditor({
             />
           ) : (
             <>
-              <CatalogNumberField label={t("settings.modelConfig.mediaModels.minDuration")} value={parsedConfig?.minDuration} onChange={(value) => setCapability("minDuration", value)} />
-              <CatalogNumberField label={t("settings.modelConfig.mediaModels.maxDuration")} value={parsedConfig?.maxDuration} onChange={(value) => setCapability("maxDuration", value)} />
-              <CatalogNumberField label={t("settings.modelConfig.mediaModels.referenceImageMax")} value={parsedConfig?.referenceImageMax} min={0} onChange={(value) => setCapability("referenceImageMax", value)} />
-              <CatalogNumberField label={t("settings.modelConfig.mediaModels.referenceVideoMax")} value={parsedConfig?.referenceVideoMax} min={0} onChange={(value) => setCapability("referenceVideoMax", value)} />
-              <CatalogNumberField label={t("settings.modelConfig.mediaModels.referenceAudioMax")} value={parsedConfig?.referenceAudioMax} min={0} onChange={(value) => setCapability("referenceAudioMax", value)} />
+              <CatalogNumberField
+                label={t("settings.modelConfig.mediaModels.minDuration")}
+                value={parsedConfig?.minDuration}
+                onChange={(value) => setCapability("minDuration", value)}
+              />
+              <CatalogNumberField
+                label={t("settings.modelConfig.mediaModels.maxDuration")}
+                value={parsedConfig?.maxDuration}
+                onChange={(value) => setCapability("maxDuration", value)}
+              />
+              <CatalogNumberField
+                label={t("settings.modelConfig.mediaModels.referenceImageMax")}
+                value={parsedConfig?.referenceImageMax}
+                min={0}
+                onChange={(value) => setCapability("referenceImageMax", value)}
+              />
+              <CatalogNumberField
+                label={t("settings.modelConfig.mediaModels.referenceVideoMax")}
+                value={parsedConfig?.referenceVideoMax}
+                min={0}
+                onChange={(value) => setCapability("referenceVideoMax", value)}
+              />
+              <CatalogNumberField
+                label={t("settings.modelConfig.mediaModels.referenceAudioMax")}
+                value={parsedConfig?.referenceAudioMax}
+                min={0}
+                onChange={(value) => setCapability("referenceAudioMax", value)}
+              />
               <label className="flex items-center gap-2 text-xs text-foreground">
-                <input type="checkbox" checked={parsedConfig?.humanReview === true} onChange={(event) => setCapability("humanReview", event.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={parsedConfig?.humanReview === true}
+                  onChange={(event) =>
+                    setCapability("humanReview", event.target.checked)
+                  }
+                />
                 {t("settings.modelConfig.mediaModels.humanReview")}
               </label>
               <div className="col-span-2">
@@ -3108,7 +3257,10 @@ function LocalMediaModelEditor({
                   ].map(([value, label]) => {
                     const selected = stringOptions("supportedModes");
                     return (
-                      <label key={value} className="flex items-center gap-2 text-xs text-foreground">
+                      <label
+                        key={value}
+                        className="flex items-center gap-2 text-xs text-foreground"
+                      >
                         <input
                           type="checkbox"
                           checked={selected.includes(value)}
@@ -3170,14 +3322,21 @@ function CatalogListField({
   useEffect(() => setDraft(normalized), [normalized]);
   return (
     <div>
-      <Label className="text-[11px] font-normal text-muted-foreground">{label}</Label>
+      <Label className="text-[11px] font-normal text-muted-foreground">
+        {label}
+      </Label>
       <Input
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() =>
-          onChange(
-            [...new Set(draft.split(/[,，]/).map((item) => item.trim()).filter(Boolean))],
-          )
+          onChange([
+            ...new Set(
+              draft
+                .split(/[,，]/)
+                .map((item) => item.trim())
+                .filter(Boolean),
+            ),
+          ])
         }
         placeholder={placeholder}
         className="mt-1 h-8"
@@ -3199,7 +3358,10 @@ function CatalogMultiSelectField({
 }) {
   const { t } = useTranslation();
   const [customValue, setCustomValue] = useState("");
-  const choices = [...options, ...value.filter((item) => !options.includes(item))];
+  const choices = [
+    ...options,
+    ...value.filter((item) => !options.includes(item)),
+  ];
   const toggle = (option: string, selected: boolean) => {
     onChange(
       selected
@@ -3219,11 +3381,16 @@ function CatalogMultiSelectField({
 
   return (
     <div>
-      <Label className="text-[11px] font-normal text-muted-foreground">{label}</Label>
+      <Label className="text-[11px] font-normal text-muted-foreground">
+        {label}
+      </Label>
       <div className="mt-1 rounded-md border border-input/80 bg-background/30 p-2">
         <div className="flex flex-wrap gap-x-3 gap-y-2">
           {choices.map((option) => (
-            <label key={option} className="flex items-center gap-1.5 text-xs text-foreground">
+            <label
+              key={option}
+              className="flex items-center gap-1.5 text-xs text-foreground"
+            >
               <input
                 type="checkbox"
                 checked={value.includes(option)}
@@ -3243,7 +3410,9 @@ function CatalogMultiSelectField({
                 addCustomValues();
               }
             }}
-            placeholder={t("settings.modelConfig.mediaModels.customOptionPlaceholder")}
+            placeholder={t(
+              "settings.modelConfig.mediaModels.customOptionPlaceholder",
+            )}
             className="h-7"
           />
           <Button
@@ -3275,12 +3444,16 @@ function CatalogNumberField({
 }) {
   return (
     <div>
-      <Label className="text-[11px] font-normal text-muted-foreground">{label}</Label>
+      <Label className="text-[11px] font-normal text-muted-foreground">
+        {label}
+      </Label>
       <Input
         type="number"
         min={min}
         value={typeof value === "number" ? value : ""}
-        onChange={(event) => onChange(event.target.value ? Number(event.target.value) : undefined)}
+        onChange={(event) =>
+          onChange(event.target.value ? Number(event.target.value) : undefined)
+        }
         className="mt-1 h-8"
       />
     </div>
@@ -3326,8 +3499,7 @@ function ProviderChannelsBlock({
     () =>
       Object.keys(providerChannels)
         .filter(
-          (provider) =>
-            !allowedProviderSet || allowedProviderSet.has(provider),
+          (provider) => !allowedProviderSet || allowedProviderSet.has(provider),
         )
         .sort(),
     [allowedProviderSet, providerChannels],
@@ -3340,8 +3512,7 @@ function ProviderChannelsBlock({
             (!allowedProviderSet || allowedProviderSet.has(item.provider)),
         )
       : FEATURE_MODEL_PROVIDERS.filter(
-          (provider) =>
-            !allowedProviderSet || allowedProviderSet.has(provider),
+          (provider) => !allowedProviderSet || allowedProviderSet.has(provider),
         ).map((provider) => ({
           provider,
           name: featureProviderLabel(provider),
@@ -3356,10 +3527,10 @@ function ProviderChannelsBlock({
   }, [savedProviderChannels]);
   const [selectedProvider, setSelectedProvider] =
     useState<FeatureModelProvider>(
-    availableProviders[0]?.provider ??
-      allowedProviders?.[0] ??
-      FEATURE_MODEL_PROVIDERS[0],
-  );
+      availableProviders[0]?.provider ??
+        allowedProviders?.[0] ??
+        FEATURE_MODEL_PROVIDERS[0],
+    );
 
   useEffect(() => {
     if (
@@ -3418,6 +3589,7 @@ function ProviderChannelsBlock({
     }
     saveProviderChannels.mutate(
       {
+        preserveUnmentioned: Boolean(allowedProviderSet),
         channels: channelsToSave,
       },
       {
@@ -3618,119 +3790,119 @@ function ProviderChannelRow({
   return (
     <div className="rounded-md border border-border/60 p-2.5">
       <div className="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
-      <div>
-        <Label className="justify-start text-[11px] font-normal text-muted-foreground">
-          {t("settings.modelConfig.featureModels.channelProvider")}
-        </Label>
-        <div className="mt-1.5 h-9 rounded-md border border-border/70 bg-white/[0.03] px-3 py-2 text-xs text-foreground">
-          {channelType?.name || featureProviderLabel(provider)}
+        <div>
+          <Label className="justify-start text-[11px] font-normal text-muted-foreground">
+            {t("settings.modelConfig.featureModels.channelProvider")}
+          </Label>
+          <div className="mt-1.5 h-9 rounded-md border border-border/70 bg-white/[0.03] px-3 py-2 text-xs text-foreground">
+            {channelType?.name || featureProviderLabel(provider)}
+          </div>
         </div>
-      </div>
-      <div>
-        <Label className="justify-start text-[11px] font-normal text-muted-foreground">
-          {t("settings.modelConfig.featureModels.upstreamKey")}
-        </Label>
-        <div className="relative mt-1.5">
-          <Input
-            name={`provider-${provider}-upstream-api-key`}
-            autoComplete="new-password"
-            data-1p-ignore="true"
-            data-lpignore="true"
-            type={revealed ? "text" : "password"}
-            value={upstreamKeyValue}
+        <div>
+          <Label className="justify-start text-[11px] font-normal text-muted-foreground">
+            {t("settings.modelConfig.featureModels.upstreamKey")}
+          </Label>
+          <div className="relative mt-1.5">
+            <Input
+              name={`provider-${provider}-upstream-api-key`}
+              autoComplete="new-password"
+              data-1p-ignore="true"
+              data-lpignore="true"
+              type={revealed ? "text" : "password"}
+              value={upstreamKeyValue}
               onChange={(e) =>
                 updateFeatureProviderChannel(provider, {
                   upstreamKey: e.target.value,
                 })
               }
-            placeholder={
-              savedKeyPreview
+              placeholder={
+                savedKeyPreview
                   ? t("settings.secretSavedPlaceholder", {
                       preview: savedKeyPreview,
                     })
-                : upstreamPlaceholder
-            }
-            autoCapitalize="none"
-            spellCheck={false}
-            className={cn(
-              "h-9 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30",
-              upstreamKeyValue ? "pr-9" : savedKeyPreview ? "pr-16" : "",
-            )}
-          />
-          {upstreamKeyValue ? (
-            <button
-              type="button"
-              onClick={() => setRevealed((r) => !r)}
-              aria-label={
-                revealed
-                  ? t("settings.mediaStorage.hideSecret")
-                  : t("settings.mediaStorage.showSecret")
+                  : upstreamPlaceholder
               }
-              className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-            >
+              autoCapitalize="none"
+              spellCheck={false}
+              className={cn(
+                "h-9 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30",
+                upstreamKeyValue ? "pr-9" : savedKeyPreview ? "pr-16" : "",
+              )}
+            />
+            {upstreamKeyValue ? (
+              <button
+                type="button"
+                onClick={() => setRevealed((r) => !r)}
+                aria-label={
+                  revealed
+                    ? t("settings.mediaStorage.hideSecret")
+                    : t("settings.mediaStorage.showSecret")
+                }
+                className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+              >
                 {revealed ? (
                   <EyeOff className="size-4" />
                 ) : (
                   <Eye className="size-4" />
                 )}
-            </button>
-          ) : savedKeyPreview ? (
-            <span className="absolute top-1/2 right-2 -translate-y-1/2 rounded bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
-              {t("settings.secretSavedBadge")}
-            </span>
-          ) : null}
+              </button>
+            ) : savedKeyPreview ? (
+              <span className="absolute top-1/2 right-2 -translate-y-1/2 rounded bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                {t("settings.secretSavedBadge")}
+              </span>
+            ) : null}
+          </div>
         </div>
-      </div>
-      <div>
-        <Label className="justify-start text-[11px] font-normal text-muted-foreground">
-          {t("settings.modelConfig.featureModels.baseUrlOverride")}
-        </Label>
-        <Input
-          value={channel?.baseUrl ?? ""}
+        <div>
+          <Label className="justify-start text-[11px] font-normal text-muted-foreground">
+            {t("settings.modelConfig.featureModels.baseUrlOverride")}
+          </Label>
+          <Input
+            value={channel?.baseUrl ?? ""}
             onChange={(e) =>
               updateFeatureProviderChannel(provider, {
                 baseUrl: e.target.value,
               })
             }
-          placeholder={
-            channelType?.defaultBaseUrl ||
-            t("settings.modelConfig.featureModels.baseUrlPlaceholder")
-          }
-          disabled={channelType?.supportsBaseUrlOverride === false}
-          className="mt-1.5 h-9 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
-        />
-      </div>
-      <div className="flex items-center justify-end gap-1.5 sm:self-end">
+            placeholder={
+              channelType?.defaultBaseUrl ||
+              t("settings.modelConfig.featureModels.baseUrlPlaceholder")
+            }
+            disabled={channelType?.supportsBaseUrlOverride === false}
+            className="mt-1.5 h-9 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
+          />
+        </div>
+        <div className="flex items-center justify-end gap-1.5 sm:self-end">
           {!isComfyUI ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-9 whitespace-nowrap px-2 text-[11px]"
-          onClick={handleSync}
-          disabled={syncProviderChannel.isPending}
-          title={t("settings.modelConfig.featureModels.syncChannelHint")}
-        >
-          {syncProviderChannel.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <RotateCw className="size-3.5" />
-          )}
-          {t("settings.modelConfig.featureModels.syncChannel")}
-        </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 whitespace-nowrap px-2 text-[11px]"
+              onClick={handleSync}
+              disabled={syncProviderChannel.isPending}
+              title={t("settings.modelConfig.featureModels.syncChannelHint")}
+            >
+              {syncProviderChannel.isPending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RotateCw className="size-3.5" />
+              )}
+              {t("settings.modelConfig.featureModels.syncChannel")}
+            </Button>
           ) : null}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground hover:text-destructive"
-          onClick={() => removeFeatureProviderChannel(provider)}
-          title={t("settings.modelConfig.featureModels.removeChannel")}
-        >
-          <Trash2 className="size-4" />
-        </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-destructive"
+            onClick={() => removeFeatureProviderChannel(provider)}
+            title={t("settings.modelConfig.featureModels.removeChannel")}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </div>
       </div>
-    </div>
       {isComfyUI ? (
         <ComfyUIWorkflowsEditor
           settings={channel?.settings ?? {}}
@@ -4437,8 +4609,12 @@ function MediaStorageSection() {
       </p>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        {t("settings.mediaStorage.status")}: {" "}
-        <span className={hasConfiguredMediaRelay ? "text-emerald-400" : "text-amber-300"}>
+        {t("settings.mediaStorage.status")}:{" "}
+        <span
+          className={
+            hasConfiguredMediaRelay ? "text-emerald-400" : "text-amber-300"
+          }
+        >
           {hasConfiguredMediaRelay
             ? t("settings.mediaStorage.configured")
             : t("settings.mediaStorage.notConfigured")}
@@ -4503,17 +4679,17 @@ function MediaStorageSection() {
         <div className="flex items-center gap-2">
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             {provider === "cloudinary" ? (
-                <>
-                  {t("settings.mediaStorage.cloudinaryFieldsHint")}{" "}
-                  <a
-                    href="https://cloudinary.com/users/register/free"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-cyan-400 hover:text-cyan-300"
-                  >
-                    {t("settings.mediaStorage.cloudinaryRegisterLink")}
-                  </a>
-                </>
+              <>
+                {t("settings.mediaStorage.cloudinaryFieldsHint")}{" "}
+                <a
+                  href="https://cloudinary.com/users/register/free"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-cyan-400 hover:text-cyan-300"
+                >
+                  {t("settings.mediaStorage.cloudinaryRegisterLink")}
+                </a>
+              </>
             ) : (
               t("settings.mediaStorage.fieldsHint")
             )}

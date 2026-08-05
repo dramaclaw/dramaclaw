@@ -148,6 +148,7 @@ class ProviderChannelConfigBody(BaseModel):
 
 class SaveProviderChannelsBody(BaseModel):
     channels: list[ProviderChannelConfigBody] = Field(default_factory=list)
+    preserve_unmentioned: bool = Field(default=False, alias="preserveUnmentioned")
 
 
 class SyncProviderChannelBody(BaseModel):
@@ -301,7 +302,11 @@ def _build_media_model_channel_specs(
         }
 
     specs = [
-        ChannelSpec(provider=provider, modelMapping=mapping)
+        ChannelSpec(
+            provider=provider,
+            type=63 if provider == "comfyui" else None,
+            modelMapping=mapping,
+        )
         for provider, mapping in grouped.items()
     ]
     return specs, normalized
@@ -653,10 +658,16 @@ async def save_custom_newapi_provider_channels(
                     "settings": channel.settings,
                 }
                 for channel in body.channels
-            ]
+            ],
+            preserve_unmentioned=body.preserve_unmentioned,
         )
+        requested_providers = {
+            str(channel.provider or "").strip().lower() for channel in body.channels
+        }
         comfyui_channels = [
-            channel for channel in saved if channel["provider"] == "comfyui"
+            channel
+            for channel in saved
+            if channel["provider"] == "comfyui" and "comfyui" in requested_providers
         ]
         if comfyui_channels:
             cfg = get_provisioner_config()
@@ -788,7 +799,8 @@ async def sync_custom_newapi_provider_channel(
                         "upstreamKey": upstream_key,
                         "baseUrl": base_url or "",
                     }
-                ]
+                ],
+                preserve_unmentioned=True,
             )
     except PermissionError as exc:
         raise _permission_error(exc) from exc

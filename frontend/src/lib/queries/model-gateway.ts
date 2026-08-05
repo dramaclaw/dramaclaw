@@ -184,6 +184,7 @@ export interface CustomChannelInput {
 }
 
 export interface SaveProviderChannelsInput {
+  preserveUnmentioned?: boolean;
   channels: Array<{
     provider: string;
     type?: number;

@@ -6843,6 +6843,7 @@ async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | Non
             MODE_HYBRID,
             get_ce_media_model_catalog,
             get_effective_newapi_config,
+            get_official_media_model_catalog,
         )
         from novelvideo.shared.runtime_env import is_ce_effective
 
@@ -6869,30 +6870,15 @@ async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | Non
                     for item in static
                     if not (_catalog_entry_identifiers(item) & local_ids)
                 ] + local
+            return get_official_media_model_catalog(media_type)
         return None
     return await catalog.list_models(media_type)
 
 
 def _static_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
-    if media_type == "video":
-        return get_freezone_video_model_options()
-    static: list[dict[str, Any]] = []
-    for key, label in image_generation_selection_options().items():
-        entry = IMAGE_GENERATION_SELECTIONS.get(key, {})
-        gateway_model = str(entry.get("model") or key)
-        static.append(
-            {
-                "id": key,
-                "providerId": entry.get("provider", "newapi"),
-                "provider": entry.get("provider", "newapi"),
-                "apiModel": key,
-                "api_model": key,
-                "gatewayModel": gateway_model,
-                "gateway_model": gateway_model,
-                "label": label,
-            }
-        )
-    return static
+    from novelvideo.model_gateway_settings import get_official_media_model_catalog
+
+    return get_official_media_model_catalog(media_type)
 
 
 def _merge_media_model_catalog_defaults(
@@ -6916,13 +6902,19 @@ def _merge_media_model_catalog_defaults(
 
 def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
     """Return new and legacy identifiers accepted at the API boundary."""
-    return {
+    identifiers = {
         str(entry.get("catalogId") or ""),
         str(entry.get("catalog_id") or ""),
         str(entry.get("id") or ""),
         str(entry.get("apiModel") or ""),
+        str(entry.get("api_model") or ""),
         str(entry.get("gatewayModel") or ""),
+        str(entry.get("gateway_model") or ""),
     }
+    aliases = entry.get("aliases")
+    if isinstance(aliases, list):
+        identifiers.update(str(alias) for alias in aliases)
+    return {identifier for identifier in identifiers if identifier}
 
 
 def _catalog_entry_id(entry: dict[str, Any] | None) -> str:

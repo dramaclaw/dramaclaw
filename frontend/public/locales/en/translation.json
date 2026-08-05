@@ -3994,6 +3994,7 @@
       "description": "Choose a model gateway channel: the platform official gateway, or your own local NewAPI.",
       "baseUrlHint": "The CE runtime configures the Local NewAPI URL automatically.",
       "effectiveBadge": "Active: {{channel}}",
+      "guide": "Configuration guide",
       "loading": "Loading…",
       "requestFailed": "Request failed, please retry.",
       "activateMode": "Set as active",

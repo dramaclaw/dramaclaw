@@ -1458,6 +1458,7 @@ src/novelvideo/models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggr
 src/novelvideo/newapi_provisioner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/novel_source.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/official_defaults.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/official_media_models.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/ports/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/ports/audit.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/ports/auth.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

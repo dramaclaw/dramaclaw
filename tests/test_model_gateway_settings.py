@@ -21,6 +21,7 @@ from novelvideo.model_gateway_settings import (
     get_effective_cognee_embedding_config,
     get_effective_newapi_config,
     get_ce_media_model_catalog,
+    get_official_media_model_catalog,
     get_newapi_media_model_mappings,
     normalize_relay_base_url,
     save_official_newapi_key,
@@ -149,6 +150,54 @@ def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
         "NEWAPI_BASE_URL",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+def test_comfyui_provider_channel_defaults_to_channel_type_63(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+
+    saved = save_newapi_provider_channels(
+        [
+            {
+                "provider": "comfyui",
+                "baseUrl": "http://host.docker.internal:8188",
+                "settings": {
+                    "comfyui": {
+                        "workflow_by_model": {
+                            "h3-t2v": {
+                                "1": {
+                                    "class_type": "SaveVideo",
+                                    "inputs": {},
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        ]
+    )
+
+    assert saved[0]["type"] == 63
+
+
+def test_provider_channel_partial_save_preserves_unmentioned_channels(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_provider_channels(
+        [
+            {"provider": "openrouter", "upstreamKey": "sk-openrouter-old"},
+            {"provider": "volcengine", "upstreamKey": "sk-volcengine-old"},
+        ]
+    )
+
+    saved = save_newapi_provider_channels(
+        [{"provider": "volcengine", "upstreamKey": "sk-volcengine-new"}],
+        preserve_unmentioned=True,
+    )
+
+    by_provider = {channel["provider"]: channel for channel in saved}
+    assert by_provider["openrouter"]["upstreamKey"] == "sk-openrouter-old"
+    assert by_provider["volcengine"]["upstreamKey"] == "sk-volcengine-new"
 
 
 def test_model_gateway_uses_explicit_custom_mode(monkeypatch, tmp_path):
@@ -2341,6 +2390,25 @@ def test_ce_media_model_catalog_uses_saved_custom_model_capabilities(
     assert catalog[0]["supportedModes"] == ["text_to_video", "first_frame"]
     assert get_ce_media_model_catalog("image") == []
     assert get_ce_media_model_catalog("video", provider="comfyui") == []
+
+
+def test_official_media_model_catalog_uses_ce_export_shape():
+    images = get_official_media_model_catalog("image")
+    videos = get_official_media_model_catalog("video")
+
+    assert len(images) == 6
+    assert len(videos) == 6
+    assert [entry["id"] for entry in videos[:2]] == [
+        "seedance-2.0-fast",
+        "seedance-2.0",
+    ]
+    seedream = next(entry for entry in images if entry["id"] == "seedream-5.0-pro")
+    assert seedream["gatewayModel"] == "seedream-5.0-pro"
+    assert seedream["resolutionOptions"] == ["1K", "2K"]
+    assert seedream["minPixels"] == 3686400
+    seedance = next(entry for entry in videos if entry["id"] == "seedance-2.0-mini")
+    assert seedance["apiModel"] == "newapi_seedance-2.0-mini"
+    assert "video_edit" in seedance["supportedModes"]
 
 
 def test_custom_media_model_accepts_arbitrary_image_and_video_models():
