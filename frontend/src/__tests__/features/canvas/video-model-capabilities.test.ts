@@ -16,6 +16,7 @@ import {
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
   videoModelReferenceDisabledReason,
+  videoMultiImageAutoSwitchMode,
   videoReferenceAutoSwitchAction,
   type VideoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
@@ -187,6 +188,130 @@ describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", ()
     expect(
       videoSubmitMediaRejectionReason("imageReference", HAPPYHORSE, { images: 5, videos: 0, audios: 0 }),
     ).toBeNull();
+  });
+});
+
+describe("videoMultiImageAutoSwitchMode — 首帧接多图时的自动改模式", () => {
+  // 这条是 bug 本体：i2v 端点按图片张数分流（1 张 = 图生视频，2-9 张 = 图片参考），
+  // 接上第二张图后做的其实已经是图片参考了，界面上模式却还写着「首帧生成视频」。
+  it("Seedance 2.0：首帧接到第 2 张图 → 切全能参考", () => {
+    expect(videoMultiImageAutoSwitchMode("imageToVideo", SEEDANCE2_FAST, 2)).toBe(
+      "allReference",
+    );
+    expect(videoMultiImageAutoSwitchMode("imageToVideo", SEEDANCE2_VALUE, 9)).toBe(
+      "allReference",
+    );
+  });
+
+  it("单图 / 无图不动 —— 那正是首帧本来的用法", () => {
+    for (const images of [0, 1]) {
+      expect(
+        videoMultiImageAutoSwitchMode("imageToVideo", SEEDANCE2_FAST, images),
+      ).toBeNull();
+    }
+  });
+
+  it("只管首帧模式，其它模式一律不插手", () => {
+    for (const mode of [
+      "textToVideo",
+      "imageReference",
+      "allReference",
+      "firstLastFrame",
+      "videoEdit",
+    ] as VideoGenMode[]) {
+      expect(videoMultiImageAutoSwitchMode(mode, SEEDANCE2_FAST, 5)).toBeNull();
+    }
+  });
+
+  // HappyHorse 自己那套状态机（videos>0→视频编辑 / images>1→图片参考）已经收口了，
+  // 这里再插一脚只会两处 updateNodeData 来回打架。
+  it("HappyHorse 不动，交给它自己的状态机", () => {
+    expect(videoMultiImageAutoSwitchMode("imageToVideo", HAPPYHORSE, 3)).toBeNull();
+  });
+
+  // 换模式救不了 1.x：它的 i2v 端点 >1 图直接 400，切到哪个模式都是 400。留在首帧上，
+  // 让提交守卫那句「该模型单次仅支持 1 张图片」把「该换模型」这个真问题说清楚。
+  it("Seedance 1.x 不动：它多图必 400，问题在模型不在模式", () => {
+    for (const id of [SEEDANCE10_PRO_FAST, SEEDANCE15_PRO]) {
+      expect(videoMultiImageAutoSwitchMode("imageToVideo", id, 2)).toBeNull();
+      expect(videoSubmitMediaRejectionReason("imageToVideo", id, {
+        images: 2,
+        videos: 0,
+        audios: 0,
+      })).toBeTruthy();
+    }
+  });
+
+  // 媒体目录声明的 supportedModes 优先级高于启发式（与可见 tab 同一口径）。
+  it("目录声明没有全能参考时退到图片参考；两个都没有则不动", () => {
+    expect(
+      videoMultiImageAutoSwitchMode(
+        "imageToVideo",
+        {
+          id: SEEDANCE2_FAST,
+          apiModel: SEEDANCE2_FAST,
+          supportedModes: ["text_to_video", "first_frame", "image_reference"],
+        },
+        2,
+      ),
+    ).toBe("imageReference");
+    expect(
+      videoMultiImageAutoSwitchMode(
+        "imageToVideo",
+        {
+          id: SEEDANCE2_FAST,
+          apiModel: SEEDANCE2_FAST,
+          supportedModes: ["text_to_video", "first_frame"],
+        },
+        2,
+      ),
+    ).toBeNull();
+  });
+
+  // 自动改模式与提交守卫必须闭合：切完之后那个模式得真能提交，否则等于把用户从
+  // 一个坑挪到另一个坑。
+  it("切过去的模式在提交守卫里放行", () => {
+    const counts = { images: 3, videos: 0, audios: 0 };
+    const target = videoMultiImageAutoSwitchMode("imageToVideo", SEEDANCE2_FAST, counts.images);
+    expect(target).not.toBeNull();
+    expect(
+      videoSubmitMediaRejectionReason(target as VideoGenMode, SEEDANCE2_FAST, counts),
+    ).toBeNull();
+  });
+
+  // 自动切模式只是把界面导对，真正兜底提交的是引用上限：万一模式没被切走（比如
+  // effect 还没跑、或将来又有人加了 bail 条件），提交也只能带 1 张图，绝不能靠
+  // 张数悄悄变成图片参考。这条上限是结构性的，不接受媒体目录 referenceImageMax 覆盖。
+  it("首帧的图片上限锁死在 1，且不被媒体目录配置覆盖", () => {
+    const source = readFileSync("src/features/canvas/nodes/VideoNode.tsx", "utf8");
+    expect(source).toContain("imageToVideo: { image: 1, video: 0, audio: 0 }");
+    expect(source).toContain("const FIXED_IMAGE_CAP_BY_MODE");
+    expect(source).toContain(
+      "image: FIXED_IMAGE_CAP_BY_MODE[mode] ?? model?.referenceImageMax ?? defaults.image",
+    );
+  });
+});
+
+describe("HappyHorse 单图默认模式", () => {
+  // 单张图时首帧和图片参考都可用（videoModeDisabledReason 两条都返回 null），默认必须
+  // 落在图片参考：它吃 1~9 张，用户接着连第二张图不用换模式；默认落首帧的话第二张一连
+  // 上来状态机就得把模式改掉，用户眼里就是「我选的模式自己变了」。
+  // 反过来用户主动点「首帧」要留得住 —— 所以是 imageToVideo 才保持 imageToVideo。
+  it("上游正好 1 张图时默认图片参考，只在用户主动选了首帧时才保持首帧", () => {
+    const source = readFileSync("src/features/canvas/nodes/VideoNode.tsx", "utf8");
+    expect(source).toContain(
+      'target = genMode === "imageToVideo" ? "imageToVideo" : "imageReference";',
+    );
+  });
+
+  // 默认值必须真的可用，否则一连图就顶进一个 hover 提示写着「不可用」的 tab。
+  it("图片参考在 1~9 张图时都可用", () => {
+    const source = readFileSync(
+      "src/features/canvas/nodes/VideoOperationsPanel.tsx",
+      "utf8",
+    );
+    expect(source).toContain('if (images === 0) return "需要连接图片节点（1~9个）";');
+    expect(source).toContain('if (images > 9) return "「图片参考」最多支持 9 张图片";');
   });
 });
 

@@ -48,6 +48,11 @@ import {
 } from '@/features/canvas/domain/nodeRegistry';
 import { EXPORT_RESULT_DISPLAY_NAME } from '@/features/canvas/domain/nodeDisplay';
 import {
+  overflowingVideoReferenceEdgeIds,
+  videoReferenceConnectionRejection,
+} from '@/features/canvas/domain/videoReferenceLimits';
+import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
+import {
   type ViewportBookmark,
   type ViewportBookmarks,
   BOOKMARK_SLOT_COUNT,
@@ -1400,6 +1405,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ) {
         return {};
       }
+      // 视频节点素材上限收口：素材已满到能力包络（图 9 / 视频 3 / 音频 3 /
+      // 总数 12）时拒绝新连接。手动拖线在 isValidConnection 就变灰了，这里兜住
+      // 拖到空白生成节点等其它建边路径。
+      if (
+        videoReferenceConnectionRejection(
+          state.nodes,
+          state.edges,
+          connection,
+          videoReferenceEnvelopeForNode,
+        ) != null
+      ) {
+        return {};
+      }
       return {
         edges: addEdge<CanvasEdge>(
           { ...connection, sourceHandle, targetHandle, type: 'disconnectableEdge' },
@@ -1944,6 +1962,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     if (!isUpstreamConnectionAllowed(sourceNode.type, targetNode.type)) {
       return null;
     }
+    // 素材上限同样要收口在这里：资产库选参考、外部文件导入
+    // （spawnExternalAssetNodes）都是往一个**已存在**的视频节点上接素材，走的正是
+    // addEdge。只在 onConnect 拦等于这条上限只在手动拖线时成立。
+    if (
+      videoReferenceConnectionRejection(
+        state.nodes,
+        state.edges,
+        { source, target },
+        videoReferenceEnvelopeForNode,
+      ) != null
+    ) {
+      return null;
+    }
 
     const edgeId = `e-${source}-${target}`;
     // Check if edge already exists
@@ -1980,6 +2011,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
     // 上游类型规则收口（如音频←非文本）。
     if (!isUpstreamConnectionAllowed(sourceNode.type, targetNode.type)) {
+      return null;
+    }
+    // 与 addEdge 同一把尺子：目前这条路径的 target 都是刚建出来的新节点（技能输出、
+    // 背景候选），够不到上限；放在这里是为了「所有公开建边入口口径一致」，将来谁把
+    // 带数据的边接到已有视频节点上也不会漏。
+    if (
+      videoReferenceConnectionRejection(
+        state.nodes,
+        state.edges,
+        { source, target },
+        videoReferenceEnvelopeForNode,
+      ) != null
+    ) {
       return null;
     }
 
@@ -2358,9 +2402,30 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return isUpstreamConnectionAllowed(sourceType, targetType);
     });
 
+    // 类型变了，素材归类也跟着变：空 Upload 建边时按图片算，转成 video/audio 之后
+    // 可能把下游视频节点顶出视频/音频上限（外部文件导入正是「先连边、后按 MIME
+    // 转换」）。建边时的校验管不到这一刻，只能在类型确定之后重算一遍。
+    const affectedVideoTargets = new Set(
+      nextEdges.filter((edge) => edge.source === nodeId).map((edge) => edge.target),
+    );
+    const overflowEdgeIds = new Set<string>();
+    for (const videoTargetId of affectedVideoTargets) {
+      for (const edgeId of overflowingVideoReferenceEdgeIds(
+        nextNodes,
+        nextEdges,
+        videoTargetId,
+        videoReferenceEnvelopeForNode,
+      )) {
+        overflowEdgeIds.add(edgeId);
+      }
+    }
+    const finalEdges = overflowEdgeIds.size
+      ? nextEdges.filter((edge) => !overflowEdgeIds.has(edge.id))
+      : nextEdges;
+
     set({
       nodes: nextNodes,
-      edges: nextEdges,
+      edges: finalEdges,
       history: {
         past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
         future: [],

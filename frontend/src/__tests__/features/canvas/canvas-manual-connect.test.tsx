@@ -473,3 +473,108 @@ describe("Canvas 拖线落点校验与建边判定对齐", () => {
     }
   });
 });
+
+// 素材上限(videoReferenceLimits)是后加的一条规则,同样必须两处同源:只在 onConnect
+// 里拦,用户会看见落点高亮成合法、松手却什么也没建;只在 isValidConnection 里拦,
+// 其它建边路径(资产拖入、菜单新建)照样能把第 10 张图连上去。
+describe("Canvas 素材上限在落点校验与建边判定上对齐", () => {
+  const IMAGE_CAP = 9;
+
+  function setupSaturatedVideo() {
+    const images = Array.from({ length: IMAGE_CAP + 1 }, (_, index) => ({
+      id: `image-${index}`,
+      type: CANVAS_NODE_TYPES.imageGen,
+      data: { imageUrl: `/i-${index}.png` },
+      position: { x: index * 300, y: 0 },
+    }));
+    const video = {
+      id: "video",
+      type: CANVAS_NODE_TYPES.video,
+      data: { videoUrl: "/v.mp4" },
+      position: { x: 0, y: 800 },
+    };
+    // 前 9 张已连上,第 10 张(image-9)是这次要拖的。
+    useCanvasStore.getState().setCanvasData(
+      [...images, video],
+      images.slice(0, IMAGE_CAP).map((node) => ({
+        id: `e-${node.id}`,
+        source: node.id,
+        target: video.id,
+        sourceHandle: "source",
+        targetHandle: "target",
+      })),
+    );
+  }
+
+  beforeEach(() => {
+    capturedOnConnect = null;
+    capturedReactFlowProps = null;
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    setupSaturatedVideo();
+  });
+
+  it(`已连满 ${IMAGE_CAP} 张图时,第 ${IMAGE_CAP + 1} 张两处都拒绝`, async () => {
+    renderCanvas();
+    await waitFor(() => expect(capturedOnConnect).toBeTruthy());
+
+    const connection: Connection = {
+      source: `image-${IMAGE_CAP}`,
+      sourceHandle: "source",
+      target: "video",
+      targetHandle: "target",
+    };
+    const isValidConnection = capturedReactFlowProps?.isValidConnection as
+      | ((connection: Connection | Edge) => boolean)
+      | undefined;
+    const highlightedAsValid = isValidConnection?.(connection);
+
+    act(() => {
+      capturedOnConnect?.(connection);
+    });
+    const edgeCreated = useCanvasStore
+      .getState()
+      .edges.some((edge) => edge.source === connection.source && edge.target === "video");
+
+    expect({ highlightedAsValid, edgeCreated }).toEqual({
+      highlightedAsValid: false,
+      edgeCreated: false,
+    });
+    // 已有的 9 条不能被这次拒绝顺手带走。
+    expect(
+      useCanvasStore.getState().edges.filter((edge) => edge.target === "video"),
+    ).toHaveLength(IMAGE_CAP);
+  });
+
+  it(`没连满时(${IMAGE_CAP - 1} 张)两处都放行`, async () => {
+    act(() => {
+      useCanvasStore.setState((state) => ({
+        edges: state.edges.filter((edge) => edge.source !== `image-${IMAGE_CAP - 1}`),
+      }));
+    });
+    renderCanvas();
+    await waitFor(() => expect(capturedOnConnect).toBeTruthy());
+
+    const connection: Connection = {
+      source: `image-${IMAGE_CAP}`,
+      sourceHandle: "source",
+      target: "video",
+      targetHandle: "target",
+    };
+    const isValidConnection = capturedReactFlowProps?.isValidConnection as
+      | ((connection: Connection | Edge) => boolean)
+      | undefined;
+    const highlightedAsValid = isValidConnection?.(connection);
+
+    act(() => {
+      capturedOnConnect?.(connection);
+    });
+    const edgeCreated = useCanvasStore
+      .getState()
+      .edges.some((edge) => edge.source === connection.source && edge.target === "video");
+
+    expect({ highlightedAsValid, edgeCreated }).toEqual({
+      highlightedAsValid: true,
+      edgeCreated: true,
+    });
+  });
+});

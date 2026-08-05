@@ -51,6 +51,25 @@ function isBaseSeedance2VideoModel(modelId: string | null | undefined): boolean 
 }
 
 /**
+ * 模型入参的统一形态：既可以只给一个 id 字符串，也可以给媒体目录下发的模型对象
+ * （`supportedModes` 存在时以它为准，那是 Admin 显式配置的能力声明）。
+ */
+export type VideoModelRef =
+  | string
+  | {
+      id?: string;
+      apiModel?: string;
+      supportedModes?: string[];
+    }
+  | null
+  | undefined;
+
+/** 从模型入参里取出用于能力启发式判定的 id（优先 apiModel，它才是打给上游的名字）。 */
+function videoModelIdOf(model: VideoModelRef): string | null | undefined {
+  return typeof model === "string" ? model : (model?.apiModel ?? model?.id);
+}
+
+/**
  * 指定模型是否支持某 genMode（与可见 tab / 切模型时是否重置残留模式口径一致）。
  * - HappyHorse：文生 / 首帧(i2v) / 图片参考(r2v) / 视频编辑。
  * - 非 HappyHorse：视频编辑是 HappyHorse 专属；全能参考与「真尾帧」首尾帧只有
@@ -59,15 +78,7 @@ function isBaseSeedance2VideoModel(modelId: string | null | undefined): boolean 
  */
 export function isVideoModeSupportedByModel(
   mode: VideoGenMode,
-  model:
-    | string
-    | {
-        id?: string;
-        apiModel?: string;
-        supportedModes?: string[];
-      }
-    | null
-    | undefined,
+  model: VideoModelRef,
 ): boolean {
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
     const modeKey: Record<VideoGenMode, string> = {
@@ -80,7 +91,7 @@ export function isVideoModeSupportedByModel(
     };
     return model.supportedModes?.includes(modeKey[mode]) ?? false;
   }
-  const modelId = typeof model === "string" ? model : (model?.apiModel ?? model?.id);
+  const modelId = videoModelIdOf(model);
   if (isHappyHorseVideoModel(modelId)) {
     return (
       mode === "textToVideo" ||
@@ -142,6 +153,47 @@ export function videoUpstreamImageDefaultMode(
  */
 export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
   return mode === "textToVideo" || mode === "allReference";
+}
+
+/**
+ * 该模型的 i2v 端点是否放行多图（>1）。后端只在「非 2.0 且非 HappyHorse」时对
+ * `len(source_paths) > 1` 直接 400（freezone.py），所以这两族之外的模型（Seedance
+ * 1.x 等）一次只能吃一张图 —— 对它们来说换模式救不了，得换模型。
+ */
+export function videoModelAcceptsMultipleImages(
+  modelId: string | null | undefined,
+): boolean {
+  return isSeedance2VideoModel(modelId) || isHappyHorseVideoModel(modelId);
+}
+
+/**
+ * 「首帧生成视频」(imageToVideo / i2v) 接了多图时该切到哪个模式，null = 不动。
+ *
+ * 为什么必须切：后端 i2v 端点按**图片张数**分流（1 张 = 图生视频，2-9 张 = 图片
+ * 参考视频），多连一张不会报错，而是悄悄变成另一种生成方式 —— 界面上模式却还写着
+ * 「首帧生成视频」。用户把第二张图连上来这个动作本身就是明确意图，直接把模式导到
+ * 真正在做的事情上：优先「全能参考」(omni，还能继续接视频 / 音频)，模型不支持
+ * omni 时退「图片参考」。
+ *
+ * 三种情况**不动**：
+ * - HappyHorse 有自己那套完整状态机（videos>0→视频编辑 / images>1→图片参考 /
+ *   images===1→首帧），在那儿统一收口，这里再插一脚只会两处来回打架；
+ * - 模型压根消费不了多图（Seedance 1.x：i2v 端点 >1 图直接 400），换到哪个模式都是
+ *   400。留在首帧上，让提交守卫那句「该模型单次仅支持 1 张图片」把话说清楚，别用
+ *   一次模式跳变把真正的问题（该换模型）盖掉；
+ * - 两个候选模式该模型都不支持 —— 宁可不动，也不要顶进一个提交必 400 的模式。
+ */
+export function videoMultiImageAutoSwitchMode(
+  mode: VideoGenMode,
+  model: VideoModelRef,
+  imageCount: number,
+): VideoGenMode | null {
+  if (mode !== "imageToVideo" || imageCount <= 1) return null;
+  const modelId = videoModelIdOf(model);
+  if (isHappyHorseVideoModel(modelId)) return null;
+  if (!videoModelAcceptsMultipleImages(modelId)) return null;
+  const candidates: VideoGenMode[] = ["allReference", "imageReference"];
+  return candidates.find((candidate) => isVideoModeSupportedByModel(candidate, model)) ?? null;
 }
 
 /**
@@ -257,11 +309,7 @@ export function videoSubmitMediaRejectionReason(
   if (counts.audios > 0 && mode !== "allReference") {
     return "该模型不支持音频素材";
   }
-  if (
-    counts.images > 1 &&
-    !isSeedance2VideoModel(modelId) &&
-    !isHappyHorseVideoModel(modelId)
-  ) {
+  if (counts.images > 1 && !videoModelAcceptsMultipleImages(modelId)) {
     return "该模型单次仅支持 1 张图片";
   }
   return null;
