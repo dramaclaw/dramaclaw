@@ -351,7 +351,7 @@ function useScriptStorySubmit(
       });
       // Persist the task handle so a page refresh can resume this job.
       updateNodeData(nodeId, generationTaskDescriptor(ref));
-      await awaitTaskCompletion(ref.task_key, project);
+      await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
       const result = await fetchFreezoneStoryScriptResult(project, ref.job_id);
       updateNodeData(nodeId, {
         isGenerating: false,
@@ -1152,7 +1152,7 @@ function ScriptOperationsPanel({
         canvasId: readUrl().canvas ?? 'default',
         nodeId,
       });
-      await awaitTaskCompletion(ref.task_key, project);
+      await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
       const result = await fetchFreezoneTextTranslateResult(project, ref.job_id);
       updateNodeData(nodeId, { prompt: result.translated_text });
     } catch (error) {

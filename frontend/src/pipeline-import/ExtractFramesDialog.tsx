@@ -99,7 +99,7 @@ export function ExtractFramesDialog({
         maxFrames,
         sceneThreshold,
       });
-      const extractTask = await awaitTaskCompletion(extractRef.task_key, project);
+      const extractTask = await awaitTaskCompletion(extractRef.task_key, project, { taskType: extractRef.task_type });
       const frameUrls = extractFrameUrls(extractTask);
       if (frameUrls.length === 0) {
         throw new Error("抽帧返回了空结果，可能视频太短或格式不支持");
@@ -117,7 +117,7 @@ export function ExtractFramesDialog({
             frameUrls,
             provider: "openrouter",
           });
-          const analyzeTask = await awaitTaskCompletion(analyzeRef.task_key, project);
+          const analyzeTask = await awaitTaskCompletion(analyzeRef.task_key, project, { taskType: analyzeRef.task_type });
           analyses = extractAnalyses(analyzeTask);
         } catch (err) {
           console.warn("[freezone] shot analysis failed (continuing without):", err);

@@ -37,6 +37,7 @@ import { readUrl } from '@/lib/url-params';
 import { useDetachUpstream } from '@/features/canvas/hooks/useDetachUpstream';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
 import { canvasAiGateway } from '@/features/canvas/application/canvasServices';
+import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
   collectUpstreamReferenceUrls,
   joinUpstreamText,
@@ -713,7 +714,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     };
 
     try {
-      const jobId = await canvasAiGateway.submitGenerateImageJob(regenerationPayload);
+      const { jobId, ref } = await canvasAiGateway.submitGenerateImageJob(regenerationPayload);
       const generationDebugContext: GenerationDebugContext = {
         sourceType: 'imageEdit',
         providerId: selectedModel.providerId,
@@ -737,6 +738,9 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         generationClientSessionId: CURRENT_RUNTIME_SESSION_ID,
         generationDebugContext,
         generationRequestPayload: regenerationPayload,
+        // 后端任务句柄：jobId 只活在本次会话的内存 Map 里，脱离监听后靠这三个
+        // 字段刷新重接（见 SubmittedImageJob / generationTaskDescriptor）。
+        ...generationTaskDescriptor(ref),
       });
     } catch (generationError) {
       const resolvedError = resolveErrorContent(generationError, t('ai.error'));

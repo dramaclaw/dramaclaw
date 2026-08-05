@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { XYPosition } from '@xyflow/react';
 
+import type { FreezoneJobRef } from '@/api/ops';
 import type {
   CanvasEdge,
   CanvasNode,
@@ -82,13 +83,31 @@ export interface GenerateImagePayload {
   >;
 }
 
+/**
+ * submitGenerateImageJob 的返回值。
+ *
+ * 两个 id 的生命周期完全不同,不能只留一个:
+ * - `jobId` 是 gateway 的进程内 Map 键,只服务 Canvas.tsx 那个轮询循环,刷新即失效;
+ * - `ref` 是后端任务句柄,落到节点上（见 generationTaskDescriptor）才是刷新后
+ *   resumeNodeGeneration 找回结果的唯一线索。
+ *
+ * 早先这里只回 jobId,于是脱离监听后除了重新提交别无他法——擦除/重绘那条路径
+ * 一直是对的（见 regenerateFreezoneRedrawNode）,这里补齐口径。
+ */
+export interface SubmittedImageJob {
+  jobId: string;
+  ref: FreezoneJobRef;
+}
+
 export interface AiGateway {
   setApiKey: (provider: string, apiKey: string) => Promise<void>;
   generateImage: (payload: GenerateImagePayload) => Promise<string>;
-  submitGenerateImageJob: (payload: GenerateImagePayload) => Promise<string>;
+  submitGenerateImageJob: (payload: GenerateImagePayload) => Promise<SubmittedImageJob>;
   getGenerateImageJob: (jobId: string) => Promise<{
     job_id: string;
-    status: 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found';
+    // 'detached': the front-end stopped following the task; it is NOT a
+    // failure and must never be rendered as one (see TaskPollTimeoutError).
+    status: 'queued' | 'running' | 'succeeded' | 'failed' | 'detached' | 'not_found';
     result?: string | null;
     error?: string | null;
   }>;

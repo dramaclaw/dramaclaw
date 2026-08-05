@@ -30,6 +30,7 @@ import { EXPORT_RESULT_DISPLAY_NAME, resolveNodeDisplayName } from '@/features/c
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { canvasAiGateway } from '@/features/canvas/application/canvasServices';
+import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { useUpstreamImages } from '@/features/canvas/application/useUpstreamGraph';
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { backendErrorToastMessage } from '@/lib/api-errors';
@@ -1152,7 +1153,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     };
 
     try {
-      const jobId = await canvasAiGateway.submitGenerateImageJob(regenerationPayload);
+      const { jobId, ref } = await canvasAiGateway.submitGenerateImageJob(regenerationPayload);
       const generationDebugContext: GenerationDebugContext = {
         sourceType: 'storyboardGen',
         providerId: selectedModel.providerId,
@@ -1177,6 +1178,9 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         generationDebugContext,
         generationRequestPayload: regenerationPayload,
         generationStoryboardMetadata: storyboardMetadata,
+        // 后端任务句柄：jobId 只活在本次会话的内存 Map 里，脱离监听后靠这三个
+        // 字段刷新重接（见 SubmittedImageJob / generationTaskDescriptor）。
+        ...generationTaskDescriptor(ref),
       });
     } catch (generationError) {
       const resolvedError = resolveErrorContent(generationError, '生成失败');

@@ -87,7 +87,7 @@ export function VideoReferenceDialog({
         maxFrames,
         sceneThreshold: 0.4,
       });
-      const task = await awaitTaskCompletion(ref.task_key, project);
+      const task = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
       const urls = extractFrameUrls(task);
       if (urls.length === 0) {
         throw new Error("抽帧返回了空结果");
