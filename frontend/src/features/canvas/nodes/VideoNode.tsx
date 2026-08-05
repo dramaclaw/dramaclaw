@@ -68,8 +68,10 @@ import {
   formatAudioDurationClips,
   MAX_AUDIO_REFERENCE_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
+  hasConfiguredReferenceCaps,
   isHappyHorseVideoModel,
   isSeedance2VideoModel,
+  referenceCapsForMode,
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
   videoModelReferenceDisabledReason,
@@ -242,28 +244,8 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
   firstLastFrame: { Icon: Layers, label: "首尾帧生成视频" },
 };
 
-// 各 genMode 对上游引用数量的硬上限。UI 用这张表把后端字段约束（多图 / 多模态
-// 场景下）显式表达出来：超额 chip 标灰 + 从 @ 候选剔除，避免「prompt 引用了
-// @图片10 但提交时被静默丢掉」。
-//
-// 表里没出现的模式默认不限制（textToVideo 不消费上游、imageToVideo 走
-// `.slice(0, 9)` 自带兜底），各自走原有路径。
-//   - allReference (omni)  ：image 1-9 / video 0-3 / audio 0-3。音频另有**逐条**
-//                            1.8~15.2s 的厂商时长约束，在提交前单独校验（见
-//                            audioReferenceDurationRejection）；**没有总时长上限**，
-//                            服务端也不校验时长，别再往这张表里加总时长口径。
-//   - firstLastFrame       ：仅图片 2 张（首帧 + 尾帧），不允许任何视频 / 音频。
-//                            图片 >2 时另有自动切到 allReference 的兜底（见
-//                            VideoNode 内部 effect）。
-const REFERENCE_CAPS_BY_MODE: Partial<
-  Record<VideoGenMode, { image: number; video: number; audio: number }>
-> = {
-  imageToVideo: { image: 9, video: 0, audio: 0 },
-  imageReference: { image: 9, video: 0, audio: 0 },
-  videoEdit: { image: 5, video: 1, audio: 0 },
-  allReference: { image: 9, video: 3, audio: 3 },
-  firstLastFrame: { image: 2, video: 0, audio: 0 },
-};
+// 各 genMode 的上游素材上限（REFERENCE_CAPS_BY_MODE / referenceCapsForMode）已收敛到
+// nodes/shared/videoModelCapabilities.ts —— 画布的连线拦截也要用同一把尺子。
 
 // 后台「媒体模型」未给该模型配置比例 / 分辨率时的兜底档位。正常路径下这两项
 // 都来自目录条目的 ratioOptions / resolutionOptions。
@@ -380,27 +362,6 @@ function selectedVideoModelReferenceDisabledReason(
       : `该模型最多支持 ${caps.audio} 个音频素材`;
   }
   return null;
-}
-
-function referenceCapsForMode(
-  model: ModelOption | null | undefined,
-  mode: VideoGenMode,
-): { image: number; video: number; audio: number } | null {
-  const defaults = REFERENCE_CAPS_BY_MODE[mode];
-  if (!defaults) return null;
-  return {
-    image: model?.referenceImageMax ?? defaults.image,
-    video: model?.referenceVideoMax ?? defaults.video,
-    audio: model?.referenceAudioMax ?? defaults.audio,
-  };
-}
-
-function hasConfiguredReferenceCaps(model: ModelOption | null | undefined): boolean {
-  return (
-    model?.referenceImageMax != null ||
-    model?.referenceVideoMax != null ||
-    model?.referenceAudioMax != null
-  );
 }
 
 function sceneOptimizeOptionsForModel(

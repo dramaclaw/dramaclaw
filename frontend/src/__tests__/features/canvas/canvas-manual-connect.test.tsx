@@ -473,3 +473,115 @@ describe("Canvas 拖线落点校验与建边判定对齐", () => {
     }
   });
 });
+
+// 素材上限拦截**不能只挂在 onConnect 上**。手工建边有好几条路径,只有从 handle 精确
+// 松手那一条走 onConnect;拖到节点本体上是靠 handleConnectEnd 里的 DOM 命中兜底直接
+// 调 connectGraphNodes 的,批量「+」扇入也是。曾经只在 onConnect 里拦,结果第 4 个视频
+// 拖到节点身上照样连得上。所以拦截落在 connectGraphNodes(所有路径的收口),这里对两条
+// 路径分别断言。
+//
+// 没配 referenceVideoMax 时视频上界是 3(全能参考),故第 3 条放行、第 4 条拦下。
+describe("Canvas 视频素材上限拦截", () => {
+  const TARGET = "target-video";
+
+  function seedCanvas(upstreamCount: number) {
+    const sources = Array.from({ length: upstreamCount }, (_, index) => ({
+      id: `src-${index}`,
+      type: CANVAS_NODE_TYPES.video,
+      position: { x: 0, y: index * 200 },
+      data: { videoUrl: `/v${index}.mp4` },
+    }));
+    useCanvasStore.getState().setCanvasData(
+      [
+        ...sources,
+        { id: "extra", type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 999 }, data: { videoUrl: "/extra.mp4" } },
+        { id: TARGET, type: CANVAS_NODE_TYPES.video, position: { x: 600, y: 0 }, data: {} },
+      ],
+      sources.map((node) => ({
+        id: `e-${node.id}`,
+        source: node.id,
+        target: TARGET,
+        sourceHandle: "source",
+        targetHandle: "target",
+      })),
+    );
+  }
+
+  const extraEdgeExists = () =>
+    useCanvasStore.getState().edges.some((edge) => edge.source === "extra");
+
+  beforeEach(() => {
+    capturedOnConnect = null;
+    capturedOnConnectStart = null;
+    capturedOnConnectEnd = null;
+    capturedReactFlowProps = null;
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+  });
+
+  it("onConnect:第 4 个视频既不高亮成合法,也不建边", async () => {
+    seedCanvas(3);
+    renderCanvas();
+    await waitFor(() => expect(capturedOnConnect).toBeTruthy());
+
+    const connection: Connection = {
+      source: "extra",
+      sourceHandle: "source",
+      target: TARGET,
+      targetHandle: "target",
+    };
+    const isValidConnection = capturedReactFlowProps?.isValidConnection as
+      | ((connection: Connection | Edge) => boolean)
+      | undefined;
+
+    expect(isValidConnection?.(connection)).toBe(false);
+    act(() => {
+      capturedOnConnect?.(connection);
+    });
+    expect(extraEdgeExists()).toBe(false);
+  });
+
+  it("拖到节点本体(connect-end DOM 兜底)同样拦得住,而未超额时仍建得上", async () => {
+    async function dropOnTargetBody(upstreamCount: number) {
+      seedCanvas(upstreamCount);
+      const view = renderCanvas();
+      await waitFor(() => expect(capturedOnConnectEnd).toBeTruthy());
+
+      const targetElement = document.createElement("div");
+      targetElement.className = "react-flow__node";
+      targetElement.dataset.id = TARGET;
+      document.body.appendChild(targetElement);
+      const originalElementFromPoint = document.elementFromPoint;
+      Object.defineProperty(document, "elementFromPoint", {
+        configurable: true,
+        value: vi.fn().mockReturnValue(targetElement),
+      });
+
+      try {
+        act(() => {
+          capturedOnConnectStart?.(
+            { clientX: 0, clientY: 0, target: null } as unknown as MouseEvent,
+            { nodeId: "extra", handleId: "source", handleType: "source" },
+          );
+        });
+        act(() => {
+          capturedOnConnectEnd?.(
+            { clientX: 100, clientY: 100, target: null } as unknown as MouseEvent,
+            { isValid: false } as FinalConnectionState,
+          );
+        });
+      } finally {
+        Object.defineProperty(document, "elementFromPoint", {
+          configurable: true,
+          value: originalElementFromPoint,
+        });
+        targetElement.remove();
+        view.unmount();
+      }
+      return extraEdgeExists();
+    }
+
+    // 先证明这条路径本身是通的,否则「拦住了」可能只是测试没走到。
+    expect(await dropOnTargetBody(2)).toBe(true);
+    expect(await dropOnTargetBody(3)).toBe(false);
+  });
+});

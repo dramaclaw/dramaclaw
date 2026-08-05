@@ -35,6 +35,7 @@ import {
   type VideoNodeData,
 } from "@/features/canvas/domain/canvasNodes";
 import {
+  GEN_MODE_TO_CATALOG_MODE,
   isHappyHorseVideoModel,
   isVideoModeSupportedByModel,
   videoModelReferenceDisabledReason,
@@ -954,15 +955,9 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
   // 非 HappyHorse 不暴露「视频编辑」(它是 HappyHorse 专属功能)。
   const visibleTabs = useMemo(() => {
     if (supportedModes?.length) {
-      const keyMap: Record<VideoGenMode, string> = {
-        textToVideo: "text_to_video",
-        imageToVideo: "first_frame",
-        firstLastFrame: "first_last_frame",
-        imageReference: "image_reference",
-        allReference: "all_reference",
-        videoEdit: "video_edit",
-      };
-      return MODE_TABS.filter((tab) => supportedModes.includes(keyMap[tab.key]));
+      return MODE_TABS.filter((tab) =>
+        supportedModes.includes(GEN_MODE_TO_CATALOG_MODE[tab.key]),
+      );
     }
     if (!isHappyHorseVideoModel(modelId)) {
       // 按模型能力过滤，而非「非 HappyHorse 一律给全部」：Seedance 1.x 不支持

@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { VideoGenMode } from "@/features/canvas/domain/canvasNodes";
+import type { CanvasNode, VideoGenMode } from "@/features/canvas/domain/canvasNodes";
+import {
+  isAudioNode,
+  isExportImageNode,
+  isImageEditNode,
+  isImageGenNode,
+  isStoryboardGenNode,
+  isUploadNode,
+  isVideoNode,
+} from "@/features/canvas/domain/canvasNodes";
 
 /**
  * Freezone 画布视频模型的**能力口径**——与后端 `freezone.py` 各视频端点的模型门禁
@@ -411,4 +420,218 @@ export function videoReferenceAutoSwitchAction(input: {
   return target
     ? { kind: "switch", modelId: target.modelId, genMode: target.genMode }
     : { kind: "none" };
+}
+
+// —— 上游素材数量上限 ——————————————————————————————————————————————————— //
+
+/** 一个上游节点在视频引用里算哪一类素材。 */
+export type ReferenceKind = "image" | "video" | "audio";
+
+export interface ReferenceCaps {
+  image: number;
+  video: number;
+  audio: number;
+}
+
+/** 目录条目里与素材上限相关的字段。 */
+export interface ReferenceCapModel {
+  referenceImageMax?: number | null;
+  referenceVideoMax?: number | null;
+  referenceAudioMax?: number | null;
+  supportedModes?: string[];
+}
+
+/**
+ * 各 genMode 对上游引用数量的硬上限。UI 用这张表把后端字段约束（多图 / 多模态
+ * 场景下）显式表达出来：超额 chip 标灰 + 从 @ 候选剔除，避免「prompt 引用了
+ * @图片10 但提交时被静默丢掉」。
+ *
+ * 这同时是后台「媒体模型」没有声明 referenceImageMax / referenceVideoMax /
+ * referenceAudioMax 时的兜底口径（含目录接口拉取失败走兜底模型列表的情况）。
+ *
+ * 表里没出现的模式默认不限制（textToVideo 不消费上游、imageToVideo 走
+ * `.slice(0, 9)` 自带兜底），各自走原有路径。
+ *   - allReference (omni)  ：image 1-9 / video 0-3 / audio 0-3。音频另有**逐条**
+ *                            1.8~15.2s 的厂商时长约束，在提交前单独校验（见
+ *                            audioReferenceDurationRejection）；**没有总时长上限**，
+ *                            服务端也不校验时长，别再往这张表里加总时长口径。
+ *   - firstLastFrame       ：仅图片 2 张（首帧 + 尾帧），不允许任何视频 / 音频。
+ *                            图片 >2 时另有自动切到 allReference 的兜底（见
+ *                            VideoNode 内部 effect）。
+ */
+export const REFERENCE_CAPS_BY_MODE: Partial<Record<VideoGenMode, ReferenceCaps>> = {
+  imageToVideo: { image: 9, video: 0, audio: 0 },
+  imageReference: { image: 9, video: 0, audio: 0 },
+  videoEdit: { image: 5, video: 1, audio: 0 },
+  allReference: { image: 9, video: 3, audio: 3 },
+  firstLastFrame: { image: 2, video: 0, audio: 0 },
+};
+
+/** 当前模式下的素材上限；模型配置优先，未配置则按模式表兜底。 */
+export function referenceCapsForMode(
+  model: ReferenceCapModel | null | undefined,
+  mode: VideoGenMode,
+): ReferenceCaps | null {
+  const defaults = REFERENCE_CAPS_BY_MODE[mode];
+  if (!defaults) return null;
+  return {
+    image: model?.referenceImageMax ?? defaults.image,
+    video: model?.referenceVideoMax ?? defaults.video,
+    audio: model?.referenceAudioMax ?? defaults.audio,
+  };
+}
+
+export function hasConfiguredReferenceCaps(
+  model: ReferenceCapModel | null | undefined,
+): boolean {
+  return (
+    model?.referenceImageMax != null ||
+    model?.referenceVideoMax != null ||
+    model?.referenceAudioMax != null
+  );
+}
+
+/**
+ * 连线拦截用的**跨模式上界**。
+ *
+ * 刻意不用「当前 genMode 的 cap」：genMode 会随上游素材自动切换（见 VideoNode 里
+ * 按 upstreamTypeCounts 纠正 genMode 的 effect —— 图片从 1 张变 2 张就会从首帧切到
+ * 图片参考，首尾帧连第 3 张图会切到全能参考）。若按当前模式拦，用户连的正是那条
+ * 「本该触发切模式」的边，会被误挡在门外。所以取该模型所有可达模式的逐类型最大值。
+ *
+ * 模型自己配了 referenceXxxMax 时直接采信 —— 后台配的就是模型级上限，本身已是上界。
+ *
+ * 返回 null 表示不施加数量约束（可达模式都不在 REFERENCE_CAPS_BY_MODE 表里，
+ * 例如纯文生视频模型）。
+ */
+export function connectionReferenceCaps(
+  model: ReferenceCapModel | null | undefined,
+): ReferenceCaps | null {
+  const modes = (Object.keys(REFERENCE_CAPS_BY_MODE) as VideoGenMode[]).filter((mode) => {
+    const supported = model?.supportedModes;
+    if (!supported?.length) return true;
+    return supported.includes(GEN_MODE_TO_CATALOG_MODE[mode]);
+  });
+  let bound: ReferenceCaps | null = null;
+  for (const mode of modes) {
+    const caps = REFERENCE_CAPS_BY_MODE[mode];
+    if (!caps) continue;
+    bound = bound
+      ? {
+          image: Math.max(bound.image, caps.image),
+          video: Math.max(bound.video, caps.video),
+          audio: Math.max(bound.audio, caps.audio),
+        }
+      : { ...caps };
+  }
+  if (!bound) return null;
+  return {
+    image: model?.referenceImageMax ?? bound.image,
+    video: model?.referenceVideoMax ?? bound.video,
+    audio: model?.referenceAudioMax ?? bound.audio,
+  };
+}
+
+/**
+ * 前端 genMode → 目录 `supportedModes` 里的取值。
+ *
+ * 注意 `imageToVideo` 对应的是 `first_frame` 而不是 `image_to_video`——它本就是
+ * 单图首帧 i2v。GenModeSelect 过滤 tab 时用的是同一张表，两处必须一致，否则
+ * 会出现「tab 可见但连线被拦」这类自相矛盾的状态。
+ */
+export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
+  textToVideo: "text_to_video",
+  imageToVideo: "first_frame",
+  firstLastFrame: "first_last_frame",
+  imageReference: "image_reference",
+  allReference: "all_reference",
+  videoEdit: "video_edit",
+};
+
+/**
+ * 一个上游节点算哪一类素材。与 VideoNode 的 upstreamTypeCounts 同口径：
+ * 携带 videoUrl 的 upload 节点（资产库视频）先判为视频，否则会被误算成图片。
+ * 返回 null 表示这个节点不作为素材参与计数（如技能节点）。
+ */
+export function referenceKindOfNode(
+  node: CanvasNode | null | undefined,
+): ReferenceKind | null {
+  if (!node) return null;
+  const videoUrl = (node.data as { videoUrl?: unknown }).videoUrl;
+  if (isVideoNode(node) || (typeof videoUrl === "string" && videoUrl.length > 0)) {
+    return "video";
+  }
+  if (isAudioNode(node)) return "audio";
+  if (
+    isImageGenNode(node) ||
+    isUploadNode(node) ||
+    isImageEditNode(node) ||
+    isExportImageNode(node) ||
+    isStoryboardGenNode(node)
+  ) {
+    return "image";
+  }
+  return null;
+}
+
+export function countReferenceKinds(nodes: readonly (CanvasNode | undefined)[]): {
+  images: number;
+  videos: number;
+  audios: number;
+} {
+  let images = 0;
+  let videos = 0;
+  let audios = 0;
+  for (const node of nodes) {
+    const kind = referenceKindOfNode(node);
+    if (kind === "video") videos += 1;
+    else if (kind === "audio") audios += 1;
+    else if (kind === "image") images += 1;
+  }
+  return { images, videos, audios };
+}
+
+/**
+ * 视频节点当前选中的模型。与 VideoNode 内部的推导同口径：节点上存了 model id 就用
+ * 它，没存（或存的模型已下线）则落到列表首个 —— 那正是选择器展示、也是提交时实际
+ * 会用的模型。
+ */
+export function videoModelForNode<T extends { id: string }>(
+  node: { data?: { model?: unknown } } | null | undefined,
+  models: readonly T[],
+): T | undefined {
+  const persisted = node?.data?.model;
+  const modelId = typeof persisted === "string" && persisted.length > 0 ? persisted : null;
+  return (modelId ? models.find((model) => model.id === modelId) : undefined) ?? models[0];
+}
+
+const KIND_LABEL: Record<ReferenceKind, string> = {
+  image: "张图片素材",
+  video: "个视频素材",
+  audio: "个音频素材",
+};
+
+/**
+ * 再接一个 `kind` 素材是否会超出模型上限；超出则返回给用户看的原因，否则 null。
+ *
+ * `existing` 是目标节点当前已连上的上游计数（不含待连的这一条）。
+ */
+export function referenceConnectionRejectionReason(
+  model: ReferenceCapModel | null | undefined,
+  existing: { images: number; videos: number; audios: number },
+  kind: ReferenceKind,
+): string | null {
+  const caps = connectionReferenceCaps(model);
+  if (!caps) return null;
+  const next = {
+    images: existing.images + (kind === "image" ? 1 : 0),
+    videos: existing.videos + (kind === "video" ? 1 : 0),
+    audios: existing.audios + (kind === "audio" ? 1 : 0),
+  };
+  const cap = caps[kind];
+  const count = kind === "image" ? next.images : kind === "video" ? next.videos : next.audios;
+  if (count <= cap) return null;
+  return cap === 0
+    ? `该模型不支持${KIND_LABEL[kind].replace(/^[张个]/, "")}`
+    : `该模型最多支持 ${cap} ${KIND_LABEL[kind]}`;
 }
