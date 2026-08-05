@@ -123,4 +123,5 @@ async def test_script_writer_runner_closes_cognee_store(monkeypatch, tmp_path):
     )
 
     assert result["beats"] == 0
+    assert result["degraded_lines"] == []
     assert store.closed is True

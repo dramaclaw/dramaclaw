@@ -32,7 +32,7 @@ from novelvideo.shared.provider_costs import is_definite_no_cost_http_rejection
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
     media_relay_ttl_seconds,
-    upload_image_bytes,
+    upload_media_bytes,
 )
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
 from novelvideo.task_backend.subprocesses import run_project_subprocess
@@ -1947,6 +1947,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         media_value: str,
         *,
         default_ext: str = "png",
+        resource_type: str = "image",
         image_transform: str | None = None,
     ) -> str:
         media_value = str(media_value or "").strip()
@@ -1964,24 +1965,26 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             data = base64.b64decode(encoded)
             ext = cls._ext_from_data_url_header(header, default_ext)
             return await asyncio.to_thread(
-                upload_image_bytes,
+                upload_media_bytes,
                 data,
                 ext=ext,
                 ttl=media_relay_ttl_seconds(
                     minimum=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
                 ),
+                resource_type=resource_type,
                 image_transform=image_transform,
             )
 
         media_path = Path(media_value)
         ext = media_path.suffix.lstrip(".") or default_ext
         return await asyncio.to_thread(
-            upload_image_bytes,
+            upload_media_bytes,
             media_path.read_bytes(),
             ext=ext,
             ttl=media_relay_ttl_seconds(
                 minimum=NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS,
             ),
+            resource_type=resource_type,
             image_transform=image_transform,
         )
 
@@ -2064,6 +2067,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 url = await self._relay_media_input(
                     path,
                     default_ext="mp4" if media_type == "video" else "mp3",
+                    resource_type="video",
                 )
             if not path.startswith(("http://", "https://")):
                 log(f"{media_type} 参考素材已上传到媒体中转")
@@ -2311,21 +2315,25 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 default_ext = "png"
                 label = "图片参考"
                 image_transform = IMAGE_TRANSFORM_AI_REFERENCE_JPEG
+                resource_type = "image"
             elif ref_type == "video":
                 key = "reference_videos"
                 default_ext = "mp4"
                 label = "视频参考"
                 image_transform = None
+                resource_type = "video"
             elif ref_type == "audio":
                 key = "reference_audios"
                 default_ext = "mp3"
                 label = "音频参考"
                 image_transform = None
+                resource_type = "video"
             else:
                 continue
             url = await self._relay_media_input(
                 path,
                 default_ext=default_ext,
+                resource_type=resource_type,
                 image_transform=image_transform,
             )
             if not path.startswith(("http://", "https://")):
@@ -2623,6 +2631,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     video_url = await self._relay_media_input(
                         video_reference_paths[0],
                         default_ext="mp4",
+                        resource_type="video",
                     )
                     if not video_reference_paths[0].startswith(("http://", "https://")):
                         log("视频参考已上传到媒体中转")

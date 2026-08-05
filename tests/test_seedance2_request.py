@@ -1136,24 +1136,33 @@ async def test_newapi_video_relay_frame_input_normalizes_local_image_refs(
     frame_path.write_bytes(b"fake-png")
     captured: dict[str, object] = {}
 
-    def fake_upload_image_bytes(data, *, ext="png", ttl=None, image_transform=None):
+    def fake_upload_media_bytes(
+        data,
+        *,
+        ext="png",
+        ttl=None,
+        resource_type="image",
+        image_transform=None,
+    ):
         captured.update(
             {
                 "data": data,
                 "ext": ext,
                 "ttl": ttl,
+                "resource_type": resource_type,
                 "image_transform": image_transform,
             }
         )
         return f"https://relay.example/frame.{ext}"
 
-    monkeypatch.setattr(video_module, "upload_image_bytes", fake_upload_image_bytes)
+    monkeypatch.setattr(video_module, "upload_media_bytes", fake_upload_media_bytes)
 
     result = await NewApiVideoGenerator._relay_frame_input(str(frame_path))
 
     assert result == "https://relay.example/frame.png"
     assert captured["data"] == b"fake-png"
     assert captured["ext"] == "png"
+    assert captured["resource_type"] == "image"
     assert captured["image_transform"] == video_module.IMAGE_TRANSFORM_AI_REFERENCE_JPEG
 
 
@@ -1171,18 +1180,26 @@ async def test_newapi_video_seedance2_references_normalize_only_image_refs(
     audio_path.write_bytes(b"fake-mp3")
     captured: list[dict[str, object]] = []
 
-    def fake_upload_image_bytes(data, *, ext="png", ttl=None, image_transform=None):
+    def fake_upload_media_bytes(
+        data,
+        *,
+        ext="png",
+        ttl=None,
+        resource_type="image",
+        image_transform=None,
+    ):
         captured.append(
             {
                 "data": data,
                 "ext": ext,
                 "ttl": ttl,
+                "resource_type": resource_type,
                 "image_transform": image_transform,
             }
         )
         return f"https://relay.example/{len(captured)}.{ext}"
 
-    monkeypatch.setattr(video_module, "upload_image_bytes", fake_upload_image_bytes)
+    monkeypatch.setattr(video_module, "upload_media_bytes", fake_upload_media_bytes)
     generator = NewApiVideoGenerator(
         api_key="test-key",
         endpoint="https://newapi.example",
@@ -1204,6 +1221,7 @@ async def test_newapi_video_seedance2_references_normalize_only_image_refs(
         "reference_audios": ["https://relay.example/3.mp3"],
     }
     assert captured[0]["image_transform"] == video_module.IMAGE_TRANSFORM_AI_REFERENCE_JPEG
+    assert [item["resource_type"] for item in captured] == ["image", "video", "video"]
     assert captured[1]["image_transform"] is None
     assert captured[2]["image_transform"] is None
     assert all(

@@ -28,7 +28,7 @@ cp .env.example .env
 | 服务 | `api` + `web` | 无 PG/Redis（自建网关版另起 `newapi`） |
 | 端口 | `8780:8780` | REST API |
 | 强制环境 | `ST_EDITION=ce`、清空 control-plane/Redis/Celery | CE 模式不可降级 |
-| 数据卷 | `ce-data:/data`（`NOVELVIDEO_DATA_ROOT=/data`） | 项目数据持久化 |
+| 数据卷 | `ce-data:/data`（输出为 `/data/output`） | 持久化项目数据库、设置和生成媒体 |
 
 ## 3. 配置 `.env`
 
@@ -56,7 +56,7 @@ docker compose down              # 停止（保留数据卷）
 
 ## 5. 数据在哪 / 备份、恢复与迁移
 
-- 项目数据在命名卷 `ce-data`（容器内 `/data`），输出在 `NOVELVIDEO_OUTPUT_DIR`（默认 `output`）。
+- 项目数据库、设置和生成媒体都在命名卷 `ce-data`（容器内 `/data`）；生成媒体固定写入 `/data/output`。删除或重建容器不会删除该卷，只有显式执行 `docker compose down -v` 才会删除。
 - 备份数据卷：
 
 ```bash
@@ -73,7 +73,7 @@ docker run --rm -v dramaclaw-ce_ce-data:/data -v "$PWD":/backup alpine \
   tar xzf /backup/ce-data-backup.tar.gz -C /data
 ```
 
-然后照常起服务（`docker compose -f docker-compose.selfhosted.yml up -d`）。若要一并带上已生成的媒体与配置，把 `output` 目录（`NOVELVIDEO_OUTPUT_DIR`）和 `.env` 也拷过去。
+然后照常起服务（`docker compose -f docker-compose.selfhosted.yml up -d`）。数据卷备份已包含生成媒体；`.env` 仍需单独备份。
 
 ## 6. 升级
 
@@ -83,6 +83,24 @@ docker run --rm -v dramaclaw-ce_ce-data:/data -v "$PWD":/backup alpine \
 git pull
 docker compose up -d --build
 ```
+
+如果旧版本曾将媒体写入容器内 `/app/output`，请在重建旧容器**之前**运行一次迁移：
+
+```bash
+git pull
+docker compose exec -T api python - < scripts/migrate_docker_output.py
+docker compose up -d --build
+```
+
+Windows PowerShell 使用：
+
+```powershell
+git pull
+Get-Content scripts/migrate_docker_output.py -Raw | docker compose exec -T api python -
+docker compose up -d --build
+```
+
+脚本只补拷缺失文件，不覆盖或删除源文件；修改项目前会备份 `projects.db`。如果旧容器已经被删除，原本仅存在于该容器层的文件无法由数据卷恢复。
 
 正式发布后改为**拉取钉版本的已发布镜像** + env-sync（升级保留你的自定义 `.env` 值）——见发行规格落地后更新本节。
 
