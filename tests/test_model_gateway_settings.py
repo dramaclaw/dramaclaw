@@ -20,6 +20,7 @@ from novelvideo.model_gateway_settings import (
     build_model_gateway_status,
     get_effective_cognee_embedding_config,
     get_effective_newapi_config,
+    get_ce_media_model_catalog,
     get_newapi_media_model_mappings,
     normalize_relay_base_url,
     save_official_newapi_key,
@@ -1807,10 +1808,11 @@ def test_comfyui_provider_channel_writes_workflows_to_newapi(
     assert json.loads(channel["settings"])["comfyui"]["workflow_by_model"] == {
         "wan-i2v": workflow
     }
-    assert get_newapi_media_model_mappings()["wan-i2v"] == {
-        "provider": "comfyui",
-        "upstreamModel": "",
-    }
+    comfy_mapping = get_newapi_media_model_mappings()["wan-i2v"]
+    assert comfy_mapping["provider"] == "comfyui"
+    assert comfy_mapping["upstreamModel"] == ""
+    assert comfy_mapping["mediaType"] == "video"
+    assert comfy_mapping["config"]["request"]["endpoint"] == "video/generations"
 
 
 def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(
@@ -2260,7 +2262,7 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
 
     config_response = client.get("/model-gateway/config")
     media_models = config_response.json()["data"]["provisioner"]["mediaModels"]
-    assert media_models == {
+    expected_mappings = {
         "LingShan-G2": {
             "provider": "openai",
             "upstreamModel": "gpt-image-upstream",
@@ -2282,6 +2284,92 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
             "upstreamModel": "lingshan-mu-upstream",
         },
     }
+    assert {
+        model: {
+            "provider": entry["provider"],
+            "upstreamModel": entry["upstreamModel"],
+        }
+        for model, entry in media_models.items()
+    } == expected_mappings
+    assert media_models["LingShan-G2"]["mediaType"] == "image"
+    assert media_models["seedance-1.5-pro"]["mediaType"] == "video"
+    assert media_models["index-tts-2"]["mediaType"] == "audio"
+
+
+def test_ce_media_model_catalog_uses_saved_custom_model_capabilities(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_media_model_mappings(
+        {
+            "custom-video": {
+                "provider": "volcengine",
+                "upstreamModel": "doubao-custom-video",
+                "mediaType": "video",
+                "label": "Custom Video",
+                "enabled": True,
+                "sortOrder": 12,
+                "config": {
+                    "resolutionOptions": ["720p", "1080p"],
+                    "ratioOptions": ["16:9", "9:16"],
+                    "minDuration": 4,
+                    "maxDuration": 10,
+                    "supportedModes": ["text_to_video", "first_frame"],
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    },
+                },
+            },
+            "disabled-image": {
+                "provider": "openrouter",
+                "upstreamModel": "disabled-image",
+                "mediaType": "image",
+                "enabled": False,
+                "config": {},
+            },
+        }
+    )
+
+    catalog = get_ce_media_model_catalog("video")
+
+    assert len(catalog) == 1
+    assert catalog[0]["id"] == "custom-video"
+    assert catalog[0]["apiModel"] == "newapi_custom-video"
+    assert catalog[0]["label"] == "Custom Video"
+    assert catalog[0]["resolutionOptions"] == ["720p", "1080p"]
+    assert catalog[0]["supportedModes"] == ["text_to_video", "first_frame"]
+    assert get_ce_media_model_catalog("image") == []
+    assert get_ce_media_model_catalog("video", provider="comfyui") == []
+
+
+def test_custom_media_model_accepts_arbitrary_image_and_video_models():
+    specs, normalized = model_gateway._build_media_model_channel_specs(
+        {
+            "kling-custom": model_gateway.MediaModelConfigBody(
+                provider="openrouter",
+                upstreamModel="kling-v2",
+                mediaType="video",
+                label="Kling Custom",
+                config={
+                    "resolutionOptions": ["720p", "1080p"],
+                    "supportedModes": ["text_to_video", "first_frame"],
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    },
+                },
+            )
+        }
+    )
+
+    assert specs[0].model_mapping == {"kling-custom": "kling-v2"}
+    assert normalized["kling-custom"]["mediaType"] == "video"
+    assert normalized["kling-custom"]["label"] == "Kling Custom"
+    assert normalized["kling-custom"]["config"]["resolutionOptions"] == [
+        "720p",
+        "1080p",
+    ]
 
 
 def test_custom_newapi_media_models_rejects_official_value_models(

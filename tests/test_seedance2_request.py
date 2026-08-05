@@ -893,6 +893,22 @@ def test_newapi_video_result_url_keeps_legacy_fallbacks(task, expected):
     assert NewApiVideoGenerator._extract_video_url(task) == expected
 
 
+def test_newapi_video_resolves_gateway_local_result_url():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="http://newapi:3000/v1",
+        model="h3-t2v",
+    )
+
+    assert generator._resolve_result_url(
+        "http://localhost:3000/v1/public/videos/task-1/content?expires=1&signature=abc"
+    ) == (
+        "http://newapi:3000/v1/public/videos/task-1/content?expires=1&signature=abc"
+    )
+
+
 async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_path, monkeypatch):
     from pathlib import Path
 

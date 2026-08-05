@@ -106,6 +106,11 @@ export interface MediaModelEntry {
   provider: FeatureModelProvider;
   /** NewAPI model_mapping 的 value；空表示使用固定模型名自身。 */
   upstreamModel: string;
+  mediaType?: 'image' | 'video' | 'audio';
+  label?: string;
+  enabled?: boolean;
+  sortOrder?: number;
+  config?: Record<string, unknown>;
 }
 
 export interface EmbeddingModelEntry {
@@ -304,6 +309,15 @@ function normalizeFeatureModelSettings(
       mediaModels[normalizedModel] = {
         provider: normalizeFeatureModelProvider(entry.provider),
         upstreamModel: typeof entry.upstreamModel === 'string' ? entry.upstreamModel.trim() : '',
+        ...(entry.mediaType === 'image' || entry.mediaType === 'video' || entry.mediaType === 'audio'
+          ? { mediaType: entry.mediaType }
+          : {}),
+        ...(typeof entry.label === 'string' && entry.label.trim()
+          ? { label: entry.label.trim() }
+          : {}),
+        enabled: entry.enabled !== false,
+        sortOrder: typeof entry.sortOrder === 'number' ? entry.sortOrder : 100,
+        config: entry.config && typeof entry.config === 'object' ? entry.config : {},
       };
     }
   }
@@ -535,6 +549,11 @@ export const useSettingsStore = create<SettingsState>()(
                   {
                     provider: normalizeFeatureModelProvider(entry.provider),
                     upstreamModel: entry.upstreamModel.trim(),
+                    ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
+                    ...(entry.label?.trim() ? { label: entry.label.trim() } : {}),
+                    enabled: entry.enabled !== false,
+                    sortOrder: entry.sortOrder ?? 100,
+                    config: entry.config ?? {},
                   },
                 ] as const)
                 .filter(([model]) => Boolean(model))

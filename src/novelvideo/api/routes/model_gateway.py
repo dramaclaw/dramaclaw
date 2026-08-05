@@ -30,6 +30,7 @@ from novelvideo.model_gateway_settings import (
 )
 from novelvideo.model_gateway_runtime import refresh_model_gateway_runtime
 from novelvideo.shared.runtime_env import is_ce_effective
+from novelvideo.media_model_request_schema import validate_media_model_catalog_config
 from novelvideo.newapi_provisioner import (
     build_channel_payload,
     build_provisioner_status,
@@ -48,17 +49,6 @@ from novelvideo.newapi_provisioner import (
 router = APIRouter(prefix="/model-gateway")
 
 
-CUSTOM_MEDIA_MODEL_NAMES = {
-    "LingShan-G2",
-    "LingShan-NB-2",
-    "seedance-1.0-pro-fast",
-    "seedance-1.5-pro",
-    "seedance-2.0",
-    "seedance-2.0-fast",
-    "happyhorse-1.0",
-    "index-tts-2",
-    "LingShan-MU-11",
-}
 OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
     "seedance-2.0-value",
     "seedance-2.0-fast-value",
@@ -171,6 +161,11 @@ class SyncProviderChannelBody(BaseModel):
 class MediaModelConfigBody(BaseModel):
     provider: str
     upstream_model: str | None = Field(default=None, alias="upstreamModel")
+    media_type: str | None = Field(default=None, alias="mediaType")
+    label: str | None = None
+    enabled: bool = True
+    sort_order: int = Field(default=100, alias="sortOrder")
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class SaveMediaModelsBody(BaseModel):
@@ -252,12 +247,12 @@ def _build_channel_payload_from_spec(
 
 def _build_media_model_channel_specs(
     models: dict[str, MediaModelConfigBody],
-) -> tuple[list[ChannelSpec], dict[str, dict[str, str]]]:
+) -> tuple[list[ChannelSpec], dict[str, dict[str, Any]]]:
     if not models:
         raise ValueError("models must be a non-empty JSON object")
 
     grouped: dict[str, dict[str, str]] = {}
-    normalized: dict[str, dict[str, str]] = {}
+    normalized: dict[str, dict[str, Any]] = {}
     for raw_model, item in models.items():
         model = str(raw_model or "").strip()
         if not model:
@@ -267,13 +262,42 @@ def _build_media_model_channel_specs(
         provider = str(item.provider or "").strip().lower()
         if not provider:
             raise ValueError(f"provider is required for media model {model}")
-        if model not in CUSTOM_MEDIA_MODEL_NAMES and provider != "comfyui":
-            raise ValueError(f"unsupported media model: {model}")
         upstream_model = (item.upstream_model or "").strip() or model
+        media_type = str(item.media_type or "").strip().lower()
+        if not media_type:
+            if model in {"LingShan-G2", "LingShan-NB-2"} or model.startswith(
+                "seedream-"
+            ):
+                media_type = "image"
+            elif model in {"index-tts-2", "LingShan-MU-11"}:
+                media_type = "audio"
+            else:
+                media_type = "video"
+        if media_type not in {"image", "video", "audio"}:
+            raise ValueError(f"invalid mediaType for media model {model}")
+        model_config = dict(item.config)
+        if media_type in {"image", "video"}:
+            model_config.setdefault(
+                "request",
+                {
+                    "endpoint": (
+                        "images/generations"
+                        if media_type == "image"
+                        else "video/generations"
+                    ),
+                    "parameters": [],
+                },
+            )
+            validate_media_model_catalog_config(model_config, media_type)
         grouped.setdefault(provider, {})[model] = upstream_model
         normalized[model] = {
             "provider": provider,
             "upstreamModel": "" if upstream_model == model else upstream_model,
+            "mediaType": media_type,
+            "label": str(item.label or model).strip() or model,
+            "enabled": bool(item.enabled),
+            "sortOrder": int(item.sort_order),
+            "config": model_config,
         }
 
     specs = [
@@ -637,9 +661,10 @@ async def save_custom_newapi_provider_channels(
         if comfyui_channels:
             cfg = get_provisioner_config()
             admin = ensure_admin_access_token(cfg)
+            existing_media_mappings = get_newapi_media_model_mappings()
             media_mappings = {
                 model: mapping
-                for model, mapping in get_newapi_media_model_mappings().items()
+                for model, mapping in existing_media_mappings.items()
                 if mapping.get("provider") != "comfyui"
             }
             for channel in comfyui_channels:
@@ -659,9 +684,23 @@ async def save_custom_newapi_provider_channels(
                 if not result.get("ok"):
                     raise RuntimeError("NewAPI rejected ComfyUI channel configuration")
                 for model in model_mapping:
+                    previous = existing_media_mappings.get(model, {})
                     media_mappings[model] = {
                         "provider": "comfyui",
                         "upstreamModel": "",
+                        "mediaType": previous.get("mediaType", "video"),
+                        "label": previous.get("label", model),
+                        "enabled": previous.get("enabled", True),
+                        "sortOrder": previous.get("sortOrder", 100),
+                        "config": previous.get(
+                            "config",
+                            {
+                                "request": {
+                                    "endpoint": "video/generations",
+                                    "parameters": [],
+                                }
+                            },
+                        ),
                     }
             save_newapi_media_model_mappings(media_mappings)
     except PermissionError as exc:

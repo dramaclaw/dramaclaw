@@ -69,6 +69,11 @@ export interface NewApiChannelType {
 export interface SavedMediaModelConfig {
   provider: string;
   upstreamModel: string;
+  mediaType?: "image" | "video" | "audio";
+  label?: string;
+  enabled?: boolean;
+  sortOrder?: number;
+  config?: Record<string, unknown>;
 }
 
 export interface SavedEmbeddingModelConfig {
@@ -403,7 +408,9 @@ export function useSaveProviderChannels() {
               : current,
         );
       }
-      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+      if (response.ok !== true) {
+        qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+      }
     },
   });
 }

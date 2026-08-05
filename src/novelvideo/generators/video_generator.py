@@ -2383,6 +2383,19 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 return value.strip()
         return ""
 
+    def _resolve_result_url(self, result_url: str) -> str:
+        """Make gateway-local result URLs reachable from this process."""
+        value = str(result_url or "").strip()
+        parsed = urllib.parse.urlsplit(value)
+        if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+            return value
+        gateway = urllib.parse.urlsplit(self.base_url)
+        if not gateway.scheme or not gateway.netloc:
+            return value
+        return urllib.parse.urlunsplit(
+            (gateway.scheme, gateway.netloc, parsed.path, parsed.query, parsed.fragment)
+        )
+
     @staticmethod
     def _extract_returned_last_frame_url(task: dict) -> str:
         if not isinstance(task, dict):
@@ -2894,7 +2907,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
                 if status in {"completed", "succeeded", "success", "done"}:
                     progress(0.9)
-                    video_url = self._extract_video_url(task)
+                    video_url = self._resolve_result_url(self._extract_video_url(task))
                     if not video_url:
                         update_request_status(
                             task_id, "failed", "No video url in DramaClawAPI result"

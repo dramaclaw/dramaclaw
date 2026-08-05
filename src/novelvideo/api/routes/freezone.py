@@ -6832,14 +6832,86 @@ def _start_freezone_image_reverse_prompt_task(
 
 
 async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | None:
-    """Use the optional EE catalog while keeping CE's static model list intact."""
+    """Use EE catalog or the CE-local catalog when custom NewAPI is active."""
     from novelvideo.ports.registry import PortNotRegistered, get_port
 
     try:
         catalog = get_port("media_model_catalog")
     except PortNotRegistered:
+        from novelvideo.model_gateway_settings import (
+            MODE_CUSTOM,
+            MODE_HYBRID,
+            get_ce_media_model_catalog,
+            get_effective_newapi_config,
+        )
+        from novelvideo.shared.runtime_env import is_ce_effective
+
+        if is_ce_effective():
+            mode = get_effective_newapi_config().mode
+            if mode == MODE_CUSTOM:
+                return _merge_media_model_catalog_defaults(
+                    _static_media_model_catalog(media_type),
+                    get_ce_media_model_catalog(media_type),
+                )
+            if mode == MODE_HYBRID:
+                local = get_ce_media_model_catalog(media_type, provider="comfyui")
+                if not local:
+                    return None
+                static = _static_media_model_catalog(media_type)
+                local_ids = {
+                    identifier
+                    for item in local
+                    for identifier in _catalog_entry_identifiers(item)
+                    if identifier
+                }
+                return [
+                    item
+                    for item in static
+                    if not (_catalog_entry_identifiers(item) & local_ids)
+                ] + local
         return None
     return await catalog.list_models(media_type)
+
+
+def _static_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
+    if media_type == "video":
+        return get_freezone_video_model_options()
+    static: list[dict[str, Any]] = []
+    for key, label in image_generation_selection_options().items():
+        entry = IMAGE_GENERATION_SELECTIONS.get(key, {})
+        gateway_model = str(entry.get("model") or key)
+        static.append(
+            {
+                "id": key,
+                "providerId": entry.get("provider", "newapi"),
+                "provider": entry.get("provider", "newapi"),
+                "apiModel": key,
+                "api_model": key,
+                "gatewayModel": gateway_model,
+                "gateway_model": gateway_model,
+                "label": label,
+            }
+        )
+    return static
+
+
+def _merge_media_model_catalog_defaults(
+    defaults: list[dict[str, Any]], configured: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Overlay CE mappings on the existing mainline capabilities."""
+    merged: list[dict[str, Any]] = []
+    for item in configured:
+        identifiers = _catalog_entry_identifiers(item)
+        base = next(
+            (
+                candidate
+                for candidate in defaults
+                if _catalog_entry_identifiers(candidate) & identifiers
+            ),
+            None,
+        )
+        merged.append({**(base or {}), **item})
+    return merged
 
 
 def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:

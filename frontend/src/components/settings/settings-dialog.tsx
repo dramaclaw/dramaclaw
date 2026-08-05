@@ -13,6 +13,7 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
+  Pencil,
   Plus,
   RotateCw,
   Trash2,
@@ -67,6 +68,7 @@ import {
   type NewApiDatabaseConfigInput,
   type NewApiChannelType,
   type SavedEmbeddingModelConfig,
+  type SavedMediaModelConfig,
   type SavedProviderChannelConfig,
 } from "@/lib/queries/model-gateway";
 import {
@@ -77,6 +79,7 @@ import {
   type EmbeddingModelEntry,
   type FeatureModelSettings,
   type FeatureModelProvider,
+  type MediaModelEntry,
   type MediaStorageProvider,
 } from "@/stores/settingsStore";
 
@@ -935,8 +938,12 @@ const MEDIA_MODEL_ROWS: readonly {
   { model: "LingShan-MU-11", kind: "audio" },
 ];
 
+const MAINLINE_MEDIA_MODEL_IDS = new Set(
+  MEDIA_MODEL_ROWS.filter((row) => !row.officialOnly).map((row) => row.model),
+);
+
 const MEDIA_ROW_GRID =
-  "grid grid-cols-[90px_minmax(0,1fr)_150px_minmax(0,1fr)] items-center gap-3";
+  "grid grid-cols-[70px_minmax(0,1fr)_130px_minmax(0,1fr)_80px] items-center gap-3";
 
 const DEFAULT_EMBEDDING_DIMENSION = 1024;
 const DEFAULT_EMBEDDING_BATCH_SIZE = 10;
@@ -953,6 +960,11 @@ interface QuickProfileChannel {
 interface QuickProfileModel {
   channel: string;
   model: string;
+  mediaType?: "image" | "video" | "audio";
+  label?: string;
+  enabled?: boolean;
+  sortOrder?: number;
+  config?: Record<string, unknown>;
 }
 
 interface QuickModelProfile {
@@ -1006,6 +1018,22 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
           ? "volcengine"
           : "openrouter",
         model: row.model,
+        mediaType: row.kind,
+        label: row.model,
+        enabled: true,
+        sortOrder: 100,
+        config:
+          row.kind === "image" || row.kind === "video"
+            ? {
+                request: {
+                  endpoint:
+                    row.kind === "image"
+                      ? "images/generations"
+                      : "video/generations",
+                  parameters: [],
+                },
+              }
+            : {},
       },
     ]),
   ),
@@ -1221,6 +1249,11 @@ function syncQuickProfileFromAdvancedSettings(
             {
               channel: ensureChannel(entry.provider),
               model: entry.upstreamModel || model,
+              ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
+              ...(entry.label ? { label: entry.label } : {}),
+              enabled: entry.enabled !== false,
+              sortOrder: entry.sortOrder ?? 100,
+              config: entry.config ?? {},
             },
           ]),
         )
@@ -1425,16 +1458,21 @@ function QuickLocalNewApiSetup({
         featureMappingsByChannel.set(selected.channel, mapping);
       }
     }
-    const mediaModels: Record<
-      string,
-      { provider: FeatureModelProvider; upstreamModel: string }
-    > = {};
+    const mediaModels: Record<string, SavedMediaModelConfig> = {};
     for (const [rawModel, item] of Object.entries(profile.mediaModels)) {
       const model = rawModel.trim();
       const upstreamModel = item.model.trim();
       const channel = channelById.get(item.channel)!;
       if (model && upstreamModel)
-        mediaModels[model] = { provider: channel.provider, upstreamModel };
+        mediaModels[model] = {
+          provider: channel.provider,
+          upstreamModel,
+          ...(item.mediaType ? { mediaType: item.mediaType } : {}),
+          ...(item.label ? { label: item.label } : {}),
+          enabled: item.enabled !== false,
+          sortOrder: item.sortOrder ?? 100,
+          config: item.config ?? {},
+        };
     }
 
     const fail = (step: string, response: unknown): never => {
@@ -1814,7 +1852,7 @@ function FeatureModelsBlock({
   database: NewApiDatabaseConfigInput | undefined;
   savedProviderChannels: SavedProviderChannelConfig[];
   savedEmbeddingModel: SavedEmbeddingModelConfig | undefined;
-  savedMediaModels: Record<string, { provider: string; upstreamModel: string }>;
+  savedMediaModels: Record<string, SavedMediaModelConfig>;
   mediaOnly?: boolean;
   comfyOnly?: boolean;
 }) {
@@ -2434,35 +2472,42 @@ function MediaModelsBlock({
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
   savedChannelByProvider: Map<string, SavedProviderChannelConfig>;
-  savedMediaModels: Record<string, { provider: string; upstreamModel: string }>;
+  savedMediaModels: Record<string, SavedMediaModelConfig>;
   comfyOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const localSavedMediaModels = useSettingsStore(
     (s) => s.featureModelConfig.mediaModels ?? {},
   );
+  const providerChannels = useSettingsStore(
+    (s) => s.featureModelConfig.providerChannels,
+  );
   const setMediaModels = useSettingsStore((s) => s.setMediaModels);
   const saveMediaModels = useSaveMediaModels();
   const [mediaModels, setLocalMediaModels] = useState(localSavedMediaModels);
   const [saveError, setSaveError] = useState("");
+  const [editingModel, setEditingModel] = useState<string | null>(null);
+  const [creatingModel, setCreatingModel] = useState(false);
   const savedMediaModelsKey = JSON.stringify(savedMediaModels);
   const localSavedMediaModelsKey = JSON.stringify(localSavedMediaModels);
   const mediaModelRows = useMemo(() => {
-    const combinedModels = { ...savedMediaModels, ...mediaModels };
-    const rows = comfyOnly
-      ? MEDIA_MODEL_ROWS.filter(
-          (row) => combinedModels[row.model]?.provider === "comfyui",
-        )
-      : [...MEDIA_MODEL_ROWS];
-    const known = new Set(rows.map((row) => row.model));
-    for (const [model, entry] of Object.entries(combinedModels)) {
-      if (!known.has(model) && entry.provider === "comfyui") {
-        rows.push({ model, kind: "video" });
-        known.add(model);
-      }
-    }
-    return rows;
-  }, [comfyOnly, mediaModels, savedMediaModels]);
+    const presetKinds = new Map(MEDIA_MODEL_ROWS.map((row) => [row.model, row.kind]));
+    const models = comfyOnly
+      ? Object.keys(mediaModels).filter((model) => mediaModels[model]?.provider === "comfyui")
+      : Array.from(new Set([...MEDIA_MODEL_ROWS.map((row) => row.model), ...Object.keys(mediaModels)]));
+    return models
+      .map((model) => {
+        const entry = mediaModels[model];
+        return {
+        model,
+        kind: entry?.mediaType ?? presetKinds.get(model) ?? "video",
+        officialOnly: false,
+        mainline: MAINLINE_MEDIA_MODEL_IDS.has(model),
+        sortOrder: entry?.sortOrder ?? 100,
+        };
+      })
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.model.localeCompare(right.model));
+  }, [comfyOnly, mediaModels]);
 
   useEffect(() => {
     const fromBackend = Object.fromEntries(
@@ -2471,6 +2516,11 @@ function MediaModelsBlock({
         {
           provider: entry.provider as FeatureModelProvider,
           upstreamModel: entry.upstreamModel,
+          ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
+          ...(entry.label ? { label: entry.label } : {}),
+          enabled: entry.enabled !== false,
+          sortOrder: entry.sortOrder ?? 100,
+          config: entry.config ?? {},
         },
       ]),
     );
@@ -2484,17 +2534,7 @@ function MediaModelsBlock({
 
   const handleSave = async () => {
     setSaveError("");
-    const next: typeof localSavedMediaModels = comfyOnly
-      ? Object.fromEntries(
-          Object.entries(savedMediaModels).map(([model, entry]) => [
-            model,
-            {
-              provider: entry.provider as FeatureModelProvider,
-              upstreamModel: entry.upstreamModel,
-            },
-          ]),
-        )
-      : {};
+    const next: typeof localSavedMediaModels = {};
     for (const row of mediaModelRows) {
       if (row.officialOnly) continue;
       const entry = mediaModels[row.model];
@@ -2502,6 +2542,11 @@ function MediaModelsBlock({
         next[row.model] = {
           provider: entry.provider,
           upstreamModel: entry.upstreamModel.trim(),
+          ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
+          ...(entry.label ? { label: entry.label } : {}),
+          enabled: entry.enabled !== false,
+          sortOrder: entry.sortOrder ?? 100,
+          config: entry.config ?? {},
         };
       }
     }
@@ -2514,7 +2559,10 @@ function MediaModelsBlock({
         Object.values(next)
           .map((entry) => entry.provider)
           .filter(
-            (provider) => !savedChannelByProvider.get(provider)?.configured,
+            (provider) =>
+              provider !== "comfyui" &&
+              !(providerChannels[provider]?.upstreamKey ?? "").trim() &&
+              !savedChannelByProvider.get(provider)?.configured,
           ),
       ),
     );
@@ -2566,6 +2614,11 @@ function MediaModelsBlock({
           {
             provider: entry.provider as FeatureModelProvider,
             upstreamModel: entry.upstreamModel,
+            ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
+            ...(entry.label ? { label: entry.label } : {}),
+            enabled: entry.enabled !== false,
+            sortOrder: entry.sortOrder ?? 100,
+            config: entry.config ?? {},
           },
         ]),
       );
@@ -2584,12 +2637,22 @@ function MediaModelsBlock({
 
   return (
     <div className="mt-6">
-      <h4 className="text-xs font-medium text-foreground">
-        {t("settings.modelConfig.mediaModels.title")}
-      </h4>
-      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-        {t("settings.modelConfig.mediaModels.description")}
-      </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="text-xs font-medium text-foreground">
+            {t("settings.modelConfig.mediaModels.title")}
+          </h4>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            {t("settings.modelConfig.mediaModels.description")}
+          </p>
+        </div>
+        {!comfyOnly ? (
+          <Button type="button" size="sm" variant="outline" onClick={() => setCreatingModel(true)}>
+            <Plus className="size-3.5" />
+            {t("settings.modelConfig.mediaModels.addModel")}
+          </Button>
+        ) : null}
+      </div>
 
       <div
         className={cn(
@@ -2601,6 +2664,7 @@ function MediaModelsBlock({
         <span>{t("settings.modelConfig.mediaModels.colModel")}</span>
         <span>{t("settings.modelConfig.mediaModels.colProvider")}</span>
         <span>{t("settings.modelConfig.mediaModels.colUpstreamModel")}</span>
+        <span>{t("settings.modelConfig.mediaModels.colActions")}</span>
       </div>
 
       <div className="mt-2 rounded-md border border-border/70">
@@ -2633,6 +2697,7 @@ function MediaModelsBlock({
                     setLocalMediaModels((prev) => ({
                       ...prev,
                       [row.model]: {
+                        ...prev[row.model],
                         provider: provider as FeatureModelProvider,
                         upstreamModel: prev[row.model]?.upstreamModel ?? "",
                       },
@@ -2669,6 +2734,7 @@ function MediaModelsBlock({
                     setLocalMediaModels((prev) => ({
                       ...prev,
                       [row.model]: {
+                        ...prev[row.model],
                         provider:
                           prev[row.model]?.provider ??
                           configuredProviders[0] ??
@@ -2687,10 +2753,87 @@ function MediaModelsBlock({
                   disabled={configuredProviders.length === 0}
                 />
               )}
+              <div className="flex items-center justify-end gap-1">
+                {!row.mainline ? (
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    title={t("settings.modelConfig.mediaModels.editCapabilities")}
+                    onClick={() => setEditingModel(row.model)}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                ) : null}
+                {!comfyOnly && !row.mainline ? (
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-destructive"
+                    title={t("settings.modelConfig.mediaModels.removeModel")}
+                    onClick={() =>
+                      setLocalMediaModels((current) => {
+                        const next = { ...current };
+                        delete next[row.model];
+                        return next;
+                      })
+                    }
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                ) : null}
+                {row.mainline ? <span className="px-2 text-xs text-muted-foreground">-</span> : null}
+              </div>
             </div>
           );
         })}
       </div>
+
+      <Dialog
+        open={creatingModel || editingModel !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setCreatingModel(false);
+            setEditingModel(null);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[88vh] w-[calc(100vw-2rem)] max-w-[900px] overflow-hidden p-0 sm:max-w-[900px]">
+          <DialogHeader className="sr-only">
+            <DialogTitle>
+              {t(
+                editingModel
+                  ? "settings.modelConfig.mediaModels.editModelTitle"
+                  : "settings.modelConfig.mediaModels.addModelTitle",
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="max-h-[88vh]">
+            <LocalMediaModelEditor
+              key={editingModel ?? "__new_media_model__"}
+              originalModel={editingModel}
+              entry={editingModel ? mediaModels[editingModel] : undefined}
+              configuredProviders={configuredProviders}
+              comfyOnly={comfyOnly}
+              onCancel={() => {
+                setCreatingModel(false);
+                setEditingModel(null);
+              }}
+              onSave={(model, entry) => {
+                setLocalMediaModels((current) => {
+                  const next = { ...current };
+                  if (editingModel && editingModel !== model) delete next[editingModel];
+                  next[model] = entry;
+                  return next;
+                });
+                setCreatingModel(false);
+                setEditingModel(null);
+              }}
+            />
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
 
       {saveError ? (
         <p className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] leading-relaxed text-destructive">
@@ -2716,9 +2859,430 @@ function MediaModelsBlock({
           {saveMediaModels.isPending ? (
             <Loader2 className="size-3.5 animate-spin" />
           ) : null}
-          {t("settings.modelConfig.mediaModels.save")}
+          {t(
+            comfyOnly
+              ? "settings.modelConfig.mediaModels.saveVideo"
+              : "settings.modelConfig.mediaModels.save",
+          )}
         </Button>
       </div>
+    </div>
+  );
+}
+
+function LocalMediaModelEditor({
+  originalModel,
+  entry,
+  configuredProviders,
+  comfyOnly,
+  onCancel,
+  onSave,
+}: {
+  originalModel: string | null;
+  entry?: MediaModelEntry;
+  configuredProviders: readonly FeatureModelProvider[];
+  comfyOnly: boolean;
+  onCancel: () => void;
+  onSave: (model: string, entry: MediaModelEntry) => void;
+}) {
+  const { t } = useTranslation();
+  const initialType = entry?.mediaType === "image" ? "image" : "video";
+  const [model, setModel] = useState(originalModel ?? "");
+  const [label, setLabel] = useState(entry?.label ?? originalModel ?? "");
+  const [mediaType, setMediaType] = useState<"image" | "video">(initialType);
+  const [provider, setProvider] = useState<FeatureModelProvider>(
+    entry?.provider ?? configuredProviders[0] ?? "comfyui",
+  );
+  const [upstreamModel, setUpstreamModel] = useState(entry?.upstreamModel ?? originalModel ?? "");
+  const [enabled, setEnabled] = useState(entry?.enabled !== false);
+  const [sortOrder, setSortOrder] = useState(entry?.sortOrder ?? 100);
+  const defaultConfig = {
+    request: {
+      endpoint: mediaType === "image" ? "images/generations" : "video/generations",
+      parameters: [],
+    },
+  };
+  const [configJson, setConfigJson] = useState(
+    JSON.stringify(entry?.config ?? defaultConfig, null, 2),
+  );
+  const parsedConfig = useMemo(() => {
+    try {
+      const parsed = JSON.parse(configJson) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }, [configJson]);
+  const setCapability = (key: string, value: unknown) => {
+    if (!parsedConfig) {
+      toast.error(t("settings.modelConfig.mediaModels.invalidCapabilitiesJson"));
+      return;
+    }
+    const next = { ...parsedConfig };
+    if (value === undefined || value === null || value === "") delete next[key];
+    else next[key] = value;
+    setConfigJson(JSON.stringify(next, null, 2));
+  };
+  const stringOptions = (key: string): string[] =>
+    Array.isArray(parsedConfig?.[key])
+      ? (parsedConfig[key] as unknown[]).map(String)
+      : [];
+
+  const handleMediaTypeChange = (nextType: "image" | "video") => {
+    setMediaType(nextType);
+    try {
+      const current = JSON.parse(configJson) as Record<string, unknown>;
+      const request =
+        current.request && typeof current.request === "object" && !Array.isArray(current.request)
+          ? (current.request as Record<string, unknown>)
+          : {};
+      setConfigJson(
+        JSON.stringify(
+          {
+            ...current,
+            request: {
+              ...request,
+              endpoint: nextType === "image" ? "images/generations" : "video/generations",
+              parameters: Array.isArray(request.parameters) ? request.parameters : [],
+            },
+          },
+          null,
+          2,
+        ),
+      );
+    } catch {
+      // Keep invalid draft text so the user can repair it before saving.
+    }
+  };
+
+  const handleSave = () => {
+    const cleanModel = model.trim();
+    if (!cleanModel || !label.trim() || !provider) {
+      toast.error(t("settings.modelConfig.mediaModels.missingModelFields"));
+      return;
+    }
+    let config: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(configJson) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+      config = parsed as Record<string, unknown>;
+    } catch {
+      toast.error(t("settings.modelConfig.mediaModels.invalidCapabilitiesJson"));
+      return;
+    }
+    onSave(cleanModel, {
+      provider,
+      upstreamModel: upstreamModel.trim() || cleanModel,
+      mediaType,
+      label: label.trim(),
+      enabled,
+      sortOrder,
+      config,
+    });
+  };
+
+  return (
+    <div className="p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium text-foreground">
+            {t(
+              originalModel
+                ? "settings.modelConfig.mediaModels.editModelTitle"
+                : "settings.modelConfig.mediaModels.addModelTitle",
+            )}
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {t("settings.modelConfig.mediaModels.capabilitiesHint")}
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <FieldRow
+          label={t("settings.modelConfig.mediaModels.modelId")}
+          value={model}
+          onChange={setModel}
+          placeholder="seedance-2.0-mini"
+        />
+        <FieldRow
+          label={t("settings.modelConfig.mediaModels.displayName")}
+          value={label}
+          onChange={setLabel}
+          placeholder="Seedance 2.0 Mini"
+        />
+        <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+          <Label className="justify-start text-[11px] font-normal text-muted-foreground">
+            {t("settings.modelConfig.mediaModels.mediaType")}
+          </Label>
+          <Select value={mediaType} onValueChange={(value) => handleMediaTypeChange(value as "image" | "video")}>
+            <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+            <SelectContent alignItemWithTrigger={false}>
+              <SelectItem value="image">{t("settings.modelConfig.mediaModels.types.image")}</SelectItem>
+              <SelectItem value="video">{t("settings.modelConfig.mediaModels.types.video")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+          <Label className="justify-start text-[11px] font-normal text-muted-foreground">
+            {t("settings.modelConfig.mediaModels.colProvider")}
+          </Label>
+          <Select value={provider} onValueChange={(value) => setProvider(value as FeatureModelProvider)} disabled={comfyOnly}>
+            <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+            <SelectContent alignItemWithTrigger={false}>
+              {configuredProviders.map((item) => <SelectItem key={item} value={item}>{featureProviderLabel(item)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="col-span-2">
+          <FieldRow
+            label={t("settings.modelConfig.mediaModels.colUpstreamModel")}
+            value={upstreamModel}
+            onChange={setUpstreamModel}
+            placeholder={model || "upstream-model-name"}
+          />
+        </div>
+        <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+          <Label className="justify-start text-[11px] font-normal text-muted-foreground">
+            {t("settings.modelConfig.mediaModels.sortOrder")}
+          </Label>
+          <Input type="number" value={sortOrder} onChange={(event) => setSortOrder(Number(event.target.value) || 0)} className="h-8" />
+        </div>
+        <label className="flex items-center gap-2 text-xs text-foreground">
+          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+          {t("settings.modelConfig.mediaModels.enabled")}
+        </label>
+      </div>
+      <div className="mt-3">
+        <p className="text-[11px] font-medium text-foreground">
+          {t("settings.modelConfig.mediaModels.commonCapabilities")}
+        </p>
+        <div className="mt-2 grid grid-cols-2 gap-3">
+          <CatalogMultiSelectField
+            label={t("settings.modelConfig.mediaModels.resolutionOptions")}
+            value={stringOptions("resolutionOptions")}
+            onChange={(value) => setCapability("resolutionOptions", value)}
+            options={
+              mediaType === "image"
+                ? ["1K", "2K", "3K", "4K", "8K", "1024x1024", "2048x2048"]
+                : ["480p", "720p", "1080p", "2K", "4K"]
+            }
+          />
+          <CatalogMultiSelectField
+            label={t("settings.modelConfig.mediaModels.ratioOptions")}
+            value={stringOptions("ratioOptions")}
+            onChange={(value) => setCapability("ratioOptions", value)}
+            options={["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "adaptive"]}
+          />
+          {mediaType === "image" ? (
+            <CatalogListField
+              label={t("settings.modelConfig.mediaModels.qualityOptions")}
+              value={stringOptions("qualityOptions")}
+              onChange={(value) => setCapability("qualityOptions", value)}
+              placeholder="low, medium, high"
+            />
+          ) : (
+            <>
+              <CatalogNumberField label={t("settings.modelConfig.mediaModels.minDuration")} value={parsedConfig?.minDuration} onChange={(value) => setCapability("minDuration", value)} />
+              <CatalogNumberField label={t("settings.modelConfig.mediaModels.maxDuration")} value={parsedConfig?.maxDuration} onChange={(value) => setCapability("maxDuration", value)} />
+              <CatalogNumberField label={t("settings.modelConfig.mediaModels.referenceImageMax")} value={parsedConfig?.referenceImageMax} min={0} onChange={(value) => setCapability("referenceImageMax", value)} />
+              <CatalogNumberField label={t("settings.modelConfig.mediaModels.referenceVideoMax")} value={parsedConfig?.referenceVideoMax} min={0} onChange={(value) => setCapability("referenceVideoMax", value)} />
+              <CatalogNumberField label={t("settings.modelConfig.mediaModels.referenceAudioMax")} value={parsedConfig?.referenceAudioMax} min={0} onChange={(value) => setCapability("referenceAudioMax", value)} />
+              <label className="flex items-center gap-2 text-xs text-foreground">
+                <input type="checkbox" checked={parsedConfig?.humanReview === true} onChange={(event) => setCapability("humanReview", event.target.checked)} />
+                {t("settings.modelConfig.mediaModels.humanReview")}
+              </label>
+              <div className="col-span-2">
+                <p className="mb-2 text-[11px] text-muted-foreground">
+                  {t("settings.modelConfig.mediaModels.supportedModes")}
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    ["text_to_video", "文生视频"],
+                    ["first_frame", "首帧"],
+                    ["first_last_frame", "首尾帧"],
+                    ["image_reference", "图片参考"],
+                    ["all_reference", "全能参考"],
+                    ["video_edit", "视频编辑"],
+                  ].map(([value, label]) => {
+                    const selected = stringOptions("supportedModes");
+                    return (
+                      <label key={value} className="flex items-center gap-2 text-xs text-foreground">
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(value)}
+                          onChange={(event) =>
+                            setCapability(
+                              "supportedModes",
+                              event.target.checked
+                                ? [...selected, value]
+                                : selected.filter((item) => item !== value),
+                            )
+                          }
+                        />
+                        {label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="mt-3 border-t border-border/60 pt-3">
+        <Label className="text-[11px] font-normal text-muted-foreground">
+          {t("settings.modelConfig.mediaModels.capabilitiesJson")}
+        </Label>
+        <Textarea
+          value={configJson}
+          onChange={(event) => setConfigJson(event.target.value)}
+          spellCheck={false}
+          className="mt-1 h-56 resize-y font-mono text-[11px]"
+        />
+      </div>
+      <div className="mt-3 flex justify-end gap-2">
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+          {t("common.cancel")}
+        </Button>
+        <Button type="button" size="sm" onClick={handleSave}>
+          {t("settings.modelConfig.mediaModels.applyModelEdit")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function CatalogListField({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string[];
+  onChange: (value: string[]) => void;
+  placeholder: string;
+}) {
+  const normalized = value.join(", ");
+  const [draft, setDraft] = useState(normalized);
+  useEffect(() => setDraft(normalized), [normalized]);
+  return (
+    <div>
+      <Label className="text-[11px] font-normal text-muted-foreground">{label}</Label>
+      <Input
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() =>
+          onChange(
+            [...new Set(draft.split(/[,，]/).map((item) => item.trim()).filter(Boolean))],
+          )
+        }
+        placeholder={placeholder}
+        className="mt-1 h-8"
+      />
+    </div>
+  );
+}
+
+function CatalogMultiSelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string[];
+  options: readonly string[];
+  onChange: (value: string[]) => void;
+}) {
+  const { t } = useTranslation();
+  const [customValue, setCustomValue] = useState("");
+  const choices = [...options, ...value.filter((item) => !options.includes(item))];
+  const toggle = (option: string, selected: boolean) => {
+    onChange(
+      selected
+        ? [...new Set([...value, option])]
+        : value.filter((item) => item !== option),
+    );
+  };
+  const addCustomValues = () => {
+    const additions = customValue
+      .split(/[,，]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (additions.length === 0) return;
+    onChange([...new Set([...value, ...additions])]);
+    setCustomValue("");
+  };
+
+  return (
+    <div>
+      <Label className="text-[11px] font-normal text-muted-foreground">{label}</Label>
+      <div className="mt-1 rounded-md border border-input/80 bg-background/30 p-2">
+        <div className="flex flex-wrap gap-x-3 gap-y-2">
+          {choices.map((option) => (
+            <label key={option} className="flex items-center gap-1.5 text-xs text-foreground">
+              <input
+                type="checkbox"
+                checked={value.includes(option)}
+                onChange={(event) => toggle(option, event.target.checked)}
+              />
+              <span>{option}</span>
+            </label>
+          ))}
+        </div>
+        <div className="mt-2 flex gap-2 border-t border-border/60 pt-2">
+          <Input
+            value={customValue}
+            onChange={(event) => setCustomValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addCustomValues();
+              }
+            }}
+            placeholder={t("settings.modelConfig.mediaModels.customOptionPlaceholder")}
+            className="h-7"
+          />
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="outline"
+            title={t("settings.modelConfig.mediaModels.addCustomOption")}
+            onClick={addCustomValues}
+            disabled={!customValue.trim()}
+          >
+            <Plus className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CatalogNumberField({
+  label,
+  value,
+  min = 1,
+  onChange,
+}: {
+  label: string;
+  value: unknown;
+  min?: number;
+  onChange: (value: number | undefined) => void;
+}) {
+  return (
+    <div>
+      <Label className="text-[11px] font-normal text-muted-foreground">{label}</Label>
+      <Input
+        type="number"
+        min={min}
+        value={typeof value === "number" ? value : ""}
+        onChange={(event) => onChange(event.target.value ? Number(event.target.value) : undefined)}
+        className="mt-1 h-8"
+      />
     </div>
   );
 }

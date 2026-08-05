@@ -260,7 +260,7 @@ def _decode_provider_channels(value: str | None) -> list[dict[str, Any]]:
     return channels
 
 
-def _decode_media_model_mappings(value: str | None) -> dict[str, dict[str, str]]:
+def _decode_media_model_mappings(value: str | None) -> dict[str, dict[str, Any]]:
     if not value:
         return {}
     try:
@@ -270,7 +270,7 @@ def _decode_media_model_mappings(value: str | None) -> dict[str, dict[str, str]]
     if not isinstance(raw, dict):
         return {}
 
-    mappings: dict[str, dict[str, str]] = {}
+    mappings: dict[str, dict[str, Any]] = {}
     for model, item in raw.items():
         model_name = str(model or "").strip()
         if not model_name or not isinstance(item, dict):
@@ -278,10 +278,23 @@ def _decode_media_model_mappings(value: str | None) -> dict[str, dict[str, str]]
         provider = str(item.get("provider") or "").strip().lower()
         if not provider:
             continue
-        mappings[model_name] = {
+        media_type = str(item.get("mediaType") or "").strip().lower()
+        config = item.get("config") if isinstance(item.get("config"), dict) else {}
+        mapping: dict[str, Any] = {
             "provider": provider,
             "upstreamModel": str(item.get("upstreamModel") or "").strip(),
         }
+        if media_type in {"image", "video", "audio"}:
+            mapping["mediaType"] = media_type
+        if str(item.get("label") or "").strip():
+            mapping["label"] = str(item.get("label") or "").strip()
+        if "enabled" in item:
+            mapping["enabled"] = item.get("enabled") is not False
+        if "sortOrder" in item:
+            mapping["sortOrder"] = int(item.get("sortOrder") or 100)
+        if config:
+            mapping["config"] = config
+        mappings[model_name] = mapping
     return mappings
 
 
@@ -410,7 +423,7 @@ def save_newapi_provider_channels(
     return normalized
 
 
-def get_newapi_media_model_mappings() -> dict[str, dict[str, str]]:
+def get_newapi_media_model_mappings() -> dict[str, dict[str, Any]]:
     settings = get_model_gateway_settings()
     return _decode_media_model_mappings(
         settings.get("custom_newapi_media_model_mappings")
@@ -418,9 +431,13 @@ def get_newapi_media_model_mappings() -> dict[str, dict[str, str]]:
 
 
 def save_newapi_media_model_mappings(
-    mappings: dict[str, dict[str, str]],
-) -> dict[str, dict[str, str]]:
-    normalized: dict[str, dict[str, str]] = {}
+    mappings: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    from novelvideo.media_model_request_schema import (
+        validate_media_model_catalog_config,
+    )
+
+    normalized: dict[str, dict[str, Any]] = {}
     for model, item in mappings.items():
         model_name = str(model or "").strip()
         if not model_name:
@@ -428,10 +445,26 @@ def save_newapi_media_model_mappings(
         provider = str(item.get("provider") or "").strip().lower()
         if not provider:
             raise ValueError(f"provider is required for media model {model_name}")
-        normalized[model_name] = {
+        media_type = str(item.get("mediaType") or "").strip().lower()
+        config = item.get("config") if isinstance(item.get("config"), dict) else {}
+        if media_type in {"image", "video"}:
+            validate_media_model_catalog_config(config, media_type)
+        normalized_item: dict[str, Any] = {
             "provider": provider,
             "upstreamModel": str(item.get("upstreamModel") or "").strip(),
         }
+        if media_type in {"image", "video", "audio"}:
+            normalized_item["mediaType"] = media_type
+        label = str(item.get("label") or "").strip()
+        if label:
+            normalized_item["label"] = label
+        if "enabled" in item:
+            normalized_item["enabled"] = item.get("enabled") is not False
+        if "sortOrder" in item:
+            normalized_item["sortOrder"] = int(item.get("sortOrder") or 100)
+        if config:
+            normalized_item["config"] = config
+        normalized[model_name] = normalized_item
     _write_many(
         {
             "custom_newapi_media_model_mappings": json.dumps(
@@ -444,8 +477,52 @@ def save_newapi_media_model_mappings(
     return normalized
 
 
-def build_newapi_media_model_mappings_status() -> dict[str, dict[str, str]]:
+def build_newapi_media_model_mappings_status() -> dict[str, dict[str, Any]]:
     return get_newapi_media_model_mappings()
+
+
+def get_ce_media_model_catalog(
+    media_type: str, *, provider: str | None = None
+) -> list[dict[str, Any]]:
+    """Expose CE-local media settings using the EE catalog response contract."""
+    wanted = str(media_type or "").strip().lower()
+    if wanted not in {"image", "video"}:
+        return []
+    result: list[dict[str, Any]] = []
+    for model, item in get_newapi_media_model_mappings().items():
+        if provider and item.get("provider") != provider:
+            continue
+        if item.get("mediaType") != wanted or item.get("enabled") is False:
+            continue
+        config = item.get("config") if isinstance(item.get("config"), dict) else {}
+        config = dict(config)
+        config.setdefault(
+            "request",
+            {
+                "endpoint": (
+                    "images/generations" if wanted == "image" else "video/generations"
+                ),
+                "parameters": [],
+            },
+        )
+        api_model = model if wanted == "image" else f"newapi_{model}"
+        result.append(
+            {
+                **config,
+                "catalogId": model,
+                "catalog_id": model,
+                "id": model,
+                "providerId": "newapi",
+                "provider": "newapi",
+                "apiModel": api_model,
+                "api_model": api_model,
+                "gatewayModel": model,
+                "gateway_model": model,
+                "label": str(item.get("label") or model),
+                "sortOrder": int(item.get("sortOrder") or 100),
+            }
+        )
+    return sorted(result, key=lambda entry: (int(entry["sortOrder"]), str(entry["id"])))
 
 
 def get_newapi_embedding_model_config() -> dict[str, Any]:
