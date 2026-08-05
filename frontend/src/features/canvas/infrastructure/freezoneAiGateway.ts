@@ -15,6 +15,8 @@
 //   - if no '/' → entire string treated as model, provider left as null
 //     (backend falls back to NANOBANANA_PROVIDER env)
 //   - extraParams.quality is forwarded for openai gpt-image-2
+//   - payload.modelParams is forwarded verbatim as `model_params` (媒体模型目录
+//     声明的动态参数，后端按目录 schema 校验)
 
 import {
   fetchFreezoneJobResult,
@@ -178,6 +180,9 @@ async function submitJob(
       modelId: payload.modelId,
       genMode: payload.generationMode,
       quality,
+      // 目录声明的动态参数（model_params）。之前这里没带，节点上填的目录参数
+      // 一路收集到提交前被整个丢掉——用户改了没有任何效果，也没有任何提示。
+      modelParams: payload.modelParams,
       canvasId,
       nodeId: payload.nodeId,
     });
@@ -195,6 +200,7 @@ async function submitJob(
     modelId: payload.modelId,
     genMode: payload.generationMode,
     quality,
+    modelParams: payload.modelParams,
     canvasId,
     nodeId: payload.nodeId,
   });

@@ -63,9 +63,13 @@ import {
   resolveImageModelResolution,
   resolveImageModelResolutions,
 } from '@/features/canvas/models';
-import { useCatalogImageModels } from '@/features/canvas/domain/catalogImageModels';
+import {
+  EMPTY_CATALOG_IMAGE_MODEL,
+  useCatalogImageModels,
+} from '@/features/canvas/domain/catalogImageModels';
 import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
 import { ModelParamsControls } from '@/features/canvas/ui/ModelParamsControls';
+import { MediaModelParameterChip } from '@/features/canvas/ui/MediaModelParameterChip';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import {
   UiButton,
@@ -623,12 +627,18 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
   );
 
   // 模型清单与每个模型的分辨率 / 比例 / 额外参数都来自后台「媒体模型」配置。
-  const { models: imageModels, getModel } = useCatalogImageModels();
+  const {
+    models: imageModels,
+    getModel,
+    isEmpty: imageModelsEmpty,
+    isLoading: imageModelsLoading,
+  } = useCatalogImageModels();
 
-  const selectedModel = useMemo(
-    () => getModel(nodeData.model),
-    [getModel, nodeData.model]
-  );
+  // 后台没配任何图片模型时 getModel 返回 undefined。占位定义只用来把选择器撑住，
+  // 提交由 imageModelsEmpty 拦死（后端对空目录直接 409）。
+  const selectedModel =
+    useMemo(() => getModel(nodeData.model), [getModel, nodeData.model])
+    ?? EMPTY_CATALOG_IMAGE_MODEL;
   const effectiveExtraParams = useMemo(
     () => ({ ...(nodeData.extraParams ?? {}) }),
     [nodeData.extraParams]
@@ -871,6 +881,10 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
 
   // Sync model, size, aspect ratio with node data
   useEffect(() => {
+    // 目录没落定（models 还是兜底列表）或后台压根没配模型时不要回写：此刻
+    // selectedModel 是兜底首项 / 占位定义，写进去等于把用户真正选中的模型冲掉，
+    // 而且这一步是持久化的，目录回来也救不回来。
+    if (imageModelsLoading || imageModelsEmpty) return;
     if (nodeData.model !== selectedModel.id) {
       updateNodeData(id, { model: selectedModel.id });
     }
@@ -884,6 +898,8 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     }
   }, [
     id,
+    imageModelsEmpty,
+    imageModelsLoading,
     nodeData,
     selectedModel.id,
     selectedResolution.value,
@@ -1070,6 +1086,15 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       return;
     }
 
+    // 后台一个图片模型都没配时不放行（上面的网格预览是纯本地渲染，不受影响）：
+    // selectedModel 此时是占位定义，提交出去后端 `_resolve_catalog_request` 直接 409。
+    if (imageModelsEmpty) {
+      const errorMessage = '管理员尚未配置任何图片模型，暂时无法生成';
+      setError(errorMessage);
+      void showErrorDialog(errorMessage, '错误');
+      return;
+    }
+
     const prompt = buildPrompt();
     if (!prompt) {
       const errorMessage = '请填写至少一个宫格候选描述';
@@ -1143,6 +1168,9 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       aspectRatio: resolvedRequestAspectRatio,
       referenceImages: allReferenceImages,
       extraParams: effectiveExtraParams,
+      // 目录声明的动态参数（model_params），与 ImageGenNode 同一口径：原样提交，
+      // 模式不匹配的键由后端 `_resolve_catalog_request` 过滤。
+      modelParams: nodeData.modelParams,
       nodeId: id,
     };
     const storyboardMetadata = {
@@ -1234,6 +1262,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     }
   }, [
     nodeData,
+    imageModelsEmpty,
     incomingImages,
     requestResolution.requestModel,
     effectiveExtraParams,
@@ -1665,7 +1694,14 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
             selectedResolution={selectedResolution}
             selectedAspectRatio={selectedAspectRatio}
             aspectRatioOptions={aspectRatioOptions}
-            onModelChange={(modelId) => updateNodeData(id, { model: modelId })}
+            onModelChange={(modelId) =>
+              // 目录参数是按模型声明的，换模型后旧值多半在新模型的 schema 里不存在，
+              // 带着走会被后端判成 unknown model parameters。一并清掉。
+              //
+              // 老的 extraParams 同理：里面的 quality 是按模型能力挑的，网关还会把它
+              // 原样发下去；不清就会拿上一个模型的画质档位去请求新模型。
+              updateNodeData(id, { model: modelId, modelParams: {}, extraParams: {} })
+            }
             onResolutionChange={(resolution) =>
               updateNodeData(id, { size: resolution as ImageSize })
             }
@@ -1717,6 +1753,12 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
             showExtraParamDescription={false}
             panelRenderMode="inline"
             inlinePanelClassName="absolute bottom-full left-0 z-[80] mb-2"
+          />
+          {/* 后台「媒体模型」声明的动态参数。没声明时该组件自己返回 null。 */}
+          <MediaModelParameterChip
+            parameters={selectedModel.requestParameters}
+            values={nodeData.modelParams}
+            onChange={(modelParams) => updateNodeData(id, { modelParams })}
           />
         </div>
 

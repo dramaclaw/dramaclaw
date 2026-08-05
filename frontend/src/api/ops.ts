@@ -1713,6 +1713,9 @@ export interface FreezoneScene360Payload {
   imageSize?: string;
   aspectRatio?: FreezoneScene360AspectRatio;
   model?: string;
+  /** 媒体模型目录身份，后端据此按目录定价规则计费（与前端报价同口径）。 */
+  catalogId?: string;
+  quality?: string;
   mode?: "candidate" | "commit";
 }
 
@@ -1739,8 +1742,11 @@ export async function submitFreezoneScene360(
         mode: payload.mode ?? "candidate",
         aspect_ratio:
           payload.aspectRatio ?? DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO,
-        // 前端不能选模型，不传 model 让后端用默认；调用方显式传了才带上。
+        // 面板上没有模型选择器，但**报价**是按目录首模型算的：不把它一并送下去，
+        // 后端就会用自己的 FREEZONE_DEFAULT_IMAGE_MODEL 跑，价格与执行对不上。
         ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.catalogId ? { catalog_id: payload.catalogId } : {}),
+        ...(payload.quality ? { quality: payload.quality } : {}),
       },
     },
   );
@@ -1834,6 +1840,9 @@ export interface FreezoneTemplateEditPayload {
   prompt?: string;
   imageSize?: string;
   model?: string;
+  /** 媒体模型目录身份，后端据此按目录定价规则计费（与前端报价同口径）。 */
+  catalogId?: string;
+  quality?: string;
 }
 
 export async function submitFreezoneTemplateEdit(
@@ -1849,7 +1858,10 @@ export async function submitFreezoneTemplateEdit(
         mode: payload.mode,
         prompt: payload.prompt ?? "",
         image_size: payload.imageSize ?? "2K",
+        // 同 scene-360：报价按目录首模型算，执行也必须用同一个模型/画质。
         ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.catalogId ? { catalog_id: payload.catalogId } : {}),
+        ...(payload.quality ? { quality: payload.quality } : {}),
       },
     },
   );

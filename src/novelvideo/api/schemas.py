@@ -547,6 +547,10 @@ class FreezoneScene360Request(BaseModel):
         default=FREEZONE_DEFAULT_IMAGE_MODEL,
         description=f"图片模型名，默认 {FREEZONE_DEFAULT_IMAGE_MODEL}",
     )
+    catalog_id: str = Field(
+        default="",
+        description="媒体模型目录条目 id。前端按目录条目报价时必须一并下发，否则计费口径与报价不一致",
+    )
     quality: Optional[str] = Field(default="medium", description="图片画质档位，默认 medium")
 
 
@@ -771,6 +775,10 @@ class FreezoneTemplateEditRequest(BaseModel):
     model: str = Field(
         default=FREEZONE_DEFAULT_IMAGE_MODEL,
         description=f"图片模型名，默认 {FREEZONE_DEFAULT_IMAGE_MODEL}",
+    )
+    catalog_id: str = Field(
+        default="",
+        description="媒体模型目录条目 id。前端按目录条目报价时必须一并下发，否则计费口径与报价不一致",
     )
     quality: Optional[str] = Field(default="medium", description="图片画质档位，默认 medium")
 

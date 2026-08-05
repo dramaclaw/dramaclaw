@@ -3318,6 +3318,59 @@ async def test_scene_360_endpoint_caps_mainline_image_size_to_2k(
     assert captured["payload"]["billing"]["pricing_kind"] == "image"
 
 
+@pytest.mark.asyncio
+async def test_scene_360_endpoint_keeps_image_size_below_the_cap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """低于 2K 的档位必须原样透传，并带上目录身份一起计费。
+
+    画布面板按媒体模型目录里那一档报价 —— 目录只给 1K 的模型如果在这里被抬到
+    2K，报价与执行、计费口径就全对不上。
+    """
+    ctx = _project_ctx(tmp_path)
+    captured: dict = {}
+
+    async def fake_resolve_freezone_project(*_args, **_kwargs):
+        return ctx, "admin", "demo", ctx.output_dir, str(ctx.output_dir)
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        captured["payload"] = kwargs.get("payload") or {}
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_scene_360"),
+            backend="celery",
+            queue="node.node_a.world",
+        )
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve_freezone_project)
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+    _write_image(ctx.output_dir / "assets" / "scenes" / "小区" / "master.png")
+
+    await freezone_routes.freezone_scene_360(
+        project="proj_freezone",
+        body=freezone_routes.FreezoneScene360Request(
+            reference_url="/api/v1/projects/proj_freezone/media/assets/scenes/小区/master.png",
+            image_size="1K",
+            canvas_id="canvas_a",
+            node_id="node_scene_360",
+            quality="low",
+            model="google/gemini-2.5-flash-image-preview",
+            catalog_id="cat-77",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert captured["payload"]["params"]["image_size"] == "1K"
+    assert captured["payload"]["billing"]["size"] == "1K"
+    assert captured["payload"]["billing"]["catalog_id"] == "cat-77"
+    assert captured["payload"]["billing"]["pricing_model"] == "google/gemini-2.5-flash-image-preview"
+
+
 def _skill_beat_input() -> dict:
     return {
         "role": "beat_context",

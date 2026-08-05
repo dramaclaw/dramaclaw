@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar, Position } from '@xyflow/react';
 import { ArrowUp, Image as ImageIcon, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -12,12 +12,7 @@ import {
   EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
-import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
-import {
-  pickAllowedOption,
-  resolveModelQualityOptions,
-  resolveModelSizeOptions,
-} from '@/features/canvas/domain/mediaModelOptions';
+import { resolveFixedFeatureModelRequest } from '@/features/canvas/domain/fixedFeatureModelRequest';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
   fetchFreezoneJobResult,
@@ -97,20 +92,18 @@ export const GridActionConfirmOverlay = memo(
     const { models: imageModels } = useFreezoneImageModels();
     const selectedModel = imageModels[0];
     const gridMode = GRID_ACTION_MODE_MAP[request.key];
-    // 宫格动作没有尺寸/画质选择器，按后台对该模型配置的档位取默认值。
-    const qualityOptions = resolveModelQualityOptions(selectedModel);
+    // 宫格动作没有尺寸/画质选择器，按后台对该模型配置的档位取默认值。报价与提交
+    // 必须来自同一次解析，见 `resolveFixedFeatureModelRequest` 的注释。
+    const modelRequest = useMemo(
+      () => resolveFixedFeatureModelRequest(selectedModel, { mode: gridMode }),
+      [gridMode, selectedModel],
+    );
     const gridActionCost = useGenerationCreditCost(
       'feature',
       selectedModel ? FREEZONE_IMAGE_FEATURES.grid : null,
       {
         surface: 'canvas',
-        params: buildImageFeatureBillingParams(selectedModel, {
-          size: pickAllowedOption('2K', resolveModelSizeOptions(selectedModel)),
-          ...(qualityOptions.length > 0
-            ? { quality: pickAllowedOption('medium', qualityOptions) }
-            : {}),
-          mode: gridMode,
-        }),
+        params: modelRequest.billingParams,
       },
     );
     const billingRuleMissing =
@@ -158,6 +151,7 @@ export const GridActionConfirmOverlay = memo(
           sourceUrl: imageSource.split('?')[0],
           mode: gridMode,
           prompt: request.label,
+          ...modelRequest.submit,
         });
         updateNodeData(nextNodeId, generationTaskDescriptor(ref));
         const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
@@ -195,6 +189,7 @@ export const GridActionConfirmOverlay = memo(
       findNodePosition,
       gridMode,
       imageSource,
+      modelRequest,
       node,
       onClose,
       request,

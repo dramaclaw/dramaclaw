@@ -295,6 +295,8 @@ export interface ImageEditNodeData extends NodeImageData {
   requestAspectRatio?: string;
   generationMode?: 'text_to_image' | 'image_to_image' | 'all_reference' | 'image_reference';
   extraParams?: Record<string, unknown>;
+  /** 后台「媒体模型」目录声明的动态参数取值，提交时作为 `model_params` 上送。 */
+  modelParams?: Record<string, unknown>;
   capabilityId?: string;
   capabilityParams?: Record<string, unknown>;
   capabilityInputs?: Record<
@@ -417,6 +419,8 @@ export interface StoryboardGenNodeData {
   size: ImageSize;
   requestAspectRatio: string;
   extraParams?: Record<string, unknown>;
+  /** 后台「媒体模型」目录声明的动态参数取值，提交时作为 `model_params` 上送。 */
+  modelParams?: Record<string, unknown>;
   imageUrl: string | null;
   previewImageUrl?: string | null;
   aspectRatio: string;

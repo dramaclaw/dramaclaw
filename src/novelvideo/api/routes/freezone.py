@@ -1820,6 +1820,7 @@ async def _start_or_enqueue_mainline_scene_360_candidate_job(
     quality: str | None,
     canvas_id: str | None,
     node_id: str | None,
+    catalog_id: str | None = None,
     task_display: dict[str, str] | None = None,
 ) -> dict:
     return await _start_or_enqueue_mainline_scene_360_task(
@@ -1834,6 +1835,7 @@ async def _start_or_enqueue_mainline_scene_360_candidate_job(
         quality=quality,
         canvas_id=canvas_id,
         node_id=node_id,
+        catalog_id=catalog_id,
         auto_commit=False,
         task_display=task_display,
     )
@@ -1852,6 +1854,7 @@ async def _start_or_enqueue_mainline_scene_360_task(
     quality: str | None,
     canvas_id: str | None,
     node_id: str | None,
+    catalog_id: str | None = None,
     auto_commit: bool = True,
     task_display: dict[str, str] | None = None,
 ) -> dict:
@@ -1889,6 +1892,10 @@ async def _start_or_enqueue_mainline_scene_360_task(
             ),
             "size": image_size or MAINLINE_SCENE_360_IMAGE_SIZE,
             "quality": quality or "medium",
+            # 画布报价时带了目录身份就必须原样传下来，否则前端按目录规则报价、
+            # 后端按旧的 image_selection 规则扣费，两边价格对不上。
+            **({"catalog_id": catalog_id} if catalog_id else {}),
+            **({"pricing_model": resolved_model} if catalog_id else {}),
         },
     )
     queued = await get_task_backend().enqueue_project_task(
@@ -2361,7 +2368,23 @@ MAINLINE_SKETCH_IMAGE_SIZE = "1K"
 MAINLINE_SKETCH_IMAGE_QUALITY = "low"
 MAINLINE_FRAME_IMAGE_SIZE = "1K"
 MAINLINE_SCENE_360_IMAGE_SIZE = "2K"
+_IMAGE_SIZE_TIERS = ("512", "1K", "2K", "3K", "4K")
 _SKILL_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_.:\-]{1,128}$")
+
+
+def _cap_mainline_scene_360_image_size(requested: str | None) -> str:
+    """360 全景取 min(前端档位, 2K)。
+
+    上限保留：主线 360 slot 一直按 2K 产出，4K 只是徒增成本。
+    但低于上限的档位必须原样透传 —— 画布面板按媒体模型目录里那一档报价，
+    目录只给 1K 的模型如果被抬到 2K，报价与执行、乃至与网关能力都对不上。
+    """
+    value = (requested or "").strip()
+    if not value or value not in _IMAGE_SIZE_TIERS:
+        return MAINLINE_SCENE_360_IMAGE_SIZE
+    if _IMAGE_SIZE_TIERS.index(value) > _IMAGE_SIZE_TIERS.index(MAINLINE_SCENE_360_IMAGE_SIZE):
+        return MAINLINE_SCENE_360_IMAGE_SIZE
+    return value
 
 
 def _canvas_events_dir(project_dir: Path) -> Path:
@@ -4400,8 +4423,12 @@ async def freezone_scene_360(
         "master_url": body.reference_url,
         "reverse_url": body.reverse_reference_url,
         "model": body.model or FREEZONE_DEFAULT_IMAGE_MODEL,
-        "image_size": MAINLINE_SCENE_360_IMAGE_SIZE,
+        # 画布面板按所选模型实际支持的档位报价并把它发下来；这里在 2K 上限内
+        # 原样使用，否则「报价 1K、执行 2K」，媒体模型目录配的分辨率在这条路由
+        # 等于没生效。
+        "image_size": _cap_mainline_scene_360_image_size(body.image_size),
         "quality": body.quality,
+        "catalog_id": body.catalog_id or None,
         "canvas_id": body.canvas_id or None,
         "node_id": body.node_id or None,
         "task_display": {
@@ -4961,6 +4988,9 @@ async def freezone_template_edit(
         provider=None,
         model=body.model or FREEZONE_DEFAULT_IMAGE_MODEL,
         quality=body.quality or "medium",
+        # 画布报价时带了目录身份就必须原样传下来，否则前端按目录规则报价、
+        # 后端按旧的 image_selection 规则扣费，两边价格对不上。
+        catalog_id=body.catalog_id or None,
         billing_feature_key="freezone.image_grid",
         billing_operation=body.mode,
     )

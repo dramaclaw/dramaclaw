@@ -3376,7 +3376,8 @@
     "thinkingLevelDesc": "仅对 fal 的 Nano Banana 2 生效；高思考会额外增加费用。",
     "thinkingDisabled": "关闭",
     "thinkingMinimal": "标准",
-    "thinkingHigh": "高"
+    "thinkingHigh": "高",
+    "noModelsAvailable": "管理员尚未配置任何图片模型"
   },
   "node": {
     "menu": {
@@ -3431,7 +3432,8 @@
       "promptRequired": "请输入提示词",
       "apiKeyRequired": "后端 provider 未配置",
       "resultTitle": "结果图片",
-      "promptPlaceholder": "描述任何你想要生成或编辑的内容"
+      "promptPlaceholder": "描述任何你想要生成或编辑的内容",
+      "noModelAvailable": "管理员尚未配置任何图片模型，暂时无法生成"
     },
     "imageGen": {
       "contextPalette": {

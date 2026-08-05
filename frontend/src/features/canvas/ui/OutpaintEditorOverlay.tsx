@@ -231,7 +231,12 @@ export const OutpaintEditorOverlay = memo(
             sourceUrl: imageSource.split('?')[0],
             targetAspectRatio: effectiveAspectRatio,
             numImages: 1,
-            imageSize,
+            // 必须是 effectiveImageSize：`imageSize` 是用户上一次挑的原始档位，换模型后
+            // 后台可能根本不给这一档（sizeOptions 里没有），UI 上显示的、报价用的都是
+            // 收敛后的 effectiveImageSize，只有提交带着越界的旧值——报价与执行对不上，
+            // 后端还会按目录 schema 判非法。而且 deps 里本来就只有 effectiveImageSize，
+            // 这里读 imageSize 连闭包都是旧的。
+            imageSize: effectiveImageSize,
             model: apiModel,
           });
           updateNodeData(nodeId, generationTaskDescriptor(ref));

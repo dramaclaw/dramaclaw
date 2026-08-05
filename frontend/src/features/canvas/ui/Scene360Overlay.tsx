@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar, Position } from '@xyflow/react';
 import { ArrowUp, ChevronDown, Globe2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -11,12 +11,7 @@ import {
   EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
-import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
-import {
-  pickAllowedOption,
-  resolveModelQualityOptions,
-  resolveModelSizeOptions,
-} from '@/features/canvas/domain/mediaModelOptions';
+import { resolveFixedFeatureModelRequest } from '@/features/canvas/domain/fixedFeatureModelRequest';
 import { CreditCostInline } from '@/components/credit-cost-inline';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
@@ -64,19 +59,18 @@ export const Scene360Overlay = memo(
     const { models: imageModels } = useFreezoneImageModels();
     const selectedModel = imageModels[0];
     // 全景没有尺寸/画质选择器，按后台对该模型配置的档位取默认值；模型没配
-    // 画质就不下发 quality。
-    const panoQualityOptions = resolveModelQualityOptions(selectedModel);
+    // 画质就不下发 quality。报价与提交必须来自同一次解析，见
+    // `resolveFixedFeatureModelRequest` 的注释。
+    const modelRequest = useMemo(
+      () => resolveFixedFeatureModelRequest(selectedModel),
+      [selectedModel],
+    );
     const panoCost = useGenerationCreditCost(
       'feature',
       selectedModel ? FREEZONE_IMAGE_FEATURES.panorama : null,
       {
         surface: 'canvas',
-        params: buildImageFeatureBillingParams(selectedModel, {
-          size: pickAllowedOption('2K', resolveModelSizeOptions(selectedModel)),
-          ...(panoQualityOptions.length > 0
-            ? { quality: pickAllowedOption('medium', panoQualityOptions) }
-            : {}),
-        }),
+        params: modelRequest.billingParams,
       },
     );
     const billingRuleMissing =
@@ -126,6 +120,7 @@ export const Scene360Overlay = memo(
         const ref = await submitFreezoneScene360(project, {
           referenceUrl: imageSource.split('?')[0],
           aspectRatio,
+          ...modelRequest.submit,
         });
         updateNodeData(nextNodeId, generationTaskDescriptor(ref));
         const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
@@ -174,6 +169,7 @@ export const Scene360Overlay = memo(
       aspectRatio,
       findNodePosition,
       imageSource,
+      modelRequest,
       node,
       onClose,
       setSelectedNode,

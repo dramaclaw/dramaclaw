@@ -58,6 +58,7 @@ import {
 import {
   countReferenceKinds,
   referenceConnectionRejectionReason,
+  videoConnectionCapModel,
   referenceKindOfNode,
   videoModelForNode,
 } from '@/features/canvas/nodes/shared/videoModelCapabilities';
@@ -962,7 +963,9 @@ export function Canvas({
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
   // 连线拦截要按目标视频节点选中模型的素材上限判定。共享 store，不额外发请求。
-  const { models: videoModels } = useFreezoneVideoModels();
+  // isLoading 一并取出：pending 期间 models 不是空数组而是硬编码的 VIDEO_MODELS，
+  // 下面的换模型剪枝必须等它落定才能记基线（同 videoReferenceAutoSwitchAction 的闸门）。
+  const { models: videoModels, isLoading: videoModelsLoading } = useFreezoneVideoModels();
   // 连线可见性：隐藏时只给 ReactFlow 的边打 `hidden`，真实 edges 一动不动（见
   // edgeVisibilityStore）。持久化/自动布局/导出全部照用 store 里的真实连线。
   const edgesHidden = useEdgeVisibilityStore((state) => state.hidden);
@@ -1774,9 +1777,20 @@ export function Canvas({
           .map((edge) => currentNodes.find((node) => node.id === edge.source)),
       );
       const model = videoModelForNode(targetNode, videoModels);
-      return referenceConnectionRejectionReason(model, existing, kind);
+      // 上限按「接上这条边之后」实际会生效的模型算：Seedance 1.x 接第一个视频/音频
+      // 素材会被自动救场成 2.0 + 全能参考，按救场前的 1.x 拦会把那条边本身挡掉。
+      const capModel = videoConnectionCapModel({
+        currentModel: model,
+        counts: {
+          videos: existing.videos + (kind === 'video' ? 1 : 0),
+          audios: existing.audios + (kind === 'audio' ? 1 : 0),
+        },
+        models: videoModels,
+        modelsLoading: videoModelsLoading,
+      });
+      return referenceConnectionRejectionReason(capModel, existing, kind);
     },
-    [videoModels],
+    [videoModels, videoModelsLoading],
   );
 
   const connectGraphNodes = useCallback(
@@ -1828,9 +1842,15 @@ export function Canvas({
   //   - 首次跑只记录基线，打开画布不会因为历史数据被删边；
   //   - 模型没变时每帧只是比对字符串，拖拽不受影响。
   // 保留的是连线顺序靠前的（与 @图片N 编号、提交顺序同一口径），断开靠后的。
+  //
+  // **必须等目录落定再记基线**：`useFreezoneVideoModels` 在 pending 时返回的是
+  // 硬编码的 VIDEO_MODELS，节点上持久化的自定义模型此时解析不出来，videoModelForNode
+  // 会落到兜底列表首项。照它记了基线，目录回来后模型 id 从兜底首项变成真正选中的那个，
+  // 这条 effect 就会把「异步 hydration」误判成「用户换了模型」，当场删掉超出新上限的
+  // 既有边并落盘 —— 用户什么都没做，只是打开了一张旧画布，连线就没了，且不可逆。
   const lastVideoModelIdsRef = useRef<Map<string, string> | null>(null);
   useEffect(() => {
-    if (videoModels.length === 0) return;
+    if (videoModelsLoading || videoModels.length === 0) return;
     const seen = new Map<string, string>();
     const baseline = lastVideoModelIdsRef.current;
     const pruned: { edgeId: string; reason: string }[] = [];
@@ -1839,7 +1859,10 @@ export function Canvas({
       const model = videoModelForNode(node, videoModels);
       const modelId = model?.id ?? '';
       seen.set(node.id, modelId);
-      if (!baseline || baseline.get(node.id) === modelId) continue;
+      // 基线里没有这个节点 = 这一轮才第一次见到它（首帧、目录 refetch 期间新建、
+      // 画布切换后重挂）。「没见过」不是「换了模型」，只记不删。
+      const previousModelId = baseline?.get(node.id);
+      if (previousModelId === undefined || previousModelId === modelId) continue;
       const counts = { images: 0, videos: 0, audios: 0 };
       for (const edge of edges) {
         if (edge.target !== node.id) continue;
@@ -1862,7 +1885,7 @@ export function Canvas({
     toast.warning(
       `${pruned[0].reason}，已断开 ${pruned.length} 条超出上限的素材连线`,
     );
-  }, [nodes, edges, videoModels, deleteEdge, scheduleCanvasPersist]);
+  }, [nodes, edges, videoModels, videoModelsLoading, deleteEdge, scheduleCanvasPersist]);
 
   const handleConnect = useCallback(
     (connection: Connection) => {

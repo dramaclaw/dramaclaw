@@ -635,3 +635,36 @@ export function referenceConnectionRejectionReason(
     ? `该模型不支持${KIND_LABEL[kind].replace(/^[张个]/, "")}`
     : `该模型最多支持 ${cap} ${KIND_LABEL[kind]}`;
 }
+
+/**
+ * 连线拦截该拿哪个模型算上限 —— **救场之后**的那个，不是节点当前存着的那个。
+ *
+ * 接入第一个视频 / 音频素材时，VideoNode 那条 effect 会把 Seedance 1.x 自动换成
+ * Seedance 2.0 + 全能参考（见 `videoReferenceAutoSwitchAction`）。1.x 的
+ * `supportedModes` 里没有 all_reference / video_edit，跨模式上界里视频上限就是 0；
+ * 按它拦，用户连的正是那条**本该触发救场**的边，当场被拒 —— 救场逻辑永远等不到
+ * 边建起来，用户只看到「连不上」，而手动换模型也没有任何提示引导。
+ *
+ * 所以先把救场结果算出来，用换之后的模型判上限。救不了（不是 1.x / 列表里没有
+ * 2.0 / 目录还没落定）就原样返回当前模型，拦截口径不变。
+ *
+ * `counts` 传**含待连这一条**的计数 —— 与救场 effect 的触发条件同源：那边看的是
+ * 边建好之后的 upstreamTypeCounts，这里必须预判到同一个状态，否则会出现「拦截放行
+ * 了但 effect 不换」或反过来的错配。
+ */
+export function videoConnectionCapModel<
+  T extends ReferenceCapModel & { id: string; apiModel?: string },
+>(input: {
+  currentModel: T | null | undefined;
+  counts: { videos: number; audios: number };
+  models: readonly T[];
+  modelsLoading: boolean;
+}): T | null | undefined {
+  const { currentModel, counts, models, modelsLoading } = input;
+  // 加载中一律按现状拦：此时 models 是硬编码兜底表，照它挑出来的 2.0 未必存在于
+  // 该项目的真列表里，effect 那边同样按兵不动（见 videoReferenceAutoSwitchAction）。
+  if (modelsLoading) return currentModel;
+  const target = pickVideoReferenceAutoSwitch(currentModel?.id, counts, models);
+  if (!target) return currentModel;
+  return models.find((model) => model.id === target.modelId) ?? currentModel;
+}
