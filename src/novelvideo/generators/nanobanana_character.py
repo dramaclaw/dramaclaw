@@ -30,7 +30,7 @@ from novelvideo.config import (
     get_style_preset,
     IMAGE_DEFAULT_STYLE,
 )
-from novelvideo.shared.billing_errors import is_insufficient_credits_error
+from novelvideo.shared.billing_errors import is_fatal_billing_error
 from novelvideo.image_request_usage import (
     record_image_request,
     update_image_request_status,
@@ -365,7 +365,7 @@ class NanoBananaCharacterGenerator:
                 generation_time=time.time() - start_time,
             )
         except Exception as e:
-            if is_insufficient_credits_error(e):
+            if is_fatal_billing_error(e):
                 raise
             if usage_recorded and project_output_dir:
                 update_image_request_status(
@@ -625,7 +625,7 @@ class NanoBananaCharacterGenerator:
                 )
 
         except Exception as e:
-            if is_insufficient_credits_error(e):
+            if is_fatal_billing_error(e):
                 raise
             if usage_recorded and project_output_dir:
                 update_image_request_status(
@@ -1298,7 +1298,7 @@ STRICT REQUIREMENTS (MUST AVOID):
             return image_bytes
 
         except Exception as e:
-            if is_insufficient_credits_error(e):
+            if is_fatal_billing_error(e):
                 raise
             if isinstance(e, RuntimeError):
                 raise
@@ -1572,7 +1572,7 @@ STRICT REQUIREMENTS (MUST AVOID):
             return image_bytes
 
         except Exception as e:
-            if is_insufficient_credits_error(e):
+            if is_fatal_billing_error(e):
                 raise
             if isinstance(e, RuntimeError):
                 raise

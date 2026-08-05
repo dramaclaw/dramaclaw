@@ -5,9 +5,14 @@ import base64
 import pytest
 
 from novelvideo.generators import image_generator
-from novelvideo.shared.billing_errors import InsufficientCreditsError
+from novelvideo.shared.billing_errors import BillingError, InsufficientCreditsError
 
 pytestmark = pytest.mark.m04
+
+
+class _ForeignBillingError(BillingError):
+    def __init__(self, **_kwargs) -> None:
+        super().__init__("foreign billing error")
 
 
 class FakeResponse:
@@ -140,7 +145,17 @@ async def test_seedream_request_refunds_reserved_credit_on_missing_image(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_seedream_request_reraises_insufficient_credit(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "InsufficientCreditsError",
+    [
+        InsufficientCreditsError,
+        _ForeignBillingError,
+    ],
+    ids=["personal", "foreign"],
+)
+async def test_seedream_request_reraises_insufficient_credit(
+    monkeypatch, tmp_path, InsufficientCreditsError
+):
     async def fake_reserve(model, *, source):
         raise InsufficientCreditsError(user_id="usr_1", cost=5, balance=0)
 

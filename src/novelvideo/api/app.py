@@ -18,8 +18,10 @@ from novelvideo.api.routes.files import preview_project_media_file
 from novelvideo.shared.billing_errors import (
     BILLING_RULE_NOT_CONFIGURED_MESSAGE,
     INSUFFICIENT_CREDITS_MESSAGE,
+    BillingError,
     BillingRuleNotConfiguredError,
     InsufficientCreditsError,
+    billing_error_payload,
     billing_rule_not_configured_payload,
     insufficient_credits_payload,
 )
@@ -184,6 +186,21 @@ def create_app() -> FastAPI:
                 "ok": False,
                 "error": BILLING_RULE_NOT_CONFIGURED_MESSAGE,
                 "data": billing_rule_not_configured_payload(exc),
+            },
+        )
+
+    @application.exception_handler(BillingError)
+    async def _billing_error(
+        request: Request,
+        exc: BillingError,
+    ) -> JSONResponse:
+        _ = request
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={
+                "ok": False,
+                "error": exc.user_message,
+                "data": billing_error_payload(exc),
             },
         )
 

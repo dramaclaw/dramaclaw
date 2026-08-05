@@ -2,9 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from novelvideo.shared.billing_errors import InsufficientCreditsError
+from novelvideo.shared.billing_errors import BillingError, InsufficientCreditsError
 
 pytestmark = pytest.mark.m07
+
+
+class _ForeignBillingError(BillingError):
+    def __init__(self, **_kwargs) -> None:
+        super().__init__("foreign billing error")
 
 
 class _FakeResponse:
@@ -291,7 +296,17 @@ async def test_indextts2_refunds_reserved_credit_on_generation_failure(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_indextts2_reraises_insufficient_credit(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "InsufficientCreditsError",
+    [
+        InsufficientCreditsError,
+        _ForeignBillingError,
+    ],
+    ids=["personal", "foreign"],
+)
+async def test_indextts2_reraises_insufficient_credit(
+    monkeypatch, tmp_path, InsufficientCreditsError
+):
     import novelvideo.generators.indextts2_fal as indextts2_fal
 
     from novelvideo.generators.indextts2_fal import IndexTTS2FalClient

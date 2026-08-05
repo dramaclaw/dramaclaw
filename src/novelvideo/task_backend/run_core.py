@@ -17,6 +17,8 @@ from novelvideo.ports import get_usage_meter
 from novelvideo.ports.authz import AdmissionContext
 from novelvideo.shared.billing_errors import (
     INSUFFICIENT_CREDITS_MESSAGE,
+    billing_error_payload,
+    find_billing_error,
     insufficient_credits_payload,
     is_insufficient_credits_error,
 )
@@ -454,6 +456,15 @@ def _project_task_failure_for_exception(
 
     if is_insufficient_credits_error(exc):
         return INSUFFICIENT_CREDITS_MESSAGE, insufficient_credits_payload(exc), True
+
+    billing_error = find_billing_error(exc)
+    if billing_error is not None:
+        logger.warning("typed billing failure in project task: %s", billing_error, exc_info=exc)
+        return (
+            billing_error.user_message,
+            billing_error_payload(billing_error),
+            True,
+        )
 
     try:
         from novelvideo.director_world.pano_sharp import Sharp3DUnavailable

@@ -28,7 +28,7 @@ from novelvideo.config import (
     PROP_REF_IMAGE_PROVIDER,
     normalize_image_generation_selection,
 )
-from novelvideo.shared.billing_errors import is_insufficient_credits_error
+from novelvideo.shared.billing_errors import is_fatal_billing_error
 from novelvideo.generators.nanobanana_grid import (
     _call_newapi_image_api,
     _call_openai_image_api,
@@ -263,7 +263,7 @@ async def generate_prop_reference(
         return result_path
 
     except Exception as e:
-        if is_insufficient_credits_error(e):
+        if is_fatal_billing_error(e):
             raise
         elapsed = time.time() - start_time
         print(f"[PropRefGen] 生成异常: {e}，耗时 {elapsed:.1f}s")

@@ -5,9 +5,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from novelvideo.shared.billing_errors import InsufficientCreditsError
+from novelvideo.shared.billing_errors import BillingError, InsufficientCreditsError
 
 pytestmark = pytest.mark.m04
+
+
+class _ForeignBillingError(BillingError):
+    def __init__(self, **_kwargs) -> None:
+        super().__init__("foreign billing error")
 
 
 def _isolate_settings_db(monkeypatch, tmp_path):
@@ -534,7 +539,17 @@ def test_newapi_image_call_reports_transport_exception_type(monkeypatch):
     assert "model=LingShan-G2" in error
 
 
-def test_newapi_image_call_reraises_insufficient_credit(monkeypatch):
+@pytest.mark.parametrize(
+    "InsufficientCreditsError",
+    [
+        InsufficientCreditsError,
+        _ForeignBillingError,
+    ],
+    ids=["personal", "foreign"],
+)
+def test_newapi_image_call_reraises_insufficient_credit(
+    monkeypatch, InsufficientCreditsError
+):
     from novelvideo.generators import nanobanana_grid
 
     class FakeUsageMeter:
@@ -554,7 +569,17 @@ def test_newapi_image_call_reraises_insufficient_credit(monkeypatch):
         )
 
 
-def test_newapi_sketch_grid_reraises_insufficient_credit(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "InsufficientCreditsError",
+    [
+        InsufficientCreditsError,
+        _ForeignBillingError,
+    ],
+    ids=["personal", "foreign"],
+)
+def test_newapi_sketch_grid_reraises_insufficient_credit(
+    monkeypatch, tmp_path, InsufficientCreditsError
+):
     from novelvideo.generators import nanobanana_grid
 
     async def fake_call_newapi_image_api(**_kwargs):
@@ -1011,7 +1036,17 @@ def test_newapi_identity_image_sends_portrait_then_costume_references(
     ]
 
 
-def test_newapi_character_portrait_reraises_insufficient_credit(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "InsufficientCreditsError",
+    [
+        InsufficientCreditsError,
+        _ForeignBillingError,
+    ],
+    ids=["personal", "foreign"],
+)
+def test_newapi_character_portrait_reraises_insufficient_credit(
+    monkeypatch, tmp_path, InsufficientCreditsError
+):
     from novelvideo.generators import nanobanana_character
 
     async def fake_call_newapi_image_api(**_kwargs):
@@ -1463,7 +1498,17 @@ def test_newapi_prop_reference_nanobanana2_omits_quality(monkeypatch, tmp_path):
     assert "extra_fields" not in posted["json"]
 
 
-def test_newapi_prop_reference_reraises_insufficient_credit(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "InsufficientCreditsError",
+    [
+        InsufficientCreditsError,
+        _ForeignBillingError,
+    ],
+    ids=["personal", "foreign"],
+)
+def test_newapi_prop_reference_reraises_insufficient_credit(
+    monkeypatch, tmp_path, InsufficientCreditsError
+):
     _isolate_settings_db(monkeypatch, tmp_path)
     import novelvideo.config as config
     from novelvideo.generators import nanobanana_prop

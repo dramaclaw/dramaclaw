@@ -31,7 +31,9 @@ from novelvideo.project_context import ProjectContext, resolve_project_context
 from novelvideo.shared.billing_errors import (
     BILLING_RULE_NOT_CONFIGURED_MESSAGE,
     INSUFFICIENT_CREDITS_MESSAGE,
+    billing_error_payload,
     billing_rule_not_configured_payload,
+    find_billing_error,
     find_billing_rule_not_configured_error,
     find_insufficient_credits_error,
     insufficient_credits_payload,
@@ -948,6 +950,18 @@ async def chat_ws(websocket: WebSocket) -> None:
                             "turn_id": turn_id,
                             "message": INSUFFICIENT_CREDITS_MESSAGE,
                             "data": insufficient_credits_payload(insufficient_error),
+                        },
+                    )
+                    continue
+                billing_error = find_billing_error(exc)
+                if billing_error is not None:
+                    await _send_json_best_effort(
+                        websocket,
+                        {
+                            "type": "error",
+                            "turn_id": turn_id,
+                            "message": billing_error.user_message,
+                            "data": billing_error_payload(billing_error),
                         },
                     )
                     continue

@@ -14,7 +14,10 @@ from novelvideo.audio_request_usage import (
 )
 from novelvideo.config import INDEXTTS2_RECORD_MODEL, INDEXTTS2_RECORD_PROVIDER
 from novelvideo.egress_context import TrustedEgressContext
-from novelvideo.shared.billing_errors import is_insufficient_credits_error
+from novelvideo.shared.billing_errors import (
+    is_fatal_billing_error,
+    is_insufficient_credits_error,
+)
 from novelvideo.project_config import (
     is_narrated_project,
     load_effective_narration_style_for_voice,
@@ -609,7 +612,7 @@ async def run_indextts2_beat_audio_generation(
                 status="success",
             )
         except Exception as exc:
-            if is_insufficient_credits_error(exc):
+            if is_fatal_billing_error(exc):
                 raise
             message = f"Beat {beat_num:02d}: {exc}"
             result.failed.append(message)

@@ -46,7 +46,7 @@ from novelvideo.ports.egress_operations import (
     canonical_request_digest,
 )
 from novelvideo.ports.model_credentials import ModelCredentialError, RequestCredential
-from novelvideo.shared.billing_errors import is_insufficient_credits_error
+from novelvideo.shared.billing_errors import is_fatal_billing_error
 from novelvideo.shared.provider_costs import is_definite_no_cost_http_rejection
 from novelvideo.generators.huimengi import (
     HuimengTaskFailed,
@@ -3351,7 +3351,7 @@ async def _call_openrouter_image_api(
             f"HTTP {e.response.status_code}: {body}" if body else f"HTTP {e.response.status_code}",
         )
     except Exception as e:
-        if is_insufficient_credits_error(e):
+        if is_fatal_billing_error(e):
             raise
         detail = f"{type(e).__name__}: {e!r}"
         print(f"[OpenRouter] 请求异常: {detail}")
@@ -3545,7 +3545,7 @@ async def _call_openai_image_api(
         return image_bytes, "", ""
     except Exception as exc:
         await _refund(reservation_id, "openai_image_api", type(exc).__name__)
-        if is_insufficient_credits_error(exc):
+        if is_fatal_billing_error(exc):
             raise
         detail = f"{type(exc).__name__}: {exc!r}"
         print(f"[OpenAI Image] 请求异常: {detail}")
@@ -3880,7 +3880,7 @@ async def _call_newapi_image_api(
             type(exc).__name__,
             request_id=provider_request_id,
         )
-        if is_insufficient_credits_error(exc):
+        if is_fatal_billing_error(exc):
             raise
         error_context = _newapi_context_for_error(request_context)
         detail = f"{type(exc).__name__}: {exc!r}; {error_context}"
@@ -5011,7 +5011,7 @@ class NanoBananaGridGenerator:
                     status="failed",
                     error_message=str(e),
                 )
-            if is_insufficient_credits_error(e):
+            if is_fatal_billing_error(e):
                 raise
             return GridGenerationResult(
                 success=False,

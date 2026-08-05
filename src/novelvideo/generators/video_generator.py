@@ -29,7 +29,10 @@ from novelvideo.video_request_usage import (
     record_video_request,
     update_video_request_status,
 )
-from novelvideo.shared.billing_errors import is_insufficient_credits_error
+from novelvideo.shared.billing_errors import (
+    find_billing_error,
+    is_insufficient_credits_error,
+)
 from novelvideo.shared.provider_costs import is_definite_no_cost_http_rejection
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
@@ -3507,7 +3510,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 provider_request_id=exc.request_id or provider_request_id,
                 provider_task_id=task_id or "",
             )
-            if is_insufficient_credits_error(exc) and not organization_request:
+            if find_billing_error(exc) is not None or (
+                is_insufficient_credits_error(exc) and not organization_request
+            ):
                 raise
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,
@@ -3543,7 +3548,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 provider_request_id=provider_request_id,
                 provider_task_id=task_id or "",
             )
-            if is_insufficient_credits_error(exc) and not organization_request:
+            if find_billing_error(exc) is not None or (
+                is_insufficient_credits_error(exc) and not organization_request
+            ):
                 raise
             return VideoGenResult(
                 status=VideoGenStatus.FAILED,

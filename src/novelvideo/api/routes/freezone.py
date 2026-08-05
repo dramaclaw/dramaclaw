@@ -95,6 +95,7 @@ from novelvideo.media_model_request_schema import (
     validate_media_request_schema,
 )
 from novelvideo.shared.billing_errors import (
+    find_billing_error,
     find_billing_rule_not_configured_error,
     find_insufficient_credits_error,
 )
@@ -333,6 +334,9 @@ def _handle_task_start_runtime_error(message: str, exc: RuntimeError) -> None:
     billing_rule_not_configured = find_billing_rule_not_configured_error(exc)
     if billing_rule_not_configured is not None:
         raise billing_rule_not_configured
+    billing = find_billing_error(exc)
+    if billing is not None:
+        raise billing
     logger.warning("%s: %s", message, exc, exc_info=True)
 
 

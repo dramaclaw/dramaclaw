@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 
 from novelvideo.ports import get_usage_meter
-from novelvideo.shared.billing_errors import is_insufficient_credits_error
+from novelvideo.shared.billing_errors import is_fatal_billing_error
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.generators.tts_generator import (
     TTSResult,
@@ -230,7 +230,7 @@ class IndexTTS2FalClient:
         except Exception as exc:
             if lease is not None:
                 await reject_audio_operation(lease)
-            if is_insufficient_credits_error(exc):
+            if is_fatal_billing_error(exc):
                 raise
             return TTSResult(
                 success=False,
@@ -334,7 +334,7 @@ class IndexTTS2FalClient:
                 duration_seconds=await _audio_duration_seconds(output_path),
             )
         except Exception as exc:
-            if is_insufficient_credits_error(exc):
+            if is_fatal_billing_error(exc):
                 raise
             return TTSResult(
                 success=False, error=f"{exc.__class__.__name__}: Fal audio failed"
@@ -421,7 +421,7 @@ class IndexTTS2FalClient:
                 duration_seconds=await _audio_duration_seconds(output_path),
             )
         except Exception as exc:
-            if is_insufficient_credits_error(exc):
+            if is_fatal_billing_error(exc):
                 raise
             return TTSResult(
                 success=False, error=f"{exc.__class__.__name__}: NewAPI audio failed"

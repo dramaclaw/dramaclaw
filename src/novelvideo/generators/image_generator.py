@@ -25,7 +25,10 @@ from novelvideo.config import (
     normalize_character_image_selection,
 )
 from novelvideo.ports import get_usage_meter
-from novelvideo.shared.billing_errors import is_insufficient_credits_error
+from novelvideo.shared.billing_errors import (
+    is_fatal_billing_error,
+    is_insufficient_credits_error,
+)
 
 
 def _provider_request_id_from_response(response: httpx.Response, result: dict[str, Any]) -> str:
@@ -337,7 +340,7 @@ class VolcengineImageGenerator:
             )
 
         except Exception as e:
-            if is_insufficient_credits_error(e):
+            if is_fatal_billing_error(e):
                 raise
             return ImageGenResult(
                 success=False,
@@ -659,7 +662,7 @@ class VolcengineImageGenerator:
                 source="seedream_image_request_api",
                 error=str(e),
             )
-            if is_insufficient_credits_error(e):
+            if is_fatal_billing_error(e):
                 raise
             return ImageGenResult(
                 success=False,
@@ -813,7 +816,7 @@ class VolcengineImageGenerator:
                 source="seedream_upscale_api",
                 error=str(e),
             )
-            if is_insufficient_credits_error(e):
+            if is_fatal_billing_error(e):
                 raise
             return ImageGenResult(
                 success=False,
@@ -952,7 +955,7 @@ class VolcengineImageGenerator:
                 source="seededit_image_api",
                 error=str(e),
             )
-            if is_insufficient_credits_error(e):
+            if is_fatal_billing_error(e):
                 raise
             return ImageGenResult(
                 success=False,
