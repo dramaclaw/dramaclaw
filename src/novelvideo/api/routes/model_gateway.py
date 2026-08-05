@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 
 from novelvideo import config as app_config
 from novelvideo.model_gateway_settings import (
+    MODE_CUSTOM,
     MODE_OFFICIAL,
+    MODE_HYBRID,
     build_media_relay_status,
     build_model_gateway_status,
     get_effective_media_relay_config,
@@ -21,6 +23,7 @@ from novelvideo.model_gateway_settings import (
     save_newapi_database_config,
     save_newapi_embedding_model_config,
     save_newapi_media_model_mappings,
+    get_newapi_media_model_mappings,
     save_newapi_provider_channels,
     get_newapi_provider_channel,
     set_model_gateway_mode,
@@ -121,6 +124,7 @@ class CreateChannelBody(BaseModel):
     weight: int = 0
     base_url: str | None = Field(default=None, alias="baseUrl")
     test_model: str | None = Field(default=None, alias="testModel")
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChannelSpec(BaseModel):
@@ -134,6 +138,7 @@ class ChannelSpec(BaseModel):
     weight: int = 0
     base_url: str | None = Field(default=None, alias="baseUrl")
     test_model: str | None = Field(default=None, alias="testModel")
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class CreateChannelsBatchBody(BaseModel):
@@ -147,6 +152,8 @@ class ProviderChannelConfigBody(BaseModel):
     type: int | None = None
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     base_url: str | None = Field(default=None, alias="baseUrl")
+    priority: int = 0
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class SaveProviderChannelsBody(BaseModel):
@@ -235,10 +242,11 @@ def _build_channel_payload_from_spec(
         upstream_key=spec.upstream_key or saved_channel.get("upstreamKey", ""),
         model_mapping=spec.model_mapping,
         group=spec.group,
-        priority=spec.priority,
+        priority=spec.priority or int(saved_channel.get("priority") or 0),
         weight=spec.weight,
         base_url=spec.base_url or saved_channel.get("baseUrl", ""),
         test_model=spec.test_model,
+        other_settings=spec.settings or saved_channel.get("settings", {}),
     )
 
 
@@ -256,11 +264,11 @@ def _build_media_model_channel_specs(
             raise ValueError("models contains an empty model name")
         if model in OFFICIAL_ONLY_MEDIA_MODEL_NAMES:
             raise ValueError(f"media model {model} is official-channel only")
-        if model not in CUSTOM_MEDIA_MODEL_NAMES:
-            raise ValueError(f"unsupported media model: {model}")
         provider = str(item.provider or "").strip().lower()
         if not provider:
             raise ValueError(f"provider is required for media model {model}")
+        if model not in CUSTOM_MEDIA_MODEL_NAMES and provider != "comfyui":
+            raise ValueError(f"unsupported media model: {model}")
         upstream_model = (item.upstream_model or "").strip() or model
         grouped.setdefault(provider, {})[model] = upstream_model
         normalized[model] = {
@@ -367,6 +375,59 @@ async def enable_official_gateway() -> dict[str, Any]:
             detail="official NewAPI gateway is not configured",
         )
     set_model_gateway_mode(MODE_OFFICIAL)
+    runtime = refresh_model_gateway_runtime()
+    return {
+        "ok": True,
+        "data": build_model_gateway_status(
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+            official_api_key=app_config.NEWAPI_API_KEY,
+        ),
+        "runtime": runtime,
+    }
+
+
+@router.post("/custom/enable")
+async def enable_custom_gateway() -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    status = build_model_gateway_status(
+        official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+        official_api_key=app_config.NEWAPI_API_KEY,
+    )
+    if not status["custom"]["configured"]:
+        raise HTTPException(
+            status_code=400, detail="local NewAPI gateway is not configured"
+        )
+    set_model_gateway_mode(MODE_CUSTOM)
+    runtime = refresh_model_gateway_runtime()
+    return {
+        "ok": True,
+        "data": build_model_gateway_status(
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+            official_api_key=app_config.NEWAPI_API_KEY,
+        ),
+        "runtime": runtime,
+    }
+
+
+@router.post("/hybrid/enable")
+async def enable_hybrid_gateway() -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    status = build_model_gateway_status(
+        official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+        official_api_key=app_config.NEWAPI_API_KEY,
+    )
+    if not status["official"]["configured"] or not status["custom"]["configured"]:
+        raise HTTPException(
+            status_code=400,
+            detail="local and official NewAPI gateways must both be configured",
+        )
+    set_model_gateway_mode(MODE_HYBRID)
     runtime = refresh_model_gateway_runtime()
     return {
         "ok": True,
@@ -564,10 +625,45 @@ async def save_custom_newapi_provider_channels(
                     "type": channel.type or 0,
                     "upstreamKey": channel.upstream_key or "",
                     "baseUrl": channel.base_url or "",
+                    "priority": channel.priority,
+                    "settings": channel.settings,
                 }
                 for channel in body.channels
             ]
         )
+        comfyui_channels = [
+            channel for channel in saved if channel["provider"] == "comfyui"
+        ]
+        if comfyui_channels:
+            cfg = get_provisioner_config()
+            admin = ensure_admin_access_token(cfg)
+            media_mappings = {
+                model: mapping
+                for model, mapping in get_newapi_media_model_mappings().items()
+                if mapping.get("provider") != "comfyui"
+            }
+            for channel in comfyui_channels:
+                comfyui_settings = channel["settings"]["comfyui"]
+                workflows = comfyui_settings["workflow_by_model"]
+                model_mapping = {str(model): str(model) for model in workflows}
+                payload = build_channel_payload(
+                    provider="comfyui",
+                    channel_type=channel.get("type") or 63,
+                    upstream_key=channel["upstreamKey"],
+                    model_mapping=model_mapping,
+                    base_url=channel["baseUrl"],
+                    priority=channel.get("priority", 0),
+                    other_settings=channel["settings"],
+                )
+                result = upsert_channel(cfg, admin, payload)
+                if not result.get("ok"):
+                    raise RuntimeError("NewAPI rejected ComfyUI channel configuration")
+                for model in model_mapping:
+                    media_mappings[model] = {
+                        "provider": "comfyui",
+                        "upstreamModel": "",
+                    }
+            save_newapi_media_model_mappings(media_mappings)
     except PermissionError as exc:
         raise _permission_error(exc) from exc
     except ValueError as exc:
@@ -582,9 +678,16 @@ async def save_custom_newapi_provider_channels(
                 {
                     "provider": channel["provider"],
                     "type": channel.get("type", 0),
-                    "configured": bool(channel["upstreamKey"]),
+                    "configured": bool(channel["upstreamKey"])
+                    or (
+                        channel["provider"] == "comfyui"
+                        and bool(channel["baseUrl"])
+                        and bool(channel.get("settings"))
+                    ),
                     "upstreamKeyPreview": mask_token(channel["upstreamKey"]),
                     "baseUrl": channel["baseUrl"],
+                    "priority": channel.get("priority", 0),
+                    "settings": channel.get("settings", {}),
                 }
                 for channel in saved
             ]

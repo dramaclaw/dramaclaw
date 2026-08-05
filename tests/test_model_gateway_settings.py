@@ -14,22 +14,30 @@ from novelvideo.api.routes import model_gateway
 from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
 from novelvideo.model_gateway_settings import (
     MODE_CUSTOM,
+    MODE_HYBRID,
     MODE_OFFICIAL,
     build_newapi_database_status,
     build_model_gateway_status,
     get_effective_cognee_embedding_config,
     get_effective_newapi_config,
+    get_newapi_media_model_mappings,
     normalize_relay_base_url,
     save_official_newapi_key,
     save_custom_newapi_gateway,
     save_newapi_embedding_model_config,
+    save_newapi_media_model_mappings,
     save_media_relay_config,
     save_newapi_database_config,
     save_newapi_provider_channels,
     set_model_gateway_mode,
 )
 from novelvideo.model_gateway_runtime import refresh_model_gateway_runtime
+from novelvideo.generators.video_generator import (
+    NewApiVideoGenerator,
+    newapi_video_backend_options,
+)
 from novelvideo.newapi_provisioner import (
+    _merge_channel_payload,
     AdminToken,
     build_channel_payload,
     ensure_newapi_setup,
@@ -43,6 +51,29 @@ from novelvideo.newapi_provisioner import (
     update_provider_channel_credentials,
     upsert_channel,
 )
+
+
+def test_comfyui_channel_update_replaces_removed_workflow_models():
+    existing = {
+        "id": 9,
+        "type": 63,
+        "model_mapping": json.dumps({"old-model": "old-model", "kept": "kept"}),
+        "models": "old-model,kept",
+        "base_url": "http://127.0.0.1:8188",
+    }
+    incoming = build_channel_payload(
+        provider="comfyui",
+        channel_type=63,
+        upstream_key="",
+        model_mapping={"kept": "kept"},
+        base_url="http://127.0.0.1:8188",
+        other_settings={"comfyui": {"workflow_by_model": {"kept": {"1": {}}}}},
+    )
+
+    merged = _merge_channel_payload(existing, incoming)["channel"]
+
+    assert merged["models"] == "kept"
+    assert json.loads(merged["model_mapping"]) == {"kept": "kept"}
 
 
 @respx.mock
@@ -138,6 +169,50 @@ def test_model_gateway_uses_explicit_custom_mode(monkeypatch, tmp_path):
     assert effective.mode == MODE_CUSTOM
     assert effective.base_url == "http://127.0.0.1:3000/v1"
     assert effective.api_key == "sk-custom-secret"
+
+
+def test_hybrid_mode_uses_official_gateway_by_default(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_custom_newapi_gateway(
+        base_url="http://127.0.0.1:3000",
+        api_key="sk-custom-secret",
+        activate=False,
+    )
+    save_official_newapi_key(api_key="sk-official-secret", activate=False)
+    set_model_gateway_mode(MODE_HYBRID)
+
+    effective = get_effective_newapi_config()
+
+    assert effective.mode == MODE_HYBRID
+    assert effective.source == "hybrid"
+    assert effective.api_key == "sk-official-secret"
+
+
+def test_hybrid_video_routes_only_comfyui_models_to_local_gateway(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_custom_newapi_gateway(
+        base_url="http://127.0.0.1:3000",
+        api_key="sk-custom-secret",
+        activate=False,
+    )
+    save_official_newapi_key(api_key="sk-official-secret", activate=False)
+    save_newapi_media_model_mappings(
+        {
+            "wan-i2v": {"provider": "comfyui", "upstreamModel": ""},
+            "seedance-2.0": {"provider": "volcengine", "upstreamModel": ""},
+        }
+    )
+    set_model_gateway_mode(MODE_HYBRID)
+
+    local = NewApiVideoGenerator(model="wan-i2v")
+    official = NewApiVideoGenerator(model="seedance-2.0")
+
+    assert local.base_url == "http://127.0.0.1:3000/v1"
+    assert local.api_key == "sk-custom-secret"
+    assert official.api_key == "sk-official-secret"
+    assert newapi_video_backend_options()["newapi_wan-i2v"] == "wan-i2v"
 
 
 def test_newapi_runtime_credentials_prefer_saved_custom_gateway(monkeypatch, tmp_path):
@@ -1658,6 +1733,8 @@ def test_custom_newapi_provider_channels_route_persists_and_masks_keys(
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "https://dashscope.example.com",
+            "priority": 0,
+            "settings": {},
         },
         {
             "provider": "deepseek",
@@ -1665,10 +1742,75 @@ def test_custom_newapi_provider_channels_route_persists_and_masks_keys(
             "configured": True,
             "upstreamKeyPreview": "sk-d...cret",
             "baseUrl": "",
+            "priority": 0,
+            "settings": {},
         },
     ]
     assert "sk-ali-upstream-secret" not in config_response.text
     assert "sk-deepseek-upstream-secret" not in config_response.text
+
+
+def test_comfyui_provider_channel_writes_workflows_to_newapi(
+    monkeypatch,
+    tmp_path,
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        model_gateway,
+        "get_provisioner_config",
+        lambda: type("Cfg", (), {"admin_base_url": "http://new-api:3000"})(),
+    )
+    monkeypatch.setattr(
+        model_gateway,
+        "ensure_admin_access_token",
+        lambda _cfg: type("Admin", (), {"access_token": "admin-secret"})(),
+    )
+
+    def fake_upsert(_cfg, _admin, payload):
+        captured["payload"] = payload
+        return {"ok": True, "httpStatus": 200, "newApiResponse": {"success": True}}
+
+    monkeypatch.setattr(model_gateway, "upsert_channel", fake_upsert)
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+    workflow = {
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}},
+    }
+
+    response = client.post(
+        "/model-gateway/custom/newapi/provider-channels",
+        json={
+            "channels": [
+                {
+                    "provider": "comfyui",
+                    "type": 63,
+                    "baseUrl": "http://127.0.0.1:8188",
+                    "priority": 100,
+                    "settings": {
+                        "comfyui": {"workflow_by_model": {"wan-i2v": workflow}}
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    channel = captured["payload"]["channel"]
+    assert channel["type"] == 63
+    assert channel["key"] == ""
+    assert channel["models"] == "wan-i2v"
+    assert channel["priority"] == 100
+    assert json.loads(channel["settings"])["comfyui"]["workflow_by_model"] == {
+        "wan-i2v": workflow
+    }
+    assert get_newapi_media_model_mappings()["wan-i2v"] == {
+        "provider": "comfyui",
+        "upstreamModel": "",
+    }
 
 
 def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(
@@ -1763,6 +1905,8 @@ def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "https://dashscope-new.example.com",
+            "priority": 0,
+            "settings": {},
         }
     ]
     assert "sk-ali-new-upstream-secret" not in config_response.text
@@ -1863,6 +2007,8 @@ def test_custom_newapi_provider_channel_sync_allows_clearing_saved_base_url(
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "",
+            "priority": 0,
+            "settings": {},
         }
     ]
 

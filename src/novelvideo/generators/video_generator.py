@@ -1798,6 +1798,27 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         )
 
         gateway = get_effective_newapi_gateway_config()
+        try:
+            from novelvideo.model_gateway_settings import (
+                MODE_CUSTOM,
+                MODE_HYBRID,
+                get_ce_newapi_config_for_mode,
+                get_effective_newapi_config,
+                get_newapi_media_model_mappings,
+            )
+
+            active_gateway = get_effective_newapi_config()
+            media_mapping = get_newapi_media_model_mappings().get(
+                model or NEWAPI_VIDEO_MODEL,
+                {},
+            )
+            if (
+                active_gateway.mode == MODE_HYBRID
+                and media_mapping.get("provider") == "comfyui"
+            ):
+                gateway = get_ce_newapi_config_for_mode(MODE_CUSTOM)
+        except (RuntimeError, ImportError):
+            pass
         self.api_key = api_key if api_key is not None else gateway.api_key
         self.base_url = (endpoint or gateway.base_url).rstrip("/")
         self.model = model or NEWAPI_VIDEO_MODEL
@@ -3551,6 +3572,14 @@ def newapi_video_backend_options(*, include_seedance2_variants: bool = False) ->
     from novelvideo.config import NEWAPI_VIDEO_MODELS
 
     models = [model for model in NEWAPI_VIDEO_MODELS if model not in NEWAPI_DISABLED_VIDEO_MODELS]
+    try:
+        from novelvideo.model_gateway_settings import get_newapi_media_model_mappings
+
+        for model, mapping in get_newapi_media_model_mappings().items():
+            if mapping.get("provider") == "comfyui" and model not in models:
+                models.append(model)
+    except (RuntimeError, ImportError):
+        pass
     if include_seedance2_variants:
         for model in NEWAPI_MAINLINE_SEEDANCE2_MODELS:
             if model not in models:

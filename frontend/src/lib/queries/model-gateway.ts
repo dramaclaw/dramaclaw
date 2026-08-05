@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import type { ErrorResponse, OkResponse } from "@/types/api";
 
-export type GatewayMode = "official" | "custom";
+export type GatewayMode = "official" | "custom" | "hybrid";
 
 /** 通用的「端点预览」：服务端只回 key 预览，绝不回完整 key。 */
 export interface GatewayEndpointPreview {
@@ -49,6 +49,8 @@ export interface SavedProviderChannelConfig {
   configured: boolean;
   upstreamKeyPreview: string;
   baseUrl: string;
+  priority?: number;
+  settings?: Record<string, unknown>;
 }
 
 export interface NewApiChannelType {
@@ -173,10 +175,18 @@ export interface CustomChannelInput {
   baseUrl: string;
   /** 可选；不填后端用 modelMapping 第一个 key。 */
   testModel: string;
+  settings?: Record<string, unknown>;
 }
 
 export interface SaveProviderChannelsInput {
-  channels: Array<{ provider: string; type?: number; upstreamKey?: string; baseUrl?: string }>;
+  channels: Array<{
+    provider: string;
+    type?: number;
+    upstreamKey?: string;
+    baseUrl?: string;
+    priority?: number;
+    settings?: Record<string, unknown>;
+  }>;
 }
 
 export interface SyncProviderChannelInput {
@@ -308,6 +318,32 @@ export function useEnableOfficial() {
   });
 }
 
+export function useEnableCustom() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post("api/v1/model-gateway/custom/enable", { throwHttpErrors: false })
+        .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+    },
+  });
+}
+
+export function useEnableHybrid() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post("api/v1/model-gateway/hybrid/enable", { throwHttpErrors: false })
+        .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+    },
+  });
+}
+
 export function useInitCustomNewApi() {
   const qc = useQueryClient();
   return useMutation({
@@ -338,8 +374,13 @@ export function useSaveProviderChannels() {
         .post("api/v1/model-gateway/custom/newapi/provider-channels", {
           json: input,
           timeout: 60_000,
+          throwHttpErrors: false,
         })
-        .json<OkResponse<{ channels: SavedProviderChannelConfig[] }> | ErrorResponse>(),
+        .json<
+          | OkResponse<{ channels: SavedProviderChannelConfig[] }>
+          | ErrorResponse
+          | FastApiErrorResponse
+        >(),
     onSuccess: async (response) => {
       if (response.ok === true) {
         await qc.cancelQueries({ queryKey: queryKeys.modelGateway() });

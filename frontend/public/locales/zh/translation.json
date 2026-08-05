@@ -4002,8 +4002,9 @@
       "gatewayWarningIconLabel": "模型网关未配置",
       "gatewayNotConfiguredImpact": "当前生效的模型网关未配置。文本、图片、视频、音频等模型调用会失败；请配置官方渠道或初始化本地 NewAPI 后再生成内容。",
       "modes": {
-        "official": "官方渠道",
-        "custom": "本地 NewAPI"
+        "official": "官方",
+        "custom": "本地",
+        "hybrid": "本地 + 官方混合"
       },
       "fields": {
         "baseUrl": "New API 地址",
@@ -4089,6 +4090,14 @@
         "addChannel": "新增渠道",
         "saveChannels": "保存渠道配置",
         "channelsSaved": "渠道配置已保存到本地。",
+        "comfyWorkflows": "ComfyUI Workflows",
+        "comfyWorkflowHint": "每个模型绑定一份由 ComfyUI 导出的 API Format Workflow。API Key 可选。",
+        "comfyAddWorkflow": "添加 Workflow",
+        "comfyExpandWorkflow": "展开查看",
+        "comfyCollapseWorkflow": "收起",
+        "comfyModelPlaceholder": "模型名称，例如 wan-i2v",
+        "comfyDuplicateModel": "Workflow 模型名称不能重复。",
+        "comfyInvalidWorkflow": "Workflow 必须是有效的 JSON 对象。",
         "channelsSaveHint": "这里只保存 CE 本地渠道预设，不会立刻修改 NewAPI 已有渠道；下次保存模型映射时会使用这些预设更新 NewAPI 渠道。如需立即替换 NewAPI 渠道 Key，请点击对应渠道的更新按钮。",
         "syncChannel": "更新 NewAPI 渠道",
         "syncChannelHint": "立刻更新 NewAPI 中该供应商已有渠道的 Key 和 Base URL，不改模型映射。",

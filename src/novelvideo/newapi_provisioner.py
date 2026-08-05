@@ -759,6 +759,7 @@ def build_channel_payload(
     weight: int = 0,
     base_url: str | None = None,
     test_model: str | None = None,
+    other_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     provider_key = (provider or "").strip()
     preset = PROVIDER_PRESETS.get(provider_key)
@@ -789,11 +790,13 @@ def build_channel_payload(
         "weight": int(weight),
         "test_model": (test_model or model_keys[0]).strip(),
         "setting": "{}",
-        "settings": "{}",
+        "settings": json.dumps(
+            other_settings or {}, ensure_ascii=False, separators=(",", ":")
+        ),
         "other": "",
         "remark": f"created by DramaClaw CE provisioner for {provider_label}",
     }
-    if not channel["key"]:
+    if not channel["key"] and provider_key != "comfyui":
         raise ValueError("upstreamKey is required")
     return {"mode": "single", "channel": channel}
 
@@ -836,7 +839,11 @@ def _merge_channel_payload(
     incoming = dict(payload["channel"])
     existing_mapping = _parse_model_mapping(existing.get("model_mapping"))
     incoming_mapping = _parse_model_mapping(incoming.get("model_mapping"))
-    merged_mapping = {**existing_mapping, **incoming_mapping}
+    merged_mapping = (
+        incoming_mapping
+        if int(incoming.get("type") or 0) == 63
+        else {**existing_mapping, **incoming_mapping}
+    )
     model_keys = validate_model_mapping(merged_mapping)
 
     allowed_fields = {

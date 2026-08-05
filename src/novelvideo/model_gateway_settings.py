@@ -27,7 +27,8 @@ from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 MODE_OFFICIAL = "official"
 MODE_CUSTOM = "custom"
-VALID_MODES = {MODE_OFFICIAL, MODE_CUSTOM}
+MODE_HYBRID = "hybrid"
+VALID_MODES = {MODE_OFFICIAL, MODE_CUSTOM, MODE_HYBRID}
 PLACEHOLDER_API_KEYS = {
     "your_newapi_token",
     "your_model_api_key",
@@ -248,6 +249,12 @@ def _decode_provider_channels(value: str | None) -> list[dict[str, Any]]:
                 "type": max(0, int(item.get("type") or 0)),
                 "upstreamKey": str(item.get("upstreamKey") or "").strip(),
                 "baseUrl": str(item.get("baseUrl") or "").strip().rstrip("/"),
+                "priority": int(item.get("priority") or 0),
+                "settings": (
+                    item.get("settings")
+                    if isinstance(item.get("settings"), dict)
+                    else {}
+                ),
             }
         )
     return channels
@@ -350,7 +357,36 @@ def save_newapi_provider_channels(
             0,
             int(item.get("type") or previous.get("type") or 0),
         )
-        if not upstream_key:
+        priority = int(item.get("priority") or previous.get("priority") or 0)
+        raw_settings = item.get("settings", previous.get("settings", {}))
+        channel_settings = raw_settings if isinstance(raw_settings, dict) else {}
+        if provider == "comfyui":
+            comfyui = channel_settings.get("comfyui")
+            workflows = (
+                comfyui.get("workflow_by_model") if isinstance(comfyui, dict) else None
+            )
+            if not base_url:
+                raise ValueError("baseUrl is required for provider comfyui")
+            if not isinstance(workflows, dict) or not workflows:
+                raise ValueError("ComfyUI requires at least one model workflow")
+            for model, workflow in workflows.items():
+                if (
+                    not str(model or "").strip()
+                    or not isinstance(workflow, dict)
+                    or not workflow
+                ):
+                    raise ValueError(
+                        "each ComfyUI workflow requires a model name and JSON object"
+                    )
+                if not any(
+                    isinstance(node, dict)
+                    and ("class_type" in node or "inputs" in node)
+                    for node in workflow.values()
+                ):
+                    raise ValueError(
+                        f"ComfyUI workflow for {model} must use exported API Format"
+                    )
+        if not upstream_key and provider != "comfyui":
             raise ValueError(f"upstreamKey is required for provider {provider}")
         normalized.append(
             {
@@ -358,6 +394,8 @@ def save_newapi_provider_channels(
                 "type": channel_type,
                 "upstreamKey": upstream_key,
                 "baseUrl": base_url,
+                "priority": priority,
+                "settings": channel_settings,
             }
         )
     _write_many(
@@ -465,9 +503,16 @@ def build_newapi_provider_channels_status() -> list[dict[str, Any]]:
         {
             "provider": channel["provider"],
             "type": channel.get("type", 0),
-            "configured": bool(channel["upstreamKey"]),
+            "configured": bool(channel["upstreamKey"])
+            or (
+                channel["provider"] == "comfyui"
+                and bool(channel["baseUrl"])
+                and bool(channel.get("settings"))
+            ),
             "upstreamKeyPreview": mask_secret(channel["upstreamKey"]),
             "baseUrl": channel["baseUrl"],
+            "priority": channel.get("priority", 0),
+            "settings": channel.get("settings", {}),
         }
         for channel in get_newapi_provider_channels()
     ]
@@ -557,8 +602,8 @@ def get_ce_newapi_config_for_mode(mode: str) -> EffectiveNewApiConfig:
         )
     db_official_api_key = normalize_api_key(settings.get("official_newapi_api_key", ""))
     return EffectiveNewApiConfig(
-        mode=MODE_OFFICIAL,
-        source="official",
+        mode=mode,
+        source="hybrid" if mode == MODE_HYBRID else "official",
         base_url=normalize_relay_base_url(OFFICIAL_NEWAPI_BASE_URL),
         api_key=db_official_api_key,
     )

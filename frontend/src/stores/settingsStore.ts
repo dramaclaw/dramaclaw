@@ -96,6 +96,10 @@ export interface FeatureProviderChannel {
   upstreamKey: string;
   /** 上游 Base URL 覆盖；空表示使用后端 provider preset。 */
   baseUrl: string;
+  /** NewAPI channel priority. It only affects initial channel selection. */
+  priority: number;
+  /** Provider-specific NewAPI channel settings, e.g. ComfyUI workflows. */
+  settings: Record<string, unknown>;
 }
 
 export interface MediaModelEntry {
@@ -362,6 +366,11 @@ function normalizeFeatureModelSettings(
         provider: normalized,
         upstreamKey: typeof channel.upstreamKey === 'string' ? channel.upstreamKey.trim() : '',
         baseUrl: typeof channel.baseUrl === 'string' ? channel.baseUrl.trim() : '',
+        priority: Number.isFinite(Number(channel.priority)) ? Math.round(Number(channel.priority)) : 0,
+        settings:
+          channel.settings && typeof channel.settings === 'object' && !Array.isArray(channel.settings)
+            ? (channel.settings as Record<string, unknown>)
+            : {},
       };
     }
   }
@@ -370,7 +379,13 @@ function normalizeFeatureModelSettings(
   for (const [provider, key] of Object.entries(providerKeys)) {
     const normalized = normalizeFeatureModelProvider(provider);
     if (!providerChannels[normalized] && key) {
-      providerChannels[normalized] = { provider: normalized, upstreamKey: key, baseUrl: '' };
+      providerChannels[normalized] = {
+        provider: normalized,
+        upstreamKey: key,
+        baseUrl: '',
+        priority: 0,
+        settings: {},
+      };
     }
   }
 
@@ -576,6 +591,8 @@ export const useSettingsStore = create<SettingsState>()(
                   provider: normalized,
                   upstreamKey: state.featureModelConfig.providerKeys[normalized] ?? '',
                   baseUrl: '',
+                  priority: 0,
+                  settings: {},
                 },
               },
             },
@@ -588,9 +605,13 @@ export const useSettingsStore = create<SettingsState>()(
             provider: normalized,
             upstreamKey: '',
             baseUrl: '',
+            priority: 0,
+            settings: {},
           };
           const upstreamKey = (patch.upstreamKey ?? prev.upstreamKey).trim();
           const baseUrl = (patch.baseUrl ?? prev.baseUrl).trim();
+          const priority = Math.round(Number(patch.priority ?? prev.priority) || 0);
+          const settings = patch.settings ?? prev.settings;
           const nextKeys = { ...state.featureModelConfig.providerKeys };
           if (upstreamKey) {
             nextKeys[normalized] = upstreamKey;
@@ -603,7 +624,7 @@ export const useSettingsStore = create<SettingsState>()(
               providerKeys: nextKeys,
               providerChannels: {
                 ...state.featureModelConfig.providerChannels,
-                [normalized]: { provider: normalized, upstreamKey, baseUrl },
+                [normalized]: { provider: normalized, upstreamKey, baseUrl, priority, settings },
               },
             },
           };

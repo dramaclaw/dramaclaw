@@ -4003,7 +4003,8 @@
       "gatewayNotConfiguredImpact": "The active model gateway is not configured. Text, image, video, and audio model calls will fail; configure the official channel or initialize Local NewAPI before generating content.",
       "modes": {
         "official": "Official",
-        "custom": "Local NewAPI"
+        "custom": "Local",
+        "hybrid": "Local + Official Hybrid"
       },
       "fields": {
         "baseUrl": "New API URL",
@@ -4089,6 +4090,14 @@
         "addChannel": "Add Channel",
         "saveChannels": "Save Channels",
         "channelsSaved": "Provider channel settings were saved locally.",
+        "comfyWorkflows": "ComfyUI Workflows",
+        "comfyWorkflowHint": "Bind each model to a ComfyUI API Format workflow. The API key is optional.",
+        "comfyAddWorkflow": "Add Workflow",
+        "comfyExpandWorkflow": "Expand",
+        "comfyCollapseWorkflow": "Collapse",
+        "comfyModelPlaceholder": "Model name, e.g. wan-i2v",
+        "comfyDuplicateModel": "Workflow model names must be unique.",
+        "comfyInvalidWorkflow": "Workflow must be a valid JSON object.",
         "channelsSaveHint": "This only saves CE local channel presets and does not immediately modify existing NewAPI channels. The next model-mapping save will update NewAPI channels with these presets. To replace a NewAPI channel key now, use the update button on that channel.",
         "syncChannel": "Update NewAPI Channel",
         "syncChannelHint": "Immediately updates the existing NewAPI channel key and Base URL for this provider without changing model mappings.",
