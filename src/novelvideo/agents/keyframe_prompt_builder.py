@@ -72,7 +72,12 @@ def create_keyframe_prompt_builder_agent(language: str = "en") -> Agent:
         "KEYFRAME_PROMPT_MODEL",
         DEFAULT_VIDEO_PROMPT_OPTIMIZER_MODEL,
     )
-    return Agent(model, system_prompt=KEYFRAME_PROMPT_BUILDER_INSTRUCTIONS_EN, output_type=str, name="Keyframe Prompt Builder")
+    return Agent(
+        model,
+        system_prompt=KEYFRAME_PROMPT_BUILDER_INSTRUCTIONS_EN,
+        output_type=str,
+        name="Keyframe Prompt Builder",
+    )
 
 
 class KeyframePromptBuilder:

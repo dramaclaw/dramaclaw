@@ -564,17 +564,9 @@ def create_seedance2_prompt_composer_agent():
     from pydantic_ai import Agent
 
     from novelvideo.config import (
+        get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
-        get_newapi_text_pydantic_model_settings,
     )
-
-    model_settings = get_newapi_text_pydantic_model_settings(
-        "SEEDANCE2_PROMPT_COMPOSER_THINKING_LEVEL",
-        "low",
-    )
-    agent_kwargs: dict[str, Any] = {}
-    if model_settings is not None:
-        agent_kwargs["model_settings"] = model_settings
 
     return Agent(
         get_newapi_text_pydantic_model(
@@ -582,10 +574,10 @@ def create_seedance2_prompt_composer_agent():
             "gemini-3.5-flash",
         ),
         system_prompt=SEEDANCE2_COMPOSER_SYSTEM_PROMPT,
+        model_settings=get_newapi_structured_output_model_settings(),
         output_type=Seedance2PromptComposerOutput,
         output_retries=2,
         name="Seedance 2.0 Prompt Composer",
-        **agent_kwargs,
     )
 
 

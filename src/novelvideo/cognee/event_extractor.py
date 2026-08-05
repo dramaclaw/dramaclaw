@@ -62,7 +62,10 @@ class EventExtractor:
             事件列表
         """
         from pydantic_ai import Agent
-        from novelvideo.config import get_pydantic_model
+        from novelvideo.config import (
+            get_newapi_structured_output_model_settings,
+            get_pydantic_model,
+        )
 
         def log(msg: str):
             if on_log:
@@ -95,7 +98,11 @@ class EventExtractor:
 5. 每章通常有 3-8 个事件"""
 
         try:
-            agent = Agent(get_pydantic_model(), output_type=ExtractedEventList)
+            agent = Agent(
+                get_pydantic_model(),
+                model_settings=get_newapi_structured_output_model_settings(),
+                output_type=ExtractedEventList,
+            )
             ai_result = await agent.run(prompt)
 
             events_data = ai_result.output.events

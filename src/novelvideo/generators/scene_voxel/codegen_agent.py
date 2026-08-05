@@ -18,7 +18,7 @@ from typing import Any
 from PIL import Image
 from pydantic_ai import Agent, BinaryContent
 
-from novelvideo.config import get_pydantic_model, get_pydantic_model_settings
+from novelvideo.config import get_pydantic_model
 
 _log = logging.getLogger(__name__)
 
@@ -313,10 +313,6 @@ async def generate_build_script(
     agent = Agent(
         model,
         system_prompt=SYSTEM_PROMPT,
-        model_settings=get_pydantic_model_settings(
-            provider_override=_PROVIDER,
-            model_name_override=_MODEL,
-        ),
         output_type=str,
         name="Scene Voxel Codegen",
     )

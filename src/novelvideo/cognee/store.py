@@ -16,6 +16,7 @@ from uuid import UUID
 
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
 from .config import init_cognee  # noqa: F401
+from novelvideo.config import get_newapi_structured_output_litellm_kwargs
 from .concurrency import cognee_pipeline_concurrency
 from .ladybug_access import cognee_project_context, ladybug_graph_access
 
@@ -26,7 +27,6 @@ with preserve_st_env():
     from cognee.api.v1.search import SearchType
     from cognee.modules.engine.operations.setup import setup
 from rich.console import Console
-from novelvideo.config import get_newapi_reasoning_kwargs
 from novelvideo.embedding_models import (
     embedding_model_for_legacy_project,
     embedding_model_scope as project_embedding_model_scope,
@@ -1312,10 +1312,7 @@ class CogneeStore:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 response_format={"type": "json_object"},
-                **get_newapi_reasoning_kwargs(
-                    thinking_env="COGNEE_LLM_THINKING_LEVEL",
-                    default_thinking_level="high",
-                ),
+                **get_newapi_structured_output_litellm_kwargs(),
             )
 
             result = json.loads(response.choices[0].message.content)
@@ -1365,10 +1362,7 @@ class CogneeStore:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 response_format={"type": "json_object"},
-                **get_newapi_reasoning_kwargs(
-                    thinking_env="COGNEE_LLM_THINKING_LEVEL",
-                    default_thinking_level="high",
-                ),
+                **get_newapi_structured_output_litellm_kwargs(),
             )
 
             import json
@@ -1770,99 +1764,6 @@ class CogneeStore:
         if len(char.identities) != 1:
             return None
         return char.identities[0]
-
-    async def select_identity_for_beat(
-        self,
-        character_ref: str,
-        episode_number: int,
-        visual_description: str = "",
-    ) -> Optional[CharacterIdentity]:
-        """为 beat 选择角色应该使用的身份。"""
-        char = self.get_character(character_ref)
-        if not char or not char.identities:
-            return None
-
-        episode = self.get_episode(episode_number)
-        ep_identity_ids = set(episode.identity_ids) if episode and episode.identity_ids else set()
-
-        valid_identities = [id_ for id_ in char.identities if id_.identity_id in ep_identity_ids]
-
-        if len(valid_identities) == 1:
-            return valid_identities[0]
-
-        if not valid_identities:
-            return None
-
-        if visual_description and len(valid_identities) > 1:
-            selected = await self._ai_select_identity(
-                character_name=char.name,
-                character_ref=character_ref,
-                visual_description=visual_description,
-                identities=valid_identities,
-            )
-            if selected:
-                return selected
-
-        return valid_identities[0] if valid_identities else None
-
-    async def _ai_select_identity(
-        self,
-        character_name: str,
-        character_ref: str,
-        visual_description: str,
-        identities: List[CharacterIdentity],
-    ) -> Optional[CharacterIdentity]:
-        """使用 AI 根据画面描述选择最合适的身份。"""
-        try:
-            import litellm
-
-            identity_options = []
-            for i, identity in enumerate(identities):
-                desc = f"{i+1}. {identity.identity_name}"
-                if identity.appearance_details:
-                    desc += f" - {identity.appearance_details}"
-                identity_options.append(desc)
-
-            prompt = f"""根据画面描述，判断角色"{character_name}"在这个场景中应该使用哪个身份形象。
-
-画面描述：{visual_description}
-
-脚本中的角色称呼：{character_ref}
-
-可选身份：
-{chr(10).join(identity_options)}
-
-请直接回复身份编号（如 1、2、3），不要有其他内容。"""
-
-            response = await litellm.acompletion(
-                model=os.environ.get("LLM_MODEL", "").strip()
-                or DEFAULT_COGNEE_LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_tokens=10,
-                **get_newapi_reasoning_kwargs(
-                    thinking_env="COGNEE_LLM_THINKING_LEVEL",
-                    default_thinking_level="high",
-                ),
-            )
-
-            answer = response.choices[0].message.content.strip()
-
-            for char in answer:
-                if char.isdigit():
-                    idx = int(char) - 1
-                    if 0 <= idx < len(identities):
-                        selected = identities[idx]
-                        console.print(
-                            f"[dim]AI 身份选择: {character_name} → {selected.identity_name}[/dim]"
-                        )
-                        return selected
-                    break
-
-        except Exception as e:
-            console.print(f"[yellow]AI 身份选择失败: {e}[/yellow]")
-
-        return None
 
     async def add_episode(self, episode: NovelEpisode):
         """添加单个剧集。"""

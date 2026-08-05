@@ -1,5 +1,10 @@
 import pytest
 from pydantic import ValidationError
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+)
 from types import SimpleNamespace
 
 from novelvideo.models import build_scene_ref, sync_beat_asset_refs
@@ -318,3 +323,257 @@ async def test_literal_workflow_uses_shared_episode_planning_content(monkeypatch
         await workflow.run(episode_num=1)
 
     assert calls == [(cognee_store, episode)]
+
+
+class _LiteralRunStore:
+    output_dir = ""
+    _props = {}
+
+    def __init__(self) -> None:
+        self.episode = SimpleNamespace(
+            number=1,
+            title="第一集",
+            identity_ids=[],
+            identity_default_map={},
+            scene_menu=[],
+            prop_menu=[],
+        )
+        self.persisted = None
+
+    async def load_graph_state(self):
+        return None
+
+    async def get_episode_from_graph(self, episode_num):
+        assert episode_num == 1
+        return self.episode
+
+    def get_episode(self, episode_num):
+        assert episode_num == 1
+        return self.episode
+
+    def get_all_characters(self):
+        return []
+
+    async def persist_narration_script(self, script):
+        self.persisted = script
+
+
+class _SequencedLiteralAgent:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = 0
+        self.prompts = []
+
+    async def run(self, prompt):
+        self.calls += 1
+        self.prompts.append(prompt)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return SimpleNamespace(output=outcome)
+
+
+def _valid_literal_output(visual_description: str) -> LiteralBeatMetaOutput:
+    return LiteralBeatMetaOutput(
+        audio_type="silence",
+        speaker="",
+        speaker_kind="character",
+        visual_description=visual_description,
+        scene_id="",
+    )
+
+
+@pytest.mark.asyncio
+async def test_literal_workflow_retries_one_line_with_a_fresh_model_call(monkeypatch):
+    store = _LiteralRunStore()
+    agent = _SequencedLiteralAgent(
+        [
+            UnexpectedModelBehavior("Exceeded maximum output retries (2)"),
+            _valid_literal_output("谢铮站在门口开口说话。"),
+            _valid_literal_output("屋内烛火轻轻摇晃。"),
+        ]
+    )
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(cognee_store=store, sqlite_store=store)
+    logs = []
+
+    script = await workflow.run(
+        episode_num=1,
+        source_text="第1场 苏鸾寝殿 夜 内\n谢铮：走。\n△烛火摇晃。",
+        on_log=logs.append,
+    )
+
+    assert agent.calls == 3
+    assert len(script.beats) == 2
+    assert workflow.last_degraded_lines == []
+    assert workflow.last_review_passed is True
+    assert any("正在重新调用模型" in message for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_literal_workflow_falls_back_per_line_and_continues(monkeypatch):
+    store = _LiteralRunStore()
+    agent = _SequencedLiteralAgent(
+        [
+            UnexpectedModelBehavior("Exceeded maximum output retries (2)"),
+            UnexpectedModelBehavior("Exceeded maximum output retries (2)"),
+            _valid_literal_output("屋内烛火轻轻摇晃。"),
+        ]
+    )
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(cognee_store=store, sqlite_store=store)
+    logs = []
+
+    script = await workflow.run(
+        episode_num=1,
+        source_text="第1场 苏鸾寝殿 夜 内\n谢铮：走。\n△烛火摇晃。",
+        on_log=logs.append,
+    )
+
+    assert agent.calls == 3
+    assert len(script.beats) == 2
+    assert script.beats[0].audio_type == "dialogue"
+    assert script.beats[0].narration_segment == "走。"
+    assert script.beats[0].visual_description == "谢铮开口说话。"
+    assert script.beats[1].visual_description == "屋内烛火轻轻摇晃。"
+    assert store.persisted is script
+    assert workflow.last_degraded_lines == [1]
+    assert workflow.last_review_passed is False
+    assert "1 行未能由模型正常生成" in workflow.last_review_summary
+    assert any("后续行继续处理" in message for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_literal_workflow_does_not_retry_content_filter_and_uses_placeholder(
+    monkeypatch,
+):
+    store = _LiteralRunStore()
+    agent = _SequencedLiteralAgent(
+        [
+            ContentFilterError("Content filter triggered"),
+            _valid_literal_output("屋内烛火轻轻摇晃。"),
+        ]
+    )
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(
+        cognee_store=store,
+        sqlite_store=store,
+        audio_type_mode="narrated",
+    )
+    logs = []
+
+    script = await workflow.run(
+        episode_num=1,
+        source_text="第1场 苏鸾寝殿 夜 内\n沈晚握紧匕首。\n△烛火摇晃。",
+        on_log=logs.append,
+    )
+
+    assert agent.calls == 2
+    assert len(script.beats) == 2
+    assert script.beats[0].audio_type == "silence"
+    assert script.beats[0].narration_segment == ""
+    assert script.beats[0].visual_description == "该行未能生成，请手动补充。"
+    assert "匕首" not in script.beats[0].model_dump_json()
+    assert script.beats[1].visual_description == "屋内烛火轻轻摇晃。"
+    assert "沈晚握紧匕首。" not in agent.prompts[1]
+    assert "[上一行因内容审核未提供]" in agent.prompts[1]
+    assert workflow.last_degraded_lines == [1]
+    assert workflow.last_review_passed is False
+    assert any("未重试" in message for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_literal_workflow_does_not_send_unprocessed_next_line(monkeypatch):
+    store = _LiteralRunStore()
+
+    class _FilteringLiteralAgent:
+        def __init__(self):
+            self.calls = 0
+            self.prompts = []
+
+        async def run(self, prompt):
+            self.calls += 1
+            self.prompts.append(prompt)
+            if "沈晚握紧匕首。" in prompt:
+                raise ContentFilterError("Content filter triggered")
+            return SimpleNamespace(output=_valid_literal_output("屋内烛火轻轻摇晃。"))
+
+    agent = _FilteringLiteralAgent()
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(cognee_store=store, sqlite_store=store)
+
+    script = await workflow.run(
+        episode_num=1,
+        source_text="第1场 苏鸾寝殿 夜 内\n△烛火摇晃。\n沈晚握紧匕首。",
+    )
+
+    assert agent.calls == 2
+    assert "沈晚握紧匕首。" not in agent.prompts[0]
+    assert script.beats[0].visual_description == "屋内烛火轻轻摇晃。"
+    assert script.beats[1].visual_description == "该行未能生成，请手动补充。"
+    assert workflow.last_degraded_lines == [2]
+
+
+@pytest.mark.asyncio
+async def test_literal_workflow_does_not_degrade_gateway_403(monkeypatch):
+    store = _LiteralRunStore()
+    agent = _SequencedLiteralAgent(
+        [ModelHTTPError(403, "brainclaw", {"error": "insufficient balance"})]
+    )
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(cognee_store=store, sqlite_store=store)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await workflow.run(
+            episode_num=1,
+            source_text="第1场 苏鸾寝殿 夜 内\n谢铮：走。",
+        )
+
+    assert exc_info.value.status_code == 403
+    assert agent.calls == 1
+    assert store.persisted is None
+
+
+@pytest.mark.asyncio
+async def test_literal_workflow_does_not_degrade_malformed_gateway_response(
+    monkeypatch,
+):
+    store = _LiteralRunStore()
+    agent = _SequencedLiteralAgent(
+        [UnexpectedModelBehavior("Invalid OpenAI-compatible gateway response")]
+    )
+    monkeypatch.setattr(
+        LiteralScriptWritingWorkflow,
+        "agent",
+        property(lambda _workflow: agent),
+    )
+    workflow = LiteralScriptWritingWorkflow(cognee_store=store, sqlite_store=store)
+
+    with pytest.raises(UnexpectedModelBehavior, match="Invalid OpenAI-compatible"):
+        await workflow.run(
+            episode_num=1,
+            source_text="第1场 苏鸾寝殿 夜 内\n谢铮：走。",
+        )
+
+    assert agent.calls == 1
+    assert store.persisted is None

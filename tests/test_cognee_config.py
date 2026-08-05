@@ -214,61 +214,57 @@ def test_gemini_direct_does_not_inherit_newapi_endpoint(monkeypatch):
     assert "LLM_ENDPOINT" not in os.environ
 
 
-def test_newapi_reasoning_kwargs_uses_cognee_thinking_env(monkeypatch):
-    from novelvideo.config import get_newapi_reasoning_kwargs
+def test_cognee_gateway_structured_output_disables_reasoning(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
 
-    monkeypatch.setenv("LLM_PROVIDER", "custom")
-    monkeypatch.setenv("COGNEE_LLM_THINKING_LEVEL", "high")
+    from cognee.infrastructure.llm.LLMGateway import LLMGateway
 
-    assert get_newapi_reasoning_kwargs(
-        thinking_env="COGNEE_LLM_THINKING_LEVEL",
-        default_thinking_level="medium",
-    ) == {
-        "reasoning_effort": "high",
-        "allowed_openai_params": ["reasoning_effort"],
-    }
+    from novelvideo.cognee.pipeline import extract_episodes_from_text
+
+    calls: list[dict] = []
+
+    async def fake_structured_output(*args, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(episodes=[])
+
+    monkeypatch.setattr(LLMGateway, "acreate_structured_output", fake_structured_output)
+
+    assert asyncio.run(extract_episodes_from_text("text", target_episodes=1)) == []
+    assert calls == [
+        {
+            "reasoning_effort": "none",
+            "allowed_openai_params": ["reasoning_effort"],
+        }
+    ]
 
 
-def test_newapi_reasoning_kwargs_empty_env_disables(monkeypatch):
-    from novelvideo.config import get_newapi_reasoning_kwargs
+def test_cognee_litellm_structured_output_disables_reasoning(monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace
 
-    monkeypatch.setenv("LLM_PROVIDER", "custom")
-    monkeypatch.setenv("COGNEE_LLM_THINKING_LEVEL", "")
+    import litellm
 
-    assert (
-        get_newapi_reasoning_kwargs(
-            thinking_env="COGNEE_LLM_THINKING_LEVEL",
-            default_thinking_level="high",
+    from novelvideo.cognee.store import CogneeStore
+
+    calls: list[dict] = []
+
+    async def fake_completion(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"assignments":{}}'))]
         )
-        == {}
+
+    monkeypatch.setattr(litellm, "acompletion", fake_completion)
+    store = CogneeStore(
+        "structured-output-test",
+        output_dir=str(tmp_path / "output"),
+        state_dir=str(tmp_path / "state"),
     )
 
+    result = asyncio.run(store._assign_events_to_episodes([], 1))
 
-def test_newapi_reasoning_kwargs_skips_direct_gemini(monkeypatch):
-    from novelvideo.config import get_newapi_reasoning_kwargs
-
-    monkeypatch.setenv("LLM_PROVIDER", "gemini")
-    monkeypatch.setenv("COGNEE_LLM_THINKING_LEVEL", "high")
-
-    assert (
-        get_newapi_reasoning_kwargs(
-            thinking_env="COGNEE_LLM_THINKING_LEVEL",
-            default_thinking_level="high",
-        )
-        == {}
-    )
-
-
-def test_newapi_reasoning_kwargs_skips_direct_openai(monkeypatch):
-    from novelvideo.config import get_newapi_reasoning_kwargs
-
-    monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("COGNEE_LLM_THINKING_LEVEL", "high")
-
-    assert (
-        get_newapi_reasoning_kwargs(
-            thinking_env="COGNEE_LLM_THINKING_LEVEL",
-            default_thinking_level="high",
-        )
-        == {}
-    )
+    assert result == {}
+    assert len(calls) == 1
+    assert calls[0]["reasoning_effort"] == "none"
+    assert calls[0]["allowed_openai_params"] == ["reasoning_effort"]

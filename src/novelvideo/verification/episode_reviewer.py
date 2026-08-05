@@ -77,12 +77,16 @@ class EpisodeReviewer:
 
     def _get_agent(self) -> Agent:
         if self._agent is None:
-            from novelvideo.config import get_pydantic_model
+            from novelvideo.config import (
+                get_newapi_structured_output_model_settings,
+                get_pydantic_model,
+            )
 
             self._agent = Agent(
                 get_pydantic_model(),
                 system_prompt=EPISODE_OVERVIEW_PROMPT,
                 output_type=EpisodeOverviewResult,
+                model_settings=get_newapi_structured_output_model_settings(),
                 output_retries=2,
                 name="导演分镜审片员",
             )
