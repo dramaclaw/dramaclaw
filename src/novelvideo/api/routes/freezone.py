@@ -2375,6 +2375,7 @@ MAINLINE_SKETCH_IMAGE_QUALITY = "low"
 MAINLINE_FRAME_IMAGE_SIZE = "1K"
 MAINLINE_SCENE_360_IMAGE_SIZE = "2K"
 _IMAGE_SIZE_TIERS = ("512", "1K", "2K", "3K", "4K")
+_IMAGE_SIZE_TIER_BY_CASEFOLD = {tier.casefold(): tier for tier in _IMAGE_SIZE_TIERS}
 _SKILL_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_.:\-]{1,128}$")
 
 
@@ -2385,8 +2386,8 @@ def _cap_mainline_scene_360_image_size(requested: str | None) -> str:
     但低于上限的档位必须原样透传 —— 画布面板按媒体模型目录里那一档报价，
     目录只给 1K 的模型如果被抬到 2K，报价与执行、乃至与网关能力都对不上。
     """
-    value = (requested or "").strip()
-    if not value or value not in _IMAGE_SIZE_TIERS:
+    value = _IMAGE_SIZE_TIER_BY_CASEFOLD.get((requested or "").strip().casefold())
+    if value is None:
         return MAINLINE_SCENE_360_IMAGE_SIZE
     if _IMAGE_SIZE_TIERS.index(value) > _IMAGE_SIZE_TIERS.index(MAINLINE_SCENE_360_IMAGE_SIZE):
         return MAINLINE_SCENE_360_IMAGE_SIZE

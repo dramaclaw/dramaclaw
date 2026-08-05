@@ -22,7 +22,7 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-// 目录首模型：既不是后端默认模型，也不支持面板默认的 2K / medium。
+// 目录第一款故意不是 360 使用的 G2，验证后台排序不会改变 360 执行模型。
 const CATALOG_MODEL = {
   catalogId: "cat-77",
   id: "studio-image-v1",
@@ -33,8 +33,20 @@ const CATALOG_MODEL = {
   qualityOptions: ["low", "high"],
 };
 
+const SCENE_360_MODEL = {
+  catalogId: "cat-g2",
+  id: "lingshan-g2",
+  providerId: "newapi" as const,
+  apiModel: "LingShan-G2",
+  label: "LingShan-G2",
+  resolutionOptions: ["1K", "2K", "4K"],
+  qualityOptions: ["low", "medium", "high"],
+};
+
+type CatalogModel = typeof CATALOG_MODEL | typeof SCENE_360_MODEL;
+
 type ImageCatalogState = {
-  models: (typeof CATALOG_MODEL)[];
+  models: CatalogModel[];
   isLoading: boolean;
   isFallback: boolean;
   error: Error | null;
@@ -42,7 +54,7 @@ type ImageCatalogState = {
 
 /** 默认给一条正常目录；单个用例可以改成加载中 / 拉取失败 / 权威空目录。 */
 const LOADED_CATALOG: ImageCatalogState = {
-  models: [CATALOG_MODEL],
+  models: [CATALOG_MODEL, SCENE_360_MODEL],
   isLoading: false,
   isFallback: false,
   error: null,
@@ -123,7 +135,7 @@ beforeEach(() => {
 });
 
 describe("360 全景面板", () => {
-  it("提交带上报价用的模型、目录身份、尺寸与画质", async () => {
+  it("固定使用 LingShan-G2，并且提交与报价参数一致", async () => {
     render(
       <Scene360Overlay node={NODE} imageSource="https://x/src.png?t=1" onClose={() => {}} />,
     );
@@ -132,16 +144,33 @@ describe("360 全景面板", () => {
 
     await waitFor(() => expect(submitFreezoneScene360).toHaveBeenCalled());
     const payload = submitFreezoneScene360.mock.calls[0][1] as Record<string, unknown>;
-    // 之前这里只有 referenceUrl + aspectRatio，模型与档位全交给后端默认值。
-    expect(payload.model).toBe(CATALOG_MODEL.apiModel);
-    expect(payload.catalogId).toBe(CATALOG_MODEL.catalogId);
-    expect(payload.imageSize).toBe("1K");
-    expect(payload.quality).toBe("low");
+    expect(payload.model).toBe(SCENE_360_MODEL.apiModel);
+    expect(payload.catalogId).toBe(SCENE_360_MODEL.catalogId);
+    expect(payload.imageSize).toBe("2K");
+    expect(payload.quality).toBe("medium");
+    expect(payload).not.toHaveProperty("aspectRatio");
+    expect(screen.queryByText("21:9")).not.toBeInTheDocument();
     // 与报价同源。
     expect(payload.imageSize).toBe(quoted.size);
     expect(payload.quality).toBe(quoted.quality);
     expect(payload.model).toBe(quoted.image_selection);
     expect(payload.catalogId).toBe(quoted.catalog_id);
+  });
+
+  it("目录没有 LingShan-G2 时禁用提交，不回落到第一款模型", () => {
+    imageCatalogState = {
+      models: [CATALOG_MODEL],
+      isLoading: false,
+      isFallback: false,
+      error: null,
+    };
+    render(
+      <Scene360Overlay node={NODE} imageSource="https://x/src.png?t=1" onClose={() => {}} />,
+    );
+    const button = screen.getByTitle("modelParams.noModelsAvailable");
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(submitFreezoneScene360).not.toHaveBeenCalled();
   });
 
   it("后台一个图片模型都没配时禁用提交，点了也不发请求", () => {
@@ -158,7 +187,7 @@ describe("360 全景面板", () => {
 
   it("目录还在路上时不算「没模型」，不许闪一下不可用", () => {
     imageCatalogState = {
-      models: [CATALOG_MODEL],
+      models: [SCENE_360_MODEL],
       isLoading: true,
       isFallback: true,
       error: null,

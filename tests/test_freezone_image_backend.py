@@ -3355,7 +3355,7 @@ async def test_scene_360_endpoint_keeps_image_size_below_the_cap(
         project="proj_freezone",
         body=freezone_routes.FreezoneScene360Request(
             reference_url="/api/v1/projects/proj_freezone/media/assets/scenes/小区/master.png",
-            image_size="1K",
+            image_size="1k",
             canvas_id="canvas_a",
             node_id="node_scene_360",
             quality="low",
@@ -3369,6 +3369,24 @@ async def test_scene_360_endpoint_keeps_image_size_below_the_cap(
     assert captured["payload"]["billing"]["size"] == "1K"
     assert captured["payload"]["billing"]["catalog_id"] == "cat-77"
     assert captured["payload"]["billing"]["pricing_model"] == "google/gemini-2.5-flash-image-preview"
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [
+        ("512", "512"),
+        ("1K", "1K"),
+        ("1k", "1K"),
+        ("2k", "2K"),
+        ("4k", "2K"),
+        ("invalid", "2K"),
+    ],
+)
+def test_scene_360_image_size_is_case_insensitive_and_capped(
+    requested: str,
+    expected: str,
+) -> None:
+    assert freezone_routes._cap_mainline_scene_360_image_size(requested) == expected
 
 
 def _fake_media_model_catalog(entries: list[dict[str, object]]):

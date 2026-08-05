@@ -1695,19 +1695,9 @@ export async function submitFreezoneRelight(
 
 // /freezone/scene-360 ----------------------------------------------------- //
 
-/** 全景输出比例。后端不传时按 "2:1" 处理；传其他值会被 Pydantic 校验拒绝。 */
-export type FreezoneScene360AspectRatio = "2:1" | "21:9";
-
-export const FREEZONE_SCENE_360_ASPECT_RATIOS: readonly FreezoneScene360AspectRatio[] =
-  ["2:1", "21:9"];
-
-export const DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO: FreezoneScene360AspectRatio =
-  "2:1";
-
 export interface FreezoneScene360Payload {
   referenceUrl: string;
   imageSize?: string;
-  aspectRatio?: FreezoneScene360AspectRatio;
   model?: string;
   /** 媒体模型目录身份，后端据此按目录定价规则计费（与前端报价同口径）。 */
   catalogId?: string;
@@ -1736,10 +1726,8 @@ export async function submitFreezoneScene360(
         reference_url: referenceUrl,
         image_size: payload.imageSize ?? "2K",
         mode: payload.mode ?? "candidate",
-        aspect_ratio:
-          payload.aspectRatio ?? DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO,
-        // 面板上没有模型选择器，但**报价**是按目录首模型算的：不把它一并送下去，
-        // 后端就会用自己的 FREEZONE_DEFAULT_IMAGE_MODEL 跑，价格与执行对不上。
+        // 360 的最终产物合同固定为 2:1；上游比例适配属于后端实现细节。
+        // 面板上没有模型选择器，报价和执行必须使用同一个固定模型。
         ...(payload.model ? { model: payload.model } : {}),
         ...(payload.catalogId ? { catalog_id: payload.catalogId } : {}),
         ...(payload.quality ? { quality: payload.quality } : {}),
