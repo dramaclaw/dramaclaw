@@ -122,21 +122,6 @@ describe("isVideoModeSupportedByModel — mode gating by model", () => {
     expect(isVideoModeSupportedByModel("videoEdit", SEEDANCE2_FAST)).toBe(false);
     expect(isVideoModeSupportedByModel("videoEdit", SEEDANCE10_PRO_FAST)).toBe(false);
   });
-
-  it("动态目录把图生视频识别为图片参考，而不是首帧", () => {
-    expect(
-      isVideoModeSupportedByModel("imageToVideo", {
-        id: "first-frame-only",
-        supportedModes: ["first_frame"],
-      }),
-    ).toBe(false);
-    expect(
-      isVideoModeSupportedByModel("imageToVideo", {
-        id: "image-reference-model",
-        supportedModes: ["image_reference"],
-      }),
-    ).toBe(true);
-  });
 });
 
 describe("videoUpstreamImageDefaultMode — auto-derived default on first image", () => {

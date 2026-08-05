@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.api.schemas import FreezoneImageToVideoRequest, FreezoneKeyframeVideoRequest
@@ -92,6 +93,14 @@ async def test_image_to_video_rejects_more_than_one_image(monkeypatch, tmp_path:
         )
 
 
+def test_image_to_video_requires_an_explicit_new_mode() -> None:
+    with pytest.raises(ValidationError, match="gen_mode"):
+        FreezoneImageToVideoRequest(
+            image_urls=["https://example.com/ref.png"],
+            model="catalog-video",
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("first_url", "last_url", "expected_mode", "expected_image_path"),
@@ -126,7 +135,6 @@ async def test_keyframe_route_derives_first_both_and_last_only_protocols(
             first_frame_url=first_url,
             last_frame_url=last_url,
             model="catalog-video",
-            gen_mode="firstLastFrame",
         ),
         {"username": "admin"},
     )

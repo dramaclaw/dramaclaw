@@ -72,7 +72,7 @@ export function isVideoModeSupportedByModel(
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
     const modeKey: Record<VideoGenMode, string> = {
       textToVideo: "text_to_video",
-      imageToVideo: "image_reference",
+      imageToVideo: "first_frame",
       firstLastFrame: "first_last_frame",
       imageReference: "image_reference",
       allReference: "all_reference",

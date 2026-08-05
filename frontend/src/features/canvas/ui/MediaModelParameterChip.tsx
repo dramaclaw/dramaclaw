@@ -105,7 +105,7 @@ export function MediaModelParameterChip({ parameters, values = {}, mode, onChang
 
 const MODE_ALIASES: Record<string, string> = {
   textToVideo: "text_to_video",
-  imageToVideo: "image_reference",
+  imageToVideo: "first_frame",
   firstLastFrame: "first_last_frame",
   imageReference: "image_reference",
   allReference: "all_reference",

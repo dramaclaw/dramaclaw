@@ -6979,6 +6979,7 @@ def _require_catalog_video_mode(
 ) -> None:
     normalized = {
         "textToVideo": "text_to_video",
+        "firstFrame": "first_frame",
         "imageToVideo": "image_reference",
         "firstLastFrame": "first_last_frame",
         "imageReference": "image_reference",
@@ -7588,11 +7589,8 @@ async def freezone_video_i2v(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    requested_mode = body.gen_mode or "image_reference"
-    execution_mode = {
-        "imageToVideo": "image_reference",
-        "imageReference": "image_reference",
-    }.get(requested_mode, requested_mode)
+    requested_mode = body.gen_mode
+    execution_mode = "image_reference"
     request_schema, model_params, capabilities = await _resolve_catalog_request(
         "video",
         body.model,

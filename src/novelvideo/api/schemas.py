@@ -1090,7 +1090,12 @@ class FreezoneImageToVideoRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    gen_mode: Literal["imageToVideo", "imageReference"] = Field(
+        description=(
+            "必填：imageToVideo 表示单图整体参考；imageReference 表示按目录上限接收图片参考。"
+            "两者执行时都使用 image_reference 协议，不代表首帧。"
+        )
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1145,7 +1150,6 @@ class FreezoneKeyframeVideoRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 

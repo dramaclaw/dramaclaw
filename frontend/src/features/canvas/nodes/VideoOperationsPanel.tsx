@@ -899,10 +899,10 @@ function videoModeDisabledReason(
         if (videos > 0) return "已连接视频节点，请使用「视频编辑」";
         if (images > 0) return "已连接图片节点，请选择「首帧」或「图片参考」";
         return null;
-      case "imageToVideo": // 单图整体参考
-        if (videos > 0) return "已连接视频节点，「图生视频」不可用";
+      case "imageToVideo": // 首帧 (i2v)
+        if (videos > 0) return "已连接视频节点，「首帧」不可用";
         if (images === 0) return "需要连接图片节点（1个）";
-        if (images > 1) return "「图生视频」仅支持单张图片，请用「图片参考」";
+        if (images > 1) return "「首帧」仅支持单张图片，请用「图片参考」";
         return null;
       case "imageReference": // 图片参考 (r2v)
         if (videos > 0) return "已连接视频节点，「图片参考」不可用";
@@ -929,9 +929,6 @@ function videoModeDisabledReason(
   if (mode === "imageToVideo" && upstreamCounts.videos >= 2) {
     return "上游有多个视频时不可用";
   }
-  if (mode === "imageToVideo" && upstreamCounts.images > 1) {
-    return "「图生视频」仅支持单张图片，请使用「图片参考」";
-  }
   if (mode === "firstLastFrame" && upstreamCounts.images > 2) {
     return "上游图片超过 2 张时不可用";
   }
@@ -948,10 +945,10 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
     left: number;
     top: number;
   } | null>(null);
-  // HappyHorse 的模式面板对齐目录能力：文生视频 / 图生视频 / 图片参考 / 视频编辑。
+  // HappyHorse 的模式面板对齐文档 4 大功能：文生视频 / 首帧 / 图片参考 / 视频编辑。
   //   - 隐藏「首尾帧」「全能参考」：HappyHorse 无这两种能力，点了只会报错。
-  //   - 「图生视频」是单图整体参考，不再重命名成「首帧」；真正的首帧由关键帧入口
-  //     负责，避免两种协议在 UI 上继续混为一谈。
+  //   - 把「图生视频」显示为「首帧」：它本就是单图首帧 i2v，直接叫「首帧」跟「图片
+  //     参考」一眼分清。
   //   - 上游接入视频后，「首帧」「图片参考」整项隐藏（文档：视频节点下没有这两个
   //     选项），只保留「文生视频」(禁用) 与「视频编辑」。
   // 非 HappyHorse 不暴露「视频编辑」(它是 HappyHorse 专属功能)。
@@ -959,7 +956,7 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
     if (supportedModes?.length) {
       const keyMap: Record<VideoGenMode, string> = {
         textToVideo: "text_to_video",
-        imageToVideo: "image_reference",
+        imageToVideo: "first_frame",
         firstLastFrame: "first_last_frame",
         imageReference: "image_reference",
         allReference: "all_reference",
@@ -978,7 +975,12 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
         : HAPPYHORSE_TAB_ORDER;
     return order
       .map((key) => MODE_TABS.find((tab) => tab.key === key))
-      .filter((tab): tab is (typeof MODE_TABS)[number] => Boolean(tab));
+      .filter((tab): tab is (typeof MODE_TABS)[number] => Boolean(tab))
+      .map((tab) =>
+        tab.key === "imageToVideo"
+          ? { ...tab, labelKey: "node.videoNode.tabs.firstFrame" }
+          : tab,
+      );
   }, [modelId, supportedModes, upstreamCounts.videos]);
   const activeTab = visibleTabs.find((tab) => tab.key === value) ?? visibleTabs[0];
 
@@ -1674,18 +1676,15 @@ function ReferenceMediaRow({
         // 首尾帧模式下，前两张图片打 首帧/尾帧 角标；超出 cap 的图片就回退到
         // 数字角标，让用户看到「这张图被忽略」的同时仍能在 prompt 里通过原序号
         // 对照——不过那种状态主要靠自动切换到 allReference 兜底，正常不会发生。
-        const explicitSlotLabel =
-          item.kind === "image" && item.displayName?.includes("尾帧")
-            ? "尾帧"
-            : item.kind === "image" && item.displayName?.includes("首帧")
-              ? "首帧"
-              : undefined;
         const slotLabel =
           genMode === "firstLastFrame" &&
           item.kind === "image" &&
           withinCap
-            ? explicitSlotLabel ??
-              (typeIndex === 1 ? "首帧" : typeIndex === 2 ? "尾帧" : undefined)
+            ? typeIndex === 1
+              ? "首帧"
+              : typeIndex === 2
+                ? "尾帧"
+                : undefined
             : undefined;
         let chip: ReactNode;
         if (item.kind === "image") {
