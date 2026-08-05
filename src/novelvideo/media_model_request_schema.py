@@ -23,7 +23,9 @@ BLOCKED_ROOTS = {
 }
 MODE_ALIASES = {
     "textToVideo": "text_to_video",
-    "imageToVideo": "first_frame",
+    # 画布「图生视频」是单张图片参考：图片影响整体画面，但不锁定第一帧。
+    # 真正的首帧模式由首尾帧入口按槽位派生为 first_frame。
+    "imageToVideo": "image_reference",
     "firstLastFrame": "first_last_frame",
     "imageReference": "image_reference",
     "allReference": "all_reference",

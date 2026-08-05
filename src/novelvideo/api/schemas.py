@@ -1045,13 +1045,13 @@ class FreezoneImageToVideoRequest(BaseModel):
     """图片参考视频请求。
 
     统一承接图生视频和图片参考视频：
-    - 1 张图片：首帧图生视频
+    - 图生视频：1 张图片作为整体画面参考，不锁定第一帧
     - 2-9 张图片：多图图片参考视频
     """
 
     image_urls: list[str] = Field(
         default_factory=list,
-        description="图片参考静态地址列表，支持 1-9 张。第一张默认作为主参考图/首帧参考图",
+        description="图片参考静态地址列表。图生视频只允许 1 张，图片参考模式按模型上限接收多张",
     )
     prompt: str = Field(default="", description="用户补充视频描述，可为空")
     camera_template_id: Optional[str] = Field(
@@ -1095,9 +1095,9 @@ class FreezoneImageToVideoRequest(BaseModel):
 
 
 class FreezoneKeyframeVideoRequest(BaseModel):
-    """首尾帧视频请求。
+    """关键帧视频请求。
 
-    接受首帧 / 尾帧两个输入，至少需要提供一个。
+    接受仅首帧、首帧+尾帧或仅尾帧，至少需要提供一个槽位。
     """
 
     first_frame_url: Optional[str] = Field(

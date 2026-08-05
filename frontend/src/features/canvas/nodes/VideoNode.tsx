@@ -234,7 +234,7 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
 > = {
   allReference: { Icon: Sparkles, label: "全能参考" },
   imageReference: { Icon: Images, label: "图片参考" },
-  imageToVideo: { Icon: Film, label: "首帧生成视频" },
+  imageToVideo: { Icon: Film, label: "图生视频" },
   firstLastFrame: { Icon: Layers, label: "首尾帧生成视频" },
 };
 
@@ -242,8 +242,7 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
 // 场景下）显式表达出来：超额 chip 标灰 + 从 @ 候选剔除，避免「prompt 引用了
 // @图片10 但提交时被静默丢掉」。
 //
-// 表里没出现的模式默认不限制（textToVideo 不消费上游、imageToVideo 走
-// `.slice(0, 9)` 自带兜底），各自走原有路径。
+// 表里没出现的模式默认不限制（textToVideo 不消费上游），各自走原有路径。
 //   - allReference (omni)  ：image 1-9 / video 0-3 / audio 0-3。音频另有**逐条**
 //                            1.8~15.2s 的厂商时长约束，在提交前单独校验（见
 //                            audioReferenceDurationRejection）；**没有总时长上限**，
@@ -254,7 +253,7 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
 const REFERENCE_CAPS_BY_MODE: Partial<
   Record<VideoGenMode, { image: number; video: number; audio: number }>
 > = {
-  imageToVideo: { image: 9, video: 0, audio: 0 },
+  imageToVideo: { image: 1, video: 0, audio: 0 },
   imageReference: { image: 9, video: 0, audio: 0 },
   videoEdit: { image: 5, video: 1, audio: 0 },
   allReference: { image: 9, video: 3, audio: 3 },
@@ -390,9 +389,11 @@ function referenceCapsForMode(
   const defaults = REFERENCE_CAPS_BY_MODE[mode];
   if (!defaults) return null;
   return {
-    image: model?.referenceImageMax ?? defaults.image,
-    video: model?.referenceVideoMax ?? defaults.video,
-    audio: model?.referenceAudioMax ?? defaults.audio,
+    // 模型目录声明的是模型上限，模式本身还可能有更小的语义上限（例如图生视频
+    // 永远只吃一张图）。两层约束取更严格者，不能让 catalog 的 9 张覆盖模式的 1 张。
+    image: Math.min(model?.referenceImageMax ?? defaults.image, defaults.image),
+    video: Math.min(model?.referenceVideoMax ?? defaults.video, defaults.video),
+    audio: Math.min(model?.referenceAudioMax ?? defaults.audio, defaults.audio),
   };
 }
 
@@ -1216,7 +1217,7 @@ export const VideoNode = memo(
         const selfHeight =
           self.measured?.height ??
           (typeof self.height === "number" ? self.height : DEFAULT_HEIGHT);
-        // 全能参考 / 图片参考 / 首帧生成视频都只铺一个图片节点；首尾帧要铺首帧 + 尾帧
+        // 全能参考 / 图片参考 / 图生视频都只铺一个图片节点；关键帧入口铺首帧 + 尾帧
         // 两个上传节点。
         const isSingleImage =
           mode === "allReference" ||
@@ -1305,7 +1306,7 @@ export const VideoNode = memo(
             CANVAS_NODE_TYPES.imageGen,
             { x: baseX, y: baseY },
             {
-              displayName: mode === "imageToVideo" ? "首帧" : "参考图",
+              displayName: "参考图",
             },
           );
           addEdge(newId, id);
@@ -1313,7 +1314,7 @@ export const VideoNode = memo(
             mode === "imageReference"
               ? "图片参考组"
               : mode === "imageToVideo"
-                ? "首帧生成视频组"
+                ? "图生视频组"
                 : "全能参考组";
           state.autoGroupSpawn(id, [newId], { label: groupLabel });
           // 上游图片直接作为素材喂给对应端点；模式切到用户点的那一个，不预填提示词
@@ -1893,6 +1894,34 @@ export const VideoNode = memo(
           }
           return urls;
         };
+        const collectUpstreamKeyframeUrls = (): {
+          firstFrameUrl: string | null;
+          lastFrameUrl: string | null;
+        } => {
+          let firstFrameUrl: string | null = null;
+          let lastFrameUrl: string | null = null;
+          const unassigned: string[] = [];
+          for (const node of collectUpstream()) {
+            const url = submittableImageUrl(node);
+            if (typeof url !== "string" || url.length === 0) continue;
+            const displayName = String(
+              (node.data as { displayName?: string | null }).displayName ?? "",
+            ).trim();
+            if (displayName.includes("尾帧") && !lastFrameUrl) {
+              lastFrameUrl = url;
+            } else if (displayName.includes("首帧") && !firstFrameUrl) {
+              firstFrameUrl = url;
+            } else {
+              unassigned.push(url);
+            }
+          }
+          // 普通图片节点没有槽位名称时继续按用户排列顺序解释：第一张首帧、第二张
+          // 尾帧。由空态 CTA 创建的「首帧 / 尾帧」上传节点则保留显式槽位，因此只
+          // 填尾帧节点时不会再被误当作首帧。
+          if (!firstFrameUrl) firstFrameUrl = unassigned.shift() ?? null;
+          if (!lastFrameUrl) lastFrameUrl = unassigned.shift() ?? null;
+          return { firstFrameUrl, lastFrameUrl };
+        };
 
         const durationClamped = clampVideoDuration(durationSec, durationBounds);
         const cameraTemplateId = cameraMovementId;
@@ -1904,12 +1933,7 @@ export const VideoNode = memo(
         // genMode 组装出一个「调一次接口」的闭包 doSubmit，校验失败则置空提前返回。
         let doSubmit: ((targetId: string) => Promise<FreezoneJobRef>) | null = null;
         if (genMode === "firstLastFrame") {
-          const imageUrls = collectUpstreamImageUrls().slice(
-            0,
-            referenceCaps?.image ?? 2,
-          );
-          const firstFrameUrl = imageUrls[0] ?? null;
-          const lastFrameUrl = imageUrls[1] ?? null;
+          const { firstFrameUrl, lastFrameUrl } = collectUpstreamKeyframeUrls();
           if (!firstFrameUrl && !lastFrameUrl) {
             console.warn(
               "[video-node] firstLastFrame submit without any frame",
@@ -1939,7 +1963,8 @@ export const VideoNode = memo(
               nodeId: targetId,
             });
         } else if (genMode === "imageToVideo" || genMode === "imageReference") {
-          // Unified i2v endpoint: 1 image = 图生视频, 2-9 images = 图片参考视频.
+          // Unified endpoint: imageToVideo 始终是单张整体参考；imageReference 才
+          // 按模型目录上限接收多张。两者都走 reference_images，不占首帧槽位。
           const imageUrls = collectUpstreamImageUrls().slice(
             0,
             referenceCaps?.image ?? 9,
@@ -2017,7 +2042,7 @@ export const VideoNode = memo(
             void showErrorDialog(
               isHappyHorseModel
                 ? "HappyHorse 不支持全能参考模式，请切换为文生视频或图生视频。"
-                : "全能参考仅支持 Seedance 2.0 模型，请切换到 Seedance 2.0，或改用「首帧生成视频」。",
+                : "全能参考仅支持 Seedance 2.0 模型，请切换到 Seedance 2.0，或改用「图生视频」。",
               t("common.error"),
             );
             updateNodeData(id, {

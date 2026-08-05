@@ -2002,7 +2002,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
         normalized_mode = {
             "textToVideo": "text_to_video",
-            "imageToVideo": "first_frame",
+            "imageToVideo": "image_reference",
             "firstLastFrame": "first_last_frame",
             "imageReference": "image_reference",
             "allReference": "all_reference",
@@ -2032,14 +2032,14 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             return
 
         if normalized_mode == "first_last_frame":
-            if not image_path:
-                raise ValueError("first frame is required for first_last_frame mode")
-            if not last_frame_path:
-                raise ValueError("last frame is required for first_last_frame mode")
-            metadata["first_frame_image"] = await self._relay_frame_input(image_path)
-            metadata["last_frame_image"] = await self._relay_frame_input(
-                str(last_frame_path)
-            )
+            if not image_path and not last_frame_path:
+                raise ValueError("at least one keyframe is required for first_last_frame mode")
+            if image_path:
+                metadata["first_frame_image"] = await self._relay_frame_input(image_path)
+            if last_frame_path:
+                metadata["last_frame_image"] = await self._relay_frame_input(
+                    str(last_frame_path)
+                )
             return
 
         raw_items: list[tuple[str, str, str]] = []
