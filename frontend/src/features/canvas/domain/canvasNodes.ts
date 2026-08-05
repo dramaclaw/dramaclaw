@@ -84,6 +84,7 @@ export interface UploadImageNodeData extends NodeImageData {
 export type VideoGenMode =
   | 'textToVideo'
   | 'allReference'
+  | 'firstFrame'
   | 'imageToVideo'
   | 'firstLastFrame'
   | 'imageReference'
@@ -683,7 +684,14 @@ export type CanvasNodeData =
   | SkillNodeData;
 
 export type CanvasNode = Node<CanvasNodeData, CanvasNodeType>;
-export type CanvasEdge = Edge;
+export type VideoKeyframeSlot = 'first' | 'last';
+
+export interface CanvasEdgeData extends Record<string, unknown> {
+  /** Stable keyframe role for an image connected to a video node. */
+  keyframeSlot?: VideoKeyframeSlot;
+}
+
+export type CanvasEdge = Edge<CanvasEdgeData>;
 
 export interface NodeCreationDto {
   type: CanvasNodeType;

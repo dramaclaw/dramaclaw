@@ -70,6 +70,8 @@ import {
   MIN_AUDIO_REFERENCE_DURATION_MS,
   isHappyHorseVideoModel,
   isSeedance2VideoModel,
+  isVideoModeSupportedByModel,
+  resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
   videoModelReferenceDisabledReason,
@@ -239,7 +241,8 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
 > = {
   allReference: { Icon: Sparkles, label: "全能参考" },
   imageReference: { Icon: Images, label: "图片参考" },
-  imageToVideo: { Icon: Film, label: "首帧生成视频" },
+  firstFrame: { Icon: Film, label: "首帧生成视频" },
+  imageToVideo: { Icon: Film, label: "图生视频" },
   firstLastFrame: { Icon: Layers, label: "首尾帧生成视频" },
 };
 
@@ -255,12 +258,11 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
 //   - firstLastFrame       ：仅图片 2 张（首帧 + 尾帧），不允许任何视频 / 音频。
 //                            图片 >2 时另有自动切到 allReference 的兜底（见
 //                            VideoNode 内部 effect）。
-//   - imageToVideo         ：仅图片 1 张。i2v 端点按张数分流（1 张 = 图生视频，
-//                            2-9 张 = 图片参考），多给一张就悄悄换了种生成方式。
-//                            图片 >1 时同样有自动切模式的兜底（见内部 effect）。
+//   - firstFrame / imageToVideo：都只接 1 张图；前者锁定首帧，后者作为整体画面参考。
 const REFERENCE_CAPS_BY_MODE: Partial<
   Record<VideoGenMode, { image: number; video: number; audio: number }>
 > = {
+  firstFrame: { image: 1, video: 0, audio: 0 },
   imageToVideo: { image: 1, video: 0, audio: 0 },
   imageReference: { image: 9, video: 0, audio: 0 },
   videoEdit: { image: 5, video: 1, audio: 0 },
@@ -385,11 +387,11 @@ function selectedVideoModelReferenceDisabledReason(
   return null;
 }
 
-// 「首帧生成视频」的 1 张图是**结构性**的，不是模型容量：i2v 端点按图片张数分流
-// （1 张 = 图生视频，2-9 张 = 图片参考），第二张一进去做的就已经不是首帧生成了。
+// 首帧与单图图生视频的 1 张图是**结构性**的，不是模型容量。
 // 所以这条不接受媒体目录 referenceImageMax 的覆盖——那个字段表达的是「这个模型最多
 // 能吃几张参考图」，管的是参考类模式；让它盖住这里等于允许配置把首帧悄悄变成参考。
 const FIXED_IMAGE_CAP_BY_MODE: Partial<Record<VideoGenMode, number>> = {
+  firstFrame: 1,
   imageToVideo: 1,
 };
 
@@ -549,6 +551,7 @@ export const VideoNode = memo(
     );
     const addNode = useCanvasStore((state) => state.addNode);
     const addEdge = useCanvasStore((state) => state.addEdge);
+    const addEdgeWithData = useCanvasStore((state) => state.addEdgeWithData);
     const setActiveOverlayNodeId = useCanvasStore(
       (state) => state.setActiveOverlayNodeId,
     );
@@ -1216,6 +1219,7 @@ export const VideoNode = memo(
         mode:
           | "allReference"
           | "imageReference"
+          | "firstFrame"
           | "imageToVideo"
           | "firstLastFrame",
       ) => {
@@ -1231,6 +1235,7 @@ export const VideoNode = memo(
         const isSingleImage =
           mode === "allReference" ||
           mode === "imageReference" ||
+          mode === "firstFrame" ||
           mode === "imageToVideo";
         // 两种源节点的默认尺寸不同（图片节点 580×360 / 上传节点 320×350），
         // 左列的定位与避让都得按实际尺寸算，否则图片节点会压到视频节点身上。
@@ -1315,15 +1320,21 @@ export const VideoNode = memo(
             CANVAS_NODE_TYPES.imageGen,
             { x: baseX, y: baseY },
             {
-              displayName: mode === "imageToVideo" ? "首帧" : "参考图",
+              displayName: mode === "firstFrame" ? "首帧" : "参考图",
             },
           );
-          addEdge(newId, id);
+          if (mode === "firstFrame") {
+            addEdgeWithData(newId, id, { keyframeSlot: "first" });
+          } else {
+            addEdge(newId, id);
+          }
           const groupLabel =
             mode === "imageReference"
               ? "图片参考组"
-              : mode === "imageToVideo"
+              : mode === "firstFrame"
                 ? "首帧生成视频组"
+                : mode === "imageToVideo"
+                  ? "图生视频组"
                 : "全能参考组";
           state.autoGroupSpawn(id, [newId], { label: groupLabel });
           // 上游图片直接作为素材喂给对应端点；模式切到用户点的那一个，不预填提示词
@@ -1342,17 +1353,17 @@ export const VideoNode = memo(
           { x: baseX, y: firstY },
           { displayName: "首帧" },
         );
-        addEdge(firstId, id);
+        addEdgeWithData(firstId, id, { keyframeSlot: "first" });
         const lastId = addNode(
           CANVAS_NODE_TYPES.upload,
           { x: baseX, y: lastY },
           { displayName: "尾帧" },
         );
-        addEdge(lastId, id);
+        addEdgeWithData(lastId, id, { keyframeSlot: "last" });
         state.autoGroupSpawn(id, [firstId, lastId], { label: '首尾帧生成视频组' });
         updateNodeData(id, { genMode: "firstLastFrame" });
       },
-      [addEdge, addNode, id, updateNodeData],
+      [addEdge, addEdgeWithData, addNode, id, updateNodeData],
     );
 
     useEffect(() => {
@@ -1382,15 +1393,14 @@ export const VideoNode = memo(
       if (isHappyHorseModel) return;
       if (data.genMode != null) return;
       if (referenceImages.length === 0) return;
-      updateNodeData(id, {
-        genMode: videoUpstreamImageDefaultMode(selectedVideoModelId),
-      });
+      const defaultMode = videoUpstreamImageDefaultMode(selectedVideoModel);
+      if (defaultMode) updateNodeData(id, { genMode: defaultMode });
     }, [
       data.genMode,
       id,
       isHappyHorseModel,
       referenceImages.length,
-      selectedVideoModelId,
+      selectedVideoModel,
       updateNodeData,
     ]);
 
@@ -1398,9 +1408,8 @@ export const VideoNode = memo(
     // 一条统一状态机替代分散的兜底 effect，避免多个 effect 互相打架：
     //   - 上游有视频            → 视频编辑 (videoEdit / video_url)
     //   - 上游图片 >1 张        → 图片参考 (imageReference / reference_images 1-9)
-    //   - 上游图片 == 1 张      → 默认图片参考，但尊重用户主动切到的「首帧」
-    //     （单张图两种模式都可用，默认给图片参考：它 1~9 张都吃，再连一张不用换模式；
-    //      首帧只吃 1 张，默认落在那儿等于让用户接着连第二张时被迫改模式。）
+    //   - 上游图片 == 1 张      → 按目录能力选择单图默认入口，并尊重用户主动选择的
+    //                             首帧 / 图生视频 / 图片参考
     //   - 无上游                → 文生视频 (textToVideo)
     // 每次都纠正，确保 genMode 不会卡在与当前上游不匹配的模式（否则 submit 时会被
     // 静默截断 / 触发上游互斥报错）。
@@ -1413,7 +1422,15 @@ export const VideoNode = memo(
       } else if (images > 1) {
         target = "imageReference";
       } else if (images === 1) {
-        target = genMode === "imageToVideo" ? "imageToVideo" : "imageReference";
+        const currentImageMode = ["firstFrame", "imageToVideo", "imageReference"].includes(
+          genMode,
+        )
+          ? genMode
+          : null;
+        target =
+          currentImageMode && isVideoModeSupportedByModel(currentImageMode, selectedVideoModel)
+            ? currentImageMode
+            : (videoUpstreamImageDefaultMode(selectedVideoModel) ?? "textToVideo");
       } else {
         target = "textToVideo";
       }
@@ -1424,13 +1441,14 @@ export const VideoNode = memo(
       genMode,
       id,
       isHappyHorseModel,
+      selectedVideoModel,
       upstreamTypeCounts.images,
       upstreamTypeCounts.videos,
       updateNodeData,
     ]);
 
     // Audio refs only carry meaning under the omni-gen (allReference) path —
-    // textToVideo / firstLastFrame / imageToVideo discard them. So when an
+    // textToVideo / firstFrame / firstLastFrame / imageToVideo discard them. So when an
     // audio upstream first appears, force the mode to `allReference`. Tracked
     // through a ref so we only fire on the 0 → ≥1 transition; once the user
     // disconnects all audio and reconnects, it fires again.
@@ -1536,9 +1554,8 @@ export const VideoNode = memo(
       if (genMode !== "textToVideo") return;
       if (upstreamCounts.images === 0 && upstreamCounts.audios === 0) return;
       if (upstreamCounts.images > 0) {
-        updateNodeData(id, {
-          genMode: videoUpstreamImageDefaultMode(selectedVideoModelId),
-        });
+        const defaultMode = videoUpstreamImageDefaultMode(selectedVideoModel);
+        if (defaultMode) updateNodeData(id, { genMode: defaultMode });
       } else if (isSeedance20Model) {
         updateNodeData(id, { genMode: "allReference" });
       }
@@ -1546,7 +1563,7 @@ export const VideoNode = memo(
       genMode,
       isHappyHorseModel,
       isSeedance20Model,
-      selectedVideoModelId,
+      selectedVideoModel,
       upstreamCounts.images,
       upstreamCounts.audios,
       id,
@@ -1811,7 +1828,7 @@ export const VideoNode = memo(
 
     // 提交可用性按模式区分（对齐后端各端点校验）：
     // - 文生 / 全能参考：后端强校验 prompt，必须有提示词（自写或上游 text）；
-    // - 首帧(i2v) / 图片参考 / 首尾帧 / 视频编辑：后端不校验 prompt，允许空提示词，
+    // - 首帧 / 图生视频 / 图片参考 / 首尾帧 / 视频编辑：后端不校验 prompt，允许空提示词，
     //   只要素材齐备即可提交（图片类要 ≥1 张上游图；视频编辑要 ≥1 个上游视频）。
     //   这修掉「删掉默认提示词后传了首帧仍无法直接生成」的问题。
     const hasPromptText =
@@ -1927,6 +1944,31 @@ export const VideoNode = memo(
           }
           return urls;
         };
+        const collectUpstreamKeyframeUrls = (): {
+          firstFrameUrl: string | null;
+          lastFrameUrl: string | null;
+        } => {
+          const state = useCanvasStore.getState();
+          const candidates: Array<{
+            url: string;
+            slot?: "first" | "last";
+            legacyDisplayName?: string | null;
+          }> = [];
+          for (const node of collectUpstream()) {
+            const url = submittableImageUrl(node);
+            if (!url) continue;
+            const edge = state.edges.find(
+              (candidate) => candidate.source === node.id && candidate.target === id,
+            );
+            candidates.push({
+              url,
+              slot: edge?.data?.keyframeSlot,
+              legacyDisplayName:
+                typeof node.data.displayName === "string" ? node.data.displayName : null,
+            });
+          }
+          return resolveVideoKeyframeUrls(candidates);
+        };
 
         const durationClamped = clampVideoDuration(durationSec, durationBounds);
         const cameraTemplateId = cameraMovementId;
@@ -1937,13 +1979,10 @@ export const VideoNode = memo(
         // 后端不再支持一次出多条，改为按「生成数量」并发调用 N 次接口。先按
         // genMode 组装出一个「调一次接口」的闭包 doSubmit，校验失败则置空提前返回。
         let doSubmit: ((targetId: string) => Promise<FreezoneJobRef>) | null = null;
-        if (genMode === "firstLastFrame") {
-          const imageUrls = collectUpstreamImageUrls().slice(
-            0,
-            referenceCaps?.image ?? 2,
-          );
-          const firstFrameUrl = imageUrls[0] ?? null;
-          const lastFrameUrl = imageUrls[1] ?? null;
+        if (genMode === "firstFrame" || genMode === "firstLastFrame") {
+          const keyframes = collectUpstreamKeyframeUrls();
+          const firstFrameUrl = keyframes.firstFrameUrl;
+          const lastFrameUrl = genMode === "firstLastFrame" ? keyframes.lastFrameUrl : null;
           if (!firstFrameUrl && !lastFrameUrl) {
             console.warn(
               "[video-node] firstLastFrame submit without any frame",
@@ -1965,7 +2004,6 @@ export const VideoNode = memo(
               durationSeconds: durationClamped,
               generateAudio,
               model: selectedVideoModel?.catalogId ?? modelId,
-              genMode,
               modelParams: data.modelParams,
               humanReview: supportsHumanReview && humanReview,
               sceneOptimize: sceneOptimize ?? null,
@@ -2818,15 +2856,12 @@ export const VideoNode = memo(
             </div>
           ) : (
             <div className="flex h-full w-full items-center px-8">
-              {/* 空态（无入边）才走到这里，一定没有上游视频。CTA 展示哪几个模式
-                  完全按当前模型的能力口径决定（videoEmptyStateCtaModes）：HappyHorse
-                  给「首帧 / 图片参考」；Seedance 2.0 给「全能参考 / 图片参考 / 首尾帧」；
-                  Seedance 1.x 等非 2.0 只给「首帧」——全能参考会 400、首尾帧尾帧被
-                  静默丢弃、多图参考不支持，不给入口免得点了被静默改写或提交必失败。 */}
+              {/* 空态（无入边）才走到这里。CTA 完全按媒体模型目录的 supportedModes
+                  决定；目录尚未加载时才使用模型族兜底，避免展示后端会拒绝的入口。 */}
               <div className="flex min-h-0 flex-col justify-center gap-2 py-4">
                 <div className="text-xs text-[var(--canvas-node-input-helper)]">试试：</div>
                 <div className="flex flex-col gap-0.5">
-                  {videoEmptyStateCtaModes(selectedVideoModelId).map((mode) => {
+                  {videoEmptyStateCtaModes(selectedVideoModel).map((mode) => {
                     const { Icon, label } = VIDEO_EMPTY_STATE_CTA_META[mode];
                     return (
                       <button

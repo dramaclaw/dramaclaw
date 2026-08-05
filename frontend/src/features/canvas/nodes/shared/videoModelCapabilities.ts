@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { VideoGenMode } from "@/features/canvas/domain/canvasNodes";
+import type {
+  VideoGenMode,
+  VideoKeyframeSlot,
+} from "@/features/canvas/domain/canvasNodes";
 
 /**
  * Freezone 画布视频模型的**能力口径**——与后端 `freezone.py` 各视频端点的模型门禁
@@ -50,6 +53,61 @@ function isBaseSeedance2VideoModel(modelId: string | null | undefined): boolean 
   return /seedance20$/.test(normalizeVideoModelId(modelId));
 }
 
+/** 前端模式与媒体模型目录能力的唯一映射。 */
+export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
+  textToVideo: "text_to_video",
+  firstFrame: "first_frame",
+  imageToVideo: "image_reference",
+  firstLastFrame: "first_last_frame",
+  imageReference: "image_reference",
+  allReference: "all_reference",
+  videoEdit: "video_edit",
+};
+
+export interface VideoKeyframeCandidate {
+  url: string;
+  slot?: VideoKeyframeSlot | null;
+  legacyDisplayName?: string | null;
+}
+
+/**
+ * 从视频节点的上游图片中解析稳定的首帧/尾帧槽位。
+ *
+ * 新画布以 edge.data.keyframeSlot 为准，节点名称只负责展示，用户重命名不会改变语义。
+ * 旧画布没有槽位字段时才兼容“首帧/尾帧”标题，最后按连线顺序补齐未分配图片。
+ */
+export function resolveVideoKeyframeUrls(
+  candidates: readonly VideoKeyframeCandidate[],
+): { firstFrameUrl: string | null; lastFrameUrl: string | null } {
+  let firstFrameUrl: string | null = null;
+  let lastFrameUrl: string | null = null;
+  const unassigned: string[] = [];
+
+  for (const candidate of candidates) {
+    if (candidate.slot === "first") {
+      if (!firstFrameUrl) firstFrameUrl = candidate.url;
+      continue;
+    }
+    if (candidate.slot === "last") {
+      if (!lastFrameUrl) lastFrameUrl = candidate.url;
+      continue;
+    }
+
+    const displayName = String(candidate.legacyDisplayName ?? "").trim();
+    if (displayName.includes("首帧") && !firstFrameUrl) {
+      firstFrameUrl = candidate.url;
+    } else if (displayName.includes("尾帧") && !lastFrameUrl) {
+      lastFrameUrl = candidate.url;
+    } else {
+      unassigned.push(candidate.url);
+    }
+  }
+
+  if (!firstFrameUrl) firstFrameUrl = unassigned.shift() ?? null;
+  if (!lastFrameUrl) lastFrameUrl = unassigned.shift() ?? null;
+  return { firstFrameUrl, lastFrameUrl };
+}
+
 /**
  * 模型入参的统一形态：既可以只给一个 id 字符串，也可以给媒体目录下发的模型对象
  * （`supportedModes` 存在时以它为准，那是 Admin 显式配置的能力声明）。
@@ -81,24 +139,20 @@ export function isVideoModeSupportedByModel(
   model: VideoModelRef,
 ): boolean {
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
-    const modeKey: Record<VideoGenMode, string> = {
-      textToVideo: "text_to_video",
-      imageToVideo: "first_frame",
-      firstLastFrame: "first_last_frame",
-      imageReference: "image_reference",
-      allReference: "all_reference",
-      videoEdit: "video_edit",
-    };
-    return model.supportedModes?.includes(modeKey[mode]) ?? false;
+    return model.supportedModes?.includes(GEN_MODE_TO_CATALOG_MODE[mode]) ?? false;
   }
   const modelId = videoModelIdOf(model);
   if (isHappyHorseVideoModel(modelId)) {
     return (
       mode === "textToVideo" ||
+      mode === "firstFrame" ||
       mode === "imageToVideo" ||
       mode === "imageReference" ||
       mode === "videoEdit"
     );
+  }
+  if (isSeedance1xVideoModel(modelId)) {
+    return mode === "textToVideo" || mode === "firstFrame";
   }
   if (mode === "videoEdit") return false;
   if (mode === "allReference" || mode === "firstLastFrame") {
@@ -114,6 +168,7 @@ export function isVideoModeSupportedByModel(
 export type VideoEmptyStateCtaMode =
   | "allReference"
   | "imageReference"
+  | "firstFrame"
   | "imageToVideo"
   | "firstLastFrame";
 
@@ -125,15 +180,26 @@ export type VideoEmptyStateCtaMode =
  *   多图参考也不支持，只给确实可用的「首帧」。
  */
 export function videoEmptyStateCtaModes(
-  modelId: string | null | undefined,
+  model: VideoModelRef,
 ): VideoEmptyStateCtaMode[] {
+  if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    const order: VideoEmptyStateCtaMode[] = [
+      "allReference",
+      "imageToVideo",
+      "firstFrame",
+      "imageReference",
+      "firstLastFrame",
+    ];
+    return order.filter((mode) => isVideoModeSupportedByModel(mode, model));
+  }
+  const modelId = videoModelIdOf(model);
   if (isHappyHorseVideoModel(modelId)) {
-    return ["imageToVideo", "imageReference"];
+    return ["imageToVideo", "firstFrame", "imageReference"];
   }
   if (isSeedance2VideoModel(modelId)) {
-    return ["allReference", "imageReference", "firstLastFrame"];
+    return ["allReference", "imageToVideo", "firstFrame", "imageReference", "firstLastFrame"];
   }
-  return ["imageToVideo"];
+  return ["firstFrame"];
 }
 
 /**
@@ -142,14 +208,22 @@ export function videoEmptyStateCtaModes(
  * 退到确实可用的「首帧」，避免默认推导把 1.x 顶进一个提交必 400 的模式。
  */
 export function videoUpstreamImageDefaultMode(
-  modelId: string | null | undefined,
-): VideoGenMode {
-  return isSeedance2VideoModel(modelId) ? "allReference" : "imageToVideo";
+  model: VideoModelRef,
+): VideoGenMode | null {
+  if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    for (const mode of ["allReference", "imageToVideo", "firstFrame"] as const) {
+      if (isVideoModeSupportedByModel(mode, model)) return mode;
+    }
+    return null;
+  }
+  const modelId = videoModelIdOf(model);
+  if (isHappyHorseVideoModel(modelId)) return "imageToVideo";
+  return isSeedance2VideoModel(modelId) ? "allReference" : "firstFrame";
 }
 
 /**
  * 该 genMode 是否**必须带提示词**才能提交：文生 / 全能参考 后端强校验 prompt；
- * 首帧(i2v) / 图片参考 / 首尾帧 / 视频编辑 允许空提示词（只要素材齐备即可提交）。
+ * 首帧 / 图生视频 / 图片参考 / 首尾帧 / 视频编辑允许空提示词（只要素材齐备即可提交）。
  */
 export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
   return mode === "textToVideo" || mode === "allReference";
@@ -460,19 +534,3 @@ export function videoReferenceAutoSwitchAction(input: {
     ? { kind: "switch", modelId: target.modelId, genMode: target.genMode }
     : { kind: "none" };
 }
-
-/**
- * 前端 genMode → 目录 `supportedModes` 里的取值。
- *
- * 注意 `imageToVideo` 对应的是 `first_frame` 而不是 `image_to_video`——它本就是
- * 单图首帧 i2v。GenModeSelect 过滤 tab 时用的是同一张表，两处必须一致，否则
- * 会出现「tab 可见但连线被拦」这类自相矛盾的状态。
- */
-export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
-  textToVideo: "text_to_video",
-  imageToVideo: "first_frame",
-  firstLastFrame: "first_last_frame",
-  imageReference: "image_reference",
-  allReference: "all_reference",
-  videoEdit: "video_edit",
-};

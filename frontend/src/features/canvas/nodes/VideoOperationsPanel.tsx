@@ -35,7 +35,6 @@ import {
   type VideoNodeData,
 } from "@/features/canvas/domain/canvasNodes";
 import {
-  GEN_MODE_TO_CATALOG_MODE,
   isHappyHorseVideoModel,
   isVideoModeSupportedByModel,
   videoModelReferenceDisabledReason,
@@ -128,16 +127,17 @@ const OPERATIONS_PANEL_EXPANDED_WIDTH = 1040;
 const MODE_TABS: ReadonlyArray<{ key: VideoGenMode; labelKey: string }> = [
   { key: "textToVideo", labelKey: "node.videoNode.tabs.textToVideo" },
   { key: "allReference", labelKey: "node.videoNode.tabs.allReference" },
+  { key: "firstFrame", labelKey: "node.videoNode.tabs.firstFrame" },
   { key: "imageToVideo", labelKey: "node.videoNode.tabs.imageToVideo" },
   { key: "firstLastFrame", labelKey: "node.videoNode.tabs.firstLastFrame" },
   { key: "imageReference", labelKey: "node.videoNode.tabs.imageReference" },
   { key: "videoEdit", labelKey: "node.videoNode.tabs.videoEdit" },
 ];
 
-// HappyHorse 的模式面板顺序：文生视频 → 首帧 → 图片参考 → 视频编辑。
-// 与上游文档 4 大功能一一对应，且与产品设计稿一致。
+// HappyHorse 的入口顺序：文生视频 → 首帧 → 图生视频 → 图片参考 → 视频编辑。
 const HAPPYHORSE_TAB_ORDER: ReadonlyArray<VideoGenMode> = [
   "textToVideo",
+  "firstFrame",
   "imageToVideo",
   "imageReference",
   "videoEdit",
@@ -889,7 +889,7 @@ function videoModeDisabledReason(
 ): string | null {
   // HappyHorse 的模式可用性完全由上游节点类型决定（文档 4 大功能）：
   //   文生视频  — 仅无上游时可用
-  //   首帧      — 仅上游正好 1 张图片时可用
+  //   首帧/图生视频 — 仅上游正好 1 张图片时可用
   //   图片参考  — 上游 1~9 张图片时可用
   //   视频编辑  — 仅上游有 1 个视频时可用
   // 不可用时返回 hover 文案（提示用户需要连接什么）。
@@ -898,12 +898,21 @@ function videoModeDisabledReason(
     switch (mode) {
       case "textToVideo":
         if (videos > 0) return "已连接视频节点，请使用「视频编辑」";
-        if (images > 0) return "已连接图片节点，请选择「首帧」或「图片参考」";
+        if (images > 0) return "已连接图片节点，请选择「首帧」「图生视频」或「图片参考」";
         return null;
-      case "imageToVideo": // 首帧 (i2v)
-        if (videos > 0) return "已连接视频节点，「首帧」不可用";
+      case "imageToVideo":
+      case "firstFrame":
+        if (videos > 0) {
+          return mode === "firstFrame"
+            ? "已连接视频节点，「首帧」不可用"
+            : "已连接视频节点，「图生视频」不可用";
+        }
         if (images === 0) return "需要连接图片节点（1个）";
-        if (images > 1) return "「首帧」仅支持单张图片，请用「图片参考」";
+        if (images > 1) {
+          return mode === "firstFrame"
+            ? "「首帧」仅支持单张图片"
+            : "「图生视频」仅支持单张图片，请用「图片参考」";
+        }
         return null;
       case "imageReference": // 图片参考 (r2v)
         if (videos > 0) return "已连接视频节点，「图片参考」不可用";
@@ -927,8 +936,8 @@ function videoModeDisabledReason(
   ) {
     return "已引用图片/音频素材时不可用";
   }
-  if (mode === "imageToVideo" && upstreamCounts.videos >= 2) {
-    return "上游有多个视频时不可用";
+  if ((mode === "firstFrame" || mode === "imageToVideo") && upstreamCounts.images > 1) {
+    return mode === "firstFrame" ? "「首帧」仅支持单张图片" : "「图生视频」仅支持单张图片";
   }
   if (mode === "firstLastFrame" && upstreamCounts.images > 2) {
     return "上游图片超过 2 张时不可用";
@@ -946,18 +955,15 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
     left: number;
     top: number;
   } | null>(null);
-  // HappyHorse 的模式面板对齐文档 4 大功能：文生视频 / 首帧 / 图片参考 / 视频编辑。
+  // HappyHorse 的模式面板把首帧与单图整体参考拆成独立入口。
   //   - 隐藏「首尾帧」「全能参考」：HappyHorse 无这两种能力，点了只会报错。
-  //   - 把「图生视频」显示为「首帧」：它本就是单图首帧 i2v，直接叫「首帧」跟「图片
-  //     参考」一眼分清。
-  //   - 上游接入视频后，「首帧」「图片参考」整项隐藏（文档：视频节点下没有这两个
-  //     选项），只保留「文生视频」(禁用) 与「视频编辑」。
+  //   - 首帧与图生视频是两个独立模式：前者锁定第一帧，后者把单图作为整体参考。
+  //   - 上游接入视频后，图片类入口隐藏，只保留「文生视频」(禁用) 与「视频编辑」。
   // 非 HappyHorse 不暴露「视频编辑」(它是 HappyHorse 专属功能)。
   const visibleTabs = useMemo(() => {
     if (supportedModes?.length) {
-      return MODE_TABS.filter((tab) =>
-        supportedModes.includes(GEN_MODE_TO_CATALOG_MODE[tab.key]),
-      );
+      const configuredModel = { apiModel: modelId ?? undefined, supportedModes };
+      return MODE_TABS.filter((tab) => isVideoModeSupportedByModel(tab.key, configuredModel));
     }
     if (!isHappyHorseVideoModel(modelId)) {
       // 按模型能力过滤，而非「非 HappyHorse 一律给全部」：Seedance 1.x 不支持
@@ -970,12 +976,7 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
         : HAPPYHORSE_TAB_ORDER;
     return order
       .map((key) => MODE_TABS.find((tab) => tab.key === key))
-      .filter((tab): tab is (typeof MODE_TABS)[number] => Boolean(tab))
-      .map((tab) =>
-        tab.key === "imageToVideo"
-          ? { ...tab, labelKey: "node.videoNode.tabs.firstFrame" }
-          : tab,
-      );
+      .filter((tab): tab is (typeof MODE_TABS)[number] => Boolean(tab));
   }, [modelId, supportedModes, upstreamCounts.videos]);
   const activeTab = visibleTabs.find((tab) => tab.key === value) ?? visibleTabs[0];
 
@@ -1651,6 +1652,7 @@ function ReferenceMediaRow({
         const modeLabel =
           {
             textToVideo: "文生视频",
+            firstFrame: "首帧",
             imageToVideo: "图生视频",
             imageReference: "多图参考",
             firstLastFrame: "首尾帧",

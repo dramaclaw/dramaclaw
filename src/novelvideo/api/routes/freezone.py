@@ -7051,7 +7051,8 @@ def _require_catalog_video_mode(
 ) -> None:
     normalized = {
         "textToVideo": "text_to_video",
-        "imageToVideo": "first_frame",
+        "firstFrame": "first_frame",
+        "imageToVideo": "image_reference",
         "firstLastFrame": "first_last_frame",
         "imageReference": "image_reference",
         "allReference": "all_reference",
@@ -7643,10 +7644,10 @@ async def freezone_video_i2v(
     body: FreezoneImageToVideoRequest,
     user: dict = Depends(get_api_user),
 ):
-    """视频处理：图片参考视频。
+    """视频处理：图片驱动视频。
 
     统一承接：
-    - 单图首帧图生视频
+    - 单图图生视频（单张图片参考，不锁定第一帧）
     - 多图图片参考视频
     """
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
@@ -7660,16 +7661,15 @@ async def freezone_video_i2v(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    requested_mode = body.gen_mode or (
-        "image_reference" if len(body.image_urls) > 1 else "first_frame"
-    )
+    requested_mode = body.gen_mode
+    execution_mode = "image_reference"
     request_schema, model_params, capabilities = await _resolve_catalog_request(
         "video",
         body.model,
         body.model_params,
-        mode=requested_mode,
+        mode=execution_mode,
     )
-    _require_catalog_video_mode(capabilities, requested_mode)
+    _require_catalog_video_mode(capabilities, execution_mode)
 
     reference_limits = _catalog_reference_limits(
         capabilities,
@@ -7679,10 +7679,13 @@ async def freezone_video_i2v(
     )
     if not body.image_urls:
         raise HTTPException(400, "image_urls is required")
-    if len(body.image_urls) > reference_limits["image"]:
+    if requested_mode == "imageToVideo" and len(body.image_urls) != 1:
+        raise HTTPException(400, "imageToVideo requires exactly one image reference")
+    image_limit = 1 if requested_mode == "imageToVideo" else reference_limits["image"]
+    if len(body.image_urls) > image_limit:
         raise HTTPException(
             400,
-            f"this model supports at most {reference_limits['image']} image references",
+            f"this mode supports at most {image_limit} image references",
         )
 
     source_paths = _resolve_url_list(project_dir, list(body.image_urls))
@@ -7700,14 +7703,10 @@ async def freezone_video_i2v(
             "multiple image references currently only support Seedance 2.0 or HappyHorse models",
         )
 
-    reference_mode = requested_mode in {"imageReference", "image_reference"}
-    reference_items = []
-    for idx, path in enumerate(source_paths):
-        if reference_mode:
-            role = "图片参考"
-        else:
-            role = "首帧" if idx == 0 else "图片参考"
-        reference_items.append({"type": "image", "path": path, "role": role})
+    reference_items = [
+        {"type": "image", "path": path, "role": "图片参考"}
+        for path in source_paths
+    ]
     final_prompt = build_freezone_image_to_video_prompt(
         user_prompt=body.prompt,
         camera_template_id=body.camera_template_id,
@@ -7745,7 +7744,7 @@ async def freezone_video_i2v(
             node_id=body.node_id or None,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode=requested_mode,
+            gen_mode=execution_mode,
             model_params=model_params,
             request_schema=request_schema,
         )
@@ -7764,9 +7763,9 @@ async def freezone_video_keyframes(
     body: FreezoneKeyframeVideoRequest,
     user: dict = Depends(get_api_user),
 ):
-    """视频处理：首尾帧视频。
+    """视频处理：关键帧视频。
 
-    接受首帧和尾帧图片；至少需要提供一个。
+    接受仅首帧、首帧+尾帧或仅尾帧；至少需要提供一个。
     """
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
         project, user
@@ -7781,16 +7780,22 @@ async def freezone_video_keyframes(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    if body.first_frame_url and body.last_frame_url:
+        execution_mode = "first_last_frame"
+    elif body.first_frame_url:
+        execution_mode = "first_frame"
+    else:
+        # 目录暂不新增独立 last_frame 能力。仅尾帧仍属于关键帧能力，最终协议只下发
+        # last_frame_image，不把它伪装成首帧。
+        execution_mode = "first_last_frame"
+
     request_schema, model_params, capabilities = await _resolve_catalog_request(
         "video",
         body.model,
         body.model_params,
-        mode=body.gen_mode or "first_last_frame",
+        mode=execution_mode,
     )
-    _require_catalog_video_mode(
-        capabilities,
-        body.gen_mode or "first_last_frame",
-    )
+    _require_catalog_video_mode(capabilities, execution_mode)
     reference_limits = _catalog_reference_limits(
         capabilities,
         image_default=2,
@@ -7812,13 +7817,15 @@ async def freezone_video_keyframes(
     )
     first_path = first_paths[0] if first_paths else ""
     last_path = last_paths[0] if last_paths else ""
+    if body.first_frame_url and not first_path:
+        raise HTTPException(400, "first_frame_url could not be resolved")
+    if body.last_frame_url and not last_path:
+        raise HTTPException(400, "last_frame_url could not be resolved")
 
-    # 只有尾帧时，退化为单帧起始参考；仍保留尾帧语义在 prompt 中。
-    primary_first_path = first_path or last_path
-    reference_items = [
-        {"type": "image", "path": primary_first_path, "role": "首帧" if first_path else "尾帧参考"}
-    ]
-    if last_path and first_path:
+    reference_items = []
+    if first_path:
+        reference_items.append({"type": "image", "path": first_path, "role": "首帧"})
+    if last_path:
         reference_items.append({"type": "image", "path": last_path, "role": "尾帧"})
 
     final_prompt = build_freezone_keyframe_video_prompt(
@@ -7860,7 +7867,7 @@ async def freezone_video_keyframes(
             node_id=body.node_id or None,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode=body.gen_mode or "first_last_frame",
+            gen_mode=execution_mode,
             model_params=model_params,
             request_schema=request_schema,
         )

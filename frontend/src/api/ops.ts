@@ -291,8 +291,6 @@ export interface FreezoneVideoKeyframesPayload extends FreezoneNodeContext {
   durationSeconds?: number;
   generateAudio?: boolean;
   model?: string;
-  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
-  genMode?: string;
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -327,7 +325,6 @@ export async function submitFreezoneVideoKeyframes(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -338,12 +335,11 @@ export async function submitFreezoneVideoKeyframes(
 
 // /freezone/video/i2v ----------------------------------------------------- //
 //
-// Unified endpoint for 图生视频 (single image, treated as first-frame ref)
-// and 图片参考视频 (2-9 images, multi-reference). The backend distinguishes
-// these two modes by `image_urls.length`.
+// Unified endpoint for single-image 图生视频 and multi-image 图片参考. Both
+// use image_reference provider semantics and never occupy the first-frame slot.
 
 export interface FreezoneVideoI2vPayload extends FreezoneNodeContext {
-  /** 1-9 image static URLs. First entry is the primary/first-frame ref. */
+  /** Image reference URLs. imageToVideo requires one; imageReference uses the catalog cap. */
   imageUrls: string[];
   prompt?: string;
   cameraTemplateId?: string | null;
@@ -354,8 +350,8 @@ export interface FreezoneVideoI2vPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** default huimeng_seedance10_fast (matches keyframes); multi-image prefers seedance 2.0. */
   model?: string;
-  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
-  genMode?: string;
+  /** Required product entry; both values execute as image_reference. */
+  genMode: "imageToVideo" | "imageReference";
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -389,7 +385,7 @@ export async function submitFreezoneVideoI2v(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
