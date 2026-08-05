@@ -461,16 +461,11 @@ def test_seedance2_prompt_composer_uses_newapi_composer_model_env(monkeypatch):
     import novelvideo.seedance2_i2v.prompt as seedance2_prompt
 
     model_calls = []
-    settings_calls = []
     agent_kwargs = {}
 
     def fake_newapi_model(model_env, default_model):
         model_calls.append((model_env, default_model))
         return "composer-model"
-
-    def fake_settings():
-        settings_calls.append(())
-        return {"openai_reasoning_effort": "none"}
 
     class FakeAgent:
         def __init__(self, model, **kwargs):
@@ -478,18 +473,16 @@ def test_seedance2_prompt_composer_uses_newapi_composer_model_env(monkeypatch):
             agent_kwargs.update(kwargs)
 
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
-    monkeypatch.setattr(config, "get_newapi_structured_output_model_settings", fake_settings)
     monkeypatch.setattr("pydantic_ai.Agent", FakeAgent)
 
     seedance2_prompt.create_seedance2_prompt_composer_agent()
 
     assert model_calls == [("SEEDANCE2_PROMPT_COMPOSER_MODEL", "gemini-3.5-flash")]
-    assert settings_calls == [()]
     assert agent_kwargs["model"] == "composer-model"
-    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "none"}
+    assert "model_settings" not in agent_kwargs
     assert agent_kwargs["name"] == "Seedance 2.0 Prompt Composer"
-    assert agent_kwargs["output_type"] is seedance2_prompt.Seedance2PromptComposerOutput
-    assert agent_kwargs["output_retries"] == 2
+    assert agent_kwargs["output_type"] is str
+    assert "output_retries" not in agent_kwargs
 
 
 def test_ai_identity_detector_keeps_legacy_global_video_model_fallback(monkeypatch):

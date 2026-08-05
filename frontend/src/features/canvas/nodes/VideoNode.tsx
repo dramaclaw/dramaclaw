@@ -68,13 +68,12 @@ import {
   formatAudioDurationClips,
   MAX_AUDIO_REFERENCE_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
-  hasConfiguredReferenceCaps,
   isHappyHorseVideoModel,
   isSeedance2VideoModel,
-  referenceCapsForMode,
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
   videoModelReferenceDisabledReason,
+  videoMultiImageAutoSwitchMode,
   videoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
@@ -244,8 +243,30 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
   firstLastFrame: { Icon: Layers, label: "首尾帧生成视频" },
 };
 
-// 各 genMode 的上游素材上限（REFERENCE_CAPS_BY_MODE / referenceCapsForMode）已收敛到
-// nodes/shared/videoModelCapabilities.ts —— 画布的连线拦截也要用同一把尺子。
+// 各 genMode 对上游引用数量的硬上限。UI 用这张表把后端字段约束（多图 / 多模态
+// 场景下）显式表达出来：超额 chip 标灰 + 从 @ 候选剔除，避免「prompt 引用了
+// @图片10 但提交时被静默丢掉」。
+//
+// 表里没出现的模式默认不限制（textToVideo 不消费上游），走原有路径。
+//   - allReference (omni)  ：image 1-9 / video 0-3 / audio 0-3。音频另有**逐条**
+//                            1.8~15.2s 的厂商时长约束，在提交前单独校验（见
+//                            audioReferenceDurationRejection）；**没有总时长上限**，
+//                            服务端也不校验时长，别再往这张表里加总时长口径。
+//   - firstLastFrame       ：仅图片 2 张（首帧 + 尾帧），不允许任何视频 / 音频。
+//                            图片 >2 时另有自动切到 allReference 的兜底（见
+//                            VideoNode 内部 effect）。
+//   - imageToVideo         ：仅图片 1 张。i2v 端点按张数分流（1 张 = 图生视频，
+//                            2-9 张 = 图片参考），多给一张就悄悄换了种生成方式。
+//                            图片 >1 时同样有自动切模式的兜底（见内部 effect）。
+const REFERENCE_CAPS_BY_MODE: Partial<
+  Record<VideoGenMode, { image: number; video: number; audio: number }>
+> = {
+  imageToVideo: { image: 1, video: 0, audio: 0 },
+  imageReference: { image: 9, video: 0, audio: 0 },
+  videoEdit: { image: 5, video: 1, audio: 0 },
+  allReference: { image: 9, video: 3, audio: 3 },
+  firstLastFrame: { image: 2, video: 0, audio: 0 },
+};
 
 // 后台「媒体模型」未给该模型配置比例 / 分辨率时的兜底档位。正常路径下这两项
 // 都来自目录条目的 ratioOptions / resolutionOptions。
@@ -362,6 +383,35 @@ function selectedVideoModelReferenceDisabledReason(
       : `该模型最多支持 ${caps.audio} 个音频素材`;
   }
   return null;
+}
+
+// 「首帧生成视频」的 1 张图是**结构性**的，不是模型容量：i2v 端点按图片张数分流
+// （1 张 = 图生视频，2-9 张 = 图片参考），第二张一进去做的就已经不是首帧生成了。
+// 所以这条不接受媒体目录 referenceImageMax 的覆盖——那个字段表达的是「这个模型最多
+// 能吃几张参考图」，管的是参考类模式；让它盖住这里等于允许配置把首帧悄悄变成参考。
+const FIXED_IMAGE_CAP_BY_MODE: Partial<Record<VideoGenMode, number>> = {
+  imageToVideo: 1,
+};
+
+function referenceCapsForMode(
+  model: ModelOption | null | undefined,
+  mode: VideoGenMode,
+): { image: number; video: number; audio: number } | null {
+  const defaults = REFERENCE_CAPS_BY_MODE[mode];
+  if (!defaults) return null;
+  return {
+    image: FIXED_IMAGE_CAP_BY_MODE[mode] ?? model?.referenceImageMax ?? defaults.image,
+    video: model?.referenceVideoMax ?? defaults.video,
+    audio: model?.referenceAudioMax ?? defaults.audio,
+  };
+}
+
+function hasConfiguredReferenceCaps(model: ModelOption | null | undefined): boolean {
+  return (
+    model?.referenceImageMax != null ||
+    model?.referenceVideoMax != null ||
+    model?.referenceAudioMax != null
+  );
 }
 
 function sceneOptimizeOptionsForModel(
@@ -1348,8 +1398,9 @@ export const VideoNode = memo(
     // 一条统一状态机替代分散的兜底 effect，避免多个 effect 互相打架：
     //   - 上游有视频            → 视频编辑 (videoEdit / video_url)
     //   - 上游图片 >1 张        → 图片参考 (imageReference / reference_images 1-9)
-    //   - 上游图片 == 1 张      → 默认首帧 (imageToVideo / image_url)，但尊重用户
-    //                             主动切到的「图片参考」
+    //   - 上游图片 == 1 张      → 默认图片参考，但尊重用户主动切到的「首帧」
+    //     （单张图两种模式都可用，默认给图片参考：它 1~9 张都吃，再连一张不用换模式；
+    //      首帧只吃 1 张，默认落在那儿等于让用户接着连第二张时被迫改模式。）
     //   - 无上游                → 文生视频 (textToVideo)
     // 每次都纠正，确保 genMode 不会卡在与当前上游不匹配的模式（否则 submit 时会被
     // 静默截断 / 触发上游互斥报错）。
@@ -1362,7 +1413,7 @@ export const VideoNode = memo(
       } else if (images > 1) {
         target = "imageReference";
       } else if (images === 1) {
-        target = genMode === "imageReference" ? "imageReference" : "imageToVideo";
+        target = genMode === "imageToVideo" ? "imageToVideo" : "imageReference";
       } else {
         target = "textToVideo";
       }
@@ -1512,6 +1563,29 @@ export const VideoNode = memo(
       if (upstreamCounts.images <= 2) return;
       updateNodeData(id, { genMode: "allReference" });
     }, [genMode, isHappyHorseModel, upstreamCounts.images, id, updateNodeData]);
+
+    // 「首帧生成视频」只承载一张图。i2v 端点按图片张数分流（1 张 = 图生视频，
+    // 2-9 张 = 图片参考），接上第二张后做的其实已经是图片参考了，模式却还停在
+    // 首帧上——所以直接把模式导到它真正在做的事情：全能参考 / 图片参考。
+    // 跟上面首尾帧 >2 图那条是同一类兜底，每次都纠正（不做一次性闩锁），
+    // 免得用户在多图状态下停在首帧、提交时被静默截断成一张。
+    // 该切到哪个、哪些情况不该动，全部收在 videoMultiImageAutoSwitchMode 里。
+    useEffect(() => {
+      const target = videoMultiImageAutoSwitchMode(
+        genMode,
+        selectedVideoModel ?? selectedVideoModelId,
+        upstreamCounts.images,
+      );
+      if (!target || target === genMode) return;
+      updateNodeData(id, { genMode: target });
+    }, [
+      genMode,
+      selectedVideoModel,
+      selectedVideoModelId,
+      upstreamCounts.images,
+      id,
+      updateNodeData,
+    ]);
 
     useEffect(
       () => () => {

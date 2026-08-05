@@ -53,16 +53,7 @@ import {
   type CanvasNodeType,
   DEFAULT_NODE_WIDTH,
   isStoryboardGroupNode,
-  isVideoNode,
 } from '@/features/canvas/domain/canvasNodes';
-import {
-  countReferenceKinds,
-  referenceConnectionRejectionReason,
-  videoConnectionCapModel,
-  referenceKindOfNode,
-  videoModelForNode,
-} from '@/features/canvas/nodes/shared/videoModelCapabilities';
-import { useFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
 import {
   CANVAS_ASSET_DRAG_MIME,
   readAssetDragPayload,
@@ -117,6 +108,8 @@ import {
 } from '@/features/canvas/domain/nodeRegistry';
 import { nodeCatalog } from '@/features/canvas/application/nodeCatalog';
 import { applySkillRoleBindingConnection } from '@/features/canvas/domain/skillConnectionEdges';
+import { videoReferenceConnectionRejection } from '@/features/canvas/domain/videoReferenceLimits';
+import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import { embedStoryboardImageMetadata } from '@/commands/image';
 import { nodeTypes as canvasNodeTypes } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
@@ -962,10 +955,6 @@ export function Canvas({
 
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
-  // 连线拦截要按目标视频节点选中模型的素材上限判定。共享 store，不额外发请求。
-  // isLoading 一并取出：pending 期间 models 不是空数组而是硬编码的 VIDEO_MODELS，
-  // 下面的换模型剪枝必须等它落定才能记基线（同 videoReferenceAutoSwitchAction 的闸门）。
-  const { models: videoModels, isLoading: videoModelsLoading } = useFreezoneVideoModels();
   // 连线可见性：隐藏时只给 ReactFlow 的边打 `hidden`，真实 edges 一动不动（见
   // edgeVisibilityStore）。持久化/自动布局/导出全部照用 store 里的真实连线。
   const edgesHidden = useEdgeVisibilityStore((state) => state.hidden);
@@ -1753,63 +1742,14 @@ export function Canvas({
     [replaceEdges, skillById],
   );
 
-  // 视频节点的上游素材数量上限 —— 由后台「媒体模型」的 referenceImageMax /
-  // referenceVideoMax / referenceAudioMax 下发，未配置时回落到各 genMode 的兜底表。
-  // 拿到拒绝原因就说明这条边会让素材超额，不放行。
-  //
-  // 刻意读 store 快照而不是渲染闭包里的 nodes / edges：批量「+」扇入会在同一个事件里
-  // 连着调多次 connectGraphNodes，闭包里的 edges 在循环中间不会更新，按它计数会让一次
-  // 拖拽把远超上限的边整批放进来。
-  const videoConnectionRejection = useCallback(
-    (connection: Connection | Edge): string | null => {
-      const { source, target } = connection;
-      if (!source || !target) return null;
-      const { nodes: currentNodes, edges: currentEdges } = useCanvasStore.getState();
-      const targetNode = currentNodes.find((node) => node.id === target);
-      if (!isVideoNode(targetNode)) return null;
-      const sourceNode = currentNodes.find((node) => node.id === source);
-      const kind = referenceKindOfNode(sourceNode);
-      if (!kind) return null;
-      // 已连的同一条边重复触发时不该把自己算进已有计数。
-      const existing = countReferenceKinds(
-        currentEdges
-          .filter((edge) => edge.target === target && edge.source !== source)
-          .map((edge) => currentNodes.find((node) => node.id === edge.source)),
-      );
-      const model = videoModelForNode(targetNode, videoModels);
-      // 上限按「接上这条边之后」实际会生效的模型算：Seedance 1.x 接第一个视频/音频
-      // 素材会被自动救场成 2.0 + 全能参考，按救场前的 1.x 拦会把那条边本身挡掉。
-      const capModel = videoConnectionCapModel({
-        currentModel: model,
-        counts: {
-          videos: existing.videos + (kind === 'video' ? 1 : 0),
-          audios: existing.audios + (kind === 'audio' ? 1 : 0),
-        },
-        models: videoModels,
-        modelsLoading: videoModelsLoading,
-      });
-      return referenceConnectionRejectionReason(capModel, existing, kind);
-    },
-    [videoModels, videoModelsLoading],
-  );
-
   const connectGraphNodes = useCallback(
     (connection: Connection, explicitSkill?: SkillDefinition | null): void => {
-      // 所有手工建边路径的收口。除 onConnect 外还有「拖到节点本体、靠 DOM 命中兜底」
-      // 「拖到空白处新建节点后回连」「批量 + 扇入」三条，它们都不经过 isValidConnection
-      // 和 onConnect —— 超额拦截必须放在这里才拦得全。
-      const rejection = videoConnectionRejection(connection);
-      if (rejection) {
-        // 批量扇入会连着调多次，固定 id 让重复提示合并成一条。
-        toast.error(rejection, { id: 'video-reference-cap' });
-        return;
-      }
       if (connectSkillRoleBinding(connection, explicitSkill)) {
         return;
       }
       connectNodes(connection);
     },
-    [connectNodes, connectSkillRoleBinding, videoConnectionRejection],
+    [connectNodes, connectSkillRoleBinding],
   );
 
   const bindSingleBeatContextInput = useCallback(
@@ -1837,62 +1777,11 @@ export function Canvas({
     [connectSkillRoleBinding],
   );
 
-  // 换模型后，已连的素材可能超出新模型的上限 —— 把超出的边断掉，并告知断了什么，
-  // 不静默丢。只在「模型确实变了」时动手：
-  //   - 首次跑只记录基线，打开画布不会因为历史数据被删边；
-  //   - 模型没变时每帧只是比对字符串，拖拽不受影响。
-  // 保留的是连线顺序靠前的（与 @图片N 编号、提交顺序同一口径），断开靠后的。
-  //
-  // **必须等目录落定再记基线**：`useFreezoneVideoModels` 在 pending 时返回的是
-  // 硬编码的 VIDEO_MODELS，节点上持久化的自定义模型此时解析不出来，videoModelForNode
-  // 会落到兜底列表首项。照它记了基线，目录回来后模型 id 从兜底首项变成真正选中的那个，
-  // 这条 effect 就会把「异步 hydration」误判成「用户换了模型」，当场删掉超出新上限的
-  // 既有边并落盘 —— 用户什么都没做，只是打开了一张旧画布，连线就没了，且不可逆。
-  const lastVideoModelIdsRef = useRef<Map<string, string> | null>(null);
-  useEffect(() => {
-    if (videoModelsLoading || videoModels.length === 0) return;
-    const seen = new Map<string, string>();
-    const baseline = lastVideoModelIdsRef.current;
-    const pruned: { edgeId: string; reason: string }[] = [];
-    for (const node of nodes) {
-      if (!isVideoNode(node)) continue;
-      const model = videoModelForNode(node, videoModels);
-      const modelId = model?.id ?? '';
-      seen.set(node.id, modelId);
-      // 基线里没有这个节点 = 这一轮才第一次见到它（首帧、目录 refetch 期间新建、
-      // 画布切换后重挂）。「没见过」不是「换了模型」，只记不删。
-      const previousModelId = baseline?.get(node.id);
-      if (previousModelId === undefined || previousModelId === modelId) continue;
-      const counts = { images: 0, videos: 0, audios: 0 };
-      for (const edge of edges) {
-        if (edge.target !== node.id) continue;
-        const kind = referenceKindOfNode(nodes.find((item) => item.id === edge.source));
-        if (!kind) continue;
-        const reason = referenceConnectionRejectionReason(model, counts, kind);
-        if (reason) {
-          pruned.push({ edgeId: edge.id, reason });
-          continue;
-        }
-        if (kind === 'image') counts.images += 1;
-        else if (kind === 'video') counts.videos += 1;
-        else counts.audios += 1;
-      }
-    }
-    lastVideoModelIdsRef.current = seen;
-    if (pruned.length === 0) return;
-    pruned.forEach(({ edgeId }) => deleteEdge(edgeId));
-    scheduleCanvasPersist(0);
-    toast.warning(
-      `${pruned[0].reason}，已断开 ${pruned.length} 条超出上限的素材连线`,
-    );
-  }, [nodes, edges, videoModels, videoModelsLoading, deleteEdge, scheduleCanvasPersist]);
-
   const handleConnect = useCallback(
     (connection: Connection) => {
       if (!canNodeBeManualConnectionSource(connection.source, nodes, connection.target)) {
         return;
       }
-      // 素材超额的拦截在 connectGraphNodes 里统一做（那里才是所有建边路径的收口）。
       connectGraphNodes(connection);
       scheduleCanvasPersist(0);
     },
@@ -1908,9 +1797,6 @@ export function Canvas({
       if (!targetId) return true;
       const targetNode = nodes.find((node) => node.id === targetId);
       if (!targetNode) return true;
-      // 素材超额的边在拖线过程中就变灰、不可落点。这里只判定不提示——每帧都会
-      // 跑，弹 toast 会刷屏；提示留给 handleConnect 松手那一次。
-      if (videoConnectionRejection(connection)) return false;
       // 类型规则：拖线过程中就把不合法的源（如音频连图片）变灰、禁止落点。刻意复用
       // handleConnect 松手时那把尺子本身 —— 只查领域层的手工建边规则是不够的，那样
       // 3D 世界 / 360° 全景的额外限制会漏在外面，表现成「拖过去高亮成合法、一松手
@@ -1921,12 +1807,24 @@ export function Canvas({
       if (sourceNode && !canNodeTypeBeManualConnectionSource(sourceNode.type, targetNode.type)) {
         return false;
       }
+      // 视频节点的素材已经满到能力包络（图 9 / 视频 3 / 音频 3 / 总数 12）时，
+      // 拖线落点变灰、不成边。与 store 的 onConnect 收口同一把尺子。
+      if (
+        videoReferenceConnectionRejection(
+          nodes,
+          edges,
+          connection,
+          videoReferenceEnvelopeForNode,
+        ) != null
+      ) {
+        return false;
+      }
       if (targetNode.type !== CANVAS_NODE_TYPES.threeDWorld) return true;
       return !edges.some(
         (edge) => edge.target === targetId && edge.source !== connection.source,
       );
     },
-    [nodes, edges, videoConnectionRejection]
+    [nodes, edges]
   );
 
   // 平移/缩放期间 onMove 每帧触发。把 currentViewport 写进 store 会让所有订阅者每帧
@@ -4008,6 +3906,24 @@ export function Canvas({
     }
   }, []);
 
+  // 手动建边落到某个节点上时，这条边会不会把视频节点的素材撑过能力包络？非空即拒绝。
+  // 三条手动路径（React Flow 拖线松手、"+" 拖拽的落点高亮、"+" 松手建边）共用同一把
+  // 尺子——少一处就会出现「拖过去高亮成合法、一松手什么也没有」。
+  const manualDropReferenceRejection = useCallback(
+    (pending: PendingConnectStart, dropNodeId: string | null): string | null => {
+      if (!dropNodeId || dropNodeId === pending.nodeId) return null;
+      const sourceId = pending.handleType === 'source' ? pending.nodeId : dropNodeId;
+      const targetId = pending.handleType === 'source' ? dropNodeId : pending.nodeId;
+      return videoReferenceConnectionRejection(
+        nodes,
+        edges,
+        { source: sourceId, target: targetId },
+        videoReferenceEnvelopeForNode,
+      );
+    },
+    [edges, nodes],
+  );
+
   const handleConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
       if (connectionState.isValid || !pendingConnectStart) {
@@ -4032,6 +3948,21 @@ export function Canvas({
       const dropNodeId = dropNodeElement?.dataset?.id ?? null;
 
       if (dropNodeId && dropNodeId !== pendingConnectStart.nodeId) {
+        // 素材撑过能力包络：这条分支是 connectionState.isValid 为 false 才走到的
+        // 补救路径，**不看** isValidConnection，必须自己拦。不拦就会一路掉进下面
+        // 「拖到空白处 → 弹新建节点菜单」，用户明明松手在节点上却弹出个菜单。
+        // 顺带 toast 出原因——落点变灰本身不解释「为什么」。
+        const referenceRejection = manualDropReferenceRejection(
+          pendingConnectStart,
+          dropNodeId,
+        );
+        if (referenceRejection) {
+          toast.warning(referenceRejection);
+          setPendingConnectStart(null);
+          setPreviewConnectionVisual(null);
+          return;
+        }
+
         const sourceNode =
           pendingConnectStart.handleType === 'source'
             ? nodes.find((node) => node.id === pendingConnectStart.nodeId)
@@ -4152,6 +4083,7 @@ export function Canvas({
     },
     [
       connectGraphNodes,
+      manualDropReferenceRejection,
       nodes,
       pendingConnectStart,
       reactFlowInstance,
@@ -4226,6 +4158,9 @@ export function Canvas({
       const validate = (el: HTMLElement | null): HTMLElement | null => {
         const dropNodeId = el?.dataset?.id ?? null;
         if (!el || !dropNodeId || dropNodeId === pending.nodeId) return null;
+        // 素材已满的视频节点不高亮成落点（与拖线时落点变灰同一口径）；松手那一下
+        // 由 handlePlusConnectDragEnd 再 toast 出原因。
+        if (manualDropReferenceRejection(pending, dropNodeId)) return null;
         const sourceNode =
           pending.handleType === 'source'
             ? nodes.find((node) => node.id === pending.nodeId)
@@ -4284,7 +4219,7 @@ export function Canvas({
         });
       return best;
     },
-    [nodes],
+    [manualDropReferenceRejection, nodes],
   );
 
   const handlePlusConnectDragStart = useCallback((params: PlusConnectDragParams) => {
@@ -4374,6 +4309,23 @@ export function Canvas({
 
       const containerRect = wrapperRef.current?.getBoundingClientRect();
       if (!pending || !containerRect) {
+        setPendingConnectStart(null);
+        setPreviewConnectionVisual(null);
+        return;
+      }
+
+      // 素材已满的视频节点上面 resolveManualDropTargetEl 不会认作落点（不高亮），
+      // 松手就会掉进「拖到空白处 → 弹新建节点菜单」。所以先单独看光标正下方压着
+      // 谁：确实是被素材上限挡下的，就 toast 出原因并收工，别弹那个菜单。
+      const hoveredNodeId =
+        (
+          document
+            .elementFromPoint(params.clientPosition.x, params.clientPosition.y)
+            ?.closest?.('.react-flow__node[data-id]') as HTMLElement | null
+        )?.dataset?.id ?? null;
+      const hoveredRejection = manualDropReferenceRejection(pending, hoveredNodeId);
+      if (hoveredRejection) {
+        toast.warning(hoveredRejection);
         setPendingConnectStart(null);
         setPreviewConnectionVisual(null);
         return;
@@ -4471,6 +4423,7 @@ export function Canvas({
     },
     [
       connectGraphNodes,
+      manualDropReferenceRejection,
       nodes,
       reactFlowInstance,
       scheduleCanvasPersist,

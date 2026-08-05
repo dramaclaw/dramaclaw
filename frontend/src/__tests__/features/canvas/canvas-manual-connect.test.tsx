@@ -474,114 +474,107 @@ describe("Canvas 拖线落点校验与建边判定对齐", () => {
   });
 });
 
-// 素材上限拦截**不能只挂在 onConnect 上**。手工建边有好几条路径,只有从 handle 精确
-// 松手那一条走 onConnect;拖到节点本体上是靠 handleConnectEnd 里的 DOM 命中兜底直接
-// 调 connectGraphNodes 的,批量「+」扇入也是。曾经只在 onConnect 里拦,结果第 4 个视频
-// 拖到节点身上照样连得上。所以拦截落在 connectGraphNodes(所有路径的收口),这里对两条
-// 路径分别断言。
-//
-// 没配 referenceVideoMax 时视频上界是 3(全能参考),故第 3 条放行、第 4 条拦下。
-describe("Canvas 视频素材上限拦截", () => {
-  const TARGET = "target-video";
+// 素材上限(videoReferenceLimits)是后加的一条规则,同样必须两处同源:只在 onConnect
+// 里拦,用户会看见落点高亮成合法、松手却什么也没建;只在 isValidConnection 里拦,
+// 其它建边路径(资产拖入、菜单新建)照样能把第 10 张图连上去。
+describe("Canvas 素材上限在落点校验与建边判定上对齐", () => {
+  const IMAGE_CAP = 9;
 
-  function seedCanvas(upstreamCount: number) {
-    const sources = Array.from({ length: upstreamCount }, (_, index) => ({
-      id: `src-${index}`,
-      type: CANVAS_NODE_TYPES.video,
-      position: { x: 0, y: index * 200 },
-      data: { videoUrl: `/v${index}.mp4` },
+  function setupSaturatedVideo() {
+    const images = Array.from({ length: IMAGE_CAP + 1 }, (_, index) => ({
+      id: `image-${index}`,
+      type: CANVAS_NODE_TYPES.imageGen,
+      data: { imageUrl: `/i-${index}.png` },
+      position: { x: index * 300, y: 0 },
     }));
+    const video = {
+      id: "video",
+      type: CANVAS_NODE_TYPES.video,
+      data: { videoUrl: "/v.mp4" },
+      position: { x: 0, y: 800 },
+    };
+    // 前 9 张已连上,第 10 张(image-9)是这次要拖的。
     useCanvasStore.getState().setCanvasData(
-      [
-        ...sources,
-        { id: "extra", type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 999 }, data: { videoUrl: "/extra.mp4" } },
-        { id: TARGET, type: CANVAS_NODE_TYPES.video, position: { x: 600, y: 0 }, data: {} },
-      ],
-      sources.map((node) => ({
+      [...images, video],
+      images.slice(0, IMAGE_CAP).map((node) => ({
         id: `e-${node.id}`,
         source: node.id,
-        target: TARGET,
+        target: video.id,
         sourceHandle: "source",
         targetHandle: "target",
       })),
     );
   }
 
-  const extraEdgeExists = () =>
-    useCanvasStore.getState().edges.some((edge) => edge.source === "extra");
-
   beforeEach(() => {
     capturedOnConnect = null;
-    capturedOnConnectStart = null;
-    capturedOnConnectEnd = null;
     capturedReactFlowProps = null;
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    setupSaturatedVideo();
   });
 
-  it("onConnect:第 4 个视频既不高亮成合法,也不建边", async () => {
-    seedCanvas(3);
+  it(`已连满 ${IMAGE_CAP} 张图时,第 ${IMAGE_CAP + 1} 张两处都拒绝`, async () => {
     renderCanvas();
     await waitFor(() => expect(capturedOnConnect).toBeTruthy());
 
     const connection: Connection = {
-      source: "extra",
+      source: `image-${IMAGE_CAP}`,
       sourceHandle: "source",
-      target: TARGET,
+      target: "video",
       targetHandle: "target",
     };
     const isValidConnection = capturedReactFlowProps?.isValidConnection as
       | ((connection: Connection | Edge) => boolean)
       | undefined;
+    const highlightedAsValid = isValidConnection?.(connection);
 
-    expect(isValidConnection?.(connection)).toBe(false);
     act(() => {
       capturedOnConnect?.(connection);
     });
-    expect(extraEdgeExists()).toBe(false);
+    const edgeCreated = useCanvasStore
+      .getState()
+      .edges.some((edge) => edge.source === connection.source && edge.target === "video");
+
+    expect({ highlightedAsValid, edgeCreated }).toEqual({
+      highlightedAsValid: false,
+      edgeCreated: false,
+    });
+    // 已有的 9 条不能被这次拒绝顺手带走。
+    expect(
+      useCanvasStore.getState().edges.filter((edge) => edge.target === "video"),
+    ).toHaveLength(IMAGE_CAP);
   });
 
-  it("拖到节点本体(connect-end DOM 兜底)同样拦得住,而未超额时仍建得上", async () => {
-    async function dropOnTargetBody(upstreamCount: number) {
-      seedCanvas(upstreamCount);
-      const view = renderCanvas();
-      await waitFor(() => expect(capturedOnConnectEnd).toBeTruthy());
+  it(`没连满时(${IMAGE_CAP - 1} 张)两处都放行`, async () => {
+    act(() => {
+      useCanvasStore.setState((state) => ({
+        edges: state.edges.filter((edge) => edge.source !== `image-${IMAGE_CAP - 1}`),
+      }));
+    });
+    renderCanvas();
+    await waitFor(() => expect(capturedOnConnect).toBeTruthy());
 
-      const targetElement = document.createElement("div");
-      targetElement.className = "react-flow__node";
-      targetElement.dataset.id = TARGET;
-      document.body.appendChild(targetElement);
-      const originalElementFromPoint = document.elementFromPoint;
-      Object.defineProperty(document, "elementFromPoint", {
-        configurable: true,
-        value: vi.fn().mockReturnValue(targetElement),
-      });
+    const connection: Connection = {
+      source: `image-${IMAGE_CAP}`,
+      sourceHandle: "source",
+      target: "video",
+      targetHandle: "target",
+    };
+    const isValidConnection = capturedReactFlowProps?.isValidConnection as
+      | ((connection: Connection | Edge) => boolean)
+      | undefined;
+    const highlightedAsValid = isValidConnection?.(connection);
 
-      try {
-        act(() => {
-          capturedOnConnectStart?.(
-            { clientX: 0, clientY: 0, target: null } as unknown as MouseEvent,
-            { nodeId: "extra", handleId: "source", handleType: "source" },
-          );
-        });
-        act(() => {
-          capturedOnConnectEnd?.(
-            { clientX: 100, clientY: 100, target: null } as unknown as MouseEvent,
-            { isValid: false } as FinalConnectionState,
-          );
-        });
-      } finally {
-        Object.defineProperty(document, "elementFromPoint", {
-          configurable: true,
-          value: originalElementFromPoint,
-        });
-        targetElement.remove();
-        view.unmount();
-      }
-      return extraEdgeExists();
-    }
+    act(() => {
+      capturedOnConnect?.(connection);
+    });
+    const edgeCreated = useCanvasStore
+      .getState()
+      .edges.some((edge) => edge.source === connection.source && edge.target === "video");
 
-    // 先证明这条路径本身是通的,否则「拦住了」可能只是测试没走到。
-    expect(await dropOnTargetBody(2)).toBe(true);
-    expect(await dropOnTargetBody(3)).toBe(false);
+    expect({ highlightedAsValid, edgeCreated }).toEqual({
+      highlightedAsValid: true,
+      edgeCreated: true,
+    });
   });
 });
