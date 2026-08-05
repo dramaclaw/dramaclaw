@@ -97,8 +97,8 @@ async def test_standard_drama_prop_planner_reports_string_list_validation_error(
     def fake_newapi_model(model_env: str, default_model: str) -> str:
         return "prop-model"
 
-    def fake_settings(thinking_env: str, default_thinking_level: str) -> dict[str, str]:
-        return {"openai_reasoning_effort": default_thinking_level}
+    def fake_settings() -> dict[str, str]:
+        return {"openai_reasoning_effort": "none"}
 
     class FakeAgent:
         def __init__(self, model, **kwargs):
@@ -118,7 +118,7 @@ async def test_standard_drama_prop_planner_reports_string_list_validation_error(
     monkeypatch.setattr(asset_compiler, "get_newapi_text_pydantic_model", fake_newapi_model)
     monkeypatch.setattr(
         asset_compiler,
-        "get_newapi_text_pydantic_model_settings",
+        "get_newapi_structured_output_model_settings",
         fake_settings,
     )
     monkeypatch.setattr(asset_compiler, "Agent", FakeAgent)

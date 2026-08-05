@@ -9,8 +9,8 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior
 
 from novelvideo.config import (
+    get_newapi_structured_output_model_settings,
     get_newapi_text_pydantic_model,
-    get_newapi_text_pydantic_model_settings,
 )
 from novelvideo.models import (
     NarrationScript,
@@ -410,10 +410,7 @@ class LiteralScriptWritingWorkflow:
                     "gemini-3.5-flash",
                 ),
                 system_prompt=LITERAL_SCRIPT_PROMPT,
-                model_settings=get_newapi_text_pydantic_model_settings(
-                    "LITERAL_BEAT_META_THINKING_LEVEL",
-                    "low",
-                ),
+                model_settings=get_newapi_structured_output_model_settings(),
                 output_type=LiteralBeatMetaOutput,
                 output_retries=2,
                 validation_context={

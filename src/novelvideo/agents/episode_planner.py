@@ -25,7 +25,10 @@ from typing import Optional, List, Any, Callable, TYPE_CHECKING
 from pydantic_ai import Agent
 from pydantic import BaseModel, Field
 
-from novelvideo.config import get_pydantic_model
+from novelvideo.config import (
+    get_newapi_structured_output_model_settings,
+    get_pydantic_model,
+)
 from novelvideo.cognee.tools import create_episode_planner_tools
 from novelvideo.shared.env_guard import preserve_st_env
 from novelvideo.utils.logging import log_agent_start, log_agent_end
@@ -167,6 +170,7 @@ def create_episode_planner_agent(tools: List[Callable]) -> Agent:
         system_prompt=EPISODE_PLANNER_PROMPT,
         tools=tools,
         output_type=EpisodePlannerOutput,
+        model_settings=get_newapi_structured_output_model_settings(),
         output_retries=3,
         name="剧集规划师",
     )
