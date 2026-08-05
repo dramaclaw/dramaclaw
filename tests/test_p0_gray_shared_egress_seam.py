@@ -17,6 +17,9 @@ class _TaskManager:
     def update_progress_for_project(self, *_args, **_kwargs) -> None:
         return None
 
+    def begin_task_execution_for_project(self, *_args, **_kwargs) -> bool:
+        return True
+
     def complete_task_for_project(self, *_args, **_kwargs) -> None:
         return None
 
