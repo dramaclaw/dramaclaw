@@ -1635,6 +1635,7 @@ src/novelvideo/verification/trace_ids.py,Elastic-2.0,2026 SuperTale contributors
 src/novelvideo/verification/training_db.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/verification/utils.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/verification/version_hash.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/video_billing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/video_duration.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/video_request_usage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/workflows/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1865,6 +1866,7 @@ tests/test_task_video_global_optimizer_lifecycle.py,Elastic-2.0,2026 SuperTale c
 tests/test_task_video_runner_returned_last_frame.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_tasks_stream_list.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_upload_sanitization.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_video_billing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_video_composer_result_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_video_pool_static_urls.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_wysiwyg_consistency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

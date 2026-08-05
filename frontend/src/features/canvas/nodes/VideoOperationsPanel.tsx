@@ -215,6 +215,9 @@ interface VideoOperationsPanelProps {
   isGenerating: boolean;
   /** 估价用的后端模型 ID；模型目录加载中 / fallback 时为 null（暂不发估价请求）。 */
   videoBackendForCost: string | null;
+  videoInputPresent: boolean;
+  videoInputBillingReady: boolean;
+  inputVideoDurationSeconds: number;
   submitDisabled: boolean;
   selectedModelReferenceError: string | null;
   mediaRejectionReason: string | null;
@@ -254,6 +257,9 @@ export function VideoOperationsPanel({
   prompt,
   isGenerating,
   videoBackendForCost,
+  videoInputPresent,
+  videoInputBillingReady,
+  inputVideoDurationSeconds,
   submitDisabled,
   selectedModelReferenceError,
   mediaRejectionReason,
@@ -325,12 +331,22 @@ export function VideoOperationsPanel({
     const debouncedQuality = useDebouncedValue(quality, 350);
     const debouncedCount = useDebouncedValue(count, 350);
     const debouncedDurationSec = useDebouncedValue(durationSec, 350);
+    const debouncedVideoInputPresent = useDebouncedValue(
+      videoInputPresent,
+      350,
+    );
+    const debouncedInputVideoDuration = useDebouncedValue(
+      inputVideoDurationSeconds,
+      350,
+    );
     const videoCount = Math.min(Math.max(debouncedCount, 1), 4);
     const videoPricingQuantity =
       videoCount * debouncedDurationSec;
     const videoCreditCost = useGenerationCreditCost(
       "feature",
-      debouncedBackend ? VIDEO_GENERATE_FEATURE_KEY : null,
+      debouncedBackend && videoInputBillingReady
+        ? VIDEO_GENERATE_FEATURE_KEY
+        : null,
       {
         surface: "canvas",
         params: {
@@ -340,6 +356,8 @@ export function VideoOperationsPanel({
           pricing_quantity: videoPricingQuantity,
           operation: genMode,
           generate_audio: generateAudio,
+          video_input_present: debouncedVideoInputPresent,
+          input_video_duration_seconds: debouncedInputVideoDuration,
         },
         quantity: videoCount,
       },

@@ -13,18 +13,24 @@ const nodeSource = readFileSync(
 );
 
 describe("canvas video generation credit contract", () => {
-  it("quotes the product feature with backend, resolution, count, and duration", () => {
+  it("quotes the product feature with output and input-video duration", () => {
     // feature key 在主体定义并导出，面板 import——两个提交入口必须同一口径。
     expect(nodeSource).toContain(
       'export const VIDEO_GENERATE_FEATURE_KEY = "freezone.video_generate"',
     );
     expect(panelSource).toContain(
-      'debouncedBackend ? VIDEO_GENERATE_FEATURE_KEY : null',
+      "debouncedBackend && videoInputBillingReady\n        ? VIDEO_GENERATE_FEATURE_KEY\n        : null",
     );
     expect(panelSource).toContain("video_backend: debouncedBackend");
     expect(panelSource).toContain("pricing_quantity: videoPricingQuantity");
     expect(panelSource).toContain("quantity: videoCount");
     expect(panelSource).toContain("operation: genMode");
+    expect(panelSource).toContain(
+      "video_input_present: debouncedVideoInputPresent",
+    );
+    expect(panelSource).toContain(
+      "input_video_duration_seconds: debouncedInputVideoDuration",
+    );
     expect(panelSource).not.toContain(
       'useGenerationCreditCost(\n      "video_backend"',
     );
@@ -53,7 +59,13 @@ describe("canvas video generation credit contract", () => {
     // 未选中且无错误的节点保持零估价开销），且 submitDisabled 包含该闸门——
     // handleSubmit 开头的 submitDisabled 早退由此同时覆盖两个提交入口。
     expect(nodeSource).toContain(
-      "hasGenerationError && videoBackendForCost\n        ? VIDEO_GENERATE_FEATURE_KEY\n        : null",
+      "hasGenerationError && videoBackendForCost && videoInputBilling.ready\n        ? VIDEO_GENERATE_FEATURE_KEY\n        : null",
+    );
+    expect(nodeSource).toContain(
+      "video_input_present: videoInputBilling.present",
+    );
+    expect(nodeSource).toContain(
+      "input_video_duration_seconds: videoInputBilling.durationSeconds",
     );
     expect(nodeSource).toContain(
       "retryBillingProbe.error instanceof BillingRuleNotConfiguredError",

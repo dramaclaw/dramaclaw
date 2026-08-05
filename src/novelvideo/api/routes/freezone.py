@@ -279,6 +279,7 @@ from novelvideo.task_identity import (
     task_config_scope,
     task_state_key,
 )
+from novelvideo.video_billing import probe_total_video_duration_seconds
 from novelvideo.task_state import get_task_manager
 from novelvideo.utils.background_anchor import copy_to_beat_selected_background
 from novelvideo.utils.document_parsers import count_billable_text_chars
@@ -367,6 +368,20 @@ async def _start_or_enqueue_freezone_video_gen(
         freezone_video_generate_task_billing,
     )
 
+    video_input_paths = [
+        str(item.get("path") or "").strip()
+        for item in reference_items
+        if str(item.get("type") or "").strip().lower() == "video"
+        and str(item.get("path") or "").strip()
+    ]
+    try:
+        input_video_duration_seconds = await probe_total_video_duration_seconds(
+            video_input_paths
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            400, f"unable to read reference video duration: {exc}"
+        ) from exc
     billing = freezone_video_generate_task_billing(
         {
             "video_backend": backend,
@@ -374,6 +389,8 @@ async def _start_or_enqueue_freezone_video_gen(
             "pricing_quantity": duration_seconds,
             "operation": gen_mode or "textToVideo",
             "generate_audio": generate_audio,
+            "video_input_present": bool(video_input_paths),
+            "input_video_duration_seconds": input_video_duration_seconds,
             **({"catalog_id": catalog_id} if catalog_id else {}),
         }
     )

@@ -419,14 +419,80 @@ async def test_freezone_video_generation_enqueues_feature_billing(
         "generate_audio": True,
         "pricing_kind": "video",
         "pricing_model": "seedance-1.0-pro-fast",
-        "pricing_params": {"resolution": "1080p"},
+        "pricing_params": {"resolution": "1080p", "video_input": "none"},
         "pricing_metrics": {
             "call_count": 1,
             "item_count": 1,
             "duration_seconds": 8,
+            "output_duration_seconds": 8,
+            "input_video_duration_ms": 0,
+            "input_video_billed_seconds": 0,
         },
         "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
+        "video_input_present": False,
+        "input_video_duration_seconds": 0.0,
     }
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_generation_probes_reference_duration_before_billing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_video_ref"),
+            backend="celery",
+            queue="node.node_a.video",
+        )
+
+    async def fake_probe(paths):
+        assert list(paths) == ["/project/a.mp4", "/project/b.mp4"]
+        return 11.95
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+    monkeypatch.setattr(
+        freezone_routes,
+        "probe_total_video_duration_seconds",
+        fake_probe,
+    )
+
+    await freezone_routes._start_or_enqueue_freezone_video_gen(
+        ctx=_project_ctx(tmp_path),
+        username="admin",
+        project="demo",
+        project_dir=tmp_path / "project",
+        output_dir=str(tmp_path / "output"),
+        job_id="job_video_ref",
+        prompt="参考视频生成",
+        reference_items=[
+            {"type": "video", "path": "/project/a.mp4"},
+            {"type": "video", "path": "/project/b.mp4"},
+        ],
+        aspect_ratio="16:9",
+        resolution="720p",
+        duration_seconds=12,
+        generate_audio=False,
+        human_review=False,
+        scene_optimize=None,
+        backend="newapi_seedance-2.0",
+        gen_mode="allReference",
+    )
+
+    billing = captured["payload"]["billing"]
+    assert billing["pricing_params"] == {
+        "resolution": "720p",
+        "video_input": "present",
+    }
+    assert billing["pricing_quantity"] == 23
+    assert billing["pricing_metrics"]["input_video_billed_seconds"] == 11
 
 
 @pytest.mark.asyncio

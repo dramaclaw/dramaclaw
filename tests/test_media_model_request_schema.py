@@ -213,6 +213,11 @@ def test_validates_media_catalog_capabilities():
             {**valid, "supportedModes": ["unknown_mode"]},
             "video",
         )
+    with pytest.raises(MediaModelSchemaError, match="referenceVideoMax requires"):
+        validate_media_model_catalog_config(
+            {**valid, "supportedModes": ["text_to_video"]},
+            "video",
+        )
 
 
 def test_catalog_config_rejects_endpoint_for_other_media_type():

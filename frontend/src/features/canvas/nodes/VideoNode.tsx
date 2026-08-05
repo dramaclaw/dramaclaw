@@ -588,6 +588,10 @@ export const VideoNode = memo(
 
     const prompt = typeof data.prompt === "string" ? data.prompt : "";
     const genMode: VideoGenMode = data.genMode ?? "textToVideo";
+    // Billing and submission must inspect the same one-hop inputs. Keeping the
+    // subscription here also lets the displayed quote react when a source
+    // video's browser-probed duration becomes available.
+    const upstreamNodes = useUpstreamNodes(id);
     const {
       models: availableVideoModels,
       isLoading: videoModelsLoading,
@@ -673,6 +677,36 @@ export const VideoNode = memo(
     const supportsHumanReview = selectedVideoModel?.humanReview === true;
     const humanReview = Boolean(data.humanReview);
     const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
+    const videoInputBilling = useMemo(() => {
+      if (genMode !== "allReference" && genMode !== "videoEdit") {
+        return { present: false, ready: true, durationSeconds: 0 };
+      }
+      const ordered = sortUpstreamByReferenceOrder(
+        upstreamNodes,
+        data.referenceOrder,
+      ).filter((node) => Boolean(referenceVideoUrl(node)));
+      const limit =
+        genMode === "videoEdit"
+          ? 1
+          : (selectedVideoModel?.referenceVideoMax ?? 3);
+      const videos = ordered.slice(0, Math.max(limit, 0));
+      if (videos.length === 0) {
+        return { present: false, ready: true, durationSeconds: 0 };
+      }
+      const durations = videos.map((node) =>
+        typeof node.data.durationMs === "number" && node.data.durationMs > 0
+          ? node.data.durationMs
+          : null,
+      );
+      const ready = durations.every((duration) => duration != null);
+      return {
+        present: true,
+        ready,
+        durationSeconds: ready
+          ? durations.reduce((sum, duration) => sum + (duration ?? 0), 0) / 1000
+          : 0,
+      };
+    }, [data.referenceOrder, genMode, selectedVideoModel, upstreamNodes]);
     useEffect(() => {
       const patch: Partial<VideoNodeData> = {};
       if (data.quality !== quality) {
@@ -763,7 +797,6 @@ export const VideoNode = memo(
     // referenceOrder taking precedence — see sortUpstreamByReferenceOrder.
     // Subscribe to ONLY this node's one-hop upstream (not the whole nodes array)
     // so dragging unrelated nodes doesn't re-render this node. See useUpstreamGraph.
-    const upstreamNodes = useUpstreamNodes(id);
     // 节点被连线（存在入边）后：隐藏「试试」CTA，只在节点中间显示一个图标（对齐 libtv）。
     const isConnected = useCanvasStore((state) =>
       state.edges.some((edge) => edge.target === id)
@@ -1772,7 +1805,7 @@ export const VideoNode = memo(
     // 零估价开销；错误态与面板同时活跃时参数一致、查询同 key，由 react-query 去重。
     const retryBillingProbe = useGenerationCreditCost(
       "feature",
-      hasGenerationError && videoBackendForCost
+      hasGenerationError && videoBackendForCost && videoInputBilling.ready
         ? VIDEO_GENERATE_FEATURE_KEY
         : null,
       {
@@ -1786,6 +1819,8 @@ export const VideoNode = memo(
           pricing_quantity: Math.min(Math.max(count, 1), 4) * durationSec,
           operation: genMode,
           generate_audio: generateAudio,
+          video_input_present: videoInputBilling.present,
+          input_video_duration_seconds: videoInputBilling.durationSeconds,
         },
         quantity: Math.min(Math.max(count, 1), 4),
       },
@@ -3018,6 +3053,9 @@ export const VideoNode = memo(
             prompt={prompt}
             isGenerating={isGenerating}
             videoBackendForCost={videoBackendForCost}
+            videoInputPresent={videoInputBilling.present}
+            videoInputBillingReady={videoInputBilling.ready}
+            inputVideoDurationSeconds={videoInputBilling.durationSeconds}
             submitDisabled={submitDisabled}
             selectedModelReferenceError={selectedModelReferenceError}
             mediaRejectionReason={mediaRejectionReason}

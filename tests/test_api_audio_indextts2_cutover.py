@@ -472,15 +472,20 @@ async def test_seedance2_single_video_passes_prepared_config_and_duration(
         "pricing_kind": "video",
         "pricing_model": "seedance-2.0-fast",
         "pricing_model_selection": "huimeng_seedance-2.0-fast",
-        "pricing_params": {"resolution": "720p"},
+        "pricing_params": {"resolution": "720p", "video_input": "none"},
         "pricing_quantity": 11,
         "pricing_metrics": {
             "call_count": 1,
             "item_count": 1,
             "duration_seconds": 11,
+            "output_duration_seconds": 11,
+            "input_video_duration_ms": 0,
+            "input_video_billed_seconds": 0,
         },
         "resolution": "720p",
         "video_backend": "huimeng_seedance-2.0-fast",
+        "video_input_present": False,
+        "input_video_duration_seconds": 0.0,
     }
 
 
