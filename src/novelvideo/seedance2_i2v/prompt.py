@@ -8,20 +8,9 @@ import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from pydantic import BaseModel, Field
-
 from novelvideo.models import beat_scene_ref, real_detected_identities, real_detected_props
 from novelvideo.seedance2_i2v.models import Seedance2I2VMode
-from novelvideo.seedance2_i2v.spoken_dialogue import (
-    parse_seedance2_spoken_lines,
-    speaker_display_name,
-)
-
-
-class Seedance2PromptComposerOutput(BaseModel):
-    """Structured output returned by the prompt composer agent."""
-
-    prompt: str = Field(default="", description="最终 Seedance 2.0 prompt")
+from novelvideo.seedance2_i2v.spoken_dialogue import speaker_display_name
 
 
 @dataclass(frozen=True)
@@ -245,46 +234,33 @@ def _prop_prompt_fallbacks(assets: list[Any] | None) -> dict[str, str]:
     return fallbacks
 
 
-def _voice_reference_labels(assets: list[Any] | None) -> dict[str, str]:
-    labels: dict[str, str] = {}
+def _beat_spoken_prompt_fragment(beat: dict[str, Any], assets: list[Any] | None) -> str:
+    spoken = _beat_spoken_text(beat)
+    if not spoken:
+        return ""
+
+    voice_references: list[str] = []
     for asset in _selected_assets(assets):
-        media_type = _text(_asset_value(asset, "media_type"))
-        reference_label = _text(_asset_value(asset, "reference_label"))
-        if media_type != "audio" or not reference_label.startswith("音频"):
+        label = _text(_asset_value(asset, "reference_label"))
+        if not label.startswith("音频"):
             continue
         identity_id = _text(_asset_value(asset, "identity_id"))
-        key = _text(_asset_value(asset, "key"))
-        if identity_id:
-            labels.setdefault(identity_id, reference_label)
-            labels.setdefault(speaker_display_name(identity_id), reference_label)
-        if key.startswith("voice:"):
-            key_id = key.split(":", 1)[1]
-            labels.setdefault(key_id, reference_label)
-            labels.setdefault(speaker_display_name(key_id), reference_label)
-    return labels
+        title = speaker_display_name(identity_id) or _text(_asset_value(asset, "label"))
+        voice_references.append(f"{title}参考{label}声线" if title else f"参考{label}声线")
 
-
-def _beat_spoken_prompt_fragment(beat: dict[str, Any], assets: list[Any] | None) -> str:
-    lines = parse_seedance2_spoken_lines(beat)
-    if not lines:
-        return _beat_spoken_text(beat)
-
-    voice_labels = _voice_reference_labels(assets)
-    fragments: list[str] = []
-    for line in lines:
-        speaker = speaker_display_name(line.speaker)
-        label = voice_labels.get(line.speaker) or voice_labels.get(speaker)
-        action = _sentence_text(line.action)
-        if action and label:
-            action_part = f"（{action}，参考{label}声线）"
-        elif action:
-            action_part = f"（{action}）"
-        elif label:
-            action_part = f"（参考{label}声线）"
-        else:
-            action_part = ""
-        fragments.append(f"{speaker}{action_part}说：“{_sentence_text(line.text)}”")
-    return "；".join(fragments)
+    speaker = speaker_display_name(_text(beat.get("speaker")))
+    context: list[str] = []
+    if speaker:
+        context.append(f"本 Beat 说话角色为{speaker}")
+    if voice_references:
+        context.append("声线对应：" + "、".join(dict.fromkeys(voice_references)))
+    context_text = "；".join(context)
+    if context_text:
+        context_text = f"；{context_text}"
+    return (
+        "原始对白与表演文本（请语义区分动作说明和实际说出的台词，"
+        f"实际台词必须逐字完整保留{context_text}）：{spoken}"
+    )
 
 
 def _text_with_identity_references(text: Any, assets: list[Any] | None) -> str:
@@ -555,7 +531,9 @@ def build_seedance2_prompt_composer_task(
         "- duration、resolution、ratio、generate_audio、return_last_frame、human_review "
         "只作为 API 请求参数，不要写进 prompt。\n"
         "- 如果用户写作要求和资产清单、道具 fallback 冲突，以资产清单和 fallback 为准。\n"
-        "- 输出字段 prompt 只放最终 prompt，不要解释。\n\n"
+        "- dialogue 或 narration_segment 属于对白时，请根据语义区分动作说明和实际说出的台词；"
+        "动作可自然改写，但实际台词必须逐字完整保留，不能删减或概括。\n"
+        "- 只输出最终 prompt，不要解释。\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2, default=str)}"
     )
 
@@ -563,10 +541,7 @@ def build_seedance2_prompt_composer_task(
 def create_seedance2_prompt_composer_agent():
     from pydantic_ai import Agent
 
-    from novelvideo.config import (
-        get_newapi_structured_output_model_settings,
-        get_newapi_text_pydantic_model,
-    )
+    from novelvideo.config import get_newapi_text_pydantic_model
 
     return Agent(
         get_newapi_text_pydantic_model(
@@ -574,9 +549,7 @@ def create_seedance2_prompt_composer_agent():
             "gemini-3.5-flash",
         ),
         system_prompt=SEEDANCE2_COMPOSER_SYSTEM_PROMPT,
-        model_settings=get_newapi_structured_output_model_settings(),
-        output_type=Seedance2PromptComposerOutput,
-        output_retries=2,
+        output_type=str,
         name="Seedance 2.0 Prompt Composer",
     )
 
@@ -605,7 +578,7 @@ async def compose_seedance2_prompt_with_agent(
             manual_prompt_reference=manual_prompt_reference,
         )
     )
-    prompt = normalize_seedance2_editor_prompt(result.output.prompt)
+    prompt = normalize_seedance2_editor_prompt(result.output)
     if not prompt:
         raise ValueError("AI composer returned an empty prompt")
     return prompt

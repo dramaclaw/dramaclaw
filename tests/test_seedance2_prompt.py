@@ -207,6 +207,129 @@ def test_seedance2_prompt_draft_binds_multi_speaker_dialogue_to_audio_labels():
     assert "你知道研发部的主管杜晨吗？" in prompt
 
 
+def test_seedance2_dialogue_draft_delegates_ambiguous_prose_to_ai():
+    from novelvideo.seedance2_i2v.assets import Seedance2ResolvedAsset
+    from novelvideo.seedance2_i2v.models import Seedance2I2VMode
+    from novelvideo.seedance2_i2v.prompt import build_seedance2_prompt_draft
+
+    beat = {
+        "audio_type": "dialogue",
+        "speaker": "丫鬟_青年时期",
+        "narration_segment": "（清脆出声，探头打趣）说起来你和赵小王爷长得一模一样。",
+    }
+    assets = [
+        Seedance2ResolvedAsset(
+            key="voice:丫鬟_青年时期",
+            label="丫鬟 · 青年时期声线",
+            media_type="audio",
+            path=Path("maid.mp3"),
+            exists=True,
+            selected=True,
+            request_field="reference_audios",
+            reference_label="音频1",
+            identity_id="丫鬟_青年时期",
+            audio_number=1,
+        )
+    ]
+
+    prompt = build_seedance2_prompt_draft(
+        mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+        beat=beat,
+        assets=assets,
+        text_overlay={},
+        prompt_guidance="",
+    )
+
+    assert "请语义区分动作说明和实际说出的台词" in prompt
+    assert "实际台词必须逐字完整保留" in prompt
+    assert "本 Beat 说话角色为丫鬟" in prompt
+    assert "丫鬟参考音频1声线" in prompt
+    assert "（清脆出声，探头打趣）说起来你和赵小王爷长得一模一样。" in prompt
+
+
+def test_seedance2_dialogue_validation_checks_explicit_lines_and_audio_labels():
+    from novelvideo.seedance2_i2v.assets import Seedance2ResolvedAsset
+    from novelvideo.seedance2_i2v.pipeline import _validate_dialogue_final_prompt
+
+    beat = {
+        "audio_type": "dialogue",
+        "narration_segment": "丫鬟（清脆出声，探头打趣）：说起来你和赵小王爷长得一模一样。",
+    }
+    assets = [
+        Seedance2ResolvedAsset(
+            key="voice:丫鬟_青年时期",
+            label="丫鬟 · 青年时期声线",
+            media_type="audio",
+            path=Path("maid.mp3"),
+            exists=True,
+            selected=True,
+            request_field="reference_audios",
+            reference_label="音频1",
+            identity_id="丫鬟_青年时期",
+            audio_number=1,
+        )
+    ]
+
+    with pytest.raises(ValueError, match="Seedance2 最终提示词缺少台词内容"):
+        _validate_dialogue_final_prompt(
+            beat=beat,
+            final_prompt="丫鬟（清脆出声，探头打趣，参考音频1声线）看向对方。",
+            assets=assets,
+        )
+
+    with pytest.raises(ValueError, match="Seedance2 最终提示词缺少参考声线"):
+        _validate_dialogue_final_prompt(
+            beat={
+                "audio_type": "dialogue",
+                "speaker": "丫鬟_青年时期",
+                "narration_segment": "（清脆出声，探头打趣）说起来你和赵小王爷长得一模一样。",
+            },
+            final_prompt="丫鬟说：“说起来你和赵小王爷长得一模一样。”",
+            assets=assets,
+        )
+
+
+def test_seedance2_dialogue_validation_keeps_plain_beat_dialogue_required():
+    from novelvideo.seedance2_i2v.assets import Seedance2ResolvedAsset
+    from novelvideo.seedance2_i2v.pipeline import _validate_dialogue_final_prompt
+
+    beat = {
+        "audio_type": "dialogue",
+        "speaker": "丫鬟_青年时期",
+        "narration_segment": "（清脆出声，探头打趣）说起来你和赵小王爷长得一模一样。",
+    }
+    assets = [
+        Seedance2ResolvedAsset(
+            key="voice:丫鬟_青年时期",
+            label="丫鬟 · 青年时期声线",
+            media_type="audio",
+            path=Path("maid.mp3"),
+            exists=True,
+            selected=True,
+            request_field="reference_audios",
+            reference_label="音频1",
+            identity_id="丫鬟_青年时期",
+            audio_number=1,
+        )
+    ]
+
+    _validate_dialogue_final_prompt(
+        beat=beat,
+        final_prompt=(
+            "丫鬟（清脆出声，探头打趣，参考音频1声线）说："
+            "“说起来你和赵小王爷长得一模一样。”"
+        ),
+        assets=assets,
+    )
+
+    with pytest.raises(ValueError, match="Seedance2 最终提示词缺少台词内容"):
+        _validate_dialogue_final_prompt(
+            beat=beat,
+            final_prompt="丫鬟（清脆出声，探头打趣，参考音频1声线）看向对方。",
+            assets=assets,
+        )
+
+
 def test_seedance2_prompt_draft_can_use_narration_voice_reference():
     from novelvideo.seedance2_i2v.assets import Seedance2ResolvedAsset
     from novelvideo.seedance2_i2v.models import Seedance2I2VMode
@@ -509,6 +632,7 @@ def test_seedance2_prompt_composer_task_includes_scene_ref_and_dialogue_text():
     assert '"variant_id"' not in task
     assert '"dialogue": "谢铮低声说：' in task
     assert "别回头，跟我走" in task
+    assert "实际台词必须逐字完整保留" in task
 
 
 def test_seedance2_prompt_hash_ignores_request_only_video_params():
@@ -598,3 +722,32 @@ async def test_generate_seedance2_prompt_uses_ai_composer_before_fallback():
     assert result.prompt == "根据图片1生成官方风格视频。"
     assert result.used_ai is True
     assert result.error == ""
+
+
+async def test_seedance2_prompt_composer_accepts_plain_text_output(monkeypatch):
+    from types import SimpleNamespace
+
+    import novelvideo.seedance2_i2v.prompt as prompt_module
+    from novelvideo.seedance2_i2v.models import Seedance2I2VMode
+
+    class FakeAgent:
+        async def run(self, task):
+            assert "只输出最终 prompt" in task
+            return SimpleNamespace(output="  根据图片1生成一段电影感视频。  ")
+
+    monkeypatch.setattr(
+        prompt_module,
+        "create_seedance2_prompt_composer_agent",
+        lambda: FakeAgent(),
+    )
+
+    result = await prompt_module.compose_seedance2_prompt_with_agent(
+        mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+        beat={"visual_description": "人物转身。"},
+        assets=[],
+        text_overlay={},
+        prompt_guidance="",
+        draft_prompt="人物转身。",
+    )
+
+    assert result == "根据图片1生成一段电影感视频。"
