@@ -71,6 +71,21 @@ export function generationTaskDescriptor(ref: FreezoneJobRef): GenerationTaskDes
   };
 }
 
+/**
+ * 轮询脱离时写回节点的补丁。
+ *
+ * 只放掉 `generationJobId` —— 它是 canvasAiGateway 进程内 Map 的键，本来就活不
+ * 过刷新，清掉正好让 Canvas.tsx 的轮询循环收工。`isGenerating` 和句柄三件套
+ * 必须原样留着：{@link nodeNeedsGenerationResume} 要靠它们判定，少一个都会让
+ * 「稍后刷新页面查看结果」变成空头支票。
+ *
+ * 单独提出来是为了能被测试直接断言 —— 内联在 Canvas.tsx 的 effect 里改错了没
+ * 人拦得住。
+ */
+export const DETACHED_GENERATION_PATCH: Record<string, unknown> = {
+  generationJobId: null,
+};
+
 type ResumeKind = 'image' | 'video' | 'audio' | 'ply' | 'script' | 'reverse-prompt';
 
 function resumeKindForNodeType(type: CanvasNodeType): ResumeKind | null {

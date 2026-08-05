@@ -251,7 +251,9 @@ export const freezoneAiGateway: AiGateway = {
         throw err;
       });
     jobs.set(ref.job_id, { ref, projectId, promise, status: "running" });
-    return ref.job_id;
+    // ref 一并回给调用方:jobs 是模块级 Map,刷新就没了,只有把后端句柄落到
+    // 节点上,脱离监听后才接得回来（见 SubmittedImageJob 注释）。
+    return { jobId: ref.job_id, ref };
   },
 
   async getGenerateImageJob(jobId) {

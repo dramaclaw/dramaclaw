@@ -88,6 +88,7 @@ import {
 } from '@/features/canvas/application/generationErrorReport';
 import { notifyTaskStillRunning, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import {
+  DETACHED_GENERATION_PATCH,
   nodeNeedsGenerationResume,
   resumeNodeGeneration,
 } from '@/features/canvas/application/resumeGeneration';
@@ -1411,19 +1412,17 @@ export function Canvas({
               // 前端不再跟这个任务了（后端长时间查不到），但它不是失败：不写
               // generationError，也保留 generationRequestPayload，让「重新生成」
               // 仍然可用；只给一个中性提示，避免把可能还在跑的任务标成失败。
+              //
+              // 补丁内容见 DETACHED_GENERATION_PATCH：只放掉进程内的 jobId，
+              // isGenerating 与句柄留着，刷新后 resume 扫描才接得回来。与
+              // 擦除/重绘路径（regenerateFreezoneRedrawNode）同口径。
               const detachedSessionId = typeof currentData.generationClientSessionId === 'string'
                 ? currentData.generationClientSessionId
                 : '';
               if (detachedSessionId === CURRENT_RUNTIME_SESSION_ID) {
                 notifyTaskStillRunning(t);
               }
-              updateNodeData(pendingNode.id, {
-                isGenerating: false,
-                generationStartedAt: null,
-                generationJobId: null,
-                generationProviderId: null,
-                generationClientSessionId: null,
-              });
+              updateNodeData(pendingNode.id, DETACHED_GENERATION_PATCH);
               break;
             }
 

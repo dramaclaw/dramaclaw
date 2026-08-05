@@ -153,10 +153,12 @@ export async function regenerateExportImageNode(nodeId: string): Promise<void> {
   });
 
   try {
-    const jobId = await canvasAiGateway.submitGenerateImageJob({ ...payload, nodeId });
+    const { jobId, ref } = await canvasAiGateway.submitGenerateImageJob({ ...payload, nodeId });
     store.updateNodeData(nodeId, {
       generationJobId: jobId,
       generationClientSessionId: CURRENT_RUNTIME_SESSION_ID,
+      // 与上面的重绘路径同口径：句柄落到节点上，脱离监听后刷新才接得回来。
+      ...generationTaskDescriptor(ref),
     });
   } catch (error) {
     const resolved = resolveErrorContent(error, '图像生成失败');
