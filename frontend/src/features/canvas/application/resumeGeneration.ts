@@ -19,6 +19,7 @@ import {
 } from '@/api/ops';
 import {
   awaitTaskCompletion,
+  isTaskCancelledError,
   isTaskPollTimeoutError,
   listTasks,
   type TaskState,
@@ -315,6 +316,10 @@ async function buildSuccessPatch(
 }
 
 function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unknown> {
+  if (isTaskCancelledError(error)) {
+    // 用户主动终止过的任务恢复时只清理生成态，不当错误展示。
+    return { ...CLEARED_TASK_FIELDS };
+  }
   if (kind === 'ply') {
     const message = error instanceof Error ? error.message : String(error);
     return { ...CLEARED_TASK_FIELDS, taskKey: null, errorMessage: `生成失败: ${message}` };

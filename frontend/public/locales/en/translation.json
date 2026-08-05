@@ -1649,6 +1649,12 @@
       "selected_regen": "Selected regen",
       "compose_episode": "Video compose",
       "freezone_image_reverse_prompt": "Image reverse prompt"
+    },
+    "cancelRunning": {
+      "title": "Stop task",
+      "fallbackMessage": "The task has already started. Stopping now will not refund the spent credits. Stop anyway?",
+      "confirm": "Stop task",
+      "keepRunning": "Keep running"
     }
   },
   "taskCenter": {

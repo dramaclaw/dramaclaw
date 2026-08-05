@@ -1649,6 +1649,12 @@
       "selected_regen": "选中重生成",
       "compose_episode": "视频合成",
       "freezone_image_reverse_prompt": "图片反推提示词"
+    },
+    "cancelRunning": {
+      "title": "终止任务",
+      "fallbackMessage": "任务已开始执行。现在终止不会退还积分，是否确认终止？",
+      "confirm": "确认终止",
+      "keepRunning": "继续执行"
     }
   },
   "taskCenter": {
