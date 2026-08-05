@@ -76,7 +76,7 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "name": "My CE profile",
   "channels": [
     {

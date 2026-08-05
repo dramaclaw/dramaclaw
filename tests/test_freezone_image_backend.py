@@ -6399,6 +6399,40 @@ async def test_freezone_image_models_prefers_ee_catalog(
     assert result == {"ok": True, "data": catalog}
 
 
+def test_ce_media_catalog_overlay_preserves_unconfigured_defaults() -> None:
+    defaults = [
+        {"id": "default-image", "apiModel": "default-image", "label": "Default"},
+        {"id": "other-image", "apiModel": "other-image", "label": "Other"},
+    ]
+    configured = [
+        {
+            "id": "default-image",
+            "apiModel": "default-image",
+            "gatewayModel": "custom-upstream",
+        },
+        {"id": "custom-image", "apiModel": "custom-image", "label": "Custom"},
+    ]
+
+    result = freezone_routes._merge_media_model_catalog_defaults(defaults, configured)
+
+    assert result == [
+        {
+            "id": "default-image",
+            "apiModel": "default-image",
+            "label": "Default",
+            "gatewayModel": "custom-upstream",
+        },
+        {"id": "other-image", "apiModel": "other-image", "label": "Other"},
+        {"id": "custom-image", "apiModel": "custom-image", "label": "Custom"},
+    ]
+
+
+def test_ce_media_catalog_overlay_returns_defaults_without_local_models() -> None:
+    defaults = [{"id": "official-image", "apiModel": "official-image"}]
+
+    assert freezone_routes._merge_media_model_catalog_defaults(defaults, []) == defaults
+
+
 @pytest.mark.asyncio
 async def test_image_catalog_pixel_floor_is_added_to_execution_schema(
     monkeypatch: pytest.MonkeyPatch,

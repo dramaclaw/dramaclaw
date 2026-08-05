@@ -6856,20 +6856,10 @@ async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | Non
                 )
             if mode == MODE_HYBRID:
                 local = get_ce_media_model_catalog(media_type, provider="comfyui")
-                if not local:
-                    return None
-                static = _static_media_model_catalog(media_type)
-                local_ids = {
-                    identifier
-                    for item in local
-                    for identifier in _catalog_entry_identifiers(item)
-                    if identifier
-                }
-                return [
-                    item
-                    for item in static
-                    if not (_catalog_entry_identifiers(item) & local_ids)
-                ] + local
+                return _merge_media_model_catalog_defaults(
+                    _static_media_model_catalog(media_type),
+                    local,
+                )
             return get_official_media_model_catalog(media_type)
         return None
     return await catalog.list_models(media_type)
@@ -6886,17 +6876,24 @@ def _merge_media_model_catalog_defaults(
 ) -> list[dict[str, Any]]:
     """Overlay CE mappings on the existing mainline capabilities."""
     merged: list[dict[str, Any]] = []
-    for item in configured:
-        identifiers = _catalog_entry_identifiers(item)
-        base = next(
+    consumed: set[int] = set()
+    for base in defaults:
+        base_identifiers = _catalog_entry_identifiers(base)
+        match_index = next(
             (
-                candidate
-                for candidate in defaults
-                if _catalog_entry_identifiers(candidate) & identifiers
+                index
+                for index, item in enumerate(configured)
+                if index not in consumed
+                and _catalog_entry_identifiers(item) & base_identifiers
             ),
             None,
         )
-        merged.append({**(base or {}), **item})
+        if match_index is None:
+            merged.append(base)
+            continue
+        consumed.add(match_index)
+        merged.append({**base, **configured[match_index]})
+    merged.extend(item for index, item in enumerate(configured) if index not in consumed)
     return merged
 
 

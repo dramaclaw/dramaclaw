@@ -76,7 +76,7 @@ The built-in recommended profile is read-only. Switch to **Custom** to edit and 
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "name": "My CE profile",
   "channels": [
     {
