@@ -194,17 +194,6 @@ def test_legacy_pydantic_factory_uses_ee_deployment_gateway(monkeypatch, tmp_pat
     assert captured["base_url"] == "https://ee-gateway.example/v1"
 
 
-def test_legacy_pydantic_model_settings_match_newapi_transport(monkeypatch):
-    monkeypatch.setenv("MODEL_PROVIDER", "openrouter")
-
-    settings = config.get_pydantic_model_settings(
-        provider_override="openrouter",
-        thinking_level_override="low",
-    )
-
-    assert settings == {"openai_reasoning_effort": "low"}
-
-
 def test_cognee_newapi_resolution_prefers_saved_gateway(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
     monkeypatch.delenv("COGNEE_LLM_PROVIDER", raising=False)

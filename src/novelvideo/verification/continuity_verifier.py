@@ -21,12 +21,16 @@ class ContinuityVerifier:
 
     def _get_agent(self) -> Agent:
         if self._agent is None:
-            from novelvideo.config import get_pydantic_model
+            from novelvideo.config import (
+                get_newapi_structured_output_model_settings,
+                get_pydantic_model,
+            )
 
             self._agent = Agent(
                 get_pydantic_model(),
                 system_prompt=SKETCH_CONTINUITY_PROMPT,
                 output_type=ContinuityResult,
+                model_settings=get_newapi_structured_output_model_settings(),
                 output_retries=2,
                 name="分镜连贯性审核员",
             )

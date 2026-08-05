@@ -165,7 +165,10 @@ def _format_color_mapping_descriptor(info: dict) -> str:
 
 def create_global_video_reviewer_agent(language: str = "en") -> Agent:
     """创建全局视频审核 Agent。"""
-    from novelvideo.config import get_superpower_pydantic_model
+    from novelvideo.config import (
+        get_newapi_structured_output_model_settings,
+        get_superpower_pydantic_model,
+    )
 
     model = get_superpower_pydantic_model(
         feature_provider_env="GLOBAL_VIDEO_PROVIDER",
@@ -175,6 +178,7 @@ def create_global_video_reviewer_agent(language: str = "en") -> Agent:
         model,
         system_prompt=GLOBAL_VIDEO_REVIEWER_INSTRUCTIONS_EN,
         output_type=NativeOutput(ReviewResult),
+        model_settings=get_newapi_structured_output_model_settings(),
         name="Video Prompt Reviewer",
     )
 
@@ -182,28 +186,20 @@ def create_global_video_reviewer_agent(language: str = "en") -> Agent:
 def create_global_video_optimizer_agent(language: str = "en") -> Agent:
     """创建全局视频优化 Agent。"""
     from novelvideo.config import (
+        get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
-        get_newapi_text_pydantic_model_settings,
     )
 
     legacy_model = os.environ.get("GLOBAL_VIDEO_MODEL", "").strip()
-    model_settings = get_newapi_text_pydantic_model_settings(
-        "GLOBAL_VIDEO_OPTIMIZER_THINKING_LEVEL",
-        "low",
-    )
-    agent_kwargs = {}
-    if model_settings is not None:
-        agent_kwargs["model_settings"] = model_settings
-
     return Agent(
         get_newapi_text_pydantic_model(
             "GLOBAL_VIDEO_OPTIMIZER_MODEL",
             legacy_model or "gemini-3.5-flash",
         ),
         system_prompt=GLOBAL_VIDEO_OPTIMIZER_INSTRUCTIONS_EN,
+        model_settings=get_newapi_structured_output_model_settings(),
         output_type=NativeOutput(list[BeatVideoStrategy]),
         name="Global Video Motion Director",
-        **agent_kwargs,
     )
 
 
@@ -737,28 +733,20 @@ Output a JSON array of objects, one per panel:
 def _create_identity_detector_agent() -> Agent:
     """创建 AI 角色颜色识别 Agent。"""
     from novelvideo.config import (
+        get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
-        get_newapi_text_pydantic_model_settings,
     )
 
     legacy_model = os.environ.get("GLOBAL_VIDEO_MODEL", "").strip()
-    model_settings = get_newapi_text_pydantic_model_settings(
-        "GLOBAL_VIDEO_IDENTITY_DETECTOR_THINKING_LEVEL",
-        "low",
-    )
-    agent_kwargs = {}
-    if model_settings is not None:
-        agent_kwargs["model_settings"] = model_settings
-
     return Agent(
         get_newapi_text_pydantic_model(
             "GLOBAL_VIDEO_IDENTITY_DETECTOR_MODEL",
             legacy_model or "gemini-3.5-flash",
         ),
         system_prompt=AI_IDENTITY_DETECTOR_INSTRUCTIONS,
+        model_settings=get_newapi_structured_output_model_settings(),
         output_type=NativeOutput(list[BeatIdentity]),
         name="角色颜色识别",
-        **agent_kwargs,
     )
 
 

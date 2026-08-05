@@ -19,35 +19,92 @@ def test_identity_planner_uses_split_newapi_model_envs(monkeypatch):
     assert calls == [("IDENTITY_PLANNER_CAST_MODEL", "gemini-3.5-flash")]
 
 
-def test_newapi_text_model_settings_use_path_specific_thinking(monkeypatch):
+def test_structured_output_model_settings_force_reasoning_off(monkeypatch):
     from novelvideo.agents.identity_planner import IdentityPlanner
 
-    monkeypatch.setenv("IDENTITY_PLANNER_CAST_THINKING_LEVEL", "low")
-    monkeypatch.setenv("IDENTITY_PLANNER_ANALYSIS_THINKING_LEVEL", "high")
-
-    assert IdentityPlanner._identity_model_settings(
-        "IDENTITY_PLANNER_CAST_THINKING_LEVEL",
-        "high",
-    ) == {"openai_reasoning_effort": "low"}
-
-    assert IdentityPlanner._identity_model_settings(
-        "IDENTITY_PLANNER_ANALYSIS_THINKING_LEVEL",
-        "low",
-    ) == {"openai_reasoning_effort": "high"}
+    assert IdentityPlanner._identity_model_settings() == {"openai_reasoning_effort": "none"}
 
 
-def test_newapi_text_model_settings_empty_env_disables(monkeypatch):
-    from novelvideo.agents.identity_planner import IdentityPlanner
+def test_opaque_newapi_alias_sends_reasoning_effort_none(monkeypatch):
+    import asyncio
+    import json
 
-    monkeypatch.setenv("IDENTITY_PLANNER_APPEARANCE_THINKING_LEVEL", "")
+    import httpx
+    from pydantic import BaseModel
+    from pydantic_ai import Agent
 
-    assert (
-        IdentityPlanner._identity_model_settings(
-            "IDENTITY_PLANNER_APPEARANCE_THINKING_LEVEL",
-            "high",
+    import novelvideo.config as config
+
+    requests: list[dict] = []
+
+    class StructuredResult(BaseModel):
+        value: str
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        output_tool = payload["tools"][0]["function"]["name"]
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-structured-test",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "DC-structured-test",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-structured-test",
+                                    "type": "function",
+                                    "function": {
+                                        "name": output_tool,
+                                        "arguments": '{"value":"ok"}',
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
         )
-        is None
+
+    monkeypatch.setattr(
+        config,
+        "_newapi_text_http_client_factory",
+        lambda *, timeout_seconds: lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=timeout_seconds,
+        ),
     )
+    model = config._newapi_text_openai_model(
+        "DC-structured-test",
+        api_key="key",
+        base_url="https://example.test/v1",
+        timeout_seconds=12.0,
+        profile=None,
+    )
+    agent = Agent(
+        model,
+        output_type=StructuredResult,
+        model_settings=config.get_newapi_structured_output_model_settings(),
+    )
+
+    result = asyncio.run(agent.run("return a structured result"))
+
+    assert result.output == StructuredResult(value="ok")
+    assert len(requests) == 1
+    assert requests[0]["reasoning_effort"] == "none"
 
 
 def test_newapi_text_provider_default_trusts_env(monkeypatch):
@@ -145,9 +202,9 @@ def test_asset_compiler_scene_planner_uses_scene_newapi_env(monkeypatch):
         model_calls.append((model_env, default_model))
         return "scene-model"
 
-    def fake_settings(thinking_env, default_thinking_level):
-        settings_calls.append((thinking_env, default_thinking_level))
-        return {"openai_reasoning_effort": default_thinking_level}
+    def fake_settings():
+        settings_calls.append(())
+        return {"openai_reasoning_effort": "none"}
 
     class FakeAgent:
         def __init__(self, model, **kwargs):
@@ -160,7 +217,7 @@ def test_asset_compiler_scene_planner_uses_scene_newapi_env(monkeypatch):
     monkeypatch.setattr(asset_compiler, "get_newapi_text_pydantic_model", fake_newapi_model)
     monkeypatch.setattr(
         asset_compiler,
-        "get_newapi_text_pydantic_model_settings",
+        "get_newapi_structured_output_model_settings",
         fake_settings,
     )
     monkeypatch.setattr(asset_compiler, "Agent", FakeAgent)
@@ -174,7 +231,7 @@ def test_asset_compiler_scene_planner_uses_scene_newapi_env(monkeypatch):
 
     assert result == []
     assert model_calls == [("EPISODE_SCENE_PLANNER_MODEL", "gemini-3.5-flash")]
-    assert settings_calls == [("EPISODE_SCENE_PLANNER_THINKING_LEVEL", "low")]
+    assert settings_calls == [()]
     assert agent_kwargs["model"] == "scene-model"
     assert agent_kwargs["name"] == "派生场景分析师"
 
@@ -193,9 +250,9 @@ def test_asset_compiler_prop_planner_uses_prop_newapi_env(monkeypatch):
         model_calls.append((model_env, default_model))
         return "prop-model"
 
-    def fake_settings(thinking_env, default_thinking_level):
-        settings_calls.append((thinking_env, default_thinking_level))
-        return {"openai_reasoning_effort": default_thinking_level}
+    def fake_settings():
+        settings_calls.append(())
+        return {"openai_reasoning_effort": "none"}
 
     class FakeAgent:
         def __init__(self, model, **kwargs):
@@ -208,7 +265,7 @@ def test_asset_compiler_prop_planner_uses_prop_newapi_env(monkeypatch):
     monkeypatch.setattr(asset_compiler, "get_newapi_text_pydantic_model", fake_newapi_model)
     monkeypatch.setattr(
         asset_compiler,
-        "get_newapi_text_pydantic_model_settings",
+        "get_newapi_structured_output_model_settings",
         fake_settings,
     )
     monkeypatch.setattr(asset_compiler, "Agent", FakeAgent)
@@ -226,7 +283,7 @@ def test_asset_compiler_prop_planner_uses_prop_newapi_env(monkeypatch):
 
     assert result == []
     assert model_calls == [("EPISODE_PROP_PLANNER_MODEL", "gemini-3.5-flash")]
-    assert settings_calls == [("EPISODE_PROP_PLANNER_THINKING_LEVEL", "low")]
+    assert settings_calls == [()]
     assert agent_kwargs["model"] == "prop-model"
     assert agent_kwargs["name"] == "场景块道具分析师"
 
@@ -242,9 +299,9 @@ def test_literal_script_writer_uses_literal_newapi_env(monkeypatch):
         model_calls.append((model_env, default_model))
         return "literal-model"
 
-    def fake_settings(thinking_env, default_thinking_level):
-        settings_calls.append((thinking_env, default_thinking_level))
-        return {"openai_reasoning_effort": default_thinking_level}
+    def fake_settings():
+        settings_calls.append(())
+        return {"openai_reasoning_effort": "none"}
 
     class FakeAgent:
         def __init__(self, model, **kwargs):
@@ -258,7 +315,7 @@ def test_literal_script_writer_uses_literal_newapi_env(monkeypatch):
     )
     monkeypatch.setattr(
         literal_script_writing,
-        "get_newapi_text_pydantic_model_settings",
+        "get_newapi_structured_output_model_settings",
         fake_settings,
     )
     monkeypatch.setattr(literal_script_writing, "Agent", FakeAgent)
@@ -267,7 +324,7 @@ def test_literal_script_writer_uses_literal_newapi_env(monkeypatch):
 
     assert workflow.agent is workflow.agent
     assert model_calls == [("LITERAL_BEAT_META_MODEL", "gemini-3.5-flash")]
-    assert settings_calls == [("LITERAL_BEAT_META_THINKING_LEVEL", "low")]
+    assert settings_calls == [()]
     assert agent_kwargs["model"] == "literal-model"
     assert agent_kwargs["name"] == "逐行剧本分镜标注师"
     assert agent_kwargs["output_type"] is literal_script_writing.LiteralBeatMetaOutput
@@ -286,9 +343,9 @@ def test_ai_identity_detector_uses_newapi_detector_model_env(monkeypatch):
         model_calls.append((model_env, default_model))
         return "detector-model"
 
-    def fake_settings(thinking_env, default_thinking_level):
-        settings_calls.append((thinking_env, default_thinking_level))
-        return {"openai_reasoning_effort": default_thinking_level}
+    def fake_settings():
+        settings_calls.append(())
+        return {"openai_reasoning_effort": "none"}
 
     class FakeAgent:
         def __init__(self, model, **kwargs):
@@ -297,16 +354,16 @@ def test_ai_identity_detector_uses_newapi_detector_model_env(monkeypatch):
 
     monkeypatch.delenv("GLOBAL_VIDEO_MODEL", raising=False)
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
-    monkeypatch.setattr(config, "get_newapi_text_pydantic_model_settings", fake_settings)
+    monkeypatch.setattr(config, "get_newapi_structured_output_model_settings", fake_settings)
     monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
 
     global_video_optimizer._create_identity_detector_agent()
 
     assert model_calls == [("GLOBAL_VIDEO_IDENTITY_DETECTOR_MODEL", "gemini-3.5-flash")]
-    assert settings_calls == [("GLOBAL_VIDEO_IDENTITY_DETECTOR_THINKING_LEVEL", "low")]
+    assert settings_calls == [()]
     assert agent_kwargs["model"] == "detector-model"
     assert agent_kwargs["name"] == "角色颜色识别"
-    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "low"}
+    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "none"}
 
 
 def test_global_video_optimizer_uses_newapi_optimizer_model_env(monkeypatch):
@@ -321,9 +378,9 @@ def test_global_video_optimizer_uses_newapi_optimizer_model_env(monkeypatch):
         model_calls.append((model_env, default_model))
         return "optimizer-model"
 
-    def fake_settings(thinking_env, default_thinking_level):
-        settings_calls.append((thinking_env, default_thinking_level))
-        return {"openai_reasoning_effort": default_thinking_level}
+    def fake_settings():
+        settings_calls.append(())
+        return {"openai_reasoning_effort": "none"}
 
     class FakeAgent:
         def __init__(self, model, **kwargs):
@@ -332,15 +389,15 @@ def test_global_video_optimizer_uses_newapi_optimizer_model_env(monkeypatch):
 
     monkeypatch.delenv("GLOBAL_VIDEO_MODEL", raising=False)
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
-    monkeypatch.setattr(config, "get_newapi_text_pydantic_model_settings", fake_settings)
+    monkeypatch.setattr(config, "get_newapi_structured_output_model_settings", fake_settings)
     monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
 
     global_video_optimizer.create_global_video_optimizer_agent()
 
     assert model_calls == [("GLOBAL_VIDEO_OPTIMIZER_MODEL", "gemini-3.5-flash")]
-    assert settings_calls == [("GLOBAL_VIDEO_OPTIMIZER_THINKING_LEVEL", "low")]
+    assert settings_calls == [()]
     assert agent_kwargs["model"] == "optimizer-model"
-    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "low"}
+    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "none"}
     assert agent_kwargs["name"] == "Global Video Motion Director"
 
 
@@ -362,8 +419,8 @@ def test_global_video_optimizer_keeps_legacy_global_video_model_fallback(monkeyp
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
     monkeypatch.setattr(
         config,
-        "get_newapi_text_pydantic_model_settings",
-        lambda thinking_env, default_thinking_level: None,
+        "get_newapi_structured_output_model_settings",
+        lambda: {"openai_reasoning_effort": "none"},
     )
     monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
 
@@ -372,7 +429,7 @@ def test_global_video_optimizer_keeps_legacy_global_video_model_fallback(monkeyp
     assert model_calls == [("GLOBAL_VIDEO_OPTIMIZER_MODEL", "legacy-gemini-model")]
 
 
-def test_global_video_optimizer_empty_thinking_level_disables_settings(monkeypatch):
+def test_global_video_optimizer_forces_structured_reasoning_off(monkeypatch):
     import novelvideo.config as config
     import novelvideo.agents.global_video_optimizer as global_video_optimizer
 
@@ -382,7 +439,6 @@ def test_global_video_optimizer_empty_thinking_level_disables_settings(monkeypat
         def __init__(self, model, **kwargs):
             agent_kwargs.update(kwargs)
 
-    monkeypatch.setenv("GLOBAL_VIDEO_OPTIMIZER_THINKING_LEVEL", "")
     monkeypatch.setattr(
         config,
         "get_newapi_text_pydantic_model",
@@ -390,14 +446,14 @@ def test_global_video_optimizer_empty_thinking_level_disables_settings(monkeypat
     )
     monkeypatch.setattr(
         config,
-        "get_newapi_text_pydantic_model_settings",
-        lambda thinking_env, default_thinking_level: None,
+        "get_newapi_structured_output_model_settings",
+        lambda: {"openai_reasoning_effort": "none"},
     )
     monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
 
     global_video_optimizer.create_global_video_optimizer_agent()
 
-    assert "model_settings" not in agent_kwargs
+    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "none"}
 
 
 def test_seedance2_prompt_composer_uses_newapi_composer_model_env(monkeypatch):
@@ -412,9 +468,9 @@ def test_seedance2_prompt_composer_uses_newapi_composer_model_env(monkeypatch):
         model_calls.append((model_env, default_model))
         return "composer-model"
 
-    def fake_settings(thinking_env, default_thinking_level):
-        settings_calls.append((thinking_env, default_thinking_level))
-        return {"openai_reasoning_effort": default_thinking_level}
+    def fake_settings():
+        settings_calls.append(())
+        return {"openai_reasoning_effort": "none"}
 
     class FakeAgent:
         def __init__(self, model, **kwargs):
@@ -422,15 +478,15 @@ def test_seedance2_prompt_composer_uses_newapi_composer_model_env(monkeypatch):
             agent_kwargs.update(kwargs)
 
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
-    monkeypatch.setattr(config, "get_newapi_text_pydantic_model_settings", fake_settings)
+    monkeypatch.setattr(config, "get_newapi_structured_output_model_settings", fake_settings)
     monkeypatch.setattr("pydantic_ai.Agent", FakeAgent)
 
     seedance2_prompt.create_seedance2_prompt_composer_agent()
 
     assert model_calls == [("SEEDANCE2_PROMPT_COMPOSER_MODEL", "gemini-3.5-flash")]
-    assert settings_calls == [("SEEDANCE2_PROMPT_COMPOSER_THINKING_LEVEL", "low")]
+    assert settings_calls == [()]
     assert agent_kwargs["model"] == "composer-model"
-    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "low"}
+    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "none"}
     assert agent_kwargs["name"] == "Seedance 2.0 Prompt Composer"
     assert agent_kwargs["output_type"] is seedance2_prompt.Seedance2PromptComposerOutput
     assert agent_kwargs["output_retries"] == 2
@@ -454,8 +510,8 @@ def test_ai_identity_detector_keeps_legacy_global_video_model_fallback(monkeypat
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
     monkeypatch.setattr(
         config,
-        "get_newapi_text_pydantic_model_settings",
-        lambda thinking_env, default_thinking_level: None,
+        "get_newapi_structured_output_model_settings",
+        lambda: {"openai_reasoning_effort": "none"},
     )
     monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
 
@@ -464,7 +520,7 @@ def test_ai_identity_detector_keeps_legacy_global_video_model_fallback(monkeypat
     assert model_calls == [("GLOBAL_VIDEO_IDENTITY_DETECTOR_MODEL", "legacy-gemini-model")]
 
 
-def test_ai_identity_detector_can_pass_explicit_thinking_level(monkeypatch):
+def test_ai_identity_detector_forces_structured_reasoning_off(monkeypatch):
     import novelvideo.config as config
     import novelvideo.agents.global_video_optimizer as global_video_optimizer
 
@@ -481,11 +537,11 @@ def test_ai_identity_detector_can_pass_explicit_thinking_level(monkeypatch):
     )
     monkeypatch.setattr(
         config,
-        "get_newapi_text_pydantic_model_settings",
-        lambda thinking_env, default_thinking_level: {"openai_reasoning_effort": "low"},
+        "get_newapi_structured_output_model_settings",
+        lambda: {"openai_reasoning_effort": "none"},
     )
     monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
 
     global_video_optimizer._create_identity_detector_agent()
 
-    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "low"}
+    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "none"}
