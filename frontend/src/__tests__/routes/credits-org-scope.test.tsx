@@ -127,6 +127,9 @@ const ORG_SUMMARY: CreditSummary = {
   dormant_personal_balance: null,
 };
 
+// No `scope` key: what a backend that predates organization promotions sends,
+// and what the merged list carries for a platform promotion whose scope the
+// wire happens to omit. Either way it must render as a platform promotion.
 const PROMOTION = {
   id: "promo-1",
   name: "首充双倍",
@@ -137,6 +140,28 @@ const PROMOTION = {
   starts_at: null,
   ends_at: null,
 };
+
+const ORG_PROMOTION = { ...PROMOTION, id: "promo-org", name: "星辰专属折扣", scope: "org" };
+const PLATFORM_PROMOTION = {
+  ...PROMOTION,
+  id: "promo-platform",
+  name: "平台通用折扣",
+  scope: "platform",
+};
+
+const ORG_BADGE = "组织促销";
+const LOW_BALANCE_ANCHOR = "请联系组织管理员追加额度";
+
+// The badge has to be attributed to a specific card, not just found somewhere
+// on the page: "the org row is badged" and "the platform row is not" are two
+// different claims and a whole-page textContent search cannot tell them apart.
+function promotionCardText(container: HTMLElement, name: string): string {
+  const title = [...container.querySelectorAll("div")].find(
+    (node) => node.textContent?.trim() === name,
+  );
+  if (!title) throw new Error(`no promotion card titled ${name}`);
+  return title.closest("div.rounded-md")?.textContent ?? "";
+}
 
 const TRANSACTION = {
   id: "tx-1",
@@ -199,6 +224,36 @@ describe("credits page — personal account", () => {
     expect(unscoped).toBe(scoped);
     expect(unscoped).not.toContain("组织");
   });
+
+  // N3. Adding organization promotions must not change a single pixel of the
+  // personal promotion surface: the section still renders, and no row on it
+  // carries a source badge.
+  it("renders promotions exactly as before, with no source badge", () => {
+    queryState.summary = { ...PERSONAL_SUMMARY };
+    queryState.promotions = [PROMOTION];
+
+    const { container } = render(<CreditsPage />);
+    const text = container.textContent ?? "";
+
+    expect(queryState.promotionsEnabled).toBe(true);
+    expect(text).toContain("当前可用促销");
+    expect(text).toContain("最终优惠以具体功能、模型和业务区域的实时报价为准。");
+    expect(text).toContain("首充双倍");
+    expect(text).toContain("图片生成");
+    expect(text).not.toContain(ORG_BADGE);
+    expect(promotionCardText(container, "首充双倍")).not.toContain(ORG_BADGE);
+  });
+
+  // N7. The scope guard in `lowBalanceThresholdOf` is what keeps a stray
+  // threshold on a personal payload from telling a personal user to go ask an
+  // organization admin he does not have.
+  it("ignores a low-balance threshold sent on a personal payload", () => {
+    queryState.summary = { ...PERSONAL_SUMMARY, balance: 1, low_balance_threshold: 500 };
+
+    const { container } = render(<CreditsPage />);
+
+    expect(container.textContent ?? "").not.toContain(LOW_BALANCE_ANCHOR);
+  });
 });
 
 describe("credits page — organization member", () => {
@@ -223,15 +278,89 @@ describe("credits page — organization member", () => {
     expect(text).not.toContain("查看统一积分余额、消费结算、退款和当前可用促销。");
   });
 
-  it("does not fetch or advertise promotions", () => {
+  // M5 gave organizations promotions of their own (`org_credit_promotions`),
+  // which retires the OI-7 narrowing that skipped the request entirely for org
+  // members. The backend now merges the organization's own promotions with the
+  // platform ones no org promotion overrides, so the page asks unconditionally
+  // and renders the list verbatim — no client-side filtering or de-duplication.
+  // The only distinction left in the UI is authorship.
+  it("fetches promotions and badges only the organization's own", () => {
     queryState.summary = { ...ORG_SUMMARY };
+    queryState.promotions = [ORG_PROMOTION, PLATFORM_PROMOTION];
 
     const { container } = render(<CreditsPage />);
     const text = container.textContent ?? "";
 
-    expect(queryState.promotionsEnabled).toBe(false);
-    expect(text).not.toContain("当前可用促销");
-    expect(text).not.toContain("首充双倍");
+    expect(queryState.promotionsEnabled).toBe(true);
+    expect(text).toContain("当前可用促销");
+    expect(text).toContain("星辰专属折扣");
+    expect(text).toContain("平台通用折扣");
+    expect(promotionCardText(container, "星辰专属折扣")).toContain(ORG_BADGE);
+    expect(promotionCardText(container, "平台通用折扣")).not.toContain(ORG_BADGE);
+  });
+
+  // N1. An absent `scope` is the wire shape of every backend that predates M5;
+  // it must not be mistaken for an organization promotion.
+  it("renders a promotion with no scope key as a platform promotion", () => {
+    queryState.summary = { ...ORG_SUMMARY };
+    queryState.promotions = [PROMOTION];
+
+    const { container } = render(<CreditsPage />);
+
+    expect(container.textContent ?? "").toContain("首充双倍");
+    expect(promotionCardText(container, "首充双倍")).not.toContain(ORG_BADGE);
+  });
+
+  // N2. `promotionScopeOf` fails towards "platform" so that a scope value this
+  // build has never seen can never claim the member's own organization
+  // authored the discount.
+  it("renders a promotion with an unrecognised scope as a platform promotion", () => {
+    queryState.summary = { ...ORG_SUMMARY };
+    queryState.promotions = [{ ...PROMOTION, name: "未来来源折扣", scope: "something_new" }];
+
+    const { container } = render(<CreditsPage />);
+
+    expect(promotionCardText(container, "未来来源折扣")).not.toContain(ORG_BADGE);
+  });
+
+  // N4. The threshold an org admin set on this member's allocation is the only
+  // warning the member can act on — he cannot top the allocation up himself.
+  it.each([
+    ["below the threshold", 5000, 6000, "5,000", "6,000"],
+    ["exactly at the threshold", 5000, 5000, "5,000", "5,000"],
+  ])("warns when the balance is %s", (_case, balance, threshold, shownBalance, shownThreshold) => {
+    queryState.summary = { ...ORG_SUMMARY, balance, low_balance_threshold: threshold };
+
+    const { container } = render(<CreditsPage />);
+    const text = container.textContent ?? "";
+
+    expect(text).toContain(LOW_BALANCE_ANCHOR);
+    expect(text).toContain(
+      `可用余额 ${shownBalance} 已低于组织设置的提醒阈值 ${shownThreshold}，${LOW_BALANCE_ANCHOR}。`,
+    );
+  });
+
+  // N5.
+  it("stays quiet while the balance is above the threshold", () => {
+    queryState.summary = { ...ORG_SUMMARY, balance: 5000, low_balance_threshold: 100 };
+
+    const { container } = render(<CreditsPage />);
+
+    expect(container.textContent ?? "").not.toContain(LOW_BALANCE_ANCHOR);
+  });
+
+  // N6. `0` is the backend's "no threshold configured". Comparing it naively
+  // would fire the warning forever, because a balance is never below zero.
+  it.each([
+    ["zero", { low_balance_threshold: 0 }],
+    ["null", { low_balance_threshold: null }],
+    ["absent", {}],
+  ])("treats a %s threshold as no threshold at all", (_case, override) => {
+    queryState.summary = { ...ORG_SUMMARY, balance: 0, ...override };
+
+    const { container } = render(<CreditsPage />);
+
+    expect(container.textContent ?? "").not.toContain(LOW_BALANCE_ANCHOR);
   });
 
   it("shows a non-zero dormant personal balance and marks it unusable here", () => {

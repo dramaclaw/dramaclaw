@@ -22,6 +22,8 @@ import {
   creditOrgOf,
   creditScopeOf,
   dormantPersonalBalanceOf,
+  lowBalanceThresholdOf,
+  promotionScopeOf,
   useCreditFilterOptions,
   useCreditPromotions,
   useCreditSummary,
@@ -227,16 +229,24 @@ export function CreditsPage() {
   const [model, setModel] = useState("");
   const summaryQuery = useCreditSummary();
   const summary = summaryQuery.data?.data;
-  // Org members are charged against their org member account, and the org
-  // promotion surface doesn't exist yet (the backend pins promotion_count to
-  // 0 for them) — so don't ask for promotions and don't advertise any. While
-  // the summary is still loading the scope reads "personal", which keeps the
-  // request timing identical to before for personal accounts.
+  // Everyone asks for promotions. An org member's list is assembled by the
+  // backend — the org's own promotions, plus the platform ones no org
+  // promotion overrides — so the page never filters or de-duplicates it and
+  // never has to know the account scope to decide whether to ask. The only
+  // per-row distinction left in the UI is who authored the promotion, which is
+  // read off `promotionScopeOf` below.
   const scope = creditScopeOf(summary);
   const isOrgScope = scope === "org_member";
   const org = creditOrgOf(summary);
   const dormantPersonalBalance = dormantPersonalBalanceOf(summary);
-  const promotionQuery = useCreditPromotions(!isOrgScope);
+  const lowBalanceThreshold = lowBalanceThresholdOf(summary);
+  // Carries both figures rather than a boolean so the copy below can name them
+  // without re-narrowing a `number | null` that the guard already settled.
+  const lowBalance =
+    lowBalanceThreshold !== null && summary !== undefined && summary.balance <= lowBalanceThreshold
+      ? { balance: summary.balance, threshold: lowBalanceThreshold }
+      : null;
+  const promotionQuery = useCreditPromotions();
   const filterOptionsQuery = useCreditFilterOptions();
   const filters = useMemo(
     () => ({
@@ -252,7 +262,7 @@ export function CreditsPage() {
     [category, endDate, featureKey, model, page, projectId, startDate],
   );
   const transactionsQuery = useCreditTransactions(filters);
-  const promotions = isOrgScope ? [] : (promotionQuery.data?.data.items ?? []);
+  const promotions = promotionQuery.data?.data.items ?? [];
   const transactions = transactionsQuery.data?.data;
   const filterOptions = filterOptionsQuery.data?.data;
   const totalPages = Math.max(1, Math.ceil((transactions?.total ?? 0) / PAGE_SIZE));
@@ -367,6 +377,21 @@ export function CreditsPage() {
           })}
         </div>
 
+        {/* Sits above the dormant-balance note on purpose: this one is about
+            the account being spent from right now, the one below is a fact
+            about a different account. An org member cannot top his allocation
+            up himself, so the only action the copy can point at is the org
+            admin who set the threshold. `text-warning` unfilled, same as the
+            pending note beside the title. */}
+        {lowBalance ? (
+          <p className="mt-3 text-xs font-medium text-warning">
+            {t("credits.lowBalanceNotice", {
+              balance: formatNumber(lowBalance.balance, language),
+              threshold: formatNumber(lowBalance.threshold, language),
+            })}
+          </p>
+        ) : null}
+
         {/* Only rendered when the user actually still holds personal credits
             (the backend sends the key as null otherwise). It is deliberately
             outside the tile grid and typeset in muted text at a smaller size:
@@ -406,8 +431,20 @@ export function CreditsPage() {
                     <div className="truncate text-sm font-medium text-foreground">
                       {promotion.name}
                     </div>
-                    <div className="mt-1 truncate text-xs text-muted-foreground">
-                      {promotion.target_label}
+                    {/* Same chip as the org-scope badge beside the title, for
+                        the same reason: a discount whose terms the member's own
+                        org set is a different thing from a platform one, and
+                        only the org-authored rows are marked — an unmarked row
+                        reads as the platform default, which is also what an
+                        absent or unrecognised `scope` means. */}
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="min-w-0 truncate">{promotion.target_label}</span>
+                      {promotionScopeOf(promotion) === "org" ? (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/12 px-2.5 py-0.5 text-xs font-medium text-primary">
+                          <Building2 className="size-3.5" strokeWidth={1.75} />
+                          {t("credits.orgPromotionBadge")}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                   <span className="shrink-0 rounded-full bg-primary/12 px-2.5 py-0.5 text-xs font-medium text-primary">
