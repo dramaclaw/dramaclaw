@@ -27,6 +27,7 @@ _EE_REQUIRED_PORTS = (
     "task_backend",
     "cancellation_store",
     "lifecycle",
+    "product_surface_access",
 )
 
 

@@ -85,6 +85,7 @@ import {
   useEpisodeWorkbenchStore,
 } from "@/stores/episode-workbench-store";
 import { useProjectNavStore } from "@/stores/project-nav-store";
+import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
 
 type PendingAction =
   | { kind: "archive"; project: string; name: string }
@@ -1087,6 +1088,12 @@ function ProjectDashboard() {
 
   const statusCounts = useProjectCounts();
   const allSummaries = useAllProjectSummaries();
+  const productSurfaces = useProductSurfaces();
+  const mainlineAvailable =
+    surfaceAccess(productSurfaces.data, "mainline")?.available ?? productSurfaces.isPending;
+  const freezoneAvailable =
+    surfaceAccess(productSurfaces.data, "freezone")?.available ?? productSurfaces.isPending;
+  const assistantAvailable = surfaceAccess(productSurfaces.data, "assistant")?.available ?? false;
   // Only animate the grid entry on a cold load (data wasn't cached). When the
   // user navigates back from a project page, the Sidebar has already warmed
   // the query — render instantly instead of flashing an empty grid.
@@ -1189,8 +1196,11 @@ function ProjectDashboard() {
   // 进项目恢复上次停留的区块（虾画 / 虾集子页，默认虾画）；上次在虾镜且
   // 有剧集深链则直达该集。
   const resolveProjectEntry = useCallback((project: string): string => {
-    const section =
+    let section =
       useProjectNavStore.getState().lastSectionByProject[project] ?? "freezone";
+    if (section === "freezone" && !freezoneAvailable) section = "ingest";
+    if (section === "assistant" && !assistantAvailable) section = "ingest";
+    if (section !== "freezone" && !mainlineAvailable) section = "freezone";
     if (section === "episodes") {
       const remembered =
         useEpisodeWorkbenchStore.getState().lastEpisodeLocationByProject[project];
@@ -1200,7 +1210,7 @@ function ProjectDashboard() {
       }
     }
     return PROJECT_SECTION_ROUTES[section] ?? PROJECT_SECTION_ROUTES.freezone;
-  }, []);
+  }, [assistantAvailable, freezoneAvailable, mainlineAvailable]);
 
   const openProject = (project: string) =>
     navigate({ to: resolveProjectEntry(project), params: { project } });

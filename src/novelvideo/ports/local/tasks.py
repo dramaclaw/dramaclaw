@@ -74,6 +74,7 @@ class InlineTaskBackend:
         ctx,
         *,
         task_type: str,
+        product_surface: str,
         queue_kind: str = "default",
         episode: int = 0,
         beat_num: int | None = None,
@@ -88,6 +89,7 @@ class InlineTaskBackend:
             "backend": "inline",
             "queue_kind": lane_name,
             "project_id": ctx.project_id,
+            "product_surface": product_surface,
             **display_metadata_for_task(task_type, payload),
         }
         project_lane_limit = project_lane_effective_active_limit(

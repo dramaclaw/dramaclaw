@@ -145,6 +145,7 @@ async def generate_rewrite(
     reservation = await usage_meter.reserve_feature_start_credits(
         user_id=billing_user_id,
         feature_key=CONTENT_REWRITE_FEATURE_KEY,
+        product_surface="mainline",
         project_id=project_id,
         resource_kind="script",
         task_type=CONTENT_REWRITE_TASK_TYPE,

@@ -427,6 +427,7 @@ async def _start_or_enqueue_freezone_video_gen(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type="freezone_video_gen",
             queue_kind="video",
             episode=0,
@@ -482,6 +483,7 @@ async def _start_or_enqueue_freezone_image_to_3gs(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="world",
             episode=0,
@@ -558,6 +560,7 @@ async def _start_or_enqueue_freezone_gen_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type="freezone_gen",
             queue_kind="default",
             episode=0,
@@ -1188,6 +1191,7 @@ async def _start_or_enqueue_mainline_sketch_from_context_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="default",
             episode=int(episode),
@@ -1374,6 +1378,7 @@ async def _start_or_enqueue_mainline_frame_from_context_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="default",
             episode=int(episode),
@@ -1612,6 +1617,7 @@ async def _start_or_enqueue_standalone_frame_from_context_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="default",
             episode=0,
@@ -1659,6 +1665,7 @@ async def _start_or_enqueue_mainline_direct_sketch_task(
     scope = _director_control_scope(int(episode), int(beat))
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="freezone",
         task_type=task_type,
         queue_kind="default",
         episode=int(episode),
@@ -1716,6 +1723,7 @@ async def _start_or_enqueue_mainline_director_control_sketch_job(
     job_id = _new_job_id()
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="freezone",
         task_type=task_type,
         queue_kind="default",
         episode=int(episode),
@@ -1781,6 +1789,7 @@ async def _start_or_enqueue_mainline_beat_sketch_task(
     )
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="freezone",
         task_type=task_type,
         queue_kind="default",
         episode=int(episode),
@@ -1905,6 +1914,7 @@ async def _start_or_enqueue_mainline_scene_360_task(
     )
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="freezone",
         task_type=task_type,
         queue_kind="world",
         episode=0,
@@ -2021,6 +2031,7 @@ async def _start_or_enqueue_freezone_edit_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type="freezone_edit",
             queue_kind="default",
             episode=0,
@@ -2138,6 +2149,7 @@ async def _start_or_enqueue_freezone_edit_path(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="default",
             episode=0,
@@ -2205,6 +2217,7 @@ async def _start_or_enqueue_freezone_mask_edit_path(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="default",
             episode=0,
@@ -2261,6 +2274,7 @@ async def _enqueue_or_start_freezone_video_analysis(
         )
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="ffmpeg" if task_type != "freezone_analyze" else "default",
             episode=0,
@@ -2304,6 +2318,7 @@ async def _enqueue_or_start_freezone_media_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind=queue_kind,
             episode=0,
@@ -2338,6 +2353,7 @@ async def _enqueue_freezone_background_job(
 ) -> dict:
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="freezone",
         task_type=task_type,
         queue_kind=queue_kind,
         episode=0,
@@ -2355,7 +2371,6 @@ async def _enqueue_freezone_background_job(
 
 
 logger = logging.getLogger("novelvideo.api.freezone")
-
 router = APIRouter()
 
 FrameReviewReviewer = Callable[[str], str | Awaitable[str]]
@@ -7317,6 +7332,7 @@ async def freezone_mark_detect(
     reservation = await usage_meter.reserve_feature_start_credits(
         user_id=billing_user_id,
         feature_key="freezone.image_mark_detect",
+        product_surface="freezone",
         project_id=billing_project_id,
         resource_kind="image",
         task_type="freezone_image_mark_detect",

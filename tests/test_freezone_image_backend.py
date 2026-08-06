@@ -237,7 +237,7 @@ def test_freezone_omni_video_limit_returns_429_envelope_through_asgi(
     app.include_router(freezone_routes.router, prefix="/api/v1")
 
     async def fake_user():
-        return {"username": "admin"}
+        return {"id": "owner_1", "username": "admin"}
 
     app.dependency_overrides[freezone_routes.get_api_user] = fake_user
 
@@ -1024,7 +1024,10 @@ def test_freezone_ai_staging_prop_endpoint_returns_ai_prop(monkeypatch, tmp_path
     monkeypatch.setattr(freezone_routes, "_run_ai_staging_prop", fake_run_ai_staging_prop)
     app = FastAPI()
     app.include_router(freezone_routes.router, prefix="/api/v1")
-    app.dependency_overrides[freezone_routes.get_api_user] = lambda: {"username": "admin"}
+    app.dependency_overrides[freezone_routes.get_api_user] = lambda: {
+        "id": "owner_1",
+        "username": "admin",
+    }
     client = TestClient(app)
 
     response = client.post(
@@ -4590,6 +4593,7 @@ async def test_skill_run_frame_accepts_plain_canvas_image_as_sketch_input(
     )
 
     assert captured["task_type"] == "mainline_frame_from_context"
+    assert captured["product_surface"] == "freezone"
     assert captured["payload"]["billing"] == {
         "feature_key": "mainline.render_regen"
     }
@@ -4735,6 +4739,7 @@ async def test_skill_run_normalizes_project_media_url_before_dispatch(
     )
 
     assert captured["task_type"] == "mainline_sketch_from_context"
+    assert captured["product_surface"] == "freezone"
     assert captured["payload"]["billing"] == {
         "feature_key": "mainline.sketch_regen"
     }

@@ -309,6 +309,7 @@ async def analyze_style(
     reservation = await usage_meter.reserve_feature_start_credits(
         user_id=billing_user_id,
         feature_key=STYLE_ANALYSIS_FEATURE_KEY,
+        product_surface="mainline",
         project_id=project_id,
         resource_kind="script",
         task_type=STYLE_ANALYSIS_TASK_TYPE,

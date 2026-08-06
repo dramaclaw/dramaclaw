@@ -162,7 +162,13 @@ async def test_gate1_cooperative_cancel_releases_lane_without_outer_task_cancel(
 
     register_project_task_runner(task_type, runner)
 
-    queued = await backend.enqueue_project_task(ctx, task_type=task_type, episode=1, queue_kind="world")
+    queued = await backend.enqueue_project_task(
+        ctx,
+        task_type=task_type,
+        product_surface="mainline",
+        episode=1,
+        queue_kind="world",
+    )
     assert await asyncio.to_thread(started.wait, 3) is True
 
     await backend.cancel_project_task(ctx, queued.task_state)
@@ -194,7 +200,13 @@ async def test_gate2_cancel_kills_registered_process_group_and_unregisters_handl
 
     register_project_task_runner(task_type, runner)
 
-    queued = await backend.enqueue_project_task(ctx, task_type=task_type, episode=1, queue_kind="ffmpeg")
+    queued = await backend.enqueue_project_task(
+        ctx,
+        task_type=task_type,
+        product_surface="mainline",
+        episode=1,
+        queue_kind="ffmpeg",
+    )
     assert await asyncio.to_thread(started.wait, 3) is True
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline and not pidfile.exists():
@@ -236,7 +248,13 @@ async def test_gate2_deadline_kills_process_group_and_marks_failed(monkeypatch, 
 
     register_project_task_runner(task_type, runner)
 
-    queued = await backend.enqueue_project_task(ctx, task_type=task_type, episode=1, queue_kind="world")
+    queued = await backend.enqueue_project_task(
+        ctx,
+        task_type=task_type,
+        product_surface="mainline",
+        episode=1,
+        queue_kind="world",
+    )
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline and not pidfile.exists():
         await asyncio.sleep(0.02)
@@ -380,9 +398,21 @@ async def test_gate3_world_lane_saturation_does_not_starve_default_lane(
     register_project_task_runner("l014_gate3_world_blocker", world_runner)
     register_project_task_runner("l014_gate3_default_fast", default_runner)
 
-    await backend.enqueue_project_task(ctx, task_type="l014_gate3_world_blocker", episode=1, queue_kind="world")
+    await backend.enqueue_project_task(
+        ctx,
+        task_type="l014_gate3_world_blocker",
+        product_surface="mainline",
+        episode=1,
+        queue_kind="world",
+    )
     await _wait_for_status(_task_ports, ctx, "l014_gate3_world_blocker", "running")
-    await backend.enqueue_project_task(ctx, task_type="l014_gate3_default_fast", episode=1, queue_kind="default")
+    await backend.enqueue_project_task(
+        ctx,
+        task_type="l014_gate3_default_fast",
+        product_surface="mainline",
+        episode=1,
+        queue_kind="default",
+    )
 
     assert await asyncio.to_thread(default_done.wait, 1) is True
     await _wait_for_status(_task_ports, ctx, "l014_gate3_default_fast", "completed")
@@ -412,8 +442,20 @@ async def test_gate3_same_lane_overflow_is_explicitly_queued_and_cancelable(
     register_project_task_runner("l014_gate3_world_running", runner)
     register_project_task_runner("l014_gate3_world_queued", runner)
 
-    await backend.enqueue_project_task(ctx, task_type="l014_gate3_world_running", episode=1, queue_kind="world")
-    queued = await backend.enqueue_project_task(ctx, task_type="l014_gate3_world_queued", episode=1, queue_kind="world")
+    await backend.enqueue_project_task(
+        ctx,
+        task_type="l014_gate3_world_running",
+        product_surface="mainline",
+        episode=1,
+        queue_kind="world",
+    )
+    queued = await backend.enqueue_project_task(
+        ctx,
+        task_type="l014_gate3_world_queued",
+        product_surface="mainline",
+        episode=1,
+        queue_kind="world",
+    )
 
     await _wait_for_status(_task_ports, ctx, "l014_gate3_world_running", "running")
     pending = _task_ports.get_task_for_project(ctx, "l014_gate3_world_queued", 1)
@@ -455,6 +497,7 @@ async def test_gate3_global_lane_queue_overflow_raises_typed_limit_exception(
     await backend.enqueue_project_task(
         ctx,
         task_type="l014_gate3_world_running_overflow",
+        product_surface="mainline",
         episode=1,
         queue_kind="world",
     )
@@ -462,6 +505,7 @@ async def test_gate3_global_lane_queue_overflow_raises_typed_limit_exception(
     await backend.enqueue_project_task(
         ctx,
         task_type="l014_gate3_world_queued_overflow",
+        product_surface="mainline",
         episode=1,
         queue_kind="world",
     )
@@ -470,6 +514,7 @@ async def test_gate3_global_lane_queue_overflow_raises_typed_limit_exception(
         await backend.enqueue_project_task(
             ctx,
             task_type="l014_gate3_world_rejected_overflow",
+            product_surface="mainline",
             episode=1,
             queue_kind="world",
         )
@@ -549,10 +594,28 @@ async def test_gate3_multi_project_lane_dispatch_is_project_fair_fifo(
     register_project_task_runner("l014_gate3_a2", runner)
     register_project_task_runner("l014_gate3_b1", runner)
 
-    await backend.enqueue_project_task(ctx_a, task_type="l014_gate3_a1", episode=1, queue_kind="world")
+    await backend.enqueue_project_task(
+        ctx_a,
+        task_type="l014_gate3_a1",
+        product_surface="mainline",
+        episode=1,
+        queue_kind="world",
+    )
     await _wait_for_status(_task_ports, ctx_a, "l014_gate3_a1", "running")
-    await backend.enqueue_project_task(ctx_a, task_type="l014_gate3_a2", episode=1, queue_kind="world")
-    await backend.enqueue_project_task(ctx_b, task_type="l014_gate3_b1", episode=1, queue_kind="world")
+    await backend.enqueue_project_task(
+        ctx_a,
+        task_type="l014_gate3_a2",
+        product_surface="mainline",
+        episode=1,
+        queue_kind="world",
+    )
+    await backend.enqueue_project_task(
+        ctx_b,
+        task_type="l014_gate3_b1",
+        product_surface="mainline",
+        episode=1,
+        queue_kind="world",
+    )
 
     assert backend.lane_snapshot()["world"]["queued"] == 2
     release_first.set()

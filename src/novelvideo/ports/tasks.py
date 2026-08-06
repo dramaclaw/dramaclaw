@@ -65,6 +65,7 @@ class TaskBackend(Protocol):
         ctx,
         *,
         task_type: str,
+        product_surface: str,
         queue_kind: str = "default",
         episode: int = 0,
         beat_num: int | None = None,

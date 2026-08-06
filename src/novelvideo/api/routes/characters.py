@@ -662,6 +662,7 @@ async def build_characters(project: str, user: dict = Depends(get_api_user)):
             return novel_import_required_response()
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="build_characters",
             queue_kind="default",
             episode=0,
@@ -1380,6 +1381,7 @@ async def generate_single_portrait_async(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="character_portrait",
             queue_kind="default",
             episode=0,
@@ -1714,6 +1716,7 @@ async def generate_identity_portrait_async(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="character_portrait",
             queue_kind="default",
             episode=0,
@@ -1843,6 +1846,7 @@ async def generate_identity_image_async(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="identity_image",
             queue_kind="default",
             episode=0,

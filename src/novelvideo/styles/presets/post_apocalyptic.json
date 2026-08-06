@@ -1,8 +1,8 @@
 {
   "id": "post_apocalyptic",
   "name": "Post-Apocalyptic",
-  "style_instructions": "Create in PHOTOREALISTIC live-action film style. REAL WORLD scene with REAL PEOPLE — NOT animation, NOT illustration, NOT CGI. When the beat or scene context calls for a post-apocalyptic setting, use desaturated muted tones, dusty grays and browns, harsh natural light, weathering, dirt, sweat, cracked concrete, rusted metal, peeling paint, overgrown vegetation, and practical survival detail. Follow the beat, scene, character, and prop descriptions for exact era, location, wardrobe, technology, and materials; do not override explicit non-apocalyptic, modern, ancient, foreign, or traversal-story details. Maintain gritty realism with documentary-like authenticity.",
-  "avoid_instructions": "ABSOLUTELY FORBIDDEN: anime, manga, cartoon, illustrated, or painted styles. NOT CGI, NOT 3D animated. No smooth flawless skin — must show natural texture and weathering. No text, watermarks, or labels on image.",
+  "style_instructions": "Create a photorealistic live-action film render — not animation, illustration, or CGI. When the beat or scene context calls for a post-apocalyptic setting, use desaturated muted tones, dusty grays and browns, harsh natural light, weathering, dirt, sweat, cracked concrete, rusted metal, peeling paint, overgrown vegetation, and practical survival detail. Follow the beat, scene, character, and prop descriptions for exact character type, era, location, wardrobe, technology, and materials; do not override explicit non-apocalyptic, modern, ancient, foreign, traversal-story, or non-human details. Maintain gritty realism with documentary-like authenticity.",
+  "avoid_instructions": "ABSOLUTELY FORBIDDEN: anime, manga, cartoon, illustrated, or painted styles. NOT CGI, NOT 3D animated. For visible human skin, avoid artificial smoothing; apply dirt and weathering only when supported by the character and scene context. No text, watermarks, or labels on image.",
   "style_tag": "DESATURATED GRITTY REALISM, HARSH LIGHT",
   "label": "写实末日风格",
   "style_family": "live_action",

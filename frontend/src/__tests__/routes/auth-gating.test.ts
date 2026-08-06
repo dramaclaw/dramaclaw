@@ -48,6 +48,10 @@ vi.mock("@/stores/app-store", () => ({
 vi.mock("@/lib/queries/projects", () => ({
   useAllProjectSummaries: () => ({ data: [], isLoading: false }),
 }));
+vi.mock("@/lib/queries/product-surfaces", () => ({
+  surfaceAccess: () => undefined,
+  useProductSurfaces: () => ({ data: undefined }),
+}));
 vi.mock("@/lib/project-route", () => ({
   canonicalProjectRouteParam: (project: string) => project,
 }));

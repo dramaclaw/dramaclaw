@@ -182,6 +182,7 @@ async def test_audio_generate_route_dispatches_indextts2(monkeypatch, tmp_path):
     assert calls == [
         {
             "ctx": ctx,
+            "product_surface": "mainline",
             "task_type": "audio_generation_indextts2",
             "episode": 3,
             "payload": {
@@ -364,6 +365,7 @@ async def test_single_beat_audio_route_dispatches_indextts2(monkeypatch, tmp_pat
     assert calls == [
         {
             "ctx": ctx,
+            "product_surface": "mainline",
             "task_type": "audio_generation_indextts2",
             "episode": 3,
             "payload": {
