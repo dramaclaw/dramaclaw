@@ -271,56 +271,118 @@ export function videoMultiImageAutoSwitchMode(
 }
 
 /**
- * Seedance 2.0 音频引用的时长边界。厂商口径是**逐条**，没有一个字提到总和：
- * `[InvalidParameter.DurationTooShort] Duration must be between 1.8s and 15.2s`。
+ * Seedance 2.0 音频引用的时长边界。厂商有**两条互相独立**的规则，都会以 400 打回：
  *
- * 所以这里也逐条卡，两头都卡。**别再回到按总时长判定**：那会把 3 条各 6s（每条都
- * 在 1.8~15.2 区间内、厂商必然放行）的合法组合拦在本地，用一条我们自己臆想出来的
- * 规则挡住用户。后端 freezone omni-gen 端点（`validate_omni_reference_limits`）只
- * 校验条数（图≤9 / 视频≤3 / 音频≤3 / 总数≤12），同样没有总时长这回事。
+ * 1. 逐条：`[InvalidParameter.DurationTooShort] Duration must be between 1.8s and 15.2s`
+ * 2. 总和：`the parameter audio total duration (seconds) specified in the request must
+ *    be less than or equal to 15.2 for model doubao-seedance-2-0 in r2v`
  *
- * 注：`seedance2_i2v/pipeline.py` 里那个 `MAX_SEEDANCE2_REFERENCE_AUDIO_TOTAL_SECONDS`
- * 总时长守卫属于**剧集 beat 流水线的参考声线**（角色工作台 3-5s 声音克隆样本），与画布
- * 这条 omni-gen 路径无关，不要拿它给这里的总时长限制背书。
+ * **这里曾经只卡第 1 条**，注释里还写着「厂商口径是逐条，没有一个字提到总和」「别再
+ * 回到按总时长判定」。那是错的：2026-08-06 3060 环境两次任务失败
+ * （freezone_video_gen/01KZ5R8ZZZY9M8T9F01H159RP7，gen_mode=allReference）实测抓到了
+ * 第 2 条报文——3 条各 6s 每条都在 1.8~15.2 区间内、逐条判定必然放行，总计 18s 却被
+ * 厂商直接拒。所以总时长这条**不是我们臆想的规则**，删掉它就等于把这个故障放回去。
  *
- * 文案里的秒数一律从这两个常量推（`/ 1000`），别在调用点另写一遍字面量，否则改阈值
+ * 总时长上限优先读媒体模型目录的 `referenceAudioTotalMaxSeconds`（后台可配），没配才用
+ * 下面这个 15.2s 的厂商兜底值。兜底值刻意与单条上限取同一个数：单条 15.2s 是厂商明确
+ * 放行的，兜底若取更小（比如 15s）就会把一条合法的顶格音频误拦在本地。想留安全余量
+ * 请在后台把 `referenceAudioTotalMaxSeconds` 配小，而不是改这里的常量。
+ *
+ * 后端 freezone omni-gen 端点有同一套兜底（`validate_omni_reference_audio_durations`，
+ * src/novelvideo/freezone/video_node.py），那层拿的是落地文件路径 + ffprobe，是本地
+ * `<audio>` 探测失败时最后一道能在计费前拦下的闸门。
+ *
+ * 文案里的秒数一律从这些常量推（`/ 1000`），别在调用点另写一遍字面量，否则改阈值
  * 时提示会静默漂移。
  */
 export const MIN_AUDIO_REFERENCE_DURATION_MS = 1_800;
 export const MAX_AUDIO_REFERENCE_DURATION_MS = 15_200;
+export const MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS = 15_200;
 
-export type AudioDurationRejection = {
-  kind: "tooShort" | "tooLong";
-  clips: { label: string; durationMs: number }[];
-};
+/** 媒体目录里与音频时长相关的那个字段（`ModelOption` 的子集）。 */
+export interface AudioDurationLimitModel {
+  referenceAudioTotalMaxSeconds?: number | null;
+}
 
 /**
- * 提交前音频时长守卫（仅 Seedance 2.0 的全能参考路径调用，其它模型边界未知）。
+ * 所选模型的**有效**音频总时长上限（毫秒）：目录配置优先，没配才用 15.2s。
+ *
+ * 与后端 `_catalog_audio_total_duration_max`（api/routes/freezone.py）同一口径：只认
+ * 有限正数，null / 0 / 负数 / NaN 一律当作没配。允许小数——15.2 本身就不是整数，这
+ * 与那几个「非负整数」的计数字段不同，别顺手套 `Number.isInteger`。
+ */
+export function audioReferenceTotalDurationLimitMs(
+  model: AudioDurationLimitModel | null | undefined,
+): number {
+  const seconds = model?.referenceAudioTotalMaxSeconds;
+  if (typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0) {
+    return Math.round(seconds * 1000);
+  }
+  return MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS;
+}
+
+/**
+ * 三个 kind 必须各占一个联合分支：写成 `kind: "tooShort" | "tooLong"` 合并那两个的话，
+ * TS 无法靠 `kind !== "tooLong"` 把整个分支从联合里剔掉，调用点的三元链就取不到
+ * totalTooLong 独有的 totalMs / limitMs。
+ */
+export type AudioDurationRejection =
+  | { kind: "tooShort"; clips: { label: string; durationMs: number }[] }
+  | { kind: "tooLong"; clips: { label: string; durationMs: number }[] }
+  | {
+      kind: "totalTooLong";
+      clips: { label: string; durationMs: number }[];
+      totalMs: number;
+      limitMs: number;
+    };
+
+/**
+ * 提交前音频时长守卫。
  *
  * `durationMs` 为 null = 探测不出时长（音频节点没渲染过波形，且 `<audio>` 探测撞上
  * CORS / 网络 / 超时）。这类一律**不参与判定**——宁可放过去让后端兜底，也不要凭空
- * 拦住一次正常提交。
+ * 拦住一次正常提交。对总时长来说这意味着算出来的和是个**下界**，但判定方向仍然安全：
+ * 漏算只会让和变小，所以「算出来超了」必定真超，不会因此误拦。
  *
- * 太短优先于太长上报：同时越界时先修哪条都行，报一类比混在一起列更好读。
+ * 两类边界**分开授权**，与后端 `validate_omni_reference_audio_durations` 一一对应：
+ *   - `perClipLimits`：逐条 1.8~15.2s，这两个数字是从 Seedance 2.0 的报文里实测出来的，
+ *     只对它成立。别家模型传 `false` —— 拿 2.0 的数字去卡它，一条正常的 25s 音频会被
+ *     我们凭空拦在本地。
+ *   - `totalLimitMs`：总时长，优先听目录里的 `referenceAudioTotalMaxSeconds`
+ *     （见 `audioReferenceTotalDurationLimitMs`），没配才落到 15.2s 兜底。
+ *
+ * 上报顺序 太短 → 单条太长 → 总和太长：前两类是「换掉这条」，最后一类是「整体裁一裁」，
+ * 混在一起列用户不知道先动哪个。
  */
 export function audioReferenceDurationRejection(
   clips: readonly { label: string; durationMs: number | null }[],
+  options: { totalLimitMs?: number; perClipLimits?: boolean } = {},
 ): AudioDurationRejection | null {
+  const {
+    totalLimitMs = MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
+    perClipLimits = true,
+  } = options;
   const measured = clips.filter(
     (clip): clip is { label: string; durationMs: number } =>
       typeof clip.durationMs === "number" && clip.durationMs > 0,
   );
-  const tooShort = measured.filter(
-    (clip) => clip.durationMs < MIN_AUDIO_REFERENCE_DURATION_MS,
-  );
-  if (tooShort.length > 0) {
-    return { kind: "tooShort", clips: tooShort };
+  if (perClipLimits) {
+    const tooShort = measured.filter(
+      (clip) => clip.durationMs < MIN_AUDIO_REFERENCE_DURATION_MS,
+    );
+    if (tooShort.length > 0) {
+      return { kind: "tooShort", clips: tooShort };
+    }
+    const tooLong = measured.filter(
+      (clip) => clip.durationMs > MAX_AUDIO_REFERENCE_DURATION_MS,
+    );
+    if (tooLong.length > 0) {
+      return { kind: "tooLong", clips: tooLong };
+    }
   }
-  const tooLong = measured.filter(
-    (clip) => clip.durationMs > MAX_AUDIO_REFERENCE_DURATION_MS,
-  );
-  if (tooLong.length > 0) {
-    return { kind: "tooLong", clips: tooLong };
+  const totalMs = measured.reduce((sum, clip) => sum + clip.durationMs, 0);
+  if (measured.length > 0 && totalMs > totalLimitMs) {
+    return { kind: "totalTooLong", clips: measured, totalMs, limitMs: totalLimitMs };
   }
   return null;
 }
@@ -333,12 +395,12 @@ export function audioReferenceDurationRejection(
  * （`Math.round(secs * 1000)`），所以按毫秒精度展示，再去掉无意义的尾随 0：
  * 900 → `0.9`、1799 → `1.799`、15201 → `15.201`、6000 → `6`。
  */
-function formatClipSeconds(durationMs: number): string {
+export function formatAudioDurationSeconds(durationMs: number): string {
   return (durationMs / 1000).toFixed(3).replace(/\.?0+$/, "");
 }
 
 /**
- * 把违规条目拼成提示里的 `{{clips}}`（tooShort / tooLong 共用）。
+ * 把违规条目拼成提示里的 `{{clips}}`（tooShort / tooLong / totalTooLong 共用）。
  *
  * 括号和分隔符都从 locale 取（zh 用全角括号 + 顿号，en 用半角括号 + 逗号），别在
  * 调用点写死——这里曾经硬编码 `（）` 和 `、`，en 用户会看到一串中文标点。
@@ -351,7 +413,7 @@ export function formatAudioDurationClips(
     .map((clip) =>
       translate("node.videoNode.audio.clipDuration", {
         label: clip.label,
-        seconds: formatClipSeconds(clip.durationMs),
+        seconds: formatAudioDurationSeconds(clip.durationMs),
       }),
     )
     .join(translate("node.videoNode.audio.clipSeparator"));

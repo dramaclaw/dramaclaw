@@ -220,6 +220,39 @@ def test_validates_media_catalog_capabilities():
         )
 
 
+def test_validates_reference_audio_total_max_seconds():
+    """参考音频**总时长**上限：收小数（厂商口径 15.2 本身就不是整数），只拒非正数。"""
+    base = {
+        "supportedModes": ["all_reference"],
+        "request": {"endpoint": "video/generations", "parameters": []},
+    }
+    for value in (15.2, 15, 0.5):
+        config = {**base, "referenceAudioTotalMaxSeconds": value}
+        assert validate_media_model_catalog_config(config, "video") is config
+    # 没配 = 走后端 15.2s 兜底，不是错误。
+    assert validate_media_model_catalog_config({**base}, "video") is not None
+
+    # True 也要拒：`type(True) is bool`，不能让布尔当成 1 秒混进来。
+    for bad in (0, -1, "15.2", True, []):
+        with pytest.raises(
+            MediaModelSchemaError, match="referenceAudioTotalMaxSeconds"
+        ):
+            validate_media_model_catalog_config(
+                {**base, "referenceAudioTotalMaxSeconds": bad},
+                "video",
+            )
+
+    # 图片模型没有参考音频这回事，配了要报「不兼容」而不是默默收下。
+    with pytest.raises(MediaModelSchemaError, match="incompatible fields"):
+        validate_media_model_catalog_config(
+            {
+                "referenceAudioTotalMaxSeconds": 15.2,
+                "request": {"endpoint": "images/generations", "parameters": []},
+            },
+            "image",
+        )
+
+
 def test_catalog_config_rejects_endpoint_for_other_media_type():
     with pytest.raises(MediaModelSchemaError, match="image model request endpoint"):
         validate_media_model_catalog_config(

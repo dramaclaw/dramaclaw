@@ -237,6 +237,7 @@ def validate_media_model_catalog_config(
             "supportedModes",
             "referenceVideoMax",
             "referenceAudioMax",
+            "referenceAudioTotalMaxSeconds",
             "humanReview",
             "sceneOptimizeOptions",
             "defaultSceneOptimize",
@@ -287,6 +288,16 @@ def validate_media_model_catalog_config(
         value = config.get(field)
         if value is not None and (type(value) is not int or value < 0):
             raise MediaModelSchemaError(f"{field} must be a non-negative integer")
+
+    # 参考音频**总时长**上限（秒）。厂商口径 15.2 本身就不是整数，所以这项收小数，
+    # 与上面那几个计数字段不同口径——别顺手并进上面的循环。
+    audio_total = config.get("referenceAudioTotalMaxSeconds")
+    if audio_total is not None and (
+        type(audio_total) not in (int, float) or audio_total <= 0
+    ):
+        raise MediaModelSchemaError(
+            "referenceAudioTotalMaxSeconds must be a positive number"
+        )
 
     if media_type == "video":
         video_limit = config.get("referenceVideoMax")

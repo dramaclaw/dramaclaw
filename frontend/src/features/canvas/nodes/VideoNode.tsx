@@ -65,7 +65,9 @@ import {
 } from "@/features/canvas/domain/canvasNodes";
 import {
   audioReferenceDurationRejection,
+  audioReferenceTotalDurationLimitMs,
   formatAudioDurationClips,
+  formatAudioDurationSeconds,
   MAX_AUDIO_REFERENCE_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
   isHappyHorseVideoModel,
@@ -251,10 +253,11 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
 // @图片10 但提交时被静默丢掉」。
 //
 // 表里没出现的模式默认不限制（textToVideo 不消费上游），走原有路径。
-//   - allReference (omni)  ：image 1-9 / video 0-3 / audio 0-3。音频另有**逐条**
-//                            1.8~15.2s 的厂商时长约束，在提交前单独校验（见
-//                            audioReferenceDurationRejection）；**没有总时长上限**，
-//                            服务端也不校验时长，别再往这张表里加总时长口径。
+//   - allReference (omni)  ：image 1-9 / video 0-3 / audio 0-3。音频另有两条厂商时长
+//                            约束——**逐条** 1.8~15.2s 和**总和** ≤15.2s（后台可配
+//                            referenceAudioTotalMaxSeconds）——都在提交前单独校验，
+//                            见 audioReferenceDurationRejection。时长口径不进这张表：
+//                            这里只表达条数。
 //   - firstLastFrame       ：仅图片 2 张（首帧 + 尾帧），不允许任何视频 / 音频。
 //                            图片 >2 时另有自动切到 allReference 的兜底（见
 //                            VideoNode 内部 effect）。
@@ -2178,11 +2181,18 @@ export const VideoNode = memo(
             });
             return;
           }
-          // Seedance 2.0 厂商对**每条**音频都要求 1.8s ≤ 时长 ≤ 15.2s（见
-          // audioReferenceDurationRejection），越界会以 InvalidParameter 400 回来。
-          // 提交前先本地校验：durationMs 缺失时用 <audio> 探测兜底，越界就弹窗拦下，
-          // 避免白跑一趟后端。仅对 seedance2 生效（其它模型边界未知）。
-          if (isSeedance20Model && audioRefs.length > 0) {
+          // Seedance 2.0 厂商对音频有两条时长约束，越界都会以 InvalidParameter 400
+          // 回来：**每条** 1.8s ≤ 时长 ≤ 15.2s，以及**所有条加起来** ≤ 15.2s。提交前
+          // 先本地校验：durationMs 缺失时用 <audio> 探测兜底，越界就弹窗拦下，避免白跑
+          // 一趟后端。
+          //
+          // 两类边界分开授权，与后端 freezone omni-gen 的兜底一一对应：
+          //   - 逐条 1.8~15.2s 只有 seedance2 成立（数字是从它的报文里实测出来的）；
+          //   - 总时长凡是目录里配了 referenceAudioTotalMaxSeconds 的模型都要管——否则
+          //     这类模型前端放行、后端拦下，用户白等一个来回还只能看到一句英文 400。
+          const audioTotalConfigured =
+            selectedVideoModel?.referenceAudioTotalMaxSeconds != null;
+          if ((isSeedance20Model || audioTotalConfigured) && audioRefs.length > 0) {
             const resolvedDurations = await Promise.all(
               audioRefs.map((ref) =>
                 typeof ref.durationMs === "number" && ref.durationMs > 0
@@ -2195,6 +2205,10 @@ export const VideoNode = memo(
                 label: ref.label,
                 durationMs: resolvedDurations[index] ?? null,
               })),
+              {
+                totalLimitMs: audioReferenceTotalDurationLimitMs(selectedVideoModel),
+                perClipLimits: isSeedance20Model,
+              },
             );
             if (rejection) {
               const clips = formatAudioDurationClips(rejection.clips, (key, vars) =>
@@ -2206,10 +2220,16 @@ export const VideoNode = memo(
                       min: MIN_AUDIO_REFERENCE_DURATION_MS / 1000,
                       clips,
                     })
-                  : t("node.videoNode.audio.durationTooLong", {
-                      max: MAX_AUDIO_REFERENCE_DURATION_MS / 1000,
-                      clips,
-                    }),
+                  : rejection.kind === "tooLong"
+                    ? t("node.videoNode.audio.durationTooLong", {
+                        max: MAX_AUDIO_REFERENCE_DURATION_MS / 1000,
+                        clips,
+                      })
+                    : t("node.videoNode.audio.durationTotalTooLong", {
+                        max: formatAudioDurationSeconds(rejection.limitMs),
+                        total: formatAudioDurationSeconds(rejection.totalMs),
+                        clips,
+                      }),
                 t("common.error"),
               );
               updateNodeData(id, {

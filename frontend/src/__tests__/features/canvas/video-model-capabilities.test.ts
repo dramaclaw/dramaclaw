@@ -7,7 +7,9 @@ import { describe, expect, it } from "vitest";
 import type { VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import {
   audioReferenceDurationRejection,
+  audioReferenceTotalDurationLimitMs,
   formatAudioDurationClips,
+  MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
   GEN_MODE_TO_CATALOG_MODE,
   isGrokVideoChannelModel,
   isHappyHorseVideoModel,
@@ -742,20 +744,81 @@ describe("audioReferenceDurationRejection — 提交前音频时长守卫", () =
     });
   });
 
-  it("多条各自合规就放行——不按总时长判定 (3 条 6s 共 18s 厂商也收)", () => {
+  // 这条曾经断言「3 条 6s 共 18s 厂商也收」。2026-08-06 3060 环境实测打脸：厂商在
+  // r2v 另有 `audio total duration ... must be less than or equal to 15.2` 一条，
+  // 逐条全合规的 18s 组合照样 400。别把它改回放行。
+  it("逐条都合规但总和超限 → 拦，并带上总时长和上限", () => {
     expect(
       audioReferenceDurationRejection([
         clip("a", 6_000),
         clip("b", 6_000),
         clip("c", 6_000),
       ]),
+    ).toEqual({
+      kind: "totalTooLong",
+      clips: [
+        { label: "a", durationMs: 6_000 },
+        { label: "b", durationMs: 6_000 },
+        { label: "c", durationMs: 6_000 },
+      ],
+      totalMs: 18_000,
+      limitMs: 15_200,
+    });
+  });
+
+  it("总和恰好顶格 15.2s 放行，多 1ms 才拦", () => {
+    expect(
+      audioReferenceDurationRejection([clip("a", 9_000), clip("b", 6_200)]),
     ).toBeNull();
-    // 3 条顶格 15.2s（总计 45.6s）同样放行：厂商口径是逐条，总和是我们臆想的。
+    expect(
+      audioReferenceDurationRejection([clip("a", 9_000), clip("b", 6_201)])?.kind,
+    ).toBe("totalTooLong");
+  });
+
+  it("单条顶格 15.2s 不会被总和这条误伤 (兜底上限与单条上限同值)", () => {
+    expect(audioReferenceDurationRejection([clip("a", 15_200)])).toBeNull();
+  });
+
+  it("单条太长优先于总和上报 (先换掉那条，再谈整体裁剪)", () => {
+    expect(
+      audioReferenceDurationRejection([clip("a", 20_000), clip("b", 6_000)])?.kind,
+    ).toBe("tooLong");
+  });
+
+  it("总和上限走传入值 (后台 referenceAudioTotalMaxSeconds)", () => {
+    const clips = [clip("a", 6_000), clip("b", 6_000)];
+    expect(audioReferenceDurationRejection(clips)).toBeNull();
+    expect(audioReferenceDurationRejection(clips, { totalLimitMs: 30_000 })).toBeNull();
+    expect(audioReferenceDurationRejection(clips, { totalLimitMs: 10_000 })).toEqual({
+      kind: "totalTooLong",
+      clips: [
+        { label: "a", durationMs: 6_000 },
+        { label: "b", durationMs: 6_000 },
+      ],
+      totalMs: 12_000,
+      limitMs: 10_000,
+    });
+  });
+
+  it("perClipLimits: false 只判总和——1.8~15.2 是 seedance2 专属数字，别拿去卡别家", () => {
+    // 后台给某个非 seedance2 模型配了 60s 总时长：一条 25s 的音频对它完全合法，
+    // 若还套用逐条 15.2s 就是我们凭空 400 掉一次正常提交。
+    const options = { totalLimitMs: 60_000, perClipLimits: false };
+    expect(audioReferenceDurationRejection([clip("a", 25_000)], options)).toBeNull();
+    expect(audioReferenceDurationRejection([clip("a", 500)], options)).toBeNull();
+    // 总和这条仍然管着。
+    expect(
+      audioReferenceDurationRejection([clip("a", 40_000), clip("b", 25_000)], options),
+    ).toMatchObject({ kind: "totalTooLong", totalMs: 65_000, limitMs: 60_000 });
+  });
+
+  it("测不出的条目不计入总和——和只会偏小，所以判超了必定真超", () => {
+    // 3 条各 6s，其中一条测不出：可见部分 12s 未超，放行给后端 ffprobe 兜底。
     expect(
       audioReferenceDurationRejection([
-        clip("a", 15_200),
-        clip("b", 15_200),
-        clip("c", 15_200),
+        clip("a", 6_000),
+        clip("b", null),
+        clip("c", 6_000),
       ]),
     ).toBeNull();
   });
@@ -791,6 +854,32 @@ describe("audioReferenceDurationRejection — 提交前音频时长守卫", () =
 
   it("没有音频引用时不拦", () => {
     expect(audioReferenceDurationRejection([])).toBeNull();
+  });
+});
+
+describe("audioReferenceTotalDurationLimitMs — 目录优先、15.2s 兜底", () => {
+  it("没配 / 配了非法值 → 兜底 15.2s", () => {
+    expect(audioReferenceTotalDurationLimitMs(null)).toBe(15_200);
+    expect(audioReferenceTotalDurationLimitMs(undefined)).toBe(15_200);
+    expect(audioReferenceTotalDurationLimitMs({})).toBe(15_200);
+    for (const bad of [null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        audioReferenceTotalDurationLimitMs({ referenceAudioTotalMaxSeconds: bad }),
+      ).toBe(MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS);
+    }
+  });
+
+  it("配了就听配置，且**接受小数**——15.2 本身就不是整数", () => {
+    expect(
+      audioReferenceTotalDurationLimitMs({ referenceAudioTotalMaxSeconds: 30 }),
+    ).toBe(30_000);
+    expect(
+      audioReferenceTotalDurationLimitMs({ referenceAudioTotalMaxSeconds: 15.2 }),
+    ).toBe(15_200);
+    // 别顺手套 Number.isInteger：那会把管理员配的 12.5s 静默退回 15.2s，比后端更宽。
+    expect(
+      audioReferenceTotalDurationLimitMs({ referenceAudioTotalMaxSeconds: 12.5 }),
+    ).toBe(12_500);
   });
 });
 
