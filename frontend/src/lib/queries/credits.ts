@@ -35,6 +35,11 @@ export interface CreditSummary {
   // Personal balance that still exists but cannot be spent here, surfaced
   // only when it is non-zero. Never folded into `balance`.
   dormant_personal_balance?: number | null;
+  // The low-balance threshold an org admin set on *this member's* allocation —
+  // not an organization-wide figure. Only org members ever receive it; `0`
+  // means "no threshold configured", which is why it can never be compared
+  // naively (every non-negative balance is `>= 0`).
+  low_balance_threshold?: number | null;
 }
 
 // Anything that is not literally "org_member" reads as a personal account.
@@ -60,6 +65,30 @@ export function dormantPersonalBalanceOf(summary?: CreditSummary | null): number
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
+// Same reason `creditOrgOf` lives here: the guards are the contract, not a
+// component detail. A threshold only exists for an org member's allocation,
+// and `0` is the backend's "not configured" — reading it as a real threshold
+// would fire the warning permanently, since a balance is never below zero.
+export function lowBalanceThresholdOf(summary?: CreditSummary | null): number | null {
+  if (creditScopeOf(summary) !== "org_member") return null;
+  const value = summary?.low_balance_threshold;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+// Who configured a promotion the caller can hit: their own organization, or
+// the platform. The backend merges both lists before sending them.
+export type CreditPromotionScope = "org" | "platform";
+
+// Mirrors `creditScopeOf`: anything that is not literally "org" reads as a
+// platform promotion. Failing towards "platform" keeps an absent or
+// not-yet-known wire value from claiming that the member's organization
+// authored a discount it did not.
+export function promotionScopeOf(
+  promotion?: { scope?: string | null } | null,
+): CreditPromotionScope {
+  return promotion?.scope === "org" ? "org" : "platform";
+}
+
 export interface CreditPromotion {
   id: string;
   name: string;
@@ -69,6 +98,10 @@ export interface CreditPromotion {
   discount_basis_points: number;
   starts_at: string | null;
   ends_at: string | null;
+  // Optional for the same reason the summary's scope keys are: a backend that
+  // predates organization promotions omits it, and such a response must keep
+  // rendering as a platform promotion.
+  scope?: CreditPromotionScope;
 }
 
 export interface CreditTransaction {
