@@ -187,7 +187,7 @@ describe("narrator voice query hooks", () => {
     expect(called).toBe(true);
   });
 
-  it("invalidates Seedance2 beat status after narrator voice changes", async () => {
+  it("invalidates dependent generation state after narrator voice changes", async () => {
     server.use(
       http.post(
         "http://localhost:3000/api/v1/projects/demo/narrator-voice/delete",
@@ -205,6 +205,9 @@ describe("narrator voice query hooks", () => {
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["seedance2-beat-status", "demo"],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["audio-billing-quote", "demo"],
     });
   });
 });

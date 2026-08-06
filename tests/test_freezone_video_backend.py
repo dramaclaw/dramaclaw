@@ -31,6 +31,7 @@ from novelvideo.freezone.video_node import (
     normalize_video_resolution_for_backend,
     resolve_freezone_video_backend,
     summarize_omni_reference_counts,
+    validate_omni_reference_audio_durations,
     validate_omni_reference_limits,
 )
 
@@ -465,3 +466,62 @@ def test_validate_omni_reference_limits_and_summary() -> None:
             audio_max=0,
             total_max=2,
         )
+
+
+def test_validate_omni_reference_audio_durations_per_clip_bounds() -> None:
+    # 厂商逐条口径：1.8s ≤ 时长 ≤ 15.2s，两端都是闭区间。
+    validate_omni_reference_audio_durations([("a.wav", 1.8)])
+    validate_omni_reference_audio_durations([("a.wav", 15.2)])
+
+    with pytest.raises(ValueError, match=r"must be >= 1\.8s") as short_exc:
+        validate_omni_reference_audio_durations([("ok.wav", 5.0), ("tiny.wav", 0.9)])
+    # 只点名越界的那条，别把合规的也列进去让用户猜。
+    assert "tiny.wav (0.9s)" in str(short_exc.value)
+    assert "ok.wav" not in str(short_exc.value)
+
+    with pytest.raises(ValueError, match=r"must be <= 15\.2s"):
+        validate_omni_reference_audio_durations([("long.wav", 15.201)])
+
+
+def test_validate_omni_reference_audio_durations_total_bound() -> None:
+    """3 条各 6s：逐条全合规，总计 18s —— 2026-08-06 3060 两次任务就死在这。
+
+    厂商报文：`audio total duration (seconds) ... must be less than or equal to 15.2
+    for model doubao-seedance-2-0 in r2v`。别把这条当成多余的本地规则删掉。
+    """
+    with pytest.raises(ValueError, match="total duration must be <= 15.2s") as exc:
+        validate_omni_reference_audio_durations(
+            [("a.wav", 6.0), ("b.wav", 6.0), ("c.wav", 6.0)]
+        )
+    assert "got 18s" in str(exc.value)
+
+    # 顶格 15.2s 必须放行：浮点和会漂到 15.200000000000001，裸比较会误拦。
+    validate_omni_reference_audio_durations(
+        [("a.wav", 6.0), ("b.wav", 6.0), ("c.wav", 3.2)]
+    )
+    # 单条顶格同样不能被总和这条误伤（兜底上限与单条上限同值）。
+    validate_omni_reference_audio_durations([("a.wav", 15.2)])
+
+    # 单条越界优先上报：先换掉那条，再谈整体裁剪。
+    with pytest.raises(ValueError, match="must be <= 15.2s"):
+        validate_omni_reference_audio_durations([("a.wav", 20.0), ("b.wav", 6.0)])
+
+    # 上限走传入值（后台 referenceAudioTotalMaxSeconds）。
+    validate_omni_reference_audio_durations(
+        [("a.wav", 6.0), ("b.wav", 6.0)], total_max_seconds=30.0
+    )
+    with pytest.raises(ValueError, match="total duration must be <= 10s"):
+        validate_omni_reference_audio_durations(
+            [("a.wav", 6.0), ("b.wav", 6.0)], total_max_seconds=10.0
+        )
+
+
+def test_validate_omni_reference_audio_durations_skips_unmeasured() -> None:
+    """探测不出的条目不参与判定——漏算只会让和更小，不会因此误拦。"""
+    validate_omni_reference_audio_durations([("unknown.wav", None)])
+    validate_omni_reference_audio_durations(
+        [("a.wav", 6.0), ("unknown.wav", None), ("c.wav", 6.0)]
+    )
+    validate_omni_reference_audio_durations([])
+    # 0 / 负数是 ffprobe 的垃圾输出，同样按「测不出」处理，别当成一条 0s 的太短音频。
+    validate_omni_reference_audio_durations([("weird.wav", 0.0), ("neg.wav", -1.0)])

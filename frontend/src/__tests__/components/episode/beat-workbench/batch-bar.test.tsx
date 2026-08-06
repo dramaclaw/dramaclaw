@@ -122,6 +122,7 @@ const {
   regenerateSketchesMock,
   sketchStartMock,
   toastSuccessMock,
+  audioQuoteState,
 } = vi.hoisted(() => ({
   assignColorsMock: vi.fn(),
   detectIdentitiesMock: vi.fn(),
@@ -129,6 +130,7 @@ const {
   regenerateSketchesMock: vi.fn(),
   sketchStartMock: vi.fn(),
   toastSuccessMock: vi.fn(),
+  audioQuoteState: { prereqErrors: [] as string[] },
 }));
 
 vi.mock("@/lib/queries/sketches", () => ({
@@ -164,7 +166,7 @@ vi.mock("@/lib/queries/audio", () => ({
         unit_cost: 6,
         cost: 18,
         display: "18",
-        prereq_errors: [],
+        prereq_errors: audioQuoteState.prereqErrors,
       },
     },
     error: null,
@@ -390,6 +392,10 @@ const DEFAULT_BEATS = [
 ];
 
 describe("BatchBar", () => {
+  beforeEach(() => {
+    audioQuoteState.prereqErrors = [];
+  });
+
   it("hides whole-episode script rewrite from the batch toolbar", () => {
     render(
       <I18nextProvider i18n={i18n}>
@@ -543,6 +549,35 @@ describe("BatchBar", () => {
 
     expect(screen.getByRole("button", { name: "确认执行" })).toBeInTheDocument();
     expect(screen.getAllByText("18").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stops whole-episode audio before confirmation when the quote reports a voice prerequisite", async () => {
+    audioQuoteState.prereqErrors = [
+      "Beat 01 解说声线缺失：项目解说人声线未配置，请上传或录制解说人音频",
+    ];
+    const user = userEvent.setup();
+    render(
+      <I18nextProvider i18n={i18n}>
+        <BatchBar
+          project="demo"
+          episode={1}
+          beats={DEFAULT_BEATS}
+          videoBackend="seedance"
+          spineTemplate="narrated"
+          sketchAspectRatio="2:3"
+          onSketchAspectRatioChange={vi.fn()}
+        />
+      </I18nextProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "生成音频" }));
+
+    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Beat 01 解说声线缺失：项目解说人声线未配置，请上传或录制解说人音频",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("keeps whole-episode TTS generation visible but unavailable when Seedance2 is selected", async () => {

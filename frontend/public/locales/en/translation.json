@@ -3604,6 +3604,7 @@
         "off": "Off",
         "durationTooShort": "Each audio clip must be at least {{min}} seconds: {{clips}}. Replace it or use a longer clip and try again.",
         "durationTooLong": "Each audio clip must be at most {{max}} seconds: {{clips}}. Trim it or use a shorter clip and try again.",
+        "durationTotalTooLong": "All audio clips combined must be at most {{max}} seconds, currently {{total}} seconds: {{clips}}. Trim them or remove some clips and try again.",
         "clipDuration": "{{label}} ({{seconds}}s)",
         "clipSeparator": ", ",
         "clipFallbackLabel": "Audio {{index}}"

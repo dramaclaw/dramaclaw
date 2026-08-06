@@ -62,6 +62,8 @@ export interface ModelOption {
   referenceImageMax?: number | null;
   referenceVideoMax?: number | null;
   referenceAudioMax?: number | null;
+  /** 参考音频总时长上限（秒，可为小数）；没配时前端按 15.2s 兜底。 */
+  referenceAudioTotalMaxSeconds?: number | null;
   request?: MediaModelRequestSchema;
 }
 

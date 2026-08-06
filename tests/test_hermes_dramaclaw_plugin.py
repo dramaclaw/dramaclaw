@@ -48,7 +48,7 @@ def test_dramaclaw_plugin_adds_chat_error_without_replacing_task_error():
 
 def test_dramaclaw_plugin_adds_voice_prereq_chat_error():
     plugin = _load_plugin_module()
-    raw_error = "Beat 03 解说声线缺失：项目解说人声线缺失，请上传或录制解说人音频"
+    raw_error = "Beat 03 解说声线缺失：项目解说人声线未配置，请上传或录制解说人音频"
 
     result = plugin._with_chat_error_hints(
         {
