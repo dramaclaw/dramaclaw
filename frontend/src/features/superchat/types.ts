@@ -8,12 +8,7 @@ export type ClientFrame =
       turn_id?: string;
       attachments?: ChatAttachment[];
     }
-  | {
-      type: "scope.set";
-      scope: ChatScope;
-    };
-
-export type AssistantProductSurface = "assistant" | "freezone_assistant";
+  | { type: "scope.set"; scope: ChatScope };
 
 export type ChatScope = {
   kind: "home" | "project" | "asset" | "task";

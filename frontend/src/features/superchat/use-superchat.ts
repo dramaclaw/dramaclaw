@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ApprovalRequest,
-  AssistantProductSurface,
   ChatAttachment,
   ChatMessage,
   ChatScope,
@@ -64,16 +63,11 @@ function loadSettings(): SuperChatSettings {
   }
 }
 
-function resolveChatWsUrl(productSurface: AssistantProductSurface): string {
-  const explicit = productSurface === "freezone_assistant"
-    ? import.meta.env.VITE_FREEZONE_SUPERCHAT_WS_URL
-    : import.meta.env.VITE_SUPERCHAT_WS_URL;
+function resolveChatWsUrl(): string {
+  const explicit = import.meta.env.VITE_SUPERCHAT_WS_URL;
   if (explicit) return explicit;
 
-  const path = productSurface === "freezone_assistant"
-    ? "/api/v1/freezone/chat/ws"
-    : "/api/v1/chat/ws";
-  const url = new URL(path, window.location.origin);
+  const url = new URL("/api/v1/chat/ws", window.location.origin);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
 }
@@ -561,11 +555,9 @@ function upsertToolMessage(messages: ChatMessage[], kind: string, payload: unkno
 export function useSuperChat({
   project,
   displayName,
-  productSurface,
 }: {
   project?: string;
   displayName: string;
-  productSurface: AssistantProductSurface;
 }) {
   const desiredScope = useMemo(() => scopeForProject(project), [project]);
   const scopeKey = useMemo(() => scopeSessionKey(desiredScope), [desiredScope]);
@@ -614,10 +606,7 @@ export function useSuperChat({
   }, []);
 
   const requestHistory = useCallback(() => {
-    sendFrame({
-      type: "scope.set",
-      scope: desiredScope,
-    });
+    sendFrame({ type: "scope.set", scope: desiredScope });
   }, [desiredScope, sendFrame]);
 
   const markTurnActive = useCallback((turnId: string | null) => {
@@ -858,14 +847,11 @@ export function useSuperChat({
       previous.close();
     }
 
-    const ws = new WebSocket(resolveChatWsUrl(productSurface));
+    const ws = new WebSocket(resolveChatWsUrl());
     wsRef.current = ws;
     ws.onopen = () => {
       if (connectionIdRef.current !== connectionId || wsRef.current !== ws) return;
-      sendFrame({
-        type: "scope.set",
-        scope: desiredScope,
-      });
+      sendFrame({ type: "scope.set", scope: desiredScope });
     };
     ws.onmessage = (event) => {
       if (connectionIdRef.current !== connectionId || wsRef.current !== ws) return;
@@ -898,7 +884,7 @@ export function useSuperChat({
         reconnectRef.current = window.setTimeout(connect, 1200);
       }
     };
-  }, [desiredScope, handleFrame, productSurface, sendFrame]);
+  }, [desiredScope, handleFrame, sendFrame]);
 
   const disconnect = useCallback(() => {
     closedRef.current = true;
@@ -996,7 +982,7 @@ export function useSuperChat({
       attachments: attachments.length > 0 ? attachments : undefined,
     });
     return true;
-  }, [connected, desiredScope, displayName, markTurnActive, productSurface, sendFrame]);
+  }, [connected, desiredScope, displayName, markTurnActive, sendFrame]);
 
   const appendNotification = useCallback(async (text: string): Promise<boolean> => {
     const trimmed = text.trim();

@@ -1,35 +1,45 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
 
-from novelvideo.api.routes.product_surfaces import require_product_surface
+from novelvideo.api.routes.product_surfaces import current_product_surface_access
 from novelvideo.ports import registry
-from novelvideo.ports.product_surface_access import ProductSurfaceUnavailableError
 
 
-class DeniedSurfaceAccess:
-    async def require_access(self, _user_id: str, surface_code: str) -> None:
-        raise ProductSurfaceUnavailableError(surface_code, "功能维护中")
+class VisibleSurfaceAccess:
+    async def get_effective_access(self, user_id: str) -> list[dict]:
+        assert user_id == "usr_1"
+        return [
+            {
+                "surface_code": "freezone",
+                "label": "虾画",
+                "available": False,
+                "unavailable_message": "入口维护中",
+            }
+        ]
 
 
 @pytest.mark.asyncio
-async def test_surface_dependency_returns_structured_403(
+async def test_surface_route_returns_visibility_without_enforcing_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setitem(
         registry._PORTS,
         "product_surface_access",
-        DeniedSurfaceAccess(),
+        VisibleSurfaceAccess(),
     )
-    dependency = require_product_surface("freezone")
+    result = await current_product_surface_access({"id": "usr_1"})
 
-    with pytest.raises(HTTPException) as raised:
-        await dependency({"id": "usr_1"})
-
-    assert raised.value.status_code == 403
-    assert raised.value.detail == {
-        "error_code": "PRODUCT_SURFACE_UNAVAILABLE",
-        "surface_code": "freezone",
-        "message": "功能维护中",
+    assert result == {
+        "ok": True,
+        "data": {
+            "items": [
+                {
+                    "surface_code": "freezone",
+                    "label": "虾画",
+                    "available": False,
+                    "unavailable_message": "入口维护中",
+                }
+            ]
+        },
     }

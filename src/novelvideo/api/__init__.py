@@ -8,11 +8,10 @@ from importlib.metadata import entry_points
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from novelvideo.config import RUNTIME_DIR
 from novelvideo.shared import runtime_env
-from novelvideo.api.routes.product_surfaces import require_mainline_surface
 
 _api_logger = logging.getLogger("novelvideo.api")
 _api_logger.setLevel(logging.INFO)
@@ -101,41 +100,19 @@ api_router.include_router(config.router, tags=["config"])
 api_router.include_router(product_surfaces.router, tags=["product-surfaces"])
 api_router.include_router(chat.router, tags=["chat"])
 api_router.include_router(projects.router, tags=["projects"])
-api_router.include_router(
-    ingest.router, tags=["ingest"], dependencies=[Depends(require_mainline_surface)]
-)
-api_router.include_router(
-    characters.router, tags=["characters"], dependencies=[Depends(require_mainline_surface)]
-)
-api_router.include_router(
-    assets.router, tags=["assets"], dependencies=[Depends(require_mainline_surface)]
-)
-api_router.include_router(
-    scenes.router, tags=["scenes"], dependencies=[Depends(require_mainline_surface)]
-)
-api_router.include_router(
-    props.router, tags=["props"], dependencies=[Depends(require_mainline_surface)]
-)
-api_router.include_router(
-    episodes.router, tags=["episodes"], dependencies=[Depends(require_mainline_surface)]
-)
-api_router.include_router(
-    scripts.router, tags=["scripts"], dependencies=[Depends(require_mainline_surface)]
-)
-api_router.include_router(
-    content.router, tags=["content"], dependencies=[Depends(require_mainline_surface)]
-)
-api_router.include_router(
-    generation.router, tags=["generation"], dependencies=[Depends(require_mainline_surface)]
-)
+api_router.include_router(ingest.router, tags=["ingest"])
+api_router.include_router(characters.router, tags=["characters"])
+api_router.include_router(assets.router, tags=["assets"])
+api_router.include_router(scenes.router, tags=["scenes"])
+api_router.include_router(props.router, tags=["props"])
+api_router.include_router(episodes.router, tags=["episodes"])
+api_router.include_router(scripts.router, tags=["scripts"])
+api_router.include_router(content.router, tags=["content"])
+api_router.include_router(generation.router, tags=["generation"])
 api_router.include_router(tasks.router, tags=["tasks"])
 api_router.include_router(files.router, tags=["files"])
-api_router.include_router(
-    styles.router, tags=["styles"], dependencies=[Depends(require_mainline_surface)]
-)
-api_router.include_router(
-    pipeline.router, tags=["pipeline"], dependencies=[Depends(require_mainline_surface)]
-)
+api_router.include_router(styles.router, tags=["styles"])
+api_router.include_router(pipeline.router, tags=["pipeline"])
 api_router.include_router(model_gateway.router, tags=["model-gateway"])
 api_router.include_router(model_credits.router, tags=["model-credits"])
 api_router.include_router(freezone.router)

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -24,8 +24,7 @@ from novelvideo.api.auth import (
 from novelvideo.api.deps import list_user_projects
 from novelvideo.chat import service as chat_service
 from novelvideo.chat.store import ChatScope, chat_store
-from novelvideo.ports import get_product_surface_access, get_usage_meter
-from novelvideo.ports.product_surface_access import ProductSurfaceUnavailableError
+from novelvideo.ports import get_usage_meter
 from novelvideo.project_context import ProjectContext, resolve_project_context
 from novelvideo.shared.billing_errors import (
     BILLING_RULE_NOT_CONFIGURED_MESSAGE,
@@ -39,7 +38,6 @@ from novelvideo.shared.billing_errors import (
 router = APIRouter()
 
 AI_ASSISTANT_CHAT_FEATURE_KEY = "assistant.chat"
-AssistantProductSurface = Literal["assistant", "freezone_assistant"]
 
 
 @router.post("/chat/cancel")
@@ -292,40 +290,14 @@ async def _require_ai_assistant_access(
     *,
     user: dict[str, Any],
     scope: ChatScope,
-    product_surface: AssistantProductSurface,
 ) -> None:
     user_id = await _requester_user_id_for_chat(user, scope)
-    await get_product_surface_access().require_assistant_access(
-        user_id,
-        product_surface,
-    )
     await get_usage_meter().require_feature_credit_balance(
         user_id=user_id,
         feature_key=AI_ASSISTANT_CHAT_FEATURE_KEY,
         project_id=str(scope.id or "") if scope.kind == "project" else "",
         resource_kind="chat",
-        metadata={
-            "scope": scope.to_dict(),
-            "product_surface": product_surface,
-        },
-    )
-
-
-async def _prewarm_authorized_chat_backend(
-    *,
-    user: dict[str, Any],
-    username: str,
-    scope: ChatScope,
-    product_surface: AssistantProductSurface,
-) -> None:
-    user_id = await _requester_user_id_for_chat(user, scope)
-    await get_product_surface_access().require_assistant_access(
-        user_id,
-        product_surface,
-    )
-    await chat_service.prewarm_chat_backend(
-        username,
-        project=scope.id if scope.kind == "project" else None,
+        metadata={"scope": scope.to_dict()},
     )
 
 
@@ -735,11 +707,8 @@ async def _stream_home_turn(
             )
 
 
-async def _serve_chat_ws(
-    websocket: WebSocket,
-    *,
-    product_surface: AssistantProductSurface,
-) -> None:
+@router.websocket("/chat/ws")
+async def chat_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     try:
         user = await _authenticate_ws(websocket)
@@ -750,6 +719,18 @@ async def _serve_chat_ws(
 
     username = str(user["username"])
     current_scope = ChatScope(kind="home")
+    current_scope = await _send_scope_changed(websocket, user, username, current_scope)
+    if current_scope is None:
+        return
+    # Do not pre-warm the default home scope on connect. The React client often
+    # immediately sends scope.set for the active project; warming home first
+    # creates a worker that is then rotated and logs a noisy initialize timeout.
+    if _should_prewarm_on_ws_connect(current_scope):
+        await chat_service.prewarm_chat_backend(
+            username,
+            project=current_scope.id if current_scope.kind == "project" else None,
+        )
+
     try:
         while True:
             try:
@@ -762,32 +743,16 @@ async def _serve_chat_ws(
             if event_type == "scope.set":
                 msg = ScopeSetIn.model_validate(raw)
                 requested_scope = _scope_from_model(msg.scope)
-                try:
-                    await _prewarm_authorized_chat_backend(
-                        user=user,
-                        username=username,
-                        scope=requested_scope,
-                        product_surface=product_surface,
-                    )
-                except ProductSurfaceUnavailableError as exc:
-                    await _send_json_best_effort(
-                        websocket,
-                        {
-                            "type": "error",
-                            "message": exc.message,
-                            "data": {
-                                "error_code": "PRODUCT_SURFACE_UNAVAILABLE",
-                                "surface_code": exc.surface_code,
-                            },
-                        },
-                    )
-                    continue
-                current_scope = await _send_scope_changed(
-                    websocket, user, username, requested_scope
-                )
+                current_scope = await _send_scope_changed(websocket, user, username, requested_scope)
                 if current_scope is None:
                     return
                 await _sync_running_agent_scope(username, current_scope)
+                # Switching project rotates the worker; warm the new scope now so
+                # the first message in the project doesn't cold-start.
+                await chat_service.prewarm_chat_backend(
+                    username,
+                    project=current_scope.id if current_scope.kind == "project" else None,
+                )
                 continue
 
             if event_type != "chat.message":
@@ -807,11 +772,7 @@ async def _serve_chat_ws(
                 continue
 
             try:
-                await _require_ai_assistant_access(
-                    user=user,
-                    scope=scope,
-                    product_surface=product_surface,
-                )
+                await _require_ai_assistant_access(user=user, scope=scope)
                 if scope.kind == "project":
                     await _stream_project_turn(
                         websocket=websocket,
@@ -842,20 +803,6 @@ async def _serve_chat_ws(
                     )
             except Exception as exc:  # noqa: BLE001
                 message = str(exc)
-                if isinstance(exc, ProductSurfaceUnavailableError):
-                    await _send_json_best_effort(
-                        websocket,
-                        {
-                            "type": "error",
-                            "turn_id": turn_id,
-                            "message": exc.message,
-                            "data": {
-                                "error_code": "PRODUCT_SURFACE_UNAVAILABLE",
-                                "surface_code": exc.surface_code,
-                            },
-                        },
-                    )
-                    continue
                 if "当前用户已有 AI 对话正在处理中" in message:
                     await _send_json_best_effort(
                         websocket,
@@ -896,13 +843,3 @@ async def _serve_chat_ws(
                 )
     except WebSocketDisconnect:
         return
-
-
-@router.websocket("/chat/ws")
-async def chat_ws(websocket: WebSocket) -> None:
-    await _serve_chat_ws(websocket, product_surface="assistant")
-
-
-@router.websocket("/freezone/chat/ws")
-async def freezone_chat_ws(websocket: WebSocket) -> None:
-    await _serve_chat_ws(websocket, product_surface="freezone_assistant")

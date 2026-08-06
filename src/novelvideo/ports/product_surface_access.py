@@ -1,4 +1,4 @@
-"""Product-surface access contract shared by CE and EE runtimes."""
+"""Product-surface visibility contract shared by CE and EE runtimes."""
 
 from __future__ import annotations
 
@@ -34,23 +34,13 @@ SURFACE_DEFINITIONS: Final[tuple[dict[str, Any], ...]] = (
         "sort_order": 40,
     },
 )
-
-SURFACE_DEFINITIONS_BY_CODE: Final = {
-    str(item["surface_code"]): item for item in SURFACE_DEFINITIONS
-}
-
-
-class ProductSurfaceUnavailableError(RuntimeError):
-    """Raised when the current user cannot enter a product surface."""
-
-    def __init__(self, surface_code: str, message: str) -> None:
-        super().__init__(message)
-        self.surface_code = surface_code
-        self.message = message
+PRODUCT_SURFACE_CODES: Final[frozenset[str]] = frozenset(
+    str(item["surface_code"]) for item in SURFACE_DEFINITIONS
+)
 
 
 class LocalProductSurfaceAccess:
-    """Safe CE defaults: core creation stays open and assistant entry points stay closed."""
+    """CE visibility defaults: core entries show and assistant entries stay hidden."""
 
     async def get_effective_access(self, user_id: str) -> list[dict[str, Any]]:
         del user_id
@@ -63,30 +53,3 @@ class LocalProductSurfaceAccess:
             }
             for item in SURFACE_DEFINITIONS
         ]
-
-    async def require_access(self, user_id: str, surface_code: str) -> dict[str, Any]:
-        clean_surface_code = str(surface_code or "").strip()
-        definition = SURFACE_DEFINITIONS_BY_CODE.get(clean_surface_code)
-        if definition is None:
-            raise ValueError(f"unknown product surface: {clean_surface_code}")
-        if not bool(definition["default_available"]):
-            raise ProductSurfaceUnavailableError(
-                clean_surface_code,
-                str(definition["default_unavailable_message"]),
-            )
-        return {
-            "surface_code": clean_surface_code,
-            "label": str(definition["label"]),
-            "available": True,
-            "unavailable_message": str(definition["default_unavailable_message"]),
-        }
-
-    async def require_assistant_access(
-        self,
-        user_id: str,
-        surface_code: str,
-    ) -> dict[str, Any]:
-        clean_surface_code = str(surface_code or "").strip()
-        if clean_surface_code not in {"assistant", "freezone_assistant"}:
-            raise ValueError(f"unknown assistant surface: {clean_surface_code}")
-        return await self.require_access(user_id, clean_surface_code)
