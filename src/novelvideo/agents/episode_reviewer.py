@@ -10,7 +10,10 @@ from typing import Callable, Optional, Union
 from pydantic_ai import Agent
 from pydantic import BaseModel, Field
 
-from novelvideo.config import get_pydantic_model
+from novelvideo.config import (
+    get_newapi_structured_output_model_settings,
+    get_pydantic_model,
+)
 
 
 # =============================================================================
@@ -208,6 +211,7 @@ def create_episode_reviewer_agent(tools: Optional[list[Callable]] = None) -> Age
         get_pydantic_model(),
         system_prompt=EPISODE_REVIEWER_PROMPT,
         output_type=EpisodePlanReport,
+        model_settings=get_newapi_structured_output_model_settings(),
         tools=tools or [],
         name="分集规划审核员",
     )

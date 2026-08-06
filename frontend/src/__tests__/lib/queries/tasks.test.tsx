@@ -11,6 +11,11 @@ vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
+vi.mock("@/components/confirm-dialog-host", () => ({
+  confirmDialog: vi.fn(),
+}));
+
+import { confirmDialog } from "@/components/confirm-dialog-host";
 import { server } from "@/__mocks__/msw/server";
 import { sampleTask } from "@/__mocks__/msw/handlers/tasks";
 import { useCancelTask, useTasks } from "@/lib/queries/tasks";
@@ -133,7 +138,7 @@ describe("useCancelTask running confirmation", () => {
         );
       }),
     );
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+    vi.mocked(confirmDialog).mockResolvedValue(false);
     const { result } = renderHook(() => useCancelTask(), { wrapper });
 
     const response = await act(() =>
@@ -175,7 +180,7 @@ describe("useCancelTask running confirmation", () => {
         });
       }),
     );
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(confirmDialog).mockResolvedValue(true);
     const { result } = renderHook(() => useCancelTask(), { wrapper });
 
     const response = await act(() =>

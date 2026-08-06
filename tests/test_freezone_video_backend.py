@@ -94,7 +94,7 @@ def test_build_freezone_omni_video_prompt_includes_theme() -> None:
     assert "氧气管" in prompt
 
 
-def test_build_freezone_image_to_video_prompt_includes_first_frame_and_marks() -> None:
+def test_build_freezone_image_to_video_prompt_uses_image_reference_semantics() -> None:
     prompt = build_freezone_image_to_video_prompt(
         user_prompt="老人缓慢抬眼，呼吸微弱。",
         camera_template_id="pedestal_up",
@@ -105,7 +105,9 @@ def test_build_freezone_image_to_video_prompt_includes_first_frame_and_marks() -
     assert "镜头上升" in prompt
     assert "老人" in prompt
     assert "主体" in prompt
-    assert "首帧约束" in prompt
+    assert "图片参考约束" in prompt
+    assert "不要强制把输入图片锁定为视频第一帧" in prompt
+    assert "首帧约束" not in prompt
 
 
 def test_build_freezone_image_to_video_prompt_supports_multi_image_references() -> None:
@@ -344,6 +346,41 @@ async def test_freezone_video_gen_allows_newapi_fast_text_to_video(monkeypatch, 
     assert captured["create"]["backend"] == "newapi_seedance-1.0-pro-fast"
     assert captured["generate"]["image_path"] is None
     assert captured["generate"]["references"] == []
+
+
+@pytest.mark.asyncio
+async def test_freezone_keyframe_tail_only_does_not_promote_tail_to_first_frame(
+    monkeypatch, tmp_path: Path
+):
+    captured: dict[str, dict] = {}
+
+    class FakeVideoGenerator:
+        async def generate(self, **kwargs):
+            captured["generate"] = kwargs
+            output_path = Path(kwargs["output_path"])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"fake mp4")
+            return VideoGenResult(status=VideoGenStatus.DONE, video_path=str(output_path))
+
+    monkeypatch.setattr(
+        "novelvideo.generators.video_generator.create_video_generator",
+        lambda **_kwargs: FakeVideoGenerator(),
+    )
+
+    tail_path = tmp_path / "tail.png"
+    tail_path.write_bytes(b"fake image")
+    await run_freezone_video_gen(
+        project_dir=tmp_path,
+        job_id="job_tail_only",
+        prompt="最终停在目标构图",
+        reference_items=[{"type": "image", "path": str(tail_path), "role": "尾帧"}],
+        backend="newapi_seedance-2.0",
+        last_frame_path=str(tail_path),
+        gen_mode="first_last_frame",
+    )
+
+    assert captured["generate"]["image_path"] is None
+    assert captured["generate"]["last_frame_path"] == str(tail_path)
 
 
 def test_seedance2_model_selection_prefers_omni_model_for_mixed_references() -> None:

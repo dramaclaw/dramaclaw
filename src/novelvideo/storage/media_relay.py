@@ -61,7 +61,14 @@ class AliyunOSSRelay:
             bucket_name.strip(),
         )
 
-    def upload_bytes(self, data: bytes, *, ext: str = "png", ttl: int = 1800) -> str:
+    def upload_bytes(
+        self,
+        data: bytes,
+        *,
+        ext: str = "png",
+        ttl: int = 1800,
+        resource_type: str = "image",
+    ) -> str:
         if not data:
             raise ValueError("cannot relay empty media bytes")
         ext = _normalize_ext(ext)
@@ -108,17 +115,30 @@ class CloudinaryRelay:
         self._api_secret = api_secret.strip()
         self._folder = str(folder or "").strip().strip("/")
 
-    def upload_bytes(self, data: bytes, *, ext: str = "png", ttl: int = 1800) -> str:
+    def upload_bytes(
+        self,
+        data: bytes,
+        *,
+        ext: str = "png",
+        ttl: int = 1800,
+        resource_type: str = "image",
+    ) -> str:
         if not data:
             raise ValueError("cannot relay empty media bytes")
 
         import httpx
 
         ext = _normalize_ext(ext)
+        resource_type = str(resource_type or "image").strip().lower()
+        if resource_type not in {"image", "video"}:
+            raise ValueError(f"unsupported Cloudinary resource type: {resource_type}")
         filename = f"{uuid.uuid4().hex}.{ext}"
         content_type = mimetypes.types_map.get(f".{ext}", "application/octet-stream")
         payload = {"folder": self._folder} if self._folder else {}
-        url = f"https://api.cloudinary.com/v1_1/{self._cloud_name}/image/upload"
+        url = (
+            f"https://api.cloudinary.com/v1_1/{self._cloud_name}/"
+            f"{resource_type}/upload"
+        )
         try:
             with httpx.Client(timeout=60.0) as client:
                 response = client.post(
@@ -128,6 +148,13 @@ class CloudinaryRelay:
                     auth=(self._api_key, self._api_secret),
                 )
                 response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = _cloudinary_error_detail(exc.response)
+            suffix = f": {detail}" if detail else ""
+            raise MediaRelayConfigError(
+                "Cloudinary media relay upload failed "
+                f"(HTTP {exc.response.status_code}){suffix}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise MediaRelayConfigError(f"Cloudinary media relay upload failed: {exc}") from exc
 
@@ -217,9 +244,31 @@ def upload_image_bytes(
     ttl: int | None = None,
     image_transform: str | None = None,
 ) -> str:
+    return upload_media_bytes(
+        data,
+        ext=ext,
+        ttl=ttl,
+        resource_type="image",
+        image_transform=image_transform,
+    )
+
+
+def upload_media_bytes(
+    data: bytes,
+    *,
+    ext: str = "png",
+    ttl: int | None = None,
+    resource_type: str = "image",
+    image_transform: str | None = None,
+) -> str:
     ttl_seconds = int(ttl if ttl is not None else _default_media_relay_ttl_seconds())
     data, ext = _apply_image_transform(data, ext=ext, image_transform=image_transform)
-    return get_media_relay().upload_bytes(data, ext=ext, ttl=ttl_seconds)
+    return get_media_relay().upload_bytes(
+        data,
+        ext=ext,
+        ttl=ttl_seconds,
+        resource_type=resource_type,
+    )
 
 
 def upload_image_file(path: str | Path, *, ttl: int | None = None) -> str:
@@ -344,3 +393,20 @@ def _normalize_ext(ext: str) -> str:
     if ext == "svg+xml":
         return "svg"
     return ext or "png"
+
+
+def _cloudinary_error_detail(response: object) -> str:
+    try:
+        payload = response.json()  # type: ignore[attr-defined]
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = str(error.get("message") or "").strip()
+            if message:
+                return message[:500]
+    try:
+        return str(response.text or "").strip()[:500]  # type: ignore[attr-defined]
+    except Exception:
+        return ""

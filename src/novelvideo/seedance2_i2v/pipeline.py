@@ -21,7 +21,7 @@ from novelvideo.seedance2_i2v.models import (
     dump_seedance2_config,
     parse_seedance2_config,
 )
-from novelvideo.seedance2_i2v.spoken_dialogue import parse_seedance2_spoken_lines
+from novelvideo.seedance2_i2v.spoken_dialogue import required_seedance2_dialogue_texts
 from novelvideo.seedance2_i2v.voice_clone import normalize_seedance2_audio_type
 
 SEEDANCE2_HUIMENG_BACKEND = "huimeng_seedance-2.0-fast"
@@ -137,15 +137,12 @@ def _validate_dialogue_final_prompt(
     if normalize_seedance2_audio_type(beat) != "dialogue":
         return
 
-    lines = parse_seedance2_spoken_lines(beat)
-    if not lines:
-        return
-
+    required_texts = required_seedance2_dialogue_texts(beat)
     prompt_text = _compact_text(final_prompt)
     missing_lines = [
-        line.text
-        for line in lines
-        if _compact_text(line.text) and _compact_text(line.text) not in prompt_text
+        text
+        for text in required_texts
+        if _compact_text(text) and _compact_text(text) not in prompt_text
     ]
     if missing_lines:
         raise ValueError(

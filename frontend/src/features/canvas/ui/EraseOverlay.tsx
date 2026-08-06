@@ -32,16 +32,24 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
+  FREEZONE_REDRAW_ASPECT_RATIOS,
   fetchFreezoneJobResult,
   submitFreezoneRedraw,
   uploadFreezoneImage,
   type FreezoneRedrawAspectRatio,
 } from '@/api/ops';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
+import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { buildRedHighlightMaskBlob } from '@/lib/mask-highlight';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { GENERATION_ERROR_CLEARED_PATCH } from '@/features/canvas/application/generationTaskArbitration';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
+import {
+  pickAllowedOption,
+  resolveModelAspectOptions,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from '@/features/canvas/domain/mediaModelOptions';
 import { readUrl } from '@/lib/url-params';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
 import { CANVAS_NODE_TOOLBAR_PILL_CLASS } from './nodeFrameStyles';
@@ -64,24 +72,12 @@ interface EraseOverlayProps {
 
 type Tool = 'brush' | 'rect' | 'eraser';
 
-const ASPECT_RATIO_OPTIONS: readonly FreezoneRedrawAspectRatio[] = [
-  '16:9',
-  '9:16',
-  '1:1',
-  '4:3',
-  '3:4',
-] as const;
-
-const ASPECT_RATIO_LABELS: Record<FreezoneRedrawAspectRatio, string> = {
+// 比例与分辨率档位来自后台「媒体模型」对选中模型的配置，这里只留下渲染用的
+// 中文别名（未命中时直接显示原值）。
+const ASPECT_RATIO_LABELS: Partial<Record<FreezoneRedrawAspectRatio, string>> = {
   original: '原图',
-  '1:1': '1:1',
-  '4:3': '4:3',
-  '3:4': '3:4',
-  '16:9': '16:9',
-  '9:16': '9:16',
 };
 
-const IMAGE_SIZE_OPTIONS = ['1K', '2K', '4K'] as const;
 const NUM_IMAGE_OPTIONS = [1, 2, 3, 4] as const;
 const BRUSH_MIN = 4;
 const BRUSH_MAX = 200;
@@ -95,17 +91,6 @@ const ERASE_TOOLBAR_BUTTON_CLASS =
   'nodrag inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50';
 const ERASE_SLIDER_CLASS =
   'nodrag nopan h-0.5 w-24 cursor-pointer appearance-none rounded-full [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#5b8cff] [&::-webkit-slider-thumb]:shadow-none [&::-moz-range-thumb]:h-2.5 [&::-moz-range-thumb]:w-2.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[#5b8cff]';
-
-function imageModelSupportsQuality(apiModel: string | null | undefined): boolean {
-  if (!apiModel) return false;
-  const normalized = apiModel.toLowerCase();
-  return (
-    normalized === 'gpt-image-2'
-    || normalized === 'image-2'
-    || normalized === 'image-2-official'
-    || normalized.includes('gpt-image')
-  );
-}
 
 export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayProps) => {
   const { t } = useTranslation();
@@ -141,15 +126,39 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
   const [aspectRatio, setAspectRatio] = useState<FreezoneRedrawAspectRatio>('16:9');
   const { models: imageModels } = useFreezoneImageModels();
   const selectedModel = imageModels[0];
+  // 尺寸 / 比例 / 画质跟随后台对该模型的配置；比例还要落在擦除（重绘）接口
+  // 自身支持的取值里。
+  const sizeOptions = useMemo(
+    () => resolveModelSizeOptions(selectedModel),
+    [selectedModel],
+  );
+  const aspectRatioOptions = useMemo<FreezoneRedrawAspectRatio[]>(
+    () =>
+      resolveModelAspectOptions(selectedModel).filter(
+        (ratio): ratio is FreezoneRedrawAspectRatio =>
+          ratio !== 'original'
+          && (FREEZONE_REDRAW_ASPECT_RATIOS as readonly string[]).includes(ratio),
+      ),
+    [selectedModel],
+  );
+  const qualityOptions = useMemo(
+    () => resolveModelQualityOptions(selectedModel),
+    [selectedModel],
+  );
+  const effectiveImageSize = pickAllowedOption(imageSize, sizeOptions);
+  const effectiveAspectRatio = pickAllowedOption(
+    aspectRatio,
+    aspectRatioOptions,
+  ) as FreezoneRedrawAspectRatio;
   const creditCost = useGenerationCreditCost(
     'feature',
     selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
     {
       surface: 'canvas',
       params: buildImageFeatureBillingParams(selectedModel, {
-        size: imageSize,
-        ...(imageModelSupportsQuality(selectedModel?.apiModel)
-          ? { quality: 'medium' }
+        size: effectiveImageSize,
+        ...(qualityOptions.length > 0
+          ? { quality: pickAllowedOption('medium', qualityOptions) }
           : {}),
         operation: 'erase',
         pricing_quantity: Math.min(Math.max(numImages, 1), 4),
@@ -478,7 +487,7 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
           sourceUrl,
           maskUrl,
           aspectRatio: resultAspectRatio,
-          imageSize,
+          imageSize: effectiveImageSize,
         },
       });
       try {
@@ -487,10 +496,10 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
           maskUrl,
           aspectRatio: resultAspectRatio as FreezoneRedrawAspectRatio,
           numImages: 1,
-          imageSize,
+          imageSize: effectiveImageSize,
         });
         updateNodeData(nodeId, generationTaskDescriptor(ref));
-        const completed = await awaitTaskCompletion(ref.task_key, project);
+        const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
         const directUrl = completed.result?.['output_url'] as string | undefined;
         let url = directUrl;
         if (!url) {
@@ -509,6 +518,12 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
           generationTaskJobId: null,
         });
       } catch (err) {
+        // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
+        // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
+        if (isTaskPollTimeoutError(err)) {
+          notifyTaskStillRunning(t);
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
         console.error('[erase] generation failed', err);
         updateNodeData(nodeId, {
@@ -521,7 +536,7 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
         });
       }
     },
-    [imageSize, updateNodeData],
+    [effectiveImageSize, t, updateNodeData],
   );
 
   const handleSubmit = useCallback(async () => {
@@ -538,7 +553,7 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
     setError(null);
     setSubmitting(true);
 
-    const resultAspectRatio = aspectRatio;
+    const resultAspectRatio = effectiveAspectRatio;
     const base = findNodePosition(
       node.id,
       EXPORT_RESULT_NODE_DEFAULT_WIDTH,
@@ -583,7 +598,7 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
       setSubmitting(false);
     }
   }, [
-    aspectRatio,
+    effectiveAspectRatio,
     buildMaskBlob,
     createEraseNode,
     findNodePosition,
@@ -730,15 +745,15 @@ export const EraseOverlay = memo(({ node, imageSource, onClose }: EraseOverlayPr
         >
           <EraseDropdown<FreezoneRedrawAspectRatio>
             label="比例"
-            value={aspectRatio}
-            options={ASPECT_RATIO_OPTIONS}
-            renderLabel={(v) => ASPECT_RATIO_LABELS[v]}
+            value={effectiveAspectRatio}
+            options={aspectRatioOptions}
+            renderLabel={(v) => ASPECT_RATIO_LABELS[v] ?? v}
             onChange={setAspectRatio}
           />
           <EraseDropdown<string>
             label="分辨率"
-            value={imageSize}
-            options={IMAGE_SIZE_OPTIONS}
+            value={effectiveImageSize}
+            options={sizeOptions}
             renderLabel={(v) => v}
             onChange={setImageSize}
           />

@@ -8,14 +8,17 @@ import type { VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import {
   audioReferenceDurationRejection,
   formatAudioDurationClips,
+  GEN_MODE_TO_CATALOG_MODE,
   isGrokVideoChannelModel,
   isHappyHorseVideoModel,
   isSeedance1xVideoModel,
   isSeedance2VideoModel,
   isVideoModeSupportedByModel,
+  resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
   videoModelReferenceDisabledReason,
+  videoMultiImageAutoSwitchMode,
   videoReferenceAutoSwitchAction,
   type VideoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
@@ -63,9 +66,11 @@ describe("video model family detection", () => {
 });
 
 describe("videoEmptyStateCtaModes — CTA by model capability", () => {
-  it("Seedance 2.0 → 全能参考 / 图片参考 / 首尾帧", () => {
+  it("Seedance 2.0 → 全能参考 / 图生视频 / 首帧 / 图片参考 / 首尾帧", () => {
     expect(videoEmptyStateCtaModes(SEEDANCE2_FAST)).toEqual([
       "allReference",
+      "imageToVideo",
+      "firstFrame",
       "imageReference",
       "firstLastFrame",
     ]);
@@ -74,16 +79,16 @@ describe("videoEmptyStateCtaModes — CTA by model capability", () => {
   it("Seedance 1.x → 只给「首帧」(全能参考会 400、首尾帧尾帧被静默丢弃、多图不支持)", () => {
     for (const id of [SEEDANCE10_PRO_FAST, SEEDANCE15_PRO]) {
       const cta = videoEmptyStateCtaModes(id);
-      expect(cta).toEqual(["imageToVideo"]);
+      expect(cta).toEqual(["firstFrame"]);
       // 回归护栏：1.x 空态绝不出现只有 2.0 支持的入口。
       expect(cta).not.toContain("allReference");
       expect(cta).not.toContain("firstLastFrame");
     }
   });
 
-  it("HappyHorse → 首帧 / 图片参考 (无全能参考 / 首尾帧)", () => {
+  it("HappyHorse → 图生视频 / 首帧 / 图片参考 (无全能参考 / 首尾帧)", () => {
     const cta = videoEmptyStateCtaModes(HAPPYHORSE);
-    expect(cta).toEqual(["imageToVideo", "imageReference"]);
+    expect(cta).toEqual(["imageToVideo", "firstFrame", "imageReference"]);
     expect(cta).not.toContain("allReference");
     expect(cta).not.toContain("firstLastFrame");
   });
@@ -97,8 +102,43 @@ describe("videoEmptyStateCtaModes — CTA by model capability", () => {
   });
 });
 
+describe("目录 supportedModes 是模式入口的单一事实来源", () => {
+  const firstFrameOnly = {
+    apiModel: SEEDANCE15_PRO,
+    supportedModes: ["text_to_video", "first_frame"],
+  };
+  const imageReferenceOnly = {
+    apiModel: "custom-reference-model",
+    supportedModes: ["text_to_video", "image_reference"],
+  };
+
+  it("只声明 first_frame 的模型仍有真正首帧入口，不会误进图生视频", () => {
+    expect(isVideoModeSupportedByModel("firstFrame", firstFrameOnly)).toBe(true);
+    expect(isVideoModeSupportedByModel("imageToVideo", firstFrameOnly)).toBe(false);
+    expect(videoEmptyStateCtaModes(firstFrameOnly)).toEqual(["firstFrame"]);
+    expect(videoUpstreamImageDefaultMode(firstFrameOnly)).toBe("firstFrame");
+  });
+
+  it("声明 image_reference 的模型提供图生视频和图片参考，但不伪装成首帧", () => {
+    expect(isVideoModeSupportedByModel("firstFrame", imageReferenceOnly)).toBe(false);
+    expect(isVideoModeSupportedByModel("imageToVideo", imageReferenceOnly)).toBe(true);
+    expect(isVideoModeSupportedByModel("imageReference", imageReferenceOnly)).toBe(true);
+    expect(videoEmptyStateCtaModes(imageReferenceOnly)).toEqual([
+      "imageToVideo",
+      "imageReference",
+    ]);
+    expect(videoUpstreamImageDefaultMode(imageReferenceOnly)).toBe("imageToVideo");
+  });
+
+  it("前端模式到目录能力的映射区分首帧和图片参考", () => {
+    expect(GEN_MODE_TO_CATALOG_MODE.firstFrame).toBe("first_frame");
+    expect(GEN_MODE_TO_CATALOG_MODE.imageToVideo).toBe("image_reference");
+    expect(GEN_MODE_TO_CATALOG_MODE.imageReference).toBe("image_reference");
+  });
+});
+
 describe("isVideoModeSupportedByModel — mode gating by model", () => {
-  const commonModes: VideoGenMode[] = ["textToVideo", "imageToVideo", "imageReference"];
+  const commonModes: VideoGenMode[] = ["textToVideo", "firstFrame"];
 
   it("全能参考 / 首尾帧仅 Seedance 2.0", () => {
     for (const mode of ["allReference", "firstLastFrame"] as VideoGenMode[]) {
@@ -109,11 +149,18 @@ describe("isVideoModeSupportedByModel — mode gating by model", () => {
     }
   });
 
-  it("文生 / 首帧 / 图片参考所有视频模型都支持", () => {
+  it("文生 / 首帧所有视频模型都支持", () => {
     for (const id of [SEEDANCE2_FAST, SEEDANCE10_PRO_FAST, HAPPYHORSE]) {
       for (const mode of commonModes) {
         expect(isVideoModeSupportedByModel(mode, id)).toBe(true);
       }
+    }
+  });
+
+  it("Seedance 1.x 不把图片参考伪装成首帧", () => {
+    for (const mode of ["imageToVideo", "imageReference"] as VideoGenMode[]) {
+      expect(isVideoModeSupportedByModel(mode, SEEDANCE10_PRO_FAST)).toBe(false);
+      expect(isVideoModeSupportedByModel(mode, SEEDANCE15_PRO)).toBe(false);
     }
   });
 
@@ -130,8 +177,27 @@ describe("videoUpstreamImageDefaultMode — auto-derived default on first image"
   });
 
   it("Seedance 1.x 接图默认「首帧」而非全能参考 (否则提交必 400)", () => {
-    expect(videoUpstreamImageDefaultMode(SEEDANCE10_PRO_FAST)).toBe("imageToVideo");
-    expect(videoUpstreamImageDefaultMode(SEEDANCE15_PRO)).toBe("imageToVideo");
+    expect(videoUpstreamImageDefaultMode(SEEDANCE10_PRO_FAST)).toBe("firstFrame");
+    expect(videoUpstreamImageDefaultMode(SEEDANCE15_PRO)).toBe("firstFrame");
+  });
+});
+
+describe("resolveVideoKeyframeUrls — stable edge slots", () => {
+  it("稳定槽位优先于可编辑标题，重命名尾帧不会被提升成首帧", () => {
+    expect(
+      resolveVideoKeyframeUrls([
+        { url: "last.png", slot: "last", legacyDisplayName: "结尾画面" },
+      ]),
+    ).toEqual({ firstFrameUrl: null, lastFrameUrl: "last.png" });
+  });
+
+  it("旧画布没有槽位时兼容历史标题，再按连线顺序补位", () => {
+    expect(
+      resolveVideoKeyframeUrls([
+        { url: "legacy-last.png", legacyDisplayName: "尾帧" },
+        { url: "unassigned.png", legacyDisplayName: "上传图片" },
+      ]),
+    ).toEqual({ firstFrameUrl: "unassigned.png", lastFrameUrl: "legacy-last.png" });
   });
 });
 
@@ -187,6 +253,130 @@ describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", ()
     expect(
       videoSubmitMediaRejectionReason("imageReference", HAPPYHORSE, { images: 5, videos: 0, audios: 0 }),
     ).toBeNull();
+  });
+});
+
+describe("videoMultiImageAutoSwitchMode — 首帧接多图时的自动改模式", () => {
+  // 这条是 bug 本体：i2v 端点按图片张数分流（1 张 = 图生视频，2-9 张 = 图片参考），
+  // 接上第二张图后做的其实已经是图片参考了，界面上模式却还写着「首帧生成视频」。
+  it("Seedance 2.0：首帧接到第 2 张图 → 切全能参考", () => {
+    expect(videoMultiImageAutoSwitchMode("imageToVideo", SEEDANCE2_FAST, 2)).toBe(
+      "allReference",
+    );
+    expect(videoMultiImageAutoSwitchMode("imageToVideo", SEEDANCE2_VALUE, 9)).toBe(
+      "allReference",
+    );
+  });
+
+  it("单图 / 无图不动 —— 那正是首帧本来的用法", () => {
+    for (const images of [0, 1]) {
+      expect(
+        videoMultiImageAutoSwitchMode("imageToVideo", SEEDANCE2_FAST, images),
+      ).toBeNull();
+    }
+  });
+
+  it("只管首帧模式，其它模式一律不插手", () => {
+    for (const mode of [
+      "textToVideo",
+      "imageReference",
+      "allReference",
+      "firstLastFrame",
+      "videoEdit",
+    ] as VideoGenMode[]) {
+      expect(videoMultiImageAutoSwitchMode(mode, SEEDANCE2_FAST, 5)).toBeNull();
+    }
+  });
+
+  // HappyHorse 自己那套状态机（videos>0→视频编辑 / images>1→图片参考）已经收口了，
+  // 这里再插一脚只会两处 updateNodeData 来回打架。
+  it("HappyHorse 不动，交给它自己的状态机", () => {
+    expect(videoMultiImageAutoSwitchMode("imageToVideo", HAPPYHORSE, 3)).toBeNull();
+  });
+
+  // 换模式救不了 1.x：它的 i2v 端点 >1 图直接 400，切到哪个模式都是 400。留在首帧上，
+  // 让提交守卫那句「该模型单次仅支持 1 张图片」把「该换模型」这个真问题说清楚。
+  it("Seedance 1.x 不动：它多图必 400，问题在模型不在模式", () => {
+    for (const id of [SEEDANCE10_PRO_FAST, SEEDANCE15_PRO]) {
+      expect(videoMultiImageAutoSwitchMode("imageToVideo", id, 2)).toBeNull();
+      expect(videoSubmitMediaRejectionReason("imageToVideo", id, {
+        images: 2,
+        videos: 0,
+        audios: 0,
+      })).toBeTruthy();
+    }
+  });
+
+  // 媒体目录声明的 supportedModes 优先级高于启发式（与可见 tab 同一口径）。
+  it("目录声明没有全能参考时退到图片参考；两个都没有则不动", () => {
+    expect(
+      videoMultiImageAutoSwitchMode(
+        "imageToVideo",
+        {
+          id: SEEDANCE2_FAST,
+          apiModel: SEEDANCE2_FAST,
+          supportedModes: ["text_to_video", "first_frame", "image_reference"],
+        },
+        2,
+      ),
+    ).toBe("imageReference");
+    expect(
+      videoMultiImageAutoSwitchMode(
+        "imageToVideo",
+        {
+          id: SEEDANCE2_FAST,
+          apiModel: SEEDANCE2_FAST,
+          supportedModes: ["text_to_video", "first_frame"],
+        },
+        2,
+      ),
+    ).toBeNull();
+  });
+
+  // 自动改模式与提交守卫必须闭合：切完之后那个模式得真能提交，否则等于把用户从
+  // 一个坑挪到另一个坑。
+  it("切过去的模式在提交守卫里放行", () => {
+    const counts = { images: 3, videos: 0, audios: 0 };
+    const target = videoMultiImageAutoSwitchMode("imageToVideo", SEEDANCE2_FAST, counts.images);
+    expect(target).not.toBeNull();
+    expect(
+      videoSubmitMediaRejectionReason(target as VideoGenMode, SEEDANCE2_FAST, counts),
+    ).toBeNull();
+  });
+
+  // 自动切模式只是把界面导对，真正兜底提交的是引用上限：万一模式没被切走（比如
+  // effect 还没跑、或将来又有人加了 bail 条件），提交也只能带 1 张图，绝不能靠
+  // 张数悄悄变成图片参考。这条上限是结构性的，不接受媒体目录 referenceImageMax 覆盖。
+  it("首帧和单图图生视频的图片上限锁死在 1，且不被媒体目录配置覆盖", () => {
+    const source = readFileSync("src/features/canvas/nodes/VideoNode.tsx", "utf8");
+    expect(source).toContain("firstFrame: { image: 1, video: 0, audio: 0 }");
+    expect(source).toContain("imageToVideo: { image: 1, video: 0, audio: 0 }");
+    expect(source).toContain("const FIXED_IMAGE_CAP_BY_MODE");
+    expect(source).toContain(
+      "image: FIXED_IMAGE_CAP_BY_MODE[mode] ?? model?.referenceImageMax ?? defaults.image",
+    );
+  });
+});
+
+describe("HappyHorse 单图默认模式", () => {
+  it("默认进入图生视频，首帧仍是目录声明后的独立可选模式", () => {
+    const configured = {
+      apiModel: HAPPYHORSE,
+      supportedModes: ["text_to_video", "first_frame", "image_reference", "video_edit"],
+    };
+    expect(videoUpstreamImageDefaultMode(configured)).toBe("imageToVideo");
+    expect(isVideoModeSupportedByModel("firstFrame", configured)).toBe(true);
+    expect(isVideoModeSupportedByModel("imageToVideo", configured)).toBe(true);
+  });
+
+  // 默认值必须真的可用，否则一连图就顶进一个 hover 提示写着「不可用」的 tab。
+  it("图片参考在 1~9 张图时都可用", () => {
+    const source = readFileSync(
+      "src/features/canvas/nodes/VideoOperationsPanel.tsx",
+      "utf8",
+    );
+    expect(source).toContain('if (images === 0) return "需要连接图片节点（1~9个）";');
+    expect(source).toContain('if (images > 9) return "「图片参考」最多支持 9 张图片";');
   });
 });
 
@@ -264,6 +454,7 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
 describe("置灰守卫 × 提交守卫 — 不置灰的组合必须存在可提交的模式", () => {
   const ALL_MODES: VideoGenMode[] = [
     "textToVideo",
+    "firstFrame",
     "imageToVideo",
     "imageReference",
     "allReference",
@@ -678,6 +869,7 @@ describe("videoModeRequiresPrompt — submit validation by mode", () => {
 
   it("首帧 / 图片参考 / 首尾帧 / 视频编辑允许空提示词", () => {
     for (const mode of [
+      "firstFrame",
       "imageToVideo",
       "imageReference",
       "firstLastFrame",

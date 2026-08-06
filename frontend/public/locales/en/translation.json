@@ -1649,6 +1649,12 @@
       "selected_regen": "Selected regen",
       "compose_episode": "Video compose",
       "freezone_image_reverse_prompt": "Image reverse prompt"
+    },
+    "cancelRunning": {
+      "title": "Stop task",
+      "fallbackMessage": "The task has already started. Stopping now will not refund the spent credits. Stop anyway?",
+      "confirm": "Stop task",
+      "keepRunning": "Keep running"
     }
   },
   "taskCenter": {
@@ -3370,7 +3376,8 @@
     "thinkingLevelDesc": "Only applies to fal Nano Banana 2. High thinking adds extra cost.",
     "thinkingDisabled": "Off",
     "thinkingMinimal": "Standard",
-    "thinkingHigh": "High"
+    "thinkingHigh": "High",
+    "noModelsAvailable": "No image model has been configured by the administrator"
   },
   "node": {
     "menu": {
@@ -3425,7 +3432,8 @@
       "promptRequired": "Please enter a prompt",
       "apiKeyRequired": "Backend provider is not configured",
       "resultTitle": "Result Image",
-      "promptPlaceholder": "Describe anything you want to generate or edit"
+      "promptPlaceholder": "Describe anything you want to generate or edit",
+      "noModelAvailable": "No image model has been configured by the administrator yet"
     },
     "imageGen": {
       "contextPalette": {
@@ -4335,7 +4343,9 @@
     "copyReport": "Copy error report",
     "technicalDetails": "Technical details",
     "serviceConfigTitle": "Generation service is not configured",
-    "openRouterConfigMessage": "This model requires OpenRouter, but the backend API key is not configured. Please contact an administrator."
+    "openRouterConfigMessage": "This model requires OpenRouter, but the backend API key is not configured. Please contact an administrator.",
+    "stillRunningTitle": "Still generating",
+    "stillRunningMessage": "This generation is taking longer than usual. The page stopped waiting, but the job is still running in the background — refresh later to pick up the result, or check its progress in the task center."
   },
   "videoCompose": {
     "title": "Video Compose",

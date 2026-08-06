@@ -22,7 +22,9 @@ services:
       ST_CELERY_BROKER_URL: ""
       ST_CELERY_RESULT_BACKEND: ""
       NOVELVIDEO_DATA_ROOT: /data
+      NOVELVIDEO_OUTPUT_DIR: /data/output
       NOVELVIDEO_STATE_DIR: /data/state
+      NOVELVIDEO_RUNTIME_DIR: /data/runtime
       DRAMACLAW_CHAT_BACKEND: hermes
       HERMES_CLI_PATH: /root/.local/bin/hermes
       # 内置 newapi 网关:后端服务端调用走容器内网,覆盖 .env 里的外部网关地址,

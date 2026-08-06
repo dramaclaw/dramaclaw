@@ -1649,6 +1649,12 @@
       "selected_regen": "选中重生成",
       "compose_episode": "视频合成",
       "freezone_image_reverse_prompt": "图片反推提示词"
+    },
+    "cancelRunning": {
+      "title": "终止任务",
+      "fallbackMessage": "任务已开始执行。现在终止不会退还积分，是否确认终止？",
+      "confirm": "确认终止",
+      "keepRunning": "继续执行"
     }
   },
   "taskCenter": {
@@ -3370,7 +3376,8 @@
     "thinkingLevelDesc": "仅对 fal 的 Nano Banana 2 生效；高思考会额外增加费用。",
     "thinkingDisabled": "关闭",
     "thinkingMinimal": "标准",
-    "thinkingHigh": "高"
+    "thinkingHigh": "高",
+    "noModelsAvailable": "管理员尚未配置任何图片模型"
   },
   "node": {
     "menu": {
@@ -3425,7 +3432,8 @@
       "promptRequired": "请输入提示词",
       "apiKeyRequired": "后端 provider 未配置",
       "resultTitle": "结果图片",
-      "promptPlaceholder": "描述任何你想要生成或编辑的内容"
+      "promptPlaceholder": "描述任何你想要生成或编辑的内容",
+      "noModelAvailable": "管理员尚未配置任何图片模型，暂时无法生成"
     },
     "imageGen": {
       "contextPalette": {
@@ -4335,7 +4343,9 @@
     "copyReport": "复制报错信息",
     "technicalDetails": "技术详情",
     "serviceConfigTitle": "生成服务未配置",
-    "openRouterConfigMessage": "当前模型需要 OpenRouter 服务，但后端还没有配置 API Key。请联系管理员处理。"
+    "openRouterConfigMessage": "当前模型需要 OpenRouter 服务，但后端还没有配置 API Key。请联系管理员处理。",
+    "stillRunningTitle": "仍在生成中",
+    "stillRunningMessage": "本次生成耗时较长，页面已停止等待，但任务仍在后台继续。可稍后刷新页面查看结果，或到任务中心查看进度。"
   },
   "videoCompose": {
     "title": "视频合成",

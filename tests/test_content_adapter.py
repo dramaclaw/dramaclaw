@@ -314,10 +314,9 @@ async def test_content_rewriter_uses_newapi_text_model(monkeypatch) -> None:
         calls["default_model"] = default_model
         return "newapi-model"
 
-    def fake_newapi_settings(thinking_env: str, default_thinking_level: str):
-        calls["thinking_env"] = thinking_env
-        calls["default_thinking_level"] = default_thinking_level
-        return {"openai_reasoning_effort": default_thinking_level}
+    def fake_newapi_settings():
+        calls["structured_settings_called"] = True
+        return {"openai_reasoning_effort": "none"}
 
     monkeypatch.delenv("MODEL_API_KEY", raising=False)
     monkeypatch.delenv("ARK_API_KEY", raising=False)
@@ -331,7 +330,7 @@ async def test_content_rewriter_uses_newapi_text_model(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         content_rewriter,
-        "get_newapi_text_pydantic_model_settings",
+        "get_newapi_structured_output_model_settings",
         fake_newapi_settings,
         raising=False,
     )
@@ -346,5 +345,4 @@ async def test_content_rewriter_uses_newapi_text_model(monkeypatch) -> None:
     assert calls["model"] == "newapi-model"
     assert calls["model_env"] == "CONTENT_REWRITER_MODEL"
     assert calls["default_model"] == "gpt-5.4-mini"
-    assert calls["thinking_env"] == "CONTENT_REWRITER_THINKING_LEVEL"
-    assert calls["default_thinking_level"] == "medium"
+    assert calls["structured_settings_called"] is True

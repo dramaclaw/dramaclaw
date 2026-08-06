@@ -23,7 +23,9 @@ BLOCKED_ROOTS = {
 }
 MODE_ALIASES = {
     "textToVideo": "text_to_video",
-    "imageToVideo": "first_frame",
+    # 画布「图生视频」是单张图片参考：图片影响整体画面，但不锁定第一帧。
+    # 真正的首帧模式由首尾帧入口按槽位派生为 first_frame。
+    "imageToVideo": "image_reference",
     "firstLastFrame": "first_last_frame",
     "imageReference": "image_reference",
     "allReference": "all_reference",
@@ -285,6 +287,18 @@ def validate_media_model_catalog_config(
         value = config.get(field)
         if value is not None and (type(value) is not int or value < 0):
             raise MediaModelSchemaError(f"{field} must be a non-negative integer")
+
+    if media_type == "video":
+        video_limit = config.get("referenceVideoMax")
+        configured_modes = set(modes or [])
+        if (
+            type(video_limit) is int
+            and video_limit > 0
+            and not configured_modes.intersection({"all_reference", "video_edit"})
+        ):
+            raise MediaModelSchemaError(
+                "referenceVideoMax requires all_reference or video_edit mode"
+            )
 
     min_pixels = config.get("minPixels")
     if min_pixels is not None and (

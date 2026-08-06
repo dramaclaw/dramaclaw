@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar, Position } from '@xyflow/react';
 import { ArrowUp, Check, ChevronDown, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -12,48 +12,41 @@ import {
   submitFreezoneUpscale,
   type FreezoneUpscaleScaleFactor,
 } from '@/api/ops';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
+import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { GENERATION_ERROR_CLEARED_PATCH } from '@/features/canvas/application/generationTaskArbitration';
 import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
   ProviderModelPicker,
-  SHARED_MODELS,
 } from '@/features/canvas/ui/ProviderModelPicker';
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
+import {
+  pickAllowedOption,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from '@/features/canvas/domain/mediaModelOptions';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
 import { CANVAS_NODE_TOOLBAR_CARD_CLASS } from './nodeFrameStyles';
 import { NODE_CREDIT_PILL_FLAT_CLASS } from './nodeControlStyles';
 import { ZoomScaledToolbar } from './ZoomScaledToolbar';
 
-const UPSCALE_IMAGE_SIZES = ['1K', '2K', '4K'] as const;
-type UpscaleImageSize = (typeof UPSCALE_IMAGE_SIZES)[number];
-const DEFAULT_UPSCALE_IMAGE_SIZE: UpscaleImageSize = '2K';
-
 const SCALE_FACTORS: FreezoneUpscaleScaleFactor[] = [2, 4, 6];
 const DEFAULT_UPSCALE_SCALE_FACTOR: FreezoneUpscaleScaleFactor = 2;
-
-function imageModelSupportsQuality(apiModel: string | null | undefined): boolean {
-  if (!apiModel) return false;
-  const normalized = apiModel.toLowerCase();
-  return (
-    normalized === 'gpt-image-2'
-    || normalized === 'image-2'
-    || normalized === 'image-2-official'
-    || normalized.includes('gpt-image')
-  );
-}
 
 interface UpscalePersistedFields {
   upscaleSourceUrl?: string;
   upscaleModelId?: string;
-  upscaleImageSize?: UpscaleImageSize;
+  upscaleImageSize?: string;
   upscaleScaleFactor?: FreezoneUpscaleScaleFactor;
 }
 
@@ -76,21 +69,33 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
   const sourceUrl = persisted.upscaleSourceUrl ?? '';
   const persistedModelId =
     typeof persisted.upscaleModelId === 'string' ? persisted.upscaleModelId : DEFAULT_SHARED_MODEL_ID;
-  const { models: availableModels } = useFreezoneImageModels();
-  const persistedImageSize: UpscaleImageSize =
-    persisted.upscaleImageSize && (UPSCALE_IMAGE_SIZES as readonly string[]).includes(persisted.upscaleImageSize)
-      ? persisted.upscaleImageSize
-      : DEFAULT_UPSCALE_IMAGE_SIZE;
+  const imageCatalog = useFreezoneImageModels();
+  const availableModels = imageCatalog.models;
+  // 后台确实一个图片模型都没配时禁止提交：后端 `_resolve_catalog_request`
+  // 对空目录直接 409，让用户点一下再收报错是最糟的体验。
+  const catalogIsEmpty = isAuthoritativeEmptyCatalog(imageCatalog);
   const persistedScaleFactor: FreezoneUpscaleScaleFactor =
     persisted.upscaleScaleFactor === 4 || persisted.upscaleScaleFactor === 6
       ? persisted.upscaleScaleFactor
       : DEFAULT_UPSCALE_SCALE_FACTOR;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 目录为空时故意让 selectedModel 保持 undefined。原来这里尾巴上还挂着
+  // `?? SHARED_MODELS.find(...)`，等于把前端硬编码的模型当成可用模型复活，
+  // 正是「后台没配模型，界面照样显示能用」的来源。
   const selectedModel =
-    availableModels.find((m) => m.id === persistedModelId)
-    ?? availableModels[0]
-    ?? SHARED_MODELS.find((m) => m.id === persistedModelId);
+    availableModels.find((m) => m.id === persistedModelId) ?? availableModels[0];
+  // 分辨率与画质档位来自后台对该模型的配置；节点上存的旧值若已不在档位里，
+  // 就收回到首个可用档位。
+  const sizeOptions = useMemo(
+    () => resolveModelSizeOptions(selectedModel),
+    [selectedModel],
+  );
+  const qualityOptions = useMemo(
+    () => resolveModelQualityOptions(selectedModel),
+    [selectedModel],
+  );
+  const persistedImageSize = pickAllowedOption(persisted.upscaleImageSize, sizeOptions);
   const creditCost = useGenerationCreditCost(
     'feature',
     selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
@@ -98,8 +103,8 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
       surface: 'canvas',
       params: buildImageFeatureBillingParams(selectedModel, {
         size: persistedImageSize,
-        ...(imageModelSupportsQuality(selectedModel?.apiModel)
-          ? { quality: 'medium' }
+        ...(qualityOptions.length > 0
+          ? { quality: pickAllowedOption('medium', qualityOptions) }
           : {}),
         operation: 'upscale',
       }),
@@ -107,6 +112,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
   );
   const billingRuleMissing =
     creditCost.error instanceof BillingRuleNotConfiguredError;
+  const submitDisabled = isSubmitting || billingRuleMissing || catalogIsEmpty;
   const costDisplay =
     creditCost.data?.data.display ??
     (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
@@ -119,7 +125,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
   );
 
   const handleImageSizeChange = useCallback(
-    (size: UpscaleImageSize) => {
+    (size: string) => {
       updateNodeData(node.id, { upscaleImageSize: size });
     },
     [node.id, updateNodeData],
@@ -138,7 +144,8 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
   }, [deleteNode, node.id, setSelectedNode]);
 
   const handleSubmit = useCallback(async () => {
-    if (isSubmitting) return;
+    // 按钮已经禁用，这里再挡一道：没有可用模型就绝不该发出请求。
+    if (isSubmitting || catalogIsEmpty) return;
     if (!sourceUrl) {
       console.error('[upscale] missing upscaleSourceUrl on node.data — cannot submit');
       return;
@@ -171,7 +178,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
         model: apiModel,
       });
       updateNodeData(node.id, generationTaskDescriptor(ref));
-      const completed = await awaitTaskCompletion(ref.task_key, project);
+      const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
       const directUrl = completed.result?.['output_url'] as string | undefined;
       let url = directUrl;
       if (!url) {
@@ -186,6 +193,12 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
         ...GENERATION_ERROR_CLEARED_PATCH,
       });
     } catch (err) {
+      // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
+      // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
+      if (isTaskPollTimeoutError(err)) {
+        notifyTaskStillRunning(t);
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       console.error('[upscale] generation failed', err);
       updateNodeData(node.id, {
@@ -197,6 +210,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
       setIsSubmitting(false);
     }
   }, [
+    catalogIsEmpty,
     isSubmitting,
     node.id,
     persistedImageSize,
@@ -204,6 +218,7 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
     persistedScaleFactor,
     selectedModel,
     sourceUrl,
+    t,
     updateNodeData,
   ]);
 
@@ -246,7 +261,11 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
           </PanelRow>
 
           <PanelRow label={t('upscaleEditor.qualityLabel')}>
-            <QualityPicker value={persistedImageSize} onChange={handleImageSizeChange} />
+            <QualityPicker
+              value={persistedImageSize}
+              options={sizeOptions}
+              onChange={handleImageSizeChange}
+            />
           </PanelRow>
 
           <PanelRow label={t('upscaleEditor.scaleLabel')}>
@@ -263,9 +282,13 @@ export const UpscaleEditorOverlay = memo(({ node }: UpscaleEditorOverlayProps) =
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={isSubmitting || billingRuleMissing}
+            disabled={submitDisabled}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-bg-dark transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            title={t('upscaleEditor.submit')}
+            title={
+              catalogIsEmpty
+                ? t('modelParams.noModelsAvailable')
+                : t('upscaleEditor.submit')
+            }
           >
             <ArrowUp className="h-4 w-4" />
           </button>
@@ -288,11 +311,13 @@ function PanelRow({ label, children }: { label: string; children: React.ReactNod
 }
 
 interface QualityPickerProps {
-  value: UpscaleImageSize;
-  onChange: (value: UpscaleImageSize) => void;
+  value: string;
+  /** 当前模型允许的分辨率档位，由后台「媒体模型」配置下发。 */
+  options: readonly string[];
+  onChange: (value: string) => void;
 }
 
-function QualityPicker({ value, onChange }: QualityPickerProps) {
+function QualityPicker({ value, options, onChange }: QualityPickerProps) {
   const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -337,7 +362,7 @@ function QualityPicker({ value, onChange }: QualityPickerProps) {
         >
           <div className="mb-1 text-[11px] uppercase tracking-wide text-text-muted">{title}</div>
           <div className="flex gap-1.5">
-            {UPSCALE_IMAGE_SIZES.map((size) => {
+            {options.map((size) => {
               const isActive = value === size;
               return (
                 <button

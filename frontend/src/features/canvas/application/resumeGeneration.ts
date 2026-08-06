@@ -17,10 +17,19 @@ import {
   fetchFreezoneStoryScriptResult,
   type FreezoneJobRef,
 } from '@/api/ops';
-import { awaitTaskCompletion, listTasks, type TaskState } from '@/api/tasks';
+import {
+  awaitTaskCompletion,
+  isTaskCancelledError,
+  isTaskPollTimeoutError,
+  listTasks,
+  type TaskState,
+} from '@/api/tasks';
 import { resolveErrorContent } from '@/features/canvas/application/errorDialog';
 import { providerErrorMessage } from '@/lib/api-errors';
-import { extractRequestId } from '@/features/canvas/application/generationErrorReport';
+import {
+  CURRENT_RUNTIME_SESSION_ID,
+  extractRequestId,
+} from '@/features/canvas/application/generationErrorReport';
 import {
   isStaleGenerationTask,
   shouldWriteGenerationError,
@@ -64,6 +73,104 @@ export function generationTaskDescriptor(ref: FreezoneJobRef): GenerationTaskDes
     generationTaskType: ref.task_type,
     generationTaskJobId: ref.job_id,
   };
+}
+
+/**
+ * 轮询脱离时写回节点的补丁。
+ *
+ * 只放掉 `generationJobId` —— 它是 canvasAiGateway 进程内 Map 的键，本来就活不
+ * 过刷新，清掉正好让 Canvas.tsx 的轮询循环收工。`isGenerating` 和句柄三件套
+ * 必须原样留着：{@link nodeNeedsGenerationResume} 要靠它们判定，少一个都会让
+ * 「稍后刷新页面查看结果」变成空头支票。
+ *
+ * 单独提出来是为了能被测试直接断言 —— 内联在 Canvas.tsx 的 effect 里改错了没
+ * 人拦得住。
+ */
+export const DETACHED_GENERATION_PATCH: Record<string, unknown> = {
+  generationJobId: null,
+};
+
+/**
+ * 这个节点的 `generationJobId` 是否值得本次会话去轮询。
+ *
+ * `generationJobId` 是 canvasAiGateway 那个模块级 `jobs` Map 的键,只在写下它的
+ * 那个 JS 会话里有意义。刷新后 Map 是空的,再去轮询必然拿到 `not_found`,而
+ * Canvas.tsx 的错误分支会把它当作生成失败:写 `generationError`、把
+ * `isGenerating` 清成 false。于是同一个节点上两条路径打架 —— descriptor 那条
+ * 正在 resume,jobId 这条在写失败,而且失败分支通常先到(查内存 Map 比发一次
+ * listTasks 快)。一旦它先写进去,{@link nodeNeedsGenerationResume} 下次就不成立,
+ * 恢复路径永久断掉。
+ *
+ * 所以轮询的前提是这个 id 由本次运行时会话写下。跨会话的遗留 id 交给
+ * {@link staleGenerationJobPatch} 收拾。
+ */
+export function nodeOwnsLiveGenerationJob(node: CanvasNode): boolean {
+  const data = node.data as Record<string, unknown>;
+  const jobId = typeof data.generationJobId === 'string' ? data.generationJobId : '';
+  return (
+    data.isGenerating === true
+    && jobId.length > 0
+    && data.generationClientSessionId === CURRENT_RUNTIME_SESSION_ID
+  );
+}
+
+/**
+ * 上个会话遗留的 `generationJobId` 该怎么处理。返回 null 表示这个节点不用管。
+ *
+ * 两种遗留节点的命运不同:
+ * - **有 descriptor**:清掉死 id,`isGenerating` 与句柄留着,让
+ *   {@link resumeNodeGeneration} 独占恢复路径 —— 补丁正是
+ *   {@link DETACHED_GENERATION_PATCH},跟 detached 分支同一份。
+ * - **没有 descriptor**(本 PR 之前提交的老节点):后端句柄压根没落盘,谁都接不回
+ *   来。原先的行为是轮询到 `not_found` 再写失败,结论一样,只是白跑一轮;这里
+ *   直接给出终态,免得节点永远转圈。
+ */
+export function staleGenerationJobPatch(node: CanvasNode): Record<string, unknown> | null {
+  const data = node.data as Record<string, unknown>;
+  const jobId = typeof data.generationJobId === 'string' ? data.generationJobId : '';
+  if (data.isGenerating !== true || jobId.length === 0) {
+    return null;
+  }
+  if (data.generationClientSessionId === CURRENT_RUNTIME_SESSION_ID) {
+    return null;
+  }
+  const taskKey = typeof data.generationTaskKey === 'string' ? data.generationTaskKey : '';
+  if (taskKey.length > 0) {
+    return DETACHED_GENERATION_PATCH;
+  }
+  return buildErrorPatch('image', new Error('生成任务已结束或不存在'));
+}
+
+/** 判定「任务不存在」需要连续 miss 的次数,以及每次之间的间隔。 */
+export const TASK_MISS_CONFIRM_ATTEMPTS = 3;
+export const TASK_MISS_CONFIRM_INTERVAL_MS = 5000;
+
+/**
+ * 反复确认任务是否真的从列表里消失了。
+ *
+ * 返回 true 只有一种情形:连续 {@link TASK_MISS_CONFIRM_ATTEMPTS} 次列表调用都
+ * 成功、且都没有这个 task_key。任何一次命中就是 false(任务还在,交给
+ * awaitTaskCompletion 按预算等);任何一次列表调用抛错也是 false —— 列不出来
+ * 不等于任务没了,宁可去走完整轮询也别写失败。
+ */
+async function confirmTaskMissing(projectId: string, taskKey: string): Promise<boolean> {
+  for (let attempt = 0; attempt < TASK_MISS_CONFIRM_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, TASK_MISS_CONFIRM_INTERVAL_MS);
+      });
+    }
+    let tasks: TaskState[];
+    try {
+      tasks = await listTasks(projectId);
+    } catch {
+      return false;
+    }
+    if (tasks.some((task) => task.task_key === taskKey)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 type ResumeKind = 'image' | 'video' | 'audio' | 'ply' | 'script' | 'reverse-prompt';
@@ -209,6 +316,10 @@ async function buildSuccessPatch(
 }
 
 function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unknown> {
+  if (isTaskCancelledError(error)) {
+    // 用户主动终止过的任务恢复时只清理生成态，不当错误展示。
+    return { ...CLEARED_TASK_FIELDS };
+  }
   if (kind === 'ply') {
     const message = error instanceof Error ? error.message : String(error);
     return { ...CLEARED_TASK_FIELDS, taskKey: null, errorMessage: `生成失败: ${message}` };
@@ -260,29 +371,35 @@ export async function resumeNodeGeneration(params: {
     ?? (node.data as Record<string, unknown>);
 
   // Quick pre-check: if the task no longer exists server-side (expired/cleaned),
-  // avoid hanging on the 20-minute poll timeout — clear the stuck 生成中 state now.
-  try {
-    const tasks = await listTasks(projectId);
-    const found = tasks.find((task) => task.task_key === taskKey);
-    if (!found) {
-      const latestNodeData = readLatestNodeData();
-      if (isStaleGenerationTask({ nodeData: latestNodeData, taskKey })) {
-        return;
-      }
-
-      updateNodeData(node.id, buildErrorPatch(kind, new Error('生成任务已结束或不存在')));
+  // avoid hanging on the full poll budget — clear the stuck 生成中 state now.
+  //
+  // 但一次 miss 不作数。列表接口会静默丢行:后端 list_tasks_for_project 对每行
+  // 单独 _row_to_state,解析抛异常就只记一条 warning 然后跳过(task_state.py),
+  // 任务其实还在库里跑。再算上提交后的可见性窗口,单次 miss 判「不存在」会把
+  // 活着的任务写成失败 —— 这正是本 PR 要消除的那类误判,不该在恢复路径上重演。
+  // 连续 miss 才算数:确认窗口约 10 秒,相对 20~35 分钟的完整预算可以忽略,
+  // 却足以盖住瞬时漏项。
+  if (await confirmTaskMissing(projectId, taskKey)) {
+    const latestNodeData = readLatestNodeData();
+    if (isStaleGenerationTask({ nodeData: latestNodeData, taskKey })) {
       return;
     }
-  } catch {
-    // List failed (transient/offline) — fall through to awaitTaskCompletion,
-    // which has its own poll + timeout handling.
+
+    updateNodeData(node.id, buildErrorPatch(kind, new Error('生成任务已结束或不存在')));
+    return;
   }
 
   try {
-    const completed = await awaitTaskCompletion(taskKey, projectId);
+    // 按任务类型取预算，跟提交侧同一份口径（见 pollTimeoutForTaskType）。
+    const completed = await awaitTaskCompletion(taskKey, projectId, { taskType });
     updateNodeData(node.id, await buildSuccessPatch(kind, completed, taskType, jobId, projectId));
   } catch (error) {
     console.warn('[resume-generation] task resume failed', { nodeId: node.id, taskKey, error });
+    // 轮询超时只说明这一轮不再等了，任务还在后端跑：保留 isGenerating 与句柄，
+    // 下次刷新再接一轮，别把还活着的任务写成失败。
+    if (isTaskPollTimeoutError(error)) {
+      return;
+    }
     if (kind === 'image' || kind === 'video') {
       const latestNodeData = readLatestNodeData();
       if (isStaleGenerationTask({ nodeData: latestNodeData, taskKey })) {

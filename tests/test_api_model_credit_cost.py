@@ -42,10 +42,23 @@ def patch_quote_expect(
         pricing_kind = expected_params.get("pricing_kind")
         pricing_quantity = int(expected_params.get("pricing_quantity") or 1)
         if pricing_kind == "video":
+            input_video_duration = float(
+                expected_params.get("input_video_duration_seconds") or 0
+            )
+            input_video_billed_seconds = (
+                int(input_video_duration)
+                if expected_params.get("video_input_present")
+                else 0
+            )
             metrics = {
                 "call_count": 1,
                 "item_count": 1,
                 "duration_seconds": pricing_quantity,
+                "output_duration_seconds": (
+                    pricing_quantity - input_video_billed_seconds
+                ),
+                "input_video_duration_ms": round(input_video_duration * 1000),
+                "input_video_billed_seconds": input_video_billed_seconds,
             }
         elif pricing_kind == "audio" and "billable_chars" in expected_params:
             metrics = {
@@ -921,7 +934,7 @@ async def test_generation_credit_cost_route_keeps_video_params_and_quantity(
         model_credits,
         expected_kind="video",
         expected_model="seedance-1.0-pro-fast",
-        expected_params={"resolution": "720p"},
+        expected_params={"resolution": "720p", "video_input": "none"},
         expected_quantity=5,
         cost=25,
     )
@@ -952,8 +965,10 @@ async def test_generation_credit_cost_route_prices_video_feature_by_backend_and_
             "pricing_kind": "video",
             "pricing_model": "seedance-1.0-pro-fast",
             "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
-            "pricing_params": {"resolution": "720p"},
+            "pricing_params": {"resolution": "720p", "video_input": "none"},
             "pricing_quantity": 5,
+            "video_input_present": False,
+            "input_video_duration_seconds": 0.0,
             "resolution": "720p",
             "video_backend": "newapi_seedance-1.0-pro-fast",
         },
@@ -1010,6 +1025,36 @@ def test_video_feature_billing_ignores_client_pricing_model_override():
     assert billing["pricing_quantity"] == 12
 
 
+def test_video_feature_billing_combines_output_with_total_input_duration():
+    from novelvideo.api.routes.model_credits import (
+        _video_backend_feature_billing_params,
+    )
+
+    billing = _video_backend_feature_billing_params(
+        {
+            "video_backend": "newapi_seedance-2.0",
+            "resolution": "720p",
+            "pricing_quantity": 12,
+            "video_input_present": True,
+            "input_video_duration_seconds": 11.95,
+        }
+    )
+
+    assert billing["pricing_params"] == {
+        "resolution": "720p",
+        "video_input": "present",
+    }
+    assert billing["pricing_quantity"] == 23
+    assert billing["pricing_metrics"] == {
+        "call_count": 1,
+        "item_count": 1,
+        "duration_seconds": 23,
+        "output_duration_seconds": 12,
+        "input_video_duration_ms": 11950,
+        "input_video_billed_seconds": 11,
+    }
+
+
 @pytest.mark.asyncio
 async def test_generation_credit_cost_route_prices_freezone_video_generate_by_feature(
     monkeypatch,
@@ -1029,8 +1074,10 @@ async def test_generation_credit_cost_route_prices_freezone_video_generate_by_fe
             "generate_audio": True,
             "pricing_kind": "video",
             "pricing_model": "seedance-1.0-pro-fast",
-            "pricing_params": {"resolution": "1080p"},
+            "pricing_params": {"resolution": "1080p", "video_input": "none"},
             "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
+            "video_input_present": False,
+            "input_video_duration_seconds": 0.0,
         },
         expected_quantity=1,
         cost=48,
@@ -1088,6 +1135,9 @@ async def test_generation_credit_cost_route_prices_video_batch_by_calls_and_tota
         "call_count": 3,
         "item_count": 3,
         "duration_seconds": 15,
+        "output_duration_seconds": 15,
+        "input_video_duration_ms": 0,
+        "input_video_billed_seconds": 0,
     }
     assert captured["quantity"] == 3
 

@@ -71,6 +71,14 @@ import {
   isPresetManagedNode,
 } from '@/features/canvas/domain/mainlineNodeFlags';
 import { prepareNodeImage } from '@/features/canvas/application/imageData';
+import {
+  CANVAS_LOW_DETAIL_CLASS,
+  CANVAS_PANNING_CLASS,
+  PANNING_CLASS_RELEASE_DELAY_MS,
+  isLowDetailZoom,
+  setCanvasGestureActive,
+  setCanvasLowDetail,
+} from '@/features/canvas/application/canvasLod';
 import { isSupportedMediaFile } from '@/features/canvas/application/videoFileTypes';
 import { uploadLocalImageToBackend } from '@/features/canvas/application/uploadToolOutput';
 import {
@@ -78,10 +86,13 @@ import {
   CURRENT_RUNTIME_SESSION_ID,
   extractRequestId,
 } from '@/features/canvas/application/generationErrorReport';
-import { showErrorDialog } from '@/features/canvas/application/errorDialog';
+import { notifyTaskStillRunning, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import {
+  DETACHED_GENERATION_PATCH,
   nodeNeedsGenerationResume,
+  nodeOwnsLiveGenerationJob,
   resumeNodeGeneration,
+  staleGenerationJobPatch,
 } from '@/features/canvas/application/resumeGeneration';
 import { readUrl } from '@/lib/url-params';
 import { useQueryClient } from '@tanstack/react-query';
@@ -97,6 +108,8 @@ import {
 } from '@/features/canvas/domain/nodeRegistry';
 import { nodeCatalog } from '@/features/canvas/application/nodeCatalog';
 import { applySkillRoleBindingConnection } from '@/features/canvas/domain/skillConnectionEdges';
+import { videoReferenceConnectionRejection } from '@/features/canvas/domain/videoReferenceLimits';
+import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import { embedStoryboardImageMetadata } from '@/commands/image';
 import { nodeTypes as canvasNodeTypes } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
@@ -989,15 +1002,23 @@ export function Canvas({
   const pendingJobNodeKey = useCanvasStore(
     useShallow((state) =>
       state.nodes
-        .filter((node) => {
-          if (node.type !== CANVAS_NODE_TYPES.exportImage) return false;
-          const data = node.data as Record<string, unknown>;
-          return (
-            data.isGenerating === true &&
-            typeof data.generationJobId === 'string' &&
-            (data.generationJobId as string).length > 0
-          );
-        })
+        .filter(
+          (node) =>
+            node.type === CANVAS_NODE_TYPES.exportImage && nodeOwnsLiveGenerationJob(node),
+        )
+        .map((node) => node.id),
+    ),
+  );
+  // 上个会话遗留的 generationJobId（刷新前任务还没 detached）。这些节点不能进
+  // 轮询循环——gateway 的内存 Map 早空了，只会拿到 not_found 然后被写成失败，
+  // 抢在 descriptor resume 前面把恢复路径掐断。见 staleGenerationJobPatch。
+  const staleJobNodeKey = useCanvasStore(
+    useShallow((state) =>
+      state.nodes
+        .filter(
+          (node) =>
+            node.type === CANVAS_NODE_TYPES.exportImage && staleGenerationJobPatch(node) !== null,
+        )
         .map((node) => node.id),
     ),
   );
@@ -1016,6 +1037,7 @@ export function Canvas({
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const pendingFocusNodeId = useCanvasStore((state) => state.pendingFocusNodeId);
   const clearPendingFocus = useCanvasStore((state) => state.clearPendingFocus);
+  const requestFocusNode = useCanvasStore((state) => state.requestFocusNode);
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
   const deleteNode = useCanvasStore((state) => state.deleteNode);
   const deleteNodes = useCanvasStore((state) => state.deleteNodes);
@@ -1300,13 +1322,24 @@ export function Canvas({
         window.setTimeout(resolve, delayMs);
       });
 
-    const pendingExportNodes = useCanvasStore.getState().nodes.filter((node) => {
+    // 先收拾上个会话遗留的 job id，再挑本次会话该轮询的。顺序要紧：清理这一步
+    // 会把带 descriptor 的节点从下面的候选集里摘掉（它的 generationJobId 被清
+    // 空），恢复交给 resumeNodeGeneration 一条路走。
+    for (const node of useCanvasStore.getState().nodes) {
       if (node.type !== CANVAS_NODE_TYPES.exportImage) {
-        return false;
+        continue;
       }
-      const data = node.data as Record<string, unknown>;
-      return data.isGenerating === true && typeof data.generationJobId === 'string' && data.generationJobId.length > 0;
-    });
+      const patch = staleGenerationJobPatch(node);
+      if (patch) {
+        updateNodeData(node.id, patch);
+      }
+    }
+
+    const pendingExportNodes = useCanvasStore
+      .getState()
+      .nodes.filter(
+        (node) => node.type === CANVAS_NODE_TYPES.exportImage && nodeOwnsLiveGenerationJob(node),
+      );
 
     for (const pendingNode of pendingExportNodes) {
       if (activeGenerationPollNodeIdsRef.current.has(pendingNode.id)) {
@@ -1398,6 +1431,24 @@ export function Canvas({
               break;
             }
 
+            if (status.status === 'detached') {
+              // 前端不再跟这个任务了（后端长时间查不到），但它不是失败：不写
+              // generationError，也保留 generationRequestPayload，让「重新生成」
+              // 仍然可用；只给一个中性提示，避免把可能还在跑的任务标成失败。
+              //
+              // 补丁内容见 DETACHED_GENERATION_PATCH：只放掉进程内的 jobId，
+              // isGenerating 与句柄留着，刷新后 resume 扫描才接得回来。与
+              // 擦除/重绘路径（regenerateFreezoneRedrawNode）同口径。
+              const detachedSessionId = typeof currentData.generationClientSessionId === 'string'
+                ? currentData.generationClientSessionId
+                : '';
+              if (detachedSessionId === CURRENT_RUNTIME_SESSION_ID) {
+                notifyTaskStillRunning(t);
+              }
+              updateNodeData(pendingNode.id, DETACHED_GENERATION_PATCH);
+              break;
+            }
+
             const errorMessage = status.error ?? (status.status === 'not_found' ? 'generation job not found' : 'generation failed');
             const generationClientSessionId = typeof currentData.generationClientSessionId === 'string'
               ? currentData.generationClientSessionId
@@ -1433,7 +1484,7 @@ export function Canvas({
         }
       })();
     }
-  }, [pendingJobNodeKey, updateNodeData]);
+  }, [pendingJobNodeKey, staleJobNodeKey, t, updateNodeData]);
 
   // Resume task_key-based generations (image / video / audio / 3D / script / 反推提示词)
   // after a page refresh. The submit flows persist a GenerationTaskDescriptor on the
@@ -1756,6 +1807,18 @@ export function Canvas({
       if (sourceNode && !canNodeTypeBeManualConnectionSource(sourceNode.type, targetNode.type)) {
         return false;
       }
+      // 视频节点的素材已经满到能力包络（图 9 / 视频 3 / 音频 3 / 总数 12）时，
+      // 拖线落点变灰、不成边。与 store 的 onConnect 收口同一把尺子。
+      if (
+        videoReferenceConnectionRejection(
+          nodes,
+          edges,
+          connection,
+          videoReferenceEnvelopeForNode,
+        ) != null
+      ) {
+        return false;
+      }
       if (targetNode.type !== CANVAS_NODE_TYPES.threeDWorld) return true;
       return !edges.some(
         (edge) => edge.target === targetId && edge.source !== connection.source,
@@ -1768,16 +1831,68 @@ export function Canvas({
   // 重跑 selector(如 BackToNodesHint 的 O(n) 可见性判断)。这里节流到 ~8fps,并在
   // onMoveEnd 必定提交最终值,既消除每帧 store 风暴,又保证落库/可见性判断及时收敛。
   const lastViewportCommitRef = useRef(0);
+
+  // LOD 效果类一律走 classList 直改 DOM，不进 React state：平移期间每帧 setState
+  // 会把「省下来的光栅化时间」原样还给 render，得不偿失。
+  //
+  // lowDetailActive 是唯一的例外：它驱动 onlyRenderVisibleElements 的开关（低缩放
+  // 档全部节点都是轻量 shell，视口裁剪只剩挂载/卸载翻腾的坏处，索性关掉），必须是
+  // React state。setState 有值守卫，平移中每帧调用但值不变，不触发重渲染；只有
+  // 缩放跨过阈值那一次会让 Canvas 重渲染一遍。
+  const panningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lowDetailActive, setLowDetailActive] = useState(() =>
+    isLowDetailZoom(initialViewportRef.current.zoom)
+  );
+  const applyLowDetailClass = useCallback((zoom: number) => {
+    const lowDetail = isLowDetailZoom(zoom);
+    wrapperRef.current?.classList.toggle(CANVAS_LOW_DETAIL_CLASS, lowDetail);
+    setCanvasLowDetail(lowDetail);
+    // 升档（退出低缩放）必须与 withLodShell 的 shell→full 交换落在同一次提交：
+    // 此刻裁剪若还停留在「低缩放档全量挂载」，302 个 shell 会同时换成完整组件
+    // （实测 ~960ms 冻结），随后 moveEnd 恢复裁剪又把 ~290 个刚挂上的整批卸掉
+    // （再冻 ~1s）。同一提交生效则裁剪先把可见集收窄到十几个，只有它们挂完整
+    // 组件（实测 ~90ms）。React 对同一事件里的 store 通知和 setState 统一批处理，
+    // 这里的 set 与交换必然同帧。降档方向相反——见 handleMoveEnd 的注释。
+    if (!lowDetail) {
+      setLowDetailActive(false);
+    }
+  }, []);
+
+  const handleMoveStart = useCallback(() => {
+    if (panningReleaseTimerRef.current) {
+      clearTimeout(panningReleaseTimerRef.current);
+      panningReleaseTimerRef.current = null;
+    }
+    wrapperRef.current?.classList.add(CANVAS_PANNING_CLASS);
+    setCanvasGestureActive(true);
+  }, []);
+
   const handleMoveEnd = useCallback(
     (_event: unknown, viewport: Viewport) => {
       lastViewportCommitRef.current = Date.now();
+      applyLowDetailClass(viewport.zoom);
+      // 降档（进入低缩放）的裁剪关闭只在手势结束时提交：全量挂载 ~240 个 shell 的
+      // 波放在缩放手势中途会有可感知的顿挫，推迟到松手后手势保持流畅；中途已跨档
+      // 的可见节点由 withLodShell 的 selector 先行换成 shell，不受此影响。升档方向
+      // 不能等到这里——见 applyLowDetailClass 的注释。
+      setLowDetailActive(isLowDetailZoom(viewport.zoom));
+      if (panningReleaseTimerRef.current) {
+        clearTimeout(panningReleaseTimerRef.current);
+      }
+      panningReleaseTimerRef.current = setTimeout(() => {
+        panningReleaseTimerRef.current = null;
+        wrapperRef.current?.classList.remove(CANVAS_PANNING_CLASS);
+        setCanvasGestureActive(false);
+      }, PANNING_CLASS_RELEASE_DELAY_MS);
       setViewportState(viewport);
     },
-    [setViewportState]
+    [applyLowDetailClass, setViewportState]
   );
 
   const handleMove = useCallback(
     (_event: unknown, viewport: Viewport) => {
+      // 缩放跨档要立刻生效（用户能看见节点内容切换），所以不受下面的节流限制。
+      applyLowDetailClass(viewport.zoom);
       const now = Date.now();
       if (now - lastViewportCommitRef.current < 120) {
         return;
@@ -1785,10 +1900,24 @@ export function Canvas({
       lastViewportCommitRef.current = now;
       setViewportState(viewport);
     },
-    [setViewportState]
+    [applyLowDetailClass, setViewportState]
   );
 
-  const handleMoveStart = useCallback(() => {}, []);
+  // 首屏恢复的视口不会触发 onMove/onMoveEnd，低缩放档要在这里补一次。
+  useEffect(() => {
+    applyLowDetailClass(initialViewportRef.current.zoom);
+    setLowDetailActive(isLowDetailZoom(initialViewportRef.current.zoom));
+    return () => {
+      if (panningReleaseTimerRef.current) {
+        clearTimeout(panningReleaseTimerRef.current);
+        panningReleaseTimerRef.current = null;
+      }
+      // 模块级信号要跟着画布一起复位，否则卸载时若正在手势中，下一次挂载会
+      // 一直以为「还在平移」而永远不测量。
+      setCanvasGestureActive(false);
+      setCanvasLowDetail(false);
+    };
+  }, [applyLowDetailClass]);
 
   useEffect(() => {
     const wrapperElement = wrapperRef.current;
@@ -1950,6 +2079,13 @@ export function Canvas({
         pendingNodePlacement.initialData,
       );
       setSelectedNode(newNodeId);
+      // 低缩放档下新节点在屏幕上只有几十像素、深色面板贴深色背景，放置成功也
+      // 近乎不可见（用户会以为「没创建上」）。复用资产拖入的聚焦机制：视口动画
+      // 拉近到新节点（zoom 提到 ≥0.6），落点即所见、且直接可编辑。常用工作缩放
+      // 下不聚焦，避免打断用户的构图视角。
+      if (isLowDetailZoom(reactFlowInstance.getZoom())) {
+        requestFocusNode(newNodeId);
+      }
       if (pendingNodePlacement.skill) {
         bindSingleBeatContextInput(newNodeId, pendingNodePlacement.skill);
       }
@@ -1965,6 +2101,7 @@ export function Canvas({
       bindSingleBeatContextInput,
       pendingNodePlacement,
       reactFlowInstance,
+      requestFocusNode,
       scheduleCanvasPersist,
       setSelectedNode,
       triggerPlacementConfirm,
@@ -3769,6 +3906,24 @@ export function Canvas({
     }
   }, []);
 
+  // 手动建边落到某个节点上时，这条边会不会把视频节点的素材撑过能力包络？非空即拒绝。
+  // 三条手动路径（React Flow 拖线松手、"+" 拖拽的落点高亮、"+" 松手建边）共用同一把
+  // 尺子——少一处就会出现「拖过去高亮成合法、一松手什么也没有」。
+  const manualDropReferenceRejection = useCallback(
+    (pending: PendingConnectStart, dropNodeId: string | null): string | null => {
+      if (!dropNodeId || dropNodeId === pending.nodeId) return null;
+      const sourceId = pending.handleType === 'source' ? pending.nodeId : dropNodeId;
+      const targetId = pending.handleType === 'source' ? dropNodeId : pending.nodeId;
+      return videoReferenceConnectionRejection(
+        nodes,
+        edges,
+        { source: sourceId, target: targetId },
+        videoReferenceEnvelopeForNode,
+      );
+    },
+    [edges, nodes],
+  );
+
   const handleConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
       if (connectionState.isValid || !pendingConnectStart) {
@@ -3793,6 +3948,21 @@ export function Canvas({
       const dropNodeId = dropNodeElement?.dataset?.id ?? null;
 
       if (dropNodeId && dropNodeId !== pendingConnectStart.nodeId) {
+        // 素材撑过能力包络：这条分支是 connectionState.isValid 为 false 才走到的
+        // 补救路径，**不看** isValidConnection，必须自己拦。不拦就会一路掉进下面
+        // 「拖到空白处 → 弹新建节点菜单」，用户明明松手在节点上却弹出个菜单。
+        // 顺带 toast 出原因——落点变灰本身不解释「为什么」。
+        const referenceRejection = manualDropReferenceRejection(
+          pendingConnectStart,
+          dropNodeId,
+        );
+        if (referenceRejection) {
+          toast.warning(referenceRejection);
+          setPendingConnectStart(null);
+          setPreviewConnectionVisual(null);
+          return;
+        }
+
         const sourceNode =
           pendingConnectStart.handleType === 'source'
             ? nodes.find((node) => node.id === pendingConnectStart.nodeId)
@@ -3913,6 +4083,7 @@ export function Canvas({
     },
     [
       connectGraphNodes,
+      manualDropReferenceRejection,
       nodes,
       pendingConnectStart,
       reactFlowInstance,
@@ -3987,6 +4158,9 @@ export function Canvas({
       const validate = (el: HTMLElement | null): HTMLElement | null => {
         const dropNodeId = el?.dataset?.id ?? null;
         if (!el || !dropNodeId || dropNodeId === pending.nodeId) return null;
+        // 素材已满的视频节点不高亮成落点（与拖线时落点变灰同一口径）；松手那一下
+        // 由 handlePlusConnectDragEnd 再 toast 出原因。
+        if (manualDropReferenceRejection(pending, dropNodeId)) return null;
         const sourceNode =
           pending.handleType === 'source'
             ? nodes.find((node) => node.id === pending.nodeId)
@@ -4045,7 +4219,7 @@ export function Canvas({
         });
       return best;
     },
-    [nodes],
+    [manualDropReferenceRejection, nodes],
   );
 
   const handlePlusConnectDragStart = useCallback((params: PlusConnectDragParams) => {
@@ -4135,6 +4309,23 @@ export function Canvas({
 
       const containerRect = wrapperRef.current?.getBoundingClientRect();
       if (!pending || !containerRect) {
+        setPendingConnectStart(null);
+        setPreviewConnectionVisual(null);
+        return;
+      }
+
+      // 素材已满的视频节点上面 resolveManualDropTargetEl 不会认作落点（不高亮），
+      // 松手就会掉进「拖到空白处 → 弹新建节点菜单」。所以先单独看光标正下方压着
+      // 谁：确实是被素材上限挡下的，就 toast 出原因并收工，别弹那个菜单。
+      const hoveredNodeId =
+        (
+          document
+            .elementFromPoint(params.clientPosition.x, params.clientPosition.y)
+            ?.closest?.('.react-flow__node[data-id]') as HTMLElement | null
+        )?.dataset?.id ?? null;
+      const hoveredRejection = manualDropReferenceRejection(pending, hoveredNodeId);
+      if (hoveredRejection) {
+        toast.warning(hoveredRejection);
         setPendingConnectStart(null);
         setPreviewConnectionVisual(null);
         return;
@@ -4232,6 +4423,7 @@ export function Canvas({
     },
     [
       connectGraphNodes,
+      manualDropReferenceRejection,
       nodes,
       reactFlowInstance,
       scheduleCanvasPersist,
@@ -4496,7 +4688,7 @@ export function Canvas({
     <div
       ref={wrapperRef}
       data-canvas-tool={handToolActive ? 'hand' : 'move'}
-      className="relative h-full w-full bg-background"
+      className="dc-canvas relative h-full w-full bg-background"
       onDragEnter={handleCanvasDragEnter}
       onDragOver={handleCanvasDragOver}
       onDragLeave={handleCanvasDragLeave}
@@ -4548,7 +4740,10 @@ export function Canvas({
         multiSelectionKeyCode={MULTI_SELECTION_KEY_CODES}
         selectionKeyCode={null}
         deleteKeyCode={null}
-        onlyRenderVisibleElements
+        // 低缩放档关掉视口裁剪：此档所有节点都是轻量 shell（见 withLodShell），
+        // 全量挂载的渲染树很小；而裁剪在快速平移时每帧挂/卸边界节点，实测 4 秒
+        // 拖拽 800+ 次翻腾、p99 帧时 470ms——收益早已倒挂。高缩放档维持裁剪。
+        onlyRenderVisibleElements={!lowDetailActive}
         zoomOnDoubleClick={false}
         proOptions={REACT_FLOW_PRO_OPTIONS}
         className="bg-background"

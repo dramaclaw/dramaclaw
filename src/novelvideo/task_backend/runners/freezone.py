@@ -193,6 +193,8 @@ async def _run_freezone_edit_async(
             provider=payload.get("provider"),
             model=payload.get("model"),
             quality=payload.get("quality"),
+            model_params=payload.get("model_params") or None,
+            request_schema=payload.get("request_schema") or None,
             output_task_type=task_type,
         ),
         project_id=ctx.project_id,
