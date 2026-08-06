@@ -7145,7 +7145,7 @@ def _require_catalog_video_mode(
     normalized = {
         "textToVideo": "text_to_video",
         "firstFrame": "first_frame",
-        "imageToVideo": "image_reference",
+        "imageToVideo": "image_to_video",
         "firstLastFrame": "first_last_frame",
         "imageReference": "image_reference",
         "allReference": "all_reference",
@@ -7796,9 +7796,9 @@ async def freezone_video_i2v(
         "video",
         body.model,
         body.model_params,
-        mode=execution_mode,
+        mode=requested_mode,
     )
-    _require_catalog_video_mode(capabilities, execution_mode)
+    _require_catalog_video_mode(capabilities, requested_mode)
 
     reference_limits = _catalog_reference_limits(
         capabilities,

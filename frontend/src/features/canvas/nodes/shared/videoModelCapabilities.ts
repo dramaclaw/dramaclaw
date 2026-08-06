@@ -57,7 +57,7 @@ function isBaseSeedance2VideoModel(modelId: string | null | undefined): boolean 
 export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
   textToVideo: "text_to_video",
   firstFrame: "first_frame",
-  imageToVideo: "image_reference",
+  imageToVideo: "image_to_video",
   firstLastFrame: "first_last_frame",
   imageReference: "image_reference",
   allReference: "all_reference",
@@ -211,7 +211,12 @@ export function videoUpstreamImageDefaultMode(
   model: VideoModelRef,
 ): VideoGenMode | null {
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
-    for (const mode of ["allReference", "imageToVideo", "firstFrame"] as const) {
+    for (const mode of [
+      "allReference",
+      "imageToVideo",
+      "firstFrame",
+      "imageReference",
+    ] as const) {
       if (isVideoModeSupportedByModel(mode, model)) return mode;
     }
     return null;

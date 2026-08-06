@@ -113,6 +113,10 @@ describe("目录 supportedModes 是模式入口的单一事实来源", () => {
     apiModel: "custom-reference-model",
     supportedModes: ["text_to_video", "image_reference"],
   };
+  const imageToVideoOnly = {
+    apiModel: "custom-image-to-video-model",
+    supportedModes: ["text_to_video", "image_to_video"],
+  };
   const comfyAllReference = {
     apiModel: "minimax_h3_r2v",
     supportedModes: ["text_to_video", "image_reference", "all_reference"],
@@ -125,20 +129,22 @@ describe("目录 supportedModes 是模式入口的单一事实来源", () => {
     expect(videoUpstreamImageDefaultMode(firstFrameOnly)).toBe("firstFrame");
   });
 
-  it("声明 image_reference 的模型提供图生视频和图片参考，但不伪装成首帧", () => {
+  it("图生视频和图片参考由两个独立目录能力控制", () => {
     expect(isVideoModeSupportedByModel("firstFrame", imageReferenceOnly)).toBe(false);
-    expect(isVideoModeSupportedByModel("imageToVideo", imageReferenceOnly)).toBe(true);
+    expect(isVideoModeSupportedByModel("imageToVideo", imageReferenceOnly)).toBe(false);
     expect(isVideoModeSupportedByModel("imageReference", imageReferenceOnly)).toBe(true);
-    expect(videoEmptyStateCtaModes(imageReferenceOnly)).toEqual([
-      "imageToVideo",
-      "imageReference",
-    ]);
-    expect(videoUpstreamImageDefaultMode(imageReferenceOnly)).toBe("imageToVideo");
+    expect(videoEmptyStateCtaModes(imageReferenceOnly)).toEqual(["imageReference"]);
+    expect(videoUpstreamImageDefaultMode(imageReferenceOnly)).toBe("imageReference");
+
+    expect(isVideoModeSupportedByModel("imageToVideo", imageToVideoOnly)).toBe(true);
+    expect(isVideoModeSupportedByModel("imageReference", imageToVideoOnly)).toBe(false);
+    expect(videoEmptyStateCtaModes(imageToVideoOnly)).toEqual(["imageToVideo"]);
+    expect(videoUpstreamImageDefaultMode(imageToVideoOnly)).toBe("imageToVideo");
   });
 
   it("前端模式到目录能力的映射区分首帧和图片参考", () => {
     expect(GEN_MODE_TO_CATALOG_MODE.firstFrame).toBe("first_frame");
-    expect(GEN_MODE_TO_CATALOG_MODE.imageToVideo).toBe("image_reference");
+    expect(GEN_MODE_TO_CATALOG_MODE.imageToVideo).toBe("image_to_video");
     expect(GEN_MODE_TO_CATALOG_MODE.imageReference).toBe("image_reference");
   });
 
@@ -390,7 +396,13 @@ describe("HappyHorse 单图默认模式", () => {
   it("默认进入图生视频，首帧仍是目录声明后的独立可选模式", () => {
     const configured = {
       apiModel: HAPPYHORSE,
-      supportedModes: ["text_to_video", "first_frame", "image_reference", "video_edit"],
+      supportedModes: [
+        "text_to_video",
+        "first_frame",
+        "image_to_video",
+        "image_reference",
+        "video_edit",
+      ],
     };
     expect(videoUpstreamImageDefaultMode(configured)).toBe("imageToVideo");
     expect(isVideoModeSupportedByModel("firstFrame", configured)).toBe(true);

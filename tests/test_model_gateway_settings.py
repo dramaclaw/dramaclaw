@@ -1947,7 +1947,10 @@ def test_comfyui_provider_channel_writes_workflows_to_newapi(
     assert comfy_mapping["config"]["request"]["endpoint"] == "video/generations"
     assert comfy_mapping["config"]["resolutionOptions"] == ["480p", "640p"]
     assert comfy_mapping["config"]["ratioOptions"] == ["16:9", "1:1"]
-    assert comfy_mapping["config"]["supportedModes"] == ["image_reference"]
+    assert comfy_mapping["config"]["supportedModes"] == [
+        "image_to_video",
+        "image_reference",
+    ]
     assert comfy_mapping["config"]["referenceImageMax"] == 1
     assert comfy_mapping["config"]["humanReview"] is True
     assert comfy_mapping["config"]["_dcManagedByWorkflow"] is True
@@ -2516,6 +2519,7 @@ def test_official_media_model_catalog_uses_ce_export_shape():
         "text_to_video",
         "first_frame",
         "first_last_frame",
+        "image_to_video",
         "image_reference",
         "all_reference",
     ]

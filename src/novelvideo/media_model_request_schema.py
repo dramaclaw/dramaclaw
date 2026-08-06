@@ -25,7 +25,7 @@ MODE_ALIASES = {
     "textToVideo": "text_to_video",
     # 画布「图生视频」是单张图片参考：图片影响整体画面，但不锁定第一帧。
     # 真正的首帧模式由首尾帧入口按槽位派生为 first_frame。
-    "imageToVideo": "image_reference",
+    "imageToVideo": "image_to_video",
     "firstLastFrame": "first_last_frame",
     "imageReference": "image_reference",
     "allReference": "all_reference",
@@ -35,6 +35,7 @@ MEDIA_MODEL_MODES = {
     "text_to_video",
     "first_frame",
     "first_last_frame",
+    "image_to_video",
     "image_reference",
     "all_reference",
     "video_edit",

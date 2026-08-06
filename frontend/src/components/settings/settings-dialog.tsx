@@ -2861,7 +2861,7 @@ function defaultComfyMediaModelConfig(model: string): MediaModelEntry {
     referenceCapabilities.referenceVideoMax = 3;
     referenceCapabilities.referenceAudioMax = 3;
   } else if (/(^|[_-])i2v($|[_-])/.test(normalized)) {
-    supportedModes = ["image_reference"];
+    supportedModes = ["image_to_video", "image_reference"];
     ratioOptions = ["16:9", "1:1"];
     referenceCapabilities.referenceImageMax = 1;
     referenceCapabilities.humanReview = true;
@@ -3737,6 +3737,7 @@ function LocalMediaModelEditor({
                     ["text_to_video", "文生视频"],
                     ["first_frame", "首帧"],
                     ["first_last_frame", "首尾帧"],
+                    ["image_to_video", "图生视频"],
                     ["image_reference", "图片参考"],
                     ["all_reference", "全能参考"],
                     ["video_edit", "视频编辑"],
