@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from novelvideo.freezone.video_node import validate_omni_reference_audio_durations
 from novelvideo.generators.video_generator import ShotReference
 from novelvideo.seedance2_i2v.character_voice_storage import probe_voice_sample_duration_seconds
 from novelvideo.seedance2_i2v.assets import (
@@ -107,21 +108,38 @@ def _selected_audio_assets(assets: list[Seedance2ResolvedAsset]) -> list[Seedanc
 
 
 def _validate_reference_audio_request(audio_paths: list[str]) -> None:
+    """Seedance2 参考音频的条数 + 时长校验。
+
+    时长判定复用画布那条 `validate_omni_reference_audio_durations`：厂商规则是同一套
+    （逐条 1.8~15.2s、再加一条总时长），两边各写一遍必然会漂——本次故障的根因就是前端
+    和后端对同一条规则的理解走散了。这里只多做两件事：把 ffprobe 的 ValueError 收成
+    `None`（测不出就不判，与画布同口径），以及把英文报错包回中文并补上「去哪儿改」。
+
+    总时长仍用本模块的 15.0s 而不是厂商的 15.2s：这条路径的参考声线本来就该是 3-5s 的
+    样例，收紧 0.2s 不会误伤，而放宽是产品口径变化，不该顺手做。
+    """
     if len(audio_paths) > MAX_SEEDANCE2_REFERENCE_AUDIOS:
         raise ValueError("Seedance2 参考音频最多 3 段")
 
-    total_duration = 0.0
-    measured = False
-    for path in audio_paths:
+    def _probe(path: str) -> float | None:
         try:
-            total_duration += probe_voice_sample_duration_seconds(path)
-            measured = True
+            return probe_voice_sample_duration_seconds(path)
         except ValueError:
-            continue
-    if measured and total_duration > MAX_SEEDANCE2_REFERENCE_AUDIO_TOTAL_SECONDS:
-        raise ValueError(
-            "Seedance2 参考音频总时长超过 15 秒，" "请回到角色工作台把参考声线裁剪到 3-5 秒"
+            return None
+
+    # 标签与 `_build_shot_references` 一致，用户在报错里看到的「音频2」能对上提示词里的。
+    measured = [
+        (f"音频{index}", _probe(path)) for index, path in enumerate(audio_paths, start=1)
+    ]
+    try:
+        validate_omni_reference_audio_durations(
+            measured,
+            total_max_seconds=MAX_SEEDANCE2_REFERENCE_AUDIO_TOTAL_SECONDS,
         )
+    except ValueError as exc:
+        raise ValueError(
+            f"Seedance2 参考音频时长不合规（{exc}），请回到角色工作台把参考声线裁剪到 3-5 秒"
+        ) from exc
 
 
 def _compact_text(value: Any) -> str:

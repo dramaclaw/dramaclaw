@@ -3604,6 +3604,7 @@
         "off": "关闭",
         "durationTooShort": "单条音频时长不能低于 {{min}} 秒：{{clips}}。请替换或补长后再试。",
         "durationTooLong": "单条音频时长不能超过 {{max}} 秒：{{clips}}。请裁剪或替换后再试。",
+        "durationTotalTooLong": "所有音频加起来不能超过 {{max}} 秒，当前共 {{total}} 秒：{{clips}}。请裁剪或去掉部分音频后再试。",
         "clipDuration": "{{label}}（{{seconds}}s）",
         "clipSeparator": "、",
         "clipFallbackLabel": "音频{{index}}"
