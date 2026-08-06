@@ -58,26 +58,6 @@ def _default_ethnicity_instruction(ethnicity: str) -> str:
     )
 
 
-_GUOMAN_IDENTITY_SHEET_STYLE = (
-    "Create a premium stylized 3D Chinese animation render with high-precision PBR "
-    "materials, refined 3D edge lighting, clean high-definition rendering, and a "
-    "polished Unreal Engine / Octane-style finish. Apply this style only to the "
-    "rendering medium, materials, lighting, and finish; do not infer or change the "
-    "character's face, age, gender, body proportions, clothing, accessories, social "
-    "status, or environment from the style preset. The identity reference, when "
-    "provided, defines the face and identity. The costume reference, when provided, "
-    "takes priority for clothing. CHARACTER DETAILS define any remaining explicit "
-    "face, clothing, and accessory facts."
-)
-
-
-def _identity_sheet_style_instructions(style_name: str, style_keywords: str) -> str:
-    """Remove Guoman content defaults from identity-sheet rendering instructions."""
-    if str(style_name or "").strip().lower() == "guoman_fantasy":
-        return _GUOMAN_IDENTITY_SHEET_STYLE
-    return style_keywords
-
-
 def create_composite_reference(
     portrait_path: str,
     fullbody_path: str,
@@ -995,7 +975,6 @@ A second reference image is provided showing the target costume/clothing.
         Returns:
             4-panel reference sheet Prompt
         """
-        style_keywords = _identity_sheet_style_instructions(style_name, style_keywords)
         family, _ = StyleService.get_style_branch(
             style_name or IMAGE_DEFAULT_STYLE,
             project_dir=project_dir or None,
