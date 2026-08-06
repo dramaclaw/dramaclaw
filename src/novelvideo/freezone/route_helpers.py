@@ -459,6 +459,11 @@ def merge_prompt_with_camera(prompt: str, camera: Optional[FreezoneImageCameraCo
 
 
 def resolve_freezone_image_style_template(style: Optional[FreezoneImageStyleConfig]) -> Optional[dict]:
+    """未知 id 静默忽略,不报错。
+
+    风格库换代后旧 id 会作废,已存画布节点里保存的旧 id 不应该让生成整个失败,
+    降级成「这次不加风格」即可,前端 chip 也会回落显示「风格」。
+    """
     if style is None:
         return None
     template_id = str(style.template_id or "").strip()
@@ -467,7 +472,7 @@ def resolve_freezone_image_style_template(style: Optional[FreezoneImageStyleConf
     for item in FREEZONE_IMAGE_STYLE_TEMPLATES:
         if item["id"] == template_id:
             return item
-    raise HTTPException(400, f"unknown image style template: {template_id}")
+    return None
 
 
 def build_style_prompt(style: Optional[FreezoneImageStyleConfig]) -> str:

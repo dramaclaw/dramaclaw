@@ -204,6 +204,9 @@ from novelvideo.freezone.route_helpers import (
     resolve_freezone_image_provider as _resolve_freezone_image_provider,
 )
 from novelvideo.freezone.route_helpers import (
+    resolve_freezone_image_style_template as _resolve_freezone_image_style_template,
+)
+from novelvideo.freezone.route_helpers import (
     resolve_outpaint_aspect_ratio as _resolve_outpaint_aspect_ratio,
 )
 from novelvideo.freezone.route_helpers import (

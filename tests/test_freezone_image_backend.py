@@ -3086,6 +3086,27 @@ def test_build_style_prompt_uses_chinese_block_without_author() -> None:
     assert "builtin" not in block
 
 
+def test_unknown_style_template_is_ignored_instead_of_rejected() -> None:
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    config = FreezoneImageStyleConfig(template_id="three_oclock_2300")
+
+    assert freezone_routes._resolve_freezone_image_style_template(config) is None
+    assert freezone_routes._build_style_prompt(config) == ""
+
+
+def test_unknown_style_template_does_not_break_prompt_merge() -> None:
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    merged = freezone_routes._merge_prompt_with_style_and_camera(
+        "一个女人站在窗前",
+        FreezoneImageStyleConfig(template_id="obsolete_style"),
+        None,
+    )
+
+    assert merged == "一个女人站在窗前"
+
+
 @pytest.mark.asyncio
 async def test_freezone_gen_route_passes_output_dir_and_quality(
     tmp_path: Path,
