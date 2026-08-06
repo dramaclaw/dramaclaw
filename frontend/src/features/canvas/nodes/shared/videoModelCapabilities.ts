@@ -308,17 +308,26 @@ export interface AudioDurationLimitModel {
  * 所选模型的**有效**音频总时长上限（毫秒）：目录配置优先，没配才用 15.2s。
  *
  * 与后端 `_catalog_audio_total_duration_max`（api/routes/freezone.py）同一口径：只认
- * 有限正数，null / 0 / 负数 / NaN 一律当作没配。允许小数——15.2 本身就不是整数，这
- * 与那几个「非负整数」的计数字段不同，别顺手套 `Number.isInteger`。
+ * 有限正数，null / 0 / 负数 / NaN / Infinity 一律当作没配。允许小数——15.2 本身就不是
+ * 整数，这与那几个「非负整数」的计数字段不同，别顺手套 `Number.isInteger`。
+ *
+ * `vendorCapMs` = 这个模型的厂商硬顶（seedance2 传 15.2s，边界未知的模型不传）。传了
+ * 就与目录值**取小**：管理员可以配得更严，但配宽了不该让厂商也跟着放行——给 seedance2
+ * 配 60s 的话，3 条 6s 在本地全过、到厂商那儿照样 400，正是这套守卫要消灭的失败。
  */
 export function audioReferenceTotalDurationLimitMs(
   model: AudioDurationLimitModel | null | undefined,
+  { vendorCapMs }: { vendorCapMs?: number } = {},
 ): number {
   const seconds = model?.referenceAudioTotalMaxSeconds;
-  if (typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0) {
-    return Math.round(seconds * 1000);
+  const configured =
+    typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0
+      ? Math.round(seconds * 1000)
+      : null;
+  if (vendorCapMs == null) {
+    return configured ?? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS;
   }
-  return MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS;
+  return configured == null ? vendorCapMs : Math.min(configured, vendorCapMs);
 }
 
 /**

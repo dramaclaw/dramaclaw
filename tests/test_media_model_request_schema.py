@@ -233,7 +233,9 @@ def test_validates_reference_audio_total_max_seconds():
     assert validate_media_model_catalog_config({**base}, "video") is not None
 
     # True 也要拒：`type(True) is bool`，不能让布尔当成 1 秒混进来。
-    for bad in (0, -1, "15.2", True, []):
+    # inf / nan 也要拒：`inf > 0` 是 True、`nan <= 0` 是 False，只写「正数」两个都会漏进来，
+    # 配成 inf 就等于把这个上限静默关掉。
+    for bad in (0, -1, "15.2", True, [], float("inf"), float("nan"), float("-inf")):
         with pytest.raises(
             MediaModelSchemaError, match="referenceAudioTotalMaxSeconds"
         ):

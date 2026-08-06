@@ -12,6 +12,7 @@ import binascii
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -7101,13 +7102,15 @@ def _catalog_audio_total_duration_max(capabilities: dict[str, Any] | None) -> fl
     """目录里配的全能参考音频**总时长**上限（秒），没配返回 None。
 
     与 `_catalog_reference_limits` 同一套「目录优先」的口径，只是这里允许小数
-    （15.2 本身就不是整数）。非正数 / 非数字一律当没配。
+    （15.2 本身就不是整数）。非正数 / 非数字 / inf / nan 一律当没配——写入侧
+    `media_model_request_schema` 已经挡了这些，但目录条目也可能是那道校验存在之前落的库，
+    读出来再挡一次才不会让 inf 静默关掉整个上限。
 
     刻意**不在这里兜底**成 15.2：调用方要靠「有没有配」来决定这个模型该不该受管，
     在这里默默返回 15.2 就分不清「管理员配了 15.2」和「压根没配」。
     """
     value = capabilities.get("referenceAudioTotalMaxSeconds") if capabilities else None
-    if type(value) in (int, float) and value > 0:
+    if type(value) in (int, float) and math.isfinite(value) and value > 0:
         return float(value)
     return None
 
@@ -8006,20 +8009,33 @@ async def freezone_video_omni_gen(
     #
     # 只对**已知边界**的模型生效，而且两类边界分开授权：
     #   - 逐条 1.8~15.2s 是从 Seedance 2.0 的报文里实测出来的，只对它成立；
-    #   - 总时长优先听目录里的 referenceAudioTotalMaxSeconds（管理员主动声明），
-    #     没配时只有 Seedance 2.0 才落到 15.2s 兜底。
+    #   - 总时长对**边界已知**的模型是「目录配置与厂商硬顶取小」：管理员可以配得更严，
+    #     但配宽了不会让厂商也跟着放行——给 seedance2 配 60s，3 条 6s 在本地全过、到厂商
+    #     那儿照样 400，正是本 PR 要消灭的那种失败。边界未知的模型没有硬顶可取，直接用
+    #     目录值。
     # 别把这两类混成一个开关：目录里给别家模型配了 60s 总时长，不代表它的单条也得
     # 卡在 15.2s —— 那样一条正常的 25s 音频会被我们凭空 400 掉。
     audio_items = [item for item in reference_items if item["type"] == "audio"]
     per_clip_bounds_known = is_freezone_seedance2_backend(backend)
     configured_audio_total = _catalog_audio_total_duration_max(capabilities)
-    audio_total_max = configured_audio_total
-    if audio_total_max is None and per_clip_bounds_known:
-        audio_total_max = MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS
+    if per_clip_bounds_known:
+        audio_total_max = min(
+            configured_audio_total or MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+            MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+        )
+    else:
+        audio_total_max = configured_audio_total
     if audio_items and (per_clip_bounds_known or audio_total_max is not None):
+        # 并发探测：ffprobe 单条有 20s 超时，串行 await 会把 3 条参考音频叠成最长 60s 的
+        # 请求耗时。gather 之后最坏就是一个超时的墙钟，也就顺带成了整体上限。
+        probed_seconds = await asyncio.gather(
+            *(_probe_reference_audio_seconds(item["path"]) for item in audio_items)
+        )
         probed = [
-            (Path(item["path"]).name or f"audio{index}", await _probe_reference_audio_seconds(item["path"]))
-            for index, item in enumerate(audio_items, start=1)
+            (Path(item["path"]).name or f"audio{index}", seconds)
+            for index, (item, seconds) in enumerate(
+                zip(audio_items, probed_seconds), start=1
+            )
         ]
         try:
             validate_omni_reference_audio_durations(

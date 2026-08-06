@@ -69,6 +69,7 @@ import {
   formatAudioDurationClips,
   formatAudioDurationSeconds,
   MAX_AUDIO_REFERENCE_DURATION_MS,
+  MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
   isHappyHorseVideoModel,
   isSeedance2VideoModel,
@@ -2206,7 +2207,12 @@ export const VideoNode = memo(
                 durationMs: resolvedDurations[index] ?? null,
               })),
               {
-                totalLimitMs: audioReferenceTotalDurationLimitMs(selectedVideoModel),
+                totalLimitMs: audioReferenceTotalDurationLimitMs(selectedVideoModel, {
+                  // seedance2 有厂商硬顶，目录配得再宽也不能越过它。
+                  vendorCapMs: isSeedance20Model
+                    ? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS
+                    : undefined,
+                }),
                 perClipLimits: isSeedance20Model,
               },
             );

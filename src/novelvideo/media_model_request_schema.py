@@ -291,12 +291,17 @@ def validate_media_model_catalog_config(
 
     # 参考音频**总时长**上限（秒）。厂商口径 15.2 本身就不是整数，所以这项收小数，
     # 与上面那几个计数字段不同口径——别顺手并进上面的循环。
+    #
+    # `math.isfinite` 不能省：`inf > 0` 是 True、`nan <= 0` 是 False，只写「正数」这两个
+    # 都会漏进来，配成 inf 就等于把这个上限静默关掉。
     audio_total = config.get("referenceAudioTotalMaxSeconds")
     if audio_total is not None and (
-        type(audio_total) not in (int, float) or audio_total <= 0
+        type(audio_total) not in (int, float)
+        or not math.isfinite(audio_total)
+        or audio_total <= 0
     ):
         raise MediaModelSchemaError(
-            "referenceAudioTotalMaxSeconds must be a positive number"
+            "referenceAudioTotalMaxSeconds must be a positive finite number"
         )
 
     if media_type == "video":

@@ -881,6 +881,27 @@ describe("audioReferenceTotalDurationLimitMs — 目录优先、15.2s 兜底", (
       audioReferenceTotalDurationLimitMs({ referenceAudioTotalMaxSeconds: 12.5 }),
     ).toBe(12_500);
   });
+
+  it("vendorCapMs 与目录值取小——配宽了不能越过厂商硬顶", () => {
+    const capped = { vendorCapMs: MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS };
+    // 管理员给 seedance2 配 60s：3 条 6s 在本地全过、到厂商那儿照样 400。必须取小。
+    expect(
+      audioReferenceTotalDurationLimitMs(
+        { referenceAudioTotalMaxSeconds: 60 },
+        capped,
+      ),
+    ).toBe(15_200);
+    // 收严的方向照收。
+    expect(
+      audioReferenceTotalDurationLimitMs({ referenceAudioTotalMaxSeconds: 8 }, capped),
+    ).toBe(8_000);
+    // 没配就是硬顶本身。
+    expect(audioReferenceTotalDurationLimitMs(null, capped)).toBe(15_200);
+    // 不传 vendorCapMs（边界未知的模型）就没有硬顶可取，60s 照用。
+    expect(
+      audioReferenceTotalDurationLimitMs({ referenceAudioTotalMaxSeconds: 60 }),
+    ).toBe(60_000);
+  });
 });
 
 describe("formatAudioDurationClips — 提示里的 {{clips}} 走 locale 排版", () => {

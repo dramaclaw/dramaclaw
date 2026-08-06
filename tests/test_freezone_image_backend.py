@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -428,14 +429,18 @@ async def test_freezone_video_omni_gen_uses_catalog_audio_total_limit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """总时长上限听后台 referenceAudioTotalMaxSeconds，15.2s 只是没配时的兜底。"""
+    """后台 referenceAudioTotalMaxSeconds 可以把上限**收得更严**（这里 8s < 厂商 15.2s）。
+
+    配宽的方向由 `..._clamps_catalog_total_to_vendor_cap` 盯着：那边取小之后厂商硬顶仍然
+    生效。两条合起来才是「取小」这个语义。
+    """
     project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
     _patch_video_catalog(
         monkeypatch,
         {
             "catalogId": "cat-omni",
             "id": "cat-omni",
-            "apiModel": "doubao-seedance-2-0",
+            "apiModel": "newapi_seedance-2.0-fast",
             "providerId": "newapi",
             "supportedModes": ["all_reference"],
             "referenceAudioTotalMaxSeconds": 8,
@@ -551,6 +556,116 @@ async def test_freezone_video_omni_gen_catalog_total_does_not_apply_per_clip_bou
 
     # 503 = 走到了入队（被替身打回），说明时长守卫放行了。
     assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_clamps_catalog_total_to_vendor_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """seedance2 的目录值只能配得更严，配宽了不算数——厂商硬顶 15.2s 必须继续生效。
+
+    管理员给 2.0 配了 60s：3 条各 6s 共 18s 若照配置放行，到厂商那儿照样 400，正是这套
+    守卫要消灭的失败。取小之后仍然拦在本地。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-wide",
+            "id": "cat-wide",
+            "apiModel": "newapi_seedance-2.0-fast",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+            "referenceAudioTotalMaxSeconds": 60,
+        },
+    )
+    references = [_audio_reference(project_dir, f"wide{i}.wav") for i in range(3)]
+
+    async def fake_probe(_path: str) -> float:
+        return 6.0
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-wide",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 400
+    assert "total duration must be <= 15.2s" in str(exc.value.detail)
+
+
+def test_catalog_audio_total_duration_max_rejects_non_finite() -> None:
+    """inf 不能当成上限：`inf > 0` 是 True，漏进来就等于静默关掉总时长判定。
+
+    写入侧 schema 已经挡了，但目录条目可能是那道校验存在之前落的库，读出来再挡一次。
+    """
+    read = freezone_routes._catalog_audio_total_duration_max
+    assert read({"referenceAudioTotalMaxSeconds": 15.2}) == 15.2
+    for bad in (float("inf"), float("nan"), float("-inf"), 0, -1, "15.2", None):
+        assert read({"referenceAudioTotalMaxSeconds": bad}) is None
+    assert read(None) is None
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_probes_audio_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """3 条音频必须并发探测。
+
+    ffprobe 单条有 20s 超时，串行 await 会把 3 条叠成最长 60s 的请求耗时。这里让每个
+    探测在返回前先 `asyncio.sleep(0)` 让出一次，只有并发调度才可能出现「3 个都进来了、
+    还没有一个返回」的时刻。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-conc",
+            "id": "cat-conc",
+            "apiModel": "newapi_seedance-2.0-fast",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+        },
+    )
+    references = [_audio_reference(project_dir, f"conc{i}.wav") for i in range(3)]
+
+    in_flight = 0
+    peak = 0
+
+    async def fake_probe(_path: str) -> float:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0)
+        in_flight -= 1
+        return 3.0
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-conc",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 503  # 9s 未超限，走到入队被替身打回
+    assert peak == 3
 
 
 @pytest.mark.asyncio
