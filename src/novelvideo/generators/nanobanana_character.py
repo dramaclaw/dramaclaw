@@ -101,11 +101,16 @@ def _inject_guoman_character_asset_override(
     if marker.startswith("CHARACTER DETAILS"):
         prompt = prompt.replace(
             "- hairline, hairstyle, and silhouette\n- skin tone and age impression\n- Preserve the reference identity exactly; do not change face structure, skin tone, hair identity, or silhouette.",
-            "- inherent facial structure and natural hairline\n- skin tone\n- Preserve facial identity only; TARGET IDENTITY FACTS and CHARACTER DETAILS control age, gender presentation, hairstyle, clothing, and silhouette.",
+            "- natural hairline\n- skin tone and recognizable facial identity\n- Preserve the reference identity exactly; TARGET IDENTITY FACTS and CHARACTER DETAILS may change age cues, hairstyle, clothing, and silhouette, but must not redesign the underlying face.",
             1,
         )
-        rules.append(
-            "- Preserve only facial identity from the anchor; do not copy conflicting age styling, hairstyle, clothing, crown, jewelry, hair accessories, or social status."
+        rules.extend(
+            [
+                "- The reference portrait is the canonical identity anchor; every panel must remain immediately recognizable as the same person.",
+                "- Apply the target age only as a natural age progression or regression of that same face; change age cues, not facial geometry or identity.",
+                "- Target gender confirms presentation only; do not masculinize, feminize, replace, or reinterpret the canonical face.",
+                "- Do not copy conflicting hairstyle, clothing, crown, jewelry, hair accessories, or social status from the anchor.",
+            ]
         )
     override = "\n".join(rules)
     return prompt.replace(marker, f"{override}\n\n{marker}", 1)

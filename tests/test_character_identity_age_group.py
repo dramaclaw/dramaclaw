@@ -90,10 +90,13 @@ def test_guoman_character_assets_override_preset_content_bias():
         assert "Target gender: male" in prompt
         assert "Target age group: middle-aged adult" in prompt
         assert "default high-status robes" in prompt
-    assert "conflicting age styling, hairstyle, clothing" in identity_prompt
-    assert "crown, jewelry, hair accessories" in identity_prompt
+    assert "canonical identity anchor" in identity_prompt
+    assert "natural age progression or regression of that same face" in identity_prompt
+    assert "change age cues, not facial geometry or identity" in identity_prompt
+    assert "Target gender confirms presentation only" in identity_prompt
+    assert "conflicting hairstyle, clothing, crown" in identity_prompt
     assert "skin tone and age impression" not in identity_prompt
-    assert "Preserve facial identity only" in identity_prompt
+    assert "must not redesign the underlying face" in identity_prompt
 
 
 def test_non_guoman_character_prompt_is_unchanged_by_guoman_override():
