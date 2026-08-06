@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { getNodesBounds, type ReactFlowInstance } from '@xyflow/react';
 
 /**
@@ -43,19 +43,41 @@ interface SmoothMinimapPanOptions {
   /** 画布容器，用来找到小地图的 svg。 */
   wrapperRef: RefObject<HTMLDivElement | null>;
   instance: ReactFlowInstance;
+  /**
+   * 拖动开始。调用方必须借此把小地图钉住不卸载 —— 小地图默认靠 hover 显示，
+   * 指针一划出去 onMouseLeave 就会在 180ms 后卸载 MiniMap，
+   * 连带本 hook 的清理函数摘掉 window 监听、拖动会突然断掉。
+   */
+  onPanStart?: () => void;
+  /**
+   * 拖动结束。`pointerInsideMinimap` 表示松手时指针是否还落在小地图内：
+   * 拖动期间 hover 态多半已经被置 false，调用方据此决定是继续显示还是收起。
+   */
+  onPanEnd?: (pointerInsideMinimap: boolean) => void;
 }
 
 export function useSmoothMinimapPan({
   enabled,
   wrapperRef,
   instance,
+  onPanStart,
+  onPanEnd,
 }: SmoothMinimapPanOptions): void {
+  // 回调走 ref：它们的身份变化不该重挂监听（重挂会在拖动中途摘掉 window 监听）。
+  const onPanStartRef = useRef(onPanStart);
+  const onPanEndRef = useRef(onPanEnd);
+  onPanStartRef.current = onPanStart;
+  onPanEndRef.current = onPanEnd;
+
   useEffect(() => {
     if (!enabled) return;
-    const svg = wrapperRef.current?.querySelector<SVGSVGElement>(
-      '.react-flow__minimap svg',
+    const minimap = wrapperRef.current?.querySelector<HTMLElement>(
+      '.react-flow__minimap',
     );
-    if (!svg) return;
+    const svg = minimap?.querySelector<SVGSVGElement>('svg');
+    if (!minimap || !svg) return;
+    // 收窄后另起一个非空 const：下面的 endPan 是函数声明，闭包里拿不到窄化结果。
+    const minimapEl: HTMLElement = minimap;
 
     let activePointerId: number | null = null;
     let startClientX = 0;
@@ -101,10 +123,15 @@ export function useSmoothMinimapPan({
         nextY = targetY;
       }
 
-      instance.setViewport({ x: nextX, y: nextY, zoom: viewport.zoom });
+      // 已经落在目标上就别再写一遍：按住不动时每帧 setViewport 会白白触发
+      // React Flow 的 move 生命周期和画布 viewport store 提交。
+      if (viewport.x !== nextX || viewport.y !== nextY) {
+        instance.setViewport({ x: nextX, y: nextY, zoom: viewport.zoom });
+      }
 
-      // 手指还按着就继续空转，等下一次 move；松手且已收敛才停。
-      if (settled && activePointerId === null) {
+      // 收敛就停，不管指针是否还按着。下一次 pointermove 会重新 startLoop()，
+      // 跟手不受影响；按住不动时则彻底静默。
+      if (settled) {
         stopLoop();
         return;
       }
@@ -144,6 +171,11 @@ export function useSmoothMinimapPan({
       window.addEventListener('pointerup', endPan);
       window.addEventListener('pointercancel', endPan);
 
+      // 通知外层把小地图钉住：默认非固定模式下指针一划出小地图，
+      // onMouseLeave 会在 180ms 后卸载 MiniMap，本 effect 的清理函数
+      // 会连带摘掉上面这三个 window 监听，拖动就断在半路了。
+      onPanStartRef.current?.();
+
       event.preventDefault();
       event.stopPropagation();
     };
@@ -162,6 +194,14 @@ export function useSmoothMinimapPan({
       detachWindowListeners();
       // 松手后让缓动自己收尾，别硬切。
       startLoop();
+
+      const rect = minimapEl.getBoundingClientRect();
+      const inside =
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom;
+      onPanEndRef.current?.(inside);
     }
 
     function detachWindowListeners() {
@@ -176,6 +216,12 @@ export function useSmoothMinimapPan({
       svg.removeEventListener('pointerdown', handlePointerDown);
       detachWindowListeners();
       stopLoop();
+      // 兜底：真被卸载时（enabled 变 false / 换 instance）必须把「拖动中」还回去，
+      // 否则外层会永远认为还在拖，小地图再也收不起来。
+      if (activePointerId !== null) {
+        activePointerId = null;
+        onPanEndRef.current?.(false);
+      }
     };
   }, [enabled, wrapperRef, instance]);
 }

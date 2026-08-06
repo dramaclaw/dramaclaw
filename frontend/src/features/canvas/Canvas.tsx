@@ -168,6 +168,8 @@ const PAN_ON_DRAG_BUTTONS = [1];
 // 抓手光标由它自带的样式负责。
 const PAN_ON_DRAG_BUTTONS_HAND = [0, 1];
 const NODE_SPAWN_PLUS_HIDE_DELAY_MS = 400;
+/** 小地图 hover 离开后的收起延迟，见 setMinimapHover 处的注释。 */
+const MINIMAP_HIDE_DELAY_MS = 180;
 
 function resolveCenteredViewport(
   container: HTMLElement | null,
@@ -746,7 +748,11 @@ export function Canvas({
 
   const [minimapPinned, setMinimapPinned] = useState(false);
   const [minimapHovered, setMinimapHovered] = useState(false);
-  const minimapVisible = minimapPinned || minimapHovered;
+  // 小地图拖动期间必须钉住不卸载：非固定模式下指针一拖出小地图就会触发
+  // onMouseLeave → 180ms 后 minimapVisible 变 false → MiniMap 卸载 →
+  // useSmoothMinimapPan 的清理函数摘掉 window 监听，拖动直接断在半路。
+  const [minimapPanning, setMinimapPanning] = useState(false);
+  const minimapVisible = minimapPinned || minimapHovered || minimapPanning;
   // 小地图弹层（含上方的书签数字行）靠 hover 显示。数字行是小地图上方、隔着间隙的
   // 独立 DOM 子树:鼠标从小地图移到数字按钮的途中会先离开小地图,若立即把
   // minimapHovered 置 false,整个 overlay 会在点到按钮前卸载,导致「点不了」。
@@ -764,20 +770,50 @@ export function Canvas({
       minimapHideTimerRef.current = window.setTimeout(() => {
         setMinimapHovered(false);
         minimapHideTimerRef.current = null;
-      }, 180);
+      }, MINIMAP_HIDE_DELAY_MS);
     }
   }, []);
+  const minimapPanReleaseTimerRef = useRef<number | null>(null);
+  const handleMinimapPanStart = useCallback(() => {
+    if (minimapPanReleaseTimerRef.current !== null) {
+      window.clearTimeout(minimapPanReleaseTimerRef.current);
+      minimapPanReleaseTimerRef.current = null;
+    }
+    setMinimapPanning(true);
+  }, []);
+  const handleMinimapPanEnd = useCallback(
+    (pointerInsideMinimap: boolean) => {
+      if (pointerInsideMinimap) {
+        setMinimapHover(true);
+        setMinimapPanning(false);
+        return;
+      }
+      // 松手在小地图外：按 hover 的同一节奏收起，而不是立刻卸载 ——
+      // 立刻卸载会把松手后的缓动收尾（约 130ms）掐断。
+      setMinimapHover(false);
+      minimapPanReleaseTimerRef.current = window.setTimeout(() => {
+        setMinimapPanning(false);
+        minimapPanReleaseTimerRef.current = null;
+      }, MINIMAP_HIDE_DELAY_MS);
+    },
+    [setMinimapHover],
+  );
   // 小地图拖动走自己的实现，不用 MiniMap 的 pannable —— 内置增益会随视口拖离
   // 内容区而复利放大。见 useSmoothMinimapPan 的文件头注释。
   useSmoothMinimapPan({
     enabled: minimapVisible,
     wrapperRef,
     instance: reactFlowInstance,
+    onPanStart: handleMinimapPanStart,
+    onPanEnd: handleMinimapPanEnd,
   });
   useEffect(
     () => () => {
       if (minimapHideTimerRef.current !== null) {
         window.clearTimeout(minimapHideTimerRef.current);
+      }
+      if (minimapPanReleaseTimerRef.current !== null) {
+        window.clearTimeout(minimapPanReleaseTimerRef.current);
       }
     },
     [],
