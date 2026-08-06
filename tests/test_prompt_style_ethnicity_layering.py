@@ -59,6 +59,7 @@ def test_style_presets_do_not_use_hard_negative_content_constraints():
         "business suit",
         "foreign person",
         "western person",
+        "childish face",
     ]
 
     for path in preset_dir.glob("*.json"):
@@ -89,6 +90,7 @@ def test_style_tags_do_not_encode_era_content():
         "MODERN",
         "ANCIENT",
         "DRAMA",
+        "FANTASY",
         "民国",
         "古装",
     }
@@ -150,6 +152,33 @@ def test_guoman_fantasy_preset_contains_only_rendering_style():
     assert "black-gold" not in lowered
     assert "when wardrobe is unspecified" not in lowered
     assert "keep the image transparent" not in lowered
+    assert data["style_tag"] == "PREMIUM 3D GUOMAN CG"
+
+
+def test_anime_preset_contains_only_rendering_style():
+    path = Path("src/novelvideo/styles/presets/anime.json")
+    data = json.loads(path.read_text())
+    instructions = data["style_instructions"].lower()
+
+    assert "apply this style only to the rendering medium" in instructions
+    assert "do not infer or change facial features" in instructions
+    assert "reference images" in instructions
+    assert "do not override them with the style preset" in instructions
+    assert "eyes: large" not in instructions
+    assert "hair: flowing" not in instructions
+    assert "watercolor-style environment" not in instructions
+
+
+def test_post_apocalyptic_preset_does_not_force_human_or_weathered_subjects():
+    path = Path("src/novelvideo/styles/presets/post_apocalyptic.json")
+    data = json.loads(path.read_text())
+    instructions = data["style_instructions"].lower()
+    avoid = data["avoid_instructions"].lower()
+
+    assert "real people" not in instructions
+    assert "non-human details" in instructions
+    assert "only when supported by the character and scene context" in avoid
+    assert "must show natural texture and weathering" not in avoid
 
 
 def test_topic_flavored_presets_defer_to_explicit_story_content():
