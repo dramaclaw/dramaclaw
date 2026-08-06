@@ -2,8 +2,8 @@
   "id": "guoman_fantasy",
   "name": "3D Xianxia Guoman",
   "style_instructions": "Create a premium stylized 3D Chinese animation render with high-precision PBR materials, refined 3D edge lighting, clean high-definition rendering, and a polished Unreal Engine / Octane-style finish. Apply this style only to the rendering medium, materials, lighting, and finish; do not infer or change faces, ages, genders, body proportions, clothing, accessories, social status, props, environments, or transparency from the style preset. Always follow explicit character descriptions, reference images, beat, scene, and prop descriptions; do not override them with the style preset.",
-  "avoid_instructions": "FORBIDDEN: live-action photography, Western comic style, flat 2D cel anime, chibi, childish face, influencer face, oily vulgar glamour, cheap web-novel cover look, low-poly game asset, plastic toy texture, wax figure appearance, over-smoothed skin, excessive HDR, messy ornament overload, deformed hands, extra limbs, broken anatomy, text, labels, watermarks.",
-  "style_tag": "3D GUOMAN FANTASY",
+  "avoid_instructions": "FORBIDDEN: live-action photography, Western comic style, flat 2D cel anime, chibi, unintended age drift, influencer face, oily vulgar glamour, cheap web-novel cover look, low-poly game asset, plastic toy texture, wax figure appearance, over-smoothed skin, excessive HDR, messy ornament overload, deformed hands, extra limbs, broken anatomy, text, labels, watermarks.",
+  "style_tag": "PREMIUM 3D GUOMAN CG",
   "label": "3D玄幻国漫",
   "style_family": "animation",
   "animation_subtype": "3d"
