@@ -669,7 +669,11 @@ def _freezone_task_cases(client: TestClient, assets: SimpleNamespace):
             "freezone_video_gen",
             client.post(
                 f"/api/v1/projects/{p}/freezone/video/i2v",
-                json={"image_urls": [image], "prompt": "move"},
+                json={
+                    "image_urls": [image],
+                    "prompt": "move",
+                    "gen_mode": "imageToVideo",
+                },
             ),
         ),
         (

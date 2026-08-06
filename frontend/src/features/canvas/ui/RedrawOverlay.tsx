@@ -30,6 +30,7 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
+  FREEZONE_REDRAW_ASPECT_RATIOS,
   fetchFreezoneJobResult,
   submitFreezoneRedraw,
   uploadFreezoneImage,
@@ -41,16 +42,24 @@ import { buildRedHighlightMaskBlob } from '@/lib/mask-highlight';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { GENERATION_ERROR_CLEARED_PATCH } from '@/features/canvas/application/generationTaskArbitration';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
+import {
+  pickAllowedOption,
+  resolveModelAspectOptions,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from '@/features/canvas/domain/mediaModelOptions';
 import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
   ProviderModelPicker,
-  SHARED_MODELS,
 } from '@/features/canvas/ui/ProviderModelPicker';
 import {
   CANVAS_NODE_INPUT_PLACEHOLDER_CLASS,
 } from '@/features/canvas/ui/nodeFrameStyles';
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { inheritMainlineFields } from '@/features/canvas/domain/inheritMainlineFields';
 import { CreditCostPill } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
@@ -66,16 +75,10 @@ interface RedrawOverlayProps {
 
 type Tool = 'brush' | 'rect' | 'eraser';
 
-const ASPECT_RATIO_OPTIONS: readonly FreezoneRedrawAspectRatio[] = [
-  'original',
-  '1:1',
-  '4:3',
-  '3:4',
-  '16:9',
-  '9:16',
-] as const;
+// 「保持原图比例」不是某个模型的能力，而是重绘接口自带的语义，永远排在
+// 后台配置的比例档位之前。其余档位来自选中模型的目录配置。
+const ORIGINAL_ASPECT_RATIO: FreezoneRedrawAspectRatio = 'original';
 
-const IMAGE_SIZE_OPTIONS = ['1K', '2K', '4K'] as const;
 const NUM_IMAGE_OPTIONS = [1, 2, 3, 4] as const;
 // 数量 > 1 时多个结果节点纵向错开摆放的间距。
 const RESULT_STACK_GAP = 24;
@@ -96,17 +99,6 @@ const BRUSH_SLIDER_CLASS =
   'h-0.5 w-24 cursor-pointer appearance-none rounded-full [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#5b8cff] [&::-webkit-slider-thumb]:shadow-none [&::-moz-range-thumb]:h-2.5 [&::-moz-range-thumb]:w-2.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[#5b8cff]';
 const REDRAW_CONFIRM_BUTTON_CLASS =
   'inline-flex h-8 items-center justify-center rounded-[8px] bg-white px-4 text-sm font-medium text-bg-dark transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-text-muted/40';
-
-function imageModelSupportsQuality(apiModel: string | null | undefined): boolean {
-  if (!apiModel) return false;
-  const normalized = apiModel.toLowerCase();
-  return (
-    normalized === 'gpt-image-2'
-    || normalized === 'image-2'
-    || normalized === 'image-2-official'
-    || normalized.includes('gpt-image')
-  );
-}
 
 export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlayProps) => {
   const { t } = useTranslation();
@@ -134,23 +126,49 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
 
   const [prompt, setPrompt] = useState('');
   const [modelId, setModelId] = useState<string>(DEFAULT_SHARED_MODEL_ID);
-  const { models: availableModels } = useFreezoneImageModels();
+  const imageCatalog = useFreezoneImageModels();
+  const availableModels = imageCatalog.models;
+  // 后台确实一个图片模型都没配时禁止提交：后端 `_resolve_catalog_request`
+  // 对空目录直接 409，让用户点一下再收报错是最糟的体验。
+  const catalogIsEmpty = isAuthoritativeEmptyCatalog(imageCatalog);
   const [imageSize, setImageSize] = useState<string>('2K');
   const [numImages, setNumImages] = useState<number>(1);
-  const [aspectRatio, setAspectRatio] = useState<FreezoneRedrawAspectRatio>('original');
+  const [aspectRatio, setAspectRatio] = useState<FreezoneRedrawAspectRatio>(
+    ORIGINAL_ASPECT_RATIO,
+  );
+  // 目录为空时故意让 selectedModel 保持 undefined。原来这里尾巴上还挂着
+  // `?? SHARED_MODELS.find(...)`，等于把前端硬编码的模型当成可用模型复活，
+  // 正是「后台没配模型，界面照样显示能用」的来源。
   const selectedModel =
-    availableModels.find((m) => m.id === modelId)
-    ?? availableModels[0]
-    ?? SHARED_MODELS.find((m) => m.id === modelId);
+    availableModels.find((m) => m.id === modelId) ?? availableModels[0];
+  // 尺寸 / 比例 / 画质全部跟随后台对该模型的配置，换模型时把越界的旧选择收回。
+  const sizeOptions = useMemo(() => resolveModelSizeOptions(selectedModel), [selectedModel]);
+  const aspectRatioOptions = useMemo<FreezoneRedrawAspectRatio[]>(() => {
+    const configured = resolveModelAspectOptions(selectedModel).filter(
+      (ratio): ratio is FreezoneRedrawAspectRatio =>
+        ratio !== ORIGINAL_ASPECT_RATIO
+        && (FREEZONE_REDRAW_ASPECT_RATIOS as readonly string[]).includes(ratio),
+    );
+    return [ORIGINAL_ASPECT_RATIO, ...configured];
+  }, [selectedModel]);
+  const effectiveImageSize = pickAllowedOption(imageSize, sizeOptions);
+  const effectiveAspectRatio = pickAllowedOption(
+    aspectRatio,
+    aspectRatioOptions,
+  ) as FreezoneRedrawAspectRatio;
+  const qualityOptions = useMemo(
+    () => resolveModelQualityOptions(selectedModel),
+    [selectedModel],
+  );
   const creditCost = useGenerationCreditCost(
     'feature',
     selectedModel ? FREEZONE_IMAGE_FEATURES.edit : null,
     {
       surface: 'canvas',
       params: buildImageFeatureBillingParams(selectedModel, {
-        size: imageSize,
-        ...(imageModelSupportsQuality(selectedModel?.apiModel)
-          ? { quality: 'medium' }
+        size: effectiveImageSize,
+        ...(qualityOptions.length > 0
+          ? { quality: pickAllowedOption('medium', qualityOptions) }
           : {}),
         operation: 'redraw',
         pricing_quantity: Math.min(Math.max(numImages, 1), 4),
@@ -160,6 +178,8 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
   );
   const billingRuleMissing =
     creditCost.error instanceof BillingRuleNotConfiguredError;
+  const submitDisabled =
+    submitting || !imageReady || billingRuleMissing || catalogIsEmpty;
   const costDisplay =
     creditCost.data?.data.display ??
     (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
@@ -447,9 +467,9 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
           sourceUrl,
           maskUrl,
           prompt,
-          aspectRatio,
+          aspectRatio: effectiveAspectRatio,
           numImages: 1,
-          imageSize,
+          imageSize: effectiveImageSize,
           model: apiModel,
         });
         updateNodeData(nodeId, generationTaskDescriptor(ref));
@@ -483,11 +503,16 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
         });
       }
     },
-    [aspectRatio, imageSize, prompt, t, updateNodeData],
+    [effectiveAspectRatio, effectiveImageSize, prompt, t, updateNodeData],
   );
 
   const handleSubmit = useCallback(async () => {
     if (submitting) return;
+    // 按钮已经禁用，这里再挡一道：没有可用模型就绝不该发出请求。
+    if (catalogIsEmpty) {
+      setError(t('modelParams.noModelsAvailable'));
+      return;
+    }
     const project = readUrl().project;
     if (!project) {
       setError('当前 URL 没有 project，无法提交');
@@ -554,6 +579,7 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
     }
   }, [
     buildMaskBlob,
+    catalogIsEmpty,
     createRedrawNode,
     findNodePosition,
     hasMask,
@@ -566,6 +592,7 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
     selectedModel,
     setSelectedNode,
     submitting,
+    t,
     updateNodeData,
   ]);
 
@@ -707,11 +734,11 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
             </Field>
             <Field label="image_size">
               <RedrawSelect
-                value={imageSize}
+                value={effectiveImageSize}
                 onChange={(event) => setImageSize(event.target.value)}
                 disabled={submitting}
               >
-                {IMAGE_SIZE_OPTIONS.map((s) => (
+                {sizeOptions.map((s) => (
                   <option key={s} value={s}>
                     {s}
                   </option>
@@ -733,13 +760,13 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
             </Field>
             <Field label="目标比例">
               <RedrawSelect
-                value={aspectRatio}
+                value={effectiveAspectRatio}
                 onChange={(event) =>
                   setAspectRatio(event.target.value as FreezoneRedrawAspectRatio)
                 }
                 disabled={submitting}
               >
-                {ASPECT_RATIO_OPTIONS.map((a) => (
+                {aspectRatioOptions.map((a) => (
                   <option key={a} value={a}>
                     {a}
                   </option>
@@ -757,9 +784,11 @@ export const RedrawOverlay = memo(({ node, imageSource, onClose }: RedrawOverlay
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={submitting || !imageReady || billingRuleMissing}
+                disabled={submitDisabled}
                 className={REDRAW_CONFIRM_BUTTON_CLASS}
-                title={submitLabel}
+                title={
+                  catalogIsEmpty ? t('modelParams.noModelsAvailable') : submitLabel
+                }
               >
                 {t('toolDialog.confirm')}
               </button>

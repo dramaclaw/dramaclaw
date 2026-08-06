@@ -291,8 +291,6 @@ export interface FreezoneVideoKeyframesPayload extends FreezoneNodeContext {
   durationSeconds?: number;
   generateAudio?: boolean;
   model?: string;
-  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
-  genMode?: string;
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -327,7 +325,6 @@ export async function submitFreezoneVideoKeyframes(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -338,12 +335,11 @@ export async function submitFreezoneVideoKeyframes(
 
 // /freezone/video/i2v ----------------------------------------------------- //
 //
-// Unified endpoint for 图生视频 (single image, treated as first-frame ref)
-// and 图片参考视频 (2-9 images, multi-reference). The backend distinguishes
-// these two modes by `image_urls.length`.
+// Unified endpoint for single-image 图生视频 and multi-image 图片参考. Both
+// use image_reference provider semantics and never occupy the first-frame slot.
 
 export interface FreezoneVideoI2vPayload extends FreezoneNodeContext {
-  /** 1-9 image static URLs. First entry is the primary/first-frame ref. */
+  /** Image reference URLs. imageToVideo requires one; imageReference uses the catalog cap. */
   imageUrls: string[];
   prompt?: string;
   cameraTemplateId?: string | null;
@@ -354,8 +350,8 @@ export interface FreezoneVideoI2vPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** default huimeng_seedance10_fast (matches keyframes); multi-image prefers seedance 2.0. */
   model?: string;
-  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
-  genMode?: string;
+  /** Required product entry; both values execute as image_reference. */
+  genMode: "imageToVideo" | "imageReference";
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -389,7 +385,7 @@ export async function submitFreezoneVideoI2v(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -1471,6 +1467,22 @@ export type FreezoneRedrawAspectRatio =
   | "16:9"
   | "9:16";
 
+/**
+ * 重绘接口自身接受的比例取值（与后端 `FreezoneRedrawRequest.aspect_ratio` 的
+ * Literal 保持一致）。
+ *
+ * 这不是某个模型的能力，而是接口契约：即便后台给模型配了别的比例档位，重绘也
+ * 只能提交这几个值，所以前端取「模型配置 ∩ 接口契约」。
+ */
+export const FREEZONE_REDRAW_ASPECT_RATIOS: readonly FreezoneRedrawAspectRatio[] = [
+  "original",
+  "1:1",
+  "4:3",
+  "3:4",
+  "16:9",
+  "9:16",
+];
+
 export interface FreezoneRedrawPayload {
   sourceUrl: string;
   /** Optional mask static URL. Transparent pixels = editable region (局部重绘). */
@@ -1683,20 +1695,13 @@ export async function submitFreezoneRelight(
 
 // /freezone/scene-360 ----------------------------------------------------- //
 
-/** 全景输出比例。后端不传时按 "2:1" 处理；传其他值会被 Pydantic 校验拒绝。 */
-export type FreezoneScene360AspectRatio = "2:1" | "21:9";
-
-export const FREEZONE_SCENE_360_ASPECT_RATIOS: readonly FreezoneScene360AspectRatio[] =
-  ["2:1", "21:9"];
-
-export const DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO: FreezoneScene360AspectRatio =
-  "2:1";
-
 export interface FreezoneScene360Payload {
   referenceUrl: string;
   imageSize?: string;
-  aspectRatio?: FreezoneScene360AspectRatio;
   model?: string;
+  /** 媒体模型目录身份，后端据此按目录定价规则计费（与前端报价同口径）。 */
+  catalogId?: string;
+  quality?: string;
   mode?: "candidate" | "commit";
 }
 
@@ -1721,10 +1726,11 @@ export async function submitFreezoneScene360(
         reference_url: referenceUrl,
         image_size: payload.imageSize ?? "2K",
         mode: payload.mode ?? "candidate",
-        aspect_ratio:
-          payload.aspectRatio ?? DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO,
-        // 前端不能选模型，不传 model 让后端用默认；调用方显式传了才带上。
+        // 360 的最终产物合同固定为 2:1；上游比例适配属于后端实现细节。
+        // 面板上没有模型选择器，报价和执行必须使用同一个固定模型。
         ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.catalogId ? { catalog_id: payload.catalogId } : {}),
+        ...(payload.quality ? { quality: payload.quality } : {}),
       },
     },
   );
@@ -1818,6 +1824,9 @@ export interface FreezoneTemplateEditPayload {
   prompt?: string;
   imageSize?: string;
   model?: string;
+  /** 媒体模型目录身份，后端据此按目录定价规则计费（与前端报价同口径）。 */
+  catalogId?: string;
+  quality?: string;
 }
 
 export async function submitFreezoneTemplateEdit(
@@ -1833,7 +1842,10 @@ export async function submitFreezoneTemplateEdit(
         mode: payload.mode,
         prompt: payload.prompt ?? "",
         image_size: payload.imageSize ?? "2K",
+        // 同 scene-360：报价按目录首模型算，执行也必须用同一个模型/画质。
         ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.catalogId ? { catalog_id: payload.catalogId } : {}),
+        ...(payload.quality ? { quality: payload.quality } : {}),
       },
     },
   );

@@ -2,6 +2,7 @@ import { SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { MediaModelParameterDefinition } from "@/api/ops";
+import { GEN_MODE_TO_CATALOG_MODE } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import { NODE_TEXT_CONTROL_TRIGGER_CLASS } from "@/features/canvas/ui/nodeControlStyles";
 
 interface Props {
@@ -104,12 +105,7 @@ export function MediaModelParameterChip({ parameters, values = {}, mode, onChang
 }
 
 const MODE_ALIASES: Record<string, string> = {
-  textToVideo: "text_to_video",
-  imageToVideo: "first_frame",
-  firstLastFrame: "first_last_frame",
-  imageReference: "image_reference",
-  allReference: "all_reference",
-  videoEdit: "video_edit",
+  ...GEN_MODE_TO_CATALOG_MODE,
 };
 
 export function filterMediaModelParamsForMode(

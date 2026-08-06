@@ -104,6 +104,23 @@ export function prefetchFreezoneVideoModels(project: string): void {
   ensureLoaded(project);
 }
 
+/**
+ * 非 hook 的读取口：store / 建边校验这类跑在 React 之外的代码要按当前模型算能力
+ * （比如引用上限）时用。读的是同一个 module-level store，所以和组件看到的是同一份
+ * 目录；还没加载出来时回落到硬编码的 VIDEO_MODELS，与 hook 的初始状态一致。
+ *
+ * 不在这里触发 ensureLoaded —— 建边是同步路径，等不到网络回来，而且这个函数会被
+ * 高频调用。目录的加载由 FreezoneShell 的 prefetch 和各视频节点的 hook 负责。
+ */
+export function readFreezoneVideoModels(
+  projectOverride?: string | null,
+): ModelOption[] {
+  const project =
+    projectOverride !== undefined ? projectOverride : readUrl().project;
+  const state = project ? states.get(project) : undefined;
+  return state?.models ?? getNoProjectState().models;
+}
+
 function subscribe(project: string | null, callback: () => void) {
   if (!project) return () => {};
   let bucket = listeners.get(project);

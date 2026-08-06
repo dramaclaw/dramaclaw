@@ -15,6 +15,8 @@
 //   - if no '/' → entire string treated as model, provider left as null
 //     (backend falls back to NANOBANANA_PROVIDER env)
 //   - extraParams.quality is forwarded for openai gpt-image-2
+//   - payload.modelParams is forwarded verbatim as `model_params` (媒体模型目录
+//     声明的动态参数，后端按目录 schema 校验)
 
 import {
   fetchFreezoneJobResult,
@@ -166,6 +168,12 @@ async function submitJob(
 
   const finalPrompt = `${cleanedPrompt}${shotSuffix}${roleSuffix}`;
 
+  // 模式兜底：调用方没给模式时按「有没有参考图」推导 —— 下面正是按这一条分流去
+  // /freezone/gen 还是 /freezone/edit，所以这个推导与实际走的路由天然一致。
+  // 后端按模式过滤目录参数，模式为空等于把声明了 modes 的 model_params 全丢掉。
+  const genMode = payload.generationMode
+    ?? (refs.length === 0 ? "text_to_image" : "image_to_image");
+
   const canvasId = currentCanvasId();
   if (refs.length === 0) {
     const ref = await submitFreezoneGen(projectId, {
@@ -176,8 +184,11 @@ async function submitJob(
       provider,
       model,
       modelId: payload.modelId,
-      genMode: payload.generationMode,
+      genMode,
       quality,
+      // 目录声明的动态参数（model_params）。之前这里没带，节点上填的目录参数
+      // 一路收集到提交前被整个丢掉——用户改了没有任何效果，也没有任何提示。
+      modelParams: payload.modelParams,
       canvasId,
       nodeId: payload.nodeId,
     });
@@ -193,8 +204,9 @@ async function submitJob(
     provider,
     model,
     modelId: payload.modelId,
-    genMode: payload.generationMode,
+    genMode,
     quality,
+    modelParams: payload.modelParams,
     canvasId,
     nodeId: payload.nodeId,
   });

@@ -68,6 +68,14 @@ export interface GenerateImagePayload {
   aspectRatio: string;
   referenceImages?: string[];
   extraParams?: Record<string, unknown>;
+  /**
+   * 后台「媒体模型」声明的动态参数取值，原样作为 `model_params` 提交，由后端
+   * `media_model_request_schema` 按目录声明校验。
+   *
+   * 与 `extraParams` 分开：那个是前端静态注册表的老结构，网关只从里面读 quality，
+   * 其余键一律丢弃 —— 目录参数塞进去等于白填。
+   */
+  modelParams?: Record<string, unknown>;
   capabilityId?: string;
   /** Triggering node id, forwarded so the backend records per-node history. */
   nodeId?: string;
