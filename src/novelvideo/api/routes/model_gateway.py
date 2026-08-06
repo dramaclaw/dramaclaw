@@ -54,6 +54,46 @@ OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
     "seedance-2.0-value",
     "seedance-2.0-fast-value",
 }
+COMFY_WORKFLOW_MANAGED_CONFIG_KEY = "_dcManagedByWorkflow"
+
+
+def _default_comfyui_media_model_config(model: str) -> dict[str, Any]:
+    tokens = str(model or "").strip().lower().replace("-", "_").split("_")
+    supported_modes = ["text_to_video"]
+    ratio_options = ["1:1", "16:9"]
+    reference_limits: dict[str, int] = {}
+    if "r2v" in tokens:
+        supported_modes = ["all_reference"]
+        reference_limits = {
+            "referenceImageMax": 9,
+            "referenceVideoMax": 3,
+            "referenceAudioMax": 3,
+        }
+    elif "i2v" in tokens:
+        supported_modes = ["image_reference"]
+        ratio_options = ["16:9", "1:1"]
+        reference_limits = {"referenceImageMax": 1, "humanReview": True}
+    return {
+        "request": {"endpoint": "video/generations", "parameters": []},
+        "resolutionOptions": ["480p", "640p"],
+        "ratioOptions": ratio_options,
+        "minDuration": 4,
+        "maxDuration": 15,
+        "supportedModes": supported_modes,
+        **reference_limits,
+        COMFY_WORKFLOW_MANAGED_CONFIG_KEY: True,
+    }
+
+
+def _comfyui_media_model_config(
+    model: str, previous: dict[str, Any] | None
+) -> dict[str, Any]:
+    current = previous if isinstance(previous, dict) else {}
+    # Older channel saves created workflow models with only a request block.
+    # Backfill those records, while leaving any user-authored capabilities intact.
+    if set(current).issubset({"request", COMFY_WORKFLOW_MANAGED_CONFIG_KEY}):
+        return {**_default_comfyui_media_model_config(model), **current}
+    return current
 
 
 def require_ce_gateway_management() -> None:
@@ -111,7 +151,7 @@ class CreateChannelBody(BaseModel):
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     model_mapping: dict[str, str] = Field(alias="modelMapping")
     group: str = "default"
-    priority: int = 0
+    priority: int | None = None
     weight: int = 0
     base_url: str | None = Field(default=None, alias="baseUrl")
     test_model: str | None = Field(default=None, alias="testModel")
@@ -125,7 +165,7 @@ class ChannelSpec(BaseModel):
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     model_mapping: dict[str, str] = Field(alias="modelMapping")
     group: str = "default"
-    priority: int = 0
+    priority: int | None = None
     weight: int = 0
     base_url: str | None = Field(default=None, alias="baseUrl")
     test_model: str | None = Field(default=None, alias="testModel")
@@ -143,7 +183,7 @@ class ProviderChannelConfigBody(BaseModel):
     type: int | None = None
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     base_url: str | None = Field(default=None, alias="baseUrl")
-    priority: int = 0
+    priority: int | None = None
     settings: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -239,7 +279,11 @@ def _build_channel_payload_from_spec(
         upstream_key=spec.upstream_key or saved_channel.get("upstreamKey", ""),
         model_mapping=spec.model_mapping,
         group=spec.group,
-        priority=spec.priority or int(saved_channel.get("priority") or 0),
+        priority=(
+            int(saved_channel.get("priority") or 0)
+            if spec.priority is None
+            else spec.priority
+        ),
         weight=spec.weight,
         base_url=spec.base_url or saved_channel.get("baseUrl", ""),
         test_model=spec.test_model,
@@ -704,14 +748,9 @@ async def save_custom_newapi_provider_channels(
                         "label": previous.get("label", model),
                         "enabled": previous.get("enabled", True),
                         "sortOrder": previous.get("sortOrder", 100),
-                        "config": previous.get(
-                            "config",
-                            {
-                                "request": {
-                                    "endpoint": "video/generations",
-                                    "parameters": [],
-                                }
-                            },
+                        "config": _comfyui_media_model_config(
+                            model,
+                            previous.get("config"),
                         ),
                     }
             save_newapi_media_model_mappings(media_mappings)

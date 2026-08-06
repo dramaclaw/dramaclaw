@@ -6955,13 +6955,14 @@ def _merge_media_model_catalog_defaults(
     merged: list[dict[str, Any]] = []
     consumed: set[int] = set()
     for base in defaults:
-        base_identifiers = _catalog_entry_identifiers(base)
+        base_id = _catalog_entry_id(base)
         match_index = next(
             (
                 index
                 for index, item in enumerate(configured)
                 if index not in consumed
-                and _catalog_entry_identifiers(item) & base_identifiers
+                and base_id
+                and _catalog_entry_id(item) == base_id
             ),
             None,
         )

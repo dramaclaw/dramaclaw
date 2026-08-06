@@ -223,6 +223,33 @@ def test_provider_channel_partial_save_preserves_unmentioned_channels(
     assert by_provider["volcengine"]["upstreamKey"] == "sk-volcengine-new"
 
 
+def test_provider_channel_priority_can_be_reset_to_zero(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_provider_channels(
+        [
+            {
+                "provider": "openrouter",
+                "upstreamKey": "sk-openrouter",
+                "priority": 100,
+            }
+        ]
+    )
+
+    saved = save_newapi_provider_channels(
+        [{"provider": "openrouter", "upstreamKey": "", "priority": 0}]
+    )
+    payload = model_gateway._build_channel_payload_from_spec(
+        model_gateway.ChannelSpec(
+            provider="openrouter",
+            modelMapping={"DC-test-LLM": "openai/test"},
+            priority=0,
+        )
+    )
+
+    assert saved[0]["priority"] == 0
+    assert payload["channel"]["priority"] == 0
+
+
 def test_model_gateway_uses_explicit_custom_mode(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
 
@@ -286,6 +313,39 @@ def test_hybrid_video_routes_only_comfyui_models_to_local_gateway(
     assert local.api_key == "sk-custom-secret"
     assert official.api_key == "sk-official-secret"
     assert newapi_video_backend_options()["newapi_wan-i2v"] == "wan-i2v"
+
+
+def test_newapi_video_backends_only_include_enabled_comfyui_video_models(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_media_model_mappings(
+        {
+            "legacy-video": {"provider": "comfyui"},
+            "enabled-video": {
+                "provider": "comfyui",
+                "mediaType": "video",
+                "enabled": True,
+            },
+            "disabled-video": {
+                "provider": "comfyui",
+                "mediaType": "video",
+                "enabled": False,
+            },
+            "comfy-image": {
+                "provider": "comfyui",
+                "mediaType": "image",
+                "enabled": True,
+            },
+        }
+    )
+
+    options = newapi_video_backend_options()
+
+    assert "newapi_legacy-video" in options
+    assert "newapi_enabled-video" in options
+    assert "newapi_disabled-video" not in options
+    assert "newapi_comfy-image" not in options
 
 
 def test_newapi_runtime_credentials_prefer_saved_custom_gateway(monkeypatch, tmp_path):
@@ -1885,6 +1945,12 @@ def test_comfyui_provider_channel_writes_workflows_to_newapi(
     assert comfy_mapping["upstreamModel"] == ""
     assert comfy_mapping["mediaType"] == "video"
     assert comfy_mapping["config"]["request"]["endpoint"] == "video/generations"
+    assert comfy_mapping["config"]["resolutionOptions"] == ["480p", "640p"]
+    assert comfy_mapping["config"]["ratioOptions"] == ["16:9", "1:1"]
+    assert comfy_mapping["config"]["supportedModes"] == ["image_reference"]
+    assert comfy_mapping["config"]["referenceImageMax"] == 1
+    assert comfy_mapping["config"]["humanReview"] is True
+    assert comfy_mapping["config"]["_dcManagedByWorkflow"] is True
 
 
 def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(

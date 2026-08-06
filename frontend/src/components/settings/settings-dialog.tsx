@@ -2853,15 +2853,18 @@ function EmbeddingModelBlock({
 function defaultComfyMediaModelConfig(model: string): MediaModelEntry {
   const normalized = model.trim().toLowerCase();
   let supportedModes = ["text_to_video"];
-  const referenceLimits: Record<string, number> = {};
+  let ratioOptions = ["1:1", "16:9"];
+  const referenceCapabilities: Record<string, number | boolean> = {};
   if (/(^|[_-])r2v($|[_-])/.test(normalized)) {
     supportedModes = ["all_reference"];
-    referenceLimits.referenceImageMax = 9;
-    referenceLimits.referenceVideoMax = 3;
-    referenceLimits.referenceAudioMax = 3;
+    referenceCapabilities.referenceImageMax = 9;
+    referenceCapabilities.referenceVideoMax = 3;
+    referenceCapabilities.referenceAudioMax = 3;
   } else if (/(^|[_-])i2v($|[_-])/.test(normalized)) {
     supportedModes = ["image_reference"];
-    referenceLimits.referenceImageMax = 1;
+    ratioOptions = ["16:9", "1:1"];
+    referenceCapabilities.referenceImageMax = 1;
+    referenceCapabilities.humanReview = true;
   }
   return {
     provider: "comfyui",
@@ -2873,11 +2876,11 @@ function defaultComfyMediaModelConfig(model: string): MediaModelEntry {
     config: {
       request: { endpoint: "video/generations", parameters: [] },
       resolutionOptions: ["480p", "640p"],
-      ratioOptions: ["1:1", "16:9"],
+      ratioOptions,
       minDuration: 4,
       maxDuration: 15,
       supportedModes,
-      ...referenceLimits,
+      ...referenceCapabilities,
       [COMFY_WORKFLOW_MANAGED_CONFIG_KEY]: true,
     },
   };
@@ -2890,6 +2893,14 @@ function detachComfyWorkflowManagedConfig(
   const config = { ...entry.config };
   delete config[COMFY_WORKFLOW_MANAGED_CONFIG_KEY];
   return { ...entry, config };
+}
+
+function isBareComfyWorkflowMediaModel(entry: MediaModelEntry): boolean {
+  if (entry.provider !== "comfyui") return false;
+  const keys = Object.keys(entry.config ?? {});
+  return keys.every(
+    (key) => key === "request" || key === COMFY_WORKFLOW_MANAGED_CONFIG_KEY,
+  );
 }
 
 function MediaModelsBlock({
@@ -3005,9 +3016,19 @@ function MediaModelsBlock({
         }
       }
       for (const model of comfyWorkflowModels) {
-        if (next[model]) continue;
-        next[model] = defaultComfyMediaModelConfig(model);
-        changed = true;
+        const existing = next[model];
+        if (!existing) {
+          next[model] = defaultComfyMediaModelConfig(model);
+          changed = true;
+        } else if (isBareComfyWorkflowMediaModel(existing)) {
+          const defaults = defaultComfyMediaModelConfig(model);
+          next[model] = {
+            ...defaults,
+            ...existing,
+            config: { ...defaults.config, ...(existing.config ?? {}) },
+          };
+          changed = true;
+        }
       }
       return changed ? next : current;
     });

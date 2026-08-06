@@ -374,7 +374,10 @@ def save_newapi_provider_channels(
         )
         if provider == "comfyui" and channel_type == 0:
             channel_type = 63
-        priority = int(item.get("priority") or previous.get("priority") or 0)
+        raw_priority = item.get("priority")
+        priority = int(
+            previous.get("priority", 0) if raw_priority is None else raw_priority
+        )
         raw_settings = item.get("settings", previous.get("settings", {}))
         channel_settings = raw_settings if isinstance(raw_settings, dict) else {}
         if provider == "comfyui":

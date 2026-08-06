@@ -3589,7 +3589,13 @@ def newapi_video_backend_options(*, include_seedance2_variants: bool = False) ->
         from novelvideo.model_gateway_settings import get_newapi_media_model_mappings
 
         for model, mapping in get_newapi_media_model_mappings().items():
-            if mapping.get("provider") == "comfyui" and model not in models:
+            media_type = str(mapping.get("mediaType") or "video").strip().lower()
+            if (
+                mapping.get("provider") == "comfyui"
+                and mapping.get("enabled") is not False
+                and media_type == "video"
+                and model not in models
+            ):
                 models.append(model)
     except (RuntimeError, ImportError):
         pass
