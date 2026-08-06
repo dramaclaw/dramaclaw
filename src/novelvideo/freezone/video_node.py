@@ -539,6 +539,102 @@ def validate_omni_reference_limits(
         raise ValueError(f"audio references count must be <= {audio_max}")
 
 
+# 全能参考音频时长：厂商（doubao-seedance-2-0 / r2v）有**两条互相独立**的规则，
+# 两条都以 400 打回，只卡其中一条就等于没卡：
+#   1. 逐条：`[InvalidParameter.DurationTooShort] Duration must be between 1.8s and 15.2s`
+#   2. 总和：`the parameter audio total duration (seconds) specified in the request must
+#      be less than or equal to 15.2 for model doubao-seedance-2-0 in r2v`
+#
+# 第 2 条是 2026-08-06 从 3060 环境两次失败任务里实测抓到的
+# （freezone_video_gen/01KZ5R8ZZZY9M8T9F01H159RP7，gen_mode=allReference）。在那之前
+# 前后端都只按第 1 条判定，3 条各 6s 每条都合法、总计 18s 必被厂商拒——用户白等一轮。
+# 别再把总时长这条当成「我们自己臆想的规则」删掉。
+MIN_OMNI_REFERENCE_AUDIO_SECONDS = 1.8
+MAX_OMNI_REFERENCE_AUDIO_SECONDS = 15.2
+MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS = 15.2
+
+
+def _format_seconds(value: float) -> str:
+    """按毫秒精度展示，去掉无意义尾随 0：15.2 → `15.2`、6.0 → `6`、1.799 → `1.799`。
+
+    不能 `round(x, 1)`：15.201 显示成「15.2」时，用户看到的正好是合法边界值却被告知
+    越界，只会怀疑我们算错了。前端 `formatClipSeconds` 是同一口径。
+    """
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def _exceeds(value: float, limit: float) -> bool:
+    """`value > limit`，但先归整到毫秒。
+
+    浮点和会自己漂出去：6 + 6 + 3.2 == 15.200000000000001，裸比较会把一组正好顶格
+    15.2s 的合法音频判成超限。
+    """
+    return round(value - limit, 3) > 0
+
+
+def validate_omni_reference_audio_durations(
+    durations: list[tuple[str, float | None]],
+    *,
+    min_seconds: float | None = MIN_OMNI_REFERENCE_AUDIO_SECONDS,
+    max_seconds: float | None = MAX_OMNI_REFERENCE_AUDIO_SECONDS,
+    total_max_seconds: float | None = MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+) -> None:
+    """全能参考音频时长兜底校验，入参是 `(标签, 秒数)`，秒数 None = 探测不出。
+
+    探测不出的条目**不参与判定**：ffprobe 缺失 / 文件读不了时，宁可放过去让厂商判，
+    也不要凭空拦死一次正常提交。这让总和成为**下界**，但判定方向仍然安全——漏算只会
+    让和更小，所以「算出来超了」必定真超，不存在因此产生的误拦。
+
+    三个上限各自可以传 `None` = **这项不判定**。逐条边界（1.8~15.2s）是从 Seedance 2.0
+    的报文里实测出来的，只对它成立；管理员在目录里配了总时长、但模型不是 2.0 时，调用方
+    应当把 min/max 传 None ——拿 2.0 的数字去卡别家模型就是凭空 400。
+
+    太短 → 单条太长 → 总和太长，逐类上报；同时越界时报一类比混在一起列更好读。
+    """
+    measured = [
+        (label, float(seconds))
+        for label, seconds in durations
+        if isinstance(seconds, (int, float))
+        and not isinstance(seconds, bool)
+        and seconds > 0
+    ]
+    if not measured:
+        return
+
+    def _clips(items: list[tuple[str, float]]) -> str:
+        return ", ".join(f"{label} ({_format_seconds(value)}s)" for label, value in items)
+
+    too_short = (
+        [item for item in measured if _exceeds(min_seconds, item[1])]
+        if min_seconds is not None
+        else []
+    )
+    if too_short:
+        raise ValueError(
+            f"audio reference duration must be >= {_format_seconds(min_seconds)}s: "
+            + _clips(too_short)
+        )
+    too_long = (
+        [item for item in measured if _exceeds(item[1], max_seconds)]
+        if max_seconds is not None
+        else []
+    )
+    if too_long:
+        raise ValueError(
+            f"audio reference duration must be <= {_format_seconds(max_seconds)}s: "
+            + _clips(too_long)
+        )
+    if total_max_seconds is None:
+        return
+    total = sum(value for _, value in measured)
+    if _exceeds(total, total_max_seconds):
+        raise ValueError(
+            "audio references total duration must be <= "
+            f"{_format_seconds(total_max_seconds)}s, got {_format_seconds(total)}s: "
+            + _clips(measured)
+        )
+
+
 def video_character_library_path(project_dir: Path) -> Path:
     return freezone_root(project_dir) / "video_character_library.json"
 

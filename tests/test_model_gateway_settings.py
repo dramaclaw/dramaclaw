@@ -10,30 +10,42 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from novelvideo import config
+from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.api.routes import model_gateway
 from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
 from novelvideo.model_gateway_settings import (
     MODE_CUSTOM,
+    MODE_HYBRID,
     MODE_OFFICIAL,
     build_newapi_database_status,
     build_model_gateway_status,
     get_effective_cognee_embedding_config,
     get_effective_newapi_config,
+    get_ce_media_model_catalog,
+    get_official_media_model_catalog,
+    get_newapi_media_model_mappings,
     normalize_relay_base_url,
     save_official_newapi_key,
     save_custom_newapi_gateway,
     save_newapi_embedding_model_config,
+    save_newapi_media_model_mappings,
     save_media_relay_config,
     save_newapi_database_config,
     save_newapi_provider_channels,
     set_model_gateway_mode,
 )
 from novelvideo.model_gateway_runtime import refresh_model_gateway_runtime
+from novelvideo.generators.video_generator import (
+    NewApiVideoGenerator,
+    newapi_video_backend_options,
+)
 from novelvideo.newapi_provisioner import (
+    _merge_channel_payload,
     AdminToken,
     build_channel_payload,
     ensure_newapi_setup,
     get_provisioner_config,
+    list_channel_types,
     NewApiSetupCredentials,
     NewApiProvisionerConfig,
     normalize_admin_base_url,
@@ -42,6 +54,90 @@ from novelvideo.newapi_provisioner import (
     update_provider_channel_credentials,
     upsert_channel,
 )
+
+
+def test_comfyui_channel_update_replaces_removed_workflow_models():
+    existing = {
+        "id": 9,
+        "type": 63,
+        "model_mapping": json.dumps({"old-model": "old-model", "kept": "kept"}),
+        "models": "old-model,kept",
+        "base_url": "http://127.0.0.1:8188",
+    }
+    incoming = build_channel_payload(
+        provider="comfyui",
+        channel_type=63,
+        upstream_key="",
+        model_mapping={"kept": "kept"},
+        base_url="http://127.0.0.1:8188",
+        other_settings={"comfyui": {"workflow_by_model": {"kept": {"1": {}}}}},
+    )
+
+    merged = _merge_channel_payload(existing, incoming)["channel"]
+
+    assert merged["models"] == "kept"
+    assert json.loads(merged["model_mapping"]) == {"kept": "kept"}
+
+
+@respx.mock
+def test_list_channel_types_normalizes_newapi_metadata():
+    cfg = NewApiProvisionerConfig(
+        admin_base_url="http://new-api:3000",
+        sql_dsn="local",
+        sqlite_path="/tmp/one-api.db",
+        admin_username="root",
+        init_timeout_ms=1000,
+        relay_token_name="dramaclaw-ce-runtime",
+    )
+    admin = AdminToken(
+        admin_user_id=1,
+        admin_username="root",
+        access_token="admin-secret",
+        token_created=False,
+    )
+    route = respx.get(
+        "http://new-api:3000/api/channel/types",
+        params={"status": 1},
+    ).mock(
+        return_value=Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "items": [
+                        {
+                            "type": 62,
+                            "provider": "TokenHub",
+                            "name": "TokenHub",
+                            "description": "Telecom gateway",
+                            "icon": "TokenHub",
+                            "default_base_url": "https://aigw.telecomjs.com",
+                            "status": 1,
+                            "capabilities": ["text", "video"],
+                            "requires_base_url": False,
+                            "supports_base_url_override": True,
+                        }
+                    ]
+                },
+            },
+        )
+    )
+
+    assert list_channel_types(cfg, admin) == [
+        {
+            "type": 62,
+            "provider": "tokenhub",
+            "name": "TokenHub",
+            "description": "Telecom gateway",
+            "icon": "TokenHub",
+            "defaultBaseUrl": "https://aigw.telecomjs.com",
+            "status": 1,
+            "capabilities": ["text", "video"],
+            "requiresBaseUrl": False,
+            "supportsBaseUrlOverride": True,
+        }
+    ]
+    assert route.called
 
 
 def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
@@ -55,6 +151,103 @@ def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
         "NEWAPI_BASE_URL",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+def test_comfyui_provider_channel_defaults_to_channel_type_63(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+
+    saved = save_newapi_provider_channels(
+        [
+            {
+                "provider": "comfyui",
+                "baseUrl": "http://host.docker.internal:8188",
+                "settings": {
+                    "comfyui": {
+                        "workflow_by_model": {
+                            "h3-t2v": {
+                                "1": {
+                                    "class_type": "SaveVideo",
+                                    "inputs": {},
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        ]
+    )
+
+    assert saved[0]["type"] == 63
+
+
+@pytest.mark.asyncio
+async def test_custom_catalog_disabled_mapping_removes_official_model(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_media_model_mappings(
+        {
+            "LingShan-G2": {
+                "provider": "openrouter",
+                "mediaType": "image",
+                "enabled": False,
+            }
+        }
+    )
+    set_model_gateway_mode(MODE_CUSTOM)
+
+    catalog = await freezone_routes._ee_media_model_catalog("image")
+
+    assert catalog is not None
+    assert all(item.get("id") != "LingShan-G2" for item in catalog)
+
+
+def test_provider_channel_partial_save_preserves_unmentioned_channels(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_provider_channels(
+        [
+            {"provider": "openrouter", "upstreamKey": "sk-openrouter-old"},
+            {"provider": "volcengine", "upstreamKey": "sk-volcengine-old"},
+        ]
+    )
+
+    saved = save_newapi_provider_channels(
+        [{"provider": "volcengine", "upstreamKey": "sk-volcengine-new"}],
+        preserve_unmentioned=True,
+    )
+
+    by_provider = {channel["provider"]: channel for channel in saved}
+    assert by_provider["openrouter"]["upstreamKey"] == "sk-openrouter-old"
+    assert by_provider["volcengine"]["upstreamKey"] == "sk-volcengine-new"
+
+
+def test_provider_channel_priority_can_be_reset_to_zero(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_provider_channels(
+        [
+            {
+                "provider": "openrouter",
+                "upstreamKey": "sk-openrouter",
+                "priority": 100,
+            }
+        ]
+    )
+
+    saved = save_newapi_provider_channels(
+        [{"provider": "openrouter", "upstreamKey": "", "priority": 0}]
+    )
+    payload = model_gateway._build_channel_payload_from_spec(
+        model_gateway.ChannelSpec(
+            provider="openrouter",
+            modelMapping={"DC-test-LLM": "openai/test"},
+            priority=0,
+        )
+    )
+
+    assert saved[0]["priority"] == 0
+    assert payload["channel"]["priority"] == 0
 
 
 def test_model_gateway_uses_explicit_custom_mode(monkeypatch, tmp_path):
@@ -76,6 +269,83 @@ def test_model_gateway_uses_explicit_custom_mode(monkeypatch, tmp_path):
     assert effective.mode == MODE_CUSTOM
     assert effective.base_url == "http://127.0.0.1:3000/v1"
     assert effective.api_key == "sk-custom-secret"
+
+
+def test_hybrid_mode_uses_official_gateway_by_default(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_custom_newapi_gateway(
+        base_url="http://127.0.0.1:3000",
+        api_key="sk-custom-secret",
+        activate=False,
+    )
+    save_official_newapi_key(api_key="sk-official-secret", activate=False)
+    set_model_gateway_mode(MODE_HYBRID)
+
+    effective = get_effective_newapi_config()
+
+    assert effective.mode == MODE_HYBRID
+    assert effective.source == "hybrid"
+    assert effective.api_key == "sk-official-secret"
+
+
+def test_hybrid_video_routes_only_comfyui_models_to_local_gateway(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_custom_newapi_gateway(
+        base_url="http://127.0.0.1:3000",
+        api_key="sk-custom-secret",
+        activate=False,
+    )
+    save_official_newapi_key(api_key="sk-official-secret", activate=False)
+    save_newapi_media_model_mappings(
+        {
+            "wan-i2v": {"provider": "comfyui", "upstreamModel": ""},
+            "seedance-2.0": {"provider": "volcengine", "upstreamModel": ""},
+        }
+    )
+    set_model_gateway_mode(MODE_HYBRID)
+
+    local = NewApiVideoGenerator(model="wan-i2v")
+    official = NewApiVideoGenerator(model="seedance-2.0")
+
+    assert local.base_url == "http://127.0.0.1:3000/v1"
+    assert local.api_key == "sk-custom-secret"
+    assert official.api_key == "sk-official-secret"
+    assert newapi_video_backend_options()["newapi_wan-i2v"] == "wan-i2v"
+
+
+def test_newapi_video_backends_only_include_enabled_comfyui_video_models(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_media_model_mappings(
+        {
+            "legacy-video": {"provider": "comfyui"},
+            "enabled-video": {
+                "provider": "comfyui",
+                "mediaType": "video",
+                "enabled": True,
+            },
+            "disabled-video": {
+                "provider": "comfyui",
+                "mediaType": "video",
+                "enabled": False,
+            },
+            "comfy-image": {
+                "provider": "comfyui",
+                "mediaType": "image",
+                "enabled": True,
+            },
+        }
+    )
+
+    options = newapi_video_backend_options()
+
+    assert "newapi_legacy-video" in options
+    assert "newapi_enabled-video" in options
+    assert "newapi_disabled-video" not in options
+    assert "newapi_comfy-image" not in options
 
 
 def test_newapi_runtime_credentials_prefer_saved_custom_gateway(monkeypatch, tmp_path):
@@ -746,6 +1016,7 @@ def test_upsert_channel_merges_existing_dc_provider_channel():
     assert channel["name"] == "DC-ali"
     assert channel["key"] == "sk-upstream-new"
     assert channel["base_url"] == "https://dashscope-new.example.com"
+    assert "status" not in channel
     assert channel["models"] == "DC-old-model,DC-screenplay-normalizer-LLM"
     assert json.loads(channel["model_mapping"]) == {
         "DC-old-model": "qwen-old",
@@ -1591,19 +1862,95 @@ def test_custom_newapi_provider_channels_route_persists_and_masks_keys(
     assert channels == [
         {
             "provider": "ali",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "https://dashscope.example.com",
+            "priority": 0,
+            "settings": {},
         },
         {
             "provider": "deepseek",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-d...cret",
             "baseUrl": "",
+            "priority": 0,
+            "settings": {},
         },
     ]
     assert "sk-ali-upstream-secret" not in config_response.text
     assert "sk-deepseek-upstream-secret" not in config_response.text
+
+
+def test_comfyui_provider_channel_writes_workflows_to_newapi(
+    monkeypatch,
+    tmp_path,
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        model_gateway,
+        "get_provisioner_config",
+        lambda: type("Cfg", (), {"admin_base_url": "http://new-api:3000"})(),
+    )
+    monkeypatch.setattr(
+        model_gateway,
+        "ensure_admin_access_token",
+        lambda _cfg: type("Admin", (), {"access_token": "admin-secret"})(),
+    )
+
+    def fake_upsert(_cfg, _admin, payload):
+        captured["payload"] = payload
+        return {"ok": True, "httpStatus": 200, "newApiResponse": {"success": True}}
+
+    monkeypatch.setattr(model_gateway, "upsert_channel", fake_upsert)
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+    workflow = {
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}},
+    }
+
+    response = client.post(
+        "/model-gateway/custom/newapi/provider-channels",
+        json={
+            "channels": [
+                {
+                    "provider": "comfyui",
+                    "type": 63,
+                    "baseUrl": "http://127.0.0.1:8188",
+                    "priority": 100,
+                    "settings": {
+                        "comfyui": {"workflow_by_model": {"wan-i2v": workflow}}
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    channel = captured["payload"]["channel"]
+    assert channel["type"] == 63
+    assert channel["key"] == "none"
+    assert channel["models"] == "wan-i2v"
+    assert channel["priority"] == 100
+    assert json.loads(channel["settings"])["comfyui"]["workflow_by_model"] == {
+        "wan-i2v": workflow
+    }
+    comfy_mapping = get_newapi_media_model_mappings()["wan-i2v"]
+    assert comfy_mapping["provider"] == "comfyui"
+    assert comfy_mapping["upstreamModel"] == ""
+    assert comfy_mapping["mediaType"] == "video"
+    assert comfy_mapping["config"]["request"]["endpoint"] == "video/generations"
+    assert comfy_mapping["config"]["resolutionOptions"] == ["480p", "640p"]
+    assert comfy_mapping["config"]["ratioOptions"] == ["16:9", "1:1"]
+    assert comfy_mapping["config"]["supportedModes"] == ["image_reference"]
+    assert comfy_mapping["config"]["referenceImageMax"] == 1
+    assert comfy_mapping["config"]["humanReview"] is True
+    assert comfy_mapping["config"]["_dcManagedByWorkflow"] is True
 
 
 def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(
@@ -1694,9 +2041,12 @@ def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(
     assert channels == [
         {
             "provider": "ali",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "https://dashscope-new.example.com",
+            "priority": 0,
+            "settings": {},
         }
     ]
     assert "sk-ali-new-upstream-secret" not in config_response.text
@@ -1793,9 +2143,12 @@ def test_custom_newapi_provider_channel_sync_allows_clearing_saved_base_url(
     assert channels == [
         {
             "provider": "ali",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "",
+            "priority": 0,
+            "settings": {},
         }
     ]
 
@@ -2047,7 +2400,7 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
 
     config_response = client.get("/model-gateway/config")
     media_models = config_response.json()["data"]["provisioner"]["mediaModels"]
-    assert media_models == {
+    expected_mappings = {
         "LingShan-G2": {
             "provider": "openai",
             "upstreamModel": "gpt-image-upstream",
@@ -2069,6 +2422,135 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
             "upstreamModel": "lingshan-mu-upstream",
         },
     }
+    assert {
+        model: {
+            "provider": entry["provider"],
+            "upstreamModel": entry["upstreamModel"],
+        }
+        for model, entry in media_models.items()
+    } == expected_mappings
+    assert media_models["LingShan-G2"]["mediaType"] == "image"
+    assert media_models["seedance-1.5-pro"]["mediaType"] == "video"
+    assert media_models["index-tts-2"]["mediaType"] == "audio"
+
+
+def test_ce_media_model_catalog_uses_saved_custom_model_capabilities(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_media_model_mappings(
+        {
+            "custom-video": {
+                "provider": "volcengine",
+                "upstreamModel": "doubao-custom-video",
+                "mediaType": "video",
+                "label": "Custom Video",
+                "enabled": True,
+                "sortOrder": 12,
+                "config": {
+                    "resolutionOptions": ["720p", "1080p"],
+                    "ratioOptions": ["16:9", "9:16"],
+                    "minDuration": 4,
+                    "maxDuration": 10,
+                    "supportedModes": ["text_to_video", "first_frame"],
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    },
+                },
+            },
+            "disabled-image": {
+                "provider": "openrouter",
+                "upstreamModel": "disabled-image",
+                "mediaType": "image",
+                "enabled": False,
+                "config": {},
+            },
+        }
+    )
+
+    catalog = get_ce_media_model_catalog("video")
+
+    assert len(catalog) == 1
+    assert catalog[0]["id"] == "custom-video"
+    assert catalog[0]["apiModel"] == "newapi_custom-video"
+    assert catalog[0]["label"] == "Custom Video"
+    assert catalog[0]["resolutionOptions"] == ["720p", "1080p"]
+    assert catalog[0]["supportedModes"] == ["text_to_video", "first_frame"]
+    assert get_ce_media_model_catalog("image") == []
+    assert get_ce_media_model_catalog("video", provider="comfyui") == []
+
+
+def test_official_media_model_catalog_uses_ce_export_shape():
+    images = get_official_media_model_catalog("image")
+    videos = get_official_media_model_catalog("video")
+
+    assert len(images) == 6
+    assert len(videos) == 7
+    assert [entry["id"] for entry in videos[:2]] == [
+        "seedance-2.0-fast",
+        "seedance-2.0",
+    ]
+    seedream = next(entry for entry in images if entry["id"] == "seedream-5.0-pro")
+    assert seedream["gatewayModel"] == "seedream-5.0-pro"
+    assert seedream["resolutionOptions"] == ["1K", "2K"]
+    assert seedream["minPixels"] == 3686400
+    seedance = next(entry for entry in videos if entry["id"] == "seedance-2.0-mini")
+    assert seedance["apiModel"] == "newapi_seedance-2.0-mini"
+    assert "video_edit" in seedance["supportedModes"]
+    minimax = videos[-1]
+    assert minimax["id"] == "MiniMax-H3"
+    assert minimax["gatewayModel"] == "MiniMax-H3"
+    assert minimax["resolutionOptions"] == ["768P", "2K"]
+    assert minimax["ratioOptions"] == [
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16",
+    ]
+    assert minimax["minDuration"] == 4
+    assert minimax["maxDuration"] == 15
+    assert minimax["supportedModes"] == [
+        "text_to_video",
+        "first_frame",
+        "first_last_frame",
+        "image_reference",
+        "all_reference",
+    ]
+    assert minimax["referenceImageMax"] == 9
+    assert minimax["referenceVideoMax"] == 3
+    assert minimax["referenceAudioMax"] == 3
+
+
+def test_custom_media_model_accepts_arbitrary_image_and_video_models():
+    specs, normalized = model_gateway._build_media_model_channel_specs(
+        {
+            "kling-custom": model_gateway.MediaModelConfigBody(
+                provider="openrouter",
+                upstreamModel="kling-v2",
+                mediaType="video",
+                label="Kling Custom",
+                config={
+                    "resolutionOptions": ["720p", "1080p"],
+                    "supportedModes": ["text_to_video", "first_frame"],
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    },
+                },
+            )
+        }
+    )
+
+    assert specs[0].model_mapping == {"kling-custom": "kling-v2"}
+    assert normalized["kling-custom"]["mediaType"] == "video"
+    assert normalized["kling-custom"]["label"] == "Kling Custom"
+    assert normalized["kling-custom"]["config"]["resolutionOptions"] == [
+        "720p",
+        "1080p",
+    ]
 
 
 def test_custom_newapi_media_models_rejects_official_value_models(
@@ -2185,8 +2667,7 @@ def test_custom_newapi_embedding_model_writes_mapping_and_persists_dimension(
     }
 
 
-def test_custom_newapi_embedding_model_accepts_positive_project_dimension(
-):
+def test_custom_newapi_embedding_model_accepts_positive_project_dimension():
     body = model_gateway.SaveEmbeddingModelBody.model_validate(
         {
             "provider": "openai",

@@ -217,6 +217,7 @@ function invalidateCharacterVoiceQueries(
 ) {
   qc.invalidateQueries({ queryKey: queryKeys.characters(project) });
   qc.invalidateQueries({ queryKey: queryKeys.characterVoiceSamples(project, name) });
+  qc.invalidateQueries({ queryKey: queryKeys.audioBillingQuotes(project) });
 }
 
 function updateCharacterVoiceCache(

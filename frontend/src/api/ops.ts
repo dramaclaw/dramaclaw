@@ -1054,6 +1054,12 @@ export interface FreezoneVideoModelInfo {
   referenceImageMax?: number | null;
   referenceVideoMax?: number | null;
   referenceAudioMax?: number | null;
+  /**
+   * 参考音频**总时长**上限（秒）。厂商 r2v 除了逐条 1.8~15.2s，还另有一条总和限制
+   * （见 videoModelCapabilities 里的说明），这项就是它的后台可配值；没配时前端按
+   * 15.2s 兜底。允许小数，别当成整数字段处理。
+   */
+  referenceAudioTotalMaxSeconds?: number | null;
   request?: MediaModelRequestSchema;
 }
 
@@ -1122,6 +1128,11 @@ function videoModelEntryFromObject(
     referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
     referenceVideoMax: pickNumber(entry, "referenceVideoMax", "reference_video_max"),
     referenceAudioMax: pickNumber(entry, "referenceAudioMax", "reference_audio_max"),
+    referenceAudioTotalMaxSeconds: pickNumber(
+      entry,
+      "referenceAudioTotalMaxSeconds",
+      "reference_audio_total_max_seconds",
+    ),
     request: pickMediaRequestSchema(entry.request),
   };
 }

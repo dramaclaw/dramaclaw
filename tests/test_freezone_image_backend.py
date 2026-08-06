@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -315,6 +316,369 @@ async def test_freezone_video_omni_gen_rejects_happyhorse_model(
 
     assert exc.value.status_code == 400
     assert "HappyHorse video does not support omni reference mode" in str(exc.value.detail)
+
+
+def _audio_reference(project_dir: Path, name: str) -> dict[str, str]:
+    """落一个占位音频文件并返回对应的 reference 条目（时长由测试直接打桩）。"""
+    path = project_dir / "freezone" / "_uploads" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"RIFF----WAVEfmt ")
+    return {"type": "audio", "url": f"/static/admin/58/freezone/_uploads/{name}"}
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_rejects_audio_total_duration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """3 条各 6s：逐条全合规、总计 18s —— 后端兜底必须在计费前 400 掉。
+
+    这就是 2026-08-06 3060 环境两次任务失败的形状：前端那层若被绕过（老画布数据、
+    <audio> 探测失败），厂商会在扣费之后才拒。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    references = [_audio_reference(project_dir, f"clip{i}.wav") for i in range(3)]
+    async def fake_probe(_path: str) -> float:
+        return 6.0
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 400
+    assert "total duration must be <= 15.2s" in str(exc.value.detail)
+    assert "got 18s" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_allows_audio_within_total_duration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """总计正好顶格 15.2s 必须放行——兜底拦过头比不拦更难查。"""
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    references = [_audio_reference(project_dir, f"ok{i}.wav") for i in range(2)]
+    durations = iter([9.0, 6.2])
+
+    async def fake_probe(_path: str) -> float:
+        return next(durations)
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    # 走到 enqueue 就说明时长这关过了，不必真的排任务。
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_skips_unprobeable_audio(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """ffprobe 测不出时不能把正常提交拦死——这层只在「知道超了」时才拦。"""
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    references = [_audio_reference(project_dir, f"blind{i}.wav") for i in range(3)]
+    async def fake_probe(_path: str) -> None:
+        return None
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 503
+
+
+def _patch_video_catalog(monkeypatch: pytest.MonkeyPatch, entry: dict[str, object]) -> None:
+    """视频目录替身：只放一条，omni-gen 会按它解析 backend / capabilities。"""
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]] | None:
+        return [entry] if media_type == "video" else None
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_uses_catalog_audio_total_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """后台 referenceAudioTotalMaxSeconds 可以把上限**收得更严**（这里 8s < 厂商 15.2s）。
+
+    配宽的方向由 `..._clamps_catalog_total_to_vendor_cap` 盯着：那边取小之后厂商硬顶仍然
+    生效。两条合起来才是「取小」这个语义。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-omni",
+            "id": "cat-omni",
+            "apiModel": "newapi_seedance-2.0-fast",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+            "referenceAudioTotalMaxSeconds": 8,
+        },
+    )
+    references = [_audio_reference(project_dir, f"cfg{i}.wav") for i in range(2)]
+
+    async def fake_probe(_path: str) -> float:
+        return 5.0
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-omni",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    # 10s 在厂商 15.2s 之内，是后台那条 8s 把它拦下的。
+    assert exc.value.status_code == 400
+    assert "total duration must be <= 8s" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_skips_duration_guard_for_unknown_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """边界未知的模型（这里是 seedance-1.5-pro，由目录打开 all_reference）不套 2.0 的数字。
+
+    1.8~15.2s 是从 2.0 的报文里实测出来的，别人家的模型凭空 400 比漏拦更糟；要卡就在
+    目录里配 referenceAudioTotalMaxSeconds 显式声明。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-other",
+            "id": "cat-other",
+            "apiModel": "newapi_seedance-1.5-pro",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+        },
+    )
+    references = [_audio_reference(project_dir, f"other{i}.wav") for i in range(3)]
+
+    async def fake_probe(_path: str) -> float:
+        return 6.0  # 总计 18s，若误套 Seedance 口径就会 400
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-other",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_catalog_total_does_not_apply_per_clip_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """后台配了总时长≠授权用 Seedance 的逐条边界卡它。
+
+    referenceAudioTotalMaxSeconds=60 的非 2.0 模型：一条 25s 的音频在总时长之内，必须放行。
+    早先这里的开关是一个 `audio_bounds_known`，配了总时长就连 1.8~15.2s 一起套上去，
+    正好会把这条 25s 凭空 400 掉。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-long",
+            "id": "cat-long",
+            "apiModel": "newapi_seedance-1.5-pro",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+            "referenceAudioTotalMaxSeconds": 60,
+        },
+    )
+    references = [_audio_reference(project_dir, "long.wav")]
+
+    async def fake_probe(_path: str) -> float:
+        return 25.0  # > 15.2s，但对这个模型没有逐条上限
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-long",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    # 503 = 走到了入队（被替身打回），说明时长守卫放行了。
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_clamps_catalog_total_to_vendor_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """seedance2 的目录值只能配得更严，配宽了不算数——厂商硬顶 15.2s 必须继续生效。
+
+    管理员给 2.0 配了 60s：3 条各 6s 共 18s 若照配置放行，到厂商那儿照样 400，正是这套
+    守卫要消灭的失败。取小之后仍然拦在本地。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-wide",
+            "id": "cat-wide",
+            "apiModel": "newapi_seedance-2.0-fast",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+            "referenceAudioTotalMaxSeconds": 60,
+        },
+    )
+    references = [_audio_reference(project_dir, f"wide{i}.wav") for i in range(3)]
+
+    async def fake_probe(_path: str) -> float:
+        return 6.0
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-wide",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 400
+    assert "total duration must be <= 15.2s" in str(exc.value.detail)
+
+
+def test_catalog_audio_total_duration_max_rejects_non_finite() -> None:
+    """inf 不能当成上限：`inf > 0` 是 True，漏进来就等于静默关掉总时长判定。
+
+    写入侧 schema 已经挡了，但目录条目可能是那道校验存在之前落的库，读出来再挡一次。
+    """
+    read = freezone_routes._catalog_audio_total_duration_max
+    assert read({"referenceAudioTotalMaxSeconds": 15.2}) == 15.2
+    for bad in (float("inf"), float("nan"), float("-inf"), 0, -1, "15.2", None):
+        assert read({"referenceAudioTotalMaxSeconds": bad}) is None
+    assert read(None) is None
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_probes_audio_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """3 条音频必须并发探测。
+
+    ffprobe 单条有 20s 超时，串行 await 会把 3 条叠成最长 60s 的请求耗时。这里让每个
+    探测在返回前先 `asyncio.sleep(0)` 让出一次，只有并发调度才可能出现「3 个都进来了、
+    还没有一个返回」的时刻。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-conc",
+            "id": "cat-conc",
+            "apiModel": "newapi_seedance-2.0-fast",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+        },
+    )
+    references = [_audio_reference(project_dir, f"conc{i}.wav") for i in range(3)]
+
+    in_flight = 0
+    peak = 0
+
+    async def fake_probe(_path: str) -> float:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0)
+        in_flight -= 1
+        return 3.0
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-conc",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 503  # 9s 未超限，走到入队被替身打回
+    assert peak == 3
+
+
+@pytest.mark.asyncio
+async def test_probe_reference_audio_seconds_returns_none_when_probe_fails(
+    tmp_path: Path,
+) -> None:
+    """ffprobe 失败必须回 None，不能像 utils.media_io.get_audio_duration 那样返回 5.0。
+
+    5.0 是个合法值，会让兜底变成静默放行——这个断言就是防它被顺手换掉。
+    """
+    broken = tmp_path / "not-audio.wav"
+    broken.write_bytes(b"not audio at all")
+    assert await freezone_routes._probe_reference_audio_seconds(str(broken)) is None
 
 
 @pytest.mark.asyncio
@@ -6787,6 +7151,90 @@ async def test_freezone_image_models_prefers_ee_catalog(
     )
 
     assert result == {"ok": True, "data": catalog}
+
+
+def test_ce_media_catalog_overlay_preserves_unconfigured_defaults() -> None:
+    defaults = [
+        {
+            "catalogId": "default-image",
+            "id": "default-image",
+            "apiModel": "default-image",
+            "label": "Default",
+        },
+        {
+            "catalogId": "other-image",
+            "id": "other-image",
+            "apiModel": "other-image",
+            "label": "Other",
+        },
+    ]
+    configured = [
+        {
+            "catalogId": "default-image",
+            "id": "default-image",
+            "apiModel": "default-image",
+            "gatewayModel": "custom-upstream",
+        },
+        {
+            "catalogId": "custom-image",
+            "id": "custom-image",
+            "apiModel": "custom-image",
+            "label": "Custom",
+        },
+    ]
+
+    result = freezone_routes._merge_media_model_catalog_defaults(defaults, configured)
+
+    assert result == [
+        {
+            "catalogId": "default-image",
+            "id": "default-image",
+            "apiModel": "default-image",
+            "label": "Default",
+            "gatewayModel": "custom-upstream",
+        },
+        {
+            "catalogId": "other-image",
+            "id": "other-image",
+            "apiModel": "other-image",
+            "label": "Other",
+        },
+        {
+            "catalogId": "custom-image",
+            "id": "custom-image",
+            "apiModel": "custom-image",
+            "label": "Custom",
+        },
+    ]
+
+
+def test_ce_media_catalog_overlay_returns_defaults_without_local_models() -> None:
+    defaults = [{"id": "official-image", "apiModel": "official-image"}]
+
+    assert freezone_routes._merge_media_model_catalog_defaults(defaults, []) == defaults
+
+
+def test_ce_media_catalog_does_not_match_custom_upstream_model_as_catalog_id() -> None:
+    defaults = [
+        {
+            "catalogId": "LingShan-G2",
+            "id": "LingShan-G2",
+            "gatewayModel": "LingShan-G2",
+            "label": "Official",
+        }
+    ]
+    configured = [
+        {
+            "catalogId": "my-image",
+            "id": "my-image",
+            "gatewayModel": "LingShan-G2",
+            "label": "Custom",
+        }
+    ]
+
+    result = freezone_routes._merge_media_model_catalog_defaults(defaults, configured)
+
+    assert [entry["catalogId"] for entry in result] == ["LingShan-G2", "my-image"]
 
 
 @pytest.mark.asyncio
