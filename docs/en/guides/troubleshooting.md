@@ -13,7 +13,7 @@
 | **Port `8780` already in use** | Change the left-hand value of `ports` in compose, e.g. `8888:8780`; or stop the process holding it (`lsof -i :8780`). |
 | **Health check stays unhealthy** | The probe hits `/api/v1/config`; if the API itself errors, check the startup logs to pinpoint the real exception. |
 | **Local dev won't start: Python version** | Requires **3.11–3.12** (`>=3.11,<3.13`). Run `uv python pin 3.12` or install the matching version, then `uv sync`. |
-| **`uv sync` exits with a required-version error** | This checkout requires **uv 0.11.31 exactly**. Install it with `curl -LsSf https://astral.sh/uv/0.11.31/install.sh \| sh` (macOS/Linux/WSL2), or use the pinned PowerShell command in the [installation guide](../getting-started/installation.md). Verify `uv --version` before retrying. |
+| **`uv sync` fails with a `required-version` error** | This repository needs uv **0.11.31 or newer**. Upgrade uv (`uv self update`, or reinstall via your package manager), check `uv --version`, then retry. |
 
 ## Model / gateway
 

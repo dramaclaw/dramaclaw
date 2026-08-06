@@ -49,30 +49,13 @@ docker compose up -d --build   # 起 api / web 两个服务
 
 | 平台 | Python 3.11/3.12 | uv | ffmpeg |
 |---|---|---|---|
-| **macOS** | `brew install python@3.12` | 使用下方固定版本命令 | `brew install ffmpeg` |
-| **Windows** | [python.org](https://www.python.org/downloads/) 或 `winget install Python.Python.3.12` | 使用下方固定版本 PowerShell 命令 | `winget install Gyan.FFmpeg`(或用 WSL2 走 Linux 流程) |
-| **Linux(Debian/Ubuntu)** | `apt install python3.12` | 使用下方固定版本命令 | `apt install ffmpeg` |
+| **macOS** | `brew install python@3.12` | `brew install uv` | `brew install ffmpeg` |
+| **Windows** | [python.org](https://www.python.org/downloads/) 或 `winget install Python.Python.3.12` | `winget install astral-sh.uv` | `winget install Gyan.FFmpeg`(或用 WSL2 走 Linux 流程) |
+| **Linux(Debian/Ubuntu)** | `apt install python3.12` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `apt install ffmpeg` |
 
-Python 必须落在 **3.11–3.12**(`requires-python = ">=3.11,<3.13"`)。本仓库还
-严格要求 **uv 0.11.31**；通过包管理器安装当前 latest uv 不适用于这个
-checkout。
-
-macOS、Linux 或 WSL2 使用固定版本安装命令：
-
-```bash
-curl -LsSf https://astral.sh/uv/0.11.31/install.sh | sh
-uv --version   # 必须以 uv 0.11.31 开头
-```
-
-Windows PowerShell 使用：
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/0.11.31/install.ps1 | iex"
-uv --version   # 必须以 uv 0.11.31 开头
-```
-
-若 `uv --version` 仍显示其他版本，请先确保新安装的二进制在 `PATH` 中排在前面。
-随后 `uv.lock` 会锁定项目依赖版本。
+> Python 必须落在 **3.11–3.12**(`requires-python = ">=3.11,<3.13"`)。uv 会按 `uv.lock` 锁定依赖版本。
+>
+> uv 需 **0.11.31 或更新**(`pyproject.toml` 的 `[tool.uv].required-version`),更高版本均可。若 `uv sync` 报 `required-version` 错误,升级 uv 后重试。
 
 ### 2. 装依赖并启动
 

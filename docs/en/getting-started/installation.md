@@ -49,32 +49,13 @@ After it's up, open **`http://localhost:8080`** in your browser (the app UI); th
 
 | Platform | Python 3.11/3.12 | uv | ffmpeg |
 |---|---|---|---|
-| **macOS** | `brew install python@3.12` | Use the pinned command below | `brew install ffmpeg` |
-| **Windows** | [python.org](https://www.python.org/downloads/) or `winget install Python.Python.3.12` | Use the pinned PowerShell command below | `winget install Gyan.FFmpeg` (or use WSL2 and follow the Linux flow) |
-| **Linux (Debian/Ubuntu)** | `apt install python3.12` | Use the pinned command below | `apt install ffmpeg` |
+| **macOS** | `brew install python@3.12` | `brew install uv` | `brew install ffmpeg` |
+| **Windows** | [python.org](https://www.python.org/downloads/) or `winget install Python.Python.3.12` | `winget install astral-sh.uv` | `winget install Gyan.FFmpeg` (or use WSL2 and follow the Linux flow) |
+| **Linux (Debian/Ubuntu)** | `apt install python3.12` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `apt install ffmpeg` |
 
-Python must be in the **3.11–3.12** range
-(`requires-python = ">=3.11,<3.13"`). This repository also requires **uv
-0.11.31 exactly**. Package-manager commands that install the current latest uv
-are not supported for this checkout.
-
-Install the pinned uv version on macOS, Linux, or WSL2:
-
-```bash
-curl -LsSf https://astral.sh/uv/0.11.31/install.sh | sh
-uv --version   # must start with: uv 0.11.31
-```
-
-Install it from Windows PowerShell:
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/0.11.31/install.ps1 | iex"
-uv --version   # must start with: uv 0.11.31
-```
-
-If `uv --version` still reports another version, make sure the newly installed
-binary is first on `PATH` before continuing. `uv.lock` then pins the project
-dependencies.
+> Python must be in the **3.11–3.12** range (`requires-python = ">=3.11,<3.13"`). uv pins dependency versions according to `uv.lock`.
+>
+> uv must be **0.11.31 or newer** (`[tool.uv].required-version` in `pyproject.toml`); any newer release is fine. If `uv sync` reports a `required-version` error, upgrade uv and retry.
 
 ### 2. Install dependencies and start
 

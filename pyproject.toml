@@ -89,7 +89,9 @@ dev = [
 ]
 
 [tool.uv]
-required-version = "==0.11.31"
+# 下限而非精确 pin：可复现性来自 uv.lock + `uv sync --frozen`，不来自 uv
+# 二进制版本。CI 仍在 pr-gate.yml 里精确安装 0.11.31。
+required-version = ">=0.11.31"
 
 [tool.ruff]
 target-version = "py311"

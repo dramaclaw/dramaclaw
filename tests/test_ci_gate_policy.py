@@ -14,7 +14,6 @@ from check_ci_gate_uniqueness import (  # noqa: E402
     validate_gate_uniqueness,
 )
 from check_ci_workflow_policy import (  # noqa: E402
-    UV_DOCUMENT_REQUIREMENTS,
     WorkflowPolicyError,
     validate_workflow_policy,
 )
@@ -53,10 +52,6 @@ def _copy_pr_gate(root: Path) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(REPO_ROOT / ".github/workflows/pr-gate.yml", target)
     shutil.copyfile(REPO_ROOT / "pyproject.toml", root / "pyproject.toml")
-    for relative_path in UV_DOCUMENT_REQUIREMENTS:
-        document_target = root / relative_path
-        document_target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(REPO_ROOT / relative_path, document_target)
     return target
 
 
@@ -360,35 +355,48 @@ def test_workflow_policy_rejects_uv_action_version_drift(tmp_path: Path) -> None
         validate_workflow_policy(tmp_path)
 
 
-def test_workflow_policy_rejects_local_uv_version_drift(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "drifted_constraint",
+    [
+        # 精确 pin 会把使用较新 uv 的贡献者挡在门外
+        'required-version = "==0.11.31"',
+        # 下限与 CI 安装的版本脱节
+        'required-version = ">=0.11.30"',
+    ],
+)
+def test_workflow_policy_rejects_local_uv_version_drift(
+    tmp_path: Path,
+    drifted_constraint: str,
+) -> None:
     _copy_pr_gate(tmp_path)
     path = tmp_path / "pyproject.toml"
     text = path.read_text(encoding="utf-8")
     path.write_text(
-        text.replace(
-            'required-version = "==0.11.31"',
-            'required-version = ">=0.11.31"',
-            1,
-        ),
+        text.replace('required-version = ">=0.11.31"', drifted_constraint, 1),
         encoding="utf-8",
     )
     with pytest.raises(WorkflowPolicyError, match=r"\[tool\.uv\]\.required-version"):
         validate_workflow_policy(tmp_path)
 
 
-def test_workflow_policy_rejects_floating_uv_install_docs(tmp_path: Path) -> None:
-    _copy_pr_gate(tmp_path)
-    path = tmp_path / "README.md"
-    text = path.read_text(encoding="utf-8")
-    path.write_text(
-        text.replace(
-            "https://astral.sh/uv/0.11.31/install.sh",
-            "https://astral.sh/uv/install.sh",
-            1,
-        ),
-        encoding="utf-8",
+@pytest.mark.parametrize(
+    "neutered_dco",
+    [
+        # `|| true` 被单独拦截，但短路前缀和行内注释同样能让 DCO 永不执行
+        "          true ||\n          python3 scripts/check_dco.py\n",
+        "          exit 0 #\n          python3 scripts/check_dco.py\n",
+    ],
+)
+def test_workflow_policy_rejects_neutered_dco_command(
+    tmp_path: Path,
+    neutered_dco: str,
+) -> None:
+    _mutate_pr_gate(
+        tmp_path,
+        "          python3 scripts/check_dco.py\n",
+        neutered_dco,
     )
-    with pytest.raises(WorkflowPolicyError, match="must document pinned uv 0.11.31"):
+    with pytest.raises(WorkflowPolicyError, match=r"steps\.dco\.run must be"):
         validate_workflow_policy(tmp_path)
 
 

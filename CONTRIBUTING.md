@@ -19,22 +19,11 @@
 ### 本地开发
 
 ```bash
-# macOS / Linux / WSL2：本仓库严格要求 uv 0.11.31
-curl -LsSf https://astral.sh/uv/0.11.31/install.sh | sh
-uv --version   # 必须以 uv 0.11.31 开头
-
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 uv sync
 cp .env.example .env      # 按文档配置模型网关
 uv run novelvideo api --port 8780
-```
-
-Windows PowerShell 使用固定版本安装命令：
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/0.11.31/install.ps1 | iex"
-uv --version   # 必须以 uv 0.11.31 开头
 ```
 
 ### 流程
@@ -44,18 +33,21 @@ uv --version   # 必须以 uv 0.11.31 开头
 3. 提交信息清晰（建议 [Conventional Commits](https://www.conventionalcommits.org/)），并对**每个 commit** 用 `git commit -s` 附上 DCO 签署（见 [开发者原产证书](#开发者原产证书dco)）；
 4. 开 PR，关联对应 issue，简述改动与验证方式。
 
-### 升级 uv 工具链
+### uv 版本
 
-uv 升级必须使用独立 PR，并在同一个 PR 中同步修改：
+本仓库只要求 uv **不低于** `pyproject.toml` 里 `[tool.uv].required-version` 的下限，
+更高版本均可 —— 依赖的可复现性由 `uv.lock` 加 `uv sync --frozen` 保证，不依赖 uv
+二进制版本。CI 另行精确安装某个 uv 版本，以固定 Gate 的运行环境。
 
-1. `pyproject.toml` 的 `[tool.uv].required-version`；
-2. `.github/workflows/pr-gate.yml` 的 `setup-uv` version；
-3. `scripts/check_ci_workflow_policy.py` 的 `UV_VERSION`；
-4. README、中文版 README、CONTRIBUTING 及中英文安装/排错文档中的安装命令；
-5. `uv.lock`（如新版本产生变化）。
+调整 CI 使用的 uv 版本需单独 PR，并在同一 PR 内同步：
 
-升级后必须运行 `uv lock --check`、CI 治理测试、完整后端测试和前端测试，并用
-真实 PR 确认 `dramaclaw-pr-gate` 通过。不要只升级本地包管理器中的 uv。
+1. `.github/workflows/pr-gate.yml` 的 `setup-uv` version；
+2. `scripts/check_ci_workflow_policy.py` 的 `UV_VERSION`（同时决定本地下限）；
+3. `pyproject.toml` 的 `[tool.uv].required-version`；
+4. `uv.lock`（如版本变化导致重新锁定）。
+
+改完跑 `uv lock --check`、CI 治理测试与完整后端/前端测试，并用真实 PR 确认
+`dramaclaw-pr-gate` 通过。
 
 ## 贡献者协议
 
