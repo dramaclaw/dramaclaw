@@ -433,3 +433,40 @@ def test_image_catalog_rejects_invalid_min_pixels(value):
             },
             "image",
         )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "referenceAudioMinSeconds",
+        "referenceAudioMaxSeconds",
+        "referenceAudioTotalMinSeconds",
+        "referenceAudioTotalMaxSeconds",
+        "referenceVideoMinSeconds",
+        "referenceVideoMaxSeconds",
+        "referenceVideoTotalMinSeconds",
+        "referenceVideoTotalMaxSeconds",
+    ],
+)
+def test_video_catalog_validates_reference_duration_fields(field):
+    config = {
+        field: 1.5,
+        "request": {"endpoint": "video/generations", "parameters": []},
+    }
+    assert validate_media_model_catalog_config(config, "video") is config
+
+    config[field] = 0
+    with pytest.raises(MediaModelSchemaError, match=field):
+        validate_media_model_catalog_config(config, "video")
+
+
+def test_video_catalog_rejects_inverted_reference_duration_range():
+    with pytest.raises(MediaModelSchemaError, match="cannot exceed"):
+        validate_media_model_catalog_config(
+            {
+                "referenceAudioTotalMinSeconds": 20,
+                "referenceAudioTotalMaxSeconds": 10,
+                "request": {"endpoint": "video/generations", "parameters": []},
+            },
+            "video",
+        )

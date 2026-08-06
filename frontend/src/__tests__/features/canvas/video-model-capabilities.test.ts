@@ -16,6 +16,7 @@ import {
   isSeedance1xVideoModel,
   isSeedance2VideoModel,
   isVideoModeSupportedByModel,
+  referenceDurationLimitsMs,
   resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
@@ -892,6 +893,50 @@ describe("audioReferenceDurationRejection — 提交前音频时长守卫", () =
 
   it("没有音频引用时不拦", () => {
     expect(audioReferenceDurationRejection([])).toBeNull();
+  });
+
+  it("支持后台配置的总时长下限，且存在未探测素材时不误拦", () => {
+    expect(
+      audioReferenceDurationRejection([clip("a", 4_000), clip("b", 5_000)], {
+        minMs: null,
+        maxMs: null,
+        totalMinMs: 10_000,
+        totalLimitMs: null,
+        perClipLimits: false,
+      }),
+    ).toMatchObject({ kind: "totalTooShort", totalMs: 9_000, limitMs: 10_000 });
+    expect(
+      audioReferenceDurationRejection([clip("a", 4_000), clip("unknown", null)], {
+        minMs: null,
+        maxMs: null,
+        totalMinMs: 10_000,
+        totalLimitMs: null,
+        perClipLimits: false,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("referenceDurationLimitsMs — 目录时长配置", () => {
+  it("分别读取音频和视频的单条/总时长配置", () => {
+    const model = {
+      referenceAudioMinSeconds: 1.8,
+      referenceAudioTotalMaxSeconds: 15.2,
+      referenceVideoMaxSeconds: 12,
+      referenceVideoTotalMinSeconds: 5,
+    };
+    expect(referenceDurationLimitsMs(model, "audio")).toEqual({
+      minMs: 1_800,
+      maxMs: undefined,
+      totalMinMs: undefined,
+      totalMaxMs: 15_200,
+    });
+    expect(referenceDurationLimitsMs(model, "video")).toEqual({
+      minMs: undefined,
+      maxMs: 12_000,
+      totalMinMs: 5_000,
+      totalMaxMs: undefined,
+    });
   });
 });
 

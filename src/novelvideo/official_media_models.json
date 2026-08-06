@@ -109,6 +109,9 @@
         "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
         "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_to_video", "image_reference"],
         "referenceAudioMax": 3,
+        "referenceAudioMinSeconds": 1.8,
+        "referenceAudioMaxSeconds": 15.2,
+        "referenceAudioTotalMaxSeconds": 15.2,
         "referenceImageMax": 9,
         "referenceVideoMax": 3,
         "resolutionOptions": ["480p", "720p"]
@@ -130,6 +133,9 @@
         "ratioOptions": ["1:1", "16:9", "4:3", "3:4", "9:16", "21:9"],
         "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_to_video", "image_reference"],
         "referenceAudioMax": 3,
+        "referenceAudioMinSeconds": 1.8,
+        "referenceAudioMaxSeconds": 15.2,
+        "referenceAudioTotalMaxSeconds": 15.2,
         "referenceImageMax": 9,
         "referenceVideoMax": 3,
         "resolutionOptions": ["480p", "720p", "1080p", "4K"]
@@ -205,6 +211,9 @@
         "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
         "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_to_video", "image_reference", "video_edit"],
         "referenceAudioMax": 3,
+        "referenceAudioMinSeconds": 1.8,
+        "referenceAudioMaxSeconds": 15.2,
+        "referenceAudioTotalMaxSeconds": 15.2,
         "referenceImageMax": 9,
         "referenceVideoMax": 3,
         "resolutionOptions": ["480p", "720p"]

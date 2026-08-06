@@ -1054,12 +1054,19 @@ export interface FreezoneVideoModelInfo {
   referenceImageMax?: number | null;
   referenceVideoMax?: number | null;
   referenceAudioMax?: number | null;
+  referenceAudioMinSeconds?: number | null;
+  referenceAudioMaxSeconds?: number | null;
+  referenceAudioTotalMinSeconds?: number | null;
   /**
    * 参考音频**总时长**上限（秒）。厂商 r2v 除了逐条 1.8~15.2s，还另有一条总和限制
    * （见 videoModelCapabilities 里的说明），这项就是它的后台可配值；没配时前端按
    * 15.2s 兜底。允许小数，别当成整数字段处理。
    */
   referenceAudioTotalMaxSeconds?: number | null;
+  referenceVideoMinSeconds?: number | null;
+  referenceVideoMaxSeconds?: number | null;
+  referenceVideoTotalMinSeconds?: number | null;
+  referenceVideoTotalMaxSeconds?: number | null;
   request?: MediaModelRequestSchema;
 }
 
@@ -1128,10 +1135,45 @@ function videoModelEntryFromObject(
     referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
     referenceVideoMax: pickNumber(entry, "referenceVideoMax", "reference_video_max"),
     referenceAudioMax: pickNumber(entry, "referenceAudioMax", "reference_audio_max"),
+    referenceAudioMinSeconds: pickNumber(
+      entry,
+      "referenceAudioMinSeconds",
+      "reference_audio_min_seconds",
+    ),
+    referenceAudioMaxSeconds: pickNumber(
+      entry,
+      "referenceAudioMaxSeconds",
+      "reference_audio_max_seconds",
+    ),
+    referenceAudioTotalMinSeconds: pickNumber(
+      entry,
+      "referenceAudioTotalMinSeconds",
+      "reference_audio_total_min_seconds",
+    ),
     referenceAudioTotalMaxSeconds: pickNumber(
       entry,
       "referenceAudioTotalMaxSeconds",
       "reference_audio_total_max_seconds",
+    ),
+    referenceVideoMinSeconds: pickNumber(
+      entry,
+      "referenceVideoMinSeconds",
+      "reference_video_min_seconds",
+    ),
+    referenceVideoMaxSeconds: pickNumber(
+      entry,
+      "referenceVideoMaxSeconds",
+      "reference_video_max_seconds",
+    ),
+    referenceVideoTotalMinSeconds: pickNumber(
+      entry,
+      "referenceVideoTotalMinSeconds",
+      "reference_video_total_min_seconds",
+    ),
+    referenceVideoTotalMaxSeconds: pickNumber(
+      entry,
+      "referenceVideoTotalMaxSeconds",
+      "reference_video_total_max_seconds",
     ),
     request: pickMediaRequestSchema(entry.request),
   };

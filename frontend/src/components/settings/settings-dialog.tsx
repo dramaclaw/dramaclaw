@@ -3718,6 +3718,25 @@ function LocalMediaModelEditor({
                 min={0}
                 onChange={(value) => setCapability("referenceAudioMax", value)}
               />
+              {[
+                "referenceAudioMinSeconds",
+                "referenceAudioMaxSeconds",
+                "referenceAudioTotalMinSeconds",
+                "referenceAudioTotalMaxSeconds",
+                "referenceVideoMinSeconds",
+                "referenceVideoMaxSeconds",
+                "referenceVideoTotalMinSeconds",
+                "referenceVideoTotalMaxSeconds",
+              ].map((field) => (
+                <CatalogNumberField
+                  key={field}
+                  label={t(`settings.modelConfig.mediaModels.${field}`)}
+                  value={parsedConfig?.[field]}
+                  min={0.1}
+                  step={0.1}
+                  onChange={(value) => setCapability(field, value)}
+                />
+              ))}
               <label className="flex items-center gap-2 text-xs text-foreground">
                 <input
                   type="checkbox"
@@ -3922,11 +3941,13 @@ function CatalogNumberField({
   label,
   value,
   min = 1,
+  step = 1,
   onChange,
 }: {
   label: string;
   value: unknown;
   min?: number;
+  step?: number;
   onChange: (value: number | undefined) => void;
 }) {
   return (
@@ -3937,6 +3958,7 @@ function CatalogNumberField({
       <Input
         type="number"
         min={min}
+        step={step}
         value={typeof value === "number" ? value : ""}
         onChange={(event) =>
           onChange(event.target.value ? Number(event.target.value) : undefined)
