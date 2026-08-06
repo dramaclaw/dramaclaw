@@ -10,12 +10,14 @@ import { readUrl } from "@/lib/url-params";
 
 export interface UseFreezoneStyleTemplatesResult {
   templates: FreezoneStyleTemplate[];
+  assetBase: string;
   isLoading: boolean;
   error: Error | null;
 }
 
 const EMPTY: UseFreezoneStyleTemplatesResult = {
   templates: [],
+  assetBase: "",
   isLoading: false,
   error: null,
 };
@@ -36,10 +38,10 @@ function writeState(project: string, next: UseFreezoneStyleTemplatesResult) {
 
 function ensureLoaded(project: string) {
   if (states.has(project)) return;
-  states.set(project, { templates: [], isLoading: true, error: null });
+  states.set(project, { templates: [], assetBase: "", isLoading: true, error: null });
   listFreezoneStyleTemplates(project)
-    .then((templates) => {
-      writeState(project, { templates, isLoading: false, error: null });
+    .then(({ templates, assetBase }) => {
+      writeState(project, { templates, assetBase, isLoading: false, error: null });
     })
     .catch((error: unknown) => {
       const normalized =
@@ -48,7 +50,12 @@ function ensureLoaded(project: string) {
         "[freezone] style-templates fetch failed:",
         normalized.message,
       );
-      writeState(project, { templates: [], isLoading: false, error: normalized });
+      writeState(project, {
+        templates: [],
+        assetBase: "",
+        isLoading: false,
+        error: normalized,
+      });
     });
 }
 

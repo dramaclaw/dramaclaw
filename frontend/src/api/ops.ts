@@ -780,18 +780,32 @@ export async function submitFreezoneReversePrompt(
 export interface FreezoneStyleTemplate {
   id: string;
   label: string;
-  /** Free-text English style description forwarded as part of the prompt. */
+  /** 题材分类:古装 / 都市 / 年代 / 生活 / 科幻 / 类型 / 写意。目前只入库,UI 暂不渲染分类 tab。 */
+  category: string;
+  /** 封面图相对路径,需经 resolveStyleAssetUrl 解析。 */
+  cover: string;
+  /** 女 / 少 / 男 / 老 四张示例图的相对路径。 */
+  samples: string[];
+  /** 中文风格提示词全文,原样拼进生成 prompt。 */
   style_prompt: string;
-  author?: string;
-  category?: string;
+}
+
+export interface FreezoneStyleTemplateList {
+  assetBase: string;
+  templates: FreezoneStyleTemplate[];
 }
 
 export async function listFreezoneStyleTemplates(
   project: string,
-): Promise<FreezoneStyleTemplate[]> {
-  return await apiCall<FreezoneStyleTemplate[]>(
-    `projects/${encodeURIComponent(project)}/freezone/image/style-templates`,
-  );
+): Promise<FreezoneStyleTemplateList> {
+  const data = await apiCall<{
+    asset_base?: string;
+    templates?: FreezoneStyleTemplate[];
+  }>(`projects/${encodeURIComponent(project)}/freezone/image/style-templates`);
+  return {
+    assetBase: data.asset_base ?? "",
+    templates: Array.isArray(data.templates) ? data.templates : [],
+  };
 }
 
 // /freezone/image/camera-options ----------------------------------------- //
