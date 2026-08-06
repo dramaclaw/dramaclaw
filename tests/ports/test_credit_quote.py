@@ -11,6 +11,7 @@ async def test_local_credit_quote_returns_zero_display() -> None:
         model="gpt-image-2",
         params={"size": "2K"},
         quantity=3,
+        product_surface="mainline",
     )
 
     assert quote == CreditQuote(

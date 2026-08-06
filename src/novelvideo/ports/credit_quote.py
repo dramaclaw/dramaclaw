@@ -27,5 +27,6 @@ class CreditQuotePort(Protocol):
         model: str,
         params: dict,
         quantity: int,
+        product_surface: str,
         user_id: str = "",
     ) -> CreditQuote: ...

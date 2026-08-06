@@ -26,6 +26,11 @@ GenerationCreditCostKind = Literal[
 GenerationCreditSurface = Literal["supertale", "canvas"]
 
 
+def _credit_product_surface(surface: GenerationCreditSurface) -> str:
+    """Map quote rendering context to the product entry that owns the request."""
+    return "freezone" if surface == "canvas" else "mainline"
+
+
 def _display_credit_cost(cost: int) -> str:
     return str(cost)
 
@@ -921,18 +926,12 @@ async def get_generation_credit_cost(
             image_role=_clean_query_value(image_role),
         ),
         "quantity": _clean_quantity(quantity),
+        "product_surface": _credit_product_surface(surface),
     }
-    try:
-        quote = await get_credit_quote().generation_credit_quote(
-            **quote_args,
-            user_id=str(user.get("id") or user.get("user_id") or ""),
-        )
-    except TypeError as exc:
-        if "user_id" not in str(exc):
-            raise
-        # One-release compatibility for third-party quote ports compiled
-        # against the previous protocol.
-        quote = await get_credit_quote().generation_credit_quote(**quote_args)
+    quote = await get_credit_quote().generation_credit_quote(
+        **quote_args,
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
     original_cost = (
         quote.total_cost
         if quote.original_total_cost is None

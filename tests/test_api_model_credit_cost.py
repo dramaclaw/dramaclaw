@@ -16,8 +16,10 @@ def patch_quote(monkeypatch, model_credits, *, expected_model: str, cost: int) -
             model: str,
             params=None,
             quantity=1,
+            product_surface="mainline",
+            user_id="",
         ):
-            del kind, params, quantity
+            del kind, params, quantity, product_surface, user_id
             assert model == expected_model
             return CreditQuote(total_cost=cost, display=str(cost))
 
@@ -96,7 +98,10 @@ def patch_quote_expect(
             model: str,
             params=None,
             quantity=1,
+            product_surface="mainline",
+            user_id="",
         ):
+            del user_id
             assert kind == expected_kind
             assert model == expected_model
             assert params == expected_with_metrics
@@ -118,7 +123,10 @@ def patch_quote_display_mismatch(cost: int, display: str) -> None:
             model: str,
             params=None,
             quantity=1,
+            product_surface="mainline",
+            user_id="",
         ):
+            del product_surface, user_id
             return CreditQuote(total_cost=cost, display=display)
 
     register_port("credit_quote", FakeCreditQuotePort())
@@ -165,6 +173,7 @@ async def test_generation_credit_cost_route_returns_promotion_display(monkeypatc
     class DiscountQuotePort:
         async def generation_credit_quote(self, **kwargs):
             assert kwargs["user_id"] == "usr_1"
+            assert kwargs["product_surface"] == "mainline"
             return CreditQuote(
                 total_cost=9,
                 display="9",
@@ -189,6 +198,29 @@ async def test_generation_credit_cost_route_returns_promotion_display(monkeypatc
         "discount_amount": 3,
         "promotion": {"id": "promo_1", "name": "模型七五折"},
     }
+
+
+@pytest.mark.asyncio
+async def test_canvas_quote_passes_freezone_product_surface():
+    from novelvideo.api.routes import model_credits
+    from novelvideo.ports.credit_quote import CreditQuote
+    from novelvideo.ports.registry import register_port
+
+    class CapturingQuotePort:
+        async def generation_credit_quote(self, **kwargs):
+            assert kwargs["product_surface"] == "freezone"
+            return CreditQuote(total_cost=12, display="12")
+
+    register_port("credit_quote", CapturingQuotePort())
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="mainline.sketch_regen",
+        user={"user_id": "usr_1"},
+    )
+
+    assert result["data"]["cost"] == 12
 
 
 @pytest.mark.asyncio

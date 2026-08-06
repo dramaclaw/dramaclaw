@@ -183,9 +183,20 @@ class _FakeTaskBackend:
 
 
 class _FakeCreditQuote:
-    async def generation_credit_quote(self, *, kind, model, params, quantity):
+    async def generation_credit_quote(
+        self,
+        *,
+        kind,
+        model,
+        params,
+        quantity,
+        product_surface,
+        user_id="",
+    ):
         assert kind == "feature"
         assert model == "mainline.beat_video_prompt"
+        assert product_surface == "mainline"
+        assert user_id == "local"
         assert params == {
             "pricing_metrics": {"call_count": quantity, "item_count": quantity}
         }

@@ -2335,16 +2335,12 @@ async def audio_generation_billing_quote(
             billable_chars=billable_chars,
         ),
         "quantity": quantity,
+        "product_surface": "mainline",
     }
-    try:
-        quote = await get_credit_quote().generation_credit_quote(
-            **quote_args,
-            user_id=str(user.get("id") or user.get("user_id") or ""),
-        )
-    except TypeError as exc:
-        if "user_id" not in str(exc):
-            raise
-        quote = await get_credit_quote().generation_credit_quote(**quote_args)
+    quote = await get_credit_quote().generation_credit_quote(
+        **quote_args,
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
     return {
         "ok": True,
         "data": {
@@ -2510,16 +2506,12 @@ async def global_optimize_video_billing_quote(
             }
         },
         "quantity": quantity,
+        "product_surface": "mainline",
     }
-    try:
-        quote = await get_credit_quote().generation_credit_quote(
-            **quote_args,
-            user_id=str(user.get("id") or user.get("user_id") or ""),
-        )
-    except TypeError as exc:
-        if "user_id" not in str(exc):
-            raise
-        quote = await get_credit_quote().generation_credit_quote(**quote_args)
+    quote = await get_credit_quote().generation_credit_quote(
+        **quote_args,
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
     return {
         "ok": True,
         "data": {
