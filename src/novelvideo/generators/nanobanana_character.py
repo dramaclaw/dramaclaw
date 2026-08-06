@@ -58,62 +58,23 @@ def _default_ethnicity_instruction(ethnicity: str) -> str:
     )
 
 
-def _inject_guoman_character_asset_override(
-    prompt: str,
-    *,
-    style_name: str,
-    marker: str,
-    identity_name: str = "",
-    gender: str = "",
-    age_group: str = "",
-) -> str:
-    """Keep Guoman content defaults from overriding character-asset facts."""
-    if str(style_name or "").strip().lower() != "guoman_fantasy":
-        return prompt
+_GUOMAN_IDENTITY_SHEET_STYLE = (
+    "Create a premium stylized 3D Chinese animation render with high-precision PBR "
+    "materials, refined 3D edge lighting, clean high-definition rendering, and a "
+    "polished Unreal Engine / Octane-style finish. Apply this style only to the "
+    "rendering medium, materials, lighting, and finish; do not infer or change the "
+    "character's face, age, gender, body proportions, clothing, accessories, social "
+    "status, or environment from the style preset. The reference portrait exclusively "
+    "defines the face and identity. CHARACTER DETAILS exclusively define clothing and "
+    "accessories."
+)
 
-    rules = [
-        "GUOMAN CHARACTER-ASSET OVERRIDE (HIGHER PRIORITY THAN STYLE DEFAULTS):",
-        "- Keep the Guoman rendering medium, facial aesthetics, materials, and finish.",
-        "- Its default high-status robes, black-gold luxury, metal or jade ornament, crown, and ornate hairpiece are fallback flavor, not character facts; do not add them unless explicitly required by FACIAL FEATURES, CHARACTER DETAILS, or a costume reference.",
-        "- Use an opaque plain neutral background; do not apply preset transparency or fantasy atmosphere.",
-        "- Explicit FACIAL FEATURES, CHARACTER DETAILS, and costume references override the style preset.",
-    ]
-    normalized_identity_name = str(identity_name or "").strip()
-    if normalized_identity_name:
-        rules.append(f"- Target identity/state: {normalized_identity_name}.")
-    normalized_gender = str(gender or "").strip()
-    if normalized_gender:
-        gender_label = {"男": "male", "男性": "male", "女": "female", "女性": "female"}.get(
-            normalized_gender,
-            normalized_gender,
-        )
-        rules.append(f"- Target gender: {gender_label}.")
-    normalized_age_group = str(age_group or "").strip()
-    if normalized_age_group:
-        age_label = {
-            "child": "child",
-            "youth": "young adult",
-            "middle": "middle-aged adult",
-            "elder": "elderly adult",
-        }.get(normalized_age_group.lower(), normalized_age_group)
-        rules.append(f"- Target age group: {age_label}.")
 
-    if marker.startswith("CHARACTER DETAILS"):
-        prompt = prompt.replace(
-            "- hairline, hairstyle, and silhouette\n- skin tone and age impression\n- Preserve the reference identity exactly; do not change face structure, skin tone, hair identity, or silhouette.",
-            "- natural hairline\n- skin tone and recognizable facial identity\n- Preserve the reference identity exactly; TARGET IDENTITY FACTS and CHARACTER DETAILS may change age cues, hairstyle, clothing, and silhouette, but must not redesign the underlying face.",
-            1,
-        )
-        rules.extend(
-            [
-                "- The reference portrait is the canonical identity anchor; every panel must remain immediately recognizable as the same person.",
-                "- Apply the target age only as a natural age progression or regression of that same face; change age cues, not facial geometry or identity.",
-                "- Target gender confirms presentation only; do not masculinize, feminize, replace, or reinterpret the canonical face.",
-                "- Do not copy conflicting hairstyle, clothing, crown, jewelry, hair accessories, or social status from the anchor.",
-            ]
-        )
-    override = "\n".join(rules)
-    return prompt.replace(marker, f"{override}\n\n{marker}", 1)
+def _identity_sheet_style_instructions(style_name: str, style_keywords: str) -> str:
+    """Remove Guoman content defaults from identity-sheet rendering instructions."""
+    if str(style_name or "").strip().lower() == "guoman_fantasy":
+        return _GUOMAN_IDENTITY_SHEET_STYLE
+    return style_keywords
 
 
 def create_composite_reference(
@@ -250,8 +211,6 @@ class NanoBananaCharacterGenerator:
         usage_task_type: str = "character_portrait",
         usage_scope: str = "",
         identity_name: str = "",
-        gender: str = "",
-        age_group: str = "",
     ) -> CharacterReferenceResult:
         """生成角色 portrait / identity anchor。
 
@@ -308,9 +267,6 @@ class NanoBananaCharacterGenerator:
                 style_keywords=style_keywords,
                 negative_keywords=negative_keywords,
                 ethnicity=ethnicity,
-                identity_name=identity_name,
-                gender=gender,
-                age_group=age_group,
             )
 
             # 保存 prompt 到文件（审计用）
@@ -440,8 +396,6 @@ class NanoBananaCharacterGenerator:
         usage_task_type: str = "character_portrait",
         usage_scope: str = "",
         identity_name: str = "",
-        gender: str = "",
-        age_group: str = "",
     ) -> CharacterReferenceResult:
         """兼容旧接口，内部统一转 portrait-first 机制。"""
         _ = views, face_only
@@ -457,8 +411,6 @@ class NanoBananaCharacterGenerator:
             usage_task_type=usage_task_type,
             usage_scope=usage_scope,
             identity_name=identity_name,
-            gender=gender,
-            age_group=age_group,
         )
 
     async def generate_identity_with_reference(
@@ -476,9 +428,6 @@ class NanoBananaCharacterGenerator:
         usage_task_type: str = "identity_image",
         usage_scope: str = "",
         identity_name: str = "",
-        gender: str = "",
-        character_age_group: str = "",
-        identity_age_group: str = "",
     ) -> CharacterReferenceResult:
         """基于角色基准图生成身份参考图（Identity Locking）。
 
@@ -541,9 +490,6 @@ class NanoBananaCharacterGenerator:
                 negative_keywords=negative_keywords,
                 ethnicity=ethnicity,
                 has_costume_reference=has_costume_ref,
-                identity_name=identity_name,
-                gender=gender,
-                age_group=identity_age_group or character_age_group,
             )
 
             # 保存 prompt 到文件（审计用）
@@ -907,9 +853,6 @@ MUST AVOID:
         style_keywords: str,
         negative_keywords: str,
         ethnicity: str = "Chinese",
-        identity_name: str = "",
-        gender: str = "",
-        age_group: str = "",
     ) -> str:
         """构建 portrait 生成 Prompt。
 
@@ -965,14 +908,6 @@ MUST AVOID:
 - Do not include multiple characters
 - Do not convert this into realistic photography or real-human actor rendering
 """
-            prompt = _inject_guoman_character_asset_override(
-                prompt,
-                style_name=style_name,
-                marker="STRICT REQUIREMENTS:",
-                identity_name=identity_name,
-                gender=gender,
-                age_group=age_group,
-            )
             return prompt.strip()
 
         prompt = f"""Generate a face-only character identity reference portrait for identity locking.
@@ -1013,14 +948,6 @@ MUST AVOID:
 - Do not include multiple characters
 - Do NOT create beauty-filter skin, glamor retouching, fashion-magazine polish, doll-like skin, or cosmetic-ad aesthetics
 """
-        prompt = _inject_guoman_character_asset_override(
-            prompt,
-            style_name=style_name,
-            marker="STRICT REQUIREMENTS:",
-            identity_name=identity_name,
-            gender=gender,
-            age_group=age_group,
-        )
         return prompt.strip()
 
     @staticmethod
@@ -1048,9 +975,6 @@ A second reference image is provided showing the target costume/clothing.
         negative_keywords: str,
         ethnicity: str = "Chinese",
         has_costume_reference: bool = False,
-        identity_name: str = "",
-        gender: str = "",
-        age_group: str = "",
     ) -> str:
         """构建 4 面板 reference sheet Prompt（全脸特写 + 正面全身 + 45° 三分全身 + 背面全身）。
 
@@ -1070,6 +994,7 @@ A second reference image is provided showing the target costume/clothing.
         Returns:
             4-panel reference sheet Prompt
         """
+        style_keywords = _identity_sheet_style_instructions(style_name, style_keywords)
         family, _ = StyleService.get_style_branch(
             style_name or IMAGE_DEFAULT_STYLE,
             project_dir=project_dir or None,
@@ -1115,14 +1040,6 @@ STRICT REQUIREMENTS (MUST AVOID):
 - No text, labels, or panel numbers on the image
 - Do not add environment scenery, props, or poster composition
 """
-            prompt = _inject_guoman_character_asset_override(
-                prompt,
-                style_name=style_name,
-                marker="CHARACTER DETAILS (CRITICAL - use this for clothing and appearance):",
-                identity_name=identity_name,
-                gender=gender,
-                age_group=age_group,
-            )
             return prompt.strip()
 
         prompt = f"""Character identity reference sheet. Neutral studio setup.
@@ -1186,14 +1103,6 @@ STRICT REQUIREMENTS (MUST AVOID):
 - Do NOT create beauty-retouched, glamorized, cosmetic-ad, or fashion-editorial output
 - Keep the project style consistent across all 4 panels
 """
-        prompt = _inject_guoman_character_asset_override(
-            prompt,
-            style_name=style_name,
-            marker="CHARACTER DETAILS (CRITICAL - use this for clothing and appearance):",
-            identity_name=identity_name,
-            gender=gender,
-            age_group=age_group,
-        )
         return prompt.strip()
 
     async def _generate_single_image(

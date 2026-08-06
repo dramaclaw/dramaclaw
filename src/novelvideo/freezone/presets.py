@@ -3159,12 +3159,7 @@ async def build_asset_preset_context(
             negative_keywords = ""
             character_prompt_builder = None
 
-        def _novelvideo_portrait_full_prompt(
-            prompt_text: str,
-            *,
-            identity_name: str = "",
-            age_group: str = "",
-        ) -> str:
+        def _novelvideo_portrait_full_prompt(prompt_text: str) -> str:
             if character_prompt_builder is None:
                 return prompt_text
             character_tag = character_prompt_builder._generate_character_tag(character)
@@ -3177,9 +3172,6 @@ async def build_asset_preset_context(
                 style_keywords=style_keywords,
                 negative_keywords=negative_keywords,
                 ethnicity=project_ethnicity,
-                identity_name=identity_name,
-                gender=str(getattr(char, "gender", "") or ""),
-                age_group=age_group or char_age_group,
             )
 
         generation_context["portrait"] = {
@@ -3193,7 +3185,6 @@ async def build_asset_preset_context(
             identity_name: str,
             identity_prompt: str,
             has_costume_image: bool,
-            identity_age_group: str,
         ) -> str:
             if character_prompt_builder is None:
                 return identity_prompt
@@ -3209,9 +3200,6 @@ async def build_asset_preset_context(
                 negative_keywords=negative_keywords,
                 ethnicity=project_ethnicity,
                 has_costume_reference=has_costume_image,
-                identity_name=identity_name,
-                gender=str(getattr(char, "gender", "") or ""),
-                age_group=identity_age_group or char_age_group,
             )
 
         def _build_identity_generation_context(identity_obj: Any) -> dict[str, Any]:
@@ -3271,15 +3259,10 @@ async def build_asset_preset_context(
                 identity_name=identity_name,
                 identity_prompt=prompt,
                 has_costume_image=has_costume_image,
-                identity_age_group=identity_age,
             )
             identity_portrait_prompt = (face_override or appearance_details or prompt).strip()
             full_identity_portrait_prompt = (
-                _novelvideo_portrait_full_prompt(
-                    identity_portrait_prompt,
-                    identity_name=identity_name,
-                    age_group=identity_age or char_age_group,
-                )
+                _novelvideo_portrait_full_prompt(identity_portrait_prompt)
                 if identity_portrait_prompt
                 else ""
             )

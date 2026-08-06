@@ -210,8 +210,6 @@ async def _generate_character_portrait(
             project_dir=str(output_dir),
             usage_task_type=task_type,
             usage_scope=scope,
-            gender=str(character.gender or ""),
-            age_group=str(character.age_group or ""),
             raise_on_error=True,
         )
         if not paths:
@@ -263,8 +261,6 @@ async def _generate_identity_portrait(
             usage_task_type=task_type,
             usage_scope=scope,
             identity_name=identity.identity_name,
-            gender=str(character.gender or ""),
-            age_group=str(identity.age_group or character.age_group or ""),
             raise_on_error=True,
         )
         if not paths:
@@ -359,9 +355,6 @@ async def _generate_identity_image(
             usage_task_type=task_type,
             usage_scope=scope,
             identity_name=identity.identity_name,
-            gender=str(character.gender or ""),
-            character_age_group=char_age,
-            identity_age_group=identity_age,
             raise_on_error=True,
         )
         success = bool(result.get("success", False)) if isinstance(result, dict) else bool(result)
