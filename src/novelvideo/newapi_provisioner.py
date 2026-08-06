@@ -774,10 +774,16 @@ def build_channel_payload(
         channel_name = (name or f"DC-{provider_key}").strip()
     else:
         channel_name = (name or f"DC-type-{channel_type}").strip()
+    resolved_upstream_key = upstream_key.strip()
+    # NewAPI's generic channel validator rejects an empty key even for ComfyUI.
+    # ComfyUI itself may run without authentication, so keep the CE setting
+    # empty while using a non-secret sentinel only in the NewAPI channel row.
+    if provider_key == "comfyui" and not resolved_upstream_key:
+        resolved_upstream_key = "none"
     channel = {
         "name": channel_name,
         "type": int(channel_type or preset["type"]),
-        "key": upstream_key.strip(),
+        "key": resolved_upstream_key,
         "base_url": resolved_base_url,
         "models": ",".join(model_keys),
         "group": normalize_group(group),

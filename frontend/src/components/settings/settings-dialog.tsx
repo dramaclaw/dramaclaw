@@ -98,6 +98,7 @@ const MEDIA_STORAGE_PROVIDERS: MediaStorageProvider[] = [
 const SHOW_CODEX_BRIDGE = false;
 const MODEL_CONFIGURATION_GUIDE_URL =
   "https://github.com/dramaclaw/dramaclaw/blob/main/docs/en/getting-started/configuring-models.md";
+const COMFY_WORKFLOW_MANAGED_CONFIG_KEY = "_dcManagedByWorkflow";
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { t } = useTranslation();
@@ -2274,15 +2275,49 @@ function FeatureModelsBlock({
 
   const handleLoadDefaultComfyWorkflows = () => {
     if (!defaultComfyWorkflows) return;
+    const current = providerChannels.comfyui;
+    const currentSettings = current?.settings ?? {};
+    const currentComfyUI =
+      currentSettings.comfyui &&
+      typeof currentSettings.comfyui === "object" &&
+      !Array.isArray(currentSettings.comfyui)
+        ? (currentSettings.comfyui as Record<string, unknown>)
+        : {};
+    const currentWorkflows = readComfyUIWorkflows(currentSettings);
     addFeatureProviderChannel("comfyui");
     updateFeatureProviderChannel("comfyui", {
-      baseUrl: "http://127.0.0.1:8188",
-      priority: 0,
+      baseUrl: current?.baseUrl || "http://127.0.0.1:8188",
+      priority: current?.priority ?? 0,
       settings: {
-        comfyui: { workflow_by_model: defaultComfyWorkflows },
+        ...currentSettings,
+        comfyui: {
+          ...currentComfyUI,
+          workflow_by_model: {
+            ...defaultComfyWorkflows,
+            ...currentWorkflows,
+          },
+        },
       },
     });
   };
+
+  useEffect(() => {
+    if (!defaultComfyWorkflows) return;
+    const current = providerChannels.comfyui;
+    if (!current || current.baseUrl.trim()) return;
+    const workflows = readComfyUIWorkflows(current.settings);
+    const hasLoadedTemplate = Object.keys(defaultComfyWorkflows).some(
+      (model) => workflows[model],
+    );
+    if (!hasLoadedTemplate) return;
+    updateFeatureProviderChannel("comfyui", {
+      baseUrl: "http://127.0.0.1:8188",
+    });
+  }, [
+    defaultComfyWorkflows,
+    providerChannels.comfyui,
+    updateFeatureProviderChannel,
+  ]);
 
   // 把功能行按 provider 分组拼成渠道：modelMapping = { DC内部模型名: 上游模型名 }。
   const buildChannels = (): CustomChannelInput[] => {
@@ -2375,9 +2410,7 @@ function FeatureModelsBlock({
 
   return (
     <>
-      {defaultComfyWorkflows &&
-      !providerChannels.comfyui &&
-      !savedChannelByProvider.has("comfyui") ? (
+      {defaultComfyWorkflows ? (
         <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2.5">
           <p className="text-xs text-muted-foreground">
             {t("settings.modelConfig.quick.comfyTemplateHint")}
@@ -2817,6 +2850,48 @@ function EmbeddingModelBlock({
   );
 }
 
+function defaultComfyMediaModelConfig(model: string): MediaModelEntry {
+  const normalized = model.trim().toLowerCase();
+  let supportedModes = ["text_to_video"];
+  const referenceLimits: Record<string, number> = {};
+  if (/(^|[_-])r2v($|[_-])/.test(normalized)) {
+    supportedModes = ["all_reference"];
+    referenceLimits.referenceImageMax = 9;
+    referenceLimits.referenceVideoMax = 3;
+    referenceLimits.referenceAudioMax = 3;
+  } else if (/(^|[_-])i2v($|[_-])/.test(normalized)) {
+    supportedModes = ["image_reference"];
+    referenceLimits.referenceImageMax = 1;
+  }
+  return {
+    provider: "comfyui",
+    upstreamModel: model,
+    mediaType: "video",
+    label: model,
+    enabled: true,
+    sortOrder: 100,
+    config: {
+      request: { endpoint: "video/generations", parameters: [] },
+      resolutionOptions: ["480p", "640p"],
+      ratioOptions: ["1:1", "16:9"],
+      minDuration: 4,
+      maxDuration: 15,
+      supportedModes,
+      ...referenceLimits,
+      [COMFY_WORKFLOW_MANAGED_CONFIG_KEY]: true,
+    },
+  };
+}
+
+function detachComfyWorkflowManagedConfig(
+  entry: MediaModelEntry | undefined,
+): MediaModelEntry | undefined {
+  if (!entry?.config?.[COMFY_WORKFLOW_MANAGED_CONFIG_KEY]) return entry;
+  const config = { ...entry.config };
+  delete config[COMFY_WORKFLOW_MANAGED_CONFIG_KEY];
+  return { ...entry, config };
+}
+
 function MediaModelsBlock({
   configuredProviders,
   newApiBaseUrl,
@@ -2842,6 +2917,7 @@ function MediaModelsBlock({
     (s) => s.featureModelConfig.providerChannels,
   );
   const setMediaModels = useSettingsStore((s) => s.setMediaModels);
+  const saveProviderChannels = useSaveProviderChannels();
   const saveMediaModels = useSaveMediaModels();
   const [mediaModels, setLocalMediaModels] = useState(localSavedMediaModels);
   const [saveError, setSaveError] = useState("");
@@ -2849,6 +2925,13 @@ function MediaModelsBlock({
   const [creatingModel, setCreatingModel] = useState(false);
   const savedMediaModelsKey = JSON.stringify(savedMediaModels);
   const localSavedMediaModelsKey = JSON.stringify(localSavedMediaModels);
+  const comfyWorkflowModels = useMemo(
+    () =>
+      Object.keys(
+        readComfyUIWorkflows(providerChannels.comfyui?.settings ?? {}),
+      ).sort(),
+    [providerChannels.comfyui?.settings],
+  );
   const mediaModelRows = useMemo(() => {
     const presetKinds = new Map(
       MEDIA_MODEL_ROWS.map((row) => [row.model, row.kind]),
@@ -2907,6 +2990,29 @@ function MediaModelsBlock({
     );
   }, [localSavedMediaModelsKey, savedMediaModelsKey]);
 
+  useEffect(() => {
+    setLocalMediaModels((current) => {
+      let changed = false;
+      const next = { ...current };
+      const workflowModelSet = new Set(comfyWorkflowModels);
+      for (const [model, entry] of Object.entries(next)) {
+        if (
+          entry.config?.[COMFY_WORKFLOW_MANAGED_CONFIG_KEY] === true &&
+          !workflowModelSet.has(model)
+        ) {
+          delete next[model];
+          changed = true;
+        }
+      }
+      for (const model of comfyWorkflowModels) {
+        if (next[model]) continue;
+        next[model] = defaultComfyMediaModelConfig(model);
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [comfyWorkflowModels]);
+
   const handleSave = async () => {
     setSaveError("");
     const next: typeof localSavedMediaModels = {};
@@ -2925,11 +3031,12 @@ function MediaModelsBlock({
         };
       }
     }
-    for (const [model, entry] of Object.entries(mediaModels)) {
-      const hiddenByScope = comfyOnly
-        ? entry.provider !== "comfyui"
-        : excludeComfyUI && entry.provider === "comfyui";
-      if (hiddenByScope) next[model] = entry;
+    if (!comfyOnly) {
+      for (const [model, entry] of Object.entries(mediaModels)) {
+        if (excludeComfyUI && entry.provider === "comfyui") {
+          next[model] = entry;
+        }
+      }
     }
     if (Object.keys(next).length === 0) {
       toast.error(t("settings.modelConfig.mediaModels.noMappings"));
@@ -2962,6 +3069,34 @@ function MediaModelsBlock({
       return;
     }
     try {
+      if (comfyOnly) {
+        const comfyChannel = providerChannels.comfyui;
+        if (!comfyChannel) {
+          toast.error(t("settings.modelConfig.featureModels.noChannels"));
+          return;
+        }
+        const channelResult = await saveProviderChannels.mutateAsync({
+          preserveUnmentioned: true,
+          channels: [
+            {
+              provider: "comfyui",
+              type: savedChannelByProvider.get("comfyui")?.type ?? 63,
+              baseUrl: comfyChannel.baseUrl.trim(),
+              priority: comfyChannel.priority ?? 0,
+              settings: comfyChannel.settings ?? {},
+            },
+          ],
+        });
+        if (channelResult.ok !== true) {
+          const message = getResponseErrorMessage(
+            channelResult,
+            t("settings.modelConfig.requestFailed"),
+          );
+          setSaveError(message);
+          toast.error(message);
+          return;
+        }
+      }
       const res = await saveMediaModels.mutateAsync({
         newApiBaseUrl: newApiBaseUrl.trim(),
         ...(database ? { database } : {}),
@@ -3081,7 +3216,7 @@ function MediaModelsBlock({
                     setLocalMediaModels((prev) => ({
                       ...prev,
                       [row.model]: {
-                        ...prev[row.model],
+                        ...detachComfyWorkflowManagedConfig(prev[row.model]),
                         provider: provider as FeatureModelProvider,
                         upstreamModel: prev[row.model]?.upstreamModel ?? "",
                       },
@@ -3118,7 +3253,7 @@ function MediaModelsBlock({
                     setLocalMediaModels((prev) => ({
                       ...prev,
                       [row.model]: {
-                        ...prev[row.model],
+                        ...detachComfyWorkflowManagedConfig(prev[row.model]),
                         provider:
                           prev[row.model]?.provider ??
                           configuredProviders[0] ??
@@ -3242,10 +3377,12 @@ function MediaModelsBlock({
           className="shrink-0"
           onClick={handleSave}
           disabled={
-            configuredProviders.length === 0 || saveMediaModels.isPending
+            configuredProviders.length === 0 ||
+            saveProviderChannels.isPending ||
+            saveMediaModels.isPending
           }
         >
-          {saveMediaModels.isPending ? (
+          {saveProviderChannels.isPending || saveMediaModels.isPending ? (
             <Loader2 className="size-3.5 animate-spin" />
           ) : null}
           {t(
@@ -3258,6 +3395,7 @@ function MediaModelsBlock({
     </div>
   );
 }
+
 
 function LocalMediaModelEditor({
   originalModel,
@@ -3370,6 +3508,7 @@ function LocalMediaModelEditor({
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
         throw new Error();
       config = parsed as Record<string, unknown>;
+      delete config[COMFY_WORKFLOW_MANAGED_CONFIG_KEY];
     } catch {
       toast.error(
         t("settings.modelConfig.mediaModels.invalidCapabilitiesJson"),

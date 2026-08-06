@@ -1874,7 +1874,7 @@ def test_comfyui_provider_channel_writes_workflows_to_newapi(
     assert response.status_code == 200
     channel = captured["payload"]["channel"]
     assert channel["type"] == 63
-    assert channel["key"] == ""
+    assert channel["key"] == "none"
     assert channel["models"] == "wan-i2v"
     assert channel["priority"] == 100
     assert json.loads(channel["settings"])["comfyui"]["workflow_by_model"] == {
