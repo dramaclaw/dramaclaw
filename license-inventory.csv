@@ -70,8 +70,6 @@ docker-compose.selfhosted.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml
 docker-compose.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/adr/0002-ffmpeg-system-dependency.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-docs/ci-gate-baseline-proposal.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-docs/ci-gate-implementation-plan.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/compliance/copyleft-deps.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/compliance/npm-dependency-licenses.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/compliance/python-dependency-licenses.csv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
