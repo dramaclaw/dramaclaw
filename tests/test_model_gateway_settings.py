@@ -2437,7 +2437,6 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     assert minimax["gatewayModel"] == "MiniMax-H3"
     assert minimax["resolutionOptions"] == ["768P", "2K"]
     assert minimax["ratioOptions"] == [
-        "adaptive",
         "21:9",
         "16:9",
         "4:3",

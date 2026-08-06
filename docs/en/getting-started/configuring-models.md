@@ -12,7 +12,7 @@ After startup, open `http://localhost:8080` and go to **Settings → Models & Ch
 | Mode | Use case | What you configure |
 |---|---|---|
 | Official | Use the models provided by RelayClaw | DC Key only |
-| Local | Route every model through Local NewAPI | NewAPI initialization, providers, feature models, embedding, and media models |
+| Custom | Route every model through your NewAPI configuration | NewAPI initialization, providers, feature models, embedding, and media models |
 | Local + Official Hybrid | Keep official models, but override matching official video models with Local ComfyUI | Official DC Key, Local NewAPI, ComfyUI URL, and workflows |
 
 Enable the intended mode after configuring it. New jobs read the latest mode, key, and mappings. Jobs already running do not switch gateways midway.
@@ -31,7 +31,7 @@ The official image/video list and its resolutions, aspect ratios, durations, and
 
 To obtain a DC Key, visit <https://relayclaw.cdnfg.com>.
 
-## Local NewAPI mode
+## Custom mode
 
 ### 1. Start the local stack
 
@@ -47,7 +47,7 @@ The repository compose file enables the setup and channel-management features re
 
 ### 2. Initialize Local NewAPI
 
-Open **Local**. When it shows “Initialization required”:
+Open **Custom**. When it shows “Initialization required”:
 
 1. Set and confirm a root account password of at least eight characters for a fresh NewAPI instance.
 2. Click **Initialize Local NewAPI**.
@@ -69,11 +69,10 @@ After initialization, start with **Recommended**. One profile configures:
 - DramaClaw feature-model mappings.
 - Cognee embedding model, dimensions, and batch size.
 - Image, video, and audio model mappings.
-- The ComfyUI channel and MiniMax H3 text-to-video, image-to-video, and multi-reference workflows.
 
 Enter each provider key separately, then click **Save & Apply All**. Keys are stored separately and never written into profile JSON. Leave an already saved key blank; entering a new value replaces it.
 
-The built-in recommended profile is read-only. Switch to **Custom** to edit and persist your own JSON. The main shape is:
+The built-in recommended profile is read-only. Switch to **My Config** to edit and persist your own JSON. The main shape is:
 
 ```json
 {
@@ -113,17 +112,7 @@ The built-in recommended profile is read-only. Switch to **Custom** to edit and 
 }
 ```
 
-Each `channel` references a `channels[].id`. A profile currently supports only one entry per `provider`. Changes in the recommended/custom profile are reflected in Advanced Settings. Saving Advanced Settings updates the active custom profile, so there are not two competing configurations.
-
-The recommended profile uses `http://127.0.0.1:8188` as the default ComfyUI URL and includes these models:
-
-| Model ID | Purpose | Workflow key |
-|---|---|---|
-| `minimax_h3_t2v` | Text-to-video | `minimax_h3_t2v` |
-| `minimax_h3_i2v` | Single-image reference video | `minimax_h3_i2v` |
-| `minimax_h3_r2v` | Multi-reference video | `minimax_h3_r2v` |
-
-These workflows are editable starter templates. Verify that your ComfyUI installation has the MiniMax H3 models, VAE, CLIP, and custom nodes referenced by the templates. If local filenames or node versions differ, update the workflow under **ComfyUI Configuration**. For a remote deployment, replace the default URL with an address reachable from the DramaClaw backend; `127.0.0.1` will not point to a remote ComfyUI host.
+Each `channel` references a `channels[].id`. A profile currently supports only one entry per `provider`. Changes in Recommended or My Config are reflected in Advanced Settings. Saving Advanced Settings updates My Config, so there are not two competing configurations. The recommended profile does not include ComfyUI. To use ComfyUI in Custom mode, add its channel, workflows, and media models through Advanced Settings.
 
 ### 4. Advanced Settings
 
@@ -141,7 +130,7 @@ After a profile is saved, a channel key should show “Saved” and a masked pre
 
 #### Feature models
 
-DramaClaw uses stable logical names such as `DC-scene-builder-LLM` and `DC-freezone-vision-LLM`. In Local mode, keep those internal names and map them to real upstream models in NewAPI.
+DramaClaw uses stable logical names such as `DC-scene-builder-LLM` and `DC-freezone-vision-LLM`. In Custom mode, keep those internal names and map them to real upstream models in NewAPI.
 
 - Text features can use text-only models.
 - Vision features send images or video and require a suitable multimodal model.
@@ -173,13 +162,13 @@ Media model configuration controls:
 - Human-review control visibility.
 - Model-specific request parameters.
 
-Built-in mainline models provide the default capability baseline and cannot be removed from the configuration. A custom local profile may add image or video models and edit custom-model capabilities. Save the complete configuration and refresh XiaHua to load the latest catalog and controls.
+Built-in mainline models provide the default capability baseline and cannot be removed from the configuration. My Config may add image or video models and edit custom-model capabilities. Save the complete configuration and refresh XiaHua to load the latest catalog and controls.
 
 The **Model ID** is DramaClaw’s stable identifier. **Upstream Model** is the actual model used by the NewAPI channel; the two may differ.
 
 ### 5. ComfyUI Configuration
 
-**ComfyUI Configuration** is separate from Advanced Settings and is available in both **Local** and **Local + Official Hybrid** modes. Both views read and write the same Local NewAPI channel and SQLite data, so NewAPI initialization and workflows are not duplicated.
+In **Custom** mode, add ComfyUI through **Advanced Settings → Provider Channels**. In **Local + Official Hybrid**, use the separate **ComfyUI Configuration** section, which includes MiniMax H3 starter workflows. Both modes use the same Local NewAPI and SQLite data.
 
 Each ComfyUI model needs:
 
@@ -195,13 +184,13 @@ A normal local ComfyUI instance does not require an API key, so leave it empty. 
 Hybrid mode keeps RelayClaw while generating selected video models through Local ComfyUI:
 
 1. Save the DC Key under **Official**.
-2. Initialize NewAPI once under **Local**; the same SQLite database is reused.
+2. Initialize NewAPI once under **Custom**; the same SQLite database is reused.
 3. Open **Local + Official Hybrid**.
 4. Open the separate **ComfyUI Configuration** section and confirm or change the service URL; the local default is `http://127.0.0.1:8188`.
-5. Use the recommended MiniMax H3 workflows, or enter a local video model ID and paste a ComfyUI **API Format Workflow** JSON export.
+5. Use the MiniMax H3 starter workflows provided by Hybrid mode, or enter a local video model ID and paste a ComfyUI **API Format Workflow** JSON export.
 6. Save video configuration and enable Hybrid mode.
 
-The ComfyUI API key is optional. Workflows must use API Format, not the browser workflow format. Local and Hybrid modes share the ComfyUI channel, workflows, and media capabilities; saving them in either mode updates the same configuration.
+The ComfyUI API key is optional. Workflows must use API Format, not the browser workflow format. Custom and Hybrid modes share the ComfyUI channel, workflows, and media capabilities; saving them in either mode updates the same configuration.
 
 Routing is based on model ID. A local video model overrides an official model with the same ID; all other models continue through RelayClaw. DramaClaw does not automatically fall back to the official model after a local failure. The user chooses whether to retry or switch models. Hybrid mode manages local video overrides only, so it does not require OpenRouter, VolcEngine, or other official upstream provider settings.
 

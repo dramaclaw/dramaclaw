@@ -406,6 +406,17 @@ function normalizeFeatureModelSettings(
   return { featureModels, mediaModels, embeddingModel, providerKeys, providerChannels };
 }
 
+function prepareFeatureModelSettingsForPersistence(
+  input: Partial<FeatureModelSettings> | null | undefined
+): FeatureModelSettings {
+  const normalized = normalizeFeatureModelSettings(input);
+  return {
+    ...normalized,
+    providerKeys: {},
+    providerChannels: {},
+  };
+}
+
 function normalizePriceDisplayCurrencyMode(
   input: PriceDisplayCurrencyMode | string | null | undefined
 ): PriceDisplayCurrencyMode {
@@ -772,11 +783,21 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'settings-storage',
-      version: 17,
+      version: 18,
       // Quota-safe persistence: on a QuotaExceededError, prune stale freezone
       // canvas keys (via the registered reclaimer) and retry once instead of
       // letting the whole store fail to hydrate/persist.
       storage: createJSONStorage(() => quotaSafeStateStorage),
+      // Model-gateway drafts may contain secrets and very large ComfyUI
+      // workflows. The backend settings database is their source of truth;
+      // keeping them in the global startup store can exhaust localStorage or
+      // make hydration block the whole application after a refresh.
+      partialize: (state) => ({
+        ...state,
+        featureModelConfig: prepareFeatureModelSettingsForPersistence(
+          state.featureModelConfig
+        ),
+      }),
       onRehydrateStorage: () => {
         return (_state, error) => {
           if (error) {
@@ -838,7 +859,9 @@ export const useSettingsStore = create<SettingsState>()(
             usdToCnyRate: normalizeUsdToCnyRate(state.usdToCnyRate),
             preferDiscountedPrice: state.preferDiscountedPrice ?? false,
             grsaiCreditTierId: normalizeGrsaiCreditTierId(state.grsaiCreditTierId),
-            featureModelConfig: normalizeFeatureModelSettings(state.featureModelConfig),
+            featureModelConfig: prepareFeatureModelSettingsForPersistence(
+              state.featureModelConfig
+            ),
           };
         }
 
@@ -866,7 +889,9 @@ export const useSettingsStore = create<SettingsState>()(
           usdToCnyRate: normalizeUsdToCnyRate(state.usdToCnyRate),
           preferDiscountedPrice: state.preferDiscountedPrice ?? false,
           grsaiCreditTierId: normalizeGrsaiCreditTierId(state.grsaiCreditTierId),
-          featureModelConfig: normalizeFeatureModelSettings(state.featureModelConfig),
+          featureModelConfig: prepareFeatureModelSettingsForPersistence(
+            state.featureModelConfig
+          ),
         };
       },
     }

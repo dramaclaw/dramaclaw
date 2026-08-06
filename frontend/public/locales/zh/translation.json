@@ -3993,7 +3993,7 @@
     },
     "modelConfig": {
       "title": "模型配置",
-      "description": "选择模型网关渠道：使用平台官方网关，或自配本地 NewAPI。",
+      "description": "选择模型网关渠道：使用平台官方网关、自定义 NewAPI，或组合使用本地与官方服务。",
       "baseUrlHint": "本地 NewAPI 地址由 CE 运行环境自动配置。",
       "effectiveBadge": "当前生效：{{channel}}",
       "guide": "配置手册",
@@ -4009,7 +4009,7 @@
       "gatewayNotConfiguredImpact": "当前生效的模型网关未配置。文本、图片、视频、音频等模型调用会失败；请配置官方渠道或初始化本地 NewAPI 后再生成内容。",
       "modes": {
         "official": "官方",
-        "custom": "本地",
+        "custom": "自定义",
         "hybrid": "本地 + 官方混合"
       },
       "fields": {
@@ -4061,7 +4061,7 @@
         "title": "推荐配置",
         "description": "本地 NewAPI 初始化完成后，使用一份配置同时完成供应商渠道、业务模型、Embedding 和媒体模型映射。",
         "recommended": "推荐配置",
-        "custom": "自定义配置",
+        "custom": "我的配置",
         "active": "使用中",
         "upstreamKey": "上游 API Key",
         "upstreamKeyPlaceholder": "输入模型供应商的 API Key",
@@ -4071,13 +4071,15 @@
         "fixJsonFirst": "请先修正配置 JSON，解析成功后会在这里显示渠道 Key 输入框。",
         "editJson": "查看或编辑推荐配置 JSON",
         "jsonHint": "channels 定义渠道；业务模型、Embedding 和每个媒体模型通过 channel 字段选择渠道。当前暂不支持重复 provider。",
-        "recommendedJsonHint": "推荐配置为内置只读模板。切换到自定义配置可基于该模板修改并长期保存。",
+        "recommendedJsonHint": "推荐配置为内置只读模板。切换到我的配置可基于该模板修改并长期保存。",
         "apply": "保存并应用全部配置",
         "applyHint": "一次写入全部配置；现有逐项配置可在下方高级配置中继续调整。",
         "applying": "正在处理：{{step}}",
         "applied": "推荐配置已全部保存并启用。",
         "initializeFirst": "请先初始化本地 NewAPI，确认数据库和管理员访问正常后再应用配置。",
         "comfyConfig": "ComfyUI 配置",
+        "comfyTemplateHint": "需要本地 MiniMax H3 示例时再主动载入，打开混合配置不会自动创建 ComfyUI 渠道。",
+        "loadComfyTemplate": "载入 MiniMax H3 模板",
         "advanced": "高级配置",
         "invalidJson": "配置 JSON 无效：{{message}}",
         "missingKeys": "以下渠道缺少上游 API Key：{{channels}}",

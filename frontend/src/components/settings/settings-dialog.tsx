@@ -492,24 +492,31 @@ function ModelConfigSection({ open }: { open: boolean }) {
               database={customDatabase}
             />
           ) : null}
-          <details className="mt-5 rounded-md border border-border/70">
-            <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
-              {t("settings.modelConfig.quick.comfyConfig")}
-            </summary>
-            <div className="border-t border-border/70 px-3 pb-4">
-              <FeatureModelsBlock
-                newApiBaseUrl={customBaseUrl}
-                database={customDatabase}
-                savedProviderChannels={
-                  config?.provisioner?.providerChannels ?? []
-                }
-                savedEmbeddingModel={config?.provisioner?.embeddingModel}
-                savedMediaModels={config?.provisioner?.mediaModels ?? {}}
-                mediaOnly
-                comfyOnly
-              />
-            </div>
-          </details>
+          {mode === "hybrid" ? (
+            <details className="mt-5 rounded-md border border-border/70">
+              <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
+                {t("settings.modelConfig.quick.comfyConfig")}
+              </summary>
+              <div className="border-t border-border/70 px-3 pb-4">
+                <FeatureModelsBlock
+                  newApiBaseUrl={customBaseUrl}
+                  database={customDatabase}
+                  channelTypesEnabled={Boolean(
+                    config?.custom?.configured &&
+                      config?.provisioner?.database?.available
+                  )}
+                  savedProviderChannels={
+                    config?.provisioner?.providerChannels ?? []
+                  }
+                  savedEmbeddingModel={config?.provisioner?.embeddingModel}
+                  savedMediaModels={config?.provisioner?.mediaModels ?? {}}
+                  defaultComfyWorkflows={HYBRID_COMFYUI_WORKFLOWS}
+                  mediaOnly
+                  comfyOnly
+                />
+              </div>
+            </details>
+          ) : null}
           {mode === "custom" ? (
             <details className="mt-5 rounded-md border border-border/70">
               <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
@@ -519,12 +526,15 @@ function ModelConfigSection({ open }: { open: boolean }) {
                 <FeatureModelsBlock
                   newApiBaseUrl={customBaseUrl}
                   database={customDatabase}
+                  channelTypesEnabled={Boolean(
+                    config?.custom?.configured &&
+                      config?.provisioner?.database?.available
+                  )}
                   savedProviderChannels={
                     config?.provisioner?.providerChannels ?? []
                   }
                   savedEmbeddingModel={config?.provisioner?.embeddingModel}
                   savedMediaModels={config?.provisioner?.mediaModels ?? {}}
-                  excludeComfyUI
                 />
               </div>
             </details>
@@ -552,10 +562,12 @@ function OfficialGatewayPanel({
 
   const [apiKey, setApiKey] = useState("");
   const [revealKey, setRevealKey] = useState(false);
+  const apiKeyInputRef = useRef<HTMLInputElement>(null);
   const savedApiKeyPreview = official?.configured ? official.apiKeyPreview : "";
 
   const handleSave = async () => {
-    const trimmedApiKey = apiKey.trim();
+    // Password managers may update the DOM without firing React's onChange.
+    const trimmedApiKey = (apiKey || apiKeyInputRef.current?.value || "").trim();
     try {
       if (!trimmedApiKey) {
         if (!official?.configured) {
@@ -637,6 +649,7 @@ function OfficialGatewayPanel({
           </Label>
           <div className="relative">
             <Input
+              ref={apiKeyInputRef}
               name="relayclaw-official-api-key"
               autoComplete="new-password"
               data-1p-ignore="true"
@@ -1194,7 +1207,7 @@ function minimaxH3ReferenceWorkflow() {
   };
 }
 
-const RECOMMENDED_COMFYUI_WORKFLOWS = {
+const HYBRID_COMFYUI_WORKFLOWS = {
   minimax_h3_t2v: minimaxH3Fl2vaWorkflow(false),
   minimax_h3_i2v: minimaxH3Fl2vaWorkflow(true),
   minimax_h3_r2v: minimaxH3ReferenceWorkflow(),
@@ -1256,50 +1269,6 @@ const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
     model: "openai/gpt-audio",
     mediaType: "audio",
   },
-  minimax_h3_i2v: {
-    channel: "comfyui",
-    model: "minimax_h3_i2v",
-    mediaType: "video",
-    config: {
-      request: { endpoint: "video/generations", parameters: [] },
-      resolutionOptions: ["480p", "640p"],
-      ratioOptions: ["16:9", "1:1"],
-      minDuration: 4,
-      maxDuration: 15,
-      supportedModes: ["image_reference"],
-      referenceImageMax: 1,
-      humanReview: true,
-    },
-  },
-  minimax_h3_r2v: {
-    channel: "comfyui",
-    model: "minimax_h3_r2v",
-    mediaType: "video",
-    config: {
-      request: { endpoint: "video/generations", parameters: [] },
-      resolutionOptions: ["480p", "640p"],
-      ratioOptions: ["1:1", "16:9"],
-      minDuration: 4,
-      maxDuration: 15,
-      referenceImageMax: 9,
-      referenceVideoMax: 3,
-      referenceAudioMax: 3,
-      supportedModes: ["all_reference"],
-    },
-  },
-  minimax_h3_t2v: {
-    channel: "comfyui",
-    model: "minimax_h3_t2v",
-    mediaType: "video",
-    config: {
-      request: { endpoint: "video/generations", parameters: [] },
-      resolutionOptions: ["480p", "640p"],
-      ratioOptions: ["1:1", "16:9"],
-      minDuration: 4,
-      maxDuration: 15,
-      supportedModes: ["text_to_video"],
-    },
-  },
 };
 
 const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
@@ -1319,16 +1288,6 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
       baseUrl: "",
       priority: 0,
       settings: {},
-    },
-    {
-      id: "comfyui",
-      provider: "comfyui",
-      type: 63,
-      baseUrl: "http://127.0.0.1:8188",
-      priority: 0,
-      settings: {
-        comfyui: { workflow_by_model: RECOMMENDED_COMFYUI_WORKFLOWS },
-      },
     },
   ],
   featureModels: {
@@ -1795,7 +1754,14 @@ function QuickLocalNewApiSetup({
         featureMappingsByChannel.set(selected.channel, mapping);
       }
     }
-    const mediaModels: Record<string, SavedMediaModelConfig> = {};
+    // Quick profiles configure the custom NewAPI stack, while ComfyUI mappings
+    // are shared with Hybrid mode. Applying a profile that does not mention
+    // ComfyUI must not erase those independently managed local overrides.
+    const mediaModels: Record<string, SavedMediaModelConfig> = Object.fromEntries(
+      Object.entries(config?.provisioner?.mediaModels ?? {}).filter(
+        ([, item]) => item.provider === "comfyui",
+      ),
+    );
     for (const [rawModel, item] of Object.entries(profile.mediaModels)) {
       const model = rawModel.trim();
       const upstreamModel = item.model.trim();
@@ -2196,6 +2162,8 @@ function FeatureModelsBlock({
   mediaOnly = false,
   comfyOnly = false,
   excludeComfyUI = false,
+  defaultComfyWorkflows,
+  channelTypesEnabled = true,
 }: {
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
@@ -2205,6 +2173,8 @@ function FeatureModelsBlock({
   mediaOnly?: boolean;
   comfyOnly?: boolean;
   excludeComfyUI?: boolean;
+  defaultComfyWorkflows?: Record<string, Record<string, unknown>>;
+  channelTypesEnabled?: boolean;
 }) {
   const { t } = useTranslation();
   const featureModels = useSettingsStore(
@@ -2213,7 +2183,7 @@ function FeatureModelsBlock({
   const providerChannels = useSettingsStore(
     (s) => s.featureModelConfig.providerChannels,
   );
-  const channelTypesQuery = useNewApiChannelTypes();
+  const channelTypesQuery = useNewApiChannelTypes(channelTypesEnabled);
   const channelTypeByProvider = useMemo(
     () =>
       new Map(
@@ -2301,6 +2271,18 @@ function FeatureModelsBlock({
     savedProviderChannelsKey,
     updateFeatureProviderChannel,
   ]);
+
+  const handleLoadDefaultComfyWorkflows = () => {
+    if (!defaultComfyWorkflows) return;
+    addFeatureProviderChannel("comfyui");
+    updateFeatureProviderChannel("comfyui", {
+      baseUrl: "http://127.0.0.1:8188",
+      priority: 0,
+      settings: {
+        comfyui: { workflow_by_model: defaultComfyWorkflows },
+      },
+    });
+  };
 
   // 把功能行按 provider 分组拼成渠道：modelMapping = { DC内部模型名: 上游模型名 }。
   const buildChannels = (): CustomChannelInput[] => {
@@ -2393,6 +2375,25 @@ function FeatureModelsBlock({
 
   return (
     <>
+      {defaultComfyWorkflows &&
+      !providerChannels.comfyui &&
+      !savedChannelByProvider.has("comfyui") ? (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2.5">
+          <p className="text-xs text-muted-foreground">
+            {t("settings.modelConfig.quick.comfyTemplateHint")}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={handleLoadDefaultComfyWorkflows}
+          >
+            <Plus className="size-3.5" />
+            {t("settings.modelConfig.quick.loadComfyTemplate")}
+          </Button>
+        </div>
+      ) : null}
       <ProviderChannelsBlock
         savedProviderChannels={savedProviderChannels}
         newApiBaseUrl={newApiBaseUrl}
@@ -3026,17 +3027,15 @@ function MediaModelsBlock({
             {t("settings.modelConfig.mediaModels.description")}
           </p>
         </div>
-        {!comfyOnly ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => setCreatingModel(true)}
-          >
-            <Plus className="size-3.5" />
-            {t("settings.modelConfig.mediaModels.addModel")}
-          </Button>
-        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => setCreatingModel(true)}
+        >
+          <Plus className="size-3.5" />
+          {t("settings.modelConfig.mediaModels.addModel")}
+        </Button>
       </div>
 
       <div

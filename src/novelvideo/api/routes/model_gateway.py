@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -750,8 +751,12 @@ async def get_custom_newapi_channel_types() -> dict[str, Any]:
     try:
         require_ce_gateway_management()
         cfg = get_provisioner_config()
-        admin = ensure_admin_access_token(cfg)
-        items = list_channel_types(cfg, admin)
+        # Token discovery may wait for an uninitialized local NewAPI. Keep all
+        # blocking HTTP/SQLite work off the ASGI event loop so official gateway
+        # saves and application startup remain responsive.
+        items = await asyncio.to_thread(
+            lambda: list_channel_types(cfg, ensure_admin_access_token(cfg))
+        )
     except PermissionError as exc:
         raise _permission_error(exc) from exc
     except Exception as exc:

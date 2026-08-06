@@ -12,7 +12,7 @@ DramaClaw CE 通过 NewAPI 兼容网关调用文本、视觉理解、Embedding�
 | 模式 | 适用场景 | 需要配置的内容 |
 |---|---|---|
 | 官方 | 直接使用 RelayClaw（虾驿）提供的模型 | 只需 DC Key |
-| 本地 | 所有模型都通过本地 NewAPI | 初始化 NewAPI、供应商渠道、业务模型、Embedding、媒体模型 |
+| 自定义 | 所有模型都通过自定义 NewAPI 配置 | 初始化 NewAPI、供应商渠道、业务模型、Embedding、媒体模型 |
 | 本地 + 官方混合 | 官方模型照常使用，只让本地 ComfyUI 视频模型覆盖同名官方视频模型 | 官方 DC Key、本地 NewAPI、ComfyUI URL 和 Workflow |
 
 配置完成后点击对应模式的启用按钮。更换模式、Key 或模型后，新任务会读取新配置；正在运行的任务不会中途切换。
@@ -31,7 +31,7 @@ DramaClaw CE 通过 NewAPI 兼容网关调用文本、视觉理解、Embedding�
 
 还没有 DC Key 时，可前往 <https://relayclaw.cdnfg.com> 注册或购买。
 
-## 本地 NewAPI 模式
+## 自定义模式
 
 ### 1. 启动本地服务
 
@@ -47,7 +47,7 @@ docker compose -f docker-compose.selfhosted.yml up -d --build
 
 ### 2. 初始化本地 NewAPI
 
-打开 **本地**。如果状态为“等待初始化”：
+打开 **自定义**。如果状态为“等待初始化”：
 
 1. 为全新的 NewAPI 设置 root 管理员密码并确认，密码至少 8 位。
 2. 点击 **初始化本地 NewAPI**。
@@ -69,11 +69,10 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 - DramaClaw 业务模型映射。
 - Cognee Embedding 模型、维度和批量大小。
 - 图片、视频和音频模型映射。
-- ComfyUI 渠道以及 MiniMax H3 的文生视频、图生视频和多参考图 Workflow。
 
 按渠道填写 API Key，然后点击 **保存并应用全部配置**。Key 独立保存，不会写入配置 JSON；已经保存的 Key 可以留空，重新输入会替换旧值。
 
-内置推荐配置是只读模板。切换到 **自定义配置** 后可以编辑 JSON，保存后的自定义配置会在下次打开时恢复。JSON 的主要结构如下：
+内置推荐配置是只读模板。切换到 **我的配置** 后可以编辑 JSON，保存后的个人配置会在下次打开时恢复。JSON 的主要结构如下：
 
 ```json
 {
@@ -113,17 +112,7 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 }
 ```
 
-`channel` 引用 `channels[].id`。当前一个 profile 中同一 `provider` 只能配置一次。修改推荐/自定义 JSON 会同步到下方高级配置；高级配置保存后也会成为当前自定义配置，避免两套配置同时生效。
-
-推荐配置中的 ComfyUI 默认地址是 `http://127.0.0.1:8188`，并预置以下模型：
-
-| 模型 ID | 用途 | Workflow Key |
-|---|---|---|
-| `minimax_h3_t2v` | 文生视频 | `minimax_h3_t2v` |
-| `minimax_h3_i2v` | 单张参考图生成视频 | `minimax_h3_i2v` |
-| `minimax_h3_r2v` | 多参考素材生成视频 | `minimax_h3_r2v` |
-
-这些 Workflow 是可编辑的初始模板。请确认本机 ComfyUI 已安装模板使用的 MiniMax H3 模型、VAE、CLIP 和自定义节点；本机文件名或节点版本不同时，需要在 **ComfyUI 配置** 中替换对应 Workflow。远程部署时，将默认地址改为 DramaClaw 后端实际可以访问的 ComfyUI 地址，不能继续使用 `127.0.0.1`。
+`channel` 引用 `channels[].id`。当前一个 profile 中同一 `provider` 只能配置一次。修改推荐配置或我的配置 JSON 会同步到下方高级配置；高级配置保存后也会成为当前个人配置，避免两套配置同时生效。推荐配置不包含 ComfyUI；需要在自定义模式使用 ComfyUI 时，请在高级配置中新增 ComfyUI 渠道、Workflow 和媒体模型。
 
 ### 4. 高级配置
 
@@ -141,7 +130,7 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 
 #### 业务模型
 
-DramaClaw 使用稳定的内部逻辑模型名，例如 `DC-scene-builder-LLM` 和 `DC-freezone-vision-LLM`。本地模式下，应保留这些内部名称，在 NewAPI 渠道中把它们映射到真实上游模型。
+DramaClaw 使用稳定的内部逻辑模型名，例如 `DC-scene-builder-LLM` 和 `DC-freezone-vision-LLM`。自定义模式下，应保留这些内部名称，在 NewAPI 渠道中把它们映射到真实上游模型。
 
 - 文本理解与生成可以选择普通文本模型。
 - 视觉理解功能会发送图片或视频，必须选择支持相应输入的多模态模型。
@@ -173,13 +162,13 @@ Embedding 模型和维度在项目创建时绑定。修改配置只自动影响�
 - 是否显示真人审核选项。
 - 模型专属请求参数。
 
-主线内置模型提供默认能力基线，不能从配置中删除。自定义本地配置可以新增图片或视频模型，并编辑自定义模型能力。保存后刷新虾画，模型列表和控件会使用最新配置。
+主线内置模型提供默认能力基线，不能从配置中删除。我的配置可以新增图片或视频模型，并编辑自定义模型能力。保存后刷新虾画，模型列表和控件会使用最新配置。
 
 模型 ID 是 DramaClaw 使用的稳定名称，**上游模型名**是 NewAPI 渠道实际调用的名称，两者可以不同。
 
 ### 5. ComfyUI 配置
 
-**ComfyUI 配置**已从高级配置中独立出来，在 **本地** 和 **本地 + 官方混合** 两种模式下都可以打开。两处读取并保存的是同一个本地 NewAPI 渠道和同一份 SQLite 数据，不需要重复初始化或维护两套 Workflow。
+在 **自定义** 模式中，ComfyUI 通过 **高级配置 → 供应商渠道** 添加。在 **本地 + 官方混合** 模式中，使用独立的 **ComfyUI 配置**，并提供 MiniMax H3 Workflow 初始模板。两种模式读取同一个本地 NewAPI 和 SQLite 数据。
 
 每条 ComfyUI 模型配置需要：
 
@@ -195,13 +184,13 @@ Embedding 模型和维度在项目创建时绑定。修改配置只自动影响�
 混合模式用于保留官方 RelayClaw，同时让指定视频模型从本地 ComfyUI 生成：
 
 1. 先在 **官方** 保存 DC Key。
-2. 在 **本地** 初始化一次 NewAPI；同一个 SQLite 不需要重复初始化。
+2. 在 **自定义** 中初始化一次 NewAPI；同一个 SQLite 不需要重复初始化。
 3. 打开 **本地 + 官方混合**。
 4. 打开独立的 **ComfyUI 配置**，确认或修改服务地址；本机默认是 `http://127.0.0.1:8188`。
-5. 使用推荐配置预置的 MiniMax H3 Workflow，或为本地视频模型填写模型 ID 并粘贴 ComfyUI 导出的 **API Format Workflow** JSON。
+5. 使用混合模式提供的 MiniMax H3 Workflow 初始模板，或为本地视频模型填写模型 ID 并粘贴 ComfyUI 导出的 **API Format Workflow** JSON。
 6. 保存视频配置并启用混合模式。
 
-ComfyUI API Key 是可选项。Workflow 必须是 API Format，而不是浏览器工作流格式。本地模式与混合模式共享 ComfyUI 渠道、Workflow 和媒体模型能力配置；任一模式保存后，另一模式会读取相同结果。
+ComfyUI API Key 是可选项。Workflow 必须是 API Format，而不是浏览器工作流格式。自定义模式与混合模式共享 ComfyUI 渠道、Workflow 和媒体模型能力配置；任一模式保存后，另一模式会读取相同结果。
 
 混合模式按模型 ID 路由：本地存在与官方同名的视频模型时使用本地 ComfyUI；其他模型继续使用官方 RelayClaw。DramaClaw 不会在本地生成失败后自动回退官方，是否重试或改选官方模型由用户决定。混合模式只管理本地视频覆盖，不要求再次配置 OpenRouter、火山等官方上游渠道。
 

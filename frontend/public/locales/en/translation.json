@@ -3993,7 +3993,7 @@
     },
     "modelConfig": {
       "title": "Model Config",
-      "description": "Choose a model gateway channel: the platform official gateway, or your own local NewAPI.",
+      "description": "Choose the official gateway, configure your own NewAPI, or combine local and official services.",
       "baseUrlHint": "The CE runtime configures the Local NewAPI URL automatically.",
       "effectiveBadge": "Active: {{channel}}",
       "guide": "Configuration guide",
@@ -4009,7 +4009,7 @@
       "gatewayNotConfiguredImpact": "The active model gateway is not configured. Text, image, video, and audio model calls will fail; configure the official channel or initialize Local NewAPI before generating content.",
       "modes": {
         "official": "Official",
-        "custom": "Local",
+        "custom": "Custom",
         "hybrid": "Local + Official Hybrid"
       },
       "fields": {
@@ -4061,7 +4061,7 @@
         "title": "Recommended Setup",
         "description": "After Local NewAPI is initialized, use one profile to configure provider channels, feature models, embedding, and media mappings.",
         "recommended": "Recommended",
-        "custom": "Custom",
+        "custom": "My Config",
         "active": "Active",
         "upstreamKey": "Upstream API Key",
         "upstreamKeyPlaceholder": "Enter the model provider API Key",
@@ -4071,13 +4071,15 @@
         "fixJsonFirst": "Fix the profile JSON first. Channel key fields appear here after it parses successfully.",
         "editJson": "View or edit profile JSON",
         "jsonHint": "channels defines providers. Feature models, embedding, and each media model select one through channel. Duplicate providers are not supported yet.",
-        "recommendedJsonHint": "The recommended profile is a built-in read-only template. Switch to Custom to edit and persist your own profile.",
+        "recommendedJsonHint": "The recommended profile is a built-in read-only template. Switch to My Config to edit and persist your own profile.",
         "apply": "Save & Apply All",
         "applyHint": "Writes the complete setup once. Use Advanced Settings below for individual changes.",
         "applying": "Working on: {{step}}",
         "applied": "The recommended setup has been saved and enabled.",
         "initializeFirst": "Initialize Local NewAPI first, then apply the profile after its database and administrator access are ready.",
         "comfyConfig": "ComfyUI Configuration",
+        "comfyTemplateHint": "Load the local MiniMax H3 example only when needed. Opening Hybrid mode will not create a ComfyUI channel.",
+        "loadComfyTemplate": "Load MiniMax H3 Template",
         "advanced": "Advanced Settings",
         "invalidJson": "Invalid profile JSON: {{message}}",
         "missingKeys": "Missing upstream API Key for channel(s): {{channels}}",
