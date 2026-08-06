@@ -13,7 +13,7 @@ After startup, open `http://localhost:8080` and go to **Settings → Models & Ch
 |---|---|---|
 | Official | Use the models provided by RelayClaw | DC Key only |
 | Custom | Route every model through your NewAPI configuration | NewAPI initialization, providers, feature models, embedding, and media models |
-| Local + Official Hybrid | Keep official models, but override matching official video models with Local ComfyUI | Official DC Key, Local NewAPI, ComfyUI URL, and workflows |
+| Local + Official Hybrid | Keep official models while adding Local ComfyUI video models or overriding official models with matching IDs | Official DC Key, Local NewAPI, ComfyUI URL, and workflows |
 
 Enable the intended mode after configuring it. New jobs read the latest mode, key, and mappings. Jobs already running do not switch gateways midway.
 
@@ -179,6 +179,10 @@ Each ComfyUI model needs:
 
 A normal local ComfyUI instance does not require an API key, so leave it empty. Authentication is relevant only when ComfyUI is placed behind an authenticated proxy.
 
+Adding a workflow automatically creates a video media model with the same ID. The settings UI uses `_t2v`, `_i2v`, or `_r2v` in the model ID to seed text-to-video, image-reference, or all-reference capabilities. You can then edit resolutions, ratios, durations, and reference-media limits. Once edited manually, that model becomes user-managed and is no longer automatically deleted with its workflow.
+
+Deleting a workflow removes only a same-ID media model that is still workflow-managed. A model that has been edited manually is preserved. Save the video configuration afterward to persist the removal to Local NewAPI.
+
 ## Local + Official Hybrid mode
 
 Hybrid mode keeps RelayClaw while generating selected video models through Local ComfyUI:
@@ -192,7 +196,9 @@ Hybrid mode keeps RelayClaw while generating selected video models through Local
 
 The ComfyUI API key is optional. Workflows must use API Format, not the browser workflow format. Custom and Hybrid modes share the ComfyUI channel, workflows, and media capabilities; saving them in either mode updates the same configuration.
 
-Routing is based on model ID. A local video model overrides an official model with the same ID; all other models continue through RelayClaw. DramaClaw does not automatically fall back to the official model after a local failure. The user chooses whether to retry or switch models. Hybrid mode manages local video overrides only, so it does not require OpenRouter, VolcEngine, or other official upstream provider settings.
+The MiniMax H3 template button remains available so missing templates can be restored. Loading it again merges the templates into existing workflows and preserves user-configured workflows with the same IDs. If the ComfyUI URL is empty, the UI fills `http://127.0.0.1:8188`; it does not replace a non-empty custom URL.
+
+Routing is based on model ID. A Local ComfyUI model may appear in XiaHua as a new model; if it shares an ID with an official video model, the local model overrides that official model. All other models continue through RelayClaw. Saving video configuration persists the ComfyUI channel first and then its media models. DramaClaw does not automatically fall back to the official model after a local failure. The user chooses whether to retry or switch models. Hybrid mode manages Local ComfyUI video models only, so it does not require OpenRouter, VolcEngine, or other official upstream provider settings.
 
 ## Reference media storage
 
