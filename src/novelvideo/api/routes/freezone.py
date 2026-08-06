@@ -171,6 +171,9 @@ from novelvideo.freezone.route_helpers import (
     build_scene_360_prompt as _build_scene_360_prompt,
 )
 from novelvideo.freezone.route_helpers import (
+    build_style_prompt as _build_style_prompt,
+)
+from novelvideo.freezone.route_helpers import (
     build_template_edit_prompt as _build_template_edit_prompt,
 )
 from novelvideo.freezone.route_helpers import (

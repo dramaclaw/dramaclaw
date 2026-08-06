@@ -3012,11 +3012,78 @@ def test_camera_prompt_contains_camera_body_lens_focal_and_aperture() -> None:
     assert "f/4" in prompt
 
 
-def test_image_style_templates_builtin_count_is_30() -> None:
+def test_image_style_templates_are_short_drama_styles() -> None:
     data = freezone_routes._get_freezone_image_style_templates()
 
-    assert len(data) == 30
-    assert any(item["id"] == "three_oclock_2300" for item in data)
+    assert len(data) == 24
+    assert [item["id"] for item in data] == [
+        "period_idol",
+        "palace_intrigue",
+        "wuxia",
+        "cn_urban",
+        "urban_romance",
+        "crime_suspense",
+        "korean_muted",
+        "nineties",
+        "golden_age",
+        "documentary_realism",
+        "retro_narrative",
+        "american_nineties",
+        "showa_monochrome",
+        "vintage_industrial",
+        "healing_life",
+        "youth_film",
+        "atompunk",
+        "neon_punk",
+        "psychological_horror",
+        "cult_film",
+        "modern_warfare",
+        "wasteland_road",
+        "neo_chinese",
+        "high_key_absurd",
+    ]
+
+
+def test_image_style_templates_have_assets_and_prompts() -> None:
+    gallery_root = Path(__file__).resolve().parents[1] / "frontend" / "public" / "style-gallery"
+
+    for item in freezone_routes._get_freezone_image_style_templates():
+        assert item["label"], item["id"]
+        assert item["category"] in {
+            "古装",
+            "都市",
+            "年代",
+            "生活",
+            "科幻",
+            "类型",
+            "写意",
+        }, item["id"]
+        assert len(item["style_prompt"]) >= 120, item["id"]
+        assert "author" not in item, item["id"]
+        assert len(item["samples"]) == 4, item["id"]
+        for rel in [item["cover"], *item["samples"]]:
+            assert not rel.startswith("/"), rel
+            assert (gallery_root / rel).is_file(), rel
+
+
+def test_nineties_style_prompt_keeps_second_line() -> None:
+    data = freezone_routes._get_freezone_image_style_templates()
+    nineties = next(item for item in data if item["id"] == "nineties")
+
+    assert "\n" in nineties["style_prompt"]
+    assert "构图平实自然" in nineties["style_prompt"]
+
+
+def test_build_style_prompt_uses_chinese_block_without_author() -> None:
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    block = freezone_routes._build_style_prompt(
+        FreezoneImageStyleConfig(template_id="golden_age")
+    )
+
+    assert block.startswith("风格模板:\n- 黄金时代\n- ")
+    assert "美式复古好莱坞黄金时代风格" in block
+    assert "builtin" not in block
 
 
 @pytest.mark.asyncio
@@ -7716,7 +7783,7 @@ async def test_freezone_upscale_resolves_original_ratio_before_model_call(
         image_size="2K",
         quality="low",
         model="HuiMeng GPT Image 2",
-        style=freezone_routes.FreezoneImageStyleConfig(template_id="three_oclock_2300"),
+        style=freezone_routes.FreezoneImageStyleConfig(template_id="golden_age"),
         camera=freezone_routes.FreezoneImageCameraConfig(
             camera_body="Panavision DXL2",
             lens="Arri Signature Prime",
@@ -7737,7 +7804,7 @@ async def test_freezone_upscale_resolves_original_ratio_before_model_call(
     assert captured["billing"]["feature_key"] == "freezone.image_edit"
     assert captured["billing"]["operation"] == "upscale"
     assert captured["billing"]["pricing_kind"] == "image"
-    assert "新古典插画" in captured["prompt"]
+    assert "黄金时代" in captured["prompt"]
     assert "Panavision DXL2" in captured["prompt"]
     assert "Arri Signature Prime" in captured["prompt"]
 
