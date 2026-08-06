@@ -342,6 +342,8 @@ frontend/src/__tests__/features/canvas/canvas-add-node-panel.test.tsx,Elastic-2.
 frontend/src/__tests__/features/canvas/canvas-bookmark-context-menu.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-lod.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-manual-connect.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/canvas-minimap-pan-mount.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/use-smooth-minimap-pan.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-node-image-wake-refresh.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-tool-menu.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/canvas-viewport-bookmarks.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -856,6 +858,7 @@ frontend/src/features/canvas/hooks/useFreezoneVideoModels.ts,Elastic-2.0,2026 Su
 frontend/src/features/canvas/hooks/useImageViewer.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/hooks/useImageViewerTransform.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/hooks/useNodeGenerationHistory.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/hooks/useSmoothMinimapPan.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/infrastructure/freezoneAiGateway.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/infrastructure/idGenerator.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/infrastructure/webImageSplitGateway.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
