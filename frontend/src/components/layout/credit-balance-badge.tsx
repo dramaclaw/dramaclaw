@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { CREDIT_VALUE_CLASS, CreditSparkIcon } from "@/components/credits/credit-visual";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useCurrentUser } from "@/lib/queries/auth";
-import { useCreditSummary } from "@/lib/queries/credits";
+import { creditScopeOf, useCreditSummary } from "@/lib/queries/credits";
 import { isCeRuntime } from "@/lib/runtime-config";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
@@ -29,6 +29,7 @@ export function CreditBalanceBadge() {
   const { data, isLoading, isError } = useCurrentUser(Boolean(username) && !ce);
   const summaryQuery = useCreditSummary(Boolean(username) && !ce);
   const summary = summaryQuery.data?.data;
+  const isOrgScope = creditScopeOf(summary) === "org_member";
   const balance = summary?.balance ?? data?.data.credit_balance;
   const language = i18n?.resolvedLanguage ?? i18n?.language ?? "en";
 
@@ -110,7 +111,14 @@ export function CreditBalanceBadge() {
       >
         <div className="border-b border-white/8 px-4 py-3.5">
           <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold">{t("credits.personalAccount")}</div>
+            {/* The heading was hardcoded to "personal account" while the
+                figures below come from whichever account the backend resolved
+                — for an org member that is the org member account, so the
+                heading named the wrong wallet (OI-7, same defect as the credit
+                page). */}
+            <div className="text-sm font-semibold">
+              {t(isOrgScope ? "credits.orgAccount" : "credits.personalAccount")}
+            </div>
             <button
               type="button"
               onClick={openCredits}
@@ -119,7 +127,9 @@ export function CreditBalanceBadge() {
               {t("credits.details")}
             </button>
           </div>
-          <div className="mt-3 text-xs text-white/50">{t("credits.balance")}</div>
+          <div className="mt-3 text-xs text-white/50">
+            {t(isOrgScope ? "credits.orgBalance" : "credits.balance")}
+          </div>
           <div className="mt-1 flex items-center gap-1.5">
             <CreditSparkIcon className="size-5" />
             <span className="text-2xl font-semibold tabular-nums">

@@ -20,6 +20,7 @@ const summaryState = vi.hoisted(() => ({
   refunded: 34,
   pending: 0,
   promotion_count: 2,
+  scope: undefined as string | undefined,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -57,7 +58,11 @@ vi.mock("@/lib/queries/auth", () => ({
   }),
 }));
 
-vi.mock("@/lib/queries/credits", () => ({
+// `creditScopeOf` is deliberately the real implementation: it is the one
+// deciding which wallet this popover claims to be showing, so stubbing it would
+// make the org-scope assertions below prove nothing.
+vi.mock("@/lib/queries/credits", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/queries/credits")>()),
   useCreditSummary: () => ({
     data: { data: summaryState },
     isStale: false,
@@ -80,6 +85,8 @@ vi.mock("react-i18next", () => ({
         "credits.short": "积分",
         "credits.openPanel": "打开积分面板",
         "credits.personalAccount": "个人积分账户",
+        "credits.orgAccount": "组织额度账户",
+        "credits.orgBalance": "组织额度余额",
         "credits.details": "查看明细",
         "credits.earned": "已获得",
         "credits.spent": "已消费",
@@ -109,6 +116,7 @@ describe("CreditBalanceBadge", () => {
     currentUserState.isLoading = false;
     currentUserState.balance = 1234;
     runtimeState.isCeRuntime = false;
+    summaryState.scope = undefined;
   });
 
   it("renders the current credit balance", async () => {
@@ -117,6 +125,34 @@ describe("CreditBalanceBadge", () => {
     expect(screen.getAllByText("1,234")).toHaveLength(2);
     expect(screen.getByText("个人积分账户")).toBeInTheDocument();
     expect(screen.getByText("当前有 2 项可能适用的优惠")).toBeInTheDocument();
+  });
+
+  // OI-7: the figures always came from whichever account the backend resolved,
+  // but the heading was hardcoded to "个人积分账户" — so an org member read his
+  // organization's balance under the name of his personal wallet.
+  it("names the organization account when the summary is org-scoped", () => {
+    summaryState.scope = "org_member";
+
+    renderBadge();
+
+    expect(screen.getByText("组织额度账户")).toBeInTheDocument();
+    expect(screen.getByText("组织额度余额")).toBeInTheDocument();
+    expect(screen.queryByText("个人积分账户")).not.toBeInTheDocument();
+    expect(screen.queryByText("当前积分余额")).not.toBeInTheDocument();
+  });
+
+  // A backend that predates the scope contract omits the key entirely, and an
+  // unknown value must not be read as an organization.
+  it("keeps the personal framing for an absent or unrecognised scope", () => {
+    for (const scope of [undefined, "personal", "something_new"]) {
+      summaryState.scope = scope;
+
+      const { unmount } = renderBadge();
+
+      expect(screen.getByText("个人积分账户")).toBeInTheDocument();
+      expect(screen.queryByText("组织额度账户")).not.toBeInTheDocument();
+      unmount();
+    }
   });
 
   it("renders nothing when logged out", () => {
