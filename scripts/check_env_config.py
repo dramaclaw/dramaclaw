@@ -101,7 +101,7 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
         "Legacy/internal feature flag or integration env outside the current public template contract.",
     ),
     (
-        re.compile(r"^(?:BACKUP_ENV_NAME|BACKUP_SYNC_OUTPUT|INDEXTTS2_FAL_ENDPOINT)$"),
+        re.compile(r"^(?:BACKUP_ENV_NAME|BACKUP_STAGE_DIR|BACKUP_SYNC_OUTPUT|INDEXTTS2_FAL_ENDPOINT)$"),
         "Optional backup/FAL integration env outside the current NewAPI-first template contract.",
     ),
     (

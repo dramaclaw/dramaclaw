@@ -133,6 +133,7 @@ import { CanvasMinimapButton } from './ui/CanvasMinimapButton';
 import { CanvasFpsMeter } from './ui/CanvasFpsMeter';
 import { CanvasSnapAlignButton } from './snap-align/CanvasSnapAlignButton';
 import { useTrackpadPanStore } from './trackpad-pan/trackpadPanStore';
+import { useSmoothMinimapPan } from './hooks/useSmoothMinimapPan';
 import { useCanvasToolStore } from './ui/canvasToolStore';
 import { SnapAlignGuides } from './snap-align/SnapAlignGuides';
 import { useSnapAlignStore } from './snap-align/snapAlignStore';
@@ -167,6 +168,8 @@ const PAN_ON_DRAG_BUTTONS = [1];
 // 抓手光标由它自带的样式负责。
 const PAN_ON_DRAG_BUTTONS_HAND = [0, 1];
 const NODE_SPAWN_PLUS_HIDE_DELAY_MS = 400;
+/** 小地图 hover 离开后的收起延迟，见 setMinimapHover 处的注释。 */
+const MINIMAP_HIDE_DELAY_MS = 180;
 
 function resolveCenteredViewport(
   container: HTMLElement | null,
@@ -745,7 +748,11 @@ export function Canvas({
 
   const [minimapPinned, setMinimapPinned] = useState(false);
   const [minimapHovered, setMinimapHovered] = useState(false);
-  const minimapVisible = minimapPinned || minimapHovered;
+  // 小地图拖动期间必须钉住不卸载：非固定模式下指针一拖出小地图就会触发
+  // onMouseLeave → 180ms 后 minimapVisible 变 false → MiniMap 卸载 →
+  // useSmoothMinimapPan 的清理函数摘掉 window 监听，拖动直接断在半路。
+  const [minimapPanning, setMinimapPanning] = useState(false);
+  const minimapVisible = minimapPinned || minimapHovered || minimapPanning;
   // 小地图弹层（含上方的书签数字行）靠 hover 显示。数字行是小地图上方、隔着间隙的
   // 独立 DOM 子树:鼠标从小地图移到数字按钮的途中会先离开小地图,若立即把
   // minimapHovered 置 false,整个 overlay 会在点到按钮前卸载,导致「点不了」。
@@ -763,9 +770,28 @@ export function Canvas({
       minimapHideTimerRef.current = window.setTimeout(() => {
         setMinimapHovered(false);
         minimapHideTimerRef.current = null;
-      }, 180);
+      }, MINIMAP_HIDE_DELAY_MS);
     }
   }, []);
+  // 小地图缓动期间，onMoveEnd 的逐帧视口提交要跳过 —— 见 handleMoveEnd 的注释。
+  // 用 ref 而不是读 minimapPanning：handleMoveEnd 每帧都跑，不该跟着状态换身份。
+  const minimapPanCommitSuppressedRef = useRef(false);
+  const handleMinimapPanStart = useCallback(() => {
+    minimapPanCommitSuppressedRef.current = true;
+    setMinimapPanning(true);
+  }, []);
+  // 这里的「结束」是 hook 保证的「松手且缓动已收敛」，不是 pointerup 那一刻，
+  // 所以可以直接解除挂载保护，不需要再赌一个固定延时（收敛耗时随剩余距离变化，
+  // 180ms 盖不住，会把缓动掐断在半路）。
+  const handleMinimapPanEnd = useCallback(
+    (pointerInsideMinimap: boolean) => {
+      minimapPanCommitSuppressedRef.current = false;
+      setMinimapPanning(false);
+      // 松手在小地图内 ⇒ 继续显示；在外 ⇒ 走 hover 的同一节奏收起。
+      setMinimapHover(pointerInsideMinimap);
+    },
+    [setMinimapHover],
+  );
   useEffect(
     () => () => {
       if (minimapHideTimerRef.current !== null) {
@@ -1869,7 +1895,6 @@ export function Canvas({
 
   const handleMoveEnd = useCallback(
     (_event: unknown, viewport: Viewport) => {
-      lastViewportCommitRef.current = Date.now();
       applyLowDetailClass(viewport.zoom);
       // 降档（进入低缩放）的裁剪关闭只在手势结束时提交：全量挂载 ~240 个 shell 的
       // 波放在缩放手势中途会有可感知的顿挫，推迟到松手后手势保持流畅；中途已跨档
@@ -1884,6 +1909,17 @@ export function Canvas({
         wrapperRef.current?.classList.remove(CANVAS_PANNING_CLASS);
         setCanvasGestureActive(false);
       }, PANNING_CLASS_RELEASE_DELAY_MS);
+      // 小地图缓动是程序化平移：每帧一次 instance.setViewport，而 ReactFlow 对
+      // 每次 setViewport 都跑一遍 onMoveStart→onMove→onMoveEnd，结束事件只有
+      // panOnScroll 才有 150ms 合并（createPanZoomEndHandler 里写死
+      // `panOnScroll ? 150 : 0`）。用户关掉「触控板平移」后 panOnScroll=false，
+      // 合并消失，这里会变成每秒约 60 次 store 提交 —— 正是本次要消掉的东西。
+      // 跳过时连 lastViewportCommitRef 也不占，好让 handleMove 的 8fps 节流照常
+      // 供给可见性判断；最终值由 onViewportSettled 收敛时提交一次。
+      if (minimapPanCommitSuppressedRef.current) {
+        return;
+      }
+      lastViewportCommitRef.current = Date.now();
       setViewportState(viewport);
     },
     [applyLowDetailClass, setViewportState]
@@ -1902,6 +1938,27 @@ export function Canvas({
     },
     [applyLowDetailClass, setViewportState]
   );
+
+  const handleMinimapViewportSettled = useCallback(
+    (viewport: Viewport) => {
+      lastViewportCommitRef.current = Date.now();
+      setViewportState(viewport);
+    },
+    [setViewportState]
+  );
+
+  // 小地图拖动走自己的实现，不用 MiniMap 的 pannable —— 内置增益会随视口拖离
+  // 内容区而复利放大。见 useSmoothMinimapPan 的文件头注释。
+  // 接线放在 handleMoveEnd/handleMinimapViewportSettled 之后，它们依赖 store 的
+  // setViewportState，声明顺序不能倒过来。
+  useSmoothMinimapPan({
+    enabled: minimapVisible,
+    wrapperRef,
+    instance: reactFlowInstance,
+    onPanStart: handleMinimapPanStart,
+    onPanEnd: handleMinimapPanEnd,
+    onViewportSettled: handleMinimapViewportSettled,
+  });
 
   // 首屏恢复的视口不会触发 onMove/onMoveEnd，低缩放档要在这里补一次。
   useEffect(() => {
@@ -4756,7 +4813,9 @@ export function Canvas({
             style={{ pointerEvents: 'all', zIndex: 10000 }}
             nodeColor="rgba(120, 120, 120, 0.92)"
             maskColor="rgba(0, 0, 0, 0.62)"
-            pannable
+            // 拖动由 useSmoothMinimapPan 接管：内置 pannable 的增益含当前视口框，
+            // 视口拖出内容区后会复利放大，越拖越快。
+            pannable={false}
             zoomable
             onMouseEnter={() => setMinimapHover(true)}
             onMouseLeave={() => setMinimapHover(false)}
