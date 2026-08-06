@@ -601,3 +601,39 @@ def test_resolve_narrator_source_third_person_uses_project_narrator(tmp_path):
     assert resolution.audio_path == narrator_audio
     assert resolution.sha256
     assert resolution.character_name == ""
+
+
+def test_resolve_narrator_source_third_person_reports_unconfigured_voice(tmp_path):
+    from novelvideo.seedance2_i2v.voice_clone import resolve_narrator_source
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    store = _FakeStore(project_dir, [])
+
+    resolution = resolve_narrator_source(
+        store=store,
+        narration_style="third_person",
+        project_narrator_stored_path="",
+    )
+
+    assert resolution.audio_path is None
+    assert resolution.error == "项目解说人声线未配置，请上传或录制解说人音频"
+
+
+def test_resolve_narrator_source_third_person_reports_missing_configured_file(tmp_path):
+    from novelvideo.seedance2_i2v.voice_clone import resolve_narrator_source
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    store = _FakeStore(project_dir, [])
+
+    resolution = resolve_narrator_source(
+        store=store,
+        narration_style="third_person",
+        project_narrator_stored_path="assets/narrator/voice.wav",
+    )
+
+    assert resolution.audio_path is None
+    assert resolution.error == (
+        "项目解说人声线已配置，但声线文件无法读取，请重新上传或检查项目存储"
+    )
