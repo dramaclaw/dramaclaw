@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -423,6 +424,15 @@ def get_freezone_image_camera_options() -> dict:
 
 def get_freezone_image_style_templates() -> list[dict]:
     return list(FREEZONE_IMAGE_STYLE_TEMPLATES)
+
+
+def get_freezone_image_style_asset_base() -> str:
+    """风格图片的地址前缀。
+
+    默认空字符串,前端回落到打包在 frontend/public/style-gallery 下的静态资源;
+    迁 OSS 时只配这个环境变量,前端无需重新发版。
+    """
+    return os.environ.get("STYLE_GALLERY_ASSET_BASE", "").strip()
 
 
 def build_camera_prompt(camera: Optional[FreezoneImageCameraConfig]) -> str:

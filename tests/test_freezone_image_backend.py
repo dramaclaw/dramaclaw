@@ -3107,6 +3107,21 @@ def test_unknown_style_template_does_not_break_prompt_merge() -> None:
     assert merged == "一个女人站在窗前"
 
 
+def test_style_asset_base_defaults_to_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STYLE_GALLERY_ASSET_BASE", raising=False)
+
+    assert freezone_routes._get_freezone_image_style_asset_base() == ""
+
+
+def test_style_asset_base_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STYLE_GALLERY_ASSET_BASE", "  https://cdn.example.com/styles/  ")
+
+    assert (
+        freezone_routes._get_freezone_image_style_asset_base()
+        == "https://cdn.example.com/styles/"
+    )
+
+
 @pytest.mark.asyncio
 async def test_freezone_gen_route_passes_output_dir_and_quality(
     tmp_path: Path,

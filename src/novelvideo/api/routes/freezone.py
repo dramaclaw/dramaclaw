@@ -183,6 +183,9 @@ from novelvideo.freezone.route_helpers import (
     get_freezone_image_camera_options as _get_freezone_image_camera_options,
 )
 from novelvideo.freezone.route_helpers import (
+    get_freezone_image_style_asset_base as _get_freezone_image_style_asset_base,
+)
+from novelvideo.freezone.route_helpers import (
     get_freezone_image_style_templates as _get_freezone_image_style_templates,
 )
 from novelvideo.freezone.route_helpers import (
@@ -5148,7 +5151,13 @@ async def freezone_image_style_templates(
 ):
     """图片处理：返回内置风格模板列表。"""
     await _resolve_freezone_project(project, user, required_role="viewer")
-    return {"ok": True, "data": _get_freezone_image_style_templates()}
+    return {
+        "ok": True,
+        "data": {
+            "asset_base": _get_freezone_image_style_asset_base(),
+            "templates": _get_freezone_image_style_templates(),
+        },
+    }
 
 
 def _freezone_not_implemented(endpoint: str) -> None:
