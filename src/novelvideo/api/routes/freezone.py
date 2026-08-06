@@ -6852,10 +6852,14 @@ async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | Non
             if mode == MODE_CUSTOM:
                 return _merge_media_model_catalog_defaults(
                     _static_media_model_catalog(media_type),
-                    get_ce_media_model_catalog(media_type),
+                    get_ce_media_model_catalog(media_type, include_disabled=True),
                 )
             if mode == MODE_HYBRID:
-                local = get_ce_media_model_catalog(media_type, provider="comfyui")
+                local = get_ce_media_model_catalog(
+                    media_type,
+                    provider="comfyui",
+                    include_disabled=True,
+                )
                 return _merge_media_model_catalog_defaults(
                     _static_media_model_catalog(media_type),
                     local,
@@ -6892,8 +6896,14 @@ def _merge_media_model_catalog_defaults(
             merged.append(base)
             continue
         consumed.add(match_index)
-        merged.append({**base, **configured[match_index]})
-    merged.extend(item for index, item in enumerate(configured) if index not in consumed)
+        override = configured[match_index]
+        if override.get("enabled") is not False:
+            merged.append({**base, **override})
+    merged.extend(
+        item
+        for index, item in enumerate(configured)
+        if index not in consumed and item.get("enabled") is not False
+    )
     return merged
 
 

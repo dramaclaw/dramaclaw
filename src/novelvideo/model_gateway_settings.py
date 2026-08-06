@@ -512,6 +512,7 @@ def _media_model_catalog(
     media_type: str,
     *,
     provider: str | None = None,
+    include_disabled: bool = False,
 ) -> list[dict[str, Any]]:
     wanted = str(media_type or "").strip().lower()
     if wanted not in {"image", "video"}:
@@ -520,7 +521,8 @@ def _media_model_catalog(
     for model, item in mappings.items():
         if provider and item.get("provider") != provider:
             continue
-        if item.get("mediaType") != wanted or item.get("enabled") is False:
+        disabled = item.get("enabled") is False
+        if item.get("mediaType") != wanted or (disabled and not include_disabled):
             continue
         config = item.get("config") if isinstance(item.get("config"), dict) else {}
         config = dict(config)
@@ -551,6 +553,7 @@ def _media_model_catalog(
                 "aliases": [str(alias) for alias in aliases if str(alias).strip()],
                 "label": str(item.get("label") or model),
                 "sortOrder": int(item.get("sortOrder") or 100),
+                **({"enabled": False} if disabled else {}),
             }
         )
     return sorted(result, key=lambda entry: (int(entry["sortOrder"]), str(entry["id"])))
@@ -561,11 +564,17 @@ def get_official_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
 
 
 def get_ce_media_model_catalog(
-    media_type: str, *, provider: str | None = None
+    media_type: str,
+    *,
+    provider: str | None = None,
+    include_disabled: bool = False,
 ) -> list[dict[str, Any]]:
     """Expose CE-local media settings using the EE catalog response contract."""
     return _media_model_catalog(
-        get_newapi_media_model_mappings(), media_type, provider=provider
+        get_newapi_media_model_mappings(),
+        media_type,
+        provider=provider,
+        include_disabled=include_disabled,
     )
 
 

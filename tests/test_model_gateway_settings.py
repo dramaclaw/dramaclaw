@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from novelvideo import config
+from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.api.routes import model_gateway
 from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
 from novelvideo.model_gateway_settings import (
@@ -177,6 +178,28 @@ def test_comfyui_provider_channel_defaults_to_channel_type_63(monkeypatch, tmp_p
     )
 
     assert saved[0]["type"] == 63
+
+
+@pytest.mark.asyncio
+async def test_custom_catalog_disabled_mapping_removes_official_model(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_media_model_mappings(
+        {
+            "LingShan-G2": {
+                "provider": "openrouter",
+                "mediaType": "image",
+                "enabled": False,
+            }
+        }
+    )
+    set_model_gateway_mode(MODE_CUSTOM)
+
+    catalog = await freezone_routes._ee_media_model_catalog("image")
+
+    assert catalog is not None
+    assert all(item.get("id") != "LingShan-G2" for item in catalog)
 
 
 def test_provider_channel_partial_save_preserves_unmentioned_channels(
