@@ -371,16 +371,11 @@ def test_global_video_optimizer_uses_newapi_optimizer_model_env(monkeypatch):
     import novelvideo.agents.global_video_optimizer as global_video_optimizer
 
     model_calls = []
-    settings_calls = []
     agent_kwargs = {}
 
     def fake_newapi_model(model_env, default_model):
         model_calls.append((model_env, default_model))
         return "optimizer-model"
-
-    def fake_settings():
-        settings_calls.append(())
-        return {"openai_reasoning_effort": "none"}
 
     class FakeAgent:
         def __init__(self, model, **kwargs):
@@ -389,16 +384,52 @@ def test_global_video_optimizer_uses_newapi_optimizer_model_env(monkeypatch):
 
     monkeypatch.delenv("GLOBAL_VIDEO_MODEL", raising=False)
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
-    monkeypatch.setattr(config, "get_newapi_structured_output_model_settings", fake_settings)
     monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
 
     global_video_optimizer.create_global_video_optimizer_agent()
 
     assert model_calls == [("GLOBAL_VIDEO_OPTIMIZER_MODEL", "gemini-3.5-flash")]
-    assert settings_calls == [()]
     assert agent_kwargs["model"] == "optimizer-model"
-    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "none"}
+    assert agent_kwargs["output_type"] is str
+    assert "model_settings" not in agent_kwargs
     assert agent_kwargs["name"] == "Global Video Motion Director"
+
+
+def test_global_video_optimizer_wraps_plain_text_output_locally(monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+
+    from novelvideo.agents.global_video_optimizer import GlobalVideoPromptOptimizer
+
+    sketch_path = tmp_path / "beat_01.png"
+    sketch_path.write_bytes(b"fake-image")
+    seen = {}
+
+    class FakeAgent:
+        async def run(self, user_prompt):
+            seen["user_prompt"] = user_prompt
+            return SimpleNamespace(output="  镜头缓缓推近，黑衣男子抬手推门。  ")
+
+    optimizer = GlobalVideoPromptOptimizer()
+    monkeypatch.setattr(optimizer, "_get_agent", lambda _language: FakeAgent())
+    monkeypatch.setattr(optimizer, "_compress_image", lambda _path: b"compressed")
+
+    result = asyncio.run(
+        optimizer.optimize_single_beat(
+            beat={"beat_number": 1, "visual_description": "黑衣男子推门"},
+            sketch_image_path=str(sketch_path),
+            character_color_map={},
+        )
+    )
+
+    assert result == {
+        "beat_number": 1,
+        "video_mode": "first_frame",
+        "prompt": "镜头缓缓推近，黑衣男子抬手推门。",
+    }
+    task = seen["user_prompt"][0]
+    assert "Output the Chinese motion prompt directly" in task
+    assert "Output JSON" not in task
 
 
 def test_global_video_optimizer_keeps_legacy_global_video_model_fallback(monkeypatch):
@@ -417,43 +448,11 @@ def test_global_video_optimizer_keeps_legacy_global_video_model_fallback(monkeyp
 
     monkeypatch.setenv("GLOBAL_VIDEO_MODEL", "legacy-gemini-model")
     monkeypatch.setattr(config, "get_newapi_text_pydantic_model", fake_newapi_model)
-    monkeypatch.setattr(
-        config,
-        "get_newapi_structured_output_model_settings",
-        lambda: {"openai_reasoning_effort": "none"},
-    )
     monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
 
     global_video_optimizer.create_global_video_optimizer_agent()
 
     assert model_calls == [("GLOBAL_VIDEO_OPTIMIZER_MODEL", "legacy-gemini-model")]
-
-
-def test_global_video_optimizer_forces_structured_reasoning_off(monkeypatch):
-    import novelvideo.config as config
-    import novelvideo.agents.global_video_optimizer as global_video_optimizer
-
-    agent_kwargs = {}
-
-    class FakeAgent:
-        def __init__(self, model, **kwargs):
-            agent_kwargs.update(kwargs)
-
-    monkeypatch.setattr(
-        config,
-        "get_newapi_text_pydantic_model",
-        lambda model_env, default_model: "optimizer-model",
-    )
-    monkeypatch.setattr(
-        config,
-        "get_newapi_structured_output_model_settings",
-        lambda: {"openai_reasoning_effort": "none"},
-    )
-    monkeypatch.setattr(global_video_optimizer, "Agent", FakeAgent)
-
-    global_video_optimizer.create_global_video_optimizer_agent()
-
-    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "none"}
 
 
 def test_seedance2_prompt_composer_uses_newapi_composer_model_env(monkeypatch):
