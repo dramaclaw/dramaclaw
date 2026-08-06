@@ -48,3 +48,64 @@ def test_novel_character_identities_setter_does_not_serialize_null_age_group():
 
     payload = json.loads(char.identities_json)
     assert payload[0]["age_group"] == ""
+
+
+def test_guoman_character_assets_override_preset_content_bias():
+    from novelvideo.config import get_style_preset
+    from novelvideo.generators.nanobanana_character import NanoBananaCharacterGenerator
+
+    builder = NanoBananaCharacterGenerator.__new__(NanoBananaCharacterGenerator)
+    style_keywords = get_style_preset("guoman_fantasy")["style_instructions"]
+    portrait_prompt = builder._build_character_prompt(
+        character_name="当铺老板",
+        character_prompt="方脸，眉眼沉稳，眼角有细纹",
+        character_tag="[DPLB]",
+        style_name="guoman_fantasy",
+        project_dir="",
+        style_keywords=style_keywords,
+        negative_keywords="no text",
+        ethnicity="Chinese",
+        identity_name="中年时期",
+    )
+    identity_prompt = builder._build_identity_locked_prompt(
+        character_name="当铺老板",
+        character_prompt="靛青棉麻长衫，黑发以木簪固定",
+        character_tag="[DPLB]",
+        target_view="front",
+        style_name="guoman_fantasy",
+        project_dir="",
+        style_keywords=style_keywords,
+        negative_keywords="no text",
+        ethnicity="Chinese",
+        identity_name="中年时期",
+    )
+
+    for prompt in (portrait_prompt, identity_prompt):
+        assert "GUOMAN CHARACTER-ASSET OVERRIDE" in prompt
+        assert "Target identity/state: 中年时期" in prompt
+        assert "default high-status robes" in prompt
+        assert "conflicting age styling, hairstyle, clothing" in prompt
+        assert "crown, jewelry, hair accessories" in prompt
+
+
+def test_non_guoman_character_prompt_is_unchanged_by_guoman_override():
+    from novelvideo.generators.nanobanana_character import NanoBananaCharacterGenerator
+
+    builder = NanoBananaCharacterGenerator.__new__(NanoBananaCharacterGenerator)
+    kwargs = dict(
+        character_name="当铺老板",
+        character_prompt="方脸，眉眼沉稳",
+        character_tag="[DPLB]",
+        style_name="realistic",
+        project_dir="",
+        style_keywords="cinematic realistic rendering",
+        negative_keywords="no text",
+    )
+    original_prompt = builder._build_character_prompt(**kwargs)
+    prompt_with_identity = builder._build_character_prompt(
+        **kwargs,
+        identity_name="中年时期",
+    )
+
+    assert prompt_with_identity == original_prompt
+    assert "GUOMAN CHARACTER-ASSET OVERRIDE" not in prompt_with_identity

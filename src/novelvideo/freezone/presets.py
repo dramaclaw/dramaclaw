@@ -3159,7 +3159,11 @@ async def build_asset_preset_context(
             negative_keywords = ""
             character_prompt_builder = None
 
-        def _novelvideo_portrait_full_prompt(prompt_text: str) -> str:
+        def _novelvideo_portrait_full_prompt(
+            prompt_text: str,
+            *,
+            identity_name: str = "",
+        ) -> str:
             if character_prompt_builder is None:
                 return prompt_text
             character_tag = character_prompt_builder._generate_character_tag(character)
@@ -3172,6 +3176,7 @@ async def build_asset_preset_context(
                 style_keywords=style_keywords,
                 negative_keywords=negative_keywords,
                 ethnicity=project_ethnicity,
+                identity_name=identity_name,
             )
 
         generation_context["portrait"] = {
@@ -3200,6 +3205,7 @@ async def build_asset_preset_context(
                 negative_keywords=negative_keywords,
                 ethnicity=project_ethnicity,
                 has_costume_reference=has_costume_image,
+                identity_name=identity_name,
             )
 
         def _build_identity_generation_context(identity_obj: Any) -> dict[str, Any]:
@@ -3262,7 +3268,10 @@ async def build_asset_preset_context(
             )
             identity_portrait_prompt = (face_override or appearance_details or prompt).strip()
             full_identity_portrait_prompt = (
-                _novelvideo_portrait_full_prompt(identity_portrait_prompt)
+                _novelvideo_portrait_full_prompt(
+                    identity_portrait_prompt,
+                    identity_name=identity_name,
+                )
                 if identity_portrait_prompt
                 else ""
             )

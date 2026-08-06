@@ -58,6 +58,36 @@ def _default_ethnicity_instruction(ethnicity: str) -> str:
     )
 
 
+def _inject_guoman_character_asset_override(
+    prompt: str,
+    *,
+    style_name: str,
+    marker: str,
+    identity_name: str = "",
+) -> str:
+    """Keep Guoman content defaults from overriding character-asset facts."""
+    if str(style_name or "").strip().lower() != "guoman_fantasy":
+        return prompt
+
+    rules = [
+        "GUOMAN CHARACTER-ASSET OVERRIDE (HIGHER PRIORITY THAN STYLE DEFAULTS):",
+        "- Keep the Guoman rendering medium, facial aesthetics, materials, and finish.",
+        "- Its default high-status robes, black-gold luxury, metal or jade ornament, crown, and ornate hairpiece are fallback flavor, not character facts; do not add them unless explicitly required by FACIAL FEATURES, CHARACTER DETAILS, or a costume reference.",
+        "- Use an opaque plain neutral background; do not apply preset transparency or fantasy atmosphere.",
+        "- Explicit FACIAL FEATURES, CHARACTER DETAILS, and costume references override the style preset.",
+    ]
+    normalized_identity_name = str(identity_name or "").strip()
+    if normalized_identity_name:
+        rules.extend(
+            [
+                f"- Target identity/state: {normalized_identity_name}.",
+                "- Preserve only facial identity from the anchor; do not copy conflicting age styling, hairstyle, clothing, crown, jewelry, hair accessories, or social status.",
+            ]
+        )
+    override = "\n".join(rules)
+    return prompt.replace(marker, f"{override}\n\n{marker}", 1)
+
+
 def create_composite_reference(
     portrait_path: str,
     fullbody_path: str,
@@ -248,6 +278,7 @@ class NanoBananaCharacterGenerator:
                 style_keywords=style_keywords,
                 negative_keywords=negative_keywords,
                 ethnicity=ethnicity,
+                identity_name=identity_name,
             )
 
             # 保存 prompt 到文件（审计用）
@@ -471,6 +502,7 @@ class NanoBananaCharacterGenerator:
                 negative_keywords=negative_keywords,
                 ethnicity=ethnicity,
                 has_costume_reference=has_costume_ref,
+                identity_name=identity_name,
             )
 
             # 保存 prompt 到文件（审计用）
@@ -834,6 +866,7 @@ MUST AVOID:
         style_keywords: str,
         negative_keywords: str,
         ethnicity: str = "Chinese",
+        identity_name: str = "",
     ) -> str:
         """构建 portrait 生成 Prompt。
 
@@ -889,6 +922,12 @@ MUST AVOID:
 - Do not include multiple characters
 - Do not convert this into realistic photography or real-human actor rendering
 """
+            prompt = _inject_guoman_character_asset_override(
+                prompt,
+                style_name=style_name,
+                marker="STRICT REQUIREMENTS:",
+                identity_name=identity_name,
+            )
             return prompt.strip()
 
         prompt = f"""Generate a face-only character identity reference portrait for identity locking.
@@ -929,6 +968,12 @@ MUST AVOID:
 - Do not include multiple characters
 - Do NOT create beauty-filter skin, glamor retouching, fashion-magazine polish, doll-like skin, or cosmetic-ad aesthetics
 """
+        prompt = _inject_guoman_character_asset_override(
+            prompt,
+            style_name=style_name,
+            marker="STRICT REQUIREMENTS:",
+            identity_name=identity_name,
+        )
         return prompt.strip()
 
     @staticmethod
@@ -956,6 +1001,7 @@ A second reference image is provided showing the target costume/clothing.
         negative_keywords: str,
         ethnicity: str = "Chinese",
         has_costume_reference: bool = False,
+        identity_name: str = "",
     ) -> str:
         """构建 4 面板 reference sheet Prompt（全脸特写 + 正面全身 + 45° 三分全身 + 背面全身）。
 
@@ -1020,6 +1066,12 @@ STRICT REQUIREMENTS (MUST AVOID):
 - No text, labels, or panel numbers on the image
 - Do not add environment scenery, props, or poster composition
 """
+            prompt = _inject_guoman_character_asset_override(
+                prompt,
+                style_name=style_name,
+                marker="CHARACTER DETAILS (CRITICAL - use this for clothing and appearance):",
+                identity_name=identity_name,
+            )
             return prompt.strip()
 
         prompt = f"""Character identity reference sheet. Neutral studio setup.
@@ -1083,6 +1135,12 @@ STRICT REQUIREMENTS (MUST AVOID):
 - Do NOT create beauty-retouched, glamorized, cosmetic-ad, or fashion-editorial output
 - Keep the project style consistent across all 4 panels
 """
+        prompt = _inject_guoman_character_asset_override(
+            prompt,
+            style_name=style_name,
+            marker="CHARACTER DETAILS (CRITICAL - use this for clothing and appearance):",
+            identity_name=identity_name,
+        )
         return prompt.strip()
 
     async def _generate_single_image(
