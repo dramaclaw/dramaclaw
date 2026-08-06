@@ -769,3 +769,51 @@ async def test_crop_seedance2_asset_to_first_frame_writes_video_input_override(
     expected = paths.video_input_frame(2, slot="first_frame")
     assert result == expected
     assert paths.valid_video_input_frame(2, slot="first_frame", source_path=source) == expected
+
+
+def test_validate_reference_audio_request_rejects_out_of_range_clips(monkeypatch):
+    """beat 流水线的音频时长守卫：逐条 1.8~15.2s + 总和 15s，与画布同一套判定。
+
+    早先这里只判总和、没有下界，一条 0.5s 的声线会被我们放到厂商那儿吃
+    `InvalidParameter.DurationTooShort`——白跑一轮才知道。
+    """
+    from novelvideo.seedance2_i2v import pipeline
+
+    durations = {"a.wav": 0.5, "b.wav": 6.0}
+    monkeypatch.setattr(
+        pipeline,
+        "probe_voice_sample_duration_seconds",
+        lambda path: durations[Path(path).name],
+    )
+
+    with pytest.raises(ValueError, match="音频1"):
+        pipeline._validate_reference_audio_request(["a.wav", "b.wav"])
+
+    durations["a.wav"] = 6.0
+    pipeline._validate_reference_audio_request(["a.wav", "b.wav"])
+
+
+def test_validate_reference_audio_request_total_bound_and_probe_failures(monkeypatch):
+    """总和超限要报中文 + 具体条目；测不出的条目不参与判定（放行给厂商）。"""
+    from novelvideo.seedance2_i2v import pipeline
+
+    monkeypatch.setattr(
+        pipeline, "probe_voice_sample_duration_seconds", lambda _path: 6.0
+    )
+    with pytest.raises(ValueError, match="请回到角色工作台"):
+        pipeline._validate_reference_audio_request(["a.wav", "b.wav", "c.wav"])
+
+    # 1.8+8.3+4.9 == 15.000000000000002：裸浮点比较会把正好顶格 15s 的一组误判成超限。
+    exact = {"a.wav": 1.8, "b.wav": 8.3, "c.wav": 4.9}
+    monkeypatch.setattr(
+        pipeline,
+        "probe_voice_sample_duration_seconds",
+        lambda path: exact[Path(path).name],
+    )
+    pipeline._validate_reference_audio_request(["a.wav", "b.wav", "c.wav"])
+
+    def boom(_path):
+        raise ValueError("ffprobe 挂了")
+
+    monkeypatch.setattr(pipeline, "probe_voice_sample_duration_seconds", boom)
+    pipeline._validate_reference_audio_request(["a.wav", "b.wav", "c.wav"])
