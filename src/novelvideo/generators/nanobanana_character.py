@@ -64,9 +64,10 @@ _GUOMAN_IDENTITY_SHEET_STYLE = (
     "polished Unreal Engine / Octane-style finish. Apply this style only to the "
     "rendering medium, materials, lighting, and finish; do not infer or change the "
     "character's face, age, gender, body proportions, clothing, accessories, social "
-    "status, or environment from the style preset. The reference portrait exclusively "
-    "defines the face and identity. CHARACTER DETAILS exclusively define clothing and "
-    "accessories."
+    "status, or environment from the style preset. The identity reference, when "
+    "provided, defines the face and identity. The costume reference, when provided, "
+    "takes priority for clothing. CHARACTER DETAILS define any remaining explicit "
+    "face, clothing, and accessory facts."
 )
 
 
