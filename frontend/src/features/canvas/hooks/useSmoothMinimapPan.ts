@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, type RefObject } from 'react';
-import { getNodesBounds, type ReactFlowInstance } from '@xyflow/react';
+import type { ReactFlowInstance, Viewport } from '@xyflow/react';
 
 /**
  * 接管小地图的拖动平移，替掉 React Flow 内置的 `pannable`。
@@ -17,9 +17,12 @@ import { getNodesBounds, type ReactFlowInstance } from '@xyflow/react';
  * 而且这个坏视口会被持久化，刷新后依旧。手上动作没变画布却越拖越快，
  * 这就是「小地图拖起来不跟手」的真正来源，跟帧率无关。
  *
- * 这里的两点改动：
- * 1. 增益只按节点包围盒算，不含视口框 —— 增益在一次手势内恒定，不再发散。
+ * 这里的三点改动：
+ * 1. 增益只按**可见**节点的**绝对**包围盒算，不含视口框 —— 增益在一次手势内恒定，
+ *    不再发散，且与内置 MiniMap 实际渲染的范围对齐（它同样只画可见节点）。
  * 2. 视口用 rAF 缓动跟随目标，而不是每帧硬跳，抹掉指针采样抖动和起停的突变。
+ * 3. 缓动的开始/收敛/结束都通知外层：外层据此在缓动期间跳过逐帧的视口提交，
+ *    并且等真正收敛后才收起小地图（否则清理函数会把缓动掐断在半路）。
  */
 
 /** 与 xyflow MiniMap 的 offsetScale 默认值一致，用于反推它渲染用的 viewBox。 */
@@ -50,10 +53,26 @@ interface SmoothMinimapPanOptions {
    */
   onPanStart?: () => void;
   /**
-   * 拖动结束。`pointerInsideMinimap` 表示松手时指针是否还落在小地图内：
-   * 拖动期间 hover 态多半已经被置 false，调用方据此决定是继续显示还是收起。
+   * 拖动**彻底**结束：指针已松开**且**缓动已收敛（或 hook 在拖动中被卸载）。
+   * 调用方据此解除小地图的挂载保护 —— 必须等收敛，不能用固定延时：收敛耗时
+   * 取决于松手瞬间的剩余距离（剩 100px 约 260ms、剩 1000px 约 360ms），
+   * 都超过自动隐藏的 180ms，小地图会在缓动到位前卸载、rAF 被清理函数取消。
+   *
+   * `pointerInsideMinimap` 表示松手时指针是否还落在小地图内：拖动期间 hover 态
+   * 多半已经被置 false，调用方据此决定是继续显示还是收起。
    */
   onPanEnd?: (pointerInsideMinimap: boolean) => void;
+  /**
+   * 缓动收敛到目标（此刻指针可能还按着不动）。调用方据此把最终视口提交一次。
+   *
+   * 之所以要这个回调：`instance.setViewport` 每次都会走一遍完整的
+   * `onMoveStart → onMove → onMoveEnd`（d3 zoom transform，没有 internal 标记），
+   * 而 React Flow 只对 `panOnScroll` 才合并结束事件（`panOnScroll ? 150 : 0`）。
+   * 用户关掉「触控板平移」后合并不存在，缓动的每一帧都会提交一次视口 ——
+   * 正是本 hook 想消掉的 store 风暴。调用方应在缓动期间跳过 `onMoveEnd` 的提交，
+   * 改由这里收敛时提交一次。
+   */
+  onViewportSettled?: (viewport: Viewport) => void;
 }
 
 export function useSmoothMinimapPan({
@@ -62,12 +81,15 @@ export function useSmoothMinimapPan({
   instance,
   onPanStart,
   onPanEnd,
+  onViewportSettled,
 }: SmoothMinimapPanOptions): void {
   // 回调走 ref：它们的身份变化不该重挂监听（重挂会在拖动中途摘掉 window 监听）。
   const onPanStartRef = useRef(onPanStart);
   const onPanEndRef = useRef(onPanEnd);
+  const onViewportSettledRef = useRef(onViewportSettled);
   onPanStartRef.current = onPanStart;
   onPanEndRef.current = onPanEnd;
+  onViewportSettledRef.current = onViewportSettled;
 
   useEffect(() => {
     if (!enabled) return;
@@ -90,6 +112,18 @@ export function useSmoothMinimapPan({
     let targetY = 0;
     let rafId = 0;
     let lastFrameTime = 0;
+    /**
+     * 指针已松开、只等缓动收尾时记下松手点是否在小地图内；收敛后才把结束通知
+     * 发出去（见 onPanEnd 的注释）。null 表示当前没有待发的结束通知。
+     */
+    let pendingPanEndInside: boolean | null = null;
+
+    function flushPanEnd() {
+      if (pendingPanEndInside === null) return;
+      const inside = pendingPanEndInside;
+      pendingPanEndInside = null;
+      onPanEndRef.current?.(inside);
+    }
 
     const stopLoop = () => {
       if (rafId) cancelAnimationFrame(rafId);
@@ -133,6 +167,10 @@ export function useSmoothMinimapPan({
       // 跟手不受影响；按住不动时则彻底静默。
       if (settled) {
         stopLoop();
+        // 最终视口在这里提交一次 —— 缓动期间外层会跳过 onMoveEnd 的逐帧提交。
+        onViewportSettledRef.current?.({ x: nextX, y: nextY, zoom: viewport.zoom });
+        // 松手后到位才算拖动真正结束，这时才允许外层收起小地图。
+        flushPanEnd();
         return;
       }
       rafId = requestAnimationFrame(step);
@@ -142,7 +180,15 @@ export function useSmoothMinimapPan({
       if (event.button !== 0 || activePointerId !== null) return;
 
       const viewport = instance.getViewport();
-      const bounds = getNodesBounds(instance.getNodes());
+      // 必须走 instance 上的 getNodesBounds（它带 nodeLookup），不能用同名的静态
+      // 工具：静态版对普通 node 直接取 `node.position`，而分组成员的 position 是
+      // **相对父节点**的。分镜组把成员改成 `parentId + hidden: true`、position 是
+      // 组内单元格坐标（近原点），组本身却可能在 x=10000 —— 静态版会把包围盒从
+      // 原点一路撑到组的位置，增益随之远大于小地图的视觉映射。
+      // 同时要过滤 hidden：内置 MiniMap 的包围盒是 getInternalNodesBounds(…, {
+      // filter: filterHidden })，只算可见节点，我们得跟它对齐才跟手。
+      const visibleNodes = instance.getNodes().filter((node) => !node.hidden);
+      const bounds = instance.getNodesBounds(visibleNodes);
       const rect = svg.getBoundingClientRect();
       const elementWidth = rect.width || MINIMAP_FALLBACK_WIDTH;
       const elementHeight = rect.height || MINIMAP_FALLBACK_HEIGHT;
@@ -156,6 +202,10 @@ export function useSmoothMinimapPan({
       // xyflow 原式是 viewScale * Math.max(zoom, Math.log(zoom))，而 ln(z) < z
       // 对所有 z > 0 恒成立，那个 Math.max 永远取 zoom，这里直接写成 zoom。
       moveScale = viewScale * viewport.zoom;
+
+      // 上一次手势的缓动可能还没收尾就又按了下来：把待发的结束通知丢掉，
+      // 否则这一次收敛时会把它冲出去，拖动中途就被外层收起。
+      pendingPanEndInside = null;
 
       activePointerId = event.pointerId;
       startClientX = event.clientX;
@@ -192,16 +242,18 @@ export function useSmoothMinimapPan({
       if (activePointerId !== event.pointerId) return;
       activePointerId = null;
       detachWindowListeners();
-      // 松手后让缓动自己收尾，别硬切。
-      startLoop();
 
       const rect = minimapEl.getBoundingClientRect();
-      const inside =
+      pendingPanEndInside =
         event.clientX >= rect.left &&
         event.clientX <= rect.right &&
         event.clientY >= rect.top &&
         event.clientY <= rect.bottom;
-      onPanEndRef.current?.(inside);
+
+      // 松手后让缓动自己收尾，别硬切；结束通知压到收敛之后再发（见 onPanEnd
+      // 的注释：收敛耗时随剩余距离变化，固定延时会把缓动掐断）。
+      // 若此刻已经在目标上，startLoop 排的这一帧会立刻判定 settled 并把它冲出去。
+      startLoop();
     }
 
     function detachWindowListeners() {
@@ -217,11 +269,13 @@ export function useSmoothMinimapPan({
       detachWindowListeners();
       stopLoop();
       // 兜底：真被卸载时（enabled 变 false / 换 instance）必须把「拖动中」还回去，
-      // 否则外层会永远认为还在拖，小地图再也收不起来。
+      // 否则外层会永远认为还在拖，小地图再也收不起来。缓动没收尾就被卸载的情况
+      // （pendingPanEndInside 还挂着）同理，一并冲出去。
       if (activePointerId !== null) {
         activePointerId = null;
-        onPanEndRef.current?.(false);
+        pendingPanEndInside = false;
       }
+      flushPanEnd();
     };
   }, [enabled, wrapperRef, instance]);
 }
