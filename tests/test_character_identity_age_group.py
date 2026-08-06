@@ -66,6 +66,8 @@ def test_guoman_character_assets_override_preset_content_bias():
         negative_keywords="no text",
         ethnicity="Chinese",
         identity_name="中年时期",
+        gender="男",
+        age_group="middle",
     )
     identity_prompt = builder._build_identity_locked_prompt(
         character_name="当铺老板",
@@ -78,14 +80,20 @@ def test_guoman_character_assets_override_preset_content_bias():
         negative_keywords="no text",
         ethnicity="Chinese",
         identity_name="中年时期",
+        gender="男",
+        age_group="middle",
     )
 
     for prompt in (portrait_prompt, identity_prompt):
         assert "GUOMAN CHARACTER-ASSET OVERRIDE" in prompt
         assert "Target identity/state: 中年时期" in prompt
+        assert "Target gender: male" in prompt
+        assert "Target age group: middle-aged adult" in prompt
         assert "default high-status robes" in prompt
-        assert "conflicting age styling, hairstyle, clothing" in prompt
-        assert "crown, jewelry, hair accessories" in prompt
+    assert "conflicting age styling, hairstyle, clothing" in identity_prompt
+    assert "crown, jewelry, hair accessories" in identity_prompt
+    assert "skin tone and age impression" not in identity_prompt
+    assert "Preserve facial identity only" in identity_prompt
 
 
 def test_non_guoman_character_prompt_is_unchanged_by_guoman_override():
@@ -105,6 +113,8 @@ def test_non_guoman_character_prompt_is_unchanged_by_guoman_override():
     prompt_with_identity = builder._build_character_prompt(
         **kwargs,
         identity_name="中年时期",
+        gender="男",
+        age_group="middle",
     )
 
     assert prompt_with_identity == original_prompt

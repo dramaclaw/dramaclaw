@@ -1140,6 +1140,8 @@ async def generate_character_reference_unified(
     usage_scope: str = "",
     identity_name: str = "",
     raise_on_error: bool = False,
+    gender: str = "",
+    age_group: str = "",
 ) -> list[str]:
     """统一的角色参考图生成接口。
 
@@ -1194,6 +1196,8 @@ async def generate_character_reference_unified(
                 usage_task_type=usage_task_type,
                 usage_scope=usage_scope,
                 identity_name=identity_name,
+                gender=gender,
+                age_group=age_group,
             )
 
             if result.success:
@@ -1230,6 +1234,8 @@ async def generate_character_reference_unified(
                 usage_task_type=usage_task_type,
                 usage_scope=usage_scope,
                 identity_name=identity_name,
+                gender=gender,
+                age_group=age_group,
             )
 
             if result.success:
@@ -1299,6 +1305,9 @@ async def generate_identity_image_unified(
     usage_scope: str = "",
     identity_name: str = "",
     raise_on_error: bool = False,
+    gender: str = "",
+    character_age_group: str = "",
+    identity_age_group: str = "",
 ) -> dict:
     """基于角色基准图生成身份参考图（Identity Locking）。
 
@@ -1342,6 +1351,9 @@ async def generate_identity_image_unified(
                 usage_task_type=usage_task_type,
                 usage_scope=usage_scope,
                 identity_name=identity_name,
+                gender=gender,
+                character_age_group=character_age_group,
+                identity_age_group=identity_age_group,
             )
             if dry_run:
                 return {
@@ -1382,6 +1394,9 @@ async def generate_identity_image_unified(
                 usage_task_type=usage_task_type,
                 usage_scope=usage_scope,
                 identity_name=identity_name,
+                gender=gender,
+                character_age_group=character_age_group,
+                identity_age_group=identity_age_group,
             )
             if dry_run:
                 return {
@@ -1418,6 +1433,8 @@ async def generate_identity_image_unified(
         usage_task_type=usage_task_type,
         usage_scope=usage_scope,
         identity_name=identity_name,
+        gender=gender,
+        age_group=identity_age_group or character_age_group,
     )
     if paths:
         import shutil

@@ -64,6 +64,8 @@ def _inject_guoman_character_asset_override(
     style_name: str,
     marker: str,
     identity_name: str = "",
+    gender: str = "",
+    age_group: str = "",
 ) -> str:
     """Keep Guoman content defaults from overriding character-asset facts."""
     if str(style_name or "").strip().lower() != "guoman_fantasy":
@@ -78,11 +80,32 @@ def _inject_guoman_character_asset_override(
     ]
     normalized_identity_name = str(identity_name or "").strip()
     if normalized_identity_name:
-        rules.extend(
-            [
-                f"- Target identity/state: {normalized_identity_name}.",
-                "- Preserve only facial identity from the anchor; do not copy conflicting age styling, hairstyle, clothing, crown, jewelry, hair accessories, or social status.",
-            ]
+        rules.append(f"- Target identity/state: {normalized_identity_name}.")
+    normalized_gender = str(gender or "").strip()
+    if normalized_gender:
+        gender_label = {"男": "male", "男性": "male", "女": "female", "女性": "female"}.get(
+            normalized_gender,
+            normalized_gender,
+        )
+        rules.append(f"- Target gender: {gender_label}.")
+    normalized_age_group = str(age_group or "").strip()
+    if normalized_age_group:
+        age_label = {
+            "child": "child",
+            "youth": "young adult",
+            "middle": "middle-aged adult",
+            "elder": "elderly adult",
+        }.get(normalized_age_group.lower(), normalized_age_group)
+        rules.append(f"- Target age group: {age_label}.")
+
+    if marker.startswith("CHARACTER DETAILS"):
+        prompt = prompt.replace(
+            "- hairline, hairstyle, and silhouette\n- skin tone and age impression\n- Preserve the reference identity exactly; do not change face structure, skin tone, hair identity, or silhouette.",
+            "- inherent facial structure and natural hairline\n- skin tone\n- Preserve facial identity only; TARGET IDENTITY FACTS and CHARACTER DETAILS control age, gender presentation, hairstyle, clothing, and silhouette.",
+            1,
+        )
+        rules.append(
+            "- Preserve only facial identity from the anchor; do not copy conflicting age styling, hairstyle, clothing, crown, jewelry, hair accessories, or social status."
         )
     override = "\n".join(rules)
     return prompt.replace(marker, f"{override}\n\n{marker}", 1)
@@ -222,6 +245,8 @@ class NanoBananaCharacterGenerator:
         usage_task_type: str = "character_portrait",
         usage_scope: str = "",
         identity_name: str = "",
+        gender: str = "",
+        age_group: str = "",
     ) -> CharacterReferenceResult:
         """生成角色 portrait / identity anchor。
 
@@ -279,6 +304,8 @@ class NanoBananaCharacterGenerator:
                 negative_keywords=negative_keywords,
                 ethnicity=ethnicity,
                 identity_name=identity_name,
+                gender=gender,
+                age_group=age_group,
             )
 
             # 保存 prompt 到文件（审计用）
@@ -408,6 +435,8 @@ class NanoBananaCharacterGenerator:
         usage_task_type: str = "character_portrait",
         usage_scope: str = "",
         identity_name: str = "",
+        gender: str = "",
+        age_group: str = "",
     ) -> CharacterReferenceResult:
         """兼容旧接口，内部统一转 portrait-first 机制。"""
         _ = views, face_only
@@ -423,6 +452,8 @@ class NanoBananaCharacterGenerator:
             usage_task_type=usage_task_type,
             usage_scope=usage_scope,
             identity_name=identity_name,
+            gender=gender,
+            age_group=age_group,
         )
 
     async def generate_identity_with_reference(
@@ -440,6 +471,9 @@ class NanoBananaCharacterGenerator:
         usage_task_type: str = "identity_image",
         usage_scope: str = "",
         identity_name: str = "",
+        gender: str = "",
+        character_age_group: str = "",
+        identity_age_group: str = "",
     ) -> CharacterReferenceResult:
         """基于角色基准图生成身份参考图（Identity Locking）。
 
@@ -503,6 +537,8 @@ class NanoBananaCharacterGenerator:
                 ethnicity=ethnicity,
                 has_costume_reference=has_costume_ref,
                 identity_name=identity_name,
+                gender=gender,
+                age_group=identity_age_group or character_age_group,
             )
 
             # 保存 prompt 到文件（审计用）
@@ -867,6 +903,8 @@ MUST AVOID:
         negative_keywords: str,
         ethnicity: str = "Chinese",
         identity_name: str = "",
+        gender: str = "",
+        age_group: str = "",
     ) -> str:
         """构建 portrait 生成 Prompt。
 
@@ -927,6 +965,8 @@ MUST AVOID:
                 style_name=style_name,
                 marker="STRICT REQUIREMENTS:",
                 identity_name=identity_name,
+                gender=gender,
+                age_group=age_group,
             )
             return prompt.strip()
 
@@ -973,6 +1013,8 @@ MUST AVOID:
             style_name=style_name,
             marker="STRICT REQUIREMENTS:",
             identity_name=identity_name,
+            gender=gender,
+            age_group=age_group,
         )
         return prompt.strip()
 
@@ -1002,6 +1044,8 @@ A second reference image is provided showing the target costume/clothing.
         ethnicity: str = "Chinese",
         has_costume_reference: bool = False,
         identity_name: str = "",
+        gender: str = "",
+        age_group: str = "",
     ) -> str:
         """构建 4 面板 reference sheet Prompt（全脸特写 + 正面全身 + 45° 三分全身 + 背面全身）。
 
@@ -1071,6 +1115,8 @@ STRICT REQUIREMENTS (MUST AVOID):
                 style_name=style_name,
                 marker="CHARACTER DETAILS (CRITICAL - use this for clothing and appearance):",
                 identity_name=identity_name,
+                gender=gender,
+                age_group=age_group,
             )
             return prompt.strip()
 
@@ -1140,6 +1186,8 @@ STRICT REQUIREMENTS (MUST AVOID):
             style_name=style_name,
             marker="CHARACTER DETAILS (CRITICAL - use this for clothing and appearance):",
             identity_name=identity_name,
+            gender=gender,
+            age_group=age_group,
         )
         return prompt.strip()
 
