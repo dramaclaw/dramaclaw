@@ -6910,25 +6910,97 @@ def _start_freezone_image_reverse_prompt_task(
 
 
 async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | None:
-    """Use the optional EE catalog while keeping CE's static model list intact."""
+    """Use EE catalog or the CE-local catalog when custom NewAPI is active."""
     from novelvideo.ports.registry import PortNotRegistered, get_port
 
     try:
         catalog = get_port("media_model_catalog")
     except PortNotRegistered:
+        from novelvideo.model_gateway_settings import (
+            MODE_CUSTOM,
+            MODE_HYBRID,
+            get_ce_media_model_catalog,
+            get_effective_newapi_config,
+            get_official_media_model_catalog,
+        )
+        from novelvideo.shared.runtime_env import is_ce_effective
+
+        if is_ce_effective():
+            mode = get_effective_newapi_config().mode
+            if mode == MODE_CUSTOM:
+                return _merge_media_model_catalog_defaults(
+                    _static_media_model_catalog(media_type),
+                    get_ce_media_model_catalog(media_type, include_disabled=True),
+                )
+            if mode == MODE_HYBRID:
+                local = get_ce_media_model_catalog(
+                    media_type,
+                    provider="comfyui",
+                    include_disabled=True,
+                )
+                return _merge_media_model_catalog_defaults(
+                    _static_media_model_catalog(media_type),
+                    local,
+                )
+            return get_official_media_model_catalog(media_type)
         return None
     return await catalog.list_models(media_type)
 
 
+def _static_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
+    from novelvideo.model_gateway_settings import get_official_media_model_catalog
+
+    return get_official_media_model_catalog(media_type)
+
+
+def _merge_media_model_catalog_defaults(
+    defaults: list[dict[str, Any]], configured: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Overlay CE mappings on the existing mainline capabilities."""
+    merged: list[dict[str, Any]] = []
+    consumed: set[int] = set()
+    for base in defaults:
+        base_id = _catalog_entry_id(base)
+        match_index = next(
+            (
+                index
+                for index, item in enumerate(configured)
+                if index not in consumed
+                and base_id
+                and _catalog_entry_id(item) == base_id
+            ),
+            None,
+        )
+        if match_index is None:
+            merged.append(base)
+            continue
+        consumed.add(match_index)
+        override = configured[match_index]
+        if override.get("enabled") is not False:
+            merged.append({**base, **override})
+    merged.extend(
+        item
+        for index, item in enumerate(configured)
+        if index not in consumed and item.get("enabled") is not False
+    )
+    return merged
+
+
 def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
     """Return new and legacy identifiers accepted at the API boundary."""
-    return {
+    identifiers = {
         str(entry.get("catalogId") or ""),
         str(entry.get("catalog_id") or ""),
         str(entry.get("id") or ""),
         str(entry.get("apiModel") or ""),
+        str(entry.get("api_model") or ""),
         str(entry.get("gatewayModel") or ""),
+        str(entry.get("gateway_model") or ""),
     }
+    aliases = entry.get("aliases")
+    if isinstance(aliases, list):
+        identifiers.update(str(alias) for alias in aliases)
+    return {identifier for identifier in identifiers if identifier}
 
 
 def _catalog_entry_id(entry: dict[str, Any] | None) -> str:

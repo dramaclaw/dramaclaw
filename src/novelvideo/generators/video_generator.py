@@ -1798,6 +1798,27 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         )
 
         gateway = get_effective_newapi_gateway_config()
+        try:
+            from novelvideo.model_gateway_settings import (
+                MODE_CUSTOM,
+                MODE_HYBRID,
+                get_ce_newapi_config_for_mode,
+                get_effective_newapi_config,
+                get_newapi_media_model_mappings,
+            )
+
+            active_gateway = get_effective_newapi_config()
+            media_mapping = get_newapi_media_model_mappings().get(
+                model or NEWAPI_VIDEO_MODEL,
+                {},
+            )
+            if (
+                active_gateway.mode == MODE_HYBRID
+                and media_mapping.get("provider") == "comfyui"
+            ):
+                gateway = get_ce_newapi_config_for_mode(MODE_CUSTOM)
+        except (RuntimeError, ImportError):
+            pass
         self.api_key = api_key if api_key is not None else gateway.api_key
         self.base_url = (endpoint or gateway.base_url).rstrip("/")
         self.model = model or NEWAPI_VIDEO_MODEL
@@ -2362,6 +2383,19 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 return value.strip()
         return ""
 
+    def _resolve_result_url(self, result_url: str) -> str:
+        """Make gateway-local result URLs reachable from this process."""
+        value = str(result_url or "").strip()
+        parsed = urllib.parse.urlsplit(value)
+        if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+            return value
+        gateway = urllib.parse.urlsplit(self.base_url)
+        if not gateway.scheme or not gateway.netloc:
+            return value
+        return urllib.parse.urlunsplit(
+            (gateway.scheme, gateway.netloc, parsed.path, parsed.query, parsed.fragment)
+        )
+
     @staticmethod
     def _extract_returned_last_frame_url(task: dict) -> str:
         if not isinstance(task, dict):
@@ -2873,7 +2907,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
                 if status in {"completed", "succeeded", "success", "done"}:
                     progress(0.9)
-                    video_url = self._extract_video_url(task)
+                    video_url = self._resolve_result_url(self._extract_video_url(task))
                     if not video_url:
                         update_request_status(
                             task_id, "failed", "No video url in DramaClawAPI result"
@@ -3551,6 +3585,20 @@ def newapi_video_backend_options(*, include_seedance2_variants: bool = False) ->
     from novelvideo.config import NEWAPI_VIDEO_MODELS
 
     models = [model for model in NEWAPI_VIDEO_MODELS if model not in NEWAPI_DISABLED_VIDEO_MODELS]
+    try:
+        from novelvideo.model_gateway_settings import get_newapi_media_model_mappings
+
+        for model, mapping in get_newapi_media_model_mappings().items():
+            media_type = str(mapping.get("mediaType") or "video").strip().lower()
+            if (
+                mapping.get("provider") == "comfyui"
+                and mapping.get("enabled") is not False
+                and media_type == "video"
+                and model not in models
+            ):
+                models.append(model)
+    except (RuntimeError, ImportError):
+        pass
     if include_seedance2_variants:
         for model in NEWAPI_MAINLINE_SEEDANCE2_MODELS:
             if model not in models:

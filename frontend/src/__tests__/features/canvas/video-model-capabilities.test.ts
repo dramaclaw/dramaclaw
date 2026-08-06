@@ -113,6 +113,10 @@ describe("目录 supportedModes 是模式入口的单一事实来源", () => {
     apiModel: "custom-reference-model",
     supportedModes: ["text_to_video", "image_reference"],
   };
+  const comfyAllReference = {
+    apiModel: "minimax_h3_r2v",
+    supportedModes: ["text_to_video", "image_reference", "all_reference"],
+  };
 
   it("只声明 first_frame 的模型仍有真正首帧入口，不会误进图生视频", () => {
     expect(isVideoModeSupportedByModel("firstFrame", firstFrameOnly)).toBe(true);
@@ -136,6 +140,28 @@ describe("目录 supportedModes 是模式入口的单一事实来源", () => {
     expect(GEN_MODE_TO_CATALOG_MODE.firstFrame).toBe("first_frame");
     expect(GEN_MODE_TO_CATALOG_MODE.imageToVideo).toBe("image_reference");
     expect(GEN_MODE_TO_CATALOG_MODE.imageReference).toBe("image_reference");
+  });
+
+  it("非 Seedance 模型声明 all_reference 后可使用多图、视频和音频素材", () => {
+    expect(isVideoModeSupportedByModel("allReference", comfyAllReference)).toBe(true);
+    expect(videoUpstreamImageDefaultMode(comfyAllReference)).toBe("allReference");
+    expect(videoMultiImageAutoSwitchMode("imageToVideo", comfyAllReference, 2)).toBe(
+      "allReference",
+    );
+    expect(
+      videoModelReferenceDisabledReason(comfyAllReference, {
+        images: 9,
+        videos: 3,
+        audios: 3,
+      }),
+    ).toBeNull();
+    expect(
+      videoSubmitMediaRejectionReason("allReference", comfyAllReference, {
+        images: 9,
+        videos: 3,
+        audios: 3,
+      }),
+    ).toBeNull();
   });
 });
 

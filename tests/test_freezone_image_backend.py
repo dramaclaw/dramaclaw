@@ -7148,6 +7148,90 @@ async def test_freezone_image_models_prefers_ee_catalog(
     assert result == {"ok": True, "data": catalog}
 
 
+def test_ce_media_catalog_overlay_preserves_unconfigured_defaults() -> None:
+    defaults = [
+        {
+            "catalogId": "default-image",
+            "id": "default-image",
+            "apiModel": "default-image",
+            "label": "Default",
+        },
+        {
+            "catalogId": "other-image",
+            "id": "other-image",
+            "apiModel": "other-image",
+            "label": "Other",
+        },
+    ]
+    configured = [
+        {
+            "catalogId": "default-image",
+            "id": "default-image",
+            "apiModel": "default-image",
+            "gatewayModel": "custom-upstream",
+        },
+        {
+            "catalogId": "custom-image",
+            "id": "custom-image",
+            "apiModel": "custom-image",
+            "label": "Custom",
+        },
+    ]
+
+    result = freezone_routes._merge_media_model_catalog_defaults(defaults, configured)
+
+    assert result == [
+        {
+            "catalogId": "default-image",
+            "id": "default-image",
+            "apiModel": "default-image",
+            "label": "Default",
+            "gatewayModel": "custom-upstream",
+        },
+        {
+            "catalogId": "other-image",
+            "id": "other-image",
+            "apiModel": "other-image",
+            "label": "Other",
+        },
+        {
+            "catalogId": "custom-image",
+            "id": "custom-image",
+            "apiModel": "custom-image",
+            "label": "Custom",
+        },
+    ]
+
+
+def test_ce_media_catalog_overlay_returns_defaults_without_local_models() -> None:
+    defaults = [{"id": "official-image", "apiModel": "official-image"}]
+
+    assert freezone_routes._merge_media_model_catalog_defaults(defaults, []) == defaults
+
+
+def test_ce_media_catalog_does_not_match_custom_upstream_model_as_catalog_id() -> None:
+    defaults = [
+        {
+            "catalogId": "LingShan-G2",
+            "id": "LingShan-G2",
+            "gatewayModel": "LingShan-G2",
+            "label": "Official",
+        }
+    ]
+    configured = [
+        {
+            "catalogId": "my-image",
+            "id": "my-image",
+            "gatewayModel": "LingShan-G2",
+            "label": "Custom",
+        }
+    ]
+
+    result = freezone_routes._merge_media_model_catalog_defaults(defaults, configured)
+
+    assert [entry["catalogId"] for entry in result] == ["LingShan-G2", "my-image"]
+
+
 @pytest.mark.asyncio
 async def test_image_catalog_pixel_floor_is_added_to_execution_schema(
     monkeypatch: pytest.MonkeyPatch,

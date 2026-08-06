@@ -235,8 +235,15 @@ export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
  * 1.x 等）一次只能吃一张图 —— 对它们来说换模式救不了，得换模型。
  */
 export function videoModelAcceptsMultipleImages(
-  modelId: string | null | undefined,
+  model: VideoModelRef,
 ): boolean {
+  if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    return (
+      isVideoModeSupportedByModel("allReference", model) ||
+      isVideoModeSupportedByModel("imageReference", model)
+    );
+  }
+  const modelId = videoModelIdOf(model);
   return isSeedance2VideoModel(modelId) || isHappyHorseVideoModel(modelId);
 }
 
@@ -265,7 +272,7 @@ export function videoMultiImageAutoSwitchMode(
   if (mode !== "imageToVideo" || imageCount <= 1) return null;
   const modelId = videoModelIdOf(model);
   if (isHappyHorseVideoModel(modelId)) return null;
-  if (!videoModelAcceptsMultipleImages(modelId)) return null;
+  if (!videoModelAcceptsMultipleImages(model)) return null;
   const candidates: VideoGenMode[] = ["allReference", "imageReference"];
   return candidates.find((candidate) => isVideoModeSupportedByModel(candidate, model)) ?? null;
 }
@@ -445,7 +452,7 @@ export function formatAudioDurationClips(
  */
 export function videoSubmitMediaRejectionReason(
   mode: VideoGenMode,
-  modelId: string | null | undefined,
+  model: VideoModelRef,
   counts: { images: number; videos: number; audios: number },
 ): string | null {
   if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit") {
@@ -454,7 +461,7 @@ export function videoSubmitMediaRejectionReason(
   if (counts.audios > 0 && mode !== "allReference") {
     return "该模型不支持音频素材";
   }
-  if (counts.images > 1 && !videoModelAcceptsMultipleImages(modelId)) {
+  if (counts.images > 1 && !videoModelAcceptsMultipleImages(model)) {
     return "该模型单次仅支持 1 张图片";
   }
   return null;
@@ -483,9 +490,24 @@ export function videoSubmitMediaRejectionReason(
  *   （`FREEZONE_DISABLED_VIDEO_BACKENDS`），不会出现在选择器里，这条分支是休眠的。
  */
 export function videoModelReferenceDisabledReason(
-  modelId: string | null | undefined,
+  model: VideoModelRef,
   counts: { images: number; videos: number; audios: number },
 ): string | null {
+  if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    const supportsAllReference = isVideoModeSupportedByModel("allReference", model);
+    const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);
+    if (counts.videos > 0 && !supportsAllReference && !supportsVideoEdit) {
+      return "该模型不支持视频素材";
+    }
+    if (counts.audios > 0 && !supportsAllReference) {
+      return "该模型不支持音频素材";
+    }
+    if (counts.images > 1 && !videoModelAcceptsMultipleImages(model)) {
+      return "该模型单次仅支持 1 张图片";
+    }
+    return null;
+  }
+  const modelId = videoModelIdOf(model);
   if (isGrokVideoChannelModel(modelId)) {
     if (counts.videos > 0 || counts.audios > 0) {
       return "Grok Video Channel 仅支持图片素材";
