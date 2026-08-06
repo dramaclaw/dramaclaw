@@ -77,26 +77,36 @@ vi.mock("@/components/ui/popover", () => ({
   PopoverContent: ({ children }: React.PropsWithChildren) => <>{children}</>,
 }));
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string) =>
-      ({
-        "credits.balance": "当前积分余额",
-        "credits.short": "积分",
-        "credits.openPanel": "打开积分面板",
-        "credits.personalAccount": "个人积分账户",
-        "credits.orgAccount": "组织额度账户",
-        "credits.orgBalance": "组织额度余额",
-        "credits.details": "查看明细",
-        "credits.earned": "已获得",
-        "credits.spent": "已消费",
-        "credits.refunded": "已退款",
-        "credits.promotions": "可用促销",
-        "credits.promotionCount": "当前有 2 项可能适用的优惠",
-        "credits.viewTransactions": "查看积分明细",
-      })[key] ?? key,
-  }),
-}));
+// The real dictionary, not a hand-copied one: which wallet this popover claims
+// to be showing lives entirely in the copy, so a test carrying its own strings
+// would keep passing while the shipped labels said something else.
+vi.mock("react-i18next", async () => {
+  const { readFileSync } = await import("node:fs");
+  const dictionary = JSON.parse(
+    readFileSync("public/locales/zh/translation.json", "utf8"),
+  ) as Record<string, unknown>;
+  const translate = (key: string, vars?: Record<string, unknown>) => {
+    const raw = key
+      .split(".")
+      .reduce<unknown>(
+        (node, part) =>
+          node && typeof node === "object"
+            ? (node as Record<string, unknown>)[part]
+            : undefined,
+        dictionary,
+      );
+    if (typeof raw !== "string") return key;
+    return raw.replace(/\{\{(\w+)\}\}/g, (_match, name: string) =>
+      String(vars?.[name] ?? ""),
+    );
+  };
+  return {
+    useTranslation: () => ({
+      t: translate,
+      i18n: { resolvedLanguage: "zh", language: "zh" },
+    }),
+  };
+});
 
 function renderBadge() {
   const qc = new QueryClient({
@@ -130,13 +140,17 @@ describe("CreditBalanceBadge", () => {
   // OI-7: the figures always came from whichever account the backend resolved,
   // but the heading was hardcoded to "个人积分账户" — so an org member read his
   // organization's balance under the name of his personal wallet.
-  it("names the organization account when the summary is org-scoped", () => {
+  //
+  // The label must also say *allocated*: this figure is the member's own share,
+  // handed to him by the org, not the organization-wide pool. Naming it
+  // "组织额度余额" told an org admin he was looking at the whole org's money.
+  it("names the allocation the organization made to this member", () => {
     summaryState.scope = "org_member";
 
     renderBadge();
 
-    expect(screen.getByText("组织额度账户")).toBeInTheDocument();
-    expect(screen.getByText("组织额度余额")).toBeInTheDocument();
+    expect(screen.getByText("组织分配给你的额度")).toBeInTheDocument();
+    expect(screen.getByText("可用余额")).toBeInTheDocument();
     expect(screen.queryByText("个人积分账户")).not.toBeInTheDocument();
     expect(screen.queryByText("当前积分余额")).not.toBeInTheDocument();
   });
@@ -150,7 +164,7 @@ describe("CreditBalanceBadge", () => {
       const { unmount } = renderBadge();
 
       expect(screen.getByText("个人积分账户")).toBeInTheDocument();
-      expect(screen.queryByText("组织额度账户")).not.toBeInTheDocument();
+      expect(screen.queryByText("组织分配给你的额度")).not.toBeInTheDocument();
       unmount();
     }
   });

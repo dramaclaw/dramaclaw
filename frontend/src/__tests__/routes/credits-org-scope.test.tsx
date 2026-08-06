@@ -208,8 +208,11 @@ describe("credits page — organization member", () => {
     const { container } = render(<CreditsPage />);
     const text = container.textContent ?? "";
 
-    expect(text).toContain("组织额度");
-    expect(text).toContain("组织额度余额");
+    // "分配" is the load-bearing word: the figure is this member's share, not
+    // the organization-wide pool. A chip reading plain "组织额度" let an org
+    // admin take his own allocation for the whole organization's balance.
+    expect(text).toContain("组织分配额度");
+    expect(text).toContain("可用余额");
     expect(text).toContain(
       "以下余额与明细来自组织「星辰文化」为你分配的组织额度，你的任务消耗从该额度扣除。",
     );
