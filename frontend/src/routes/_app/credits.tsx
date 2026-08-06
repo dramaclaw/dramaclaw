@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, Clock3, Sparkles } from "lucide-react";
+import { Building2, ChevronLeft, ChevronRight, Clock3, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -19,6 +19,9 @@ import {
 import {
   type CreditTransaction,
   type CreditTransactionCategory,
+  creditOrgOf,
+  creditScopeOf,
+  dormantPersonalBalanceOf,
   useCreditFilterOptions,
   useCreditPromotions,
   useCreditSummary,
@@ -209,7 +212,9 @@ function InlineError({ message, onRetry }: { message: string; onRetry: () => voi
   );
 }
 
-function CreditsPage() {
+// Exported as a test seam: the route module itself can't be mounted in vitest
+// (no router plugin there), so the page is rendered directly in unit tests.
+export function CreditsPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const language = i18n.resolvedLanguage ?? i18n.language ?? "zh";
@@ -221,7 +226,17 @@ function CreditsPage() {
   const [featureKey, setFeatureKey] = useState("");
   const [model, setModel] = useState("");
   const summaryQuery = useCreditSummary();
-  const promotionQuery = useCreditPromotions();
+  const summary = summaryQuery.data?.data;
+  // Org members are charged against their org member account, and the org
+  // promotion surface doesn't exist yet (the backend pins promotion_count to
+  // 0 for them) — so don't ask for promotions and don't advertise any. While
+  // the summary is still loading the scope reads "personal", which keeps the
+  // request timing identical to before for personal accounts.
+  const scope = creditScopeOf(summary);
+  const isOrgScope = scope === "org_member";
+  const org = creditOrgOf(summary);
+  const dormantPersonalBalance = dormantPersonalBalanceOf(summary);
+  const promotionQuery = useCreditPromotions(!isOrgScope);
   const filterOptionsQuery = useCreditFilterOptions();
   const filters = useMemo(
     () => ({
@@ -237,8 +252,7 @@ function CreditsPage() {
     [category, endDate, featureKey, model, page, projectId, startDate],
   );
   const transactionsQuery = useCreditTransactions(filters);
-  const summary = summaryQuery.data?.data;
-  const promotions = promotionQuery.data?.data.items ?? [];
+  const promotions = isOrgScope ? [] : (promotionQuery.data?.data.items ?? []);
   const transactions = transactionsQuery.data?.data;
   const filterOptions = filterOptionsQuery.data?.data;
   const totalPages = Math.max(1, Math.ceil((transactions?.total ?? 0) / PAGE_SIZE));
@@ -284,8 +298,27 @@ function CreditsPage() {
               <ChevronLeft className="size-3.5" strokeWidth={1.75} />
               {t("credits.back")}
             </button>
-            <h1 className="text-xl font-semibold text-foreground">{t("credits.centerTitle")}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">{t("credits.centerDescription")}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-semibold text-foreground">{t("credits.centerTitle")}</h1>
+              {/* An unlabelled number was the defect: an org member saw a
+                  balance with no hint that it belongs to the org rather than
+                  to him. The chip names the account, the note below names the
+                  org itself. */}
+              {isOrgScope ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/12 px-2.5 py-0.5 text-xs font-medium text-primary">
+                  <Building2 className="size-3.5" strokeWidth={1.75} />
+                  {t("credits.orgScopeBadge")}
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t(isOrgScope ? "credits.orgCenterDescription" : "credits.centerDescription")}
+            </p>
+            {org ? (
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t("credits.orgScopeNotice", { name: org.name })}
+              </p>
+            ) : null}
           </div>
           {/* Unfilled too — it reads as a status note next to the title, and
               `text-warning` already carries the whole signal. */}
@@ -321,7 +354,7 @@ function CreditsPage() {
                 className={cn(TILE, isBalance && "ring-1 ring-inset ring-primary/25")}
               >
                 <div className="text-xs font-medium text-muted-foreground">
-                  {t(`credits.${key}`)}
+                  {t(isBalance && isOrgScope ? "credits.orgBalance" : `credits.${key}`)}
                 </div>
                 <div className="mt-1.5 flex items-center gap-1.5 text-2xl font-semibold text-foreground">
                   {isBalance ? <CreditSparkIcon className="size-5" /> : null}
@@ -333,6 +366,27 @@ function CreditsPage() {
             );
           })}
         </div>
+
+        {/* Only rendered when the user actually still holds personal credits
+            (the backend sends the key as null otherwise). It is deliberately
+            outside the tile grid and typeset in muted text at a smaller size:
+            it is a fact about another account, not a figure you can spend
+            here, and it is never added into the balance above. */}
+        {dormantPersonalBalance !== null ? (
+          <div className={cn(TILE, "mt-3 flex flex-wrap items-start justify-between gap-2")}>
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-muted-foreground">
+                {t("credits.dormantPersonalBalance")}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("credits.dormantPersonalHint")}
+              </p>
+            </div>
+            <span className="tabular-nums text-lg font-semibold text-muted-foreground">
+              {formatNumber(dormantPersonalBalance, language)}
+            </span>
+          </div>
+        ) : null}
       </section>
 
       {promotions.length > 0 ? (

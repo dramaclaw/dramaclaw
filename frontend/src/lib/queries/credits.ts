@@ -8,6 +8,17 @@ import type { OkResponse } from "@/types/api";
 
 export type CreditTransactionCategory = "all" | "earned" | "spent" | "refunded";
 
+// Which account the `credits/me/*` figures were read from. An organization
+// member's tasks are charged to their org member account, so the page must
+// show that account — showing the personal wallet next to org spending was
+// the whole defect (OI-7).
+export type CreditScope = "personal" | "org_member";
+
+export interface CreditOrgRef {
+  org_id: string;
+  name: string;
+}
+
 export interface CreditSummary {
   balance: number;
   earned: number;
@@ -16,6 +27,37 @@ export interface CreditSummary {
   pending: number;
   promotion_count: number;
   updated_at: string | null;
+  // The three keys below are optional on purpose: a backend that predates the
+  // scope contract simply omits them, and such a response must keep working
+  // as a personal account rather than failing to parse.
+  scope?: CreditScope;
+  organization?: CreditOrgRef | null;
+  // Personal balance that still exists but cannot be spent here, surfaced
+  // only when it is non-zero. Never folded into `balance`.
+  dormant_personal_balance?: number | null;
+}
+
+// Anything that is not literally "org_member" reads as a personal account.
+// Failing towards "personal" keeps an unknown/absent value from painting the
+// organization framing onto a personal wallet.
+export function creditScopeOf(payload?: { scope?: string | null } | null): CreditScope {
+  return payload?.scope === "org_member" ? "org_member" : "personal";
+}
+
+// Reads the wire key so no component has to. Two surfaces render this scope —
+// the credit page and the top-bar balance badge — and a nameless org ref would
+// print an empty label, so the emptiness check belongs here instead of twice at
+// the call sites.
+export function creditOrgOf(summary?: CreditSummary | null): CreditOrgRef | null {
+  if (creditScopeOf(summary) !== "org_member") return null;
+  const ref = summary?.organization;
+  return ref && typeof ref.name === "string" && ref.name !== "" ? ref : null;
+}
+
+export function dormantPersonalBalanceOf(summary?: CreditSummary | null): number | null {
+  if (creditScopeOf(summary) !== "org_member") return null;
+  const value = summary?.dormant_personal_balance;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 export interface CreditPromotion {
@@ -57,6 +99,8 @@ export interface CreditTransactionPage {
   page: number;
   page_size: number;
   total: number;
+  // Same contract as the summary: org members get their org account's ledger.
+  scope?: CreditScope;
 }
 
 export interface CreditFilterOption {
