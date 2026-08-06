@@ -856,6 +856,7 @@ frontend/src/features/canvas/hooks/useFreezoneVideoModels.ts,Elastic-2.0,2026 Su
 frontend/src/features/canvas/hooks/useImageViewer.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/hooks/useImageViewerTransform.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/hooks/useNodeGenerationHistory.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/hooks/useSmoothMinimapPan.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/infrastructure/freezoneAiGateway.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/infrastructure/idGenerator.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/infrastructure/webImageSplitGateway.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -133,6 +133,7 @@ import { CanvasMinimapButton } from './ui/CanvasMinimapButton';
 import { CanvasFpsMeter } from './ui/CanvasFpsMeter';
 import { CanvasSnapAlignButton } from './snap-align/CanvasSnapAlignButton';
 import { useTrackpadPanStore } from './trackpad-pan/trackpadPanStore';
+import { useSmoothMinimapPan } from './hooks/useSmoothMinimapPan';
 import { useCanvasToolStore } from './ui/canvasToolStore';
 import { SnapAlignGuides } from './snap-align/SnapAlignGuides';
 import { useSnapAlignStore } from './snap-align/snapAlignStore';
@@ -766,6 +767,13 @@ export function Canvas({
       }, 180);
     }
   }, []);
+  // 小地图拖动走自己的实现，不用 MiniMap 的 pannable —— 内置增益会随视口拖离
+  // 内容区而复利放大。见 useSmoothMinimapPan 的文件头注释。
+  useSmoothMinimapPan({
+    enabled: minimapVisible,
+    wrapperRef,
+    instance: reactFlowInstance,
+  });
   useEffect(
     () => () => {
       if (minimapHideTimerRef.current !== null) {
@@ -4756,7 +4764,9 @@ export function Canvas({
             style={{ pointerEvents: 'all', zIndex: 10000 }}
             nodeColor="rgba(120, 120, 120, 0.92)"
             maskColor="rgba(0, 0, 0, 0.62)"
-            pannable
+            // 拖动由 useSmoothMinimapPan 接管：内置 pannable 的增益含当前视口框，
+            // 视口拖出内容区后会复利放大，越拖越快。
+            pannable={false}
             zoomable
             onMouseEnter={() => setMinimapHover(true)}
             onMouseLeave={() => setMinimapHover(false)}
