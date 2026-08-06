@@ -336,6 +336,7 @@ async def test_audio_billing_quote_uses_server_planned_quantity(monkeypatch, tmp
         "model": "mainline.beat_audio_generation",
         "params": generation._audio_billing_payload([2, 4], billable_chars=9),
         "quantity": 2,
+        "product_surface": "mainline",
         "user_id": "user_1",
     }
 
