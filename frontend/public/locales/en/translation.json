@@ -4077,6 +4077,7 @@
         "applying": "Working on: {{step}}",
         "applied": "The recommended setup has been saved and enabled.",
         "initializeFirst": "Initialize Local NewAPI first, then apply the profile after its database and administrator access are ready.",
+        "comfyConfig": "ComfyUI Configuration",
         "advanced": "Advanced Settings",
         "invalidJson": "Invalid profile JSON: {{message}}",
         "missingKeys": "Missing upstream API Key for channel(s): {{channels}}",

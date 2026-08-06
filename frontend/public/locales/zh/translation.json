@@ -4077,6 +4077,7 @@
         "applying": "正在处理：{{step}}",
         "applied": "推荐配置已全部保存并启用。",
         "initializeFirst": "请先初始化本地 NewAPI，确认数据库和管理员访问正常后再应用配置。",
+        "comfyConfig": "ComfyUI 配置",
         "advanced": "高级配置",
         "invalidJson": "配置 JSON 无效：{{message}}",
         "missingKeys": "以下渠道缺少上游 API Key：{{channels}}",

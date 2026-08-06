@@ -69,6 +69,7 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 - DramaClaw 业务模型映射。
 - Cognee Embedding 模型、维度和批量大小。
 - 图片、视频和音频模型映射。
+- ComfyUI 渠道以及 MiniMax H3 的文生视频、图生视频和多参考图 Workflow。
 
 按渠道填写 API Key，然后点击 **保存并应用全部配置**。Key 独立保存，不会写入配置 JSON；已经保存的 Key 可以留空，重新输入会替换旧值。
 
@@ -113,6 +114,16 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 ```
 
 `channel` 引用 `channels[].id`。当前一个 profile 中同一 `provider` 只能配置一次。修改推荐/自定义 JSON 会同步到下方高级配置；高级配置保存后也会成为当前自定义配置，避免两套配置同时生效。
+
+推荐配置中的 ComfyUI 默认地址是 `http://127.0.0.1:8188`，并预置以下模型：
+
+| 模型 ID | 用途 | Workflow Key |
+|---|---|---|
+| `minimax_h3_t2v` | 文生视频 | `minimax_h3_t2v` |
+| `minimax_h3_i2v` | 单张参考图生成视频 | `minimax_h3_i2v` |
+| `minimax_h3_r2v` | 多参考素材生成视频 | `minimax_h3_r2v` |
+
+这些 Workflow 是可编辑的初始模板。请确认本机 ComfyUI 已安装模板使用的 MiniMax H3 模型、VAE、CLIP 和自定义节点；本机文件名或节点版本不同时，需要在 **ComfyUI 配置** 中替换对应 Workflow。远程部署时，将默认地址改为 DramaClaw 后端实际可以访问的 ComfyUI 地址，不能继续使用 `127.0.0.1`。
 
 ### 4. 高级配置
 
@@ -166,6 +177,19 @@ Embedding 模型和维度在项目创建时绑定。修改配置只自动影响�
 
 模型 ID 是 DramaClaw 使用的稳定名称，**上游模型名**是 NewAPI 渠道实际调用的名称，两者可以不同。
 
+### 5. ComfyUI 配置
+
+**ComfyUI 配置**已从高级配置中独立出来，在 **本地** 和 **本地 + 官方混合** 两种模式下都可以打开。两处读取并保存的是同一个本地 NewAPI 渠道和同一份 SQLite 数据，不需要重复初始化或维护两套 Workflow。
+
+每条 ComfyUI 模型配置需要：
+
+- DramaClaw 使用的模型 ID。
+- ComfyUI 服务地址；本机默认是 `http://127.0.0.1:8188`。
+- 从 ComfyUI 导出的 **API Format Workflow** JSON，而不是浏览器工作流 JSON。
+- 与 Workflow 对应的媒体模型能力，例如支持模式、比例、分辨率、时长和参考素材数量。
+
+普通本地 ComfyUI 不需要 API Key，可以留空。只有在 ComfyUI 前方部署了要求认证的代理时，才需要按代理方案提供认证信息。
+
 ## 本地 + 官方混合模式
 
 混合模式用于保留官方 RelayClaw，同时让指定视频模型从本地 ComfyUI 生成：
@@ -173,11 +197,11 @@ Embedding 模型和维度在项目创建时绑定。修改配置只自动影响�
 1. 先在 **官方** 保存 DC Key。
 2. 在 **本地** 初始化一次 NewAPI；同一个 SQLite 不需要重复初始化。
 3. 打开 **本地 + 官方混合**。
-4. 配置 ComfyUI 地址。
-5. 为每个本地视频模型填写模型 ID，并粘贴 ComfyUI 导出的 **API Format Workflow** JSON。
+4. 打开独立的 **ComfyUI 配置**，确认或修改服务地址；本机默认是 `http://127.0.0.1:8188`。
+5. 使用推荐配置预置的 MiniMax H3 Workflow，或为本地视频模型填写模型 ID 并粘贴 ComfyUI 导出的 **API Format Workflow** JSON。
 6. 保存视频配置并启用混合模式。
 
-ComfyUI API Key 是可选项。Workflow 必须是 API Format，而不是浏览器工作流格式。
+ComfyUI API Key 是可选项。Workflow 必须是 API Format，而不是浏览器工作流格式。本地模式与混合模式共享 ComfyUI 渠道、Workflow 和媒体模型能力配置；任一模式保存后，另一模式会读取相同结果。
 
 混合模式按模型 ID 路由：本地存在与官方同名的视频模型时使用本地 ComfyUI；其他模型继续使用官方 RelayClaw。DramaClaw 不会在本地生成失败后自动回退官方，是否重试或改选官方模型由用户决定。混合模式只管理本地视频覆盖，不要求再次配置 OpenRouter、火山等官方上游渠道。
 
@@ -216,6 +240,8 @@ Bucket 无需公开读；DramaClaw 使用临时签名 URL 授权上游读取。
 | 知识图谱 embedding 失败 | 检查 embedding Key、上游模型、维度和批量大小；429 表示上游限流。 |
 | 参考图或首帧无法读取 | 检查媒体存储配置和临时 URL 是否能被上游公网访问。 |
 | 混合模式本地视频失败后没有走官方 | 这是预期行为；混合模式不做自动失败回退。 |
+| ComfyUI 无法连接 `127.0.0.1:8188` | `127.0.0.1` 指 DramaClaw 后端所在环境。容器或远程部署时改为后端可访问的宿主机名或局域网地址。 |
+| MiniMax H3 Workflow 执行时报节点或模型缺失 | 确认 ComfyUI 已安装推荐 Workflow 使用的自定义节点和模型文件，并按本机安装情况修改 Workflow。 |
 
 ## 相关文件
 

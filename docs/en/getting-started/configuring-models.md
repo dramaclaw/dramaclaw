@@ -69,6 +69,7 @@ After initialization, start with **Recommended**. One profile configures:
 - DramaClaw feature-model mappings.
 - Cognee embedding model, dimensions, and batch size.
 - Image, video, and audio model mappings.
+- The ComfyUI channel and MiniMax H3 text-to-video, image-to-video, and multi-reference workflows.
 
 Enter each provider key separately, then click **Save & Apply All**. Keys are stored separately and never written into profile JSON. Leave an already saved key blank; entering a new value replaces it.
 
@@ -113,6 +114,16 @@ The built-in recommended profile is read-only. Switch to **Custom** to edit and 
 ```
 
 Each `channel` references a `channels[].id`. A profile currently supports only one entry per `provider`. Changes in the recommended/custom profile are reflected in Advanced Settings. Saving Advanced Settings updates the active custom profile, so there are not two competing configurations.
+
+The recommended profile uses `http://127.0.0.1:8188` as the default ComfyUI URL and includes these models:
+
+| Model ID | Purpose | Workflow key |
+|---|---|---|
+| `minimax_h3_t2v` | Text-to-video | `minimax_h3_t2v` |
+| `minimax_h3_i2v` | Single-image reference video | `minimax_h3_i2v` |
+| `minimax_h3_r2v` | Multi-reference video | `minimax_h3_r2v` |
+
+These workflows are editable starter templates. Verify that your ComfyUI installation has the MiniMax H3 models, VAE, CLIP, and custom nodes referenced by the templates. If local filenames or node versions differ, update the workflow under **ComfyUI Configuration**. For a remote deployment, replace the default URL with an address reachable from the DramaClaw backend; `127.0.0.1` will not point to a remote ComfyUI host.
 
 ### 4. Advanced Settings
 
@@ -166,6 +177,19 @@ Built-in mainline models provide the default capability baseline and cannot be r
 
 The **Model ID** is DramaClaw’s stable identifier. **Upstream Model** is the actual model used by the NewAPI channel; the two may differ.
 
+### 5. ComfyUI Configuration
+
+**ComfyUI Configuration** is separate from Advanced Settings and is available in both **Local** and **Local + Official Hybrid** modes. Both views read and write the same Local NewAPI channel and SQLite data, so NewAPI initialization and workflows are not duplicated.
+
+Each ComfyUI model needs:
+
+- The model ID used by DramaClaw.
+- The ComfyUI service URL; the local default is `http://127.0.0.1:8188`.
+- A ComfyUI **API Format Workflow** JSON export, not the browser workflow JSON.
+- Matching media capabilities, including modes, ratios, resolutions, durations, and reference-media limits.
+
+A normal local ComfyUI instance does not require an API key, so leave it empty. Authentication is relevant only when ComfyUI is placed behind an authenticated proxy.
+
 ## Local + Official Hybrid mode
 
 Hybrid mode keeps RelayClaw while generating selected video models through Local ComfyUI:
@@ -173,11 +197,11 @@ Hybrid mode keeps RelayClaw while generating selected video models through Local
 1. Save the DC Key under **Official**.
 2. Initialize NewAPI once under **Local**; the same SQLite database is reused.
 3. Open **Local + Official Hybrid**.
-4. Enter the ComfyUI URL.
-5. For each local video model, enter its model ID and paste a ComfyUI **API Format Workflow** JSON export.
+4. Open the separate **ComfyUI Configuration** section and confirm or change the service URL; the local default is `http://127.0.0.1:8188`.
+5. Use the recommended MiniMax H3 workflows, or enter a local video model ID and paste a ComfyUI **API Format Workflow** JSON export.
 6. Save video configuration and enable Hybrid mode.
 
-The ComfyUI API key is optional. Workflows must use API Format, not the browser workflow format.
+The ComfyUI API key is optional. Workflows must use API Format, not the browser workflow format. Local and Hybrid modes share the ComfyUI channel, workflows, and media capabilities; saving them in either mode updates the same configuration.
 
 Routing is based on model ID. A local video model overrides an official model with the same ID; all other models continue through RelayClaw. DramaClaw does not automatically fall back to the official model after a local failure. The user chooses whether to retry or switch models. Hybrid mode manages local video overrides only, so it does not require OpenRouter, VolcEngine, or other official upstream provider settings.
 
@@ -216,6 +240,8 @@ Enter Cloud name, API Key, API Secret, and an optional folder. Find them under *
 | Knowledge-graph embedding fails | Check the key, upstream model, dimensions, and batch size. HTTP 429 means upstream rate limiting. |
 | Reference media cannot be read | Verify media storage and that the upstream service can reach the temporary public URL. |
 | Hybrid local video fails without official fallback | Expected: Hybrid mode has no automatic failure fallback. |
+| ComfyUI cannot connect to `127.0.0.1:8188` | `127.0.0.1` means the environment running the DramaClaw backend. For containers or remote deployments, use a host or LAN address reachable from that backend. |
+| A MiniMax H3 workflow reports missing nodes or models | Install the custom nodes and model files referenced by the recommended workflow, then adjust the workflow for local filenames and versions. |
 
 ## Related files
 

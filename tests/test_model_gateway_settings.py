@@ -2420,7 +2420,7 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     videos = get_official_media_model_catalog("video")
 
     assert len(images) == 6
-    assert len(videos) == 6
+    assert len(videos) == 7
     assert [entry["id"] for entry in videos[:2]] == [
         "seedance-2.0-fast",
         "seedance-2.0",
@@ -2432,6 +2432,31 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     seedance = next(entry for entry in videos if entry["id"] == "seedance-2.0-mini")
     assert seedance["apiModel"] == "newapi_seedance-2.0-mini"
     assert "video_edit" in seedance["supportedModes"]
+    minimax = videos[-1]
+    assert minimax["id"] == "MiniMax-H3"
+    assert minimax["gatewayModel"] == "MiniMax-H3"
+    assert minimax["resolutionOptions"] == ["768P", "2K"]
+    assert minimax["ratioOptions"] == [
+        "adaptive",
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16",
+    ]
+    assert minimax["minDuration"] == 4
+    assert minimax["maxDuration"] == 15
+    assert minimax["supportedModes"] == [
+        "text_to_video",
+        "first_frame",
+        "first_last_frame",
+        "image_reference",
+        "all_reference",
+    ]
+    assert minimax["referenceImageMax"] == 9
+    assert minimax["referenceVideoMax"] == 3
+    assert minimax["referenceAudioMax"] == 3
 
 
 def test_custom_media_model_accepts_arbitrary_image_and_video_models():

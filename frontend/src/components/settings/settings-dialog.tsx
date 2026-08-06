@@ -494,7 +494,7 @@ function ModelConfigSection({ open }: { open: boolean }) {
           ) : null}
           <details className="mt-5 rounded-md border border-border/70">
             <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
-              {t("settings.modelConfig.quick.advanced")}
+              {t("settings.modelConfig.quick.comfyConfig")}
             </summary>
             <div className="border-t border-border/70 px-3 pb-4">
               <FeatureModelsBlock
@@ -505,11 +505,30 @@ function ModelConfigSection({ open }: { open: boolean }) {
                 }
                 savedEmbeddingModel={config?.provisioner?.embeddingModel}
                 savedMediaModels={config?.provisioner?.mediaModels ?? {}}
-                mediaOnly={mode === "hybrid"}
-                comfyOnly={mode === "hybrid"}
+                mediaOnly
+                comfyOnly
               />
             </div>
           </details>
+          {mode === "custom" ? (
+            <details className="mt-5 rounded-md border border-border/70">
+              <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
+                {t("settings.modelConfig.quick.advanced")}
+              </summary>
+              <div className="border-t border-border/70 px-3 pb-4">
+                <FeatureModelsBlock
+                  newApiBaseUrl={customBaseUrl}
+                  database={customDatabase}
+                  savedProviderChannels={
+                    config?.provisioner?.providerChannels ?? []
+                  }
+                  savedEmbeddingModel={config?.provisioner?.embeddingModel}
+                  savedMediaModels={config?.provisioner?.mediaModels ?? {}}
+                  excludeComfyUI
+                />
+              </div>
+            </details>
+          ) : null}
         </>
       ) : null}
     </section>
@@ -956,13 +975,6 @@ const MAINLINE_MEDIA_MODEL_IDS = new Set(
   MEDIA_MODEL_ROWS.filter((row) => !row.officialOnly).map((row) => row.model),
 );
 
-const RECOMMENDED_MEDIA_UPSTREAM_MODELS: Readonly<Record<string, string>> = {
-  "seedance-1.0-pro": "doubao-seedance-1-0-pro-250528",
-  "seedance-2.0": "doubao-seedance-2-0-260128",
-  "seedance-2.0-fast": "doubao-seedance-2-0-fast-260128",
-  "seedance-2.0-mini": "doubao-seedance-2-0-mini-260615",
-};
-
 const MEDIA_ROW_GRID =
   "grid grid-cols-[70px_minmax(0,1fr)_130px_minmax(0,1fr)_80px] items-center gap-3";
 
@@ -1001,9 +1013,298 @@ interface QuickModelProfile {
   mediaModels: Record<string, QuickProfileModel>;
 }
 
+function comfyNode(classType: string, inputs: Record<string, unknown>) {
+  return { inputs, class_type: classType };
+}
+
+function minimaxH3Fl2vaWorkflow(firstFrame: boolean) {
+  const generationInputs: Record<string, unknown> = {
+    prompt: "",
+    width: ["115", 0],
+    height: ["115", 1],
+    length: ["105:107", 1],
+    clip: ["105:13", 0],
+    vae: ["105:11", 0],
+  };
+  if (firstFrame) generationInputs.first_frame = ["114", 0];
+  return {
+    "92": comfyNode("SaveVideo", {
+      filename_prefix: "video/MiniMax_H3",
+      format: "auto",
+      codec: "auto",
+      video: ["105:91", 0],
+    }),
+    ...(firstFrame
+      ? {
+          "114": comfyNode("LoadImage", {
+            image: "transparent_rgb_gaming_mouse.png",
+          }),
+          "119": comfyNode("ImageScaleToTotalPixels", {
+            upscale_method: "nearest-exact",
+            megapixels: 1,
+            resolution_steps: 32,
+          }),
+          "120": comfyNode("GetImageSize", { image: ["119", 0] }),
+        }
+      : {}),
+    "115": comfyNode("ResolutionSelector", {
+      aspect_ratio: firstFrame ? "1:1 (Square)" : "16:9 (Widescreen)",
+      megapixels: 0.4,
+      multiple: 32,
+    }),
+    "105:11": comfyNode("VAELoader", {
+      vae_name: "minimax_h3_video_vae_fp16.safetensors",
+    }),
+    "105:24": comfyNode("VAELoader", {
+      vae_name: "minimax_h3_audio_vae_fp32.safetensors",
+    }),
+    "105:23": comfyNode("VAEDecodeAudio", {
+      samples: ["105:14", 0],
+      vae: ["105:24", 0],
+    }),
+    "105:10": comfyNode("VAEDecode", {
+      samples: ["105:14", 0],
+      vae: ["105:11", 0],
+    }),
+    "105:17": comfyNode("KSamplerSelect", { sampler_name: "res_multistep" }),
+    "105:9": comfyNode("BasicScheduler", {
+      scheduler: "simple",
+      steps: 20,
+      denoise: 1,
+      model: ["105:6", 0],
+    }),
+    "105:14": comfyNode("SamplerCustomAdvanced", {
+      noise: ["105:15", 0],
+      guider: ["105:16", 0],
+      sampler: ["105:17", 0],
+      sigmas: ["105:9", 0],
+      latent_image: ["105:104", 1],
+    }),
+    "105:16": comfyNode("BasicGuider", {
+      model: ["105:6", 0],
+      conditioning: ["105:104", 0],
+    }),
+    "105:6": comfyNode("UNETLoader", {
+      unet_name: "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      weight_dtype: "default",
+    }),
+    "105:13": comfyNode("CLIPLoader", {
+      clip_name: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      type: "minimax",
+      device: "default",
+    }),
+    "105:15": comfyNode("RandomNoise", {
+      noise_seed: firstFrame ? 168866841893410 : 556589502035082,
+    }),
+    "105:91": comfyNode("CreateVideo", {
+      fps: 24,
+      bit_depth: 8,
+      images: ["105:10", 0],
+      audio: ["105:23", 0],
+    }),
+    "105:104": comfyNode("MiniMaxH3ImageToVideo", generationInputs),
+    "105:107": comfyNode("ComfyMathExpression", {
+      expression:
+        "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": ["105:111", 0],
+    }),
+    "105:111": comfyNode("PrimitiveFloat", { value: 5 }),
+  };
+}
+
+function minimaxH3ReferenceWorkflow() {
+  return {
+    "92": comfyNode("SaveVideo", {
+      filename_prefix: "video/MiniMax_H3",
+      format: "auto",
+      codec: "auto",
+      video: ["130", 0],
+    }),
+    "115": comfyNode("ResolutionSelector", {
+      aspect_ratio: "16:9 (Widescreen)",
+      megapixels: 0.4,
+      multiple: 32,
+    }),
+    "119": comfyNode("VAELoader", {
+      vae_name: "minimax_h3_video_vae_fp16.safetensors",
+    }),
+    "120": comfyNode("VAELoader", {
+      vae_name: "minimax_h3_audio_vae_fp32.safetensors",
+    }),
+    "121": comfyNode("VAEDecodeAudio", {
+      samples: ["125", 0],
+      vae: ["120", 0],
+    }),
+    "122": comfyNode("VAEDecode", { samples: ["125", 0], vae: ["119", 0] }),
+    "123": comfyNode("KSamplerSelect", { sampler_name: "res_multistep" }),
+    "124": comfyNode("BasicScheduler", {
+      scheduler: "simple",
+      steps: 20,
+      denoise: 1,
+      model: ["127", 0],
+    }),
+    "125": comfyNode("SamplerCustomAdvanced", {
+      noise: ["129", 0],
+      guider: ["126", 0],
+      sampler: ["123", 0],
+      sigmas: ["124", 0],
+      latent_image: ["136", 1],
+    }),
+    "126": comfyNode("BasicGuider", {
+      model: ["127", 0],
+      conditioning: ["136", 0],
+    }),
+    "127": comfyNode("UNETLoader", {
+      unet_name: "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      weight_dtype: "default",
+    }),
+    "128": comfyNode("CLIPLoader", {
+      clip_name: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      type: "minimax",
+      device: "default",
+    }),
+    "129": comfyNode("RandomNoise", { noise_seed: 157368968253448 }),
+    "130": comfyNode("CreateVideo", {
+      fps: 24,
+      bit_depth: 8,
+      images: ["122", 0],
+      audio: ["121", 0],
+    }),
+    "131": comfyNode("ComfyMathExpression", {
+      expression:
+        "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": ["132", 0],
+    }),
+    "132": comfyNode("PrimitiveFloat", { value: 5 }),
+    "136": comfyNode("MiniMaxH3ReferenceToVideo", {
+      prompt: ["138", 0],
+      width: ["115", 0],
+      height: ["115", 1],
+      length: ["131", 1],
+      ref_image_size: "match",
+      clip: ["128", 0],
+      vae: ["119", 0],
+      audio_vae: ["120", 0],
+      "ref_images.ref_image_0": ["137", 0],
+      "ref_images.ref_image_1": ["139", 0],
+    }),
+    "137": comfyNode("LoadImage", { image: "red_superboy_on_city_roof.png" }),
+    "138": comfyNode("PrimitiveStringMultiline", { value: "" }),
+    "139": comfyNode("LoadImage", { image: "mecha_dragon_lightning.png" }),
+  };
+}
+
+const RECOMMENDED_COMFYUI_WORKFLOWS = {
+  minimax_h3_t2v: minimaxH3Fl2vaWorkflow(false),
+  minimax_h3_i2v: minimaxH3Fl2vaWorkflow(true),
+  minimax_h3_r2v: minimaxH3ReferenceWorkflow(),
+};
+
+const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
+  "LingShan-G2": {
+    channel: "openrouter",
+    model: "openai/gpt-image-2",
+    mediaType: "image",
+  },
+  "LingShan-NB-2": {
+    channel: "openrouter",
+    model: "google/gemini-3.1-flash-image",
+    mediaType: "image",
+  },
+  "seedance-1.0-pro-fast": {
+    channel: "volcengine",
+    model: "seedance-1.0-pro-fast",
+    mediaType: "video",
+  },
+  "seedance-1.0-pro": {
+    channel: "volcengine",
+    model: "doubao-seedance-1-0-pro-250528",
+    mediaType: "video",
+  },
+  "seedance-1.5-pro": {
+    channel: "volcengine",
+    model: "doubao-seedance-1-5-pro-251215",
+    mediaType: "video",
+  },
+  "seedance-2.0": {
+    channel: "volcengine",
+    model: "doubao-seedance-2-0-260128",
+    mediaType: "video",
+  },
+  "seedance-2.0-fast": {
+    channel: "volcengine",
+    model: "doubao-seedance-2-0-fast-260128",
+    mediaType: "video",
+  },
+  "seedance-2.0-mini": {
+    channel: "volcengine",
+    model: "doubao-seedance-2-0-mini-260615",
+    mediaType: "video",
+  },
+  "happyhorse-1.0": {
+    channel: "openrouter",
+    model: "alibaba/happyhorse-1.0",
+    mediaType: "video",
+  },
+  "index-tts-2": {
+    channel: "openrouter",
+    model: "openai/gpt-audio",
+    mediaType: "audio",
+  },
+  "LingShan-MU-11": {
+    channel: "openrouter",
+    model: "openai/gpt-audio",
+    mediaType: "audio",
+  },
+  minimax_h3_i2v: {
+    channel: "comfyui",
+    model: "minimax_h3_i2v",
+    mediaType: "video",
+    config: {
+      request: { endpoint: "video/generations", parameters: [] },
+      resolutionOptions: ["480p", "640p"],
+      ratioOptions: ["16:9", "1:1"],
+      minDuration: 4,
+      maxDuration: 15,
+      supportedModes: ["image_reference"],
+      referenceImageMax: 1,
+      humanReview: true,
+    },
+  },
+  minimax_h3_r2v: {
+    channel: "comfyui",
+    model: "minimax_h3_r2v",
+    mediaType: "video",
+    config: {
+      request: { endpoint: "video/generations", parameters: [] },
+      resolutionOptions: ["480p", "640p"],
+      ratioOptions: ["1:1", "16:9"],
+      minDuration: 4,
+      maxDuration: 15,
+      referenceImageMax: 9,
+      referenceVideoMax: 3,
+      referenceAudioMax: 3,
+      supportedModes: ["all_reference"],
+    },
+  },
+  minimax_h3_t2v: {
+    channel: "comfyui",
+    model: "minimax_h3_t2v",
+    mediaType: "video",
+    config: {
+      request: { endpoint: "video/generations", parameters: [] },
+      resolutionOptions: ["480p", "640p"],
+      ratioOptions: ["1:1", "16:9"],
+      minDuration: 4,
+      maxDuration: 15,
+      supportedModes: ["text_to_video"],
+    },
+  },
+};
+
 const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
   version: 2,
-  name: "DramaClaw CE OpenRouter 与火山推荐配置",
+  name: "OpenRouter+ VolCengine",
   channels: [
     {
       id: "openrouter",
@@ -1019,6 +1320,16 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
       priority: 0,
       settings: {},
     },
+    {
+      id: "comfyui",
+      provider: "comfyui",
+      type: 63,
+      baseUrl: "http://127.0.0.1:8188",
+      priority: 0,
+      settings: {
+        comfyui: { workflow_by_model: RECOMMENDED_COMFYUI_WORKFLOWS },
+      },
+    },
   ],
   featureModels: {
     text: { channel: "openrouter", model: "openai/gpt-5.6-luna" },
@@ -1032,29 +1343,26 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
     batchSize: 10,
   },
   mediaModels: Object.fromEntries(
-    MEDIA_MODEL_ROWS.filter((row) => !row.officialOnly).map((row) => [
-      row.model,
+    Object.entries(RECOMMENDED_MEDIA_MODELS).map(([model, mapping]) => [
+      model,
       {
-        channel: row.model.startsWith("seedance-")
-          ? "volcengine"
-          : "openrouter",
-        model: RECOMMENDED_MEDIA_UPSTREAM_MODELS[row.model] ?? row.model,
-        mediaType: row.kind,
-        label: row.model,
+        ...mapping,
+        label: model,
         enabled: true,
         sortOrder: 100,
         config:
-          row.kind === "image" || row.kind === "video"
+          mapping.config ??
+          (mapping.mediaType === "image" || mapping.mediaType === "video"
             ? {
                 request: {
                   endpoint:
-                    row.kind === "image"
+                    mapping.mediaType === "image"
                       ? "images/generations"
                       : "video/generations",
                   parameters: [],
                 },
               }
-            : {},
+            : {}),
       },
     ]),
   ),
@@ -1887,6 +2195,7 @@ function FeatureModelsBlock({
   savedMediaModels,
   mediaOnly = false,
   comfyOnly = false,
+  excludeComfyUI = false,
 }: {
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
@@ -1895,6 +2204,7 @@ function FeatureModelsBlock({
   savedMediaModels: Record<string, SavedMediaModelConfig>;
   mediaOnly?: boolean;
   comfyOnly?: boolean;
+  excludeComfyUI?: boolean;
 }) {
   const { t } = useTranslation();
   const featureModels = useSettingsStore(
@@ -1926,9 +2236,13 @@ function FeatureModelsBlock({
   const configuredProviders = useMemo(
     () =>
       Object.keys(providerChannels)
-        .filter((provider) => !comfyOnly || provider === "comfyui")
+        .filter(
+          (provider) =>
+            (!comfyOnly || provider === "comfyui") &&
+            (!excludeComfyUI || provider !== "comfyui"),
+        )
         .sort(),
-    [comfyOnly, providerChannels],
+    [comfyOnly, excludeComfyUI, providerChannels],
   );
   const textFeatureGroups = useMemo(
     () =>
@@ -2088,6 +2402,7 @@ function FeatureModelsBlock({
         }
         channelTypesLoading={channelTypesQuery.isLoading}
         allowedProviders={comfyOnly ? ["comfyui"] : undefined}
+        excludedProviders={excludeComfyUI ? ["comfyui"] : undefined}
       />
 
       {!mediaOnly ? (
@@ -2161,6 +2476,7 @@ function FeatureModelsBlock({
         savedChannelByProvider={savedChannelByProvider}
         savedMediaModels={savedMediaModels}
         comfyOnly={comfyOnly}
+        excludeComfyUI={excludeComfyUI}
       />
     </>
   );
@@ -2507,6 +2823,7 @@ function MediaModelsBlock({
   savedChannelByProvider,
   savedMediaModels,
   comfyOnly = false,
+  excludeComfyUI = false,
 }: {
   configuredProviders: readonly FeatureModelProvider[];
   newApiBaseUrl: string;
@@ -2514,6 +2831,7 @@ function MediaModelsBlock({
   savedChannelByProvider: Map<string, SavedProviderChannelConfig>;
   savedMediaModels: Record<string, SavedMediaModelConfig>;
   comfyOnly?: boolean;
+  excludeComfyUI?: boolean;
 }) {
   const { t } = useTranslation();
   const localSavedMediaModels = useSettingsStore(
@@ -2543,6 +2861,9 @@ function MediaModelsBlock({
             ...MEDIA_MODEL_ROWS.map((row) => row.model),
             ...Object.keys(mediaModels),
           ]),
+        ).filter(
+          (model) =>
+            !excludeComfyUI || mediaModels[model]?.provider !== "comfyui",
         );
     return models
       .map((model) => {
@@ -2560,7 +2881,7 @@ function MediaModelsBlock({
           left.sortOrder - right.sortOrder ||
           left.model.localeCompare(right.model),
       );
-  }, [comfyOnly, mediaModels]);
+  }, [comfyOnly, excludeComfyUI, mediaModels]);
 
   useEffect(() => {
     const fromBackend = Object.fromEntries(
@@ -2602,6 +2923,12 @@ function MediaModelsBlock({
           config: entry.config ?? {},
         };
       }
+    }
+    for (const [model, entry] of Object.entries(mediaModels)) {
+      const hiddenByScope = comfyOnly
+        ? entry.provider !== "comfyui"
+        : excludeComfyUI && entry.provider === "comfyui";
+      if (hiddenByScope) next[model] = entry;
     }
     if (Object.keys(next).length === 0) {
       toast.error(t("settings.modelConfig.mediaModels.noMappings"));
@@ -3467,6 +3794,7 @@ function ProviderChannelsBlock({
   channelTypes,
   channelTypesLoading,
   allowedProviders,
+  excludedProviders,
 }: {
   savedProviderChannels: SavedProviderChannelConfig[];
   newApiBaseUrl: string;
@@ -3474,6 +3802,7 @@ function ProviderChannelsBlock({
   channelTypes: NewApiChannelType[];
   channelTypesLoading: boolean;
   allowedProviders?: readonly string[];
+  excludedProviders?: readonly string[];
 }) {
   const { t } = useTranslation();
   const providerChannels = useSettingsStore(
@@ -3495,24 +3824,32 @@ function ProviderChannelsBlock({
     () => (allowedProviders ? new Set(allowedProviders) : null),
     [allowedProviders],
   );
+  const excludedProviderSet = useMemo(
+    () => new Set(excludedProviders ?? []),
+    [excludedProviders],
+  );
   const configuredProviders = useMemo(
     () =>
       Object.keys(providerChannels)
         .filter(
           (provider) => !allowedProviderSet || allowedProviderSet.has(provider),
         )
+        .filter((provider) => !excludedProviderSet.has(provider))
         .sort(),
-    [allowedProviderSet, providerChannels],
+    [allowedProviderSet, excludedProviderSet, providerChannels],
   );
   const providerOptions =
     channelTypes.length > 0
       ? channelTypes.filter(
           (item) =>
             item.status === 1 &&
-            (!allowedProviderSet || allowedProviderSet.has(item.provider)),
+            (!allowedProviderSet || allowedProviderSet.has(item.provider)) &&
+            !excludedProviderSet.has(item.provider),
         )
       : FEATURE_MODEL_PROVIDERS.filter(
-          (provider) => !allowedProviderSet || allowedProviderSet.has(provider),
+          (provider) =>
+            (!allowedProviderSet || allowedProviderSet.has(provider)) &&
+            !excludedProviderSet.has(provider),
         ).map((provider) => ({
           provider,
           name: featureProviderLabel(provider),
