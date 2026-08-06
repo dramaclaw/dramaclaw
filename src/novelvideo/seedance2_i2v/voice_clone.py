@@ -197,7 +197,7 @@ def narrator_reference_audio_path(project_dir: str | Path, stored_path: str) -> 
     path = Path(stored)
     if not path.is_absolute():
         path = Path(project_dir) / path
-    return path if path.exists() else None
+    return path if path.is_file() else None
 
 
 def file_sha256(path: Path) -> str:
@@ -334,11 +334,21 @@ def resolve_narrator_source(
             sha256="",
             error="项目解说人声线已配置，但声线文件无法读取，请重新上传或检查项目存储",
         )
+    try:
+        sha256 = file_sha256(audio_path)
+    except OSError:
+        return NarratorResolution(
+            style=style,
+            source="project_narrator",
+            audio_path=None,
+            sha256="",
+            error="项目解说人声线已配置，但声线文件无法读取，请重新上传或检查项目存储",
+        )
     return NarratorResolution(
         style=style,
         source="project_narrator",
         audio_path=audio_path,
-        sha256=file_sha256(audio_path),
+        sha256=sha256,
     )
 
 

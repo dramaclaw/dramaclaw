@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
+import { queryKeys } from "@/lib/query-keys";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { GenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 
@@ -34,8 +35,7 @@ export function useAudioBillingQuote(
   const mode = params.mode ?? "sync_changed";
   return useQuery({
     queryKey: [
-      "audio-billing-quote",
-      project,
+      ...queryKeys.audioBillingQuotes(project),
       episode,
       mode,
       beatNumbers.join(","),
