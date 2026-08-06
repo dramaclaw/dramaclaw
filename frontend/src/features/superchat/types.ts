@@ -3,7 +3,6 @@
 export type ClientFrame =
   | {
       type: "chat.message";
-      product_surface: AssistantProductSurface;
       scope?: ChatScope;
       text: string;
       turn_id?: string;
@@ -11,7 +10,6 @@ export type ClientFrame =
     }
   | {
       type: "scope.set";
-      product_surface: AssistantProductSurface;
       scope: ChatScope;
     };
 

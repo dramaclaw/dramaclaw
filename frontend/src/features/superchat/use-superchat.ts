@@ -64,11 +64,16 @@ function loadSettings(): SuperChatSettings {
   }
 }
 
-function resolveChatWsUrl(): string {
-  const explicit = import.meta.env.VITE_SUPERCHAT_WS_URL;
+function resolveChatWsUrl(productSurface: AssistantProductSurface): string {
+  const explicit = productSurface === "freezone_assistant"
+    ? import.meta.env.VITE_FREEZONE_SUPERCHAT_WS_URL
+    : import.meta.env.VITE_SUPERCHAT_WS_URL;
   if (explicit) return explicit;
 
-  const url = new URL("/api/v1/chat/ws", window.location.origin);
+  const path = productSurface === "freezone_assistant"
+    ? "/api/v1/freezone/chat/ws"
+    : "/api/v1/chat/ws";
+  const url = new URL(path, window.location.origin);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
 }
@@ -611,10 +616,9 @@ export function useSuperChat({
   const requestHistory = useCallback(() => {
     sendFrame({
       type: "scope.set",
-      product_surface: productSurface,
       scope: desiredScope,
     });
-  }, [desiredScope, productSurface, sendFrame]);
+  }, [desiredScope, sendFrame]);
 
   const markTurnActive = useCallback((turnId: string | null) => {
     if (!turnId) return;
@@ -854,13 +858,12 @@ export function useSuperChat({
       previous.close();
     }
 
-    const ws = new WebSocket(resolveChatWsUrl());
+    const ws = new WebSocket(resolveChatWsUrl(productSurface));
     wsRef.current = ws;
     ws.onopen = () => {
       if (connectionIdRef.current !== connectionId || wsRef.current !== ws) return;
       sendFrame({
         type: "scope.set",
-        product_surface: productSurface,
         scope: desiredScope,
       });
     };
@@ -987,7 +990,6 @@ export function useSuperChat({
     setStreamText("");
     sendFrame({
       type: "chat.message",
-      product_surface: productSurface,
       scope: desiredScope,
       text: outboundText,
       turn_id: turnId,

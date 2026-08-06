@@ -91,3 +91,56 @@ async def test_closed_assistant_surface_does_not_prewarm(monkeypatch) -> None:
         )
 
     assert prewarm_called is False
+
+
+@pytest.mark.anyio
+async def test_freezone_chat_ignores_forged_client_surface(monkeypatch) -> None:
+    seen = {}
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.frames = [
+                {
+                    "type": "scope.set",
+                    "product_surface": "assistant",
+                    "scope": {"kind": "project", "id": "project_a"},
+                }
+            ]
+
+        async def accept(self):
+            return None
+
+        async def receive_json(self):
+            if self.frames:
+                return self.frames.pop(0)
+            raise WebSocketDisconnect(code=1000)
+
+        async def send_json(self, _payload):
+            return None
+
+    async def fake_authenticate(_websocket):
+        return {"id": "usr_1", "username": "alice"}
+
+    async def fake_prewarm(**kwargs):
+        seen["surface"] = kwargs["product_surface"]
+
+    async def fake_scope_changed(_websocket, _user, _username, scope):
+        return scope
+
+    async def fake_sync(_username, _scope):
+        seen["scope_synced"] = True
+
+    monkeypatch.setattr(chat_route, "_authenticate_ws", fake_authenticate)
+    monkeypatch.setattr(chat_route, "_prewarm_authorized_chat_backend", fake_prewarm)
+    monkeypatch.setattr(chat_route, "_send_scope_changed", fake_scope_changed)
+    monkeypatch.setattr(chat_route, "_sync_running_agent_scope", fake_sync)
+
+    await chat_route._serve_chat_ws(
+        FakeWebSocket(),
+        product_surface="freezone_assistant",
+    )
+
+    assert seen == {
+        "surface": "freezone_assistant",
+        "scope_synced": True,
+    }

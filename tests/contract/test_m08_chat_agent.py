@@ -83,11 +83,16 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
 
 def test_ce_chat_ws_accepts_missing_cookie_via_local_auth(monkeypatch) -> None:
     from novelvideo.api.app import create_app
+    from novelvideo.api.routes import chat as chat_routes
     from novelvideo.chat import service as chat_service
     from novelvideo.ports import registry
 
     async def _no_prewarm(*_args, **_kwargs) -> None:
         return None
+
+    class _OpenAssistantAccess:
+        async def require_assistant_access(self, _user_id: str, surface_code: str):
+            return {"surface_code": surface_code, "available": True}
 
     monkeypatch.setenv("ST_EDITION", "ce")
     monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "")
@@ -95,10 +100,18 @@ def test_ce_chat_ws_accepts_missing_cookie_via_local_auth(monkeypatch) -> None:
     monkeypatch.setattr(registry, "_PORTS", {})
     monkeypatch.setattr(registry, "_BOOTSTRAPPED", False)
     monkeypatch.setattr(chat_service, "prewarm_chat_backend", _no_prewarm)
+    monkeypatch.setattr(
+        chat_routes,
+        "get_product_surface_access",
+        lambda: _OpenAssistantAccess(),
+    )
 
     app = create_app()
     with TestClient(app) as client:
         with client.websocket_connect("/api/v1/chat/ws") as websocket:
+            websocket.send_json(
+                {"type": "scope.set", "scope": {"kind": "home", "id": None}}
+            )
             first_frame = websocket.receive_json()
 
     assert first_frame["type"] == "scope.changed"

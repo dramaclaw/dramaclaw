@@ -85,7 +85,6 @@ class ChatAttachmentIn(BaseModel):
 
 class ChatMessageIn(BaseModel):
     type: str
-    product_surface: AssistantProductSurface
     scope: ChatScopePayload | None = None
     text: str
     turn_id: str | None = None
@@ -94,7 +93,6 @@ class ChatMessageIn(BaseModel):
 
 class ScopeSetIn(BaseModel):
     type: str
-    product_surface: AssistantProductSurface
     scope: ChatScopePayload
 
 
@@ -737,8 +735,11 @@ async def _stream_home_turn(
             )
 
 
-@router.websocket("/chat/ws")
-async def chat_ws(websocket: WebSocket) -> None:
+async def _serve_chat_ws(
+    websocket: WebSocket,
+    *,
+    product_surface: AssistantProductSurface,
+) -> None:
     await websocket.accept()
     try:
         user = await _authenticate_ws(websocket)
@@ -749,9 +750,6 @@ async def chat_ws(websocket: WebSocket) -> None:
 
     username = str(user["username"])
     current_scope = ChatScope(kind="home")
-    current_scope = await _send_scope_changed(websocket, user, username, current_scope)
-    if current_scope is None:
-        return
     try:
         while True:
             try:
@@ -764,16 +762,12 @@ async def chat_ws(websocket: WebSocket) -> None:
             if event_type == "scope.set":
                 msg = ScopeSetIn.model_validate(raw)
                 requested_scope = _scope_from_model(msg.scope)
-                current_scope = await _send_scope_changed(websocket, user, username, requested_scope)
-                if current_scope is None:
-                    return
-                await _sync_running_agent_scope(username, current_scope)
                 try:
                     await _prewarm_authorized_chat_backend(
                         user=user,
                         username=username,
-                        scope=current_scope,
-                        product_surface=msg.product_surface,
+                        scope=requested_scope,
+                        product_surface=product_surface,
                     )
                 except ProductSurfaceUnavailableError as exc:
                     await _send_json_best_effort(
@@ -787,6 +781,13 @@ async def chat_ws(websocket: WebSocket) -> None:
                             },
                         },
                     )
+                    continue
+                current_scope = await _send_scope_changed(
+                    websocket, user, username, requested_scope
+                )
+                if current_scope is None:
+                    return
+                await _sync_running_agent_scope(username, current_scope)
                 continue
 
             if event_type != "chat.message":
@@ -809,7 +810,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                 await _require_ai_assistant_access(
                     user=user,
                     scope=scope,
-                    product_surface=msg.product_surface,
+                    product_surface=product_surface,
                 )
                 if scope.kind == "project":
                     await _stream_project_turn(
@@ -895,3 +896,13 @@ async def chat_ws(websocket: WebSocket) -> None:
                 )
     except WebSocketDisconnect:
         return
+
+
+@router.websocket("/chat/ws")
+async def chat_ws(websocket: WebSocket) -> None:
+    await _serve_chat_ws(websocket, product_surface="assistant")
+
+
+@router.websocket("/freezone/chat/ws")
+async def freezone_chat_ws(websocket: WebSocket) -> None:
+    await _serve_chat_ws(websocket, product_surface="freezone_assistant")

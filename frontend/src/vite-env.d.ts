@@ -8,6 +8,7 @@ interface ImportMetaEnv {
   readonly VITE_APP_VERSION: string;
   readonly VITE_SUPERCHAT_URL?: string;
   readonly VITE_SUPERCHAT_WS_URL?: string;
+  readonly VITE_FREEZONE_SUPERCHAT_WS_URL?: string;
   readonly VITE_CLUSTER_MODE?: "none" | "multi-region";
   readonly VITE_CLUSTER_REGIONS_URL?: string;
 }
