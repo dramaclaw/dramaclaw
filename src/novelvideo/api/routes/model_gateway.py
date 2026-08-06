@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -9,7 +10,9 @@ from pydantic import BaseModel, Field
 
 from novelvideo import config as app_config
 from novelvideo.model_gateway_settings import (
+    MODE_CUSTOM,
     MODE_OFFICIAL,
+    MODE_HYBRID,
     build_media_relay_status,
     build_model_gateway_status,
     get_effective_media_relay_config,
@@ -21,12 +24,14 @@ from novelvideo.model_gateway_settings import (
     save_newapi_database_config,
     save_newapi_embedding_model_config,
     save_newapi_media_model_mappings,
+    get_newapi_media_model_mappings,
     save_newapi_provider_channels,
     get_newapi_provider_channel,
     set_model_gateway_mode,
 )
 from novelvideo.model_gateway_runtime import refresh_model_gateway_runtime
 from novelvideo.shared.runtime_env import is_ce_effective
+from novelvideo.media_model_request_schema import validate_media_model_catalog_config
 from novelvideo.newapi_provisioner import (
     build_channel_payload,
     build_provisioner_status,
@@ -34,6 +39,7 @@ from novelvideo.newapi_provisioner import (
     ensure_newapi_setup,
     ensure_admin_access_token,
     get_provisioner_config,
+    list_channel_types,
     mask_token,
     NewApiSetupCredentials,
     require_provisioner_enabled,
@@ -44,21 +50,50 @@ from novelvideo.newapi_provisioner import (
 router = APIRouter(prefix="/model-gateway")
 
 
-CUSTOM_MEDIA_MODEL_NAMES = {
-    "LingShan-G2",
-    "LingShan-NB-2",
-    "seedance-1.0-pro-fast",
-    "seedance-1.5-pro",
-    "seedance-2.0",
-    "seedance-2.0-fast",
-    "happyhorse-1.0",
-    "index-tts-2",
-    "LingShan-MU-11",
-}
 OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
     "seedance-2.0-value",
     "seedance-2.0-fast-value",
 }
+COMFY_WORKFLOW_MANAGED_CONFIG_KEY = "_dcManagedByWorkflow"
+
+
+def _default_comfyui_media_model_config(model: str) -> dict[str, Any]:
+    tokens = str(model or "").strip().lower().replace("-", "_").split("_")
+    supported_modes = ["text_to_video"]
+    ratio_options = ["1:1", "16:9"]
+    reference_limits: dict[str, int] = {}
+    if "r2v" in tokens:
+        supported_modes = ["all_reference"]
+        reference_limits = {
+            "referenceImageMax": 9,
+            "referenceVideoMax": 3,
+            "referenceAudioMax": 3,
+        }
+    elif "i2v" in tokens:
+        supported_modes = ["image_reference"]
+        ratio_options = ["16:9", "1:1"]
+        reference_limits = {"referenceImageMax": 1, "humanReview": True}
+    return {
+        "request": {"endpoint": "video/generations", "parameters": []},
+        "resolutionOptions": ["480p", "640p"],
+        "ratioOptions": ratio_options,
+        "minDuration": 4,
+        "maxDuration": 15,
+        "supportedModes": supported_modes,
+        **reference_limits,
+        COMFY_WORKFLOW_MANAGED_CONFIG_KEY: True,
+    }
+
+
+def _comfyui_media_model_config(
+    model: str, previous: dict[str, Any] | None
+) -> dict[str, Any]:
+    current = previous if isinstance(previous, dict) else {}
+    # Older channel saves created workflow models with only a request block.
+    # Backfill those records, while leaving any user-authored capabilities intact.
+    if set(current).issubset({"request", COMFY_WORKFLOW_MANAGED_CONFIG_KEY}):
+        return {**_default_comfyui_media_model_config(model), **current}
+    return current
 
 
 def require_ce_gateway_management() -> None:
@@ -116,10 +151,11 @@ class CreateChannelBody(BaseModel):
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     model_mapping: dict[str, str] = Field(alias="modelMapping")
     group: str = "default"
-    priority: int = 0
+    priority: int | None = None
     weight: int = 0
     base_url: str | None = Field(default=None, alias="baseUrl")
     test_model: str | None = Field(default=None, alias="testModel")
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChannelSpec(BaseModel):
@@ -129,10 +165,11 @@ class ChannelSpec(BaseModel):
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     model_mapping: dict[str, str] = Field(alias="modelMapping")
     group: str = "default"
-    priority: int = 0
+    priority: int | None = None
     weight: int = 0
     base_url: str | None = Field(default=None, alias="baseUrl")
     test_model: str | None = Field(default=None, alias="testModel")
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class CreateChannelsBatchBody(BaseModel):
@@ -143,12 +180,16 @@ class CreateChannelsBatchBody(BaseModel):
 
 class ProviderChannelConfigBody(BaseModel):
     provider: str
+    type: int | None = None
     upstream_key: str | None = Field(default=None, alias="upstreamKey")
     base_url: str | None = Field(default=None, alias="baseUrl")
+    priority: int | None = None
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class SaveProviderChannelsBody(BaseModel):
     channels: list[ProviderChannelConfigBody] = Field(default_factory=list)
+    preserve_unmentioned: bool = Field(default=False, alias="preserveUnmentioned")
 
 
 class SyncProviderChannelBody(BaseModel):
@@ -162,6 +203,11 @@ class SyncProviderChannelBody(BaseModel):
 class MediaModelConfigBody(BaseModel):
     provider: str
     upstream_model: str | None = Field(default=None, alias="upstreamModel")
+    media_type: str | None = Field(default=None, alias="mediaType")
+    label: str | None = None
+    enabled: bool = True
+    sort_order: int = Field(default=100, alias="sortOrder")
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class SaveMediaModelsBody(BaseModel):
@@ -228,46 +274,84 @@ def _build_channel_payload_from_spec(
     saved_channel = get_newapi_provider_channel(spec.provider) or {}
     return build_channel_payload(
         provider=spec.provider,
-        channel_type=spec.type,
+        channel_type=spec.type or int(saved_channel.get("type") or 0) or None,
         name=spec.name,
         upstream_key=spec.upstream_key or saved_channel.get("upstreamKey", ""),
         model_mapping=spec.model_mapping,
         group=spec.group,
-        priority=spec.priority,
+        priority=(
+            int(saved_channel.get("priority") or 0)
+            if spec.priority is None
+            else spec.priority
+        ),
         weight=spec.weight,
         base_url=spec.base_url or saved_channel.get("baseUrl", ""),
         test_model=spec.test_model,
+        other_settings=spec.settings or saved_channel.get("settings", {}),
     )
 
 
 def _build_media_model_channel_specs(
     models: dict[str, MediaModelConfigBody],
-) -> tuple[list[ChannelSpec], dict[str, dict[str, str]]]:
+) -> tuple[list[ChannelSpec], dict[str, dict[str, Any]]]:
     if not models:
         raise ValueError("models must be a non-empty JSON object")
 
     grouped: dict[str, dict[str, str]] = {}
-    normalized: dict[str, dict[str, str]] = {}
+    normalized: dict[str, dict[str, Any]] = {}
     for raw_model, item in models.items():
         model = str(raw_model or "").strip()
         if not model:
             raise ValueError("models contains an empty model name")
         if model in OFFICIAL_ONLY_MEDIA_MODEL_NAMES:
             raise ValueError(f"media model {model} is official-channel only")
-        if model not in CUSTOM_MEDIA_MODEL_NAMES:
-            raise ValueError(f"unsupported media model: {model}")
         provider = str(item.provider or "").strip().lower()
         if not provider:
             raise ValueError(f"provider is required for media model {model}")
         upstream_model = (item.upstream_model or "").strip() or model
+        media_type = str(item.media_type or "").strip().lower()
+        if not media_type:
+            if model in {"LingShan-G2", "LingShan-NB-2"} or model.startswith(
+                "seedream-"
+            ):
+                media_type = "image"
+            elif model in {"index-tts-2", "LingShan-MU-11"}:
+                media_type = "audio"
+            else:
+                media_type = "video"
+        if media_type not in {"image", "video", "audio"}:
+            raise ValueError(f"invalid mediaType for media model {model}")
+        model_config = dict(item.config)
+        if media_type in {"image", "video"}:
+            model_config.setdefault(
+                "request",
+                {
+                    "endpoint": (
+                        "images/generations"
+                        if media_type == "image"
+                        else "video/generations"
+                    ),
+                    "parameters": [],
+                },
+            )
+            validate_media_model_catalog_config(model_config, media_type)
         grouped.setdefault(provider, {})[model] = upstream_model
         normalized[model] = {
             "provider": provider,
             "upstreamModel": "" if upstream_model == model else upstream_model,
+            "mediaType": media_type,
+            "label": str(item.label or model).strip() or model,
+            "enabled": bool(item.enabled),
+            "sortOrder": int(item.sort_order),
+            "config": model_config,
         }
 
     specs = [
-        ChannelSpec(provider=provider, modelMapping=mapping)
+        ChannelSpec(
+            provider=provider,
+            type=63 if provider == "comfyui" else None,
+            modelMapping=mapping,
+        )
         for provider, mapping in grouped.items()
     ]
     return specs, normalized
@@ -365,6 +449,59 @@ async def enable_official_gateway() -> dict[str, Any]:
             detail="official NewAPI gateway is not configured",
         )
     set_model_gateway_mode(MODE_OFFICIAL)
+    runtime = refresh_model_gateway_runtime()
+    return {
+        "ok": True,
+        "data": build_model_gateway_status(
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+            official_api_key=app_config.NEWAPI_API_KEY,
+        ),
+        "runtime": runtime,
+    }
+
+
+@router.post("/custom/enable")
+async def enable_custom_gateway() -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    status = build_model_gateway_status(
+        official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+        official_api_key=app_config.NEWAPI_API_KEY,
+    )
+    if not status["custom"]["configured"]:
+        raise HTTPException(
+            status_code=400, detail="local NewAPI gateway is not configured"
+        )
+    set_model_gateway_mode(MODE_CUSTOM)
+    runtime = refresh_model_gateway_runtime()
+    return {
+        "ok": True,
+        "data": build_model_gateway_status(
+            official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+            official_api_key=app_config.NEWAPI_API_KEY,
+        ),
+        "runtime": runtime,
+    }
+
+
+@router.post("/hybrid/enable")
+async def enable_hybrid_gateway() -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    status = build_model_gateway_status(
+        official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
+        official_api_key=app_config.NEWAPI_API_KEY,
+    )
+    if not status["official"]["configured"] or not status["custom"]["configured"]:
+        raise HTTPException(
+            status_code=400,
+            detail="local and official NewAPI gateways must both be configured",
+        )
+    set_model_gateway_mode(MODE_HYBRID)
     runtime = refresh_model_gateway_runtime()
     return {
         "ok": True,
@@ -559,12 +696,64 @@ async def save_custom_newapi_provider_channels(
             [
                 {
                     "provider": channel.provider,
+                    "type": channel.type or 0,
                     "upstreamKey": channel.upstream_key or "",
                     "baseUrl": channel.base_url or "",
+                    "priority": channel.priority,
+                    "settings": channel.settings,
                 }
                 for channel in body.channels
-            ]
+            ],
+            preserve_unmentioned=body.preserve_unmentioned,
         )
+        requested_providers = {
+            str(channel.provider or "").strip().lower() for channel in body.channels
+        }
+        comfyui_channels = [
+            channel
+            for channel in saved
+            if channel["provider"] == "comfyui" and "comfyui" in requested_providers
+        ]
+        if comfyui_channels:
+            cfg = get_provisioner_config()
+            admin = ensure_admin_access_token(cfg)
+            existing_media_mappings = get_newapi_media_model_mappings()
+            media_mappings = {
+                model: mapping
+                for model, mapping in existing_media_mappings.items()
+                if mapping.get("provider") != "comfyui"
+            }
+            for channel in comfyui_channels:
+                comfyui_settings = channel["settings"]["comfyui"]
+                workflows = comfyui_settings["workflow_by_model"]
+                model_mapping = {str(model): str(model) for model in workflows}
+                payload = build_channel_payload(
+                    provider="comfyui",
+                    channel_type=channel.get("type") or 63,
+                    upstream_key=channel["upstreamKey"],
+                    model_mapping=model_mapping,
+                    base_url=channel["baseUrl"],
+                    priority=channel.get("priority", 0),
+                    other_settings=channel["settings"],
+                )
+                result = upsert_channel(cfg, admin, payload)
+                if not result.get("ok"):
+                    raise RuntimeError("NewAPI rejected ComfyUI channel configuration")
+                for model in model_mapping:
+                    previous = existing_media_mappings.get(model, {})
+                    media_mappings[model] = {
+                        "provider": "comfyui",
+                        "upstreamModel": "",
+                        "mediaType": previous.get("mediaType", "video"),
+                        "label": previous.get("label", model),
+                        "enabled": previous.get("enabled", True),
+                        "sortOrder": previous.get("sortOrder", 100),
+                        "config": _comfyui_media_model_config(
+                            model,
+                            previous.get("config"),
+                        ),
+                    }
+            save_newapi_media_model_mappings(media_mappings)
     except PermissionError as exc:
         raise _permission_error(exc) from exc
     except ValueError as exc:
@@ -578,14 +767,40 @@ async def save_custom_newapi_provider_channels(
             "channels": [
                 {
                     "provider": channel["provider"],
-                    "configured": bool(channel["upstreamKey"]),
+                    "type": channel.get("type", 0),
+                    "configured": bool(channel["upstreamKey"])
+                    or (
+                        channel["provider"] == "comfyui"
+                        and bool(channel["baseUrl"])
+                        and bool(channel.get("settings"))
+                    ),
                     "upstreamKeyPreview": mask_token(channel["upstreamKey"]),
                     "baseUrl": channel["baseUrl"],
+                    "priority": channel.get("priority", 0),
+                    "settings": channel.get("settings", {}),
                 }
                 for channel in saved
             ]
         },
     }
+
+
+@router.get("/custom/newapi/channel-types")
+async def get_custom_newapi_channel_types() -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+        cfg = get_provisioner_config()
+        # Token discovery may wait for an uninitialized local NewAPI. Keep all
+        # blocking HTTP/SQLite work off the ASGI event loop so official gateway
+        # saves and application startup remain responsive.
+        items = await asyncio.to_thread(
+            lambda: list_channel_types(cfg, ensure_admin_access_token(cfg))
+        )
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "data": {"items": items}}
 
 
 @router.post("/custom/newapi/provider-channel/sync")
@@ -610,13 +825,15 @@ async def sync_custom_newapi_provider_channel(
         )
         cfg = _get_provisioner_config_from_request(body.new_api_base_url, body.database)
         admin = ensure_admin_access_token(cfg)
-        result = update_provider_channel_credentials(
-            cfg,
-            admin,
-            provider=provider,
-            upstream_key=upstream_key,
-            base_url=base_url,
-        )
+        update_kwargs: dict[str, Any] = {
+            "provider": provider,
+            "upstream_key": upstream_key,
+            "base_url": base_url,
+        }
+        saved_channel_type = int(saved_channel.get("type") or 0)
+        if saved_channel_type > 0:
+            update_kwargs["channel_type"] = saved_channel_type
+        result = update_provider_channel_credentials(cfg, admin, **update_kwargs)
         saved = []
         if result.get("ok"):
             saved = save_newapi_provider_channels(
@@ -626,7 +843,8 @@ async def sync_custom_newapi_provider_channel(
                         "upstreamKey": upstream_key,
                         "baseUrl": base_url or "",
                     }
-                ]
+                ],
+                preserve_unmentioned=True,
             )
     except PermissionError as exc:
         raise _permission_error(exc) from exc

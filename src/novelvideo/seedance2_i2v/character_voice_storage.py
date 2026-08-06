@@ -94,26 +94,45 @@ def _transcode_to_mp3(content: bytes) -> bytes:
     return result.stdout
 
 
+PROBE_DURATION_TIMEOUT_SECONDS = 20.0
+"""ffprobe 探测时长的墙钟上限。
+
+这里的入参是**用户上传的文件**，而且这个函数现在挂在同步请求路径上
+（freezone omni-gen 的音频时长兜底）。ffprobe 遇到畸形/超长容器有可能迟迟不返回，
+没有 timeout 的话一个坏文件就能把 HTTP 请求吊死，并且一直占着线程池的一个 worker。
+超时按「测不出」处理（ValueError），与其它探测失败同一条路径。
+"""
+
+
 def probe_voice_sample_duration_seconds(path: str | Path) -> float:
     """Return audio duration in seconds using ffprobe."""
 
     if not shutil.which("ffprobe"):
         raise ValueError("系统未安装 ffprobe，无法读取音频时长")
-    result = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=PROBE_DURATION_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # 必须在这里转成 ValueError：调用方（beat 流水线的
+        # `_validate_reference_audio_request`、freezone 的 `_probe_reference_audio_seconds`）
+        # 都只按 ValueError 走「测不出就跳过」，漏出 TimeoutExpired 会变成 500。
+        raise ValueError(
+            f"读取音频时长超时（>{PROBE_DURATION_TIMEOUT_SECONDS:g}s）：{path}"
+        ) from exc
     try:
         duration = float((result.stdout or "").strip())
     except (TypeError, ValueError) as exc:

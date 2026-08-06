@@ -65,8 +65,11 @@ import {
 } from "@/features/canvas/domain/canvasNodes";
 import {
   audioReferenceDurationRejection,
+  audioReferenceTotalDurationLimitMs,
   formatAudioDurationClips,
+  formatAudioDurationSeconds,
   MAX_AUDIO_REFERENCE_DURATION_MS,
+  MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
   isHappyHorseVideoModel,
   isSeedance2VideoModel,
@@ -251,10 +254,11 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
 // @图片10 但提交时被静默丢掉」。
 //
 // 表里没出现的模式默认不限制（textToVideo 不消费上游），走原有路径。
-//   - allReference (omni)  ：image 1-9 / video 0-3 / audio 0-3。音频另有**逐条**
-//                            1.8~15.2s 的厂商时长约束，在提交前单独校验（见
-//                            audioReferenceDurationRejection）；**没有总时长上限**，
-//                            服务端也不校验时长，别再往这张表里加总时长口径。
+//   - allReference (omni)  ：image 1-9 / video 0-3 / audio 0-3。音频另有两条厂商时长
+//                            约束——**逐条** 1.8~15.2s 和**总和** ≤15.2s（后台可配
+//                            referenceAudioTotalMaxSeconds）——都在提交前单独校验，
+//                            见 audioReferenceDurationRejection。时长口径不进这张表：
+//                            这里只表达条数。
 //   - firstLastFrame       ：仅图片 2 张（首帧 + 尾帧），不允许任何视频 / 音频。
 //                            图片 >2 时另有自动切到 allReference 的兜底（见
 //                            VideoNode 内部 effect）。
@@ -366,8 +370,7 @@ function selectedVideoModelReferenceDisabledReason(
   counts: { images: number; videos: number; audios: number },
   mode: VideoGenMode,
 ): string | null {
-  const modelId = model?.apiModel ?? model?.id;
-  const capabilityReason = videoModelReferenceDisabledReason(modelId, counts);
+  const capabilityReason = videoModelReferenceDisabledReason(model, counts);
   if (capabilityReason) return capabilityReason;
   const caps = referenceCapsForMode(model, mode);
   if (!caps) return null;
@@ -687,6 +690,10 @@ export const VideoNode = memo(
     // 选了 Seedance 2.0 也会被「全能参考仅支持 Seedance 2.0」挡下，视频/音频上游
     // 也不再自动切模式。CE 兜底列表恰好 id === apiModel，所以这个坑只在 EE 显形。
     const isSeedance20Model = isSeedance2VideoModel(selectedVideoModelId);
+    const supportsAllReference = isVideoModeSupportedByModel(
+      "allReference",
+      selectedVideoModel,
+    );
     const supportsHumanReview = selectedVideoModel?.humanReview === true;
     const humanReview = Boolean(data.humanReview);
     const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
@@ -1452,8 +1459,8 @@ export const VideoNode = memo(
     // audio upstream first appears, force the mode to `allReference`. Tracked
     // through a ref so we only fire on the 0 → ≥1 transition; once the user
     // disconnects all audio and reconnects, it fires again.
-    // 仅 Seedance 2.0 能消费音频（omni）；非 2.0（Seedance 1.x）不支持音频素材，
-    // 由模型选择器拦截，这里不强推 allReference 以免顶进提交必 400 的模式。
+    // 是否可消费音频由媒体目录的 all_reference 能力决定；未声明该能力的模型由
+    // 模型选择器拦截，这里不强推 allReference 以免顶进提交必 400 的模式。
     const prevHasAudioRef = useRef(false);
     const hasAudioUpstream = useMemo(
       () => referenceMedia.some((item) => item.kind === "audio"),
@@ -1467,7 +1474,7 @@ export const VideoNode = memo(
         hasAudioUpstream &&
         data.genMode !== "allReference" &&
         !isHappyHorseModel &&
-        isSeedance20Model
+        supportsAllReference
       ) {
         updateNodeData(id, { genMode: "allReference" });
       }
@@ -1476,7 +1483,7 @@ export const VideoNode = memo(
       hasAudioUpstream,
       id,
       isHappyHorseModel,
-      isSeedance20Model,
+      supportsAllReference,
       updateNodeData,
     ]);
 
@@ -1527,12 +1534,12 @@ export const VideoNode = memo(
     // 首尾帧 / 图片参考）都会把视频丢弃。所以只要上游存在视频就强制切到
     // allReference 并锁死——下面的 tab 禁用规则会把其它 tab 一并禁用。
     // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
-    // 仅 Seedance 2.0 能消费视频（omni）；1.x 已由上面那条 effect 换成 2.0，剩下
-    // 的非 2.0 情形（Grok 等显式渠道）不强推 allReference，以免顶进必 400 的模式。
+    // 是否可消费视频由媒体目录的 all_reference 能力决定；未声明该能力的模型不强推，
+    // 以免顶进提交必 400 的模式。
     useEffect(() => {
       if (upstreamCounts.videos === 0) return;
       if (isHappyHorseModel) return;
-      if (!isSeedance20Model) return;
+      if (!supportsAllReference) return;
       if (genMode === "allReference") return;
       updateNodeData(id, { genMode: "allReference" });
     }, [
@@ -1540,7 +1547,7 @@ export const VideoNode = memo(
       genMode,
       id,
       isHappyHorseModel,
-      isSeedance20Model,
+      supportsAllReference,
       updateNodeData,
     ]);
 
@@ -1556,13 +1563,13 @@ export const VideoNode = memo(
       if (upstreamCounts.images > 0) {
         const defaultMode = videoUpstreamImageDefaultMode(selectedVideoModel);
         if (defaultMode) updateNodeData(id, { genMode: defaultMode });
-      } else if (isSeedance20Model) {
+      } else if (supportsAllReference) {
         updateNodeData(id, { genMode: "allReference" });
       }
     }, [
       genMode,
       isHappyHorseModel,
-      isSeedance20Model,
+      supportsAllReference,
       selectedVideoModel,
       upstreamCounts.images,
       upstreamCounts.audios,
@@ -1578,8 +1585,16 @@ export const VideoNode = memo(
       if (isHappyHorseModel) return;
       if (genMode !== "firstLastFrame") return;
       if (upstreamCounts.images <= 2) return;
+      if (!supportsAllReference) return;
       updateNodeData(id, { genMode: "allReference" });
-    }, [genMode, isHappyHorseModel, upstreamCounts.images, id, updateNodeData]);
+    }, [
+      genMode,
+      isHappyHorseModel,
+      supportsAllReference,
+      upstreamCounts.images,
+      id,
+      updateNodeData,
+    ]);
 
     // 「首帧生成视频」只承载一张图。i2v 端点按图片张数分流（1 张 = 图生视频，
     // 2-9 张 = 图片参考），接上第二张后做的其实已经是图片参考了，模式却还停在
@@ -1836,12 +1851,14 @@ export const VideoNode = memo(
     const hasRequiredMediaForMode =
       genMode === "videoEdit"
         ? upstreamCounts.videos > 0
-        : upstreamCounts.images > 0;
+        : genMode === "allReference"
+          ? upstreamCounts.images + upstreamCounts.videos + upstreamCounts.audios > 0
+          : upstreamCounts.images > 0;
     // 提交前守卫：当前模型/模式无法消费已接入素材（视频/音频被静默丢、非 2.0 非
     // HappyHorse 多图会被后端 400）时给出理由并禁用提交，替代静默丢素材 / 提交 400。
     const mediaRejectionReason = videoSubmitMediaRejectionReason(
       genMode,
-      selectedVideoModelId,
+      selectedVideoModel,
       upstreamCounts,
     );
     const selectedModelReferenceError = selectedVideoModelReferenceDisabledReason(
@@ -2082,14 +2099,13 @@ export const VideoNode = memo(
               nodeId: targetId,
             });
         } else if (genMode === "allReference") {
-          // 全能参考(omni)仅 Seedance 2.0 后端支持：HappyHorse / Seedance 1.x 打
-          // omni 端点必被后端 400。这里前置守卫给出可读提示，防止残留模式（如从
-          // 2.0 切到 1.x 后未重置）在提交时打到不支持的端点。
-          if (!isSeedance20Model) {
+          // 全能参考是否可用以媒体目录的 supportedModes 为准。这里前置守卫给出
+          // 可读提示，防止切换模型后残留模式打到不支持的端点。
+          if (!supportsAllReference) {
             void showErrorDialog(
               isHappyHorseModel
                 ? "HappyHorse 不支持全能参考模式，请切换为文生视频或图生视频。"
-                : "全能参考仅支持 Seedance 2.0 模型，请切换到 Seedance 2.0，或改用「首帧生成视频」。",
+                : "当前模型不支持全能参考，请切换模型或改用其它生成模式。",
               t("common.error"),
             );
             updateNodeData(id, {
@@ -2178,11 +2194,18 @@ export const VideoNode = memo(
             });
             return;
           }
-          // Seedance 2.0 厂商对**每条**音频都要求 1.8s ≤ 时长 ≤ 15.2s（见
-          // audioReferenceDurationRejection），越界会以 InvalidParameter 400 回来。
-          // 提交前先本地校验：durationMs 缺失时用 <audio> 探测兜底，越界就弹窗拦下，
-          // 避免白跑一趟后端。仅对 seedance2 生效（其它模型边界未知）。
-          if (isSeedance20Model && audioRefs.length > 0) {
+          // Seedance 2.0 厂商对音频有两条时长约束，越界都会以 InvalidParameter 400
+          // 回来：**每条** 1.8s ≤ 时长 ≤ 15.2s，以及**所有条加起来** ≤ 15.2s。提交前
+          // 先本地校验：durationMs 缺失时用 <audio> 探测兜底，越界就弹窗拦下，避免白跑
+          // 一趟后端。
+          //
+          // 两类边界分开授权，与后端 freezone omni-gen 的兜底一一对应：
+          //   - 逐条 1.8~15.2s 只有 seedance2 成立（数字是从它的报文里实测出来的）；
+          //   - 总时长凡是目录里配了 referenceAudioTotalMaxSeconds 的模型都要管——否则
+          //     这类模型前端放行、后端拦下，用户白等一个来回还只能看到一句英文 400。
+          const audioTotalConfigured =
+            selectedVideoModel?.referenceAudioTotalMaxSeconds != null;
+          if ((isSeedance20Model || audioTotalConfigured) && audioRefs.length > 0) {
             const resolvedDurations = await Promise.all(
               audioRefs.map((ref) =>
                 typeof ref.durationMs === "number" && ref.durationMs > 0
@@ -2195,6 +2218,15 @@ export const VideoNode = memo(
                 label: ref.label,
                 durationMs: resolvedDurations[index] ?? null,
               })),
+              {
+                totalLimitMs: audioReferenceTotalDurationLimitMs(selectedVideoModel, {
+                  // seedance2 有厂商硬顶，目录配得再宽也不能越过它。
+                  vendorCapMs: isSeedance20Model
+                    ? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS
+                    : undefined,
+                }),
+                perClipLimits: isSeedance20Model,
+              },
             );
             if (rejection) {
               const clips = formatAudioDurationClips(rejection.clips, (key, vars) =>
@@ -2206,10 +2238,16 @@ export const VideoNode = memo(
                       min: MIN_AUDIO_REFERENCE_DURATION_MS / 1000,
                       clips,
                     })
-                  : t("node.videoNode.audio.durationTooLong", {
-                      max: MAX_AUDIO_REFERENCE_DURATION_MS / 1000,
-                      clips,
-                    }),
+                  : rejection.kind === "tooLong"
+                    ? t("node.videoNode.audio.durationTooLong", {
+                        max: MAX_AUDIO_REFERENCE_DURATION_MS / 1000,
+                        clips,
+                      })
+                    : t("node.videoNode.audio.durationTotalTooLong", {
+                        max: formatAudioDurationSeconds(rejection.limitMs),
+                        total: formatAudioDurationSeconds(rejection.totalMs),
+                        clips,
+                      }),
                 t("common.error"),
               );
               updateNodeData(id, {
@@ -2446,6 +2484,7 @@ export const VideoNode = memo(
       humanReview,
       id,
       isSeedance20Model,
+      supportsAllReference,
       supportsHumanReview,
       modelId,
       prompt,

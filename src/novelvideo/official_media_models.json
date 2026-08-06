@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "name": "DramaClaw CE official media models",
+  "mediaModels": {
+    "LingShan-G2": {
+      "provider": "newapi",
+      "upstreamModel": "LingShan-G2",
+      "mediaType": "image",
+      "label": "LingShan G2",
+      "enabled": true,
+      "sortOrder": 10,
+      "aliases": ["gpt-image-2", "huimeng_gpt_image2", "newapi_gpt_image2"],
+      "config": {
+        "request": {"endpoint": "images/generations", "parameters": []},
+        "ratioOptions": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "4:5", "5:4", "21:9"],
+        "qualityOptions": ["low", "medium", "high"],
+        "resolutionOptions": ["1K", "2K", "4K"]
+      }
+    },
+    "LingShan-NB-2": {
+      "provider": "newapi",
+      "upstreamModel": "LingShan-NB-2",
+      "mediaType": "image",
+      "label": "LingShan NB 2",
+      "enabled": true,
+      "sortOrder": 20,
+      "aliases": ["nano-banana-2", "nanobanana2", "newapi_nanobanana2"],
+      "config": {
+        "request": {"endpoint": "images/generations", "parameters": []},
+        "ratioOptions": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "5:4", "4:5", "1:4", "4:1", "1:8", "8:1"],
+        "resolutionOptions": ["1K", "2K", "4K"]
+      }
+    },
+    "seedream-4.5": {
+      "provider": "newapi",
+      "upstreamModel": "seedream-4.5",
+      "mediaType": "image",
+      "label": "Seedream 4.5",
+      "enabled": true,
+      "sortOrder": 79,
+      "aliases": ["new_seedream-4.5"],
+      "config": {
+        "request": {"endpoint": "images/generations", "parameters": []},
+        "minPixels": 3686400,
+        "ratioOptions": ["1:1", "4:3", "3:4", "9:16", "16:9", "2:3", "3:2", "21:9"],
+        "resolutionOptions": ["2K", "4K"]
+      }
+    },
+    "seedream-5.0-pro": {
+      "provider": "newapi",
+      "upstreamModel": "seedream-5.0-pro",
+      "mediaType": "image",
+      "label": "Seedream 5.0 Pro",
+      "enabled": true,
+      "sortOrder": 79,
+      "aliases": ["newapi_seedream-5.0", "seedream-5.0"],
+      "config": {
+        "request": {
+          "endpoint": "images/generations",
+          "parameters": [{"key": "watermark", "label": "生成水印", "control": "select", "options": [0], "requestPath": "metadata.watermark"}]
+        },
+        "minPixels": 3686400,
+        "ratioOptions": ["1:1", "4:3", "3:4", "9:16", "16:9", "2:3", "3:2", "21:9"],
+        "resolutionOptions": ["1K", "2K"]
+      }
+    },
+    "seedream-5.0-lite": {
+      "provider": "newapi",
+      "upstreamModel": "seedream-5.0-lite",
+      "mediaType": "image",
+      "label": "Seedream 5.0 Lite",
+      "enabled": true,
+      "sortOrder": 79,
+      "aliases": ["newapi_seedream-5.0-lite", "seedream-5.0-Lite"],
+      "config": {
+        "request": {"endpoint": "images/generations", "parameters": []},
+        "minPixels": 3686400,
+        "ratioOptions": ["1:1", "16:9", "9:16", "3:2", "3:4", "21:9", "2:3", "4:3"],
+        "resolutionOptions": ["2K", "3K"]
+      }
+    },
+    "LingShan-NB-Pro": {
+      "provider": "newapi",
+      "upstreamModel": "LingShan-NB-Pro",
+      "mediaType": "image",
+      "label": "LingShan NB Pro",
+      "enabled": true,
+      "sortOrder": 100,
+      "aliases": [],
+      "config": {
+        "request": {"endpoint": "images/generations", "parameters": []},
+        "ratioOptions": ["1:1", "9:16", "16:9", "4:3", "3:4", "2:3", "3:2", "5:4", "4:5", "21:9"],
+        "resolutionOptions": ["1K", "2K", "4K"]
+      }
+    },
+    "seedance-2.0-fast": {
+      "provider": "newapi",
+      "upstreamModel": "seedance-2.0-fast",
+      "mediaType": "video",
+      "label": "Seedance2.0 Fast",
+      "enabled": true,
+      "sortOrder": 10,
+      "aliases": ["newapi_seedance-2.0-fast"],
+      "config": {
+        "request": {"endpoint": "video/generations", "parameters": []},
+        "humanReview": true,
+        "minDuration": 4,
+        "maxDuration": 15,
+        "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_reference"],
+        "referenceAudioMax": 3,
+        "referenceImageMax": 9,
+        "referenceVideoMax": 3,
+        "resolutionOptions": ["480p", "720p"]
+      }
+    },
+    "seedance-2.0": {
+      "provider": "newapi",
+      "upstreamModel": "seedance-2.0",
+      "mediaType": "video",
+      "label": "Seedance 2.0",
+      "enabled": true,
+      "sortOrder": 20,
+      "aliases": ["newapi_seedance-2.0"],
+      "config": {
+        "request": {"endpoint": "video/generations", "parameters": []},
+        "humanReview": true,
+        "minDuration": 4,
+        "maxDuration": 15,
+        "ratioOptions": ["1:1", "16:9", "4:3", "3:4", "9:16", "21:9"],
+        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_reference"],
+        "referenceAudioMax": 3,
+        "referenceImageMax": 9,
+        "referenceVideoMax": 3,
+        "resolutionOptions": ["480p", "720p", "1080p", "4K"]
+      }
+    },
+    "seedance-1.5-pro": {
+      "provider": "newapi",
+      "upstreamModel": "seedance-1.5-pro",
+      "mediaType": "video",
+      "label": "Seedance1.5 Pro",
+      "enabled": true,
+      "sortOrder": 50,
+      "aliases": ["newapi_seedance-1.5-pro"],
+      "config": {
+        "request": {"endpoint": "video/generations", "parameters": []},
+        "minDuration": 4,
+        "maxDuration": 12,
+        "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "supportedModes": ["text_to_video", "first_frame", "image_reference"],
+        "resolutionOptions": ["480p", "720p", "1080p"]
+      }
+    },
+    "seedance-1.0-pro-fast": {
+      "provider": "newapi",
+      "upstreamModel": "seedance-1.0-pro-fast",
+      "mediaType": "video",
+      "label": "Seedance1.0 Pro Fast",
+      "enabled": true,
+      "sortOrder": 60,
+      "aliases": ["newapi_seedance-1.0-pro-fast"],
+      "config": {
+        "request": {"endpoint": "video/generations", "parameters": []},
+        "minDuration": 2,
+        "maxDuration": 12,
+        "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "supportedModes": ["text_to_video", "first_frame"],
+        "resolutionOptions": ["480p", "720p", "1080p"]
+      }
+    },
+    "happyhorse-1.0": {
+      "provider": "newapi",
+      "upstreamModel": "happyhorse-1.0",
+      "mediaType": "video",
+      "label": "HappyHorse 1.0",
+      "enabled": true,
+      "sortOrder": 70,
+      "aliases": ["newapi_happyhorse-1.0"],
+      "config": {
+        "request": {"endpoint": "video/generations", "parameters": []},
+        "minDuration": 3,
+        "maxDuration": 15,
+        "ratioOptions": ["16:9", "9:16", "1:1"],
+        "supportedModes": ["text_to_video", "first_frame", "image_reference", "video_edit"],
+        "referenceAudioMax": 0,
+        "referenceImageMax": 9,
+        "referenceVideoMax": 1,
+        "resolutionOptions": ["720p", "1080p"]
+      }
+    },
+    "seedance-2.0-mini": {
+      "provider": "newapi",
+      "upstreamModel": "seedance-2.0-mini",
+      "mediaType": "video",
+      "label": "Seedance 2.0 mini",
+      "enabled": true,
+      "sortOrder": 100,
+      "aliases": [],
+      "config": {
+        "request": {"endpoint": "video/generations", "parameters": []},
+        "humanReview": true,
+        "minDuration": 4,
+        "maxDuration": 15,
+        "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
+        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_reference", "video_edit"],
+        "referenceAudioMax": 3,
+        "referenceImageMax": 9,
+        "referenceVideoMax": 3,
+        "resolutionOptions": ["480p", "720p"]
+      }
+    },
+    "MiniMax-H3": {
+      "provider": "newapi",
+      "upstreamModel": "MiniMax-H3",
+      "mediaType": "video",
+      "label": "MiniMax-H3",
+      "enabled": true,
+      "sortOrder": 110,
+      "aliases": [],
+      "config": {
+        "request": {"endpoint": "video/generations", "parameters": []},
+        "minDuration": 4,
+        "maxDuration": 15,
+        "ratioOptions": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "image_reference", "all_reference"],
+        "referenceAudioMax": 3,
+        "referenceImageMax": 9,
+        "referenceVideoMax": 3,
+        "resolutionOptions": ["768P", "2K"]
+      }
+    }
+  }
+}
