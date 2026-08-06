@@ -38,11 +38,16 @@ def test_ws_connect_can_prewarm_non_home_scope() -> None:
 async def test_ai_assistant_access_check_uses_chat_feature_key(monkeypatch) -> None:
     seen = {}
 
+    class FakeSurfaceAccess:
+        async def require_assistant_access(self, _user_id: str):
+            return {"available": True}
+
     class FakeUsageMeter:
         async def require_feature_credit_balance(self, **kwargs):
             seen.update(kwargs)
             return {"allowed": True}
 
+    monkeypatch.setattr(chat_route, "get_product_surface_access", lambda: FakeSurfaceAccess())
     monkeypatch.setattr(chat_route, "get_usage_meter", lambda: FakeUsageMeter())
 
     await chat_route._require_ai_assistant_access(
