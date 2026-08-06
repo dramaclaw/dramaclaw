@@ -205,6 +205,7 @@ async def start_sketch_edit_execute(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="sketch_edit_execute",
             queue_kind="sketch",
             episode=episode_num,

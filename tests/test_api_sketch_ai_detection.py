@@ -241,6 +241,7 @@ def test_detect_identities_reserves_feature_credit_and_marks_model_calls_include
         {
             "user_id": "user-1",
             "feature_key": "mainline.ai_identity_detection",
+            "product_surface": "mainline",
             "project_id": "project-1",
             "resource_kind": "sketch",
             "task_type": "ai_identity_detection",

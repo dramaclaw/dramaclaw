@@ -81,10 +81,12 @@ class LocalProductSurfaceAccess:
             "unavailable_message": str(definition["default_unavailable_message"]),
         }
 
-    async def require_assistant_access(self, user_id: str) -> dict[str, Any]:
-        del user_id
-        definition = SURFACE_DEFINITIONS_BY_CODE["assistant"]
-        raise ProductSurfaceUnavailableError(
-            "assistant",
-            str(definition["default_unavailable_message"]),
-        )
+    async def require_assistant_access(
+        self,
+        user_id: str,
+        surface_code: str,
+    ) -> dict[str, Any]:
+        clean_surface_code = str(surface_code or "").strip()
+        if clean_surface_code not in {"assistant", "freezone_assistant"}:
+            raise ValueError(f"unknown assistant surface: {clean_surface_code}")
+        return await self.require_access(user_id, clean_surface_code)

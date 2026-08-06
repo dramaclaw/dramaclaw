@@ -122,6 +122,7 @@ async def _start_or_enqueue_stage_asset(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="stage_asset",
             queue_kind="world",
             episode=0,
@@ -222,6 +223,7 @@ async def _start_or_enqueue_scene_pano(
     scope = stage_asset_scope(scene_name, step)
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="mainline",
         task_type="scene_pano_generation",
         queue_kind="world",
         episode=0,
@@ -1011,6 +1013,7 @@ async def build_scenes(project: str, user: dict = Depends(get_api_user)):
             return novel_import_required_response()
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="build_scenes",
             queue_kind="default",
             episode=0,
@@ -1145,6 +1148,7 @@ async def _start_scene_reference_task(
         model_selection = str(model or "").strip()
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="scene_reference_asset",
             queue_kind="default",
             episode=0,

@@ -2476,6 +2476,7 @@ export function SuperChatPanel({
   const chat = useSuperChat({
     project: params.project,
     displayName: username || "SuperTale",
+    productSurface: variant === "freezone" ? "freezone_assistant" : "assistant",
   });
   const isChatInitializing = !chat.historyReady && chat.messages.length === 0 && (chat.connecting || chat.connected);
 

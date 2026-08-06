@@ -4229,6 +4229,7 @@ async def test_skill_run_frame_accepts_plain_canvas_image_as_sketch_input(
     )
 
     assert captured["task_type"] == "mainline_frame_from_context"
+    assert captured["product_surface"] == "freezone"
     assert captured["payload"]["billing"] == {
         "feature_key": "mainline.render_regen"
     }
@@ -4374,6 +4375,7 @@ async def test_skill_run_normalizes_project_media_url_before_dispatch(
     )
 
     assert captured["task_type"] == "mainline_sketch_from_context"
+    assert captured["product_surface"] == "freezone"
     assert captured["payload"]["billing"] == {
         "feature_key": "mainline.sketch_regen"
     }

@@ -381,6 +381,7 @@ async def start_ingest(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="ingest_fast",
             queue_kind="default",
             episode=0,

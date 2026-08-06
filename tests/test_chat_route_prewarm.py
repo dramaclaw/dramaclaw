@@ -3,6 +3,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from novelvideo.api.routes import chat as chat_route
 from novelvideo.chat.store import ChatScope
+from novelvideo.ports.product_surface_access import ProductSurfaceUnavailableError
 
 
 @pytest.mark.anyio
@@ -39,7 +40,8 @@ async def test_ai_assistant_access_check_uses_chat_feature_key(monkeypatch) -> N
     seen = {}
 
     class FakeSurfaceAccess:
-        async def require_assistant_access(self, _user_id: str):
+        async def require_assistant_access(self, _user_id: str, surface_code: str):
+            seen["surface_code"] = surface_code
             return {"available": True}
 
     class FakeUsageMeter:
@@ -53,6 +55,7 @@ async def test_ai_assistant_access_check_uses_chat_feature_key(monkeypatch) -> N
     await chat_route._require_ai_assistant_access(
         user={"id": "usr_1", "username": "alice"},
         scope=ChatScope(kind="home"),
+        product_surface="assistant",
     )
 
     assert seen["user_id"] == "usr_1"
@@ -60,3 +63,31 @@ async def test_ai_assistant_access_check_uses_chat_feature_key(monkeypatch) -> N
     assert seen["project_id"] == ""
     assert seen["resource_kind"] == "chat"
     assert seen["metadata"]["scope"] == {"kind": "home", "id": None}
+    assert seen["metadata"]["product_surface"] == "assistant"
+    assert seen["surface_code"] == "assistant"
+
+
+@pytest.mark.anyio
+async def test_closed_assistant_surface_does_not_prewarm(monkeypatch) -> None:
+    prewarm_called = False
+
+    class FakeSurfaceAccess:
+        async def require_assistant_access(self, _user_id: str, surface_code: str):
+            raise ProductSurfaceUnavailableError(surface_code, "入口维护中")
+
+    async def fake_prewarm(*_args, **_kwargs):
+        nonlocal prewarm_called
+        prewarm_called = True
+
+    monkeypatch.setattr(chat_route, "get_product_surface_access", lambda: FakeSurfaceAccess())
+    monkeypatch.setattr(chat_route.chat_service, "prewarm_chat_backend", fake_prewarm)
+
+    with pytest.raises(ProductSurfaceUnavailableError, match="入口维护中"):
+        await chat_route._prewarm_authorized_chat_backend(
+            user={"id": "usr_1", "username": "alice"},
+            username="alice",
+            scope=ChatScope(kind="home"),
+            product_surface="freezone_assistant",
+        )
+
+    assert prewarm_called is False

@@ -3,12 +3,19 @@
 export type ClientFrame =
   | {
       type: "chat.message";
+      product_surface: AssistantProductSurface;
       scope?: ChatScope;
       text: string;
       turn_id?: string;
       attachments?: ChatAttachment[];
     }
-  | { type: "scope.set"; scope: ChatScope };
+  | {
+      type: "scope.set";
+      product_surface: AssistantProductSurface;
+      scope: ChatScope;
+    };
+
+export type AssistantProductSurface = "assistant" | "freezone_assistant";
 
 export type ChatScope = {
   kind: "home" | "project" | "asset" | "task";

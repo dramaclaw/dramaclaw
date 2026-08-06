@@ -105,6 +105,7 @@ def test_style_analysis_reserves_and_confirms_feature_credit(monkeypatch, tmp_pa
         {
             "user_id": "user-1",
             "feature_key": "mainline.style_analysis",
+            "product_surface": "mainline",
             "project_id": "project-1",
             "resource_kind": "script",
             "task_type": "style_analysis",

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -39,6 +39,7 @@ from novelvideo.shared.billing_errors import (
 router = APIRouter()
 
 AI_ASSISTANT_CHAT_FEATURE_KEY = "assistant.chat"
+AssistantProductSurface = Literal["assistant", "freezone_assistant"]
 
 
 @router.post("/chat/cancel")
@@ -84,6 +85,7 @@ class ChatAttachmentIn(BaseModel):
 
 class ChatMessageIn(BaseModel):
     type: str
+    product_surface: AssistantProductSurface
     scope: ChatScopePayload | None = None
     text: str
     turn_id: str | None = None
@@ -92,6 +94,7 @@ class ChatMessageIn(BaseModel):
 
 class ScopeSetIn(BaseModel):
     type: str
+    product_surface: AssistantProductSurface
     scope: ChatScopePayload
 
 
@@ -291,15 +294,40 @@ async def _require_ai_assistant_access(
     *,
     user: dict[str, Any],
     scope: ChatScope,
+    product_surface: AssistantProductSurface,
 ) -> None:
     user_id = await _requester_user_id_for_chat(user, scope)
-    await get_product_surface_access().require_assistant_access(user_id)
+    await get_product_surface_access().require_assistant_access(
+        user_id,
+        product_surface,
+    )
     await get_usage_meter().require_feature_credit_balance(
         user_id=user_id,
         feature_key=AI_ASSISTANT_CHAT_FEATURE_KEY,
         project_id=str(scope.id or "") if scope.kind == "project" else "",
         resource_kind="chat",
-        metadata={"scope": scope.to_dict()},
+        metadata={
+            "scope": scope.to_dict(),
+            "product_surface": product_surface,
+        },
+    )
+
+
+async def _prewarm_authorized_chat_backend(
+    *,
+    user: dict[str, Any],
+    username: str,
+    scope: ChatScope,
+    product_surface: AssistantProductSurface,
+) -> None:
+    user_id = await _requester_user_id_for_chat(user, scope)
+    await get_product_surface_access().require_assistant_access(
+        user_id,
+        product_surface,
+    )
+    await chat_service.prewarm_chat_backend(
+        username,
+        project=scope.id if scope.kind == "project" else None,
     )
 
 
@@ -724,15 +752,6 @@ async def chat_ws(websocket: WebSocket) -> None:
     current_scope = await _send_scope_changed(websocket, user, username, current_scope)
     if current_scope is None:
         return
-    # Do not pre-warm the default home scope on connect. The React client often
-    # immediately sends scope.set for the active project; warming home first
-    # creates a worker that is then rotated and logs a noisy initialize timeout.
-    if _should_prewarm_on_ws_connect(current_scope):
-        await chat_service.prewarm_chat_backend(
-            username,
-            project=current_scope.id if current_scope.kind == "project" else None,
-        )
-
     try:
         while True:
             try:
@@ -749,12 +768,25 @@ async def chat_ws(websocket: WebSocket) -> None:
                 if current_scope is None:
                     return
                 await _sync_running_agent_scope(username, current_scope)
-                # Switching project rotates the worker; warm the new scope now so
-                # the first message in the project doesn't cold-start.
-                await chat_service.prewarm_chat_backend(
-                    username,
-                    project=current_scope.id if current_scope.kind == "project" else None,
-                )
+                try:
+                    await _prewarm_authorized_chat_backend(
+                        user=user,
+                        username=username,
+                        scope=current_scope,
+                        product_surface=msg.product_surface,
+                    )
+                except ProductSurfaceUnavailableError as exc:
+                    await _send_json_best_effort(
+                        websocket,
+                        {
+                            "type": "error",
+                            "message": exc.message,
+                            "data": {
+                                "error_code": "PRODUCT_SURFACE_UNAVAILABLE",
+                                "surface_code": exc.surface_code,
+                            },
+                        },
+                    )
                 continue
 
             if event_type != "chat.message":
@@ -774,7 +806,11 @@ async def chat_ws(websocket: WebSocket) -> None:
                 continue
 
             try:
-                await _require_ai_assistant_access(user=user, scope=scope)
+                await _require_ai_assistant_access(
+                    user=user,
+                    scope=scope,
+                    product_surface=msg.product_surface,
+                )
                 if scope.kind == "project":
                     await _stream_project_turn(
                         websocket=websocket,

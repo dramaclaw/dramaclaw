@@ -153,6 +153,7 @@ async def test_mark_detection_route_reserves_and_confirms_feature_credit(
         {
             "user_id": "user_7",
             "feature_key": "freezone.image_mark_detect",
+            "product_surface": "freezone",
             "project_id": "project_59",
             "resource_kind": "image",
             "task_type": "freezone_image_mark_detect",

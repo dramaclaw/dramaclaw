@@ -297,6 +297,7 @@ async def generate_prop_reference(
         pricing_model = selected_model or resolve_prop_reference_image_model()
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="prop_reference_asset",
             queue_kind="default",
             episode=0,

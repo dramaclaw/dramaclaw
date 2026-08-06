@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ApprovalRequest,
+  AssistantProductSurface,
   ChatAttachment,
   ChatMessage,
   ChatScope,
@@ -555,9 +556,11 @@ function upsertToolMessage(messages: ChatMessage[], kind: string, payload: unkno
 export function useSuperChat({
   project,
   displayName,
+  productSurface,
 }: {
   project?: string;
   displayName: string;
+  productSurface: AssistantProductSurface;
 }) {
   const desiredScope = useMemo(() => scopeForProject(project), [project]);
   const scopeKey = useMemo(() => scopeSessionKey(desiredScope), [desiredScope]);
@@ -606,8 +609,12 @@ export function useSuperChat({
   }, []);
 
   const requestHistory = useCallback(() => {
-    sendFrame({ type: "scope.set", scope: desiredScope });
-  }, [desiredScope, sendFrame]);
+    sendFrame({
+      type: "scope.set",
+      product_surface: productSurface,
+      scope: desiredScope,
+    });
+  }, [desiredScope, productSurface, sendFrame]);
 
   const markTurnActive = useCallback((turnId: string | null) => {
     if (!turnId) return;
@@ -851,7 +858,11 @@ export function useSuperChat({
     wsRef.current = ws;
     ws.onopen = () => {
       if (connectionIdRef.current !== connectionId || wsRef.current !== ws) return;
-      sendFrame({ type: "scope.set", scope: desiredScope });
+      sendFrame({
+        type: "scope.set",
+        product_surface: productSurface,
+        scope: desiredScope,
+      });
     };
     ws.onmessage = (event) => {
       if (connectionIdRef.current !== connectionId || wsRef.current !== ws) return;
@@ -884,7 +895,7 @@ export function useSuperChat({
         reconnectRef.current = window.setTimeout(connect, 1200);
       }
     };
-  }, [desiredScope, handleFrame, sendFrame]);
+  }, [desiredScope, handleFrame, productSurface, sendFrame]);
 
   const disconnect = useCallback(() => {
     closedRef.current = true;
@@ -976,13 +987,14 @@ export function useSuperChat({
     setStreamText("");
     sendFrame({
       type: "chat.message",
+      product_surface: productSurface,
       scope: desiredScope,
       text: outboundText,
       turn_id: turnId,
       attachments: attachments.length > 0 ? attachments : undefined,
     });
     return true;
-  }, [connected, desiredScope, displayName, markTurnActive, sendFrame]);
+  }, [connected, desiredScope, displayName, markTurnActive, productSurface, sendFrame]);
 
   const appendNotification = useCallback(async (text: string): Promise<boolean> => {
     const trimmed = text.trim();

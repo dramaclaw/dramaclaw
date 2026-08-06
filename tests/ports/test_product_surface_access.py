@@ -25,4 +25,4 @@ async def test_ce_rejects_assistant_service() -> None:
     access = LocalProductSurfaceAccess()
 
     with pytest.raises(ProductSurfaceUnavailableError, match="虾导功能暂未开放"):
-        await access.require_assistant_access("local-user")
+        await access.require_assistant_access("local-user", "assistant")
