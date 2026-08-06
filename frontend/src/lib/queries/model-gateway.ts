@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import type { ErrorResponse, OkResponse } from "@/types/api";
 
-export type GatewayMode = "official" | "custom";
+export type GatewayMode = "official" | "custom" | "hybrid";
 
 /** 通用的「端点预览」：服务端只回 key 预览，绝不回完整 key。 */
 export interface GatewayEndpointPreview {
@@ -45,14 +45,35 @@ export interface NewApiDatabaseStatus {
 
 export interface SavedProviderChannelConfig {
   provider: string;
+  type?: number;
   configured: boolean;
   upstreamKeyPreview: string;
   baseUrl: string;
+  priority?: number;
+  settings?: Record<string, unknown>;
+}
+
+export interface NewApiChannelType {
+  type: number;
+  provider: string;
+  name: string;
+  description: string;
+  icon: string;
+  defaultBaseUrl: string;
+  status: number;
+  capabilities: string[];
+  requiresBaseUrl: boolean;
+  supportsBaseUrlOverride: boolean;
 }
 
 export interface SavedMediaModelConfig {
   provider: string;
   upstreamModel: string;
+  mediaType?: "image" | "video" | "audio";
+  label?: string;
+  enabled?: boolean;
+  sortOrder?: number;
+  config?: Record<string, unknown>;
 }
 
 export interface SavedEmbeddingModelConfig {
@@ -146,6 +167,7 @@ export interface FastApiErrorResponse {
 /** 一个 NewAPI 渠道：provider + 上游 Key + DC 模型名→上游模型名映射。 */
 export interface CustomChannelInput {
   provider: string;
+  type?: number;
   /** 渠道名，可选；不填后端自动生成。 */
   name?: string;
   upstreamKey: string;
@@ -158,10 +180,19 @@ export interface CustomChannelInput {
   baseUrl: string;
   /** 可选；不填后端用 modelMapping 第一个 key。 */
   testModel: string;
+  settings?: Record<string, unknown>;
 }
 
 export interface SaveProviderChannelsInput {
-  channels: Array<{ provider: string; upstreamKey?: string; baseUrl?: string }>;
+  preserveUnmentioned?: boolean;
+  channels: Array<{
+    provider: string;
+    type?: number;
+    upstreamKey?: string;
+    baseUrl?: string;
+    priority?: number;
+    settings?: Record<string, unknown>;
+  }>;
 }
 
 export interface SyncProviderChannelInput {
@@ -252,6 +283,21 @@ export function useModelGatewayConfig(enabled = true) {
   });
 }
 
+export function useNewApiChannelTypes(enabled = true) {
+  return useQuery({
+    queryKey: [...queryKeys.modelGateway(), "channel-types"],
+    queryFn: ({ signal }) =>
+      api
+        .get("api/v1/model-gateway/custom/newapi/channel-types", {
+          signal,
+          throwHttpErrors: false,
+        })
+        .json<OkResponse<{ items: NewApiChannelType[] }> | ErrorResponse>(),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useSaveOfficialConfig() {
   const qc = useQueryClient();
   return useMutation({
@@ -271,6 +317,32 @@ export function useEnableOfficial() {
     mutationFn: () =>
       api
         .post("api/v1/model-gateway/official/enable")
+        .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+    },
+  });
+}
+
+export function useEnableCustom() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post("api/v1/model-gateway/custom/enable", { throwHttpErrors: false })
+        .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+    },
+  });
+}
+
+export function useEnableHybrid() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post("api/v1/model-gateway/hybrid/enable", { throwHttpErrors: false })
         .json<OkResponse<ModelGatewayConfig> | ErrorResponse>(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
@@ -308,10 +380,38 @@ export function useSaveProviderChannels() {
         .post("api/v1/model-gateway/custom/newapi/provider-channels", {
           json: input,
           timeout: 60_000,
+          throwHttpErrors: false,
         })
-        .json<OkResponse<{ channels: SavedProviderChannelConfig[] }> | ErrorResponse>(),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+        .json<
+          | OkResponse<{ channels: SavedProviderChannelConfig[] }>
+          | ErrorResponse
+          | FastApiErrorResponse
+        >(),
+    onSuccess: async (response) => {
+      if (response.ok === true) {
+        await qc.cancelQueries({ queryKey: queryKeys.modelGateway() });
+        qc.setQueryData<OkResponse<ModelGatewayConfig>>(
+          queryKeys.modelGateway(),
+          (current) =>
+            current
+              ? {
+                  ...current,
+                  data: {
+                    ...current.data,
+                    provisioner: current.data.provisioner
+                      ? {
+                          ...current.data.provisioner,
+                          providerChannels: response.data.channels,
+                        }
+                      : current.data.provisioner,
+                  },
+                }
+              : current,
+        );
+      }
+      if (response.ok !== true) {
+        qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+      }
     },
   });
 }

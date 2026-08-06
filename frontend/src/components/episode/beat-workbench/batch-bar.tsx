@@ -157,6 +157,8 @@ export function BatchBar({
     (episodeAudioBillingQuote.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : "");
+  const episodeAudioPrereqErrors =
+    episodeAudioBillingQuote.data?.data.prereq_errors ?? [];
   const detectIdentitiesCostDisplay =
     detectIdentitiesCost.data?.data.display ??
     (detectIdentitiesCost.error instanceof BillingRuleNotConfiguredError
@@ -356,6 +358,13 @@ export function BatchBar({
                   variant="ghost"
                   onClick={() => {
                     if (audioUnavailableForVideoBackend) return;
+                    if (episodeAudioPrereqErrors.length > 0) {
+                      showError(
+                        t("episode.workbench.batch.genAudioTitle"),
+                        episodeAudioPrereqErrors.join("\n"),
+                      );
+                      return;
+                    }
                     askConfirm(
                       t("episode.workbench.batch.genAudioTitle"),
                       t("episode.workbench.batch.genAudioDesc"),
@@ -380,12 +389,14 @@ export function BatchBar({
               )}
               {t("episode.workbench.batch.genAudio")}
               <span aria-hidden="true" className="inline-flex min-w-7 justify-start">
-                <CreditCostPill
-                  display={episodeAudioCostDisplay}
-                  promotion={episodeAudioBillingQuote.data?.data.promotion}
-                  disabled={audioUnavailableForVideoBackend}
-                  className="h-4 bg-transparent px-0 text-[11px]"
-                />
+                {episodeAudioPrereqErrors.length === 0 && (
+                  <CreditCostPill
+                    display={episodeAudioCostDisplay}
+                    promotion={episodeAudioBillingQuote.data?.data.promotion}
+                    disabled={audioUnavailableForVideoBackend}
+                    className="h-4 bg-transparent px-0 text-[11px]"
+                  />
+                )}
               </span>
             </TooltipTrigger>
             {audioUnavailableForVideoBackend && (

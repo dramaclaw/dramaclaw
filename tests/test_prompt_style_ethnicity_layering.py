@@ -136,20 +136,20 @@ def test_live_action_style_tags_describe_grade_finish():
         assert normalized_words & grade_words
 
 
-def test_guoman_fantasy_content_bias_is_fallback_flavor():
+def test_guoman_fantasy_preset_contains_only_rendering_style():
     path = Path("src/novelvideo/styles/presets/guoman_fantasy.json")
     data = json.loads(path.read_text())
     instructions = data["style_instructions"]
     lowered = instructions.lower()
 
-    assert "default flavor" in lowered
-    assert "when character descriptions or reference images do not specify" in lowered
-    assert "when wardrobe is unspecified" in lowered
-    assert "always follow explicit character descriptions" in lowered
+    assert "apply this style only to the rendering medium" in lowered
+    assert "do not infer or change faces" in lowered
     assert "reference images" in lowered
-    assert "phoenix-shaped eyes" not in lowered
-    assert "distant-mountain brows" not in lowered
-    assert "cold detached temperament" not in lowered
+    assert "do not override them with the style preset" in lowered
+    assert "high-status fantasy robes" not in lowered
+    assert "black-gold" not in lowered
+    assert "when wardrobe is unspecified" not in lowered
+    assert "keep the image transparent" not in lowered
 
 
 def test_topic_flavored_presets_defer_to_explicit_story_content():

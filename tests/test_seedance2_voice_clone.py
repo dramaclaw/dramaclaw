@@ -601,3 +601,83 @@ def test_resolve_narrator_source_third_person_uses_project_narrator(tmp_path):
     assert resolution.audio_path == narrator_audio
     assert resolution.sha256
     assert resolution.character_name == ""
+
+
+def test_resolve_narrator_source_third_person_reports_unconfigured_voice(tmp_path):
+    from novelvideo.seedance2_i2v.voice_clone import resolve_narrator_source
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    store = _FakeStore(project_dir, [])
+
+    resolution = resolve_narrator_source(
+        store=store,
+        narration_style="third_person",
+        project_narrator_stored_path="",
+    )
+
+    assert resolution.audio_path is None
+    assert resolution.error == "项目解说人声线未配置，请上传或录制解说人音频"
+
+
+def test_resolve_narrator_source_third_person_reports_missing_configured_file(tmp_path):
+    from novelvideo.seedance2_i2v.voice_clone import resolve_narrator_source
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    store = _FakeStore(project_dir, [])
+
+    resolution = resolve_narrator_source(
+        store=store,
+        narration_style="third_person",
+        project_narrator_stored_path="assets/narrator/voice.wav",
+    )
+
+    assert resolution.audio_path is None
+    assert resolution.error == (
+        "项目解说人声线已配置，但声线文件无法读取，请重新上传或检查项目存储"
+    )
+
+
+def test_resolve_narrator_source_third_person_rejects_configured_directory(tmp_path):
+    from novelvideo.seedance2_i2v.voice_clone import resolve_narrator_source
+
+    project_dir = tmp_path / "proj"
+    narrator_directory = project_dir / "assets" / "narrator" / "voice.wav"
+    narrator_directory.mkdir(parents=True)
+    store = _FakeStore(project_dir, [])
+
+    resolution = resolve_narrator_source(
+        store=store,
+        narration_style="third_person",
+        project_narrator_stored_path="assets/narrator/voice.wav",
+    )
+
+    assert resolution.audio_path is None
+    assert "声线文件无法读取" in resolution.error
+
+
+def test_resolve_narrator_source_third_person_reports_hash_read_failure(
+    tmp_path, monkeypatch
+):
+    import novelvideo.seedance2_i2v.voice_clone as voice_clone
+
+    project_dir = tmp_path / "proj"
+    narrator_audio = project_dir / "assets" / "narrator" / "voice.wav"
+    narrator_audio.parent.mkdir(parents=True)
+    narrator_audio.write_bytes(b"project-narrator")
+    store = _FakeStore(project_dir, [])
+
+    def fail_to_read(_path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(voice_clone, "file_sha256", fail_to_read)
+
+    resolution = voice_clone.resolve_narrator_source(
+        store=store,
+        narration_style="third_person",
+        project_narrator_stored_path="assets/narrator/voice.wav",
+    )
+
+    assert resolution.audio_path is None
+    assert "声线文件无法读取" in resolution.error

@@ -87,6 +87,7 @@ export function AudioPane({
     (audioCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
+  const audioPrereqError = audioCost.data?.data.prereq_errors?.[0] ?? "";
   const audioTask = useTaskController({
     key: { taskType: TASK_TYPES.AUDIO_GENERATION_INDEXTTS2, project, episode },
     alsoReconcile: [TASK_TYPES.AUDIO_GENERATION],
@@ -163,7 +164,13 @@ export function AudioPane({
           <Button
             size="xs"
             variant="outline"
-            onClick={() => setRegenConfirm(true)}
+            onClick={() => {
+              if (audioPrereqError) {
+                showAudioError(audioPrereqError);
+                return;
+              }
+              setRegenConfirm(true);
+            }}
             disabled={regenerate.isPending || audioTask.started}
             className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
           >
@@ -172,11 +179,15 @@ export function AudioPane({
             ) : (
               <RefreshCw className="size-3" />
             )}
-            {t("common.regenerate")}
-            <CreditCostInline
-              display={audioCostDisplay}
-              promotion={audioCost.data?.data.promotion}
-            />
+            {audioPrereqError
+              ? t("episode.workbench.audio.configureVoiceAction")
+              : t("common.regenerate")}
+            {!audioPrereqError && (
+              <CreditCostInline
+                display={audioCostDisplay}
+                promotion={audioCost.data?.data.promotion}
+              />
+            )}
           </Button>
         </div>
       )}

@@ -76,6 +76,7 @@ function invalidateNarratorVoiceQueries(
 ) {
   qc.invalidateQueries({ queryKey: queryKeys.narratorVoice(project) });
   qc.invalidateQueries({ queryKey: queryKeys.narratorVoiceSources(project) });
+  qc.invalidateQueries({ queryKey: queryKeys.audioBillingQuotes(project) });
   qc.invalidateQueries({ queryKey: seedance2BeatStatusProjectKey(project) });
 }
 

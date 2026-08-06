@@ -196,6 +196,51 @@ async def test_audio_generate_route_dispatches_indextts2(monkeypatch, tmp_path):
     ]
 
 
+@pytest.mark.asyncio
+async def test_audio_generate_route_does_not_enqueue_when_voice_file_is_missing(
+    monkeypatch, tmp_path
+):
+    from novelvideo.api.routes import generation
+    from novelvideo.api.schemas import TTSGenerateRequest
+
+    calls = []
+    _patch_generation_celery(monkeypatch, generation, tmp_path, _FakeStore())
+
+    async def fake_plan(**_kwargs):
+        return (
+            [],
+            [
+                "Beat 02 解说声线缺失：项目解说人声线已配置，"
+                "但声线文件无法读取，请重新上传或检查项目存储"
+            ],
+            0,
+        )
+
+    monkeypatch.setattr(generation, "_audio_generation_plan", fake_plan)
+    monkeypatch.setattr(
+        generation,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=_fake_enqueue(calls)),
+    )
+
+    response = await generation.generate_audio(
+        project="demo",
+        episode_num=3,
+        body=TTSGenerateRequest(mode="redo_selected", beat_numbers=[2]),
+        user={"username": "alice"},
+    )
+
+    assert response == {
+        "ok": False,
+        "code": "voice_prereq_required",
+        "error": (
+            "Beat 02 解说声线缺失：项目解说人声线已配置，"
+            "但声线文件无法读取，请重新上传或检查项目存储"
+        ),
+    }
+    assert calls == []
+
+
 def test_audio_generate_http_route_dispatches_indextts2(monkeypatch, tmp_path):
     from novelvideo.api.routes import generation
 

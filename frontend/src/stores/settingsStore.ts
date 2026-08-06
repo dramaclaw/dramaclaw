@@ -23,60 +23,7 @@ export const DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL = 'nano-banana-pro';
 
 export type MediaStorageProvider = 'aliyun_oss' | 'cloudinary';
 
-export type FeatureModelProvider =
-  | 'openai'
-  | 'midjourney'
-  | 'azure'
-  | 'ollama'
-  | 'midjourneyplus'
-  | 'openaimax'
-  | 'ohmygpt'
-  | 'custom'
-  | 'ails'
-  | 'aiproxy'
-  | 'palm'
-  | 'api2gpt'
-  | 'aigc2d'
-  | 'anthropic'
-  | 'baidu'
-  | 'zhipu'
-  | 'ali'
-  | 'xunfei'
-  | '360'
-  | 'openrouter'
-  | 'aiproxylibrary'
-  | 'fastgpt'
-  | 'tencent'
-  | 'gemini'
-  | 'moonshot'
-  | 'zhipuv4'
-  | 'perplexity'
-  | 'lingyiwanwu'
-  | 'aws'
-  | 'cohere'
-  | 'minimax'
-  | 'sunoapi'
-  | 'dify'
-  | 'jina'
-  | 'cloudflare'
-  | 'siliconflow'
-  | 'vertexai'
-  | 'mistral'
-  | 'deepseek'
-  | 'mokaai'
-  | 'volcengine'
-  | 'baiduv2'
-  | 'xinference'
-  | 'xai'
-  | 'coze'
-  | 'kling'
-  | 'jimeng'
-  | 'vidu'
-  | 'submodel'
-  | 'doubaovideo'
-  | 'sora'
-  | 'replicate'
-  | 'codex';
+export type FeatureModelProvider = string;
 
 export const FEATURE_MODEL_PROVIDERS: readonly FeatureModelProvider[] = [
   'openai',
@@ -149,12 +96,21 @@ export interface FeatureProviderChannel {
   upstreamKey: string;
   /** 上游 Base URL 覆盖；空表示使用后端 provider preset。 */
   baseUrl: string;
+  /** NewAPI channel priority. It only affects initial channel selection. */
+  priority: number;
+  /** Provider-specific NewAPI channel settings, e.g. ComfyUI workflows. */
+  settings: Record<string, unknown>;
 }
 
 export interface MediaModelEntry {
   provider: FeatureModelProvider;
   /** NewAPI model_mapping 的 value；空表示使用固定模型名自身。 */
   upstreamModel: string;
+  mediaType?: 'image' | 'video' | 'audio';
+  label?: string;
+  enabled?: boolean;
+  sortOrder?: number;
+  config?: Record<string, unknown>;
 }
 
 export interface EmbeddingModelEntry {
@@ -312,8 +268,9 @@ function normalizeApiKey(input: string): string {
 function normalizeFeatureModelProvider(
   input: FeatureModelProvider | string | null | undefined
 ): FeatureModelProvider {
-  return FEATURE_MODEL_PROVIDERS.includes(input as FeatureModelProvider)
-    ? (input as FeatureModelProvider)
+  const normalized = String(input ?? '').trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]*$/.test(normalized)
+    ? normalized
     : DEFAULT_FEATURE_MODEL_PROVIDER;
 }
 
@@ -352,6 +309,15 @@ function normalizeFeatureModelSettings(
       mediaModels[normalizedModel] = {
         provider: normalizeFeatureModelProvider(entry.provider),
         upstreamModel: typeof entry.upstreamModel === 'string' ? entry.upstreamModel.trim() : '',
+        ...(entry.mediaType === 'image' || entry.mediaType === 'video' || entry.mediaType === 'audio'
+          ? { mediaType: entry.mediaType }
+          : {}),
+        ...(typeof entry.label === 'string' && entry.label.trim()
+          ? { label: entry.label.trim() }
+          : {}),
+        enabled: entry.enabled !== false,
+        sortOrder: typeof entry.sortOrder === 'number' ? entry.sortOrder : 100,
+        config: entry.config && typeof entry.config === 'object' ? entry.config : {},
       };
     }
   }
@@ -414,6 +380,11 @@ function normalizeFeatureModelSettings(
         provider: normalized,
         upstreamKey: typeof channel.upstreamKey === 'string' ? channel.upstreamKey.trim() : '',
         baseUrl: typeof channel.baseUrl === 'string' ? channel.baseUrl.trim() : '',
+        priority: Number.isFinite(Number(channel.priority)) ? Math.round(Number(channel.priority)) : 0,
+        settings:
+          channel.settings && typeof channel.settings === 'object' && !Array.isArray(channel.settings)
+            ? (channel.settings as Record<string, unknown>)
+            : {},
       };
     }
   }
@@ -422,11 +393,28 @@ function normalizeFeatureModelSettings(
   for (const [provider, key] of Object.entries(providerKeys)) {
     const normalized = normalizeFeatureModelProvider(provider);
     if (!providerChannels[normalized] && key) {
-      providerChannels[normalized] = { provider: normalized, upstreamKey: key, baseUrl: '' };
+      providerChannels[normalized] = {
+        provider: normalized,
+        upstreamKey: key,
+        baseUrl: '',
+        priority: 0,
+        settings: {},
+      };
     }
   }
 
   return { featureModels, mediaModels, embeddingModel, providerKeys, providerChannels };
+}
+
+function prepareFeatureModelSettingsForPersistence(
+  input: Partial<FeatureModelSettings> | null | undefined
+): FeatureModelSettings {
+  const normalized = normalizeFeatureModelSettings(input);
+  return {
+    ...normalized,
+    providerKeys: {},
+    providerChannels: {},
+  };
 }
 
 function normalizePriceDisplayCurrencyMode(
@@ -572,6 +560,11 @@ export const useSettingsStore = create<SettingsState>()(
                   {
                     provider: normalizeFeatureModelProvider(entry.provider),
                     upstreamModel: entry.upstreamModel.trim(),
+                    ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
+                    ...(entry.label?.trim() ? { label: entry.label.trim() } : {}),
+                    enabled: entry.enabled !== false,
+                    sortOrder: entry.sortOrder ?? 100,
+                    config: entry.config ?? {},
                   },
                 ] as const)
                 .filter(([model]) => Boolean(model))
@@ -628,6 +621,8 @@ export const useSettingsStore = create<SettingsState>()(
                   provider: normalized,
                   upstreamKey: state.featureModelConfig.providerKeys[normalized] ?? '',
                   baseUrl: '',
+                  priority: 0,
+                  settings: {},
                 },
               },
             },
@@ -640,9 +635,13 @@ export const useSettingsStore = create<SettingsState>()(
             provider: normalized,
             upstreamKey: '',
             baseUrl: '',
+            priority: 0,
+            settings: {},
           };
           const upstreamKey = (patch.upstreamKey ?? prev.upstreamKey).trim();
           const baseUrl = (patch.baseUrl ?? prev.baseUrl).trim();
+          const priority = Math.round(Number(patch.priority ?? prev.priority) || 0);
+          const settings = patch.settings ?? prev.settings;
           const nextKeys = { ...state.featureModelConfig.providerKeys };
           if (upstreamKey) {
             nextKeys[normalized] = upstreamKey;
@@ -655,7 +654,7 @@ export const useSettingsStore = create<SettingsState>()(
               providerKeys: nextKeys,
               providerChannels: {
                 ...state.featureModelConfig.providerChannels,
-                [normalized]: { provider: normalized, upstreamKey, baseUrl },
+                [normalized]: { provider: normalized, upstreamKey, baseUrl, priority, settings },
               },
             },
           };
@@ -784,11 +783,21 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'settings-storage',
-      version: 17,
+      version: 18,
       // Quota-safe persistence: on a QuotaExceededError, prune stale freezone
       // canvas keys (via the registered reclaimer) and retry once instead of
       // letting the whole store fail to hydrate/persist.
       storage: createJSONStorage(() => quotaSafeStateStorage),
+      // Model-gateway drafts may contain secrets and very large ComfyUI
+      // workflows. The backend settings database is their source of truth;
+      // keeping them in the global startup store can exhaust localStorage or
+      // make hydration block the whole application after a refresh.
+      partialize: (state) => ({
+        ...state,
+        featureModelConfig: prepareFeatureModelSettingsForPersistence(
+          state.featureModelConfig
+        ),
+      }),
       onRehydrateStorage: () => {
         return (_state, error) => {
           if (error) {
@@ -850,7 +859,9 @@ export const useSettingsStore = create<SettingsState>()(
             usdToCnyRate: normalizeUsdToCnyRate(state.usdToCnyRate),
             preferDiscountedPrice: state.preferDiscountedPrice ?? false,
             grsaiCreditTierId: normalizeGrsaiCreditTierId(state.grsaiCreditTierId),
-            featureModelConfig: normalizeFeatureModelSettings(state.featureModelConfig),
+            featureModelConfig: prepareFeatureModelSettingsForPersistence(
+              state.featureModelConfig
+            ),
           };
         }
 
@@ -878,7 +889,9 @@ export const useSettingsStore = create<SettingsState>()(
           usdToCnyRate: normalizeUsdToCnyRate(state.usdToCnyRate),
           preferDiscountedPrice: state.preferDiscountedPrice ?? false,
           grsaiCreditTierId: normalizeGrsaiCreditTierId(state.grsaiCreditTierId),
-          featureModelConfig: normalizeFeatureModelSettings(state.featureModelConfig),
+          featureModelConfig: prepareFeatureModelSettingsForPersistence(
+            state.featureModelConfig
+          ),
         };
       },
     }

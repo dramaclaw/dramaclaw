@@ -12,6 +12,7 @@ import binascii
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -256,7 +257,11 @@ from novelvideo.freezone.video_node import (
     normalize_video_resolution_for_backend,
     resolve_freezone_video_backend,
     summarize_omni_reference_counts,
+    validate_omni_reference_audio_durations,
     validate_omni_reference_limits,
+    MAX_OMNI_REFERENCE_AUDIO_SECONDS,
+    MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+    MIN_OMNI_REFERENCE_AUDIO_SECONDS,
 )
 from novelvideo.models import CharacterIdentity, beat_scene_id
 from novelvideo.project_config import (
@@ -6905,25 +6910,97 @@ def _start_freezone_image_reverse_prompt_task(
 
 
 async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | None:
-    """Use the optional EE catalog while keeping CE's static model list intact."""
+    """Use EE catalog or the CE-local catalog when custom NewAPI is active."""
     from novelvideo.ports.registry import PortNotRegistered, get_port
 
     try:
         catalog = get_port("media_model_catalog")
     except PortNotRegistered:
+        from novelvideo.model_gateway_settings import (
+            MODE_CUSTOM,
+            MODE_HYBRID,
+            get_ce_media_model_catalog,
+            get_effective_newapi_config,
+            get_official_media_model_catalog,
+        )
+        from novelvideo.shared.runtime_env import is_ce_effective
+
+        if is_ce_effective():
+            mode = get_effective_newapi_config().mode
+            if mode == MODE_CUSTOM:
+                return _merge_media_model_catalog_defaults(
+                    _static_media_model_catalog(media_type),
+                    get_ce_media_model_catalog(media_type, include_disabled=True),
+                )
+            if mode == MODE_HYBRID:
+                local = get_ce_media_model_catalog(
+                    media_type,
+                    provider="comfyui",
+                    include_disabled=True,
+                )
+                return _merge_media_model_catalog_defaults(
+                    _static_media_model_catalog(media_type),
+                    local,
+                )
+            return get_official_media_model_catalog(media_type)
         return None
     return await catalog.list_models(media_type)
 
 
+def _static_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
+    from novelvideo.model_gateway_settings import get_official_media_model_catalog
+
+    return get_official_media_model_catalog(media_type)
+
+
+def _merge_media_model_catalog_defaults(
+    defaults: list[dict[str, Any]], configured: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Overlay CE mappings on the existing mainline capabilities."""
+    merged: list[dict[str, Any]] = []
+    consumed: set[int] = set()
+    for base in defaults:
+        base_id = _catalog_entry_id(base)
+        match_index = next(
+            (
+                index
+                for index, item in enumerate(configured)
+                if index not in consumed
+                and base_id
+                and _catalog_entry_id(item) == base_id
+            ),
+            None,
+        )
+        if match_index is None:
+            merged.append(base)
+            continue
+        consumed.add(match_index)
+        override = configured[match_index]
+        if override.get("enabled") is not False:
+            merged.append({**base, **override})
+    merged.extend(
+        item
+        for index, item in enumerate(configured)
+        if index not in consumed and item.get("enabled") is not False
+    )
+    return merged
+
+
 def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
     """Return new and legacy identifiers accepted at the API boundary."""
-    return {
+    identifiers = {
         str(entry.get("catalogId") or ""),
         str(entry.get("catalog_id") or ""),
         str(entry.get("id") or ""),
         str(entry.get("apiModel") or ""),
+        str(entry.get("api_model") or ""),
         str(entry.get("gatewayModel") or ""),
+        str(entry.get("gateway_model") or ""),
     }
+    aliases = entry.get("aliases")
+    if isinstance(aliases, list):
+        identifiers.update(str(alias) for alias in aliases)
+    return {identifier for identifier in identifiers if identifier}
 
 
 def _catalog_entry_id(entry: dict[str, Any] | None) -> str:
@@ -7091,6 +7168,41 @@ def _catalog_reference_limits(
         "video": _limit("referenceVideoMax", video_default),
         "audio": _limit("referenceAudioMax", audio_default),
     }
+
+
+def _catalog_audio_total_duration_max(capabilities: dict[str, Any] | None) -> float | None:
+    """目录里配的全能参考音频**总时长**上限（秒），没配返回 None。
+
+    与 `_catalog_reference_limits` 同一套「目录优先」的口径，只是这里允许小数
+    （15.2 本身就不是整数）。非正数 / 非数字 / inf / nan 一律当没配——写入侧
+    `media_model_request_schema` 已经挡了这些，但目录条目也可能是那道校验存在之前落的库，
+    读出来再挡一次才不会让 inf 静默关掉整个上限。
+
+    刻意**不在这里兜底**成 15.2：调用方要靠「有没有配」来决定这个模型该不该受管，
+    在这里默默返回 15.2 就分不清「管理员配了 15.2」和「压根没配」。
+    """
+    value = capabilities.get("referenceAudioTotalMaxSeconds") if capabilities else None
+    if type(value) in (int, float) and math.isfinite(value) and value > 0:
+        return float(value)
+    return None
+
+
+async def _probe_reference_audio_seconds(path: str) -> float | None:
+    """ffprobe 读音频时长，读不出返回 None（校验器会跳过这条）。
+
+    不能改用 `utils.media_io.get_audio_duration`：它探测失败时返回 **5.0**，一个正好
+    合法的值，会把兜底变成静默放行。这里要的就是「不知道」和「知道」分得清。
+    """
+    from novelvideo.seedance2_i2v.character_voice_storage import (
+        probe_voice_sample_duration_seconds,
+    )
+    from novelvideo.utils.async_ops import call_blocking
+
+    try:
+        return float(await call_blocking(probe_voice_sample_duration_seconds, path))
+    except Exception as exc:  # ffprobe 缺失 / 文件损坏 / 权限，都只是「测不出」
+        logger.warning("[freezone] reference audio duration probe failed: %s (%s)", path, exc)
+        return None
 
 
 def _catalog_duration_bounds(
@@ -7962,6 +8074,54 @@ async def freezone_video_omni_gen(
                 "role": str(item.get("role") or ""),
             }
         )
+
+    # 音频时长兜底。前端也拦一遍（videoModelCapabilities.audioReferenceDurationRejection），
+    # 但那层靠 <audio> 探测，CORS / 超时 / 老画布数据都可能测不出而放行；这里 URL 已经
+    # 落成本地路径，ffprobe 能给出确定答案，是最后一道能在计费前拦下的闸门。
+    #
+    # 只对**已知边界**的模型生效，而且两类边界分开授权：
+    #   - 逐条 1.8~15.2s 是从 Seedance 2.0 的报文里实测出来的，只对它成立；
+    #   - 总时长对**边界已知**的模型是「目录配置与厂商硬顶取小」：管理员可以配得更严，
+    #     但配宽了不会让厂商也跟着放行——给 seedance2 配 60s，3 条 6s 在本地全过、到厂商
+    #     那儿照样 400，正是本 PR 要消灭的那种失败。边界未知的模型没有硬顶可取，直接用
+    #     目录值。
+    # 别把这两类混成一个开关：目录里给别家模型配了 60s 总时长，不代表它的单条也得
+    # 卡在 15.2s —— 那样一条正常的 25s 音频会被我们凭空 400 掉。
+    audio_items = [item for item in reference_items if item["type"] == "audio"]
+    per_clip_bounds_known = is_freezone_seedance2_backend(backend)
+    configured_audio_total = _catalog_audio_total_duration_max(capabilities)
+    if per_clip_bounds_known:
+        audio_total_max = min(
+            configured_audio_total or MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+            MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+        )
+    else:
+        audio_total_max = configured_audio_total
+    if audio_items and (per_clip_bounds_known or audio_total_max is not None):
+        # 并发探测：ffprobe 单条有 20s 超时，串行 await 会把 3 条参考音频叠成最长 60s 的
+        # 请求耗时。gather 之后最坏就是一个超时的墙钟，也就顺带成了整体上限。
+        probed_seconds = await asyncio.gather(
+            *(_probe_reference_audio_seconds(item["path"]) for item in audio_items)
+        )
+        probed = [
+            (Path(item["path"]).name or f"audio{index}", seconds)
+            for index, (item, seconds) in enumerate(
+                zip(audio_items, probed_seconds), start=1
+            )
+        ]
+        try:
+            validate_omni_reference_audio_durations(
+                probed,
+                min_seconds=(
+                    MIN_OMNI_REFERENCE_AUDIO_SECONDS if per_clip_bounds_known else None
+                ),
+                max_seconds=(
+                    MAX_OMNI_REFERENCE_AUDIO_SECONDS if per_clip_bounds_known else None
+                ),
+                total_max_seconds=audio_total_max,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     final_prompt = build_freezone_omni_video_prompt(
         user_prompt=body.prompt,
