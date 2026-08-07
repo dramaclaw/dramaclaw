@@ -34,12 +34,22 @@ The official image/video list and its resolutions, aspect ratios, durations, and
 Official and Local + Official Hybrid modes show the current catalog version, model count, and source:
 
 - Click **Check for Updates** to fetch the latest catalog from DramaClaw's official publishing URL and apply it immediately.
-- **Automatically update the official model catalog** is off by default. When enabled, DramaClaw checks once whenever the corresponding settings panel is opened; it does not poll in the background.
+- **Automatically update the official model catalog** is off by default. When enabled, the backend checks every five minutes by default and also checks immediately when the corresponding settings panel opens.
 - Downloaded catalogs are stored locally at `state/local/official_media_models.json` and remain active after restart.
 - DramaClaw rejects a remote catalog older than the active version. After an application upgrade, a newer bundled catalog takes precedence over an older local cache.
-- After a successful update, the image and video model lists in the current XiaHua browser session refresh automatically.
+- After a successful update, an open XiaHua browser observes the catalog status every minute while automatic updates are enabled and refreshes its image and video model lists when the content SHA256 changes.
+- The status API reports the active content SHA256, publishing Git revision, publication time, remote URL, and latest update error so each instance can be audited.
 
 Official catalog updates do not change provider channels, model mappings, or capabilities maintained in Custom mode.
+
+The official catalog defaults to the `dramaclaw-dl` bucket in Chengdu: `https://dramaclaw-dl.oss-cn-chengdu.aliyuncs.com/official-media-catalog/manifest.json`. The manifest points to a SHA256-addressed catalog snapshot that is never overwritten. The backend validates the manifest, catalog version, and content SHA256, and uses ETag revalidation. Override the default with `OFFICIAL_MEDIA_CATALOG_MANIFEST_URL`; `OFFICIAL_MEDIA_CATALOG_URL` remains as a legacy direct-JSON source. Set `OFFICIAL_MEDIA_CATALOG_POLL_SECONDS` to change the polling interval; the minimum is 60 seconds.
+
+The repository's `publish-official-media-catalog` workflow uploads `catalogs/<sha256>.json` with a long-lived immutable cache policy, then publishes `manifest.json` with a 60-second cache policy. Configure the following as repository secrets or in the GitHub `official-media-catalog` environment:
+
+- Variables are optional: the defaults are `oss-cn-chengdu.aliyuncs.com`, `dramaclaw-dl`, and `official-media-catalog`; override them with `OFFICIAL_CATALOG_OSS_ENDPOINT`, `OFFICIAL_CATALOG_OSS_BUCKET`, and `OFFICIAL_CATALOG_OSS_PREFIX`.
+- Secrets: `OFFICIAL_CATALOG_OSS_ACCESS_KEY_ID` and `OFFICIAL_CATALOG_OSS_ACCESS_KEY_SECRET` take precedence; otherwise the workflow reuses organization-level `OSS_RELAY_AK` and `OSS_RELAY_SK`.
+
+Keep `dramaclaw-dl` private and grant anonymous `GetObject` only for the `official-media-catalog/*` prefix. The CI identity only needs write access to that prefix. Git pull requests remain the source of truth; enabling OSS versioning is recommended for infrastructure recovery.
 
 To obtain a DC Key, visit <https://relayclaw.cdnfg.com>.
 

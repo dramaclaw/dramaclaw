@@ -4044,7 +4044,7 @@
           "remote": "Online update"
         },
         "mediaCatalogAutoUpdate": "Automatically update official models",
-        "mediaCatalogAutoUpdateHint": "Check and apply compatible catalog updates when Settings opens.",
+        "mediaCatalogAutoUpdateHint": "Check periodically in the background and apply compatible updates immediately when Settings opens.",
         "mediaCatalogCheckNow": "Check for updates",
         "mediaCatalogUpdated": "The official media model catalog was updated.",
         "mediaCatalogUpToDate": "The official media model catalog is up to date.",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ from httpx import Response
 
 from novelvideo import config
 from novelvideo import model_gateway_settings
+from novelvideo import official_media_catalog_remote
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.api.routes import model_gateway
 from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
@@ -1575,6 +1577,147 @@ def test_official_media_catalog_preferences_and_remote_update(monkeypatch, tmp_p
     assert current.json()["data"]["modelCount"] == 1
 
 
+def test_official_media_catalog_defaults_to_dramaclaw_download_bucket(monkeypatch):
+    monkeypatch.delenv("OFFICIAL_MEDIA_CATALOG_MANIFEST_URL", raising=False)
+    monkeypatch.delenv("OFFICIAL_MEDIA_CATALOG_URL", raising=False)
+
+    assert official_media_catalog_remote._remote_source() == (
+        "https://dramaclaw-dl.oss-cn-chengdu.aliyuncs.com/"
+        "official-media-catalog/manifest.json",
+        True,
+    )
+
+
+def test_official_media_catalog_manifest_verifies_hash_and_revalidates_etag(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    manifest_url = "https://catalog.example.test/official-media-catalog/manifest.json"
+    monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_MANIFEST_URL", manifest_url)
+    payload = {
+        "version": 1,
+        "catalogVersion": "2026.08.07.1",
+        "name": "Test official media models",
+        "mediaModels": {
+            "test-video": {
+                "provider": "newapi",
+                "upstreamModel": "test-video",
+                "mediaType": "video",
+                "label": "Test Video",
+                "enabled": True,
+                "sortOrder": 10,
+                "config": {
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    }
+                },
+            }
+        },
+    }
+    canonical = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    digest = hashlib.sha256(canonical).hexdigest()
+    catalog_path = f"catalogs/{digest}.json"
+    catalog_url = f"https://catalog.example.test/official-media-catalog/{catalog_path}"
+    manifest = {
+        "schemaVersion": 1,
+        "catalogVersion": payload["catalogVersion"],
+        "revision": "a" * 40,
+        "publishedAt": "2026-08-07T12:00:00Z",
+        "sha256": digest,
+        "path": catalog_path,
+    }
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    with respx.mock:
+        manifest_route = respx.get(manifest_url).mock(
+            side_effect=[
+                Response(200, json=manifest, headers={"etag": '"release-1"'}),
+                Response(304, headers={"etag": '"release-1"'}),
+            ]
+        )
+        catalog_route = respx.get(catalog_url).mock(
+            return_value=Response(200, content=canonical)
+        )
+        installed = client.post("/model-gateway/official/media-catalog/check")
+        unchanged = client.post("/model-gateway/official/media-catalog/check")
+
+    assert installed.status_code == 200, installed.text
+    installed_data = installed.json()["data"]
+    assert installed_data["updated"] is True
+    assert installed_data["source"] == "remote"
+    assert installed_data["revision"] == "a" * 40
+    assert installed_data["publishedAt"] == "2026-08-07T12:00:00Z"
+    assert installed_data["sha256"] == digest
+    assert installed_data["remoteUrl"] == manifest_url
+    assert installed_data["lastError"] == ""
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["data"]["updated"] is False
+    assert len(catalog_route.calls) == 1
+    assert len(manifest_route.calls) == 2
+    assert manifest_route.calls[1].request.headers["if-none-match"] == '"release-1"'
+
+
+def test_official_media_catalog_manifest_rejects_hash_mismatch(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    manifest_url = "https://catalog.example.test/releases/manifest.json"
+    monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_MANIFEST_URL", manifest_url)
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+    payload = {**bundled, "catalogVersion": "2026.08.07.2"}
+    actual_digest = hashlib.sha256(
+        json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    manifest = {
+        "schemaVersion": 1,
+        "catalogVersion": payload["catalogVersion"],
+        "revision": "b" * 40,
+        "publishedAt": "2026-08-07T12:00:00Z",
+        "sha256": "0" * 64,
+        "path": f"catalogs/{'0' * 64}.json",
+    }
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    with respx.mock:
+        respx.get(manifest_url).mock(return_value=Response(200, json=manifest))
+        respx.get(
+            f"https://catalog.example.test/releases/catalogs/{'0' * 64}.json"
+        ).mock(return_value=Response(200, json=payload))
+        response = client.post("/model-gateway/official/media-catalog/check")
+
+    assert response.status_code == 502
+    assert "SHA256" in response.json()["detail"]
+    status = client.get("/model-gateway/official/media-catalog").json()["data"]
+    assert status["source"] == "bundled"
+    assert "SHA256" in status["lastError"]
+    assert actual_digest != manifest["sha256"]
+
+
+def test_official_media_catalog_manifest_rejects_absolute_content_url():
+    with pytest.raises(ValueError, match="path"):
+        official_media_catalog_remote.validate_official_media_catalog_manifest(
+            {
+                "schemaVersion": 1,
+                "catalogVersion": "2026.08.07.1",
+                "revision": "c" * 40,
+                "publishedAt": "2026-08-07T12:00:00Z",
+                "sha256": "d" * 64,
+                "path": "https://attacker.example/catalog.json",
+            }
+        )
+
+
 def test_official_media_catalog_rejects_downgrade(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
     source_url = "https://catalog.example.test/official_media_models.json"
@@ -1600,6 +1743,27 @@ def test_official_media_catalog_rejects_downgrade(monkeypatch, tmp_path):
     assert "downgrade" in downgrade_response.json()["detail"]
     status = client.get("/model-gateway/official/media-catalog").json()["data"]
     assert status["source"] == "bundled"
+
+
+def test_official_media_catalog_rejects_reused_version_with_different_content(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+    changed = {**bundled, "name": "Changed without a version bump"}
+
+    with pytest.raises(ValueError, match="version already exists"):
+        model_gateway_settings.install_official_media_catalog(
+            changed,
+            source_url="https://catalog.example.test/official_media_models.json",
+        )
+
+    cache_path = Path(config.STATE_DIR) / "local" / "official_media_models.json"
+    assert not cache_path.exists()
 
 
 def test_official_media_catalog_rejects_invalid_model_before_cache_write(

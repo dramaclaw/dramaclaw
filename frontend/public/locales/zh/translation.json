@@ -4044,7 +4044,7 @@
           "remote": "在线更新"
         },
         "mediaCatalogAutoUpdate": "自动更新官方模型列表",
-        "mediaCatalogAutoUpdateHint": "打开设置时自动检查并应用兼容的模型目录更新。",
+        "mediaCatalogAutoUpdateHint": "后台定时检查，并在打开设置时立即应用兼容的模型目录更新。",
         "mediaCatalogCheckNow": "立即检查更新",
         "mediaCatalogUpdated": "官方媒体模型列表已更新。",
         "mediaCatalogUpToDate": "官方媒体模型列表已是最新版本。",
