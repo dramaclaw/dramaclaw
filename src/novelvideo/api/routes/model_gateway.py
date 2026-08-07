@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -16,9 +18,12 @@ from novelvideo.model_gateway_settings import (
     build_media_relay_status,
     build_model_gateway_status,
     get_effective_media_relay_config,
+    get_official_media_catalog_update_status,
+    install_official_media_catalog,
     normalize_relay_base_url,
     normalize_api_key,
     save_media_relay_config,
+    save_official_media_catalog_auto_update,
     save_official_newapi_key,
     save_custom_newapi_gateway,
     save_newapi_database_config,
@@ -55,6 +60,10 @@ OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
     "seedance-2.0-fast-value",
 }
 COMFY_WORKFLOW_MANAGED_CONFIG_KEY = "_dcManagedByWorkflow"
+DEFAULT_OFFICIAL_MEDIA_CATALOG_URL = (
+    "https://raw.githubusercontent.com/dramaclaw/dramaclaw/main/"
+    "src/novelvideo/official_media_models.json"
+)
 
 
 def _default_comfyui_media_model_config(model: str) -> dict[str, Any]:
@@ -70,7 +79,7 @@ def _default_comfyui_media_model_config(model: str) -> dict[str, Any]:
             "referenceAudioMax": 3,
         }
     elif "i2v" in tokens:
-        supported_modes = ["image_reference"]
+        supported_modes = ["image_to_video", "image_reference"]
         ratio_options = ["16:9", "1:1"]
         reference_limits = {"referenceImageMax": 1, "humanReview": True}
     return {
@@ -105,6 +114,10 @@ def require_ce_gateway_management() -> None:
 
 class OfficialGatewayBody(BaseModel):
     new_api_api_key: str = Field(alias="newApiApiKey")
+
+
+class OfficialMediaCatalogPreferencesBody(BaseModel):
+    auto_update: bool = Field(alias="autoUpdate")
 
 
 class MediaRelayConfigBody(BaseModel):
@@ -431,6 +444,64 @@ async def get_model_gateway_config() -> dict[str, Any]:
             "mediaRelay": _media_relay_status(),
         },
     }
+
+
+def _require_ce_media_catalog_management() -> None:
+    if not is_ce_effective():
+        raise PermissionError("official media catalog management is only available in CE")
+
+
+@router.get("/official/media-catalog")
+async def get_official_media_catalog_status() -> dict[str, Any]:
+    try:
+        _require_ce_media_catalog_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    return {"ok": True, "data": get_official_media_catalog_update_status()}
+
+
+@router.post("/official/media-catalog/preferences")
+async def save_official_media_catalog_preferences(
+    body: OfficialMediaCatalogPreferencesBody,
+) -> dict[str, Any]:
+    try:
+        _require_ce_media_catalog_management()
+        status = save_official_media_catalog_auto_update(body.auto_update)
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    return {"ok": True, "data": status}
+
+
+@router.post("/official/media-catalog/check")
+async def check_official_media_catalog() -> dict[str, Any]:
+    try:
+        _require_ce_media_catalog_management()
+        source_url = str(
+            os.environ.get(
+                "OFFICIAL_MEDIA_CATALOG_URL",
+                DEFAULT_OFFICIAL_MEDIA_CATALOG_URL,
+            )
+            or ""
+        ).strip()
+        if not source_url:
+            raise ValueError("official media catalog URL is not configured")
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+            response = await client.get(source_url)
+            response.raise_for_status()
+            if len(response.content) > 2 * 1024 * 1024:
+                raise ValueError("official media catalog is too large")
+            payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("official media catalog response must be a JSON object")
+        updated, status = install_official_media_catalog(
+            payload,
+            source_url=source_url,
+        )
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "data": {**status, "updated": updated}}
 
 
 @router.post("/official/enable")

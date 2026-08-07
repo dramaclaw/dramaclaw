@@ -577,7 +577,9 @@ def validate_omni_reference_audio_durations(
     *,
     min_seconds: float | None = MIN_OMNI_REFERENCE_AUDIO_SECONDS,
     max_seconds: float | None = MAX_OMNI_REFERENCE_AUDIO_SECONDS,
+    total_min_seconds: float | None = None,
     total_max_seconds: float | None = MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+    media_label: str = "audio",
 ) -> None:
     """全能参考音频时长兜底校验，入参是 `(标签, 秒数)`，秒数 None = 探测不出。
 
@@ -611,7 +613,7 @@ def validate_omni_reference_audio_durations(
     )
     if too_short:
         raise ValueError(
-            f"audio reference duration must be >= {_format_seconds(min_seconds)}s: "
+            f"{media_label} reference duration must be >= {_format_seconds(min_seconds)}s: "
             + _clips(too_short)
         )
     too_long = (
@@ -621,15 +623,24 @@ def validate_omni_reference_audio_durations(
     )
     if too_long:
         raise ValueError(
-            f"audio reference duration must be <= {_format_seconds(max_seconds)}s: "
+            f"{media_label} reference duration must be <= {_format_seconds(max_seconds)}s: "
             + _clips(too_long)
         )
-    if total_max_seconds is None:
-        return
     total = sum(value for _, value in measured)
-    if _exceeds(total, total_max_seconds):
+    # 总时长下限只有在每一条素材都成功探测时才可判定；漏测会让和偏小，不能据此误拦。
+    if (
+        total_min_seconds is not None
+        and len(measured) == len(durations)
+        and _exceeds(total_min_seconds, total)
+    ):
         raise ValueError(
-            "audio references total duration must be <= "
+            f"{media_label} references total duration must be >= "
+            f"{_format_seconds(total_min_seconds)}s, got {_format_seconds(total)}s: "
+            + _clips(measured)
+        )
+    if total_max_seconds is not None and _exceeds(total, total_max_seconds):
+        raise ValueError(
+            f"{media_label} references total duration must be <= "
             f"{_format_seconds(total_max_seconds)}s, got {_format_seconds(total)}s: "
             + _clips(measured)
         )

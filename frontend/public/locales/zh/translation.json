@@ -3604,10 +3604,18 @@
         "off": "关闭",
         "durationTooShort": "单条音频时长不能低于 {{min}} 秒：{{clips}}。请替换或补长后再试。",
         "durationTooLong": "单条音频时长不能超过 {{max}} 秒：{{clips}}。请裁剪或替换后再试。",
+        "durationTotalTooShort": "所有音频合计不能低于 {{min}} 秒，当前共 {{total}} 秒：{{clips}}。请增加或延长音频后再试。",
         "durationTotalTooLong": "所有音频加起来不能超过 {{max}} 秒，当前共 {{total}} 秒：{{clips}}。请裁剪或去掉部分音频后再试。",
         "clipDuration": "{{label}}（{{seconds}}s）",
         "clipSeparator": "、",
         "clipFallbackLabel": "音频{{index}}"
+      },
+      "referenceDuration": {
+        "videoFallbackLabel": "视频{{index}}",
+        "videoTooShort": "单条视频时长不能低于 {{min}} 秒：{{clips}}。请替换或延长后再试。",
+        "videoTooLong": "单条视频时长不能超过 {{max}} 秒：{{clips}}。请裁剪或替换后再试。",
+        "videoTotalTooShort": "所有视频合计不能低于 {{min}} 秒，当前共 {{total}} 秒：{{clips}}。请增加或延长视频后再试。",
+        "videoTotalTooLong": "所有视频合计不能超过 {{max}} 秒，当前共 {{total}} 秒：{{clips}}。请裁剪或移除部分视频后再试。"
       },
       "count": {
         "format": "{{count}}个"
@@ -4028,7 +4036,19 @@
         "saved": "已保存并切换为官方渠道。",
         "enabled": "已切换为官方渠道。",
         "missingFields": "请填写 API Key。",
-        "registerLink": "请前往 RelayClaw 进行注册"
+        "registerLink": "请前往 RelayClaw 进行注册",
+        "mediaCatalogTitle": "官方媒体模型列表",
+        "mediaCatalogStatus": "版本 {{version}} · {{count}} 个模型 · {{source}}",
+        "mediaCatalogSources": {
+          "bundled": "应用内置",
+          "remote": "在线更新"
+        },
+        "mediaCatalogAutoUpdate": "自动更新官方模型列表",
+        "mediaCatalogAutoUpdateHint": "打开设置时自动检查并应用兼容的模型目录更新。",
+        "mediaCatalogCheckNow": "立即检查更新",
+        "mediaCatalogUpdated": "官方媒体模型列表已更新。",
+        "mediaCatalogUpToDate": "官方媒体模型列表已是最新版本。",
+        "mediaCatalogCheckFailed": "检查官方媒体模型列表失败，请稍后重试。"
       },
       "custom": {
         "description": "CE 使用本机 SQLite NewAPI。DramaClaw 会自动连接数据库、创建运行令牌并启用本地渠道。",
@@ -4223,6 +4243,14 @@
         "referenceImageMax": "参考图片上限",
         "referenceVideoMax": "参考视频上限",
         "referenceAudioMax": "参考音频上限",
+        "referenceAudioMinSeconds": "单条音频最短（秒）",
+        "referenceAudioMaxSeconds": "单条音频最长（秒）",
+        "referenceAudioTotalMinSeconds": "音频合计最短（秒）",
+        "referenceAudioTotalMaxSeconds": "音频合计最长（秒）",
+        "referenceVideoMinSeconds": "单条视频最短（秒）",
+        "referenceVideoMaxSeconds": "单条视频最长（秒）",
+        "referenceVideoTotalMinSeconds": "视频合计最短（秒）",
+        "referenceVideoTotalMaxSeconds": "视频合计最长（秒）",
         "humanReview": "支持真人审核",
         "supportedModes": "视频生成模式",
         "capabilitiesHint": "使用与 EE 媒体模型目录一致的 config；保存全部配置后在虾画生效。",

@@ -114,6 +114,34 @@ def test_filters_mode_specific_parameters_and_defaults():
         validate_media_model_params(filtered, {"camera_fixed": True})
 
 
+def test_image_to_video_and_image_reference_parameters_are_independent():
+    schema = {
+        "endpoint": "video/generations",
+        "parameters": [
+            {
+                "key": "i2v_only",
+                "control": "switch",
+                "requestPath": "i2v_only",
+                "modes": ["image_to_video"],
+            },
+            {
+                "key": "reference_only",
+                "control": "switch",
+                "requestPath": "reference_only",
+                "modes": ["image_reference"],
+            },
+        ],
+    }
+
+    image_to_video = media_request_schema_for_mode(schema, "imageToVideo")
+    image_reference = media_request_schema_for_mode(schema, "imageReference")
+
+    assert [item["key"] for item in image_to_video["parameters"]] == ["i2v_only"]
+    assert [item["key"] for item in image_reference["parameters"]] == [
+        "reference_only"
+    ]
+
+
 @pytest.mark.parametrize(
     ("parameter", "message"),
     [
@@ -187,7 +215,12 @@ def test_rejects_invalid_parameter_definitions(parameter, message):
 def test_validates_media_catalog_capabilities():
     valid = {
         "resolutionOptions": ["720p", "1080p"],
-        "supportedModes": ["text_to_video", "all_reference"],
+        "supportedModes": [
+            "text_to_video",
+            "image_to_video",
+            "image_reference",
+            "all_reference",
+        ],
         "minDuration": 4,
         "maxDuration": 12,
         "referenceImageMax": 4,
@@ -399,4 +432,41 @@ def test_image_catalog_rejects_invalid_min_pixels(value):
                 "request": {"endpoint": "images/generations", "parameters": []},
             },
             "image",
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "referenceAudioMinSeconds",
+        "referenceAudioMaxSeconds",
+        "referenceAudioTotalMinSeconds",
+        "referenceAudioTotalMaxSeconds",
+        "referenceVideoMinSeconds",
+        "referenceVideoMaxSeconds",
+        "referenceVideoTotalMinSeconds",
+        "referenceVideoTotalMaxSeconds",
+    ],
+)
+def test_video_catalog_validates_reference_duration_fields(field):
+    config = {
+        field: 1.5,
+        "request": {"endpoint": "video/generations", "parameters": []},
+    }
+    assert validate_media_model_catalog_config(config, "video") is config
+
+    config[field] = 0
+    with pytest.raises(MediaModelSchemaError, match=field):
+        validate_media_model_catalog_config(config, "video")
+
+
+def test_video_catalog_rejects_inverted_reference_duration_range():
+    with pytest.raises(MediaModelSchemaError, match="cannot exceed"):
+        validate_media_model_catalog_config(
+            {
+                "referenceAudioTotalMinSeconds": 20,
+                "referenceAudioTotalMaxSeconds": 10,
+                "request": {"endpoint": "video/generations", "parameters": []},
+            },
+            "video",
         )

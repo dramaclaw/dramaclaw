@@ -123,6 +123,16 @@ export interface ModelGatewayConfig {
   mediaRelay?: MediaRelayConfig;
 }
 
+export interface OfficialMediaCatalogStatus {
+  autoUpdate: boolean;
+  source: "bundled" | "remote";
+  schemaVersion: number;
+  catalogVersion: string;
+  modelCount: number;
+  lastCheckedAt: string;
+  updated?: boolean;
+}
+
 export interface SaveOfficialConfigInput {
   newApiApiKey: string;
 }
@@ -280,6 +290,57 @@ export function useModelGatewayConfig(enabled = true) {
         .get("api/v1/model-gateway/config", { signal })
         .json<OkResponse<ModelGatewayConfig>>(),
     enabled,
+  });
+}
+
+const officialMediaCatalogQueryKey = [
+  ...queryKeys.modelGateway(),
+  "official-media-catalog",
+] as const;
+
+export function useOfficialMediaCatalogStatus(enabled = true) {
+  return useQuery({
+    queryKey: officialMediaCatalogQueryKey,
+    queryFn: ({ signal }) =>
+      api
+        .get("api/v1/model-gateway/official/media-catalog", { signal })
+        .json<OkResponse<OfficialMediaCatalogStatus>>(),
+    enabled,
+  });
+}
+
+export function useSaveOfficialMediaCatalogPreferences() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (autoUpdate: boolean) =>
+      api
+        .post("api/v1/model-gateway/official/media-catalog/preferences", {
+          json: { autoUpdate },
+          throwHttpErrors: false,
+        })
+        .json<OkResponse<OfficialMediaCatalogStatus> | ErrorResponse>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: officialMediaCatalogQueryKey });
+    },
+  });
+}
+
+export function useCheckOfficialMediaCatalog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post("api/v1/model-gateway/official/media-catalog/check", {
+          timeout: 20_000,
+          throwHttpErrors: false,
+        })
+        .json<OkResponse<OfficialMediaCatalogStatus> | ErrorResponse>(),
+    onSuccess: (response) => {
+      qc.invalidateQueries({ queryKey: officialMediaCatalogQueryKey });
+      if (response.ok && response.data.updated && typeof window !== "undefined") {
+        window.dispatchEvent(new Event("media-model-catalog-updated"));
+      }
+    },
   });
 }
 

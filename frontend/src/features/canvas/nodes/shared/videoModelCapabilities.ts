@@ -57,7 +57,7 @@ function isBaseSeedance2VideoModel(modelId: string | null | undefined): boolean 
 export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
   textToVideo: "text_to_video",
   firstFrame: "first_frame",
-  imageToVideo: "image_reference",
+  imageToVideo: "image_to_video",
   firstLastFrame: "first_last_frame",
   imageReference: "image_reference",
   allReference: "all_reference",
@@ -211,7 +211,12 @@ export function videoUpstreamImageDefaultMode(
   model: VideoModelRef,
 ): VideoGenMode | null {
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
-    for (const mode of ["allReference", "imageToVideo", "firstFrame"] as const) {
+    for (const mode of [
+      "allReference",
+      "imageToVideo",
+      "firstFrame",
+      "imageReference",
+    ] as const) {
       if (isVideoModeSupportedByModel(mode, model)) return mode;
     }
     return null;
@@ -308,7 +313,42 @@ export const MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS = 15_200;
 
 /** 媒体目录里与音频时长相关的那个字段（`ModelOption` 的子集）。 */
 export interface AudioDurationLimitModel {
+  referenceAudioMinSeconds?: number | null;
+  referenceAudioMaxSeconds?: number | null;
+  referenceAudioTotalMinSeconds?: number | null;
   referenceAudioTotalMaxSeconds?: number | null;
+  referenceVideoMinSeconds?: number | null;
+  referenceVideoMaxSeconds?: number | null;
+  referenceVideoTotalMinSeconds?: number | null;
+  referenceVideoTotalMaxSeconds?: number | null;
+}
+
+export interface ReferenceDurationLimitsMs {
+  minMs?: number;
+  maxMs?: number;
+  totalMinMs?: number;
+  totalMaxMs?: number;
+}
+
+export function referenceDurationLimitsMs(
+  model: AudioDurationLimitModel | null | undefined,
+  media: "audio" | "video",
+): ReferenceDurationLimitsMs {
+  const prefix = media === "audio" ? "referenceAudio" : "referenceVideo";
+  const read = (suffix: string): number | undefined => {
+    const seconds = (model as Record<string, unknown> | null | undefined)?.[
+      `${prefix}${suffix}`
+    ];
+    return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0
+      ? Math.round(seconds * 1000)
+      : undefined;
+  };
+  return {
+    minMs: read("MinSeconds"),
+    maxMs: read("MaxSeconds"),
+    totalMinMs: read("TotalMinSeconds"),
+    totalMaxMs: read("TotalMaxSeconds"),
+  };
 }
 
 /**
@@ -346,6 +386,12 @@ export type AudioDurationRejection =
   | { kind: "tooShort"; clips: { label: string; durationMs: number }[] }
   | { kind: "tooLong"; clips: { label: string; durationMs: number }[] }
   | {
+      kind: "totalTooShort";
+      clips: { label: string; durationMs: number }[];
+      totalMs: number;
+      limitMs: number;
+    }
+  | {
       kind: "totalTooLong";
       clips: { label: string; durationMs: number }[];
       totalMs: number;
@@ -372,10 +418,19 @@ export type AudioDurationRejection =
  */
 export function audioReferenceDurationRejection(
   clips: readonly { label: string; durationMs: number | null }[],
-  options: { totalLimitMs?: number; perClipLimits?: boolean } = {},
+  options: {
+    totalLimitMs?: number | null;
+    totalMinMs?: number;
+    minMs?: number | null;
+    maxMs?: number | null;
+    perClipLimits?: boolean;
+  } = {},
 ): AudioDurationRejection | null {
   const {
     totalLimitMs = MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
+    totalMinMs,
+    minMs = MIN_AUDIO_REFERENCE_DURATION_MS,
+    maxMs = MAX_AUDIO_REFERENCE_DURATION_MS,
     perClipLimits = true,
   } = options;
   const measured = clips.filter(
@@ -383,21 +438,24 @@ export function audioReferenceDurationRejection(
       typeof clip.durationMs === "number" && clip.durationMs > 0,
   );
   if (perClipLimits) {
-    const tooShort = measured.filter(
-      (clip) => clip.durationMs < MIN_AUDIO_REFERENCE_DURATION_MS,
-    );
+    const tooShort = minMs == null
+      ? []
+      : measured.filter((clip) => clip.durationMs < minMs);
     if (tooShort.length > 0) {
       return { kind: "tooShort", clips: tooShort };
     }
-    const tooLong = measured.filter(
-      (clip) => clip.durationMs > MAX_AUDIO_REFERENCE_DURATION_MS,
-    );
+    const tooLong = maxMs == null
+      ? []
+      : measured.filter((clip) => clip.durationMs > maxMs);
     if (tooLong.length > 0) {
       return { kind: "tooLong", clips: tooLong };
     }
   }
   const totalMs = measured.reduce((sum, clip) => sum + clip.durationMs, 0);
-  if (measured.length > 0 && totalMs > totalLimitMs) {
+  if (totalMinMs != null && measured.length === clips.length && totalMs < totalMinMs) {
+    return { kind: "totalTooShort", clips: measured, totalMs, limitMs: totalMinMs };
+  }
+  if (totalLimitMs != null && measured.length > 0 && totalMs > totalLimitMs) {
     return { kind: "totalTooLong", clips: measured, totalMs, limitMs: totalLimitMs };
   }
   return null;

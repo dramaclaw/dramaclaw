@@ -7,9 +7,12 @@ keeps its deployment environment as the sole credential source.
 
 from __future__ import annotations
 
-import os
+import hashlib
 import json
+import os
 import sqlite3
+import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +38,10 @@ PLACEHOLDER_API_KEYS = {
     "your_api_key",
     "your_dc_key",
 }
+OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY = "official_media_catalog_auto_update"
+OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY = "official_media_catalog_last_checked_at"
+OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY = "official_media_catalog_remote_url"
+_OFFICIAL_MEDIA_CATALOG_WRITE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -494,15 +501,172 @@ def build_newapi_media_model_mappings_status() -> dict[str, dict[str, Any]]:
     return get_newapi_media_model_mappings()
 
 
-def get_official_media_model_mappings() -> dict[str, dict[str, Any]]:
-    config_path = Path(__file__).with_name("official_media_models.json")
+def _official_media_catalog_bundle_path() -> Path:
+    return Path(__file__).with_name("official_media_models.json")
+
+
+def _official_media_catalog_cache_path() -> Path:
+    from novelvideo import config
+
+    return Path(config.STATE_DIR) / "local" / "official_media_models.json"
+
+
+def _read_official_media_catalog(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError("official media model configuration is invalid") from exc
-    models = payload.get("mediaModels") if isinstance(payload, dict) else None
-    if not isinstance(models, dict):
-        raise RuntimeError("official media model configuration has no mediaModels")
+    try:
+        return _validate_official_media_catalog(payload)
+    except ValueError as exc:
+        raise RuntimeError("official media model configuration is invalid") from exc
+
+
+def _catalog_version(payload: dict[str, Any]) -> tuple[int, ...]:
+    raw = str(payload.get("catalogVersion") or "").strip()
+    parts = raw.split(".")
+    if not raw or any(not part.isdigit() for part in parts):
+        raise ValueError("catalogVersion must contain dot-separated numbers")
+    return tuple(int(part) for part in parts)
+
+
+def _validate_official_media_catalog(payload: object) -> dict[str, Any]:
+    from novelvideo.media_model_request_schema import (
+        validate_media_model_catalog_config,
+        validate_media_request_schema,
+    )
+
+    if not isinstance(payload, dict):
+        raise ValueError("official media catalog must be a JSON object")
+    if type(payload.get("version")) is not int or payload["version"] != 1:
+        raise ValueError("unsupported official media catalog schema version")
+    _catalog_version(payload)
+    models = payload.get("mediaModels")
+    if not isinstance(models, dict) or not models:
+        raise ValueError("official media catalog must contain mediaModels")
+    for model, item in models.items():
+        if not str(model).strip() or not isinstance(item, dict):
+            raise ValueError("official media catalog contains an invalid model")
+        media_type = str(item.get("mediaType") or "").strip().lower()
+        if media_type not in {"image", "video", "audio"}:
+            raise ValueError(f"invalid mediaType for official media model {model}")
+        if not str(item.get("provider") or "").strip():
+            raise ValueError(f"provider is required for official media model {model}")
+        if not str(item.get("upstreamModel") or "").strip():
+            raise ValueError(f"upstreamModel is required for official media model {model}")
+        if "enabled" in item and not isinstance(item["enabled"], bool):
+            raise ValueError(f"enabled must be boolean for official media model {model}")
+        if "sortOrder" in item and (
+            isinstance(item["sortOrder"], bool)
+            or not isinstance(item["sortOrder"], int)
+        ):
+            raise ValueError(f"sortOrder must be an integer for official media model {model}")
+        aliases = item.get("aliases")
+        if aliases is not None and (
+            not isinstance(aliases, list)
+            or any(not isinstance(alias, str) or not alias.strip() for alias in aliases)
+            or len(set(aliases)) != len(aliases)
+        ):
+            raise ValueError(
+                f"aliases must contain unique non-empty strings for official media model {model}"
+            )
+        config = item.get("config", {})
+        if media_type in {"image", "video"}:
+            validate_media_model_catalog_config(config, media_type)
+        elif not isinstance(config, dict):
+            raise ValueError(f"config must be an object for official media model {model}")
+        else:
+            validate_media_request_schema(config.get("request"))
+    return payload
+
+
+def _effective_official_media_catalog() -> tuple[dict[str, Any], str]:
+    bundled = _read_official_media_catalog(_official_media_catalog_bundle_path())
+    cache_path = _official_media_catalog_cache_path()
+    if cache_path.is_file():
+        try:
+            cached = _read_official_media_catalog(cache_path)
+            if _catalog_version(cached) >= _catalog_version(bundled):
+                return cached, "remote"
+        except RuntimeError:
+            pass
+    return bundled, "bundled"
+
+
+def _official_media_catalog_digest(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def get_official_media_catalog_update_status() -> dict[str, Any]:
+    settings = _read_all()
+    payload, source = _effective_official_media_catalog()
+    return {
+        "autoUpdate": settings.get(OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY, "0")
+        != "0",
+        "source": source,
+        "schemaVersion": int(payload.get("version") or 1),
+        "catalogVersion": str(
+            payload.get("catalogVersion") or payload.get("version") or "1"
+        ),
+        "modelCount": len(payload["mediaModels"]),
+        "lastCheckedAt": settings.get(OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY, ""),
+    }
+
+
+def save_official_media_catalog_auto_update(enabled: bool) -> dict[str, Any]:
+    _write_many({OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY: "1" if enabled else "0"})
+    return get_official_media_catalog_update_status()
+
+
+def install_official_media_catalog(
+    payload: dict[str, Any], *, source_url: str
+) -> tuple[bool, dict[str, Any]]:
+    validated = _validate_official_media_catalog(payload)
+    with _OFFICIAL_MEDIA_CATALOG_WRITE_LOCK:
+        current, _source = _effective_official_media_catalog()
+        if _catalog_version(validated) < _catalog_version(current):
+            raise ValueError("official media catalog downgrade is not allowed")
+        updated = _official_media_catalog_digest(
+            validated
+        ) != _official_media_catalog_digest(current)
+        if updated:
+            cache_path = _official_media_catalog_cache_path()
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=cache_path.parent,
+                    prefix=f".{cache_path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as temporary:
+                    temporary.write(
+                        json.dumps(validated, ensure_ascii=False, indent=2) + "\n"
+                    )
+                    temporary.flush()
+                    os.fsync(temporary.fileno())
+                    temporary_path = Path(temporary.name)
+                temporary_path.replace(cache_path)
+            finally:
+                if temporary_path is not None:
+                    temporary_path.unlink(missing_ok=True)
+    _write_many(
+        {
+            OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY: _now_iso(),
+            OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY: str(source_url or "").strip(),
+        }
+    )
+    return updated, get_official_media_catalog_update_status()
+
+
+def get_official_media_model_mappings() -> dict[str, dict[str, Any]]:
+    payload, _source = _effective_official_media_catalog()
+    models = payload["mediaModels"]
     return {
         str(model): dict(item)
         for model, item in models.items()

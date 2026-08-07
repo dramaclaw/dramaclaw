@@ -525,3 +525,34 @@ def test_validate_omni_reference_audio_durations_skips_unmeasured() -> None:
     validate_omni_reference_audio_durations([])
     # 0 / 负数是 ffprobe 的垃圾输出，同样按「测不出」处理，别当成一条 0s 的太短音频。
     validate_omni_reference_audio_durations([("weird.wav", 0.0), ("neg.wav", -1.0)])
+
+
+def test_validate_reference_duration_total_min_requires_complete_measurement() -> None:
+    with pytest.raises(ValueError, match="total duration must be >= 10s"):
+        validate_omni_reference_audio_durations(
+            [("a.wav", 4.0), ("b.wav", 5.0)],
+            min_seconds=None,
+            max_seconds=None,
+            total_min_seconds=10,
+            total_max_seconds=None,
+        )
+
+    # 有一条无法探测时，已知总和只是下界，不能据此误判低于总时长下限。
+    validate_omni_reference_audio_durations(
+        [("a.wav", 4.0), ("unknown.wav", None)],
+        min_seconds=None,
+        max_seconds=None,
+        total_min_seconds=10,
+        total_max_seconds=None,
+    )
+
+
+def test_validate_reference_duration_uses_video_label() -> None:
+    with pytest.raises(ValueError, match="video reference duration must be <= 8s"):
+        validate_omni_reference_audio_durations(
+            [("clip.mp4", 9.0)],
+            min_seconds=None,
+            max_seconds=8,
+            total_max_seconds=None,
+            media_label="video",
+        )

@@ -16,6 +16,7 @@ import {
   isSeedance1xVideoModel,
   isSeedance2VideoModel,
   isVideoModeSupportedByModel,
+  referenceDurationLimitsMs,
   resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
   videoModeRequiresPrompt,
@@ -113,6 +114,10 @@ describe("目录 supportedModes 是模式入口的单一事实来源", () => {
     apiModel: "custom-reference-model",
     supportedModes: ["text_to_video", "image_reference"],
   };
+  const imageToVideoOnly = {
+    apiModel: "custom-image-to-video-model",
+    supportedModes: ["text_to_video", "image_to_video"],
+  };
   const comfyAllReference = {
     apiModel: "minimax_h3_r2v",
     supportedModes: ["text_to_video", "image_reference", "all_reference"],
@@ -125,20 +130,22 @@ describe("目录 supportedModes 是模式入口的单一事实来源", () => {
     expect(videoUpstreamImageDefaultMode(firstFrameOnly)).toBe("firstFrame");
   });
 
-  it("声明 image_reference 的模型提供图生视频和图片参考，但不伪装成首帧", () => {
+  it("图生视频和图片参考由两个独立目录能力控制", () => {
     expect(isVideoModeSupportedByModel("firstFrame", imageReferenceOnly)).toBe(false);
-    expect(isVideoModeSupportedByModel("imageToVideo", imageReferenceOnly)).toBe(true);
+    expect(isVideoModeSupportedByModel("imageToVideo", imageReferenceOnly)).toBe(false);
     expect(isVideoModeSupportedByModel("imageReference", imageReferenceOnly)).toBe(true);
-    expect(videoEmptyStateCtaModes(imageReferenceOnly)).toEqual([
-      "imageToVideo",
-      "imageReference",
-    ]);
-    expect(videoUpstreamImageDefaultMode(imageReferenceOnly)).toBe("imageToVideo");
+    expect(videoEmptyStateCtaModes(imageReferenceOnly)).toEqual(["imageReference"]);
+    expect(videoUpstreamImageDefaultMode(imageReferenceOnly)).toBe("imageReference");
+
+    expect(isVideoModeSupportedByModel("imageToVideo", imageToVideoOnly)).toBe(true);
+    expect(isVideoModeSupportedByModel("imageReference", imageToVideoOnly)).toBe(false);
+    expect(videoEmptyStateCtaModes(imageToVideoOnly)).toEqual(["imageToVideo"]);
+    expect(videoUpstreamImageDefaultMode(imageToVideoOnly)).toBe("imageToVideo");
   });
 
   it("前端模式到目录能力的映射区分首帧和图片参考", () => {
     expect(GEN_MODE_TO_CATALOG_MODE.firstFrame).toBe("first_frame");
-    expect(GEN_MODE_TO_CATALOG_MODE.imageToVideo).toBe("image_reference");
+    expect(GEN_MODE_TO_CATALOG_MODE.imageToVideo).toBe("image_to_video");
     expect(GEN_MODE_TO_CATALOG_MODE.imageReference).toBe("image_reference");
   });
 
@@ -390,7 +397,13 @@ describe("HappyHorse 单图默认模式", () => {
   it("默认进入图生视频，首帧仍是目录声明后的独立可选模式", () => {
     const configured = {
       apiModel: HAPPYHORSE,
-      supportedModes: ["text_to_video", "first_frame", "image_reference", "video_edit"],
+      supportedModes: [
+        "text_to_video",
+        "first_frame",
+        "image_to_video",
+        "image_reference",
+        "video_edit",
+      ],
     };
     expect(videoUpstreamImageDefaultMode(configured)).toBe("imageToVideo");
     expect(isVideoModeSupportedByModel("firstFrame", configured)).toBe(true);
@@ -463,6 +476,45 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
     expect(
       videoModelReferenceDisabledReason(HAPPYHORSE, { ...none, audios: 1 }),
     ).toBeTruthy();
+  });
+
+  // 后台把某个模型的「视频编辑」下掉后，启发式那套「HappyHorse 天生能吃视频」的假设
+  // 就不成立了 —— 目录声明才是事实。
+  it("HappyHorse：目录里没有 video_edit 时，接入视频 → 置灰", () => {
+    const withoutVideoEdit = {
+      apiModel: HAPPYHORSE,
+      supportedModes: [
+        "text_to_video",
+        "first_frame",
+        "image_reference",
+        "first_last_frame",
+      ],
+    };
+    expect(
+      videoModelReferenceDisabledReason(withoutVideoEdit, { ...none, videos: 1 }),
+    ).toBe("该模型不支持视频素材");
+    // 目录里还留着 video_edit 的话照旧放行，别把整个模型误伤掉。
+    expect(
+      videoModelReferenceDisabledReason(
+        { apiModel: HAPPYHORSE, supportedModes: [...withoutVideoEdit.supportedModes, "video_edit"] },
+        { ...none, videos: 1 },
+      ),
+    ).toBeNull();
+  });
+
+  // 回归：选择器曾把模型塌成 `model.apiModel ?? model.id` 再传进来，目录声明的
+  // supportedModes 在这条路径上整个丢掉，只剩启发式 —— 后台下掉 HappyHorse 的视频
+  // 编辑后，它在选择器里依然可选，用户选进去后所有模式都是灰的、提交也被拦，成了
+  // 死胡同。这里锁住「传整个 ModelOption」，与 VideoNode 的提交守卫同源。
+  it("模型选择器必须把整个 ModelOption 传给置灰守卫（而非只传 id）", () => {
+    const source = readFileSync(
+      "src/features/canvas/nodes/VideoOperationsPanel.tsx",
+      "utf8",
+    );
+    expect(source).toContain("videoModelReferenceDisabledReason(model, {");
+    expect(source).not.toContain(
+      "videoModelReferenceDisabledReason(model.apiModel ?? model.id",
+    );
   });
 
   it("Grok Video Channel：仅图片、且最多 8 张", () => {
@@ -880,6 +932,50 @@ describe("audioReferenceDurationRejection — 提交前音频时长守卫", () =
 
   it("没有音频引用时不拦", () => {
     expect(audioReferenceDurationRejection([])).toBeNull();
+  });
+
+  it("支持后台配置的总时长下限，且存在未探测素材时不误拦", () => {
+    expect(
+      audioReferenceDurationRejection([clip("a", 4_000), clip("b", 5_000)], {
+        minMs: null,
+        maxMs: null,
+        totalMinMs: 10_000,
+        totalLimitMs: null,
+        perClipLimits: false,
+      }),
+    ).toMatchObject({ kind: "totalTooShort", totalMs: 9_000, limitMs: 10_000 });
+    expect(
+      audioReferenceDurationRejection([clip("a", 4_000), clip("unknown", null)], {
+        minMs: null,
+        maxMs: null,
+        totalMinMs: 10_000,
+        totalLimitMs: null,
+        perClipLimits: false,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("referenceDurationLimitsMs — 目录时长配置", () => {
+  it("分别读取音频和视频的单条/总时长配置", () => {
+    const model = {
+      referenceAudioMinSeconds: 1.8,
+      referenceAudioTotalMaxSeconds: 15.2,
+      referenceVideoMaxSeconds: 12,
+      referenceVideoTotalMinSeconds: 5,
+    };
+    expect(referenceDurationLimitsMs(model, "audio")).toEqual({
+      minMs: 1_800,
+      maxMs: undefined,
+      totalMinMs: undefined,
+      totalMaxMs: 15_200,
+    });
+    expect(referenceDurationLimitsMs(model, "video")).toEqual({
+      minMs: undefined,
+      maxMs: 12_000,
+      totalMinMs: 5_000,
+      totalMaxMs: undefined,
+    });
   });
 });
 

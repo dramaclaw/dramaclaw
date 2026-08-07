@@ -57,7 +57,7 @@ async def test_image_to_video_uses_one_reference_image_not_first_frame(
     captured = await _install_route_fakes(
         monkeypatch,
         tmp_path,
-        _catalog("image_reference"),
+        _catalog("image_to_video"),
     )
 
     await freezone_routes.freezone_video_i2v(
@@ -70,7 +70,7 @@ async def test_image_to_video_uses_one_reference_image_not_first_frame(
         {"username": "admin"},
     )
 
-    assert captured["request_mode"] == "image_reference"
+    assert captured["request_mode"] == "imageToVideo"
     assert captured["start"]["gen_mode"] == "image_reference"
     assert captured["start"]["reference_items"] == [
         {"type": "image", "path": "https://example.com/ref.png", "role": "图片参考"}
@@ -79,7 +79,7 @@ async def test_image_to_video_uses_one_reference_image_not_first_frame(
 
 @pytest.mark.asyncio
 async def test_image_to_video_rejects_more_than_one_image(monkeypatch, tmp_path: Path) -> None:
-    await _install_route_fakes(monkeypatch, tmp_path, _catalog("image_reference"))
+    await _install_route_fakes(monkeypatch, tmp_path, _catalog("image_to_video"))
 
     with pytest.raises(HTTPException, match="exactly one image"):
         await freezone_routes.freezone_video_i2v(
@@ -91,6 +91,70 @@ async def test_image_to_video_rejects_more_than_one_image(monkeypatch, tmp_path:
             ),
             {"username": "admin"},
         )
+
+
+@pytest.mark.asyncio
+async def test_image_to_video_does_not_use_image_reference_capability(
+    monkeypatch, tmp_path: Path
+) -> None:
+    await _install_route_fakes(monkeypatch, tmp_path, _catalog("image_reference"))
+
+    with pytest.raises(HTTPException, match="image_to_video"):
+        await freezone_routes.freezone_video_i2v(
+            "project",
+            FreezoneImageToVideoRequest(
+                image_urls=["https://example.com/ref.png"],
+                model="catalog-video",
+                gen_mode="imageToVideo",
+            ),
+            {"username": "admin"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_image_reference_does_not_use_image_to_video_capability(
+    monkeypatch, tmp_path: Path
+) -> None:
+    await _install_route_fakes(monkeypatch, tmp_path, _catalog("image_to_video"))
+
+    with pytest.raises(HTTPException, match="image_reference"):
+        await freezone_routes.freezone_video_i2v(
+            "project",
+            FreezoneImageToVideoRequest(
+                image_urls=["https://example.com/a.png", "https://example.com/b.png"],
+                model="catalog-video",
+                gen_mode="imageReference",
+            ),
+            {"username": "admin"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_image_reference_keeps_multi_image_reference_protocol(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured = await _install_route_fakes(
+        monkeypatch,
+        tmp_path,
+        _catalog("image_reference"),
+    )
+
+    await freezone_routes.freezone_video_i2v(
+        "project",
+        FreezoneImageToVideoRequest(
+            image_urls=["https://example.com/a.png", "https://example.com/b.png"],
+            model="catalog-video",
+            gen_mode="imageReference",
+        ),
+        {"username": "admin"},
+    )
+
+    assert captured["request_mode"] == "imageReference"
+    assert captured["start"]["gen_mode"] == "image_reference"
+    assert [item["path"] for item in captured["start"]["reference_items"]] == [
+        "https://example.com/a.png",
+        "https://example.com/b.png",
+    ]
 
 
 def test_image_to_video_requires_an_explicit_new_mode() -> None:

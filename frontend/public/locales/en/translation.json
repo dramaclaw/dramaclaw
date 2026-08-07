@@ -3604,10 +3604,18 @@
         "off": "Off",
         "durationTooShort": "Each audio clip must be at least {{min}} seconds: {{clips}}. Replace it or use a longer clip and try again.",
         "durationTooLong": "Each audio clip must be at most {{max}} seconds: {{clips}}. Trim it or use a shorter clip and try again.",
+        "durationTotalTooShort": "All audio clips combined must be at least {{min}} seconds, currently {{total}} seconds: {{clips}}. Add or extend audio and try again.",
         "durationTotalTooLong": "All audio clips combined must be at most {{max}} seconds, currently {{total}} seconds: {{clips}}. Trim them or remove some clips and try again.",
         "clipDuration": "{{label}} ({{seconds}}s)",
         "clipSeparator": ", ",
         "clipFallbackLabel": "Audio {{index}}"
+      },
+      "referenceDuration": {
+        "videoFallbackLabel": "Video {{index}}",
+        "videoTooShort": "Each video clip must be at least {{min}} seconds: {{clips}}. Replace or extend it and try again.",
+        "videoTooLong": "Each video clip must be at most {{max}} seconds: {{clips}}. Trim or replace it and try again.",
+        "videoTotalTooShort": "All video clips combined must be at least {{min}} seconds, currently {{total}} seconds: {{clips}}. Add or extend video and try again.",
+        "videoTotalTooLong": "All video clips combined must be at most {{max}} seconds, currently {{total}} seconds: {{clips}}. Trim or remove video and try again."
       },
       "count": {
         "format": "{{count}}"
@@ -4028,7 +4036,19 @@
         "saved": "Saved and switched to the official channel.",
         "enabled": "Switched to the official channel.",
         "missingFields": "Please fill in the API Key.",
-        "registerLink": "Register at RelayClaw"
+        "registerLink": "Register at RelayClaw",
+        "mediaCatalogTitle": "Official media model catalog",
+        "mediaCatalogStatus": "Version {{version}} · {{count}} models · {{source}}",
+        "mediaCatalogSources": {
+          "bundled": "Bundled",
+          "remote": "Online update"
+        },
+        "mediaCatalogAutoUpdate": "Automatically update official models",
+        "mediaCatalogAutoUpdateHint": "Check and apply compatible catalog updates when Settings opens.",
+        "mediaCatalogCheckNow": "Check for updates",
+        "mediaCatalogUpdated": "The official media model catalog was updated.",
+        "mediaCatalogUpToDate": "The official media model catalog is up to date.",
+        "mediaCatalogCheckFailed": "Could not check the official media model catalog. Try again later."
       },
       "custom": {
         "description": "CE uses a local SQLite-backed NewAPI. DramaClaw connects the database, creates a runtime token, and enables the local channel automatically.",
@@ -4223,6 +4243,14 @@
         "referenceImageMax": "Reference image limit",
         "referenceVideoMax": "Reference video limit",
         "referenceAudioMax": "Reference audio limit",
+        "referenceAudioMinSeconds": "Minimum per audio clip (seconds)",
+        "referenceAudioMaxSeconds": "Maximum per audio clip (seconds)",
+        "referenceAudioTotalMinSeconds": "Minimum total audio (seconds)",
+        "referenceAudioTotalMaxSeconds": "Maximum total audio (seconds)",
+        "referenceVideoMinSeconds": "Minimum per video clip (seconds)",
+        "referenceVideoMaxSeconds": "Maximum per video clip (seconds)",
+        "referenceVideoTotalMinSeconds": "Minimum total video (seconds)",
+        "referenceVideoTotalMaxSeconds": "Maximum total video (seconds)",
         "humanReview": "Supports human review",
         "supportedModes": "Video generation modes",
         "capabilitiesHint": "Uses the same config contract as the EE media catalog. Save the complete configuration to apply it in XiaHua.",

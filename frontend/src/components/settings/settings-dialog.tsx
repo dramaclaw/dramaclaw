@@ -50,6 +50,9 @@ import {
 } from "@/lib/feature-models";
 import {
   useModelGatewayConfig,
+  useOfficialMediaCatalogStatus,
+  useSaveOfficialMediaCatalogPreferences,
+  useCheckOfficialMediaCatalog,
   useNewApiChannelTypes,
   useEnableOfficial,
   useEnableCustom,
@@ -560,11 +563,85 @@ function OfficialGatewayPanel({
   const enableOfficial = useEnableOfficial();
   const enableHybrid = useEnableHybrid();
   const saveOfficial = useSaveOfficialConfig();
+  const mediaCatalogQuery = useOfficialMediaCatalogStatus();
+  const saveMediaCatalogPreferences =
+    useSaveOfficialMediaCatalogPreferences();
+  const checkMediaCatalog = useCheckOfficialMediaCatalog();
+  const automaticCatalogCheckStarted = useRef(false);
 
   const [apiKey, setApiKey] = useState("");
   const [revealKey, setRevealKey] = useState(false);
   const apiKeyInputRef = useRef<HTMLInputElement>(null);
   const savedApiKeyPreview = official?.configured ? official.apiKeyPreview : "";
+  const mediaCatalog = mediaCatalogQuery.data?.data;
+
+  const runMediaCatalogCheck = async (manual: boolean) => {
+    try {
+      const response = await checkMediaCatalog.mutateAsync();
+      if (!response.ok) {
+        if (manual) {
+          toast.error(
+            getResponseErrorMessage(
+              response,
+              t("settings.modelConfig.official.mediaCatalogCheckFailed"),
+            ),
+          );
+        }
+        return;
+      }
+      if (manual) {
+        toast.success(
+          t(
+            response.data.updated
+              ? "settings.modelConfig.official.mediaCatalogUpdated"
+              : "settings.modelConfig.official.mediaCatalogUpToDate",
+          ),
+        );
+      }
+    } catch (error) {
+      if (manual) {
+        toast.error(
+          await getRequestErrorMessage(
+            error,
+            t("settings.modelConfig.official.mediaCatalogCheckFailed"),
+          ),
+        );
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (
+      automaticCatalogCheckStarted.current ||
+      !mediaCatalog?.autoUpdate ||
+      checkMediaCatalog.isPending
+    )
+      return;
+    automaticCatalogCheckStarted.current = true;
+    void runMediaCatalogCheck(false);
+  }, [mediaCatalog?.autoUpdate, checkMediaCatalog.isPending]);
+
+  const handleMediaCatalogAutoUpdate = async () => {
+    const next = !mediaCatalog?.autoUpdate;
+    try {
+      const response = await saveMediaCatalogPreferences.mutateAsync(next);
+      if (!response.ok) {
+        toast.error(
+          getResponseErrorMessage(
+            response,
+            t("settings.modelConfig.requestFailed"),
+          ),
+        );
+      }
+    } catch (error) {
+      toast.error(
+        await getRequestErrorMessage(
+          error,
+          t("settings.modelConfig.requestFailed"),
+        ),
+      );
+    }
+  };
 
   const handleSave = async () => {
     // Password managers may update the DOM without firing React's onChange.
@@ -642,6 +719,77 @@ function OfficialGatewayPanel({
           {t("settings.modelConfig.official.registerLink")}
         </a>
       </p>
+
+      <div className="rounded-md border border-border/70 px-3 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-foreground">
+              {t("settings.modelConfig.official.mediaCatalogTitle")}
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              {mediaCatalog
+                ? t("settings.modelConfig.official.mediaCatalogStatus", {
+                    version: mediaCatalog.catalogVersion,
+                    count: mediaCatalog.modelCount,
+                    source: t(
+                      `settings.modelConfig.official.mediaCatalogSources.${mediaCatalog.source}`,
+                    ),
+                  })
+                : t("settings.modelConfig.loading")}
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => void runMediaCatalogCheck(true)}
+            disabled={mediaCatalogQuery.isLoading || checkMediaCatalog.isPending}
+          >
+            <RotateCw
+              className={cn(
+                "size-3.5",
+                checkMediaCatalog.isPending && "animate-spin",
+              )}
+            />
+            {t("settings.modelConfig.official.mediaCatalogCheckNow")}
+          </Button>
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/60 pt-3">
+          <div>
+            <Label className="text-xs font-normal text-foreground">
+              {t("settings.modelConfig.official.mediaCatalogAutoUpdate")}
+            </Label>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              {t("settings.modelConfig.official.mediaCatalogAutoUpdateHint")}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={mediaCatalog?.autoUpdate ?? false}
+            aria-label={t(
+              "settings.modelConfig.official.mediaCatalogAutoUpdate",
+            )}
+            disabled={
+              !mediaCatalog || saveMediaCatalogPreferences.isPending
+            }
+            onClick={() => void handleMediaCatalogAutoUpdate()}
+            className={cn(
+              "relative h-5 w-9 shrink-0 rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+              mediaCatalog?.autoUpdate
+                ? "border-primary bg-primary"
+                : "border-input bg-muted",
+            )}
+          >
+            <span
+              className={cn(
+                "absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow-sm transition-transform",
+                mediaCatalog?.autoUpdate ? "translate-x-4" : "translate-x-0",
+              )}
+            />
+          </button>
+        </div>
+      </div>
 
       <div className="space-y-2.5">
         <div className="grid grid-cols-[120px_1fr] items-center gap-3">
@@ -2861,7 +3009,7 @@ function defaultComfyMediaModelConfig(model: string): MediaModelEntry {
     referenceCapabilities.referenceVideoMax = 3;
     referenceCapabilities.referenceAudioMax = 3;
   } else if (/(^|[_-])i2v($|[_-])/.test(normalized)) {
-    supportedModes = ["image_reference"];
+    supportedModes = ["image_to_video", "image_reference"];
     ratioOptions = ["16:9", "1:1"];
     referenceCapabilities.referenceImageMax = 1;
     referenceCapabilities.humanReview = true;
@@ -3718,6 +3866,25 @@ function LocalMediaModelEditor({
                 min={0}
                 onChange={(value) => setCapability("referenceAudioMax", value)}
               />
+              {[
+                "referenceAudioMinSeconds",
+                "referenceAudioMaxSeconds",
+                "referenceAudioTotalMinSeconds",
+                "referenceAudioTotalMaxSeconds",
+                "referenceVideoMinSeconds",
+                "referenceVideoMaxSeconds",
+                "referenceVideoTotalMinSeconds",
+                "referenceVideoTotalMaxSeconds",
+              ].map((field) => (
+                <CatalogNumberField
+                  key={field}
+                  label={t(`settings.modelConfig.mediaModels.${field}`)}
+                  value={parsedConfig?.[field]}
+                  min={0.1}
+                  step={0.1}
+                  onChange={(value) => setCapability(field, value)}
+                />
+              ))}
               <label className="flex items-center gap-2 text-xs text-foreground">
                 <input
                   type="checkbox"
@@ -3737,6 +3904,7 @@ function LocalMediaModelEditor({
                     ["text_to_video", "文生视频"],
                     ["first_frame", "首帧"],
                     ["first_last_frame", "首尾帧"],
+                    ["image_to_video", "图生视频"],
                     ["image_reference", "图片参考"],
                     ["all_reference", "全能参考"],
                     ["video_edit", "视频编辑"],
@@ -3921,11 +4089,13 @@ function CatalogNumberField({
   label,
   value,
   min = 1,
+  step = 1,
   onChange,
 }: {
   label: string;
   value: unknown;
   min?: number;
+  step?: number;
   onChange: (value: number | undefined) => void;
 }) {
   return (
@@ -3936,6 +4106,7 @@ function CatalogNumberField({
       <Input
         type="number"
         min={min}
+        step={step}
         value={typeof value === "number" ? value : ""}
         onChange={(event) =>
           onChange(event.target.value ? Number(event.target.value) : undefined)
