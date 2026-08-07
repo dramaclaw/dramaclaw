@@ -712,7 +712,9 @@ def _csv_env(name: str, default: str) -> list[str]:
 # newAPI 视频网关。VIDEO_BACKEND 使用 newapi_<model> 时会通过 NEWAPI_BASE_URL 调用。
 NEWAPI_VIDEO_MODELS = _csv_env(
     "NEWAPI_VIDEO_MODELS",
-    "seedance-1.0-pro-fast,seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,happyhorse-1.0",
+    # Higgsfield first-frame image-to-video (DoP / DoP-turbo) is routed through
+    # the NewAPI gateway; its upstream channel is configured in the NewAPI backend.
+    "seedance-1.0-pro-fast,seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,happyhorse-1.0,higgsfield-dop-turbo,higgsfield-dop",
 )
 DEFAULT_VIDEO_MODEL = os.environ.get(
     "DEFAULT_VIDEO_MODEL",
@@ -726,7 +728,9 @@ NEWAPI_VIDEO_AUDIO_MODELS = _csv_env(
 )
 NEWAPI_VIDEO_DURATION_BOUNDS = os.environ.get(
     "NEWAPI_VIDEO_DURATION_BOUNDS",
-    "seedance-1.0-pro-fast:2-12,seedance-1.5-pro:4-12,seedance-2.0:4-15,seedance-2.0-fast:4-15,seedance-2.0-value:4-15,seedance-2.0-fast-value:4-15,happyhorse-1.0:3-15",
+    # Higgsfield DoP produces fixed 3s / 5s clips and has no native audio (so it
+    # is intentionally absent from NEWAPI_VIDEO_AUDIO_MODELS).
+    "seedance-1.0-pro-fast:2-12,seedance-1.5-pro:4-12,seedance-2.0:4-15,seedance-2.0-fast:4-15,seedance-2.0-value:4-15,seedance-2.0-fast-value:4-15,happyhorse-1.0:3-15,higgsfield-dop-turbo:3-5,higgsfield-dop:3-5",
 ).strip()
 
 # 视频生成后端: newapi_seedance-1.0-pro-fast (默认), newapi_seedance-2.0-fast,
