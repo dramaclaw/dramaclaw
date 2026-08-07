@@ -79,7 +79,7 @@ def _default_comfyui_media_model_config(model: str) -> dict[str, Any]:
             "referenceAudioMax": 3,
         }
     elif "i2v" in tokens:
-        supported_modes = ["image_reference"]
+        supported_modes = ["image_to_video", "image_reference"]
         ratio_options = ["16:9", "1:1"]
         reference_limits = {"referenceImageMax": 1, "humanReview": True}
     return {

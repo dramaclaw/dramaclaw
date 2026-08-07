@@ -25,7 +25,7 @@ MODE_ALIASES = {
     "textToVideo": "text_to_video",
     # 画布「图生视频」是单张图片参考：图片影响整体画面，但不锁定第一帧。
     # 真正的首帧模式由首尾帧入口按槽位派生为 first_frame。
-    "imageToVideo": "image_reference",
+    "imageToVideo": "image_to_video",
     "firstLastFrame": "first_last_frame",
     "imageReference": "image_reference",
     "allReference": "all_reference",
@@ -35,6 +35,7 @@ MEDIA_MODEL_MODES = {
     "text_to_video",
     "first_frame",
     "first_last_frame",
+    "image_to_video",
     "image_reference",
     "all_reference",
     "video_edit",
@@ -237,7 +238,14 @@ def validate_media_model_catalog_config(
             "supportedModes",
             "referenceVideoMax",
             "referenceAudioMax",
+            "referenceAudioMinSeconds",
+            "referenceAudioMaxSeconds",
+            "referenceAudioTotalMinSeconds",
             "referenceAudioTotalMaxSeconds",
+            "referenceVideoMinSeconds",
+            "referenceVideoMaxSeconds",
+            "referenceVideoTotalMinSeconds",
+            "referenceVideoTotalMaxSeconds",
             "humanReview",
             "sceneOptimizeOptions",
             "defaultSceneOptimize",
@@ -289,20 +297,39 @@ def validate_media_model_catalog_config(
         if value is not None and (type(value) is not int or value < 0):
             raise MediaModelSchemaError(f"{field} must be a non-negative integer")
 
-    # 参考音频**总时长**上限（秒）。厂商口径 15.2 本身就不是整数，所以这项收小数，
-    # 与上面那几个计数字段不同口径——别顺手并进上面的循环。
-    #
-    # `math.isfinite` 不能省：`inf > 0` 是 True、`nan <= 0` 是 False，只写「正数」这两个
-    # 都会漏进来，配成 inf 就等于把这个上限静默关掉。
-    audio_total = config.get("referenceAudioTotalMaxSeconds")
-    if audio_total is not None and (
-        type(audio_total) not in (int, float)
-        or not math.isfinite(audio_total)
-        or audio_total <= 0
+    duration_fields = (
+        "referenceAudioMinSeconds",
+        "referenceAudioMaxSeconds",
+        "referenceAudioTotalMinSeconds",
+        "referenceAudioTotalMaxSeconds",
+        "referenceVideoMinSeconds",
+        "referenceVideoMaxSeconds",
+        "referenceVideoTotalMinSeconds",
+        "referenceVideoTotalMaxSeconds",
+    )
+    for field in duration_fields:
+        value = config.get(field)
+        if value is not None and (
+            type(value) not in (int, float)
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise MediaModelSchemaError(f"{field} must be a positive finite number")
+
+    for minimum_field, maximum_field in (
+        ("referenceAudioMinSeconds", "referenceAudioMaxSeconds"),
+        ("referenceAudioTotalMinSeconds", "referenceAudioTotalMaxSeconds"),
+        ("referenceVideoMinSeconds", "referenceVideoMaxSeconds"),
+        ("referenceVideoTotalMinSeconds", "referenceVideoTotalMaxSeconds"),
     ):
-        raise MediaModelSchemaError(
-            "referenceAudioTotalMaxSeconds must be a positive finite number"
-        )
+        minimum_value = config.get(minimum_field)
+        maximum_value = config.get(maximum_field)
+        if (
+            minimum_value is not None
+            and maximum_value is not None
+            and minimum_value > maximum_value
+        ):
+            raise MediaModelSchemaError(f"{minimum_field} cannot exceed {maximum_field}")
 
     if media_type == "video":
         video_limit = config.get("referenceVideoMax")

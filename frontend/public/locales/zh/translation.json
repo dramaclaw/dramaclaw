@@ -3604,10 +3604,18 @@
         "off": "关闭",
         "durationTooShort": "单条音频时长不能低于 {{min}} 秒：{{clips}}。请替换或补长后再试。",
         "durationTooLong": "单条音频时长不能超过 {{max}} 秒：{{clips}}。请裁剪或替换后再试。",
+        "durationTotalTooShort": "所有音频合计不能低于 {{min}} 秒，当前共 {{total}} 秒：{{clips}}。请增加或延长音频后再试。",
         "durationTotalTooLong": "所有音频加起来不能超过 {{max}} 秒，当前共 {{total}} 秒：{{clips}}。请裁剪或去掉部分音频后再试。",
         "clipDuration": "{{label}}（{{seconds}}s）",
         "clipSeparator": "、",
         "clipFallbackLabel": "音频{{index}}"
+      },
+      "referenceDuration": {
+        "videoFallbackLabel": "视频{{index}}",
+        "videoTooShort": "单条视频时长不能低于 {{min}} 秒：{{clips}}。请替换或延长后再试。",
+        "videoTooLong": "单条视频时长不能超过 {{max}} 秒：{{clips}}。请裁剪或替换后再试。",
+        "videoTotalTooShort": "所有视频合计不能低于 {{min}} 秒，当前共 {{total}} 秒：{{clips}}。请增加或延长视频后再试。",
+        "videoTotalTooLong": "所有视频合计不能超过 {{max}} 秒，当前共 {{total}} 秒：{{clips}}。请裁剪或移除部分视频后再试。"
       },
       "count": {
         "format": "{{count}}个"
@@ -4235,6 +4243,14 @@
         "referenceImageMax": "参考图片上限",
         "referenceVideoMax": "参考视频上限",
         "referenceAudioMax": "参考音频上限",
+        "referenceAudioMinSeconds": "单条音频最短（秒）",
+        "referenceAudioMaxSeconds": "单条音频最长（秒）",
+        "referenceAudioTotalMinSeconds": "音频合计最短（秒）",
+        "referenceAudioTotalMaxSeconds": "音频合计最长（秒）",
+        "referenceVideoMinSeconds": "单条视频最短（秒）",
+        "referenceVideoMaxSeconds": "单条视频最长（秒）",
+        "referenceVideoTotalMinSeconds": "视频合计最短（秒）",
+        "referenceVideoTotalMaxSeconds": "视频合计最长（秒）",
         "humanReview": "支持真人审核",
         "supportedModes": "视频生成模式",
         "capabilitiesHint": "使用与 EE 媒体模型目录一致的 config；保存全部配置后在虾画生效。",
