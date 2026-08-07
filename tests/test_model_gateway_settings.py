@@ -1595,6 +1595,47 @@ def test_official_media_catalog_rejects_downgrade(monkeypatch, tmp_path):
     assert status["source"] == "bundled"
 
 
+def test_official_media_catalog_rejects_invalid_model_before_cache_write(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    source_url = "https://catalog.example.test/official_media_models.json"
+    monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_URL", source_url)
+    payload = {
+        "version": 1,
+        "catalogVersion": "2026.08.06.2",
+        "mediaModels": {
+            "broken-video": {
+                "provider": "newapi",
+                "upstreamModel": "broken-video",
+                "mediaType": "video",
+                "sortOrder": "not-a-number",
+                "config": {
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    }
+                },
+            }
+        },
+    }
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    with respx.mock:
+        respx.get(source_url).mock(return_value=Response(200, json=payload))
+        response = client.post("/model-gateway/official/media-catalog/check")
+
+    assert response.status_code == 502
+    assert "sortOrder must be an integer" in response.json()["detail"]
+    cache_path = Path(config.STATE_DIR) / "local" / "official_media_models.json"
+    assert not cache_path.exists()
+    assert client.get("/model-gateway/official/media-catalog").json()["data"][
+        "source"
+    ] == "bundled"
+
+
 def test_official_media_catalog_ignores_cache_older_than_bundle(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
     bundled = json.loads(

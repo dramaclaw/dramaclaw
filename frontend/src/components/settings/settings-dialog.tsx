@@ -726,7 +726,7 @@ function OfficialGatewayPanel({
             <p className="text-xs font-medium text-foreground">
               {t("settings.modelConfig.official.mediaCatalogTitle")}
             </p>
-            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
               {mediaCatalog
                 ? t("settings.modelConfig.official.mediaCatalogStatus", {
                     version: mediaCatalog.catalogVersion,
@@ -759,7 +759,7 @@ function OfficialGatewayPanel({
             <Label className="text-xs font-normal text-foreground">
               {t("settings.modelConfig.official.mediaCatalogAutoUpdate")}
             </Label>
-            <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
               {t("settings.modelConfig.official.mediaCatalogAutoUpdateHint")}
             </p>
           </div>
