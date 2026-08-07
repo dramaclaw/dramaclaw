@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -191,6 +193,43 @@ describe('shell 升级队列', () => {
     tick();
     expect(a).not.toHaveBeenCalled();
     expect(b).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('低缩放档新建节点自动聚焦', () => {
+  const CANVAS_SOURCE = readFileSync('src/features/canvas/Canvas.tsx', 'utf8');
+
+  /**
+   * 截出某个组件内 handler 的函数体：从声明锚点到下一个组件作用域（两空格缩进）
+   * 的 `const` 声明为止。内层 `const` 缩进更深，不会误截。
+   */
+  const bodyAfter = (marker: string): string => {
+    const start = CANVAS_SOURCE.indexOf(marker);
+    expect(start, `Canvas.tsx 里找不到锚点：${marker}`).toBeGreaterThan(-1);
+    const rest = CANVAS_SOURCE.slice(start + marker.length);
+    const end = rest.indexOf('\n  const ');
+    return end === -1 ? rest : rest.slice(0, end);
+  };
+
+  it('所有「凭空新建节点」的入口都要过 focusNewNodeIfLowZoom', () => {
+    // 10% 缩放下新节点在屏幕上只有几十像素、深色面板贴深色背景，用户会以为
+    // 「没创建上」。之前只有拖放式落点补了聚焦，底部「+」快捷栏与拖线菜单
+    // 漏掉了 —— 这份清单就是为了锁住所有入口，新增入口必须一起补。
+    for (const marker of [
+      'const commitNodePlacementAtClientPosition = useCallback(',
+      'const finalizeNodeSpawn = useCallback(',
+      'const handleQuickAddNode = useCallback(',
+      'const handleQuickAddSkill = useCallback(',
+    ]) {
+      expect(bodyAfter(marker), marker).toContain('focusNewNodeIfLowZoom(');
+    }
+  });
+
+  it('聚焦门槛走 isLowDetailZoom，且把 zoom 拉到 ≥0.6', () => {
+    expect(bodyAfter('const focusNewNodeIfLowZoom = useCallback(')).toContain(
+      'isLowDetailZoom(reactFlowInstance.getZoom())'
+    );
+    expect(CANVAS_SOURCE).toContain('zoom: Math.max(currentZoom, 0.6)');
   });
 });
 
