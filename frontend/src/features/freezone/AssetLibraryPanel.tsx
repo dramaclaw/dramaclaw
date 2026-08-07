@@ -695,7 +695,7 @@ export function AssetLibraryPanel({
         {/* 折叠/展开胶囊 — 停在卡片右侧的画布上 */}
         <div
           className="group/handle pointer-events-auto absolute top-3 z-30 flex h-10 w-10 items-center justify-center transition-[left] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
-          style={{ left: collapsed ? 16 : 316 }}
+          style={{ left: collapsed ? 16 : 312 }}
         >
           <button
             type="button"
@@ -729,14 +729,14 @@ export function AssetLibraryPanel({
           </span>
         </div>
 
-        {/* 悬浮圆角卡片 */}
+        {/* 贴左边直出的抽屉：满高、不留外边距，收起时整块滑到屏幕外 */}
         <div
-          className={`flex flex-col min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-[rgba(var(--surface-rgb)/0.86)] backdrop-blur-2xl transition-[opacity,transform] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
+          className={`flex h-full flex-col min-h-0 overflow-hidden rounded-r-2xl border-r border-white/10 bg-[#212121] transition-transform duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
             collapsed
-              ? "pointer-events-none -translate-x-3 opacity-0"
-              : "pointer-events-auto translate-x-0 opacity-100"
+              ? "pointer-events-none -translate-x-full"
+              : "pointer-events-auto translate-x-0"
           }`}
-          style={{ width: 288, marginLeft: 16, marginTop: 16, marginBottom: 16, height: 'calc(100% - 32px)' }}
+          style={{ width: 300 }}
         >
           {/* ─ 分段 Tab 栏 ── */}
           <div className="flex rounded-full border border-white/10 mx-3 mt-4 mb-1.5 p-0.5 gap-0.5">
