@@ -33,6 +33,13 @@ describe("canvas AI text generation contract", () => {
     expect(nodeSource).toContain("content: result.generated_text");
   });
 
+  it("reuses AI text generation when drafting a text-to-video prompt", () => {
+    expect(nodeSource).toContain("const textGeneratePrompt = instruction");
+    expect(nodeSource).toContain("mode === 'imageToPrompt' || mode === 'textToVideo'");
+    expect(nodeSource).toContain("void runTextGenerate()");
+    expect(nodeSource).toContain("void runTextTranslate()");
+  });
+
   it("uses the dedicated text generation API and result endpoint", () => {
     expect(apiSource).toContain("/freezone/text/generate");
     expect(apiSource).toContain(

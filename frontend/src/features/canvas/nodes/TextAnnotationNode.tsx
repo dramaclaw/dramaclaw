@@ -25,8 +25,6 @@ import {
   type TextAnnotationNodeData,
   type TextNodeMode,
   type UploadImageNodeData,
-  type VideoGenCount,
-  type VideoGenQuality,
   type VideoNodeData,
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
@@ -51,9 +49,6 @@ import {
   submitFreezoneReversePrompt,
   submitFreezoneTextGenerate,
   submitFreezoneTextTranslate,
-  submitFreezoneVideoGen,
-  type FreezoneVideoAspectRatio,
-  type FreezoneVideoResolution,
 } from '@/api/ops';
 import { awaitTaskCompletion } from '@/api/tasks';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
@@ -61,7 +56,6 @@ import { useNodeGenerationTaskState } from '@/features/canvas/application/useNod
 import { readUrl } from '@/lib/url-params';
 import {
   DEFAULT_SHARED_MODEL_ID,
-  DEFAULT_VIDEO_MODEL_ID,
   ProviderModelPicker,
 } from '@/features/canvas/ui/ProviderModelPicker';
 import {
@@ -71,7 +65,6 @@ import {
   NODE_INLINE_ICON_BUTTON_ACTIVE_CLASS,
   NODE_INLINE_ICON_BUTTON_CLASS,
 } from '@/features/canvas/ui/nodeControlStyles';
-import { useFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
 import { CreditCostInline } from '@/components/credit-cost-inline';
 import type { CreditPromotionDisplay } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
@@ -144,19 +137,6 @@ const REAL_MODES = new Set<TextNodeMode>([
   'textToMusicGen',
 ]);
 
-function resolveVideoOutputUrl(result: Record<string, unknown> | null | undefined): string | null {
-  if (!result) return null;
-  for (const key of ['video_url', 'output_url', 'url']) {
-    const value = result[key];
-    if (typeof value === 'string' && value.length > 0) return value;
-  }
-  return null;
-}
-
-function qualityToResolution(q: VideoGenQuality): FreezoneVideoResolution {
-  return q.toLowerCase() as FreezoneVideoResolution;
-}
-
 const MODES: ReadonlyArray<{
   key: TextNodeMode;
   icon: typeof FileText;
@@ -186,7 +166,6 @@ export const TextAnnotationNode = memo(({
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
   const addNode = useCanvasStore((state) => state.addNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
-  const duplicateNodeAsSibling = useCanvasStore((state) => state.duplicateNodeAsSibling);
   const findNodePosition = useCanvasStore((state) => state.findNodePosition);
   const content = typeof data.content === 'string' ? data.content : '';
   const instruction = typeof data.instruction === 'string' ? data.instruction : '';
@@ -196,8 +175,6 @@ export const TextAnnotationNode = memo(({
   const modelId = typeof data.model === 'string' && data.model.length > 0
     ? data.model
     : DEFAULT_SHARED_MODEL_ID;
-  // 文生视频默认模型取「视频模型接口返回的第一个」，而非文本节点的图像默认 id。
-  const { models: videoModels } = useFreezoneVideoModels();
   const reversePromptInstruction =
     instruction.trim() || IMAGE_TO_PROMPT_DEFAULT_CONTENT;
   const reversePromptBillableChars = countBillableTextChars(
@@ -223,10 +200,13 @@ export const TextAnnotationNode = memo(({
     (reversePromptBillingRuleMissing
       ? t('common.billingRuleNotConfiguredShort')
       : null);
-  const textGenerateBillableChars = countBillableTextChars(instruction);
+  const textGeneratePrompt = instruction;
+  const textGenerateBillableChars = countBillableTextChars(textGeneratePrompt);
   const textGenerateCost = useGenerationCreditCost(
     'feature',
-    mode === 'writing' && selected ? TEXT_GENERATE_FEATURE_KEY : null,
+    (mode === 'writing' || mode === 'textToVideo') && selected
+      ? TEXT_GENERATE_FEATURE_KEY
+      : null,
     {
       surface: 'canvas',
       quantity: textGenerateBillableChars,
@@ -245,6 +225,7 @@ export const TextAnnotationNode = memo(({
       ? t('common.billingRuleNotConfiguredShort')
       : null);
   const { isGenerating } = useNodeGenerationTaskState(data);
+  const [isTranslating, setIsTranslating] = useState(false);
   // referenceOnly: 节点被作为上游引用素材使用（脚本节点 spawn 出来的）。
   // 复用 compact 视图（只渲染编辑卡片），同时 selected ops panel 也不显示。
   const isReferenceOnly = Boolean(data.referenceOnly);
@@ -429,8 +410,8 @@ export const TextAnnotationNode = memo(({
     }
   }, [id, reversePromptInstruction, updateNodeData]);
 
-  const runTextGenerate = useCallback(async () => {
-    const prompt = instruction.trim();
+  const runTextGenerate = useCallback(async (promptOverride?: string) => {
+    const prompt = (promptOverride ?? instruction).trim();
     if (!prompt || textGenerateBillingRuleMissing) return;
     const projectId = readUrl().project;
     if (!projectId) {
@@ -464,95 +445,32 @@ export const TextAnnotationNode = memo(({
     }
   }, [id, instruction, t, textGenerateBillingRuleMissing, updateNodeData]);
 
-  const runTextToVideo = useCallback(async () => {
-    const promptText = content.trim();
-    if (promptText.length === 0) return;
+  const runTextTranslate = useCallback(async () => {
+    if (isGenerating || isTranslating) return;
+    const trimmed = content.trim();
+    if (trimmed.length === 0) return;
     const projectId = readUrl().project;
     if (!projectId) {
-      console.error('[text-node] no project in URL');
+      console.error('[text-node] translate: no project in URL');
       return;
     }
-    const state = useCanvasStore.getState();
-    const downstreamEdge = state.edges.find((edge) => edge.source === id);
-    const targetNode = downstreamEdge
-      ? state.nodes.find((node) => node.id === downstreamEdge.target)
-      : null;
-    if (!targetNode || targetNode.type !== CANVAS_NODE_TYPES.video) {
-      console.warn('[text-node] textToVideo: no downstream video node');
-      return;
-    }
-    const videoData = targetNode.data as VideoNodeData;
-    const aspectRatio = (videoData.aspectRatio ?? '16:9') as FreezoneVideoAspectRatio;
-    const quality: VideoGenQuality = videoData.quality ?? '720P';
-    const durationSec = typeof videoData.durationSec === 'number' ? videoData.durationSec : 5;
-    const generateAudio = Boolean(videoData.generateAudio);
-    const count: VideoGenCount = (videoData.count ?? 1) as VideoGenCount;
-    const videoModel = typeof videoData.model === 'string' && videoData.model.length > 0
-      ? videoData.model
-      : (videoModels[0]?.id ?? DEFAULT_VIDEO_MODEL_ID);
-
-    // 后端不再支持一次出多条 —— 按视频节点选的「生成数量」并发调 N 次接口：
-    // 第 1 条回填下游视频节点，其余复制成同类视频节点并排。
-    const total = Math.min(Math.max(count, 1), 4);
-    updateNodeData(targetNode.id, {
-      prompt: promptText,
-      isGenerating: true,
-      generationStartedAt: Date.now(),
-      // 目标节点可能带着上次批量生成的画册，本次单条回填后画册与主视频脱钩——清掉。
-      generationBatch: null,
-    });
-    const targetIds: string[] = [targetNode.id];
-    for (let i = 1; i < total; i += 1) {
-      const siblingId = duplicateNodeAsSibling(targetNode.id, i, {
-        prompt: promptText,
-        isGenerating: true,
-        generationStartedAt: Date.now(),
-        count: 1,
-        videoUrl: null,
-        sourceFileName: null,
-        // duplicateNodeAsSibling 整份展开源节点 data，画册字段必须显式清空，
-        // 否则兄弟节点会继承源节点的旧画册（卡边 + 徽标显示别人的结果）。
-        generationBatch: null,
+    setIsTranslating(true);
+    try {
+      const ref = await submitFreezoneTextTranslate(projectId, {
+        text: content,
+        nodeType: 'text',
+        canvasId: readUrl().canvas ?? 'default',
+        nodeId: id,
       });
-      if (siblingId) targetIds.push(siblingId);
+      await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
+      const result = await fetchFreezoneTextTranslateResult(projectId, ref.job_id);
+      updateNodeData(id, { content: result.translated_text });
+    } catch (error) {
+      console.error('[text-node] translate failed', error);
+    } finally {
+      setIsTranslating(false);
     }
-
-    const runOne = async (videoNodeId: string) => {
-      try {
-        const ref = await submitFreezoneVideoGen(projectId, {
-          prompt: promptText,
-          aspectRatio,
-          resolution: qualityToResolution(quality),
-          durationSeconds: durationSec,
-          generateAudio,
-          model: videoModel,
-          genMode: "textToVideo",
-          canvasId: readUrl().canvas ?? 'default',
-          nodeId: videoNodeId,
-        });
-        // Persist the task handle so a page refresh can resume this job.
-        updateNodeData(videoNodeId, generationTaskDescriptor(ref));
-        const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
-        const url = resolveVideoOutputUrl(completed.result);
-        if (url) {
-          updateNodeData(videoNodeId, {
-            videoUrl: url,
-            isGenerating: false,
-            generationStartedAt: null,
-            sourceFileName: null,
-          });
-        } else {
-          console.warn('[text-node] textToVideo completed without output url', completed);
-          updateNodeData(videoNodeId, { isGenerating: false, generationStartedAt: null });
-        }
-      } catch (error) {
-        console.error('[text-node] textToVideo failed', error);
-        updateNodeData(videoNodeId, { isGenerating: false, generationStartedAt: null });
-      }
-    };
-
-    await Promise.allSettled(targetIds.map(runOne));
-  }, [content, duplicateNodeAsSibling, id, videoModels, updateNodeData]);
+  }, [content, id, isGenerating, isTranslating, updateNodeData]);
 
   const textPlaceholder = t('node.textNode.placeholder');
   const hasUserContent = content.trim().length > 0 && content.trim() !== textPlaceholder.trim();
@@ -569,7 +487,7 @@ export const TextAnnotationNode = memo(({
       return;
     }
     if (mode === 'textToVideo') {
-      void runTextToVideo();
+      void runTextGenerate();
       return;
     }
     if (!hasUserContent) return;
@@ -584,13 +502,21 @@ export const TextAnnotationNode = memo(({
     reversePromptBillingRuleMissing,
     runImageToPrompt,
     runTextGenerate,
-    runTextToVideo,
   ]);
 
   const submitDisabled = isGenerating
     || (mode === 'writing' && (textGenerateBillingRuleMissing || instruction.trim().length === 0))
+    || (
+      mode === 'textToVideo'
+      && (textGenerateBillingRuleMissing || instruction.trim().length === 0)
+    )
     || (mode === 'imageToPrompt' && reversePromptBillingRuleMissing)
-    || (mode !== 'writing' && mode !== 'imageToPrompt' && !hasUserContent);
+    || (
+      mode !== 'writing'
+      && mode !== 'textToVideo'
+      && mode !== 'imageToPrompt'
+      && !hasUserContent
+    );
   // Inner panels stay neutral regardless of selection — the React Flow node
   // wrapper already shows the active state as an outer outline. Doubling it
   // up on the inner cards (libtv-style reference shows neutral borders only)
@@ -637,14 +563,16 @@ export const TextAnnotationNode = memo(({
       {!isCompactView && selected && !isBoxSelecting && !isReferenceOnly && !isSystemManaged && !isEditingContent && (
         <WritingOpsPanel
           nodeId={id}
-          content={content}
           instruction={instruction}
           isGenerating={isGenerating}
+          isTranslating={isTranslating}
           width={resolvedWidth}
           costDisplay={textGenerateCostDisplay}
           promotion={textGenerateCost.data?.data.promotion}
           submitDisabled={submitDisabled}
+          translateDisabled={isGenerating || isTranslating || !hasUserContent}
           onGenerate={handleSubmit}
+          onTranslate={runTextTranslate}
         />
       )}
 
@@ -747,24 +675,31 @@ export const TextAnnotationNode = memo(({
               )}
               <textarea
                 value={
-                  mode === 'imageToPrompt'
+                  mode === 'imageToPrompt' || mode === 'textToVideo'
                     ? instruction === IMAGE_TO_PROMPT_DEFAULT_CONTENT ? '' : instruction
                     : content
                 }
                 onChange={(event) => {
-                  const field = mode === 'imageToPrompt' ? 'instruction' : 'content';
+                  const field = mode === 'imageToPrompt' || mode === 'textToVideo'
+                    ? 'instruction'
+                    : 'content';
                   updateNodeData(id, { [field]: event.target.value });
                 }}
                 onMouseDown={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
                 onKeyDown={(event) => event.stopPropagation()}
-                placeholder={mode === 'imageToPrompt' ? IMAGE_TO_PROMPT_DEFAULT_CONTENT : textPlaceholder}
+                placeholder={
+                  mode === 'imageToPrompt'
+                    ? IMAGE_TO_PROMPT_DEFAULT_CONTENT
+                    : mode === 'textToVideo'
+                      ? t('node.textNode.generatePlaceholder')
+                      : textPlaceholder
+                }
                 className={`ui-scrollbar nodrag nowheel min-h-0 w-full flex-1 resize-none border-none bg-transparent px-3 pt-3 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
               />
               <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
-                {/* 文生视频 / 反推提示词的模型不在文本节点上选：文生视频走下游视频节点的
-                    model，反推提示词接口压根不收 model。所以这两种模式都不显示模型选择器，
-                    只保留右侧提交按钮（占位 span 维持 justify-between 把按钮顶到右边）。 */}
+                {/* 文生视频的视频模型由下游视频节点管理；反推提示词接口不接收模型。
+                    因此这两种模式均不在文本节点显示模型选择器。 */}
                 {mode === 'textToVideo' || mode === 'imageToPrompt' ? (
                   <span />
                 ) : (
@@ -780,6 +715,32 @@ export const TextAnnotationNode = memo(({
                       display={reversePromptCostDisplay}
                       promotion={reversePromptCost.data?.data.promotion}
                     />
+                  )}
+                  {mode === 'textToVideo' && (
+                    <>
+                      <button
+                        type="button"
+                        title={t('node.textNode.translate')}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void runTextTranslate();
+                        }}
+                        disabled={isGenerating || isTranslating || !hasUserContent}
+                        className={`${NODE_INLINE_ICON_BUTTON_CLASS} ${
+                          isTranslating ? NODE_INLINE_ICON_BUTTON_ACTIVE_CLASS : ''
+                        }`}
+                      >
+                        {isTranslating ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Languages className="h-4 w-4" />
+                        )}
+                      </button>
+                      <CreditCostInline
+                        display={textGenerateCostDisplay}
+                        promotion={textGenerateCost.data?.data.promotion}
+                      />
+                    </>
                   )}
                   <button
                     type="button"
@@ -913,60 +874,34 @@ TextAnnotationNode.displayName = 'TextAnnotationNode';
 
 interface WritingOpsPanelProps {
   nodeId: string;
-  content: string;
   instruction: string;
   isGenerating: boolean;
+  isTranslating: boolean;
   width: number;
   costDisplay: string | null;
   promotion?: CreditPromotionDisplay | null;
   submitDisabled: boolean;
+  translateDisabled: boolean;
   onGenerate: () => void;
+  onTranslate: () => void;
 }
 
 function WritingOpsPanel({
   nodeId,
-  content,
   instruction,
   isGenerating,
+  isTranslating,
   width,
   costDisplay,
   promotion,
   submitDisabled,
+  translateDisabled,
   onGenerate,
+  onTranslate,
 }: WritingOpsPanelProps) {
   const { t } = useTranslation();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
-  const [isTranslating, setIsTranslating] = useState(false);
   const generatePlaceholder = t('node.textNode.generatePlaceholder');
-
-  const handleTranslate = useCallback(async () => {
-    if (isGenerating || isTranslating) return;
-    const trimmed = content.trim();
-    if (trimmed.length === 0) return;
-    const project = readUrl().project;
-    if (!project) {
-      console.error('[text-node] translate: no project in URL');
-      return;
-    }
-    setIsTranslating(true);
-    try {
-      const ref = await submitFreezoneTextTranslate(project, {
-        text: content,
-        nodeType: 'text',
-        canvasId: readUrl().canvas ?? 'default',
-        nodeId,
-      });
-      await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
-      const result = await fetchFreezoneTextTranslateResult(project, ref.job_id);
-      updateNodeData(nodeId, { content: result.translated_text });
-    } catch (error) {
-      console.error('[text-node] translate failed', error);
-    } finally {
-      setIsTranslating(false);
-    }
-  }, [content, isGenerating, isTranslating, nodeId, updateNodeData]);
-
-  const translateDisabled = isGenerating || isTranslating || content.trim().length === 0;
 
   return (
     <div
@@ -988,18 +923,14 @@ function WritingOpsPanel({
         className={`ui-scrollbar nodrag nowheel min-h-0 w-full flex-1 resize-none border-none bg-transparent px-3 pt-3 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
         disabled={isGenerating}
       />
-      <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
-        <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
-          <span className="h-2 w-2 shrink-0 rounded-full bg-cyan-400/80" />
-          <span className="truncate">{t('node.textNode.textWriterModel')}</span>
-        </span>
+      <div className="flex shrink-0 items-center justify-end gap-2 px-3 py-2">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
             title={t('node.textNode.translate')}
             onClick={(event) => {
               event.stopPropagation();
-              void handleTranslate();
+              onTranslate();
             }}
             disabled={translateDisabled}
             className={`${NODE_INLINE_ICON_BUTTON_CLASS} ${

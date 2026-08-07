@@ -17,6 +17,7 @@ from novelvideo.freezone.text_node import (
     build_freezone_story_script_task,
     build_freezone_translation_task,
     build_freezone_video_story_script_task,
+    create_freezone_text_writer_agent,
     generate_freezone_text,
     generate_freezone_story_script_with_vision,
     translate_freezone_text,
@@ -112,6 +113,40 @@ async def test_translate_freezone_text_flips_invalid_same_language_result(
 def test_translation_defaults_use_newapi_gemini_flash() -> None:
     assert FREEZONE_TRANSLATION_PROVIDER == "newapi"
     assert FREEZONE_TRANSLATION_MODEL == "DC-freezone-translator-LLM"
+
+
+def test_text_writer_disables_reasoning_like_other_dc_text_agents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import novelvideo.config as config
+    import novelvideo.freezone.text_node as text_node
+
+    agent_kwargs: dict[str, object] = {}
+
+    class FakeAgent:
+        def __init__(self, model, **kwargs):
+            agent_kwargs["model"] = model
+            agent_kwargs.update(kwargs)
+
+    monkeypatch.setattr(
+        config,
+        "get_newapi_text_pydantic_model",
+        lambda model_env, default_model: (model_env, default_model),
+    )
+    monkeypatch.setattr(
+        config,
+        "get_newapi_structured_output_model_settings",
+        lambda: {"openai_reasoning_effort": "none"},
+    )
+    monkeypatch.setattr(text_node, "Agent", FakeAgent)
+
+    create_freezone_text_writer_agent()
+
+    assert agent_kwargs["model"] == (
+        "FREEZONE_TEXT_WRITER_MODEL",
+        "DC-freezone-text-writer-LLM",
+    )
+    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "none"}
 
 
 @pytest.mark.asyncio

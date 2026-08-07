@@ -3535,7 +3535,6 @@
       },
       "placeholder": "写下故事、场景或角色灵感。例如：雨夜旧车站里，一封迟到的信改变了所有人的选择。",
       "generatePlaceholder": "描述你想生成的故事、场景、角色设定、对白或创作提示词…",
-      "textWriterModel": "DC 文本创作模型",
       "modelPickerHint": "选择模型",
       "submit": "提交",
       "translate": "翻译（中英文互译）"

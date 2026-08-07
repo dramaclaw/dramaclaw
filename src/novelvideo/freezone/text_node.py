@@ -244,7 +244,10 @@ def get_freezone_translation_agent() -> Agent:
 
 def create_freezone_text_writer_agent() -> Agent:
     """创建 Freezone 自由文本生成 Agent。"""
-    from novelvideo.config import get_newapi_text_pydantic_model
+    from novelvideo.config import (
+        get_newapi_structured_output_model_settings,
+        get_newapi_text_pydantic_model,
+    )
 
     model = get_newapi_text_pydantic_model(
         "FREEZONE_TEXT_WRITER_MODEL",
@@ -253,6 +256,7 @@ def create_freezone_text_writer_agent() -> Agent:
     return Agent(
         model,
         system_prompt=FREEZONE_TEXT_WRITER_SYSTEM_PROMPT,
+        model_settings=get_newapi_structured_output_model_settings(),
         output_type=str,
         name="Freezone AI Text Writer",
     )
