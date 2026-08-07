@@ -20,6 +20,11 @@ import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImage
 import { FREEZONE_IMAGE_FEATURES } from '@/features/canvas/application/freezoneImageFeatureBilling';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import {
+  pickAllowedOption,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from '@/features/canvas/domain/mediaModelOptions';
+import {
   NODE_CREDIT_PILL_FLAT_CLASS,
   NODE_FLOATING_PANEL_SURFACE_CLASS,
   NODE_GENERATE_BUTTON_BASE_CLASS,
@@ -97,10 +102,11 @@ const ZOOM_LEVELS: MultiAngleZoomLevel[] = [
   'extreme_wide',
 ];
 
-export type MultiAngleProviderId = 'huimeng' | 'openrouter' | 'openai';
+/** 供应商 id 由目录条目下发，前端不枚举。 */
+export type MultiAngleProviderId = string;
 
-export const MULTI_ANGLE_IMAGE_SIZES = ['1K', '2K', '4K'] as const;
-export type MultiAngleImageSize = (typeof MULTI_ANGLE_IMAGE_SIZES)[number];
+/** 分辨率档位由后台「媒体模型」对所选模型的配置下发，前端不枚举。 */
+export type MultiAngleImageSize = string;
 const DEFAULT_MULTI_ANGLE_IMAGE_SIZE: MultiAngleImageSize = '2K';
 
 export interface MultiAngleSubmitPayload {
@@ -130,16 +136,6 @@ const EDITOR_PROMPT_TEXTAREA_CLASS =
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
-}
-
-function imageModelSupportsQuality(apiModel: string | null | undefined): boolean {
-  const normalized = String(apiModel ?? '').trim().toLowerCase();
-  return (
-    normalized === 'gpt-image-2'
-    || normalized === 'image-2'
-    || normalized === 'image-2-official'
-    || normalized.includes('gpt-image')
-  );
 }
 
 // 预览图片卡片的相对尺寸：景别越近越大、越远越小（仅影响球内预览，不发后端）。
@@ -189,6 +185,8 @@ interface SliderRowProps {
 
 interface QualityPickerProps {
   value: MultiAngleImageSize;
+  /** 当前模型允许的分辨率档位，由后台「媒体模型」配置下发。 */
+  options: readonly string[];
   onChange: (value: MultiAngleImageSize) => void;
 }
 
@@ -266,7 +264,7 @@ function PresetPicker({ value, onChange }: PresetPickerProps) {
   );
 }
 
-function QualityPicker({ value, onChange }: QualityPickerProps) {
+function QualityPicker({ value, options, onChange }: QualityPickerProps) {
   const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -311,7 +309,7 @@ function QualityPicker({ value, onChange }: QualityPickerProps) {
         >
           <div className="mb-1 text-[11px] uppercase tracking-wide text-text-dark/50">{title}</div>
           <div className="flex gap-1.5">
-            {MULTI_ANGLE_IMAGE_SIZES.map((size) => {
+            {options.map((size) => {
               const isActive = value === size;
               return (
                 <button
@@ -420,15 +418,25 @@ export function MultiAngleEditorPanel({ imageSource, onClose, onSubmit }: MultiA
   const [imageSize, setImageSize] = useState<MultiAngleImageSize>(DEFAULT_MULTI_ANGLE_IMAGE_SIZE);
   const { models: imageModels } = useFreezoneImageModels();
   const selectedModel = imageModels[0];
+  // 分辨率与画质档位跟随后台对该模型的配置。
+  const sizeOptions = useMemo(
+    () => resolveModelSizeOptions(selectedModel),
+    [selectedModel],
+  );
+  const qualityOptions = useMemo(
+    () => resolveModelQualityOptions(selectedModel),
+    [selectedModel],
+  );
+  const effectiveImageSize = pickAllowedOption(imageSize, sizeOptions);
   const creditCost = useGenerationCreditCost(
     'feature',
     selectedModel ? FREEZONE_IMAGE_FEATURES.multiView : null,
     {
       surface: 'canvas',
       params: buildImageFeatureBillingParams(selectedModel, {
-        size: imageSize,
-        ...(imageModelSupportsQuality(selectedModel?.apiModel)
-          ? { quality: 'medium' }
+        size: effectiveImageSize,
+        ...(qualityOptions.length > 0
+          ? { quality: pickAllowedOption('medium', qualityOptions) }
           : {}),
         operation: 'multi_view',
       }),
@@ -558,14 +566,14 @@ export function MultiAngleEditorPanel({ imageSource, onClose, onSubmit }: MultiA
       zoom,
       promptOverride: promptOverrideEnabled && promptOverride.trim() ? promptOverride.trim() : null,
       apiModel: selectedModel.apiModel,
-      providerId: selectedModel.providerId as MultiAngleProviderId,
-      imageSize,
+      providerId: selectedModel.providerId,
+      imageSize: effectiveImageSize,
     });
   }, [
     activePreset,
     horizontalDeg,
     horizontalDescription,
-    imageSize,
+    effectiveImageSize,
     onSubmit,
     presetLabel,
     promptOverride,
@@ -620,7 +628,11 @@ export function MultiAngleEditorPanel({ imageSource, onClose, onSubmit }: MultiA
         <div className="flex min-h-[254px] flex-1 flex-col">
           <div className="mb-5 flex items-center gap-2.5">
             <PresetPicker value={activePreset} onChange={applyPreset} />
-            <QualityPicker value={imageSize} onChange={setImageSize} />
+            <QualityPicker
+              value={effectiveImageSize}
+              options={sizeOptions}
+              onChange={setImageSize}
+            />
           </div>
 
           <SliderRow

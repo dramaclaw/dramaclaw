@@ -164,7 +164,9 @@ async def test_inline_consumer_precedes_run_core_and_runner(monkeypatch, tmp_pat
     backend = InlineTaskBackend(producer=FakeProducer(), consumer=consumer)
     monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
 
-    await backend.enqueue_project_task(ctx, task_type="single_video", episode=1)
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1
+    )
     job = submitted[0]
 
     def fake_run_core(verified, *_args, **_kwargs):
@@ -203,6 +205,7 @@ async def test_inline_task_backend_returns_immediately_and_completes_in_backgrou
     queued = await _inline_backend(producer=producer).enqueue_project_task(
         ctx,
         task_type=task_type,
+        product_surface="mainline",
         episode=1,
     )
 
@@ -236,7 +239,10 @@ async def test_inline_task_backend_runs_runner_outside_active_event_loop(tmp_pat
     register_project_task_runner(task_type, runner)
 
     queued = await _inline_backend().enqueue_project_task(
-        ctx, task_type=task_type, episode=1
+        ctx,
+        task_type=task_type,
+        product_surface="mainline",
+        episode=1,
     )
 
     assert queued.backend == "inline"
@@ -255,8 +261,12 @@ async def test_inline_duplicate_reservation_has_zero_second_admission_and_delive
     monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
 
     first, second = await asyncio.gather(
-        backend.enqueue_project_task(ctx, task_type="single_video", episode=1),
-        backend.enqueue_project_task(ctx, task_type="single_video", episode=1),
+        backend.enqueue_project_task(
+            ctx, task_type="single_video", product_surface="mainline", episode=1
+        ),
+        backend.enqueue_project_task(
+            ctx, task_type="single_video", product_surface="mainline", episode=1
+        ),
     )
 
     assert first.task_state.task_id == second.task_state.task_id
@@ -274,7 +284,9 @@ async def test_inline_signing_failure_marks_task_failed_without_delivery(
     monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
 
     with pytest.raises(InvalidTaskEnvelope):
-        await backend.enqueue_project_task(ctx, task_type="single_video", episode=1)
+        await backend.enqueue_project_task(
+            ctx, task_type="single_video", product_surface="mainline", episode=1
+        )
 
     state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
     assert state.status == "failed"
@@ -297,7 +309,9 @@ async def test_inline_signed_flat_mismatch_has_zero_runner_usage_and_success(
         lambda *_args, **_kwargs: downstream_calls.append("run_core"),
     )
 
-    await backend.enqueue_project_task(ctx, task_type="single_video", episode=1)
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1
+    )
     job = submitted[0]
     job.envelope["episode"] = True
 
@@ -325,7 +339,9 @@ async def test_inline_stale_authority_has_zero_runner_usage_and_success(
         lambda *_args, **_kwargs: downstream_calls.append("run_core"),
     )
 
-    await backend.enqueue_project_task(ctx, task_type="single_video", episode=1)
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1
+    )
     job = submitted[0]
 
     await backend._run_inline(backend._lanes["default"], job)

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 export const queryKeys = {
   currentUser: () => ["auth", "me"] as const,
+  productSurfaces: () => ["product-surfaces", "me"] as const,
   creditSummary: () => ["credits", "summary"] as const,
   creditPromotions: () => ["credits", "promotions"] as const,
   creditFilterOptions: () => ["credits", "filter-options"] as const,
@@ -95,6 +96,7 @@ export const queryKeys = {
   narratorVoice: (p: string) => ["projects", p, "narrator-voice"] as const,
   narratorVoiceSources: (p: string) =>
     ["projects", p, "narrator-voice", "sources"] as const,
+  audioBillingQuotes: (p: string) => ["audio-billing-quote", p] as const,
   finalVideo: (p: string, ep: number) =>
     ["projects", p, "episodes", ep, "final-video"] as const,
   tasks: (p?: string) => (p ? (["projects", p, "tasks"] as const) : (["tasks"] as const)),

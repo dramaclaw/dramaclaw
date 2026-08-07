@@ -171,6 +171,35 @@ describe("character voice sample query hooks", () => {
     });
   });
 
+  it("invalidates audio billing quotes after a character voice changes", async () => {
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/projects/demo/characters/%E7%A7%A6/voice-samples/default/upload",
+        () =>
+          HttpResponse.json({
+            ok: true,
+            data: { slot: "default", path: "voice_default.wav" },
+          }),
+      ),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    const { result } = renderHook(
+      () => useUploadCharacterVoiceSample("demo", "秦"),
+      { wrapper: wrapperWithClient(qc) },
+    );
+
+    result.current.mutate({
+      slot: "default",
+      file: new File(["voice"], "voice.wav"),
+    });
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.audioBillingQuotes("demo"),
+    });
+  });
+
   it("posts recorded data URLs to the record endpoint", async () => {
     let body: unknown = null;
     server.use(

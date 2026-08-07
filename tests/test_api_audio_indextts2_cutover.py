@@ -182,6 +182,7 @@ async def test_audio_generate_route_dispatches_indextts2(monkeypatch, tmp_path):
     assert calls == [
         {
             "ctx": ctx,
+            "product_surface": "mainline",
             "task_type": "audio_generation_indextts2",
             "episode": 3,
             "payload": {
@@ -194,6 +195,51 @@ async def test_audio_generate_route_dispatches_indextts2(monkeypatch, tmp_path):
             },
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_audio_generate_route_does_not_enqueue_when_voice_file_is_missing(
+    monkeypatch, tmp_path
+):
+    from novelvideo.api.routes import generation
+    from novelvideo.api.schemas import TTSGenerateRequest
+
+    calls = []
+    _patch_generation_celery(monkeypatch, generation, tmp_path, _FakeStore())
+
+    async def fake_plan(**_kwargs):
+        return (
+            [],
+            [
+                "Beat 02 解说声线缺失：项目解说人声线已配置，"
+                "但声线文件无法读取，请重新上传或检查项目存储"
+            ],
+            0,
+        )
+
+    monkeypatch.setattr(generation, "_audio_generation_plan", fake_plan)
+    monkeypatch.setattr(
+        generation,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=_fake_enqueue(calls)),
+    )
+
+    response = await generation.generate_audio(
+        project="demo",
+        episode_num=3,
+        body=TTSGenerateRequest(mode="redo_selected", beat_numbers=[2]),
+        user={"username": "alice"},
+    )
+
+    assert response == {
+        "ok": False,
+        "code": "voice_prereq_required",
+        "error": (
+            "Beat 02 解说声线缺失：项目解说人声线已配置，"
+            "但声线文件无法读取，请重新上传或检查项目存储"
+        ),
+    }
+    assert calls == []
 
 
 def test_audio_generate_http_route_dispatches_indextts2(monkeypatch, tmp_path):
@@ -290,6 +336,7 @@ async def test_audio_billing_quote_uses_server_planned_quantity(monkeypatch, tmp
         "model": "mainline.beat_audio_generation",
         "params": generation._audio_billing_payload([2, 4], billable_chars=9),
         "quantity": 2,
+        "product_surface": "mainline",
         "user_id": "user_1",
     }
 
@@ -319,6 +366,7 @@ async def test_single_beat_audio_route_dispatches_indextts2(monkeypatch, tmp_pat
     assert calls == [
         {
             "ctx": ctx,
+            "product_surface": "mainline",
             "task_type": "audio_generation_indextts2",
             "episode": 3,
             "payload": {
@@ -472,15 +520,20 @@ async def test_seedance2_single_video_passes_prepared_config_and_duration(
         "pricing_kind": "video",
         "pricing_model": "seedance-2.0-fast",
         "pricing_model_selection": "huimeng_seedance-2.0-fast",
-        "pricing_params": {"resolution": "720p"},
+        "pricing_params": {"resolution": "720p", "video_input": "none"},
         "pricing_quantity": 11,
         "pricing_metrics": {
             "call_count": 1,
             "item_count": 1,
             "duration_seconds": 11,
+            "output_duration_seconds": 11,
+            "input_video_duration_ms": 0,
+            "input_video_billed_seconds": 0,
         },
         "resolution": "720p",
         "video_backend": "huimeng_seedance-2.0-fast",
+        "video_input_present": False,
+        "input_video_duration_seconds": 0.0,
     }
 
 

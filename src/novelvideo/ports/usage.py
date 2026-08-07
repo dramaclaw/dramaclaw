@@ -30,6 +30,7 @@ class UsageMeter(Protocol):
         *,
         user_id: str,
         feature_key: str,
+        product_surface: str,
         project_id: str = "",
         resource_kind: str = "",
         task_id: str = "",

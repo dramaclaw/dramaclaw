@@ -8,6 +8,12 @@ type AudioWaveformPlayerProps = {
   durationMs?: number | null;
   /** 元数据加载后回传真实时长(毫秒)。 */
   onLoadedDuration?: (ms: number) => void;
+  /**
+   * 播放态变化回调。播放态是本组件的内部 state,而画布的 LOD 换壳决策发生在
+   * 节点组件之外(withLodShell),读不到,所以要往外抛一份。卸载时保证补一次
+   * false,避免留下陈旧的「播放中」标记。
+   */
+  onPlayingChange?: (playing: boolean) => void;
 };
 
 // 模块级波形峰值缓存:同一 src 只解码一次。decodeAudioData 开销不小,
@@ -75,6 +81,7 @@ export function AudioWaveformPlayer({
   src,
   durationMs,
   onLoadedDuration,
+  onPlayingChange,
 }: AudioWaveformPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -88,6 +95,24 @@ export function AudioWaveformPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [peaksVersion, setPeaksVersion] = useState(0);
   const [hovered, setHovered] = useState(false);
+
+  // ---- 播放态外抛 ----------------------------------------------------------
+  // 回调走 ref:调用方常传内联箭头函数,直接进依赖会让下面的 effect 每次渲染
+  // 重跑,把卸载兜底的 false 误发出去。这个 effect 必须声明在下面那个之前,
+  // 同一次提交里 ref 才是新的。
+  const onPlayingChangeRef = useRef(onPlayingChange);
+  useEffect(() => {
+    onPlayingChangeRef.current = onPlayingChange;
+  }, [onPlayingChange]);
+  useEffect(() => {
+    onPlayingChangeRef.current?.(isPlaying);
+    if (!isPlaying) return;
+    // 播放中被卸载(视口裁剪 / LOD 换壳)时 <audio> 不会派发 pause 事件,
+    // 这里补一次 false,否则外部会留下永久的「播放中」标记。
+    return () => {
+      onPlayingChangeRef.current?.(false);
+    };
+  }, [isPlaying]);
 
   // ---- 解码波形峰值 --------------------------------------------------------
   useEffect(() => {

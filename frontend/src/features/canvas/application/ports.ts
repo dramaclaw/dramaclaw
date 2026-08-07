@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { XYPosition } from '@xyflow/react';
 
+import type { FreezoneJobRef } from '@/api/ops';
 import type {
   CanvasEdge,
   CanvasNode,
@@ -67,6 +68,14 @@ export interface GenerateImagePayload {
   aspectRatio: string;
   referenceImages?: string[];
   extraParams?: Record<string, unknown>;
+  /**
+   * 后台「媒体模型」声明的动态参数取值，原样作为 `model_params` 提交，由后端
+   * `media_model_request_schema` 按目录声明校验。
+   *
+   * 与 `extraParams` 分开：那个是前端静态注册表的老结构，网关只从里面读 quality，
+   * 其余键一律丢弃 —— 目录参数塞进去等于白填。
+   */
+  modelParams?: Record<string, unknown>;
   capabilityId?: string;
   /** Triggering node id, forwarded so the backend records per-node history. */
   nodeId?: string;
@@ -82,13 +91,31 @@ export interface GenerateImagePayload {
   >;
 }
 
+/**
+ * submitGenerateImageJob 的返回值。
+ *
+ * 两个 id 的生命周期完全不同,不能只留一个:
+ * - `jobId` 是 gateway 的进程内 Map 键,只服务 Canvas.tsx 那个轮询循环,刷新即失效;
+ * - `ref` 是后端任务句柄,落到节点上（见 generationTaskDescriptor）才是刷新后
+ *   resumeNodeGeneration 找回结果的唯一线索。
+ *
+ * 早先这里只回 jobId,于是脱离监听后除了重新提交别无他法——擦除/重绘那条路径
+ * 一直是对的（见 regenerateFreezoneRedrawNode）,这里补齐口径。
+ */
+export interface SubmittedImageJob {
+  jobId: string;
+  ref: FreezoneJobRef;
+}
+
 export interface AiGateway {
   setApiKey: (provider: string, apiKey: string) => Promise<void>;
   generateImage: (payload: GenerateImagePayload) => Promise<string>;
-  submitGenerateImageJob: (payload: GenerateImagePayload) => Promise<string>;
+  submitGenerateImageJob: (payload: GenerateImagePayload) => Promise<SubmittedImageJob>;
   getGenerateImageJob: (jobId: string) => Promise<{
     job_id: string;
-    status: 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found';
+    // 'detached': the front-end stopped following the task; it is NOT a
+    // failure and must never be rendered as one (see TaskPollTimeoutError).
+    status: 'queued' | 'running' | 'succeeded' | 'failed' | 'detached' | 'not_found';
     result?: string | null;
     error?: string | null;
   }>;

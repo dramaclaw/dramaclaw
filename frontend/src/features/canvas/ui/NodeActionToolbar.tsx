@@ -118,7 +118,8 @@ import {
   uploadFreezoneImage,
 } from "@/api/ops";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
-import { awaitTaskCompletion } from "@/api/tasks";
+import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
+import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
 import { normalizeVideoStoryRows } from "@/features/canvas/application/videoStoryNormalizer";
 import { readUrl } from "@/lib/url-params";
 import { sanitizeStoryboardText } from "@/features/canvas/application/storyboardText";
@@ -1770,7 +1771,7 @@ export const NodeActionToolbar = memo(
                       projectId,
                       { sourceUrl: videoUrl },
                     );
-                    const completed = await awaitTaskCompletion(ref.task_key, projectId);
+                    const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
                     console.info(
                       "[audio-separate] task completed",
                       completed.result,
@@ -1979,7 +1980,18 @@ export const NodeActionToolbar = memo(
                     );
                     addEdge(node.id, silentNodeId);
                   } catch (error) {
-                    console.error("[audio-separate] failed", error);
+                    // 脱离监听 ≠ 分离失败。音视频分离不落节点句柄（结果是两个
+                    // 新节点，没有承载 taskKey 的宿主），所以这里只能明确告诉
+                    // 用户任务还在后台跑、结果去任务中心取，而不是静默收场。
+                    if (isTaskPollTimeoutError(error)) {
+                      console.warn("[audio-separate] detached from a still-running job", {
+                        taskKey: error.taskKey,
+                        idleMs: error.idleMs,
+                      });
+                      notifyTaskStillRunning(t);
+                    } else {
+                      console.error("[audio-separate] failed", error);
+                    }
                   } finally {
                     updateNodeData(node.id, { isSeparatingAv: false });
                   }

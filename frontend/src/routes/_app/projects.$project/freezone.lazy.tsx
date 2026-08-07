@@ -100,6 +100,7 @@ function FreezoneProjectRoute() {
           message={globalError?.message ?? ""}
           details={globalError?.details}
           copyText={globalError?.copyText}
+          variant={globalError?.variant}
           onClose={() => setGlobalError(null)}
         />
       </div>

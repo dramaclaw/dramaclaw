@@ -12,6 +12,7 @@ import binascii
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -257,7 +258,11 @@ from novelvideo.freezone.video_node import (
     normalize_video_resolution_for_backend,
     resolve_freezone_video_backend,
     summarize_omni_reference_counts,
+    validate_omni_reference_audio_durations,
     validate_omni_reference_limits,
+    MAX_OMNI_REFERENCE_AUDIO_SECONDS,
+    MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+    MIN_OMNI_REFERENCE_AUDIO_SECONDS,
 )
 from novelvideo.models import CharacterIdentity, beat_scene_id
 from novelvideo.project_config import (
@@ -280,6 +285,7 @@ from novelvideo.task_identity import (
     task_config_scope,
     task_state_key,
 )
+from novelvideo.video_billing import probe_total_video_duration_seconds
 from novelvideo.task_state import get_task_manager
 from novelvideo.utils.background_anchor import copy_to_beat_selected_background
 from novelvideo.utils.document_parsers import count_billable_text_chars
@@ -371,6 +377,20 @@ async def _start_or_enqueue_freezone_video_gen(
         freezone_video_generate_task_billing,
     )
 
+    video_input_paths = [
+        str(item.get("path") or "").strip()
+        for item in reference_items
+        if str(item.get("type") or "").strip().lower() == "video"
+        and str(item.get("path") or "").strip()
+    ]
+    try:
+        input_video_duration_seconds = await probe_total_video_duration_seconds(
+            video_input_paths
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            400, f"unable to read reference video duration: {exc}"
+        ) from exc
     billing = freezone_video_generate_task_billing(
         {
             "video_backend": backend,
@@ -378,6 +398,8 @@ async def _start_or_enqueue_freezone_video_gen(
             "pricing_quantity": duration_seconds,
             "operation": gen_mode or "textToVideo",
             "generate_audio": generate_audio,
+            "video_input_present": bool(video_input_paths),
+            "input_video_duration_seconds": input_video_duration_seconds,
             **({"catalog_id": catalog_id} if catalog_id else {}),
         }
     )
@@ -409,6 +431,7 @@ async def _start_or_enqueue_freezone_video_gen(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type="freezone_video_gen",
             queue_kind="video",
             episode=0,
@@ -464,6 +487,7 @@ async def _start_or_enqueue_freezone_image_to_3gs(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="world",
             episode=0,
@@ -540,6 +564,7 @@ async def _start_or_enqueue_freezone_gen_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type="freezone_gen",
             queue_kind="default",
             episode=0,
@@ -1170,6 +1195,7 @@ async def _start_or_enqueue_mainline_sketch_from_context_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="default",
             episode=int(episode),
@@ -1356,6 +1382,7 @@ async def _start_or_enqueue_mainline_frame_from_context_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="default",
             episode=int(episode),
@@ -1594,6 +1621,7 @@ async def _start_or_enqueue_standalone_frame_from_context_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="default",
             episode=0,
@@ -1641,6 +1669,7 @@ async def _start_or_enqueue_mainline_direct_sketch_task(
     scope = _director_control_scope(int(episode), int(beat))
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="freezone",
         task_type=task_type,
         queue_kind="default",
         episode=int(episode),
@@ -1698,6 +1727,7 @@ async def _start_or_enqueue_mainline_director_control_sketch_job(
     job_id = _new_job_id()
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="freezone",
         task_type=task_type,
         queue_kind="default",
         episode=int(episode),
@@ -1763,6 +1793,7 @@ async def _start_or_enqueue_mainline_beat_sketch_task(
     )
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="freezone",
         task_type=task_type,
         queue_kind="default",
         episode=int(episode),
@@ -1807,6 +1838,7 @@ async def _start_or_enqueue_mainline_scene_360_candidate_job(
     quality: str | None,
     canvas_id: str | None,
     node_id: str | None,
+    catalog_id: str | None = None,
     task_display: dict[str, str] | None = None,
 ) -> dict:
     return await _start_or_enqueue_mainline_scene_360_task(
@@ -1821,6 +1853,7 @@ async def _start_or_enqueue_mainline_scene_360_candidate_job(
         quality=quality,
         canvas_id=canvas_id,
         node_id=node_id,
+        catalog_id=catalog_id,
         auto_commit=False,
         task_display=task_display,
     )
@@ -1839,6 +1872,7 @@ async def _start_or_enqueue_mainline_scene_360_task(
     quality: str | None,
     canvas_id: str | None,
     node_id: str | None,
+    catalog_id: str | None = None,
     auto_commit: bool = True,
     task_display: dict[str, str] | None = None,
 ) -> dict:
@@ -1876,10 +1910,15 @@ async def _start_or_enqueue_mainline_scene_360_task(
             ),
             "size": image_size or MAINLINE_SCENE_360_IMAGE_SIZE,
             "quality": quality or "medium",
+            # 画布报价时带了目录身份就必须原样传下来，否则前端按目录规则报价、
+            # 后端按旧的 image_selection 规则扣费，两边价格对不上。
+            **({"catalog_id": catalog_id} if catalog_id else {}),
+            **({"pricing_model": resolved_model} if catalog_id else {}),
         },
     )
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="freezone",
         task_type=task_type,
         queue_kind="world",
         episode=0,
@@ -1943,6 +1982,8 @@ async def _start_or_enqueue_freezone_edit_job(
     model_id: str | None = None,
     catalog_id: str | None = None,
     gen_mode: str | None = None,
+    model_params: dict[str, Any] | None = None,
+    request_schema: dict[str, Any] | None = None,
     task_display: dict[str, str] | None = None,
     billing_feature_key: str = "",
     billing_operation: str = "",
@@ -1994,6 +2035,7 @@ async def _start_or_enqueue_freezone_edit_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type="freezone_edit",
             queue_kind="default",
             episode=0,
@@ -2014,6 +2056,10 @@ async def _start_or_enqueue_freezone_edit_job(
                 "model_id": model_id or "",
                 "catalog_id": catalog_id or "",
                 "gen_mode": gen_mode or "",
+                # 目录动态参数与它的 schema 一起下发给 runner；schema 是 runner
+                # 把参数写进网关请求体（requestPath）的唯一依据，只带值没有用。
+                **({"model_params": model_params} if model_params else {}),
+                **({"request_schema": request_schema} if request_schema else {}),
                 **({"billing": billing} if billing else {}),
                 **display_payload,
             },
@@ -2107,6 +2153,7 @@ async def _start_or_enqueue_freezone_edit_path(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="default",
             episode=0,
@@ -2174,6 +2221,7 @@ async def _start_or_enqueue_freezone_mask_edit_path(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="default",
             episode=0,
@@ -2230,6 +2278,7 @@ async def _enqueue_or_start_freezone_video_analysis(
         )
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind="ffmpeg" if task_type != "freezone_analyze" else "default",
             episode=0,
@@ -2273,6 +2322,7 @@ async def _enqueue_or_start_freezone_media_job(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="freezone",
             task_type=task_type,
             queue_kind=queue_kind,
             episode=0,
@@ -2307,6 +2357,7 @@ async def _enqueue_freezone_background_job(
 ) -> dict:
     queued = await get_task_backend().enqueue_project_task(
         ctx,
+        product_surface="freezone",
         task_type=task_type,
         queue_kind=queue_kind,
         episode=0,
@@ -2324,7 +2375,6 @@ async def _enqueue_freezone_background_job(
 
 
 logger = logging.getLogger("novelvideo.api.freezone")
-
 router = APIRouter()
 
 FrameReviewReviewer = Callable[[str], str | Awaitable[str]]
@@ -2348,7 +2398,24 @@ MAINLINE_SKETCH_IMAGE_SIZE = "1K"
 MAINLINE_SKETCH_IMAGE_QUALITY = "low"
 MAINLINE_FRAME_IMAGE_SIZE = "1K"
 MAINLINE_SCENE_360_IMAGE_SIZE = "2K"
+_IMAGE_SIZE_TIERS = ("512", "1K", "2K", "3K", "4K")
+_IMAGE_SIZE_TIER_BY_CASEFOLD = {tier.casefold(): tier for tier in _IMAGE_SIZE_TIERS}
 _SKILL_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_.:\-]{1,128}$")
+
+
+def _cap_mainline_scene_360_image_size(requested: str | None) -> str:
+    """360 全景取 min(前端档位, 2K)。
+
+    上限保留：主线 360 slot 一直按 2K 产出，4K 只是徒增成本。
+    但低于上限的档位必须原样透传 —— 画布面板按媒体模型目录里那一档报价，
+    目录只给 1K 的模型如果被抬到 2K，报价与执行、乃至与网关能力都对不上。
+    """
+    value = _IMAGE_SIZE_TIER_BY_CASEFOLD.get((requested or "").strip().casefold())
+    if value is None:
+        return MAINLINE_SCENE_360_IMAGE_SIZE
+    if _IMAGE_SIZE_TIERS.index(value) > _IMAGE_SIZE_TIERS.index(MAINLINE_SCENE_360_IMAGE_SIZE):
+        return MAINLINE_SCENE_360_IMAGE_SIZE
+    return value
 
 
 def _canvas_events_dir(project_dir: Path) -> Path:
@@ -4379,6 +4446,23 @@ async def freezone_scene_360(
     scene_id = _infer_scene_id_from_master_path(base_path, project_dir)
     if not scene_id:
         raise HTTPException(400, "could not infer scene_id from reference_url")
+    # 与 /freezone/gen 同一口径：EE 里目录是权威的，模型和目录身份都要在目录里
+    # 对得上才放行。原来这条路由直接采信 body —— 客户端可以随便报一个便宜的
+    # catalog_id 配一个贵的 model，报价按前者、执行按后者。
+    _schema, _params, catalog_entry = await _resolve_catalog_request(
+        "image",
+        body.catalog_id or body.model,
+        None,
+        mode="image_to_image",
+    )
+    # 只取模型：这条老路由的 provider 是 scene_360_builder 那边按环境变量解析的
+    # （`resolve_scene_360_image_provider`），不走网关那套 provider/model 组合，
+    # 所以这里必须发裸 apiModel，不能带 provider 前缀。
+    _catalog_provider, catalog_model = _catalog_image_execution_selection(
+        catalog_entry,
+        requested_provider=None,
+        requested_model=body.model,
+    )
     kwargs = {
         "ctx": ctx,
         "project_dir": project_dir,
@@ -4386,9 +4470,14 @@ async def freezone_scene_360(
         "description": None,
         "master_url": body.reference_url,
         "reverse_url": body.reverse_reference_url,
-        "model": body.model or FREEZONE_DEFAULT_IMAGE_MODEL,
-        "image_size": MAINLINE_SCENE_360_IMAGE_SIZE,
+        "model": catalog_model or body.model or FREEZONE_DEFAULT_IMAGE_MODEL,
+        # 画布面板按所选模型实际支持的档位报价并把它发下来；这里在 2K 上限内
+        # 原样使用，否则「报价 1K、执行 2K」，媒体模型目录配的分辨率在这条路由
+        # 等于没生效。
+        "image_size": _cap_mainline_scene_360_image_size(body.image_size),
         "quality": body.quality,
+        # 计费身份以目录条目为准，不采信 body —— 它直接决定按哪条目录规则扣费。
+        "catalog_id": _catalog_entry_id(catalog_entry) or body.catalog_id or None,
         "canvas_id": body.canvas_id or None,
         "node_id": body.node_id or None,
         "task_display": {
@@ -4932,6 +5021,23 @@ async def freezone_template_edit(
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
         project, user
     )
+    # 与 /freezone/edit 同一口径：EE 里目录是权威的，模型和目录身份都要在目录里
+    # 对得上才放行。原来这条路由直接采信 body —— 客户端可以随便报一个便宜的
+    # catalog_id 配一个贵的 model，报价按前者、执行按后者。
+    _schema, _params, catalog_entry = await _resolve_catalog_request(
+        "image",
+        body.catalog_id or body.model,
+        None,
+        mode="image_to_image",
+    )
+    # provider 也一并取目录条目的：这条路由和 /freezone/edit 共用
+    # `_start_or_enqueue_freezone_edit_job`，它会按 provider/model 走网关，
+    # 目录里配的 openrouter 模型再按默认 provider 路由就送错家了。
+    execution_provider, execution_model = _catalog_image_execution_selection(
+        catalog_entry,
+        requested_provider=None,
+        requested_model=body.model,
+    )
     return await _start_or_enqueue_freezone_edit_job(
         ctx=ctx,
         username=username,
@@ -4945,9 +5051,13 @@ async def freezone_template_edit(
         image_size=body.image_size or "2K",
         camera=body.camera,
         style=body.style,
-        provider=None,
-        model=body.model or FREEZONE_DEFAULT_IMAGE_MODEL,
+        provider=execution_provider,
+        model=execution_model or body.model or FREEZONE_DEFAULT_IMAGE_MODEL,
         quality=body.quality or "medium",
+        # 画布报价时带了目录身份就必须原样传下来，否则前端按目录规则报价、
+        # 后端按旧的 image_selection 规则扣费，两边价格对不上。
+        # 身份以目录条目为准，不采信 body —— 它直接决定按哪条目录规则扣费。
+        catalog_id=_catalog_entry_id(catalog_entry) or body.catalog_id or None,
         billing_feature_key="freezone.image_grid",
         billing_operation=body.mode,
     )
@@ -6819,25 +6929,97 @@ def _start_freezone_image_reverse_prompt_task(
 
 
 async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | None:
-    """Use the optional EE catalog while keeping CE's static model list intact."""
+    """Use EE catalog or the CE-local catalog when custom NewAPI is active."""
     from novelvideo.ports.registry import PortNotRegistered, get_port
 
     try:
         catalog = get_port("media_model_catalog")
     except PortNotRegistered:
+        from novelvideo.model_gateway_settings import (
+            MODE_CUSTOM,
+            MODE_HYBRID,
+            get_ce_media_model_catalog,
+            get_effective_newapi_config,
+            get_official_media_model_catalog,
+        )
+        from novelvideo.shared.runtime_env import is_ce_effective
+
+        if is_ce_effective():
+            mode = get_effective_newapi_config().mode
+            if mode == MODE_CUSTOM:
+                return _merge_media_model_catalog_defaults(
+                    _static_media_model_catalog(media_type),
+                    get_ce_media_model_catalog(media_type, include_disabled=True),
+                )
+            if mode == MODE_HYBRID:
+                local = get_ce_media_model_catalog(
+                    media_type,
+                    provider="comfyui",
+                    include_disabled=True,
+                )
+                return _merge_media_model_catalog_defaults(
+                    _static_media_model_catalog(media_type),
+                    local,
+                )
+            return get_official_media_model_catalog(media_type)
         return None
     return await catalog.list_models(media_type)
 
 
+def _static_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
+    from novelvideo.model_gateway_settings import get_official_media_model_catalog
+
+    return get_official_media_model_catalog(media_type)
+
+
+def _merge_media_model_catalog_defaults(
+    defaults: list[dict[str, Any]], configured: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Overlay CE mappings on the existing mainline capabilities."""
+    merged: list[dict[str, Any]] = []
+    consumed: set[int] = set()
+    for base in defaults:
+        base_id = _catalog_entry_id(base)
+        match_index = next(
+            (
+                index
+                for index, item in enumerate(configured)
+                if index not in consumed
+                and base_id
+                and _catalog_entry_id(item) == base_id
+            ),
+            None,
+        )
+        if match_index is None:
+            merged.append(base)
+            continue
+        consumed.add(match_index)
+        override = configured[match_index]
+        if override.get("enabled") is not False:
+            merged.append({**base, **override})
+    merged.extend(
+        item
+        for index, item in enumerate(configured)
+        if index not in consumed and item.get("enabled") is not False
+    )
+    return merged
+
+
 def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
     """Return new and legacy identifiers accepted at the API boundary."""
-    return {
+    identifiers = {
         str(entry.get("catalogId") or ""),
         str(entry.get("catalog_id") or ""),
         str(entry.get("id") or ""),
         str(entry.get("apiModel") or ""),
+        str(entry.get("api_model") or ""),
         str(entry.get("gatewayModel") or ""),
+        str(entry.get("gateway_model") or ""),
     }
+    aliases = entry.get("aliases")
+    if isinstance(aliases, list):
+        identifiers.update(str(alias) for alias in aliases)
+    return {identifier for identifier in identifiers if identifier}
 
 
 def _catalog_entry_id(entry: dict[str, Any] | None) -> str:
@@ -6966,7 +7148,8 @@ def _require_catalog_video_mode(
 ) -> None:
     normalized = {
         "textToVideo": "text_to_video",
-        "imageToVideo": "first_frame",
+        "firstFrame": "first_frame",
+        "imageToVideo": "image_reference",
         "firstLastFrame": "first_last_frame",
         "imageReference": "image_reference",
         "allReference": "all_reference",
@@ -7004,6 +7187,41 @@ def _catalog_reference_limits(
         "video": _limit("referenceVideoMax", video_default),
         "audio": _limit("referenceAudioMax", audio_default),
     }
+
+
+def _catalog_audio_total_duration_max(capabilities: dict[str, Any] | None) -> float | None:
+    """目录里配的全能参考音频**总时长**上限（秒），没配返回 None。
+
+    与 `_catalog_reference_limits` 同一套「目录优先」的口径，只是这里允许小数
+    （15.2 本身就不是整数）。非正数 / 非数字 / inf / nan 一律当没配——写入侧
+    `media_model_request_schema` 已经挡了这些，但目录条目也可能是那道校验存在之前落的库，
+    读出来再挡一次才不会让 inf 静默关掉整个上限。
+
+    刻意**不在这里兜底**成 15.2：调用方要靠「有没有配」来决定这个模型该不该受管，
+    在这里默默返回 15.2 就分不清「管理员配了 15.2」和「压根没配」。
+    """
+    value = capabilities.get("referenceAudioTotalMaxSeconds") if capabilities else None
+    if type(value) in (int, float) and math.isfinite(value) and value > 0:
+        return float(value)
+    return None
+
+
+async def _probe_reference_audio_seconds(path: str) -> float | None:
+    """ffprobe 读音频时长，读不出返回 None（校验器会跳过这条）。
+
+    不能改用 `utils.media_io.get_audio_duration`：它探测失败时返回 **5.0**，一个正好
+    合法的值，会把兜底变成静默放行。这里要的就是「不知道」和「知道」分得清。
+    """
+    from novelvideo.seedance2_i2v.character_voice_storage import (
+        probe_voice_sample_duration_seconds,
+    )
+    from novelvideo.utils.async_ops import call_blocking
+
+    try:
+        return float(await call_blocking(probe_voice_sample_duration_seconds, path))
+    except Exception as exc:  # ffprobe 缺失 / 文件损坏 / 权限，都只是「测不出」
+        logger.warning("[freezone] reference audio duration probe failed: %s (%s)", path, exc)
+        return None
 
 
 def _catalog_duration_bounds(
@@ -7118,6 +7336,7 @@ async def freezone_mark_detect(
     reservation = await usage_meter.reserve_feature_start_credits(
         user_id=billing_user_id,
         feature_key="freezone.image_mark_detect",
+        product_surface="freezone",
         project_id=billing_project_id,
         resource_kind="image",
         task_type="freezone_image_mark_detect",
@@ -7558,10 +7777,10 @@ async def freezone_video_i2v(
     body: FreezoneImageToVideoRequest,
     user: dict = Depends(get_api_user),
 ):
-    """视频处理：图片参考视频。
+    """视频处理：图片驱动视频。
 
     统一承接：
-    - 单图首帧图生视频
+    - 单图图生视频（单张图片参考，不锁定第一帧）
     - 多图图片参考视频
     """
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
@@ -7575,16 +7794,15 @@ async def freezone_video_i2v(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    requested_mode = body.gen_mode or (
-        "image_reference" if len(body.image_urls) > 1 else "first_frame"
-    )
+    requested_mode = body.gen_mode
+    execution_mode = "image_reference"
     request_schema, model_params, capabilities = await _resolve_catalog_request(
         "video",
         body.model,
         body.model_params,
-        mode=requested_mode,
+        mode=execution_mode,
     )
-    _require_catalog_video_mode(capabilities, requested_mode)
+    _require_catalog_video_mode(capabilities, execution_mode)
 
     reference_limits = _catalog_reference_limits(
         capabilities,
@@ -7594,10 +7812,13 @@ async def freezone_video_i2v(
     )
     if not body.image_urls:
         raise HTTPException(400, "image_urls is required")
-    if len(body.image_urls) > reference_limits["image"]:
+    if requested_mode == "imageToVideo" and len(body.image_urls) != 1:
+        raise HTTPException(400, "imageToVideo requires exactly one image reference")
+    image_limit = 1 if requested_mode == "imageToVideo" else reference_limits["image"]
+    if len(body.image_urls) > image_limit:
         raise HTTPException(
             400,
-            f"this model supports at most {reference_limits['image']} image references",
+            f"this mode supports at most {image_limit} image references",
         )
 
     source_paths = _resolve_url_list(project_dir, list(body.image_urls))
@@ -7615,14 +7836,10 @@ async def freezone_video_i2v(
             "multiple image references currently only support Seedance 2.0 or HappyHorse models",
         )
 
-    reference_mode = requested_mode in {"imageReference", "image_reference"}
-    reference_items = []
-    for idx, path in enumerate(source_paths):
-        if reference_mode:
-            role = "图片参考"
-        else:
-            role = "首帧" if idx == 0 else "图片参考"
-        reference_items.append({"type": "image", "path": path, "role": role})
+    reference_items = [
+        {"type": "image", "path": path, "role": "图片参考"}
+        for path in source_paths
+    ]
     final_prompt = build_freezone_image_to_video_prompt(
         user_prompt=body.prompt,
         camera_template_id=body.camera_template_id,
@@ -7660,7 +7877,7 @@ async def freezone_video_i2v(
             node_id=body.node_id or None,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode=requested_mode,
+            gen_mode=execution_mode,
             model_params=model_params,
             request_schema=request_schema,
         )
@@ -7679,9 +7896,9 @@ async def freezone_video_keyframes(
     body: FreezoneKeyframeVideoRequest,
     user: dict = Depends(get_api_user),
 ):
-    """视频处理：首尾帧视频。
+    """视频处理：关键帧视频。
 
-    接受首帧和尾帧图片；至少需要提供一个。
+    接受仅首帧、首帧+尾帧或仅尾帧；至少需要提供一个。
     """
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
         project, user
@@ -7696,16 +7913,22 @@ async def freezone_video_keyframes(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    if body.first_frame_url and body.last_frame_url:
+        execution_mode = "first_last_frame"
+    elif body.first_frame_url:
+        execution_mode = "first_frame"
+    else:
+        # 目录暂不新增独立 last_frame 能力。仅尾帧仍属于关键帧能力，最终协议只下发
+        # last_frame_image，不把它伪装成首帧。
+        execution_mode = "first_last_frame"
+
     request_schema, model_params, capabilities = await _resolve_catalog_request(
         "video",
         body.model,
         body.model_params,
-        mode=body.gen_mode or "first_last_frame",
+        mode=execution_mode,
     )
-    _require_catalog_video_mode(
-        capabilities,
-        body.gen_mode or "first_last_frame",
-    )
+    _require_catalog_video_mode(capabilities, execution_mode)
     reference_limits = _catalog_reference_limits(
         capabilities,
         image_default=2,
@@ -7727,13 +7950,15 @@ async def freezone_video_keyframes(
     )
     first_path = first_paths[0] if first_paths else ""
     last_path = last_paths[0] if last_paths else ""
+    if body.first_frame_url and not first_path:
+        raise HTTPException(400, "first_frame_url could not be resolved")
+    if body.last_frame_url and not last_path:
+        raise HTTPException(400, "last_frame_url could not be resolved")
 
-    # 只有尾帧时，退化为单帧起始参考；仍保留尾帧语义在 prompt 中。
-    primary_first_path = first_path or last_path
-    reference_items = [
-        {"type": "image", "path": primary_first_path, "role": "首帧" if first_path else "尾帧参考"}
-    ]
-    if last_path and first_path:
+    reference_items = []
+    if first_path:
+        reference_items.append({"type": "image", "path": first_path, "role": "首帧"})
+    if last_path:
         reference_items.append({"type": "image", "path": last_path, "role": "尾帧"})
 
     final_prompt = build_freezone_keyframe_video_prompt(
@@ -7775,7 +8000,7 @@ async def freezone_video_keyframes(
             node_id=body.node_id or None,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode=body.gen_mode or "first_last_frame",
+            gen_mode=execution_mode,
             model_params=model_params,
             request_schema=request_schema,
         )
@@ -7869,6 +8094,54 @@ async def freezone_video_omni_gen(
                 "role": str(item.get("role") or ""),
             }
         )
+
+    # 音频时长兜底。前端也拦一遍（videoModelCapabilities.audioReferenceDurationRejection），
+    # 但那层靠 <audio> 探测，CORS / 超时 / 老画布数据都可能测不出而放行；这里 URL 已经
+    # 落成本地路径，ffprobe 能给出确定答案，是最后一道能在计费前拦下的闸门。
+    #
+    # 只对**已知边界**的模型生效，而且两类边界分开授权：
+    #   - 逐条 1.8~15.2s 是从 Seedance 2.0 的报文里实测出来的，只对它成立；
+    #   - 总时长对**边界已知**的模型是「目录配置与厂商硬顶取小」：管理员可以配得更严，
+    #     但配宽了不会让厂商也跟着放行——给 seedance2 配 60s，3 条 6s 在本地全过、到厂商
+    #     那儿照样 400，正是本 PR 要消灭的那种失败。边界未知的模型没有硬顶可取，直接用
+    #     目录值。
+    # 别把这两类混成一个开关：目录里给别家模型配了 60s 总时长，不代表它的单条也得
+    # 卡在 15.2s —— 那样一条正常的 25s 音频会被我们凭空 400 掉。
+    audio_items = [item for item in reference_items if item["type"] == "audio"]
+    per_clip_bounds_known = is_freezone_seedance2_backend(backend)
+    configured_audio_total = _catalog_audio_total_duration_max(capabilities)
+    if per_clip_bounds_known:
+        audio_total_max = min(
+            configured_audio_total or MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+            MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+        )
+    else:
+        audio_total_max = configured_audio_total
+    if audio_items and (per_clip_bounds_known or audio_total_max is not None):
+        # 并发探测：ffprobe 单条有 20s 超时，串行 await 会把 3 条参考音频叠成最长 60s 的
+        # 请求耗时。gather 之后最坏就是一个超时的墙钟，也就顺带成了整体上限。
+        probed_seconds = await asyncio.gather(
+            *(_probe_reference_audio_seconds(item["path"]) for item in audio_items)
+        )
+        probed = [
+            (Path(item["path"]).name or f"audio{index}", seconds)
+            for index, (item, seconds) in enumerate(
+                zip(audio_items, probed_seconds), start=1
+            )
+        ]
+        try:
+            validate_omni_reference_audio_durations(
+                probed,
+                min_seconds=(
+                    MIN_OMNI_REFERENCE_AUDIO_SECONDS if per_clip_bounds_known else None
+                ),
+                max_seconds=(
+                    MAX_OMNI_REFERENCE_AUDIO_SECONDS if per_clip_bounds_known else None
+                ),
+                total_max_seconds=audio_total_max,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     final_prompt = build_freezone_omni_video_prompt(
         user_prompt=body.prompt,
@@ -8497,10 +8770,10 @@ async def freezone_edit(
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
         project, user
     )
-    _, _, catalog_entry = await _resolve_catalog_request(
+    request_schema, model_params, catalog_entry = await _resolve_catalog_request(
         "image",
         body.model_id or body.model,
-        None,
+        body.model_params,
         mode=body.gen_mode,
     )
     execution_provider, execution_model = _catalog_image_execution_selection(
@@ -8529,6 +8802,8 @@ async def freezone_edit(
         model_id=_catalog_entry_id(catalog_entry) or body.model_id or None,
         catalog_id=_catalog_entry_id(catalog_entry) or None,
         gen_mode=body.gen_mode or None,
+        model_params=model_params,
+        request_schema=request_schema,
         billing_feature_key="freezone.image_edit",
         billing_operation=body.gen_mode or "edit",
     )

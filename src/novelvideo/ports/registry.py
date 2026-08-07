@@ -30,6 +30,7 @@ _EE_REQUIRED_PORTS = (
     "task_envelope_consumer",
     "cancellation_store",
     "lifecycle",
+    "product_surface_access",
     "model_credentials",
     "authz",
     "egress",

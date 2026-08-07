@@ -188,6 +188,7 @@ async def _enqueue_episode_asset_planner(
     task_scope = _episode_asset_task_scope(asset_kind, episode_num)
     queued = await get_task_backend().enqueue_project_task(
         resolved.ctx,
+        product_surface="mainline",
         task_type=task_type,
         queue_kind="default",
         episode=episode_num,
@@ -265,6 +266,7 @@ async def plan_episodes(project: str, body: EpisodePlanRequest, user: dict = Dep
             return novel_import_required_response()
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="build_episodes",
             queue_kind="default",
             episode=0,
@@ -478,6 +480,7 @@ async def plan_episode_identities(
     if resolved.ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             resolved.ctx,
+            product_surface="mainline",
             task_type="identity_planner",
             queue_kind="default",
             episode=episode_num,

@@ -485,6 +485,13 @@ class FreezoneEditRequest(BaseModel):
         default=None, description="可选：注册表模型 id，用于还原节点时回填 model"
     )
     gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    model_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "媒体模型目录声明的动态参数取值。与 /freezone/gen 同一口径 —— "
+            "带参考图的图编辑走这条路由，少了这个字段目录参数在图编辑侧等于没生效"
+        ),
+    )
 
 
 class FreezoneSketchFromContextRequest(BaseModel):
@@ -546,6 +553,10 @@ class FreezoneScene360Request(BaseModel):
     model: str = Field(
         default=FREEZONE_DEFAULT_IMAGE_MODEL,
         description=f"图片模型名，默认 {FREEZONE_DEFAULT_IMAGE_MODEL}",
+    )
+    catalog_id: str = Field(
+        default="",
+        description="媒体模型目录条目 id。前端按目录条目报价时必须一并下发，否则计费口径与报价不一致",
     )
     quality: Optional[str] = Field(default="medium", description="图片画质档位，默认 medium")
 
@@ -771,6 +782,10 @@ class FreezoneTemplateEditRequest(BaseModel):
     model: str = Field(
         default=FREEZONE_DEFAULT_IMAGE_MODEL,
         description=f"图片模型名，默认 {FREEZONE_DEFAULT_IMAGE_MODEL}",
+    )
+    catalog_id: str = Field(
+        default="",
+        description="媒体模型目录条目 id。前端按目录条目报价时必须一并下发，否则计费口径与报价不一致",
     )
     quality: Optional[str] = Field(default="medium", description="图片画质档位，默认 medium")
 
@@ -1045,13 +1060,13 @@ class FreezoneImageToVideoRequest(BaseModel):
     """图片参考视频请求。
 
     统一承接图生视频和图片参考视频：
-    - 1 张图片：首帧图生视频
+    - 图生视频：1 张图片作为整体画面参考，不锁定第一帧
     - 2-9 张图片：多图图片参考视频
     """
 
     image_urls: list[str] = Field(
         default_factory=list,
-        description="图片参考静态地址列表，支持 1-9 张。第一张默认作为主参考图/首帧参考图",
+        description="图片参考静态地址列表。图生视频只允许 1 张，图片参考模式按模型上限接收多张",
     )
     prompt: str = Field(default="", description="用户补充视频描述，可为空")
     camera_template_id: Optional[str] = Field(
@@ -1090,14 +1105,19 @@ class FreezoneImageToVideoRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    gen_mode: Literal["imageToVideo", "imageReference"] = Field(
+        description=(
+            "必填：imageToVideo 表示单图整体参考；imageReference 表示按目录上限接收图片参考。"
+            "两者执行时都使用 image_reference 协议，不代表首帧。"
+        )
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class FreezoneKeyframeVideoRequest(BaseModel):
-    """首尾帧视频请求。
+    """关键帧视频请求。
 
-    接受首帧 / 尾帧两个输入，至少需要提供一个。
+    接受仅首帧、首帧+尾帧或仅尾帧，至少需要提供一个槽位。
     """
 
     first_frame_url: Optional[str] = Field(
@@ -1145,7 +1165,6 @@ class FreezoneKeyframeVideoRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 

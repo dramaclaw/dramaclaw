@@ -311,6 +311,7 @@ async def generate_script(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="script_writer",
             queue_kind="default",
             episode=episode_num,
@@ -431,6 +432,7 @@ async def generate_beat_video_prompt(
     if resolved.ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             resolved.ctx,
+            product_surface="mainline",
             task_type="beat_video_prompt",
             queue_kind="default",
             episode=episode_num,
@@ -529,6 +531,7 @@ async def generate_seedance2_prompt(
     reservation = await usage_meter.reserve_feature_start_credits(
         user_id=_requester_user_id_for_billing(resolved, user),
         feature_key=SEEDANCE2_PROMPT_FEATURE_KEY,
+        product_surface="mainline",
         project_id=project_id,
         resource_kind="script",
         task_type=SEEDANCE2_PROMPT_TASK_TYPE,

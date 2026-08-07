@@ -160,3 +160,21 @@ export function useFreezoneImageModels(
     () => getNoProjectState(),
   );
 }
+
+/**
+ * 后台**确实**一个模型都没配（接口成功返回空列表），不是拉取失败兜底、
+ * 也不是还在加载。
+ *
+ * 为 true 时调用方必须禁用提交：后端 `_resolve_catalog_request` 对权威空目录
+ * 直接 409，让用户拿一个前端硬编码的模型点下去再收一个报错是最糟的体验。
+ * 三个状态必须一起看 —— 只判 `models.length === 0` 会把「还在加载」也算成
+ * 「没配」，面板会闪一下不可用。
+ *
+ * 只吃 models/isLoading/isFallback 三个字段，`useFreezoneVideoModels` 的返回值
+ * 形状相同，视频目录也用这一条判据。
+ */
+export function isAuthoritativeEmptyCatalog(
+  result: Pick<UseFreezoneImageModelsResult, "models" | "isLoading" | "isFallback">,
+): boolean {
+  return !result.isLoading && !result.isFallback && result.models.length === 0;
+}

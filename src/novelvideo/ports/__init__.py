@@ -76,6 +76,10 @@ def get_release_feed_port():
         return NoOpReleaseFeed()
 
 
+def get_product_surface_access():
+    return get_port("product_surface_access")
+
+
 def get_model_credentials():
     return get_port("model_credentials")
 
@@ -103,6 +107,7 @@ __all__ = [
     "get_egress_port",
     "get_lifecycle_port",
     "get_model_credentials",
+    "get_product_surface_access",
     "get_project_access",
     "get_project_registry",
     "get_provider_instrumentation",

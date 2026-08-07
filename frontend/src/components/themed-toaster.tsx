@@ -33,7 +33,7 @@ export function ThemedToaster() {
           minWidth: 0,
         } as CSSProperties,
         className:
-          "!min-h-0 !rounded-sm !border !border-white/10 !bg-white/[0.06] !px-4 !py-2 !text-sm !text-white/80 !shadow-none",
+          "!min-h-0 !rounded-sm !border !border-white/10 !bg-zinc-900/90 !px-4 !py-2 !text-sm !text-white/90 !shadow-none !backdrop-blur-xl",
       }}
     />
   );

@@ -686,7 +686,12 @@ async def test_inline_cancel_is_cooperative_runner_stop(tmp_path):
 
     register_project_task_runner(task_type, runner)
 
-    queued = await backend.enqueue_project_task(ctx, task_type=task_type, episode=1)
+    queued = await backend.enqueue_project_task(
+        ctx,
+        task_type=task_type,
+        product_surface="mainline",
+        episode=1,
+    )
     assert await asyncio.to_thread(runner_started.wait, 3) is True
     await backend.cancel_project_task(ctx, queued.task_state)
     assert (
@@ -731,6 +736,11 @@ async def test_inline_backend_runs_sync_core_outside_active_event_loop(monkeypat
         fake_run_project_task_core_sync,
     )
 
-    await backend.enqueue_project_task(ctx, task_type="m07_no_asyncio_run_in_loop", episode=1)
+    await backend.enqueue_project_task(
+        ctx,
+        task_type="m07_no_asyncio_run_in_loop",
+        product_surface="mainline",
+        episode=1,
+    )
 
     assert await asyncio.to_thread(observed.wait, 3) is True

@@ -8,9 +8,12 @@ import pytest
 @pytest.fixture(autouse=True)
 def restore_ports_registry_globals():
     from novelvideo.ports import registry
+    from novelvideo.ports.product_surface_access import LocalProductSurfaceAccess
 
     ports_snapshot = dict(registry._PORTS)
     bootstrapped_snapshot = registry._BOOTSTRAPPED
+    if "product_surface_access" not in registry._PORTS:
+        registry.register_port("product_surface_access", LocalProductSurfaceAccess())
     try:
         yield
     finally:

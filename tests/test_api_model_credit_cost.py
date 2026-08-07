@@ -16,8 +16,10 @@ def patch_quote(monkeypatch, model_credits, *, expected_model: str, cost: int) -
             model: str,
             params=None,
             quantity=1,
+            product_surface="mainline",
+            user_id="",
         ):
-            del kind, params, quantity
+            del kind, params, quantity, product_surface, user_id
             assert model == expected_model
             return CreditQuote(total_cost=cost, display=str(cost))
 
@@ -42,10 +44,23 @@ def patch_quote_expect(
         pricing_kind = expected_params.get("pricing_kind")
         pricing_quantity = int(expected_params.get("pricing_quantity") or 1)
         if pricing_kind == "video":
+            input_video_duration = float(
+                expected_params.get("input_video_duration_seconds") or 0
+            )
+            input_video_billed_seconds = (
+                int(input_video_duration)
+                if expected_params.get("video_input_present")
+                else 0
+            )
             metrics = {
                 "call_count": 1,
                 "item_count": 1,
                 "duration_seconds": pricing_quantity,
+                "output_duration_seconds": (
+                    pricing_quantity - input_video_billed_seconds
+                ),
+                "input_video_duration_ms": round(input_video_duration * 1000),
+                "input_video_billed_seconds": input_video_billed_seconds,
             }
         elif pricing_kind == "audio" and "billable_chars" in expected_params:
             metrics = {
@@ -83,7 +98,10 @@ def patch_quote_expect(
             model: str,
             params=None,
             quantity=1,
+            product_surface="mainline",
+            user_id="",
         ):
+            del user_id
             assert kind == expected_kind
             assert model == expected_model
             assert params == expected_with_metrics
@@ -105,7 +123,10 @@ def patch_quote_display_mismatch(cost: int, display: str) -> None:
             model: str,
             params=None,
             quantity=1,
+            product_surface="mainline",
+            user_id="",
         ):
+            del product_surface, user_id
             return CreditQuote(total_cost=cost, display=display)
 
     register_port("credit_quote", FakeCreditQuotePort())
@@ -152,6 +173,7 @@ async def test_generation_credit_cost_route_returns_promotion_display(monkeypatc
     class DiscountQuotePort:
         async def generation_credit_quote(self, **kwargs):
             assert kwargs["user_id"] == "usr_1"
+            assert kwargs["product_surface"] == "mainline"
             return CreditQuote(
                 total_cost=9,
                 display="9",
@@ -176,6 +198,29 @@ async def test_generation_credit_cost_route_returns_promotion_display(monkeypatc
         "discount_amount": 3,
         "promotion": {"id": "promo_1", "name": "模型七五折"},
     }
+
+
+@pytest.mark.asyncio
+async def test_canvas_quote_passes_freezone_product_surface():
+    from novelvideo.api.routes import model_credits
+    from novelvideo.ports.credit_quote import CreditQuote
+    from novelvideo.ports.registry import register_port
+
+    class CapturingQuotePort:
+        async def generation_credit_quote(self, **kwargs):
+            assert kwargs["product_surface"] == "freezone"
+            return CreditQuote(total_cost=12, display="12")
+
+    register_port("credit_quote", CapturingQuotePort())
+
+    result = await model_credits.get_generation_credit_cost(
+        kind="feature",
+        surface="canvas",
+        value="mainline.sketch_regen",
+        user={"user_id": "usr_1"},
+    )
+
+    assert result["data"]["cost"] == 12
 
 
 @pytest.mark.asyncio
@@ -921,7 +966,7 @@ async def test_generation_credit_cost_route_keeps_video_params_and_quantity(
         model_credits,
         expected_kind="video",
         expected_model="seedance-1.0-pro-fast",
-        expected_params={"resolution": "720p"},
+        expected_params={"resolution": "720p", "video_input": "none"},
         expected_quantity=5,
         cost=25,
     )
@@ -952,8 +997,10 @@ async def test_generation_credit_cost_route_prices_video_feature_by_backend_and_
             "pricing_kind": "video",
             "pricing_model": "seedance-1.0-pro-fast",
             "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
-            "pricing_params": {"resolution": "720p"},
+            "pricing_params": {"resolution": "720p", "video_input": "none"},
             "pricing_quantity": 5,
+            "video_input_present": False,
+            "input_video_duration_seconds": 0.0,
             "resolution": "720p",
             "video_backend": "newapi_seedance-1.0-pro-fast",
         },
@@ -1010,6 +1057,36 @@ def test_video_feature_billing_ignores_client_pricing_model_override():
     assert billing["pricing_quantity"] == 12
 
 
+def test_video_feature_billing_combines_output_with_total_input_duration():
+    from novelvideo.api.routes.model_credits import (
+        _video_backend_feature_billing_params,
+    )
+
+    billing = _video_backend_feature_billing_params(
+        {
+            "video_backend": "newapi_seedance-2.0",
+            "resolution": "720p",
+            "pricing_quantity": 12,
+            "video_input_present": True,
+            "input_video_duration_seconds": 11.95,
+        }
+    )
+
+    assert billing["pricing_params"] == {
+        "resolution": "720p",
+        "video_input": "present",
+    }
+    assert billing["pricing_quantity"] == 23
+    assert billing["pricing_metrics"] == {
+        "call_count": 1,
+        "item_count": 1,
+        "duration_seconds": 23,
+        "output_duration_seconds": 12,
+        "input_video_duration_ms": 11950,
+        "input_video_billed_seconds": 11,
+    }
+
+
 @pytest.mark.asyncio
 async def test_generation_credit_cost_route_prices_freezone_video_generate_by_feature(
     monkeypatch,
@@ -1029,8 +1106,10 @@ async def test_generation_credit_cost_route_prices_freezone_video_generate_by_fe
             "generate_audio": True,
             "pricing_kind": "video",
             "pricing_model": "seedance-1.0-pro-fast",
-            "pricing_params": {"resolution": "1080p"},
+            "pricing_params": {"resolution": "1080p", "video_input": "none"},
             "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
+            "video_input_present": False,
+            "input_video_duration_seconds": 0.0,
         },
         expected_quantity=1,
         cost=48,
@@ -1088,6 +1167,9 @@ async def test_generation_credit_cost_route_prices_video_batch_by_calls_and_tota
         "call_count": 3,
         "item_count": 3,
         "duration_seconds": 15,
+        "output_duration_seconds": 15,
+        "input_video_duration_ms": 0,
+        "input_video_billed_seconds": 0,
     }
     assert captured["quantity"] == 3
 

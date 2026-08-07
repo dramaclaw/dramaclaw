@@ -30,6 +30,12 @@ import { MyBuddyCompanion } from "@/features/companion/MyBuddyCompanion";
 import { AccessoryUnlockPrompt } from "@/features/rewards/AccessoryUnlockPrompt";
 import { VersionUpdateDialog } from "@/features/version-update/VersionUpdateDialog";
 import { PikoInspirationStation } from "@/features/piko-mini-game/PikoInspirationStation";
+import { ProductSurfaceUnavailable } from "@/components/product-surface-unavailable";
+import {
+  surfaceAccess,
+  useProductSurfaces,
+  type ProductSurfaceCode,
+} from "@/lib/queries/product-surfaces";
 
 export function shouldRedirectMissingUsernameToLogin(): boolean {
   return authRequired();
@@ -59,6 +65,17 @@ function AppLayout() {
     return `/projects/${match[1]}/${match[2] ?? ""}`;
   })();
   const isAssistantPage = /^\/projects\/[^/]+\/assistant$/.test(pathname);
+  const productSurfaces = useProductSurfaces(Boolean(username && validated));
+  const requiredSurfaceCode: ProductSurfaceCode | null = routeProject
+    ? isAssistantPage
+      ? "assistant"
+      : /^\/projects\/[^/]+\/freezone$/.test(pathname)
+        ? "freezone"
+        : "mainline"
+    : null;
+  const requiredSurface = requiredSurfaceCode
+    ? surfaceAccess(productSurfaces.data, requiredSurfaceCode)
+    : undefined;
 
   // Keep viewport-relative panel sizes (AI assistant width, task panel height)
   // within the current window. Runs once on mount to fix persisted values that
@@ -147,7 +164,11 @@ function AppLayout() {
     }
   }, [canonicalProject, navigate, projectSummaries.isLoading, routeProject]);
 
-  if (routeProject && projectSummaries.isLoading) {
+  if (
+    routeProject &&
+    (projectSummaries.isLoading ||
+      (Boolean(username && validated) && productSurfaces.isPending))
+  ) {
     return (
       <div className="flex h-dvh items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
@@ -196,7 +217,18 @@ function AppLayout() {
                     ease: "easeOut",
                   }}
                 >
-                  <Outlet />
+                  {requiredSurfaceCode && productSurfaces.error ? (
+                    <ProductSurfaceUnavailable
+                      message="暂时无法确认功能开放状态，请稍后重试。"
+                      retry={() => void productSurfaces.refetch()}
+                    />
+                  ) : requiredSurfaceCode && !requiredSurface ? (
+                    <ProductSurfaceUnavailable message="功能开放配置不完整，请联系管理员。" />
+                  ) : requiredSurface && !requiredSurface.available ? (
+                    <ProductSurfaceUnavailable message={requiredSurface.unavailable_message} />
+                  ) : (
+                    <Outlet />
+                  )}
                 </motion.div>
               </main>
             </div>

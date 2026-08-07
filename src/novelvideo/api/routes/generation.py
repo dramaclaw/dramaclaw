@@ -1919,6 +1919,7 @@ async def compose_video(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="compose_episode",
             queue_kind="ffmpeg",
             episode=episode_num,
@@ -2116,6 +2117,7 @@ async def generate_sketches(
             )
             queued = await get_task_backend().enqueue_project_task(
                 ctx,
+                product_surface="mainline",
                 task_type="sketch_grid_generation",
                 queue_kind="default",
                 episode=episode_num,
@@ -2333,16 +2335,12 @@ async def audio_generation_billing_quote(
             billable_chars=billable_chars,
         ),
         "quantity": quantity,
+        "product_surface": "mainline",
     }
-    try:
-        quote = await get_credit_quote().generation_credit_quote(
-            **quote_args,
-            user_id=str(user.get("id") or user.get("user_id") or ""),
-        )
-    except TypeError as exc:
-        if "user_id" not in str(exc):
-            raise
-        quote = await get_credit_quote().generation_credit_quote(**quote_args)
+    quote = await get_credit_quote().generation_credit_quote(
+        **quote_args,
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
     return {
         "ok": True,
         "data": {
@@ -2410,6 +2408,7 @@ async def generate_audio(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="audio_generation_indextts2",
             queue_kind="default",
             episode=episode_num,
@@ -2507,16 +2506,12 @@ async def global_optimize_video_billing_quote(
             }
         },
         "quantity": quantity,
+        "product_surface": "mainline",
     }
-    try:
-        quote = await get_credit_quote().generation_credit_quote(
-            **quote_args,
-            user_id=str(user.get("id") or user.get("user_id") or ""),
-        )
-    except TypeError as exc:
-        if "user_id" not in str(exc):
-            raise
-        quote = await get_credit_quote().generation_credit_quote(**quote_args)
+    quote = await get_credit_quote().generation_credit_quote(
+        **quote_args,
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
     return {
         "ok": True,
         "data": {
@@ -2592,6 +2587,7 @@ async def global_optimize_video(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="global_optimize_video",
             queue_kind="default",
             episode=episode_num,
@@ -2763,6 +2759,7 @@ async def regenerate_grid(
         )
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="grid_regenerate",
             queue_kind="default",
             episode=episode_num,
@@ -3075,6 +3072,7 @@ async def render_execute(
             )
             queued = await get_task_backend().enqueue_project_task(
                 ctx,
+                product_surface="mainline",
                 task_type="selected_regen",
                 queue_kind="default",
                 episode=episode_num,
@@ -3204,6 +3202,7 @@ async def regenerate_beats(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="selected_regen",
             queue_kind="default",
             episode=episode_num,
@@ -3304,6 +3303,7 @@ async def regenerate_sketches(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="sketch_regen",
             queue_kind="default",
             episode=episode_num,
@@ -4120,6 +4120,7 @@ async def director_control_to_sketch(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="director_control_to_sketch",
             queue_kind="default",
             episode=int(episode_num),
@@ -4449,6 +4450,7 @@ async def generate_missing_manual_sketches(
         if ctx is not None:
             await get_task_backend().enqueue_project_task(
                 ctx,
+                product_surface="mainline",
                 task_type="sketch_regen",
                 queue_kind="default",
                 episode=episode_num,
@@ -4755,6 +4757,7 @@ async def generate_single_video(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="single_video",
             queue_kind="video",
             episode=episode_num,
@@ -5315,6 +5318,7 @@ async def regenerate_beat_audio(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="audio_generation_indextts2",
             queue_kind="default",
             episode=episode_num,
@@ -6026,6 +6030,7 @@ async def detect_sketch_identities(
     reservation = await usage_meter.reserve_feature_start_credits(
         user_id=_requester_user_id_for_billing(resolved, user),
         feature_key=AI_IDENTITY_DETECTION_FEATURE_KEY,
+        product_surface="mainline",
         project_id=project_id,
         resource_kind="sketch",
         task_type=AI_IDENTITY_DETECTION_TASK_TYPE,

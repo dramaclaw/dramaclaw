@@ -1,6 +1,7 @@
 """Generation credit cost lookup for the main application."""
 
 import json
+import math
 import os
 from typing import Literal
 
@@ -23,6 +24,11 @@ GenerationCreditCostKind = Literal[
     "feature",
 ]
 GenerationCreditSurface = Literal["supertale", "canvas"]
+
+
+def _credit_product_surface(surface: GenerationCreditSurface) -> str:
+    """Map quote rendering context to the product entry that owns the request."""
+    return "freezone" if surface == "canvas" else "mainline"
 
 
 def _display_credit_cost(cost: int) -> str:
@@ -354,7 +360,11 @@ def _image_selection_billing_params(
 
 def _video_backend_billing_params(params: dict) -> dict:
     resolution = str(params.get("resolution") or "").strip()
-    return {"resolution": resolution} if resolution else {}
+    has_video_input = params.get("video_input_present") is True
+    result = {"video_input": "present" if has_video_input else "none"}
+    if resolution:
+        result["resolution"] = resolution
+    return result
 
 
 def _video_backend_feature_billing_params(params: dict) -> dict:
@@ -367,12 +377,26 @@ def _video_backend_feature_billing_params(params: dict) -> dict:
     # resolved server-side so callers cannot pair cheap pricing with another
     # provider model.
     pricing_model = _video_backend_cost_model(video_backend)
-    pricing_quantity = normalize_video_duration_for_backend(
+    output_duration = normalize_video_duration_for_backend(
         video_backend,
         params.get("pricing_quantity"),
     )
+    has_video_input = params.get("video_input_present") is True
+    try:
+        input_video_duration = max(
+            float(params.get("input_video_duration_seconds") or 0),
+            0.0,
+        )
+    except (TypeError, ValueError):
+        input_video_duration = 0.0
+    input_video_billed_seconds = (
+        math.floor(input_video_duration) if has_video_input else 0
+    )
+    pricing_quantity = output_duration + input_video_billed_seconds
     return {
         **params,
+        "video_input_present": has_video_input,
+        "input_video_duration_seconds": input_video_duration,
         "pricing_kind": "video",
         "pricing_model": pricing_model,
         "pricing_params": _video_backend_billing_params(params),
@@ -381,6 +405,9 @@ def _video_backend_feature_billing_params(params: dict) -> dict:
             "call_count": 1,
             "item_count": 1,
             "duration_seconds": pricing_quantity,
+            "output_duration_seconds": output_duration,
+            "input_video_duration_ms": round(input_video_duration * 1000),
+            "input_video_billed_seconds": input_video_billed_seconds,
         },
         "pricing_model_selection": video_backend,
     }
@@ -831,6 +858,12 @@ def _default_billing_params(
             if str(resolved.get("pricing_kind") or "").strip() == "video":
                 per_call_duration = max(int(metrics.get("duration_seconds") or 0), 1)
                 metrics["duration_seconds"] = per_call_duration * action_count
+                for key in (
+                    "output_duration_seconds",
+                    "input_video_duration_ms",
+                    "input_video_billed_seconds",
+                ):
+                    metrics[key] = max(int(metrics.get(key) or 0), 0) * action_count
         return {**resolved, "pricing_metrics": metrics}
 
     if surface == "canvas":
@@ -893,18 +926,12 @@ async def get_generation_credit_cost(
             image_role=_clean_query_value(image_role),
         ),
         "quantity": _clean_quantity(quantity),
+        "product_surface": _credit_product_surface(surface),
     }
-    try:
-        quote = await get_credit_quote().generation_credit_quote(
-            **quote_args,
-            user_id=str(user.get("id") or user.get("user_id") or ""),
-        )
-    except TypeError as exc:
-        if "user_id" not in str(exc):
-            raise
-        # One-release compatibility for third-party quote ports compiled
-        # against the previous protocol.
-        quote = await get_credit_quote().generation_credit_quote(**quote_args)
+    quote = await get_credit_quote().generation_credit_quote(
+        **quote_args,
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
     original_cost = (
         quote.total_cost
         if quote.original_total_cost is None

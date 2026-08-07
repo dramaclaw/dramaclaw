@@ -7,20 +7,12 @@ import io
 import os
 import re
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.output import NativeOutput
 from PIL import Image as PILImage
-
-
-class BeatVideoStrategy(BaseModel):
-    """单个 Beat 的视频策略。"""
-
-    beat_number: int
-    video_mode: Literal["first_frame", "keyframe"]
-    prompt: str = Field(description="中文运动提示词，50-90字")
 
 
 class ReviewResult(BaseModel):
@@ -81,8 +73,7 @@ You are a cinematic motion director. Given sketch panels and character color map
 - ⚠️ **Dialogue beats**: if a Beat is marked as dialogue, describe the speaking action (lips moving, gestures while talking). The dialogue text will be appended by the system — only describe the physical action in the prompt.
 
 ## Output Format
-Output a strict JSON array with no explanation or markdown. Prompt values MUST be in Chinese:
-[{"beat_number": 1, "video_mode": "first_frame", "prompt": "镜头缓缓推近..."}, ...]
+Output the Chinese motion prompt directly. No JSON, explanation, or markdown.
 """
 
 
@@ -165,7 +156,10 @@ def _format_color_mapping_descriptor(info: dict) -> str:
 
 def create_global_video_reviewer_agent(language: str = "en") -> Agent:
     """创建全局视频审核 Agent。"""
-    from novelvideo.config import get_superpower_pydantic_model
+    from novelvideo.config import (
+        get_newapi_structured_output_model_settings,
+        get_superpower_pydantic_model,
+    )
 
     model = get_superpower_pydantic_model(
         feature_provider_env="GLOBAL_VIDEO_PROVIDER",
@@ -175,26 +169,16 @@ def create_global_video_reviewer_agent(language: str = "en") -> Agent:
         model,
         system_prompt=GLOBAL_VIDEO_REVIEWER_INSTRUCTIONS_EN,
         output_type=NativeOutput(ReviewResult),
+        model_settings=get_newapi_structured_output_model_settings(),
         name="Video Prompt Reviewer",
     )
 
 
 def create_global_video_optimizer_agent(language: str = "en") -> Agent:
     """创建全局视频优化 Agent。"""
-    from novelvideo.config import (
-        get_newapi_text_pydantic_model,
-        get_newapi_text_pydantic_model_settings,
-    )
+    from novelvideo.config import get_newapi_text_pydantic_model
 
     legacy_model = os.environ.get("GLOBAL_VIDEO_MODEL", "").strip()
-    model_settings = get_newapi_text_pydantic_model_settings(
-        "GLOBAL_VIDEO_OPTIMIZER_THINKING_LEVEL",
-        "low",
-    )
-    agent_kwargs = {}
-    if model_settings is not None:
-        agent_kwargs["model_settings"] = model_settings
-
     return Agent(
         get_newapi_text_pydantic_model(
             "GLOBAL_VIDEO_OPTIMIZER_MODEL",
@@ -202,9 +186,8 @@ def create_global_video_optimizer_agent(language: str = "en") -> Agent:
             capability="text.generate.agent",
         ),
         system_prompt=GLOBAL_VIDEO_OPTIMIZER_INSTRUCTIONS_EN,
-        output_type=NativeOutput(list[BeatVideoStrategy]),
+        output_type=str,
         name="Global Video Motion Director",
-        **agent_kwargs,
     )
 
 
@@ -365,15 +348,13 @@ class GlobalVideoPromptOptimizer:
 {beat_context}
 {dialogue_hint}{continuity_section}
 ## Requirements
-1. Use first_frame mode
-2. Treat the sketch frame and Start Frame as video t=0; describe only what happens after it
-3. Use Motion Prompt as the authoritative forward action chain
-4. If Motion Prompt starts with an action that contradicts the visible t=0 state, begin from the first compatible action instead
-5. Generate the motion prompt in Chinese (中文)
-6. Use character appearance descriptions, never use character names
-7. Output beat_number as {bn}
+1. Treat the sketch frame and Start Frame as video t=0; describe only what happens after it
+2. Use Motion Prompt as the authoritative forward action chain
+3. If Motion Prompt starts with an action that contradicts the visible t=0 state, begin from the first compatible action instead
+4. Generate the motion prompt in Chinese (中文)
+5. Use character appearance descriptions, never use character names
 
-Output JSON array with one element directly."""
+Output the Chinese motion prompt directly. No JSON, explanation, or markdown."""
 
         # Load and compress the sketch image
         if not os.path.exists(sketch_image_path):
@@ -393,16 +374,14 @@ Output JSON array with one element directly."""
         if not response.output:
             raise RuntimeError(f"Beat {bn}: AI 返回空内容")
 
-        strategies: list[BeatVideoStrategy] = response.output
-        if not strategies:
-            raise RuntimeError(f"Beat {bn}: AI 返回空数组")
+        prompt = response.output.strip()
+        if not prompt:
+            raise RuntimeError(f"Beat {bn}: AI 返回空内容")
 
-        # Take the first (and should be only) result
-        s = strategies[0]
         result = {
             "beat_number": bn,
             "video_mode": "first_frame",
-            "prompt": s.prompt.strip(),
+            "prompt": prompt,
         }
 
         # Append dialogue line if applicable
@@ -748,19 +727,11 @@ Output a JSON array of objects, one per panel:
 def _create_identity_detector_agent() -> Agent:
     """创建 AI 角色颜色识别 Agent。"""
     from novelvideo.config import (
+        get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
-        get_newapi_text_pydantic_model_settings,
     )
 
     legacy_model = os.environ.get("GLOBAL_VIDEO_MODEL", "").strip()
-    model_settings = get_newapi_text_pydantic_model_settings(
-        "GLOBAL_VIDEO_IDENTITY_DETECTOR_THINKING_LEVEL",
-        "low",
-    )
-    agent_kwargs = {}
-    if model_settings is not None:
-        agent_kwargs["model_settings"] = model_settings
-
     return Agent(
         get_newapi_text_pydantic_model(
             "GLOBAL_VIDEO_IDENTITY_DETECTOR_MODEL",
@@ -768,9 +739,9 @@ def _create_identity_detector_agent() -> Agent:
             capability="text.generate.agent",
         ),
         system_prompt=AI_IDENTITY_DETECTOR_INSTRUCTIONS,
+        model_settings=get_newapi_structured_output_model_settings(),
         output_type=NativeOutput(list[BeatIdentity]),
         name="角色颜色识别",
-        **agent_kwargs,
     )
 
 

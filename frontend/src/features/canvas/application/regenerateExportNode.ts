@@ -5,7 +5,7 @@ import {
   submitFreezoneRedraw,
   type FreezoneRedrawAspectRatio,
 } from '@/api/ops';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { canvasAiGateway } from './canvasServices';
@@ -67,7 +67,7 @@ async function regenerateFreezoneRedrawNode(
       imageSize: request.imageSize,
     });
     useCanvasStore.getState().updateNodeData(nodeId, generationTaskDescriptor(ref));
-    const completed = await awaitTaskCompletion(ref.task_key, project);
+    const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
     const directUrl = completed.result?.['output_url'] as string | undefined;
     let url = directUrl;
     if (!url) {
@@ -85,6 +85,18 @@ async function regenerateFreezoneRedrawNode(
       generationTaskJobId: null,
     });
   } catch (error) {
+    // Detached ≠ failed. The job may still land, and the descriptor written
+    // above is the only way back to it — keep isGenerating and the handle so
+    // resumeNodeGeneration re-attaches on the next load. Clearing them here
+    // would strand a result the backend still produces.
+    if (isTaskPollTimeoutError(error)) {
+      console.warn('[regenerate] detached from a still-running redraw', {
+        nodeId,
+        taskKey: error.taskKey,
+        idleMs: error.idleMs,
+      });
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     console.error('[regenerate] freezone redraw failed', error);
     useCanvasStore.getState().updateNodeData(nodeId, {
@@ -141,10 +153,12 @@ export async function regenerateExportImageNode(nodeId: string): Promise<void> {
   });
 
   try {
-    const jobId = await canvasAiGateway.submitGenerateImageJob({ ...payload, nodeId });
+    const { jobId, ref } = await canvasAiGateway.submitGenerateImageJob({ ...payload, nodeId });
     store.updateNodeData(nodeId, {
       generationJobId: jobId,
       generationClientSessionId: CURRENT_RUNTIME_SESSION_ID,
+      // 与上面的重绘路径同口径：句柄落到节点上，脱离监听后刷新才接得回来。
+      ...generationTaskDescriptor(ref),
     });
   } catch (error) {
     const resolved = resolveErrorContent(error, '图像生成失败');

@@ -10,8 +10,8 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from novelvideo.config import (
+    get_newapi_structured_output_model_settings,
     get_newapi_text_pydantic_model,
-    get_newapi_text_pydantic_model_settings,
 )
 from novelvideo.model_gateway_runtime import model_gateway_output_retries
 from novelvideo.models import (
@@ -654,10 +654,7 @@ class AssetCompiler:
                 capability="text.generate.agent",
             ),
             system_prompt=BASE_SCENE_RECONCILE_PROMPT,
-            model_settings=get_newapi_text_pydantic_model_settings(
-                "EPISODE_SCENE_RECONCILE_THINKING_LEVEL",
-                "low",
-            ),
+            model_settings=get_newapi_structured_output_model_settings(),
             output_type=EpisodeBaseSceneReconcileOutput,
             output_retries=model_gateway_output_retries(2),
             name="基础场景资产校对员",
@@ -968,10 +965,7 @@ class AssetCompiler:
                 capability="text.generate.agent",
             ),
             system_prompt=NARRATED_SCENE_PROMPT,
-            model_settings=get_newapi_text_pydantic_model_settings(
-                "NARRATED_SCENE_ASSET_THINKING_LEVEL",
-                "low",
-            ),
+            model_settings=get_newapi_structured_output_model_settings(),
             output_type=NarratedScenePlanOutput,
             output_retries=model_gateway_output_retries(2),
             validation_context={
@@ -1054,10 +1048,7 @@ class AssetCompiler:
                 capability="text.generate.agent",
             ),
             system_prompt=DERIVED_SCENE_PROMPT,
-            model_settings=get_newapi_text_pydantic_model_settings(
-                "EPISODE_SCENE_PLANNER_THINKING_LEVEL",
-                "low",
-            ),
+            model_settings=get_newapi_structured_output_model_settings(),
             output_type=BlockDerivedSceneOutput,
             output_retries=model_gateway_output_retries(2),
             name="派生场景分析师",
@@ -1244,10 +1235,7 @@ class AssetCompiler:
                 capability="text.generate.agent",
             ),
             system_prompt=BLOCK_PROP_PROMPT,
-            model_settings=get_newapi_text_pydantic_model_settings(
-                "EPISODE_PROP_PLANNER_THINKING_LEVEL",
-                "low",
-            ),
+            model_settings=get_newapi_structured_output_model_settings(),
             output_type=BlockPropRequirements,
             output_retries=model_gateway_output_retries(2),
             validation_context={

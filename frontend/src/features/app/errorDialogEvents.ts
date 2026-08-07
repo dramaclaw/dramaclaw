@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+/**
+ * `pending` is for outcomes that are not failures — most notably "the front-end
+ * stopped waiting but the backend job is still running". It keeps the dialog
+ * shell but drops the error semantics (icon, tone, wording).
+ */
+export type GlobalErrorDialogVariant = 'error' | 'pending';
+
 export interface GlobalErrorDialogDetail {
   title: string;
   message: string;
   details?: string;
   copyText?: string;
+  variant?: GlobalErrorDialogVariant;
 }
 
 const OPEN_ERROR_DIALOG_EVENT = 'storyboard:open-error-dialog';

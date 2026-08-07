@@ -288,6 +288,8 @@ async def run_freezone_edit(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     quality: Optional[str] = None,
+    model_params: Optional[dict[str, Any]] = None,
+    request_schema: Optional[dict[str, Any]] = None,
     output_task_type: str = "freezone_edit",
     egress_context: TrustedEgressContext | None = None,
 ) -> Path:
@@ -326,6 +328,11 @@ async def run_freezone_edit(
             model_override=model,
             image_size_override=image_size,
         )
+    # 与 run_freezone_gen 同一口径：目录声明的动态参数按 schema 里的 requestPath
+    # 写进网关请求体。少了这两行，图编辑侧的 model_params 会在这里被丢掉。
+    # 组织支同样要带上——请求作用域凭据只换掉出网身份，不改请求体形状。
+    cfg["newapi_model_params"] = model_params or {}
+    cfg["newapi_request_schema"] = request_schema or {}
     await generate_reference_edit_image(
         prompt=prompt,
         reference_images=refs,
@@ -1315,7 +1322,22 @@ async def run_freezone_video_gen(
             resolution=resolution,
         )
     else:
-        first_image_ref = next((ref for ref in references if ref.type == "image"), None)
+        normalized_mode = {
+            "firstLastFrame": "first_last_frame",
+            "imageToVideo": "image_reference",
+            "imageReference": "image_reference",
+        }.get(str(gen_mode or "").strip(), str(gen_mode or "").strip())
+        if normalized_mode in {"first_frame", "first_last_frame"}:
+            first_image_ref = next(
+                (
+                    ref
+                    for ref in references
+                    if ref.type == "image" and "首帧" in str(ref.role or "")
+                ),
+                None,
+            )
+        else:
+            first_image_ref = next((ref for ref in references if ref.type == "image"), None)
         if (
             (first_image_ref is None or not first_image_ref.path)
             and not str(backend).startswith("huimeng_")
