@@ -29,6 +29,18 @@ DramaClaw manages the official gateway URL. RelayClaw already provides the `DC-*
 
 The official image/video list and its resolutions, aspect ratios, durations, and reference-media capabilities come from the bundled `src/novelvideo/official_media_models.json`.
 
+### Update the official media model catalog
+
+Official and Local + Official Hybrid modes show the current catalog version, model count, and source:
+
+- Click **Check for Updates** to fetch the latest catalog from DramaClaw's official publishing URL and apply it immediately.
+- **Automatically update the official model catalog** is off by default. When enabled, DramaClaw checks once whenever the corresponding settings panel is opened; it does not poll in the background.
+- Downloaded catalogs are stored locally at `state/local/official_media_models.json` and remain active after restart.
+- DramaClaw rejects a remote catalog older than the active version. After an application upgrade, a newer bundled catalog takes precedence over an older local cache.
+- After a successful update, the image and video model lists in the current XiaHua browser session refresh automatically.
+
+Official catalog updates do not change provider channels, model mappings, or capabilities maintained in Custom mode.
+
 To obtain a DC Key, visit <https://relayclaw.cdnfg.com>.
 
 ## Custom mode
