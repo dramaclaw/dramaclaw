@@ -78,14 +78,25 @@ def _default_comfyui_media_model_config(
         for token in str(value or "").strip().lower().replace("-", "_").split("_")
     }
     supported_modes: list[str] = []
-    ratio_options = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
     reference_limits: dict[str, int | bool] = {}
     is_minimax_h3_local = model.strip().lower() == "minimax-h3-local"
+    resolution_options = (
+        ["480p", "768p", "1080p"]
+        if is_minimax_h3_local
+        else ["480p", "640p"]
+    )
+    ratio_options = (
+        ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+        if is_minimax_h3_local
+        else ["1:1", "16:9"]
+    )
     if "t2v" in route_tokens or not route_tokens.intersection({"i2v", "r2v"}):
         supported_modes.append("text_to_video")
     if "i2v" in route_tokens:
-        supported_modes.append(
-            "first_frame" if is_minimax_h3_local else "image_reference"
+        supported_modes.extend(
+            ["first_frame"]
+            if is_minimax_h3_local
+            else ["image_to_video", "image_reference"]
         )
         reference_limits["referenceImageMax"] = 1
     if "r2v" in route_tokens:
@@ -97,7 +108,7 @@ def _default_comfyui_media_model_config(
         }
     return {
         "request": {"endpoint": "video/generations", "parameters": []},
-        "resolutionOptions": ["480p", "768p", "1080p"],
+        "resolutionOptions": resolution_options,
         "ratioOptions": ratio_options,
         "minDuration": 4,
         "maxDuration": 15,

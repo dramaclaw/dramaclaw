@@ -3039,9 +3039,14 @@ function defaultComfyMediaModelConfig(
     ),
   );
   const supportedModes: string[] = [];
-  const ratioOptions = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
   const referenceCapabilities: Record<string, number | boolean> = {};
   const isMiniMaxH3Local = model.trim().toLowerCase() === "minimax-h3-local";
+  const resolutionOptions = isMiniMaxH3Local
+    ? ["480p", "768p", "1080p"]
+    : ["480p", "640p"];
+  const ratioOptions = isMiniMaxH3Local
+    ? ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+    : ["1:1", "16:9"];
   if (
     routeTokens.has("t2v") ||
     (!routeTokens.has("i2v") && !routeTokens.has("r2v"))
@@ -3049,7 +3054,11 @@ function defaultComfyMediaModelConfig(
     supportedModes.push("text_to_video");
   }
   if (routeTokens.has("i2v")) {
-    supportedModes.push(isMiniMaxH3Local ? "first_frame" : "image_reference");
+    supportedModes.push(
+      ...(isMiniMaxH3Local
+        ? ["first_frame"]
+        : ["image_to_video", "image_reference"]),
+    );
     referenceCapabilities.referenceImageMax = 1;
   }
   if (routeTokens.has("r2v")) {
@@ -3067,7 +3076,7 @@ function defaultComfyMediaModelConfig(
     sortOrder: 100,
     config: {
       request: { endpoint: "video/generations", parameters: [] },
-      resolutionOptions: ["480p", "768p", "1080p"],
+      resolutionOptions,
       ratioOptions,
       minDuration: 4,
       maxDuration: 15,
@@ -4467,11 +4476,7 @@ function ProviderChannelRow({
     : "";
   const upstreamPlaceholder = savedKeyPreview || "sk-...";
   const isComfyUI = provider === "comfyui";
-  const hasComfyUIConfig =
-    isComfyUI &&
-    (savedChannel?.configured === true ||
-      Boolean(channel?.baseUrl.trim()) ||
-      Object.keys(readComfyUIWorkflows(channel?.settings ?? {})).length > 0);
+  const hasComfyUIConfig = isComfyUI && savedChannel?.configured === true;
   useEffect(() => {
     if (!upstreamKeyValue) setRevealed(false);
   }, [upstreamKeyValue]);

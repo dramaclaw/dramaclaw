@@ -2085,20 +2085,12 @@ def test_comfyui_provider_channel_writes_workflows_to_newapi(
     assert comfy_mapping["upstreamModel"] == ""
     assert comfy_mapping["mediaType"] == "video"
     assert comfy_mapping["config"]["request"]["endpoint"] == "video/generations"
-    assert comfy_mapping["config"]["resolutionOptions"] == [
-        "480p",
-        "768p",
-        "1080p",
+    assert comfy_mapping["config"]["resolutionOptions"] == ["480p", "640p"]
+    assert comfy_mapping["config"]["ratioOptions"] == ["1:1", "16:9"]
+    assert comfy_mapping["config"]["supportedModes"] == [
+        "image_to_video",
+        "image_reference",
     ]
-    assert comfy_mapping["config"]["ratioOptions"] == [
-        "21:9",
-        "16:9",
-        "4:3",
-        "1:1",
-        "3:4",
-        "9:16",
-    ]
-    assert comfy_mapping["config"]["supportedModes"] == ["image_reference"]
     assert comfy_mapping["config"]["referenceImageMax"] == 1
     assert "humanReview" not in comfy_mapping["config"]
     assert comfy_mapping["config"]["_dcManagedByWorkflow"] is True
