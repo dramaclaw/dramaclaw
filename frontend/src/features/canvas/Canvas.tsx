@@ -1342,6 +1342,19 @@ export function Canvas({
     clearPendingFocus();
   }, [pendingFocusNodeId, nodes, reactFlowInstance, clearPendingFocus]);
 
+  // 低缩放档（10% 之类）下新节点在屏幕上只有几十像素、深色面板贴深色背景，
+  // 创建成功也近乎不可见，用户会以为「没创建上」。所有「凭空新建节点」的入口
+  // 都复用上面的聚焦机制：视口动画拉近到新节点（zoom 提到 ≥0.6），创建即所见、
+  // 且直接可编辑。常用工作缩放下不聚焦，避免打断用户的构图视角。
+  const focusNewNodeIfLowZoom = useCallback(
+    (nodeId: string) => {
+      if (isLowDetailZoom(reactFlowInstance.getZoom())) {
+        requestFocusNode(nodeId);
+      }
+    },
+    [reactFlowInstance, requestFocusNode],
+  );
+
   useEffect(() => {
     const sleep = (delayMs: number) =>
       new Promise<void>((resolve) => {
@@ -2136,13 +2149,7 @@ export function Canvas({
         pendingNodePlacement.initialData,
       );
       setSelectedNode(newNodeId);
-      // 低缩放档下新节点在屏幕上只有几十像素、深色面板贴深色背景，放置成功也
-      // 近乎不可见（用户会以为「没创建上」）。复用资产拖入的聚焦机制：视口动画
-      // 拉近到新节点（zoom 提到 ≥0.6），落点即所见、且直接可编辑。常用工作缩放
-      // 下不聚焦，避免打断用户的构图视角。
-      if (isLowDetailZoom(reactFlowInstance.getZoom())) {
-        requestFocusNode(newNodeId);
-      }
+      focusNewNodeIfLowZoom(newNodeId);
       if (pendingNodePlacement.skill) {
         bindSingleBeatContextInput(newNodeId, pendingNodePlacement.skill);
       }
@@ -2156,9 +2163,9 @@ export function Canvas({
     [
       addNode,
       bindSingleBeatContextInput,
+      focusNewNodeIfLowZoom,
       pendingNodePlacement,
       reactFlowInstance,
-      requestFocusNode,
       scheduleCanvasPersist,
       setSelectedNode,
       triggerPlacementConfirm,
@@ -3140,6 +3147,7 @@ export function Canvas({
         }
       }
 
+      focusNewNodeIfLowZoom(newNodeId);
       scheduleCanvasPersist(0);
       setShowNodeMenu(false);
       setMenuAllowedTypes(undefined);
@@ -3149,6 +3157,7 @@ export function Canvas({
     },
     [
       connectGraphNodes,
+      focusNewNodeIfLowZoom,
       pendingBatchConnectIds,
       pendingConnectStart,
       scheduleCanvasPersist,
@@ -3268,9 +3277,10 @@ export function Canvas({
     (type: CanvasNodeType) => {
       const newNodeId = addNode(type, spawnAtViewportCenter());
       setSelectedNode(newNodeId);
+      focusNewNodeIfLowZoom(newNodeId);
       scheduleCanvasPersist(0);
     },
-    [addNode, scheduleCanvasPersist, setSelectedNode, spawnAtViewportCenter],
+    [addNode, focusNewNodeIfLowZoom, scheduleCanvasPersist, setSelectedNode, spawnAtViewportCenter],
   );
 
   const handleQuickAddSkill = useCallback(
@@ -3281,10 +3291,18 @@ export function Canvas({
         displayName: skill.display_name,
       } as Partial<CanvasNodeData>);
       setSelectedNode(newNodeId);
+      focusNewNodeIfLowZoom(newNodeId);
       bindSingleBeatContextInput(newNodeId, skill);
       scheduleCanvasPersist(0);
     },
-    [addNode, bindSingleBeatContextInput, scheduleCanvasPersist, setSelectedNode, spawnAtViewportCenter],
+    [
+      addNode,
+      bindSingleBeatContextInput,
+      focusNewNodeIfLowZoom,
+      scheduleCanvasPersist,
+      setSelectedNode,
+      spawnAtViewportCenter,
+    ],
   );
 
   // 历史资产弹窗「使用」：把该资产作为新节点生成到视口中心（复用素材落点的 spawnAssetNode）。
