@@ -215,6 +215,45 @@ describe("strict organization access snapshot", () => {
       .not.toContain("UPSTREAM-SECRET-GATEWAY-STATE");
   });
 
+  // gateway_mismatch is a value this build knows, so it must survive parsing
+  // instead of being flattened into the unknown sentinel: the paired denial
+  // reason is what tells the member an admin has to rebind, and the two have to
+  // stay consistent with each other in the cache.
+  it("keeps a known gateway mismatch state instead of flattening it to unknown", async () => {
+    const body = {
+      ...authoritativeOrgMe,
+      capabilities: { ...authoritativeOrgMe.capabilities, start_model_tasks: false },
+      gateway_key: { state: "gateway_mismatch", key_version: 3 },
+      denial_reason: "ORG_CREDENTIAL_GATEWAY_MISMATCH",
+    };
+    server.use(http.get("*/api/v1/org/me", () => HttpResponse.json(body)));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook(() => useOrgMe(), { wrapper: wrapperFor(client) });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.gateway_key)
+      .toEqual({ state: "gateway_mismatch", key_version: 3 });
+    expect(result.current.data?.denial_reason).toBe("ORG_CREDENTIAL_GATEWAY_MISMATCH");
+    expect(result.current.data?.capabilities.start_model_tasks).toBe(false);
+    expect(client.getQueryData(queryKeys.orgMe())).toEqual(result.current.data);
+  });
+
+  // The mismatch row always carries the version of the credential it belongs
+  // to, so a versionless one is as malformed as a versionless active row.
+  it.each([null, 0, -1, "3"])(
+    "rejects a gateway mismatch without a positive version %j",
+    async (keyVersion) => {
+      const body = {
+        ...authoritativeOrgMe,
+        capabilities: { ...authoritativeOrgMe.capabilities, start_model_tasks: false },
+        gateway_key: { state: "gateway_mismatch", key_version: keyVersion },
+        denial_reason: "ORG_CREDENTIAL_GATEWAY_MISMATCH",
+      };
+      server.use(http.get("*/api/v1/org/me", () => HttpResponse.json(body)));
+      await expect(getOrgMe()).rejects.toMatchObject({ code: "ORG_REQUEST_FAILED" });
+    },
+  );
+
   it("accepts an unavailable capability snapshot for an unknown gateway state", async () => {
     const body = {
       ...authoritativeOrgMe,
@@ -259,6 +298,7 @@ describe("strict organization access snapshot", () => {
     "ORG_SUSPENDED",
     "ORG_CREDENTIAL_MISSING",
     "ORG_CREDENTIAL_DISABLED",
+    "ORG_CREDENTIAL_GATEWAY_MISMATCH",
     "ORG_AUTHZ_STALE",
   ])("accepts allowlisted denial reason %s", async (denialReason) => {
     const body = {

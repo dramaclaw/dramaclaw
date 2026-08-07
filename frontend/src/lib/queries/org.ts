@@ -55,6 +55,7 @@ const ORG_ACCESS_DENIAL_REASONS = new Set([
   "ORG_SUSPENDED",
   "ORG_CREDENTIAL_MISSING",
   "ORG_CREDENTIAL_DISABLED",
+  "ORG_CREDENTIAL_GATEWAY_MISMATCH",
   "ORG_AUTHZ_STALE",
 ]);
 const GATEWAY_ZONED_DATETIME =
@@ -134,7 +135,10 @@ function parseGatewaySummary(value: unknown): OrgMe["gateway_key"] | null {
   }
   const hasValidVersion = Number.isSafeInteger(value.key_version) &&
     Number(value.key_version) > 0;
-  if (value.state === "active" || value.state === "no_active") {
+  // gateway_mismatch is the active row seen from a deployment pointed at a
+  // different gateway, so it carries a real version like active/no_active.
+  if (value.state === "active" || value.state === "no_active" ||
+    value.state === "gateway_mismatch") {
     return hasValidVersion
       ? { state: value.state, key_version: Number(value.key_version) }
       : null;

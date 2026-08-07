@@ -24,6 +24,8 @@ const labels: Record<string, string> = {
   "organization.access.reasons.ORG_CREDENTIAL_DISABLED": "Organization key unavailable",
   "organization.access.reasons.ORG_MEMBERSHIP_INACTIVE": "Membership inactive",
   "organization.access.reasons.ORG_SUSPENDED": "Organization suspended",
+  "organization.access.reasons.ORG_CREDENTIAL_GATEWAY_MISMATCH":
+    "Gateway mismatch, ask an admin to rebind",
   "organization.access.reasons.ORG_AUTHZ_STALE": "Access changed",
   "organization.access.reasons.generic": "Access is currently unavailable",
   "organization.access.available": "Model tasks available",
@@ -83,6 +85,21 @@ describe("access unavailable", () => {
     );
     expect(document.body.textContent).not.toMatch(/credential_id|provider|raw key/i);
     expect(screen.queryByText(/view existing|export existing/i)).not.toBeInTheDocument();
+  });
+
+  // A key bound against another gateway has a specific remedy (an admin has to
+  // rebind it), so it must not fall through to the generic copy the way a value
+  // this build has never heard of does.
+  it("names a gateway mismatch instead of falling back to the generic reason", async () => {
+    server.use(http.get("*/api/v1/org/me", () => HttpResponse.json({
+      ...denied,
+      gateway_key: { state: "gateway_mismatch", key_version: 3 },
+      denial_reason: "ORG_CREDENTIAL_GATEWAY_MISMATCH",
+    })));
+    renderPage();
+
+    expect(await screen.findByText("Gateway mismatch, ask an admin to rebind")).toBeVisible();
+    expect(screen.queryByText("Access is currently unavailable")).not.toBeInTheDocument();
   });
 
   it("renders the generic message without exposing an unknown denial reason", async () => {

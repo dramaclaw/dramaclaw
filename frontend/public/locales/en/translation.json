@@ -68,6 +68,7 @@
         "ORG_SUSPENDED": "This organization is suspended.",
         "ORG_CREDENTIAL_MISSING": "The organization has no available gateway key.",
         "ORG_CREDENTIAL_DISABLED": "The organization gateway key is unavailable.",
+        "ORG_CREDENTIAL_GATEWAY_MISMATCH": "The organization gateway key was bound to a different gateway. Ask an administrator to rebind it.",
         "ORG_AUTHZ_STALE": "Your access changed. Refresh before trying again.",
         "generic": "Model access is currently unavailable."
       }

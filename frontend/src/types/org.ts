@@ -37,10 +37,11 @@ export type OrgAccessDenialReason =
   | "ORG_SUSPENDED"
   | "ORG_CREDENTIAL_MISSING"
   | "ORG_CREDENTIAL_DISABLED"
+  | "ORG_CREDENTIAL_GATEWAY_MISMATCH"
   | "ORG_AUTHZ_STALE";
 
 export interface GatewayKeySummary {
-  state: "never_configured" | "active" | "no_active" | "unknown";
+  state: "never_configured" | "active" | "no_active" | "gateway_mismatch" | "unknown";
   key_version: number | null;
 }
 
