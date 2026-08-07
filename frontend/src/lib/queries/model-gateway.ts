@@ -130,6 +130,11 @@ export interface OfficialMediaCatalogStatus {
   catalogVersion: string;
   modelCount: number;
   lastCheckedAt: string;
+  sha256: string;
+  revision: string;
+  publishedAt: string;
+  remoteUrl: string;
+  lastError: string;
   updated?: boolean;
 }
 

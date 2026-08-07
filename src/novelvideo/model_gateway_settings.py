@@ -41,6 +41,11 @@ PLACEHOLDER_API_KEYS = {
 OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY = "official_media_catalog_auto_update"
 OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY = "official_media_catalog_last_checked_at"
 OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY = "official_media_catalog_remote_url"
+OFFICIAL_MEDIA_CATALOG_ETAG_KEY = "official_media_catalog_etag"
+OFFICIAL_MEDIA_CATALOG_REVISION_KEY = "official_media_catalog_revision"
+OFFICIAL_MEDIA_CATALOG_PUBLISHED_AT_KEY = "official_media_catalog_published_at"
+OFFICIAL_MEDIA_CATALOG_SHA256_KEY = "official_media_catalog_sha256"
+OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY = "official_media_catalog_last_error"
 _OFFICIAL_MEDIA_CATALOG_WRITE_LOCK = threading.Lock()
 
 
@@ -654,6 +659,8 @@ def _official_media_catalog_digest(payload: dict[str, Any]) -> str:
 def get_official_media_catalog_update_status() -> dict[str, Any]:
     settings = _read_all()
     payload, source = _effective_official_media_catalog()
+    digest = _official_media_catalog_digest(payload)
+    metadata_matches = settings.get(OFFICIAL_MEDIA_CATALOG_SHA256_KEY) == digest
     return {
         "autoUpdate": settings.get(OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY, "0")
         != "0",
@@ -664,6 +671,19 @@ def get_official_media_catalog_update_status() -> dict[str, Any]:
         ),
         "modelCount": len(payload["mediaModels"]),
         "lastCheckedAt": settings.get(OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY, ""),
+        "sha256": digest,
+        "revision": (
+            settings.get(OFFICIAL_MEDIA_CATALOG_REVISION_KEY, "")
+            if metadata_matches
+            else ""
+        ),
+        "publishedAt": (
+            settings.get(OFFICIAL_MEDIA_CATALOG_PUBLISHED_AT_KEY, "")
+            if metadata_matches
+            else ""
+        ),
+        "remoteUrl": settings.get(OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY, ""),
+        "lastError": settings.get(OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY, ""),
     }
 
 
@@ -672,17 +692,57 @@ def save_official_media_catalog_auto_update(enabled: bool) -> dict[str, Any]:
     return get_official_media_catalog_update_status()
 
 
+def get_official_media_catalog_remote_etag(source_url: str) -> str:
+    settings = _read_all()
+    if settings.get(OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY) != str(source_url).strip():
+        return ""
+    payload, _source = _effective_official_media_catalog()
+    if settings.get(OFFICIAL_MEDIA_CATALOG_SHA256_KEY) != _official_media_catalog_digest(
+        payload
+    ):
+        return ""
+    return settings.get(OFFICIAL_MEDIA_CATALOG_ETAG_KEY, "")
+
+
+def record_official_media_catalog_check(
+    *, source_url: str, etag: str = "", error: str = ""
+) -> dict[str, Any]:
+    values = {
+        OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY: _now_iso(),
+        OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY: str(source_url or "").strip(),
+        OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY: str(error or "").strip()[:500],
+        OFFICIAL_MEDIA_CATALOG_ETAG_KEY: str(etag or "").strip(),
+    }
+    _write_many(values)
+    return get_official_media_catalog_update_status()
+
+
 def install_official_media_catalog(
-    payload: dict[str, Any], *, source_url: str
+    payload: dict[str, Any],
+    *,
+    source_url: str,
+    expected_sha256: str = "",
+    revision: str = "",
+    published_at: str = "",
+    etag: str = "",
 ) -> tuple[bool, dict[str, Any]]:
     validated = _validate_official_media_catalog(payload)
+    candidate_digest = _official_media_catalog_digest(validated)
+    normalized_expected_digest = str(expected_sha256 or "").strip().lower()
+    if normalized_expected_digest and candidate_digest != normalized_expected_digest:
+        raise ValueError("official media catalog SHA256 does not match manifest")
     with _OFFICIAL_MEDIA_CATALOG_WRITE_LOCK:
         current, _source = _effective_official_media_catalog()
-        if _catalog_version(validated) < _catalog_version(current):
+        candidate_version = _catalog_version(validated)
+        current_version = _catalog_version(current)
+        current_digest = _official_media_catalog_digest(current)
+        if candidate_version < current_version:
             raise ValueError("official media catalog downgrade is not allowed")
-        updated = _official_media_catalog_digest(
-            validated
-        ) != _official_media_catalog_digest(current)
+        if candidate_version == current_version and candidate_digest != current_digest:
+            raise ValueError(
+                "official media catalog version already exists with different content"
+            )
+        updated = candidate_digest != current_digest
         if updated:
             cache_path = _official_media_catalog_cache_path()
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -710,6 +770,11 @@ def install_official_media_catalog(
         {
             OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY: _now_iso(),
             OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY: str(source_url or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_ETAG_KEY: str(etag or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_REVISION_KEY: str(revision or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_PUBLISHED_AT_KEY: str(published_at or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_SHA256_KEY: candidate_digest,
+            OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY: "",
         }
     )
     return updated, get_official_media_catalog_update_status()

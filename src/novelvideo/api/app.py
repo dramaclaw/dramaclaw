@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
 import time
 from collections import Counter
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
@@ -269,8 +271,6 @@ def create_app() -> FastAPI:
             from novelvideo.sqlite_pragmas import litestream_enabled
 
             if litestream_enabled():
-                import asyncio
-
                 from novelvideo.backup.wal_migrator import migrate_state_tree
                 from novelvideo.config import STATE_DIR
 
@@ -278,6 +278,19 @@ def create_app() -> FastAPI:
                     await asyncio.to_thread(migrate_state_tree, Path(STATE_DIR))
                 except Exception:
                     logger.exception("WAL migration sweep failed (non-fatal)")
+
+            from novelvideo.official_media_catalog_remote import (
+                run_official_media_catalog_updater,
+            )
+            from novelvideo.shared.runtime_env import is_ce_effective
+
+            if is_ce_effective():
+                application.state.official_media_catalog_updater = (
+                    asyncio.create_task(
+                        run_official_media_catalog_updater(),
+                        name="official-media-catalog-updater",
+                    )
+                )
         except Exception:
             logger.exception("API startup failed while connecting to control-plane")
             raise
@@ -285,6 +298,12 @@ def create_app() -> FastAPI:
     @application.on_event("shutdown")
     async def shutdown() -> None:
         from novelvideo.ports.registry import PortNotRegistered, get_port
+
+        updater = getattr(application.state, "official_media_catalog_updater", None)
+        if updater is not None:
+            updater.cancel()
+            with suppress(asyncio.CancelledError):
+                await updater
 
         try:
             lifecycle = get_port("lifecycle")

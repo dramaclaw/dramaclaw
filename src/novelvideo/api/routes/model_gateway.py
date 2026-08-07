@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Any
 
 import httpx
@@ -19,7 +18,6 @@ from novelvideo.model_gateway_settings import (
     build_model_gateway_status,
     get_effective_media_relay_config,
     get_official_media_catalog_update_status,
-    install_official_media_catalog,
     normalize_relay_base_url,
     normalize_api_key,
     parse_comfyui_channel_workflows,
@@ -35,6 +33,9 @@ from novelvideo.model_gateway_settings import (
     get_newapi_provider_channel,
     get_newapi_provider_channels,
     set_model_gateway_mode,
+)
+from novelvideo.official_media_catalog_remote import (
+    check_official_media_catalog_update,
 )
 from novelvideo.model_gateway_runtime import refresh_model_gateway_runtime
 from novelvideo.shared.runtime_env import is_ce_effective
@@ -63,10 +64,6 @@ OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {
     "seedance-2.0-fast-value",
 }
 COMFY_WORKFLOW_MANAGED_CONFIG_KEY = "_dcManagedByWorkflow"
-DEFAULT_OFFICIAL_MEDIA_CATALOG_URL = (
-    "https://raw.githubusercontent.com/dramaclaw/dramaclaw/main/"
-    "src/novelvideo/official_media_models.json"
-)
 
 
 def _default_comfyui_media_model_config(
@@ -511,27 +508,7 @@ async def save_official_media_catalog_preferences(
 async def check_official_media_catalog() -> dict[str, Any]:
     try:
         _require_ce_media_catalog_management()
-        source_url = str(
-            os.environ.get(
-                "OFFICIAL_MEDIA_CATALOG_URL",
-                DEFAULT_OFFICIAL_MEDIA_CATALOG_URL,
-            )
-            or ""
-        ).strip()
-        if not source_url:
-            raise ValueError("official media catalog URL is not configured")
-        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-            response = await client.get(source_url)
-            response.raise_for_status()
-            if len(response.content) > 2 * 1024 * 1024:
-                raise ValueError("official media catalog is too large")
-            payload = response.json()
-        if not isinstance(payload, dict):
-            raise ValueError("official media catalog response must be a JSON object")
-        updated, status = install_official_media_catalog(
-            payload,
-            source_url=source_url,
-        )
+        updated, status = await check_official_media_catalog_update()
     except PermissionError as exc:
         raise _permission_error(exc) from exc
     except (httpx.HTTPError, ValueError) as exc:

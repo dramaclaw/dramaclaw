@@ -34,12 +34,22 @@ DramaClaw CE 通过 NewAPI 兼容网关调用文本、视觉理解、Embedding�
 官方模式和本地 + 官方混合模式会显示当前官方模型列表的版本、模型数量和来源：
 
 - 点击 **立即检查更新**，可以从 DramaClaw 官方发布地址获取最新模型列表并立即应用。
-- **自动更新官方模型列表**默认关闭。开启后，每次打开对应设置面板时自动检查一次；它不会在后台定时轮询。
+- **自动更新官方模型列表**默认关闭。开启后，后端默认每 5 分钟检查一次；打开对应设置面板时也会立即检查。
 - 下载的模型列表保存在本地 `state/local/official_media_models.json`，重启后继续生效。
 - DramaClaw 不会安装低于当前生效版本的远端列表。应用升级后，如果新版内置列表比本地缓存更新，会优先使用新版内置列表。
 - 更新成功后，当前浏览器中的虾画图片和视频模型列表会自动刷新。
+- 状态接口会返回当前内容的 SHA256、发布 Git revision、发布时间、远端地址和最近一次更新错误，便于确认每个实例实际使用的版本。
 
 用户在自定义模式中维护的渠道、模型映射和能力配置不受官方模型列表更新影响。
+
+官方目录默认使用成都地域的 `dramaclaw-dl` Bucket：`https://dramaclaw-dl.oss-cn-chengdu.aliyuncs.com/official-media-catalog/manifest.json`。manifest 指向按 SHA256 命名、永不覆盖的目录快照；后端会校验 manifest、目录版本和内容 SHA256，并使用 ETag 检查更新。可通过 `OFFICIAL_MEDIA_CATALOG_MANIFEST_URL` 覆盖默认地址；`OFFICIAL_MEDIA_CATALOG_URL` 是兼容旧部署的直接 JSON 地址。轮询间隔可通过 `OFFICIAL_MEDIA_CATALOG_POLL_SECONDS` 调整，最低为 60 秒。
+
+仓库的 `publish-official-media-catalog` 工作流负责发布：先上传带长期不可变缓存头的 `catalogs/<sha256>.json`，最后上传缓存 60 秒的 `manifest.json`。以下密钥既可配置为仓库级 Secrets，也可配置在 GitHub `official-media-catalog` environment 中：
+
+- Variables 可选：默认使用 `oss-cn-chengdu.aliyuncs.com`、`dramaclaw-dl` 和 `official-media-catalog`；可用 `OFFICIAL_CATALOG_OSS_ENDPOINT`、`OFFICIAL_CATALOG_OSS_BUCKET`、`OFFICIAL_CATALOG_OSS_PREFIX` 覆盖。
+- Secrets：优先使用 `OFFICIAL_CATALOG_OSS_ACCESS_KEY_ID`、`OFFICIAL_CATALOG_OSS_ACCESS_KEY_SECRET`；未配置时复用组织级 `OSS_RELAY_AK`、`OSS_RELAY_SK`。
+
+`dramaclaw-dl` Bucket 本身保持私有，只对 `official-media-catalog/*` 前缀授予匿名 `GetObject`，CI 身份仅需该前缀的写权限。模型目录仍以 Git PR 为唯一内容源；建议开启 Bucket 版本控制作为基础设施灾备。
 
 还没有 DC Key 时，可前往 <https://relayclaw.cdnfg.com> 注册或购买。
 
