@@ -26,6 +26,7 @@ from novelvideo.model_gateway_settings import (
     get_ce_media_model_catalog,
     get_official_media_model_catalog,
     get_newapi_media_model_mappings,
+    get_newapi_provider_channels,
     normalize_relay_base_url,
     save_official_newapi_key,
     save_custom_newapi_gateway,
@@ -56,6 +57,12 @@ from novelvideo.newapi_provisioner import (
     update_provider_channel_credentials,
     upsert_channel,
 )
+
+
+def test_generic_comfyui_i2v_defaults_to_widescreen():
+    config = model_gateway._default_comfyui_media_model_config("wan-i2v")
+
+    assert config["ratioOptions"][0] == "16:9"
 
 
 def test_comfyui_channel_update_replaces_removed_workflow_models():
@@ -2091,8 +2098,209 @@ def test_comfyui_provider_channel_writes_workflows_to_newapi(
         "image_reference",
     ]
     assert comfy_mapping["config"]["referenceImageMax"] == 1
-    assert comfy_mapping["config"]["humanReview"] is True
+    assert "humanReview" not in comfy_mapping["config"]
     assert comfy_mapping["config"]["_dcManagedByWorkflow"] is True
+
+
+def test_comfyui_workflow_routes_create_one_media_model(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        model_gateway,
+        "get_provisioner_config",
+        lambda: type("Cfg", (), {"admin_base_url": "http://new-api:3000"})(),
+    )
+    monkeypatch.setattr(
+        model_gateway,
+        "ensure_admin_access_token",
+        lambda _cfg: type("Admin", (), {"access_token": "admin-secret"})(),
+    )
+
+    def fake_upsert(_cfg, _admin, payload):
+        captured["payload"] = payload
+        return {"ok": True, "httpStatus": 200, "newApiResponse": {"success": True}}
+
+    monkeypatch.setattr(model_gateway, "upsert_channel", fake_upsert)
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+    workflow = {"6": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}}}
+    routes = [
+        {
+            "id": route_id,
+            "match": {},
+            "workflow": workflow,
+        }
+        for route_id in ("minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_r2v")
+    ]
+
+    response = client.post(
+        "/model-gateway/custom/newapi/provider-channels",
+        json={
+            "channels": [
+                {
+                    "provider": "comfyui",
+                    "type": 63,
+                    "baseUrl": "http://127.0.0.1:8188",
+                    "settings": {
+                        "comfyui": {
+                            "model_name": "MiniMax-H3-local",
+                            "workflow_routes": routes,
+                        }
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    channel = captured["payload"]["channel"]
+    assert channel["models"] == "MiniMax-H3-local"
+    assert json.loads(channel["settings"])["comfyui"]["workflow_routes"] == routes
+    mappings = get_newapi_media_model_mappings()
+    assert set(mappings) == {"MiniMax-H3-local"}
+    config = mappings["MiniMax-H3-local"]["config"]
+    assert config["resolutionOptions"] == ["480p", "768p", "1080p"]
+    assert config["ratioOptions"] == [
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16",
+    ]
+    assert config["supportedModes"] == [
+        "text_to_video",
+        "first_frame",
+        "all_reference",
+    ]
+    assert config["referenceImageMax"] == 9
+    assert config["referenceVideoMax"] == 3
+    assert config["referenceAudioMax"] == 3
+
+
+def test_comfyui_workflow_routes_require_one_model_name(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/model-gateway/custom/newapi/provider-channels",
+        json={
+            "channels": [
+                {
+                    "provider": "comfyui",
+                    "type": 63,
+                    "baseUrl": "http://127.0.0.1:8188",
+                    "settings": {
+                        "comfyui": {
+                            "workflow_routes": [
+                                {
+                                    "id": "minimax_h3_t2v",
+                                    "match": {},
+                                    "workflow": {
+                                        "6": {
+                                            "class_type": "CLIPTextEncode",
+                                            "inputs": {"text": ""},
+                                        }
+                                    },
+                                }
+                            ]
+                        }
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert "one model name" in response.json()["detail"]
+
+
+def test_clear_comfyui_removes_channel_and_media_models(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    save_newapi_provider_channels(
+        [
+            {
+                "provider": "openrouter",
+                "type": 20,
+                "upstreamKey": "secret",
+                "baseUrl": "",
+                "settings": {},
+            },
+            {
+                "provider": "comfyui",
+                "type": 63,
+                "upstreamKey": "",
+                "baseUrl": "http://127.0.0.1:8188",
+                "settings": {
+                    "comfyui": {
+                            "model_name": "MiniMax-H3-local",
+                            "workflow_routes": [
+                                {
+                                    "id": "minimax_h3_t2v",
+                                    "match": {},
+                                    "workflow": {
+                                        "6": {
+                                            "class_type": "CLIPTextEncode",
+                                            "inputs": {"text": ""},
+                                        }
+                                    },
+                                }
+                            ],
+                    }
+                },
+            },
+        ]
+    )
+    save_newapi_media_model_mappings(
+        {
+            "MiniMax-H3-local": {
+                "provider": "comfyui",
+                "upstreamModel": "",
+                "mediaType": "video",
+                "config": {},
+            },
+            "seedance-2.0": {
+                "provider": "volcengine",
+                "upstreamModel": "doubao-seedance-2-0",
+                "mediaType": "video",
+                "config": {},
+            },
+        }
+    )
+    monkeypatch.setattr(
+        model_gateway,
+        "get_provisioner_config",
+        lambda: type("Cfg", (), {"admin_base_url": "http://new-api:3000"})(),
+    )
+    monkeypatch.setattr(
+        model_gateway,
+        "ensure_admin_access_token",
+        lambda _cfg: type("Admin", (), {"access_token": "admin-secret"})(),
+    )
+    deleted: dict[str, object] = {}
+
+    def fake_delete(_cfg, _admin, **kwargs):
+        deleted.update(kwargs)
+        return True
+
+    monkeypatch.setattr(model_gateway, "delete_channel_by_name", fake_delete)
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    response = client.delete("/model-gateway/custom/newapi/comfyui")
+
+    assert response.status_code == 200, response.text
+    assert deleted == {"name": "DC-comfyui", "channel_type": 63}
+    assert [item["provider"] for item in get_newapi_provider_channels()] == [
+        "openrouter"
+    ]
+    assert set(get_newapi_media_model_mappings()) == {"seedance-2.0"}
 
 
 def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(

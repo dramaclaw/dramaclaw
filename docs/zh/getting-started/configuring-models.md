@@ -182,18 +182,20 @@ Embedding 模型和维度在项目创建时绑定。修改配置只自动影响�
 
 在 **自定义** 模式中，ComfyUI 通过 **高级配置 → 供应商渠道** 添加。在 **本地 + 官方混合** 模式中，使用独立的 **ComfyUI 配置**，并提供 MiniMax H3 Workflow 初始模板。两种模式读取同一个本地 NewAPI 和 SQLite 数据。
 
-每条 ComfyUI 模型配置需要：
+每个 ComfyUI 渠道配置需要：
 
-- DramaClaw 使用的模型 ID。
+- 一个 DramaClaw 使用的模型名称。该名称会注册到本地 NewAPI，并显示在虾画中。
 - ComfyUI 服务地址；本机默认是 `http://127.0.0.1:8188`。
-- 从 ComfyUI 导出的 **API Format Workflow** JSON，而不是浏览器工作流 JSON。
-- 与 Workflow 对应的媒体模型能力，例如支持模式、比例、分辨率、时长和参考素材数量。
+- 一条或多条 Workflow。每条包含唯一的 **Workflow ID** 和从 ComfyUI 导出的 **API Format Workflow JSON**，不能使用浏览器工作流 JSON。
+- 该模型的媒体能力，例如支持模式、比例、分辨率、时长和参考素材数量。
 
 普通本地 ComfyUI 不需要 API Key，可以留空。只有在 ComfyUI 前方部署了要求认证的代理时，才需要按代理方案提供认证信息。
 
-新增 Workflow 后，设置页会自动创建同名的视频媒体模型，并根据模型 ID 中的 `_t2v`、`_i2v` 或 `_r2v` 填入文生视频、图片参考或全能参考的基础能力。自动创建的模型可以继续编辑分辨率、比例、时长和参考素材上限；一旦手动编辑，该模型就转为用户管理，不再跟随 Workflow 自动删除。
+同一个模型名称可以绑定多条 Workflow。DramaClaw 将模型名称、Workflow ID 和 Workflow JSON 保存到 NewAPI，具体选择哪条 Workflow 由虾驿处理；虾画只显示一个统一模型，不再为每条 Workflow 创建一个模型。
 
-删除 Workflow 时，设置页只会同步删除仍由 Workflow 自动管理的同名媒体模型，不会删除已经手动编辑过的模型。删除后仍需保存视频配置，变更才会写入本地 NewAPI。
+MiniMax H3 模板使用模型名 `MiniMax-H3-local`，内置文生、首帧和全能参考三条 Workflow。初始媒体能力为文生视频、首帧和全能参考，分辨率为 `480p`、`768p`、`1080p`，比例为 `21:9`、`16:9`、`4:3`、`1:1`、`3:4`、`9:16`。这些是初始值，仍可在媒体模型能力配置中调整。
+
+删除单条 Workflow 只删除该路由，不会自动删除统一模型。需要彻底移除时，点击仅在已配置后显示的 **清除 ComfyUI 配置**，确认后会删除本地和 NewAPI 中的 ComfyUI 渠道、Workflow 及对应媒体模型映射；项目和已生成媒体不会被删除。
 
 ## 本地 + 官方混合模式
 
@@ -203,12 +205,12 @@ Embedding 模型和维度在项目创建时绑定。修改配置只自动影响�
 2. 在 **自定义** 中初始化一次 NewAPI；同一个 SQLite 不需要重复初始化。
 3. 打开 **本地 + 官方混合**。
 4. 打开独立的 **ComfyUI 配置**，确认或修改服务地址；本机默认是 `http://127.0.0.1:8188`。
-5. 使用混合模式提供的 MiniMax H3 Workflow 初始模板，或为本地视频模型填写模型 ID 并粘贴 ComfyUI 导出的 **API Format Workflow** JSON。
+5. 使用混合模式提供的 MiniMax H3 Workflow 初始模板，或填写一个本地视频模型名称，再为它添加一条或多条 Workflow ID 和 **API Format Workflow JSON**。
 6. 保存视频配置并启用混合模式。
 
 ComfyUI API Key 是可选项。Workflow 必须是 API Format，而不是浏览器工作流格式。自定义模式与混合模式共享 ComfyUI 渠道、Workflow 和媒体模型能力配置；任一模式保存后，另一模式会读取相同结果。
 
-MiniMax H3 模板按钮会一直保留，方便恢复缺少的模板。重复载入时会把模板合并到现有 Workflow 中，保留用户已经配置的同名 Workflow；当 ComfyUI 地址为空时，会自动填入 `http://127.0.0.1:8188`，不会覆盖非空的自定义地址。
+MiniMax H3 模板按钮会一直保留，方便恢复缺少的模板。重复载入时会把模板合并到现有 Workflow 中，保留用户已经配置的同 ID Workflow；当 ComfyUI 地址为空时，会自动填入 `http://127.0.0.1:8188`，不会覆盖非空的自定义地址。
 
 混合模式按模型 ID 路由：本地 ComfyUI 模型可以作为新模型加入虾画；本地存在与官方同名的视频模型时，则使用本地模型覆盖该官方模型。其他模型继续使用官方 RelayClaw。保存视频配置时，DramaClaw 会先保存 ComfyUI 渠道，再保存对应媒体模型。DramaClaw 不会在本地生成失败后自动回退官方，是否重试或改选官方模型由用户决定。混合模式只管理本地视频模型，不要求再次配置 OpenRouter、火山等官方上游渠道。
 

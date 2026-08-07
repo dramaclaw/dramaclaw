@@ -22,6 +22,7 @@ from novelvideo.model_gateway_settings import (
     install_official_media_catalog,
     normalize_relay_base_url,
     normalize_api_key,
+    parse_comfyui_channel_workflows,
     save_media_relay_config,
     save_official_media_catalog_auto_update,
     save_official_newapi_key,
@@ -32,6 +33,7 @@ from novelvideo.model_gateway_settings import (
     get_newapi_media_model_mappings,
     save_newapi_provider_channels,
     get_newapi_provider_channel,
+    get_newapi_provider_channels,
     set_model_gateway_mode,
 )
 from novelvideo.model_gateway_runtime import refresh_model_gateway_runtime
@@ -41,6 +43,7 @@ from novelvideo.newapi_provisioner import (
     build_channel_payload,
     build_provisioner_status,
     create_or_reuse_relay_token,
+    delete_channel_by_name,
     ensure_newapi_setup,
     ensure_admin_access_token,
     get_provisioner_config,
@@ -66,25 +69,48 @@ DEFAULT_OFFICIAL_MEDIA_CATALOG_URL = (
 )
 
 
-def _default_comfyui_media_model_config(model: str) -> dict[str, Any]:
-    tokens = str(model or "").strip().lower().replace("-", "_").split("_")
-    supported_modes = ["text_to_video"]
-    ratio_options = ["1:1", "16:9"]
-    reference_limits: dict[str, int] = {}
-    if "r2v" in tokens:
-        supported_modes = ["all_reference"]
+def _default_comfyui_media_model_config(
+    model: str, *, workflow_ids: list[str] | None = None
+) -> dict[str, Any]:
+    route_tokens = {
+        token
+        for value in (workflow_ids or [model])
+        for token in str(value or "").strip().lower().replace("-", "_").split("_")
+    }
+    supported_modes: list[str] = []
+    reference_limits: dict[str, int | bool] = {}
+    is_minimax_h3_local = model.strip().lower() == "minimax-h3-local"
+    resolution_options = (
+        ["480p", "768p", "1080p"]
+        if is_minimax_h3_local
+        else ["480p", "640p"]
+    )
+    ratio_options = (
+        ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+        if is_minimax_h3_local
+        else ["16:9", "1:1"]
+        if "i2v" in route_tokens
+        else ["1:1", "16:9"]
+    )
+    if "t2v" in route_tokens or not route_tokens.intersection({"i2v", "r2v"}):
+        supported_modes.append("text_to_video")
+    if "i2v" in route_tokens:
+        supported_modes.extend(
+            ["first_frame"]
+            if is_minimax_h3_local
+            else ["image_to_video", "image_reference"]
+        )
+        reference_limits["referenceImageMax"] = 1
+    if "r2v" in route_tokens:
+        supported_modes.append("all_reference")
         reference_limits = {
             "referenceImageMax": 9,
             "referenceVideoMax": 3,
             "referenceAudioMax": 3,
         }
-    elif "i2v" in tokens:
-        supported_modes = ["image_to_video", "image_reference"]
-        ratio_options = ["16:9", "1:1"]
-        reference_limits = {"referenceImageMax": 1, "humanReview": True}
     return {
         "request": {"endpoint": "video/generations", "parameters": []},
-        "resolutionOptions": ["480p", "640p"],
+        "resolutionOptions": resolution_options,
         "ratioOptions": ratio_options,
         "minDuration": 4,
         "maxDuration": 15,
@@ -95,13 +121,22 @@ def _default_comfyui_media_model_config(model: str) -> dict[str, Any]:
 
 
 def _comfyui_media_model_config(
-    model: str, previous: dict[str, Any] | None
+    model: str,
+    previous: dict[str, Any] | None,
+    *,
+    workflow_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     current = previous if isinstance(previous, dict) else {}
     # Older channel saves created workflow models with only a request block.
     # Backfill those records, while leaving any user-authored capabilities intact.
     if set(current).issubset({"request", COMFY_WORKFLOW_MANAGED_CONFIG_KEY}):
-        return {**_default_comfyui_media_model_config(model), **current}
+        return {
+            **_default_comfyui_media_model_config(
+                model,
+                workflow_ids=workflow_ids,
+            ),
+            **current,
+        }
     return current
 
 
@@ -795,9 +830,10 @@ async def save_custom_newapi_provider_channels(
                 if mapping.get("provider") != "comfyui"
             }
             for channel in comfyui_channels:
-                comfyui_settings = channel["settings"]["comfyui"]
-                workflows = comfyui_settings["workflow_by_model"]
-                model_mapping = {str(model): str(model) for model in workflows}
+                models, workflow_ids = parse_comfyui_channel_workflows(
+                    channel["settings"]
+                )
+                model_mapping = {model: model for model in models}
                 payload = build_channel_payload(
                     provider="comfyui",
                     channel_type=channel.get("type") or 63,
@@ -822,6 +858,7 @@ async def save_custom_newapi_provider_channels(
                         "config": _comfyui_media_model_config(
                             model,
                             previous.get("config"),
+                            workflow_ids=workflow_ids,
                         ),
                     }
             save_newapi_media_model_mappings(media_mappings)
@@ -854,6 +891,46 @@ async def save_custom_newapi_provider_channels(
             ]
         },
     }
+
+
+@router.delete("/custom/newapi/comfyui")
+async def clear_custom_newapi_comfyui() -> dict[str, Any]:
+    try:
+        require_ce_gateway_management()
+        cfg = get_provisioner_config()
+        admin = ensure_admin_access_token(cfg)
+        deleted = delete_channel_by_name(
+            cfg,
+            admin,
+            name="DC-comfyui",
+            channel_type=63,
+        )
+        channels = save_newapi_provider_channels(
+            [
+                channel
+                for channel in get_newapi_provider_channels()
+                if channel["provider"] != "comfyui"
+            ]
+        )
+        mappings = save_newapi_media_model_mappings(
+            {
+                model: mapping
+                for model, mapping in get_newapi_media_model_mappings().items()
+                if mapping.get("provider") != "comfyui"
+            }
+        )
+        return {
+            "ok": True,
+            "data": {
+                "channelDeleted": deleted,
+                "channels": channels,
+                "mediaModels": mappings,
+            },
+        }
+    except PermissionError as exc:
+        raise _permission_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/custom/newapi/channel-types")
