@@ -300,7 +300,7 @@ def _fixed_image_billing_params(value: str, *, model: str) -> dict:
             model=model, image_size=image_size, quality=quality
         )
     if clean_value in {"scene_master", "scene_reverse_master"}:
-        return _image_billing_params(model=model, image_size="1K", quality="low")
+        return _image_billing_params(model=model, image_size="1K", quality="medium")
     if clean_value == "prop_reference":
         from novelvideo.generators.nanobanana_grid import normalize_image_size
         from novelvideo.generators.nanobanana_prop import PROP_REF_IMAGE_SIZE

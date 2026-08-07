@@ -1413,7 +1413,7 @@
     "title": "虾料",
     "subtitle": "上传剧本，开启你的创意之旅",
     "dropzoneHint": "点击或拖拽上传小说文件",
-    "supportedFormats": "支持 .txt / .md / .docx · 文件不超过 1MB · 正文不超过 10 万字",
+    "supportedFormats": "支持 .txt / .md / .docx · 文件不超过 512KB · 正文不超过 10 万字",
     "uploadingTitle": "正在上传小说…",
     "uploadingHint": "上传完成前请勿离开本页面，网络较慢时可能需要多等一会儿。",
     "inputMode": {

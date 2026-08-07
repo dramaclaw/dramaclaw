@@ -12,6 +12,7 @@ from novelvideo.generators.video_generator import (
     newapi_video_backend_options,
 )
 from novelvideo.generators.video_generator import VideoGenResult, VideoGenStatus
+from novelvideo.video_duration import video_duration_bounds_for_backend
 from novelvideo.freezone.video_node import (
     add_video_character_library_item,
     build_freezone_image_to_video_prompt,
@@ -225,6 +226,22 @@ def test_video_duration_normalization_uses_ceiling_and_backend_bounds() -> None:
         "newapi_seedance-1.0-pro-fast",
         5.1,
     ) == 6
+
+
+def test_seedance_mini_duration_fallback_with_legacy_env(monkeypatch) -> None:
+    from novelvideo import config
+
+    monkeypatch.setattr(
+        config,
+        "NEWAPI_VIDEO_DURATION_BOUNDS",
+        "seedance-1.0-pro-fast:2-12,seedance-2.0:4-15",
+    )
+
+    backend = "newapi_seedance-2.0-mini"
+    assert video_duration_bounds_for_backend(backend) == (4, 15)
+    assert normalize_video_duration_for_backend(backend, 2) == 4
+    assert normalize_video_duration_for_backend(backend, 13) == 13
+    assert normalize_video_duration_for_backend(backend, 20) == 15
 
 
 def test_newapi_video_backend_preserves_gateway_model_case() -> None:

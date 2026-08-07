@@ -596,7 +596,7 @@ async def test_upload_novel_file_too_large_preserves_existing_same_name(
     )
 
     upload = UploadFile(
-        file=io.BytesIO(b"x" * (1024 * 1024 + 1)),
+        file=io.BytesIO(b"x" * (512 * 1024 + 1)),
         filename="novel.txt",
     )
     response = await ingest.upload_novel(
@@ -607,9 +607,9 @@ async def test_upload_novel_file_too_large_preserves_existing_same_name(
 
     assert response == {
         "ok": False,
-        "error": "文件超过 1MB 上限，请压缩文件或拆分正文后重新上传。",
+        "error": "文件超过 512KB 上限，请压缩文件或拆分正文后重新上传。",
         "error_type": "file_too_large",
-        "data": {"limit_bytes": 1024 * 1024},
+        "data": {"limit_bytes": 512 * 1024},
     }
     assert existing.read_text(encoding="utf-8") == NOVEL_TEXT
     assert list((uploads_dir / ".staging").glob("upload-*")) == []
