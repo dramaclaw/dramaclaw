@@ -477,6 +477,25 @@ export function useSaveProviderChannels() {
   });
 }
 
+/** 删除 CE 本地及 NewAPI 中的 ComfyUI 渠道和媒体模型映射。 */
+export function useClearComfyUIConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .delete("api/v1/model-gateway/custom/newapi/comfyui", {
+          timeout: 60_000,
+          throwHttpErrors: false,
+        })
+        .json<OkResponse<unknown> | ErrorResponse | FastApiErrorResponse>(),
+    onSuccess: (response) => {
+      if (response.ok !== true) return;
+      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+      window.dispatchEvent(new Event("media-model-catalog-updated"));
+    },
+  });
+}
+
 /** 更新 NewAPI 中已存在的供应商渠道 key / Base URL，不改模型映射。 */
 export function useSyncProviderChannel() {
   const qc = useQueryClient();

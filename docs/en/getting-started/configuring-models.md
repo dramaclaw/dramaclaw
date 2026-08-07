@@ -182,18 +182,20 @@ The **Model ID** is DramaClaw’s stable identifier. **Upstream Model** is the a
 
 In **Custom** mode, add ComfyUI through **Advanced Settings → Provider Channels**. In **Local + Official Hybrid**, use the separate **ComfyUI Configuration** section, which includes MiniMax H3 starter workflows. Both modes use the same Local NewAPI and SQLite data.
 
-Each ComfyUI model needs:
+Each ComfyUI channel configuration needs:
 
-- The model ID used by DramaClaw.
+- One model name used by DramaClaw. It is registered in Local NewAPI and displayed in XiaHua.
 - The ComfyUI service URL; the local default is `http://127.0.0.1:8188`.
-- A ComfyUI **API Format Workflow** JSON export, not the browser workflow JSON.
-- Matching media capabilities, including modes, ratios, resolutions, durations, and reference-media limits.
+- One or more workflows. Each workflow has a unique **Workflow ID** and a ComfyUI **API Format Workflow JSON** export; browser workflow JSON is not accepted.
+- Media capabilities for the model, including modes, ratios, resolutions, durations, and reference-media limits.
 
 A normal local ComfyUI instance does not require an API key, so leave it empty. Authentication is relevant only when ComfyUI is placed behind an authenticated proxy.
 
-Adding a workflow automatically creates a video media model with the same ID. The settings UI uses `_t2v`, `_i2v`, or `_r2v` in the model ID to seed text-to-video, image-reference, or all-reference capabilities. You can then edit resolutions, ratios, durations, and reference-media limits. Once edited manually, that model becomes user-managed and is no longer automatically deleted with its workflow.
+One model name can bind multiple workflows. DramaClaw saves the model name, Workflow IDs, and Workflow JSON to NewAPI, while RelayClaw selects the workflow for each request. XiaHua displays one unified model rather than one model per workflow.
 
-Deleting a workflow removes only a same-ID media model that is still workflow-managed. A model that has been edited manually is preserved. Save the video configuration afterward to persist the removal to Local NewAPI.
+The MiniMax H3 template uses the model name `MiniMax-H3-local` and includes text-to-video, first-frame, and all-reference workflows. Its initial media capabilities enable those three modes, resolutions `480p`, `768p`, and `1080p`, and ratios `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, and `9:16`. These are starter values and remain editable in media model capabilities.
+
+Deleting one workflow removes only that route; it does not automatically delete the unified model. To remove everything, use **Clear ComfyUI configuration**, which appears only after ComfyUI is configured. After confirmation, it removes the ComfyUI channel, workflows, and related media model mappings from local settings and NewAPI. Existing projects and generated media are preserved.
 
 ## Local + Official Hybrid mode
 
@@ -203,12 +205,12 @@ Hybrid mode keeps RelayClaw while generating selected video models through Local
 2. Initialize NewAPI once under **Custom**; the same SQLite database is reused.
 3. Open **Local + Official Hybrid**.
 4. Open the separate **ComfyUI Configuration** section and confirm or change the service URL; the local default is `http://127.0.0.1:8188`.
-5. Use the MiniMax H3 starter workflows provided by Hybrid mode, or enter a local video model ID and paste a ComfyUI **API Format Workflow** JSON export.
+5. Use the MiniMax H3 starter workflows provided by Hybrid mode, or enter one local video model name and add one or more Workflow IDs with **API Format Workflow JSON**.
 6. Save video configuration and enable Hybrid mode.
 
 The ComfyUI API key is optional. Workflows must use API Format, not the browser workflow format. Custom and Hybrid modes share the ComfyUI channel, workflows, and media capabilities; saving them in either mode updates the same configuration.
 
-The MiniMax H3 template button remains available so missing templates can be restored. Loading it again merges the templates into existing workflows and preserves user-configured workflows with the same IDs. If the ComfyUI URL is empty, the UI fills `http://127.0.0.1:8188`; it does not replace a non-empty custom URL.
+The MiniMax H3 template button remains available so missing templates can be restored. Loading it again merges the templates into existing workflows and preserves user-configured workflows with the same Workflow IDs. If the ComfyUI URL is empty, the UI fills `http://127.0.0.1:8188`; it does not replace a non-empty custom URL.
 
 Routing is based on model ID. A Local ComfyUI model may appear in XiaHua as a new model; if it shares an ID with an official video model, the local model overrides that official model. All other models continue through RelayClaw. Saving video configuration persists the ComfyUI channel first and then its media models. DramaClaw does not automatically fall back to the official model after a local failure. The user chooses whether to retry or switch models. Hybrid mode manages Local ComfyUI video models only, so it does not require OpenRouter, VolcEngine, or other official upstream provider settings.
 

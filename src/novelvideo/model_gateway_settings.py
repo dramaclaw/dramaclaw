@@ -354,6 +354,79 @@ def get_newapi_provider_channel(provider: str) -> dict[str, Any] | None:
     return None
 
 
+def parse_comfyui_channel_workflows(
+    settings: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    comfyui = settings.get("comfyui")
+    if not isinstance(comfyui, dict):
+        raise ValueError("ComfyUI settings are required")
+    routes = comfyui.get("workflow_routes")
+    if routes is not None:
+        if not isinstance(routes, list) or not routes:
+            raise ValueError("ComfyUI requires at least one workflow route")
+        route_ids: list[str] = []
+        configured_model = str(comfyui.get("model_name") or "").strip()
+        models: set[str] = {configured_model} if configured_model else set()
+        for route in routes:
+            if not isinstance(route, dict):
+                raise ValueError("each ComfyUI workflow route must be an object")
+            route_id = str(route.get("id") or "").strip()
+            workflow = route.get("workflow")
+            match = route.get("match")
+            route_models = match.get("models") if isinstance(match, dict) else None
+            if not route_id or route_id in route_ids:
+                raise ValueError("each ComfyUI workflow route requires a unique id")
+            if route_models is not None:
+                if (
+                    not isinstance(route_models, list)
+                    or len(route_models) != 1
+                    or not str(route_models[0] or "").strip()
+                ):
+                    raise ValueError(
+                        "each ComfyUI workflow route accepts at most one model name"
+                    )
+                models.add(str(route_models[0]).strip())
+            if not isinstance(workflow, dict) or not workflow:
+                raise ValueError(
+                    "each ComfyUI workflow route requires an API Format JSON object"
+                )
+            if not any(
+                isinstance(node, dict) and ("class_type" in node or "inputs" in node)
+                for node in workflow.values()
+            ):
+                raise ValueError(
+                    f"ComfyUI workflow {route_id} must use exported API Format"
+                )
+            route_ids.append(route_id)
+        if len(models) != 1:
+            raise ValueError("a ComfyUI channel supports one model name")
+        return sorted(models), route_ids
+
+    workflows = comfyui.get("workflow_by_model")
+    if not isinstance(workflows, dict) or not workflows:
+        raise ValueError("ComfyUI requires at least one model workflow")
+    for model, workflow in workflows.items():
+        if (
+            not str(model or "").strip()
+            or not isinstance(workflow, dict)
+            or not workflow
+        ):
+            raise ValueError(
+                "each ComfyUI workflow requires a model name and JSON object"
+            )
+        if not any(
+            isinstance(node, dict) and ("class_type" in node or "inputs" in node)
+            for node in workflow.values()
+        ):
+            raise ValueError(
+                f"ComfyUI workflow for {model} must use exported API Format"
+            )
+    return (
+        [str(model).strip() for model in workflows],
+        [str(model) for model in workflows],
+    )
+
+
 def save_newapi_provider_channels(
     channels: list[dict[str, Any]],
     *,
@@ -388,31 +461,9 @@ def save_newapi_provider_channels(
         raw_settings = item.get("settings", previous.get("settings", {}))
         channel_settings = raw_settings if isinstance(raw_settings, dict) else {}
         if provider == "comfyui":
-            comfyui = channel_settings.get("comfyui")
-            workflows = (
-                comfyui.get("workflow_by_model") if isinstance(comfyui, dict) else None
-            )
             if not base_url:
                 raise ValueError("baseUrl is required for provider comfyui")
-            if not isinstance(workflows, dict) or not workflows:
-                raise ValueError("ComfyUI requires at least one model workflow")
-            for model, workflow in workflows.items():
-                if (
-                    not str(model or "").strip()
-                    or not isinstance(workflow, dict)
-                    or not workflow
-                ):
-                    raise ValueError(
-                        "each ComfyUI workflow requires a model name and JSON object"
-                    )
-                if not any(
-                    isinstance(node, dict)
-                    and ("class_type" in node or "inputs" in node)
-                    for node in workflow.values()
-                ):
-                    raise ValueError(
-                        f"ComfyUI workflow for {model} must use exported API Format"
-                    )
+            parse_comfyui_channel_workflows(channel_settings)
         if not upstream_key and provider != "comfyui":
             raise ValueError(f"upstreamKey is required for provider {provider}")
         normalized.append(

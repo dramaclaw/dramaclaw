@@ -941,6 +941,42 @@ def find_channel_by_name(
     return sorted(matches, key=lambda item: int(item.get("id") or 0), reverse=True)[0]
 
 
+def delete_channel_by_name(
+    cfg: NewApiProvisionerConfig,
+    admin: AdminToken,
+    *,
+    name: str,
+    channel_type: int | None = None,
+) -> bool:
+    """Delete one managed NewAPI channel; return False when it does not exist."""
+    existing = find_channel_by_name(
+        cfg,
+        admin,
+        name=name,
+        channel_type=channel_type,
+    )
+    if not existing:
+        return False
+    channel_id = existing.get("id")
+    if channel_id is None:
+        raise RuntimeError(f"delete channel {name} failed: missing channel id")
+    with httpx.Client(timeout=15) as client:
+        res = client.delete(
+            f"{cfg.admin_base_url}/api/channel/{channel_id}",
+            headers=admin_headers(admin),
+        )
+    try:
+        body: Any = res.json()
+    except ValueError:
+        body = res.text
+    if res.status_code >= 400:
+        raise RuntimeError(
+            f"delete channel {name} failed: HTTP {res.status_code} {body}"
+        )
+    require_newapi_success(body, f"delete channel {name}")
+    return True
+
+
 def get_channel_detail(
     cfg: NewApiProvisionerConfig,
     admin: AdminToken,
