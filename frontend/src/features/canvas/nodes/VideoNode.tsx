@@ -2022,6 +2022,7 @@ export const VideoNode = memo(
             submitFreezoneVideoKeyframes(projectId, {
               firstFrameUrl,
               lastFrameUrl,
+              genMode,
               prompt: composedPrompt,
               cameraTemplateId,
               aspectRatio: submitAspectRatio,

@@ -369,6 +369,7 @@ async def _start_or_enqueue_freezone_video_gen(
     model_id: str | None = None,
     catalog_id: str | None = None,
     gen_mode: str | None = None,
+    requested_gen_mode: str | None = None,
     model_params: dict[str, Any] | None = None,
     request_schema: dict[str, Any] | None = None,
     capabilities: dict[str, Any] | None = None,
@@ -422,7 +423,7 @@ async def _start_or_enqueue_freezone_video_gen(
             "video_backend": backend,
             "resolution": resolution,
             "pricing_quantity": duration_seconds,
-            "operation": gen_mode or "textToVideo",
+            "operation": requested_gen_mode or gen_mode or "textToVideo",
             "generate_audio": generate_audio,
             "video_input_present": bool(video_input_paths),
             "input_video_duration_seconds": input_video_duration_seconds,
@@ -436,6 +437,7 @@ async def _start_or_enqueue_freezone_video_gen(
         "model_id": model_id or "",
         "catalog_id": catalog_id or "",
         "gen_mode": gen_mode or "",
+        "requested_gen_mode": requested_gen_mode or gen_mode or "",
         "prompt": prompt,
         "reference_items": reference_items,
         "aspect_ratio": aspect_ratio,
@@ -7748,11 +7750,11 @@ async def freezone_video_gen(
         "video",
         body.model,
         body.model_params,
-        mode=body.gen_mode or "text_to_video",
+        mode=body.gen_mode,
     )
     _require_catalog_video_mode(
         capabilities,
-        body.gen_mode or "text_to_video",
+        body.gen_mode,
     )
     character_items = _load_video_character_items_by_ids(project_dir, body.character_ids)
     character_names = [str(item.get("name") or "") for item in character_items]
@@ -7803,7 +7805,8 @@ async def freezone_video_gen(
             node_id=body.node_id or None,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode=body.gen_mode or "text_to_video",
+            gen_mode="text_to_video",
+            requested_gen_mode=body.gen_mode,
             model_params=model_params,
             request_schema=request_schema,
             capabilities=capabilities,
@@ -7922,6 +7925,7 @@ async def freezone_video_i2v(
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=execution_mode,
+            requested_gen_mode=requested_mode,
             model_params=model_params,
             request_schema=request_schema,
             capabilities=capabilities,
@@ -7951,29 +7955,30 @@ async def freezone_video_keyframes(
 
     if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
         raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
-    if not (body.first_frame_url or body.last_frame_url):
-        raise HTTPException(400, "first_frame_url or last_frame_url is required")
+    if body.gen_mode == "firstFrame":
+        if not body.first_frame_url:
+            raise HTTPException(400, "firstFrame requires first_frame_url")
+        if body.last_frame_url:
+            raise HTTPException(400, "firstFrame does not accept last_frame_url")
+    elif not (body.first_frame_url or body.last_frame_url):
+        raise HTTPException(400, "firstLastFrame requires at least one keyframe")
     try:
         backend = await _resolve_catalog_video_backend(body.model)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    if body.first_frame_url and body.last_frame_url:
-        execution_mode = "first_last_frame"
-    elif body.first_frame_url:
-        execution_mode = "first_frame"
-    else:
-        # 目录暂不新增独立 last_frame 能力。仅尾帧仍属于关键帧能力，最终协议只下发
-        # last_frame_image，不把它伪装成首帧。
-        execution_mode = "first_last_frame"
+    requested_mode = body.gen_mode
+    execution_mode = (
+        "first_frame" if requested_mode == "firstFrame" else "first_last_frame"
+    )
 
     request_schema, model_params, capabilities = await _resolve_catalog_request(
         "video",
         body.model,
         body.model_params,
-        mode=execution_mode,
+        mode=requested_mode,
     )
-    _require_catalog_video_mode(capabilities, execution_mode)
+    _require_catalog_video_mode(capabilities, requested_mode)
     reference_limits = _catalog_reference_limits(
         capabilities,
         image_default=2,
@@ -8046,6 +8051,7 @@ async def freezone_video_keyframes(
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=execution_mode,
+            requested_gen_mode=requested_mode,
             model_params=model_params,
             request_schema=request_schema,
             capabilities=capabilities,
@@ -8085,7 +8091,7 @@ async def freezone_video_omni_gen(
         "video",
         body.model,
         body.model_params,
-        mode=body.gen_mode or "all_reference",
+        mode=body.gen_mode,
     )
     mode_enabled = _catalog_mode_enabled(capabilities, "all_reference")
     if mode_enabled is False:
@@ -8212,7 +8218,8 @@ async def freezone_video_omni_gen(
             node_id=body.node_id or None,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode=body.gen_mode or "all_reference",
+            gen_mode="all_reference",
+            requested_gen_mode=body.gen_mode,
             model_params=model_params,
             request_schema=request_schema,
             capabilities=capabilities,
@@ -8256,7 +8263,7 @@ async def freezone_video_edit(
         "video",
         body.model,
         body.model_params,
-        mode=body.gen_mode or "video_edit",
+        mode=body.gen_mode,
     )
     mode_enabled = _catalog_mode_enabled(capabilities, "video_edit")
     if mode_enabled is False or (
@@ -8331,7 +8338,8 @@ async def freezone_video_edit(
             node_id=body.node_id or None,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode=body.gen_mode or "video_edit",
+            gen_mode="video_edit",
+            requested_gen_mode=body.gen_mode,
             model_params=model_params,
             request_schema=request_schema,
             capabilities=capabilities,

@@ -195,8 +195,8 @@ export interface FreezoneVideoGenPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** Backend model id, e.g. huimeng_seedance20_fast / seedance_pro. */
   model?: string;
-  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
-  genMode?: string;
+  /** 文生视频入口的固定业务模式。 */
+  genMode: "textToVideo";
   /**
    * Real-person material review. Set `true` when the input contains real
    * human faces so the backend routes the job through the human-review path
@@ -234,7 +234,7 @@ export async function submitFreezoneVideoGen(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -291,6 +291,8 @@ export interface FreezoneVideoKeyframesPayload extends FreezoneNodeContext {
   durationSeconds?: number;
   generateAudio?: boolean;
   model?: string;
+  /** 关键帧业务模式。首尾帧可只提供首帧、只提供尾帧或同时提供。 */
+  genMode: "firstFrame" | "firstLastFrame";
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -325,6 +327,7 @@ export async function submitFreezoneVideoKeyframes(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -414,8 +417,8 @@ export interface FreezoneVideoEditPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** default newapi_happyhorse-1.0. */
   model?: string;
-  /** 生成模式（还原用）：videoEdit。 */
-  genMode?: string;
+  /** 视频编辑入口的固定业务模式。 */
+  genMode: "videoEdit";
   humanReview?: boolean;
 }
 
@@ -449,7 +452,7 @@ export async function submitFreezoneVideoEdit(
         audio_setting: payload.audioSetting ?? "auto",
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         ...nodeContextBody(payload),
       },
@@ -481,8 +484,8 @@ export interface FreezoneVideoOmniGenPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** default huimeng_seedance20_fast per backend default. */
   model?: string;
-  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
-  genMode?: string;
+  /** 全能参考入口的固定业务模式。 */
+  genMode: "allReference";
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -522,7 +525,7 @@ export async function submitFreezoneVideoOmniGen(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),

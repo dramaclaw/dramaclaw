@@ -7,7 +7,13 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from novelvideo.api.routes import freezone as freezone_routes
-from novelvideo.api.schemas import FreezoneImageToVideoRequest, FreezoneKeyframeVideoRequest
+from novelvideo.api.schemas import (
+    FreezoneImageToVideoRequest,
+    FreezoneKeyframeVideoRequest,
+    FreezoneVideoEditRequest,
+    FreezoneVideoGenRequest,
+    FreezoneVideoOmniGenRequest,
+)
 
 
 def _catalog(*modes: str) -> dict:
@@ -72,6 +78,7 @@ async def test_image_to_video_uses_one_reference_image_not_first_frame(
 
     assert captured["request_mode"] == "imageToVideo"
     assert captured["start"]["gen_mode"] == "image_reference"
+    assert captured["start"]["requested_gen_mode"] == "imageToVideo"
     assert captured["start"]["reference_items"] == [
         {"type": "image", "path": "https://example.com/ref.png", "role": "图片参考"}
     ]
@@ -151,6 +158,7 @@ async def test_image_reference_keeps_multi_image_reference_protocol(
 
     assert captured["request_mode"] == "imageReference"
     assert captured["start"]["gen_mode"] == "image_reference"
+    assert captured["start"]["requested_gen_mode"] == "imageReference"
     assert [item["path"] for item in captured["start"]["reference_items"]] == [
         "https://example.com/a.png",
         "https://example.com/b.png",
@@ -165,23 +173,61 @@ def test_image_to_video_requires_an_explicit_new_mode() -> None:
         )
 
 
+def test_fixed_video_routes_reject_cross_route_modes() -> None:
+    with pytest.raises(ValidationError, match="gen_mode"):
+        FreezoneVideoGenRequest(prompt="rain", gen_mode="allReference")
+    with pytest.raises(ValidationError, match="gen_mode"):
+        FreezoneVideoOmniGenRequest(prompt="rain", gen_mode="textToVideo")
+    with pytest.raises(ValidationError, match="gen_mode"):
+        FreezoneVideoEditRequest(video_url="video.mp4", gen_mode="firstFrame")
+
+
+def test_keyframe_route_requires_explicit_mode() -> None:
+    with pytest.raises(ValidationError, match="gen_mode"):
+        FreezoneKeyframeVideoRequest(
+            first_frame_url="https://example.com/ref.png",
+            model="catalog-video",
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("first_url", "last_url", "expected_mode", "expected_image_path"),
+    ("requested_mode", "first_url", "last_url", "expected_mode", "expected_image_path"),
     [
-        ("https://example.com/first.png", None, "first_frame", "https://example.com/first.png"),
         (
+            "firstFrame",
+            "https://example.com/first.png",
+            None,
+            "first_frame",
+            "https://example.com/first.png",
+        ),
+        (
+            "firstLastFrame",
+            "https://example.com/first.png",
+            None,
+            "first_last_frame",
+            "https://example.com/first.png",
+        ),
+        (
+            "firstLastFrame",
             "https://example.com/first.png",
             "https://example.com/last.png",
             "first_last_frame",
             "https://example.com/first.png",
         ),
-        (None, "https://example.com/last.png", "first_last_frame", None),
+        (
+            "firstLastFrame",
+            None,
+            "https://example.com/last.png",
+            "first_last_frame",
+            None,
+        ),
     ],
 )
-async def test_keyframe_route_derives_first_both_and_last_only_protocols(
+async def test_keyframe_route_preserves_selected_mode_for_all_frame_combinations(
     monkeypatch,
     tmp_path: Path,
+    requested_mode: str,
     first_url: str | None,
     last_url: str | None,
     expected_mode: str,
@@ -199,14 +245,50 @@ async def test_keyframe_route_derives_first_both_and_last_only_protocols(
             first_frame_url=first_url,
             last_frame_url=last_url,
             model="catalog-video",
+            gen_mode=requested_mode,
         ),
         {"username": "admin"},
     )
 
-    assert captured["request_mode"] == expected_mode
+    assert captured["request_mode"] == requested_mode
     assert captured["start"]["gen_mode"] == expected_mode
+    assert captured["start"]["requested_gen_mode"] == requested_mode
     assert captured["start"]["last_frame_path"] == last_url
     first_items = [
         item for item in captured["start"]["reference_items"] if item["role"] == "首帧"
     ]
     assert (first_items[0]["path"] if first_items else None) == expected_image_path
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("first_url", "last_url", "message"),
+    [
+        (None, None, "requires first_frame_url"),
+        (
+            "https://example.com/first.png",
+            "https://example.com/last.png",
+            "does not accept last_frame_url",
+        ),
+    ],
+)
+async def test_first_frame_mode_rejects_invalid_frame_combinations(
+    monkeypatch,
+    tmp_path: Path,
+    first_url: str | None,
+    last_url: str | None,
+    message: str,
+) -> None:
+    await _install_route_fakes(monkeypatch, tmp_path, _catalog("first_frame"))
+
+    with pytest.raises(HTTPException, match=message):
+        await freezone_routes.freezone_video_keyframes(
+            "project",
+            FreezoneKeyframeVideoRequest(
+                first_frame_url=first_url,
+                last_frame_url=last_url,
+                model="catalog-video",
+                gen_mode="firstFrame",
+            ),
+            {"username": "admin"},
+        )

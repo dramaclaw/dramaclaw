@@ -764,7 +764,8 @@ async def test_freezone_video_generation_enqueues_feature_billing(
         human_review=False,
         scene_optimize=None,
         backend="newapi_seedance-1.0-pro-fast",
-        gen_mode="imageToVideo",
+        gen_mode="image_reference",
+        requested_gen_mode="imageToVideo",
     )
 
     assert result["data"]["task_type"] == "freezone_video_gen"
@@ -792,6 +793,8 @@ async def test_freezone_video_generation_enqueues_feature_billing(
         "video_input_present": False,
         "input_video_duration_seconds": 0.0,
     }
+    assert captured["payload"]["gen_mode"] == "image_reference"
+    assert captured["payload"]["requested_gen_mode"] == "imageToVideo"
 
 
 @pytest.mark.asyncio
