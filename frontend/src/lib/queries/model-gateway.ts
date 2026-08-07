@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
@@ -302,16 +303,47 @@ const officialMediaCatalogQueryKey = [
   ...queryKeys.modelGateway(),
   "official-media-catalog",
 ] as const;
+const officialMediaCatalogStatusPollMs = 60_000;
+
+function fetchOfficialMediaCatalogStatus(signal?: AbortSignal) {
+  return api
+    .get("api/v1/model-gateway/official/media-catalog", { signal })
+    .json<OkResponse<OfficialMediaCatalogStatus>>();
+}
 
 export function useOfficialMediaCatalogStatus(enabled = true) {
   return useQuery({
     queryKey: officialMediaCatalogQueryKey,
-    queryFn: ({ signal }) =>
-      api
-        .get("api/v1/model-gateway/official/media-catalog", { signal })
-        .json<OkResponse<OfficialMediaCatalogStatus>>(),
+    queryFn: ({ signal }) => fetchOfficialMediaCatalogStatus(signal),
     enabled,
   });
+}
+
+export function useOfficialMediaCatalogWatcher(enabled = true) {
+  const previousSha256 = useRef<string | null>(null);
+  const query = useQuery({
+    queryKey: officialMediaCatalogQueryKey,
+    queryFn: ({ signal }) => fetchOfficialMediaCatalogStatus(signal),
+    enabled,
+    refetchInterval: (current) =>
+      current.state.data?.data.autoUpdate === false
+        ? false
+        : officialMediaCatalogStatusPollMs,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
+  const sha256 = query.data?.data.sha256.trim() ?? "";
+
+  useEffect(() => {
+    if (!sha256) return;
+    const previous = previousSha256.current;
+    previousSha256.current = sha256;
+    if (previous && previous !== sha256 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("media-model-catalog-updated"));
+    }
+  }, [sha256]);
+
+  return query;
 }
 
 export function useSaveOfficialMediaCatalogPreferences() {
@@ -324,8 +356,12 @@ export function useSaveOfficialMediaCatalogPreferences() {
           throwHttpErrors: false,
         })
         .json<OkResponse<OfficialMediaCatalogStatus> | ErrorResponse>(),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: officialMediaCatalogQueryKey });
+    onSuccess: (response) => {
+      if (response.ok) {
+        qc.setQueryData(officialMediaCatalogQueryKey, response);
+      } else {
+        qc.invalidateQueries({ queryKey: officialMediaCatalogQueryKey });
+      }
     },
   });
 }
@@ -341,9 +377,10 @@ export function useCheckOfficialMediaCatalog() {
         })
         .json<OkResponse<OfficialMediaCatalogStatus> | ErrorResponse>(),
     onSuccess: (response) => {
-      qc.invalidateQueries({ queryKey: officialMediaCatalogQueryKey });
-      if (response.ok && response.data.updated && typeof window !== "undefined") {
-        window.dispatchEvent(new Event("media-model-catalog-updated"));
+      if (response.ok) {
+        qc.setQueryData(officialMediaCatalogQueryKey, response);
+      } else {
+        qc.invalidateQueries({ queryKey: officialMediaCatalogQueryKey });
       }
     },
   });

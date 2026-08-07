@@ -37,7 +37,7 @@ Official and Local + Official Hybrid modes show the current catalog version, mod
 - **Automatically update the official model catalog** is off by default. When enabled, the backend checks every five minutes by default and also checks immediately when the corresponding settings panel opens.
 - Downloaded catalogs are stored locally at `state/local/official_media_models.json` and remain active after restart.
 - DramaClaw rejects a remote catalog older than the active version. After an application upgrade, a newer bundled catalog takes precedence over an older local cache.
-- After a successful update, the image and video model lists in the current XiaHua browser session refresh automatically.
+- After a successful update, an open XiaHua browser observes the catalog status every minute while automatic updates are enabled and refreshes its image and video model lists when the content SHA256 changes.
 - The status API reports the active content SHA256, publishing Git revision, publication time, remote URL, and latest update error so each instance can be audited.
 
 Official catalog updates do not change provider channels, model mappings, or capabilities maintained in Custom mode.
