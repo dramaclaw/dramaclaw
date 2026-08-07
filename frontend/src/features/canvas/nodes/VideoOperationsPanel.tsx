@@ -732,7 +732,12 @@ export function VideoOperationsPanel({
                     domain="video"
                     popoverPlacement="top"
                     getOptionDisabledReason={(model) =>
-                      videoModelReferenceDisabledReason(model.apiModel ?? model.id, {
+                      // 传整个 ModelOption,不要塌成 id —— 能力口径以后台「媒体模型」
+                      // 声明的 supportedModes 为准,只传 id 会退到启发式,把目录里的
+                      // 改动整个丢掉(例如后台下掉 HappyHorse 的视频编辑后,它在这里
+                      // 依然可选,选进去所有模式都是灰的、提交也被拦)。与 VideoNode
+                      // 的提交守卫同源。
+                      videoModelReferenceDisabledReason(model, {
                         images: upstreamCounts.images,
                         // 视频 / 音频必须和自动切模型的 effect 同一口径（按节点类型，
                         // 空节点也算）。若这里用「已解析 URL」口径，连着空视频节点时

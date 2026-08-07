@@ -465,6 +465,45 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
     ).toBeTruthy();
   });
 
+  // 后台把某个模型的「视频编辑」下掉后，启发式那套「HappyHorse 天生能吃视频」的假设
+  // 就不成立了 —— 目录声明才是事实。
+  it("HappyHorse：目录里没有 video_edit 时，接入视频 → 置灰", () => {
+    const withoutVideoEdit = {
+      apiModel: HAPPYHORSE,
+      supportedModes: [
+        "text_to_video",
+        "first_frame",
+        "image_reference",
+        "first_last_frame",
+      ],
+    };
+    expect(
+      videoModelReferenceDisabledReason(withoutVideoEdit, { ...none, videos: 1 }),
+    ).toBe("该模型不支持视频素材");
+    // 目录里还留着 video_edit 的话照旧放行，别把整个模型误伤掉。
+    expect(
+      videoModelReferenceDisabledReason(
+        { apiModel: HAPPYHORSE, supportedModes: [...withoutVideoEdit.supportedModes, "video_edit"] },
+        { ...none, videos: 1 },
+      ),
+    ).toBeNull();
+  });
+
+  // 回归：选择器曾把模型塌成 `model.apiModel ?? model.id` 再传进来，目录声明的
+  // supportedModes 在这条路径上整个丢掉，只剩启发式 —— 后台下掉 HappyHorse 的视频
+  // 编辑后，它在选择器里依然可选，用户选进去后所有模式都是灰的、提交也被拦，成了
+  // 死胡同。这里锁住「传整个 ModelOption」，与 VideoNode 的提交守卫同源。
+  it("模型选择器必须把整个 ModelOption 传给置灰守卫（而非只传 id）", () => {
+    const source = readFileSync(
+      "src/features/canvas/nodes/VideoOperationsPanel.tsx",
+      "utf8",
+    );
+    expect(source).toContain("videoModelReferenceDisabledReason(model, {");
+    expect(source).not.toContain(
+      "videoModelReferenceDisabledReason(model.apiModel ?? model.id",
+    );
+  });
+
   it("Grok Video Channel：仅图片、且最多 8 张", () => {
     const GROK = "newapi_grok-video-channel";
     expect(videoModelReferenceDisabledReason(GROK, { ...none, images: 8 })).toBeNull();
