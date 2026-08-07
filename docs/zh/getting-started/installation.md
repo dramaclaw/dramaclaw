@@ -54,6 +54,8 @@ docker compose up -d --build   # 起 api / web 两个服务
 | **Linux(Debian/Ubuntu)** | `apt install python3.12` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `apt install ffmpeg` |
 
 > Python 必须落在 **3.11–3.12**(`requires-python = ">=3.11,<3.13"`)。uv 会按 `uv.lock` 锁定依赖版本。
+>
+> uv 需 **0.11.31 或更新**(`pyproject.toml` 的 `[tool.uv].required-version`),更高版本均可。若 `uv sync` 报 `required-version` 错误,升级 uv 后重试。
 
 ### 2. 装依赖并启动
 

@@ -54,6 +54,8 @@ After it's up, open **`http://localhost:8080`** in your browser (the app UI); th
 | **Linux (Debian/Ubuntu)** | `apt install python3.12` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `apt install ffmpeg` |
 
 > Python must be in the **3.11–3.12** range (`requires-python = ">=3.11,<3.13"`). uv pins dependency versions according to `uv.lock`.
+>
+> uv must be **0.11.31 or newer** (`[tool.uv].required-version` in `pyproject.toml`); any newer release is fine. If `uv sync` reports a `required-version` error, upgrade uv and retry.
 
 ### 2. Install dependencies and start
 

@@ -1,12 +1,14 @@
 path,license_expression,copyright,evidence
 .dockerignore,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .env.example,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+.github/CODEOWNERS,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/ISSUE_TEMPLATE/bug_report.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/ISSUE_TEMPLATE/config.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/ISSUE_TEMPLATE/documentation.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/ISSUE_TEMPLATE/failing_test.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/ISSUE_TEMPLATE/feature_request.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/PULL_REQUEST_TEMPLATE.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+.github/dependency-review-config.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/labels.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/banned-words.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/ce-import-lint.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -15,6 +17,7 @@ path,license_expression,copyright,evidence
 .github/workflows/dependency-review.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/ee-terms.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/frontend.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+.github/workflows/pr-gate.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/release-images.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/secret-scan.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .github/workflows/sync-to-gitee.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1291,9 +1294,13 @@ scripts/acceptance/foss_only_e2e.sh,Elastic-2.0,2026 SuperTale contributors,REUS
 scripts/acceptance/run.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/ce_allowlist.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_ce_port_closure.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/check_ci_gate_uniqueness.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/check_ci_workflow_policy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_dco.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_dependency_licenses.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/check_dependency_review_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_env_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/ci_yaml.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/compliance/generate_p0b_artifacts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/lint_banned_words.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/lint_ce_imports.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1750,6 +1757,7 @@ tests/test_character_voice_storage.py,Elastic-2.0,2026 SuperTale contributors,RE
 tests/test_chat_replay_strip.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_route_prewarm.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_service_user_agent_scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_ci_gate_policy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cli_cognee_commands.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cli_store_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cognee_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

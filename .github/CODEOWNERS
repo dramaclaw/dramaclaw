@@ -1,0 +1,12 @@
+/.github/CODEOWNERS                         @bopy-zou @Handanhhhy
+/.github/workflows/                         @bopy-zou @Handanhhhy
+/.github/dependency-review-config.yml       @bopy-zou @Handanhhhy
+/scripts/check_*.py                         @bopy-zou @Handanhhhy
+/scripts/ci_yaml.py                         @bopy-zou @Handanhhhy
+/scripts/lint_*.py                          @bopy-zou @Handanhhhy
+/scripts/ce_allowlist.py                    @bopy-zou @Handanhhhy
+/pyproject.toml                             @bopy-zou @Handanhhhy
+/uv.lock                                    @bopy-zou @Handanhhhy
+/.gitleaks.toml                             @bopy-zou @Handanhhhy
+/ce-allowlist.toml                          @bopy-zou @Handanhhhy
+/docs/ci-gate-*.md                          @bopy-zou @Handanhhhy
