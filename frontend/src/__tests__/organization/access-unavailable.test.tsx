@@ -85,6 +85,20 @@ describe("access unavailable", () => {
     expect(screen.queryByText(/view existing|export existing/i)).not.toBeInTheDocument();
   });
 
+  it("renders the generic message without exposing an unknown denial reason", async () => {
+    server.use(http.get("*/api/v1/org/me", () => HttpResponse.json({
+      ...denied,
+      capabilities: { ...denied.capabilities, start_model_tasks: true },
+      denial_reason: "UPSTREAM-SECRET-DENIAL",
+    })));
+    const { client } = renderPage();
+
+    expect(await screen.findByText("Access is currently unavailable")).toBeVisible();
+    expect(document.body.textContent).not.toContain("UPSTREAM-SECRET-DENIAL");
+    expect(JSON.stringify(client.getQueryCache().getAll()))
+      .not.toContain("UPSTREAM-SECRET-DENIAL");
+  });
+
   it("recovers on focus from a denied snapshot without replaying writes", async () => {
     let requests = 0;
     server.use(http.get("*/api/v1/org/me", () => {

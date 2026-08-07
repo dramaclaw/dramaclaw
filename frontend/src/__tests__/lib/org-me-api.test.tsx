@@ -86,6 +86,15 @@ describe("strict organization access snapshot", () => {
       ...authoritativeOrgMe,
       denial_reason: "ORG_CREDENTIAL_MISSING",
     }],
+    ["incoherent available decision for a known gateway", {
+      ...authoritativeOrgMe,
+      capabilities: { ...authoritativeOrgMe.capabilities, start_model_tasks: false },
+    }],
+    ["incoherent denial for an unknown gateway", {
+      ...authoritativeOrgMe,
+      gateway_key: { state: "UPSTREAM-SECRET-GATEWAY-STATE", key_version: 1 },
+      denial_reason: "ORG_CREDENTIAL_MISSING",
+    }],
     ["invalid timestamp", {
       ...authoritativeOrgMe,
       organization: { ...authoritativeOrgMe.organization, updated_at: "2026-02-30T00:00:00Z" },
@@ -179,7 +188,7 @@ describe("strict organization access snapshot", () => {
     ["active/null", { state: "active", key_version: null }],
     ["no_active/null", { state: "no_active", key_version: null }],
     ["never_configured/version", { state: "never_configured", key_version: 1 }],
-    ["unknown state", { state: "pending", key_version: 1 }],
+    ["non-string state", { state: 1, key_version: 1 }],
     ["zero version", { state: "active", key_version: 0 }],
     ["negative version", { state: "active", key_version: -1 }],
     ["unsafe version", { state: "active", key_version: Number.MAX_SAFE_INTEGER + 1 }],
@@ -187,6 +196,61 @@ describe("strict organization access snapshot", () => {
     const body = { ...authoritativeOrgMe, gateway_key: gatewayKey };
     server.use(http.get("*/api/v1/org/me", () => HttpResponse.json(body)));
     await expect(getOrgMe()).rejects.toMatchObject({ code: "ORG_REQUEST_FAILED" });
+  });
+
+  it("normalizes an unknown gateway state before returning or caching it", async () => {
+    const body = {
+      ...authoritativeOrgMe,
+      gateway_key: { state: "UPSTREAM-SECRET-GATEWAY-STATE", key_version: 1 },
+    };
+    server.use(http.get("*/api/v1/org/me", () => HttpResponse.json(body)));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook(() => useOrgMe(), { wrapper: wrapperFor(client) });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.gateway_key).toEqual({ state: "unknown", key_version: 1 });
+    expect(result.current.data?.capabilities.start_model_tasks).toBe(false);
+    expect(client.getQueryData(queryKeys.orgMe())).toEqual(result.current.data);
+    expect(JSON.stringify(client.getQueryCache().getAll()))
+      .not.toContain("UPSTREAM-SECRET-GATEWAY-STATE");
+  });
+
+  it("accepts an unavailable capability snapshot for an unknown gateway state", async () => {
+    const body = {
+      ...authoritativeOrgMe,
+      capabilities: { ...authoritativeOrgMe.capabilities, start_model_tasks: false },
+      gateway_key: { state: "UPSTREAM-SECRET-GATEWAY-STATE", key_version: 1 },
+    };
+    server.use(http.get("*/api/v1/org/me", () => HttpResponse.json(body)));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook(() => useOrgMe(), { wrapper: wrapperFor(client) });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.gateway_key).toEqual({ state: "unknown", key_version: 1 });
+    expect(result.current.data?.denial_reason).toBeNull();
+    expect(result.current.data?.capabilities.start_model_tasks).toBe(false);
+    expect(client.getQueryData(queryKeys.orgMe())).toEqual(result.current.data);
+    expect(JSON.stringify(client.getQueryCache().getAll()))
+      .not.toContain("UPSTREAM-SECRET-GATEWAY-STATE");
+  });
+
+  it("normalizes combined unknown gateway and denial values before caching", async () => {
+    const body = {
+      ...authoritativeOrgMe,
+      gateway_key: { state: "UPSTREAM-SECRET-GATEWAY-STATE", key_version: null },
+      denial_reason: "UPSTREAM-SECRET-DENIAL",
+    };
+    server.use(http.get("*/api/v1/org/me", () => HttpResponse.json(body)));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook(() => useOrgMe(), { wrapper: wrapperFor(client) });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.gateway_key).toEqual({ state: "unknown", key_version: null });
+    expect(result.current.data?.denial_reason).toBeNull();
+    expect(result.current.data?.capabilities.start_model_tasks).toBe(false);
+    expect(client.getQueryData(queryKeys.orgMe())).toEqual(result.current.data);
+    expect(JSON.stringify(client.getQueryCache().getAll()))
+      .not.toMatch(/UPSTREAM-SECRET-(?:GATEWAY-STATE|DENIAL)/);
   });
 
   it.each([
@@ -206,12 +270,25 @@ describe("strict organization access snapshot", () => {
     await expect(getOrgMe()).resolves.toEqual(body);
   });
 
-  it("rejects unknown denial reasons", async () => {
+  it("normalizes an unknown denial reason before returning or caching it", async () => {
     const body = {
       ...authoritativeOrgMe,
-      capabilities: { ...authoritativeOrgMe.capabilities, start_model_tasks: false },
       denial_reason: "UPSTREAM-SECRET-DENIAL",
     };
+    server.use(http.get("*/api/v1/org/me", () => HttpResponse.json(body)));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook(() => useOrgMe(), { wrapper: wrapperFor(client) });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.denial_reason).toBeNull();
+    expect(result.current.data?.capabilities.start_model_tasks).toBe(false);
+    expect(client.getQueryData(queryKeys.orgMe())).toEqual(result.current.data);
+    expect(JSON.stringify(client.getQueryCache().getAll()))
+      .not.toContain("UPSTREAM-SECRET-DENIAL");
+  });
+
+  it.each([undefined, 1, false, {}])("rejects non-string denial reason %j", async (denialReason) => {
+    const body = { ...authoritativeOrgMe, denial_reason: denialReason };
     server.use(http.get("*/api/v1/org/me", () => HttpResponse.json(body)));
     await expect(getOrgMe()).rejects.toMatchObject({ code: "ORG_REQUEST_FAILED" });
   });

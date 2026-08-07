@@ -40,7 +40,7 @@ export type OrgAccessDenialReason =
   | "ORG_AUTHZ_STALE";
 
 export interface GatewayKeySummary {
-  state: "never_configured" | "active" | "no_active";
+  state: "never_configured" | "active" | "no_active" | "unknown";
   key_version: number | null;
 }
 

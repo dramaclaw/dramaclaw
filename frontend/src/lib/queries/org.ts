@@ -124,30 +124,71 @@ function isOrgCapabilities(value: unknown): boolean {
     [...ORG_CAPABILITY_FIELDS].every((field) => typeof value[field] === "boolean");
 }
 
-function hasCoherentGatewaySummary(value: unknown): boolean {
-  if (!isRecord(value) || !hasExactFields(value, ORG_GATEWAY_SUMMARY_FIELDS)) return false;
-  if (value.state === "never_configured") return value.key_version === null;
-  return (value.state === "active" || value.state === "no_active") &&
-    Number.isSafeInteger(value.key_version) && Number(value.key_version) > 0;
+function parseGatewaySummary(value: unknown): OrgMe["gateway_key"] | null {
+  if (!isRecord(value) || !hasExactFields(value, ORG_GATEWAY_SUMMARY_FIELDS) ||
+    typeof value.state !== "string") return null;
+  if (value.state === "never_configured") {
+    return value.key_version === null
+      ? { state: value.state, key_version: value.key_version }
+      : null;
+  }
+  const hasValidVersion = Number.isSafeInteger(value.key_version) &&
+    Number(value.key_version) > 0;
+  if (value.state === "active" || value.state === "no_active") {
+    return hasValidVersion
+      ? { state: value.state, key_version: Number(value.key_version) }
+      : null;
+  }
+  return value.key_version === null || hasValidVersion
+    ? {
+        state: "unknown",
+        key_version: value.key_version === null ? null : Number(value.key_version),
+      }
+    : null;
 }
 
 function parseOrgMe(value: unknown, status: number): OrgMe {
   if (
     !isRecord(value) || !hasExactFields(value, ORG_ME_FIELDS) ||
     !isOrgMeUser(value.user) || !isOrgMeOrganization(value.organization) ||
-    !isOrgMeMembership(value.membership) || !isOrgCapabilities(value.capabilities) ||
-    !hasCoherentGatewaySummary(value.gateway_key) ||
-    !(value.denial_reason === null ||
-      (typeof value.denial_reason === "string" &&
-        ORG_ACCESS_DENIAL_REASONS.has(value.denial_reason)))
+    !isOrgMeMembership(value.membership) || !isOrgCapabilities(value.capabilities)
   ) {
     throw new OrgApiError({ status });
   }
-  const capabilities = value.capabilities as Record<string, unknown>;
-  if ((capabilities.start_model_tasks === true) !== (value.denial_reason === null)) {
+  const gatewayKey = parseGatewaySummary(value.gateway_key);
+  if (gatewayKey === null ||
+    !(value.denial_reason === null || typeof value.denial_reason === "string")) {
     throw new OrgApiError({ status });
   }
-  return value as unknown as OrgMe;
+  const capabilities = { ...(value.capabilities as OrgMe["capabilities"]) };
+  let denialReason: OrgMe["denial_reason"];
+  if (value.denial_reason === null || ORG_ACCESS_DENIAL_REASONS.has(value.denial_reason)) {
+    denialReason = value.denial_reason as OrgMe["denial_reason"];
+    const hasCoherentAccessDecision = denialReason === null
+      ? gatewayKey.state === "unknown" || capabilities.start_model_tasks === true
+      : capabilities.start_model_tasks === false;
+    if (!hasCoherentAccessDecision) {
+      throw new OrgApiError({ status });
+    }
+  } else {
+    denialReason = null;
+    capabilities.start_model_tasks = false;
+  }
+  if (gatewayKey.state === "unknown") {
+    capabilities.start_model_tasks = false;
+  }
+  return {
+    user: { ...(value.user as OrgMe["user"]) },
+    organization: value.organization === null
+      ? null
+      : { ...(value.organization as NonNullable<OrgMe["organization"]>) },
+    membership: value.membership === null
+      ? null
+      : { ...(value.membership as NonNullable<OrgMe["membership"]>) },
+    capabilities,
+    gateway_key: gatewayKey,
+    denial_reason: denialReason,
+  };
 }
 
 export class OrgApiError extends Error {

@@ -55,6 +55,20 @@ describe("organization access presentation", () => {
     });
   });
 
+  it("presents a normalized unknown denial as unavailable for the current organization", () => {
+    expect(
+      presentOrganizationAccess({
+        ...snapshot,
+        capabilities: { ...snapshot.capabilities, start_model_tasks: false },
+        denial_reason: null,
+      }),
+    ).toEqual({
+      canStart: false,
+      denialReason: null,
+      hasCurrentOrganization: true,
+    });
+  });
+
   it.each([
     ["missing capability", { ...snapshot, capabilities: {} }],
     [
