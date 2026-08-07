@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from novelvideo.model_gateway_settings import _validate_official_media_catalog
+from novelvideo.official_media_catalog_schema import validate_official_media_catalog
 
 _REVISION_RE = re.compile(r"^[0-9a-f]{7,64}$")
 
@@ -52,7 +52,7 @@ def build_publication(
     published_at: str,
     prefix: str,
 ) -> CatalogPublication:
-    validated = _validate_official_media_catalog(payload)
+    validated = validate_official_media_catalog(payload)
     normalized_revision = str(revision or "").strip().lower()
     if not _REVISION_RE.fullmatch(normalized_revision):
         raise ValueError("revision must be a 7-64 character hexadecimal Git SHA")

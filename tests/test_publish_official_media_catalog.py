@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -63,3 +64,28 @@ def test_build_publication_rejects_unsafe_prefix(prefix):
             published_at="2026-08-07T12:00:00Z",
             prefix=prefix,
         )
+
+
+def test_publisher_dry_run_in_isolated_stdlib_interpreter():
+    root = Path(__file__).parents[1]
+    script = root / "scripts" / "publish_official_media_catalog.py"
+    source = root / "src"
+    command = (
+        "import runpy,sys;"
+        f"sys.path.insert(0,{str(source)!r});"
+        f"sys.argv=[{str(script)!r},'--dry-run','--revision',{'c' * 40!r},"
+        "'--published-at','2026-08-07T12:00:00Z'];"
+        f"runpy.run_path({str(script)!r},run_name='__main__')"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", command],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    result = json.loads(completed.stdout)
+    assert result["dryRun"] is True
+    assert result["manifestKey"] == "official-media-catalog/manifest.json"
