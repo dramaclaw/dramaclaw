@@ -88,7 +88,6 @@ def _default_comfyui_media_model_config(
             "first_frame" if is_minimax_h3_local else "image_reference"
         )
         reference_limits["referenceImageMax"] = 1
-        reference_limits["humanReview"] = True
     if "r2v" in route_tokens:
         supported_modes.append("all_reference")
         reference_limits = {

@@ -2100,7 +2100,7 @@ def test_comfyui_provider_channel_writes_workflows_to_newapi(
     ]
     assert comfy_mapping["config"]["supportedModes"] == ["image_reference"]
     assert comfy_mapping["config"]["referenceImageMax"] == 1
-    assert comfy_mapping["config"]["humanReview"] is True
+    assert "humanReview" not in comfy_mapping["config"]
     assert comfy_mapping["config"]["_dcManagedByWorkflow"] is True
 
 

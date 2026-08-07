@@ -509,7 +509,7 @@ function ModelConfigSection({ open }: { open: boolean }) {
                   database={customDatabase}
                   channelTypesEnabled={Boolean(
                     config?.custom?.configured &&
-                      config?.provisioner?.database?.available
+                    config?.provisioner?.database?.available,
                   )}
                   savedProviderChannels={
                     config?.provisioner?.providerChannels ?? []
@@ -534,7 +534,7 @@ function ModelConfigSection({ open }: { open: boolean }) {
                   database={customDatabase}
                   channelTypesEnabled={Boolean(
                     config?.custom?.configured &&
-                      config?.provisioner?.database?.available
+                    config?.provisioner?.database?.available,
                   )}
                   savedProviderChannels={
                     config?.provisioner?.providerChannels ?? []
@@ -566,8 +566,7 @@ function OfficialGatewayPanel({
   const enableHybrid = useEnableHybrid();
   const saveOfficial = useSaveOfficialConfig();
   const mediaCatalogQuery = useOfficialMediaCatalogStatus();
-  const saveMediaCatalogPreferences =
-    useSaveOfficialMediaCatalogPreferences();
+  const saveMediaCatalogPreferences = useSaveOfficialMediaCatalogPreferences();
   const checkMediaCatalog = useCheckOfficialMediaCatalog();
   const automaticCatalogCheckStarted = useRef(false);
 
@@ -647,7 +646,11 @@ function OfficialGatewayPanel({
 
   const handleSave = async () => {
     // Password managers may update the DOM without firing React's onChange.
-    const trimmedApiKey = (apiKey || apiKeyInputRef.current?.value || "").trim();
+    const trimmedApiKey = (
+      apiKey ||
+      apiKeyInputRef.current?.value ||
+      ""
+    ).trim();
     try {
       if (!trimmedApiKey) {
         if (!official?.configured) {
@@ -745,7 +748,9 @@ function OfficialGatewayPanel({
             size="sm"
             variant="outline"
             onClick={() => void runMediaCatalogCheck(true)}
-            disabled={mediaCatalogQuery.isLoading || checkMediaCatalog.isPending}
+            disabled={
+              mediaCatalogQuery.isLoading || checkMediaCatalog.isPending
+            }
           >
             <RotateCw
               className={cn(
@@ -772,9 +777,7 @@ function OfficialGatewayPanel({
             aria-label={t(
               "settings.modelConfig.official.mediaCatalogAutoUpdate",
             )}
-            disabled={
-              !mediaCatalog || saveMediaCatalogPreferences.isPending
-            }
+            disabled={!mediaCatalog || saveMediaCatalogPreferences.isPending}
             onClick={() => void handleMediaCatalogAutoUpdate()}
             className={cn(
               "relative h-5 w-9 shrink-0 rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
@@ -1629,7 +1632,10 @@ function syncQuickProfileFromAdvancedSettings(
       ...(provider === "comfyui" ? { type: 63 } : {}),
       baseUrl: settings.providerChannels[provider]?.baseUrl ?? "",
       priority: settings.providerChannels[provider]?.priority ?? 0,
-      settings: settings.providerChannels[provider]?.settings ?? {},
+      settings: normalizeProviderChannelSettings(
+        provider,
+        settings.providerChannels[provider]?.settings ?? {},
+      ),
     });
     channelIdByProvider.set(provider, id);
     return id;
@@ -1902,11 +1908,12 @@ function QuickLocalNewApiSetup({
     // Quick profiles configure the custom NewAPI stack, while ComfyUI mappings
     // are shared with Hybrid mode. Applying a profile that does not mention
     // ComfyUI must not erase those independently managed local overrides.
-    const mediaModels: Record<string, SavedMediaModelConfig> = Object.fromEntries(
-      Object.entries(config?.provisioner?.mediaModels ?? {}).filter(
-        ([, item]) => item.provider === "comfyui",
-      ),
-    );
+    const mediaModels: Record<string, SavedMediaModelConfig> =
+      Object.fromEntries(
+        Object.entries(config?.provisioner?.mediaModels ?? {}).filter(
+          ([, item]) => item.provider === "comfyui",
+        ),
+      );
     for (const [rawModel, item] of Object.entries(profile.mediaModels)) {
       const model = rawModel.trim();
       const upstreamModel = item.model.trim();
@@ -1940,7 +1947,10 @@ function QuickLocalNewApiSetup({
             : {}),
           baseUrl: channel.baseUrl.trim(),
           priority: channel.priority ?? 0,
-          settings: channel.settings ?? {},
+          settings: normalizeProviderChannelSettings(
+            channel.provider,
+            channel.settings ?? {},
+          ),
         })),
       });
       if (channelResult.ok !== true || !("data" in channelResult)) {
@@ -1967,7 +1977,10 @@ function QuickLocalNewApiSetup({
               weight: 0,
               baseUrl: channel.baseUrl.trim(),
               testModel: "",
-              settings: channel.settings ?? {},
+              settings: normalizeProviderChannelSettings(
+                channel.provider,
+                channel.settings ?? {},
+              ),
             };
           },
         ),
@@ -2007,7 +2020,10 @@ function QuickLocalNewApiSetup({
           upstreamKey: "",
           baseUrl: channel.baseUrl,
           priority: channel.priority ?? 0,
-          settings: channel.settings ?? {},
+          settings: normalizeProviderChannelSettings(
+            channel.provider,
+            channel.settings ?? {},
+          ),
         });
       }
       for (const group of FEATURE_MODEL_GROUPS) {
@@ -2401,7 +2417,10 @@ function FeatureModelsBlock({
         updateFeatureProviderChannel(provider, {
           baseUrl: savedBaseUrl,
           priority: channel.priority ?? 0,
-          settings: channel.settings ?? {},
+          settings: normalizeProviderChannelSettings(
+            channel.provider,
+            channel.settings ?? {},
+          ),
         });
         continue;
       }
@@ -2409,7 +2428,10 @@ function FeatureModelsBlock({
         updateFeatureProviderChannel(provider, {
           baseUrl: savedBaseUrl,
           priority: channel.priority ?? current.priority,
-          settings: channel.settings ?? current.settings,
+          settings: normalizeProviderChannelSettings(
+            channel.provider,
+            channel.settings ?? current.settings,
+          ),
         });
       }
     }
@@ -2500,7 +2522,10 @@ function FeatureModelsBlock({
         weight: 0,
         baseUrl: (channel?.baseUrl ?? "").trim(),
         testModel: "",
-        settings: channel?.settings ?? {},
+        settings: normalizeProviderChannelSettings(
+          provider,
+          channel?.settings ?? {},
+        ),
       };
     });
   };
@@ -3026,7 +3051,6 @@ function defaultComfyMediaModelConfig(
   if (routeTokens.has("i2v")) {
     supportedModes.push(isMiniMaxH3Local ? "first_frame" : "image_reference");
     referenceCapabilities.referenceImageMax = 1;
-    referenceCapabilities.humanReview = true;
   }
   if (routeTokens.has("r2v")) {
     supportedModes.push("all_reference");
@@ -3104,15 +3128,12 @@ function MediaModelsBlock({
   const [creatingModel, setCreatingModel] = useState(false);
   const savedMediaModelsKey = JSON.stringify(savedMediaModels);
   const localSavedMediaModelsKey = JSON.stringify(localSavedMediaModels);
-  const comfyWorkflowModels = useMemo(
-    () => {
-      const model = readComfyUIModelName(
-        providerChannels.comfyui?.settings ?? {},
-      );
-      return model ? [model] : [];
-    },
-    [providerChannels.comfyui?.settings],
-  );
+  const comfyWorkflowModels = useMemo(() => {
+    const model = readComfyUIModelName(
+      providerChannels.comfyui?.settings ?? {},
+    );
+    return model ? [model] : [];
+  }, [providerChannels.comfyui?.settings]);
   const comfyWorkflowIds = useMemo(
     () =>
       Object.keys(
@@ -3284,7 +3305,10 @@ function MediaModelsBlock({
               type: savedChannelByProvider.get("comfyui")?.type ?? 63,
               baseUrl: comfyChannel.baseUrl.trim(),
               priority: comfyChannel.priority ?? 0,
-              settings: comfyChannel.settings ?? {},
+              settings: normalizeProviderChannelSettings(
+                "comfyui",
+                comfyChannel.settings ?? {},
+              ),
             },
           ],
         });
@@ -3596,7 +3620,6 @@ function MediaModelsBlock({
     </div>
   );
 }
-
 
 function LocalMediaModelEditor({
   originalModel,
@@ -4272,7 +4295,10 @@ function ProviderChannelsBlock({
           (providerChannels[provider]?.upstreamKey ?? "").trim() || undefined,
         baseUrl: (providerChannels[provider]?.baseUrl ?? "").trim(),
         priority: providerChannels[provider]?.priority ?? 0,
-        settings: providerChannels[provider]?.settings ?? {},
+        settings: normalizeProviderChannelSettings(
+          provider,
+          providerChannels[provider]?.settings ?? {},
+        ),
       }));
     if (channelsToSave.length === 0) {
       toast.error(
@@ -4503,15 +4529,32 @@ function ProviderChannelRow({
       const response = await clearComfyUIConfig.mutateAsync();
       if (response.ok !== true) {
         toast.error(
-          getResponseErrorMessage(response, t("settings.modelConfig.requestFailed")),
+          getResponseErrorMessage(
+            response,
+            t("settings.modelConfig.requestFailed"),
+          ),
         );
         return;
       }
       removeFeatureProviderChannel("comfyui");
+      const currentMediaModels =
+        useSettingsStore.getState().featureModelConfig.mediaModels ?? {};
+      useSettingsStore
+        .getState()
+        .setMediaModels(
+          Object.fromEntries(
+            Object.entries(currentMediaModels).filter(
+              ([, entry]) => entry.provider !== "comfyui",
+            ),
+          ),
+        );
       toast.success(t("settings.modelConfig.featureModels.comfyCleared"));
     } catch (error) {
       toast.error(
-        await getRequestErrorMessage(error, t("settings.modelConfig.requestFailed")),
+        await getRequestErrorMessage(
+          error,
+          t("settings.modelConfig.requestFailed"),
+        ),
       );
     }
   };
@@ -4673,7 +4716,8 @@ function readComfyUIWorkflows(
   if (Array.isArray(routes)) {
     return Object.fromEntries(
       routes.flatMap((route) => {
-        if (!route || typeof route !== "object" || Array.isArray(route)) return [];
+        if (!route || typeof route !== "object" || Array.isArray(route))
+          return [];
         const item = route as Record<string, unknown>;
         const id = typeof item.id === "string" ? item.id.trim() : "";
         const workflow = item.workflow;
@@ -4743,6 +4787,34 @@ function buildComfyUIWorkflowRoutes(
   }));
 }
 
+function normalizeProviderChannelSettings(
+  provider: string,
+  settings: Record<string, unknown>,
+): Record<string, unknown> {
+  if (provider !== "comfyui") return settings;
+  const comfyui =
+    settings.comfyui &&
+    typeof settings.comfyui === "object" &&
+    !Array.isArray(settings.comfyui)
+      ? (settings.comfyui as Record<string, unknown>)
+      : {};
+  if (Array.isArray(comfyui.workflow_routes)) return settings;
+  const workflows = readComfyUIWorkflows(settings);
+  const workflowIds = Object.keys(workflows);
+  const isLegacyH3Group =
+    workflowIds.length > 1 &&
+    workflowIds.every((id) => /^minimax[_-]h3(?:[_-]|$)/i.test(id));
+  if (workflowIds.length !== 1 && !isLegacyH3Group) return settings;
+  const model = readComfyUIModelName(settings);
+  if (!model) return settings;
+  const normalized = { ...comfyui };
+  delete normalized.workflow_by_model;
+  delete normalized.workflow;
+  normalized.model_name = model;
+  normalized.workflow_routes = buildComfyUIWorkflowRoutes(workflows);
+  return { ...settings, comfyui: normalized };
+}
+
 function ComfyUIWorkflowsEditor({
   settings,
   onChange,
@@ -4791,7 +4863,9 @@ function ComfyUIWorkflowsEditor({
     const next = nextValue.trim();
     if (!next || next === previous) return;
     if (workflows[next]) {
-      toast.error(t("settings.modelConfig.featureModels.comfyDuplicateWorkflow"));
+      toast.error(
+        t("settings.modelConfig.featureModels.comfyDuplicateWorkflow"),
+      );
       return;
     }
     const renamed: Record<string, Record<string, unknown>> = {};
@@ -4855,8 +4929,7 @@ function ComfyUIWorkflowsEditor({
       </div>
       <div className="mt-3 space-y-3">
         {Object.entries(workflows).map(([workflowId, workflow]) => {
-          const text =
-            drafts[workflowId] ?? JSON.stringify(workflow, null, 2);
+          const text = drafts[workflowId] ?? JSON.stringify(workflow, null, 2);
           const isExpanded = expandedWorkflows.has(workflowId);
           return (
             <div
