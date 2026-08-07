@@ -88,6 +88,8 @@ def _default_comfyui_media_model_config(
     ratio_options = (
         ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
         if is_minimax_h3_local
+        else ["16:9", "1:1"]
+        if "i2v" in route_tokens
         else ["1:1", "16:9"]
     )
     if "t2v" in route_tokens or not route_tokens.intersection({"i2v", "r2v"}):

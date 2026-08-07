@@ -59,6 +59,12 @@ from novelvideo.newapi_provisioner import (
 )
 
 
+def test_generic_comfyui_i2v_defaults_to_widescreen():
+    config = model_gateway._default_comfyui_media_model_config("wan-i2v")
+
+    assert config["ratioOptions"][0] == "16:9"
+
+
 def test_comfyui_channel_update_replaces_removed_workflow_models():
     existing = {
         "id": 9,
@@ -2086,7 +2092,7 @@ def test_comfyui_provider_channel_writes_workflows_to_newapi(
     assert comfy_mapping["mediaType"] == "video"
     assert comfy_mapping["config"]["request"]["endpoint"] == "video/generations"
     assert comfy_mapping["config"]["resolutionOptions"] == ["480p", "640p"]
-    assert comfy_mapping["config"]["ratioOptions"] == ["1:1", "16:9"]
+    assert comfy_mapping["config"]["ratioOptions"] == ["16:9", "1:1"]
     assert comfy_mapping["config"]["supportedModes"] == [
         "image_to_video",
         "image_reference",

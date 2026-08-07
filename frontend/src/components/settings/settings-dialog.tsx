@@ -3046,7 +3046,9 @@ function defaultComfyMediaModelConfig(
     : ["480p", "640p"];
   const ratioOptions = isMiniMaxH3Local
     ? ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
-    : ["1:1", "16:9"];
+    : routeTokens.has("i2v")
+      ? ["16:9", "1:1"]
+      : ["1:1", "16:9"];
   if (
     routeTokens.has("t2v") ||
     (!routeTokens.has("i2v") && !routeTokens.has("r2v"))
