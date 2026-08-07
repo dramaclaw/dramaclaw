@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const nodeSource = readFileSync(
+  "src/features/canvas/nodes/TextAnnotationNode.tsx",
+  "utf8",
+);
+const apiSource = readFileSync("src/api/ops.ts", "utf8");
+
+describe("canvas AI text generation contract", () => {
+  it("quotes and submits the same character-priced feature", () => {
+    expect(nodeSource).toContain(
+      "const TEXT_GENERATE_FEATURE_KEY = 'freezone.text_generate'",
+    );
+    expect(nodeSource).toContain("operation: 'text_generate'");
+    expect(nodeSource).toContain(
+      "billable_chars: textGenerateBillableChars",
+    );
+    expect(nodeSource).toContain(
+      "pricing_quantity: textGenerateBillableChars",
+    );
+    expect(nodeSource).toContain("submitFreezoneTextGenerate(projectId");
+    expect(nodeSource).toContain("prompt,");
+  });
+
+  it("keeps the user instruction separate from generated content", () => {
+    expect(nodeSource).toContain("value={instruction}");
+    expect(nodeSource).toContain(
+      "updateNodeData(nodeId, { instruction: event.target.value })",
+    );
+    expect(nodeSource).toContain("content: result.generated_text");
+  });
+
+  it("uses the dedicated text generation API and result endpoint", () => {
+    expect(apiSource).toContain("/freezone/text/generate");
+    expect(apiSource).toContain(
+      "/freezone/jobs/freezone_text_generate/",
+    );
+  });
+});

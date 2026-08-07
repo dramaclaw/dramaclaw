@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import {
   CANVAS_NODE_TYPES,
@@ -45,8 +46,10 @@ import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import {
   ensureBackendImageUrl,
   fetchFreezoneReversePromptResult,
+  fetchFreezoneTextGenerateResult,
   fetchFreezoneTextTranslateResult,
   submitFreezoneReversePrompt,
+  submitFreezoneTextGenerate,
   submitFreezoneTextTranslate,
   submitFreezoneVideoGen,
   type FreezoneVideoAspectRatio,
@@ -70,8 +73,12 @@ import {
 } from '@/features/canvas/ui/nodeControlStyles';
 import { useFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
 import { CreditCostInline } from '@/components/credit-cost-inline';
+import type { CreditPromotionDisplay } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
-import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
+import {
+  BillingRuleNotConfiguredError,
+  backendErrorToastMessage,
+} from '@/lib/api-errors';
 
 type TextAnnotationNodeProps = NodeProps & {
   id: string;
@@ -88,6 +95,8 @@ const COMPACT_MIN_HEIGHT = 240;
 const MAX_WIDTH = 900;
 const MAX_HEIGHT = 1200;
 const IMAGE_REVERSE_PROMPT_FEATURE_KEY = 'freezone.image_reverse_prompt';
+const TEXT_GENERATE_FEATURE_KEY = 'freezone.text_generate';
+const TEXT_WRITER_MODEL_ID = 'DC-freezone-text-writer-LLM';
 
 const PICKER_INSET = 32;
 const COMPACT_OPS_PANEL_HEIGHT = 140;
@@ -214,6 +223,27 @@ export const TextAnnotationNode = memo(({
     (reversePromptBillingRuleMissing
       ? t('common.billingRuleNotConfiguredShort')
       : null);
+  const textGenerateBillableChars = countBillableTextChars(instruction);
+  const textGenerateCost = useGenerationCreditCost(
+    'feature',
+    mode === 'writing' && selected ? TEXT_GENERATE_FEATURE_KEY : null,
+    {
+      surface: 'canvas',
+      quantity: textGenerateBillableChars,
+      params: {
+        operation: 'text_generate',
+        billable_chars: textGenerateBillableChars,
+        pricing_quantity: textGenerateBillableChars,
+      },
+    },
+  );
+  const textGenerateBillingRuleMissing =
+    textGenerateCost.error instanceof BillingRuleNotConfiguredError;
+  const textGenerateCostDisplay =
+    textGenerateCost.data?.data.display ??
+    (textGenerateBillingRuleMissing
+      ? t('common.billingRuleNotConfiguredShort')
+      : null);
   const { isGenerating } = useNodeGenerationTaskState(data);
   // referenceOnly: 节点被作为上游引用素材使用（脚本节点 spawn 出来的）。
   // 复用 compact 视图（只渲染编辑卡片），同时 selected ops panel 也不显示。
@@ -326,8 +356,8 @@ export const TextAnnotationNode = memo(({
 
   const handlePickMode = useCallback((nextMode: TextNodeMode) => {
     if (nextMode === 'writing') {
-      updateNodeData(id, { mode: nextMode });
-      enterEditMode();
+      // 先打开 AI 创作面板；节点正文仍可通过单击占位区 / 双击已有内容手工编辑。
+      updateNodeData(id, { mode: nextMode, pickerDismissed: true });
       return;
     }
     // 文字生成音乐：派生下游音乐音频节点后，左侧文本节点回到纯文本编辑态
@@ -398,6 +428,41 @@ export const TextAnnotationNode = memo(({
       updateNodeData(id, { isGenerating: false, generationStartedAt: null });
     }
   }, [id, reversePromptInstruction, updateNodeData]);
+
+  const runTextGenerate = useCallback(async () => {
+    const prompt = instruction.trim();
+    if (!prompt || textGenerateBillingRuleMissing) return;
+    const projectId = readUrl().project;
+    if (!projectId) {
+      console.error('[text-node] text generation: no project in URL');
+      return;
+    }
+
+    updateNodeData(id, { isGenerating: true, generationStartedAt: Date.now() });
+    try {
+      const ref = await submitFreezoneTextGenerate(projectId, {
+        prompt,
+        canvasId: readUrl().canvas ?? 'default',
+        nodeId: id,
+      });
+      updateNodeData(id, generationTaskDescriptor(ref));
+      await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
+      const result = await fetchFreezoneTextGenerateResult(projectId, ref.job_id);
+      if (!result.generated_text.trim()) {
+        throw new Error('text generation returned empty output');
+      }
+      updateNodeData(id, {
+        content: result.generated_text,
+        model: result.model || TEXT_WRITER_MODEL_ID,
+        isGenerating: false,
+        generationStartedAt: null,
+      });
+    } catch (error) {
+      console.error('[text-node] text generation failed', error);
+      toast.error(backendErrorToastMessage(error, t));
+      updateNodeData(id, { isGenerating: false, generationStartedAt: null });
+    }
+  }, [id, instruction, t, textGenerateBillingRuleMissing, updateNodeData]);
 
   const runTextToVideo = useCallback(async () => {
     const promptText = content.trim();
@@ -493,7 +558,12 @@ export const TextAnnotationNode = memo(({
   const hasUserContent = content.trim().length > 0 && content.trim() !== textPlaceholder.trim();
 
   const handleSubmit = useCallback(() => {
-    if (isGenerating || reversePromptBillingRuleMissing) return;
+    if (isGenerating) return;
+    if (mode === 'writing') {
+      void runTextGenerate();
+      return;
+    }
+    if (reversePromptBillingRuleMissing) return;
     if (mode === 'imageToPrompt') {
       void runImageToPrompt();
       return;
@@ -513,12 +583,14 @@ export const TextAnnotationNode = memo(({
     modelId,
     reversePromptBillingRuleMissing,
     runImageToPrompt,
+    runTextGenerate,
     runTextToVideo,
   ]);
 
   const submitDisabled = isGenerating
+    || (mode === 'writing' && (textGenerateBillingRuleMissing || instruction.trim().length === 0))
     || (mode === 'imageToPrompt' && reversePromptBillingRuleMissing)
-    || (mode !== 'imageToPrompt' && !hasUserContent);
+    || (mode !== 'writing' && mode !== 'imageToPrompt' && !hasUserContent);
   // Inner panels stay neutral regardless of selection — the React Flow node
   // wrapper already shows the active state as an outer outline. Doubling it
   // up on the inner cards (libtv-style reference shows neutral borders only)
@@ -566,8 +638,13 @@ export const TextAnnotationNode = memo(({
         <WritingOpsPanel
           nodeId={id}
           content={content}
+          instruction={instruction}
           isGenerating={isGenerating}
           width={resolvedWidth}
+          costDisplay={textGenerateCostDisplay}
+          promotion={textGenerateCost.data?.data.promotion}
+          submitDisabled={submitDisabled}
+          onGenerate={handleSubmit}
         />
       )}
 
@@ -837,20 +914,30 @@ TextAnnotationNode.displayName = 'TextAnnotationNode';
 interface WritingOpsPanelProps {
   nodeId: string;
   content: string;
+  instruction: string;
   isGenerating: boolean;
   width: number;
+  costDisplay: string | null;
+  promotion?: CreditPromotionDisplay | null;
+  submitDisabled: boolean;
+  onGenerate: () => void;
 }
 
 function WritingOpsPanel({
   nodeId,
   content,
+  instruction,
   isGenerating,
   width,
+  costDisplay,
+  promotion,
+  submitDisabled,
+  onGenerate,
 }: WritingOpsPanelProps) {
   const { t } = useTranslation();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [isTranslating, setIsTranslating] = useState(false);
-  const textPlaceholder = t('node.textNode.placeholder');
+  const generatePlaceholder = t('node.textNode.generatePlaceholder');
 
   const handleTranslate = useCallback(async () => {
     if (isGenerating || isTranslating) return;
@@ -892,34 +979,61 @@ function WritingOpsPanel({
       onClick={(event) => event.stopPropagation()}
     >
       <textarea
-        value={content}
-        onChange={(event) => updateNodeData(nodeId, { content: event.target.value })}
+        value={instruction}
+        onChange={(event) => updateNodeData(nodeId, { instruction: event.target.value })}
         onMouseDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
-        placeholder={textPlaceholder}
+        placeholder={generatePlaceholder}
         className={`ui-scrollbar nodrag nowheel min-h-0 w-full flex-1 resize-none border-none bg-transparent px-3 pt-3 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
         disabled={isGenerating}
       />
-      <div className="flex shrink-0 items-center justify-end gap-1 px-3 py-2">
-        <button
-          type="button"
-          title={t('node.textNode.translate')}
-          onClick={(event) => {
-            event.stopPropagation();
-            void handleTranslate();
-          }}
-          disabled={translateDisabled}
-          className={`${NODE_INLINE_ICON_BUTTON_CLASS} ${
-            isTranslating ? NODE_INLINE_ICON_BUTTON_ACTIVE_CLASS : ''
-          }`}
-        >
-          {isTranslating ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Languages className="h-4 w-4" />
-          )}
-        </button>
+      <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-cyan-400/80" />
+          <span className="truncate">{t('node.textNode.textWriterModel')}</span>
+        </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            title={t('node.textNode.translate')}
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleTranslate();
+            }}
+            disabled={translateDisabled}
+            className={`${NODE_INLINE_ICON_BUTTON_CLASS} ${
+              isTranslating ? NODE_INLINE_ICON_BUTTON_ACTIVE_CLASS : ''
+            }`}
+          >
+            {isTranslating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Languages className="h-4 w-4" />
+            )}
+          </button>
+          <CreditCostInline display={costDisplay} promotion={promotion} />
+          <button
+            type="button"
+            disabled={submitDisabled}
+            title={t('node.textNode.submit')}
+            onClick={(event) => {
+              event.stopPropagation();
+              onGenerate();
+            }}
+            className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
+              submitDisabled
+                ? NODE_GENERATE_BUTTON_DISABLED_CLASS
+                : NODE_GENERATE_BUTTON_ENABLED_CLASS
+            }`}
+          >
+            {isGenerating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArrowUp className="h-4 w-4" />
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

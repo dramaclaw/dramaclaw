@@ -3263,6 +3263,54 @@ async def test_freezone_celery_text_runner_records_project_node_history(
 
 
 @pytest.mark.asyncio
+async def test_freezone_celery_text_generate_runner_records_project_node_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novelvideo.freezone.history import read_generation_history
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    ctx = _project_ctx(tmp_path)
+    project_dir = ctx.output_dir
+
+    async def fake_generate_freezone_text(*, prompt: str):
+        assert prompt == "写一段雨夜重逢"
+        return "DC-freezone-text-writer-LLM", "雨夜里，他们在旧站台重逢。"
+
+    class FakeTaskManager:
+        def update_progress_for_project(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        "novelvideo.freezone.text_node.generate_freezone_text",
+        fake_generate_freezone_text,
+    )
+    monkeypatch.setattr(freezone_runner, "get_task_manager", lambda: FakeTaskManager())
+
+    result = await freezone_runner._run_freezone_text_generate_async(
+        {
+            "payload": {
+                "job_id": "job_text_generate",
+                "project_dir": str(project_dir),
+                "prompt": "写一段雨夜重逢",
+                "canvas_id": "canvas_a",
+                "node_id": "node_text",
+            }
+        },
+        ctx,
+    )
+
+    history = read_generation_history(
+        project_dir=project_dir,
+        canvas_id="canvas_a",
+        node_id="node_text",
+    )
+    assert result["generated_text"] == "雨夜里，他们在旧站台重逢。"
+    assert history[-1]["task_type"] == "freezone_text_generate"
+    assert history[-1]["model"] == "DC-freezone-text-writer-LLM"
+
+
+@pytest.mark.asyncio
 async def test_freezone_image_to_3gs_task_includes_fixed_feature_billing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3489,6 +3537,48 @@ async def test_freezone_text_job_preserves_canvas_node_context_in_celery_payload
     assert captured["payload"]["canvas_id"] == "canvas_a"
     assert captured["payload"]["node_id"] == "node_text"
     assert captured["payload"]["billing"] == {"billable_chars": 2}
+
+
+@pytest.mark.asyncio
+async def test_freezone_text_generate_job_uses_visible_chars_for_billing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _project_ctx(tmp_path)
+    captured: dict = {}
+
+    async def fake_resolve_freezone_project(*_args, **_kwargs):
+        return ctx, "admin", "demo", ctx.output_dir, str(ctx.output_dir)
+
+    async def fake_enqueue_freezone_background_job(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "data": {"task_key": "task_key"}}
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve_freezone_project)
+    monkeypatch.setattr(
+        freezone_routes,
+        "_enqueue_freezone_background_job",
+        fake_enqueue_freezone_background_job,
+    )
+    monkeypatch.setattr(freezone_routes, "_new_job_id", lambda: "job_text_generate")
+
+    await freezone_routes.freezone_text_generate(
+        project="proj_freezone",
+        body=freezone_routes.FreezoneTextGenerateRequest(
+            prompt=" 写一段\n雨夜故事 ",
+            canvas_id="canvas_a",
+            node_id="node_text",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert captured["task_type"] == "freezone_text_generate"
+    assert captured["payload"]["canvas_id"] == "canvas_a"
+    assert captured["payload"]["node_id"] == "node_text"
+    assert captured["payload"]["billing"] == {
+        "billable_chars": 7,
+        "operation": "text_generate",
+    }
 
 
 @pytest.mark.asyncio

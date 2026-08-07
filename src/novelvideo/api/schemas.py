@@ -1631,6 +1631,14 @@ class FreezoneTextTranslateRequest(BaseModel):
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
 
 
+class FreezoneTextGenerateRequest(BaseModel):
+    """Freezone 文本节点：根据创作要求生成自由文本。"""
+
+    prompt: str = Field(min_length=1, max_length=20000, description="文本创作要求")
+    canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
+    node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+
+
 class FreezoneTextTranslateData(BaseModel):
     translated_text: str
     source_language: Literal["zh", "en"]

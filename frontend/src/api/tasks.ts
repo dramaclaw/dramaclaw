@@ -249,6 +249,7 @@ export const LONG_JOB_MAX_POLL_MS = 35 * 60 * 1000;
 const SHORT_TASK_TYPES = new Set([
   "freezone_audio_speech",
   "freezone_audio_eleven_music",
+  "freezone_text_generate",
   "freezone_text_translate",
   "freezone_analyze_video_story",
   "freezone_image_reverse_prompt",

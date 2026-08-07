@@ -3534,6 +3534,8 @@
         "textToMusicGen": "文字生成音乐"
       },
       "placeholder": "写下故事、场景或角色灵感。例如：雨夜旧车站里，一封迟到的信改变了所有人的选择。",
+      "generatePlaceholder": "描述你想生成的故事、场景、角色设定、对白或创作提示词…",
+      "textWriterModel": "DC 文本创作模型",
       "modelPickerHint": "选择模型",
       "submit": "提交",
       "translate": "翻译（中英文互译）"
@@ -4185,6 +4187,7 @@
           "EPISODE_PROP_PLANNER": "规划本集道具",
           "SCENE_BUILD": "解析并完善场景描述",
           "FREEZONE_TRANSLATION": "文本提示词中英互译",
+          "FREEZONE_TEXT_WRITER": "AI 文本生成",
           "FREEZONE_STORY_SCRIPT": "故事脚本生成",
           "FREEZONE_VISION": "图片与视频内容解析",
           "STYLE_ANALYZER": "从参考图分析自定义风格",

@@ -3534,6 +3534,8 @@
         "textToMusicGen": "Text to Music"
       },
       "placeholder": "Write a story, scene, or character idea. For example: in an old station on a rainy night, a late letter changes everyone's choice.",
+      "generatePlaceholder": "Describe the story, scene, character, dialogue, or creative prompt you want to generate…",
+      "textWriterModel": "DC Text Writer",
       "modelPickerHint": "Pick a model",
       "submit": "Submit",
       "translate": "Translate (zh ↔ en)"
@@ -4185,6 +4187,7 @@
           "EPISODE_PROP_PLANNER": "Plan episode props",
           "SCENE_BUILD": "Analyze and enrich scene descriptions",
           "FREEZONE_TRANSLATION": "Prompt zh/en translation",
+          "FREEZONE_TEXT_WRITER": "AI text generation",
           "FREEZONE_STORY_SCRIPT": "Story script generation",
           "FREEZONE_VISION": "Image and video content analysis",
           "STYLE_ANALYZER": "Analyze a custom style from reference images",

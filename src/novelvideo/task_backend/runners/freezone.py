@@ -804,6 +804,53 @@ async def _run_freezone_text_translate_async(
     return result
 
 
+async def _run_freezone_text_generate_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.jobs import ensure_freezone_dirs
+    from novelvideo.freezone.paths import outputs_dir
+    from novelvideo.freezone.text_node import generate_freezone_text
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+    prompt = str(payload.get("prompt") or "").strip()
+    _update(ctx, "freezone_text_generate", job_id, 0.1, "开始生成文本...")
+    model, generated_text = await generate_freezone_text(prompt=prompt)
+    data = {"generated_text": generated_text, "model": model}
+    out = outputs_dir(project_dir, "freezone_text_generate") / f"{job_id}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    import json
+
+    out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    rel = out.relative_to(project_dir).as_posix()
+    result = {
+        "job_id": job_id,
+        "output_format": "json",
+        "output_path": str(out),
+        "output_url": make_static_url_for_context(ctx, rel),
+        **data,
+    }
+    history_record = _append_node_history(
+        ctx=ctx,
+        project_dir=project_dir,
+        payload=payload,
+        task_type="freezone_text_generate",
+        job_id=job_id,
+        media_type="text",
+        input_preview=prompt[:240],
+        prompt=prompt,
+        model=model,
+        result=result,
+    )
+    if history_record:
+        result["generation_history_record"] = history_record
+    return result
+
+
 async def _run_freezone_story_script_async(
     envelope: dict[str, Any],
     ctx: ProjectContext,
@@ -959,6 +1006,10 @@ def run_freezone_text_translate(envelope: dict[str, Any], ctx: ProjectContext) -
     return _run_cancellable(envelope, _run_freezone_text_translate_async(envelope, ctx))
 
 
+def run_freezone_text_generate(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+    return _run_cancellable(envelope, _run_freezone_text_generate_async(envelope, ctx))
+
+
 def run_freezone_story_script(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_story_script_async(envelope, ctx))
 
@@ -1094,6 +1145,7 @@ register_project_task_runner("freezone_video_upscale", run_freezone_video_upscal
 register_project_task_runner("freezone_audio_separate", run_freezone_audio_separate)
 register_project_task_runner("freezone_video_compose", run_freezone_video_compose)
 register_project_task_runner("freezone_text_translate", run_freezone_text_translate)
+register_project_task_runner("freezone_text_generate", run_freezone_text_generate)
 register_project_task_runner("freezone_story_script", run_freezone_story_script)
 register_project_task_runner(
     "freezone_image_reverse_prompt",
