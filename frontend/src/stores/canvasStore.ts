@@ -1670,33 +1670,48 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const source = state.nodes.find((n) => n.id === sourceNodeId);
       if (!source) continue;
 
+      // 复制一整个组时成员也在 nodeIds 里。成员坐标是相对父组的，跟着父组的克隆
+      // 走即可；只有「根」(父不在这次复制里) 才需要往下让开一个身位。
+      const parentIsCloned = Boolean(source.parentId && sourceSet.has(source.parentId));
       const sourceHeight =
         source.measured?.height ??
         (typeof source.height === 'number' ? source.height : 360);
-      const position = {
-        x: source.position.x,
-        y: source.position.y + sourceHeight + 24,
-      };
+      const position = parentIsCloned
+        ? { x: source.position.x, y: source.position.y }
+        : {
+            x: source.position.x,
+            y: source.position.y + sourceHeight + 24,
+          };
 
       // Append a "- 副本" suffix to whichever name fields the node carries so
       // the clone is visually distinguishable (matches the reference design).
+      // 组内成员不加后缀——只有被直接复制的那个对象需要区分。
       const sourceData = source.data as Record<string, unknown>;
       const nameOverrides: Record<string, unknown> = {};
-      if (typeof sourceData.displayName === 'string' && sourceData.displayName) {
-        nameOverrides.displayName = `${sourceData.displayName} - 副本`;
-      }
-      if (typeof sourceData.label === 'string' && sourceData.label) {
-        nameOverrides.label = `${sourceData.label} - 副本`;
+      if (!parentIsCloned) {
+        if (typeof sourceData.displayName === 'string' && sourceData.displayName) {
+          nameOverrides.displayName = `${sourceData.displayName} - 副本`;
+        }
+        if (typeof sourceData.label === 'string' && sourceData.label) {
+          nameOverrides.label = `${sourceData.label} - 副本`;
+        }
       }
 
       const newNode = canvasNodeFactory.createNode(source.type, position, {
         ...(source.data as Partial<CanvasNodeData>),
         ...(nameOverrides as Partial<CanvasNodeData>),
       });
+      // 组框的尺寸是节点级字段，createNode 不会带过来，得手动搬。
+      if (isGroupNode(source)) {
+        newNode.width = source.width;
+        newNode.height = source.height;
+        newNode.style = source.style ? { ...source.style } : undefined;
+      }
       // Keep the clone inside the same group (if any) so its position stays
-      // anchored to the original's coordinate space.
+      // anchored to the original's coordinate space. 父组本身也在复制里时，
+      // 指向父组的克隆，否则成员会被塞回原来那个组。
       if (source.parentId) {
-        newNode.parentId = source.parentId;
+        newNode.parentId = idMap.get(source.parentId) ?? source.parentId;
         newNode.extent = source.extent;
       }
 
