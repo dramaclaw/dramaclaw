@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 import respx
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from novelvideo import config
+from novelvideo import model_gateway_settings
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.api.routes import model_gateway
 from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
@@ -1514,6 +1516,102 @@ def test_enable_official_gateway_route_switches_mode_when_enabled(
         ).mode
         == MODE_OFFICIAL
     )
+
+
+def test_official_media_catalog_preferences_and_remote_update(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    source_url = "https://catalog.example.test/official_media_models.json"
+    monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_URL", source_url)
+    payload = {
+        "version": 1,
+        "catalogVersion": "2026.08.06.2",
+        "name": "Test official media models",
+        "mediaModels": {
+            "test-video": {
+                "provider": "newapi",
+                "upstreamModel": "test-video",
+                "mediaType": "video",
+                "label": "Test Video",
+                "enabled": True,
+                "sortOrder": 10,
+                "config": {
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    }
+                },
+            }
+        },
+    }
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    initial = client.get("/model-gateway/official/media-catalog")
+    enabled = client.post(
+        "/model-gateway/official/media-catalog/preferences",
+        json={"autoUpdate": True},
+    )
+    with respx.mock:
+        respx.get(source_url).mock(return_value=Response(200, json=payload))
+        checked = client.post("/model-gateway/official/media-catalog/check")
+    current = client.get("/model-gateway/official/media-catalog")
+
+    assert initial.status_code == 200
+    assert initial.json()["data"]["autoUpdate"] is False
+    assert initial.json()["data"]["source"] == "bundled"
+    assert enabled.json()["data"]["autoUpdate"] is True
+    assert checked.status_code == 200, checked.text
+    assert checked.json()["data"]["updated"] is True
+    assert current.json()["data"]["source"] == "remote"
+    assert current.json()["data"]["catalogVersion"] == "2026.08.06.2"
+    assert current.json()["data"]["modelCount"] == 1
+
+
+def test_official_media_catalog_rejects_downgrade(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    source_url = "https://catalog.example.test/official_media_models.json"
+    monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_URL", source_url)
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+    downgraded = {**bundled, "catalogVersion": "2026.08.05.9"}
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    with respx.mock:
+        route = respx.get(source_url)
+        route.mock(return_value=Response(200, json=downgraded))
+        downgrade_response = client.post(
+            "/model-gateway/official/media-catalog/check"
+        )
+
+    assert downgrade_response.status_code == 502
+    assert "downgrade" in downgrade_response.json()["detail"]
+    status = client.get("/model-gateway/official/media-catalog").json()["data"]
+    assert status["source"] == "bundled"
+
+
+def test_official_media_catalog_ignores_cache_older_than_bundle(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+    cached = json.loads(json.dumps(bundled))
+    cached["catalogVersion"] = "2026.08.05.9"
+    cache_path = Path(config.STATE_DIR) / "local" / "official_media_models.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(cached), encoding="utf-8")
+
+    status = model_gateway_settings.get_official_media_catalog_update_status()
+
+    assert status["source"] == "bundled"
+    assert status["catalogVersion"] == bundled["catalogVersion"]
 
 
 def test_save_official_gateway_route_persists_user_registered_key(

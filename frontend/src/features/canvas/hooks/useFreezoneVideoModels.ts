@@ -25,6 +25,7 @@ export interface UseFreezoneVideoModelsResult {
 const states = new Map<string, UseFreezoneVideoModelsResult>();
 const listeners = new Map<string, Set<() => void>>();
 const inFlightProjects = new Set<string>();
+const pendingRefreshProjects = new Set<string>();
 
 // Lazy singleton — circular import with `ProviderModelPicker.tsx` means we
 // can't touch `VIDEO_MODELS` at module top level (TDZ).
@@ -55,7 +56,11 @@ function toModelOptions(models: FreezoneVideoModelInfo[]): ModelOption[] {
 }
 
 function ensureLoaded(project: string, force = false) {
-  if (inFlightProjects.has(project) || (!force && states.has(project))) return;
+  if (inFlightProjects.has(project)) {
+    if (force) pendingRefreshProjects.add(project);
+    return;
+  }
+  if (!force && states.has(project)) return;
   inFlightProjects.add(project);
 
   const current = states.get(project);
@@ -92,6 +97,7 @@ function ensureLoaded(project: string, force = false) {
     })
     .finally(() => {
       inFlightProjects.delete(project);
+      if (pendingRefreshProjects.delete(project)) ensureLoaded(project, true);
     });
 }
 
@@ -102,6 +108,26 @@ function ensureLoaded(project: string, force = false) {
 export function prefetchFreezoneVideoModels(project: string): void {
   if (!project) return;
   ensureLoaded(project);
+}
+
+function refreshKnownVideoModelCatalogs() {
+  const projects = new Set(states.keys());
+  const currentProject = readUrl().project;
+  if (currentProject) projects.add(currentProject);
+  projects.forEach((project) => ensureLoaded(project, true));
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "media-model-catalog-updated",
+    refreshKnownVideoModelCatalogs,
+  );
+  import.meta.hot?.dispose(() => {
+    window.removeEventListener(
+      "media-model-catalog-updated",
+      refreshKnownVideoModelCatalogs,
+    );
+  });
 }
 
 /**

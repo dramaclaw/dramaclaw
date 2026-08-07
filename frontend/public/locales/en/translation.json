@@ -4028,7 +4028,19 @@
         "saved": "Saved and switched to the official channel.",
         "enabled": "Switched to the official channel.",
         "missingFields": "Please fill in the API Key.",
-        "registerLink": "Register at RelayClaw"
+        "registerLink": "Register at RelayClaw",
+        "mediaCatalogTitle": "Official media model catalog",
+        "mediaCatalogStatus": "Version {{version}} · {{count}} models · {{source}}",
+        "mediaCatalogSources": {
+          "bundled": "Bundled",
+          "remote": "Online update"
+        },
+        "mediaCatalogAutoUpdate": "Automatically update official models",
+        "mediaCatalogAutoUpdateHint": "Check and apply compatible catalog updates when Settings opens.",
+        "mediaCatalogCheckNow": "Check for updates",
+        "mediaCatalogUpdated": "The official media model catalog was updated.",
+        "mediaCatalogUpToDate": "The official media model catalog is up to date.",
+        "mediaCatalogCheckFailed": "Could not check the official media model catalog. Try again later."
       },
       "custom": {
         "description": "CE uses a local SQLite-backed NewAPI. DramaClaw connects the database, creates a runtime token, and enables the local channel automatically.",
