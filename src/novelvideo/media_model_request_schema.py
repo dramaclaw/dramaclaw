@@ -23,6 +23,7 @@ BLOCKED_ROOTS = {
 }
 MODE_ALIASES = {
     "textToVideo": "text_to_video",
+    "firstFrame": "first_frame",
     # 画布「图生视频」是单张图片参考：图片影响整体画面，但不锁定第一帧。
     # 真正的首帧模式由首尾帧入口按槽位派生为 first_frame。
     "imageToVideo": "image_to_video",
@@ -66,6 +67,12 @@ RESERVED_CATALOG_CONFIG_FIELDS = {
 
 class MediaModelSchemaError(ValueError):
     pass
+
+
+def normalize_media_model_mode(mode: str | None) -> str:
+    """Normalize canvas business mode names to media catalog mode names."""
+    raw_mode = str(mode or "")
+    return MODE_ALIASES.get(raw_mode, raw_mode)
 
 
 def _validate_js_number(value: int | float, field: str) -> None:
@@ -401,7 +408,7 @@ def media_request_schema_for_mode(schema: object, mode: str | None) -> dict[str,
     normalized_schema = validate_media_request_schema(schema)
     if not normalized_schema:
         return {}
-    normalized_mode = MODE_ALIASES.get(str(mode or ""), str(mode or ""))
+    normalized_mode = normalize_media_model_mode(mode)
     filtered = copy.deepcopy(normalized_schema)
     filtered["parameters"] = [
         item

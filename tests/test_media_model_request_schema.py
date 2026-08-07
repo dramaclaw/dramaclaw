@@ -4,6 +4,7 @@ from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     apply_media_request_schema,
     media_request_schema_for_mode,
+    normalize_media_model_mode,
     validate_media_model_catalog_config,
     validate_media_model_params,
     validate_media_request_schema,
@@ -112,6 +113,52 @@ def test_filters_mode_specific_parameters_and_defaults():
     assert validate_media_model_params(filtered, {}) == {"seed": 1}
     with pytest.raises(MediaModelSchemaError, match="unknown model parameters"):
         validate_media_model_params(filtered, {"camera_fixed": True})
+
+
+@pytest.mark.parametrize(
+    ("business_mode", "catalog_mode"),
+    [
+        ("textToVideo", "text_to_video"),
+        ("firstFrame", "first_frame"),
+        ("firstLastFrame", "first_last_frame"),
+        ("imageToVideo", "image_to_video"),
+        ("imageReference", "image_reference"),
+        ("allReference", "all_reference"),
+        ("videoEdit", "video_edit"),
+    ],
+)
+def test_normalizes_all_canvas_video_modes(business_mode, catalog_mode):
+    assert normalize_media_model_mode(business_mode) == catalog_mode
+
+
+def test_first_frame_alias_keeps_and_validates_mode_specific_parameters():
+    schema = {
+        "endpoint": "video/generations",
+        "parameters": [
+            {
+                "key": "camera_fixed",
+                "control": "switch",
+                "requestPath": "camera_fixed",
+                "required": True,
+                "modes": ["first_frame"],
+            },
+            {
+                "key": "reference_strength",
+                "control": "number",
+                "requestPath": "reference_strength",
+                "modes": ["image_reference"],
+            },
+        ],
+    }
+
+    filtered = media_request_schema_for_mode(schema, "firstFrame")
+
+    assert [item["key"] for item in filtered["parameters"]] == ["camera_fixed"]
+    assert validate_media_model_params(filtered, {"camera_fixed": True}) == {
+        "camera_fixed": True
+    }
+    with pytest.raises(MediaModelSchemaError, match="parameter is required: camera_fixed"):
+        validate_media_model_params(filtered, {})
 
 
 def test_image_to_video_and_image_reference_parameters_are_independent():

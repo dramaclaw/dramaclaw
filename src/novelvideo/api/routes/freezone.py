@@ -92,6 +92,7 @@ from novelvideo.freezone import canvas_store
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     media_request_schema_for_mode,
+    normalize_media_model_mode,
     validate_media_model_params,
     validate_media_request_schema,
 )
@@ -7174,15 +7175,7 @@ def _require_catalog_video_mode(
     capabilities: dict[str, Any] | None,
     mode: str,
 ) -> None:
-    normalized = {
-        "textToVideo": "text_to_video",
-        "firstFrame": "first_frame",
-        "imageToVideo": "image_to_video",
-        "firstLastFrame": "first_last_frame",
-        "imageReference": "image_reference",
-        "allReference": "all_reference",
-        "videoEdit": "video_edit",
-    }.get(mode, mode)
+    normalized = normalize_media_model_mode(mode)
     if _catalog_mode_enabled(capabilities, normalized) is False:
         raise HTTPException(400, f"this model does not support {normalized} mode")
 
