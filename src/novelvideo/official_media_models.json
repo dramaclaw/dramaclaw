@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "catalogVersion": "2026.08.06.1",
   "name": "DramaClaw CE official media models",
   "mediaModels": {
     "LingShan-G2": {
@@ -107,8 +108,11 @@
         "minDuration": 4,
         "maxDuration": 15,
         "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
-        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_reference"],
+        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_to_video", "image_reference"],
         "referenceAudioMax": 3,
+        "referenceAudioMinSeconds": 1.8,
+        "referenceAudioMaxSeconds": 15.2,
+        "referenceAudioTotalMaxSeconds": 15.2,
         "referenceImageMax": 9,
         "referenceVideoMax": 3,
         "resolutionOptions": ["480p", "720p"]
@@ -128,8 +132,11 @@
         "minDuration": 4,
         "maxDuration": 15,
         "ratioOptions": ["1:1", "16:9", "4:3", "3:4", "9:16", "21:9"],
-        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_reference"],
+        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_to_video", "image_reference"],
         "referenceAudioMax": 3,
+        "referenceAudioMinSeconds": 1.8,
+        "referenceAudioMaxSeconds": 15.2,
+        "referenceAudioTotalMaxSeconds": 15.2,
         "referenceImageMax": 9,
         "referenceVideoMax": 3,
         "resolutionOptions": ["480p", "720p", "1080p", "4K"]
@@ -148,7 +155,7 @@
         "minDuration": 4,
         "maxDuration": 12,
         "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
-        "supportedModes": ["text_to_video", "first_frame", "image_reference"],
+        "supportedModes": ["text_to_video", "first_frame", "image_to_video", "image_reference"],
         "resolutionOptions": ["480p", "720p", "1080p"]
       }
     },
@@ -182,7 +189,7 @@
         "minDuration": 3,
         "maxDuration": 15,
         "ratioOptions": ["16:9", "9:16", "1:1"],
-        "supportedModes": ["text_to_video", "first_frame", "image_reference", "video_edit"],
+        "supportedModes": ["text_to_video", "first_frame", "image_to_video", "image_reference", "video_edit"],
         "referenceAudioMax": 0,
         "referenceImageMax": 9,
         "referenceVideoMax": 1,
@@ -203,8 +210,11 @@
         "minDuration": 4,
         "maxDuration": 15,
         "ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
-        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_reference", "video_edit"],
+        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "all_reference", "image_to_video", "image_reference", "video_edit"],
         "referenceAudioMax": 3,
+        "referenceAudioMinSeconds": 1.8,
+        "referenceAudioMaxSeconds": 15.2,
+        "referenceAudioTotalMaxSeconds": 15.2,
         "referenceImageMax": 9,
         "referenceVideoMax": 3,
         "resolutionOptions": ["480p", "720p"]
@@ -223,7 +233,7 @@
         "minDuration": 4,
         "maxDuration": 15,
         "ratioOptions": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
-        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "image_reference", "all_reference"],
+        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "image_to_video", "image_reference", "all_reference"],
         "referenceAudioMax": 3,
         "referenceImageMax": 9,
         "referenceVideoMax": 3,

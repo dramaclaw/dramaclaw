@@ -7,9 +7,12 @@ keeps its deployment environment as the sole credential source.
 
 from __future__ import annotations
 
-import os
+import hashlib
 import json
+import os
 import sqlite3
+import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +24,10 @@ from novelvideo.official_defaults import (
     DEFAULT_COGNEE_EMBEDDING_PROVIDER,
     DEFAULT_EMBEDDING_BATCH_SIZE,
     OFFICIAL_NEWAPI_BASE_URL,
+)
+from novelvideo.official_media_catalog_schema import (
+    catalog_version as _catalog_version,
+    validate_official_media_catalog as _validate_official_media_catalog,
 )
 from novelvideo.shared.runtime_env import is_ce_effective
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
@@ -35,6 +42,15 @@ PLACEHOLDER_API_KEYS = {
     "your_api_key",
     "your_dc_key",
 }
+OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY = "official_media_catalog_auto_update"
+OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY = "official_media_catalog_last_checked_at"
+OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY = "official_media_catalog_remote_url"
+OFFICIAL_MEDIA_CATALOG_ETAG_KEY = "official_media_catalog_etag"
+OFFICIAL_MEDIA_CATALOG_REVISION_KEY = "official_media_catalog_revision"
+OFFICIAL_MEDIA_CATALOG_PUBLISHED_AT_KEY = "official_media_catalog_published_at"
+OFFICIAL_MEDIA_CATALOG_SHA256_KEY = "official_media_catalog_sha256"
+OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY = "official_media_catalog_last_error"
+_OFFICIAL_MEDIA_CATALOG_WRITE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -347,6 +363,79 @@ def get_newapi_provider_channel(provider: str) -> dict[str, Any] | None:
     return None
 
 
+def parse_comfyui_channel_workflows(
+    settings: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    comfyui = settings.get("comfyui")
+    if not isinstance(comfyui, dict):
+        raise ValueError("ComfyUI settings are required")
+    routes = comfyui.get("workflow_routes")
+    if routes is not None:
+        if not isinstance(routes, list) or not routes:
+            raise ValueError("ComfyUI requires at least one workflow route")
+        route_ids: list[str] = []
+        configured_model = str(comfyui.get("model_name") or "").strip()
+        models: set[str] = {configured_model} if configured_model else set()
+        for route in routes:
+            if not isinstance(route, dict):
+                raise ValueError("each ComfyUI workflow route must be an object")
+            route_id = str(route.get("id") or "").strip()
+            workflow = route.get("workflow")
+            match = route.get("match")
+            route_models = match.get("models") if isinstance(match, dict) else None
+            if not route_id or route_id in route_ids:
+                raise ValueError("each ComfyUI workflow route requires a unique id")
+            if route_models is not None:
+                if (
+                    not isinstance(route_models, list)
+                    or len(route_models) != 1
+                    or not str(route_models[0] or "").strip()
+                ):
+                    raise ValueError(
+                        "each ComfyUI workflow route accepts at most one model name"
+                    )
+                models.add(str(route_models[0]).strip())
+            if not isinstance(workflow, dict) or not workflow:
+                raise ValueError(
+                    "each ComfyUI workflow route requires an API Format JSON object"
+                )
+            if not any(
+                isinstance(node, dict) and ("class_type" in node or "inputs" in node)
+                for node in workflow.values()
+            ):
+                raise ValueError(
+                    f"ComfyUI workflow {route_id} must use exported API Format"
+                )
+            route_ids.append(route_id)
+        if len(models) != 1:
+            raise ValueError("a ComfyUI channel supports one model name")
+        return sorted(models), route_ids
+
+    workflows = comfyui.get("workflow_by_model")
+    if not isinstance(workflows, dict) or not workflows:
+        raise ValueError("ComfyUI requires at least one model workflow")
+    for model, workflow in workflows.items():
+        if (
+            not str(model or "").strip()
+            or not isinstance(workflow, dict)
+            or not workflow
+        ):
+            raise ValueError(
+                "each ComfyUI workflow requires a model name and JSON object"
+            )
+        if not any(
+            isinstance(node, dict) and ("class_type" in node or "inputs" in node)
+            for node in workflow.values()
+        ):
+            raise ValueError(
+                f"ComfyUI workflow for {model} must use exported API Format"
+            )
+    return (
+        [str(model).strip() for model in workflows],
+        [str(model) for model in workflows],
+    )
+
+
 def save_newapi_provider_channels(
     channels: list[dict[str, Any]],
     *,
@@ -381,31 +470,9 @@ def save_newapi_provider_channels(
         raw_settings = item.get("settings", previous.get("settings", {}))
         channel_settings = raw_settings if isinstance(raw_settings, dict) else {}
         if provider == "comfyui":
-            comfyui = channel_settings.get("comfyui")
-            workflows = (
-                comfyui.get("workflow_by_model") if isinstance(comfyui, dict) else None
-            )
             if not base_url:
                 raise ValueError("baseUrl is required for provider comfyui")
-            if not isinstance(workflows, dict) or not workflows:
-                raise ValueError("ComfyUI requires at least one model workflow")
-            for model, workflow in workflows.items():
-                if (
-                    not str(model or "").strip()
-                    or not isinstance(workflow, dict)
-                    or not workflow
-                ):
-                    raise ValueError(
-                        "each ComfyUI workflow requires a model name and JSON object"
-                    )
-                if not any(
-                    isinstance(node, dict)
-                    and ("class_type" in node or "inputs" in node)
-                    for node in workflow.values()
-                ):
-                    raise ValueError(
-                        f"ComfyUI workflow for {model} must use exported API Format"
-                    )
+            parse_comfyui_channel_workflows(channel_settings)
         if not upstream_key and provider != "comfyui":
             raise ValueError(f"upstreamKey is required for provider {provider}")
         normalized.append(
@@ -494,15 +561,174 @@ def build_newapi_media_model_mappings_status() -> dict[str, dict[str, Any]]:
     return get_newapi_media_model_mappings()
 
 
-def get_official_media_model_mappings() -> dict[str, dict[str, Any]]:
-    config_path = Path(__file__).with_name("official_media_models.json")
+def _official_media_catalog_bundle_path() -> Path:
+    return Path(__file__).with_name("official_media_models.json")
+
+
+def _official_media_catalog_cache_path() -> Path:
+    from novelvideo import config
+
+    return Path(config.STATE_DIR) / "local" / "official_media_models.json"
+
+
+def _read_official_media_catalog(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError("official media model configuration is invalid") from exc
-    models = payload.get("mediaModels") if isinstance(payload, dict) else None
-    if not isinstance(models, dict):
-        raise RuntimeError("official media model configuration has no mediaModels")
+    try:
+        return _validate_official_media_catalog(payload)
+    except ValueError as exc:
+        raise RuntimeError("official media model configuration is invalid") from exc
+
+
+def _effective_official_media_catalog() -> tuple[dict[str, Any], str]:
+    bundled = _read_official_media_catalog(_official_media_catalog_bundle_path())
+    cache_path = _official_media_catalog_cache_path()
+    if cache_path.is_file():
+        try:
+            cached = _read_official_media_catalog(cache_path)
+            if _catalog_version(cached) >= _catalog_version(bundled):
+                return cached, "remote"
+        except RuntimeError:
+            pass
+    return bundled, "bundled"
+
+
+def _official_media_catalog_digest(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def get_official_media_catalog_update_status() -> dict[str, Any]:
+    settings = _read_all()
+    payload, source = _effective_official_media_catalog()
+    digest = _official_media_catalog_digest(payload)
+    metadata_matches = settings.get(OFFICIAL_MEDIA_CATALOG_SHA256_KEY) == digest
+    return {
+        "autoUpdate": settings.get(OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY, "0")
+        != "0",
+        "source": source,
+        "schemaVersion": int(payload.get("version") or 1),
+        "catalogVersion": str(
+            payload.get("catalogVersion") or payload.get("version") or "1"
+        ),
+        "modelCount": len(payload["mediaModels"]),
+        "lastCheckedAt": settings.get(OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY, ""),
+        "sha256": digest,
+        "revision": (
+            settings.get(OFFICIAL_MEDIA_CATALOG_REVISION_KEY, "")
+            if metadata_matches
+            else ""
+        ),
+        "publishedAt": (
+            settings.get(OFFICIAL_MEDIA_CATALOG_PUBLISHED_AT_KEY, "")
+            if metadata_matches
+            else ""
+        ),
+        "remoteUrl": settings.get(OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY, ""),
+        "lastError": settings.get(OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY, ""),
+    }
+
+
+def save_official_media_catalog_auto_update(enabled: bool) -> dict[str, Any]:
+    _write_many({OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY: "1" if enabled else "0"})
+    return get_official_media_catalog_update_status()
+
+
+def get_official_media_catalog_remote_etag(source_url: str) -> str:
+    settings = _read_all()
+    if settings.get(OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY) != str(source_url).strip():
+        return ""
+    payload, _source = _effective_official_media_catalog()
+    if settings.get(OFFICIAL_MEDIA_CATALOG_SHA256_KEY) != _official_media_catalog_digest(
+        payload
+    ):
+        return ""
+    return settings.get(OFFICIAL_MEDIA_CATALOG_ETAG_KEY, "")
+
+
+def record_official_media_catalog_check(
+    *, source_url: str, etag: str = "", error: str = ""
+) -> dict[str, Any]:
+    values = {
+        OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY: _now_iso(),
+        OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY: str(source_url or "").strip(),
+        OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY: str(error or "").strip()[:500],
+        OFFICIAL_MEDIA_CATALOG_ETAG_KEY: str(etag or "").strip(),
+    }
+    _write_many(values)
+    return get_official_media_catalog_update_status()
+
+
+def install_official_media_catalog(
+    payload: dict[str, Any],
+    *,
+    source_url: str,
+    expected_sha256: str = "",
+    revision: str = "",
+    published_at: str = "",
+    etag: str = "",
+) -> tuple[bool, dict[str, Any]]:
+    validated = _validate_official_media_catalog(payload)
+    candidate_digest = _official_media_catalog_digest(validated)
+    normalized_expected_digest = str(expected_sha256 or "").strip().lower()
+    if normalized_expected_digest and candidate_digest != normalized_expected_digest:
+        raise ValueError("official media catalog SHA256 does not match manifest")
+    with _OFFICIAL_MEDIA_CATALOG_WRITE_LOCK:
+        current, _source = _effective_official_media_catalog()
+        candidate_version = _catalog_version(validated)
+        current_version = _catalog_version(current)
+        current_digest = _official_media_catalog_digest(current)
+        if candidate_version < current_version:
+            raise ValueError("official media catalog downgrade is not allowed")
+        if candidate_version == current_version and candidate_digest != current_digest:
+            raise ValueError(
+                "official media catalog version already exists with different content"
+            )
+        updated = candidate_digest != current_digest
+        if updated:
+            cache_path = _official_media_catalog_cache_path()
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=cache_path.parent,
+                    prefix=f".{cache_path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as temporary:
+                    temporary.write(
+                        json.dumps(validated, ensure_ascii=False, indent=2) + "\n"
+                    )
+                    temporary.flush()
+                    os.fsync(temporary.fileno())
+                    temporary_path = Path(temporary.name)
+                temporary_path.replace(cache_path)
+            finally:
+                if temporary_path is not None:
+                    temporary_path.unlink(missing_ok=True)
+    _write_many(
+        {
+            OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY: _now_iso(),
+            OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY: str(source_url or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_ETAG_KEY: str(etag or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_REVISION_KEY: str(revision or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_PUBLISHED_AT_KEY: str(published_at or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_SHA256_KEY: candidate_digest,
+            OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY: "",
+        }
+    )
+    return updated, get_official_media_catalog_update_status()
+
+
+def get_official_media_model_mappings() -> dict[str, dict[str, Any]]:
+    payload, _source = _effective_official_media_catalog()
+    models = payload["mediaModels"]
     return {
         str(model): dict(item)
         for model, item in models.items()

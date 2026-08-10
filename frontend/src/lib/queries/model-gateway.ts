@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
@@ -121,6 +122,21 @@ export interface ModelGatewayConfig {
   custom: CustomGatewayConfig;
   provisioner?: ModelGatewayProvisionerConfig;
   mediaRelay?: MediaRelayConfig;
+}
+
+export interface OfficialMediaCatalogStatus {
+  autoUpdate: boolean;
+  source: "bundled" | "remote";
+  schemaVersion: number;
+  catalogVersion: string;
+  modelCount: number;
+  lastCheckedAt: string;
+  sha256: string;
+  revision: string;
+  publishedAt: string;
+  remoteUrl: string;
+  lastError: string;
+  updated?: boolean;
 }
 
 export interface SaveOfficialConfigInput {
@@ -283,6 +299,93 @@ export function useModelGatewayConfig(enabled = true) {
   });
 }
 
+const officialMediaCatalogQueryKey = [
+  ...queryKeys.modelGateway(),
+  "official-media-catalog",
+] as const;
+const officialMediaCatalogStatusPollMs = 60_000;
+
+function fetchOfficialMediaCatalogStatus(signal?: AbortSignal) {
+  return api
+    .get("api/v1/model-gateway/official/media-catalog", { signal })
+    .json<OkResponse<OfficialMediaCatalogStatus>>();
+}
+
+export function useOfficialMediaCatalogStatus(enabled = true) {
+  return useQuery({
+    queryKey: officialMediaCatalogQueryKey,
+    queryFn: ({ signal }) => fetchOfficialMediaCatalogStatus(signal),
+    enabled,
+  });
+}
+
+export function useOfficialMediaCatalogWatcher(enabled = true) {
+  const previousSha256 = useRef<string | null>(null);
+  const query = useQuery({
+    queryKey: officialMediaCatalogQueryKey,
+    queryFn: ({ signal }) => fetchOfficialMediaCatalogStatus(signal),
+    enabled,
+    refetchInterval: (current) =>
+      current.state.data?.data.autoUpdate === false
+        ? false
+        : officialMediaCatalogStatusPollMs,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
+  const sha256 = query.data?.data.sha256.trim() ?? "";
+
+  useEffect(() => {
+    if (!sha256) return;
+    const previous = previousSha256.current;
+    previousSha256.current = sha256;
+    if (previous && previous !== sha256 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("media-model-catalog-updated"));
+    }
+  }, [sha256]);
+
+  return query;
+}
+
+export function useSaveOfficialMediaCatalogPreferences() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (autoUpdate: boolean) =>
+      api
+        .post("api/v1/model-gateway/official/media-catalog/preferences", {
+          json: { autoUpdate },
+          throwHttpErrors: false,
+        })
+        .json<OkResponse<OfficialMediaCatalogStatus> | ErrorResponse>(),
+    onSuccess: (response) => {
+      if (response.ok) {
+        qc.setQueryData(officialMediaCatalogQueryKey, response);
+      } else {
+        qc.invalidateQueries({ queryKey: officialMediaCatalogQueryKey });
+      }
+    },
+  });
+}
+
+export function useCheckOfficialMediaCatalog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post("api/v1/model-gateway/official/media-catalog/check", {
+          timeout: 20_000,
+          throwHttpErrors: false,
+        })
+        .json<OkResponse<OfficialMediaCatalogStatus> | ErrorResponse>(),
+    onSuccess: (response) => {
+      if (response.ok) {
+        qc.setQueryData(officialMediaCatalogQueryKey, response);
+      } else {
+        qc.invalidateQueries({ queryKey: officialMediaCatalogQueryKey });
+      }
+    },
+  });
+}
+
 export function useNewApiChannelTypes(enabled = true) {
   return useQuery({
     queryKey: [...queryKeys.modelGateway(), "channel-types"],
@@ -412,6 +515,25 @@ export function useSaveProviderChannels() {
       if (response.ok !== true) {
         qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
       }
+    },
+  });
+}
+
+/** 删除 CE 本地及 NewAPI 中的 ComfyUI 渠道和媒体模型映射。 */
+export function useClearComfyUIConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .delete("api/v1/model-gateway/custom/newapi/comfyui", {
+          timeout: 60_000,
+          throwHttpErrors: false,
+        })
+        .json<OkResponse<unknown> | ErrorResponse | FastApiErrorResponse>(),
+    onSuccess: (response) => {
+      if (response.ok !== true) return;
+      qc.invalidateQueries({ queryKey: queryKeys.modelGateway() });
+      window.dispatchEvent(new Event("media-model-catalog-updated"));
     },
   });
 }

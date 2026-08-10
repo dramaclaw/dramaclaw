@@ -65,8 +65,9 @@ def _append_freezone_video_node_history(
     extra: dict[str, Any] = {}
     if payload.get("model_id"):
         extra["model"] = str(payload["model_id"])
-    if payload.get("gen_mode"):
-        extra["gen_mode"] = str(payload["gen_mode"])
+    history_mode = payload.get("requested_gen_mode") or payload.get("gen_mode")
+    if history_mode:
+        extra["gen_mode"] = str(history_mode)
 
     record = build_node_history_record(
         task_type="freezone_video_gen",

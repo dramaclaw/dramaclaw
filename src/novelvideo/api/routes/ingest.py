@@ -39,6 +39,7 @@ from novelvideo.utils.document_parsers import (
 )
 from novelvideo.utils.screenplay_quality import build_import_format_check
 from novelvideo.utils.upload_safety import (
+    MAX_NOVEL_IMPORT_BYTES,
     MAX_NOVEL_UPLOAD_BYTES,
     UploadTooLargeError,
     is_safe_upload_target,
@@ -120,12 +121,21 @@ def _unsupported_format_response(filename: str) -> dict:
     }
 
 
-def _file_too_large_response() -> dict:
+def _format_file_size_limit(limit_bytes: int) -> str:
+    if limit_bytes % (1024 * 1024) == 0:
+        return f"{limit_bytes // (1024 * 1024)}MB"
+    return f"{limit_bytes // 1024}KB"
+
+
+def _file_too_large_response(
+    limit_bytes: int = MAX_NOVEL_UPLOAD_BYTES,
+) -> dict:
+    limit_label = _format_file_size_limit(limit_bytes)
     return {
         "ok": False,
-        "error": "文件超过 1MB 上限，请压缩文件或拆分正文后重新上传。",
+        "error": f"文件超过 {limit_label} 上限，请压缩文件或拆分正文后重新上传。",
         "error_type": "file_too_large",
-        "data": {"limit_bytes": MAX_NOVEL_UPLOAD_BYTES},
+        "data": {"limit_bytes": limit_bytes},
     }
 
 
@@ -306,8 +316,8 @@ async def start_ingest(
         return {"ok": False, "error": f"File '{body.filename}' not found in uploads/"}
 
     try:
-        if novel_path.stat().st_size > MAX_NOVEL_UPLOAD_BYTES:
-            return _file_too_large_response()
+        if novel_path.stat().st_size > MAX_NOVEL_IMPORT_BYTES:
+            return _file_too_large_response(MAX_NOVEL_IMPORT_BYTES)
     except OSError:
         logger.warning("[%s] failed to stat uploaded novel", project, exc_info=True)
         return {"ok": False, "error": "无法读取上传文件，请重新上传后再导入"}

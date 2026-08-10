@@ -680,7 +680,11 @@ def _freezone_task_cases(client: TestClient, assets: SimpleNamespace):
             "freezone_video_gen",
             client.post(
                 f"/api/v1/projects/{p}/freezone/video/keyframes",
-                json={"first_frame_url": image, "prompt": "move"},
+                json={
+                    "first_frame_url": image,
+                    "prompt": "move",
+                    "gen_mode": "firstFrame",
+                },
             ),
         ),
         (

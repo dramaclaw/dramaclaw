@@ -6,7 +6,8 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
-MAX_NOVEL_UPLOAD_BYTES = 1 * 1024 * 1024
+MAX_NOVEL_UPLOAD_BYTES = 512 * 1024
+MAX_NOVEL_IMPORT_BYTES = 1 * 1024 * 1024
 
 
 class UploadTooLargeError(ValueError):

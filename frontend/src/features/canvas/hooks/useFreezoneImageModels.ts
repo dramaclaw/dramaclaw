@@ -26,6 +26,7 @@ export interface UseFreezoneImageModelsResult {
 const states = new Map<string, UseFreezoneImageModelsResult>();
 const listeners = new Map<string, Set<() => void>>();
 const inFlightProjects = new Set<string>();
+const pendingRefreshProjects = new Set<string>();
 
 // Lazy singleton — must NOT touch `SHARED_MODELS` at module top level
 // because we have a circular import with `ProviderModelPicker.tsx` (the
@@ -61,7 +62,11 @@ function toModelOptions(models: FreezoneImageModelInfo[]): ModelOption[] {
 function ensureLoaded(project: string, force = false) {
   // Already loaded or in-flight — `states` is populated synchronously on
   // first call so this is a true idempotent guard.
-  if (inFlightProjects.has(project) || (!force && states.has(project))) return;
+  if (inFlightProjects.has(project)) {
+    if (force) pendingRefreshProjects.add(project);
+    return;
+  }
+  if (!force && states.has(project)) return;
   inFlightProjects.add(project);
   const current = states.get(project);
   states.set(project, current
@@ -97,6 +102,7 @@ function ensureLoaded(project: string, force = false) {
     })
     .finally(() => {
       inFlightProjects.delete(project);
+      if (pendingRefreshProjects.delete(project)) ensureLoaded(project, true);
     });
 }
 
@@ -109,6 +115,26 @@ function ensureLoaded(project: string, force = false) {
 export function prefetchFreezoneImageModels(project: string): void {
   if (!project) return;
   ensureLoaded(project);
+}
+
+function refreshKnownImageModelCatalogs() {
+  const projects = new Set(states.keys());
+  const currentProject = readUrl().project;
+  if (currentProject) projects.add(currentProject);
+  projects.forEach((project) => ensureLoaded(project, true));
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "media-model-catalog-updated",
+    refreshKnownImageModelCatalogs,
+  );
+  import.meta.hot?.dispose(() => {
+    window.removeEventListener(
+      "media-model-catalog-updated",
+      refreshKnownImageModelCatalogs,
+    );
+  });
 }
 
 function subscribe(project: string | null, callback: () => void) {

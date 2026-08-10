@@ -3556,14 +3556,14 @@ NEWAPI_VIDEO_DISPLAY_LABELS = {
     "seedance-2.0-fast": "Seedance2.0 Fast",
     "seedance-2.0-value": "Seedance2.0 Value",
     "seedance-2.0-fast-value": "Seedance2.0 Fast Value",
+    "seedance-2.0-mini": "Seedance2.0 Mini",
     "happyhorse-1.0": "HappyHorse 1.0",
     "grok-video-channel": "Grok Video Channel",
 }
 NEWAPI_MAINLINE_SEEDANCE2_MODELS = (
     "seedance-2.0",
     "seedance-2.0-fast",
-    "seedance-2.0-value",
-    "seedance-2.0-fast-value",
+    "seedance-2.0-mini",
 )
 NEWAPI_DISABLED_VIDEO_MODELS = {"grok-video-channel"}
 

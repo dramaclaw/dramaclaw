@@ -559,15 +559,11 @@ async def test_freezone_video_omni_gen_catalog_total_does_not_apply_per_clip_bou
 
 
 @pytest.mark.asyncio
-async def test_freezone_video_omni_gen_clamps_catalog_total_to_vendor_cap(
+async def test_freezone_video_omni_gen_uses_explicit_catalog_total_limit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """seedance2 的目录值只能配得更严，配宽了不算数——厂商硬顶 15.2s 必须继续生效。
-
-    管理员给 2.0 配了 60s：3 条各 6s 共 18s 若照配置放行，到厂商那儿照样 400，正是这套
-    守卫要消灭的失败。取小之后仍然拦在本地。
-    """
+    """显式目录配置是权威值，不能再被代码里的隐藏厂商常量覆盖。"""
     project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
     _patch_video_catalog(
         monkeypatch,
@@ -599,8 +595,8 @@ async def test_freezone_video_omni_gen_clamps_catalog_total_to_vendor_cap(
             user={"username": "admin"},
         )
 
-    assert exc.value.status_code == 400
-    assert "total duration must be <= 15.2s" in str(exc.value.detail)
+    # 503 = 通过时长校验并走到入队（测试替身故意返回 broker unavailable）。
+    assert exc.value.status_code == 503
 
 
 def test_catalog_audio_total_duration_max_rejects_non_finite() -> None:
@@ -768,7 +764,8 @@ async def test_freezone_video_generation_enqueues_feature_billing(
         human_review=False,
         scene_optimize=None,
         backend="newapi_seedance-1.0-pro-fast",
-        gen_mode="imageToVideo",
+        gen_mode="image_reference",
+        requested_gen_mode="imageToVideo",
     )
 
     assert result["data"]["task_type"] == "freezone_video_gen"
@@ -796,6 +793,8 @@ async def test_freezone_video_generation_enqueues_feature_billing(
         "video_input_present": False,
         "input_video_duration_seconds": 0.0,
     }
+    assert captured["payload"]["gen_mode"] == "image_reference"
+    assert captured["payload"]["requested_gen_mode"] == "imageToVideo"
 
 
 @pytest.mark.asyncio
@@ -857,6 +856,52 @@ async def test_freezone_video_generation_probes_reference_duration_before_billin
     }
     assert billing["pricing_quantity"] == 23
     assert billing["pricing_metrics"]["input_video_billed_seconds"] == 11
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_generation_validates_catalog_video_duration_before_billing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def unexpected_enqueue(*_args, **_kwargs):
+        raise AssertionError("duration validation must happen before enqueue")
+
+    async def fake_probe(path: str) -> float:
+        return 4.0 if path.endswith("a.mp4") else 7.0
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=unexpected_enqueue),
+    )
+    monkeypatch.setattr(freezone_routes, "probe_video_duration_seconds", fake_probe)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes._start_or_enqueue_freezone_video_gen(
+            ctx=_project_ctx(tmp_path),
+            username="admin",
+            project="demo",
+            project_dir=tmp_path / "project",
+            output_dir=str(tmp_path / "output"),
+            job_id="job_video_limit",
+            prompt="参考视频生成",
+            reference_items=[
+                {"type": "video", "path": "/project/a.mp4"},
+                {"type": "video", "path": "/project/b.mp4"},
+            ],
+            aspect_ratio="16:9",
+            resolution="720p",
+            duration_seconds=12,
+            generate_audio=False,
+            human_review=False,
+            scene_optimize=None,
+            backend="newapi_seedance-2.0",
+            gen_mode="allReference",
+            capabilities={"referenceVideoTotalMaxSeconds": 10},
+        )
+
+    assert exc.value.status_code == 400
+    assert "video references total duration must be <= 10s" in str(exc.value.detail)
 
 
 @pytest.mark.asyncio
