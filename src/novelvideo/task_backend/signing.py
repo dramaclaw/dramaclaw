@@ -6,14 +6,23 @@ import base64
 import binascii
 from dataclasses import dataclass, field
 import json
+import logging
 import os
+from pathlib import Path
 import re
+import secrets
 from types import MappingProxyType
 from typing import Mapping
+
+logger = logging.getLogger("novelvideo.task_backend.signing")
 
 _ACTIVE_KEY_ID_ENV = "ST_TASK_ENVELOPE_ACTIVE_KEY_ID"
 _KEYRING_ENV = "ST_TASK_ENVELOPE_KEYRING_B64_JSON"
 _KEY_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+
+_LOCAL_KEYRING_FILENAME = "task_envelope_keyring.json"
+_LOCAL_KEY_ID = "ce-local-v1"
+_LOCAL_KEY_BYTES = 32
 
 
 class TaskEnvelopeSigningConfigError(RuntimeError):
@@ -53,9 +62,12 @@ def _decode_key(value: object) -> bytes:
     return decoded
 
 
-def _parse_config() -> TaskEnvelopeSigningConfig:
-    active_key_id = os.environ.get(_ACTIVE_KEY_ID_ENV)
-    raw_keyring = os.environ.get(_KEYRING_ENV)
+def _build_config(active_key_id: object, raw_keyring: object) -> TaskEnvelopeSigningConfig:
+    """Validate one active kid plus a ``{kid: canonical-b64}`` object.
+
+    Shared by the environment parser and the CE-local keyring file so both
+    entry points enforce the identical frozen contract.
+    """
     if (
         type(active_key_id) is not str
         or _KEY_ID_RE.fullmatch(active_key_id) is None
@@ -82,6 +94,13 @@ def _parse_config() -> TaskEnvelopeSigningConfig:
     )
 
 
+def _parse_config() -> TaskEnvelopeSigningConfig:
+    return _build_config(
+        os.environ.get(_ACTIVE_KEY_ID_ENV),
+        os.environ.get(_KEYRING_ENV),
+    )
+
+
 def load_task_envelope_signing_config() -> TaskEnvelopeSigningConfig:
     failed = False
     try:
@@ -92,3 +111,130 @@ def load_task_envelope_signing_config() -> TaskEnvelopeSigningConfig:
     if failed or config is None:
         raise TaskEnvelopeSigningConfigError from None
     return config
+
+
+def _local_keyring_path() -> Path:
+    configured = os.environ.get("NOVELVIDEO_STATE_DIR", "").strip()
+    if configured:
+        base = Path(configured)
+    else:
+        from novelvideo.config import STATE_DIR
+
+        base = Path(STATE_DIR)
+    return base / _LOCAL_KEYRING_FILENAME
+
+
+def _config_from_document(document: object) -> TaskEnvelopeSigningConfig:
+    if type(document) is not dict:
+        raise ValueError
+    return _build_config(
+        document.get("active_key_id"),
+        json.dumps(document.get("keyring")),
+    )
+
+
+def _read_local_keyring(path: Path) -> TaskEnvelopeSigningConfig | None:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    # A keyring that exists but does not parse is tampering or corruption, not
+    # a first boot; regenerating here would silently invalidate live envelopes.
+    return _config_from_document(json.loads(raw))
+
+
+def _persist_local_keyring(path: Path, document: dict) -> TaskEnvelopeSigningConfig:
+    """Create the keyring exactly once, even under a concurrent first boot.
+
+    The payload is written to a private temporary file and only then linked
+    into place, so a racing reader can never observe a half-written keyring
+    (the failure mode behind rails/rails#53661).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(document, sort_keys=True).encode("utf-8")
+    temp_path = path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp")
+    fd = os.open(str(temp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        os.write(fd, serialized)
+    finally:
+        os.close(fd)
+    try:
+        try:
+            os.link(str(temp_path), str(path))
+        except FileExistsError:
+            pass
+        except OSError:
+            # Filesystems without hard links: fall back to an atomic replace.
+            # A concurrent writer may win, so the on-disk copy still decides.
+            os.replace(str(temp_path), str(path))
+    finally:
+        try:
+            os.unlink(str(temp_path))
+        except OSError:
+            pass
+    existing = _read_local_keyring(path)
+    if existing is None:
+        raise OSError("task envelope keyring vanished after persist")
+    return existing
+
+
+def load_or_create_local_signing_config() -> TaskEnvelopeSigningConfig:
+    """CE-only: honour explicit config, otherwise generate a per-install keyring.
+
+    CE is published as a public image whose compose file marks ``.env``
+    optional, so a fail-closed signing config would crash every out-of-the-box
+    install. CE therefore behaves like Rails' ``secret_key_base`` outside
+    production: generate once, persist, reuse. EE never reaches this function —
+    the gate is the edition, never "the config happens to be missing", so a
+    misconfigured EE deploy still refuses to start instead of silently minting
+    per-process keys that its workers cannot verify.
+    """
+    from novelvideo.shared.runtime_env import is_ce_effective
+
+    # Explicit configuration wins in every edition and stays fail-closed; the
+    # edition gate below guards key *generation* only, which is the whole of
+    # the CE exception.
+    if os.environ.get(_ACTIVE_KEY_ID_ENV) or os.environ.get(_KEYRING_ENV):
+        return load_task_envelope_signing_config()
+
+    if not is_ce_effective():
+        raise TaskEnvelopeSigningConfigError from None
+
+    path = _local_keyring_path()
+    failed = False
+    try:
+        config = _read_local_keyring(path)
+    except Exception:
+        failed = True
+        config = None
+    if failed:
+        raise TaskEnvelopeSigningConfigError from None
+    if config is not None:
+        return config
+
+    document = {
+        "active_key_id": _LOCAL_KEY_ID,
+        "keyring": {
+            _LOCAL_KEY_ID: base64.b64encode(
+                secrets.token_bytes(_LOCAL_KEY_BYTES)
+            ).decode("ascii")
+        },
+    }
+    try:
+        return _persist_local_keyring(path, document)
+    except OSError as exc:
+        # A read-only state volume must not brick the install. CE runs producer
+        # and consumer in one inline process, so an ephemeral key still signs
+        # and verifies; it only resets on restart.
+        logger.warning(
+            "could not persist the task envelope keyring to %s (%s); using an "
+            "ephemeral key for this process. Set %s and %s explicitly to keep "
+            "signatures stable across restarts or hosts.",
+            path,
+            exc,
+            _ACTIVE_KEY_ID_ENV,
+            _KEYRING_ENV,
+        )
+    return _config_from_document(document)

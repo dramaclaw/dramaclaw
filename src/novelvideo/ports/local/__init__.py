@@ -29,7 +29,7 @@ from novelvideo.ports.product_surface_access import LocalProductSurfaceAccess
 from novelvideo.ports.registry import get_port, register_port
 from novelvideo.task_backend.producer import TaskEnvelopeProducer
 from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
-from novelvideo.task_backend.signing import load_task_envelope_signing_config
+from novelvideo.task_backend.signing import load_or_create_local_signing_config
 
 
 class LocalModelCredentials:
@@ -112,7 +112,7 @@ class LocalEgress:
 
 def register_local_ports() -> None:
     authz = LocalAuthz()
-    signing_config = load_task_envelope_signing_config()
+    signing_config = load_or_create_local_signing_config()
     producer = TaskEnvelopeProducer(
         authz=authz,
         active_key_id=signing_config.active_key_id,
