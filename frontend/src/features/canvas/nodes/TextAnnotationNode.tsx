@@ -447,7 +447,7 @@ export const TextAnnotationNode = memo(({
 
   const runTextTranslate = useCallback(async () => {
     if (isGenerating || isTranslating) return;
-    const trimmed = content.trim();
+    const trimmed = instruction.trim();
     if (trimmed.length === 0) return;
     const projectId = readUrl().project;
     if (!projectId) {
@@ -457,20 +457,20 @@ export const TextAnnotationNode = memo(({
     setIsTranslating(true);
     try {
       const ref = await submitFreezoneTextTranslate(projectId, {
-        text: content,
+        text: trimmed,
         nodeType: 'text',
         canvasId: readUrl().canvas ?? 'default',
         nodeId: id,
       });
       await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
       const result = await fetchFreezoneTextTranslateResult(projectId, ref.job_id);
-      updateNodeData(id, { content: result.translated_text });
+      updateNodeData(id, { instruction: result.translated_text });
     } catch (error) {
       console.error('[text-node] translate failed', error);
     } finally {
       setIsTranslating(false);
     }
-  }, [content, id, isGenerating, isTranslating, updateNodeData]);
+  }, [id, instruction, isGenerating, isTranslating, updateNodeData]);
 
   const textPlaceholder = t('node.textNode.placeholder');
   const hasUserContent = content.trim().length > 0 && content.trim() !== textPlaceholder.trim();
@@ -570,7 +570,9 @@ export const TextAnnotationNode = memo(({
           costDisplay={textGenerateCostDisplay}
           promotion={textGenerateCost.data?.data.promotion}
           submitDisabled={submitDisabled}
-          translateDisabled={isGenerating || isTranslating || !hasUserContent}
+          translateDisabled={
+            isGenerating || isTranslating || instruction.trim().length === 0
+          }
           onGenerate={handleSubmit}
           onTranslate={runTextTranslate}
         />
@@ -725,7 +727,9 @@ export const TextAnnotationNode = memo(({
                           event.stopPropagation();
                           void runTextTranslate();
                         }}
-                        disabled={isGenerating || isTranslating || !hasUserContent}
+                        disabled={
+                          isGenerating || isTranslating || instruction.trim().length === 0
+                        }
                         className={`${NODE_INLINE_ICON_BUTTON_CLASS} ${
                           isTranslating ? NODE_INLINE_ICON_BUTTON_ACTIVE_CLASS : ''
                         }`}
@@ -774,13 +778,20 @@ export const TextAnnotationNode = memo(({
         // 的 prompt + send 面板已移除——writing/textToMusic 的 submit
         // 之前就是 stub，留着只会和正文重复编辑同一个 content 字段。
         <div
-          className={`flex h-full w-full flex-col rounded-[var(--node-radius)] border transition-colors ${inputBodyToneClass}`}
+          className={`relative flex h-full w-full flex-col rounded-[var(--node-radius)] border transition-colors ${inputBodyToneClass}`}
           onDoubleClick={(event) => {
             if (isEditingContent || isSystemManaged) return;
             event.stopPropagation();
             enterEditMode();
           }}
         >
+          {isGenerating && (
+            <NodeGenerationOverlay
+              startedAt={data.generationStartedAt ?? null}
+              durationMs={REVERSE_PROMPT_DURATION_MS}
+              hasBackground={hasUserContent}
+            />
+          )}
           {isEditingContent ? (
             <textarea
               ref={editTextareaRef}

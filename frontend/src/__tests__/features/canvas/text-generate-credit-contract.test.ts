@@ -40,6 +40,18 @@ describe("canvas AI text generation contract", () => {
     expect(nodeSource).toContain("void runTextTranslate()");
   });
 
+  it("translates the creation prompt without replacing generated text", () => {
+    expect(nodeSource).toContain("const trimmed = instruction.trim()");
+    expect(nodeSource).toContain("text: trimmed");
+    expect(nodeSource).toContain("instruction: result.translated_text");
+    expect(nodeSource).not.toContain("content: result.translated_text");
+  });
+
+  it("shows the shared progress overlay while AI text is generating", () => {
+    expect(nodeSource.match(/<NodeGenerationOverlay/g) ?? []).toHaveLength(2);
+    expect(nodeSource).toContain("startedAt={data.generationStartedAt ?? null}");
+  });
+
   it("uses the dedicated text generation API and result endpoint", () => {
     expect(apiSource).toContain("/freezone/text/generate");
     expect(apiSource).toContain(
