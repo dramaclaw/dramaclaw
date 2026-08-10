@@ -3535,6 +3535,7 @@
       },
       "placeholder": "Write a story, scene, or character idea. For example: in an old station on a rainy night, a late letter changes everyone's choice.",
       "generatePlaceholder": "Describe the story, scene, character, dialogue, or creative prompt you want to generate…",
+      "generateText": "Generate text with AI",
       "modelPickerHint": "Pick a model",
       "submit": "Submit",
       "translate": "Translate (zh ↔ en)"

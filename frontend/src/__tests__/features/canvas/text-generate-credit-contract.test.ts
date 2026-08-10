@@ -38,6 +38,8 @@ describe("canvas AI text generation contract", () => {
     expect(nodeSource).toContain("mode === 'imageToPrompt' || mode === 'textToVideo'");
     expect(nodeSource).toContain("void runTextGenerate()");
     expect(nodeSource).toContain("void runInstructionTranslate()");
+    expect(nodeSource).not.toContain("runTextToVideo");
+    expect(nodeSource).not.toContain("submitFreezoneVideoGen");
   });
 
   it("translates the creation prompt without replacing generated text", () => {

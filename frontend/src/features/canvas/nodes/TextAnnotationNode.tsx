@@ -297,14 +297,15 @@ export const TextAnnotationNode = memo(({
 
   const spawnVideoNode = useCallback(() => {
     const position = findNodePosition(id, 580, 680);
+    // 文本内容由连线实时提供给下游。不要在这里复制到 video.prompt；该字段只用于
+    // 视频节点自己的补充指令，否则上游文本更新后会留下过期快照。
     const seedData: Partial<VideoNodeData> = {
       genMode: 'textToVideo',
-      prompt: typeof data.content === 'string' ? data.content : '',
     };
     const newNodeId = addNode(CANVAS_NODE_TYPES.video, position, seedData);
     addEdge(id, newNodeId);
     useCanvasStore.getState().autoGroupSpawn(id, [newNodeId], { label: '文生视频组' });
-  }, [addEdge, addNode, data.content, findNodePosition, id]);
+  }, [addEdge, addNode, findNodePosition, id]);
 
   const spawnUploadNode = useCallback(() => {
     const sourceNode = useCanvasStore
@@ -790,7 +791,11 @@ export const TextAnnotationNode = memo(({
                   <button
                     type="button"
                     disabled={submitDisabled}
-                    title={t('node.textNode.submit')}
+                    title={
+                      mode === 'textToVideo'
+                        ? t('node.textNode.generateText')
+                        : t('node.textNode.submit')
+                    }
                     onClick={(event) => {
                       event.stopPropagation();
                       handleSubmit();
@@ -999,7 +1004,7 @@ function WritingOpsPanel({
           <button
             type="button"
             disabled={submitDisabled}
-            title={t('node.textNode.submit')}
+            title={t('node.textNode.generateText')}
             onClick={(event) => {
               event.stopPropagation();
               onGenerate();
