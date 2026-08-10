@@ -341,8 +341,14 @@ async def test_gateway_routed_pydantic_model_uses_one_request_scoped_transport(
     assert transport_calls == [(messages, None, parameters)]
     claim_spec = operation_port.calls[0][1]
     assert claim_spec.capability == capability
-    assert claim_spec.business_task_id == f"envelope-1:{capability}:000001"
     assert len(claim_spec.request_digest) == 64
+    # Envelope prefix first so an operator can find every row a task wrote by
+    # prefix alone; then the payload digest and its occurrence in this
+    # envelope. Not a call ordinal — a call ordinal has no defined value under
+    # concurrency, see tests/test_p0g4e_cognee_concurrent_egress.py.
+    assert claim_spec.business_task_id == (
+        f"envelope-1:{capability}:{claim_spec.request_digest}:000001"
+    )
 
 
 @pytest.mark.asyncio

@@ -400,9 +400,27 @@ class CogneeStore:
         operation: Callable[[], Awaitable[Any]],
         log: Callable[[str], None],
     ) -> Any:
-        """Run a Cognee pipeline stage once, retrying one transient failure."""
+        """Run a Cognee pipeline stage once, retrying one transient failure.
+
+        The retry is skipped under organization egress. A second attempt runs
+        in the same request scope, so every submit it makes is a fresh
+        occurrence with its own operation key — the durable ledger cannot tell
+        it from new work and the organization pays twice for the batches that
+        had already succeeded. Failing closed matches what this codebase
+        already does with every other retry knob it can reach under
+        organization egress (model_gateway_runtime.py:53-57 forces zero output
+        retries, cognee/config.py:807 forces max_retries=0).
+        """
+        from novelvideo.model_gateway_runtime import current_model_gateway_context
+
+        gateway_context = current_model_gateway_context()
+        attempts = (
+            1
+            if gateway_context is not None and gateway_context.is_organization
+            else 2
+        )
         last_error: Exception | None = None
-        for attempt in range(2):
+        for attempt in range(attempts):
             try:
                 async with cognee_pipeline_concurrency():
                     with self.embedding_model_scope():
@@ -411,7 +429,7 @@ class CogneeStore:
                 return result
             except Exception as exc:
                 last_error = exc
-                if attempt == 0:
+                if attempt + 1 < attempts:
                     log(f"{stage_name}失败，准备重试(1/1): {exc}")
                     await asyncio.sleep(0)
                     continue

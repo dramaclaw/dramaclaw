@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import threading
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterator, TypeVar
 
 from novelvideo.model_gateway_settings import get_effective_newapi_config
@@ -25,9 +27,43 @@ _MODEL_GATEWAY_CONTEXT: ContextVar[TrustedEgressContext | None] = ContextVar(
     "novelvideo_model_gateway_context",
     default=None,
 )
-_MODEL_GATEWAY_SUBMIT_SEQUENCE: ContextVar[int] = ContextVar(
-    "novelvideo_model_gateway_submit_sequence",
-    default=0,
+
+
+@dataclass
+class _SubmitLedger:
+    """Occurrence counters for one request scope.
+
+    Held in a ContextVar as a mutable object rather than as a plain int:
+    asyncio snapshots the context for every task it creates, so an int written
+    back with .set() lands in that task's private copy and is invisible to its
+    siblings and to the parent. cognee fans out with create_task on this exact
+    path, so a counter kept that way never advances and every concurrent
+    submit claims the same operation key. cognee/concurrency.py:47-70 works
+    because it shares an object by reference; this does the same.
+
+    The lock guards no path that exists today — the read-modify-write below
+    contains no await, and the threads that do reach this module
+    (loop.run_in_executor) carry no context and are denied before they get
+    here. It is here because, unlike _PipelineLimits which counts for logs, a
+    torn read costs a duplicate paid egress or a spurious conflict that kills
+    a user's import; and asyncio.to_thread *does* copy the context, so the
+    invariant would die silently the day someone introduces it.
+    """
+
+    _occurrences: dict[tuple[str, str], int] = field(default_factory=dict)
+    _guard: threading.Lock = field(default_factory=threading.Lock)
+
+    def next_occurrence(self, capability: str, request_digest: str) -> int:
+        with self._guard:
+            key = (capability, request_digest)
+            occurrence = self._occurrences.get(key, 0) + 1
+            self._occurrences[key] = occurrence
+            return occurrence
+
+
+_MODEL_GATEWAY_SUBMIT_LEDGER: ContextVar[_SubmitLedger | None] = ContextVar(
+    "novelvideo_model_gateway_submit_ledger",
+    default=None,
 )
 
 _EGRESS_ERROR_MESSAGES = {
@@ -66,11 +102,11 @@ def model_gateway_request_scope(
     if context is not None and type(context) is not TrustedEgressContext:
         raise TypeError("context must be a TrustedEgressContext or None")
     token = _MODEL_GATEWAY_CONTEXT.set(context)
-    sequence_token = _MODEL_GATEWAY_SUBMIT_SEQUENCE.set(0)
+    ledger_token = _MODEL_GATEWAY_SUBMIT_LEDGER.set(_SubmitLedger())
     try:
         yield
     finally:
-        _MODEL_GATEWAY_SUBMIT_SEQUENCE.reset(sequence_token)
+        _MODEL_GATEWAY_SUBMIT_LEDGER.reset(ledger_token)
         _MODEL_GATEWAY_CONTEXT.reset(token)
 
 
@@ -90,13 +126,38 @@ def model_gateway_scope_for_runner(envelope: dict[str, Any]) -> Iterator[None]:
         yield
 
 
-def next_model_gateway_business_task_id(capability: str) -> str:
+def next_model_gateway_business_task_id(
+    capability: str,
+    *,
+    request_digest: str,
+) -> str:
+    """Name one submit so the durable ledger can tell submits apart.
+
+    The identity is content-derived because the call sites that use this
+    helper have no business coordinates to name a request by — cognee's unit
+    of work is an arbitrary text batch, and TrustedEgressContext carries no
+    episode/beat/scope. Where a call site *does* have a real identity it
+    should pass that instead; see generators/video_generator.py:2682 and
+    storage/media_relay.py:433.
+
+    Two byte-identical payloads in one envelope are still two side effects
+    that each need a result, so an occurrence ordinal separates them. It is
+    counted per (capability, digest), which makes the identity depend on the
+    multiset of requests the envelope issues rather than on the order in
+    which cognee's tasks happen to arrive here — so a redelivered envelope
+    reproduces the same keys and is refused, per
+    docs/b2b-org-tenant/p0-gray-freeze.md:108.
+
+    request_digest is keyword-only so that a stale positional call fails
+    loudly instead of quietly digesting the capability string.
+    """
+
     context = current_model_gateway_context()
-    if context is None:
+    ledger = _MODEL_GATEWAY_SUBMIT_LEDGER.get()
+    if context is None or ledger is None:
         raise ModelGatewayEgressError("ORG_EGRESS_DENIED")
-    sequence = _MODEL_GATEWAY_SUBMIT_SEQUENCE.get() + 1
-    _MODEL_GATEWAY_SUBMIT_SEQUENCE.set(sequence)
-    return f"{context.envelope_id}:{capability}:{sequence:06d}"
+    occurrence = ledger.next_occurrence(capability, request_digest)
+    return f"{context.envelope_id}:{capability}:{request_digest}:{occurrence:06d}"
 
 
 def _without_volatile_transport_fields(value: Any) -> Any:
@@ -180,12 +241,15 @@ def create_request_scoped_gateway_model(
         ):
             context = current_model_gateway_context()
             if context is not None and context.is_organization:
-                business_task_id = next_model_gateway_business_task_id(capability)
                 request_digest = canonical_model_transport_digest(
                     model_name=model_name,
                     messages=messages,
                     model_settings=model_settings,
                     model_request_parameters=model_request_parameters,
+                )
+                business_task_id = next_model_gateway_business_task_id(
+                    capability,
+                    request_digest=request_digest,
                 )
 
                 async def submit(credential: RequestCredential):
@@ -227,12 +291,15 @@ def create_request_scoped_gateway_model(
         ):
             context = current_model_gateway_context()
             if context is not None and context.is_organization:
-                business_task_id = next_model_gateway_business_task_id(capability)
                 request_digest = canonical_model_transport_digest(
                     model_name=model_name,
                     messages=messages,
                     model_settings=model_settings,
                     model_request_parameters=model_request_parameters,
+                )
+                business_task_id = next_model_gateway_business_task_id(
+                    capability,
+                    request_digest=request_digest,
                 )
 
                 def stream_factory(credential: RequestCredential):

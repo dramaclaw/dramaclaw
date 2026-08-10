@@ -743,8 +743,11 @@ async def _route_project_embedding_transport(
         },
         bytes_mode="base64",
     )
-    business_task_id = next_model_gateway_business_task_id("embedding.generate")
     request_digest = canonical_request_digest(canonical_payload)
+    business_task_id = next_model_gateway_business_task_id(
+        "embedding.generate",
+        request_digest=request_digest,
+    )
 
     async def submit(credential):
         routed = _project_embedding_request_kwargs(
@@ -797,8 +800,11 @@ async def _route_cognee_llm_transport(
         {"args": list(args), "kwargs": clean_kwargs},
         bytes_mode="base64",
     )
-    business_task_id = next_model_gateway_business_task_id("cognee.llm")
     request_digest = canonical_request_digest(canonical_payload)
+    business_task_id = next_model_gateway_business_task_id(
+        "cognee.llm",
+        request_digest=request_digest,
+    )
 
     async def submit(credential):
         routed = dict(clean_kwargs)
@@ -975,6 +981,30 @@ async def _run_project_embedding_with_billing(
     return result
 
 
+async def _embed_text_once_under_organization_egress(embed_text, engine, text):
+    """Call Cognee's embed_text, minus its own retries under organization egress.
+
+    LiteLLMEmbeddingEngine.embed_text carries
+    @retry(stop=stop_after_delay(128), retry=retry_if_not_exception_type(NotFoundError)).
+    Every attempt re-enters gateway_aembedding, which mints a new occurrence
+    and claims a new operation — so a retry here is a second paid submit, not a
+    replay, and the durable ledger has no way to tell. Worse, the two egress
+    failures are plain RuntimeError and therefore retryable by that predicate,
+    so a deterministic collision burns the whole 128s budget before surfacing.
+
+    Outside organization mode the retry is a free transient-failure absorber
+    and stays. Inside it, this matches what the codebase already does with
+    every other retry knob on this path: model_gateway_runtime.py:53-57 forces
+    zero output retries, and the submit below forces max_retries=0.
+    """
+    from novelvideo.model_gateway_runtime import current_model_gateway_context
+
+    context = current_model_gateway_context()
+    if context is not None and context.is_organization:
+        return await getattr(embed_text, "__wrapped__", embed_text)(engine, text)
+    return await embed_text(engine, text)
+
+
 def _patch_cognee_embedding_gateway() -> None:
     """Install one concurrency-safe project-aware newAPI embedding gateway."""
     global _embedding_gateway_patch_installed
@@ -1040,7 +1070,11 @@ def _patch_cognee_embedding_gateway() -> None:
             if getattr(self, "mock", False):
                 dimensions = require_current_embedding_model_spec().dimensions
                 return [[0.0] * dimensions for _ in range(expected_count)]
-            return await original_embed_text(self, text)
+            return await _embed_text_once_under_organization_egress(
+                original_embed_text,
+                self,
+                text,
+            )
 
         return await _run_project_embedding_with_billing(
             project_embed,
