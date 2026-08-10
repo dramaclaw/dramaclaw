@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
+import { collectDuplicableIds } from "@/features/canvas/domain/groupSelectionDuplicate";
 import { useCanvasStore } from "@/stores/canvasStore";
 
 function node(
@@ -59,6 +60,43 @@ describe("duplicateNodesAsSiblings", () => {
     expect(groupClone?.width).toBe(640);
     expect(groupClone?.height).toBe(480);
     // 只有被直接复制的对象加「副本」后缀，组内成员保持原名
+    expect((groupClone?.data as { label?: string }).label).toBe("苏鸾 - 副本");
+    expect((memberClone?.data as { displayName?: string }).displayName).toBe("立绘");
+  });
+
+  // 框选整组走的是这条路:marquee 剔除祖先组，工具栏拿到的 selected 里只有成员。
+  // 直接把它递给 store 会重现「副本散架 + 塞回原组」；补组后必须和显式选中组等价。
+  it("keeps the group intact when only its members are selected (marquee path)", () => {
+    const group = node(
+      "g",
+      CANVAS_NODE_TYPES.group,
+      { x: 0, y: 0 },
+      { label: "苏鸾" },
+      { width: 640, height: 480, style: { zIndex: -1 } },
+    );
+    const member = node(
+      "m",
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 40, y: 60 },
+      { displayName: "立绘" },
+      { parentId: "g", extent: "parent" },
+    );
+    const nodes = [group, member];
+    useCanvasStore.setState({ nodes, edges: [] });
+
+    const [groupCloneId, memberCloneId] = useCanvasStore
+      .getState()
+      .duplicateNodesAsSiblings(collectDuplicableIds(nodes, ["m"]));
+
+    const after = useCanvasStore.getState().nodes;
+    const groupClone = after.find((candidate) => candidate.id === groupCloneId);
+    const memberClone = after.find((candidate) => candidate.id === memberCloneId);
+
+    expect(memberClone?.parentId).toBe(groupCloneId);
+    expect(memberClone?.position).toEqual({ x: 40, y: 60 });
+    expect(groupClone?.position).toEqual({ x: 0, y: 480 + 24 });
+    expect(groupClone?.width).toBe(640);
+    // 成员不加后缀，只有组框自己算「被直接复制的对象」
     expect((groupClone?.data as { label?: string }).label).toBe("苏鸾 - 副本");
     expect((memberClone?.data as { displayName?: string }).displayName).toBe("立绘");
   });

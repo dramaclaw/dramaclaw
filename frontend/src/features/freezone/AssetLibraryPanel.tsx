@@ -837,6 +837,7 @@ export function AssetLibraryPanel({
               onRestoreMainlineDefault={onRestoreMainlineDefault}
               hasPresetLabel={hasPresetLabel}
               reloadToken={reloadToken}
+              collapsed={collapsed}
             />
           )}
         </div>

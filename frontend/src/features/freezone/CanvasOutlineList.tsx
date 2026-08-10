@@ -335,9 +335,14 @@ function outlineDownloadFilename(item: CanvasOutlineItem, url: string): string {
   return `${item.name}.${extension}`;
 }
 
-export function CanvasOutlineList() {
+export function CanvasOutlineList({ collapsed = false }: { collapsed?: boolean } = {}) {
   const { t } = useTranslation();
-  const signature = useCanvasStore((state) => canvasOutlineSignature(state.nodes));
+  // 抽屉收起是纯 CSS 位移，组件不卸载 —— 不短路的话，用户收起抽屉拖画布时，这条
+  // 签名照样每帧把几百个节点(含可能几百字符的提示词名)拼成大字符串然后丢掉。
+  // 返回常量 "" 时 zustand 判等不重渲；展开那一拍再重新算一次即可。
+  const signature = useCanvasStore((state) =>
+    collapsed ? "" : canvasOutlineSignature(state.nodes),
+  );
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);

@@ -38,6 +38,11 @@ interface CanvasesTabProps {
   onRestoreMainlineDefault?: () => Promise<void> | void;
   hasPresetLabel: boolean;
   reloadToken?: number;
+  /**
+   * 抽屉是否处于收起态。收起走的是 CSS `-translate-x-full`，组件并不卸载，
+   * 所以要显式往下传，让大纲停掉它那条按 nodes 重算的订阅（见 CanvasOutlineList）。
+   */
+  collapsed?: boolean;
 }
 
 export function CanvasesTab({
@@ -46,6 +51,7 @@ export function CanvasesTab({
   onRestoreMainlineDefault,
   hasPresetLabel,
   reloadToken,
+  collapsed = false,
 }: CanvasesTabProps) {
   const { t } = useTranslation();
   const username = useAuthStore((state) => state.username);
@@ -245,7 +251,7 @@ export function CanvasesTab({
       )}
 
       {/* 画布条以下是当前画布的节点大纲 */}
-      <CanvasOutlineList />
+      <CanvasOutlineList collapsed={collapsed} />
     </div>
   );
 }
