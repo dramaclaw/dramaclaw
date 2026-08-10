@@ -445,7 +445,7 @@ export const TextAnnotationNode = memo(({
     }
   }, [id, instruction, t, textGenerateBillingRuleMissing, updateNodeData]);
 
-  const runTextTranslate = useCallback(async () => {
+  const runInstructionTranslate = useCallback(async () => {
     if (isGenerating || isTranslating) return;
     const trimmed = instruction.trim();
     if (trimmed.length === 0) return;
@@ -471,6 +471,33 @@ export const TextAnnotationNode = memo(({
       setIsTranslating(false);
     }
   }, [id, instruction, isGenerating, isTranslating, updateNodeData]);
+
+  const runContentTranslate = useCallback(async () => {
+    if (isGenerating || isTranslating) return;
+    const trimmed = content.trim();
+    if (trimmed.length === 0) return;
+    const projectId = readUrl().project;
+    if (!projectId) {
+      console.error('[text-node] translate: no project in URL');
+      return;
+    }
+    setIsTranslating(true);
+    try {
+      const ref = await submitFreezoneTextTranslate(projectId, {
+        text: trimmed,
+        nodeType: 'text',
+        canvasId: readUrl().canvas ?? 'default',
+        nodeId: id,
+      });
+      await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
+      const result = await fetchFreezoneTextTranslateResult(projectId, ref.job_id);
+      updateNodeData(id, { content: result.translated_text });
+    } catch (error) {
+      console.error('[text-node] translate failed', error);
+    } finally {
+      setIsTranslating(false);
+    }
+  }, [content, id, isGenerating, isTranslating, updateNodeData]);
 
   const textPlaceholder = t('node.textNode.placeholder');
   const hasUserContent = content.trim().length > 0 && content.trim() !== textPlaceholder.trim();
@@ -560,7 +587,7 @@ export const TextAnnotationNode = memo(({
         maxHeight={MAX_HEIGHT}
       />
 
-      {!isCompactView && selected && !isBoxSelecting && !isReferenceOnly && !isSystemManaged && !isEditingContent && (
+      {!isCompactView && mode === 'writing' && selected && !isBoxSelecting && !isReferenceOnly && !isSystemManaged && !isEditingContent && (
         <WritingOpsPanel
           nodeId={id}
           instruction={instruction}
@@ -574,7 +601,21 @@ export const TextAnnotationNode = memo(({
             isGenerating || isTranslating || instruction.trim().length === 0
           }
           onGenerate={handleSubmit}
-          onTranslate={runTextTranslate}
+          onTranslate={runInstructionTranslate}
+        />
+      )}
+
+      {!isCompactView && mode === 'textToMusic' && selected && !isBoxSelecting && !isReferenceOnly && !isSystemManaged && !isEditingContent && (
+        <ContentOpsPanel
+          nodeId={id}
+          content={content}
+          isGenerating={isGenerating}
+          isTranslating={isTranslating}
+          width={resolvedWidth}
+          translateDisabled={
+            isGenerating || isTranslating || content.trim().length === 0
+          }
+          onTranslate={runContentTranslate}
         />
       )}
 
@@ -725,7 +766,7 @@ export const TextAnnotationNode = memo(({
                         title={t('node.textNode.translate')}
                         onClick={(event) => {
                           event.stopPropagation();
-                          void runTextTranslate();
+                          void runInstructionTranslate();
                         }}
                         disabled={
                           isGenerating || isTranslating || instruction.trim().length === 0
@@ -976,6 +1017,73 @@ function WritingOpsPanel({
             )}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+interface ContentOpsPanelProps {
+  nodeId: string;
+  content: string;
+  isGenerating: boolean;
+  isTranslating: boolean;
+  width: number;
+  translateDisabled: boolean;
+  onTranslate: () => void;
+}
+
+function ContentOpsPanel({
+  nodeId,
+  content,
+  isGenerating,
+  isTranslating,
+  width,
+  translateDisabled,
+  onTranslate,
+}: ContentOpsPanelProps) {
+  const { t } = useTranslation();
+  const updateNodeData = useCanvasStore((state) => state.updateNodeData);
+  const textPlaceholder = t('node.textNode.placeholder');
+
+  return (
+    <div
+      className={`nodrag absolute left-1/2 z-[300] flex -translate-x-1/2 flex-col rounded-[var(--node-radius)] border ${CANVAS_NODE_INPUT_SURFACE_CLASS} ${CANVAS_NODE_INPUT_FRAME_CLASS}`}
+      style={{
+        top: `calc(100% + ${COMPACT_OPS_PANEL_GAP}px)`,
+        height: COMPACT_OPS_PANEL_HEIGHT,
+        width: Math.max(width, COMPACT_OPS_PANEL_MIN_WIDTH),
+      }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <textarea
+        value={content}
+        onChange={(event) => updateNodeData(nodeId, { content: event.target.value })}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+        placeholder={textPlaceholder}
+        className={`ui-scrollbar nodrag nowheel min-h-0 w-full flex-1 resize-none border-none bg-transparent px-3 pt-3 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
+        disabled={isGenerating}
+      />
+      <div className="flex shrink-0 items-center justify-end gap-1 px-3 py-2">
+        <button
+          type="button"
+          title={t('node.textNode.translate')}
+          onClick={(event) => {
+            event.stopPropagation();
+            onTranslate();
+          }}
+          disabled={translateDisabled}
+          className={`${NODE_INLINE_ICON_BUTTON_CLASS} ${
+            isTranslating ? NODE_INLINE_ICON_BUTTON_ACTIVE_CLASS : ''
+          }`}
+        >
+          {isTranslating ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Languages className="h-4 w-4" />
+          )}
+        </button>
       </div>
     </div>
   );

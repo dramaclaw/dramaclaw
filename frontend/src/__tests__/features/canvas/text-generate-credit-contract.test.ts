@@ -37,14 +37,22 @@ describe("canvas AI text generation contract", () => {
     expect(nodeSource).toContain("const textGeneratePrompt = instruction");
     expect(nodeSource).toContain("mode === 'imageToPrompt' || mode === 'textToVideo'");
     expect(nodeSource).toContain("void runTextGenerate()");
-    expect(nodeSource).toContain("void runTextTranslate()");
+    expect(nodeSource).toContain("void runInstructionTranslate()");
   });
 
   it("translates the creation prompt without replacing generated text", () => {
     expect(nodeSource).toContain("const trimmed = instruction.trim()");
     expect(nodeSource).toContain("text: trimmed");
     expect(nodeSource).toContain("instruction: result.translated_text");
-    expect(nodeSource).not.toContain("content: result.translated_text");
+  });
+
+  it("keeps clone-audio text in content for downstream audio generation", () => {
+    expect(nodeSource).toContain("mode === 'textToMusic'");
+    expect(nodeSource).toContain("<ContentOpsPanel");
+    expect(nodeSource).toContain(
+      "updateNodeData(nodeId, { content: event.target.value })",
+    );
+    expect(nodeSource).toContain("content: result.translated_text");
   });
 
   it("shows the shared progress overlay while AI text is generating", () => {
