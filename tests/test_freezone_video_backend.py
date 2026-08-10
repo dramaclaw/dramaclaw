@@ -29,6 +29,7 @@ from novelvideo.freezone.video_node import (
     get_freezone_video_model_options,
     get_video_camera_template,
     is_freezone_happyhorse_backend,
+    is_freezone_happyhorse_video_edit_backend,
     is_freezone_seedance2_backend,
     load_video_character_library,
     normalize_video_aspect_ratio,
@@ -352,6 +353,7 @@ def test_video_model_options_and_resolution_work() -> None:
     assert "Seedance1.5 Pro" in labels
     assert "Seedance2.0 Fast" in labels
     assert "HappyHorse 1.0" in labels
+    assert "HappyHorse 1.1" in labels
     assert "Grok Video Channel" not in labels
     assert normalize_video_resolution("720P") == "720p"
     happyhorse = next(item for item in options if item["id"] == "newapi_happyhorse-1.0")
@@ -359,6 +361,10 @@ def test_video_model_options_and_resolution_work() -> None:
     assert happyhorse["minDuration"] == 3
     assert happyhorse["maxDuration"] == 15
     assert normalize_video_resolution_for_backend("newapi_happyhorse-1.0", "480p") == "720p"
+    happyhorse_11 = next(item for item in options if item["id"] == "newapi_happyhorse-1.1")
+    assert happyhorse_11["resolutionOptions"] == ["720p", "1080p"]
+    assert happyhorse_11["minDuration"] == 3
+    assert happyhorse_11["maxDuration"] == 15
 
 
 def test_catalog_resolution_options_override_legacy_video_whitelist() -> None:
@@ -466,6 +472,9 @@ def test_seedance2_backend_detection_accepts_newapi_and_legacy_values() -> None:
 
 def test_happyhorse_backend_detection_accepts_newapi_value() -> None:
     assert is_freezone_happyhorse_backend("newapi_happyhorse-1.0")
+    assert is_freezone_happyhorse_backend("newapi_happyhorse-1.1")
+    assert is_freezone_happyhorse_video_edit_backend("newapi_happyhorse-1.0")
+    assert not is_freezone_happyhorse_video_edit_backend("newapi_happyhorse-1.1")
     assert not is_freezone_happyhorse_backend("newapi_seedance-2.0-fast")
 
 

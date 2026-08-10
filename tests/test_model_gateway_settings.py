@@ -3000,7 +3000,7 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     videos = get_official_media_model_catalog("video")
 
     assert len(images) == 6
-    assert len(videos) == 7
+    assert len(videos) == 8
     assert [entry["id"] for entry in videos[:2]] == [
         "seedance-2.0-fast",
         "seedance-2.0",
@@ -3012,6 +3012,30 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     seedance = next(entry for entry in videos if entry["id"] == "seedance-2.0-mini")
     assert seedance["apiModel"] == "newapi_seedance-2.0-mini"
     assert "video_edit" in seedance["supportedModes"]
+    happyhorse_11 = next(entry for entry in videos if entry["id"] == "happyhorse-1.1")
+    assert happyhorse_11["gatewayModel"] == "happyhorse-1.1"
+    assert happyhorse_11["minDuration"] == 3
+    assert happyhorse_11["maxDuration"] == 15
+    assert happyhorse_11["ratioOptions"] == [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4",
+        "21:9",
+        "9:21",
+        "5:4",
+        "4:5",
+    ]
+    assert happyhorse_11["supportedModes"] == [
+        "text_to_video",
+        "first_frame",
+        "image_to_video",
+        "image_reference",
+    ]
+    assert happyhorse_11["referenceImageMax"] == 9
+    assert happyhorse_11["referenceVideoMax"] == 0
+    assert happyhorse_11["referenceAudioMax"] == 0
     minimax = videos[-1]
     assert minimax["id"] == "MiniMax-H3"
     assert minimax["gatewayModel"] == "MiniMax-H3"

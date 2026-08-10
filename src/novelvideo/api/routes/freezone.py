@@ -256,6 +256,7 @@ from novelvideo.freezone.video_node import (
     get_video_camera_template,
     get_video_camera_templates,
     is_freezone_happyhorse_backend,
+    is_freezone_happyhorse_video_edit_backend,
     is_freezone_seedance2_backend,
     library_folder_keys,
     load_video_character_folders,
@@ -8578,7 +8579,7 @@ async def freezone_video_edit(
     )
     mode_enabled = _catalog_mode_enabled(capabilities, "video_edit")
     if mode_enabled is False or (
-        mode_enabled is None and not is_freezone_happyhorse_backend(backend)
+        mode_enabled is None and not is_freezone_happyhorse_video_edit_backend(backend)
     ):
         raise HTTPException(400, "this model does not support video_edit mode")
 

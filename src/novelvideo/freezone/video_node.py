@@ -116,6 +116,7 @@ FREEZONE_NEWAPI_VIDEO_BACKENDS = {
     "newapi_seedance-1.0-pro-fast",
     "newapi_seedance-1.5-pro",
     "newapi_happyhorse-1.0",
+    "newapi_happyhorse-1.1",
 }
 FREEZONE_DISABLED_VIDEO_BACKENDS = {"newapi_grok-video-channel"}
 
@@ -173,7 +174,7 @@ def freezone_video_resolution_options(backend: str | None) -> tuple[str, ...]:
     model = _freezone_video_model_from_backend(backend)
     if model == "grok-video-channel":
         return FREEZONE_GROK_VIDEO_CHANNEL_RESOLUTION_OPTIONS
-    if model == "happyhorse-1.0":
+    if model in {"happyhorse-1.0", "happyhorse-1.1"}:
         return FREEZONE_HAPPYHORSE_RESOLUTION_OPTIONS
     if model.startswith("seedance-2.0"):
         return FREEZONE_SEEDANCE2_RESOLUTION_OPTIONS_BY_MODEL.get(
@@ -248,6 +249,7 @@ def _freezone_newapi_video_options() -> dict[str, str]:
         if key in FREEZONE_NEWAPI_VIDEO_BACKENDS
     }
     options.setdefault("newapi_happyhorse-1.0", "HappyHorse 1.0")
+    options.setdefault("newapi_happyhorse-1.1", "HappyHorse 1.1")
     if FREEZONE_DEFAULT_VIDEO_BACKEND not in options:
         return options
     ordered = {FREEZONE_DEFAULT_VIDEO_BACKEND: options[FREEZONE_DEFAULT_VIDEO_BACKEND]}
@@ -339,6 +341,20 @@ def is_freezone_seedance2_backend(backend: str | None) -> bool:
 
 
 def is_freezone_happyhorse_backend(backend: str | None) -> bool:
+    """Return whether the backend uses the legacy HappyHorse media protocol."""
+    from novelvideo.generators.video_generator import parse_newapi_video_backend
+
+    model = parse_newapi_video_backend(backend) or _freezone_video_model_from_backend(backend)
+    return model in {"happyhorse-1.0", "happyhorse-1.1"}
+
+
+def is_freezone_happyhorse_video_edit_backend(backend: str | None) -> bool:
+    """Legacy fallback for catalogs that do not declare supported modes.
+
+    Normal CE/EE requests are governed by the media catalog. Only HappyHorse 1.0
+    historically exposed video editing, so 1.1 must not inherit it merely because
+    both versions share a request protocol.
+    """
     from novelvideo.generators.video_generator import parse_newapi_video_backend
 
     model = parse_newapi_video_backend(backend) or _freezone_video_model_from_backend(backend)

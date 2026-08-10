@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "catalogVersion": "2026.08.06.1",
+  "catalogVersion": "2026.08.10.1",
   "name": "DramaClaw CE official media models",
   "mediaModels": {
     "LingShan-G2": {
@@ -193,6 +193,26 @@
         "referenceAudioMax": 0,
         "referenceImageMax": 9,
         "referenceVideoMax": 1,
+        "resolutionOptions": ["720p", "1080p"]
+      }
+    },
+    "happyhorse-1.1": {
+      "provider": "newapi",
+      "upstreamModel": "happyhorse-1.1",
+      "mediaType": "video",
+      "label": "HappyHorse 1.1",
+      "enabled": true,
+      "sortOrder": 71,
+      "aliases": ["newapi_happyhorse-1.1"],
+      "config": {
+        "request": {"endpoint": "video/generations", "parameters": []},
+        "minDuration": 3,
+        "maxDuration": 15,
+        "ratioOptions": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "9:21", "5:4", "4:5"],
+        "supportedModes": ["text_to_video", "first_frame", "image_to_video", "image_reference"],
+        "referenceAudioMax": 0,
+        "referenceImageMax": 9,
+        "referenceVideoMax": 0,
         "resolutionOptions": ["720p", "1080p"]
       }
     },

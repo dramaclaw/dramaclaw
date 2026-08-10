@@ -2128,7 +2128,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         return self.model.strip().startswith("seedance-2.0")
 
     def _is_happyhorse_model(self) -> bool:
+        """Legacy HappyHorse 1.0 branch, including its video-edit behavior."""
         return self.model.strip().lower() == "happyhorse-1.0"
+
+    def _uses_happyhorse_protocol(self) -> bool:
+        """Models sharing the stable HappyHorse request field contract."""
+        return self.model.strip().lower() in {"happyhorse-1.0", "happyhorse-1.1"}
 
     def _is_grok_video_channel_model(self) -> bool:
         return self.model.strip().lower() == "grok-video-channel"
@@ -2136,7 +2141,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
     @staticmethod
     def _happyhorse_ratio(value: str | None) -> str:
         text = str(value or "").strip()
-        return text if text in {"16:9", "9:16", "1:1", "4:3", "3:4"} else "16:9"
+        return (
+            text
+            if text in {"16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "9:21", "5:4", "4:5"}
+            else "16:9"
+        )
 
     @staticmethod
     def _happyhorse_resolution(value: str | None) -> str:
@@ -2591,12 +2600,21 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         image_path = str(image_path or "").strip()
         requested_mode = str(kwargs.get("gen_mode") or "").strip()
 
+        uses_happyhorse_protocol = self._uses_happyhorse_protocol()
+        if uses_happyhorse_protocol and len(prompt) > 2500:
+            prompt = prompt[:2500]
+            log("提示词已截断到 HappyHorse 上限 2500 字符")
+
         metadata: dict[str, object] = {
             "resolution": self.resolution,
             "ratio": ratio,
             "watermark": False,
             "generate_audio": bool(self.generate_audio),
         }
+        if uses_happyhorse_protocol:
+            metadata.pop("generate_audio", None)
+            metadata["ratio"] = self._happyhorse_ratio(ratio)
+            metadata["resolution"] = self._happyhorse_resolution(self.resolution)
         payload: dict[str, object] = {
             "model": self.model,
             "prompt": prompt,
@@ -2619,24 +2637,20 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     status=VideoGenStatus.FAILED,
                     error=str(exc),
                 )
-            seedance2_config = _seedance2_config_mapping(kwargs.get("seedance2_config"))
-            scene_optimize = str(seedance2_config.get("scene_optimize") or "").strip()
-            if scene_optimize:
-                metadata["scene_optimize"] = scene_optimize
-            if kwargs.get("human_review"):
-                metadata["human_review"] = True
-            audio_setting = str(kwargs.get("audio_setting") or "").strip()
-            if audio_setting:
-                metadata["audio_setting"] = audio_setting
-            metadata["return_last_frame"] = bool(
-                seedance2_config.get("return_last_frame", False)
-            )
+            if not uses_happyhorse_protocol:
+                seedance2_config = _seedance2_config_mapping(kwargs.get("seedance2_config"))
+                scene_optimize = str(seedance2_config.get("scene_optimize") or "").strip()
+                if scene_optimize:
+                    metadata["scene_optimize"] = scene_optimize
+                if kwargs.get("human_review"):
+                    metadata["human_review"] = True
+                audio_setting = str(kwargs.get("audio_setting") or "").strip()
+                if audio_setting:
+                    metadata["audio_setting"] = audio_setting
+                metadata["return_last_frame"] = bool(
+                    seedance2_config.get("return_last_frame", False)
+                )
         elif self._is_happyhorse_model():
-            if len(prompt) > 2500:
-                prompt = prompt[:2500]
-                payload["prompt"] = prompt
-                log("提示词已截断到 HappyHorse 1.0 上限 2500 字符")
-
             duration_int = int(math.ceil(duration))
             metadata.pop("generate_audio", None)
             metadata["ratio"] = self._happyhorse_ratio(ratio)
@@ -3601,6 +3615,7 @@ NEWAPI_VIDEO_DISPLAY_LABELS = {
     "seedance-2.0-fast-value": "Seedance2.0 Fast Value",
     "seedance-2.0-mini": "Seedance2.0 Mini",
     "happyhorse-1.0": "HappyHorse 1.0",
+    "happyhorse-1.1": "HappyHorse 1.1",
     "grok-video-channel": "Grok Video Channel",
 }
 NEWAPI_MAINLINE_SEEDANCE2_MODELS = (
