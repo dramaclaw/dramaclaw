@@ -5152,15 +5152,20 @@ async def freezone_image_style_templates(
     project: str,
     user: dict = Depends(get_api_user),
 ):
-    """图片处理：返回风格模板列表(默认内置清单,可用 STYLE_GALLERY_MANIFEST 覆盖)。"""
+    """图片处理：返回风格模板列表(默认内置清单,可用 STYLE_GALLERY_MANIFEST 覆盖)。
+
+    `data` 必须保持**裸列表**。这个端点同时服务多个仓库的前端,而它们的 `apiCall`
+    只拆一层 `{ok, data}` 信封、不校验 `data` 的形状;一旦把 `data` 换成对象,所有
+    没跟进的调用方一句 `templates.find(...)` 就抛 `is not a function`,冒泡到根错误
+    边界变成整页「页面加载失败」。清单元信息因此挂在信封同级 —— 只取 `data` 的老
+    客户端会自然忽略这些多余字段,新客户端另行读取。
+    """
     await _resolve_freezone_project(project, user, required_role="viewer")
     return {
         "ok": True,
-        "data": {
-            "asset_base": _get_freezone_image_style_asset_base(),
-            "version": _get_freezone_image_style_manifest_version(),
-            "templates": _get_freezone_image_style_templates(),
-        },
+        "data": _get_freezone_image_style_templates(),
+        "asset_base": _get_freezone_image_style_asset_base(),
+        "version": _get_freezone_image_style_manifest_version(),
     }
 
 

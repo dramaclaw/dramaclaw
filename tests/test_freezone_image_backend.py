@@ -3066,6 +3066,42 @@ def test_image_style_templates_have_assets_and_prompts() -> None:
             assert (gallery_root / rel).is_file(), rel
 
 
+@pytest.mark.asyncio
+async def test_image_style_templates_route_keeps_data_a_bare_list(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`data` 必须是裸列表 —— 这是跨仓库的前端契约，不是实现细节。
+
+    这个端点同时服务多个仓库的前端，它们的 `apiCall` 只拆一层 `{ok, data}`、不校验
+    `data` 的形状。把 `data` 换成 `{asset_base, version, templates}` 对象曾经让所有
+    没跟进的前端一句 `templates.find(...)` 抛 `is not a function`，冒泡到根错误边界
+    变成整页「页面加载失败」。清单元信息只能挂在信封同级。
+    """
+    _patch_freezone_project(monkeypatch, tmp_path)
+    monkeypatch.setenv("STYLE_GALLERY_ASSET_BASE", "https://cdn.example.com/style")
+
+    app = FastAPI()
+    app.include_router(freezone_routes.router, prefix="/api/v1")
+
+    async def fake_user():
+        return {"id": "owner_1", "username": "admin"}
+
+    app.dependency_overrides[freezone_routes.get_api_user] = fake_user
+
+    response = TestClient(app).get(
+        "/api/v1/projects/58/freezone/image/style-templates"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert isinstance(payload["data"], list), "data 必须是裸列表，元信息挂信封同级"
+    assert payload["data"] == freezone_routes._get_freezone_image_style_templates()
+    assert payload["asset_base"] == "https://cdn.example.com/style"
+    assert payload["version"]
+
+
 def test_nineties_style_prompt_keeps_second_line() -> None:
     data = freezone_routes._get_freezone_image_style_templates()
     nineties = next(item for item in data if item["id"] == "nineties")

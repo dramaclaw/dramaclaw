@@ -380,6 +380,7 @@ frontend/src/__tests__/api/canvas.test.ts,Elastic-2.0,2026 SuperTale contributor
 frontend/src/__tests__/api/client.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/api/freezone-scene360.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/api/freezone-video-edit.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/api/style-templates-shape.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/api/task-poll-timeout.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/account/avatar-upload-dialog.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/assets/asset-panels-rename.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { apiCall, apiClient } from "./client";
+import { apiCall, apiCallEnvelope, apiClient } from "./client";
 
 // Per-node generation history -------------------------------------------- //
 
@@ -797,18 +797,63 @@ export interface FreezoneStyleTemplateList {
   templates: FreezoneStyleTemplate[];
 }
 
+/**
+ * 把后端吐回来的东西掰成风格模板数组。
+ *
+ * 这个端点的形状在两个仓库之间反复横跳过：早期 `data` 是裸列表，后来被换成
+ * `{asset_base, version, templates}` 的对象（于是没跟进的前端 `templates.find(...)`
+ * 当场抛 `is not a function`，整页白屏），现在又改回裸列表、元信息挂到信封同级。
+ * 所以这里不信任何一种形状，四种常见包装都认，认不出就退空列表 —— 图墙空着是能
+ * 看懂的降级，白屏不是。同一族的 {@link coerceCameraTemplateList} 就是这么做的。
+ */
+function coerceStyleTemplateList(payload: unknown): FreezoneStyleTemplate[] {
+  let candidate: unknown = payload;
+  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+    const wrapper = candidate as Record<string, unknown>;
+    if (Array.isArray(wrapper.templates)) candidate = wrapper.templates;
+    else if (Array.isArray(wrapper.data)) candidate = wrapper.data;
+    else if (Array.isArray(wrapper.items)) candidate = wrapper.items;
+    else if (Array.isArray(wrapper.style_templates)) candidate = wrapper.style_templates;
+  }
+  if (!Array.isArray(candidate)) return [];
+  const result: FreezoneStyleTemplate[] = [];
+  for (const item of candidate) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    // 没 id 就没法回写到节点上，这条直接丢掉；其余字段缺了还能降级显示。
+    const id = pickString(entry, "id", "template_id", "templateId", "key");
+    if (!id) continue;
+    result.push({
+      id,
+      label: pickString(entry, "label", "display_name", "displayName", "title", "name") ?? id,
+      category: pickString(entry, "category", "group", "kind") ?? "",
+      cover: pickString(entry, "cover", "cover_url", "coverUrl", "thumbnail") ?? "",
+      samples: pickStringArray(entry, "samples", "sample_urls", "sampleUrls"),
+      style_prompt:
+        pickString(entry, "style_prompt", "stylePrompt", "prompt", "prompt_fragment") ?? "",
+    });
+  }
+  return result;
+}
+
 export async function listFreezoneStyleTemplates(
   project: string,
 ): Promise<FreezoneStyleTemplateList> {
-  const data = await apiCall<{
-    asset_base?: string;
-    version?: string;
-    templates?: FreezoneStyleTemplate[];
-  }>(`projects/${encodeURIComponent(project)}/freezone/image/style-templates`);
+  // 走 apiCallEnvelope 而不是 apiCall：清单元信息挂在 `data` 同级（`data` 得留给
+  // 裸列表，见后端路由注释）。元信息在 data 里的旧形状也照样能认出来。
+  const envelope = await apiCallEnvelope<unknown>(
+    `projects/${encodeURIComponent(project)}/freezone/image/style-templates`,
+  );
+  const nested =
+    envelope.data && typeof envelope.data === "object" && !Array.isArray(envelope.data)
+      ? (envelope.data as Record<string, unknown>)
+      : {};
+  const meta = (key: string) =>
+    pickString(envelope, key) ?? pickString(nested, key) ?? "";
   return {
-    assetBase: data.asset_base ?? "",
-    version: data.version ?? "",
-    templates: Array.isArray(data.templates) ? data.templates : [],
+    assetBase: meta("asset_base"),
+    version: meta("version"),
+    templates: coerceStyleTemplateList(envelope.data),
   };
 }
 
