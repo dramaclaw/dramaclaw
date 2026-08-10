@@ -39,6 +39,7 @@ import {
   type CanvasNode,
   type CanvasNodeType,
 } from "@/features/canvas/domain/canvasNodes";
+import { resolveNodePrimaryAsset } from "@/features/canvas/domain/canvasAssets";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import {
   DropdownMenu,
@@ -96,19 +97,22 @@ function outlineThumbUrl(node: CanvasNode): string | null {
     return imageUrl;
   }
   const preview = (node.data as { previewImageUrl?: unknown }).previewImageUrl;
-  return typeof preview === "string" && preview ? preview : null;
+  if (typeof preview === "string" && preview) {
+    return preview;
+  }
+  // 全景查看器这类不是「图片节点」但原件就是一张图的，直接拿它的原件当缩略图。
+  const asset = resolveNodePrimaryAsset(node);
+  return asset?.kind === "image" ? asset.url : null;
 }
 
-/** 下载拿的是原件：视频/音频各取自己的资源，其余回落到画面本身。 */
+/**
+ * 下载拿的是原件，走全局那张「节点 → 原始资产」映射（`resolveNodePrimaryAsset`），
+ * 不在这里自己认字段：视频合成的成片在 `resultVideoUrl`、视频故事的源片在
+ * `sourceVideoUrl`、3D 世界的包在 `plyUrl`，而它们身上都同时挂着封面图，自己认一遍
+ * 就会把海报当成片下载给用户。没有原件的节点（文本、脚本等）回落到画面本身。
+ */
 function outlineMediaUrl(node: CanvasNode): string | null {
-  const data = node.data as { videoUrl?: unknown; audioUrl?: unknown };
-  if (typeof data.videoUrl === "string" && data.videoUrl) {
-    return data.videoUrl;
-  }
-  if (typeof data.audioUrl === "string" && data.audioUrl) {
-    return data.audioUrl;
-  }
-  return outlineThumbUrl(node);
+  return resolveNodePrimaryAsset(node)?.url ?? outlineThumbUrl(node);
 }
 
 function toOutlineItem(node: CanvasNode): CanvasOutlineItem {
@@ -429,7 +433,7 @@ export function CanvasOutlineList() {
 
   if (outline.length === 0) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-3 py-6 text-xs text-white/34">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-3 py-6 text-xs text-text-muted/70">
         {t("freezone.canvasOutline.empty")}
       </div>
     );
@@ -442,7 +446,7 @@ export function CanvasOutlineList() {
           <OutlineSearchInput value={query} onChange={setQuery} onClose={closeSearch} />
         ) : (
           <>
-            <span className="shrink-0 text-[11px] font-medium text-white/45">
+            <span className="shrink-0 text-[11px] font-medium text-text-muted">
               {t("freezone.canvasOutline.title")}
             </span>
             {groupIds.length > 0 && (
@@ -464,7 +468,7 @@ export function CanvasOutlineList() {
             )}
             <span className="flex-1" />
             {filtering && (
-              <span className="shrink-0 text-[11px] tabular-nums text-white/30">
+              <span className="shrink-0 text-[11px] tabular-nums text-text-muted/70">
                 {t("freezone.canvasOutline.matched", { count: total })}
               </span>
             )}
@@ -489,7 +493,7 @@ export function CanvasOutlineList() {
       </div>
       <div className="ui-scrollbar-vertical min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {visible.length === 0 ? (
-          <div className="px-1 py-6 text-center text-xs text-white/34">
+          <div className="px-1 py-6 text-center text-xs text-text-muted/70">
             {t("freezone.canvasOutline.noMatch")}
           </div>
         ) : (
@@ -519,10 +523,10 @@ export function CanvasOutlineList() {
 const NO_COLLAPSED_GROUPS: ReadonlySet<string> = new Set();
 
 const HEADER_ICON_BUTTON_CLASS =
-  "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-white/45 transition hover:bg-white/10 hover:text-white";
+  "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-[rgb(var(--text-rgb)/0.1)] hover:text-text-dark";
 
 const TOOLTIP_CONTENT_CLASS =
-  "z-[130] rounded-md border border-white/10 bg-[#2a2a2c] px-2 py-1 text-[11px] text-white shadow-lg";
+  "z-[130] rounded-md border border-[var(--ui-border-soft)] bg-surface-dark px-2 py-1 text-[11px] text-text-dark shadow-lg";
 
 /** 工具条上的图标按钮：hover 弹自绘 tooltip，不用浏览器那个慢半拍的原生 title。 */
 function OutlineIconButton({
@@ -558,7 +562,7 @@ function OutlineIconButton({
 }
 
 const FILTER_MENU_CONTENT_CLASS =
-  "z-[120] min-w-[132px] border-white/10 bg-[#242426]/95 text-text-dark shadow-none backdrop-blur-3xl";
+  "z-[120] min-w-[132px] border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.95)] text-text-dark shadow-none backdrop-blur-3xl";
 
 /** 类型筛选：搜索框展开时收成一个图标，让位给输入框。 */
 function OutlineTypeFilter({
@@ -583,10 +587,10 @@ function OutlineTypeFilter({
             aria-label={t("freezone.canvasOutline.filter")}
             title={compact ? `${t("freezone.canvasOutline.filter")}：${label}` : undefined}
             className={
-              "inline-flex h-6 shrink-0 items-center gap-1 rounded-[5px] border px-1.5 text-[11px] transition hover:bg-white/10 hover:text-white " +
+              "inline-flex h-6 shrink-0 items-center gap-1 rounded-md border px-1.5 text-[11px] transition hover:bg-[rgb(var(--text-rgb)/0.1)] hover:text-text-dark " +
               (active
-                ? "border-white/20 bg-white/[0.08] text-white"
-                : "border-white/10 bg-white/[0.03] text-white/60")
+                ? "border-[var(--ui-border-strong)] bg-[rgb(var(--text-rgb)/0.08)] text-text-dark"
+                : "border-[var(--ui-border-soft)] bg-[rgb(var(--text-rgb)/0.03)] text-text-muted")
             }
           />
         }
@@ -611,7 +615,7 @@ function OutlineTypeFilter({
               value={filter.key}
               // base-ui 的单选项默认不关菜单，这里选完就该收起来
               closeOnClick
-              className="rounded-[10px] text-xs text-text-dark focus:bg-[rgba(255,255,255,0.075)] focus:text-text-dark"
+              className="rounded-[var(--ui-radius-lg)] text-xs text-text-dark focus:bg-[rgb(var(--text-rgb)/0.075)] focus:text-text-dark"
             >
               {t(`freezone.canvasOutline.types.${filter.key}`)}
             </DropdownMenuRadioItem>
@@ -645,17 +649,17 @@ function OutlineSearchInput({
           if (event.key === "Escape") onClose();
         }}
         placeholder={t("freezone.canvasOutline.search")}
-        className="h-6 w-full rounded-[5px] border border-white/10 bg-white/[0.04] pl-2 pr-6 text-[11px] text-white outline-none transition placeholder:text-white/30 focus:border-white/25"
+        className="h-6 w-full rounded-md border border-[var(--ui-border-soft)] bg-[rgb(var(--text-rgb)/0.04)] pl-2 pr-6 text-[11px] text-text-dark outline-none transition placeholder:text-text-muted/70 focus:border-[var(--ui-border-strong)]"
       />
-      <Search className="pointer-events-none absolute right-2 h-3 w-3 text-white/30" />
+      <Search className="pointer-events-none absolute right-2 h-3 w-3 text-text-muted/70" />
     </div>
   );
 }
 
 const MENU_CONTENT_CLASS =
-  "z-[120] min-w-[140px] border-white/10 bg-[#242426]/95 text-text-dark shadow-none backdrop-blur-3xl";
+  "z-[120] min-w-[140px] border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.95)] text-text-dark shadow-none backdrop-blur-3xl";
 const MENU_ITEM_CLASS =
-  "gap-2 rounded-[10px] text-xs text-text-dark focus:bg-[rgba(255,255,255,0.075)] focus:text-text-dark";
+  "gap-2 rounded-[var(--ui-radius-lg)] text-xs text-text-dark focus:bg-[rgb(var(--text-rgb)/0.075)] focus:text-text-dark";
 
 type OutlineRowProps = {
   item: CanvasOutlineItem;
@@ -672,7 +676,7 @@ type OutlineRowProps = {
 };
 
 const THUMB_CLASS =
-  "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-white/[0.06] bg-white/[0.03]";
+  "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[var(--ui-border-soft)] bg-[rgb(var(--text-rgb)/0.03)]";
 
 const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) {
   const { item, depth, collapsedGroupIds, selectedNodeId, renamingId, onToggleGroup, onFocusNode } =
@@ -685,22 +689,22 @@ const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) 
 
   const rowClass =
     "group/row relative flex w-full items-center gap-2 rounded-lg pr-1.5 transition " +
-    (selected ? "bg-white/[0.08]" : "hover:bg-white/[0.05]");
+    (selected ? "bg-[rgb(var(--text-rgb)/0.08)]" : "hover:bg-[rgb(var(--text-rgb)/0.05)]");
   const leadClass = "flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left";
 
   const lead =
     item.kind === "group" ? (
       <>
         {collapsed ? (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-white/35" />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted/70" />
         ) : (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-white/35" />
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-muted/70" />
         )}
         <span className={THUMB_CLASS}>
           {collapsed ? (
-            <Folder className="h-4 w-4 text-white/45" />
+            <Folder className="h-4 w-4 text-text-muted" />
           ) : (
-            <FolderOpen className="h-4 w-4 text-white/45" />
+            <FolderOpen className="h-4 w-4 text-text-muted" />
           )}
         </span>
       </>
@@ -739,7 +743,7 @@ const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) 
       {lead}
       <span
         className={
-          "min-w-0 flex-1 truncate text-xs " + (selected ? "text-white" : "text-white/72")
+          "min-w-0 flex-1 truncate text-xs " + (selected ? "text-text-dark" : "text-text-dark/80")
         }
       >
         {item.name}
@@ -751,7 +755,7 @@ const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) 
     <div style={indent} className={rowClass}>
       {body}
       {item.kind === "group" && !renaming && (
-        <span className="shrink-0 text-[10px] tabular-nums text-white/28 group-hover/row:hidden">
+        <span className="shrink-0 text-[10px] tabular-nums text-text-muted/70 group-hover/row:hidden">
           {t("freezone.canvasOutline.groupMembers", { count: countOutlineNodes(item.children) })}
         </span>
       )}
@@ -776,7 +780,7 @@ const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) 
 
 function OutlineNodeIcon({ type }: { type: CanvasNodeType }) {
   const Icon = NODE_TYPE_ICON[type] ?? ImageIcon;
-  return <Icon className="h-4 w-4 text-white/45" />;
+  return <Icon className="h-4 w-4 text-text-muted" />;
 }
 
 /** hover 才露出来的那组操作：更多菜单 + 定位，参照 libtv 的行尾布局。 */
@@ -787,7 +791,7 @@ function OutlineRowActions({ item, onFocusNode, onDuplicate, onStartRename, onDo
   const renameQueuedRef = useRef(false);
   const downloadable = collectOutlineDownloads(item).length > 0;
   const iconButtonClass =
-    "inline-flex h-6 w-6 items-center justify-center rounded-md text-white/50 transition hover:bg-white/10 hover:text-white";
+    "inline-flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition hover:bg-[rgb(var(--text-rgb)/0.1)] hover:text-text-dark";
 
   return (
     <div
@@ -897,7 +901,7 @@ function OutlineRenameInput({
           onCancel(null);
         }
       }}
-      className="min-w-0 flex-1 rounded-[4px] border border-white/15 bg-white/[0.06] px-1.5 py-0.5 text-xs text-white outline-none focus:border-white/30"
+      className="min-w-0 flex-1 rounded-md border border-[var(--ui-border-soft)] bg-[rgb(var(--text-rgb)/0.06)] px-1.5 py-0.5 text-xs text-text-dark outline-none focus:border-[var(--ui-border-strong)]"
     />
   );
 }

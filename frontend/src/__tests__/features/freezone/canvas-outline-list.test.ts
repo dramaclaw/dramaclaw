@@ -146,6 +146,66 @@ describe("collectOutlineDownloads", () => {
     expect(outline[0].thumbUrl).toBe("https://cdn/c.jpg");
     expect(outline[0].mediaUrl).toBe("https://cdn/c.mp4");
   });
+
+  // 下面这几种节点身上原件与封面同时存在，且原件不叫 videoUrl。自己认字段的实现会
+  // 把封面当原件下载给用户 —— 必须走 resolveNodePrimaryAsset 那张全局映射。
+  it("下载 3D 世界拿的是 3GS 包，不是封面图", () => {
+    const outline = buildCanvasOutline([
+      node("world", CANVAS_NODE_TYPES.threeDWorld, {
+        plyUrl: "https://cdn/scene.sog",
+        previewImageUrl: "https://cdn/cover.png",
+      }),
+    ]);
+
+    expect(outline[0].thumbUrl).toBe("https://cdn/cover.png");
+    expect(outline[0].mediaUrl).toBe("https://cdn/scene.sog");
+  });
+
+  it("下载视频合成拿的是成片，不是海报", () => {
+    const outline = buildCanvasOutline([
+      node("compose", CANVAS_NODE_TYPES.videoCompose, {
+        resultVideoUrl: "https://cdn/final.mp4",
+        previewImageUrl: "https://cdn/poster.jpg",
+      }),
+    ]);
+
+    expect(outline[0].thumbUrl).toBe("https://cdn/poster.jpg");
+    expect(outline[0].mediaUrl).toBe("https://cdn/final.mp4");
+  });
+
+  it("视频故事只有源片时也能下载", () => {
+    const outline = buildCanvasOutline([
+      node("story", CANVAS_NODE_TYPES.videoStory, {
+        sourceVideoUrl: "https://cdn/source.mp4",
+      }),
+    ]);
+
+    expect(outline[0].mediaUrl).toBe("https://cdn/source.mp4");
+  });
+
+  it("全景查看器的球面贴图既是缩略图也是原件", () => {
+    const outline = buildCanvasOutline([
+      node("pano", CANVAS_NODE_TYPES.pano360Viewer, {
+        imageUrl: "https://cdn/pano.jpg",
+      }),
+    ]);
+
+    expect(outline[0].thumbUrl).toBe("https://cdn/pano.jpg");
+    expect(outline[0].mediaUrl).toBe("https://cdn/pano.jpg");
+  });
+
+  it("分格节点下载第一格，而不是整节点没有原件", () => {
+    const outline = buildCanvasOutline([
+      node("split", CANVAS_NODE_TYPES.storyboardSplit, {
+        frames: [
+          { imageUrl: "https://cdn/frame-0.png" },
+          { imageUrl: "https://cdn/frame-1.png" },
+        ],
+      }),
+    ]);
+
+    expect(outline[0].mediaUrl).toBe("https://cdn/frame-0.png");
+  });
 });
 
 describe("collectOutlineGroupIds", () => {

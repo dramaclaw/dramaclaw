@@ -731,7 +731,7 @@ export function AssetLibraryPanel({
 
         {/* 贴左边直出的抽屉：满高、不留外边距，收起时整块滑到屏幕外 */}
         <div
-          className={`flex h-full flex-col min-h-0 overflow-hidden rounded-r-2xl border-r border-white/10 bg-[#212121] transition-transform duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
+          className={`flex h-full flex-col min-h-0 overflow-hidden rounded-r-2xl border-r border-[rgb(var(--border-rgb))] bg-[rgb(var(--surface-rgb))] transition-transform duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
             collapsed
               ? "pointer-events-none -translate-x-full"
               : "pointer-events-auto translate-x-0"
