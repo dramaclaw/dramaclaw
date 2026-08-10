@@ -3013,35 +3013,27 @@ def test_camera_prompt_contains_camera_body_lens_focal_and_aperture() -> None:
 
 
 def test_image_style_templates_are_short_drama_styles() -> None:
+    """端点吐出来的必须就是随包那份清单,一条不多一条不少、顺序也一致。
+
+    原来在这里抄了一份 24 个 id 的列表,每加一批风格就要照抄一遍,而它想验的其实是
+    「路由拿的是内置清单」。改成直接比对清单文件:既不随风格数漂移,又比数量更严。
+    数量另设下限,防止清单被截断成空壳还悄悄通过。
+    """
+    shipped = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "novelvideo"
+            / "freezone"
+            / "style_templates.json"
+        ).read_text(encoding="utf-8")
+    )
+    expected_ids = [item["id"] for item in shipped["templates"]]
+
     data = freezone_routes._get_freezone_image_style_templates()
 
-    assert len(data) == 24
-    assert [item["id"] for item in data] == [
-        "period_idol",
-        "palace_intrigue",
-        "wuxia",
-        "cn_urban",
-        "urban_romance",
-        "crime_suspense",
-        "korean_muted",
-        "nineties",
-        "golden_age",
-        "documentary_realism",
-        "retro_narrative",
-        "american_nineties",
-        "showa_monochrome",
-        "vintage_industrial",
-        "healing_life",
-        "youth_film",
-        "atompunk",
-        "neon_punk",
-        "psychological_horror",
-        "cult_film",
-        "modern_warfare",
-        "wasteland_road",
-        "neo_chinese",
-        "high_key_absurd",
-    ]
+    assert [item["id"] for item in data] == expected_ids
+    assert len(expected_ids) >= 24
 
 
 def test_image_style_templates_have_assets_and_prompts() -> None:
@@ -3049,6 +3041,8 @@ def test_image_style_templates_have_assets_and_prompts() -> None:
 
     for item in freezone_routes._get_freezone_image_style_templates():
         assert item["label"], item["id"]
+        # 类目是受控词表,不是自由文本 —— 图墙的筛选 tab 直接按它铺,多一个错别字
+        # 就多一个只有一张卡的 tab。加风格时如果确实要新类目,在这里显式登记。
         assert item["category"] in {
             "古装",
             "都市",
@@ -3057,8 +3051,14 @@ def test_image_style_templates_have_assets_and_prompts() -> None:
             "科幻",
             "类型",
             "写意",
+            # 第二批素材:以画法/媒介立类。
+            "动画",
+            "绘画",
+            "神话",
         }, item["id"]
-        assert len(item["style_prompt"]) >= 120, item["id"]
+        # 下限只为拦住「提示词被截成空壳/占位符」——不是质量分。第二批里 大友克洋(97)
+        # 与 埃及壁画(102) 素材本身就短,原来的 120 会把两条合法风格判死。
+        assert len(item["style_prompt"]) >= 90, item["id"]
         assert "author" not in item, item["id"]
         assert len(item["samples"]) == 4, item["id"]
         for rel in [item["cover"], *item["samples"]]:
