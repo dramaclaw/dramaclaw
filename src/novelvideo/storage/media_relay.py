@@ -425,7 +425,12 @@ async def relay_tenant_image_bytes(
             organization_id=identity.organization_id,
             project_id=identity.project_id,
             root_task_id=context.root_task_id,
-            business_task_id=context.envelope_id,
+            # One relay is one billable egress, and one envelope may relay many
+            # objects, so the operation key has to name the object too — the
+            # envelope alone would make the second object collide with the
+            # first and be rejected as a conflicting claim. object_digest is
+            # derived from object_id, so a retry recomputes the same key.
+            business_task_id=f"{context.envelope_id}:{object_digest}",
             capability="storage.media.relay",
             credential_id=identity.credential_id,
             credential_version=identity.credential_version,
