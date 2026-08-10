@@ -7,11 +7,13 @@
     .venv/bin/python scripts/build_style_gallery.py \\
         --source ~/Downloads/飞书20260806-171116/黄金时代 \\
         --source ~/Downloads/飞书20260806-174825/原子朋克 \\
+        --source ~/Downloads/风格2 \\
         --out frontend/public/style-gallery \\
         --emit-manifest src/novelvideo/freezone/style_templates.json
 
 --source 可重复传入,每个都必须直接包含若干风格子目录,子目录内有 提示词.txt。
-飞书导出目录顶层的文件夹互为完整重复拷贝,每批任取其一即可。
+飞书导出目录顶层的文件夹互为完整重复拷贝,每批任取其一即可;后来直接给的素材包
+(风格2)则本身就是那一层。
 STYLE_META 里的每个风格会在所有 --source 里按名字查找,找不到即报错退出。
 
 产物是「图片目录 + 一份 JSON 清单」这一对:图片可以整个目录传 OSS(后端配
@@ -55,25 +57,51 @@ STYLE_META: list[dict[str, str]] = [
     {"src": "美式90", "id": "american_nineties", "category": "年代"},
     {"src": "昭和黑白", "id": "showa_monochrome", "category": "年代"},
     {"src": "老式工业", "id": "vintage_industrial", "category": "年代"},
+    {"src": "60海报", "id": "sixties_poster", "category": "年代"},
+    {"src": "复古港片", "id": "hk_retro", "category": "年代"},
+    {"src": "复古胶片", "id": "retro_film", "category": "年代"},
     {"src": "生活治愈", "id": "healing_life", "category": "生活"},
     {"src": "青春胶片", "id": "youth_film", "category": "生活"},
     {"src": "原子朋克", "id": "atompunk", "category": "科幻"},
     {"src": "霓虹朋克", "id": "neon_punk", "category": "科幻"},
+    {"src": "硬核科幻", "id": "hard_scifi", "category": "科幻"},
+    {"src": "蒸汽朋克", "id": "steampunk", "category": "科幻"},
+    {"src": "血肉朋克", "id": "biopunk", "category": "科幻"},
     {"src": "心理恐怖", "id": "psychological_horror", "category": "类型"},
     {"src": "邪典cult", "id": "cult_film", "category": "类型"},
     {"src": "现代战争", "id": "modern_warfare", "category": "类型"},
     {"src": "荒野公路", "id": "wasteland_road", "category": "类型"},
+    {"src": "西部牛仔", "id": "western_cowboy", "category": "类型"},
     {"src": "新兴中式", "id": "neo_chinese", "category": "写意"},
     {"src": "高调荒诞", "id": "high_key_absurd", "category": "写意"},
+    # 第二批(~/Downloads/风格2):以画法/媒介立类,插进已有类目的接着原类目排,
+    # 三个新类目(动画/绘画/神话)排在最后。像素风格那套素材缺 提示词.txt,未收录。
+    {"src": "上美动漫", "id": "shanghai_animation", "category": "动画"},
+    {"src": "大友克洋", "id": "otomo_akira", "category": "动画"},
+    {"src": "定格动画", "id": "stop_motion", "category": "动画"},
+    {"src": "黏土动画", "id": "claymation", "category": "动画"},
+    {"src": "中式水墨", "id": "chinese_ink", "category": "绘画"},
+    {"src": "浮世绘风", "id": "ukiyo_e", "category": "绘画"},
+    {"src": "传统皮影", "id": "shadow_puppet", "category": "绘画"},
+    {"src": "埃及壁画", "id": "egyptian_mural", "category": "绘画"},
+    {"src": "简约插画", "id": "minimal_illustration", "category": "绘画"},
+    {"src": "荒诞达利", "id": "dali_surreal", "category": "绘画"},
+    {"src": "游戏概念", "id": "game_concept", "category": "绘画"},
+    {"src": "传统神话", "id": "chinese_myth", "category": "神话"},
+    {"src": "希腊神话", "id": "greek_myth", "category": "神话"},
+    {"src": "西式魔幻", "id": "western_fantasy", "category": "神话"},
 ]
 
-# 素材文件名 -> 输出文件名
-SAMPLE_FILES: list[tuple[str, str]] = [
-    ("女.png", "female.webp"),
-    ("少.png", "youth.webp"),
-    ("男.png", "male.webp"),
-    ("老.png", "elder.webp"),
+# 素材文件名 -> 输出文件名。两批素材的人物图命名不同(第一批「女/男」,第二批
+# 「女青年/男青年」),同一个位置给多个候选名,按顺序取第一个存在的。
+SAMPLE_FILES: list[tuple[tuple[str, ...], str]] = [
+    (("女.png", "女青年.png"), "female.webp"),
+    (("少.png",), "youth.webp"),
+    (("男.png", "男青年.png"), "male.webp"),
+    (("老.png",), "elder.webp"),
 ]
+# locate_cover 靠「排除人物图后剩下的唯一一张 PNG」兜底,所以候选名要全。
+SAMPLE_SOURCE_NAMES = {name for names, _ in SAMPLE_FILES for name in names}
 
 
 def clean_style_prompt(raw: str) -> str:
@@ -110,16 +138,16 @@ def locate_cover(style_dir: Path, name: str) -> Path:
 
     正常叫 `<风格名>.png`。但飞书导出里 `纪实写实` 的封面被误命名成了
     `复古叙事.png`(内容确实是纪实写实的封面,与另一批真正的 复古叙事 封面
-    md5 不同),所以退一步取目录里唯一一张非人物示例的 PNG。有多张候选时
-    宁可报错也不猜。
+    md5 不同);第二批素材更是普遍取了简称(`60海报/海报.png`、`上美动漫/
+    上美.png`、`大友克洋/阿基拉.png`)。所以退一步取目录里唯一一张非人物
+    示例的 PNG。有多张候选时宁可报错也不猜。
     """
     expected = style_dir / f"{name}.png"
     if expected.is_file():
         return expected
 
-    sample_names = {src_name for src_name, _ in SAMPLE_FILES}
     candidates = sorted(
-        path for path in style_dir.glob("*.png") if path.name not in sample_names
+        path for path in style_dir.glob("*.png") if path.name not in SAMPLE_SOURCE_NAMES
     )
     if len(candidates) == 1:
         return candidates[0]
@@ -147,10 +175,16 @@ def build(sources: list[Path], out: Path) -> list[dict[str, object]]:
         )
 
         samples: list[str] = []
-        for src_name, dst_name in SAMPLE_FILES:
-            sample_src = style_dir / src_name
-            if not sample_src.is_file():
-                raise SystemExit(f"示例图缺失: {sample_src}")
+        for src_names, dst_name in SAMPLE_FILES:
+            sample_src = next(
+                (style_dir / src_name for src_name in src_names
+                 if (style_dir / src_name).is_file()),
+                None,
+            )
+            if sample_src is None:
+                raise SystemExit(
+                    f"示例图缺失: {style_dir} 里找不到 {' / '.join(src_names)}"
+                )
             convert_image(
                 sample_src,
                 out / meta["id"] / dst_name,

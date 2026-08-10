@@ -28,6 +28,16 @@ def _write_manifest(path: Path, templates: list[dict], version: str = "test-1") 
     return path
 
 
+def _builtin_ids() -> list[str]:
+    """直接从内置清单文件读 id 列表。
+
+    「回落到内置清单」的断言原本写死 24,每加一批风格就要改三处数字,而它想表达的
+    其实是「拿到的就是内置那份」。改成比对 id 列表:既不随风格数漂移,又比数量更严。
+    """
+    shipped = json.loads(manifest.BUILTIN_MANIFEST_PATH.read_text(encoding="utf-8"))
+    return [item["id"] for item in shipped["templates"]]
+
+
 def _template(template_id: str = "demo") -> dict:
     return {
         "id": template_id,
@@ -41,7 +51,10 @@ def _template(template_id: str = "demo") -> dict:
 
 def test_builtin_manifest_ships_with_the_package() -> None:
     assert manifest.BUILTIN_MANIFEST_PATH.is_file()
-    assert len(manifest.load_style_templates()) == 24
+    # 加载器读出来的必须和文件里那份一字不差 —— 校验环节把不合规的条目丢掉时,
+    # 这里就会少几条。数量另设下限,防止清单被截断成空壳还悄悄通过。
+    assert [item["id"] for item in manifest.load_style_templates()] == _builtin_ids()
+    assert len(_builtin_ids()) >= 24
     assert manifest.get_style_manifest_version()
 
 
@@ -62,7 +75,7 @@ def test_missing_override_falls_back_to_the_builtin_manifest(
     monkeypatch.setenv(manifest.MANIFEST_ENV, str(tmp_path / "nope.json"))
     manifest.reset_style_template_cache()
 
-    assert len(manifest.load_style_templates()) == 24
+    assert [item["id"] for item in manifest.load_style_templates()] == _builtin_ids()
 
 
 @pytest.mark.parametrize(
@@ -83,7 +96,7 @@ def test_broken_override_falls_back_instead_of_raising(
     monkeypatch.setenv(manifest.MANIFEST_ENV, str(path))
     manifest.reset_style_template_cache()
 
-    assert len(manifest.load_style_templates()) == 24
+    assert [item["id"] for item in manifest.load_style_templates()] == _builtin_ids()
 
 
 def test_bare_array_manifest_is_accepted(

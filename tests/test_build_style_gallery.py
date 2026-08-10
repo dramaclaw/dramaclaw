@@ -39,25 +39,38 @@ def test_clean_style_prompt_keeps_sentence_ending_period() -> None:
 def test_style_meta_covers_all_styles_with_unique_ids() -> None:
     meta = build_style_gallery.STYLE_META
 
-    assert len(meta) == 24
-    assert len({item["id"] for item in meta}) == 24
-    assert len({item["src"] for item in meta}) == 24
+    assert len(meta) == 45
+    assert len({item["id"] for item in meta}) == 45
+    assert len({item["src"] for item in meta}) == 45
     assert {item["category"] for item in meta} == {
         "古装", "都市", "年代", "生活", "科幻", "类型", "写意",
+        # 第二批素材带来的三个新类目
+        "动画", "绘画", "神话",
     }
 
 
 def test_style_meta_order_groups_categories() -> None:
-    categories = [item["category"] for item in build_style_gallery.STYLE_META]
+    """同一类目必须连续成块 —— 图墙「全部」视图直接按这个顺序铺卡片。
 
-    assert categories == [
-        "古装", "古装", "古装",
-        "都市", "都市", "都市", "都市",
-        "年代", "年代", "年代", "年代", "年代", "年代", "年代",
-        "生活", "生活",
-        "科幻", "科幻",
-        "类型", "类型", "类型", "类型",
-        "写意", "写意",
+    断言的是「每个类目恰好一段」而不是逐项枚举 45 条:后者每加一套风格就要重写
+    一遍,断言的却还是同一件事。类目出现顺序一并锁住,它就是筛选 tab 的顺序。
+    """
+    import itertools
+
+    categories = [item["category"] for item in build_style_gallery.STYLE_META]
+    runs = [(key, len(list(group))) for key, group in itertools.groupby(categories)]
+
+    assert runs == [
+        ("古装", 3),
+        ("都市", 4),
+        ("年代", 10),
+        ("生活", 2),
+        ("科幻", 5),
+        ("类型", 5),
+        ("写意", 2),
+        ("动画", 4),
+        ("绘画", 7),
+        ("神话", 3),
     ]
 
 
@@ -107,12 +120,39 @@ def test_shipped_manifest_matches_style_meta() -> None:
     ]
 
 
-def _make_style_dir(root: Path, cover_name: str) -> Path:
+def _make_style_dir(
+    root: Path,
+    cover_name: str,
+    person_names: tuple[str, ...] = ("女.png", "少.png", "男.png", "老.png"),
+) -> Path:
     style_dir = root / "某风格"
     style_dir.mkdir()
-    for name in ("女.png", "少.png", "男.png", "老.png", cover_name):
+    for name in (*person_names, cover_name):
         (style_dir / name).write_bytes(b"")
     return style_dir
+
+
+def test_sample_files_accept_both_batches_person_naming() -> None:
+    """两批素材的人物图命名不同,同一个输出位置要能认下两种。"""
+    by_output = {dst: names for names, dst in build_style_gallery.SAMPLE_FILES}
+
+    assert by_output["female.webp"] == ("女.png", "女青年.png")
+    assert by_output["male.webp"] == ("男.png", "男青年.png")
+    assert "女青年.png" in build_style_gallery.SAMPLE_SOURCE_NAMES
+
+
+def test_locate_cover_ignores_second_batch_person_images(tmp_path: Path) -> None:
+    """第二批封面普遍取简称(60海报/海报.png),得靠排除人物图后剩的唯一 PNG 兜底。
+
+    人物图若因为改名没被认出来,这里就会变成「多张候选」而报错 —— 正是这条要挡住的。
+    """
+    style_dir = _make_style_dir(
+        tmp_path,
+        "海报.png",
+        person_names=("女青年.png", "少.png", "男青年.png", "老.png"),
+    )
+
+    assert build_style_gallery.locate_cover(style_dir, "60海报").name == "海报.png"
 
 
 def test_locate_cover_prefers_the_file_named_after_the_style(tmp_path: Path) -> None:
