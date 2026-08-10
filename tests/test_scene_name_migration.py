@@ -648,23 +648,11 @@ async def test_cli_project_id_scene_migration_uses_ee_entry_point(
     class EntryPoint:
         def load(self):
             def register():
-                for name in (
-                    "auth",
-                    "auth_session",
-                    "project_access",
-                    "audit_sink",
-                    "credit_quote",
-                    "usage_meter",
-                    "provider_instrumentation",
-                    "task_backend",
-                    "task_envelope_consumer",
-                    "cancellation_store",
-                    "lifecycle",
-                    "product_surface_access",
-                    "model_credentials",
-                    "authz",
-                    "egress",
-                ):
+                # A stand-in EE must satisfy whatever bootstrap demands today;
+                # this list used to be hand-copied, and went stale the moment a
+                # port was added. project_registry is re-registered afterwards
+                # so the fake wins over the placeholder.
+                for name in registry._EE_REQUIRED_PORTS:
                     registry.register_port(name, object())
                 registry.register_port("project_registry", FakeProjectRegistry())
 

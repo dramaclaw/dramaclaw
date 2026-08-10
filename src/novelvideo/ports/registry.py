@@ -17,6 +17,10 @@ class PortNotRegistered(RuntimeError):
 
 _PORTS: dict[str, Any] = {}
 _BOOTSTRAPPED = False
+# Every port this package fetches without a PortNotRegistered fallback. Ports
+# with a fallback (release_feed, media_model_catalog) are deliberately absent —
+# listing them would make EE refuse to start over something CE can supply
+# itself. tests/ports/test_registry.py derives both directions from the source.
 _EE_REQUIRED_PORTS = (
     "auth",
     "auth_session",
@@ -34,6 +38,7 @@ _EE_REQUIRED_PORTS = (
     "model_credentials",
     "authz",
     "egress",
+    "egress_operations",
 )
 
 
