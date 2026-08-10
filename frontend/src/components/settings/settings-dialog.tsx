@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { confirmDialog } from "@/components/confirm-dialog-host";
 import {
   AlertTriangle,
   ChevronDown,
@@ -50,6 +51,9 @@ import {
 } from "@/lib/feature-models";
 import {
   useModelGatewayConfig,
+  useOfficialMediaCatalogStatus,
+  useSaveOfficialMediaCatalogPreferences,
+  useCheckOfficialMediaCatalog,
   useNewApiChannelTypes,
   useEnableOfficial,
   useEnableCustom,
@@ -61,6 +65,7 @@ import {
   useSaveEmbeddingModel,
   useSaveMediaModels,
   useSaveProviderChannels,
+  useClearComfyUIConfig,
   useSaveMediaRelayConfig,
   useSyncProviderChannel,
   type GatewayMode,
@@ -504,7 +509,7 @@ function ModelConfigSection({ open }: { open: boolean }) {
                   database={customDatabase}
                   channelTypesEnabled={Boolean(
                     config?.custom?.configured &&
-                      config?.provisioner?.database?.available
+                    config?.provisioner?.database?.available,
                   )}
                   savedProviderChannels={
                     config?.provisioner?.providerChannels ?? []
@@ -529,7 +534,7 @@ function ModelConfigSection({ open }: { open: boolean }) {
                   database={customDatabase}
                   channelTypesEnabled={Boolean(
                     config?.custom?.configured &&
-                      config?.provisioner?.database?.available
+                    config?.provisioner?.database?.available,
                   )}
                   savedProviderChannels={
                     config?.provisioner?.providerChannels ?? []
@@ -560,15 +565,92 @@ function OfficialGatewayPanel({
   const enableOfficial = useEnableOfficial();
   const enableHybrid = useEnableHybrid();
   const saveOfficial = useSaveOfficialConfig();
+  const mediaCatalogQuery = useOfficialMediaCatalogStatus();
+  const saveMediaCatalogPreferences = useSaveOfficialMediaCatalogPreferences();
+  const checkMediaCatalog = useCheckOfficialMediaCatalog();
+  const automaticCatalogCheckStarted = useRef(false);
 
   const [apiKey, setApiKey] = useState("");
   const [revealKey, setRevealKey] = useState(false);
   const apiKeyInputRef = useRef<HTMLInputElement>(null);
   const savedApiKeyPreview = official?.configured ? official.apiKeyPreview : "";
+  const mediaCatalog = mediaCatalogQuery.data?.data;
+
+  const runMediaCatalogCheck = async (manual: boolean) => {
+    try {
+      const response = await checkMediaCatalog.mutateAsync();
+      if (!response.ok) {
+        if (manual) {
+          toast.error(
+            getResponseErrorMessage(
+              response,
+              t("settings.modelConfig.official.mediaCatalogCheckFailed"),
+            ),
+          );
+        }
+        return;
+      }
+      if (manual) {
+        toast.success(
+          t(
+            response.data.updated
+              ? "settings.modelConfig.official.mediaCatalogUpdated"
+              : "settings.modelConfig.official.mediaCatalogUpToDate",
+          ),
+        );
+      }
+    } catch (error) {
+      if (manual) {
+        toast.error(
+          await getRequestErrorMessage(
+            error,
+            t("settings.modelConfig.official.mediaCatalogCheckFailed"),
+          ),
+        );
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (
+      automaticCatalogCheckStarted.current ||
+      !mediaCatalog?.autoUpdate ||
+      checkMediaCatalog.isPending
+    )
+      return;
+    automaticCatalogCheckStarted.current = true;
+    void runMediaCatalogCheck(false);
+  }, [mediaCatalog?.autoUpdate, checkMediaCatalog.isPending]);
+
+  const handleMediaCatalogAutoUpdate = async () => {
+    const next = !mediaCatalog?.autoUpdate;
+    try {
+      const response = await saveMediaCatalogPreferences.mutateAsync(next);
+      if (!response.ok) {
+        toast.error(
+          getResponseErrorMessage(
+            response,
+            t("settings.modelConfig.requestFailed"),
+          ),
+        );
+      }
+    } catch (error) {
+      toast.error(
+        await getRequestErrorMessage(
+          error,
+          t("settings.modelConfig.requestFailed"),
+        ),
+      );
+    }
+  };
 
   const handleSave = async () => {
     // Password managers may update the DOM without firing React's onChange.
-    const trimmedApiKey = (apiKey || apiKeyInputRef.current?.value || "").trim();
+    const trimmedApiKey = (
+      apiKey ||
+      apiKeyInputRef.current?.value ||
+      ""
+    ).trim();
     try {
       if (!trimmedApiKey) {
         if (!official?.configured) {
@@ -642,6 +724,77 @@ function OfficialGatewayPanel({
           {t("settings.modelConfig.official.registerLink")}
         </a>
       </p>
+
+      <div className="rounded-md border border-border/70 px-3 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-foreground">
+              {t("settings.modelConfig.official.mediaCatalogTitle")}
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              {mediaCatalog
+                ? t("settings.modelConfig.official.mediaCatalogStatus", {
+                    version: mediaCatalog.catalogVersion,
+                    count: mediaCatalog.modelCount,
+                    source: t(
+                      `settings.modelConfig.official.mediaCatalogSources.${mediaCatalog.source}`,
+                    ),
+                  })
+                : t("settings.modelConfig.loading")}
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => void runMediaCatalogCheck(true)}
+            disabled={
+              mediaCatalogQuery.isLoading || checkMediaCatalog.isPending
+            }
+          >
+            <RotateCw
+              className={cn(
+                "size-3.5",
+                checkMediaCatalog.isPending && "animate-spin",
+              )}
+            />
+            {t("settings.modelConfig.official.mediaCatalogCheckNow")}
+          </Button>
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/60 pt-3">
+          <div>
+            <Label className="text-xs font-normal text-foreground">
+              {t("settings.modelConfig.official.mediaCatalogAutoUpdate")}
+            </Label>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              {t("settings.modelConfig.official.mediaCatalogAutoUpdateHint")}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={mediaCatalog?.autoUpdate ?? false}
+            aria-label={t(
+              "settings.modelConfig.official.mediaCatalogAutoUpdate",
+            )}
+            disabled={!mediaCatalog || saveMediaCatalogPreferences.isPending}
+            onClick={() => void handleMediaCatalogAutoUpdate()}
+            className={cn(
+              "relative h-5 w-9 shrink-0 rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+              mediaCatalog?.autoUpdate
+                ? "border-primary bg-primary"
+                : "border-input bg-muted",
+            )}
+          >
+            <span
+              className={cn(
+                "absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow-sm transition-transform",
+                mediaCatalog?.autoUpdate ? "translate-x-4" : "translate-x-0",
+              )}
+            />
+          </button>
+        </div>
+      </div>
 
       <div className="space-y-2.5">
         <div className="grid grid-cols-[120px_1fr] items-center gap-3">
@@ -1209,9 +1362,12 @@ function minimaxH3ReferenceWorkflow() {
 }
 
 const HYBRID_COMFYUI_WORKFLOWS = {
-  minimax_h3_t2v: minimaxH3Fl2vaWorkflow(false),
-  minimax_h3_i2v: minimaxH3Fl2vaWorkflow(true),
-  minimax_h3_r2v: minimaxH3ReferenceWorkflow(),
+  model: "MiniMax-H3-local",
+  workflows: {
+    minimax_h3_t2v: minimaxH3Fl2vaWorkflow(false),
+    minimax_h3_i2v: minimaxH3Fl2vaWorkflow(true),
+    minimax_h3_r2v: minimaxH3ReferenceWorkflow(),
+  },
 };
 
 const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
@@ -1405,22 +1561,13 @@ function parseQuickModelProfile(value: string): QuickModelProfile {
       throw new Error(`invalid channel type: ${channel.provider}`);
     }
     if (channel.provider === "comfyui") {
-      const comfyui = channel.settings?.comfyui;
-      const workflows =
-        comfyui && typeof comfyui === "object" && !Array.isArray(comfyui)
-          ? (comfyui as Record<string, unknown>).workflow_by_model
-          : undefined;
+      const workflows = readComfyUIWorkflows(channel.settings ?? {});
+      const model = readComfyUIModelName(channel.settings ?? {});
       if (!channel.baseUrl?.trim())
         throw new Error("ComfyUI channel.baseUrl is required");
-      if (
-        !workflows ||
-        typeof workflows !== "object" ||
-        Array.isArray(workflows)
-      ) {
-        throw new Error(
-          "ComfyUI channel.settings.comfyui.workflow_by_model is required",
-        );
-      }
+      if (!model) throw new Error("ComfyUI model name is required");
+      if (Object.keys(workflows).length === 0)
+        throw new Error("ComfyUI requires at least one workflow");
     }
     if (providers.has(channel.provider)) {
       throw new Error(
@@ -1485,7 +1632,10 @@ function syncQuickProfileFromAdvancedSettings(
       ...(provider === "comfyui" ? { type: 63 } : {}),
       baseUrl: settings.providerChannels[provider]?.baseUrl ?? "",
       priority: settings.providerChannels[provider]?.priority ?? 0,
-      settings: settings.providerChannels[provider]?.settings ?? {},
+      settings: normalizeProviderChannelSettings(
+        provider,
+        settings.providerChannels[provider]?.settings ?? {},
+      ),
     });
     channelIdByProvider.set(provider, id);
     return id;
@@ -1758,11 +1908,12 @@ function QuickLocalNewApiSetup({
     // Quick profiles configure the custom NewAPI stack, while ComfyUI mappings
     // are shared with Hybrid mode. Applying a profile that does not mention
     // ComfyUI must not erase those independently managed local overrides.
-    const mediaModels: Record<string, SavedMediaModelConfig> = Object.fromEntries(
-      Object.entries(config?.provisioner?.mediaModels ?? {}).filter(
-        ([, item]) => item.provider === "comfyui",
-      ),
-    );
+    const mediaModels: Record<string, SavedMediaModelConfig> =
+      Object.fromEntries(
+        Object.entries(config?.provisioner?.mediaModels ?? {}).filter(
+          ([, item]) => item.provider === "comfyui",
+        ),
+      );
     for (const [rawModel, item] of Object.entries(profile.mediaModels)) {
       const model = rawModel.trim();
       const upstreamModel = item.model.trim();
@@ -1796,7 +1947,10 @@ function QuickLocalNewApiSetup({
             : {}),
           baseUrl: channel.baseUrl.trim(),
           priority: channel.priority ?? 0,
-          settings: channel.settings ?? {},
+          settings: normalizeProviderChannelSettings(
+            channel.provider,
+            channel.settings ?? {},
+          ),
         })),
       });
       if (channelResult.ok !== true || !("data" in channelResult)) {
@@ -1823,7 +1977,10 @@ function QuickLocalNewApiSetup({
               weight: 0,
               baseUrl: channel.baseUrl.trim(),
               testModel: "",
-              settings: channel.settings ?? {},
+              settings: normalizeProviderChannelSettings(
+                channel.provider,
+                channel.settings ?? {},
+              ),
             };
           },
         ),
@@ -1863,7 +2020,10 @@ function QuickLocalNewApiSetup({
           upstreamKey: "",
           baseUrl: channel.baseUrl,
           priority: channel.priority ?? 0,
-          settings: channel.settings ?? {},
+          settings: normalizeProviderChannelSettings(
+            channel.provider,
+            channel.settings ?? {},
+          ),
         });
       }
       for (const group of FEATURE_MODEL_GROUPS) {
@@ -2174,7 +2334,10 @@ function FeatureModelsBlock({
   mediaOnly?: boolean;
   comfyOnly?: boolean;
   excludeComfyUI?: boolean;
-  defaultComfyWorkflows?: Record<string, Record<string, unknown>>;
+  defaultComfyWorkflows?: {
+    model: string;
+    workflows: Record<string, Record<string, unknown>>;
+  };
   channelTypesEnabled?: boolean;
 }) {
   const { t } = useTranslation();
@@ -2254,7 +2417,10 @@ function FeatureModelsBlock({
         updateFeatureProviderChannel(provider, {
           baseUrl: savedBaseUrl,
           priority: channel.priority ?? 0,
-          settings: channel.settings ?? {},
+          settings: normalizeProviderChannelSettings(
+            channel.provider,
+            channel.settings ?? {},
+          ),
         });
         continue;
       }
@@ -2262,7 +2428,10 @@ function FeatureModelsBlock({
         updateFeatureProviderChannel(provider, {
           baseUrl: savedBaseUrl,
           priority: channel.priority ?? current.priority,
-          settings: channel.settings ?? current.settings,
+          settings: normalizeProviderChannelSettings(
+            channel.provider,
+            channel.settings ?? current.settings,
+          ),
         });
       }
     }
@@ -2284,6 +2453,15 @@ function FeatureModelsBlock({
         ? (currentSettings.comfyui as Record<string, unknown>)
         : {};
     const currentWorkflows = readComfyUIWorkflows(currentSettings);
+    const currentModel = readComfyUIModelName(currentSettings);
+    const model = currentModel || defaultComfyWorkflows.model;
+    const workflows = {
+      ...defaultComfyWorkflows.workflows,
+      ...currentWorkflows,
+    };
+    const nextComfyUI = { ...currentComfyUI };
+    delete nextComfyUI.workflow_by_model;
+    delete nextComfyUI.workflow;
     addFeatureProviderChannel("comfyui");
     updateFeatureProviderChannel("comfyui", {
       baseUrl: current?.baseUrl || "http://127.0.0.1:8188",
@@ -2291,11 +2469,9 @@ function FeatureModelsBlock({
       settings: {
         ...currentSettings,
         comfyui: {
-          ...currentComfyUI,
-          workflow_by_model: {
-            ...defaultComfyWorkflows,
-            ...currentWorkflows,
-          },
+          ...nextComfyUI,
+          model_name: model,
+          workflow_routes: buildComfyUIWorkflowRoutes(workflows),
         },
       },
     });
@@ -2306,7 +2482,7 @@ function FeatureModelsBlock({
     const current = providerChannels.comfyui;
     if (!current || current.baseUrl.trim()) return;
     const workflows = readComfyUIWorkflows(current.settings);
-    const hasLoadedTemplate = Object.keys(defaultComfyWorkflows).some(
+    const hasLoadedTemplate = Object.keys(defaultComfyWorkflows.workflows).some(
       (model) => workflows[model],
     );
     if (!hasLoadedTemplate) return;
@@ -2346,7 +2522,10 @@ function FeatureModelsBlock({
         weight: 0,
         baseUrl: (channel?.baseUrl ?? "").trim(),
         testModel: "",
-        settings: channel?.settings ?? {},
+        settings: normalizeProviderChannelSettings(
+          provider,
+          channel?.settings ?? {},
+        ),
       };
     });
   };
@@ -2850,21 +3029,45 @@ function EmbeddingModelBlock({
   );
 }
 
-function defaultComfyMediaModelConfig(model: string): MediaModelEntry {
-  const normalized = model.trim().toLowerCase();
-  let supportedModes = ["text_to_video"];
-  let ratioOptions = ["1:1", "16:9"];
+function defaultComfyMediaModelConfig(
+  model: string,
+  workflowIds: readonly string[] = [],
+): MediaModelEntry {
+  const routeTokens = new Set(
+    (workflowIds.length > 0 ? workflowIds : [model]).flatMap((value) =>
+      value.trim().toLowerCase().replace(/-/g, "_").split("_"),
+    ),
+  );
+  const supportedModes: string[] = [];
   const referenceCapabilities: Record<string, number | boolean> = {};
-  if (/(^|[_-])r2v($|[_-])/.test(normalized)) {
-    supportedModes = ["all_reference"];
+  const isMiniMaxH3Local = model.trim().toLowerCase() === "minimax-h3-local";
+  const resolutionOptions = isMiniMaxH3Local
+    ? ["480p", "768p", "1080p"]
+    : ["480p", "640p"];
+  const ratioOptions = isMiniMaxH3Local
+    ? ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+    : routeTokens.has("i2v")
+      ? ["16:9", "1:1"]
+      : ["1:1", "16:9"];
+  if (
+    routeTokens.has("t2v") ||
+    (!routeTokens.has("i2v") && !routeTokens.has("r2v"))
+  ) {
+    supportedModes.push("text_to_video");
+  }
+  if (routeTokens.has("i2v")) {
+    supportedModes.push(
+      ...(isMiniMaxH3Local
+        ? ["first_frame"]
+        : ["image_to_video", "image_reference"]),
+    );
+    referenceCapabilities.referenceImageMax = 1;
+  }
+  if (routeTokens.has("r2v")) {
+    supportedModes.push("all_reference");
     referenceCapabilities.referenceImageMax = 9;
     referenceCapabilities.referenceVideoMax = 3;
     referenceCapabilities.referenceAudioMax = 3;
-  } else if (/(^|[_-])i2v($|[_-])/.test(normalized)) {
-    supportedModes = ["image_reference"];
-    ratioOptions = ["16:9", "1:1"];
-    referenceCapabilities.referenceImageMax = 1;
-    referenceCapabilities.humanReview = true;
   }
   return {
     provider: "comfyui",
@@ -2875,7 +3078,7 @@ function defaultComfyMediaModelConfig(model: string): MediaModelEntry {
     sortOrder: 100,
     config: {
       request: { endpoint: "video/generations", parameters: [] },
-      resolutionOptions: ["480p", "640p"],
+      resolutionOptions,
       ratioOptions,
       minDuration: 4,
       maxDuration: 15,
@@ -2936,7 +3139,13 @@ function MediaModelsBlock({
   const [creatingModel, setCreatingModel] = useState(false);
   const savedMediaModelsKey = JSON.stringify(savedMediaModels);
   const localSavedMediaModelsKey = JSON.stringify(localSavedMediaModels);
-  const comfyWorkflowModels = useMemo(
+  const comfyWorkflowModels = useMemo(() => {
+    const model = readComfyUIModelName(
+      providerChannels.comfyui?.settings ?? {},
+    );
+    return model ? [model] : [];
+  }, [providerChannels.comfyui?.settings]);
+  const comfyWorkflowIds = useMemo(
     () =>
       Object.keys(
         readComfyUIWorkflows(providerChannels.comfyui?.settings ?? {}),
@@ -3018,10 +3227,13 @@ function MediaModelsBlock({
       for (const model of comfyWorkflowModels) {
         const existing = next[model];
         if (!existing) {
-          next[model] = defaultComfyMediaModelConfig(model);
+          next[model] = defaultComfyMediaModelConfig(model, comfyWorkflowIds);
           changed = true;
         } else if (isBareComfyWorkflowMediaModel(existing)) {
-          const defaults = defaultComfyMediaModelConfig(model);
+          const defaults = defaultComfyMediaModelConfig(
+            model,
+            comfyWorkflowIds,
+          );
           next[model] = {
             ...defaults,
             ...existing,
@@ -3032,7 +3244,7 @@ function MediaModelsBlock({
       }
       return changed ? next : current;
     });
-  }, [comfyWorkflowModels]);
+  }, [comfyWorkflowIds, comfyWorkflowModels]);
 
   const handleSave = async () => {
     setSaveError("");
@@ -3104,7 +3316,10 @@ function MediaModelsBlock({
               type: savedChannelByProvider.get("comfyui")?.type ?? 63,
               baseUrl: comfyChannel.baseUrl.trim(),
               priority: comfyChannel.priority ?? 0,
-              settings: comfyChannel.settings ?? {},
+              settings: normalizeProviderChannelSettings(
+                "comfyui",
+                comfyChannel.settings ?? {},
+              ),
             },
           ],
         });
@@ -3417,7 +3632,6 @@ function MediaModelsBlock({
   );
 }
 
-
 function LocalMediaModelEditor({
   originalModel,
   entry,
@@ -3718,6 +3932,25 @@ function LocalMediaModelEditor({
                 min={0}
                 onChange={(value) => setCapability("referenceAudioMax", value)}
               />
+              {[
+                "referenceAudioMinSeconds",
+                "referenceAudioMaxSeconds",
+                "referenceAudioTotalMinSeconds",
+                "referenceAudioTotalMaxSeconds",
+                "referenceVideoMinSeconds",
+                "referenceVideoMaxSeconds",
+                "referenceVideoTotalMinSeconds",
+                "referenceVideoTotalMaxSeconds",
+              ].map((field) => (
+                <CatalogNumberField
+                  key={field}
+                  label={t(`settings.modelConfig.mediaModels.${field}`)}
+                  value={parsedConfig?.[field]}
+                  min={0.1}
+                  step={0.1}
+                  onChange={(value) => setCapability(field, value)}
+                />
+              ))}
               <label className="flex items-center gap-2 text-xs text-foreground">
                 <input
                   type="checkbox"
@@ -3737,6 +3970,7 @@ function LocalMediaModelEditor({
                     ["text_to_video", "文生视频"],
                     ["first_frame", "首帧"],
                     ["first_last_frame", "首尾帧"],
+                    ["image_to_video", "图生视频"],
                     ["image_reference", "图片参考"],
                     ["all_reference", "全能参考"],
                     ["video_edit", "视频编辑"],
@@ -3921,11 +4155,13 @@ function CatalogNumberField({
   label,
   value,
   min = 1,
+  step = 1,
   onChange,
 }: {
   label: string;
   value: unknown;
   min?: number;
+  step?: number;
   onChange: (value: number | undefined) => void;
 }) {
   return (
@@ -3936,6 +4172,7 @@ function CatalogNumberField({
       <Input
         type="number"
         min={min}
+        step={step}
         value={typeof value === "number" ? value : ""}
         onChange={(event) =>
           onChange(event.target.value ? Number(event.target.value) : undefined)
@@ -4069,7 +4306,10 @@ function ProviderChannelsBlock({
           (providerChannels[provider]?.upstreamKey ?? "").trim() || undefined,
         baseUrl: (providerChannels[provider]?.baseUrl ?? "").trim(),
         priority: providerChannels[provider]?.priority ?? 0,
-        settings: providerChannels[provider]?.settings ?? {},
+        settings: normalizeProviderChannelSettings(
+          provider,
+          providerChannels[provider]?.settings ?? {},
+        ),
       }));
     if (channelsToSave.length === 0) {
       toast.error(
@@ -4230,6 +4470,7 @@ function ProviderChannelRow({
     (s) => s.clearFeatureProviderUpstreamKey,
   );
   const syncProviderChannel = useSyncProviderChannel();
+  const clearComfyUIConfig = useClearComfyUIConfig();
   const [revealed, setRevealed] = useState(false);
   const upstreamKeyValue = channel?.upstreamKey ?? "";
   const savedKeyPreview = savedChannel?.configured
@@ -4237,6 +4478,7 @@ function ProviderChannelRow({
     : "";
   const upstreamPlaceholder = savedKeyPreview || "sk-...";
   const isComfyUI = provider === "comfyui";
+  const hasComfyUIConfig = isComfyUI && savedChannel?.configured === true;
   useEffect(() => {
     if (!upstreamKeyValue) setRevealed(false);
   }, [upstreamKeyValue]);
@@ -4273,6 +4515,47 @@ function ProviderChannelRow({
         setRevealed(false);
       }
       toast.success(t("settings.modelConfig.featureModels.channelSynced"));
+    } catch (error) {
+      toast.error(
+        await getRequestErrorMessage(
+          error,
+          t("settings.modelConfig.requestFailed"),
+        ),
+      );
+    }
+  };
+  const handleClearComfyUI = async () => {
+    const confirmed = await confirmDialog({
+      title: t("settings.modelConfig.featureModels.clearComfyTitle"),
+      description: t("settings.modelConfig.featureModels.clearComfyConfirm"),
+      confirmText: t("settings.modelConfig.featureModels.clearComfy"),
+      confirmVariant: "destructive",
+    });
+    if (!confirmed) return;
+    try {
+      const response = await clearComfyUIConfig.mutateAsync();
+      if (response.ok !== true) {
+        toast.error(
+          getResponseErrorMessage(
+            response,
+            t("settings.modelConfig.requestFailed"),
+          ),
+        );
+        return;
+      }
+      removeFeatureProviderChannel("comfyui");
+      const currentMediaModels =
+        useSettingsStore.getState().featureModelConfig.mediaModels ?? {};
+      useSettingsStore
+        .getState()
+        .setMediaModels(
+          Object.fromEntries(
+            Object.entries(currentMediaModels).filter(
+              ([, entry]) => entry.provider !== "comfyui",
+            ),
+          ),
+        );
+      toast.success(t("settings.modelConfig.featureModels.comfyCleared"));
     } catch (error) {
       toast.error(
         await getRequestErrorMessage(
@@ -4387,16 +4670,34 @@ function ProviderChannelRow({
               {t("settings.modelConfig.featureModels.syncChannel")}
             </Button>
           ) : null}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground hover:text-destructive"
-            onClick={() => removeFeatureProviderChannel(provider)}
-            title={t("settings.modelConfig.featureModels.removeChannel")}
-          >
-            <Trash2 className="size-4" />
-          </Button>
+          {hasComfyUIConfig ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 whitespace-nowrap text-destructive hover:text-destructive"
+              onClick={() => void handleClearComfyUI()}
+              disabled={clearComfyUIConfig.isPending}
+            >
+              {clearComfyUIConfig.isPending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="size-3.5" />
+              )}
+              {t("settings.modelConfig.featureModels.clearComfy")}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-destructive"
+              onClick={() => removeFeatureProviderChannel(provider)}
+              title={t("settings.modelConfig.featureModels.removeChannel")}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          )}
         </div>
       </div>
       {isComfyUI ? (
@@ -4417,7 +4718,28 @@ function readComfyUIWorkflows(
   const comfyui = settings.comfyui;
   if (!comfyui || typeof comfyui !== "object" || Array.isArray(comfyui))
     return {};
-  const workflows = (comfyui as Record<string, unknown>).workflow_by_model;
+  const config = comfyui as Record<string, unknown>;
+  const routes = config.workflow_routes;
+  if (Array.isArray(routes)) {
+    return Object.fromEntries(
+      routes.flatMap((route) => {
+        if (!route || typeof route !== "object" || Array.isArray(route))
+          return [];
+        const item = route as Record<string, unknown>;
+        const id = typeof item.id === "string" ? item.id.trim() : "";
+        const workflow = item.workflow;
+        if (
+          !id ||
+          !workflow ||
+          typeof workflow !== "object" ||
+          Array.isArray(workflow)
+        )
+          return [];
+        return [[id, workflow as Record<string, unknown>]];
+      }),
+    );
+  }
+  const workflows = config.workflow_by_model;
   if (!workflows || typeof workflows !== "object" || Array.isArray(workflows))
     return {};
   return Object.fromEntries(
@@ -4431,6 +4753,75 @@ function readComfyUIWorkflows(
   );
 }
 
+function readComfyUIModelName(settings: Record<string, unknown>): string {
+  const comfyui = settings.comfyui;
+  if (!comfyui || typeof comfyui !== "object" || Array.isArray(comfyui))
+    return "";
+  const config = comfyui as Record<string, unknown>;
+  if (typeof config.model_name === "string" && config.model_name.trim()) {
+    return config.model_name.trim();
+  }
+  if (Array.isArray(config.workflow_routes)) {
+    for (const route of config.workflow_routes) {
+      if (!route || typeof route !== "object" || Array.isArray(route)) continue;
+      const match = (route as Record<string, unknown>).match;
+      if (!match || typeof match !== "object" || Array.isArray(match)) continue;
+      const models = (match as Record<string, unknown>).models;
+      if (Array.isArray(models) && typeof models[0] === "string") {
+        const model = models[0].trim();
+        if (model) return model;
+      }
+    }
+  }
+  const legacyModels = Object.keys(readComfyUIWorkflows(settings));
+  if (legacyModels.length === 1) return legacyModels[0];
+  if (
+    legacyModels.length > 1 &&
+    legacyModels.every((model) => /^minimax[_-]h3(?:[_-]|$)/i.test(model))
+  ) {
+    return "MiniMax-H3-local";
+  }
+  return legacyModels[0] ?? "";
+}
+
+function buildComfyUIWorkflowRoutes(
+  workflows: Record<string, Record<string, unknown>>,
+): Record<string, unknown>[] {
+  return Object.entries(workflows).map(([id, workflow]) => ({
+    id,
+    match: {},
+    workflow,
+  }));
+}
+
+function normalizeProviderChannelSettings(
+  provider: string,
+  settings: Record<string, unknown>,
+): Record<string, unknown> {
+  if (provider !== "comfyui") return settings;
+  const comfyui =
+    settings.comfyui &&
+    typeof settings.comfyui === "object" &&
+    !Array.isArray(settings.comfyui)
+      ? (settings.comfyui as Record<string, unknown>)
+      : {};
+  if (Array.isArray(comfyui.workflow_routes)) return settings;
+  const workflows = readComfyUIWorkflows(settings);
+  const workflowIds = Object.keys(workflows);
+  const isLegacyH3Group =
+    workflowIds.length > 1 &&
+    workflowIds.every((id) => /^minimax[_-]h3(?:[_-]|$)/i.test(id));
+  if (workflowIds.length !== 1 && !isLegacyH3Group) return settings;
+  const model = readComfyUIModelName(settings);
+  if (!model) return settings;
+  const normalized = { ...comfyui };
+  delete normalized.workflow_by_model;
+  delete normalized.workflow;
+  normalized.model_name = model;
+  normalized.workflow_routes = buildComfyUIWorkflowRoutes(workflows);
+  return { ...settings, comfyui: normalized };
+}
+
 function ComfyUIWorkflowsEditor({
   settings,
   onChange,
@@ -4440,44 +4831,55 @@ function ComfyUIWorkflowsEditor({
 }) {
   const { t } = useTranslation();
   const workflows = readComfyUIWorkflows(settings);
+  const model = readComfyUIModelName(settings);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [expandedModels, setExpandedModels] = useState<Set<string>>(
+  const [expandedWorkflows, setExpandedWorkflows] = useState<Set<string>>(
     () => new Set(),
   );
 
-  const writeWorkflows = (next: Record<string, Record<string, unknown>>) => {
+  const writeConfig = (
+    nextModel: string,
+    nextWorkflows: Record<string, Record<string, unknown>>,
+  ) => {
     const existingComfyUI =
       settings.comfyui &&
       typeof settings.comfyui === "object" &&
       !Array.isArray(settings.comfyui)
         ? (settings.comfyui as Record<string, unknown>)
         : {};
+    const nextComfyUI = { ...existingComfyUI };
+    delete nextComfyUI.workflow_by_model;
+    delete nextComfyUI.workflow;
+    nextComfyUI.model_name = nextModel;
+    nextComfyUI.workflow_routes = buildComfyUIWorkflowRoutes(nextWorkflows);
     onChange({
       ...settings,
-      comfyui: { ...existingComfyUI, workflow_by_model: next },
+      comfyui: nextComfyUI,
     });
   };
 
   const addWorkflow = () => {
     let index = Object.keys(workflows).length + 1;
-    let model = `comfyui-video-${index}`;
-    while (workflows[model]) model = `comfyui-video-${++index}`;
-    writeWorkflows({ ...workflows, [model]: {} });
-    setDrafts((current) => ({ ...current, [model]: "{}" }));
+    let workflowId = `workflow-${index}`;
+    while (workflows[workflowId]) workflowId = `workflow-${++index}`;
+    writeConfig(model, { ...workflows, [workflowId]: {} });
+    setDrafts((current) => ({ ...current, [workflowId]: "{}" }));
   };
 
   const renameWorkflow = (previous: string, nextValue: string) => {
     const next = nextValue.trim();
     if (!next || next === previous) return;
     if (workflows[next]) {
-      toast.error(t("settings.modelConfig.featureModels.comfyDuplicateModel"));
+      toast.error(
+        t("settings.modelConfig.featureModels.comfyDuplicateWorkflow"),
+      );
       return;
     }
     const renamed: Record<string, Record<string, unknown>> = {};
     for (const [model, workflow] of Object.entries(workflows)) {
       renamed[model === previous ? next : model] = workflow;
     }
-    writeWorkflows(renamed);
+    writeConfig(model, renamed);
     setDrafts((current) => {
       const updated = {
         ...current,
@@ -4489,14 +4891,14 @@ function ComfyUIWorkflowsEditor({
     });
   };
 
-  const commitWorkflow = (model: string, text: string) => {
+  const commitWorkflow = (workflowId: string, text: string) => {
     try {
       const parsed = JSON.parse(text) as unknown;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
         throw new Error();
-      writeWorkflows({
+      writeConfig(model, {
         ...workflows,
-        [model]: parsed as Record<string, unknown>,
+        [workflowId]: parsed as Record<string, unknown>,
       });
     } catch {
       toast.error(t("settings.modelConfig.featureModels.comfyInvalidWorkflow"));
@@ -4507,10 +4909,10 @@ function ComfyUIWorkflowsEditor({
     <div className="mt-3 border-t border-border/60 pt-3">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-medium text-foreground">
+          <p className="text-xs font-medium text-foreground">
             {t("settings.modelConfig.featureModels.comfyWorkflows")}
           </p>
-          <p className="mt-1 text-[10px] text-muted-foreground">
+          <p className="mt-1 text-xs text-muted-foreground">
             {t("settings.modelConfig.featureModels.comfyWorkflowHint")}
           </p>
         </div>
@@ -4519,23 +4921,41 @@ function ComfyUIWorkflowsEditor({
           {t("settings.modelConfig.featureModels.comfyAddWorkflow")}
         </Button>
       </div>
+      <div className="mt-3">
+        <Label className="text-xs text-muted-foreground">
+          {t("settings.modelConfig.featureModels.comfyModelName")}
+        </Label>
+        <Input
+          value={model}
+          onChange={(event) => writeConfig(event.target.value, workflows)}
+          placeholder={t(
+            "settings.modelConfig.featureModels.comfyModelPlaceholder",
+          )}
+          className="mt-1 h-8"
+        />
+      </div>
       <div className="mt-3 space-y-3">
-        {Object.entries(workflows).map(([model, workflow]) => {
-          const text = drafts[model] ?? JSON.stringify(workflow, null, 2);
-          const isExpanded = expandedModels.has(model);
+        {Object.entries(workflows).map(([workflowId, workflow]) => {
+          const text = drafts[workflowId] ?? JSON.stringify(workflow, null, 2);
+          const isExpanded = expandedWorkflows.has(workflowId);
           return (
             <div
-              key={model}
+              key={workflowId}
               className="rounded-md border border-border/60 p-2.5"
             >
+              <Label className="text-xs text-muted-foreground">
+                {t("settings.modelConfig.featureModels.comfyWorkflowId")}
+              </Label>
               <div className="flex items-center gap-2">
                 <Input
-                  defaultValue={model}
-                  onBlur={(event) => renameWorkflow(model, event.target.value)}
+                  defaultValue={workflowId}
+                  onBlur={(event) =>
+                    renameWorkflow(workflowId, event.target.value)
+                  }
                   placeholder={t(
-                    "settings.modelConfig.featureModels.comfyModelPlaceholder",
+                    "settings.modelConfig.featureModels.comfyWorkflowIdPlaceholder",
                   )}
-                  className="h-8"
+                  className="mt-1 h-8"
                 />
                 <Button
                   type="button"
@@ -4544,24 +4964,27 @@ function ComfyUIWorkflowsEditor({
                   className="text-muted-foreground hover:text-destructive"
                   onClick={() => {
                     const next = { ...workflows };
-                    delete next[model];
-                    writeWorkflows(next);
+                    delete next[workflowId];
+                    writeConfig(model, next);
                   }}
                 >
                   <Trash2 className="size-4" />
                 </Button>
               </div>
-              <div className="mt-2 flex justify-end">
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <Label className="text-xs text-muted-foreground">
+                  {t("settings.modelConfig.featureModels.comfyWorkflowJson")}
+                </Label>
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
                   className="h-7 px-2 text-[10px] text-muted-foreground"
                   onClick={() =>
-                    setExpandedModels((current) => {
+                    setExpandedWorkflows((current) => {
                       const next = new Set(current);
-                      if (next.has(model)) next.delete(model);
-                      else next.add(model);
+                      if (next.has(workflowId)) next.delete(workflowId);
+                      else next.add(workflowId);
                       return next;
                     })
                   }
@@ -4583,13 +5006,15 @@ function ComfyUIWorkflowsEditor({
                 onChange={(event) =>
                   setDrafts((current) => ({
                     ...current,
-                    [model]: event.target.value,
+                    [workflowId]: event.target.value,
                   }))
                 }
-                onBlur={(event) => commitWorkflow(model, event.target.value)}
+                onBlur={(event) =>
+                  commitWorkflow(workflowId, event.target.value)
+                }
                 spellCheck={false}
                 className={cn(
-                  "mt-1 resize-none font-mono text-[11px] transition-[height] duration-200",
+                  "mt-1 resize-none font-mono text-xs transition-[height] duration-200",
                   isExpanded ? "h-[60vh] min-h-80" : "h-44",
                 )}
               />

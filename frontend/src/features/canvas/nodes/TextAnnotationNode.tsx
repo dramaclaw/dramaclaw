@@ -461,6 +461,7 @@ export const TextAnnotationNode = memo(({
           durationSeconds: durationSec,
           generateAudio,
           model: videoModel,
+          genMode: "textToVideo",
           canvasId: readUrl().canvas ?? 'default',
           nodeId: videoNodeId,
         });

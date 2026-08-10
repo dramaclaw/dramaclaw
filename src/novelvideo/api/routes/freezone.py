@@ -92,6 +92,7 @@ from novelvideo.freezone import canvas_store
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     media_request_schema_for_mode,
+    normalize_media_model_mode,
     validate_media_model_params,
     validate_media_request_schema,
 )
@@ -285,7 +286,10 @@ from novelvideo.task_identity import (
     task_config_scope,
     task_state_key,
 )
-from novelvideo.video_billing import probe_total_video_duration_seconds
+from novelvideo.video_billing import (
+    probe_total_video_duration_seconds,
+    probe_video_duration_seconds,
+)
 from novelvideo.task_state import get_task_manager
 from novelvideo.utils.background_anchor import copy_to_beat_selected_background
 from novelvideo.utils.document_parsers import count_billable_text_chars
@@ -370,8 +374,10 @@ async def _start_or_enqueue_freezone_video_gen(
     model_id: str | None = None,
     catalog_id: str | None = None,
     gen_mode: str | None = None,
+    requested_gen_mode: str | None = None,
     model_params: dict[str, Any] | None = None,
     request_schema: dict[str, Any] | None = None,
+    capabilities: dict[str, Any] | None = None,
 ) -> dict:
     from novelvideo.api.routes.model_credits import (
         freezone_video_generate_task_billing,
@@ -383,20 +389,46 @@ async def _start_or_enqueue_freezone_video_gen(
         if str(item.get("type") or "").strip().lower() == "video"
         and str(item.get("path") or "").strip()
     ]
+    video_duration_bounds = _catalog_reference_duration_bounds(capabilities, "video")
+    measured_video_durations: list[tuple[str, float]] | None = None
     try:
-        input_video_duration_seconds = await probe_total_video_duration_seconds(
-            video_input_paths
-        )
+        if video_input_paths and any(value is not None for value in video_duration_bounds):
+            video_seconds = await asyncio.gather(
+                *(probe_video_duration_seconds(path) for path in video_input_paths)
+            )
+            measured_video_durations = [
+                (Path(path).name or f"video{index}", seconds)
+                for index, (path, seconds) in enumerate(
+                    zip(video_input_paths, video_seconds), start=1
+                )
+            ]
+            input_video_duration_seconds = sum(video_seconds)
+        else:
+            input_video_duration_seconds = await probe_total_video_duration_seconds(
+                video_input_paths
+            )
     except (OSError, ValueError) as exc:
         raise HTTPException(
             400, f"unable to read reference video duration: {exc}"
         ) from exc
+    if measured_video_durations is not None:
+        try:
+            validate_omni_reference_audio_durations(
+                measured_video_durations,
+                min_seconds=video_duration_bounds[0],
+                max_seconds=video_duration_bounds[1],
+                total_min_seconds=video_duration_bounds[2],
+                total_max_seconds=video_duration_bounds[3],
+                media_label="video",
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     billing = freezone_video_generate_task_billing(
         {
             "video_backend": backend,
             "resolution": resolution,
             "pricing_quantity": duration_seconds,
-            "operation": gen_mode or "textToVideo",
+            "operation": requested_gen_mode or gen_mode or "textToVideo",
             "generate_audio": generate_audio,
             "video_input_present": bool(video_input_paths),
             "input_video_duration_seconds": input_video_duration_seconds,
@@ -410,6 +442,7 @@ async def _start_or_enqueue_freezone_video_gen(
         "model_id": model_id or "",
         "catalog_id": catalog_id or "",
         "gen_mode": gen_mode or "",
+        "requested_gen_mode": requested_gen_mode or gen_mode or "",
         "prompt": prompt,
         "reference_items": reference_items,
         "aspect_ratio": aspect_ratio,
@@ -7146,15 +7179,7 @@ def _require_catalog_video_mode(
     capabilities: dict[str, Any] | None,
     mode: str,
 ) -> None:
-    normalized = {
-        "textToVideo": "text_to_video",
-        "firstFrame": "first_frame",
-        "imageToVideo": "image_reference",
-        "firstLastFrame": "first_last_frame",
-        "imageReference": "image_reference",
-        "allReference": "all_reference",
-        "videoEdit": "video_edit",
-    }.get(mode, mode)
+    normalized = normalize_media_model_mode(mode)
     if _catalog_mode_enabled(capabilities, normalized) is False:
         raise HTTPException(400, f"this model does not support {normalized} mode")
 
@@ -7189,6 +7214,26 @@ def _catalog_reference_limits(
     }
 
 
+def _catalog_reference_duration_bounds(
+    capabilities: dict[str, Any] | None,
+    media: str,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    prefix = "referenceAudio" if media == "audio" else "referenceVideo"
+
+    def _duration(suffix: str) -> float | None:
+        value = capabilities.get(f"{prefix}{suffix}") if capabilities else None
+        if type(value) in (int, float) and math.isfinite(value) and value > 0:
+            return float(value)
+        return None
+
+    return (
+        _duration("MinSeconds"),
+        _duration("MaxSeconds"),
+        _duration("TotalMinSeconds"),
+        _duration("TotalMaxSeconds"),
+    )
+
+
 def _catalog_audio_total_duration_max(capabilities: dict[str, Any] | None) -> float | None:
     """目录里配的全能参考音频**总时长**上限（秒），没配返回 None。
 
@@ -7200,10 +7245,7 @@ def _catalog_audio_total_duration_max(capabilities: dict[str, Any] | None) -> fl
     刻意**不在这里兜底**成 15.2：调用方要靠「有没有配」来决定这个模型该不该受管，
     在这里默默返回 15.2 就分不清「管理员配了 15.2」和「压根没配」。
     """
-    value = capabilities.get("referenceAudioTotalMaxSeconds") if capabilities else None
-    if type(value) in (int, float) and math.isfinite(value) and value > 0:
-        return float(value)
-    return None
+    return _catalog_reference_duration_bounds(capabilities, "audio")[3]
 
 
 async def _probe_reference_audio_seconds(path: str) -> float | None:
@@ -7705,11 +7747,11 @@ async def freezone_video_gen(
         "video",
         body.model,
         body.model_params,
-        mode=body.gen_mode or "text_to_video",
+        mode=body.gen_mode,
     )
     _require_catalog_video_mode(
         capabilities,
-        body.gen_mode or "text_to_video",
+        body.gen_mode,
     )
     character_items = _load_video_character_items_by_ids(project_dir, body.character_ids)
     character_names = [str(item.get("name") or "") for item in character_items]
@@ -7760,9 +7802,11 @@ async def freezone_video_gen(
             node_id=body.node_id or None,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode=body.gen_mode or "text_to_video",
+            gen_mode="text_to_video",
+            requested_gen_mode=body.gen_mode,
             model_params=model_params,
             request_schema=request_schema,
+            capabilities=capabilities,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error("failed to start freezone video gen task", exc)
@@ -7800,9 +7844,9 @@ async def freezone_video_i2v(
         "video",
         body.model,
         body.model_params,
-        mode=execution_mode,
+        mode=requested_mode,
     )
-    _require_catalog_video_mode(capabilities, execution_mode)
+    _require_catalog_video_mode(capabilities, requested_mode)
 
     reference_limits = _catalog_reference_limits(
         capabilities,
@@ -7878,8 +7922,10 @@ async def freezone_video_i2v(
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=execution_mode,
+            requested_gen_mode=requested_mode,
             model_params=model_params,
             request_schema=request_schema,
+            capabilities=capabilities,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error(
@@ -7906,29 +7952,30 @@ async def freezone_video_keyframes(
 
     if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
         raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
-    if not (body.first_frame_url or body.last_frame_url):
-        raise HTTPException(400, "first_frame_url or last_frame_url is required")
+    if body.gen_mode == "firstFrame":
+        if not body.first_frame_url:
+            raise HTTPException(400, "firstFrame requires first_frame_url")
+        if body.last_frame_url:
+            raise HTTPException(400, "firstFrame does not accept last_frame_url")
+    elif not (body.first_frame_url or body.last_frame_url):
+        raise HTTPException(400, "firstLastFrame requires at least one keyframe")
     try:
         backend = await _resolve_catalog_video_backend(body.model)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    if body.first_frame_url and body.last_frame_url:
-        execution_mode = "first_last_frame"
-    elif body.first_frame_url:
-        execution_mode = "first_frame"
-    else:
-        # 目录暂不新增独立 last_frame 能力。仅尾帧仍属于关键帧能力，最终协议只下发
-        # last_frame_image，不把它伪装成首帧。
-        execution_mode = "first_last_frame"
+    requested_mode = body.gen_mode
+    execution_mode = (
+        "first_frame" if requested_mode == "firstFrame" else "first_last_frame"
+    )
 
     request_schema, model_params, capabilities = await _resolve_catalog_request(
         "video",
         body.model,
         body.model_params,
-        mode=execution_mode,
+        mode=requested_mode,
     )
-    _require_catalog_video_mode(capabilities, execution_mode)
+    _require_catalog_video_mode(capabilities, requested_mode)
     reference_limits = _catalog_reference_limits(
         capabilities,
         image_default=2,
@@ -8001,8 +8048,10 @@ async def freezone_video_keyframes(
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=execution_mode,
+            requested_gen_mode=requested_mode,
             model_params=model_params,
             request_schema=request_schema,
+            capabilities=capabilities,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error(
@@ -8039,7 +8088,7 @@ async def freezone_video_omni_gen(
         "video",
         body.model,
         body.model_params,
-        mode=body.gen_mode or "all_reference",
+        mode=body.gen_mode,
     )
     mode_enabled = _catalog_mode_enabled(capabilities, "all_reference")
     if mode_enabled is False:
@@ -8095,29 +8144,18 @@ async def freezone_video_omni_gen(
             }
         )
 
-    # 音频时长兜底。前端也拦一遍（videoModelCapabilities.audioReferenceDurationRejection），
-    # 但那层靠 <audio> 探测，CORS / 超时 / 老画布数据都可能测不出而放行；这里 URL 已经
-    # 落成本地路径，ffprobe 能给出确定答案，是最后一道能在计费前拦下的闸门。
-    #
-    # 只对**已知边界**的模型生效，而且两类边界分开授权：
-    #   - 逐条 1.8~15.2s 是从 Seedance 2.0 的报文里实测出来的，只对它成立；
-    #   - 总时长对**边界已知**的模型是「目录配置与厂商硬顶取小」：管理员可以配得更严，
-    #     但配宽了不会让厂商也跟着放行——给 seedance2 配 60s，3 条 6s 在本地全过、到厂商
-    #     那儿照样 400，正是本 PR 要消灭的那种失败。边界未知的模型没有硬顶可取，直接用
-    #     目录值。
-    # 别把这两类混成一个开关：目录里给别家模型配了 60s 总时长，不代表它的单条也得
-    # 卡在 15.2s —— 那样一条正常的 25s 音频会被我们凭空 400 掉。
+    # 音频时长必须在预扣积分和投递任务之前校验。目录配置是服务端权威值；Seedance 2.0
+    # 的历史边界仅在旧目录尚未补齐新字段时兜底，显式配置不再被隐藏常量覆盖。
     audio_items = [item for item in reference_items if item["type"] == "audio"]
-    per_clip_bounds_known = is_freezone_seedance2_backend(backend)
-    configured_audio_total = _catalog_audio_total_duration_max(capabilities)
-    if per_clip_bounds_known:
-        audio_total_max = min(
-            configured_audio_total or MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
-            MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
-        )
-    else:
-        audio_total_max = configured_audio_total
-    if audio_items and (per_clip_bounds_known or audio_total_max is not None):
+    audio_bounds = list(_catalog_reference_duration_bounds(capabilities, "audio"))
+    if is_freezone_seedance2_backend(backend):
+        if audio_bounds[0] is None:
+            audio_bounds[0] = MIN_OMNI_REFERENCE_AUDIO_SECONDS
+        if audio_bounds[1] is None:
+            audio_bounds[1] = MAX_OMNI_REFERENCE_AUDIO_SECONDS
+        if audio_bounds[3] is None:
+            audio_bounds[3] = MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS
+    if audio_items and any(value is not None for value in audio_bounds):
         # 并发探测：ffprobe 单条有 20s 超时，串行 await 会把 3 条参考音频叠成最长 60s 的
         # 请求耗时。gather 之后最坏就是一个超时的墙钟，也就顺带成了整体上限。
         probed_seconds = await asyncio.gather(
@@ -8132,13 +8170,10 @@ async def freezone_video_omni_gen(
         try:
             validate_omni_reference_audio_durations(
                 probed,
-                min_seconds=(
-                    MIN_OMNI_REFERENCE_AUDIO_SECONDS if per_clip_bounds_known else None
-                ),
-                max_seconds=(
-                    MAX_OMNI_REFERENCE_AUDIO_SECONDS if per_clip_bounds_known else None
-                ),
-                total_max_seconds=audio_total_max,
+                min_seconds=audio_bounds[0],
+                max_seconds=audio_bounds[1],
+                total_min_seconds=audio_bounds[2],
+                total_max_seconds=audio_bounds[3],
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -8180,9 +8215,11 @@ async def freezone_video_omni_gen(
             node_id=body.node_id or None,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode=body.gen_mode or "all_reference",
+            gen_mode="all_reference",
+            requested_gen_mode=body.gen_mode,
             model_params=model_params,
             request_schema=request_schema,
+            capabilities=capabilities,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error(
@@ -8223,7 +8260,7 @@ async def freezone_video_edit(
         "video",
         body.model,
         body.model_params,
-        mode=body.gen_mode or "video_edit",
+        mode=body.gen_mode,
     )
     mode_enabled = _catalog_mode_enabled(capabilities, "video_edit")
     if mode_enabled is False or (
@@ -8298,9 +8335,11 @@ async def freezone_video_edit(
             node_id=body.node_id or None,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
-            gen_mode=body.gen_mode or "video_edit",
+            gen_mode="video_edit",
+            requested_gen_mode=body.gen_mode,
             model_params=model_params,
             request_schema=request_schema,
+            capabilities=capabilities,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error(

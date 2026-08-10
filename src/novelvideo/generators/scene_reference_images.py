@@ -598,7 +598,7 @@ def _scene_image_config(model: str) -> dict[str, str]:
         "image-2",
         "image-2-official",
     }:
-        image_config["quality"] = "low"
+        image_config["quality"] = "medium"
     return image_config
 
 
@@ -714,8 +714,8 @@ async def generate_scene_reference_image(
             image_config={
                 "aspect_ratio": "16:9",
                 "image_size": "1K",
-                "quality": "low",
-                "huimeng_image_quality": "low",
+                "quality": "medium",
+                "huimeng_image_quality": "medium",
             },
         )
     else:
@@ -728,7 +728,7 @@ async def generate_scene_reference_image(
             image_config={
                 "aspect_ratio": "16:9",
                 "image_size": "1K",
-                "quality": "low",
+                "quality": "medium",
             },
         )
 

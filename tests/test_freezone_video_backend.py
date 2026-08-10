@@ -12,6 +12,7 @@ from novelvideo.generators.video_generator import (
     newapi_video_backend_options,
 )
 from novelvideo.generators.video_generator import VideoGenResult, VideoGenStatus
+from novelvideo.video_duration import video_duration_bounds_for_backend
 from novelvideo.freezone.video_node import (
     add_video_character_library_item,
     build_freezone_image_to_video_prompt,
@@ -225,6 +226,22 @@ def test_video_duration_normalization_uses_ceiling_and_backend_bounds() -> None:
         "newapi_seedance-1.0-pro-fast",
         5.1,
     ) == 6
+
+
+def test_seedance_mini_duration_fallback_with_legacy_env(monkeypatch) -> None:
+    from novelvideo import config
+
+    monkeypatch.setattr(
+        config,
+        "NEWAPI_VIDEO_DURATION_BOUNDS",
+        "seedance-1.0-pro-fast:2-12,seedance-2.0:4-15",
+    )
+
+    backend = "newapi_seedance-2.0-mini"
+    assert video_duration_bounds_for_backend(backend) == (4, 15)
+    assert normalize_video_duration_for_backend(backend, 2) == 4
+    assert normalize_video_duration_for_backend(backend, 13) == 13
+    assert normalize_video_duration_for_backend(backend, 20) == 15
 
 
 def test_newapi_video_backend_preserves_gateway_model_case() -> None:
@@ -525,3 +542,34 @@ def test_validate_omni_reference_audio_durations_skips_unmeasured() -> None:
     validate_omni_reference_audio_durations([])
     # 0 / 负数是 ffprobe 的垃圾输出，同样按「测不出」处理，别当成一条 0s 的太短音频。
     validate_omni_reference_audio_durations([("weird.wav", 0.0), ("neg.wav", -1.0)])
+
+
+def test_validate_reference_duration_total_min_requires_complete_measurement() -> None:
+    with pytest.raises(ValueError, match="total duration must be >= 10s"):
+        validate_omni_reference_audio_durations(
+            [("a.wav", 4.0), ("b.wav", 5.0)],
+            min_seconds=None,
+            max_seconds=None,
+            total_min_seconds=10,
+            total_max_seconds=None,
+        )
+
+    # 有一条无法探测时，已知总和只是下界，不能据此误判低于总时长下限。
+    validate_omni_reference_audio_durations(
+        [("a.wav", 4.0), ("unknown.wav", None)],
+        min_seconds=None,
+        max_seconds=None,
+        total_min_seconds=10,
+        total_max_seconds=None,
+    )
+
+
+def test_validate_reference_duration_uses_video_label() -> None:
+    with pytest.raises(ValueError, match="video reference duration must be <= 8s"):
+        validate_omni_reference_audio_durations(
+            [("clip.mp4", 9.0)],
+            min_seconds=None,
+            max_seconds=8,
+            total_max_seconds=None,
+            media_label="video",
+        )

@@ -1052,7 +1052,10 @@ class FreezoneVideoGenRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    gen_mode: Literal["textToVideo"] = Field(
+        default="textToVideo",
+        description="文生视频入口的固定业务模式",
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1165,6 +1168,9 @@ class FreezoneKeyframeVideoRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+    gen_mode: Literal["firstFrame", "firstLastFrame"] = Field(
+        description="必填：首帧或首尾帧业务模式；不能根据实际上传的帧数推断",
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1216,7 +1222,10 @@ class FreezoneVideoEditRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    gen_mode: Literal["videoEdit"] = Field(
+        default="videoEdit",
+        description="视频编辑入口的固定业务模式",
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1378,7 +1387,10 @@ class FreezoneVideoOmniGenRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    gen_mode: Literal["allReference"] = Field(
+        default="allReference",
+        description="全能参考入口的固定业务模式",
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 

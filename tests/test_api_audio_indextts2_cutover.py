@@ -138,23 +138,23 @@ def _fake_enqueue(calls):
     return fake_enqueue_project_task
 
 
-def test_happyhorse_video_backend_options_expose_mainline_limits() -> None:
+def test_mainline_video_backend_options_hide_legacy_models_and_expose_mini() -> None:
     from novelvideo.api.routes import generation
 
     options = {
         item.value: item.model_dump()
         for item in generation._api_video_backend_options()
     }
-    happyhorse = options["newapi_happyhorse-1.0"]
+    assert "newapi_seedance-2.0-value" not in options
+    assert "newapi_seedance-2.0-fast-value" not in options
+    assert "newapi_happyhorse-1.0" not in options
 
-    assert happyhorse["is_happyhorse"] is True
-    assert happyhorse["is_seedance2"] is False
-    assert happyhorse["resolution_options"] == ["720p", "1080p"]
-    assert happyhorse["ratio_options"] == ["16:9", "9:16", "1:1", "4:3", "3:4"]
-    assert happyhorse["supported_modes"] == ["first_frame", "multimodal_reference"]
-    assert happyhorse["reference_image_max"] == 9
-    assert happyhorse["reference_video_max"] == 1
-    assert happyhorse["reference_audio_max"] == 0
+    mini = options["newapi_seedance-2.0-mini"]
+    assert mini["label"] == "Seedance2.0 Mini"
+    assert mini["is_seedance2"] is True
+    assert mini["is_happyhorse"] is False
+    assert mini["min_duration"] == 4
+    assert mini["max_duration"] == 15
 
 
 @pytest.mark.asyncio

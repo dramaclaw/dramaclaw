@@ -834,7 +834,7 @@ def test_scene_reference_feature_quote_resolves_selected_bottom_model(monkeypatc
 
     assert params["pricing_kind"] == "image"
     assert params["pricing_model"] == "gpt-image-2"
-    assert params["pricing_params"] == {"size": "1K", "quality": "low"}
+    assert params["pricing_params"] == {"size": "1K", "quality": "medium"}
     assert params["pricing_model_selection"] == "newapi_gpt_image2"
 
 

@@ -65,12 +65,12 @@ import {
 } from "@/features/canvas/domain/canvasNodes";
 import {
   audioReferenceDurationRejection,
-  audioReferenceTotalDurationLimitMs,
   formatAudioDurationClips,
   formatAudioDurationSeconds,
   MAX_AUDIO_REFERENCE_DURATION_MS,
   MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
+  referenceDurationLimitsMs,
   isHappyHorseVideoModel,
   isSeedance2VideoModel,
   isVideoModeSupportedByModel,
@@ -323,33 +323,41 @@ export function clampVideoDuration(value: number, bounds: { min: number; max: nu
 // 音频节点的 durationMs 是懒加载的（波形播放器挂载读元数据后才写入），刚上传、
 // 从未渲染过的音频节点可能为 null。提交前用一个临时 <audio> 探测真实时长兜底，
 // 探测失败（CORS/网络等）返回 null，不阻断提交，交由后端兜底。
-function probeAudioDurationMs(url: string): Promise<number | null> {
+function probeMediaDurationMs(url: string, media: "audio" | "video"): Promise<number | null> {
   return new Promise((resolve) => {
     if (!url) {
       resolve(null);
       return;
     }
-    const audio = document.createElement("audio");
+    const element = document.createElement(media);
     let settled = false;
     const finish = (ms: number | null) => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
-      audio.onloadedmetadata = null;
-      audio.onerror = null;
-      audio.removeAttribute("src");
-      audio.load();
+      element.onloadedmetadata = null;
+      element.onerror = null;
+      element.removeAttribute("src");
+      element.load();
       resolve(ms);
     };
     const timer = window.setTimeout(() => finish(null), 8000);
-    audio.preload = "metadata";
-    audio.onloadedmetadata = () => {
-      const secs = audio.duration;
+    element.preload = "metadata";
+    element.onloadedmetadata = () => {
+      const secs = element.duration;
       finish(Number.isFinite(secs) && secs > 0 ? Math.round(secs * 1000) : null);
     };
-    audio.onerror = () => finish(null);
-    audio.src = url;
+    element.onerror = () => finish(null);
+    element.src = url;
   });
+}
+
+function probeAudioDurationMs(url: string): Promise<number | null> {
+  return probeMediaDurationMs(url, "audio");
+}
+
+function probeVideoDurationMs(url: string): Promise<number | null> {
+  return probeMediaDurationMs(url, "video");
 }
 
 function isSeedance2ValueModel(modelId: string | null | undefined): boolean {
@@ -2014,6 +2022,7 @@ export const VideoNode = memo(
             submitFreezoneVideoKeyframes(projectId, {
               firstFrameUrl,
               lastFrameUrl,
+              genMode,
               prompt: composedPrompt,
               cameraTemplateId,
               aspectRatio: submitAspectRatio,
@@ -2127,6 +2136,11 @@ export const VideoNode = memo(
             label: string;
             durationMs: number | null;
           }[] = [];
+          const videoRefs: {
+            url: string;
+            label: string;
+            durationMs: number | null;
+          }[] = [];
           let imageCount = 0;
           let videoCount = 0;
           let audioCount = 0;
@@ -2137,6 +2151,16 @@ export const VideoNode = memo(
               // 视频节点或携带 videoUrl 的 upload 节点（资产库视频）统一收集。
               if (videoCount < caps.video) {
                 references.push({ type: "video", url: videoRefUrl });
+                videoRefs.push({
+                  url: videoRefUrl,
+                  label: t("node.videoNode.referenceDuration.videoFallbackLabel", {
+                    index: videoCount + 1,
+                  }),
+                  durationMs:
+                    typeof node.data.durationMs === "number"
+                      ? node.data.durationMs
+                      : null,
+                });
                 videoCount += 1;
               }
             } else if (isAudioNode(node)) {
@@ -2194,69 +2218,99 @@ export const VideoNode = memo(
             });
             return;
           }
-          // Seedance 2.0 厂商对音频有两条时长约束，越界都会以 InvalidParameter 400
-          // 回来：**每条** 1.8s ≤ 时长 ≤ 15.2s，以及**所有条加起来** ≤ 15.2s。提交前
-          // 先本地校验：durationMs 缺失时用 <audio> 探测兜底，越界就弹窗拦下，避免白跑
-          // 一趟后端。
-          //
-          // 两类边界分开授权，与后端 freezone omni-gen 的兜底一一对应：
-          //   - 逐条 1.8~15.2s 只有 seedance2 成立（数字是从它的报文里实测出来的）；
-          //   - 总时长凡是目录里配了 referenceAudioTotalMaxSeconds 的模型都要管——否则
-          //     这类模型前端放行、后端拦下，用户白等一个来回还只能看到一句英文 400。
-          const audioTotalConfigured =
-            selectedVideoModel?.referenceAudioTotalMaxSeconds != null;
-          if ((isSeedance20Model || audioTotalConfigured) && audioRefs.length > 0) {
+          const validateReferenceDurations = async (
+            media: "audio" | "video",
+            refs: typeof audioRefs,
+          ): Promise<boolean> => {
+            const configured = referenceDurationLimitsMs(selectedVideoModel, media);
+            const limits = {
+              minMs:
+                configured.minMs ??
+                (media === "audio" && isSeedance20Model
+                  ? MIN_AUDIO_REFERENCE_DURATION_MS
+                  : undefined),
+              maxMs:
+                configured.maxMs ??
+                (media === "audio" && isSeedance20Model
+                  ? MAX_AUDIO_REFERENCE_DURATION_MS
+                  : undefined),
+              totalMinMs: configured.totalMinMs,
+              totalMaxMs:
+                configured.totalMaxMs ??
+                (media === "audio" && isSeedance20Model
+                  ? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS
+                  : undefined),
+            };
+            if (refs.length === 0 || Object.values(limits).every((value) => value == null)) {
+              return true;
+            }
             const resolvedDurations = await Promise.all(
-              audioRefs.map((ref) =>
+              refs.map((ref) =>
                 typeof ref.durationMs === "number" && ref.durationMs > 0
                   ? Promise.resolve(ref.durationMs)
-                  : probeAudioDurationMs(ref.url),
+                  : media === "audio"
+                    ? probeAudioDurationMs(ref.url)
+                    : probeVideoDurationMs(ref.url),
               ),
             );
             const rejection = audioReferenceDurationRejection(
-              audioRefs.map((ref, index) => ({
+              refs.map((ref, index) => ({
                 label: ref.label,
                 durationMs: resolvedDurations[index] ?? null,
               })),
               {
-                totalLimitMs: audioReferenceTotalDurationLimitMs(selectedVideoModel, {
-                  // seedance2 有厂商硬顶，目录配得再宽也不能越过它。
-                  vendorCapMs: isSeedance20Model
-                    ? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS
-                    : undefined,
-                }),
-                perClipLimits: isSeedance20Model,
+                minMs: limits.minMs ?? null,
+                maxMs: limits.maxMs ?? null,
+                totalMinMs: limits.totalMinMs,
+                totalLimitMs: limits.totalMaxMs ?? null,
+                perClipLimits: limits.minMs != null || limits.maxMs != null,
               },
             );
             if (rejection) {
               const clips = formatAudioDurationClips(rejection.clips, (key, vars) =>
                 t(key, vars),
               );
-              void showErrorDialog(
+              const prefix =
+                media === "audio" ? "node.videoNode.audio" : "node.videoNode.referenceDuration";
+              const message =
                 rejection.kind === "tooShort"
-                  ? t("node.videoNode.audio.durationTooShort", {
-                      min: MIN_AUDIO_REFERENCE_DURATION_MS / 1000,
+                  ? t(`${prefix}.${media === "audio" ? "durationTooShort" : "videoTooShort"}`, {
+                      min: formatAudioDurationSeconds(limits.minMs ?? 0),
                       clips,
                     })
                   : rejection.kind === "tooLong"
-                    ? t("node.videoNode.audio.durationTooLong", {
-                        max: MAX_AUDIO_REFERENCE_DURATION_MS / 1000,
+                    ? t(`${prefix}.${media === "audio" ? "durationTooLong" : "videoTooLong"}`, {
+                        max: formatAudioDurationSeconds(limits.maxMs ?? 0),
                         clips,
                       })
-                    : t("node.videoNode.audio.durationTotalTooLong", {
-                        max: formatAudioDurationSeconds(rejection.limitMs),
-                        total: formatAudioDurationSeconds(rejection.totalMs),
-                        clips,
-                      }),
-                t("common.error"),
-              );
+                    : rejection.kind === "totalTooShort"
+                      ? t(
+                          `${prefix}.${media === "audio" ? "durationTotalTooShort" : "videoTotalTooShort"}`,
+                          {
+                            min: formatAudioDurationSeconds(rejection.limitMs),
+                            total: formatAudioDurationSeconds(rejection.totalMs),
+                            clips,
+                          },
+                        )
+                      : t(
+                          `${prefix}.${media === "audio" ? "durationTotalTooLong" : "videoTotalTooLong"}`,
+                          {
+                            max: formatAudioDurationSeconds(rejection.limitMs),
+                            total: formatAudioDurationSeconds(rejection.totalMs),
+                            clips,
+                          },
+                        );
+              toast.error(message, { duration: 5_000 });
               updateNodeData(id, {
                 isGenerating: false,
                 generationStartedAt: null,
               });
-              return;
+              return false;
             }
-          }
+            return true;
+          };
+          if (!(await validateReferenceDurations("audio", audioRefs))) return;
+          if (!(await validateReferenceDurations("video", videoRefs))) return;
           doSubmit = (targetId) =>
             submitFreezoneVideoOmniGen(projectId, {
               prompt: composedPrompt,
