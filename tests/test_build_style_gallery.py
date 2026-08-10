@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +66,45 @@ def test_style_meta_ids_are_ascii_snake_case() -> None:
 
     for item in build_style_gallery.STYLE_META:
         assert re.fullmatch(r"[a-z][a-z0-9_]*", item["id"]), item["id"]
+
+
+def test_render_manifest_matches_the_loader_format() -> None:
+    entries = [
+        {
+            "id": "demo",
+            "label": "示例",
+            "category": "都市",
+            "cover": "demo/cover.webp",
+            "samples": ["demo/female.webp"],
+            "style_prompt": "示例提示词",
+        }
+    ]
+
+    text = build_style_gallery.render_manifest(entries, "2026-08-07")
+    parsed = json.loads(text)
+
+    assert text.endswith("\n")
+    assert "示例" in text, "中文不该被转成 \\uXXXX"
+    assert parsed == {"version": "2026-08-07", "templates": entries}
+
+
+def test_shipped_manifest_matches_style_meta() -> None:
+    """脚本的 STYLE_META 与仓库里那份内置清单必须同步,否则重跑脚本会悄悄换掉风格库。"""
+    shipped = json.loads(
+        (
+            REPO_ROOT / "src" / "novelvideo" / "freezone" / "style_templates.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert [item["id"] for item in shipped["templates"]] == [
+        item["id"] for item in build_style_gallery.STYLE_META
+    ]
+    assert [item["label"] for item in shipped["templates"]] == [
+        item["src"] for item in build_style_gallery.STYLE_META
+    ]
+    assert [item["category"] for item in shipped["templates"]] == [
+        item["category"] for item in build_style_gallery.STYLE_META
+    ]
 
 
 def _make_style_dir(root: Path, cover_name: str) -> Path:

@@ -1,17 +1,22 @@
 # SPDX-License-Identifier: Elastic-2.0
 # Copyright (c) 2026 ClaymoreLab
-"""把飞书导出的短剧风格素材转成 style-gallery 静态资源 + 后端常量。
+"""把飞书导出的短剧风格素材转成 style-gallery 静态资源 + 风格清单。
 
 用法:
 
     .venv/bin/python scripts/build_style_gallery.py \\
         --source ~/Downloads/飞书20260806-171116/黄金时代 \\
         --source ~/Downloads/飞书20260806-174825/原子朋克 \\
-        --out frontend/public/style-gallery
+        --out frontend/public/style-gallery \\
+        --emit-manifest src/novelvideo/freezone/style_templates.json
 
 --source 可重复传入,每个都必须直接包含若干风格子目录,子目录内有 提示词.txt。
 飞书导出目录顶层的文件夹互为完整重复拷贝,每批任取其一即可。
 STYLE_META 里的每个风格会在所有 --source 里按名字查找,找不到即报错退出。
+
+产物是「图片目录 + 一份 JSON 清单」这一对:图片可以整个目录传 OSS(后端配
+`STYLE_GALLERY_ASSET_BASE`),清单换代时覆盖内置那份、或另存一处再用
+`STYLE_GALLERY_MANIFEST` 指过去,两边都不需要改代码。
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 from PIL import Image
@@ -168,10 +174,10 @@ def build(sources: list[Path], out: Path) -> list[dict[str, object]]:
     return entries
 
 
-def render_constant(entries: list[dict[str, object]]) -> str:
-    """JSON 字面量对 str/list/dict 而言同时也是合法 Python,直接复用。"""
-    body = json.dumps(entries, ensure_ascii=False, indent=4)
-    return f"FREEZONE_IMAGE_STYLE_TEMPLATES = {body}\n"
+def render_manifest(entries: list[dict[str, object]], version: str) -> str:
+    """清单格式与 `novelvideo.freezone.style_templates` 的加载器一一对应。"""
+    manifest = {"version": version, "templates": entries}
+    return json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
 
 
 def main() -> None:
@@ -185,21 +191,26 @@ def main() -> None:
     )
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument(
-        "--emit-constant",
+        "--emit-manifest",
         type=Path,
-        help="把生成的 Python 常量写到该文件;不给则打印到 stdout",
+        help="把风格清单 JSON 写到该文件;不给则打印到 stdout",
+    )
+    parser.add_argument(
+        "--manifest-version",
+        default=date.today().isoformat(),
+        help="写进清单的版本号,默认取当天日期",
     )
     args = parser.parse_args()
 
     entries = build(
         [source.expanduser() for source in args.source], args.out.expanduser()
     )
-    constant = render_constant(entries)
-    if args.emit_constant:
-        args.emit_constant.write_text(constant, encoding="utf-8")
-        print(f"常量已写入 {args.emit_constant}", file=sys.stderr)
+    manifest = render_manifest(entries, args.manifest_version)
+    if args.emit_manifest:
+        args.emit_manifest.write_text(manifest, encoding="utf-8")
+        print(f"清单已写入 {args.emit_manifest}", file=sys.stderr)
     else:
-        print(constant)
+        print(manifest)
     print(f"共处理 {len(entries)} 套风格", file=sys.stderr)
 
 

@@ -168,6 +168,56 @@ describe("StyleGalleryModal", () => {
     expect(onSelect).toHaveBeenCalledWith("wuxia");
   });
 
+  it("narrows the grid to one category and back", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <StyleGalleryModal
+        templates={TEMPLATES}
+        assetBase=""
+        selectedId={null}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "古装" }));
+
+    expect(screen.getByRole("button", { name: "武侠江湖" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "黄金时代" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "全部" }));
+
+    expect(screen.getByRole("button", { name: "黄金时代" })).toBeInTheDocument();
+  });
+
+  it("shows a placeholder instead of an empty grid", () => {
+    const { rerender } = render(
+      <StyleGalleryModal
+        templates={[]}
+        assetBase=""
+        selectedId={null}
+        isLoading
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("加载中…")).toBeInTheDocument();
+
+    rerender(
+      <StyleGalleryModal
+        templates={[]}
+        assetBase=""
+        selectedId={null}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("暂无风格模板")).toBeInTheDocument();
+  });
+
   it("returns from the detail view to the gallery", async () => {
     const user = userEvent.setup();
 

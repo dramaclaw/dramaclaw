@@ -3113,6 +3113,28 @@ def test_style_asset_base_defaults_to_empty(monkeypatch: pytest.MonkeyPatch) -> 
     assert freezone_routes._get_freezone_image_style_asset_base() == ""
 
 
+def test_style_manifest_version_is_exposed_for_troubleshooting() -> None:
+    """图片和提示词各自可换代,接口带上清单版本才好定位是哪份在生效。
+
+    版本号跟着清单文件走,别在这里写死 —— 否则每改一版清单都要顺手改测试。
+    """
+    manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "novelvideo"
+            / "freezone"
+            / "style_templates.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert (
+        freezone_routes._get_freezone_image_style_manifest_version()
+        == manifest["version"]
+    )
+    assert manifest["version"]
+
+
 def test_style_asset_base_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STYLE_GALLERY_ASSET_BASE", "  https://cdn.example.com/styles/  ")
 

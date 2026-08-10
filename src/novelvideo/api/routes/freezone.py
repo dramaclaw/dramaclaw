@@ -186,6 +186,9 @@ from novelvideo.freezone.route_helpers import (
     get_freezone_image_style_asset_base as _get_freezone_image_style_asset_base,
 )
 from novelvideo.freezone.route_helpers import (
+    get_freezone_image_style_manifest_version as _get_freezone_image_style_manifest_version,
+)
+from novelvideo.freezone.route_helpers import (
     get_freezone_image_style_templates as _get_freezone_image_style_templates,
 )
 from novelvideo.freezone.route_helpers import (
@@ -5149,12 +5152,13 @@ async def freezone_image_style_templates(
     project: str,
     user: dict = Depends(get_api_user),
 ):
-    """图片处理：返回内置风格模板列表。"""
+    """图片处理：返回风格模板列表(默认内置清单,可用 STYLE_GALLERY_MANIFEST 覆盖)。"""
     await _resolve_freezone_project(project, user, required_role="viewer")
     return {
         "ok": True,
         "data": {
             "asset_base": _get_freezone_image_style_asset_base(),
+            "version": _get_freezone_image_style_manifest_version(),
             "templates": _get_freezone_image_style_templates(),
         },
     }

@@ -780,7 +780,7 @@ export async function submitFreezoneReversePrompt(
 export interface FreezoneStyleTemplate {
   id: string;
   label: string;
-  /** 题材分类:古装 / 都市 / 年代 / 生活 / 科幻 / 类型 / 写意。目前只入库,UI 暂不渲染分类 tab。 */
+  /** 题材分类:古装 / 都市 / 年代 / 生活 / 科幻 / 类型 / 写意,图墙顶部按它分组。 */
   category: string;
   /** 封面图相对路径,需经 resolveStyleAssetUrl 解析。 */
   cover: string;
@@ -792,6 +792,8 @@ export interface FreezoneStyleTemplate {
 
 export interface FreezoneStyleTemplateList {
   assetBase: string;
+  /** 后端风格清单的版本号,图片和提示词对不上时用来定位是哪一份清单在生效。 */
+  version: string;
   templates: FreezoneStyleTemplate[];
 }
 
@@ -800,10 +802,12 @@ export async function listFreezoneStyleTemplates(
 ): Promise<FreezoneStyleTemplateList> {
   const data = await apiCall<{
     asset_base?: string;
+    version?: string;
     templates?: FreezoneStyleTemplate[];
   }>(`projects/${encodeURIComponent(project)}/freezone/image/style-templates`);
   return {
     assetBase: data.asset_base ?? "",
+    version: data.version ?? "",
     templates: Array.isArray(data.templates) ? data.templates : [],
   };
 }

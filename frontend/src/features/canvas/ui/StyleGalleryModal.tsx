@@ -1,19 +1,53 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, Check, Maximize2, X } from 'lucide-react';
 
 import type { FreezoneStyleTemplate } from '@/api/ops';
-import { resolveStyleAssetUrl } from '@/features/canvas/nodes/styleAssetUrl';
+import { StyleAssetImage } from '@/features/canvas/ui/StyleAssetImage';
 
 const STYLE_GALLERY_MODAL_CLASS =
   'relative flex h-[min(720px,82vh)] w-[min(1120px,92vw)] flex-col overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#15161b]/96 shadow-[0_18px_48px_rgba(0,0,0,0.45)] backdrop-blur-md';
+
+const ALL_CATEGORIES = '__all__';
+const OTHER_CATEGORY = '__other__';
+
+/** 后端 category 的出现顺序就是展示顺序,没填分类的统一落到最后的「其他」。 */
+export function collectStyleCategories(
+  templates: FreezoneStyleTemplate[],
+): Array<{ key: string; label: string }> {
+  const seen: string[] = [];
+  let hasOther = false;
+  for (const item of templates) {
+    const category = item.category?.trim() ?? '';
+    if (!category) {
+      hasOther = true;
+      continue;
+    }
+    if (!seen.includes(category)) seen.push(category);
+  }
+  const list = seen.map((category) => ({ key: category, label: category }));
+  if (hasOther) list.push({ key: OTHER_CATEGORY, label: '其他' });
+  return list;
+}
+
+export function filterStylesByCategory(
+  templates: FreezoneStyleTemplate[],
+  category: string,
+): FreezoneStyleTemplate[] {
+  if (category === ALL_CATEGORIES) return templates;
+  if (category === OTHER_CATEGORY) {
+    return templates.filter((item) => !item.category?.trim());
+  }
+  return templates.filter((item) => item.category?.trim() === category);
+}
 
 export interface StyleGalleryModalProps {
   templates: FreezoneStyleTemplate[];
   assetBase: string;
   selectedId: string | null;
+  isLoading?: boolean;
   /** 只回调,不自己关闭;关闭由调用方决定。 */
   onSelect: (id: string | null) => void;
   onClose: () => void;
@@ -23,13 +57,20 @@ export function StyleGalleryModal({
   templates,
   assetBase,
   selectedId,
+  isLoading = false,
   onSelect,
   onClose,
 }: StyleGalleryModalProps) {
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [category, setCategory] = useState<string>(ALL_CATEGORIES);
   const detail = detailId
     ? templates.find((item) => item.id === detailId) ?? null
     : null;
+  const categories = useMemo(() => collectStyleCategories(templates), [templates]);
+  const visible = useMemo(
+    () => filterStylesByCategory(templates, category),
+    [templates, category],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -94,9 +135,10 @@ export function StyleGalleryModal({
           <div className="flex flex-1 gap-4 overflow-hidden p-4">
             <div className="ui-scrollbar grid flex-1 grid-cols-2 content-start gap-2 overflow-y-auto">
               {detail.samples.map((sample, index) => (
-                <img
+                <StyleAssetImage
                   key={sample}
-                  src={resolveStyleAssetUrl(sample, assetBase)}
+                  rel={sample}
+                  assetBase={assetBase}
                   alt={`${detail.label} 示例 ${index + 1}`}
                   loading="lazy"
                   className="w-full rounded-[8px] border border-white/[0.08] object-cover"
@@ -117,54 +159,88 @@ export function StyleGalleryModal({
             </div>
           </div>
         ) : (
-          <div className="ui-scrollbar flex-1 overflow-y-auto p-4">
-            <div className="grid grid-cols-4 gap-3">
-              {templates.map((item) => {
-                const isActive = item.id === selectedId;
-                return (
-                  <div
-                    key={item.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={item.label}
-                    onClick={() => onSelect(item.id)}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') return;
-                      event.preventDefault();
-                      onSelect(item.id);
-                    }}
-                    className={`group relative cursor-pointer overflow-hidden rounded-[12px] border bg-white/[0.04] transition-colors ${
-                      isActive
-                        ? 'border-white/[0.30] ring-1 ring-white/24'
-                        : 'border-white/[0.10] hover:border-white/[0.18] hover:bg-white/[0.06]'
-                    }`}
-                  >
-                    <img
-                      src={resolveStyleAssetUrl(item.cover, assetBase)}
-                      alt={item.label}
-                      loading="lazy"
-                      className="aspect-video w-full object-cover"
-                    />
-                    <div className="px-2.5 py-2 text-xs font-medium text-text-dark/86">
-                      {item.label}
-                    </div>
-                    {isActive && (
-                      <Check className="absolute right-2 top-2 size-4 text-[rgb(var(--accent-rgb))]" />
-                    )}
+          <div className="flex flex-1 flex-col overflow-hidden">
+            {categories.length > 1 && (
+              <div className="ui-scrollbar flex shrink-0 items-center gap-1.5 overflow-x-auto px-4 pt-3">
+                {[{ key: ALL_CATEGORIES, label: '全部' }, ...categories].map((entry) => {
+                  const isActive = entry.key === category;
+                  return (
                     <button
+                      key={entry.key}
                       type="button"
-                      aria-label={`查看${item.label}详情`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setDetailId(item.id);
-                      }}
-                      className="absolute bottom-10 right-2 flex size-7 items-center justify-center rounded-md bg-black/55 text-text-dark opacity-0 transition-opacity hover:bg-black/75 group-hover:opacity-100"
+                      onClick={() => setCategory(entry.key)}
+                      className={`h-7 shrink-0 rounded-[6px] px-2.5 text-xs font-medium transition-colors ${
+                        isActive
+                          ? 'bg-white/[0.14] text-text-dark'
+                          : 'text-text-dark/62 hover:bg-white/[0.08] hover:text-text-dark'
+                      }`}
                     >
-                      <Maximize2 className="size-3.5" />
+                      {entry.label}
                     </button>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
+            )}
+            {isLoading && templates.length === 0 && (
+              <div className="flex flex-1 items-center justify-center text-xs text-text-muted">
+                加载中…
+              </div>
+            )}
+            {!isLoading && templates.length === 0 && (
+              <div className="flex flex-1 items-center justify-center text-xs text-text-muted">
+                暂无风格模板
+              </div>
+            )}
+            <div className="ui-scrollbar flex-1 overflow-y-auto p-4">
+              <div className="grid grid-cols-4 gap-3">
+                {visible.map((item) => {
+                  const isActive = item.id === selectedId;
+                  return (
+                    <div
+                      key={item.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={item.label}
+                      onClick={() => onSelect(item.id)}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        onSelect(item.id);
+                      }}
+                      className={`group relative cursor-pointer overflow-hidden rounded-[12px] border bg-white/[0.04] transition-colors ${
+                        isActive
+                          ? 'border-white/[0.30] ring-1 ring-white/24'
+                          : 'border-white/[0.10] hover:border-white/[0.18] hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      <StyleAssetImage
+                        rel={item.cover}
+                        assetBase={assetBase}
+                        alt={item.label}
+                        loading="lazy"
+                        className="aspect-video w-full object-cover"
+                      />
+                      <div className="px-2.5 py-2 text-xs font-medium text-text-dark/86">
+                        {item.label}
+                      </div>
+                      {isActive && (
+                        <Check className="absolute right-2 top-2 size-4 text-[rgb(var(--accent-rgb))]" />
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`查看${item.label}详情`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setDetailId(item.id);
+                        }}
+                        className="absolute bottom-10 right-2 flex size-7 items-center justify-center rounded-md bg-black/55 text-text-dark opacity-0 transition-opacity hover:bg-black/75 group-hover:opacity-100"
+                      >
+                        <Maximize2 className="size-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}

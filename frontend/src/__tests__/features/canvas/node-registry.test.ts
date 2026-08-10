@@ -95,6 +95,31 @@ describe("建边白名单", () => {
     );
   });
 
+  it("风格节点只能连到图片节点，且不开放手工拖线", () => {
+    const allTypes = Object.keys(canvasNodeDefinitions) as CanvasNodeType[];
+    const reachable = allTypes.filter((type) =>
+      isUpstreamConnectionAllowed(CANVAS_NODE_TYPES.style, type),
+    );
+    expect(reachable).toEqual([CANVAS_NODE_TYPES.imageGen]);
+
+    // 那根边由图片节点的对账逻辑跟着 styleTemplateId 建（建边收口必须放行），但
+    // 手工拖线不能给 —— 一个风格节点挂到第二个图片节点上，两边的对账会把它来回
+    // 改写成对方的风格，永远收敛不了。
+    expect(
+      isManualConnectionAllowed(CANVAS_NODE_TYPES.style, CANVAS_NODE_TYPES.imageGen),
+    ).toBe(false);
+  });
+
+  it("风格节点不进创建菜单，也不进连线菜单", () => {
+    // 用户手工拖出来的空风格节点没有归属的图片节点，谁也不消费它。
+    expect(getMenuNodeDefinitions().map((item) => item.type)).not.toContain(
+      CANVAS_NODE_TYPES.style,
+    );
+    expect(getUpstreamSpawnTypes(CANVAS_NODE_TYPES.imageGen)).not.toContain(
+      CANVAS_NODE_TYPES.style,
+    );
+  });
+
   it("新增的下游白名单不误伤既有连线", () => {
     // 文本 → 音频（音频节点唯一的合法上游）仍然放行。
     expect(
