@@ -15,6 +15,7 @@ import {
   fetchFreezoneJobResult,
   fetchFreezoneReversePromptResult,
   fetchFreezoneStoryScriptResult,
+  fetchFreezoneTextGenerateResult,
   type FreezoneJobRef,
 } from '@/api/ops';
 import {
@@ -173,9 +174,16 @@ async function confirmTaskMissing(projectId: string, taskKey: string): Promise<b
   return true;
 }
 
-type ResumeKind = 'image' | 'video' | 'audio' | 'ply' | 'script' | 'reverse-prompt';
+type ResumeKind =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'ply'
+  | 'script'
+  | 'reverse-prompt'
+  | 'text-generate';
 
-function resumeKindForNodeType(type: CanvasNodeType): ResumeKind | null {
+function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): ResumeKind | null {
   switch (type) {
     case CANVAS_NODE_TYPES.imageGen:
     case CANVAS_NODE_TYPES.imageEdit:
@@ -190,7 +198,7 @@ function resumeKindForNodeType(type: CanvasNodeType): ResumeKind | null {
     case CANVAS_NODE_TYPES.script:
       return 'script';
     case CANVAS_NODE_TYPES.textAnnotation:
-      return 'reverse-prompt';
+      return taskType === 'freezone_text_generate' ? 'text-generate' : 'reverse-prompt';
     default:
       return null;
   }
@@ -310,6 +318,17 @@ async function buildSuccessPatch(
       }
       return { ...CLEARED_TASK_FIELDS };
     }
+    case 'text-generate': {
+      const result = await fetchFreezoneTextGenerateResult(projectId, jobId);
+      if (!result.generated_text.trim()) {
+        return { ...CLEARED_TASK_FIELDS };
+      }
+      return {
+        ...CLEARED_TASK_FIELDS,
+        content: result.generated_text,
+        model: result.model,
+      };
+    }
     default:
       return { ...CLEARED_TASK_FIELDS };
   }
@@ -335,7 +354,7 @@ function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unkno
         extractRequestId(rawMessage) ?? extractRequestId(resolved.details),
     };
   }
-  // audio / script / reverse-prompt surface their own inline errors elsewhere;
+  // audio / script / reverse-prompt / text-generate surface their own inline errors elsewhere;
   // just leave the 生成中 state.
   return { ...CLEARED_TASK_FIELDS };
 }
@@ -360,7 +379,9 @@ export async function resumeNodeGeneration(params: {
   const taskType =
     typeof data.generationTaskType === 'string' ? (data.generationTaskType as FreezoneTaskType) : null;
   const jobId = typeof data.generationTaskJobId === 'string' ? data.generationTaskJobId : '';
-  const kind = resumeKindForNodeType(node.type as CanvasNodeType);
+  const kind = taskType
+    ? resumeKindForNode(node.type as CanvasNodeType, taskType)
+    : null;
 
   if (!taskKey || !taskType || !kind) {
     return;

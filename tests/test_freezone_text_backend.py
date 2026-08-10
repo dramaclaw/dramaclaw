@@ -115,7 +115,7 @@ def test_translation_defaults_use_newapi_gemini_flash() -> None:
     assert FREEZONE_TRANSLATION_MODEL == "DC-freezone-translator-LLM"
 
 
-def test_text_writer_disables_reasoning_like_other_dc_text_agents(
+def test_text_writer_uses_plain_text_agent_without_structured_output_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import novelvideo.config as config
@@ -133,11 +133,6 @@ def test_text_writer_disables_reasoning_like_other_dc_text_agents(
         "get_newapi_text_pydantic_model",
         lambda model_env, default_model: (model_env, default_model),
     )
-    monkeypatch.setattr(
-        config,
-        "get_newapi_structured_output_model_settings",
-        lambda: {"openai_reasoning_effort": "none"},
-    )
     monkeypatch.setattr(text_node, "Agent", FakeAgent)
 
     create_freezone_text_writer_agent()
@@ -146,7 +141,7 @@ def test_text_writer_disables_reasoning_like_other_dc_text_agents(
         "FREEZONE_TEXT_WRITER_MODEL",
         "DC-freezone-text-writer-LLM",
     )
-    assert agent_kwargs["model_settings"] == {"openai_reasoning_effort": "none"}
+    assert "model_settings" not in agent_kwargs
 
 
 @pytest.mark.asyncio
