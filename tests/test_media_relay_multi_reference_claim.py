@@ -8,94 +8,22 @@ for idempotency keys, and it means the caller owes the ledger one key per side
 effect. Relaying N reference images under a single key breaks that side of the
 bargain, and the ledger correctly refuses the second image.
 
-The double below mirrors product_claim_egress_operation
-(0039_p0_gray_egress_operations.py:192-215) rather than returning a fixed
-verdict, because a stateless double cannot express the very behaviour under
-test.
+The double this uses models the claim verdict an EgressOperationPort
+implementation is required to return, rather than a fixed verdict, because a
+stateless double cannot express the very behaviour under test. It lives in
+tests/support/egress_ledger.py because the same contract is under test from a
+second direction in tests/test_p0g4e_cognee_concurrent_egress.py.
 """
 
 from __future__ import annotations
 
 import pytest
+from support.egress_ledger import LedgerDouble
 
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.ports.authz import BillingPrincipal
-from novelvideo.ports.egress_operations import (
-    EgressOperationError,
-    OperationClaimResult,
-    OperationSnapshot,
-    OperationSpec,
-    OperationState,
-)
+from novelvideo.ports.egress_operations import OperationSpec
 from novelvideo.ports.model_credentials import CredentialReference
-
-
-class LedgerDouble:
-    """Key-addressed stand-in for the durable operation authority.
-
-    Mirrors the definer: first claim on a key inserts and wins; a later claim
-    on the same key replays when the request digest matches and raises
-    EGRESS_OPERATION_CONFLICT when it does not.
-    """
-
-    def __init__(self) -> None:
-        self.rows: dict[str, dict] = {}
-        self.claims: list[OperationSpec] = []
-
-    async def claim(self, *, spec: OperationSpec) -> OperationClaimResult:
-        self.claims.append(spec)
-        key = spec.operation_key
-        existing = self.rows.get(key)
-        if existing is None:
-            row = {
-                "operation_id": f"op-{len(self.rows) + 1}",
-                "request_digest": spec.request_digest,
-                "state": OperationState.DISPATCHING,
-                "version": 1,
-                "transition_token": f"token-{len(self.rows) + 1}",
-            }
-            self.rows[key] = row
-            return OperationClaimResult(
-                won=True,
-                operation=OperationSnapshot(
-                    operation_id=row["operation_id"],
-                    operation_key=key,
-                    state=row["state"],
-                    version=row["version"],
-                ),
-                transition_token=row["transition_token"],
-            )
-        if existing["request_digest"] != spec.request_digest:
-            raise EgressOperationError("EGRESS_OPERATION_CONFLICT")
-        return OperationClaimResult(
-            won=False,
-            operation=OperationSnapshot(
-                operation_id=existing["operation_id"],
-                operation_key=key,
-                state=existing["state"],
-                version=existing["version"],
-            ),
-            transition_token=None,
-        )
-
-    def _transition(self, kwargs, state: OperationState) -> OperationSnapshot:
-        for key, row in self.rows.items():
-            if row["operation_id"] == kwargs["operation_id"]:
-                row["state"] = state
-                row["version"] = kwargs["expected_version"] + 1
-                return OperationSnapshot(
-                    operation_id=row["operation_id"],
-                    operation_key=key,
-                    state=state,
-                    version=row["version"],
-                )
-        raise EgressOperationError("EGRESS_OPERATION_INVALID_TRANSITION")
-
-    async def mark_completed(self, **kwargs) -> OperationSnapshot:
-        return self._transition(kwargs, OperationState.COMPLETED)
-
-    async def mark_unknown(self, **kwargs) -> OperationSnapshot:
-        return self._transition(kwargs, OperationState.UNKNOWN)
 
 
 class RelayDouble:
