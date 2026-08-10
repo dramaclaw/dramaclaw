@@ -2068,7 +2068,9 @@ export const VideoNode = memo(
               nodeId: targetId,
             });
         } else if (genMode === "videoEdit") {
-          // HappyHorse 视频编辑：1 个源视频 + 0-5 张参考图 → video_url + reference_images。
+          // 视频编辑：1 个源视频 + 0-5 张参考图 → video_url + reference_images。
+          // 不再是 HappyHorse 专属 —— 目录里声明了 video_edit 的模型都走这条路，
+          // 提交时带的是各自的 catalogId，能力由后端按目录校验。
           const upstream = collectUpstream();
           const videoUrl =
             upstream
