@@ -136,6 +136,82 @@ function labelOf(data: Record<string, unknown>): string | null {
   return firstStr(data.displayName, data.sourceFileName);
 }
 
+/** 一个节点身上的一件原始资产（未经 `resolveMediaUrl` 归一）。 */
+export interface CanvasNodeAsset {
+  kind: CanvasAssetKind;
+  /** 原件地址 —— 下载要拿的就是它，不是封面。 */
+  url: string;
+  /** 卡片/缩略图用的封面；视频、3D 世界这类没有静帧的资产才有值。 */
+  previewUrl: string | null;
+  /** 同一节点有多件时的区分位（分格图）。 */
+  suffix?: string;
+}
+
+/**
+ * 一个节点身上有哪些**原始**资产。这是「节点 → 可下载文件」的单一事实来源：资产
+ * 库（{@link extractCanvasAssets}）与侧栏画布大纲都读它。
+ *
+ * 单独抽出来是因为这张表极易漏：视频合成的成片在 `resultVideoUrl`、视频故事的源
+ * 片在 `sourceVideoUrl`、3D 世界的包在 `plyUrl`，而这三种节点身上同时挂着
+ * `previewImageUrl`。谁自己写一版「取 videoUrl，否则回落到封面」，谁就会把海报当
+ * 成片下载给用户。封面与原件在这里是两个字段，语义上分开。
+ */
+export function resolveNodeAssets(node: CanvasNode): CanvasNodeAsset[] {
+  const data = asRecord(node.data);
+  const one = (
+    kind: CanvasAssetKind,
+    url: string | null,
+    previewUrl: string | null = null,
+  ): CanvasNodeAsset[] => (url ? [{ kind, url, previewUrl }] : []);
+
+  switch (node.type) {
+    case CANVAS_NODE_TYPES.upload:
+    case CANVAS_NODE_TYPES.imageEdit:
+    case CANVAS_NODE_TYPES.imageGen:
+    case CANVAS_NODE_TYPES.exportImage:
+      return one('image', firstStr(data.imageUrl, data.committed_slot_url, data.previewImageUrl));
+    case CANVAS_NODE_TYPES.pano360Viewer:
+      // 全景查看器承载的就是那张球面贴图本身，原件即 imageUrl。
+      return one('image', firstStr(data.imageUrl, data.previewImageUrl));
+    case CANVAS_NODE_TYPES.storyboardSplit:
+    case CANVAS_NODE_TYPES.storyboardGen: {
+      const frames = Array.isArray(data.frames) ? data.frames : [];
+      return frames.flatMap((frame, index) => {
+        const frameData = asRecord(frame);
+        const url = firstStr(frameData.imageUrl, frameData.previewImageUrl);
+        return url
+          ? [{ kind: 'image' as const, url, previewUrl: null, suffix: `frame-${index}` }]
+          : [];
+      });
+    }
+    case CANVAS_NODE_TYPES.video:
+    case CANVAS_NODE_TYPES.videoStory:
+      return one(
+        'video',
+        firstStr(data.videoUrl, data.sourceVideoUrl),
+        str(data.previewImageUrl),
+      );
+    case CANVAS_NODE_TYPES.videoCompose:
+      return one('video', firstStr(data.resultVideoUrl), str(data.previewImageUrl));
+    case CANVAS_NODE_TYPES.audio:
+      return one('audio', firstStr(data.audioUrl));
+    case CANVAS_NODE_TYPES.threeDWorld:
+      // The world's "asset" is its 3GS package (plyUrl, preferred) or a 360
+      // pano image. The cover image is what we actually show on the card.
+      return one('model', firstStr(data.plyUrl, data.panoUrl), str(data.previewImageUrl));
+    default:
+      return [];
+  }
+}
+
+/**
+ * 节点的主资产 —— 一个节点只允许一件「下载它」时该拿到的东西。分格类节点有多张图，
+ * 取第一张（整个节点的批量下载由调用方自己遍历 {@link resolveNodeAssets}）。
+ */
+export function resolveNodePrimaryAsset(node: CanvasNode): CanvasNodeAsset | null {
+  return resolveNodeAssets(node)[0] ?? null;
+}
+
 /**
  * Pull every image / video / audio asset out of the live canvas nodes.
  *
@@ -147,98 +223,26 @@ export function extractCanvasAssets(nodes: CanvasNode[]): CanvasAssetBuckets {
   const buckets: CanvasAssetBuckets = { image: [], video: [], audio: [], model: [] };
   const seen = new Set<string>();
 
-  const push = (
-    kind: CanvasAssetKind,
-    rawUrl: string | null,
-    options: { nodeId: string; previewUrl?: string | null; label: string | null; timestamp: number | null; suffix?: string },
-  ) => {
-    const url = resolveMediaUrl(rawUrl);
-    if (!url || seen.has(url)) {
-      return;
-    }
-    seen.add(url);
-    buckets[kind].push({
-      id: `${options.nodeId}:${options.suffix ?? ''}:${url}`,
-      kind,
-      url,
-      previewUrl: resolveMediaUrl(options.previewUrl ?? null),
-      nodeId: options.nodeId,
-      label: options.label,
-      timestamp: options.timestamp,
-    });
-  };
-
   for (const node of nodes) {
     const data = asRecord(node.data);
     const timestamp = timestampOf(data);
     const label = labelOf(data);
 
-    switch (node.type) {
-      case CANVAS_NODE_TYPES.upload:
-      case CANVAS_NODE_TYPES.imageEdit:
-      case CANVAS_NODE_TYPES.imageGen:
-      case CANVAS_NODE_TYPES.exportImage: {
-        push('image', firstStr(data.imageUrl, data.committed_slot_url, data.previewImageUrl), {
-          nodeId: node.id,
-          label,
-          timestamp,
-        });
-        break;
+    for (const asset of resolveNodeAssets(node)) {
+      const url = resolveMediaUrl(asset.url);
+      if (!url || seen.has(url)) {
+        continue;
       }
-      case CANVAS_NODE_TYPES.storyboardSplit:
-      case CANVAS_NODE_TYPES.storyboardGen: {
-        const frames = Array.isArray(data.frames) ? data.frames : [];
-        frames.forEach((frame, index) => {
-          const frameData = asRecord(frame);
-          push('image', firstStr(frameData.imageUrl, frameData.previewImageUrl), {
-            nodeId: node.id,
-            label,
-            timestamp,
-            suffix: `frame-${index}`,
-          });
-        });
-        break;
-      }
-      case CANVAS_NODE_TYPES.video:
-      case CANVAS_NODE_TYPES.videoStory: {
-        push('video', firstStr(data.videoUrl, data.sourceVideoUrl), {
-          nodeId: node.id,
-          previewUrl: str(data.previewImageUrl),
-          label,
-          timestamp,
-        });
-        break;
-      }
-      case CANVAS_NODE_TYPES.videoCompose: {
-        push('video', firstStr(data.resultVideoUrl), {
-          nodeId: node.id,
-          previewUrl: str(data.previewImageUrl),
-          label,
-          timestamp,
-        });
-        break;
-      }
-      case CANVAS_NODE_TYPES.audio: {
-        push('audio', firstStr(data.audioUrl), {
-          nodeId: node.id,
-          label,
-          timestamp,
-        });
-        break;
-      }
-      case CANVAS_NODE_TYPES.threeDWorld: {
-        // The world's "asset" is its 3GS package (plyUrl, preferred) or a 360
-        // pano image. The cover image is what we actually show on the card.
-        push('model', firstStr(data.plyUrl, data.panoUrl), {
-          nodeId: node.id,
-          previewUrl: str(data.previewImageUrl),
-          label,
-          timestamp,
-        });
-        break;
-      }
-      default:
-        break;
+      seen.add(url);
+      buckets[asset.kind].push({
+        id: `${node.id}:${asset.suffix ?? ''}:${url}`,
+        kind: asset.kind,
+        url,
+        previewUrl: resolveMediaUrl(asset.previewUrl),
+        nodeId: node.id,
+        label,
+        timestamp,
+      });
     }
   }
 

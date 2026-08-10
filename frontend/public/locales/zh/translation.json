@@ -458,6 +458,35 @@
         "days": "{{count}} 天前"
       }
     },
+    "canvasOutline": {
+      "title": "画布元素",
+      "groupMembers": "{{count}} 个节点",
+      "empty": "当前画布还没有节点",
+      "duplicate": "复制",
+      "rename": "重命名",
+      "download": "下载",
+      "locate": "定位到节点",
+      "moreActions": "更多操作",
+      "matched": "匹配 {{count}} 个",
+      "expandAll": "展开全部分组",
+      "collapseAll": "收起全部分组",
+      "search": "搜索节点",
+      "closeSearch": "关闭搜索",
+      "filter": "按类型筛选",
+      "noMatch": "没有匹配的节点",
+      "types": {
+        "all": "全部",
+        "text": "文本",
+        "image": "图片",
+        "video": "视频",
+        "storyboard": "分镜",
+        "beat": "镜头上下文",
+        "audio": "音频",
+        "script": "脚本",
+        "world": "3D / 全景",
+        "skill": "技能"
+      }
+    },
     "projections": {
       "staleCount": "{{count}} 个主线投影有更新",
       "activeCount": "{{count}} 个主线投影",
