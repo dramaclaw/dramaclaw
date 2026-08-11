@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from novelvideo.api import OPENAPI_TAGS, api_router, register_verification_routes
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.routes.files import preview_project_media_file
+from novelvideo.ports.authz import AuthzError, authz_error_payload
 from novelvideo.shared.billing_errors import (
     BILLING_RULE_NOT_CONFIGURED_MESSAGE,
     INSUFFICIENT_CREDITS_MESSAGE,
@@ -203,6 +204,31 @@ def create_app() -> FastAPI:
                 "ok": False,
                 "error": exc.user_message,
                 "data": billing_error_payload(exc),
+            },
+        )
+
+    @application.exception_handler(AuthzError)
+    async def _authz_error(
+        request: Request,
+        exc: AuthzError,
+    ) -> JSONResponse:
+        # Without this handler the denial escaped to Starlette's
+        # ServerErrorMiddleware, which answers text/plain 500 — no machine code
+        # for the frontend and, because nothing on this path logged, no trace
+        # for whoever triages it.
+        logger.warning(
+            "organization authorization denied: code=%s status=%s method=%s path=%s",
+            exc.code,
+            exc.http_status,
+            request.method,
+            request.url.path,
+        )
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={
+                "ok": False,
+                "error": exc.user_message,
+                "data": authz_error_payload(exc),
             },
         )
 

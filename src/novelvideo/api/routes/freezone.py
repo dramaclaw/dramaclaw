@@ -96,6 +96,7 @@ from novelvideo.media_model_request_schema import (
     validate_media_model_params,
     validate_media_request_schema,
 )
+from novelvideo.ports.authz import find_authz_error
 from novelvideo.shared.billing_errors import (
     find_billing_error,
     find_billing_rule_not_configured_error,
@@ -347,6 +348,12 @@ def _handle_task_start_runtime_error(message: str, exc: RuntimeError) -> None:
     billing = find_billing_error(exc)
     if billing is not None:
         raise billing
+    # AuthzError is a RuntimeError subclass, so without this it fell through to
+    # the warning below and callers turned an organization denial into a bare
+    # 503. Re-raise so the app-level handler renders the contracted 4xx.
+    authz_denial = find_authz_error(exc)
+    if authz_denial is not None:
+        raise authz_denial
     logger.warning("%s: %s", message, exc, exc_info=True)
 
 
