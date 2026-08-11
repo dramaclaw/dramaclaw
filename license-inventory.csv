@@ -1692,6 +1692,7 @@ src/novelvideo/workflows/script_writing.py,Elastic-2.0,2026 SuperTale contributo
 tests/compliance/test_generate_p0b_artifacts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/conftest.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/contract/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/contract/conftest.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/contract/test_l014_inline_task_backend_concurrency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/contract/test_m01_auth.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/contract/test_m02_projects.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1942,6 +1943,7 @@ tests/test_task_timeout.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml ag
 tests/test_task_video_global_optimizer_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_video_runner_returned_last_frame.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_tasks_stream_list.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_transport_retry_disabled.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_upload_sanitization.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_video_billing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_video_composer_result_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
