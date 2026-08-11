@@ -106,6 +106,9 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "translate_freezone_text": LeafEgressRule(
         "novelvideo.freezone.text_node", LeafEgress.NETWORK, "EG-18a"
     ),
+    "generate_freezone_text": LeafEgressRule(
+        "novelvideo.freezone.text_node", LeafEgress.NETWORK, "EG-18a"
+    ),
     "generate_freezone_story_script": LeafEgressRule(
         "novelvideo.freezone.text_node", LeafEgress.NETWORK, "EG-18a"
     ),
@@ -1036,7 +1039,12 @@ async def _run_freezone_text_generate_async(
     ensure_freezone_dirs(project_dir)
     prompt = str(payload.get("prompt") or "").strip()
     _update(ctx, "freezone_text_generate", job_id, 0.1, "开始生成文本...")
-    model, generated_text = await generate_freezone_text(prompt=prompt)
+    model, generated_text = await _call_freezone_leaf(
+        envelope,
+        generate_freezone_text,
+        "generate_freezone_text",
+        prompt=prompt,
+    )
     data = {"generated_text": generated_text, "model": model}
     out = outputs_dir(project_dir, "freezone_text_generate") / f"{job_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)

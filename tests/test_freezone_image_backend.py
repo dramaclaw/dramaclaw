@@ -3281,8 +3281,11 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
     ctx = _project_ctx(tmp_path)
     project_dir = ctx.output_dir
 
-    async def fake_generate_freezone_text(*, prompt: str):
+    # 真 leaf 出网，签名里有 egress_context（`freezone/text_node.py`）。个人信封下
+    # 它是 None，但仍会传进来——分发按分类注入，不再看替身的签名长什么样。
+    async def fake_generate_freezone_text(*, prompt: str, egress_context):
         assert prompt == "写一段雨夜重逢"
+        assert egress_context is None
         return "DC-freezone-text-writer-LLM", "雨夜里，他们在旧站台重逢。"
 
     class FakeTaskManager:

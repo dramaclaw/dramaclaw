@@ -386,13 +386,24 @@ async def translate_freezone_text(
     )
 
 
-async def generate_freezone_text(*, prompt: str) -> tuple[str, str]:
-    """根据用户指令生成自由文本，返回逻辑模型名与最终文本。"""
+async def generate_freezone_text(
+    *,
+    prompt: str,
+    egress_context: TrustedEgressContext | None = None,
+) -> tuple[str, str]:
+    """根据用户指令生成自由文本，返回逻辑模型名与最终文本。**会出网**。
+
+    形参与 `model_gateway_request_scope` 都照 `translate_freezone_text` 写：
+    `runners/freezone.py:FREEZONE_LEAF_EGRESS` 判本函数为 NETWORK 的依据就是它。
+    """
     clean_prompt = str(prompt or "").strip()
     if not clean_prompt:
         raise ValueError("prompt is required")
 
-    response = await get_freezone_text_writer_agent().run(clean_prompt)
+    from novelvideo.model_gateway_runtime import model_gateway_request_scope
+
+    with model_gateway_request_scope(egress_context):
+        response = await get_freezone_text_writer_agent().run(clean_prompt)
     generated_text = str(response.output or "").strip()
     if not generated_text:
         raise ValueError("text generation returned empty output")
