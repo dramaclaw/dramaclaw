@@ -2,6 +2,8 @@ import asyncio
 import json
 import threading
 import time
+from datetime import datetime, timezone
+from itertools import count
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,10 +13,14 @@ from fastapi.testclient import TestClient
 
 from novelvideo.project_context import ProjectContext
 from novelvideo.ports import registry
+from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
 from novelvideo.ports.local.project import AllowAllProjectAccess
 from novelvideo.ports.local.tasks import InlineTaskBackend, InMemoryCancellationStore
+from novelvideo.ports.model_credentials import CredentialReference
 from novelvideo.task_backend.cancel import TaskCancelled, is_cancel_requested
+from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
 from novelvideo.task_backend.limits import project_lane_effective_active_limit
+from novelvideo.task_backend.producer import TaskEnvelopeProducer
 from novelvideo.task_backend.queues import QUEUE_KINDS
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_state import TaskStateManager, get_task_manager
@@ -39,6 +45,45 @@ def _ctx(tmp_path: Path) -> ProjectContext:
         runtime_dir=tmp_path / "runtime" / "alice" / "demo",
         is_home_node=True,
     )
+
+
+_M07_NOW = datetime(2026, 8, 3, 4, 5, 6, tzinfo=timezone.utc)
+_M07_SIGNING_KEY = b"m07-task-envelope-test-key-00001"
+
+
+class _M07Authz:
+    async def admit_model_task(self, *, user_id: str, root_task_id: str):
+        return AdmissionContext(
+            requester_user_id=user_id,
+            billing_principal=BillingPrincipal(kind="local", id=user_id),
+            credential=CredentialReference("local", "local-newapi", 1),
+            admission_id=f"admission-{root_task_id}",
+            root_task_id=root_task_id,
+            admitted_at="2026-08-03T04:05:00Z",
+            authz_version=1,
+        )
+
+
+def _signed_inline_backend() -> InlineTaskBackend:
+    """接线口径与 test_l014_inline_task_backend_concurrency.py 一致：真实签名与
+    验签，只 stub authz。裸 InlineTaskBackend() 按设计不执行任何任务——consumer
+    为 None 时 tasks.py 直接判 InvalidTaskEnvelope（失败关闭）。"""
+    authz = _M07Authz()
+    envelope_ids = count(1)
+    keyring = {"m07-v1": _M07_SIGNING_KEY}
+    producer = TaskEnvelopeProducer(
+        authz=authz,
+        active_key_id="m07-v1",
+        keyring=keyring,
+        clock=lambda: _M07_NOW,
+        envelope_id_factory=lambda: f"m07-envelope-{next(envelope_ids)}",
+    )
+    consumer = TaskEnvelopeConsumer(
+        keyring=keyring,
+        authz=authz,
+        clock=lambda: _M07_NOW,
+    )
+    return InlineTaskBackend(producer=producer, consumer=consumer)
 
 
 async def _first_sse_event(response):
@@ -658,7 +703,7 @@ async def test_m07_task_backend_read_and_stream_shapes_are_ce_ee_isomorphic(
 @pytest.mark.asyncio
 async def test_inline_cancel_is_cooperative_runner_stop(tmp_path):
     ctx = _ctx(tmp_path)
-    backend = InlineTaskBackend()
+    backend = _signed_inline_backend()
     task_type = "m07_cooperative_cancel"
     observed_cancel = False
     runner_started = threading.Event()
@@ -721,7 +766,7 @@ async def test_inline_backend_runs_sync_core_outside_active_event_loop(monkeypat
     from novelvideo.ports.local import tasks as local_tasks
 
     ctx = _ctx(tmp_path)
-    backend = InlineTaskBackend()
+    backend = _signed_inline_backend()
     observed = threading.Event()
 
     def fake_run_project_task_core_sync(*args, **kwargs):
