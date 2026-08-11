@@ -97,6 +97,7 @@ import {
   type FreezoneVideoAspectRatio,
 } from "@/api/ops";
 import { awaitTaskCompletion } from "@/api/tasks";
+import { useModelTaskAccess } from "@/lib/model-task-access";
 import { readUrl } from "@/lib/url-params";
 import {
   ProviderModelPicker,
@@ -269,6 +270,9 @@ export function VideoOperationsPanel({
   onSubmit,
 }: VideoOperationsPanelProps) {
     const { t } = useTranslation();
+    // `submitDisabled` already carries the org admission block from VideoNode;
+    // this is only for the button's title, so a blocked member is told why.
+    const modelTaskAccess = useModelTaskAccess();
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const addNode = useCanvasStore((state) => state.addNode);
@@ -841,7 +845,8 @@ export function VideoOperationsPanel({
                     title={
                       selectedModelReferenceError ?? (isGenerating
                         ? t("node.videoNode.submitBusy")
-                        : (mediaRejectionReason ?? t("node.videoNode.submit")))
+                        : (modelTaskAccess.message ?? mediaRejectionReason ??
+                          t("node.videoNode.submit")))
                     }
                     onClick={(event) => {
                       event.stopPropagation();

@@ -251,10 +251,11 @@ export async function getOrgMe(): Promise<OrgMe> {
   }
 }
 
-export function useOrgMe() {
+export function useOrgMe(enabled = true) {
   return useQuery({
     queryKey: queryKeys.orgMe(),
     queryFn: getOrgMe,
     refetchOnWindowFocus: true,
+    enabled,
   });
 }

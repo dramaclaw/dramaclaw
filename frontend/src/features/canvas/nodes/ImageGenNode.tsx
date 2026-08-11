@@ -74,6 +74,7 @@ import {
   useAlbumPendingTotal,
 } from '@/features/canvas/nodes/shared/albumPendingTotals';
 import { downloadUrlAsFile } from '@/lib/browserDownload';
+import { useModelTaskAccess } from '@/lib/model-task-access';
 import {
   CANVAS_NODE_INPUT_BODY_FRAME_CLASS,
   CANVAS_NODE_INPUT_PLACEHOLDER_CLASS,
@@ -920,11 +921,13 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     orderedReferenceUrls.length > selectedModel.referenceImageMax
       ? `该模型最多支持 ${selectedModel.referenceImageMax} 张图片素材`
       : null;
+  const modelTaskAccess = useModelTaskAccess();
   const submitDisabled =
     isGenerating ||
     !selectedModel ||
     !hasEffectivePrompt ||
     imageBillingRuleMissing ||
+    modelTaskAccess.blocked ||
     selectedModelReferenceError !== null;
 
   const handleSubmit = useCallback(async () => {
@@ -1976,7 +1979,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               <button
                 type="button"
                 disabled={submitDisabled}
-                title={selectedModelReferenceError ?? "生成"}
+                title={selectedModelReferenceError ?? modelTaskAccess.message ?? "生成"}
                 onClick={(event) => {
                   event.stopPropagation();
                   void handleSubmit();

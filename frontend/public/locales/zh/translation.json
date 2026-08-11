@@ -4559,5 +4559,17 @@
     "zoom": "缩放",
     "zoomIn": "放大",
     "zoomOut": "缩小"
+  },
+  "modelTaskAccess": {
+    "blocked": {
+      "MODEL_ACCESS_DENIED": "此账号的模型访问资格已禁用，请联系组织管理员。",
+      "ORG_MEMBERSHIP_INACTIVE": "组织成员身份已失效，请联系组织管理员。",
+      "ORG_SUSPENDED": "所属组织已暂停，暂时无法发起生成。",
+      "ORG_CREDENTIAL_MISSING": "组织尚无可用的网关 Key，请联系组织管理员绑定。",
+      "ORG_CREDENTIAL_DISABLED": "组织网关 Key 当前不可用，请联系组织管理员。",
+      "ORG_CREDENTIAL_GATEWAY_MISMATCH": "组织网关 Key 绑定的是另一个网关，请联系组织管理员重新绑定。",
+      "ORG_AUTHZ_STALE": "访问状态已变化，请刷新后重试。",
+      "generic": "当前无法发起生成，请刷新或联系组织管理员。"
+    }
   }
 }

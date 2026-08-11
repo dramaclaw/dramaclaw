@@ -33,6 +33,7 @@ import {
   AssetLibraryModal,
   type AssetLibrarySelection,
 } from '@/features/canvas/ui/AssetLibraryModal';
+import { useModelTaskAccess } from '@/lib/model-task-access';
 import { readUrl } from '@/lib/url-params';
 import { useDetachUpstream } from '@/features/canvas/hooks/useDetachUpstream';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
@@ -333,6 +334,7 @@ function mergeCandidateSourceMeta(
 
 export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageEditNodeProps) => {
   const { t, i18n } = useTranslation();
+  const modelTaskAccess = useModelTaskAccess();
   const updateNodeInternals = useUpdateNodeInternals();
   const [error, setError] = useState<string | null>(null);
 
@@ -634,6 +636,11 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   }, []);
 
   const handleGenerate = useCallback(async () => {
+    // 组织成员没有发起模型任务的资格时不放行：后端会拒，这里先说清楚原因。
+    if (modelTaskAccess.blocked) {
+      if (modelTaskAccess.message) setError(modelTaskAccess.message);
+      return;
+    }
     // 后台没配任何图片模型时不放行：selectedModel 是占位定义，提交出去后端
     // `_resolve_catalog_request` 直接 409，不如在这里说清楚。
     if (imageModelsEmpty) {
@@ -838,6 +845,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     data.modelParams,
     capability,
     imageModelsEmpty,
+    modelTaskAccess,
     selectedAspectRatio.value,
     selectedModel.id,
     selectedModel.expectedDurationMs,
@@ -1515,6 +1523,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
             event.stopPropagation();
             void handleGenerate();
           }}
+          disabled={modelTaskAccess.blocked}
+          title={modelTaskAccess.message ?? undefined}
           variant="primary"
           className={`shrink-0 ${NODE_CONTROL_PRIMARY_BUTTON_CLASS}`}
         >

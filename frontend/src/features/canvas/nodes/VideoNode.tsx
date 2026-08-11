@@ -104,6 +104,7 @@ import { isVideoFile, VIDEO_FILE_ACCEPT } from "@/features/canvas/application/vi
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { toast } from "sonner";
 import { downloadUrlAsFile } from "@/lib/browserDownload";
+import { useModelTaskAccess } from "@/lib/model-task-access";
 import {
   setAlbumPendingTotal,
   useAlbumPendingTotal,
@@ -1903,9 +1904,11 @@ export const VideoNode = memo(
     );
     const videoBillingRuleMissing =
       retryBillingProbe.error instanceof BillingRuleNotConfiguredError;
+    const modelTaskAccess = useModelTaskAccess();
     const submitDisabled =
       isGenerating ||
       videoBillingRuleMissing ||
+      modelTaskAccess.blocked ||
       !selectedVideoModel ||
       selectedModelReferenceError !== null ||
       mediaRejectionReason != null ||

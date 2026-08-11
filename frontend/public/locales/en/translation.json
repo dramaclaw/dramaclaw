@@ -4559,5 +4559,17 @@
     "zoom": "Zoom",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out"
+  },
+  "modelTaskAccess": {
+    "blocked": {
+      "MODEL_ACCESS_DENIED": "Model access is disabled for this account. Contact your organization administrator.",
+      "ORG_MEMBERSHIP_INACTIVE": "Your organization membership is inactive. Contact your organization administrator.",
+      "ORG_SUSPENDED": "This organization is suspended, so generation is unavailable.",
+      "ORG_CREDENTIAL_MISSING": "The organization has no gateway key bound. Ask your organization administrator to bind one.",
+      "ORG_CREDENTIAL_DISABLED": "The organization gateway key is unavailable. Contact your organization administrator.",
+      "ORG_CREDENTIAL_GATEWAY_MISMATCH": "The organization gateway key is bound to a different gateway. Ask your organization administrator to rebind it.",
+      "ORG_AUTHZ_STALE": "Your access changed. Refresh before trying again.",
+      "generic": "Generation is unavailable right now. Refresh or contact your organization administrator."
+    }
   }
 }

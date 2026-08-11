@@ -16,6 +16,7 @@ import { joinUpstreamText } from '@/features/canvas/application/graphContentReso
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { useUpstreamContents } from '@/features/canvas/application/useUpstreamGraph';
+import { useModelTaskAccess } from '@/lib/model-task-access';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 
@@ -54,9 +55,18 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
     .filter((segment) => segment.length > 0)
     .join('\n\n');
   const emotionPrompt = data.emotionPrompt ?? '';
+  // 组织成员没有发起模型任务的资格时不放行。面板与节点本体的重试共用这个 hook，
+  // 所以门控放在这里，两条入口都盖到。
+  const modelTaskAccess = useModelTaskAccess();
 
   const generate = useCallback(async () => {
     if (isGenerating) return;
+    if (modelTaskAccess.blocked) {
+      if (modelTaskAccess.message) {
+        updateNodeData(nodeId, { generationError: modelTaskAccess.message });
+      }
+      return;
+    }
     const trimmed = effectivePrompt;
     if (trimmed.length === 0) return;
     const project = readUrl().project;
@@ -109,6 +119,7 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
     }
   }, [
     isGenerating,
+    modelTaskAccess,
     isMusic,
     data.musicLengthMs,
     data.forceInstrumental,
@@ -120,5 +131,5 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
     updateNodeData,
   ]);
 
-  return { generate, isGenerating, effectivePrompt, isMusic };
+  return { generate, isGenerating, effectivePrompt, isMusic, modelTaskAccess };
 }

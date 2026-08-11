@@ -48,7 +48,8 @@ describe("canvas audio generation credit contract", () => {
       "t('common.billingRuleNotConfiguredShort')",
     );
     expect(panelSource).toContain(
-      "isGenerating || billingRuleMissing || effectivePrompt.length === 0",
+      "isGenerating || billingRuleMissing || modelTaskAccess.blocked",
     );
+    expect(panelSource).toContain("effectivePrompt.length === 0");
   });
 });

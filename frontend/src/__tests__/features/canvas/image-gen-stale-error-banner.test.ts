@@ -131,6 +131,9 @@ vi.mock("@/features/canvas/nodes/useReferenceMentionSync", () => ({
 vi.mock("@/lib/queries/generation-credit-cost", () => ({
   useGenerationCreditCost: () => ({ data: undefined, error: null }),
 }));
+vi.mock("@/lib/model-task-access", () => ({
+  useModelTaskAccess: () => ({ blocked: false, denialReason: null, message: null }),
+}));
 vi.mock("@/features/canvas/nodes/shared/albumPendingTotals", () => ({
   setAlbumPendingTotal: vi.fn(),
   useAlbumPendingTotal: () => 0,

@@ -79,6 +79,7 @@ import {
   NodeGenerationHistory,
   hasCompletedHistoryRecords,
 } from '@/features/canvas/ui/NodeGenerationHistory';
+import { useModelTaskAccess } from '@/lib/model-task-access';
 import { readUrl } from '@/lib/url-params';
 import {
   BillingRuleNotConfiguredError,
@@ -1172,7 +1173,8 @@ function ScriptOperationsPanel({
         (ref.kind === 'video' && Boolean(ref.videoUrl)) ||
         (ref.kind === 'image' && Boolean(ref.thumbUrl)),
     );
-  const submitDisabled = isGenerating || !hasContent;
+  const modelTaskAccess = useModelTaskAccess();
+  const submitDisabled = isGenerating || !hasContent || modelTaskAccess.blocked;
 
   return (
     <OperationPanelShell
@@ -1253,7 +1255,7 @@ function ScriptOperationsPanel({
           <button
             type="button"
             disabled={submitDisabled}
-            title="生成"
+            title={modelTaskAccess.message ?? '生成'}
             onClick={() => void onSubmit()}
             className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
               submitDisabled

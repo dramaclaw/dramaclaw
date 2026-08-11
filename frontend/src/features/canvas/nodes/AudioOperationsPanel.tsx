@@ -111,6 +111,7 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
     generate: handleSubmit,
     effectivePrompt,
     isGenerating,
+    modelTaskAccess,
   } = useAudioGeneration(nodeId, data);
   const speechBillableChars = countBillableTextChars(effectivePrompt);
   const musicLengthMs =
@@ -222,7 +223,8 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
 
   // 文本框为空但引用了非空文本时也允许提交（effectivePrompt 会回退到上游引用）。
   const submitDisabled =
-    isGenerating || billingRuleMissing || effectivePrompt.length === 0;
+    isGenerating || billingRuleMissing || modelTaskAccess.blocked ||
+    effectivePrompt.length === 0;
 
   return (
     <OperationPanelShell
@@ -367,7 +369,7 @@ export function AudioOperationsPanel({ nodeId, data }: AudioOperationsPanelProps
         <button
           type="button"
           disabled={submitDisabled}
-          title="生成"
+          title={modelTaskAccess.message ?? '生成'}
           onClick={handleSubmit}
           className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
             submitDisabled
