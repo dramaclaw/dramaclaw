@@ -75,13 +75,31 @@ def _video_egress_context(value: object):
     return value
 
 
+def _ambient_video_egress_context():
+    """本次请求作用域上绑定的身份，供调用点漏传 `egress_context=` 时兜底。
+
+    两族闸门原先只看 kwargs，于是「忘了穿参数」就等于放行——组织流量拿平台
+    凭据直连上游、记到平台账上，正是这套闸门要防的事。同类闸门在
+    `storage/media_relay.py` 是 fail-closed 的，两处极性本不该相反。
+    只在 kwargs 无上下文时才回落；显式传入的仍然优先，语义不变。
+    """
+
+    from novelvideo.model_gateway_runtime import current_model_gateway_context
+
+    return current_model_gateway_context()
+
+
 def _deny_direct_organization_video(kwargs: dict[str, Any]) -> None:
     context = _video_egress_context(kwargs.get("egress_context"))
+    if context is None:
+        context = _ambient_video_egress_context()
     if context is not None and context.billing_principal.kind != "platform":
         raise VideoEgressError("ORG_EGRESS_DENIED")
 
 
 def _direct_video_context_denied(context: object | None) -> bool:
+    if context is None:
+        context = _ambient_video_egress_context()
     return bool(context is not None and context.billing_principal.kind != "platform")
 
 

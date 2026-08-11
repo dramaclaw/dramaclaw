@@ -202,6 +202,63 @@ async def test_direct_instance_denies_organization_before_transport(
     assert exc_info.value.code == "ORG_EGRESS_DENIED"
 
 
+def test_direct_backends_deny_organization_bound_only_by_request_scope() -> None:
+    """忘了穿 `egress_context=` 时，闸门要回落到请求作用域，而不是放行。
+
+    上面两条既有用例都显式传参，所以它们证明不了「调用点漏传」这个形状。
+    而漏传恰恰是最可能发生的：这两族闸门（`_deny_direct_organization_video`
+    与 `_direct_video_context_denied`）的上下文都只从 kwargs 取，漏一个参数
+    就等于组织流量拿平台凭据直连上游、记到平台账上。
+    """
+    from novelvideo.generators.video_generator import (
+        VideoEgressError,
+        create_video_generator,
+    )
+    from novelvideo.model_gateway_runtime import model_gateway_request_scope
+
+    cases = (
+        ("seedance_fast", {"api_key": "platform-key"}),
+        ("seedance_pro", {"api_key": "platform-key"}),
+        ("seedance_2", {"api_key": "platform-key"}),
+        ("grok_720", {"api_key": "platform-key"}),
+        ("huimeng_seedance-1.0-pro-fast", {"client": object()}),
+    )
+    for backend, kwargs in cases:
+        for kind in ("organization", "local"):
+            with model_gateway_request_scope(_context(kind)):
+                with pytest.raises(VideoEgressError) as exc_info:
+                    create_video_generator(backend, **kwargs)
+                assert exc_info.value.code == "ORG_EGRESS_DENIED", backend
+
+        # 反向对照：平台作用域不受影响，回落不得变成一律拒绝。
+        with model_gateway_request_scope(_context("platform")):
+            assert create_video_generator(backend, **kwargs) is not None
+        assert create_video_generator(backend, **kwargs) is not None
+
+
+@pytest.mark.asyncio
+async def test_direct_instance_denies_organization_bound_only_by_request_scope(
+    tmp_path: Path,
+) -> None:
+    """实例侧同理：`generate()` 漏传 `egress_context=` 也必须被作用域拦下。"""
+    from novelvideo.generators.video_generator import (
+        SeedanceVideoGenerator,
+        VideoEgressError,
+    )
+    from novelvideo.model_gateway_runtime import model_gateway_request_scope
+
+    generator = SeedanceVideoGenerator(model="seedance", api_key="platform-key")
+
+    with model_gateway_request_scope(_context()):
+        with pytest.raises(VideoEgressError) as exc_info:
+            await generator.generate(
+                image_path=str(tmp_path / "missing.png"),
+                prompt="prompt",
+                output_path=str(tmp_path / "out.mp4"),
+            )
+    assert exc_info.value.code == "ORG_EGRESS_DENIED"
+
+
 @pytest.mark.asyncio
 async def test_newapi_submit_poll_fetch_use_exact_credential_and_transitions(
     monkeypatch, tmp_path: Path
