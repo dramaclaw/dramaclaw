@@ -26,16 +26,25 @@ class ServiceEgressDenied(RuntimeError):
 
     code = "ORG_SERVICE_EGRESS_DENIED"
 
-    def __init__(self) -> None:
+    def __init__(self, reason: str | None = None) -> None:
         super().__init__("organization service egress is denied")
+        # Which boundary refused, as a fixed slug — never interpolated request
+        # data. The denial is raised from five places that need five different
+        # fixes (a missing port registration is not a malformed object key),
+        # and the caller has no other way to tell them apart.
+        self.reason = reason
 
 
 class ServiceOperationNotReplayable(RuntimeError):
     """Raised when a durable service operation was already claimed."""
 
+    code = "ORG_SERVICE_OPERATION_NOT_REPLAYABLE"
+
 
 class ServiceInvocationFailed(RuntimeError):
     """Secret-free failure after a claimed storage invocation."""
+
+    code = "ORG_SERVICE_INVOCATION_FAILED"
 
     def __init__(self) -> None:
         super().__init__("service operation failed")
@@ -78,7 +87,7 @@ def validate_tenant_source_url(
     try:
         port = parsed.port
     except ValueError:
-        raise ServiceEgressDenied() from None
+        raise ServiceEgressDenied("source-url") from None
     allowed_hosts = (
         {host.strip().lower() for host in identity.allowed_source_hosts}
         if type(identity) is StorageRelayIdentity
@@ -97,7 +106,7 @@ def validate_tenant_source_url(
         or parsed.password is not None
         or port not in {None, 443}
     ):
-        raise ServiceEgressDenied()
+        raise ServiceEgressDenied("source-url")
     return str(value).strip()
 
 
@@ -160,7 +169,7 @@ class AliyunOSSRelay:
             f"relay/{datetime.now(timezone.utc):%Y%m%d}/{uuid.uuid4().hex}.{ext}"
         )
         if not _is_safe_object_key(key):
-            raise ServiceEgressDenied()
+            raise ServiceEgressDenied("object-key")
         self._bucket.put_object(key, data)
         return self._bucket.sign_url("GET", key, int(ttl), slash_safe=True)
 
@@ -226,7 +235,7 @@ class CloudinaryRelay:
         payload = {"folder": self._folder} if self._folder else {}
         if object_key is not None:
             if not _is_safe_object_key(object_key):
-                raise ServiceEgressDenied()
+                raise ServiceEgressDenied("object-key")
             payload["public_id"] = object_key.rsplit(".", 1)[0]
         url = (
             f"https://api.cloudinary.com/v1_1/{self._cloud_name}/"
@@ -404,7 +413,7 @@ async def relay_tenant_image_bytes(
         or type(object_id) is not str
         or not object_id.strip()
     ):
-        raise ServiceEgressDenied()
+        raise ServiceEgressDenied("identity")
 
     normalized_ext = _normalize_ext(ext)
     object_digest = hashlib.sha256(object_id.encode("utf-8")).hexdigest()
@@ -483,17 +492,17 @@ async def relay_tenant_image_bytes_from_context(
     from novelvideo.ports import get_egress_operation_port
 
     if type(context) is not TrustedEgressContext or not context.is_organization:
-        raise ServiceEgressDenied()
+        raise ServiceEgressDenied("context")
 
     try:
         operations = get_egress_operation_port()
     except Exception:
-        raise ServiceEgressDenied() from None
+        raise ServiceEgressDenied("operation-port") from None
     if not all(
         callable(getattr(operations, method, None))
         for method in ("claim", "mark_completed", "mark_unknown")
     ):
-        raise ServiceEgressDenied()
+        raise ServiceEgressDenied("operation-port")
 
     identity = StorageRelayIdentity(
         credential_id="svc-media-relay",

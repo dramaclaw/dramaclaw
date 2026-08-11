@@ -3623,7 +3623,25 @@ async def _call_newapi_image_api(
                 payload["image"] = await relay_helper(reference_images)
         except Exception as exc:
             if context is not None and context.is_organization:
-                return None, "", "media relay upload failed"
+                # The organization path hides `exc` because an arbitrary
+                # exception may carry a signed URL or a key. The relay's own
+                # three failures are secret-free by construction, though, and
+                # they need three different fixes — a port registration, a
+                # retry, an object-storage policy — so name which one fired
+                # (OI-45). Anything else stays opaque.
+                code = getattr(type(exc), "code", None)
+                reason = getattr(exc, "reason", None)
+                if not isinstance(code, str):
+                    return None, "", "media relay upload failed"
+                logger.warning(
+                    "organization media relay failed: code=%s reason=%s "
+                    "envelope=%s project=%s",
+                    code,
+                    reason or "-",
+                    context.envelope_id,
+                    context.project_id,
+                )
+                return None, "", f"media relay upload failed ({code})"
             return None, "", f"media relay upload failed: {exc}"
         request_path = "/images/edits"
     else:

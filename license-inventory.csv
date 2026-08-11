@@ -1864,6 +1864,7 @@ tests/test_newapi_text_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.
 tests/test_no_nicegui_character_ref_imports.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openapi_edition_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_openresty_upload_limit.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_org_relay_failure_diagnosability.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_oss_presign_builder.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_p0_gray_execution_boundaries.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_p0_gray_shared_egress_seam.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
