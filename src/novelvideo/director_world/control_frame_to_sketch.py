@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.config import OUTPUT_DIR, STATE_DIR, get_sketch_generation_config
+from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.generators.nanobanana_grid import REGEN_MODE_CONFIGS, NanoBananaGridGenerator
 from novelvideo.generators.pool_indexer import save_grid_and_split
 from novelvideo.project_config import load_project_config_file
@@ -385,7 +386,22 @@ async def convert_control_frame_to_sketch(
     require_control_frame_path: bool = False,
     candidate_output_path: str | Path | None = None,
     promote: bool = True,
+    egress_context: TrustedEgressContext | None = None,
 ) -> dict[str, Any]:
+    """把控制帧转成草图。**会出网**：下游经 NanoBananaGridGenerator 请求图像 provider。
+
+    `egress_context` 声明的是这个事实——`freezone.py:FREEZONE_LEAF_EGRESS` 判本函数
+    为 NETWORK 的依据就是它，没有它签名就在谎称「本函数不出网」。
+
+    它**不**继续往 `generate_grid` 里传：那个方法 39 个形参、没有这一项，穿进去等于
+    对整条内部链路做一次签名扫荡。也不需要——身份已由
+    `task_backend/run_core.py:695` 的 `model_gateway_scope_for_runner(envelope)` 在
+    派发处中心绑定，`nanobanana_grid.py:_prepare_organization_image_egress` 在显式
+    参数为 None 时读作用域。这条前提由
+    `tests/test_p0g4i_freezone_leaf_classification.py` 钉住，不是默认成立。
+    """
+
+    del egress_context
     user = (user or "").strip()
     project = (project or "").strip()
     if not user or not project:

@@ -12,6 +12,9 @@ from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.consumer import VerifiedTaskDelivery
 from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 
+# 「这个关键字压根没传进来」的哨兵——与「传了但值是 None」是两件事。
+_NOT_PASSED = object()
+
 
 class _TaskManager:
     def update_progress_for_project(self, *_args, **_kwargs) -> None:
@@ -288,8 +291,12 @@ async def test_freezone_representative_leaves_receive_same_trusted_context(
         received.append(("text", egress_context))
         return "hello", "zh", "en"
 
-    async def video_leaf(*, egress_context, **_kwargs):
-        received.append(("video", egress_context))
+    # 自由区的视频 leaf 全是本地 ffmpeg（EG-20a），没有一个出网的可以做代表。
+    # 它按 OI-47 的分类**不该**收到 context，所以这里断言的是「没传」而不是「传了」。
+    # 原先这个替身写成 `*, egress_context` 硬要一个 context，等于把 OI-47 的错判据
+    # 钉成了期望值——线上正是因此拒掉组织成员的抽帧/放大任务。
+    async def local_video_leaf(**kwargs):
+        received.append(("video", kwargs.get("egress_context", _NOT_PASSED)))
         path = project_dir / "video.mp4"
         path.write_bytes(b"video")
         return path, {}
@@ -312,7 +319,7 @@ async def test_freezone_representative_leaves_receive_same_trusted_context(
         "novelvideo.freezone.text_node.translate_freezone_text", text_leaf
     )
     monkeypatch.setattr(
-        "novelvideo.freezone.jobs.run_freezone_video_upscale", video_leaf
+        "novelvideo.freezone.jobs.run_freezone_video_upscale", local_video_leaf
     )
     monkeypatch.setattr(
         "novelvideo.freezone.audio_node.generate_freezone_audio_eleven_music",
@@ -331,7 +338,13 @@ async def test_freezone_representative_leaves_receive_same_trusted_context(
         "video",
         "audio",
     ]
-    assert all(received_context is context for _media, received_context in received)
+    egressing = [
+        received_context
+        for media, received_context in received
+        if media != "video"
+    ]
+    assert all(received_context is context for received_context in egressing)
+    assert dict(received)["video"] is _NOT_PASSED
 
 
 @pytest.mark.asyncio

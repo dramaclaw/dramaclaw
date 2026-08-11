@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -51,24 +52,109 @@ def _extract_trusted_egress_context(
     return None
 
 
+class LeafEgress(Enum):
+    """leaf 会不会出网。这是分发判据本身，与它的签名长什么样无关。"""
+
+    LOCAL = "local"
+    """纯本地：ffmpeg/subprocess，不出网、不取凭证。组织一律放行。"""
+
+    NETWORK = "network"
+    """出网：必须声明并接收 `egress_context`，由本函数注入。"""
+
+    DENIED = "denied"
+    """已知出网但尚未声明契约：组织下拒。与「未列入表」同待遇，列出来只为留证据。"""
+
+
+@dataclass(frozen=True, slots=True)
+class LeafEgressRule:
+    module: str
+    egress: LeafEgress
+    eg_id: str
+
+
+# 键是**调用点显式给出的名字**，不是函数对象：19 个调用点的 import 都在 runner
+# 函数体内，测试替换掉的是那个局部名，模块级建的对象表必然查不中；`leaf.__name__`
+# 同理（假 leaf 叫别的名字）。名字由调用点提供，替身也就盖不住分类。
+FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
+    # EG-20a `tool.local.restricted`（egress-inventory.md:54，`service/local`）
+    "run_freezone_extract_frames": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
+    "run_freezone_video_upscale": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
+    "run_freezone_video_compose": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
+    "run_freezone_video_erase": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
+    "run_freezone_audio_separate": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
+    # EG-18b `freezone.image.generate`（:52，`gateway-routed`）
+    "run_freezone_gen": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
+    ),
+    "run_freezone_edit": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
+    ),
+    "reverse_prompt_from_image": LeafEgressRule(
+        "novelvideo.freezone.image_node", LeafEgress.NETWORK, "EG-18b"
+    ),
+    # EG-18a `freezone.text.generate` / `.structured`（:51，`gateway-routed`）
+    "translate_freezone_text": LeafEgressRule(
+        "novelvideo.freezone.text_node", LeafEgress.NETWORK, "EG-18a"
+    ),
+    "generate_freezone_story_script": LeafEgressRule(
+        "novelvideo.freezone.text_node", LeafEgress.NETWORK, "EG-18a"
+    ),
+    "generate_freezone_story_script_with_vision": LeafEgressRule(
+        "novelvideo.freezone.text_node", LeafEgress.NETWORK, "EG-18a"
+    ),
+    # EG-15a `audio.tts.gateway`（:46，`gateway-routed`）
+    "generate_freezone_audio_speech": LeafEgressRule(
+        "novelvideo.freezone.audio_node", LeafEgress.NETWORK, "EG-15a"
+    ),
+    # 自由区 eleven music 未登记进 egress-inventory，见 OI-56。
+    "generate_freezone_audio_eleven_music": LeafEgressRule(
+        "novelvideo.freezone.audio_node", LeafEgress.NETWORK, "EG-未登记"
+    ),
+    # EG-09a/09b：经 NanoBananaGridGenerator 出图，newapi 走网关，其余 provider 在
+    # `nanobanana_grid.py:141` 对组织抛 ORG_EGRESS_DENIED。
+    "convert_control_frame_to_sketch": LeafEgressRule(
+        "novelvideo.director_world.control_frame_to_sketch",
+        LeafEgress.NETWORK,
+        "EG-09a",
+    ),
+    # 以下两个真出网（`jobs.py:190-199` / `:1604` 的 call_freezone_vision_model）却
+    # 没有 egress_context 形参，组织下无法安全放行，维持拒绝。见 OI-56。
+    "run_freezone_mask_edit": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.DENIED, "EG-18b"
+    ),
+    "run_freezone_analyze_shots": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.DENIED, "EG-18b"
+    ),
+}
+
+
 def _call_freezone_leaf(
     envelope: dict[str, Any],
     leaf,
+    leaf_name: str,
     /,
     **kwargs: Any,
 ):
+    """按 leaf 是否出网分发。`leaf_name` 必填——漏传是 TypeError，不是静默放行。"""
+
     context = _extract_trusted_egress_context(envelope)
-    try:
-        parameters = inspect.signature(leaf).parameters.values()
-        accepts_context = any(
-            parameter.name == "egress_context"
-            or parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in parameters
-        )
-    except (TypeError, ValueError):
-        accepts_context = False
-    if accepts_context:
-        return leaf(egress_context=context, **kwargs)
+    rule = FREEZONE_LEAF_EGRESS.get(leaf_name)
+    if rule is not None:
+        if rule.egress is LeafEgress.LOCAL:
+            return leaf(**kwargs)
+        if rule.egress is LeafEgress.NETWORK:
+            return leaf(egress_context=context, **kwargs)
+    # 未分类与 DENIED 同待遇：默认 fail-closed。
     if context is not None and context.is_organization:
         raise InvalidTaskEnvelope() from None
     return leaf(**kwargs)
@@ -175,6 +261,7 @@ async def _run_freezone_gen_async(
         _call_freezone_leaf(
             envelope,
             run_freezone_gen,
+            "run_freezone_gen",
             project_dir=project_dir,
             job_id=job_id,
             prompt=str(payload.get("prompt") or ""),
@@ -232,6 +319,7 @@ async def _run_freezone_edit_async(
         _call_freezone_leaf(
             envelope,
             run_freezone_edit,
+            "run_freezone_edit",
             project_dir=project_dir,
             job_id=job_id,
             prompt=str(payload.get("prompt") or ""),
@@ -289,6 +377,7 @@ async def _run_freezone_mask_edit_async(
     out_path = await _call_freezone_leaf(
         envelope,
         run_freezone_mask_edit,
+        "run_freezone_mask_edit",
         project_dir=project_dir,
         job_id=job_id,
         base_path=str(payload["base_path"]),
@@ -326,6 +415,7 @@ async def _run_freezone_extract_async(
     frame_paths = await _call_freezone_leaf(
         envelope,
         run_freezone_extract_frames,
+        "run_freezone_extract_frames",
         project_dir=project_dir,
         job_id=job_id,
         video_path=Path(str(payload["video_path"])),
@@ -364,6 +454,7 @@ async def _run_freezone_analyze_async(
     result = await _call_freezone_leaf(
         envelope,
         run_freezone_analyze_shots,
+        "run_freezone_analyze_shots",
         project_dir=project_dir,
         job_id=job_id,
         frame_paths=frame_paths,
@@ -407,6 +498,7 @@ async def _run_freezone_video_story_async(
     frame_paths = await _call_freezone_leaf(
         envelope,
         run_freezone_extract_frames,
+        "run_freezone_extract_frames",
         project_dir=project_dir,
         job_id=job_id,
         video_path=Path(str(payload["video_path"])),
@@ -427,6 +519,7 @@ async def _run_freezone_video_story_async(
     result = await _call_freezone_leaf(
         envelope,
         run_freezone_analyze_shots,
+        "run_freezone_analyze_shots",
         project_dir=project_dir,
         job_id=job_id,
         frame_paths=[str(path) for path in frame_paths],
@@ -610,6 +703,7 @@ async def _run_mainline_director_control_sketch_async(
         _call_freezone_leaf(
             envelope,
             convert_control_frame_to_sketch,
+            "convert_control_frame_to_sketch",
             user=ctx.owner_username,
             project=ctx.project_name,
             episode=episode,
@@ -704,6 +798,7 @@ async def _run_freezone_video_erase_async(
     output_path, meta = await _call_freezone_leaf(
         envelope,
         run_freezone_video_erase,
+        "run_freezone_video_erase",
         project_dir=project_dir,
         job_id=job_id,
         source_path=str(payload["source_path"]),
@@ -741,6 +836,7 @@ async def _run_freezone_video_upscale_async(
     output_path, meta = await _call_freezone_leaf(
         envelope,
         run_freezone_video_upscale,
+        "run_freezone_video_upscale",
         project_dir=project_dir,
         job_id=job_id,
         source_path=str(payload["source_path"]),
@@ -776,6 +872,7 @@ async def _run_freezone_audio_separate_async(
     outputs = await _call_freezone_leaf(
         envelope,
         run_freezone_audio_separate,
+        "run_freezone_audio_separate",
         project_dir=project_dir,
         job_id=job_id,
         source_path=str(payload["source_path"]),
@@ -823,6 +920,7 @@ async def _run_freezone_video_compose_async(
     output_path = await _call_freezone_leaf(
         envelope,
         run_freezone_video_compose,
+        "run_freezone_video_compose",
         project_dir=project_dir,
         job_id=job_id,
         title=str(payload.get("title") or ""),
@@ -884,6 +982,7 @@ async def _run_freezone_text_translate_async(
     translated_text, source_language, target_language = await _call_freezone_leaf(
         envelope,
         translate_freezone_text,
+        "translate_freezone_text",
         text=str(payload.get("text") or ""),
         node_type=node_type,
     )
@@ -959,6 +1058,7 @@ async def _run_freezone_story_script_async(
         frame_paths = await _call_freezone_leaf(
             envelope,
             run_freezone_extract_frames,
+            "run_freezone_extract_frames",
             project_dir=project_dir,
             job_id=job_id,
             video_path=Path(video_path),
@@ -985,6 +1085,7 @@ async def _run_freezone_story_script_async(
         data = await _call_freezone_leaf(
             envelope,
             generate_freezone_story_script_with_vision,
+            "generate_freezone_story_script_with_vision",
             frame_paths=[str(path) for path in frame_paths],
             character_image_paths=character_image_paths,
             source_text=source_text,
@@ -997,6 +1098,7 @@ async def _run_freezone_story_script_async(
         data = await _call_freezone_leaf(
             envelope,
             generate_freezone_story_script,
+            "generate_freezone_story_script",
             source_text=source_text,
             prompt=prompt,
             model=str(payload.get("model") or ""),
@@ -1057,6 +1159,7 @@ async def _run_freezone_image_reverse_prompt_async(
     prompt = await _call_freezone_leaf(
         envelope,
         reverse_prompt_from_image,
+        "reverse_prompt_from_image",
         image_path=source_path,
         instruction=str(payload.get("instruction") or ""),
     )
@@ -1132,6 +1235,7 @@ async def _run_freezone_audio_speech_async(
         result = await _call_freezone_leaf(
             envelope,
             generate_freezone_audio_speech,
+            "generate_freezone_audio_speech",
             store=store,
             username=ctx.owner_username,
             project=ctx.project_name,
@@ -1197,6 +1301,7 @@ async def _run_freezone_audio_eleven_music_async(
     result = await _call_freezone_leaf(
         envelope,
         generate_freezone_audio_eleven_music,
+        "generate_freezone_audio_eleven_music",
         project_dir=project_dir,
         job_id=job_id,
         prompt=str(payload.get("input") or ""),
