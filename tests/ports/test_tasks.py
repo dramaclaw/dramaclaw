@@ -186,6 +186,52 @@ async def test_inline_consumer_precedes_run_core_and_runner(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_inline_without_consumer_fails_closed_before_running_core(
+    monkeypatch, tmp_path
+):
+    """No verifier, no execution — and say so, rather than dropping the task.
+
+    ``InlineTaskBackend.__init__`` takes ``consumer=None`` because tests enter
+    from either end of the pipe, but the only production construction site
+    (``ports/local/__init__.py:128``) always passes both. So the guard in
+    ``_run_inline`` exists for one purpose: an unverified delivery must not
+    reach ``run_project_task_core_sync``.
+
+    Nothing was watching it. Replacing the guard with a bare ``return`` — fail
+    open, task silently dropped — left the whole CE suite green, which means a
+    later refactor could have deleted it, or worse, let the core run without a
+    verified envelope, with no test objecting.
+
+    The consumer-less construction below deliberately mirrors the shape that
+    made two m07 tests hang in OI-32. There it was an accident that read as
+    flakiness; here it is the subject.
+    """
+
+    ctx = _ctx(tmp_path)
+    submitted = []
+    backend = InlineTaskBackend(producer=FakeProducer())
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1
+    )
+    job = submitted[0]
+
+    ran: list = []
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks.run_project_task_core_sync",
+        lambda *args, **kwargs: ran.append(args),
+    )
+
+    await backend._run_inline(backend._lanes["default"], job)
+
+    assert ran == []
+    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
+    assert state.status == "failed"
+    assert state.metadata["error_code"] == "TASK_ENVELOPE_INVALID"
+
+
+@pytest.mark.asyncio
 async def test_inline_task_backend_returns_immediately_and_completes_in_background(
     tmp_path,
 ):
