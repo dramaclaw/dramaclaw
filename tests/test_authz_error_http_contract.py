@@ -27,10 +27,10 @@ from novelvideo.ports.authz import (
     authz_error_user_message,
 )
 
-# Mirrors novelvideo_ee/authz/admission_repository.py::_REJECTION_CODES plus the
-# two codes raised outside the admission definer (config.py's gray switch and
-# the credential port's decrypt failure). EE is not importable from CE tests, so
-# this set is restated rather than imported.
+# Mirrors the enterprise admission repository's `_REJECTION_CODES` plus the two
+# codes raised outside the admission definer (the gray-switch config and the
+# credential port's decrypt failure). That package is not importable from this
+# repo, so the set is restated here rather than imported.
 CONTRACTED_STATUS = {
     "ORG_CONTEXT_REQUIRED": 403,
     "ORG_MEMBERSHIP_INACTIVE": 403,

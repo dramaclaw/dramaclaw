@@ -13,7 +13,7 @@ import { join } from "node:path";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { http, HttpResponse, type JsonBodyType } from "msw";
 import type { PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -70,7 +70,7 @@ const noKeyBound = {
   denial_reason: "ORG_CREDENTIAL_MISSING",
 };
 
-function respondWith(body: unknown, status = 200) {
+function respondWith(body: JsonBodyType, status = 200) {
   const seen: string[] = [];
   server.use(
     http.get("*/api/v1/org/me", ({ request }) => {
