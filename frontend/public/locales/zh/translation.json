@@ -479,6 +479,35 @@
         "days": "{{count}} 天前"
       }
     },
+    "canvasOutline": {
+      "title": "画布元素",
+      "groupMembers": "{{count}} 个节点",
+      "empty": "当前画布还没有节点",
+      "duplicate": "复制",
+      "rename": "重命名",
+      "download": "下载",
+      "locate": "定位到节点",
+      "moreActions": "更多操作",
+      "matched": "匹配 {{count}} 个",
+      "expandAll": "展开全部分组",
+      "collapseAll": "收起全部分组",
+      "search": "搜索节点",
+      "closeSearch": "关闭搜索",
+      "filter": "按类型筛选",
+      "noMatch": "没有匹配的节点",
+      "types": {
+        "all": "全部",
+        "text": "文本",
+        "image": "图片",
+        "video": "视频",
+        "storyboard": "分镜",
+        "beat": "镜头上下文",
+        "audio": "音频",
+        "script": "脚本",
+        "world": "3D / 全景",
+        "skill": "技能"
+      }
+    },
     "projections": {
       "staleCount": "{{count}} 个主线投影有更新",
       "activeCount": "{{count}} 个主线投影",
@@ -3564,6 +3593,8 @@
         "textToMusicGen": "文字生成音乐"
       },
       "placeholder": "写下故事、场景或角色灵感。例如：雨夜旧车站里，一封迟到的信改变了所有人的选择。",
+      "generatePlaceholder": "描述你想生成的故事、场景、角色设定、对白或创作提示词…",
+      "generateText": "AI 生成文本",
       "modelPickerHint": "选择模型",
       "submit": "提交",
       "translate": "翻译（中英文互译）"
@@ -4223,6 +4254,7 @@
           "EPISODE_PROP_PLANNER": "规划本集道具",
           "SCENE_BUILD": "解析并完善场景描述",
           "FREEZONE_TRANSLATION": "文本提示词中英互译",
+          "FREEZONE_TEXT_WRITER": "AI 文本生成",
           "FREEZONE_STORY_SCRIPT": "故事脚本生成",
           "FREEZONE_VISION": "图片与视频内容解析",
           "STYLE_ANALYZER": "从参考图分析自定义风格",

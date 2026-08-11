@@ -8,6 +8,7 @@ import pytest
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.api.schemas import FreezoneStoryScriptGenerateData, FreezoneStoryScriptRow
 from novelvideo.freezone.text_node import (
+    FREEZONE_TEXT_WRITER_MODEL,
     FREEZONE_TRANSLATION_MODEL,
     FREEZONE_TRANSLATION_PROVIDER,
     FreezoneTranslationResult,
@@ -16,6 +17,8 @@ from novelvideo.freezone.text_node import (
     build_freezone_story_script_task,
     build_freezone_translation_task,
     build_freezone_video_story_script_task,
+    create_freezone_text_writer_agent,
+    generate_freezone_text,
     generate_freezone_story_script_with_vision,
     translate_freezone_text,
 )
@@ -112,6 +115,56 @@ def test_translation_defaults_use_newapi_gemini_flash() -> None:
     assert FREEZONE_TRANSLATION_MODEL == "DC-freezone-translator-LLM"
 
 
+def test_text_writer_uses_plain_text_agent_without_structured_output_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import novelvideo.config as config
+    import novelvideo.freezone.text_node as text_node
+
+    agent_kwargs: dict[str, object] = {}
+
+    class FakeAgent:
+        def __init__(self, model, **kwargs):
+            agent_kwargs["model"] = model
+            agent_kwargs.update(kwargs)
+
+    monkeypatch.setattr(
+        config,
+        "get_newapi_text_pydantic_model",
+        lambda model_env, default_model: (model_env, default_model),
+    )
+    monkeypatch.setattr(text_node, "Agent", FakeAgent)
+
+    create_freezone_text_writer_agent()
+
+    assert agent_kwargs["model"] == (
+        "FREEZONE_TEXT_WRITER_MODEL",
+        "DC-freezone-text-writer-LLM",
+    )
+    assert "model_settings" not in agent_kwargs
+
+
+@pytest.mark.asyncio
+async def test_generate_freezone_text_returns_configured_model_and_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeAgent:
+        async def run(self, prompt: str):
+            assert prompt == "写一段雨夜重逢的短故事"
+
+            class Response:
+                output = "雨落在旧车站的铁轨上，她终于等到了那班迟来的列车。"
+
+            return Response()
+
+    monkeypatch.setattr("novelvideo.freezone.text_node.get_freezone_text_writer_agent", FakeAgent)
+
+    model, text = await generate_freezone_text(prompt="  写一段雨夜重逢的短故事  ")
+
+    assert model == FREEZONE_TEXT_WRITER_MODEL == "DC-freezone-text-writer-LLM"
+    assert text.startswith("雨落在旧车站")
+
+
 def test_build_freezone_story_script_task_mentions_required_columns() -> None:
     task = build_freezone_story_script_task(
         source_text="沈昭昭在深夜办公室醒来。",
@@ -161,6 +214,39 @@ async def test_freezone_text_translate_route_returns_task_id(
     assert result["data"]["task_type"] == "freezone_text_translate"
     assert captured["text"] == "电影感特写，雨夜街头"
     assert captured["node_type"] == "image"
+
+
+@pytest.mark.asyncio
+async def test_freezone_text_generate_route_returns_task_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    _patch_project_resolution(monkeypatch, project_dir)
+    captured: dict[str, object] = {}
+
+    def _fake_start_text_generate_task(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        freezone_routes, "_start_freezone_text_generate_task", _fake_start_text_generate_task
+    )
+
+    result = await freezone_routes.freezone_text_generate(
+        project="58",
+        body=freezone_routes.FreezoneTextGenerateRequest(
+            prompt="写一段雨夜重逢的短故事",
+            canvas_id="canvas_a",
+            node_id="node_text",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["task_type"] == "freezone_text_generate"
+    assert captured["prompt"] == "写一段雨夜重逢的短故事"
+    assert captured["canvas_id"] == "canvas_a"
+    assert captured["node_id"] == "node_text"
 
 
 @pytest.mark.asyncio
@@ -674,6 +760,39 @@ async def test_freezone_text_translate_job_result_returns_json_payload(
     assert result["ok"] is True
     assert result["data"]["translated_text"] == "Today is Monday"
     assert result["data"]["target_language"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_freezone_text_generate_job_result_returns_json_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    job_id = "textgenerate1"
+    out = project_dir / "freezone" / "_outputs" / "freezone_text_generate" / f"{job_id}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_text": "雨夜旧车站里，一封迟到的信改变了所有人的选择。",
+        "model": "DC-freezone-text-writer-LLM",
+    }
+    out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    class FakeManager:
+        def get_task(self, *args, **kwargs):
+            return None
+
+    _patch_project_resolution(monkeypatch, project_dir)
+    monkeypatch.setattr(freezone_routes, "get_task_manager", lambda: FakeManager())
+
+    result = await freezone_routes.freezone_job_result(
+        project="58",
+        task_type="freezone_text_generate",
+        job_id=job_id,
+        user={"username": "admin"},
+    )
+
+    assert result["ok"] is True
+    assert result["data"] == payload
 
 
 @pytest.mark.asyncio

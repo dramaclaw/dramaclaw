@@ -743,6 +743,13 @@ def _freezone_task_cases(client: TestClient, assets: SimpleNamespace):
             ),
         ),
         (
+            "freezone_text_generate",
+            client.post(
+                f"/api/v1/projects/{p}/freezone/text/generate",
+                json={"prompt": "写一段雨夜重逢的短故事"},
+            ),
+        ),
+        (
             "freezone_story_script",
             client.post(
                 f"/api/v1/projects/{p}/freezone/text/story-script",
@@ -773,7 +780,7 @@ def test_m06_freezone_task_backend_responses_are_ce_ee_isomorphic(
     client, task_backend, _task_manager, _project_dir, assets, _store = m06_client_factory(backend)
 
     cases = _freezone_task_cases(client, assets)
-    assert len(cases) == 28
+    assert len(cases) == 29
     for task_type, response in cases:
         assert response.status_code == 200, response.text
         _assert_freezone_http_task_shape(response.json(), task_type=task_type)
@@ -819,6 +826,7 @@ def test_m06_freezone_task_backend_responses_are_ce_ee_isomorphic(
         "freezone_video_gen",
         "freezone_video_compose",
         "freezone_text_translate",
+        "freezone_text_generate",
         "freezone_story_script",
         "freezone_audio_speech",
         "freezone_audio_eleven_music",

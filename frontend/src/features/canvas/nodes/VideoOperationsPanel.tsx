@@ -892,10 +892,11 @@ interface GenModeSelectProps {
   onChange: (next: VideoGenMode) => void;
 }
 
-function videoModeDisabledReason(
+export function videoModeDisabledReason(
   mode: VideoGenMode,
   modelId: string | null | undefined,
   upstreamCounts: { videos: number; images: number; audios: number },
+  supportedModes?: string[],
 ): string | null {
   // HappyHorse 的模式可用性完全由上游节点类型决定（文档 4 大功能）：
   //   文生视频  — 仅无上游时可用
@@ -937,8 +938,27 @@ function videoModeDisabledReason(
         return "HappyHorse 不支持该模式";
     }
   }
+  // 「视频编辑」以上游视频**为输入**，不能被下面那条「有视频就只剩全能参考」连坐。
+  // 它和「全能参考」是仅有的两个消费视频素材的模式 —— 提交守卫
+  // `videoSubmitMediaRejectionReason` 早就写着 `mode !== "allReference" && mode !==
+  // "videoEdit"`，这里漏了同一条豁免。视频编辑一度是 HappyHorse 专属（见
+  // `isVideoModeSupportedByModel` 的注释），后来目录里的 seedance-2.0-mini 这类模型
+  // 也声明了 `video_edit`，tab 露出来了、却被这条旧规则一并置灰，于是「接上视频想切
+  // 视频编辑」被自己挡死。
+  const model = supportedModes?.length
+    ? { apiModel: modelId ?? undefined, supportedModes }
+    : modelId;
+  const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);
+  if (mode === "videoEdit") {
+    if (!supportsVideoEdit) return "该模型不支持「视频编辑」";
+    if (upstreamCounts.videos === 0) return "需要连接视频节点（1个）";
+    if (upstreamCounts.videos > 1) return "「视频编辑」仅支持连接 1 个视频节点";
+    return null;
+  }
   if (upstreamCounts.videos > 0 && mode !== "allReference") {
-    return "上游含视频素材时只能用「全能参考」";
+    return supportsVideoEdit
+      ? "上游含视频素材时只能用「全能参考」或「视频编辑」"
+      : "上游含视频素材时只能用「全能参考」";
   }
   if (
     mode === "textToVideo" &&
@@ -1054,7 +1074,12 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
         >
           {visibleTabs.map((tab) => {
             const isActive = tab.key === value;
-            const disabledReason = videoModeDisabledReason(tab.key, modelId, upstreamCounts);
+            const disabledReason = videoModeDisabledReason(
+              tab.key,
+              modelId,
+              upstreamCounts,
+              supportedModes,
+            );
             const isDisabled = disabledReason != null && !isActive;
             // 禁用按钮在多数浏览器里不触发 mouse 事件，hover 提示挂在外层 div 上；
             // 提示气泡定位到菜单右侧，与设计稿一致。

@@ -78,6 +78,7 @@ _TASK_TYPE_LABELS = {
     "freezone_audio_separate": "音频分离",
     "freezone_video_compose": "视频合成",
     "freezone_text_translate": "字幕翻译",
+    "freezone_text_generate": "AI 文本生成",
     "freezone_story_script": "生成故事脚本",
     "freezone_script_to_video_plan": "脚本转视频计划",
     "freezone_audio_speech": "生成语音",

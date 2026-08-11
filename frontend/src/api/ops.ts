@@ -155,6 +155,7 @@ export interface FreezoneJobRef {
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
     | "freezone_image_reverse_prompt"
+    | "freezone_text_generate"
     | "freezone_text_translate"
     | "freezone_story_script"
     | "freezone_analyze_video_story"
@@ -1938,6 +1939,7 @@ export async function fetchFreezoneJobResult(
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
     | "freezone_image_reverse_prompt"
+    | "freezone_text_generate"
     | "freezone_text_translate"
     | "freezone_story_script"
     | "freezone_analyze_video_story"
@@ -2190,6 +2192,40 @@ export async function createFreezoneAudioVoice(
 }
 
 // /freezone/text/translate ------------------------------------------------ //
+
+export interface FreezoneTextGeneratePayload extends FreezoneNodeContext {
+  prompt: string;
+}
+
+export async function submitFreezoneTextGenerate(
+  project: string,
+  payload: FreezoneTextGeneratePayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/text/generate`,
+    {
+      method: "POST",
+      json: {
+        prompt: payload.prompt,
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
+export interface FreezoneTextGenerateResult {
+  generated_text: string;
+  model: string;
+}
+
+export async function fetchFreezoneTextGenerateResult(
+  project: string,
+  jobId: string,
+): Promise<FreezoneTextGenerateResult> {
+  return await apiCall<FreezoneTextGenerateResult>(
+    `projects/${encodeURIComponent(project)}/freezone/jobs/freezone_text_generate/${encodeURIComponent(jobId)}/result`,
+  );
+}
 
 export type FreezoneTextTranslateNodeType =
   | "generic"

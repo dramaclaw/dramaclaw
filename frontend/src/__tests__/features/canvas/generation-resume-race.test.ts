@@ -22,6 +22,7 @@ import {
 
 const listTasks = vi.fn();
 const awaitTaskCompletion = vi.fn();
+const fetchFreezoneTextGenerateResult = vi.fn();
 
 vi.mock("@/api/tasks", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/tasks")>();
@@ -36,6 +37,7 @@ vi.mock("@/api/ops", () => ({
   fetchFreezoneJobResult: vi.fn().mockResolvedValue({ url: "out.png" }),
   fetchFreezoneReversePromptResult: vi.fn(),
   fetchFreezoneStoryScriptResult: vi.fn(),
+  fetchFreezoneTextGenerateResult: (...args: unknown[]) => fetchFreezoneTextGenerateResult(...args),
 }));
 
 const TASK_KEY = "freezone_image:job-9";
@@ -51,6 +53,21 @@ function resumableNode(extra: Record<string, unknown> = {}): CanvasNode {
       generationTaskKey: TASK_KEY,
       generationTaskType: "freezone_image",
       generationTaskJobId: "job-9",
+      ...extra,
+    },
+  } as unknown as CanvasNode;
+}
+
+function resumableTextNode(extra: Record<string, unknown> = {}): CanvasNode {
+  return {
+    id: "text-1",
+    type: CANVAS_NODE_TYPES.textAnnotation,
+    position: { x: 0, y: 0 },
+    data: {
+      isGenerating: true,
+      generationTaskKey: "freezone_text_generate:text-job-1",
+      generationTaskType: "freezone_text_generate",
+      generationTaskJobId: "text-job-1",
       ...extra,
     },
   } as unknown as CanvasNode;
@@ -138,6 +155,36 @@ describe("恢复路径：列表漏项不等于任务不存在", () => {
 
     expect(listTasks).toHaveBeenCalledTimes(1);
     expect(awaitTaskCompletion).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("恢复路径：文本任务按任务类型取回结果", () => {
+  it("刷新后使用文本生成结果接口恢复正文和模型", async () => {
+    const taskKey = "freezone_text_generate:text-job-1";
+    listTasks.mockResolvedValue([{ task_key: taskKey, status: "running" }]);
+    awaitTaskCompletion.mockResolvedValue({
+      task_key: taskKey,
+      status: "completed",
+      result: { output_format: "json" },
+    });
+    fetchFreezoneTextGenerateResult.mockResolvedValue({
+      generated_text: "雨落在旧车站的铁轨上。",
+      model: "DC-freezone-text-writer-LLM",
+    });
+    const updateNodeData = vi.fn();
+
+    await resumeNodeGeneration({
+      node: resumableTextNode(),
+      projectId: "demo",
+      updateNodeData,
+    });
+
+    expect(fetchFreezoneTextGenerateResult).toHaveBeenCalledWith("demo", "text-job-1");
+    const calls = updateNodeData.mock.calls;
+    const patch = calls[calls.length - 1]?.[1] as Record<string, unknown>;
+    expect(patch.content).toBe("雨落在旧车站的铁轨上。");
+    expect(patch.model).toBe("DC-freezone-text-writer-LLM");
+    expect(patch.isGenerating).toBe(false);
   });
 });
 

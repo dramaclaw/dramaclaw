@@ -64,6 +64,7 @@ from novelvideo.api.schemas import (
     FreezoneStoryScriptCharacterRef,
     FreezoneStoryScriptGenerateRequest,
     FreezoneTemplateEditRequest,
+    FreezoneTextGenerateRequest,
     FreezoneTextTranslateRequest,
     FreezoneThreeDViewerScreenshotRequest,
     FreezoneUpscaleRequest,
@@ -236,6 +237,7 @@ from novelvideo.freezone.slots import (
 )
 from novelvideo.freezone.text_node import (
     bind_story_script_assets,
+    generate_freezone_text,
     generate_freezone_story_script,
     generate_freezone_story_script_with_vision,
     translate_freezone_text,
@@ -5561,6 +5563,10 @@ def _text_translate_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_text_translate") / f"{job_id}.json"
 
 
+def _text_generate_output_path(project_dir: Path, job_id: str) -> Path:
+    return outputs_dir(project_dir, "freezone_text_generate") / f"{job_id}.json"
+
+
 def _freezone_history_preview(text: str, limit: int = 240) -> str:
     compact = " ".join(str(text or "").split())
     if len(compact) <= limit:
@@ -5727,6 +5733,166 @@ def _start_freezone_text_translate_task(
             )
 
     asyncio.create_task(_runner())
+
+
+def _start_freezone_text_generate_task(
+    *,
+    username: str,
+    project: str,
+    project_dir: Path,
+    job_id: str,
+    prompt: str,
+    canvas_id: str | None = None,
+    node_id: str | None = None,
+) -> None:
+    task_type = "freezone_text_generate"
+    task_manager = get_task_manager()
+    metadata = {
+        "job_id": job_id,
+        "canvas_id": canvas_id or "",
+        "node_id": node_id or "",
+    }
+    task_manager.create_task(
+        task_type,
+        username,
+        project,
+        episode=0,
+        scope=job_id,
+        status="starting",
+        metadata=metadata,
+    )
+
+    async def _runner() -> None:
+        try:
+            task_manager.update_progress(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                progress=0.1,
+                current_task="generating_text",
+                logs=["开始生成文本"],
+            )
+            model, generated_text = await generate_freezone_text(prompt=prompt)
+            payload = {"generated_text": generated_text, "model": model}
+            out = _text_generate_output_path(project_dir, job_id)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            history_record = _record_freezone_node_history(
+                project_dir=project_dir,
+                canvas_id=canvas_id,
+                node_id=node_id,
+                task_type=task_type,
+                username=username,
+                project=project,
+                job_id=job_id,
+                status="completed",
+                media_type="text",
+                input_preview=_freezone_history_preview(prompt),
+                prompt=prompt,
+                model=model,
+                result={"output_format": "json", **payload},
+            )
+            result = {"output_format": "json", **payload}
+            if history_record:
+                result["generation_history_record"] = history_record
+            task_manager.complete_task(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                result=result,
+                current_task="completed",
+                logs=["文本生成完成"],
+                metadata=metadata,
+            )
+        except Exception as exc:
+            _record_freezone_node_history(
+                project_dir=project_dir,
+                canvas_id=canvas_id,
+                node_id=node_id,
+                task_type=task_type,
+                username=username,
+                project=project,
+                job_id=job_id,
+                status="failed",
+                media_type="text",
+                input_preview=_freezone_history_preview(prompt),
+                prompt=prompt,
+                error=str(exc),
+            )
+            task_manager.fail_task(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                error=str(exc),
+                current_task="failed",
+                logs=[f"错误: {exc}"],
+                metadata=metadata,
+            )
+
+    asyncio.create_task(_runner())
+
+
+@router.post(
+    "/projects/{project}/freezone/text/generate",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_TEXT],
+)
+async def freezone_text_generate(
+    project: str,
+    body: FreezoneTextGenerateRequest,
+    user: dict = Depends(get_api_user),
+):
+    """文本节点：根据用户要求生成可继续编辑的自由文本。"""
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    prompt = body.prompt.strip()
+    if not prompt:
+        raise HTTPException(400, "prompt is required")
+
+    try:
+        job_id = _new_job_id()
+        if ctx is not None:
+            return await _enqueue_freezone_background_job(
+                ctx=ctx,
+                project_dir=project_dir,
+                task_type="freezone_text_generate",
+                job_id=job_id,
+                payload={
+                    "prompt": prompt,
+                    "canvas_id": body.canvas_id or "",
+                    "node_id": body.node_id or "",
+                    "billing": {
+                        "billable_chars": count_billable_text_chars(prompt),
+                        "operation": "text_generate",
+                    },
+                },
+            )
+        _start_freezone_text_generate_task(
+            username=username,
+            project=project_name,
+            project_dir=project_dir,
+            job_id=job_id,
+            prompt=prompt,
+            canvas_id=body.canvas_id or None,
+            node_id=body.node_id or None,
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("failed to start text generation task", exc)
+        raise HTTPException(503, f"failed to start text generation task: {exc}") from exc
+
+    return _accepted_job_response(
+        task_type="freezone_text_generate",
+        username=username,
+        project=project_name,
+        job_id=job_id,
+    )
 
 
 @router.post(
@@ -8877,6 +9043,7 @@ async def freezone_job_result(
         "freezone_video_compose",
         "freezone_image_reverse_prompt",
         "freezone_image_to_3gs",
+        "freezone_text_generate",
         "freezone_text_translate",
         "freezone_story_script",
     ],
@@ -9022,6 +9189,8 @@ async def freezone_job_result(
         out = _video_compose_output_path(project_dir, job_id)
     if task_type == "freezone_text_translate":
         out = _text_translate_output_path(project_dir, job_id)
+    if task_type == "freezone_text_generate":
+        out = _text_generate_output_path(project_dir, job_id)
     if task_type == "freezone_story_script":
         out = _story_script_output_path(project_dir, job_id)
     if task_type in {"freezone_analyze", "freezone_video_story"}:
@@ -9076,6 +9245,7 @@ async def freezone_job_result(
         return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
     if task_type in {
         "freezone_image_reverse_prompt",
+        "freezone_text_generate",
         "freezone_text_translate",
         "freezone_story_script",
     }:

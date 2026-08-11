@@ -479,6 +479,35 @@
         "days": "{{count}} days ago"
       }
     },
+    "canvasOutline": {
+      "title": "Canvas elements",
+      "groupMembers": "{{count}} nodes",
+      "empty": "This canvas has no nodes yet",
+      "duplicate": "Duplicate",
+      "rename": "Rename",
+      "download": "Download",
+      "locate": "Locate on canvas",
+      "moreActions": "More actions",
+      "matched": "{{count}} matches",
+      "expandAll": "Expand all groups",
+      "collapseAll": "Collapse all groups",
+      "search": "Search nodes",
+      "closeSearch": "Close search",
+      "filter": "Filter by type",
+      "noMatch": "No matching nodes",
+      "types": {
+        "all": "All",
+        "text": "Text",
+        "image": "Image",
+        "video": "Video",
+        "storyboard": "Storyboard",
+        "beat": "Shot context",
+        "audio": "Audio",
+        "script": "Script",
+        "world": "3D / Pano",
+        "skill": "Skill"
+      }
+    },
     "projections": {
       "staleCount": "{{count}} mainline projection has updates",
       "activeCount": "{{count}} mainline projection",
@@ -3564,6 +3593,8 @@
         "textToMusicGen": "Text to Music"
       },
       "placeholder": "Write a story, scene, or character idea. For example: in an old station on a rainy night, a late letter changes everyone's choice.",
+      "generatePlaceholder": "Describe the story, scene, character, dialogue, or creative prompt you want to generate…",
+      "generateText": "Generate text with AI",
       "modelPickerHint": "Pick a model",
       "submit": "Submit",
       "translate": "Translate (zh ↔ en)"
@@ -4223,6 +4254,7 @@
           "EPISODE_PROP_PLANNER": "Plan episode props",
           "SCENE_BUILD": "Analyze and enrich scene descriptions",
           "FREEZONE_TRANSLATION": "Prompt zh/en translation",
+          "FREEZONE_TEXT_WRITER": "AI text generation",
           "FREEZONE_STORY_SCRIPT": "Story script generation",
           "FREEZONE_VISION": "Image and video content analysis",
           "STYLE_ANALYZER": "Analyze a custom style from reference images",

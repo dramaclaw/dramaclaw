@@ -2,6 +2,7 @@
 
 当前包含：
 - 中英文提示词互译
+- 自由文本生成
 - 故事脚本生成
 """
 
@@ -22,11 +23,13 @@ from novelvideo.model_gateway_runtime import (
 
 from novelvideo.official_defaults import (
     DEFAULT_FREEZONE_STORY_SCRIPT_MODEL,
+    DEFAULT_FREEZONE_TEXT_WRITER_MODEL,
     DEFAULT_FREEZONE_TRANSLATION_MODEL,
 )
 
 FREEZONE_TRANSLATION_PROVIDER = "newapi"
 FREEZONE_TRANSLATION_MODEL = DEFAULT_FREEZONE_TRANSLATION_MODEL
+FREEZONE_TEXT_WRITER_MODEL = DEFAULT_FREEZONE_TEXT_WRITER_MODEL
 FREEZONE_STORY_SCRIPT_MODEL = {
     "id": DEFAULT_FREEZONE_STORY_SCRIPT_MODEL,
     "provider": "newapi",
@@ -64,6 +67,22 @@ You translate prompting text between Simplified Chinese and English for creative
 9. When translating English into Chinese, keep technical tokens intact but translate every English instruction sentence, rule sentence, heading, and description into Simplified Chinese.
 10. When translating Chinese into English, keep technical tokens intact but translate every Chinese instruction sentence, rule sentence, heading, and description into English.
 11. Return structured data matching the requested schema. Do not wrap with markdown.
+"""
+
+FREEZONE_TEXT_WRITER_SYSTEM_PROMPT = """# Freezone AI Text Writer
+
+You create polished, creator-ready text from a user's instruction.
+
+## Goal
+- Write the requested story, scene, character setting, dialogue, outline, or creative prompt.
+- Follow the user's requested language, structure, tone, length, and formatting.
+- Make the result concrete and directly usable in a creative workflow.
+
+## Rules
+1. Preserve names, IDs, technical tokens, ratios, and other constraints supplied by the user.
+2. Do not invent constraints that conflict with the user's instruction.
+3. Return only the finished text. Do not explain your process.
+4. Do not wrap the result in a markdown code fence.
 """
 
 FREEZONE_STORY_SCRIPT_SYSTEM_PROMPT = """# Freezone Story Script Generator
@@ -181,6 +200,7 @@ FREEZONE_NODE_TYPE_LABELS: dict[str, str] = {
 }
 
 _translation_agent: Optional[Agent] = None
+_text_writer_agent: Optional[Agent] = None
 _story_script_agent: Optional[Agent] = None
 _video_story_script_agent: Optional[Agent] = None
 
@@ -227,6 +247,40 @@ def get_freezone_translation_agent() -> Agent:
     if _translation_agent is None:
         _translation_agent = create_freezone_translation_agent()
     return _translation_agent
+
+
+def create_freezone_text_writer_agent() -> Agent:
+    """创建 Freezone 自由文本生成 Agent。"""
+    from novelvideo.config import get_newapi_text_pydantic_model
+
+    model = get_newapi_text_pydantic_model(
+        "FREEZONE_TEXT_WRITER_MODEL",
+        FREEZONE_TEXT_WRITER_MODEL,
+    )
+    return Agent(
+        model,
+        system_prompt=FREEZONE_TEXT_WRITER_SYSTEM_PROMPT,
+        output_type=str,
+        name="Freezone AI Text Writer",
+    )
+
+
+def get_freezone_text_writer_agent() -> Agent:
+    """获取自由文本生成 Agent 单例。"""
+    global _text_writer_agent
+    if _text_writer_agent is None:
+        _text_writer_agent = create_freezone_text_writer_agent()
+    return _text_writer_agent
+
+
+def resolve_freezone_text_writer_model() -> str:
+    """返回当前自由文本生成逻辑模型名，供结果与审计记录使用。"""
+    from novelvideo.config import get_newapi_text_model_name
+
+    return get_newapi_text_model_name(
+        "FREEZONE_TEXT_WRITER_MODEL",
+        FREEZONE_TEXT_WRITER_MODEL,
+    )
 
 
 def resolve_freezone_story_script_model(model: str | None) -> dict[str, str]:
@@ -330,6 +384,19 @@ async def translate_freezone_text(
         result.source_language,
         target_language,
     )
+
+
+async def generate_freezone_text(*, prompt: str) -> tuple[str, str]:
+    """根据用户指令生成自由文本，返回逻辑模型名与最终文本。"""
+    clean_prompt = str(prompt or "").strip()
+    if not clean_prompt:
+        raise ValueError("prompt is required")
+
+    response = await get_freezone_text_writer_agent().run(clean_prompt)
+    generated_text = str(response.output or "").strip()
+    if not generated_text:
+        raise ValueError("text generation returned empty output")
+    return resolve_freezone_text_writer_model(), generated_text
 
 
 _STORY_SCRIPT_COMMON_RULES = (

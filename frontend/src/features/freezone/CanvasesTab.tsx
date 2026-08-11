@@ -1,21 +1,17 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
-  Box,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  Film,
-  Frame,
-  Home,
-  RotateCcw,
-  SquareDashed,
-  Trash2,
-  UserRound,
-  Workflow,
-  type LucideIcon,
-} from "lucide-react";
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type MouseEvent as ReactMouseEvent,
+  type WheelEvent as ReactWheelEvent,
+} from "react";
+import { Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { confirmDialog } from "@/components/confirm-dialog-host";
+import { CanvasOutlineList } from "./CanvasOutlineList";
 import {
   createBlankFreezoneCanvas,
   deleteFreezoneCanvas,
@@ -42,6 +38,11 @@ interface CanvasesTabProps {
   onRestoreMainlineDefault?: () => Promise<void> | void;
   hasPresetLabel: boolean;
   reloadToken?: number;
+  /**
+   * 抽屉是否处于收起态。收起走的是 CSS `-translate-x-full`，组件并不卸载，
+   * 所以要显式往下传，让大纲停掉它那条按 nodes 重算的订阅（见 CanvasOutlineList）。
+   */
+  collapsed?: boolean;
 }
 
 export function CanvasesTab({
@@ -50,6 +51,7 @@ export function CanvasesTab({
   onRestoreMainlineDefault,
   hasPresetLabel,
   reloadToken,
+  collapsed = false,
 }: CanvasesTabProps) {
   const { t } = useTranslation();
   const username = useAuthStore((state) => state.username);
@@ -63,10 +65,20 @@ export function CanvasesTab({
   const [creatingCanvas, setCreatingCanvas] = useState(false);
   const [newCanvasName, setNewCanvasName] = useState("");
   const [restoringMainline, setRestoringMainline] = useState(false);
-  const [expandedMembers, setExpandedMembers] = useState(false);
-  const [expandedOther, setExpandedOther] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const createInputRef = useRef<HTMLInputElement>(null);
   const reloadKey = `${reloadToken ?? 0}`;
   const previousReloadKeyRef = useRef(reloadKey);
+
+  useEffect(() => {
+    if (showCreateForm) createInputRef.current?.focus();
+  }, [showCreateForm]);
+
+  const closeCreateForm = () => {
+    setShowCreateForm(false);
+    setNewCanvasName("");
+    setLocalError(null);
+  };
 
   useEffect(() => {
     if (previousReloadKeyRef.current === reloadKey) return;
@@ -94,21 +106,9 @@ export function CanvasesTab({
   };
 
   const sections = buildCanvasBrowserSections(items, currentCanvasId, username);
-  const currentCanvasInMembers = sections.memberCanvases.some((item) => item.id === currentCanvasId);
-  const currentCanvasInOther = sections.otherCanvases.some((item) => item.id === currentCanvasId);
+  // 一条横向 tab 条：我的画布在最前，其余按最近修改排在后面。
+  const canvasTabs = flattenCanvasBrowserSections(sections);
   const showRestoreMainlineAction = currentCanvasId !== "default" && hasPresetLabel;
-
-  useEffect(() => {
-    if (currentCanvasInMembers) {
-      setExpandedMembers(true);
-    }
-  }, [currentCanvasInMembers]);
-
-  useEffect(() => {
-    if (currentCanvasInOther) {
-      setExpandedOther(true);
-    }
-  }, [currentCanvasInOther]);
 
   const handleRestoreMainlineClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -147,6 +147,7 @@ export function CanvasesTab({
         return next;
       });
       setNewCanvasName("");
+      setShowCreateForm(false);
       await canvasesQuery.refetch();
       writeUrl({ canvas: canvasId });
     } catch (err) {
@@ -164,7 +165,12 @@ export function CanvasesTab({
   const handleDeleteCanvas = async (item: CanvasDisplaySummary) => {
     if (!canDeleteCanvasSummary(item, username)) return;
     const name = displayNameForCanvasSummary(item, t);
-    const ok = window.confirm(t("freezone.canvases.deleteConfirm", { name }));
+    const ok = await confirmDialog({
+      title: t("freezone.canvases.deleteTitle"),
+      description: t("freezone.canvases.deleteConfirm", { name }),
+      confirmText: t("common.delete"),
+      confirmVariant: "destructive",
+    });
     if (!ok) return;
     setDeletingCanvasId(item.id);
     setLocalError(null);
@@ -193,278 +199,275 @@ export function CanvasesTab({
         </div>
       )}
 
-      <div className="ui-scrollbar-hidden flex-1 min-h-0 overflow-y-auto px-3 pt-1 space-y-0">
-        <form onSubmit={handleCreateCanvas} className="pb-2 pt-3">
-          <div className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] p-2">
+      {loading ? (
+        <div className="shrink-0 px-3 py-4 text-center text-xs text-text-muted">
+          {t("freezone.canvases.loading")}
+        </div>
+      ) : (
+        <CanvasTabStrip
+          items={canvasTabs}
+          currentCanvasId={currentCanvasId}
+          showRestoreMainlineAction={showRestoreMainlineAction}
+          restoringMainline={restoringMainline}
+          deletingCanvasId={deletingCanvasId}
+          username={username}
+          creating={showCreateForm}
+          onToggleCreate={() => setShowCreateForm((value) => !value)}
+          onSwitch={switchTo}
+          onRestoreMainline={handleRestoreMainlineClick}
+          onDelete={handleDeleteCanvas}
+        />
+      )}
+
+      {/* 新建表单默认收起，点 tab 行末尾的 + 才展开 */}
+      {showCreateForm && (
+        <form onSubmit={handleCreateCanvas} className="shrink-0 px-3 pb-2 pt-2">
+          <div className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] p-1.5">
             <input
+              ref={createInputRef}
               value={newCanvasName}
               onChange={(event) => {
                 setNewCanvasName(event.target.value);
                 if (localError) setLocalError(null);
               }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") closeCreateForm();
+              }}
               maxLength={40}
               placeholder={t("freezone.canvases.createPlaceholder")}
               disabled={creatingCanvas}
-              className="h-7 min-w-0 flex-1 bg-transparent px-1 text-xs text-white/82 outline-none placeholder:text-white/34 disabled:cursor-not-allowed disabled:opacity-60"
+              className="h-6 min-w-0 flex-1 bg-transparent px-1 text-xs text-white/82 outline-none placeholder:text-white/34 disabled:cursor-not-allowed disabled:opacity-60"
             />
             <button
               type="submit"
               disabled={creatingCanvas || !newCanvasName.trim()}
-              className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/[0.045] px-2.5 text-[11px] font-medium text-white/72 transition hover:border-white/18 hover:bg-white/[0.075] hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+              className="inline-flex h-6 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/[0.045] px-2 text-[11px] font-medium text-white/72 transition hover:border-white/18 hover:bg-white/[0.075] hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
               title={t("freezone.canvases.createTitle")}
             >
               {creatingCanvas ? t("freezone.canvases.createBusy") : t("freezone.canvases.create")}
             </button>
           </div>
         </form>
-        {loading ? (
-          <div className="py-8 text-center text-xs text-text-muted">
-            {t("freezone.canvases.loading")}
-          </div>
-        ) : (
-          <>
-            <CanvasSectionTitle label={t("freezone.canvases.myCanvasSection")} />
-            <CanvasListItem
-              item={sections.defaultCanvas}
-              currentCanvasId={currentCanvasId}
-              showRestoreMainlineAction={showRestoreMainlineAction && sections.defaultCanvas.id === currentCanvasId}
-              restoringMainline={restoringMainline}
-              onSwitch={switchTo}
-              onRestoreMainline={handleRestoreMainlineClick}
-              canDelete={canDeleteCanvasSummary(sections.defaultCanvas, username)}
-              deleting={deletingCanvasId === sections.defaultCanvas.id}
-              onDelete={handleDeleteCanvas}
-            />
+      )}
 
-            {sections.memberCanvases.length > 0 && (
-              <CollapsibleCanvasSection
-                title={t("freezone.canvases.memberCanvasesSection")}
-                count={sections.memberCanvases.length}
-                expanded={expandedMembers}
-                onToggle={() => setExpandedMembers((value) => !value)}
-                expandTitle={t("freezone.canvases.expandMemberCanvases")}
-                collapseTitle={t("freezone.canvases.collapseMemberCanvases")}
-              >
-                {sections.memberCanvases.map((item) => (
-                  <CanvasListItem
-                    key={`member:${item.id}`}
-                    item={item}
-                    currentCanvasId={currentCanvasId}
-                    showRestoreMainlineAction={showRestoreMainlineAction && item.id === currentCanvasId}
-                    restoringMainline={restoringMainline}
-                    onSwitch={switchTo}
-                    onRestoreMainline={handleRestoreMainlineClick}
-                    canDelete={canDeleteCanvasSummary(item, username)}
-                    deleting={deletingCanvasId === item.id}
-                    onDelete={handleDeleteCanvas}
-                  />
-                ))}
-              </CollapsibleCanvasSection>
-            )}
-
-            {sections.otherCanvases.length > 0 && (
-              <CollapsibleCanvasSection
-                title={t("freezone.canvases.otherCanvasesSection")}
-                count={sections.otherCanvases.length}
-                expanded={expandedOther}
-                onToggle={() => setExpandedOther((value) => !value)}
-                expandTitle={t("freezone.canvases.expandOtherCanvases")}
-                collapseTitle={t("freezone.canvases.collapseOtherCanvases")}
-              >
-                {sections.otherCanvases.map((item) => (
-                  <CanvasListItem
-                    key={`other:${item.id}`}
-                    item={item}
-                    currentCanvasId={currentCanvasId}
-                    showRestoreMainlineAction={showRestoreMainlineAction && item.id === currentCanvasId}
-                    restoringMainline={restoringMainline}
-                    onSwitch={switchTo}
-                    onRestoreMainline={handleRestoreMainlineClick}
-                    canDelete={canDeleteCanvasSummary(item, username)}
-                    deleting={deletingCanvasId === item.id}
-                    onDelete={handleDeleteCanvas}
-                  />
-                ))}
-              </CollapsibleCanvasSection>
-            )}
-          </>
-        )}
-      </div>
+      {/* 画布条以下是当前画布的节点大纲 */}
+      <CanvasOutlineList collapsed={collapsed} />
     </div>
   );
 }
 
-function CanvasSectionTitle({ label, className }: { label: string; className?: string }) {
-  return (
-    <div className={`pb-2 pt-4 text-xs font-semibold text-white/72 ${className ?? ""}`}>
-      {label}
-    </div>
-  );
-}
-
-function CollapsibleCanvasSection({
-  title,
-  count,
-  expanded,
-  onToggle,
-  expandTitle,
-  collapseTitle,
-  children,
-}: {
-  title: string;
-  count: number;
-  expanded: boolean;
-  onToggle: () => void;
-  expandTitle: string;
-  collapseTitle: string;
-  children: ReactNode;
-}) {
-  const Icon = expanded ? ChevronDown : ChevronRight;
-  return (
-    <div className="pt-3">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center justify-between py-2 text-left text-xs font-semibold text-white/72 hover:text-white"
-        aria-expanded={expanded}
-        title={expanded ? collapseTitle : expandTitle}
-      >
-        <span>{title}</span>
-        <span className="inline-flex items-center gap-2 text-[11px] text-white/40">
-          {count}
-          <Icon className="h-3.5 w-3.5" />
-        </span>
-      </button>
-      {expanded && <div className="space-y-2 pb-1 pt-1">{children}</div>}
-    </div>
-  );
-}
-
-function CanvasListItem({
-  item,
+function CanvasTabStrip({
+  items,
   currentCanvasId,
   showRestoreMainlineAction,
   restoringMainline,
+  deletingCanvasId,
+  username,
+  creating,
+  onToggleCreate,
   onSwitch,
   onRestoreMainline,
-  canDelete,
-  deleting,
   onDelete,
 }: {
-  item: CanvasDisplaySummary;
+  items: CanvasDisplaySummary[];
   currentCanvasId: string;
   showRestoreMainlineAction: boolean;
   restoringMainline: boolean;
+  deletingCanvasId: string | null;
+  username?: string | null;
+  creating: boolean;
+  onToggleCreate: () => void;
   onSwitch: (id: string) => void;
   onRestoreMainline: (event: ReactMouseEvent<HTMLButtonElement>) => void;
-  canDelete: boolean;
-  deleting: boolean;
   onDelete: (item: CanvasDisplaySummary) => Promise<void> | void;
 }) {
   const { t } = useTranslation();
-  const isCurrent = item.id === currentCanvasId;
-  const sourceCanvasId = sourceCanvasIdFromSummary(item);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef<HTMLDivElement>(null);
+  const [edgeFade, setEdgeFade] = useState({ start: false, end: false });
+
+  // 切换画布后把选中的 tab 滚进可视区，避免它停在滚动条外面。
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [currentCanvasId, items.length]);
+
+  // 只有真的滚得动时才给边缘上渐隐，免得刚好放得下的时候把末尾那个 tab 也蒙灰。
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const sync = () => {
+      const max = element.scrollWidth - element.clientWidth;
+      setEdgeFade({ start: element.scrollLeft > 1, end: element.scrollLeft < max - 1 });
+    };
+    sync();
+    element.addEventListener("scroll", sync, { passive: true });
+    const observer = new ResizeObserver(sync);
+    observer.observe(element);
+    return () => {
+      element.removeEventListener("scroll", sync);
+      observer.disconnect();
+    };
+  }, [items.length]);
+
+  const fadeMask = edgeFadeMask(edgeFade.start, edgeFade.end);
+
+  // 普通滚轮（只有 deltaY）也能横向翻这条 tab。
+  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    const element = scrollRef.current;
+    if (!element) return;
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    element.scrollLeft += event.deltaY;
+  };
+
+  const currentItem = items.find((item) => item.id === currentCanvasId) ?? null;
+  const currentSourceCanvasId = currentItem ? sourceCanvasIdFromSummary(currentItem) : null;
+  const canRestoreMainline = showRestoreMainlineAction && !!currentItem;
+  const showSourceShortcut =
+    !!currentSourceCanvasId && currentSourceCanvasId !== currentCanvasId;
+
+  return (
+    <Tabs
+      value={currentCanvasId}
+      // 切换只由 trigger 的 onClick 驱动：受控 value 不让组件自己改，
+      // 否则 base-ui 内部的激活会顺手把当前画布带走。
+      onValueChange={noop}
+      className="shrink-0 gap-0 px-3 pt-2.5"
+    >
+      {/* 整行共用一条基线，选中 tab 的下划线正好压在上面 */}
+      <div className="flex items-center gap-1 border-b border-white/[0.07]">
+        <div
+          ref={scrollRef}
+          onWheel={handleWheel}
+          style={fadeMask ? { maskImage: fadeMask, WebkitMaskImage: fadeMask } : undefined}
+          className="ui-scrollbar-hidden min-w-0 flex-1 overflow-x-auto"
+        >
+          <TabsList variant="line" className="gap-0 p-0">
+            {items.map((item) => (
+              <CanvasTab
+                key={item.id}
+                ref={item.id === currentCanvasId ? activeRef : undefined}
+                item={item}
+                isCurrent={item.id === currentCanvasId}
+                canDelete={canDeleteCanvasSummary(item, username)}
+                deleting={deletingCanvasId === item.id}
+                onSwitch={onSwitch}
+                onDelete={onDelete}
+              />
+            ))}
+          </TabsList>
+        </div>
+
+        {/* 当前画布的操作固定在右侧，不跟着 tab 一起滚走 */}
+        {showSourceShortcut && (
+          <button
+            type="button"
+            onClick={() => onSwitch(currentSourceCanvasId)}
+            title={t("freezone.canvases.sourceCanvasTitle", { canvasId: currentSourceCanvasId })}
+            className="mb-1 inline-flex h-5 shrink-0 items-center rounded-full border border-amber-300/35 px-2 text-[10px] text-amber-200 transition hover:bg-amber-300/15 hover:text-amber-100"
+          >
+            {t("freezone.canvases.sourceCanvas")}
+          </button>
+        )}
+        {canRestoreMainline && (
+          <button
+            type="button"
+            onClick={onRestoreMainline}
+            disabled={restoringMainline}
+            className="mb-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-white/45 transition hover:bg-white/[0.07] hover:text-white disabled:cursor-default disabled:opacity-50"
+            title={t("freezone.canvases.restoreTitle")}
+            aria-label={restoringMainline ? t("freezone.canvases.restoreBusy") : t("freezone.canvases.restore")}
+          >
+            <RotateCcw className={"h-3.5 w-3.5 " + (restoringMainline ? "animate-spin" : "")} />
+          </button>
+        )}
+        {/* 分隔一下，别让 + 看起来像是最后一个 tab 的关闭按钮 */}
+        <span aria-hidden className="mb-1 ml-0.5 h-3.5 w-px shrink-0 bg-white/10" />
+        <button
+          type="button"
+          onClick={onToggleCreate}
+          aria-expanded={creating}
+          className={
+            "mb-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition " +
+            (creating
+              ? "bg-white/[0.09] text-white"
+              : "text-white/45 hover:bg-white/[0.07] hover:text-white")
+          }
+          title={t("freezone.canvases.createTitle")}
+          aria-label={t("freezone.canvases.createTitle")}
+        >
+          {creating ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+        </button>
+      </div>
+    </Tabs>
+  );
+}
+
+function noop() {}
+
+/** 两端各渐隐 18px，提示这条 tab 还能往那个方向滚。 */
+function edgeFadeMask(start: boolean, end: boolean): string | undefined {
+  if (!start && !end) return undefined;
+  const stops = [
+    start ? "transparent 0, #000 18px" : "#000 0",
+    end ? "#000 calc(100% - 18px), transparent 100%" : "#000 100%",
+  ];
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+function CanvasTab({
+  ref,
+  item,
+  isCurrent,
+  canDelete,
+  deleting,
+  onSwitch,
+  onDelete,
+}: {
+  ref?: React.Ref<HTMLDivElement>;
+  item: CanvasDisplaySummary;
+  isCurrent: boolean;
+  canDelete: boolean;
+  deleting: boolean;
+  onSwitch: (id: string) => void;
+  onDelete: (item: CanvasDisplaySummary) => Promise<void> | void;
+}) {
+  const { t } = useTranslation();
   const summary =
     item.displayKind === "personal" && item.displayName === PERSONAL_CANVAS_DISPLAY_NAME
       ? t("freezone.canvases.personalCanvasName")
       : displayNameForCanvasSummary(item, t);
-  const kind = canvasKindFromSummary(item);
-  const Icon = isConflictCopyCanvas(item) ? Copy : CANVAS_KIND_ICON[kind] ?? Frame;
   const relative = formatRelative(item.modified_at, t);
-  const canRestoreMainline = isCurrent && showRestoreMainlineAction;
 
   return (
-    <div
-      className={
-        "group relative flex items-center gap-3 rounded-lg py-2 transition " +
-        (isCurrent ? "cursor-default" : "cursor-pointer opacity-60 hover:opacity-90")
-      }
-      aria-current={isCurrent ? "true" : undefined}
-      title={`${item.id} · ${relative} · ${(item.size / 1024).toFixed(1)} KB`}
-    >
-      <div className="flex w-full min-w-0 items-center gap-4">
-        <button
-          type="button"
-          onClick={() => onSwitch(item.id)}
-          disabled={isCurrent}
-          className="block shrink-0 disabled:cursor-default"
-        >
-          <div
-            className={
-              "relative flex h-[80px] w-[60px] items-center justify-center overflow-hidden rounded-[6px] border " +
-              (isCurrent
-                ? "border-primary/30 bg-primary/[0.12]"
-                : "border-white/[0.08] bg-white/[0.04]")
-            }
-          >
-            <Icon className={"h-5 w-5 " + (isCurrent ? "text-primary" : "text-white/50")} />
-          </div>
-        </button>
-        <div className="min-w-0 flex-1">
-          <button
-            type="button"
-            onClick={() => onSwitch(item.id)}
-            disabled={isCurrent}
-            className="block max-w-full text-left disabled:cursor-default"
-          >
-            <span
-              className={
-                "block max-w-full truncate text-sm font-medium " +
-                (isCurrent ? "text-white" : "text-white/60")
-              }
-            >
-              {summary}
-            </span>
-            {relative ? (
-              <span className={`mt-2 block truncate text-[11px] leading-snug tabular-nums ${isCurrent ? "text-white/55" : "text-white/40"}`}>
-                {relative}
-              </span>
-            ) : null}
-          </button>
-        {canRestoreMainline || canDelete ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {canRestoreMainline && (
-              <button
-                type="button"
-                onClick={onRestoreMainline}
-                disabled={restoringMainline}
-                className="inline-flex h-6 items-center justify-center gap-1 rounded-md border border-white/10 bg-white/[0.035] px-2 text-[10px] font-medium text-white/72 transition hover:border-white/18 hover:bg-white/[0.06] hover:text-white disabled:cursor-default disabled:opacity-50"
-                title={t("freezone.canvases.restoreTitle")}
-              >
-                <RotateCcw className="h-3 w-3" />
-                {restoringMainline ? t("freezone.canvases.restoreBusy") : t("freezone.canvases.restore")}
-              </button>
-            )}
-            {canDelete && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                void onDelete(item);
-              }}
-              disabled={deleting}
-              className="inline-flex h-6 items-center justify-center gap-1 rounded-md border border-red-400/20 bg-red-500/[0.04] px-2 text-[10px] font-medium text-red-200/80 transition hover:border-red-300/35 hover:bg-red-500/[0.08] hover:text-red-100 disabled:opacity-50"
-              title={t("freezone.canvases.deleteTitle")}
-            >
-              <Trash2 className="h-3 w-3" />
-              {deleting ? t("freezone.canvases.deleteBusy") : t("freezone.canvases.delete")}
-            </button>
-            )}
-          </div>
-        ) : null}
-        </div>
-      </div>
-      {sourceCanvasId && sourceCanvasId !== currentCanvasId && (
+    <div ref={ref} className="group relative flex h-full shrink-0 items-stretch">
+      <TabsTrigger
+        value={item.id}
+        onClick={() => onSwitch(item.id)}
+        title={`${summary} · ${relative} · ${(item.size / 1024).toFixed(1)} KB`}
+        // after:bottom-0 让下划线落在整行的基线上，而不是浮在下面 5px
+        className={
+          "h-full rounded-none px-2.5 text-[11px] group-data-horizontal/tabs:after:bottom-0 " +
+          (canDelete ? "pr-6" : "")
+        }
+      >
+        <span className="max-w-[112px] truncate">{summary}</span>
+      </TabsTrigger>
+      {canDelete && (
         <button
           type="button"
           onClick={(event) => {
             event.stopPropagation();
-            onSwitch(sourceCanvasId);
+            void onDelete(item);
           }}
-          title={t("freezone.canvases.sourceCanvasTitle", { canvasId: sourceCanvasId })}
-          className="tap-button h-6 px-2 text-[10px] border-amber-300/35 text-amber-200 hover:bg-amber-300/15 hover:text-amber-100"
+          disabled={deleting}
+          className={
+            "absolute right-1 top-1/2 inline-flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full text-white/40 transition hover:bg-red-500/15 hover:text-red-200 focus-visible:opacity-100 disabled:opacity-50 " +
+            (isCurrent ? "" : "opacity-0 group-hover:opacity-100")
+          }
+          title={t("freezone.canvases.deleteTitle")}
+          aria-label={deleting ? t("freezone.canvases.deleteBusy") : t("freezone.canvases.delete")}
         >
-          {t("freezone.canvases.sourceCanvas")}
+          {deleting ? <Trash2 className="h-3 w-3" /> : <X className="h-3 w-3" />}
         </button>
       )}
     </div>
@@ -526,6 +529,17 @@ export function buildCanvasBrowserSections(
     memberCanvases: memberCanvases.sort(compareCanvasSummaryByRecent),
     otherCanvases: otherCanvases.sort(compareCanvasSummaryByRecent),
   };
+}
+
+/** 把分组结果压成一条：我的画布在最前，成员画布、其他画布依次跟随，同 id 只保留一次。 */
+export function flattenCanvasBrowserSections(
+  sections: CanvasBrowserSections,
+): CanvasDisplaySummary[] {
+  return [
+    sections.defaultCanvas,
+    ...sections.memberCanvases,
+    ...sections.otherCanvases,
+  ].filter((item, index, array) => array.findIndex((candidate) => candidate.id === item.id) === index);
 }
 
 export function orderCanvasSummaries(
@@ -598,17 +612,6 @@ type CanvasKind =
   | "workflow"
   | "blank"
   | "other";
-
-const CANVAS_KIND_ICON: Record<CanvasKind, LucideIcon> = {
-  default: Home,
-  episode: Film,
-  beat: Frame,
-  personal: UserRound,
-  asset: Box,
-  workflow: Workflow,
-  blank: SquareDashed,
-  other: Frame,
-};
 
 export function canvasKindFromSummary(item: FreezoneCanvasSummary): CanvasKind {
   const displayKind = (item as CanvasDisplaySummary).displayKind;
