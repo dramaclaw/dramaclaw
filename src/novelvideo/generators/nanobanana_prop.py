@@ -37,7 +37,10 @@ from novelvideo.generators.nanobanana_grid import (
     normalize_image_size,
     normalize_openai_quality,
 )
-from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.egress_context import (
+    TrustedEgressContext,
+    ambient_organization_egress_context,
+)
 
 PROP_REF_ASPECT_RATIO = "16:9"
 PROP_REF_IMAGE_SIZE = "0.5K"
@@ -152,6 +155,8 @@ async def generate_prop_reference(
 
     if egress_context is not None and type(egress_context) is not TrustedEgressContext:
         raise TypeError("egress_context must be a TrustedEgressContext")
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
     if egress_context is not None and egress_context.is_organization:
         _selected_provider, selected_model = _prop_reference_image_source(model)
         prompt = build_prop_reference_prompt(

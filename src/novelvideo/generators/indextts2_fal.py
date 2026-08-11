@@ -12,7 +12,10 @@ import httpx
 
 from novelvideo.ports import get_usage_meter
 from novelvideo.shared.billing_errors import is_fatal_billing_error
-from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.egress_context import (
+    TrustedEgressContext,
+    ambient_organization_egress_context,
+)
 from novelvideo.generators.tts_generator import (
     TTSResult,
     claim_audio_operation,
@@ -129,6 +132,8 @@ class IndexTTS2FalClient:
             get_effective_newapi_gateway_config,
         )
 
+        if egress_context is None:
+            egress_context = ambient_organization_egress_context()
         self.egress_context = egress_context
         organization_mode = (
             type(egress_context) is TrustedEgressContext

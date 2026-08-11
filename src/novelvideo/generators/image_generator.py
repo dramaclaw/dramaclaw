@@ -296,6 +296,12 @@ class VolcengineImageGenerator:
         Returns:
             生成结果
         """
+        if egress_context is None:
+            from novelvideo.egress_context import (
+                ambient_organization_egress_context,
+            )
+
+            egress_context = ambient_organization_egress_context()
         if egress_context is not None:
             from novelvideo.egress_context import TrustedEgressContext
             from novelvideo.ports.egress import EgressError

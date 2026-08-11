@@ -13,7 +13,10 @@ from typing import Any
 
 from novelvideo.config import INDEXTTS2_RECORD_MODEL, OUTPUT_DIR
 from novelvideo.generators.indextts2_fal import IndexTTS2FalClient
-from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.egress_context import (
+    TrustedEgressContext,
+    ambient_organization_egress_context,
+)
 from novelvideo.generators.tts_generator import (
     claim_audio_operation,
     complete_audio_operation,
@@ -457,6 +460,8 @@ async def generate_freezone_audio_speech(
 
     output_path = freezone_audio_speech_output_path(project_dir, job_id)
     if egress_context is None:
+        egress_context = ambient_organization_egress_context()
+    if egress_context is None:
         generator = IndexTTS2FalClient()
     else:
         generator = IndexTTS2FalClient(
@@ -540,6 +545,8 @@ async def _write_newapi_audio_speech(
     import httpx
 
     lease = None
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
     if egress_context is not None:
         if (
             type(egress_context) is not TrustedEgressContext

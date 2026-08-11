@@ -440,6 +440,10 @@ async def run_indextts2_beat_audio_generation(
 ) -> IndexTTS2BeatAudioTaskResult:
     """Generate selected beat MP3s with IndexTTS2 character/narrator references."""
 
+    if egress_context is None:
+        from novelvideo.egress_context import ambient_organization_egress_context
+
+        egress_context = ambient_organization_egress_context()
     if generator is None and egress_context is not None:
         from novelvideo.generators.indextts2_fal import IndexTTS2FalClient
 

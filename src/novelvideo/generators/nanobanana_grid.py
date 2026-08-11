@@ -37,7 +37,10 @@ from novelvideo.config import (
     get_style_preset,
 )
 from novelvideo.ports import get_usage_meter
-from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.egress_context import (
+    TrustedEgressContext,
+    ambient_organization_egress_context,
+)
 from novelvideo.ports.authz import AdmissionContext
 from novelvideo.ports.egress import EgressError
 from novelvideo.ports.egress_operations import (
@@ -131,6 +134,8 @@ async def _prepare_organization_image_egress(
     request: dict[str, object],
 ) -> _OrganizationImageEgress | None:
     context = _validate_egress_context(egress_context)
+    if context is None:
+        context = ambient_organization_egress_context()
     if context is None or not context.is_organization:
         return None
     if provider != "newapi":

@@ -25,7 +25,7 @@ from typing import Any, Iterable
 import aiosqlite
 
 from novelvideo.verification import failure_registry
-from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.egress_context import TrustedEgressContext, ambient_egress_context
 
 DEFAULT_GATE_MODEL_GOOGLE = "gemini-3.5-flash"
 DEFAULT_GATE_MODEL_OPENROUTER = "gemini-3.5-flash"
@@ -231,9 +231,7 @@ def resolve_gate_backend_for_context(
     if egress_context is not None and type(egress_context) is not TrustedEgressContext:
         raise TypeError("egress_context must be a TrustedEgressContext or None")
     if egress_context is None:
-        from novelvideo.model_gateway_runtime import current_model_gateway_context
-
-        egress_context = current_model_gateway_context()
+        egress_context = ambient_egress_context()
     if egress_context is not None and egress_context.is_organization:
         from novelvideo.model_gateway_runtime import ModelGatewayEgressError
 

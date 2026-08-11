@@ -15,7 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.egress_context import (
+    TrustedEgressContext,
+    ambient_organization_egress_context,
+)
 from novelvideo.task_backend.cancel import (
     TaskCancelled,
     TaskTimedOut,
@@ -106,6 +109,8 @@ def require_direct_model_egress_allowed(
 ) -> None:
     """Preserve platform behavior and deny direct model egress for organizations."""
 
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
     if egress_context is None:
         return
     if type(egress_context) is not TrustedEgressContext:
@@ -359,6 +364,12 @@ def run_project_subprocess(
     poll_seconds: float = 0.1,
 ) -> subprocess.CompletedProcess:
     """Run a subprocess in its own process group and kill it on cancel/deadline."""
+    # 这里**不**回落到作用域身份：本参数的含义是「调用方已为这条组织命令备好
+    # 受限启动策略」，属调用方准备工作，不是策略判决。全仓 16 个调用点只有
+    # `freezone/jobs.py:503` 传了 `restricted_policy`，回落会让其余 15 处
+    # （`video_composer.py:22`、`video_generator.py:113` 等本地 ffmpeg）对组织
+    # 一律 `ORG_SERVICE_EGRESS_DENIED`——那些命令不带凭据也不出网，拒掉是功能
+    # 损坏而非安全收益。真正的凭据出网闸门是 `build_model_child_env`，它已回落。
     restricted = (
         type(egress_context) is TrustedEgressContext and egress_context.is_organization
     )

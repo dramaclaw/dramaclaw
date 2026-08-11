@@ -29,7 +29,10 @@ import numpy as np
 from PIL import Image
 
 from novelvideo.freezone.paths import output_path_for_job, outputs_dir
-from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.egress_context import (
+    TrustedEgressContext,
+    ambient_organization_egress_context,
+)
 from novelvideo.ports.egress import EgressError
 from novelvideo.task_backend.subprocesses import (
     EgressBoundaryError,
@@ -71,6 +74,8 @@ async def run_freezone_gen(
     #     - no refs   → generate_text_to_image  (NEW v1.2)
     if egress_context is not None and type(egress_context) is not TrustedEgressContext:
         raise TypeError("egress_context must be a TrustedEgressContext")
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
     if (
         egress_context is not None
         and egress_context.is_organization
@@ -311,6 +316,8 @@ async def run_freezone_edit(
 
     if egress_context is not None and type(egress_context) is not TrustedEgressContext:
         raise TypeError("egress_context must be a TrustedEgressContext")
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
     if egress_context is not None and egress_context.is_organization:
         cfg = {
             "provider": "newapi",

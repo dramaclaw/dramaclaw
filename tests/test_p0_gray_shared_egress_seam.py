@@ -73,6 +73,7 @@ def _run_core(
     run_task_id: str | None = None,
     context_project_id: str | None = None,
     context_requester_user_id: str | None = None,
+    observe=None,
 ):
     from novelvideo.task_backend import run_core
     from novelvideo.task_backend.registry import register_project_task_runner
@@ -87,6 +88,8 @@ def _run_core(
 
     def runner(envelope, _ctx):
         captured["envelope"] = envelope
+        if observe is not None:
+            observe()
         return {"ok": True}
 
     monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
@@ -169,6 +172,64 @@ def test_run_core_constructs_immutable_secret_free_context_from_verified_deliver
     assert "secret" not in repr(context).casefold()
     with pytest.raises(FrozenInstanceError):
         context.project_id = "borrowed-project"
+
+
+def test_run_core_binds_gateway_scope_for_every_runner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """派发点中心绑定：runner 自己不绑定，也必须能读到本次投递的身份。
+
+    `egress_context` 是可选参数，缺省即放行——于是「平台任务，允许」和「调用点
+    忘了穿参数」被压成同一个 `None`。闸门要能区分这两者，前提是**总有**一个
+    请求作用域的身份可读。绑定原先只在 5 个 runner 自己函数体内做，其余 runner
+    （render / sketch / video / audio / freezone）读到的恒为 None；现在派发点
+    统一绑定，与那 5 处嵌套安全（set/reset 成对）。
+    """
+
+    from novelvideo import model_gateway_runtime as runtime
+    from novelvideo.egress_context import TrustedEgressContext
+
+    seen: dict[str, object] = {}
+
+    _run_core(
+        monkeypatch,
+        _delivery(),
+        observe=lambda: seen.__setitem__(
+            "context", runtime.current_model_gateway_context()
+        ),
+    )
+
+    context = seen["context"]
+    assert type(context) is TrustedEgressContext
+    assert context.envelope_id == "envelope-1"
+    assert context.is_organization is True
+    assert runtime.current_model_gateway_context() is None
+
+
+def test_dispatch_refuses_an_envelope_that_carries_no_identity() -> None:
+    """失效关闭落在派发点：没有身份的信任信封根本到不了 runner。
+
+    这是 OI-48 「缺省即放行」的中心收口。逐个闸门改成「无身份即报错」做不到
+    同样的事——CLI 与内部工具本就合法地没有身份，那样只会把它们一并拒掉；
+    而组织身份只在通过校验的投递里存在，派发点是它唯一的入口。
+    """
+
+    from novelvideo.egress_context import (
+        TRUSTED_EGRESS_CONTEXT_KEY,
+        TrustedRunnerEnvelope,
+    )
+    from novelvideo.model_gateway_runtime import model_gateway_scope_for_runner
+
+    with pytest.raises(TypeError):
+        with model_gateway_scope_for_runner(
+            TrustedRunnerEnvelope({TRUSTED_EGRESS_CONTEXT_KEY: None})
+        ):
+            pass
+
+    # 普通 dict 冒充信任信封同样进不来。
+    with pytest.raises(TypeError):
+        with model_gateway_scope_for_runner({TRUSTED_EGRESS_CONTEXT_KEY: None}):
+            pass
 
 
 def test_run_core_rejects_cross_task_admission_before_runner(

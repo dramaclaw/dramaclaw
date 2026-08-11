@@ -77,8 +77,13 @@ async def prepare_freezone_vision_egress(
     images: list[bytes],
     timeout_seconds: float,
 ) -> FreezoneVisionEgress | None:
-    from novelvideo.egress_context import TrustedEgressContext
+    from novelvideo.egress_context import (
+        TrustedEgressContext,
+        ambient_organization_egress_context,
+    )
 
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
     if egress_context is None:
         return None
     if type(egress_context) is not TrustedEgressContext:

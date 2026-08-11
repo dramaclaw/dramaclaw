@@ -13,6 +13,7 @@ from novelvideo.egress_context import (
     TrustedEgressContext,
     TrustedRunnerEnvelope,
 )
+from novelvideo.model_gateway_runtime import model_gateway_scope_for_runner
 from novelvideo.ports import get_usage_meter
 from novelvideo.ports.authz import AdmissionContext
 from novelvideo.shared.billing_errors import (
@@ -688,7 +689,11 @@ def run_project_task_core_sync(
                 if deadline_monotonic is not None:
                     envelope["__deadline_monotonic"] = deadline_monotonic
                     envelope["__timeout_seconds"] = timeout_seconds
-                result = runner(envelope, ctx)
+                # 唯一派发点，绑定本次投递的身份，使闸门总有一个请求作用域的
+                # 身份可读——否则「平台任务，允许」与「调用点漏传参数」都是 None。
+                # 5 个 runner 在自己函数体内另有绑定，嵌套安全（set/reset 成对）。
+                with model_gateway_scope_for_runner(envelope):
+                    result = runner(envelope, ctx)
             except BaseException as exc:
                 if isinstance(exc, TaskCancelled):
                     asyncio.run(

@@ -47,7 +47,11 @@ from novelvideo.generators.nanobanana_grid import (
     normalize_openai_quality,
     normalize_image_size,
 )
-from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.egress_context import (
+    TrustedEgressContext,
+    ambient_organization_egress_context,
+)
+
 
 def _default_ethnicity_instruction(ethnicity: str) -> str:
     value = (ethnicity or "").strip()
@@ -164,6 +168,8 @@ class NanoBananaCharacterGenerator:
             and type(egress_context) is not TrustedEgressContext
         ):
             raise TypeError("egress_context must be a TrustedEgressContext")
+        if egress_context is None:
+            egress_context = ambient_organization_egress_context()
         config = config or get_grid_generation_config(selection_override=selection)
         if egress_context is not None and egress_context.is_organization:
             config = dict(config)
