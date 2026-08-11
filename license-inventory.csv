@@ -420,10 +420,10 @@ frontend/src/__tests__/features/companion/petdex-pets.test.ts,Elastic-2.0,2026 S
 frontend/src/__tests__/features/freezone/asset-library-panel-beat-context.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/beat-context-projection.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/canvas-draft-storage.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/freezone/canvas-outline-list.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/canvasSaveCoordinator.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/canvasSyncCore.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/canvases-tab-query.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/src/__tests__/features/freezone/canvas-outline-list.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/canvases-tab.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/commit-dialog-submit.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/commit-dialog-targets.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1885,6 +1885,10 @@ tests/test_p0g4c_video_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.t
 tests/test_p0g4d_audio_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_p0g4e_cognee_concurrent_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_p0g4f_storage_control.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_p0g4g_ambient_egress_fallback.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_p0g4h_org_denial_refund_invariant.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_p0g4i_freezone_leaf_classification.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_p0g4j_egress_handle_kind_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_p0g4t_service_operation_exclusion.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_pano_sharp_da2_loading.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_pool_index_rebuild.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1897,7 +1901,6 @@ tests/test_project_embedding_models.py,Elastic-2.0,2026 SuperTale contributors,R
 tests/test_project_id_route_paths.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_spine_template.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_static_media.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-tests/test_publish_official_media_catalog.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_task_routes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_prompt_style_ethnicity_layering.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_publish_official_media_catalog.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
