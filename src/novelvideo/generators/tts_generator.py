@@ -15,7 +15,11 @@ from pydantic import BaseModel, Field
 from novelvideo.config import get_tts_config
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.ports.authz import AdmissionContext
-from novelvideo.ports.egress_operations import OperationSpec, canonical_request_digest
+from novelvideo.ports.egress_operations import (
+    HandleKind,
+    OperationSpec,
+    canonical_request_digest,
+)
 from novelvideo.ports.model_credentials import ModelCredentialError, RequestCredential
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
 from novelvideo.task_backend.subprocesses import run_project_subprocess
@@ -104,6 +108,7 @@ async def claim_audio_operation(
         credential_id=context.credential.credential_id,
         credential_version=context.credential.key_version,
         request_digest=canonical_request_digest(request),
+        handle_kind=HandleKind.LOCAL_RESULT,
     )
     port = ports.get_egress_operation_port()
     return AudioOperationLease(port=port, claim=await port.claim(spec=spec))
@@ -134,11 +139,13 @@ async def complete_audio_operation(
 ) -> None:
     if not lease.claim.won:
         return
+    # 同步音频没有上游作业号（HandleKind.LOCAL_RESULT），这里就是 None——原先填的
+    # 那个占位串只是能骗过「非空」检查的字面量。真结果引用在下面的 result_ref。
     accepted = await lease.port.mark_accepted(
         operation_id=lease.claim.operation.operation_id,
         transition_token=lease.claim.transition_token,
         expected_version=lease.claim.operation.version,
-        provider_job_id="sync-audio",
+        provider_job_id=None,
     )
     await lease.port.mark_completed(
         operation_id=accepted.operation_id,

@@ -24,6 +24,34 @@ from novelvideo.ports.egress_operations import (
 )
 
 
+# `0039_p0_gray_egress_operations.py:296-318` 的 SECURITY DEFINER 函数所判的前置态，
+# 逐条照抄。替身不建这台状态机，服务路径里「从 dispatching 直接 completed」这种在真
+# 库上必抛 P0001 的写法在测试里就永远看不见——OI-49 正是这么活下来的。
+TRANSITION_ALLOWED_FROM: dict[OperationState, frozenset[OperationState]] = {
+    OperationState.ACCEPTED: frozenset({OperationState.DISPATCHING}),
+    OperationState.COMPLETED: frozenset({OperationState.ACCEPTED}),
+    OperationState.REJECTED_BEFORE_SUBMIT: frozenset({OperationState.DISPATCHING}),
+    OperationState.UNKNOWN: frozenset(
+        {OperationState.DISPATCHING, OperationState.ACCEPTED}
+    ),
+}
+
+
+def assert_transition_allowed(
+    *,
+    current: OperationState,
+    target: OperationState,
+    expected_version: int,
+    row_version: int,
+) -> None:
+    """真 definer 的判据：前置态与乐观锁版本。不合就是 INVALID_TRANSITION。"""
+
+    if current not in TRANSITION_ALLOWED_FROM[target]:
+        raise EgressOperationError("EGRESS_OPERATION_INVALID_TRANSITION")
+    if expected_version != row_version:
+        raise EgressOperationError("EGRESS_OPERATION_INVALID_TRANSITION")
+
+
 class LedgerDouble:
     """First claim on a key inserts and wins; a later claim on the same key
     replays when the request digest matches and raises
@@ -76,6 +104,12 @@ class LedgerDouble:
     def _transition(self, kwargs, state: OperationState) -> OperationSnapshot:
         for key, row in self.rows.items():
             if row["operation_id"] == kwargs["operation_id"]:
+                assert_transition_allowed(
+                    current=row["state"],
+                    target=state,
+                    expected_version=kwargs["expected_version"],
+                    row_version=row["version"],
+                )
                 row["state"] = state
                 row["version"] = kwargs["expected_version"] + 1
                 return OperationSnapshot(

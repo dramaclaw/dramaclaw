@@ -71,6 +71,24 @@ class OperationState(str, Enum):
     UNKNOWN = "unknown"
 
 
+class HandleKind(str, Enum):
+    """一次出网操作**能拿到什么样的句柄**——由调用方在 claim 时声明。
+
+    这是判别式：终态里 `provider_job_id` / `result_ref` 各自允许什么形状，由类别
+    决定，DB 侧的 `egress_operations_output_check` 照此判。原先只有一条「非空」
+    检查，占位串就能满足它，等于没有保证。
+    """
+
+    PROVIDER_JOB = "provider_job"
+    """有上游异步作业：accepted 起就必须留下上游作业号，completed 还要有结果引用。"""
+
+    LOCAL_RESULT = "local_result"
+    """没有上游作业，但有真实结果引用（如同步音频落盘的路径）。"""
+
+    NONE = "none"
+    """纯服务内部副作用：两列都没有真值可填，于是要求两列都是 NULL。"""
+
+
 class EgressOperationError(RuntimeError):
     """Stable operation failure without database or provider details."""
 
@@ -91,6 +109,9 @@ class OperationSpec:
     credential_id: str
     credential_version: int
     request_digest: str
+    # 必填、无默认值：给默认值就把「我声明它没有句柄」和「我忘了写」压回同一个
+    # 值，新约束会重新退化成 OI-49 那种「读上去像保证」的东西。
+    handle_kind: HandleKind
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -107,9 +128,13 @@ class OperationSpec:
             raise TypeError("credential_version must be a positive integer")
         if self.credential_version < 1:
             raise ValueError("credential_version must be positive")
+        if type(self.handle_kind) is not HandleKind:
+            raise TypeError("handle_kind must be a HandleKind")
 
     @property
     def operation_key(self) -> str:
+        # handle_kind 刻意**不在**身份里：它描述的是这次操作留什么句柄，不是它
+        # 是哪一次操作。放进来会让存量行的 replay 整体失配。
         identity = {
             "organization_id": self.organization_id,
             "project_id": self.project_id,
@@ -170,7 +195,10 @@ class EgressOperationPort(Protocol):
         operation_id: str,
         transition_token: str,
         expected_version: int,
-        provider_job_id: str,
+        # None 不是「忘了传」：类别写在行上，DB 是权威，`local_result` 与 `none`
+        # 本来就没有上游作业号可填。这与 OI-48 谴责的「用可选参数当身份载体」不是
+        # 一回事——那里 None 意味着信息丢失，这里 None 是一个被约束校验的声明。
+        provider_job_id: str | None,
     ) -> OperationSnapshot: ...
 
     async def mark_completed(
@@ -179,7 +207,7 @@ class EgressOperationPort(Protocol):
         operation_id: str,
         transition_token: str,
         expected_version: int,
-        result_ref: str,
+        result_ref: str | None,
     ) -> OperationSnapshot: ...
 
     async def mark_unknown(

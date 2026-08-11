@@ -4,7 +4,7 @@ import pytest
 
 
 def _spec(**overrides):
-    from novelvideo.ports.egress_operations import OperationSpec
+    from novelvideo.ports.egress_operations import HandleKind, OperationSpec
 
     values = {
         "organization_id": "org_1",
@@ -15,6 +15,7 @@ def _spec(**overrides):
         "credential_id": "credential_1",
         "credential_version": 3,
         "request_digest": "a" * 64,
+        "handle_kind": HandleKind.PROVIDER_JOB,
     }
     values.update(overrides)
     return OperationSpec(**values)

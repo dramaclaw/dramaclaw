@@ -2674,6 +2674,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
     @staticmethod
     def _operation_spec(context, payload: dict[str, object], kwargs: dict[str, Any]):
         from novelvideo.ports.egress_operations import (
+            HandleKind,
             OperationSpec,
             canonical_request_digest,
         )
@@ -2704,6 +2705,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             credential_id=context.credential.credential_id,
             credential_version=context.credential.key_version,
             request_digest=canonical_request_digest(digest_input),
+            handle_kind=HandleKind.PROVIDER_JOB,
         )
 
     @staticmethod

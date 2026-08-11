@@ -230,6 +230,7 @@ async def run_backup_operation(
 
     from novelvideo.egress_context import TrustedEgressContext
     from novelvideo.ports.egress_operations import (
+        HandleKind,
         OperationSpec,
         canonical_request_digest,
     )
@@ -258,6 +259,7 @@ async def run_backup_operation(
             credential_id=context.identity.credential_id,
             credential_version=context.identity.credential_version,
             request_digest=canonical_request_digest(request),
+            handle_kind=HandleKind.NONE,
         )
     )
     if not claim.won:
@@ -277,11 +279,19 @@ async def run_backup_operation(
         except Exception:
             pass
         raise BackupInvocationFailed() from None
-    await operations.mark_completed(
+    # `completed` 只能来自 `accepted`（`0039:294-338`）。原先从 `dispatching` 直跳
+    # completed，真库上必抛 P0001；替身没有状态机才一直是绿的。
+    accepted = await operations.mark_accepted(
         operation_id=claim.operation.operation_id,
         transition_token=claim.transition_token,
         expected_version=claim.operation.version,
-        result_ref="service-operation-completed",
+        provider_job_id=None,
+    )
+    await operations.mark_completed(
+        operation_id=accepted.operation_id,
+        transition_token=claim.transition_token,
+        expected_version=accepted.version,
+        result_ref=None,
     )
     return result
 

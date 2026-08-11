@@ -12,6 +12,7 @@ from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
 from novelvideo.ports.egress_operations import (
     OperationClaimResult,
     OperationSnapshot,
+    HandleKind,
     OperationSpec,
     OperationState,
     canonical_request_digest,
@@ -104,6 +105,7 @@ async def authorize_credentialed_hermes(
         credential_id=credential.credential_id,
         credential_version=credential.key_version,
         request_digest=canonical_request_digest({"prompt": prompt}),
+        handle_kind=HandleKind.NONE,
     )
     claim = await operation_port.claim(spec=spec)
     if type(claim) is not OperationClaimResult or not claim.won:

@@ -22,7 +22,7 @@ from support.egress_ledger import LedgerDouble
 
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.ports.authz import BillingPrincipal
-from novelvideo.ports.egress_operations import OperationSpec
+from novelvideo.ports.egress_operations import HandleKind, OperationSpec
 from novelvideo.ports.model_credentials import CredentialReference
 
 
@@ -155,6 +155,7 @@ def test_operation_key_still_ignores_the_request_digest():
             credential_id="credential",
             credential_version=1,
             request_digest=digest,
+            handle_kind=HandleKind.NONE,
         )
 
     assert spec("a" * 64).operation_key == spec("b" * 64).operation_key

@@ -457,7 +457,7 @@ def test_request_scoped_objects_and_operation_spec_do_not_expose_plaintext_key()
     None
 ):
     from novelvideo import model_gateway_runtime as runtime
-    from novelvideo.ports.egress_operations import OperationSpec
+    from novelvideo.ports.egress_operations import HandleKind, OperationSpec
 
     canary = "sk-plaintext-must-not-escape"
     context = _organization_context()
@@ -475,6 +475,7 @@ def test_request_scoped_objects_and_operation_spec_do_not_expose_plaintext_key()
         credential_id="credential-1",
         credential_version=3,
         request_digest="e" * 64,
+        handle_kind=HandleKind.NONE,
     )
 
     with runtime.model_gateway_request_scope(context):

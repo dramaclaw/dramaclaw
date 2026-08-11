@@ -18,7 +18,11 @@ from novelvideo.egress_context import (
 )
 from novelvideo.ports import get_egress_operation_port, get_model_credentials
 from novelvideo.ports.authz import AdmissionContext
-from novelvideo.ports.egress_operations import OperationSpec, canonical_request_digest
+from novelvideo.ports.egress_operations import (
+    HandleKind,
+    OperationSpec,
+    canonical_request_digest,
+)
 from novelvideo.ports.model_credentials import RequestCredential
 from novelvideo.shared.runtime_env import is_ce_effective
 
@@ -392,6 +396,7 @@ async def execute_organization_gateway_request(
             credential_id=context.credential.credential_id,
             credential_version=context.credential.key_version,
             request_digest=request_digest,
+            handle_kind=HandleKind.NONE,
         )
     )
     if not claim.won:
@@ -422,17 +427,20 @@ async def execute_organization_gateway_request(
         )
         raise
 
+    # 这里没有上游作业号可留：网关同步提交，返回体不带 provider 侧的作业标识。
+    # 原先拿本行自己的 `operation_id` 填两列，只是为了骗过旧 CHECK 的「非空」判据，
+    # 读上去像「留了上游句柄」，实则是自引用。HandleKind.NONE 把这件事写在行上。
     accepted = await operation_port.mark_accepted(
         operation_id=operation.operation_id,
         transition_token=transition_token,
         expected_version=operation.version,
-        provider_job_id=operation.operation_id,
+        provider_job_id=None,
     )
     await operation_port.mark_completed(
         operation_id=operation.operation_id,
         transition_token=transition_token,
         expected_version=accepted.version,
-        result_ref=operation.operation_id,
+        result_ref=None,
     )
     return result
 
@@ -469,6 +477,7 @@ async def execute_organization_gateway_stream(
             credential_id=context.credential.credential_id,
             credential_version=context.credential.key_version,
             request_digest=request_digest,
+            handle_kind=HandleKind.NONE,
         )
     )
     if not claim.won:
@@ -492,11 +501,12 @@ async def execute_organization_gateway_stream(
     accepted = None
     try:
         async with stream_factory(credential) as response:
+            # 流式同样没有上游作业号，见上面同函数族的说明。
             accepted = await operation_port.mark_accepted(
                 operation_id=operation.operation_id,
                 transition_token=transition_token,
                 expected_version=operation.version,
-                provider_job_id=operation.operation_id,
+                provider_job_id=None,
             )
             try:
                 yield response
@@ -520,7 +530,7 @@ async def execute_organization_gateway_stream(
         operation_id=operation.operation_id,
         transition_token=transition_token,
         expected_version=accepted.version,
-        result_ref=operation.operation_id,
+        result_ref=None,
     )
 
 

@@ -42,6 +42,7 @@ from novelvideo.ports.authz import AdmissionContext
 from novelvideo.ports.egress import EgressError
 from novelvideo.ports.egress_operations import (
     OperationClaimResult,
+    HandleKind,
     OperationSpec,
     canonical_request_digest,
 )
@@ -158,6 +159,7 @@ async def _prepare_organization_image_egress(
             credential_id=context.credential.credential_id,
             credential_version=context.credential.key_version,
             request_digest=canonical_request_digest(request),
+            handle_kind=HandleKind.PROVIDER_JOB,
         )
     )
     if not claim.won:

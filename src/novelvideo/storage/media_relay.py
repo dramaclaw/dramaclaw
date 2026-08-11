@@ -398,6 +398,7 @@ async def relay_tenant_image_bytes(
 
     from novelvideo.egress_context import TrustedEgressContext
     from novelvideo.ports.egress_operations import (
+        HandleKind,
         OperationSpec,
         OperationState,
         canonical_request_digest,
@@ -444,6 +445,7 @@ async def relay_tenant_image_bytes(
             credential_id=identity.credential_id,
             credential_version=identity.credential_version,
             request_digest=request_digest,
+            handle_kind=HandleKind.NONE,
         )
     )
     if not claim.won or claim.operation.state is not OperationState.DISPATCHING:
@@ -469,11 +471,20 @@ async def relay_tenant_image_bytes(
         except Exception:
             pass
         raise ServiceInvocationFailed() from None
-    await operations.mark_completed(
+    # `completed` 只能来自 `accepted`（`0039:294-338` 的 definer 如此判），先前从
+    # `dispatching` 直接跳 completed 在真库上必抛 P0001；之所以一直是绿的，只因替身
+    # 没有状态机。expected_version 要跟着 accepted 的返回走：版本已经 +1。
+    accepted = await operations.mark_accepted(
         operation_id=claim.operation.operation_id,
         transition_token=claim.transition_token,
         expected_version=claim.operation.version,
-        result_ref="service-operation-completed",
+        provider_job_id=None,
+    )
+    await operations.mark_completed(
+        operation_id=accepted.operation_id,
+        transition_token=claim.transition_token,
+        expected_version=accepted.version,
+        result_ref=None,
     )
     return str(result)
 

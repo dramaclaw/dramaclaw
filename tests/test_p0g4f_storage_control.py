@@ -8,22 +8,34 @@ import pytest
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.ports.authz import BillingPrincipal
 from novelvideo.ports.egress_operations import (
+    HandleKind,
     OperationClaimResult,
     OperationSnapshot,
     OperationState,
 )
 from novelvideo.ports.model_credentials import CredentialReference
+from support.egress_ledger import assert_transition_allowed
 
 
 class FakeOperations:
+    """带状态机的替身。
+
+    原先它连 `mark_accepted` 都没有，`mark_completed` 也不看前置态，于是服务路径
+    「从 dispatching 直跳 completed」——真库上必抛 P0001——在这里一路绿灯。替身不建
+    状态机，DB 侧的约束就是摆设，见 OI-49。
+    """
+
     def __init__(
         self, *, won: bool = True, state: OperationState = OperationState.DISPATCHING
     ):
         self.won = won
         self.state = state
         self.claims = []
+        self.accepted = []
         self.completed = []
         self.unknown = []
+        self._state = state
+        self._version = 1
 
     async def claim(self, *, spec):
         self.claims.append(spec)
@@ -38,23 +50,36 @@ class FakeOperations:
             transition_token="transition-1" if self.won else None,
         )
 
-    async def mark_completed(self, **kwargs):
-        self.completed.append(kwargs)
+    def _transition(self, kwargs, target: OperationState) -> OperationSnapshot:
+        assert_transition_allowed(
+            current=self._state,
+            target=target,
+            expected_version=kwargs["expected_version"],
+            row_version=self._version,
+        )
+        self._state = target
+        self._version = kwargs["expected_version"] + 1
         return OperationSnapshot(
             operation_id=kwargs["operation_id"],
             operation_key="operation-key",
-            state=OperationState.COMPLETED,
-            version=kwargs["expected_version"] + 1,
+            state=target,
+            version=self._version,
         )
 
+    async def mark_accepted(self, **kwargs):
+        snapshot = self._transition(kwargs, OperationState.ACCEPTED)
+        self.accepted.append(kwargs)
+        return snapshot
+
+    async def mark_completed(self, **kwargs):
+        snapshot = self._transition(kwargs, OperationState.COMPLETED)
+        self.completed.append(kwargs)
+        return snapshot
+
     async def mark_unknown(self, **kwargs):
+        snapshot = self._transition(kwargs, OperationState.UNKNOWN)
         self.unknown.append(kwargs)
-        return OperationSnapshot(
-            operation_id=kwargs["operation_id"],
-            operation_key="operation-key",
-            state=OperationState.UNKNOWN,
-            version=kwargs["expected_version"] + 1,
-        )
+        return snapshot
 
 
 def _org_context(*, org_id: str = "org-a", project_id: str = "project-a"):
@@ -327,6 +352,10 @@ async def test_c1_eg21_context_facade_transitions_in_claim_relay_terminal_order(
             events.append("claim")
             return await super().claim(spec=spec)
 
+        async def mark_accepted(self, **kwargs):
+            events.append("accepted")
+            return await super().mark_accepted(**kwargs)
+
         async def mark_completed(self, **kwargs):
             events.append("completed")
             return await super().mark_completed(**kwargs)
@@ -354,7 +383,8 @@ async def test_c1_eg21_context_facade_transitions_in_claim_relay_terminal_order(
         assert events == ["claim", "relay", "unknown"]
     else:
         assert await call == "https://relay.example/signed-secret-url"
-        assert events == ["claim", "relay", "completed"]
+        # `completed` 只能来自 `accepted`（`0039:302-307`），中继因此多一步 accept。
+        assert events == ["claim", "relay", "accepted", "completed"]
 
 
 @pytest.mark.asyncio
@@ -575,7 +605,12 @@ async def test_c1_eg22_pos_allows_only_newapi_admin_service_identity():
     assert result == {"ok": True}
     assert network_calls == ["called"]
     assert len(operations.claims) == 1
-    assert operations.completed[0]["result_ref"] == "service-operation-completed"
+    # 这条路径没有上游作业号、也没有结果引用（HandleKind.NONE），两列就该是 NULL。
+    # 原先它断言的是占位串 `"service-operation-completed"` ——把「能骗过非空检查的
+    # 字符串」钉成了期望值，DB 约束、写入点、用例三方互相背书，见 OI-49。
+    assert operations.claims[0].handle_kind is HandleKind.NONE
+    assert operations.accepted[0]["provider_job_id"] is None
+    assert operations.completed[0]["result_ref"] is None
 
 
 @pytest.mark.asyncio
