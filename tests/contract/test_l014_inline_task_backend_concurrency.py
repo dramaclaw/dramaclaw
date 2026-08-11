@@ -1,6 +1,4 @@
 import asyncio
-from datetime import datetime, timezone
-from itertools import count
 import os
 import signal
 import sys
@@ -12,9 +10,7 @@ from pathlib import Path
 import pytest
 
 from novelvideo.ports import registry
-from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
 from novelvideo.ports.local.tasks import InlineTaskBackend, InMemoryCancellationStore
-from novelvideo.ports.model_credentials import CredentialReference
 from novelvideo.project_context import ProjectContext
 from novelvideo.generators import tts_generator, video_composer, video_generator
 from novelvideo.generators.tts_generator import EdgeTTSGenerator, MockTTSGenerator
@@ -25,10 +21,8 @@ from novelvideo.task_backend.cancel import (
     TaskTimedOut,
     raise_if_envelope_cancel_requested,
 )
-from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
 from novelvideo.task_backend.limits import global_lane_concurrency
 from novelvideo.task_backend.registry import register_project_task_runner
-from novelvideo.task_backend.producer import TaskEnvelopeProducer
 from novelvideo.task_backend.subprocesses import (
     active_subprocess_count,
     kill_task_processes,
@@ -37,42 +31,6 @@ from novelvideo.task_backend.subprocesses import (
 from novelvideo.task_state import TaskStateManager
 
 pytestmark = pytest.mark.m07
-
-_L014_NOW = datetime(2026, 8, 3, 4, 5, 6, tzinfo=timezone.utc)
-_L014_SIGNING_KEY = b"l014-task-envelope-test-key-0001"
-
-
-class _L014Authz:
-    async def admit_model_task(self, *, user_id: str, root_task_id: str):
-        return AdmissionContext(
-            requester_user_id=user_id,
-            billing_principal=BillingPrincipal(kind="local", id=user_id),
-            credential=CredentialReference("local", "local-newapi", 1),
-            admission_id=f"admission-{root_task_id}",
-            root_task_id=root_task_id,
-            admitted_at="2026-08-03T04:05:00Z",
-            authz_version=1,
-        )
-
-
-def _inline_backend() -> InlineTaskBackend:
-    authz = _L014Authz()
-    envelope_ids = count(1)
-    keyring = {"l014-v1": _L014_SIGNING_KEY}
-    producer = TaskEnvelopeProducer(
-        authz=authz,
-        active_key_id="l014-v1",
-        keyring=keyring,
-        clock=lambda: _L014_NOW,
-        envelope_id_factory=lambda: f"l014-envelope-{next(envelope_ids)}",
-    )
-    consumer = TaskEnvelopeConsumer(
-        keyring=keyring,
-        authz=authz,
-        clock=lambda: _L014_NOW,
-    )
-    return InlineTaskBackend(producer=producer, consumer=consumer)
-
 
 def _ctx(
     tmp_path: Path, project_id: str = "proj_l014", requester: str = "editor_1"
@@ -191,10 +149,10 @@ def _spawn_tree_script(tmp_path: Path) -> tuple[Path, Path]:
 
 @pytest.mark.asyncio
 async def test_gate1_cooperative_cancel_releases_lane_without_outer_task_cancel(
-    _task_ports, tmp_path
+    _task_ports, signed_inline_backend, tmp_path
 ):
     ctx = _ctx(tmp_path)
-    backend = _inline_backend()
+    backend = signed_inline_backend()
     started = threading.Event()
     observed_cancel = threading.Event()
     finished = threading.Event()
@@ -233,10 +191,10 @@ async def test_gate1_cooperative_cancel_releases_lane_without_outer_task_cancel(
 
 @pytest.mark.asyncio
 async def test_gate2_cancel_kills_registered_process_group_and_unregisters_handle(
-    _task_ports, tmp_path
+    _task_ports, signed_inline_backend, tmp_path
 ):
     ctx = _ctx(tmp_path)
-    backend = _inline_backend()
+    backend = signed_inline_backend()
     script, pidfile = _spawn_tree_script(tmp_path)
     started = threading.Event()
     task_type = "l014_gate2_cancel_kills_process_group"
@@ -287,11 +245,11 @@ async def test_gate2_cancel_kills_registered_process_group_and_unregisters_handl
 
 @pytest.mark.asyncio
 async def test_gate2_deadline_kills_process_group_and_marks_failed(
-    monkeypatch, _task_ports, tmp_path
+    monkeypatch, _task_ports, signed_inline_backend, tmp_path
 ):
     monkeypatch.setenv("ST_PROJECT_TASK_TIMEOUT_S", "1")
     ctx = _ctx(tmp_path)
-    backend = _inline_backend()
+    backend = signed_inline_backend()
     script, pidfile = _spawn_tree_script(tmp_path)
     task_type = "l014_gate2_deadline_kills_process_group"
 
@@ -445,12 +403,13 @@ async def test_gate2_timeout_signals_are_not_swallowed_by_generator_fallbacks(
 async def test_gate3_world_lane_saturation_does_not_starve_default_lane(
     monkeypatch,
     _task_ports,
+    signed_inline_backend,
     tmp_path,
 ):
     monkeypatch.setenv("ST_CE_GLOBAL_MAX_ACTIVE_WORLD_TASKS", "1")
     monkeypatch.setenv("ST_CE_GLOBAL_MAX_ACTIVE_DEFAULT_TASKS", "1")
     ctx = _ctx(tmp_path)
-    backend = _inline_backend()
+    backend = signed_inline_backend()
     world_release = threading.Event()
     default_done = threading.Event()
 
@@ -491,13 +450,14 @@ async def test_gate3_world_lane_saturation_does_not_starve_default_lane(
 async def test_gate3_same_lane_overflow_is_explicitly_queued_and_cancelable(
     monkeypatch,
     _task_ports,
+    signed_inline_backend,
     tmp_path,
 ):
     monkeypatch.setenv("ST_CE_GLOBAL_MAX_ACTIVE_WORLD_TASKS", "1")
     monkeypatch.setenv("ST_PROJECT_MAX_ACTIVE_WORLD_TASKS", "5")
     monkeypatch.setenv("ST_PROJECT_USER_MAX_ACTIVE_WORLD_TASKS", "5")
     ctx = _ctx(tmp_path)
-    backend = _inline_backend()
+    backend = signed_inline_backend()
     release = threading.Event()
     started = []
 
@@ -546,6 +506,7 @@ async def test_gate3_same_lane_overflow_is_explicitly_queued_and_cancelable(
 async def test_gate3_global_lane_queue_overflow_raises_typed_limit_exception(
     monkeypatch,
     _task_ports,
+    signed_inline_backend,
     tmp_path,
 ):
     monkeypatch.setenv("ST_CE_GLOBAL_MAX_ACTIVE_WORLD_TASKS", "1")
@@ -553,7 +514,7 @@ async def test_gate3_global_lane_queue_overflow_raises_typed_limit_exception(
     monkeypatch.setenv("ST_PROJECT_MAX_ACTIVE_WORLD_TASKS", "5")
     monkeypatch.setenv("ST_PROJECT_USER_MAX_ACTIVE_WORLD_TASKS", "5")
     ctx = _ctx(tmp_path)
-    backend = _inline_backend()
+    backend = signed_inline_backend()
     release = threading.Event()
 
     def runner(envelope, run_ctx):
@@ -650,12 +611,13 @@ async def test_gate3_lane_scheduler_uses_independent_global_concurrency_config(
 async def test_gate3_multi_project_lane_dispatch_is_project_fair_fifo(
     monkeypatch,
     _task_ports,
+    signed_inline_backend,
     tmp_path,
 ):
     monkeypatch.setenv("ST_CE_GLOBAL_MAX_ACTIVE_WORLD_TASKS", "1")
     monkeypatch.setenv("ST_PROJECT_MAX_ACTIVE_WORLD_TASKS", "5")
     monkeypatch.setenv("ST_PROJECT_USER_MAX_ACTIVE_WORLD_TASKS", "5")
-    backend = _inline_backend()
+    backend = signed_inline_backend()
     ctx_a = _ctx(tmp_path, "proj_l014_a", requester="editor_a")
     ctx_b = _ctx(tmp_path, "proj_l014_b", requester="editor_b")
     release_first = threading.Event()
