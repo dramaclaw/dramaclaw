@@ -13,9 +13,17 @@ useDefault = true
 # "3gs_combined" 是 freezone「3GS 导演合成图」输入项的 UI 标识符（key: "3gs_combined"），
 # 非密钥；generic-api-key 因低熵 key:"..." 模式误判。详见 verification-ledger 2026-06-29。
 # "clarify-ws-key" 是 chat route prewarm 测试夹具的 bridge_key 桩值，非密钥。
+# 前端测试夹具同理：下方自定义规则的 paths 按 Python 约定写（tests/、*.py），
+# TS/JS 侧的 __tests__/ 与 *.test.tsx 一条都不匹配，于是同样的合成夹具
+# 「在 Python 里安静、在 TypeScript 里报警」。这里补齐前端测试目录约定。
+# 注意：只放行路径，不放行值——不得改成按值/按指纹逐条压制。
 [allowlist]
-description = "全局放行：确认的 generic-api-key 误报（前端 UI 输入项标识符，非密钥）"
+description = "全局放行：确认的 generic-api-key 误报（前端 UI 输入项标识符、前端测试夹具），非密钥"
 stopwords = ["3gs_combined", "clarify-ws-key"]
+paths = [
+  '''(^|/)__tests__/''',
+  '''\.(test|spec)\.[jt]sx?$''',
+]
 
 [[rules]]
 id = "env-credential-real-value"
