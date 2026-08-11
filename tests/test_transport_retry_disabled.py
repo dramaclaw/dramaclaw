@@ -304,6 +304,75 @@ def test_gateway_organization_branch_disables_retry(monkeypatch):
     assert len(calls) == 1 + EXPECTED_MAX_RETRIES
 
 
+# --------------------------------------------------------------------------
+# The image direct branch.
+#
+# nanobanana_grid._call_openai_image_api builds its own AsyncOpenAI and keeps
+# it in a local variable, so _assert_no_retries has nothing to read. The seam
+# is instead the function-local ``from openai import AsyncOpenAI`` at
+# nanobanana_grid.py:3376, which resolves at call time.
+#
+# This branch multiplies: an application-level loop of 4 attempts sits on top
+# of the transport (nanobanana_grid.py:3457), so an SDK default of 2 makes the
+# worst case 12 upstream calls against one reservation (:3453, taken once
+# before the loop).
+# --------------------------------------------------------------------------
+
+
+def test_openai_image_direct_branch_disables_transport_retry(monkeypatch):
+    """The image path bills once at :3453 and must not re-send under it."""
+
+    import openai
+
+    from novelvideo.generators import nanobanana_grid
+
+    captured: list[dict] = []
+    calls: list[httpx.Request] = []
+    opened: list[httpx.AsyncClient] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        # 429 is retried by the SDK's own default policy, but none of the
+        # generator's transient tokens (:3499-3508) appear in a RateLimitError
+        # repr — so this count measures the transport layer alone.
+        return httpx.Response(429, json={"error": {"message": "boom"}})
+
+    real_client_cls = openai.AsyncOpenAI
+
+    class _CapturingAsyncOpenAI(real_client_cls):
+        def __init__(self, **kwargs):
+            captured.append(dict(kwargs))
+            transport_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            opened.append(transport_client)
+            super().__init__(**kwargs, http_client=transport_client)
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", _CapturingAsyncOpenAI)
+
+    async def drive():
+        return await nanobanana_grid._call_openai_image_api(
+            api_key="sk-test",
+            model="gpt-image-1",
+            prompt="a cat",
+        )
+
+    try:
+        image_bytes, _text, error_detail = asyncio.run(drive())
+    finally:
+        for transport_client in opened:
+            asyncio.run(transport_client.aclose())
+
+    assert captured, "the image direct branch never constructed an AsyncOpenAI"
+    assert captured[0].get("max_retries") == EXPECTED_MAX_RETRIES, (
+        "generators/nanobanana_grid.py:3455 must pass max_retries=0 explicitly; "
+        f"got {captured[0].get('max_retries', '<absent>')!r}"
+    )
+    # The behaviour behind the attribute: one 429 produced exactly one call.
+    assert len(calls) == 1 + EXPECTED_MAX_RETRIES
+    assert image_bytes is None and error_detail, (
+        "the 429 should surface as an error, not as a silent success"
+    )
+
+
 def test_the_zero_has_to_be_written_down():
     """Deleting ``max_retries=0`` would not fail loudly — the SDK default is 2.
 

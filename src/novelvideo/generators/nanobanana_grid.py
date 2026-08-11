@@ -3452,7 +3452,7 @@ async def _call_openai_image_api(
     try:
         reservation_id = await _reserve("openai_image_api")
 
-        client = AsyncOpenAI(api_key=api_key, timeout=300.0)
+        client = AsyncOpenAI(api_key=api_key, timeout=300.0, max_retries=0)
         result = None
         for _attempt in range(4):
             try:
