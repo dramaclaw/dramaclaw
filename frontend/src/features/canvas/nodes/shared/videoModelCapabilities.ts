@@ -47,6 +47,52 @@ export function isSeedance2VideoModel(modelId: string | null | undefined): boole
   return /seedance2/.test(normalizeVideoModelId(modelId));
 }
 
+/**
+ * Seedance 2.5（目录里的 `gateway_model = seedance-2.5`，apiModel `newapi_seedance-2.5`）。
+ *
+ * 归一化后是 `seedance25`，所以它同时也命中上面的 `isSeedance2VideoModel`(`/seedance2/`)
+ * ——那条是「2.x 族」的粗口径（能吃多图 / 视频 / 音频），两者不冲突，别为了区分把它
+ * 改成 `seedance20`：2.5 的多图与参考素材能力跟 2.0 同族，收窄会把 2.5 打回 1.x 待遇。
+ *
+ * 这条**只**用于「片段重拍」这类 2.5 独占的入口。判定按前缀而非全等，是为了将来
+ * 出 `seedance-2.5-fast` 之类变体时不用再改一次。
+ */
+export function isSeedance25VideoModel(modelId: string | null | undefined): boolean {
+  return /seedance25/.test(normalizeVideoModelId(modelId));
+}
+
+/**
+ * 「片段重拍」要落到哪个模型上：目录里第一个 Seedance 2.5，没有则 null。
+ *
+ * 返回 null 意味着这个项目的目录里压根没上 2.5 —— 调用方应该把入口置灰而不是随便
+ * 挑一个模型顶上：时间码是写给 2.5 的视频编辑用的，换个模型只会得到一次莫名其妙的
+ * 生成。
+ */
+export function findReshootVideoModel<T extends { id: string; apiModel?: string }>(
+  models: readonly T[],
+): T | null {
+  return models.find((model) => isSeedance25VideoModel(model.apiModel ?? model.id)) ?? null;
+}
+
+/**
+ * 出片的比例 / 时长是否由输入视频决定 —— Seedance 的视频编辑就是这样：厂商硬校验
+ * `ratio` 必须是 `adaptive`、`duration` 必须是 -1，指定具体值整单打回
+ * （`[InvalidParameter.TaskTypeConstraint] ... the output ratio and duration follow
+ * the input video`）。所以这两项在界面上也不该出现 —— 摆着一个改了也不生效、还会
+ * 让人以为自己能定出片时长的旋钮，比不给更糟。
+ *
+ * 后端 `VideoGenerator._follows_source_video_output` 是同一条判断（seedance 系 +
+ * 视频编辑），两边改一处就要同步另一处。HappyHorse 的视频编辑不在此列，它照常带
+ * 比例和时长。
+ */
+export function videoOutputFollowsSourceVideo(
+  mode: VideoGenMode | null | undefined,
+  modelId: string | null | undefined,
+): boolean {
+  if (mode !== "videoEdit") return false;
+  return /seedance/.test(normalizeVideoModelId(modelId));
+}
+
 // 基础款 Seedance 2.0（`…seedance-2.0` 本体，不含 fast / value / fast-value 变体）。
 // 归一化后以 `seedance20` 结尾即为基础款——变体都会在后面多出 `fast` / `value` 后缀。
 function isBaseSeedance2VideoModel(modelId: string | null | undefined): boolean {

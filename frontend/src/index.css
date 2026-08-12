@@ -80,6 +80,10 @@
   --ui-border-strong: rgba(15, 23, 42, 0.2);
   --canvas-node-input-placeholder: rgba(96, 96, 104, 0.72);
   --canvas-node-input-helper: rgba(104, 104, 112, 0.76);
+  /* 分组默认底色：没有配色的组光靠一圈描边根本看不出边界，垫一层灰把「这是一
+     个组」讲清楚。画布本身接近纯黑，想让灰更明显只能往亮里加 —— 往暗里调在这个
+     底色上根本拉不开差别。 */
+  --group-node-bg: rgba(15, 23, 42, 0.09);
   --ui-shadow-panel: 0 14px 34px rgba(15, 23, 42, 0.18);
   --ui-radius-lg: 12px;
   --ui-radius-xl: 16px;
@@ -153,6 +157,7 @@
   --ui-border-strong: rgba(255, 255, 255, 0.12);
   --canvas-node-input-placeholder: rgba(196, 196, 202, 0.68);
   --canvas-node-input-helper: rgba(184, 184, 192, 0.62);
+  --group-node-bg: rgba(255, 255, 255, 0.1);
   --ui-shadow-panel: 0 14px 34px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.03) inset;
   --ui-glow-accent: 0 0 24px rgba(var(--accent-rgb) / 0.25);
   --ui-radius-lg: 12px;
@@ -526,6 +531,17 @@
 
 .mention-chip:hover > .mention-chip-swap {
   display: inline-flex;
+}
+
+/* 片段重拍的时间码：比普通 mention 深一档，一眼看出是区间引用而不是用户手打的
+   数字。不配图标——等宽数字本身已经足够辨识，加图标反而把这一行撑得很杂。 */
+.mention-chip-timecode {
+  background: rgba(0, 0, 0, 0.42);
+  font-variant-numeric: tabular-nums;
+}
+
+.mention-chip-timecode:hover {
+  background: rgba(0, 0, 0, 0.55);
 }
 
 /* 音频引用：可点击的 ▶ / ⏸ 播放按钮（无缩略图）。 */
