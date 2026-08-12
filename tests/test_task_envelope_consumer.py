@@ -65,6 +65,48 @@ def _delivery() -> dict:
     }
 
 
+BILLING_METADATA = {
+    "feature_credit_reservation_id": "reservation-1",
+    "feature_credit_charge_id": "reservation-1",
+    "feature_credit_cost": "12",
+}
+
+
+def _billed_delivery() -> dict:
+    delivery = _delivery()
+    delivery["billing_metadata"] = dict(BILLING_METADATA)
+    return delivery
+
+
+def _expired_delivery() -> dict:
+    payload = {
+        "episode": 3,
+        "beat_num": 2,
+        "scope": "selected",
+        "queue_kind": "video",
+        "payload": {"prompt": "safe business input"},
+    }
+    signed = SignedTaskEnvelope.sign(
+        admission=_admission(),
+        envelope_id="envelope-1",
+        task_type="single_video",
+        project_id="project-1",
+        payload=payload,
+        issued_at="2026-08-01T04:00:00Z",
+        expires_at="2026-08-02T04:00:00Z",
+        signing_key_id="active-v1",
+        signing_key=KEYRING["active-v1"],
+    )
+    return {
+        "project_id": "project-1",
+        "requester_user_id": "user-1",
+        "task_type": "single_video",
+        **payload,
+        "task_envelope_v2": signed.to_dict(),
+        "billing_metadata": dict(BILLING_METADATA),
+    }
+
+
 class FakeAuthz:
     def __init__(self, admission: AdmissionContext | None = None) -> None:
         self.admission = admission or _admission(
@@ -263,6 +305,97 @@ async def test_consumer_verifies_envelope_before_running_policy():
         await consumer.consume(delivery, expected_root_task_id="task-root")
 
     assert policy_calls == []
+    assert authz.calls == []
+
+
+@pytest.mark.asyncio
+async def test_policy_rejection_carries_verified_settlement_identity():
+    """灰度关闭发生在 verify 成功之后，所以身份是可信的，允许驱动退款。"""
+    from novelvideo.ports.authz import AuthzError
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer, VerifiedTaskDelivery
+
+    authz = FakeAuthz()
+
+    def reject_execution() -> None:
+        raise RuntimeError("policy-secret-canary")
+
+    consumer = TaskEnvelopeConsumer(
+        keyring=KEYRING,
+        authz=authz,
+        clock=lambda: NOW,
+        pre_execution_policy=reject_execution,
+    )
+
+    with pytest.raises(AuthzError) as captured:
+        await consumer.consume(_billed_delivery(), expected_root_task_id="task-root")
+
+    settlement = captured.value.settlement
+    assert settlement is not None
+    # 刻意不是 VerifiedTaskDelivery：那个类型是「可以进 runner」的凭证。
+    assert not isinstance(settlement, VerifiedTaskDelivery)
+    assert settlement.project_id == "project-1"
+    assert settlement.requester_user_id == "user-1"
+    assert settlement.task_type == "single_video"
+    assert settlement.episode == 3
+    assert settlement.beat_num == 2
+    assert settlement.scope == "selected"
+    assert dict(settlement.billing_metadata) == BILLING_METADATA
+    assert "policy-secret-canary" not in str(captured.value)
+    assert captured.value.code == "P0_GRAY_DISABLED"
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_stale_authority_rejection_carries_verified_settlement_identity():
+    """authz 漂移同样发生在 verify 之后——这是本条最高频的触发源。"""
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+    from novelvideo.task_backend.envelope import StaleTaskEnvelope
+
+    authz = FakeAuthz(
+        _admission(
+            admission_id="fresh-admission",
+            admitted_at="2026-08-03T04:05:05Z",
+            key_version=8,
+        )
+    )
+    consumer = TaskEnvelopeConsumer(keyring=KEYRING, authz=authz, clock=lambda: NOW)
+
+    with pytest.raises(StaleTaskEnvelope) as captured:
+        await consumer.consume(_billed_delivery(), expected_root_task_id="task-root")
+
+    settlement = captured.value.settlement
+    assert settlement is not None
+    assert settlement.project_id == "project-1"
+    assert settlement.task_type == "single_video"
+    assert dict(settlement.billing_metadata) == BILLING_METADATA
+    assert captured.value.code == "TASK_ENVELOPE_STALE"
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["flat_mismatch", "tampered_signature", "expired"])
+async def test_unverified_rejection_withholds_settlement_identity(case):
+    """签名没通过就没有可信身份，绝不能拿它驱动资金动作。"""
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    authz = FakeAuthz()
+    consumer = TaskEnvelopeConsumer(keyring=KEYRING, authz=authz, clock=lambda: NOW)
+    if case == "expired":
+        delivery = _expired_delivery()
+    else:
+        delivery = _billed_delivery()
+        if case == "flat_mismatch":
+            delivery["episode"] = True
+        else:
+            delivery["task_envelope_v2"]["signature"] = "0" * 64
+
+    with pytest.raises(InvalidTaskEnvelope) as captured:
+        await consumer.consume(delivery, expected_root_task_id="task-root")
+
+    assert captured.value.settlement is None
     assert authz.calls == []
 
 

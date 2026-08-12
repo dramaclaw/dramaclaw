@@ -24,7 +24,11 @@ from novelvideo.task_backend.limits import (
     project_lane_effective_active_limit,
 )
 from novelvideo.task_backend.queues import QUEUE_KINDS, normalize_queue_kind
-from novelvideo.task_backend.run_core import run_project_task_core_sync
+from novelvideo.task_backend.run_core import (
+    feature_credit_reservation_id,
+    refund_undelivered_feature_credit_reservation,
+    run_project_task_core_sync,
+)
 from novelvideo.task_backend.subprocesses import kill_task_processes
 from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
 
@@ -284,6 +288,17 @@ class InlineTaskBackend:
             except InvalidTaskEnvelope as exc:
                 consumer_failure = exc
         if consumer_failure is not None:
+            settlement = consumer_failure.settlement
+            if settlement is not None:
+                # 预留发生在入队侧、退款发生在 run_core 里,而这里是两者之间。
+                # 只有签名已验证的拒绝才带 settlement——未验证的信封不驱动资金。
+                await refund_undelivered_feature_credit_reservation(
+                    feature_credit_reservation_id(settlement.billing_metadata),
+                    metadata={
+                        "source": "task_rejected_before_worker",
+                        "error_code": consumer_failure.code,
+                    },
+                )
             job.manager.fail_task_for_project(
                 job.ctx,
                 str(job.envelope.get("task_type") or ""),

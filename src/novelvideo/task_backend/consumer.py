@@ -11,6 +11,7 @@ from typing import Any
 from novelvideo.ports.authz import AdmissionContext, AuthzError, AuthzPort
 from novelvideo.task_backend.envelope import (
     InvalidTaskEnvelope,
+    RejectedTaskSettlement,
     SignedTaskEnvelope,
     StaleTaskEnvelope,
 )
@@ -31,6 +32,34 @@ _SIGNED_PAYLOAD_FIELDS = {"episode", "beat_num", "scope", "queue_kind", "payload
 
 def _allow_execution() -> None:
     return None
+
+
+def _rejected_settlement(
+    signed: SignedTaskEnvelope,
+    signed_payload: dict[str, Any],
+    raw_delivery: dict[str, Any],
+) -> RejectedTaskSettlement:
+    """Build the settlement identity for a refusal raised after verification."""
+    billing_metadata = raw_delivery.get("billing_metadata")
+    return RejectedTaskSettlement(
+        project_id=signed.project_id,
+        requester_user_id=signed.admission.requester_user_id,
+        task_type=signed.task_type,
+        episode=signed_payload["episode"],
+        beat_num=signed_payload["beat_num"],
+        scope=signed_payload["scope"],
+        billing_metadata=MappingProxyType(dict(billing_metadata or {})),
+    )
+
+
+def _refuse_verified(
+    error: InvalidTaskEnvelope,
+    signed: SignedTaskEnvelope,
+    signed_payload: dict[str, Any],
+    raw_delivery: dict[str, Any],
+) -> InvalidTaskEnvelope:
+    error.settlement = _rejected_settlement(signed, signed_payload, raw_delivery)
+    return error
 
 
 class _PreExecutionPolicyError(AuthzError, InvalidTaskEnvelope):
@@ -167,7 +196,12 @@ class TaskEnvelopeConsumer:
         except Exception:
             policy_failed = True
         if policy_failed:
-            raise _PreExecutionPolicyError("P0_GRAY_DISABLED") from None
+            raise _refuse_verified(
+                _PreExecutionPolicyError("P0_GRAY_DISABLED"),
+                signed,
+                signed_payload,
+                raw_delivery,
+            ) from None
 
         authority_failed = False
         current_admission: AdmissionContext | None = None
@@ -183,7 +217,12 @@ class TaskEnvelopeConsumer:
         except Exception:
             authority_failed = True
         if authority_failed:
-            raise StaleTaskEnvelope() from None
+            raise _refuse_verified(
+                StaleTaskEnvelope(),
+                signed,
+                signed_payload,
+                raw_delivery,
+            ) from None
 
         return VerifiedTaskDelivery(
             envelope_id=signed.envelope_id,

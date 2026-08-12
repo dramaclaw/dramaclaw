@@ -15,11 +15,35 @@ from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
 from novelvideo.ports.model_credentials import CredentialReference
 
 
+@dataclass(frozen=True)
+class RejectedTaskSettlement:
+    """The signature-verified identity of an envelope refused before execution.
+
+    Rejections raised *after* ``SignedTaskEnvelope.verify`` succeeded still carry
+    a trustworthy identity, so the caller may settle the money the enqueue side
+    already reserved.  Rejections raised while verifying carry none — attaching
+    one there would let an unverified envelope drive a refund.
+
+    Deliberately not a ``VerifiedTaskDelivery``: that type is the token saying
+    "this may enter a runner", and ``run_project_task_core_sync`` gates on it by
+    exact type.  A refused envelope must not be able to impersonate it.
+    """
+
+    project_id: str
+    requester_user_id: str
+    task_type: str
+    episode: int
+    beat_num: Any
+    scope: Any
+    billing_metadata: Mapping[str, Any]
+
+
 class InvalidTaskEnvelope(ValueError):
     """A fail-closed task envelope error with a stable public code."""
 
     code = "TASK_ENVELOPE_INVALID"
     _message = "invalid task envelope"
+    settlement: RejectedTaskSettlement | None = None
 
     def __init__(self) -> None:
         super().__init__(self._message)

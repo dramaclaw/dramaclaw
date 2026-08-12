@@ -399,6 +399,79 @@ async def test_inline_stale_authority_has_zero_runner_usage_and_success(
     assert downstream_calls == []
 
 
+class FakeUsageMeter:
+    def __init__(self):
+        self.refunds = []
+
+    async def settle_cancelled_feature_credit_reservation(
+        self, reservation_id, *, metadata=None
+    ):
+        self.refunds.append({"reservation_id": reservation_id, "metadata": metadata})
+        return {"decision": "refund"}
+
+
+@pytest.mark.asyncio
+async def test_inline_stale_authority_refunds_the_enqueue_side_reservation(
+    monkeypatch, tmp_path
+):
+    """预留在入队侧发生、退款在 worker 里发生，被拒的任务夹在中间会白扣。"""
+    ctx = _ctx(tmp_path)
+    backend = _inline_backend(authz=FakeAuthz(key_version=2))
+    meter = FakeUsageMeter()
+    submitted = []
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks.run_project_task_core_sync",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "novelvideo.task_backend.run_core.get_usage_meter", lambda: meter
+    )
+
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1
+    )
+    job = submitted[0]
+    job.envelope["billing_metadata"] = {"feature_credit_reservation_id": "reservation-1"}
+
+    await backend._run_inline(backend._lanes["default"], job)
+
+    assert [refund["reservation_id"] for refund in meter.refunds] == ["reservation-1"]
+    assert meter.refunds[0]["metadata"]["error_code"] == "TASK_ENVELOPE_STALE"
+    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
+    assert state.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_inline_unverified_rejection_moves_zero_credits(monkeypatch, tmp_path):
+    """签名没通过时身份不可信,不得让它驱动资金动作。"""
+    ctx = _ctx(tmp_path)
+    backend = _inline_backend()
+    meter = FakeUsageMeter()
+    submitted = []
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks.run_project_task_core_sync",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "novelvideo.task_backend.run_core.get_usage_meter", lambda: meter
+    )
+
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1
+    )
+    job = submitted[0]
+    job.envelope["billing_metadata"] = {"feature_credit_reservation_id": "reservation-1"}
+    job.envelope["episode"] = True
+
+    await backend._run_inline(backend._lanes["default"], job)
+
+    assert meter.refunds == []
+    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
+    assert state.status == "failed"
+
+
 def test_local_bootstrap_builds_authz_and_producer_before_registering(monkeypatch):
     from novelvideo.ports.local import register_local_ports
 

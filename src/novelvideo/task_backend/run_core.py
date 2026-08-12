@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Mapping
 
 from novelvideo.egress_context import (
     TRUSTED_EGRESS_CONTEXT_KEY,
@@ -261,12 +261,16 @@ def _clear_project_task_metrics_context() -> None:
     get_usage_meter().clear_llm_usage_context()
 
 
-def _feature_credit_reservation_id(metadata: dict[str, Any]) -> str:
+def feature_credit_reservation_id(metadata: Mapping[str, Any]) -> str:
+    """Read the enqueue-side reservation id a delivery carries, if any."""
     return str(
         metadata.get("feature_credit_reservation_id")
         or metadata.get("feature_credit_charge_id")
         or ""
     ).strip()
+
+
+_feature_credit_reservation_id = feature_credit_reservation_id
 
 
 async def _confirm_feature_credit_reservation(
@@ -309,7 +313,7 @@ async def _refund_feature_credit_reservation(
         )
 
 
-async def _refund_undelivered_feature_credit_reservation(
+async def refund_undelivered_feature_credit_reservation(
     reservation_id: str,
     *,
     metadata: dict[str, Any] | None = None,
@@ -318,6 +322,11 @@ async def _refund_undelivered_feature_credit_reservation(
 
     Paid provider attempts are recorded independently for platform cost
     accounting and do not turn an undelivered user task into a billable result.
+
+    Public because the reservation is taken on the enqueue side while this
+    refund lives in the worker: callers that refuse a delivery *between* those
+    two points (the inline backend below, the EE celery entrypoint) must settle
+    through this one path rather than growing a second refund.
     """
     if not reservation_id:
         return
@@ -331,6 +340,11 @@ async def _refund_undelivered_feature_credit_reservation(
             "undelivered feature credit refund remains awaiting retry: %s",
             exc,
         )
+
+
+_refund_undelivered_feature_credit_reservation = (
+    refund_undelivered_feature_credit_reservation
+)
 
 
 async def _emit_project_task_metrics(
