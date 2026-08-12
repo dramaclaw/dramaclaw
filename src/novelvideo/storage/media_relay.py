@@ -419,8 +419,14 @@ async def relay_tenant_image_bytes(
 
     normalized_ext = _normalize_ext(ext)
     object_digest = hashlib.sha256(object_id.encode("utf-8")).hexdigest()
+    # Inside `relay/` because that is the whole of what the relay credential is
+    # granted: the same bucket answers a HEAD under `relay/` with 404 NoSuchKey
+    # and the identical HEAD under `tenants/` with 403 AccessDenied. The tenant
+    # and project segments stay — they are why the key was ever structured —
+    # they just live under the prefix the credential can reach.
     object_key = (
-        f"tenants/{identity.organization_id}/projects/{identity.project_id}/"
+        f"relay/tenants/{identity.organization_id}/"
+        f"projects/{identity.project_id}/"
         f"objects/{object_digest}.{normalized_ext}"
     )
     request_digest = canonical_request_digest(
