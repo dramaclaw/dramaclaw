@@ -99,6 +99,9 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "run_freezone_edit": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
     ),
+    "run_freezone_mask_edit": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
+    ),
     "reverse_prompt_from_image": LeafEgressRule(
         "novelvideo.freezone.image_node", LeafEgress.NETWORK, "EG-18b"
     ),
@@ -130,11 +133,8 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
         LeafEgress.NETWORK,
         "EG-09a",
     ),
-    # 以下两个真出网（`jobs.py:190-199` / `:1604` 的 call_freezone_vision_model）却
-    # 没有 egress_context 形参，组织下无法安全放行，维持拒绝。见 OI-56。
-    "run_freezone_mask_edit": LeafEgressRule(
-        "novelvideo.freezone.jobs", LeafEgress.DENIED, "EG-18b"
-    ),
+    # 真出网（`jobs.py` 的 call_freezone_vision_model）却没有 egress_context 形参，
+    # 组织下无法安全放行，维持拒绝。见 OI-56。
     "run_freezone_analyze_shots": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.DENIED, "EG-18b"
     ),

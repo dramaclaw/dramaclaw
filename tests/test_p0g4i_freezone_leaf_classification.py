@@ -174,49 +174,93 @@ async def test_local_ffmpeg_leaf_runs_under_an_organization_context(
 @pytest.mark.parametrize("leaf_shape", ["explicit", "var_keyword"])
 @pytest.mark.asyncio
 async def test_unclassified_leaf_is_denied_under_an_organization_context(
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     leaf_shape: str,
 ) -> None:
-    """表外 leaf 照旧抛：默认 fail-closed 没有被这次改动放松（护栏 a）。
+    """表外 leaf 照旧抛：默认 fail-closed 没有被历次改动放松（护栏 a）。
 
-    `run_freezone_mask_edit` 真出网（`jobs.py:190-199`）却未声明 `egress_context`，
-    是刻意留在表外的一条，见 OI-56。
+    样本刻意用一个**表里不存在的名字**直接打分发器，而不是借某个真实 leaf 的
+    DENIED 分类——借真实 leaf 时，那条 leaf 一旦被接上出网上下文改判 NETWORK
+    （OI-56 ① 就是），这条护栏用例会跟着失去覆盖。现在它只依赖「未分类」本身。
 
-    两种签名形状都必须拒。`var_keyword` 那条现在是绿的反面——原判据 `:65` 把
-    `**kwargs` 算作「接受 context」，于是把一个未分类的出网 leaf 放行，context
+    两种签名形状都必须拒。`var_keyword` 那条是原判据的漏洞所在：`inspect.signature`
+    把 `**kwargs` 算作「接受 context」，于是把一个未分类的出网 leaf 放行，context
     被吞进袋子里静默失效。分类判据不看签名，两条同拒。
     """
 
-    from novelvideo.task_backend.runners import freezone
+    from novelvideo.task_backend.runners.freezone import (
+        FREEZONE_LEAF_EGRESS,
+        _call_freezone_leaf,
+    )
 
     leaf_calls = 0
 
     if leaf_shape == "explicit":
-        # 抄真实签名（`jobs.py:146`）：无 egress_context，无 **kwargs。
-        async def mask_edit_leaf(
-            *,
-            project_dir,
-            job_id,
-            base_path,
-            mask_path,
-            prompt,
-            aspect_ratio,
-            image_size,
-            quality,
-            provider,
-            model,
-        ):
+
+        async def unclassified_leaf(*, project_dir, job_id):
             nonlocal leaf_calls
             leaf_calls += 1
             return project_dir / "out.png"
 
     else:
 
-        async def mask_edit_leaf(**kwargs):
+        async def unclassified_leaf(**kwargs):
             nonlocal leaf_calls
             leaf_calls += 1
             return kwargs["project_dir"] / "out.png"
+
+    assert "leaf_not_in_the_table" not in FREEZONE_LEAF_EGRESS
+
+    with pytest.raises(InvalidTaskEnvelope):
+        await _call_freezone_leaf(
+            _organization_envelope(tmp_path),
+            unclassified_leaf,
+            "leaf_not_in_the_table",
+            project_dir=tmp_path / "output",
+            job_id="job-1",
+        )
+
+    assert leaf_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_mask_edit_leaf_receives_the_organization_egress_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """图像擦除对组织必须**到达** leaf，且 leaf 手里拿到的是组织身份（OI-56 ①）。
+
+    它真出网（`jobs.py:190` 调 `generate_reference_edit_image`），此前因没有
+    `egress_context` 形参而被判 DENIED，组织下落 `_call_freezone_leaf` 兜底分支抛
+    `InvalidTaskEnvelope`。「到达」不够——断言必须落到 leaf 收到的 context 上，
+    否则等于复制 OI-48 那种「有形参没接住」的形状。
+    """
+
+    from novelvideo.task_backend.runners import freezone
+
+    project_dir = tmp_path / "output"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    out = project_dir / "freezone_mask_edit" / "job-1.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(b"png")
+    seen: list[TrustedEgressContext | None] = []
+
+    async def mask_edit_leaf(
+        *,
+        project_dir,
+        job_id,
+        base_path,
+        mask_path,
+        prompt,
+        aspect_ratio,
+        image_size,
+        quality,
+        provider,
+        model,
+        egress_context=None,
+    ):
+        seen.append(egress_context)
+        return out
 
     monkeypatch.setattr(freezone, "get_task_manager", lambda: _TaskManager())
     monkeypatch.setattr(
@@ -230,21 +274,22 @@ async def test_unclassified_leaf_is_denied_under_an_organization_context(
         lambda _ctx, rel, **_k: f"/static/{rel}",
     )
 
-    with pytest.raises(InvalidTaskEnvelope):
-        await freezone._run_freezone_mask_edit_async(
-            _organization_envelope(
-                tmp_path,
-                task_type="freezone_mask_edit",
-                payload={
-                    "base_path": str(tmp_path / "output" / "in.png"),
-                    "mask_path": str(tmp_path / "output" / "mask.png"),
-                    "prompt": "prompt",
-                },
-            ),
-            _project_context(tmp_path),
-        )
+    result = await freezone._run_freezone_mask_edit_async(
+        _organization_envelope(
+            tmp_path,
+            task_type="freezone_mask_edit",
+            payload={
+                "base_path": str(project_dir / "in.png"),
+                "mask_path": str(project_dir / "mask.png"),
+                "prompt": "prompt",
+            },
+        ),
+        _project_context(tmp_path),
+    )
 
-    assert leaf_calls == 0
+    assert result["job_id"] == "job-1"
+    assert len(seen) == 1
+    assert seen[0] is not None and seen[0].is_organization
 
 
 def test_local_table_is_exactly_the_five_audited_leaves() -> None:
@@ -275,7 +320,7 @@ def test_local_table_is_exactly_the_five_audited_leaves() -> None:
         for name, rule in FREEZONE_LEAF_EGRESS.items()
         if rule.egress is LeafEgress.DENIED
     }
-    assert denied == {"run_freezone_mask_edit", "run_freezone_analyze_shots"}
+    assert denied == {"run_freezone_analyze_shots"}
 
 
 def test_classification_matches_the_real_leaf_signatures() -> None:

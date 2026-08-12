@@ -521,6 +521,64 @@ async def test_eg18b_freezone_image_reuses_org_context_and_has_no_direct_fallbac
 
 
 @pytest.mark.asyncio
+async def test_eg18b_freezone_mask_edit_reuses_org_context_and_pins_newapi(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """图像擦除也归 EG-18b：组织身份必须一路带到出网点（OI-56 ①）。
+
+    上面那条钉的是 `run_freezone_gen`；擦除此前根本到不了这里（分类表判 DENIED，
+    分发器兜底拒绝）。接上形参而不往下透传，就是 OI-48 那种「有形参没接住」的形状，
+    分类自洽性检查看不出来——所以断言落在 `generate_reference_edit_image` 实收的
+    kwargs 上。
+
+    `config["provider"]` 一并钉死：组织下若沿用 `get_grid_generation_config`，本地
+    目录配置可能给出非 newapi provider，会在 `nanobanana_grid.py:138-139` 撞
+    ORG_EGRESS_DENIED。这里把那个函数投毒成 volcengine——默认配置恰好也返回
+    newapi，不投毒的话这条断言对「组织分支被删掉」是绿的。
+    """
+
+    from novelvideo.freezone import jobs
+
+    context = _egress_context(kind="organization")
+    calls: list[dict[str, object]] = []
+
+    async def fake_generate_reference_edit_image(**kwargs):
+        calls.append(kwargs)
+        __import__("pathlib").Path(kwargs["output_path"]).write_bytes(b"erased")
+
+    monkeypatch.setattr(
+        "novelvideo.generators.nanobanana_grid.generate_reference_edit_image",
+        fake_generate_reference_edit_image,
+    )
+    monkeypatch.setattr(
+        "novelvideo.config.get_grid_generation_config",
+        lambda **_kwargs: {"provider": "volcengine", "api_key": "local-directory-key"},
+    )
+    base = tmp_path / "base.png"
+    mask = tmp_path / "mask.png"
+    base.write_bytes(b"base")
+    mask.write_bytes(b"mask")
+
+    output = await jobs.run_freezone_mask_edit(
+        project_dir=tmp_path,
+        job_id="freezone-mask-edit",
+        base_path=str(base),
+        mask_path=str(mask),
+        prompt="erase the sign",
+        provider="newapi",
+        model="frozen-freezone-model",
+        egress_context=context,
+    )
+
+    assert output.read_bytes() == b"erased"
+    assert len(calls) == 1
+    assert calls[0]["egress_context"] is context
+    assert calls[0]["egress_capability"] == "freezone.image.generate"
+    assert calls[0]["config"]["provider"] == "newapi"
+
+
+@pytest.mark.asyncio
 async def test_eg18b_freezone_vision_builds_explicit_transport_from_same_org_credential(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

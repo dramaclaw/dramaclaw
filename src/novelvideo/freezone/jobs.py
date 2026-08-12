@@ -156,6 +156,7 @@ async def run_freezone_mask_edit(
     api_key: Optional[str] = None,
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> Path:
     """Masked erase/edit via the same provider routing used by Freezone image edit."""
     out = output_path_for_job(project_dir, "freezone_mask_edit", job_id)
@@ -172,11 +173,30 @@ async def run_freezone_mask_edit(
     from novelvideo.generators.nanobanana_grid import generate_reference_edit_image
     from novelvideo.utils.error_redaction import redact_secrets
 
-    cfg = get_grid_generation_config(
-        provider_override=provider,
-        model_override=model,
-        image_size_override=image_size,
-    )
+    if egress_context is not None and type(egress_context) is not TrustedEgressContext:
+        raise TypeError("egress_context must be a TrustedEgressContext")
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
+    if egress_context is not None and egress_context.is_organization:
+        # 与 run_freezone_edit 同一口径：组织下不读本地目录配置。
+        # `get_grid_generation_config` 可能返回非 newapi provider，而组织出网闸门
+        # （`nanobanana_grid.py:138-139`）对非 newapi 一律 ORG_EGRESS_DENIED。
+        cfg = {
+            "provider": "newapi",
+            "api_key": "request-scoped",
+            "base_url": "https://request-scoped.invalid/v1",
+            "model": model or "gpt-image-2",
+            "mode": "1x1",
+            "rows": 1,
+            "cols": 1,
+            "total_panels": 1,
+        }
+    else:
+        cfg = get_grid_generation_config(
+            provider_override=provider,
+            model_override=model,
+            image_size_override=image_size,
+        )
     provider_name = str(cfg.get("provider") or provider or "newapi").strip().lower()
     mask_prompt = (
         f"{prompt}\n\n"
@@ -196,6 +216,8 @@ async def run_freezone_mask_edit(
             quality=quality,
             api_key=api_key,
             config=cfg,
+            egress_context=egress_context,
+            egress_capability="freezone.image.generate",
         )
     except Exception as exc:
         raise RuntimeError(
