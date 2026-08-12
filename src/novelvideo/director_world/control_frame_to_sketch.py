@@ -396,9 +396,14 @@ async def convert_control_frame_to_sketch(
     它**不**继续往 `generate_grid` 里传：那个方法 39 个形参、没有这一项，穿进去等于
     对整条内部链路做一次签名扫荡。也不需要——身份已由
     `task_backend/run_core.py:695` 的 `model_gateway_scope_for_runner(envelope)` 在
-    派发处中心绑定，`nanobanana_grid.py:_prepare_organization_image_egress` 在显式
-    参数为 None 时读作用域。这条前提由
-    `tests/test_p0g4i_freezone_leaf_classification.py` 钉住，不是默认成立。
+    派发处中心绑定，`nanobanana_grid.py:_call_newapi_image_api_with_egress`（`generate_grid`
+    的 newapi 分支经它出网）在显式参数为 None 时读作用域。
+
+    这条前提在 OI-52 修好之前对本路径是**假的**：`generate_grid` 当时根本不经过任何
+    闸门，组织流量在这里无 claim、无组织凭证。钉住它的是
+    `tests/test_p0g4i_freezone_leaf_classification.py`（作用域可达）与
+    `tests/test_p0g4k_grid_family_image_egress.py`（`generate_grid` 真的读了它），
+    不是默认成立。
     """
 
     del egress_context

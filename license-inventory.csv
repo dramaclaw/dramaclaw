@@ -1889,6 +1889,7 @@ tests/test_p0g4g_ambient_egress_fallback.py,Elastic-2.0,2026 SuperTale contribut
 tests/test_p0g4h_org_denial_refund_invariant.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_p0g4i_freezone_leaf_classification.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_p0g4j_egress_handle_kind_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_p0g4k_grid_family_image_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_p0g4t_service_operation_exclusion.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_pano_sharp_da2_loading.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_pool_index_rebuild.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

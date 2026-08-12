@@ -132,6 +132,7 @@ async def _prepare_organization_image_egress(
     provider: str,
     capability: str,
     request: dict[str, object],
+    business_task_id: str | None = None,
 ) -> _OrganizationImageEgress | None:
     context = _validate_egress_context(egress_context)
     if context is None:
@@ -159,7 +160,7 @@ async def _prepare_organization_image_egress(
             organization_id=context.billing_principal.id,
             project_id=context.project_id,
             root_task_id=context.root_task_id,
-            business_task_id=context.envelope_id,
+            business_task_id=business_task_id or context.envelope_id,
             capability=capability,
             credential_id=context.credential.credential_id,
             credential_version=context.credential.key_version,
@@ -2947,6 +2948,12 @@ async def _generate_image(
     """Shared body for text-only and image-edit single-image generation."""
     ref_paths = list(reference_image_paths or [])
     context = _validate_egress_context(egress_context)
+    if context is None:
+        # claim 本身不漏（`_prepare_organization_image_egress` 自己回落到作用域），漏的是
+        # 转发给叶子的身份：`context` 留成 None，参考图中继就静默走平台分支而不是
+        # `relay_tenant_image_bytes_from_context`。只补组织这一支——把平台身份也回落
+        # 进去，会让平台流量撞上组织 deny 闸门（OI-48 的房规）。
+        context = ambient_organization_egress_context()
     configured_provider = (
         str((config or {}).get("provider") or "newapi").strip().lower()
     )
@@ -3913,6 +3920,121 @@ async def _call_newapi_image_api(
         return None, "", f"请求异常: {detail}"
 
 
+def _reference_image_bytes(
+    image_ref: bytes | tuple[bytes, str] | tuple[str, bytes, str],
+) -> bytes:
+    """Unpack the three reference-image shapes the newAPI path accepts."""
+    if isinstance(image_ref, tuple):
+        if len(image_ref) == 3:
+            return bytes(image_ref[1])
+        if len(image_ref) == 2:
+            return bytes(image_ref[0])
+        return bytes(image_ref[0])
+    return bytes(image_ref)
+
+
+async def _call_newapi_image_api_with_egress(
+    *,
+    capability: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    reference_images: (
+        list[bytes | tuple[bytes, str] | tuple[str, bytes, str]] | None
+    ) = None,
+    image_config: dict | None = None,
+    base_url: str | None = None,
+    egress_context: TrustedEgressContext | None = None,
+) -> tuple[bytes | None, str, str]:
+    """grid 家族的出网闸门（OI-52）：把 `_generate_image` 已验证的形状装到叶子外围。
+
+    闸门装在**调用点**而不是叶子内部，因为叶子复原不出 `capability`、归一化前的
+    `image_size`、fallback 前的 `quality`，也拿不到结果引用；而 `_generate_image`
+    与 `scene_reference_images.py` 已经在叶子上方 claim 过，叶子内再 claim 一次会以
+    同键不同 digest 撞成 `EGRESS_OPERATION_CONFLICT`。
+
+    非组织身份走逐字节透传：叶子收到的实参与没有这层包装时完全一致，
+    `tests/test_newapi_image_gateway.py` 的直调因此不受影响。
+    """
+
+    context = _validate_egress_context(egress_context)
+    if context is None:
+        context = ambient_organization_egress_context()
+    if context is None or not context.is_organization:
+        return await _call_newapi_image_api(
+            api_key=api_key,
+            model=model,
+            prompt=prompt,
+            reference_images=reference_images,
+            image_config=image_config,
+            base_url=base_url,
+        )
+
+    from novelvideo.model_gateway_runtime import next_model_gateway_business_task_id
+
+    config = image_config or {}
+    request = {
+        "model": model,
+        "prompt": prompt,
+        "reference_sha256": [
+            hashlib.sha256(_reference_image_bytes(item)).hexdigest()
+            for item in (reference_images or [])
+        ],
+        "aspect_ratio": str(config.get("aspect_ratio") or ""),
+        "image_size": str(config.get("image_size") or ""),
+        "quality": str(config.get("quality") or ""),
+    }
+    # 同一 envelope 内可以有多次同 capability 的图像操作（`_render_single_panel_gemini`
+    # 用 asyncio.gather 扇出 N 路），`envelope_id` 当 business_task_id 会把它们压成同一
+    # 个操作键。这个 helper 带请求内序号，且在 envelope 重投递时可复现。
+    state = await _prepare_organization_image_egress(
+        egress_context=context,
+        provider="newapi",
+        capability=capability,
+        request=request,
+        business_task_id=next_model_gateway_business_task_id(
+            capability,
+            request_digest=canonical_request_digest(request),
+        ),
+    )
+    if state is None:
+        raise EgressError("ORG_EGRESS_DENIED")
+
+    async def _mark_unknown() -> None:
+        await state.operation_port.mark_unknown(
+            operation_id=state.claim.operation.operation_id,
+            transition_token=state.claim.transition_token,
+            expected_version=state.claim.operation.version,
+        )
+
+    trace: dict[str, str] = {}
+    try:
+        image_bytes, text, error = await _call_newapi_image_api(
+            api_key=state.credential.api_key,
+            model=model,
+            prompt=prompt,
+            reference_images=reference_images,
+            image_config=image_config,
+            base_url=state.credential.base_url,
+            trace=trace,
+            egress_context=context,
+        )
+    except Exception:
+        await _mark_unknown()
+        raise
+    if not image_bytes:
+        # 叶子把传输失败压成 `(None, "", error)`，操作已经出过网但没有可用结果，
+        # 只能落 unknown——不能当没发生过，否则重试会以同键再 claim 一次。
+        await _mark_unknown()
+        return image_bytes, text, error
+    await _complete_organization_image_egress(
+        state,
+        trace=trace,
+        result_ref=f"image:sha256:{hashlib.sha256(image_bytes).hexdigest()}",
+    )
+    return image_bytes, text, error
+
+
 async def _relay_reference_images_for_newapi(
     reference_images: list[bytes | tuple[bytes, str] | tuple[str, bytes, str]],
     *,
@@ -3921,15 +4043,6 @@ async def _relay_reference_images_for_newapi(
     """Upload reference image bytes to OSS relay for URL-only upstream channels."""
 
     context = _validate_egress_context(egress_context)
-
-    def _image_bytes(image_ref) -> bytes:
-        if isinstance(image_ref, tuple):
-            if len(image_ref) == 3:
-                return bytes(image_ref[1])
-            if len(image_ref) == 2:
-                return bytes(image_ref[0])
-            return bytes(image_ref[0])
-        return bytes(image_ref)
 
     def _image_ext(image_ref) -> str:
         if isinstance(image_ref, tuple):
@@ -3953,7 +4066,7 @@ async def _relay_reference_images_for_newapi(
     if context is not None and context.is_organization:
         urls: list[str] = []
         for index, image_ref in enumerate(reference_images):
-            data = _image_bytes(image_ref)
+            data = _reference_image_bytes(image_ref)
             content_digest = hashlib.sha256(data).hexdigest()
             object_id = (
                 f"{context.envelope_id}:{context.project_id}:{index}:{content_digest}"
@@ -3977,7 +4090,7 @@ async def _relay_reference_images_for_newapi(
         for image_ref in reference_images:
             urls.append(
                 upload_image_bytes(
-                    _image_bytes(image_ref),
+                    _reference_image_bytes(image_ref),
                     ext=_image_ext(image_ref),
                     ttl=relay_ttl,
                     image_transform=IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
@@ -4130,6 +4243,13 @@ class NanoBananaGridGenerator:
             else:
                 key_name = "GOOGLE_AI_API_KEY"
             raise ValueError(f"API key not set. Set {key_name} environment variable.")
+
+        # EG-09b（OI-52）：组织只许经网关出图。这条判决 `_prepare_organization_image_egress`
+        # 早就有，但 grid 家族的调用点不经过它，于是对 `generate_grid` 这些入口从未生效。
+        # 提到构造点是因为那 6 个入口共用 `self.provider` 选分支，一处判就够。
+        # 只对组织身份生效——平台/个人走 direct provider 行为不变。
+        if self.provider != "newapi" and ambient_organization_egress_context() is not None:
+            raise EgressError("ORG_EGRESS_DENIED")
 
         print(f"[NanoBanana Grid] Provider: {self.provider}, Model: {self.model}")
 
@@ -4864,7 +4984,8 @@ class NanoBananaGridGenerator:
                     contents,
                     include_mime=True,
                 )
-                image_bytes, _text, newapi_error = await _call_newapi_image_api(
+                image_bytes, _text, newapi_error = await _call_newapi_image_api_with_egress(
+                    capability="image.generate.grid",
                     api_key=self.api_key,
                     model=self.model,
                     prompt=prompt_text,
@@ -5195,7 +5316,8 @@ class NanoBananaGridGenerator:
                     contents,
                     include_mime=True,
                 )
-                image_bytes, _, error_detail = await _call_newapi_image_api(
+                image_bytes, _, error_detail = await _call_newapi_image_api_with_egress(
+                    capability="image.generate.action_grid",
                     api_key=self.api_key,
                     model=self.model,
                     prompt=prompt_text,
@@ -5449,7 +5571,8 @@ class NanoBananaGridGenerator:
                     contents,
                     include_mime=True,
                 )
-                image_bytes, _text, newapi_error = await _call_newapi_image_api(
+                image_bytes, _text, newapi_error = await _call_newapi_image_api_with_egress(
+                    capability="image.edit.sketch_reformat",
                     api_key=self.api_key,
                     model=self.model,
                     prompt=prompt_text,
@@ -7006,7 +7129,8 @@ CRITICAL: Keep exact composition from sketch. Only add color, texture, and light
                     contents,
                     include_mime=True,
                 )
-                image_bytes, _, error_detail = await _call_newapi_image_api(
+                image_bytes, _, error_detail = await _call_newapi_image_api_with_egress(
+                    capability="image.generate.render_panel",
                     api_key=self.api_key,
                     model=self.model,
                     prompt=prompt_text,
@@ -7220,7 +7344,8 @@ CRITICAL: The output must look like a higher-resolution vertical crop/extension 
                             getattr(ref_image.inline_data, "mime_type", "image/png") or "image/png",
                         )
                     )
-                image_bytes, _, newapi_error = await _call_newapi_image_api(
+                image_bytes, _, newapi_error = await _call_newapi_image_api_with_egress(
+                    capability="image.edit.upscale",
                     api_key=self.api_key,
                     model=self.model,
                     prompt=prompt,
@@ -7407,7 +7532,8 @@ OUTPUT: Single high-quality image, no watermarks, no text overlays.
                     contents,
                     include_mime=True,
                 )
-                image_bytes, _, error_detail = await _call_newapi_image_api(
+                image_bytes, _, error_detail = await _call_newapi_image_api_with_egress(
+                    capability="image.generate.preview",
                     api_key=self.api_key,
                     model=self.model,
                     prompt=prompt_text,
