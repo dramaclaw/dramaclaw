@@ -27,8 +27,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from pypinyin import pinyin, Style
-
 from pydantic import BaseModel, Field
 
 from novelvideo.config import (
@@ -69,7 +67,6 @@ from novelvideo.generators.prompt_builder import (
 from novelvideo.generators.render_identity_guard import render_ai_detection_error
 from novelvideo.models import (
     beat_scene_id,
-    build_prop_menu,
     collect_prop_marker_ids_from_beat,
     real_detected_identities,
 )
@@ -82,7 +79,6 @@ from novelvideo.image_request_usage import (
     record_image_request,
     update_image_request_status,
 )
-from novelvideo.utils.path_resolver import compute_scoped_grid_filename
 from novelvideo.storage.media_relay import (
     IMAGE_TRANSFORM_AI_REFERENCE_JPEG,
     media_relay_ttl_seconds,
@@ -2157,8 +2153,6 @@ def crop_sketch_panels(
     from PIL import Image
     from novelvideo.generators.grid_splitter import _trim_outer_border
     import numpy as np
-
-    sketch_dir = str(Path(sketch_path).parent) if Path(sketch_path).is_file() else sketch_path
 
     def _trim_panel(panel_img):
         """裁掉单个 panel 的白边。"""
@@ -4337,7 +4331,7 @@ class NanoBananaGridGenerator:
         if len(beats) < 1:
             return GridGenerationResult(
                 success=False,
-                error=f"需要至少 1 个 beat，当前没有 beats",
+                error="需要至少 1 个 beat，当前没有 beats",
                 generation_time=time.time() - start_time,
             )
 
@@ -4507,7 +4501,7 @@ class NanoBananaGridGenerator:
 
             if sketch:
                 # Sketch 模式使用 UnifiedPromptBuilder（与导出逻辑一致）
-                print(f"[NanoBananaPro] 进入 Sketch 模式")
+                print("[NanoBananaPro] 进入 Sketch 模式")
 
                 # 当前网格的全局 beat 范围 (1-based)
                 grid_beat_start = beat_start_index + 1
@@ -4580,7 +4574,7 @@ class NanoBananaGridGenerator:
                     )
 
                 if sketch_result or has_all_pool_sketches:
-                    print(f"[NanoBananaPro] 进入 Render 模式 (基于草图渲染)")
+                    print("[NanoBananaPro] 进入 Render 模式 (基于草图渲染)")
                     if has_all_pool_sketches:
                         print(
                             f"[Render] 使用图片池草图: {len(beat_sketch_paths)} 个 beat"
@@ -4683,7 +4677,7 @@ class NanoBananaGridGenerator:
 
             # Prompt-Only 模式：只生成提示词，跳过 API 调用
             if prompt_only:
-                print(f"[NanoBananaPro] Prompt-Only 模式，跳过 API 调用")
+                print("[NanoBananaPro] Prompt-Only 模式，跳过 API 调用")
                 # 在 Render 模式下，显示 sketch 切片信息（用于验证）
                 if is_render_mode:
                     sketch_capacity = (
@@ -5630,7 +5624,7 @@ class NanoBananaGridGenerator:
                 if not response.candidates or not response.candidates[0].content:
                     return GridGenerationResult(
                         success=False,
-                        error=f"[Reformat] API 响应无有效内容",
+                        error="[Reformat] API 响应无有效内容",
                         generation_time=time.time() - start_time,
                     )
 
@@ -5727,9 +5721,6 @@ class NanoBananaGridGenerator:
             if detection_error:
                 raise RuntimeError(detection_error)
 
-        from google import genai
-        from google.genai import types
-
         # 验证参考图
         valid_character_map = {}
         for char_name, info in character_map.items():
@@ -5790,8 +5781,6 @@ class NanoBananaGridGenerator:
         )
 
         if sketch:
-            grid_beat_start = beat_start_index + 1
-            grid_beat_end = beat_start_index + grid_capacity
             ctx = create_prompt_context(
                 mode=PromptMode.SKETCH,
                 beats=beats[:grid_capacity],
@@ -5844,7 +5833,7 @@ class NanoBananaGridGenerator:
                 else:
                     temp_dir = Path("output")
                 temp_dir.mkdir(parents=True, exist_ok=True)
-                sub_sketch_path = str(temp_dir / f"temp_sub_sketch_batch.jpg")
+                sub_sketch_path = str(temp_dir / "temp_sub_sketch_batch.jpg")
                 target_aspect_batch = None
                 if sketch_aspect_padding and mode_key:
                     target_aspect_batch = cell_aspect_ratio(mode_key)
@@ -6191,7 +6180,7 @@ class NanoBananaGridGenerator:
         print(
             f"[NanoBananaPro Batch] 共 {total_beats} 个 beats，最大网格: {max_grid_rows}x{max_grid_cols}"
         )
-        print(f"[NanoBananaPro Batch] 动态网格优化已启用（最小化黑色填充）")
+        print("[NanoBananaPro Batch] 动态网格优化已启用（最小化黑色填充）")
 
         # 确保输出目录存在
         if output_dir:
@@ -6823,11 +6812,9 @@ class NanoBananaGridGenerator:
         然后用本地偏移切出正确的 panel。
         """
         from PIL import Image
-        import io
 
         # 1. 查找覆盖当前 beat 范围的草图文件
         try:
-            sketch_capacity = SKETCH_GRID_CONFIG["rows"] * SKETCH_GRID_CONFIG["cols"]  # 25
             beat_range_start = beat_start_index + 1  # 1-based
             beat_range_end = beat_start_index + len(beats)
 
@@ -6879,11 +6866,6 @@ class NanoBananaGridGenerator:
             return GridGenerationResult(success=False, error_message=f"Failed to slice sketch: {e}")
 
         # 2. 准备并行任务
-        from novelvideo.generators import create_image_generator
-
-        # 假设我们总是使用 VolcengineImageGenerator (Seedream)
-        image_gen = create_image_generator("volcengine")
-
         if not output_path:
             # Default path if none provided
             output_path = "output/render_grid_temp.png"
@@ -6896,7 +6878,6 @@ class NanoBananaGridGenerator:
 
         # 3. 准备并行任务 (使用 NanoBanana/Gemini)
         tasks = []
-        import time
 
         for i, beat in enumerate(beats):
             if i >= len(panels):
@@ -7007,7 +6988,7 @@ CRITICAL: Keep exact composition from sketch. Only add color, texture, and light
                     img = Image.open(res)
                     rendered_panels.append(img)
                     success_count += 1
-                except:
+                except Exception:
                     rendered_panels.append(panels[idx])
 
         print(f"[Render] Completed {success_count}/{len(beats)} panels.")
@@ -7677,108 +7658,6 @@ def _generation_beat_number(beat: dict, fallback_index: int) -> int:
         except (TypeError, ValueError):
             pass
     return fallback_index + 1
-
-
-async def regenerate_selected_beats(
-    selected_beats: List[dict],
-    mode_key: str,
-    character_map: Dict[str, dict],
-    style: str,
-    output_dir: str,
-    scene_menu: list[dict] | list | None = None,
-    prop_menu: list[dict] | list | None = None,
-    sketch_colors: dict[str, str] | None = None,
-    ethnicity: str = "Chinese",
-    is_sketch: bool = False,
-    sketch_dir: str = "",
-    api_key: Optional[str] = None,
-    episode_grids_dir: str = "",
-) -> List[GridGenerationResult]:
-    """再生选中的 beats（支持 render 和 sketch 模式）。
-
-    从 REGEN_MODE_CONFIGS[mode_key] 读取 rows, cols, aspect_ratio, image_size，
-    使用 perfect_grid_split 分割后逐 grid 调用 generate_grid。
-
-    Args:
-        selected_beats: 选中的 beat 数据列表
-        mode_key: 再生模式 key，如 "1x1_9-16", "2x2_1-1"
-        character_map: 角色映射
-        style: 风格
-        output_dir: 输出目录
-        ethnicity: 种族
-        is_sketch: 是否为草图模式
-        sketch_dir: 草图目录
-        api_key: API key
-
-    Returns:
-        GridGenerationResult 列表
-    """
-    rows, cols, aspect_ratio, image_size = parse_regen_mode(mode_key)
-    capacity = rows * cols
-
-    # 分割 beats
-    grid_splits = perfect_grid_split(
-        len(selected_beats), max_grid=capacity, is_portrait=(rows != cols)
-    )
-    print(
-        f"[RegenBeats] mode={mode_key}, beats={len(selected_beats)}, "
-        f"splits={grid_splits}, aspect_ratio={aspect_ratio}"
-    )
-
-    generator = create_grid_generator(api_key)
-    results = []
-    beat_offset = 0
-
-    for grid_idx, (g_rows, g_cols) in enumerate(grid_splits, start=1):
-        grid_beat_count = g_rows * g_cols
-        grid_beats = selected_beats[beat_offset : beat_offset + grid_beat_count]
-        beat_offset += grid_beat_count
-
-        # UUID 命名避免多次再生时文件名冲突
-        output_path = str(Path(output_dir) / f"regen_{uuid.uuid4().hex[:12]}.png")
-
-        # 提取 beat 编号用于 location_beat_numbers
-        beat_numbers = [_generation_beat_number(b, i) for i, b in enumerate(grid_beats)]
-
-        # 从图片池构建 per-beat 草图路径
-        grid_beat_sketch_paths = None
-        if episode_grids_dir and not is_sketch:
-            from novelvideo.generators.pool_indexer import build_beat_sketch_paths
-
-            grid_beat_sketch_paths = build_beat_sketch_paths(
-                episode_grids_dir, beat_numbers
-            )
-
-        result = await generator.generate_grid(
-            beats=grid_beats,
-            character_map=character_map,
-            scene_menu=scene_menu,
-            prop_menu=prop_menu,
-            sketch_colors=sketch_colors,
-            style=style,
-            output_path=output_path,
-            ethnicity=ethnicity,
-            rows=g_rows,
-            cols=g_cols,
-            sketch=is_sketch,
-            sketch_dir=sketch_dir if not is_sketch else "",
-            location_beat_numbers=beat_numbers,
-            aspect_ratio_override=aspect_ratio,
-            image_size_override=image_size,
-            beat_sketch_paths=grid_beat_sketch_paths,
-        )
-        result.beat_start_index = beat_offset - grid_beat_count
-        result.beat_count = len(grid_beats)
-        result.grid_rows = g_rows
-        result.grid_cols = g_cols
-        results.append(result)
-
-        if result.success:
-            print(f"[RegenBeats] Grid {grid_idx} 成功: {result.grid_image_path}")
-        else:
-            print(f"[RegenBeats] Grid {grid_idx} 失败: {result.error}")
-
-    return results
 
 
 async def regenerate_selected_beats(
