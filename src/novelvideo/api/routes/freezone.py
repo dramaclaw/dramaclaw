@@ -7835,7 +7835,8 @@ async def freezone_update_asset_library_folder(
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if not cover_path.exists():
-            raise HTTPException(404, f"cover not found: {cover_path}")
+            # 只回传进来的 URL：cover_path 是绝对路径，带用户名和落盘目录。
+            raise HTTPException(404, f"cover not found: {body.cover}")
     try:
         folder = update_video_character_folder(
             project_dir, folder_id, name=body.name, cover=body.cover
@@ -7856,7 +7857,11 @@ async def freezone_delete_asset_library_folder(
     folder_id: str,
     user: dict = Depends(get_api_user),
 ):
-    """视频处理：删掉一个自建文件夹，连同落在它里面的素材条目一起删。"""
+    """视频处理：删掉一个自建文件夹，柜内素材条目一并从资产库移除。
+
+    只删索引，磁盘上的素材文件保留——画布节点可能还引用着同一个 URL，真删文件会
+    造成裂图。孤儿文件归项目级清理负责，不在这条路由的职责里。
+    """
     _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user
     )
