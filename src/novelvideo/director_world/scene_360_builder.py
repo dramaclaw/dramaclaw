@@ -771,6 +771,37 @@ def make_contact_sheet(
     sheet.save(output_dir / "scene_360_contact.jpg", quality=92)
 
 
+def _resolve_newapi_credentials() -> tuple[str, str]:
+    """Resolve newapi credentials, honoring an organization gateway injection.
+
+    This builder runs in its own OS process (`stage_asset_tasks.run_scene_360`
+    launches it), so the trusted-identity ContextVar cannot reach here. The parent
+    claims the operation and resolves the organization credential, then hands the
+    resolved credential over through process-local environment variables.
+
+    `ST_ORG_EGRESS_MODE` is what makes "no credential arrived" distinguishable from
+    "this is a platform task" — without it a missing credential would silently fall
+    back to the platform key in settings.db, which is exactly the leak being closed.
+    The credential must be passed as an explicit override: the environment fallback
+    in `get_newapi_runtime_credentials` only applies when the configured gateway is
+    itself environment backed, so an injected `NEWAPI_API_KEY` would be ignored in CE.
+    """
+
+    from novelvideo.config import get_newapi_runtime_credentials
+
+    if os.environ.get("ST_ORG_EGRESS_MODE") != "1":
+        return get_newapi_runtime_credentials()
+
+    org_key = (os.environ.get("ST_ORG_GATEWAY_API_KEY") or "").strip()
+    org_base_url = (os.environ.get("ST_ORG_GATEWAY_BASE_URL") or "").strip()
+    if not org_key or not org_base_url:
+        raise RuntimeError("ORG_CONTEXT_REQUIRED")
+    return get_newapi_runtime_credentials(
+        api_key_override=org_key,
+        base_url_override=org_base_url,
+    )
+
+
 async def run(args: argparse.Namespace) -> int:
     load_env()
     args.quality = str(
@@ -999,9 +1030,7 @@ async def run(args: argparse.Namespace) -> int:
             },
         )
     elif provider == "newapi":
-        from novelvideo.config import get_newapi_runtime_credentials
-
-        api_key, base_url = get_newapi_runtime_credentials()
+        api_key, base_url = _resolve_newapi_credentials()
         if not api_key:
             raise RuntimeError("NEWAPI_API_KEY is missing")
         model = (

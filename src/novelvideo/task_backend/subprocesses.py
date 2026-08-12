@@ -43,6 +43,7 @@ _BOUNDARY_MESSAGES = {
     "EGRESS_OPERATION_NOT_RESTARTED": "existing egress operation cannot be restarted",
     "ORG_EGRESS_DENIED": "organization egress is denied",
     "ORG_SERVICE_EGRESS_DENIED": "organization service egress is denied",
+    "ORG_CONTEXT_REQUIRED": "organization context required",
 }
 
 
@@ -104,30 +105,85 @@ def _has_network_argument(args: Sequence[str]) -> bool:
     )
 
 
+def resolve_organization_egress_context(
+    egress_context: TrustedEgressContext | None,
+) -> TrustedEgressContext | None:
+    """Return the organization context in force, or None for platform/personal."""
+
+    if egress_context is None:
+        egress_context = ambient_organization_egress_context()
+    if egress_context is None:
+        return None
+    if type(egress_context) is not TrustedEgressContext:
+        raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
+    return egress_context if egress_context.is_organization else None
+
+
 def require_direct_model_egress_allowed(
     egress_context: TrustedEgressContext | None,
 ) -> None:
     """Preserve platform behavior and deny direct model egress for organizations."""
 
-    if egress_context is None:
-        egress_context = ambient_organization_egress_context()
-    if egress_context is None:
-        return
-    if type(egress_context) is not TrustedEgressContext:
-        raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
-    if egress_context.is_organization:
+    if resolve_organization_egress_context(egress_context) is not None:
         raise EgressBoundaryError("ORG_EGRESS_DENIED")
+
+
+#: Platform model credentials that must not survive into a gateway-routed child.
+#: `run_project_subprocess` passes ``env=None`` by default, so an uncurated child
+#: inherits the whole parent environment and can resolve a platform key on its own.
+_PLATFORM_MODEL_ENV_NAMES = (
+    "NEWAPI_API_KEY",
+    "NEWAPI_BASE_URL",
+    "MODEL_API_KEY",
+    "MODEL_BASE_URL",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "VOLCENGINE_API_KEY",
+    "FAL_KEY",
+)
+
+ORG_EGRESS_MODE_ENV = "ST_ORG_EGRESS_MODE"
+ORG_GATEWAY_API_KEY_ENV = "ST_ORG_GATEWAY_API_KEY"
+ORG_GATEWAY_BASE_URL_ENV = "ST_ORG_GATEWAY_BASE_URL"
 
 
 def build_model_child_env(
     source: dict[str, str],
     *,
     egress_context: TrustedEgressContext | None,
+    gateway_credential: Any | None = None,
 ) -> dict[str, str]:
-    """Keep legacy platform children, but never create a model child for an org."""
+    """Build a model child's environment, denying orgs without a gateway credential.
 
-    require_direct_model_egress_allowed(egress_context)
-    return dict(source)
+    Identity never crosses the process boundary — a ContextVar does not survive
+    ``fork``/``exec``. Only an already-claimed, already-resolved credential does,
+    and only through this chokepoint. Callers that pass no ``gateway_credential``
+    keep the legacy behavior exactly: platform children unchanged, orgs denied.
+    """
+
+    organization = resolve_organization_egress_context(egress_context)
+    if organization is None:
+        return dict(source)
+    if gateway_credential is None:
+        raise EgressBoundaryError("ORG_EGRESS_DENIED")
+
+    api_key = str(getattr(gateway_credential, "api_key", "") or "").strip()
+    base_url = str(getattr(gateway_credential, "base_url", "") or "").strip()
+    if not api_key or not base_url:
+        raise EgressBoundaryError("ORG_CONTEXT_REQUIRED")
+
+    child = {
+        key: value
+        for key, value in source.items()
+        if key not in _PLATFORM_MODEL_ENV_NAMES
+    }
+    child[ORG_EGRESS_MODE_ENV] = "1"
+    child[ORG_GATEWAY_API_KEY_ENV] = api_key
+    child[ORG_GATEWAY_BASE_URL_ENV] = base_url
+    return child
 
 
 def _restricted_launch_values(

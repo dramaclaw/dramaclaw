@@ -219,6 +219,25 @@ async def _complete_organization_image_egress(
     )
 
 
+async def _abandon_organization_image_egress(
+    state: _OrganizationImageEgress | None,
+) -> None:
+    """Close out a claim whose outcome we cannot observe.
+
+    Deliberately `mark_unknown` rather than `mark_rejected_before_submit`: once the
+    credential is out of our hands we cannot prove the request was never submitted,
+    and only the ledger's unknown state is honest about that.
+    """
+
+    if state is None:
+        return
+    await state.operation_port.mark_unknown(
+        operation_id=state.claim.operation.operation_id,
+        transition_token=state.claim.transition_token,
+        expected_version=state.claim.operation.version,
+    )
+
+
 _SCENE_REFERENCE_FEATURE_BILLING = contextvars.ContextVar(
     "scene_reference_feature_billing", default=False
 )

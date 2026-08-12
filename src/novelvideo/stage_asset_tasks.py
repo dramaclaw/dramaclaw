@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ from typing import Any, Callable
 
 from novelvideo.director_world import block_world_builder, pano_sharp, stage_manifest
 from novelvideo.director_world.paths import safe_name, world_path
+from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.ports import get_usage_meter
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
 from novelvideo.task_backend.subprocesses import run_project_subprocess
@@ -38,6 +40,9 @@ from novelvideo.utils.path_resolver import (
 
 logger = logging.getLogger(__name__)
 
+
+#: Gateway capability that meters the 360 panorama the builder subprocess produces.
+SCENE_360_EGRESS_CAPABILITY = "image.generate.pano_360"
 
 SPATIAL_CONTRACT_SCHEMA_VERSION = "scene_spatial_contract_v8_topology_only_locks"
 SPATIAL_CONTRACT_DEFAULT_MODEL = "openai/gpt-5.5"
@@ -1167,12 +1172,21 @@ def run_scene_360(
     timeout_seconds: int = 1800,
     progress_callback: Callable[[float, str], None] | None = None,
     _manage_model_credit: bool = True,
+    egress_context: TrustedEgressContext | None = None,
 ) -> dict[str, Any]:
     """Generate `pano_360.png` from a scene master image or text description."""
+
+    from novelvideo.task_backend.subprocesses import (
+        build_model_child_env,
+        resolve_organization_egress_context,
+    )
 
     def report(progress: float, message: str) -> None:
         if progress_callback:
             progress_callback(progress, message)
+
+    org_context = resolve_organization_egress_context(egress_context)
+    is_org = org_context is not None
 
     project_dir = Path(project_dir)
     source = str(source or "").strip().lower()
@@ -1284,7 +1298,11 @@ def run_scene_360(
                     not analysis_path.exists()
                     or analysis_path.stat().st_mtime < latest_input_mtime
                 )
-                if needs_analysis and os.environ.get("OPENROUTER_API_KEY"):
+                if (
+                    needs_analysis
+                    and not is_org
+                    and os.environ.get("OPENROUTER_API_KEY")
+                ):
                     report(0.12, "分析 master/reverse 侧边 overlap 和 continuation...")
                     analyzer_cmd = [
                         sys.executable,
@@ -1341,7 +1359,11 @@ def run_scene_360(
                         SPATIAL_CONTRACT_SCHEMA_VERSION,
                     )
                 )
-                if needs_contract and os.environ.get("OPENROUTER_API_KEY"):
+                if (
+                    needs_contract
+                    and not is_org
+                    and os.environ.get("OPENROUTER_API_KEY")
+                ):
                     report(
                         0.14,
                         f"分析 master/reverse 空间合同 ({spatial_contract_model})...",
@@ -1418,9 +1440,54 @@ def run_scene_360(
             image_size=image_size,
             quality=quality,
         )
+    # The generator is a separate OS process, so trusted identity cannot follow it.
+    # Claim and resolve here, then hand only the resolved credential across.
+    egress_state = None
+    child_env: dict[str, str] | None = None
+    if is_org:
+        from novelvideo.generators.nanobanana_grid import (
+            _abandon_organization_image_egress,
+            _complete_organization_image_egress,
+            _prepare_organization_image_egress,
+        )
+        from novelvideo.model_gateway_runtime import (
+            next_model_gateway_business_task_id,
+        )
+        from novelvideo.ports.egress_operations import canonical_request_digest
+
+        egress_request = {
+            "provider": provider,
+            "model": resolved_model,
+            "image_size": image_size,
+            "quality": quality,
+            "style": style,
+            "aspect_ratio": "2:1",
+            "source": source,
+            "scene_id": scene_id,
+            "has_master": bool(master_path),
+            "has_reverse_master": bool(reverse_master_path),
+        }
+        egress_state = _run_credit_coro(
+            lambda: _prepare_organization_image_egress(
+                egress_context=org_context,
+                provider=provider,
+                capability=SCENE_360_EGRESS_CAPABILITY,
+                request=egress_request,
+                business_task_id=next_model_gateway_business_task_id(
+                    SCENE_360_EGRESS_CAPABILITY,
+                    request_digest=canonical_request_digest(egress_request),
+                ),
+            )
+        )
+        child_env = build_model_child_env(
+            os.environ.copy(),
+            egress_context=org_context,
+            gateway_credential=egress_state.credential,
+        )
     try:
         proc = run_project_subprocess(
             cmd,
+            env=child_env,
             capture_output=True,
             text=True,
             timeout=int(timeout_seconds),
@@ -1433,6 +1500,17 @@ def run_scene_360(
             raise RuntimeError(f"360 生成器成功退出，但没有写出结果: {generated}")
 
         provider_trace = _read_scene_360_provider_trace(generation_dir)
+        if egress_state is not None:
+            _run_credit_coro(
+                lambda: _complete_organization_image_egress(
+                    egress_state,
+                    trace=provider_trace,
+                    result_ref=(
+                        f"image:sha256:{hashlib.sha256(generated.read_bytes()).hexdigest()}"
+                    ),
+                )
+            )
+            egress_state = None
         pano_path = out_dir / "pano_360.png"
         archived: Path | None = None
         if update_manifest and pano_path.exists():
@@ -1506,6 +1584,10 @@ def run_scene_360(
             "stdout_tail": (proc.stdout or "")[-2000:],
         }
     except BaseException as exc:
+        if egress_state is not None:
+            _run_credit_coro(
+                lambda: _abandon_organization_image_egress(egress_state)
+            )
         if _manage_model_credit:
             _refund_scene_360_model_call(
                 reservation_id,

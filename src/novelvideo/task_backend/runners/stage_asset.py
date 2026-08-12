@@ -5,14 +5,33 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from novelvideo.egress_context import (
+    TRUSTED_EGRESS_CONTEXT_KEY,
+    TrustedEgressContext,
+    TrustedRunnerEnvelope,
+)
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
     raise_if_envelope_cancel_requested,
     remaining_timeout_seconds,
 )
+from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
+
+
+def _extract_trusted_egress_context(
+    envelope: dict[str, Any],
+) -> TrustedEgressContext | None:
+    if type(envelope) is TrustedRunnerEnvelope:
+        context = envelope.get(TRUSTED_EGRESS_CONTEXT_KEY)
+        if type(context) is not TrustedEgressContext:
+            raise InvalidTaskEnvelope() from None
+        return context
+    if type(envelope) is not dict or TRUSTED_EGRESS_CONTEXT_KEY in envelope:
+        raise InvalidTaskEnvelope() from None
+    return None
 
 
 def _splat_format_for_path(path: Path) -> str:
@@ -152,6 +171,7 @@ def run_stage_asset(
             max_abs_coord=int(params.get("max_abs_coord", 96)),
             max_y=int(params.get("max_y", 64)),
             progress_callback=update,
+            egress_context=_extract_trusted_egress_context(envelope),
         )
     elif step in {"pano_from_master", "pano_from_text"}:
         source = "master" if step == "pano_from_master" else "text"
@@ -180,6 +200,7 @@ def run_stage_asset(
                 int(params.get("timeout_seconds", 1800))
             ),
             progress_callback=update,
+            egress_context=_extract_trusted_egress_context(envelope),
         )
     else:
         raise ValueError(f"unknown stage_asset step: {step}")
@@ -286,6 +307,7 @@ def run_scene_pano_generation(
             default_seconds=int(params.get("timeout_seconds", 1800)),
         ),
         progress_callback=update,
+        egress_context=_extract_trusted_egress_context(envelope),
     )
     check_cancel()
     if isinstance(result, dict):
