@@ -1588,6 +1588,7 @@ async def run_freezone_analyze_shots(
     model: Optional[str] = None,
     analysis_mode: str = "shots",
     duration_sec: Optional[float] = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> dict:
     """Send N frames to a Vision model and parse a structured JSON response.
 
@@ -1596,11 +1597,20 @@ async def run_freezone_analyze_shots(
     """
     import json
 
+    from novelvideo.freezone import vision_gateway
     from novelvideo.freezone.vision_gateway import (
         FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
         VisionInput,
-        call_freezone_vision_model,
         image_media_type,
+        resolve_freezone_vision_model,
+    )
+
+    # 与 `image_node.reverse_prompt_from_image` 同一口径：出网 helper 在函数体内
+    # 引进来，不放模块级——leaf 模块的导入面本身是分类契约的一部分。
+    from novelvideo.freezone.presets import (
+        abandon_freezone_vision_egress,
+        complete_freezone_vision_egress,
+        prepare_freezone_vision_egress,
     )
 
     if not frame_paths:
@@ -1623,42 +1633,63 @@ async def run_freezone_analyze_shots(
     )
 
     del api_key
-    vision_model, text = await call_freezone_vision_model(
+    frame_bytes = [
+        (Path(path).read_bytes(), image_media_type(path))
+        for path in frame_paths
+        if Path(path).exists()
+    ]
+    vision_egress = await prepare_freezone_vision_egress(
+        egress_context=egress_context,
+        model_name=resolve_freezone_vision_model(model),
         prompt=prompt,
-        images=[
-            VisionInput(
-                data=Path(path).read_bytes(),
-                media_type=image_media_type(path),
-            )
-            for path in frame_paths
-            if Path(path).exists()
-        ],
-        model_override=model,
+        images=[data for data, _ in frame_bytes],
         timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
     )
-    used_provider = "newapi"
-
-    if not text:
-        raise RuntimeError(f"{used_provider} Vision returned no text")
-
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = "\n".join(
-            line for line in cleaned.splitlines() if not line.strip().startswith("```")
-        ).strip()
     try:
-        analyses = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        (out_dir / "raw_response.txt").write_text(text, encoding="utf-8")
-        raise RuntimeError(
-            f"{used_provider} returned non-JSON: {exc}; raw saved"
-        ) from exc
+        vision_model, text = await vision_gateway.call_freezone_vision_model(
+            prompt=prompt,
+            images=[
+                VisionInput(data=data, media_type=media_type)
+                for data, media_type in frame_bytes
+            ],
+            model_override=model,
+            timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+            transport_context=(
+                vision_egress.transport_context if vision_egress else None
+            ),
+        )
+        used_provider = "newapi"
 
-    if mode == "video_story":
-        if not isinstance(analyses, dict):
-            raise RuntimeError(f"{used_provider} response is not an object")
-    elif not isinstance(analyses, list):
-        raise RuntimeError(f"{used_provider} response is not a list")
+        if not text:
+            raise RuntimeError(f"{used_provider} Vision returned no text")
+
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = "\n".join(
+                line
+                for line in cleaned.splitlines()
+                if not line.strip().startswith("```")
+            ).strip()
+        try:
+            analyses = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            (out_dir / "raw_response.txt").write_text(text, encoding="utf-8")
+            raise RuntimeError(
+                f"{used_provider} returned non-JSON: {exc}; raw saved"
+            ) from exc
+
+        if mode == "video_story":
+            if not isinstance(analyses, dict):
+                raise RuntimeError(f"{used_provider} response is not an object")
+        elif not isinstance(analyses, list):
+            raise RuntimeError(f"{used_provider} response is not a list")
+    except BaseException:
+        # 出网点一抛就到不了 complete_*，claim 会停在 dispatching 等收割器。
+        # 这里恒 submitted=True：帧字节在 claim 之前就读完了（digest 要用），claim
+        # 与提交之间没有会抛的步骤，所以任何失败都发生在「已经交出去、结果不明」之后。
+        await abandon_freezone_vision_egress(vision_egress, submitted=True)
+        raise
+    await complete_freezone_vision_egress(vision_egress, result=text)
 
     payload = {
         "provider": used_provider,

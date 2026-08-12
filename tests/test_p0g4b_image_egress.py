@@ -631,3 +631,173 @@ async def test_eg18b_freezone_vision_builds_explicit_transport_from_same_org_cre
     assert built[0]["base_url"] == "https://vision-gateway.invalid/v1"
     assert len(operation_port.claims) == 1
     assert operation_port.claims[0].capability == "freezone.vision.analyze"
+    # 成功也要有终态：只 claim 不 complete，行会一直躺在 dispatching。
+    assert [state.state for state in operation_port.states.values()] == [
+        OperationState.COMPLETED
+    ]
+
+
+class _AbandonRecordingOperationPort(_OperationPort):
+    """记录终态原语的调用，用来断言 claim 没有停在 dispatching。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.abandoned: list[tuple[str, str]] = []
+
+    async def mark_unknown(self, *, operation_id, **_kwargs):
+        self.abandoned.append(("unknown", operation_id))
+
+    async def mark_rejected_before_submit(self, *, operation_id, **_kwargs):
+        self.abandoned.append(("rejected", operation_id))
+
+
+def _org_vision_ports(
+    monkeypatch: pytest.MonkeyPatch,
+    context: TrustedEgressContext,
+    operation_port,
+) -> list[dict[str, object]]:
+    """把组织 vision 出网的两个端口换成假的，并封住平台通道回落。"""
+
+    import novelvideo.config as config_module
+    import novelvideo.ports as ports
+    from pydantic_ai.models.test import TestModel
+
+    credential_port = _CredentialPort(
+        RequestCredential(
+            reference=context.credential,
+            api_key="vision-request-key",
+            base_url="https://vision-gateway.invalid/v1",
+        )
+    )
+    monkeypatch.setattr(ports, "get_model_credentials", lambda: credential_port)
+    monkeypatch.setattr(ports, "get_egress_operation_port", lambda: operation_port)
+    monkeypatch.setattr(
+        config_module,
+        "get_newapi_text_pydantic_model",
+        lambda *_args, **_kwargs: pytest.fail(
+            "organization vision must bypass environment/backend model transport"
+        ),
+    )
+    built: list[dict[str, object]] = []
+
+    def fake_explicit_model(model_name, **kwargs):
+        built.append({"model_name": model_name, **kwargs})
+        return TestModel(custom_output_text='[{"shot": 1}]')
+
+    monkeypatch.setattr(config_module, "_newapi_text_openai_model", fake_explicit_model)
+    return built
+
+
+@pytest.mark.asyncio
+async def test_eg18b_freezone_analyze_shots_builds_explicit_transport_from_org_credential(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """镜头分析与上面的逆推提示词同一条出网点，此前它根本没接（OI-56 ②）。
+
+    没有 `transport_context` 时 `vision_gateway.py:81` 会回落到平台通道——组织的
+    请求用平台 Key 出网。这里把 `get_newapi_text_pydantic_model` 投毒成 fail：它一旦
+    被调用就说明回落发生了，比断言「transport_context 非 None」更贴近后果。
+    """
+
+    from novelvideo.freezone import jobs
+
+    context = _egress_context(kind="organization")
+    operation_port = _OperationPort()
+    built = _org_vision_ports(monkeypatch, context, operation_port)
+
+    frame = tmp_path / "frame_001.png"
+    frame.write_bytes(b"frame")
+
+    payload = await jobs.run_freezone_analyze_shots(
+        project_dir=tmp_path,
+        job_id="analyze-1",
+        frame_paths=[str(frame)],
+        egress_context=context,
+    )
+
+    assert payload["analyses"] == [{"shot": 1}]
+    assert len(built) == 1
+    assert built[0]["api_key"] == "vision-request-key"
+    assert built[0]["base_url"] == "https://vision-gateway.invalid/v1"
+    assert len(operation_port.claims) == 1
+    assert operation_port.claims[0].capability == "freezone.vision.analyze"
+    # 成功也要有终态：只 claim 不 complete，行会一直躺在 dispatching。
+    assert [state.state for state in operation_port.states.values()] == [
+        OperationState.COMPLETED
+    ]
+
+
+@pytest.mark.asyncio
+async def test_eg18b_freezone_analyze_shots_failure_leaves_no_dispatching_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """出网抛异常时 claim 必须落终态，不能停在 dispatching（OI-56 ② 的失败路径）。
+
+    样板 `reverse_prompt_from_image` 在 `prepare_*` 之后没有 try——一抛就到不了
+    `complete_*`，claim 留在 dispatching 等收割器。新调用点不复制这个形状。
+    """
+
+    from novelvideo.freezone import jobs
+
+    context = _egress_context(kind="organization")
+    operation_port = _AbandonRecordingOperationPort()
+    _org_vision_ports(monkeypatch, context, operation_port)
+
+    async def exploding_call(**_kwargs):
+        raise RuntimeError("gateway exploded")
+
+    monkeypatch.setattr(
+        "novelvideo.freezone.vision_gateway.call_freezone_vision_model",
+        exploding_call,
+    )
+    frame = tmp_path / "frame_001.png"
+    frame.write_bytes(b"frame")
+
+    with pytest.raises(RuntimeError, match="gateway exploded"):
+        await jobs.run_freezone_analyze_shots(
+            project_dir=tmp_path,
+            job_id="analyze-1",
+            frame_paths=[str(frame)],
+            egress_context=context,
+        )
+
+    assert len(operation_port.claims) == 1
+    assert [state for state, _ in operation_port.abandoned] == ["unknown"]
+
+
+@pytest.mark.asyncio
+async def test_abandon_freezone_vision_egress_rejects_when_nothing_was_submitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """确未提交时落 rejected，不落 unknown——两者对收割器语义不同。
+
+    `unknown` 是「不知道对面发生了什么」，收割器不敢当没发生；`rejected` 是
+    「确实没提交」。上面那条走的是 unknown 分支，这条单测钉住另一半。
+    """
+
+    import novelvideo.ports as ports
+    from novelvideo.freezone.presets import (
+        abandon_freezone_vision_egress,
+        prepare_freezone_vision_egress,
+    )
+
+    context = _egress_context(kind="organization")
+    operation_port = _AbandonRecordingOperationPort()
+    _org_vision_ports(monkeypatch, context, operation_port)
+    assert ports.get_egress_operation_port() is operation_port
+
+    state = await prepare_freezone_vision_egress(
+        egress_context=context,
+        model_name="vision-model",
+        prompt="prompt",
+        images=[b"frame"],
+        timeout_seconds=1.0,
+    )
+
+    await abandon_freezone_vision_egress(state, submitted=False)
+    # 非组织上下文下 prepare 返回 None，abandon 必须是 no-op 而不是崩。
+    await abandon_freezone_vision_egress(None, submitted=True)
+
+    assert [state for state, _ in operation_port.abandoned] == ["rejected"]

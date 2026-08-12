@@ -141,6 +141,35 @@ async def complete_freezone_vision_egress(
     )
 
 
+async def abandon_freezone_vision_egress(
+    state: FreezoneVisionEgress | None,
+    *,
+    submitted: bool,
+) -> None:
+    """出网失败时给 claim 一个终态，别让它停在 `dispatching`。
+
+    `submitted` 为真表示请求已经交出去、结果不明——落 `unknown`，与 EE `0066`
+    收割器同一口径；为假表示确未提交，落 `rejected`。形状对齐
+    `audio_node.py:665-675`。
+    """
+    if state is None:
+        return
+    claim = state.image_egress.claim
+    operation_port = state.image_egress.operation_port
+    if submitted:
+        await operation_port.mark_unknown(
+            operation_id=claim.operation.operation_id,
+            transition_token=claim.transition_token,
+            expected_version=claim.operation.version,
+        )
+        return
+    await operation_port.mark_rejected_before_submit(
+        operation_id=claim.operation.operation_id,
+        transition_token=claim.transition_token,
+        expected_version=claim.operation.version,
+    )
+
+
 @dataclass
 class PresetRef:
     kind: str

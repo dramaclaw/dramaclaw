@@ -292,6 +292,66 @@ async def test_mask_edit_leaf_receives_the_organization_egress_context(
     assert seen[0] is not None and seen[0].is_organization
 
 
+@pytest.mark.asyncio
+async def test_analyze_shots_leaf_receives_the_organization_egress_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Vision 分析对组织必须到达 leaf，且拿到组织身份（OI-56 ②）。
+
+    它有两个入口：`freezone_analyze` 与 `freezone_video_story`，后者会先跑完
+    ffmpeg 抽帧再撞上拒绝——白烧一遍算力。
+    """
+
+    from novelvideo.task_backend.runners import freezone
+
+    project_dir = tmp_path / "output"
+    out_dir = project_dir / "freezone_analyze" / "job-1"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    analysis = out_dir / "analysis.json"
+    analysis.write_text("{}", encoding="utf-8")
+    seen: list[TrustedEgressContext | None] = []
+
+    async def analyze_leaf(
+        *,
+        project_dir,
+        job_id,
+        frame_paths,
+        provider,
+        model,
+        analysis_mode,
+        duration_sec,
+        egress_context=None,
+    ):
+        seen.append(egress_context)
+        return {"output_path": str(analysis), "model": "m", "analysis_mode": "shots"}
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: _TaskManager())
+    monkeypatch.setattr(
+        "novelvideo.freezone.jobs.run_freezone_analyze_shots", analyze_leaf
+    )
+    monkeypatch.setattr(
+        "novelvideo.freezone.jobs.ensure_freezone_dirs", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "novelvideo.api.deps.make_static_url_for_context",
+        lambda _ctx, rel, **_k: f"/static/{rel}",
+    )
+
+    result = await freezone._run_freezone_analyze_async(
+        _organization_envelope(
+            tmp_path,
+            task_type="freezone_analyze",
+            payload={"frame_paths": [str(project_dir / "frame_001.png")]},
+        ),
+        _project_context(tmp_path),
+    )
+
+    assert result["job_id"] == "job-1"
+    assert len(seen) == 1
+    assert seen[0] is not None and seen[0].is_organization
+
+
 def test_local_table_is_exactly_the_five_audited_leaves() -> None:
     """本地表严格 5 个，不得凭「看起来像本地」扩表（护栏 b）。
 
@@ -315,12 +375,14 @@ def test_local_table_is_exactly_the_five_audited_leaves() -> None:
     )
 
     # DENIED 桶同样锁死：它不是「待办清单」，往里塞新名字等于悄悄扩大拒绝面。
+    # OI-56 把最后两条（mask_edit / analyze_shots）接上出网上下文后，这个桶空了——
+    # 未分类的 leaf 照旧走 `_call_freezone_leaf` 的兜底拒绝，不需要在表里挂名字。
     denied = {
         name
         for name, rule in FREEZONE_LEAF_EGRESS.items()
         if rule.egress is LeafEgress.DENIED
     }
-    assert denied == {"run_freezone_analyze_shots"}
+    assert denied == set()
 
 
 def test_classification_matches_the_real_leaf_signatures() -> None:
