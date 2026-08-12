@@ -44,8 +44,6 @@ class ModelTimeoutError(RuntimeError):
         self.model_name = str(model_name or "").strip() or "unknown"
         self.model = self.model_name
         self.timeout_seconds = float(timeout_seconds)
-        self.error_code = self.error_code
-        self.code = self.code
         if message is None:
             message = (
                 f"text model '{self.model_name}' timed out after "
