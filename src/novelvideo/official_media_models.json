@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "catalogVersion": "2026.08.06.1",
+  "catalogVersion": "2026.08.13.1",
   "name": "DramaClaw CE official media models",
   "mediaModels": {
     "LingShan-G2": {
@@ -229,15 +229,25 @@
       "sortOrder": 110,
       "aliases": [],
       "config": {
-        "request": {"endpoint": "video/generations", "parameters": []},
+        "request": {
+          "endpoint": "video/generations",
+          "protocol": "minimax_v2",
+          "operations": {
+            "create": "/v2/video_generation",
+            "query": "/v2/query/video_generation/{task_id}",
+            "list": "/v2/query/video_generation",
+            "delete": "/v2/video_generation/{task_id}"
+          },
+          "parameters": []
+        },
         "minDuration": 4,
         "maxDuration": 15,
-        "ratioOptions": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "ratioOptions": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
         "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "image_to_video", "image_reference", "all_reference"],
         "referenceAudioMax": 3,
         "referenceImageMax": 9,
         "referenceVideoMax": 3,
-        "resolutionOptions": ["768P", "2K"]
+        "resolutionOptions": ["2K"]
       }
     }
   }

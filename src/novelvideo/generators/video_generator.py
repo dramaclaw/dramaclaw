@@ -1917,6 +1917,24 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 except json.JSONDecodeError as exc:
                     raise RuntimeError(f"DramaClawAPI task query returned invalid JSON: {text}") from exc
 
+    async def _delete_json(self, url: str) -> dict:
+        async with aiohttp.ClientSession(timeout=self._client_timeout()) as session:
+            async with session.delete(url, headers=self.headers) as resp:
+                text = await resp.text()
+                if resp.status < 200 or resp.status >= 300:
+                    request_id = self._extract_request_id(text, resp.headers)
+                    raise NewApiVideoError(
+                        f"DramaClawAPI task delete failed: HTTP {resp.status} - {text}",
+                        request_id=request_id,
+                        status_code=resp.status,
+                    )
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"DramaClawAPI task delete returned invalid JSON: {text}"
+                    ) from exc
+
     async def _download_video(self, url: str, output_path: str) -> bytes:
         if url.startswith("data:"):
             header, _, encoded = url.partition(",")
@@ -2312,12 +2330,93 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             if "_newapi_request_id" not in merged and task.get("_newapi_request_id"):
                 merged["_newapi_request_id"] = task["_newapi_request_id"]
             return merged
+        native_task = task.get("task")
+        if isinstance(native_task, dict):
+            return native_task
         return task
 
     @classmethod
     def _task_id_from_submit_response(cls, submitted: dict) -> str:
         task = cls._task_response_data(submitted)
         return str(task.get("task_id") or task.get("id") or "").strip()
+
+    def _uses_minimax_v2(self) -> bool:
+        return (
+            self.model.strip().casefold() == "minimax-h3"
+            and self.request_schema.get("protocol") == "minimax_v2"
+        )
+
+    def _minimax_v2_url(self, operation: str, *, task_id: str = "") -> str:
+        from novelvideo.media_model_request_schema import MINIMAX_V2_OPERATIONS
+
+        if not self._uses_minimax_v2() or operation not in MINIMAX_V2_OPERATIONS:
+            raise ValueError("MiniMax v2 lifecycle is not configured for this model")
+        path = MINIMAX_V2_OPERATIONS[operation]
+        if "{task_id}" in path:
+            clean_task_id = str(task_id or "").strip()
+            if not clean_task_id:
+                raise ValueError("task_id is required")
+            path = path.replace("{task_id}", urllib.parse.quote(clean_task_id, safe=""))
+        return f"{self.base_url.removesuffix('/v1')}{path}"
+
+    @staticmethod
+    def _minimax_v2_content_item(media_type: str, url: str, role: str) -> dict:
+        return {
+            "type": f"{media_type}_url",
+            f"{media_type}_url": {"url": url},
+            "role": role,
+        }
+
+    @classmethod
+    def _minimax_v2_payload(
+        cls, payload: dict[str, object], metadata: dict[str, object]
+    ) -> dict[str, object]:
+        prompt = str(payload.get("prompt") or "").strip()
+        if not prompt:
+            raise ValueError("prompt is required for MiniMax v2 video generation")
+        content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
+
+        def append_one(media_type: str, key: str, role: str) -> None:
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                content.append(cls._minimax_v2_content_item(media_type, value.strip(), role))
+
+        def append_many(media_type: str, key: str, role: str) -> None:
+            values = metadata.get(key)
+            if isinstance(values, list):
+                for value in values:
+                    if isinstance(value, str) and value.strip():
+                        content.append(cls._minimax_v2_content_item(media_type, value.strip(), role))
+
+        append_one("image", "image_url", "first_frame")
+        append_one("image", "first_frame_image", "first_frame")
+        append_one("image", "last_frame_image", "last_frame")
+        append_many("image", "reference_images", "reference_image")
+        append_many("video", "reference_videos", "reference_video")
+        append_many("audio", "reference_audios", "reference_audio")
+
+        duration = float(str(payload.get("seconds") or payload.get("duration") or 0))
+        if not duration.is_integer():
+            raise ValueError("MiniMax v2 duration must be an integer")
+        native_payload: dict[str, object] = {
+            "model": payload.get("model"),
+            "content": content,
+            "resolution": metadata.get("resolution"),
+            "duration": int(duration),
+        }
+        ratio = str(metadata.get("ratio") or "").strip()
+        if ratio:
+            native_payload["ratio"] = ratio
+        return native_payload
+
+    async def list_tasks(self, params: dict[str, object] | None = None) -> dict:
+        url = self._minimax_v2_url("list")
+        if params:
+            url = f"{url}?{urllib.parse.urlencode(params, doseq=True)}"
+        return await self._get_json(url)
+
+    async def delete_task(self, task_id: str) -> dict:
+        return await self._delete_json(self._minimax_v2_url("delete", task_id=task_id))
 
     async def _relay_seedance2_references(
         self,
@@ -2377,6 +2476,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 value = metadata.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
+        content = task.get("content")
+        if isinstance(content, dict):
+            value = content.get("url")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
         for key in ("url", "video_url"):
             value = task.get(key)
             if isinstance(value, str) and value.strip():
@@ -2865,12 +2969,18 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             )
             from novelvideo.media_model_request_schema import apply_media_request_schema
 
-            self._canonicalize_video_payload(payload, metadata)
-            payload = apply_media_request_schema(
-                payload, self.request_schema, self.model_params
-            )
+            if self._uses_minimax_v2():
+                payload = self._minimax_v2_payload(payload, metadata)
+            else:
+                self._canonicalize_video_payload(payload, metadata)
+                payload = apply_media_request_schema(
+                    payload, self.request_schema, self.model_params
+                )
             submitted = await self._post_json(
-                f"{self.base_url}/video/generations", payload
+                self._minimax_v2_url("create")
+                if self._uses_minimax_v2()
+                else f"{self.base_url}/video/generations",
+                payload,
             )
             task_id = self._task_id_from_submit_response(submitted)
             provider_request_id = str(submitted.get("_newapi_request_id") or "").strip()
@@ -2900,7 +3010,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
             for poll_count in range(max_polls):
                 task = self._task_response_data(
-                    await self._get_json(f"{self.base_url}/video/generations/{task_id}")
+                    await self._get_json(
+                        self._minimax_v2_url("query", task_id=task_id)
+                        if self._uses_minimax_v2()
+                        else f"{self.base_url}/video/generations/{task_id}"
+                    )
                 )
                 status = str(task.get("status") or "").lower()
                 progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
