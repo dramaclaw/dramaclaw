@@ -25,6 +25,7 @@ from novelvideo.ports.usage import (
     VerifiedTaskSettlementIdentity,
 )
 from novelvideo.project_context import require_project_home_node
+from novelvideo.config import ModelTimeoutError
 from novelvideo.shared.billing_errors import (
     INSUFFICIENT_CREDITS_MESSAGE,
     billing_error_payload,
@@ -571,6 +572,17 @@ def _project_task_failure_for_exception(
 
     if isinstance(exc, VideoPromptPrerequisiteError):
         return str(exc), {"error_code": exc.error_code}, True
+
+    if isinstance(exc, ModelTimeoutError):
+        return (
+            str(exc),
+            {
+                "error_code": exc.error_code,
+                "model": exc.model_name,
+                "timeout_seconds": exc.timeout_seconds,
+            },
+            True,
+        )
 
     if isinstance(exc, TaskTimedOut):
         timeout_seconds = int(getattr(exc, "timeout_seconds", None) or 30 * 60)
