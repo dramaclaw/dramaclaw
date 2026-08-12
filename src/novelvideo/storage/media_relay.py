@@ -402,6 +402,7 @@ async def relay_tenant_image_bytes(
         OperationSpec,
         OperationState,
         canonical_request_digest,
+        record_unknown_outcome,
     )
 
     if (
@@ -462,14 +463,9 @@ async def relay_tenant_image_bytes(
         if inspect.isawaitable(result):
             result = await result
     except Exception:
-        try:
-            await operations.mark_unknown(
-                operation_id=claim.operation.operation_id,
-                transition_token=claim.transition_token,
-                expected_version=claim.operation.version,
-            )
-        except Exception:
-            pass
+        await record_unknown_outcome(
+            operations, claim=claim, capability="storage.media.relay"
+        )
         raise ServiceInvocationFailed() from None
     # `completed` 只能来自 `accepted`（`0039:294-338` 的 definer 如此判），先前从
     # `dispatching` 直接跳 completed 在真库上必抛 P0001；之所以一直是绿的，只因替身

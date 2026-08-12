@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 _ERROR_MESSAGES = {
     "EGRESS_OPERATION_CONFLICT": "egress operation conflicts with an existing claim",
@@ -217,3 +220,41 @@ class EgressOperationPort(Protocol):
         transition_token: str,
         expected_version: int,
     ) -> OperationSnapshot: ...
+
+
+async def record_unknown_outcome(
+    operations: EgressOperationPort,
+    *,
+    claim: OperationClaimResult,
+    capability: str,
+) -> None:
+    """出网调用失败后尽力把行收敛到 `unknown`；收不了就记一条日志，绝不改变控制流。
+
+    住在这里而不是各调用点，是因为三条服务出网路径（relay / newapi 管理面 / 备份同步）
+    的收尾代码原本**逐字相同**，而它们各自的注释里已经记着同一类漏检命中过一次
+    （「原先从 `dispatching` 直跳 completed」）。同一段话抄三遍就会漏改三处里的两处。
+
+    **不抛**：出网已经失败了，台账写不进去不该把它变成另一种失败——调用方对台账无能为力，
+    分裂成两种错误只会让上层更难处理。行的收敛由库内收割器兜底（EE
+    `0066_egress_operation_reaper`），但那要过一整个租约周期，在那之前这条日志是唯一线索。
+
+    日志只出 `operation_id` / `capability` / 异常类型名（OI-45 护栏）：凭条是这行的写入
+    授权，被吞的异常本体可能带签名 URL 或密钥，所以取类型不取 `str(exc)`。
+    """
+
+    try:
+        await operations.mark_unknown(
+            operation_id=claim.operation.operation_id,
+            transition_token=claim.transition_token,
+            expected_version=claim.operation.version,
+        )
+    except Exception as error:
+        # 字段插在消息里而不是 `extra=`：默认 formatter 不打 extra，那样的日志读起来
+        # 与今天的「什么都没有」没有区别。
+        logger.warning(
+            "egress operation %s (%s) stays in dispatching: "
+            "mark_unknown failed with %s; it will be collected by the reaper",
+            claim.operation.operation_id,
+            capability,
+            type(error).__name__,
+        )

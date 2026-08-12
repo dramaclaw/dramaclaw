@@ -233,6 +233,7 @@ async def run_backup_operation(
         HandleKind,
         OperationSpec,
         canonical_request_digest,
+        record_unknown_outcome,
     )
 
     require_backup_execution_context(context)
@@ -270,14 +271,7 @@ async def run_backup_operation(
         if inspect.isawaitable(result):
             result = await result
     except Exception:
-        try:
-            await operations.mark_unknown(
-                operation_id=claim.operation.operation_id,
-                transition_token=claim.transition_token,
-                expected_version=claim.operation.version,
-            )
-        except Exception:
-            pass
+        await record_unknown_outcome(operations, claim=claim, capability=capability)
         raise BackupInvocationFailed() from None
     # `completed` 只能来自 `accepted`（`0039:294-338`）。原先从 `dispatching` 直跳
     # completed，真库上必抛 P0001；替身没有状态机才一直是绿的。

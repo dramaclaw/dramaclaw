@@ -1816,6 +1816,7 @@ tests/test_director_world_service.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_director_world_staging_prop_ai.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_docker_persistence_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ee_terms_lint.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_egress_dispatching_leak_diagnosability.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_env_config_ratchet.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_episode_optimizer_colors.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_fish_speech_prompt_removed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
