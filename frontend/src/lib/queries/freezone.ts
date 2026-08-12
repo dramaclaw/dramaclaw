@@ -6,6 +6,11 @@ import {
   listFreezoneBeatContext,
   listFreezoneProjectAssets,
 } from "@/api/projects";
+import {
+  fetchFreezoneAssetLibraryFolders,
+  fetchFreezoneVideoCharacterLibrary,
+} from "@/api/ops";
+import { normalizeLibraryList } from "@/features/canvas/ui/assetLibraryItems";
 import { api } from "@/lib/api";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
@@ -100,6 +105,61 @@ export function useFreezoneProjectAssets(
         throw new Error("project is required");
       }
       return listFreezoneProjectAssets(project, { signal });
+    },
+    enabled: enabled && Boolean(project),
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * 资产库（项目级素材库）的只读列表。写操作（上传/删除/从主线同步）仍在
+ * AssetLibraryModal 里走裸调用，这里只负责浏览侧的读取与缓存。
+ */
+export function useFreezoneAssetLibrary(
+  project: string | null | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: project
+      ? queryKeys.freezoneAssetLibrary(project)
+      : ["projects", "__missing__", "freezone", "asset-library"],
+    queryFn: async () => {
+      if (!project) {
+        throw new Error("project is required");
+      }
+      return normalizeLibraryList(
+        await fetchFreezoneVideoCharacterLibrary(project),
+      );
+    },
+    enabled: enabled && Boolean(project),
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * 用户自建的资产库文件夹。系统文件夹（主线 / 待分类资产 / 类目同名目录）不落盘，
+ * 由 buildAssetFolders 直接生成，所以这个查询只补自建的那部分。老后端没有该路由
+ * 时按空列表处理，浏览侧照常显示系统文件夹。
+ */
+export function useFreezoneAssetLibraryFolders(
+  project: string | null | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: project
+      ? queryKeys.freezoneAssetLibraryFolders(project)
+      : ["projects", "__missing__", "freezone", "asset-library", "folders"],
+    queryFn: async () => {
+      if (!project) {
+        throw new Error("project is required");
+      }
+      try {
+        const folders = await fetchFreezoneAssetLibraryFolders(project);
+        return Array.isArray(folders) ? folders : [];
+      } catch (err) {
+        console.warn("[asset-library] load folders failed, treat as empty", err);
+        return [];
+      }
     },
     enabled: enabled && Boolean(project),
     staleTime: 15_000,

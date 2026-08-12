@@ -2577,11 +2577,35 @@ export type FreezoneAssetLibrarySource =
   | "scene"
   | "prop";
 
+/** 用途类目。老条目没有该字段，读取侧按 source/media 兜底推导。 */
+export type FreezoneAssetLibraryCategory =
+  | "other"
+  | "character"
+  | "scene"
+  | "prop"
+  | "style"
+  | "audio";
+
+/**
+ * 用户自建的资产库文件夹。系统文件夹（主线 / 待分类资产 / 各类目同名目录）不落盘，
+ * 由前端按保留 key 生成，只有这里的自建文件夹会从后端读回来。
+ */
+export interface FreezoneAssetLibraryFolder {
+  id: string;
+  name: string;
+  /** 封面图 URL，取自文件夹内某个素材；没设过时为空,前端画默认文件夹图标。 */
+  cover?: string | null;
+  created_at?: string;
+}
+
 export interface FreezoneVideoCharacterLibraryItem {
   id?: string;
   name: string;
   media?: FreezoneAssetLibraryMedia;
   source?: FreezoneAssetLibrarySource;
+  category?: FreezoneAssetLibraryCategory;
+  /** 保存位置：系统文件夹 key 或自建文件夹 id。老条目没有，读取侧按类目兜底。 */
+  folder?: string;
   image_urls?: string[];
   video_url?: string | null;
   audio_url?: string | null;
@@ -2597,6 +2621,8 @@ export interface FreezoneAddVideoCharacterLibraryItemPayload {
   imageUrls?: string[];
   videoUrl?: string;
   audioUrl?: string;
+  category?: FreezoneAssetLibraryCategory;
+  folder?: string;
 }
 
 export async function fetchFreezoneVideoCharacterLibrary(
@@ -2620,9 +2646,52 @@ export async function submitFreezoneAddVideoCharacterLibraryItem(
   }
   if (payload.videoUrl) body.video_url = payload.videoUrl;
   if (payload.audioUrl) body.audio_url = payload.audioUrl;
+  if (payload.category) body.category = payload.category;
+  if (payload.folder) body.folder = payload.folder;
   return await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/video/character-library`,
     { method: "POST", json: body },
+  );
+}
+
+export async function fetchFreezoneAssetLibraryFolders(
+  project: string,
+): Promise<FreezoneAssetLibraryFolder[]> {
+  return await apiCall<FreezoneAssetLibraryFolder[]>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders`,
+  );
+}
+
+export async function createFreezoneAssetLibraryFolder(
+  project: string,
+  name: string,
+): Promise<FreezoneAssetLibraryFolder> {
+  return await apiCall<FreezoneAssetLibraryFolder>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders`,
+    { method: "POST", json: { name } },
+  );
+}
+
+/** 改名 / 换封面。只传要改的字段,另一个原样保留。 */
+export async function updateFreezoneAssetLibraryFolder(
+  project: string,
+  folderId: string,
+  patch: { name?: string; cover?: string },
+): Promise<FreezoneAssetLibraryFolder> {
+  return await apiCall<FreezoneAssetLibraryFolder>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders/${encodeURIComponent(folderId)}`,
+    { method: "PATCH", json: patch },
+  );
+}
+
+/** 整柜清空:删掉文件夹连同里面的素材。返回被删掉的素材条数。 */
+export async function deleteFreezoneAssetLibraryFolder(
+  project: string,
+  folderId: string,
+): Promise<{ deleted_items: number }> {
+  return await apiCall<{ deleted_items: number }>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders/${encodeURIComponent(folderId)}`,
+    { method: "DELETE" },
   );
 }
 

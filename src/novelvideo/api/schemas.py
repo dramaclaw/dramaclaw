@@ -1003,6 +1003,34 @@ class FreezoneVideoCharacterLibraryItemRequest(BaseModel):
         default=None,
         description="音频静态地址（media=audio 时必填）",
     )
+    category: Literal["other", "character", "scene", "prop", "style", "audio"] | None = Field(
+        default=None,
+        description="用途类目（其它/人物/场景/物品/风格/音效）；不传时后端按 source/media 兜底推导",
+    )
+    folder: str | None = Field(
+        default=None,
+        description=(
+            "保存位置：系统文件夹 key（其它/人物/场景/物品/风格/音效同名，"
+            "对应 other/character/scene/prop/style/audio）或用户自建文件夹 id；"
+            "不传时按类目落到同名系统文件夹"
+        ),
+    )
+
+
+class FreezoneAssetLibraryFolderRequest(BaseModel):
+    """新建资产库文件夹请求。文件夹只管保存位置，和素材的类目标签互不影响。"""
+
+    name: str = Field(description="文件夹名称，最长 20 字，不能与系统文件夹重名")
+
+
+class FreezoneAssetLibraryFolderPatchRequest(BaseModel):
+    """改文件夹。两个字段都可选，只改传上来的那个。"""
+
+    name: str | None = Field(default=None, description="新名称；不传表示不改名")
+    cover: str | None = Field(
+        default=None,
+        description="封面图 URL，取自该文件夹内的素材；传空串表示清掉封面",
+    )
 
 
 class FreezoneVideoGenRequest(BaseModel):

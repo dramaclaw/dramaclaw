@@ -14,7 +14,12 @@ from novelvideo.generators.video_generator import (
 from novelvideo.generators.video_generator import VideoGenResult, VideoGenStatus
 from novelvideo.video_duration import video_duration_bounds_for_backend
 from novelvideo.freezone.video_node import (
+    RESERVED_FOLDER_KEYS,
+    add_video_character_folder,
+    delete_video_character_folder,
     add_video_character_library_item,
+    library_folder_keys,
+    update_video_character_folder,
     build_freezone_image_to_video_prompt,
     build_freezone_keyframe_video_prompt,
     build_freezone_omni_video_prompt,
@@ -32,6 +37,7 @@ from novelvideo.freezone.video_node import (
     normalize_video_resolution_for_backend,
     resolve_freezone_video_backend,
     summarize_omni_reference_counts,
+    sync_mainline_assets_into_library,
     validate_omni_reference_audio_durations,
     validate_omni_reference_limits,
 )
@@ -75,6 +81,150 @@ def test_video_character_library_roundtrip(tmp_path: Path) -> None:
     deleted = delete_video_character_library_item(project_dir, item["id"])
     assert deleted is True
     assert load_video_character_library(project_dir) == []
+
+
+def test_video_character_library_category(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+
+    # 不传类目时按来源/媒介兜底：本地上传的图片归「其它」，音频归「音效」。
+    plain = add_video_character_library_item(
+        project_dir, name="参考图", image_urls=["/static/a.png"]
+    )
+    assert plain["category"] == "other"
+    bgm = add_video_character_library_item(
+        project_dir, name="脚步声", media="audio", audio_url="/static/step.mp3"
+    )
+    assert bgm["category"] == "audio"
+
+    styled = add_video_character_library_item(
+        project_dir, name="赛博霓虹", image_urls=["/static/b.png"], category="style"
+    )
+    assert styled["category"] == "style"
+
+    # 主线同步按 source 归类，且不会把已经归好的类目冲掉。
+    sync_mainline_assets_into_library(
+        project_dir,
+        assets=[
+            {
+                "id": "mainline:scene:厨房",
+                "name": "厨房",
+                "media": "image",
+                "source": "scene",
+                "url": "/static/kitchen.png",
+            },
+            {
+                "id": styled["id"],
+                "name": "赛博霓虹",
+                "media": "image",
+                "source": "upload",
+                "url": "/static/b.png",
+            },
+        ],
+    )
+    items = {str(it["id"]): it for it in load_video_character_library(project_dir)}
+    assert items["mainline:scene:厨房"]["category"] == "scene"
+    assert items[styled["id"]]["category"] == "style"
+
+
+def test_video_character_library_folder(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+
+    # 不传保存位置时按类目落到同名系统文件夹，主线同步来的一律进 mainline。
+    plain = add_video_character_library_item(
+        project_dir, name="参考图", image_urls=["/static/a.png"]
+    )
+    assert plain["folder"] == "other"
+    styled = add_video_character_library_item(
+        project_dir, name="赛博霓虹", image_urls=["/static/b.png"], category="style"
+    )
+    assert styled["folder"] == "style"
+
+    # 文件夹和标签是两个独立维度：可以放进自建文件夹、同时打「人物」标签。
+    folder = add_video_character_folder(project_dir, name="第一集素材")
+    assert folder["name"] == "第一集素材"
+    assert folder["id"] not in RESERVED_FOLDER_KEYS
+    assert folder["id"] in library_folder_keys(project_dir)
+
+    filed = add_video_character_library_item(
+        project_dir,
+        name="女主定妆",
+        image_urls=["/static/c.png"],
+        category="character",
+        folder=folder["id"],
+    )
+    assert filed["folder"] == folder["id"]
+    assert filed["category"] == "character"
+
+    # 重名（含系统文件夹名）建不出来。
+    with pytest.raises(ValueError):
+        add_video_character_folder(project_dir, name="第一集素材")
+    with pytest.raises(ValueError):
+        add_video_character_folder(project_dir, name="待分类资产")
+    with pytest.raises(ValueError):
+        add_video_character_folder(project_dir, name="x" * 21)
+
+    # 主线同步不会把用户挪好的位置冲掉。
+    sync_mainline_assets_into_library(
+        project_dir,
+        assets=[
+            {
+                "id": "mainline:scene:厨房",
+                "name": "厨房",
+                "media": "image",
+                "source": "scene",
+                "url": "/static/kitchen.png",
+            },
+            {
+                "id": filed["id"],
+                "name": "女主定妆",
+                "media": "image",
+                "source": "upload",
+                "url": "/static/c.png",
+            },
+        ],
+    )
+    items = {str(it["id"]): it for it in load_video_character_library(project_dir)}
+    assert items["mainline:scene:厨房"]["folder"] == "mainline"
+    assert items[filed["id"]]["folder"] == folder["id"]
+
+
+def test_video_character_folder_update_and_delete(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    folder = add_video_character_folder(project_dir, name="第一集素材")
+    other = add_video_character_folder(project_dir, name="第二集素材")
+
+    # 改名 / 换封面互不影响：只传一个字段时另一个原样保留。
+    renamed = update_video_character_folder(project_dir, folder["id"], name="第一集")
+    assert renamed is not None and renamed["name"] == "第一集"
+    covered = update_video_character_folder(
+        project_dir, folder["id"], cover="/static/c.png"
+    )
+    assert covered is not None
+    assert covered["cover"] == "/static/c.png"
+    assert covered["name"] == "第一集"
+
+    # 改名走的是和新建同一套校验；改成自己现在的名字不算重名。
+    assert update_video_character_folder(project_dir, folder["id"], name="第一集")
+    with pytest.raises(ValueError):
+        update_video_character_folder(project_dir, folder["id"], name="第二集素材")
+    with pytest.raises(ValueError):
+        update_video_character_folder(project_dir, folder["id"], name="主线")
+    assert update_video_character_folder(project_dir, "nope", name="随便") is None
+
+    inside = add_video_character_library_item(
+        project_dir, name="女主定妆", image_urls=["/static/c.png"], folder=folder["id"]
+    )
+    outside = add_video_character_library_item(
+        project_dir, name="路人", image_urls=["/static/d.png"], folder=other["id"]
+    )
+
+    # 整柜清空：文件夹和里面的素材一起没，别的文件夹不受牵连。
+    assert delete_video_character_folder(project_dir, folder["id"]) == 1
+    assert folder["id"] not in library_folder_keys(project_dir)
+    remaining = {str(it["id"]) for it in load_video_character_library(project_dir)}
+    assert inside["id"] not in remaining
+    assert outside["id"] in remaining
+    assert delete_video_character_folder(project_dir, folder["id"]) is None
 
 
 def test_video_ratio_and_resolution_normalization() -> None:

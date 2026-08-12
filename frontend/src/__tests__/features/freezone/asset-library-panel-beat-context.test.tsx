@@ -7,6 +7,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const listFreezoneBeatContext = vi.fn();
 const listFreezoneProjectAssets = vi.fn();
+const fetchFreezoneVideoCharacterLibrary = vi.fn();
+const fetchFreezoneAssetLibraryFolders = vi.fn();
+const syncFreezoneAssetLibraryFromMainline = vi.fn();
 
 vi.mock("@/api/projects", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/projects")>()),
@@ -14,8 +17,33 @@ vi.mock("@/api/projects", async (importOriginal) => ({
   listFreezoneProjectAssets: (...args: unknown[]) => listFreezoneProjectAssets(...args),
 }));
 
+vi.mock("@/api/ops", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/ops")>()),
+  fetchFreezoneVideoCharacterLibrary: (...args: unknown[]) =>
+    fetchFreezoneVideoCharacterLibrary(...args),
+  fetchFreezoneAssetLibraryFolders: (...args: unknown[]) =>
+    fetchFreezoneAssetLibraryFolders(...args),
+  syncFreezoneAssetLibraryFromMainline: (...args: unknown[]) =>
+    syncFreezoneAssetLibraryFromMainline(...args),
+}));
+
 vi.mock("@/features/freezone/CanvasesTab", () => ({
   CanvasesTab: () => null,
+}));
+
+// 「主线资产」tab 受后台的 mainline product surface 开关控制,默认按开着测。
+let mainlineAvailable = true;
+vi.mock("@/lib/queries/product-surfaces", () => ({
+  useProductSurfaces: () => ({ data: undefined, isPending: false }),
+  surfaceAccess: (_data: unknown, code: string) =>
+    code === "mainline"
+      ? {
+          surface_code: "mainline",
+          label: "虾集",
+          available: mainlineAvailable,
+          unavailable_message: "",
+        }
+      : undefined,
 }));
 
 import { AssetLibraryPanel } from "@/features/freezone/AssetLibraryPanel";
@@ -30,6 +58,7 @@ function makeWrapper() {
 describe("AssetLibraryPanel beat context", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mainlineAvailable = true;
   });
 
   it("shares one project asset request across matching panels", async () => {
@@ -117,7 +146,7 @@ describe("AssetLibraryPanel beat context", () => {
       { wrapper: makeWrapper() },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "主线资产" }));
+    fireEvent.click(screen.getByRole("tab", { name: "主线资产" }));
     await screen.findByText(/项目素材加载失败：network down/);
 
     act(() => {
@@ -196,7 +225,7 @@ describe("AssetLibraryPanel beat context", () => {
       { wrapper: makeWrapper() },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "主线资产" }));
+    fireEvent.click(screen.getByRole("tab", { name: "主线资产" }));
     fireEvent.click(screen.getByRole("button", { name: /场景/ }));
     expect(await screen.findByText("厨房")).toBeInTheDocument();
     expect(screen.queryByText("导演合成图")).toBeNull();
@@ -352,7 +381,7 @@ describe("AssetLibraryPanel beat context", () => {
       { wrapper: makeWrapper() },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "主线资产" }));
+    fireEvent.click(screen.getByRole("tab", { name: "主线资产" }));
     fireEvent.click(screen.getByRole("button", { name: /场景/ }));
 
     expect(await screen.findByText("厨房 / master")).toBeInTheDocument();
@@ -374,5 +403,196 @@ describe("AssetLibraryPanel beat context", () => {
     expect(screen.queryByText("背面世界")).toBeNull();
     expect(screen.queryByText("360世界")).toBeNull();
     expect(screen.getByRole("button", { name: /场景.*4/ })).toBeInTheDocument();
+  });
+
+  it("hides the mainline asset tab when the mainline surface is disabled", async () => {
+    mainlineAvailable = false;
+    listFreezoneProjectAssets.mockResolvedValue([]);
+    listFreezoneBeatContext.mockResolvedValue({
+      scope: { episode: null, beat: null },
+      episodes: [],
+      assets: [],
+    });
+
+    render(
+      <AssetLibraryPanel
+        project="demo"
+        metadata={{ kind: "default" }}
+        currentCanvasId="user_admin_demo"
+        collapsed={false}
+      />,
+      { wrapper: makeWrapper() },
+    );
+
+    expect(screen.queryByRole("tab", { name: "主线资产" })).toBeNull();
+    expect(screen.queryByPlaceholderText("搜索素材...")).toBeNull();
+    // 「项目画布」不受这个开关影响,必须还在。
+    expect(screen.getByRole("tab", { name: "项目画布" })).toBeInTheDocument();
+  });
+
+  it("falls back to the canvases tab when mainline is switched off while open", async () => {
+    listFreezoneProjectAssets.mockResolvedValue([]);
+    listFreezoneBeatContext.mockResolvedValue({
+      scope: { episode: null, beat: null },
+      episodes: [],
+      assets: [],
+    });
+
+    const { rerender } = render(
+      <AssetLibraryPanel
+        project="demo"
+        metadata={{ kind: "default" }}
+        currentCanvasId="user_admin_demo"
+        collapsed={false}
+      />,
+      { wrapper: makeWrapper() },
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "主线资产" }));
+    expect(screen.getByPlaceholderText("搜索素材...")).toBeInTheDocument();
+
+    mainlineAvailable = false;
+    act(() => {
+      rerender(
+        <AssetLibraryPanel
+          project="demo"
+          metadata={{ kind: "default" }}
+          currentCanvasId="user_admin_demo"
+          collapsed={false}
+        />,
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(screen.queryByPlaceholderText("搜索素材...")).toBeNull();
+    });
+    expect(screen.queryByRole("tab", { name: "主线资产" })).toBeNull();
+  });
+
+  it("browses the project asset library under its own tab", async () => {
+    listFreezoneProjectAssets.mockResolvedValue([]);
+    listFreezoneBeatContext.mockResolvedValue({
+      scope: { episode: null, beat: null },
+      episodes: [],
+      assets: [],
+    });
+    fetchFreezoneVideoCharacterLibrary.mockResolvedValue({
+      items: [
+        {
+          id: "lib-1",
+          name: "参考图A",
+          media: "image",
+          source: "upload",
+          image_urls: ["/static/library/a.png"],
+        },
+        {
+          id: "lib-2",
+          name: "厨房静帧",
+          media: "image",
+          source: "scene",
+          image_urls: ["/static/library/kitchen.png"],
+        },
+        {
+          id: "lib-3",
+          name: "片段B",
+          media: "video",
+          source: "upload",
+          video_url: "/static/library/b.mp4",
+        },
+      ],
+    });
+
+    render(
+      <AssetLibraryPanel
+        project="demo"
+        metadata={{ kind: "default" }}
+        currentCanvasId="user_admin_demo"
+        collapsed={false}
+      />,
+      { wrapper: makeWrapper() },
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "资产库" }));
+
+    // 根目录只有文件夹,条目要点进去才看得到。
+    expect(
+      await screen.findByRole("button", { name: "文件夹 主线" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "文件夹 待分类资产" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("参考图A")).toBeNull();
+
+    // 主线同步来的条目(不论人物/场景/道具)统统收在一个【主线】文件夹里。
+    fireEvent.click(screen.getByRole("button", { name: "文件夹 主线" }));
+    expect(await screen.findByText("厨房静帧")).toBeInTheDocument();
+    expect(screen.queryByText("参考图A")).toBeNull();
+
+    // 面包屑退回根目录,再进【待分类资产】看本地上传的图片和视频。
+    fireEvent.click(screen.getByRole("button", { name: "返回资产库根目录" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "文件夹 待分类资产" }),
+    );
+    expect(await screen.findByText("参考图A")).toBeInTheDocument();
+    expect(screen.getByText("片段B")).toBeInTheDocument();
+    expect(screen.queryByText("厨房静帧")).toBeNull();
+  });
+
+  it("keeps the asset library tab available when mainline is disabled", async () => {
+    mainlineAvailable = false;
+    listFreezoneProjectAssets.mockResolvedValue([]);
+    listFreezoneBeatContext.mockResolvedValue({
+      scope: { episode: null, beat: null },
+      episodes: [],
+      assets: [],
+    });
+    fetchFreezoneVideoCharacterLibrary.mockResolvedValue({ items: [] });
+
+    render(
+      <AssetLibraryPanel
+        project="demo"
+        metadata={{ kind: "default" }}
+        currentCanvasId="user_admin_demo"
+        collapsed={false}
+      />,
+      { wrapper: makeWrapper() },
+    );
+
+    // 资产库装的是本地上传的素材,不属于主线,开关关掉也得留着。
+    expect(screen.queryByRole("tab", { name: "主线资产" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "资产库" }));
+    expect(await screen.findByText(/资产库还是空的/)).toBeInTheDocument();
+  });
+
+  it("opens the asset library modal from the tab bar icon", async () => {
+    listFreezoneProjectAssets.mockResolvedValue([]);
+    listFreezoneBeatContext.mockResolvedValue({
+      scope: { episode: null, beat: null },
+      episodes: [],
+      assets: [],
+    });
+    fetchFreezoneVideoCharacterLibrary.mockResolvedValue({ items: [] });
+    fetchFreezoneAssetLibraryFolders.mockResolvedValue([]);
+    syncFreezoneAssetLibraryFromMainline.mockResolvedValue({ items: [] });
+
+    render(
+      <AssetLibraryPanel
+        project="demo"
+        metadata={{ kind: "default" }}
+        currentCanvasId="user_admin_demo"
+        collapsed={false}
+      />,
+      { wrapper: makeWrapper() },
+    );
+
+    // 入口常驻,停在「项目画布」tab 上也能点开。
+    expect(screen.getByRole("tab", { name: "项目画布" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "资产管理" }));
+
+    expect(await screen.findByRole("button", { name: "新建" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批量操作" })).toBeInTheDocument();
   });
 });

@@ -38,6 +38,8 @@ from novelvideo.api.schemas import (
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
     FreezoneAnalyzeVideoStoryRequest,
+    FreezoneAssetLibraryFolderPatchRequest,
+    FreezoneAssetLibraryFolderRequest,
     FreezoneAudioMusicRequest,
     FreezoneAudioSeparateRequest,
     FreezoneAudioSpeechRequest,
@@ -241,17 +243,22 @@ from novelvideo.freezone.text_node import (
     translate_freezone_text,
 )
 from novelvideo.freezone.video_node import (
+    MAINLINE_FOLDER_KEY,
+    add_video_character_folder,
     add_video_character_library_item,
     build_freezone_image_to_video_prompt,
     build_freezone_keyframe_video_prompt,
     build_freezone_omni_video_prompt,
     build_freezone_video_prompt,
+    delete_video_character_folder,
     delete_video_character_library_item,
     get_freezone_video_model_options,
     get_video_camera_template,
     get_video_camera_templates,
     is_freezone_happyhorse_backend,
     is_freezone_seedance2_backend,
+    library_folder_keys,
+    load_video_character_folders,
     load_video_character_library,
     sync_mainline_assets_into_library,
     normalize_freezone_seedance2_scene_optimize,
@@ -260,6 +267,7 @@ from novelvideo.freezone.video_node import (
     normalize_video_resolution_for_backend,
     resolve_freezone_video_backend,
     summarize_omni_reference_counts,
+    update_video_character_folder,
     validate_omni_reference_audio_durations,
     validate_omni_reference_limits,
     MAX_OMNI_REFERENCE_AUDIO_SECONDS,
@@ -7749,6 +7757,13 @@ async def freezone_add_video_character_library_item(
         for url in body.image_urls:
             _require_local(url, "image")
 
+    # 保存位置必须是已存在的文件夹；主线是同步产物，不接受上传。
+    if body.folder:
+        if body.folder == MAINLINE_FOLDER_KEY:
+            raise HTTPException(400, "cannot upload into the mainline folder")
+        if body.folder not in library_folder_keys(project_dir):
+            raise HTTPException(404, f"folder not found: {body.folder}")
+
     item = add_video_character_library_item(
         project_dir,
         name=body.name,
@@ -7756,8 +7771,99 @@ async def freezone_add_video_character_library_item(
         image_urls=body.image_urls,
         video_url=body.video_url,
         audio_url=body.audio_url,
+        category=body.category,
+        folder=body.folder,
     )
     return {"ok": True, "data": item}
+
+
+@router.get(
+    "/projects/{project}/freezone/video/asset-library/folders",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_asset_library_folders(
+    project: str,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：列出用户自建的资产库文件夹（系统文件夹由前端按保留 key 生成）。"""
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="viewer"
+    )
+    return {"ok": True, "data": load_video_character_folders(project_dir)}
+
+
+@router.post(
+    "/projects/{project}/freezone/video/asset-library/folders",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_add_asset_library_folder(
+    project: str,
+    body: FreezoneAssetLibraryFolderRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：新建一个资产库文件夹。"""
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    try:
+        folder = add_video_character_folder(project_dir, name=body.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "data": folder}
+
+
+@router.patch(
+    "/projects/{project}/freezone/video/asset-library/folders/{folder_id}",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_update_asset_library_folder(
+    project: str,
+    folder_id: str,
+    body: FreezoneAssetLibraryFolderPatchRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：给资产库文件夹改名或换封面。系统文件夹没有实体记录，一律 404。"""
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    if body.cover:
+        # 封面只能是本项目 static 下的素材。这个字段会被所有打开资产库的协作者当
+        # <img src> 渲染，放行外链等于让别人的浏览器替你去访问第三方地址（referrer
+        # 和 IP 都带过去）。和录入素材那条路由的 _require_local 同一套要求。
+        try:
+            cover_path = resolve_static_url_to_path(body.cover, project_dir)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not cover_path.exists():
+            raise HTTPException(404, f"cover not found: {cover_path}")
+    try:
+        folder = update_video_character_folder(
+            project_dir, folder_id, name=body.name, cover=body.cover
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if folder is None:
+        raise HTTPException(404, f"folder not found: {folder_id}")
+    return {"ok": True, "data": folder}
+
+
+@router.delete(
+    "/projects/{project}/freezone/video/asset-library/folders/{folder_id}",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_delete_asset_library_folder(
+    project: str,
+    folder_id: str,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：删掉一个自建文件夹，连同落在它里面的素材条目一起删。"""
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    removed = delete_video_character_folder(project_dir, folder_id)
+    if removed is None:
+        raise HTTPException(404, f"folder not found: {folder_id}")
+    return {"ok": True, "data": {"deleted_items": removed}}
 
 
 @router.post(
