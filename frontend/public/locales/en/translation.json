@@ -5211,16 +5211,25 @@
     },
     "video": {
       "clip": "Clip",
+      "reshoot": "Reshoot Clip",
       "hd": "HD",
       "analyze": "Analyze",
+      "frameAnalysis": "Frame-by-Frame",
+      "extend": "Smart Extend",
       "separateAudioVideo": "Separate A/V",
+      "frameEdit": "Frame Editing",
+      "frameEditSubjectRemove": "Remove Subject",
+      "frameEditSubjectModify": "Modify Subject",
+      "frameEditSubjectReplace": "Replace Subject",
+      "frameEditMatte": "Smart Matting",
       "subtitleRemoval": "Remove Subtitles",
       "subtitleRemovalTip": "AI-powered subtitle removal — Chinese & English only",
       "subtitleRemovalSmart": "Smart erase",
       "subtitleRemovalBox": "Box-select erase",
       "fullscreen": "Fullscreen",
       "notImplementedYet": "Coming soon",
-      "requiresVideo": "Upload a video first"
+      "requiresVideo": "Upload a video first",
+      "reshootRequiresSeedance25": "Reshoot Clip requires Seedance 2.5, which is not enabled for this project"
     },
     "audio": {
       "requiresAudio": "No audio to download yet",
@@ -5453,7 +5462,8 @@
       "placeholderAudio": "Audio",
       "placeholderScript": "Script",
       "betaTag": "Beta",
-      "videoCompose": "Video Compose"
+      "videoCompose": "Video Compose",
+      "videoBreakdown": "Frame-by-Frame"
     },
     "imageNode": {
       "title": "Image Node",
@@ -5473,7 +5483,10 @@
       "requestId": "Request ID",
       "copyRequestId": "Copy request ID",
       "requestIdCopied": "Copied",
-      "resolution": "Image resolution"
+      "resolution": "Image resolution",
+      "replace": "Replace image",
+      "replaceTypeError": "Please upload an image file",
+      "replaceFailed": "Failed to replace image"
     },
     "directorControlBundle": {
       "badge": "Director composite",
@@ -5709,6 +5722,7 @@
       "noVideo": "No video",
       "upload": "Upload",
       "clickToUpload": "Click or drag to upload video",
+      "replace": "Replace video",
       "resolution": "Video resolution",
       "tabs": {
         "textToVideo": "Text to Video",
@@ -7208,6 +7222,38 @@
     "openRouterConfigMessage": "This model requires OpenRouter, but the backend API key is not configured. Please contact an administrator.",
     "stillRunningTitle": "Still generating",
     "stillRunningMessage": "This generation is taking longer than usual. The page stopped waiting, but the job is still running in the background — refresh later to pick up the result, or check its progress in the task center."
+  },
+  "canvasPick": {
+    "title": "Pick a reference from the canvas",
+    "hint": "Click a video node on the canvas",
+    "backToNode": "Back to node",
+    "cancel": "Cancel selection",
+    "selectNode": "Select \"{{name}}\""
+  },
+  "videoBreakdown": {
+    "sourceLabel": "Source video",
+    "emptyHint": "Add a video to start",
+    "uploading": "Uploading…",
+    "uploadFailed": "Video upload failed",
+    "uploadVideo": "Upload video",
+    "pickFromCanvas": "Pick from canvas",
+    "replace": "Replace",
+    "attached": "Selected clip",
+    "dimensionsLabel": "Breakdown dimensions",
+    "dimension": {
+      "storyboard": "Shots",
+      "motion": "Motion",
+      "music": "Music"
+    },
+    "start": "Start breakdown",
+    "running": "Breaking down…",
+    "failed": "Breakdown failed",
+    "emptyResult": "Nothing usable came out of this video",
+    "groups": {
+      "storyboard": "Shot group {{index}}",
+      "motion": "Motion | camera reference",
+      "music": "Music | BGM reference"
+    }
   },
   "videoCompose": {
     "title": "Video Compose",

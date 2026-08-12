@@ -14,8 +14,11 @@ import {
   isGrokVideoChannelModel,
   isHappyHorseVideoModel,
   isSeedance1xVideoModel,
+  isSeedance25VideoModel,
   isSeedance2VideoModel,
   isVideoModeSupportedByModel,
+  findReshootVideoModel,
+  videoOutputFollowsSourceVideo,
   referenceDurationLimitsMs,
   resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
@@ -53,6 +56,7 @@ const SEEDANCE2_VALUE = "newapi_seedance-2.0-fast-value";
 const SEEDANCE10_PRO_FAST = "newapi_seedance-1.0-pro-fast";
 const SEEDANCE15_PRO = "newapi_seedance-1.5-pro";
 const HAPPYHORSE = "newapi_happyhorse-1.0";
+const SEEDANCE25 = "newapi_seedance-2.5";
 
 describe("video model family detection", () => {
   it("classifies Seedance 2.0 variants (not 1.x)", () => {
@@ -84,6 +88,66 @@ describe("video model family detection", () => {
     }
     // 分隔符不敏感：normalize 后 `seedance20` 仍是 2.0，不会漏成 1.x。
     expect(isSeedance2VideoModel("SEEDANCE 2.0 FAST")).toBe(true);
+  });
+
+  it("singles out Seedance 2.5 without unsettling the 2.x family verdict", () => {
+    expect(isSeedance25VideoModel(SEEDANCE25)).toBe(true);
+    // 2.5 仍属 2.x 族（多图 / 视频 / 音频能力同源），这条粗口径不能因为它被收窄。
+    expect(isSeedance2VideoModel(SEEDANCE25)).toBe(true);
+    expect(isSeedance1xVideoModel(SEEDANCE25)).toBe(false);
+    // 2.0 全家不能被误判成 2.5 —— 片段重拍入口就是靠这条区分开的。
+    for (const id of [SEEDANCE2_FAST, SEEDANCE2_VALUE, "seedance-2.0", HAPPYHORSE]) {
+      expect(isSeedance25VideoModel(id)).toBe(false);
+    }
+  });
+});
+
+describe("findReshootVideoModel — 片段重拍只认 Seedance 2.5", () => {
+  it("picks the 2.5 entry out of a mixed catalog by apiModel", () => {
+    const models = [
+      { id: "cat-fast", apiModel: SEEDANCE2_FAST },
+      { id: "cat-25", apiModel: SEEDANCE25 },
+      { id: "cat-hh", apiModel: HAPPYHORSE },
+    ];
+    // 返回的是目录条目本身（`id` 才是要写进 VideoNodeData.model 的值，不是 apiModel）。
+    expect(findReshootVideoModel(models)?.id).toBe("cat-25");
+  });
+
+  it("falls back to id when the catalog entry carries no apiModel", () => {
+    expect(findReshootVideoModel([{ id: "seedance-2.5" }])?.id).toBe("seedance-2.5");
+  });
+
+  it("returns null when the project catalog has no 2.5 at all", () => {
+    // 目录里没上 2.5 → 入口该置灰，而不是随便挑个 2.0 顶上。
+    expect(
+      findReshootVideoModel([
+        { id: "cat-fast", apiModel: SEEDANCE2_FAST },
+        { id: "cat-hh", apiModel: HAPPYHORSE },
+      ]),
+    ).toBeNull();
+    expect(findReshootVideoModel([])).toBeNull();
+  });
+});
+
+// 厂商硬校验：Seedance 视频编辑的 ratio 必须 adaptive、duration 必须 -1，指定具体值
+// 整单打回。界面据此隐藏比例/时长两个旋钮，后端据此改写下发值 —— 两边同一条判断。
+describe("videoOutputFollowsSourceVideo — 视频编辑不许带比例和时长", () => {
+  it("holds for Seedance video edit", () => {
+    expect(videoOutputFollowsSourceVideo("videoEdit", SEEDANCE25)).toBe(true);
+    expect(videoOutputFollowsSourceVideo("videoEdit", "seedance-2.0")).toBe(true);
+  });
+
+  it("leaves every other mode of the same model alone", () => {
+    // 全能参考带视频素材也照常出比例和时长 —— 只有视频编辑这一档跟随原片。
+    for (const mode of ["allReference", "textToVideo", "imageToVideo"] as const) {
+      expect(videoOutputFollowsSourceVideo(mode, SEEDANCE25)).toBe(false);
+    }
+    expect(videoOutputFollowsSourceVideo(null, SEEDANCE25)).toBe(false);
+  });
+
+  it("excludes HappyHorse video edit — 它那套参数照常收比例和时长", () => {
+    expect(videoOutputFollowsSourceVideo("videoEdit", HAPPYHORSE)).toBe(false);
+    expect(videoOutputFollowsSourceVideo("videoEdit", null)).toBe(false);
   });
 });
 

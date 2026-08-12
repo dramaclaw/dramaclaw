@@ -551,6 +551,92 @@ async def _run_freezone_video_story_async(
     }
 
 
+async def _run_freezone_video_breakdown_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.jobs import ensure_freezone_dirs, run_freezone_video_breakdown
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+
+    def report(ratio: float, message: str) -> None:
+        _update(ctx, "freezone_video_breakdown", job_id, ratio, message)
+
+    report(0.05, "开始逐帧拉片...")
+    result = await run_freezone_video_breakdown(
+        project_dir=project_dir,
+        job_id=job_id,
+        video_path=Path(str(payload["video_path"])),
+        dimensions=list(payload.get("dimensions") or []) or None,
+        max_frames=int(payload.get("max_frames") or 40),
+        scene_threshold=float(payload.get("scene_threshold") or 0.3),
+        duration_sec=payload.get("duration_sec"),
+        storyboard_group_size=int(payload.get("storyboard_group_size") or 4),
+        max_motion_clips=int(payload.get("max_motion_clips") or 3),
+        motion_clip_max_sec=float(payload.get("motion_clip_max_sec") or 6.0),
+        music_clip_sec=float(payload.get("music_clip_sec") or 15.0),
+        model=payload.get("model"),
+        progress=report,
+    )
+
+    def to_url(path_value: Any) -> str | None:
+        # 作业层只认磁盘路径，前端只认 URL —— 转换集中在这一处，免得每个维度各写
+        # 一遍 relative_to/make_static_url。
+        if not path_value:
+            return None
+        path = Path(str(path_value))
+        if not path.exists():
+            return None
+        try:
+            rel = path.relative_to(project_dir).as_posix()
+        except ValueError:
+            # 落在项目目录外的文件没有 static URL 可给，宁可少一个字段也不能拼一个
+            # 指向别人项目的地址。
+            return None
+        return make_static_url_for_context(ctx, rel, local_path=path)
+
+    storyboard = result.get("storyboard")
+    if isinstance(storyboard, dict):
+        for group in storyboard.get("groups") or []:
+            for shot in group.get("shots") or []:
+                shot["image_url"] = to_url(shot.pop("image_path", None))
+
+    motion = result.get("motion")
+    if isinstance(motion, dict):
+        for clip in motion.get("clips") or []:
+            clip["video_url"] = to_url(clip.pop("video_path", None))
+            clip["preview_image_url"] = to_url(clip.pop("preview_image_path", None))
+
+    music = result.get("music")
+    if isinstance(music, dict) and isinstance(music.get("clip"), dict):
+        music["clip"]["audio_url"] = to_url(music["clip"].pop("audio_path", None))
+
+    response = {
+        "job_id": job_id,
+        "source_video_url": payload.get("video_url"),
+        "duration_sec": result.get("duration_sec"),
+        "model": result.get("model"),
+        "title": result.get("title"),
+        "summary": result.get("summary"),
+        "dimensions": result.get("dimensions"),
+        "storyboard": storyboard,
+        "motion": motion,
+        "music": music,
+        "frame_urls": [to_url(path) for path in result.get("frame_paths") or []],
+        "output_url": to_url(result.get("output_path")),
+    }
+    _update(ctx, "freezone_video_breakdown", job_id, 1.0, "逐帧拉片完成")
+    return response
+
+
+def run_freezone_video_breakdown(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+    return _run_cancellable(envelope, _run_freezone_video_breakdown_async(envelope, ctx))
+
+
 def run_freezone_gen(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_gen_async(envelope, ctx))
 
@@ -1457,6 +1543,7 @@ register_project_task_runner(
 register_project_task_runner(
     "freezone_story_script", run_freezone_story_script, requires_home_node=False
 )
+register_project_task_runner("freezone_video_breakdown", run_freezone_video_breakdown)
 register_project_task_runner(
     "freezone_image_reverse_prompt",
     run_freezone_image_reverse_prompt,

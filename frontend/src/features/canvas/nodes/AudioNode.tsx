@@ -31,6 +31,10 @@ import {
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { NodeGenerationOverlay } from '@/features/canvas/ui/NodeGenerationOverlay';
 import { AudioWaveformPlayer } from '@/features/canvas/ui/AudioWaveformPlayer';
+import { NodeMediaReplaceButton } from '@/features/canvas/ui/NodeMediaReplaceButton';
+import {
+  useAssetCommitDragById,
+} from '@/features/canvas/ui/useAssetCommitDrag';
 import { setNodeMediaActive } from '@/features/canvas/application/canvasLod';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
@@ -121,6 +125,10 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
   const hasMainlineContext = hasMainlineContexts(
     (data as { mainline_context?: unknown }).mainline_context,
   );
+
+  // 卡片内那颗替换按钮同时兼「按住拖到左侧素材库」（原 AssetCommitHandle 的手势）。
+  const { canCommit: canCommitAsset, startDrag: startAssetCommitDrag } =
+    useAssetCommitDragById(id);
 
   // 上传一份本地音频到后端 freezone — 复用通用 upload 端点（后端不区分 mime）。
   // 上传成功后落 audioUrl/sourceFileName 进 store，AudioOperationsPanel 那边
@@ -303,7 +311,9 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
       />
 
       {/* 音频节点不再作为上传入口（空状态/替换均移除）：上传音频请通过「上传节点」
-          或把音频文件拖入画布；外部投递仍走 canvasEventBus 'audio-node/external-file'。 */}
+          或把音频文件拖入画布；外部投递仍走 canvasEventBus 'audio-node/external-file'。
+          唯一例外是 allowLocalReplace（逐帧拉片产出的 BGM 参考）—— 那是一条参考
+          素材，用户换成自己的曲子是正常用法，见下方右上角的替换按钮。 */}
 
       <div
         className={`relative flex h-full w-full items-center justify-center ${audioSource ? 'overflow-hidden' : 'overflow-visible'} rounded-[var(--node-radius)] border ${CANVAS_NODE_PANEL_SURFACE_CLASS} transition-colors ${cardToneClass}`}
@@ -351,6 +361,21 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
             <span className="text-[12px]">{t('node.audioNode.empty')}</span>
           </div>
         )}
+
+        {/* 卡片内右上角唯一的「替换」入口：点击换本地文件，按住拖则丢进左侧素材库。
+            选中即出现（allowLocalReplace 的卡片常驻）—— 这颗按钮接管了原来浮在
+            节点外侧的 AssetCommitHandle，见 SelectedNodeOverlay。 */}
+        {canCommitAsset &&
+          !isGenerating &&
+          (data.allowLocalReplace === true || selected) && (
+            <NodeMediaReplaceButton
+              accept="audio/*"
+              busy={Boolean(data.isUploading)}
+              title={t('node.audio.replaceAudioTitle')}
+              onPick={processFile}
+              onCommitDragStart={startAssetCommitDrag}
+            />
+          )}
       </div>
 
       {/* 节点一旦有音频内容（手动上传 or TTS 合成），就不再展示底部操作区 ——

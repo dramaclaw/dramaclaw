@@ -72,8 +72,10 @@ import {
   MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
   referenceDurationLimitsMs,
+  findReshootVideoModel,
   isHappyHorseVideoModel,
   isSeedance2VideoModel,
+  isSeedance25VideoModel,
   isVideoModeSupportedByModel,
   resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
@@ -171,7 +173,20 @@ import {
   NODE_SIDE_ACTION_ICON_CLASS,
   NodeSideActionRail,
 } from "@/features/canvas/ui/NodeSideActionRail";
+import { NodeMediaReplaceButton } from "@/features/canvas/ui/NodeMediaReplaceButton";
+import {
+  useAssetCommitDragById,
+} from "@/features/canvas/ui/useAssetCommitDrag";
 import { VideoClipPanel } from "@/features/canvas/nodes/VideoClipPanel";
+import {
+  RESHOOT_TIMELINE_HEIGHT,
+  VideoReshootTimeline,
+} from "@/features/canvas/nodes/VideoReshootTimeline";
+import {
+  pruneReshootClipsByPrompt,
+  syncReshootPrompt,
+  type VideoReshootClip,
+} from "@/features/canvas/application/videoReshootClips";
 import {
   CAMERA_MOVEMENT_PRESETS,
   findCameraMovementPreset,
@@ -180,6 +195,7 @@ import {
 import { useFreezoneVideoCameraTemplates } from "@/features/canvas/hooks/useFreezoneVideoCameraTemplates";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { useCanvasStore, useIsBoxSelecting } from "@/stores/canvasStore";
+import { useCanvasPickStore } from "@/stores/canvasPickStore";
 import {
   fetchFreezoneJobResult,
   submitFreezoneVideoCompose,
@@ -1079,10 +1095,102 @@ export const VideoNode = memo(
     const durationMs =
       typeof data.durationMs === "number" ? data.durationMs : null;
 
+    // 片段重拍：轨道上截出来的区间即是要交给模型的指令，所以每次变动都把时间码
+    // 同步进 prompt（新增追加 / 拖动改写 / 删除摘掉），用户手写的正文原样保留。
+    const isReshootMode = Boolean(data.isReshootMode);
+    const reshootClips = useMemo(
+      () => (Array.isArray(data.reshootClips) ? data.reshootClips : []),
+      [data.reshootClips],
+    );
+    const handleReshootClipsChange = useCallback(
+      (next: VideoReshootClip[]) => {
+        updateNodeData(id, {
+          reshootClips: next,
+          prompt: syncReshootPrompt(
+            typeof data.prompt === "string" ? data.prompt : "",
+            reshootClips,
+            next,
+          ),
+        });
+      },
+      [data.prompt, id, reshootClips, updateNodeData],
+    );
+    // 反过来：用户在输入框里删掉某行时间码（chip 上的 × 或退格），轨道上那段也撤掉。
+    // 不撤的话它还留在轨道上，一拖又把时间码写回 prompt，用户会觉得根本删不掉。
+    useEffect(() => {
+      if (!isReshootMode || reshootClips.length === 0) return;
+      const pruned = pruneReshootClipsByPrompt(prompt, reshootClips);
+      // 引用没变 = 一段都没少，别白写一次 store（否则每敲一个字都要过一遍）。
+      if (pruned !== reshootClips) {
+        updateNodeData(id, { reshootClips: pruned });
+      }
+    }, [id, isReshootMode, prompt, reshootClips, updateNodeData]);
+
+    // 片段重拍只有「Seedance 2.5 + 视频编辑」这一条路：时间码是写给它的视频编辑的
+    // 指令，落到别的模式上等于把时间码当普通提示词发出去。面板里模型选择器是锁死的、
+    // 功能切换整块不显示，所以这里是这两个值在重拍节点上的**唯一作者**——别处再写
+    // 就会两边对着改（见下方 videos→allReference 那条 effect 的注释）。
+    //
+    // 模型也一并纠正：节点存的是目录条目 id，目录换了或这条被删掉时解析会回退成列表
+    // 第一个模型（很可能不支持视频编辑），而选择器锁着，用户没有任何手段把它改回来。
+    useEffect(() => {
+      if (!isReshootMode) return;
+      if (videoModelsLoading) return;
+      const patch: Record<string, unknown> = {};
+      if (genMode !== "videoEdit") patch.genMode = "videoEdit";
+      const reshootModel = findReshootVideoModel(availableVideoModels);
+      if (reshootModel && !isSeedance25VideoModel(selectedVideoModelId)) {
+        patch.model = reshootModel.id;
+      }
+      if (Object.keys(patch).length === 0) return;
+      updateNodeData(id, patch);
+    }, [
+      availableVideoModels,
+      genMode,
+      id,
+      isReshootMode,
+      selectedVideoModelId,
+      updateNodeData,
+      videoModelsLoading,
+    ]);
+
     const resolvedTitle = useMemo(
       () => localizeNodeDisplayName(CANVAS_NODE_TYPES.video, data, t),
       [data, t],
     );
+
+    // 「从画布选择」拾取模式：某个节点（逐帧拉片）正在等一段视频素材时，本节点浮出
+    // 一层可点选的覆盖层，点中就把自己回填给发起方并连一根边。
+    const pickRequest = useCanvasPickStore((state) => state.request);
+    const cancelPick = useCanvasPickStore((state) => state.cancelPick);
+    const isPickTarget =
+      pickRequest?.kind === "video" &&
+      pickRequest.requesterNodeId !== id &&
+      Boolean(data.videoUrl);
+
+    const handlePickSelect = useCallback(() => {
+      const requesterId = pickRequest?.requesterNodeId;
+      if (!requesterId || !data.videoUrl) return;
+      const store = useCanvasStore.getState();
+      store.updateNodeData(requesterId, {
+        sourceVideoUrl: data.videoUrl,
+        previewImageUrl: data.previewImageUrl ?? null,
+        sourceFileName: resolvedTitle,
+        sourceNodeId: id,
+      });
+      store.addEdge(id, requesterId);
+      store.setSelectedNode(requesterId);
+      store.requestFocusNode(requesterId);
+      cancelPick();
+    }, [
+      cancelPick,
+      data.previewImageUrl,
+      data.videoUrl,
+      id,
+      pickRequest?.requesterNodeId,
+      resolvedTitle,
+    ]);
+
     const resolvedWidth = Math.max(
       MIN_WIDTH,
       Math.round(width ?? DEFAULT_WIDTH),
@@ -1556,6 +1664,7 @@ export const VideoNode = memo(
         hasAudioUpstream &&
         data.genMode !== "allReference" &&
         !(data.genMode === "videoEdit" && videoEditAcceptsAudio) &&
+        !isReshootMode &&
         !isHappyHorseModel &&
         supportsAllReference
       ) {
@@ -1566,6 +1675,7 @@ export const VideoNode = memo(
       hasAudioUpstream,
       id,
       isHappyHorseModel,
+      isReshootMode,
       supportsAllReference,
       updateNodeData,
       videoEditAcceptsAudio,
@@ -1622,13 +1732,23 @@ export const VideoNode = memo(
     ]);
 
     // 上游接入视频素材时，「全能参考」和目录声明的「视频编辑」都能消费；其它模式
-    // 会把视频丢弃。已经处于合法 videoEdit 时不要再强制改成 allReference。
-    // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
-    // 是否可消费视频由媒体目录的 all_reference 能力决定；未声明该能力的模型不强推，
-    // 以免顶进提交必 400 的模式。
+    // （文生 / 图生 / 首尾帧 / 图片参考）会把视频丢弃，所以只要上游存在视频就强制切到
+    // allReference 并锁死——下面的 tab 禁用规则会把其它 tab 一并禁用。与音频的
+    // 「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。是否可消费
+    // 视频由媒体目录的 all_reference 能力决定；未声明该能力的模型不强推，以免顶进提交
+    // 必 400 的模式。
+    // 「视频编辑」同样吃视频（video_url），不在强推之列：它本来就是消费视频的模式，
+    // 拽回全能参考等于把用户选的模式改掉。
+    //
+    // 片段重拍节点整个跳过（不看模型能力）：它的模式由上面那条 effect 单独钉在
+    // videoEdit 上，这里但凡还有条件能落到 `updateNodeData` 就会和它对着改 ——
+    // 实测一个模型解析成 2.0-fast（目录里没这条 id，回退成列表第一个）的旧重拍节点，
+    // supportsVideoEdit=false 让上面那道能力判断失效，两条 effect 每帧互写一次，
+    // 直接把整页顶成 Maximum update depth。同一份数据只能有一个作者。
     useEffect(() => {
       if (upstreamCounts.videos === 0) return;
       if (isHappyHorseModel) return;
+      if (isReshootMode) return;
       if (genMode === "videoEdit" && supportsVideoEdit) return;
       if (!supportsAllReference) return;
       if (genMode === "allReference") return;
@@ -1638,6 +1758,7 @@ export const VideoNode = memo(
       genMode,
       id,
       isHappyHorseModel,
+      isReshootMode,
       supportsAllReference,
       supportsVideoEdit,
       updateNodeData,
@@ -2768,6 +2889,9 @@ export const VideoNode = memo(
     });
 
     const isUploading = Boolean(data.isUploading);
+    // 卡片内那颗替换按钮同时兼「按住拖到左侧素材库」（原 AssetCommitHandle 的手势）。
+    const { canCommit: canCommitAsset, startDrag: startAssetCommitDrag } =
+      useAssetCommitDragById(id);
     const isEmptyVideoBody = !videoSource && !isUploading && !isGenerating && !hasGenerationError;
     const bodySurfaceClass = isEmptyVideoBody
       ? CANVAS_NODE_INPUT_SURFACE_CLASS
@@ -2786,6 +2910,22 @@ export const VideoNode = memo(
       !data.referenceOnly &&
       // 视频高清节点用自己的 VideoUpscaleEditorOverlay 配置面板，不走常规生成面板。
       !data.isUpscaleNode;
+
+    // 剪辑 / 去字幕 / 画册都会占用节点底下那块位置，轨道让位给当前正在用的那个。
+    // 另外时间码是喂给 Seedance 2.5 视频编辑的，用户在这个节点上把模型换成别的，
+    // 轨道就得收起来 —— 留着只会截出一串没人消费的区间。已截的片段不清空：切回
+    // 2.5 立刻原样回来，prompt 里那几行时间码也一直在，两边始终对得上。
+    const showReshootTimeline =
+      isReshootMode &&
+      isSeedance25VideoModel(selectedVideoModelId) &&
+      Boolean(videoSource) &&
+      !isClipMode &&
+      !subtitleEraseMode &&
+      !albumExpanded;
+    // 轨道占掉的高度：下面的操作面板 / 历史面板都相对节点底边定位，得一起往下让。
+    const reshootOffset = showReshootTimeline
+      ? RESHOOT_TIMELINE_HEIGHT + OPERATIONS_PANEL_GAP
+      : 0;
 
     const handleCaptureFrame = useCallback(
       async (mode: "first" | "last" | "current") => {
@@ -2923,6 +3063,21 @@ export const VideoNode = memo(
           className="!h-2 !w-2 !border-0 !bg-[rgb(148,163,184)]"
         />
 
+        {isPickTarget && (
+          <div
+            className="group/pick absolute inset-0 z-[46] flex cursor-pointer items-center justify-center rounded-[var(--node-radius)] ring-2 ring-inset ring-cyan-300/60 transition-colors hover:bg-black/45"
+            onClick={(event) => {
+              event.stopPropagation();
+              handlePickSelect();
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <span className="rounded-full border border-white/20 bg-black/75 px-3 py-1.5 text-[13px] font-medium text-white opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.45)] transition-opacity group-hover/pick:opacity-100">
+              {t("canvasPick.selectNode", { name: resolvedTitle })}
+            </span>
+          </div>
+        )}
+
         {/* 画册展开时隐藏浮动标题和分辨率角标——画册容器自带头部（与图片节点一致）。 */}
         {!albumExpanded && (
           <>
@@ -2987,6 +3142,26 @@ export const VideoNode = memo(
             albumExpanded && hasAlbum ? "invisible" : ""
           }`}
         >
+          {/* 卡片内右上角唯一的「替换」入口：点击换本地文件 —— 复用节点自己那条
+              上传路径（processFile，含 HEVC 转码 + uploadFreezoneVideo 落 OSS），
+              换完 onLoadedMetadata 会重算时长/像素；按住拖则丢进左侧素材库。
+              选中即出现（allowLocalReplace 的卡片常驻），因为这颗按钮接管了
+              原来浮在节点外侧的 AssetCommitHandle，见 SelectedNodeOverlay。
+              空态不给：那时本来就有 NodeSideActionRail 那颗上传按钮。 */}
+          {canCommitAsset &&
+            videoSource &&
+            !isGenerating &&
+            !albumExpanded &&
+            (data.allowLocalReplace === true || selected) && (
+              <NodeMediaReplaceButton
+                accept={VIDEO_FILE_ACCEPT}
+                busy={isUploading}
+                title={t("node.videoNode.replace")}
+                onPick={processFile}
+                onCommitDragStart={startAssetCommitDrag}
+              />
+            )}
+
           {/* 生成/上传中优先显示 loading：原地重新生成时 videoUrl 仍是上一条结果，
               若不加这层 guard，旧视频会一直占位、isGenerating 分支永远到不了。
               失败时 isGenerating 归 false，旧视频自动复现（videoUrl 未被清空）。 */}
@@ -3367,6 +3542,28 @@ export const VideoNode = memo(
           </div>
         )}
 
+        {/* 片段重拍的时间轨道：独立一条挂在卡片外面（画面 → 轨道 → 操作面板），
+            压在画面上会挡住正在对照的镜头，也不好跟下方 prompt 一起看。 */}
+        {showReshootTimeline && (
+          <div
+            className="absolute z-10"
+            style={{
+              top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
+              // 跟操作面板同宽（两边各外挑一截）：轨道越宽，同样的秒数摊到的像素
+              // 越多，截片段才好下手；顺带跟下面的 prompt 面板对齐成一根竖线。
+              left: -panelOverhang,
+              right: -panelOverhang,
+            }}
+          >
+            <VideoReshootTimeline
+              videoUrl={videoSource!}
+              durationMs={durationMs}
+              clips={reshootClips}
+              onChange={handleReshootClipsChange}
+            />
+          </div>
+        )}
+
         {isClipMode && videoSource && (
           <div
             className="absolute left-0 right-0 z-10 flex flex-col gap-1"
@@ -3436,6 +3633,7 @@ export const VideoNode = memo(
             selectedModelReferenceError={selectedModelReferenceError}
             mediaRejectionReason={mediaRejectionReason}
             expanded={panelExpanded}
+            topOffset={reshootOffset}
             onExpandedChange={setPanelExpanded}
             onSubmit={handleSubmit}
           />
@@ -3451,7 +3649,7 @@ export const VideoNode = memo(
             <div
               className={`nodrag absolute z-[300] rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS} ${NODE_OPS_PANEL_ENTER_CLASS} px-3 py-2`}
               style={{
-                top: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight}px)`,
+                top: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight + reshootOffset}px)`,
                 left: -panelOverhang,
                 right: -panelOverhang,
               }}

@@ -72,6 +72,7 @@ export const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; heigh
   audioNode: { width: 480, height: 210 },
   videoStoryNode: { width: 720, height: 360 },
   videoComposeNode: { width: 240, height: 136 },
+  videoBreakdownNode: { width: 300, height: 292 },
   pano360ViewerNode: { width: 900, height: 540 },
   threeDWorldNode: { width: 340, height: 210 },
   storyboardNode: { width: 800, height: 600 },

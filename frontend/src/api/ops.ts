@@ -2637,6 +2637,122 @@ export async function submitFreezoneAnalyzeVideoStory(
   );
 }
 
+// /freezone/video-breakdown ---------------------------------------------- //
+
+export type FreezoneVideoBreakdownDimension = "storyboard" | "motion" | "music";
+
+export interface FreezoneVideoBreakdownPayload {
+  /** /static/... URL inside the project. */
+  videoUrl: string;
+  /** Omit to run all three dimensions. */
+  dimensions?: FreezoneVideoBreakdownDimension[];
+  /** Keyframe cap, 3..80; defaults to 40 backend-side (actual count tracks duration). */
+  maxFrames?: number;
+  /** 0..1 ffmpeg scene threshold; defaults to 0.3 backend-side. */
+  sceneThreshold?: number;
+  /** Optional total duration (seconds) — improves shot timestamp accuracy. */
+  durationSec?: number;
+  /** Shots per storyboard group when the model gives no segments; default 4. */
+  storyboardGroupSize?: number;
+  /** Max motion reference clips; default 3. */
+  maxMotionClips?: number;
+  /** Per-clip cap in seconds; default 6. */
+  motionClipMaxSec?: number;
+  /** BGM reference length in seconds; default 15. */
+  musicClipSec?: number;
+}
+
+export interface FreezoneVideoBreakdownShot {
+  code: string;
+  shot: number;
+  segment: number;
+  start_time: number;
+  end_time: number;
+  duration: number;
+  shot_size: string;
+  lighting: string;
+  camera_angle: string;
+  camera_movement: string;
+  description: string;
+  narrative: string;
+  image_prompt: string;
+  motion_prompt: string;
+  image_url: string | null;
+}
+
+export interface FreezoneVideoBreakdownGroup {
+  group_index: number;
+  segment: number;
+  label: string;
+  shots: FreezoneVideoBreakdownShot[];
+}
+
+export interface FreezoneVideoBreakdownMotionClip {
+  code: string;
+  shot: number;
+  start_time: number;
+  end_time: number;
+  duration_sec: number;
+  camera_movement: string;
+  camera_angle: string;
+  description: string;
+  motion_prompt: string;
+  video_url: string | null;
+  preview_image_url: string | null;
+}
+
+export interface FreezoneVideoBreakdownMusicClip {
+  code: string;
+  start_time: number;
+  end_time: number;
+  duration_sec: number;
+  description: string;
+  mood: string;
+  instruments: string[];
+  bpm: number | null;
+  audio_url: string | null;
+}
+
+/** Shape of `completed.result` for the `freezone_video_breakdown` task. */
+export interface FreezoneVideoBreakdownResult {
+  job_id: string;
+  source_video_url?: string | null;
+  duration_sec?: number | null;
+  model?: string | null;
+  title?: string | null;
+  summary?: string | null;
+  dimensions?: FreezoneVideoBreakdownDimension[];
+  storyboard?: { label: string; groups: FreezoneVideoBreakdownGroup[] } | null;
+  motion?: { label: string; clips: FreezoneVideoBreakdownMotionClip[] } | null;
+  /** `clip` is null when the source video has no audio track. */
+  music?: { label: string; clip: FreezoneVideoBreakdownMusicClip | null } | null;
+  frame_urls?: (string | null)[];
+  output_url?: string | null;
+}
+
+export async function submitFreezoneVideoBreakdown(
+  project: string,
+  payload: FreezoneVideoBreakdownPayload,
+): Promise<FreezoneJobRef> {
+  const body: Record<string, unknown> = {
+    video_url: payload.videoUrl,
+  };
+  if (payload.dimensions?.length) body.dimensions = payload.dimensions;
+  if (payload.maxFrames != null) body.max_frames = payload.maxFrames;
+  if (payload.sceneThreshold != null) body.scene_threshold = payload.sceneThreshold;
+  if (payload.durationSec != null) body.duration_sec = payload.durationSec;
+  if (payload.storyboardGroupSize != null) {
+    body.storyboard_group_size = payload.storyboardGroupSize;
+  }
+  if (payload.maxMotionClips != null) body.max_motion_clips = payload.maxMotionClips;
+  if (payload.motionClipMaxSec != null) body.motion_clip_max_sec = payload.motionClipMaxSec;
+  if (payload.musicClipSec != null) body.music_clip_sec = payload.musicClipSec;
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video-breakdown`,
+    { method: "POST", json: body },
+  );
+}
+
 // /freezone/video/character-library -------------------------------------- //
 
 export type FreezoneAssetLibraryMedia = "image" | "video" | "audio";

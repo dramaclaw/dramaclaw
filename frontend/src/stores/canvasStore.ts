@@ -58,6 +58,11 @@ import {
 } from '@/features/canvas/domain/videoReferenceLimits';
 import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import {
+  planVideoBreakdownGroups,
+  type PlanVideoBreakdownGroupsOptions,
+  type VideoBreakdownResultLike,
+} from '@/features/canvas/application/videoBreakdownGroups';
+import {
   type ViewportBookmark,
   type ViewportBookmarks,
   BOOKMARK_SLOT_COUNT,
@@ -279,6 +284,18 @@ interface CanvasState {
     }[],
     options?: { cols?: number; groupName?: string }
   ) => string | null;
+
+  /**
+   * 把一次「逐帧拉片」的产出落到画布：分镜组 01/02/03、动态｜运镜动作参考、
+   * 音乐｜BGM参考片段各自成组，摆在拉片节点右侧的一列里，成员逐一连回拉片节点
+   * （组节点自身没有 handle，连不了边）。整批算一个 undo 步；返回创建的组节点
+   * id 列表，源节点不存在或这次拉片没有任何可落盘产出时返回 null。
+   */
+  addVideoBreakdownGroups: (
+    sourceNodeId: string,
+    result: VideoBreakdownResultLike,
+    options?: Omit<PlanVideoBreakdownGroupsOptions, 'origin'>
+  ) => string[] | null;
 
   updateNodeData: (
     nodeId: string,
@@ -2005,6 +2022,91 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     return groupNode.id;
+  },
+
+  addVideoBreakdownGroups: (sourceNodeId, result, options) => {
+    const state = get();
+    const source = state.nodes.find((node) => node.id === sourceNodeId);
+    if (!source) {
+      return null;
+    }
+
+    const nodeMap = new Map(state.nodes.map((node) => [node.id, node] as const));
+    const sourceAbs = resolveAbsolutePosition(source, nodeMap);
+    const sourceSize = getNodeSize(source);
+
+    const plans = planVideoBreakdownGroups(result, {
+      ...options,
+      origin: { x: sourceAbs.x + sourceSize.width + 120, y: sourceAbs.y },
+    });
+    if (plans.length === 0) {
+      return null;
+    }
+
+    // Parent group must precede its own children in the array for React Flow —
+    // 逐组 push（组、组的成员、下一组…）天然满足。
+    const orderedNodes: CanvasNode[] = [];
+    const newEdges: CanvasEdge[] = [];
+    const groupIds: string[] = [];
+
+    for (const plan of plans) {
+      const groupNode = canvasNodeFactory.createNode(
+        CANVAS_NODE_TYPES.group,
+        plan.position,
+        { label: plan.label, displayName: plan.label }
+      );
+      groupNode.width = plan.width;
+      groupNode.height = plan.height;
+      groupNode.style = { width: plan.width, height: plan.height };
+      groupNode.selected = false;
+      orderedNodes.push(groupNode);
+      groupIds.push(groupNode.id);
+
+      for (const child of plan.children) {
+        const childNode = canvasNodeFactory.createNode(
+          child.type,
+          child.position,
+          child.data as Partial<CanvasNodeData>
+        );
+        childNode.parentId = groupNode.id;
+        childNode.width = child.width;
+        childNode.height = child.height;
+        childNode.style = {
+          ...(childNode.style ?? {}),
+          width: child.width,
+          height: child.height,
+        };
+        childNode.selected = false;
+        orderedNodes.push(childNode);
+        newEdges.push({
+          id: `e-${sourceNodeId}-${childNode.id}`,
+          source: sourceNodeId,
+          target: childNode.id,
+          sourceHandle: 'source',
+          targetHandle: 'target',
+          type: 'disconnectableEdge',
+        });
+      }
+    }
+
+    set({
+      nodes: [
+        ...state.nodes.map((node) =>
+          node.selected ? { ...node, selected: false } : node
+        ),
+        ...orderedNodes,
+      ],
+      edges: [...state.edges, ...newEdges],
+      selectedNodeId: groupIds[0] ?? null,
+      history: {
+        past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+        future: [],
+      },
+      dragHistorySnapshot: null,
+      ...trackEdit(state),
+    });
+
+    return groupIds;
   },
 
   addEdge: (source, target) => {

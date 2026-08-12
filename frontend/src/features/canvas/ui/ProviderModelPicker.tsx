@@ -224,6 +224,13 @@ interface ProviderModelPickerProps {
    * to block Seedance 1.0 models while reference media is attached.
    */
   getOptionDisabledReason?: (model: ModelOption) => string | null;
+  /**
+   * 锁死当前模型：触发器退化成一块只读标签（去掉箭头、不可点、不弹列表）。
+   * 给「片段重拍」这类模型独占的入口用 —— 那里换模型必然失效，与其在列表里把
+   * 其余项挨个置灰让人反复试，不如根本不给切。`lockedReason` 作为 hover 说明。
+   */
+  locked?: boolean;
+  lockedReason?: string;
 }
 
 export function ProviderModelPicker({
@@ -235,6 +242,8 @@ export function ProviderModelPicker({
   className,
   popoverPlacement = 'top',
   getOptionDisabledReason,
+  locked = false,
+  lockedReason,
 }: ProviderModelPickerProps) {
   const { t } = useTranslation();
   // When the caller supplies an explicit `models` prop we don't fire any API
@@ -305,6 +314,24 @@ export function ProviderModelPicker({
     };
   }, [isOpen, popoverPlacement]);
 
+  const triggerLabel =
+    selectedModel?.label
+    ?? (catalogIsEmpty ? t('modelParams.noModelsAvailable') : selectedModelId);
+
+  if (locked) {
+    return (
+      <div className={`relative ${className ?? ''}`}>
+        <span
+          className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} cursor-default`}
+          title={lockedReason}
+        >
+          <Box className={NODE_TEXT_CONTROL_ICON_CLASS} />
+          <span className="font-medium">{triggerLabel}</span>
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className={`relative ${className ?? ''}`}>
       <button
@@ -317,10 +344,7 @@ export function ProviderModelPicker({
         className={NODE_TEXT_CONTROL_TRIGGER_CLASS}
       >
         <Box className={NODE_TEXT_CONTROL_ICON_CLASS} />
-        <span className="font-medium">
-          {selectedModel?.label
-            ?? (catalogIsEmpty ? t('modelParams.noModelsAvailable') : selectedModelId)}
-        </span>
+        <span className="font-medium">{triggerLabel}</span>
         <ChevronDown className="h-3 w-3 text-text-muted/90" />
       </button>
       {isOpen && popoverPosition && createPortal(

@@ -19,6 +19,8 @@ import {
 import {
   Boxes,
   ChevronDown,
+  Clapperboard,
+  ClockPlus,
   Copy,
   Crop,
   Download,
@@ -31,6 +33,7 @@ import {
   Grid2x2,
   Grid3x3,
   ImageUpscale,
+  Layers,
   LayoutDashboard,
   LayoutGrid,
   Link2,
@@ -41,14 +44,18 @@ import {
   Palette,
   PenLine,
   RefreshCw,
+  Replace,
   Rewind,
   RotateCw,
+  ScanSearch,
   Scissors,
   Send,
   Sparkles,
+  SquarePen,
   Trash2,
   Unlink2,
   User,
+  UserRoundCog,
   Users,
   Video as VideoIcon,
   Wand2,
@@ -112,6 +119,8 @@ import { copyImageSourceToClipboard } from "@/commands/image";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
+import { findReshootVideoModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import {
   fetchFreezoneAudioSeparateResult,
   submitFreezoneAnalyzeVideoStory,
@@ -486,6 +495,14 @@ export const NodeActionToolbar = memo(
       (videoAnalyzeBillingRuleMissing
         ? t("common.billingRuleNotConfiguredShort")
         : null);
+    // 片段重拍是 Seedance 2.5 独占能力（时间码要交给它的视频编辑消费），所以入口
+    // 的可用性直接由「这个项目的模型目录里有没有 2.5」决定。目录是 module 级共享
+    // store，这里多订一份不会多发请求。
+    const { models: videoModelsForReshoot } = useFreezoneVideoModels();
+    const reshootModel = useMemo(
+      () => findReshootVideoModel(videoModelsForReshoot),
+      [videoModelsForReshoot],
+    );
     const isImageEdit = isImageEditNode(node);
     // Plain (non-protected) group → eligible for ungroup. Captured up here as a
     // boolean + a plain id while `node` still has its full type: over-broad node
@@ -1595,6 +1612,90 @@ export const NodeActionToolbar = memo(
                   );
                 };
 
+                // 片段重拍 / 智能续写 / 画面编辑：菜单先落地，功能后续逐个接入。
+                // 在接上之前明确告诉用户「暂未上线」，而不是静默无反应。
+                const handleVideoComingSoon = (label: string) => {
+                  handleVideoStub(label);
+                  toast.info(t("nodeToolbar.video.notImplementedYet"));
+                };
+
+                // 逐帧拉片：在下游落一个空的拉片节点并连边就完事 —— 节点自己会顺着
+                // 这根上游边认素材（VideoBreakdownNode 里 upstreamVideo 优先于
+                // data.sourceVideoUrl），所以这里不必再把 URL 抄一份进去，抄了反而
+                // 会让「断开边退回空态」失效。拆什么维度、什么时候开跑，交给用户在
+                // 那个节点上决定。
+                const handleVideoBreakdown = () => {
+                  if (!hasVideo || !videoUrl) {
+                    return;
+                  }
+                  const position = findNodePosition(node.id, 300, 292);
+                  const breakdownNodeId = addNode(
+                    CANVAS_NODE_TYPES.videoBreakdown,
+                    position,
+                    { sourceNodeId: node.id },
+                  );
+                  addEdge(node.id, breakdownNodeId);
+                };
+
+                // 片段重拍：在下游复制一个同内容的视频节点，卡片底部挂时间轨道。
+                // 复制而不是就地改，是因为重拍要跟原片对照着看；节点里只标注区间、
+                // 不裁视频，截出来的时间码自动写进 prompt 交给模型。
+                const handleVideoReshoot = () => {
+                  if (!hasVideo || !videoUrl || !reshootModel) {
+                    return;
+                  }
+                  const sourceName =
+                    typeof videoData.displayName === "string" &&
+                    videoData.displayName.trim().length > 0
+                      ? videoData.displayName.trim()
+                      : t("nodeToolbar.video.reshoot");
+                  const position = findNodePosition(node.id, 580, 380);
+                  const reshootNodeId = addNode(
+                    CANVAS_NODE_TYPES.video,
+                    position,
+                    {
+                      displayName: `${sourceName}-${t("nodeToolbar.video.reshoot")}`,
+                      videoUrl,
+                      previewImageUrl:
+                        typeof videoData.previewImageUrl === "string"
+                          ? videoData.previewImageUrl
+                          : null,
+                      aspectRatio:
+                        typeof videoData.aspectRatio === "string"
+                          ? videoData.aspectRatio
+                          : "16:9",
+                      durationMs:
+                        typeof videoData.durationMs === "number"
+                          ? videoData.durationMs
+                          : null,
+                      widthPx:
+                        typeof videoData.widthPx === "number"
+                          ? videoData.widthPx
+                          : null,
+                      heightPx:
+                        typeof videoData.heightPx === "number"
+                          ? videoData.heightPx
+                          : null,
+                      isReshootMode: true,
+                      reshootClips: [],
+                      // 直接把模型钉成 2.5：新节点默认会选目录里排第一的模型，
+                      // 落到别的模型上时间轨道就会当场隐藏，等于点了个寂寞。
+                      model: reshootModel.id,
+                      // 重拍走「视频编辑」：厂商本来就会从带时间码的 prompt 里认出
+                      // 这是视频编辑（见 InvalidParameter.TaskTypeConstraint），
+                      // 与其让它猜，不如直接声明，请求才会落到 /video-edit 那条路上。
+                      genMode: "videoEdit",
+                      isGenerating: false,
+                    } as unknown as Parameters<typeof addNode>[2],
+                  );
+                  addEdge(node.id, reshootNodeId);
+                  onNodesChange([
+                    { id: node.id, type: "select", selected: false },
+                    { id: reshootNodeId, type: "select", selected: true },
+                  ]);
+                  setSelectedNode(reshootNodeId);
+                };
+
                 const handleVideoAnalyze = async () => {
                   if (!hasVideo || !videoUrl || isAnalyzing) {
                     return;
@@ -2032,6 +2133,29 @@ export const NodeActionToolbar = memo(
                       {t("nodeToolbar.video.clip")}
                     </UiChipButton>
                     <UiChipButton
+                      key="video-reshoot"
+                      className={`${stubButtonClass} ${
+                        !hasVideo || !reshootModel
+                          ? "opacity-50 cursor-not-allowed"
+                          : ""
+                      }`}
+                      title={
+                        !hasVideo
+                          ? t("nodeToolbar.video.requiresVideo")
+                          : !reshootModel
+                            ? t("nodeToolbar.video.reshootRequiresSeedance25")
+                            : undefined
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!hasVideo || !reshootModel) return;
+                        handleVideoReshoot();
+                      }}
+                    >
+                      <Clapperboard className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.reshoot")}
+                    </UiChipButton>
+                    <UiChipButton
                       key="video-hd"
                       className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
                       title={
@@ -2078,6 +2202,40 @@ export const NodeActionToolbar = memo(
                         promotion={videoAnalyzeCreditCost.data?.data.promotion}
                         disabled={!hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing}
                       />
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-frame-analysis"
+                      className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
+                      title={
+                        !hasVideo
+                          ? t("nodeToolbar.video.requiresVideo")
+                          : undefined
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!hasVideo) return;
+                        handleVideoBreakdown();
+                      }}
+                    >
+                      <ScanSearch className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.frameAnalysis")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-extend"
+                      className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
+                      title={
+                        !hasVideo
+                          ? t("nodeToolbar.video.requiresVideo")
+                          : undefined
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!hasVideo) return;
+                        handleVideoComingSoon("extend");
+                      }}
+                    >
+                      <ClockPlus className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.extend")}
                     </UiChipButton>
                     <DropdownMenu
                       onOpenChange={(open) => {
@@ -2164,6 +2322,66 @@ export const NodeActionToolbar = memo(
                       )}
                       {t("nodeToolbar.video.separateAudioVideo")}
                     </UiChipButton>
+                    <DropdownMenu
+                      onOpenChange={(open) => {
+                        if (open) closeDownloadMenu();
+                      }}
+                    >
+                      <DropdownMenuTrigger asChild>
+                        <UiChipButton
+                          key="video-frame-edit"
+                          className={stubButtonClass}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <SquarePen className="h-3.5 w-3.5" />
+                          {t("nodeToolbar.video.frameEdit")}
+                          <ChevronDown className="h-3 w-3" />
+                        </UiChipButton>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="start"
+                        sideOffset={6}
+                        className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[180px]`}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <DropdownMenuItem
+                          className={TOOLBAR_MENU_ITEM_CLASS}
+                          onSelect={() =>
+                            handleVideoComingSoon("frame-edit-subject-remove")
+                          }
+                        >
+                          <Eraser className="h-4 w-4" />
+                          {t("nodeToolbar.video.frameEditSubjectRemove")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className={TOOLBAR_MENU_ITEM_CLASS}
+                          onSelect={() =>
+                            handleVideoComingSoon("frame-edit-subject-modify")
+                          }
+                        >
+                          <UserRoundCog className="h-4 w-4" />
+                          {t("nodeToolbar.video.frameEditSubjectModify")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className={TOOLBAR_MENU_ITEM_CLASS}
+                          onSelect={() =>
+                            handleVideoComingSoon("frame-edit-subject-replace")
+                          }
+                        >
+                          <Replace className="h-4 w-4" />
+                          {t("nodeToolbar.video.frameEditSubjectReplace")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className={TOOLBAR_MENU_ITEM_CLASS}
+                          onSelect={() =>
+                            handleVideoComingSoon("frame-edit-matte")
+                          }
+                        >
+                          <Layers className="h-4 w-4" />
+                          {t("nodeToolbar.video.frameEditMatte")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     <UiChipButton
                       key="video-download"
                       className={`${stubButtonClass} !px-2 ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}

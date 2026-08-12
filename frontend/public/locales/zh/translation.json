@@ -5211,16 +5211,25 @@
     },
     "video": {
       "clip": "剪辑",
+      "reshoot": "片段重拍",
       "hd": "高清",
       "analyze": "解析",
+      "frameAnalysis": "逐帧拉片",
+      "extend": "智能续写",
       "separateAudioVideo": "分离音视频",
+      "frameEdit": "画面编辑",
+      "frameEditSubjectRemove": "主体消除",
+      "frameEditSubjectModify": "主体修改",
+      "frameEditSubjectReplace": "主体替换",
+      "frameEditMatte": "智能抠像",
       "subtitleRemoval": "智能去字幕",
       "subtitleRemovalTip": "AI一键去除视频字幕，仅只支持中英文字幕",
       "subtitleRemovalSmart": "智能擦除",
       "subtitleRemovalBox": "框选擦除",
       "fullscreen": "全屏播放",
       "notImplementedYet": "该功能暂未上线",
-      "requiresVideo": "请先上传视频"
+      "requiresVideo": "请先上传视频",
+      "reshootRequiresSeedance25": "片段重拍仅支持 Seedance 2.5，当前项目未开放该模型"
     },
     "audio": {
       "requiresAudio": "请先准备音频",
@@ -5453,7 +5462,8 @@
       "placeholderAudio": "音频",
       "placeholderScript": "脚本",
       "betaTag": "Beta",
-      "videoCompose": "视频合成"
+      "videoCompose": "视频合成",
+      "videoBreakdown": "逐帧拉片"
     },
     "imageNode": {
       "title": "图片节点",
@@ -5473,7 +5483,10 @@
       "requestId": "请求ID",
       "copyRequestId": "复制请求ID",
       "requestIdCopied": "已复制",
-      "resolution": "图片分辨率"
+      "resolution": "图片分辨率",
+      "replace": "替换图片",
+      "replaceTypeError": "请上传图片文件",
+      "replaceFailed": "图片替换失败"
     },
     "directorControlBundle": {
       "badge": "导演合成",
@@ -5709,6 +5722,7 @@
       "noVideo": "暂无视频",
       "upload": "上传视频",
       "clickToUpload": "点击或拖拽上传视频",
+      "replace": "替换视频",
       "resolution": "视频分辨率",
       "tabs": {
         "textToVideo": "文生视频",
@@ -7208,6 +7222,38 @@
     "openRouterConfigMessage": "当前模型需要 OpenRouter 服务，但后端还没有配置 API Key。请联系管理员处理。",
     "stillRunningTitle": "仍在生成中",
     "stillRunningMessage": "本次生成耗时较长，页面已停止等待，但任务仍在后台继续。可稍后刷新页面查看结果，或到任务中心查看进度。"
+  },
+  "canvasPick": {
+    "title": "从画布选择参考",
+    "hint": "点击画布中的视频节点",
+    "backToNode": "返回节点",
+    "cancel": "取消选择",
+    "selectNode": "选择【{{name}}】"
+  },
+  "videoBreakdown": {
+    "sourceLabel": "视频素材",
+    "emptyHint": "上传视频后开始",
+    "uploading": "上传中…",
+    "uploadFailed": "视频上传失败",
+    "uploadVideo": "上传视频",
+    "pickFromCanvas": "从画布选择",
+    "replace": "更换",
+    "attached": "已选素材",
+    "dimensionsLabel": "拆解维度",
+    "dimension": {
+      "storyboard": "分镜",
+      "motion": "动态",
+      "music": "音乐"
+    },
+    "start": "开始拉片",
+    "running": "拉片中…",
+    "failed": "拉片失败",
+    "emptyResult": "这条视频没有拆出任何可用内容",
+    "groups": {
+      "storyboard": "分镜组{{index}}",
+      "motion": "动态｜运镜动作参考",
+      "music": "音乐｜BGM参考片段"
+    }
   },
   "videoCompose": {
     "title": "视频合成",

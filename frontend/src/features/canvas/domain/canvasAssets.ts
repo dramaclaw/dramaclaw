@@ -193,6 +193,10 @@ export function resolveNodeAssets(node: CanvasNode): CanvasNodeAsset[] {
       );
     case CANVAS_NODE_TYPES.videoCompose:
       return one('video', firstStr(data.resultVideoUrl), str(data.previewImageUrl));
+    case CANVAS_NODE_TYPES.videoBreakdown:
+      // 拉片节点自己不产片，但本地上传进来的源片只存在这儿——不登记的话历史面板
+      // 拿不到它。
+      return one('video', firstStr(data.sourceVideoUrl), str(data.previewImageUrl));
     case CANVAS_NODE_TYPES.audio:
       return one('audio', firstStr(data.audioUrl));
     case CANVAS_NODE_TYPES.threeDWorld:

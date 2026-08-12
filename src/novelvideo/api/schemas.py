@@ -851,6 +851,74 @@ class FreezoneAnalyzeVideoStoryRequest(BaseModel):
     )
 
 
+class FreezoneVideoBreakdownRequest(BaseModel):
+    """逐帧拉片请求：把一条视频拆成分镜 / 动态 / 音乐三个维度的参考素材。
+
+    与 `analyze-video-story` 的区别：那个只产一张表（文字），拉片会真的把片段切
+    出来 —— 分镜是抽帧图、动态是按运镜切出的视频片段、音乐是分离出的 BGM 片段。
+    """
+
+    video_url: str = Field(
+        description="视频静态地址。必须是当前项目下真实存在的 /static/... 视频 URL",
+        examples=["/static/admin/58/freezone/_uploads/example.mp4"],
+    )
+    dimensions: list[Literal["storyboard", "motion", "music"]] = Field(
+        default_factory=lambda: ["storyboard", "motion", "music"],
+        description=(
+            "要拆解的维度。storyboard=分镜（抽帧图组）、motion=动态（运镜参考片段）、"
+            "music=音乐（BGM 参考片段）。留空等同于三个全开"
+        ),
+    )
+    max_frames: int = Field(
+        default=40,
+        ge=3,
+        le=80,
+        description=(
+            "关键帧抽取上限。实际帧数按视频时长算（约每秒一帧），这里只封顶；"
+            "帧越密拆出来的镜头越细，同时视觉调用也越贵"
+        ),
+    )
+    scene_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="ffmpeg 场景切换阈值，范围 0-1。长镜头建议 0.2-0.3，快剪建议 0.4-0.5",
+    )
+    duration_sec: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="视频总时长（秒）。可选；传入后镜头时间轴更准确",
+        examples=[15],
+    )
+    storyboard_group_size: int = Field(
+        default=4,
+        ge=1,
+        le=12,
+        description=(
+            "分镜分组的每组镜头数上限。模型给出叙事段落（segment）时按段落分组，"
+            "没给才按这个大小等分兜底"
+        ),
+    )
+    max_motion_clips: int = Field(
+        default=3,
+        ge=1,
+        le=8,
+        description="动态维度最多切几段运镜参考片段",
+    )
+    motion_clip_max_sec: float = Field(
+        default=6.0,
+        gt=0,
+        le=30,
+        description="单段运镜参考片段的时长上限（秒），超出的镜头会被截断",
+    )
+    music_clip_sec: float = Field(
+        default=15.0,
+        gt=0,
+        le=120,
+        description="BGM 参考片段时长（秒）。视频短于这个值时取全长",
+    )
+
+
 class FreezoneUpscaleRequest(BaseModel):
     """高清放大请求。
 

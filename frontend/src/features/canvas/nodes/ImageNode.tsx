@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Handle,
   Position,
@@ -10,6 +10,7 @@ import {
 } from '@xyflow/react';
 import { AlertTriangle, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import {
   CANVAS_NODE_TYPES,
@@ -44,6 +45,10 @@ import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { DirectorControlBundleBadge } from '@/features/canvas/ui/DirectorControlBundleBadge';
 import { CANVAS_NODE_PANEL_SURFACE_CLASS, canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
 import { NodeGenerationOverlay } from '@/features/canvas/ui/NodeGenerationOverlay';
+import { NodeMediaReplaceButton } from '@/features/canvas/ui/NodeMediaReplaceButton';
+import {
+  useAssetCommitDragById,
+} from '@/features/canvas/ui/useAssetCommitDrag';
 import {
   CandidateBindingBadges,
   hasMainlineContexts,
@@ -57,6 +62,8 @@ import {
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { useNaturalSizeRecordTrust } from '@/features/canvas/hooks/useNaturalSizeRecordTrust';
 import { useNodeBodyVariantBudget } from '@/features/canvas/hooks/useNodeBodyVariantBudget';
+import { uploadFreezoneImage } from '@/api/ops';
+import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -225,6 +232,45 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
   // skip the persist branch). Drives a top-right resolution chip like the video node.
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(
     () => readNodeNaturalSize(data),
+  );
+
+  // 「替换素材」：上传一份本地图片顶掉这条结果。走通用 freezone upload（落 OSS），
+  // 与上传节点同一条路径。natural size 一并清掉，让 <img onLoad> 按新图重新定比例
+  // 和尺寸 —— 不清的话旧图的分辨率角标会一直挂在那儿。
+  // 同一颗按钮还兼「按住拖到左侧素材库」（原 AssetCommitHandle 的手势）。
+  const [isReplacing, setIsReplacing] = useState(false);
+  const { canCommit: canCommitAsset, startDrag: startAssetCommitDrag } =
+    useAssetCommitDragById(id);
+  const handleReplaceFile = useCallback(
+    async (file: File) => {
+      if (!file.type.startsWith('image/')) {
+        toast.error(t('node.imageNode.replaceTypeError'));
+        return;
+      }
+      const projectId = readUrl().project;
+      if (!projectId) {
+        console.error('[image-node] no project in URL — cannot upload');
+        return;
+      }
+      setIsReplacing(true);
+      try {
+        const uploaded = await uploadFreezoneImage(projectId, file, file.name);
+        setNaturalSize(null);
+        updateNodeData(id, {
+          imageUrl: uploaded.url,
+          previewImageUrl: uploaded.url,
+          sourceFileName: file.name,
+          imageNaturalWidth: null,
+          imageNaturalHeight: null,
+        });
+      } catch (error) {
+        console.error('[image-node] replace upload failed', error);
+        toast.error(t('node.imageNode.replaceFailed'));
+      } finally {
+        setIsReplacing(false);
+      }
+    },
+    [id, t, updateNodeData],
   );
 
   return (
@@ -418,6 +464,21 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             hasBackground={Boolean(data.imageUrl)}
           />
         )}
+
+        {/* 卡片内右上角唯一的「替换」入口：点击换本地文件，按住拖则丢进左侧素材库
+            替换同类型素材。选中即出现（allowLocalReplace 的卡片常驻）—— 这颗按钮
+            接管了原来浮在节点外侧的 AssetCommitHandle，见 SelectedNodeOverlay。 */}
+        {canCommitAsset &&
+          !isGenerating &&
+          (data.allowLocalReplace === true || selected) && (
+            <NodeMediaReplaceButton
+              accept="image/*"
+              busy={isReplacing}
+              title={t('node.imageNode.replace')}
+              onPick={handleReplaceFile}
+              onCommitDragStart={startAssetCommitDrag}
+            />
+          )}
       </div>
 
       <Handle

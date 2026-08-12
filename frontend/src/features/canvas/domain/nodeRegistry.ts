@@ -4,6 +4,7 @@ import {
   AUTO_REQUEST_ASPECT_RATIO,
   CANVAS_NODE_TYPES,
   DEFAULT_ASPECT_RATIO,
+  VIDEO_BREAKDOWN_DIMENSIONS,
   type BeatContextNodeData,
   type AudioNodeData,
   type ImageSize,
@@ -23,6 +24,7 @@ import {
   type ThreeDWorldNodeData,
   type UploadImageNodeData,
   type VideoComposeNodeData,
+  type VideoBreakdownNodeData,
   type VideoNodeData,
   type VideoStoryNodeData,
 } from './canvasNodes';
@@ -35,7 +37,7 @@ import {
 } from '../ui/ProviderModelPicker';
 import { readLastVideoModel } from './lastVideoModel';
 
-export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'audio' | 'script' | 'pano360' | 'threeDWorld' | 'videoCompose';
+export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'audio' | 'script' | 'pano360' | 'threeDWorld' | 'videoCompose' | 'videoBreakdown';
 
 export interface CanvasNodeCapabilities {
   toolbar: boolean;
@@ -497,6 +499,42 @@ const videoComposeNodeDefinition: CanvasNodeDefinition<VideoComposeNodeData> = {
   }),
 };
 
+const videoBreakdownNodeDefinition: CanvasNodeDefinition<VideoBreakdownNodeData> = {
+  type: CANVAS_NODE_TYPES.videoBreakdown,
+  menuLabelKey: 'node.menu.videoBreakdown',
+  menuIcon: 'videoBreakdown',
+  visibleInMenu: true,
+  capabilities: {
+    toolbar: false,
+    promptInput: false,
+  },
+  connectivity: {
+    // 上游接一个视频（本地上传时没有上游边，节点自己存 URL）；下游挂拉片
+    // 产出的分镜 / 动态 / 音乐三个结果组。
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
+      // 只作为视频的下游候选出现（视频 → 逐帧拉片）；反过来「从它的左侧 +
+      // 创建一个上游」没有意义，素材要么本地上传要么从画布拾取。
+      fromSource: true,
+      fromTarget: false,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.videoBreakdown],
+    sourceVideoUrl: null,
+    previewImageUrl: null,
+    sourceFileName: null,
+    sourceNodeId: null,
+    // 三个维度默认全开——空态下用户直接点「开始拉片」也能拿到完整拆解。
+    dimensions: [...VIDEO_BREAKDOWN_DIMENSIONS],
+    isUploading: false,
+    isBreakingDown: false,
+    breakdownStartedAt: null,
+    breakdownError: null,
+  }),
+};
+
 // 写死的脚本生成模型 id（脚本生成接口暂未提供 list）。和 ScriptNode 内的
 // SCRIPT_MODELS 保持同步，仅供 createDefaultData 选默认。
 const DEFAULT_SCRIPT_MODEL_ID = 'gvlm-3.1';
@@ -657,6 +695,7 @@ export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition>
   [CANVAS_NODE_TYPES.audio]: audioNodeDefinition,
   [CANVAS_NODE_TYPES.videoStory]: videoStoryNodeDefinition,
   [CANVAS_NODE_TYPES.videoCompose]: videoComposeNodeDefinition,
+  [CANVAS_NODE_TYPES.videoBreakdown]: videoBreakdownNodeDefinition,
   [CANVAS_NODE_TYPES.script]: scriptNodeDefinition,
   [CANVAS_NODE_TYPES.pano360Viewer]: pano360ViewerNodeDefinition,
   [CANVAS_NODE_TYPES.threeDWorld]: threeDWorldNodeDefinition,
@@ -691,7 +730,16 @@ const UPSTREAM_SOURCE_WHITELIST: Partial<Record<CanvasNodeType, readonly CanvasN
   // 分离」动作留下的溯源边：那个动作从一个视频节点同时产出「背景音」音频节点和
   // 「无声」视频节点，两条边一起画回源视频。少了 video 这一项，音频那条边会被建边
   // 收口静默丢掉，画布上一边连着无声视频、一边孤零零挂着背景音。
-  [CANVAS_NODE_TYPES.audio]: [CANVAS_NODE_TYPES.textAnnotation, CANVAS_NODE_TYPES.video],
+  // 逐帧拉片同理：它的「音乐｜BGM参考片段」组里那个音频节点是拉片产出，那根边
+  // 是溯源边，少了 videoBreakdown 这一项会被建边收口静默丢掉。
+  [CANVAS_NODE_TYPES.audio]: [
+    CANVAS_NODE_TYPES.textAnnotation,
+    CANVAS_NODE_TYPES.video,
+    CANVAS_NODE_TYPES.videoBreakdown,
+  ],
+  // 逐帧拉片只吃视频：它整个节点就是「把一条视频拆成分镜/动态/音乐」，接进来一张
+  // 图或一段文本什么都不会发生，只是画布上一根骗人的线。
+  [CANVAS_NODE_TYPES.videoBreakdown]: [CANVAS_NODE_TYPES.video],
 };
 
 // 「源节点类型」→ 允许的下游（目标）节点类型白名单。与上面那张表对称：那张按
@@ -752,6 +800,8 @@ const SYSTEM_ONLY_CONNECTIONS: readonly (readonly [CanvasNodeType, CanvasNodeTyp
   // 放开手工拖线的话，一个风格节点能挂到第二个图片节点上，两边的对账各自认为
   // 「节点承载的风格和我不一致」，会把它来回改写成对方的风格，永远收敛不了。
   [CANVAS_NODE_TYPES.style, CANVAS_NODE_TYPES.imageGen],
+  // 逐帧拉片 → 音频同理：那是「音乐｜BGM参考片段」组的溯源边，由拉片产出程序建立。
+  [CANVAS_NODE_TYPES.videoBreakdown, CANVAS_NODE_TYPES.audio],
 ];
 
 // 判断用户能不能**手工**建立这条边：建边规则放行，且不是系统专用边。菜单候选与
@@ -800,11 +850,13 @@ const IMAGE_DOWNSTREAM_SPAWN_TYPES: readonly CanvasNodeType[] = [
 export const DOWNSTREAM_SPAWN_WHITELIST: Partial<
   Record<CanvasNodeType, readonly CanvasNodeType[]>
 > = {
-  // 视频：仅允许 文本 / 视频 / 视频合成 / 脚本 —— 图片、音频、多版本不该作为下游。
+  // 视频：仅允许 文本 / 视频 / 视频合成 / 逐帧拉片 / 脚本 —— 图片、音频、多版本
+  // 不该作为下游。
   [CANVAS_NODE_TYPES.video]: [
     CANVAS_NODE_TYPES.textAnnotation,
     CANVAS_NODE_TYPES.video,
     CANVAS_NODE_TYPES.videoCompose,
+    CANVAS_NODE_TYPES.videoBreakdown,
     CANVAS_NODE_TYPES.script,
   ],
   // 音频：下游只有视频（声轨素材）与视频合成（音频轨）读得懂。

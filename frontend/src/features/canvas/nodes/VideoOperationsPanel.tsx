@@ -46,6 +46,7 @@ import {
   videoModeForcesAutomaticAspectRatio,
   videoModelDefaultGenerateAudio,
   videoModelReferenceDisabledReason,
+  videoOutputFollowsSourceVideo,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
 import { VIDEO_FILE_ACCEPT } from "@/features/canvas/application/videoFileTypes";
@@ -240,6 +241,11 @@ interface VideoOperationsPanelProps {
   selectedModelReferenceError: string | null;
   mediaRejectionReason: string | null;
   expanded: boolean;
+  /**
+   * 收起态面板额外下移的像素。节点底边和面板之间插了别的东西时（片段重拍的时间
+   * 轨道）由调用方传进来，免得两块叠在一起。放大态是居中弹窗，不受影响。
+   */
+  topOffset?: number;
   onExpandedChange: (expanded: boolean) => void;
   onSubmit: () => Promise<void>;
 }
@@ -283,6 +289,7 @@ export function VideoOperationsPanel({
   selectedModelReferenceError,
   mediaRejectionReason,
   expanded,
+  topOffset = 0,
   onExpandedChange,
   onSubmit,
 }: VideoOperationsPanelProps) {
@@ -767,7 +774,7 @@ export function VideoOperationsPanel({
               onCollapse={() => onExpandedChange(false)}
               inlineClassName={`nodrag absolute z-30 flex flex-col rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS}`}
               inlineStyle={{
-                top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
+                top: `calc(100% + ${OPERATIONS_PANEL_GAP + topOffset}px)`,
                 left: showReferenceDocumentControls
                   ? `calc((100% - ${adaptivePanelWidth}) / 2)`
                   : -panelOverhang,
@@ -806,26 +813,31 @@ export function VideoOperationsPanel({
                   />
                 </div>
                 <div className="ml-3 flex shrink-0 items-center gap-3">
-                  <GenModeSelect
-                    value={genMode}
-                    modelId={selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId}
-                    supportedModes={selectedVideoModel?.supportedModes}
-                    // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
-                    // 其余模型仍按已解析素材 URL 计数。
-                    upstreamCounts={
-                      isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
-                    }
-                    onChange={(nextMode) =>
-                      updateNodeData(id, {
-                        genMode: nextMode,
-                        modelParams: filterMediaModelParamsForMode(
-                          selectedVideoModel?.request?.parameters,
-                          data.modelParams,
-                          nextMode,
-                        ),
-                      })
-                    }
-                  />
+                  {/* 片段重拍固定走视频编辑（时间码只有它吃得下），功能切换整块不显示 */}
+                  {!data.isReshootMode && (
+                    <GenModeSelect
+                      value={genMode}
+                      modelId={
+                        selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId
+                      }
+                      supportedModes={selectedVideoModel?.supportedModes}
+                      // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
+                      // 其余模型仍按已解析素材 URL 计数。
+                      upstreamCounts={
+                        isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
+                      }
+                      onChange={(nextMode) =>
+                        updateNodeData(id, {
+                          genMode: nextMode,
+                          modelParams: filterMediaModelParamsForMode(
+                            selectedVideoModel?.request?.parameters,
+                            data.modelParams,
+                            nextMode,
+                          ),
+                        })
+                      }
+                    />
+                  )}
                   <NodeContextPromptPaletteButton
                     nodeId={id}
                     onInsert={insertContextPaletteEntry}
@@ -969,6 +981,10 @@ export function VideoOperationsPanel({
                 <div className="flex min-w-0 items-center gap-2">
                   <ProviderModelPicker
                     selectedModelId={modelId}
+                    // 片段重拍是 Seedance 2.5 独占的：时间码只有它的视频编辑吃得下，
+                    // 换任何一个模型这个节点都白做。所以这里直接锁死，不给切。
+                    locked={Boolean(data.isReshootMode)}
+                    lockedReason="片段重拍仅支持 Seedance 2.5"
                     onChange={(nextModelId) => {
                       const nextModel = availableVideoModels.find(
                         (item) => item.id === nextModelId,
@@ -1025,6 +1041,10 @@ export function VideoOperationsPanel({
                     sceneOptimizeOptions={sceneOptimizeOptions}
                     supportsGenerateAudio={supportsGenerateAudio}
                     generateAudio={generateAudio}
+                    followsSourceVideo={videoOutputFollowsSourceVideo(
+                      genMode,
+                      selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId,
+                    )}
                     onChange={(patch) => updateNodeData(id, patch)}
                   />
                   <MediaModelParameterChip
@@ -1407,6 +1427,12 @@ interface VideoConfigChipProps {
   sceneOptimizeOptions: readonly Seedance2SceneOptimize[];
   supportsGenerateAudio: boolean;
   generateAudio: boolean;
+  /**
+   * 出片比例 / 时长跟随原片（Seedance 视频编辑）。为真时这两栏整个不出现 ——
+   * 厂商压根不收这两个参数，留着只会让人以为自己能定。见
+   * [[videoOutputFollowsSourceVideo]]。
+   */
+  followsSourceVideo?: boolean;
   onChange: (patch: Partial<VideoNodeData>) => void;
 }
 
@@ -1423,6 +1449,7 @@ function VideoConfigChip({
   sceneOptimizeOptions,
   supportsGenerateAudio,
   generateAudio,
+  followsSourceVideo = false,
   onChange,
 }: VideoConfigChipProps) {
   const { t } = useTranslation();
@@ -1490,11 +1517,15 @@ function VideoConfigChip({
         }}
         className={NODE_TEXT_CONTROL_TRIGGER_CLASS}
       >
-        <span>
-          {followInputAspectRatio || aspectRatio === "auto"
-            ? t("node.videoNode.aspect.auto")
-            : aspectRatio}
-        </span>
+        {followsSourceVideo ? (
+          <span>跟随原片</span>
+        ) : (
+          <span>
+            {followInputAspectRatio || aspectRatio === "auto"
+              ? t("node.videoNode.aspect.auto")
+              : aspectRatio}
+          </span>
+        )}
         <span className="text-text-muted/80">·</span>
         <span>{formatResolutionLabel(quality)}</span>
         {!followInputDuration && (
@@ -1519,6 +1550,12 @@ function VideoConfigChip({
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
+          {followsSourceVideo && (
+            <div className="mb-3 rounded-md bg-white/[0.045] px-2.5 py-1.5 text-[11px] leading-5 text-text-muted/85">
+              视频编辑的画面比例与时长由原片决定，不可指定。
+            </div>
+          )}
+
           {!followInputAspectRatio && (
             <>
               <div className={VIDEO_PARAM_LABEL_CLASS}>

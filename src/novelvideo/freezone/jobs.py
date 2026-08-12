@@ -15,13 +15,14 @@ Provider selection (since v1.1):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Optional
 
@@ -539,6 +540,23 @@ async def _run_cmd(
             raise EgressBoundaryError("ORG_SERVICE_EGRESS_DENIED")
         stderr = (proc.stderr or "").strip()
         raise RuntimeError(stderr[-1000:] or f"command failed: {' '.join(cmd)}")
+
+
+async def _try_run_cmd(cmd: list[str]) -> bool:
+    """跑一条命令，失败只回 ``False``。
+
+    给「没有产出也属于正常结果」的探测性调用用 —— 比如场景检测抽帧，一镜到底的
+    素材本来就一个切点都没有，不该当成错误往上抛。
+    """
+
+    proc = await asyncio.to_thread(
+        subprocess.run,
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=1800,
+    )
+    return proc.returncode == 0
 
 
 async def _probe_has_audio(source_path: str) -> bool:
@@ -1578,6 +1596,92 @@ JSON schema:
 """
 
 
+_MAX_JSON_REPAIRS = 32
+_MERGED_JSON_KEY_RE = re.compile(
+    r'^(?P<name>[A-Za-z_][A-Za-z0-9_]*?)(?P<value>-?\d+(?:\.\d+)?),?$'
+)
+
+
+def _strip_json_fence(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = "\n".join(
+            line for line in cleaned.splitlines() if not line.strip().startswith("```")
+        ).strip()
+    return cleaned
+
+
+def _split_merged_json_key(text: str, pos: int) -> Optional[str]:
+    """``{"shot25,"segment"...`` → ``{"shot":25,"segment"...``
+
+    视觉模型偶尔会把键、值、逗号糊成一个字符串（漏掉 ``":``）。这类笔误往往在同
+    一份输出里连着犯好几次，一处一处补回来比整份作废划算得多。
+    """
+
+    end_quote = text.rfind('"', 0, pos)
+    if end_quote <= 0:
+        return None
+    start_quote = text.rfind('"', 0, end_quote)
+    if start_quote == -1:
+        return None
+    match = _MERGED_JSON_KEY_RE.match(text[start_quote + 1 : end_quote])
+    if not match:
+        return None
+    fixed = f'"{match.group("name")}":{match.group("value")},'
+    return text[:start_quote] + fixed + text[end_quote:]
+
+
+def _drop_broken_json_element(text: str, pos: int) -> Optional[str]:
+    """把解析出错的那个数组元素整段删掉，返回新文本；下不了手就返回 None。"""
+
+    start = text.rfind("{", 0, pos + 1)
+    if start <= 0:  # 0 是整份文档的开头，删了就什么都不剩
+        return None
+    end = text.find("}", pos)
+    if end == -1:
+        return None
+
+    head = text[:start].rstrip()
+    tail = text[end + 1 :].lstrip()
+    if head.endswith("["):  # 数组第一个元素
+        return head + (tail[1:] if tail.startswith(",") else tail)
+    if head.endswith(","):  # 中间或最后一个元素
+        return head[:-1] + tail
+    return None
+
+
+def loads_model_json(text: str) -> Any:
+    """解析模型返回的 JSON，写坏的地方就地修补，而不是整份作废。
+
+    视觉模型偶尔会把 ``"shot":25`` 写成 ``"shot25``，一个 token 的笔误就能让
+    整份 20KB 的读片表报废。先按笔误模式补，补不回来的元素才整段丢掉。
+    """
+
+    cleaned = _strip_json_fence(text)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        first_error = exc  # except 块结束就会解绑 exc，这里留一份
+
+    repaired = cleaned
+    for _ in range(_MAX_JSON_REPAIRS):
+        try:
+            parsed = json.loads(repaired)
+        except json.JSONDecodeError as exc:
+            candidate = _split_merged_json_key(repaired, exc.pos) or _drop_broken_json_element(
+                repaired, exc.pos
+            )
+            if candidate is None or candidate == repaired:
+                break
+            repaired = candidate
+            continue
+        logger.warning(
+            "model JSON was malformed at char %s; repaired and recovered", first_error.pos
+        )
+        return parsed
+    raise first_error
+
+
 async def run_freezone_analyze_shots(
     *,
     project_dir: Path,
@@ -1659,15 +1763,8 @@ async def run_freezone_analyze_shots(
         if not text:
             raise RuntimeError(f"{used_provider} Vision returned no text")
 
-        cleaned = text.strip()
-        if cleaned.startswith("```"):
-            cleaned = "\n".join(
-                line
-                for line in cleaned.splitlines()
-                if not line.strip().startswith("```")
-            ).strip()
         try:
-            analyses = json.loads(cleaned)
+            analyses = loads_model_json(text)
         except json.JSONDecodeError as exc:
             (out_dir / "raw_response.txt").write_text(text, encoding="utf-8")
             raise RuntimeError(
@@ -1703,6 +1800,711 @@ async def run_freezone_analyze_shots(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     payload["output_path"] = str(out_file)
+    return payload
+
+
+# ============================================================
+# 逐帧拉片 (video breakdown) — 一条视频拆成分镜 / 动态 / 音乐
+# ============================================================
+
+
+VIDEO_BREAKDOWN_DIMENSIONS: tuple[str, ...] = ("storyboard", "motion", "music")
+
+# 模型写这些词就代表「这一镜没有运镜」，挑动态参考片段时优先跳过它们：
+# 拉出来一段完全静止的画面当运镜参考是没有意义的。
+_STATIC_CAMERA_MOVEMENTS = {
+    "静止",
+    "固定",
+    "固定镜头",
+    "无",
+    "无运镜",
+    "static",
+    "fixed",
+    "none",
+    "still",
+}
+
+# 拉片能拆多细，上限就是喂给模型的关键帧有多密：固定 20 帧在 40 秒的片子里等于
+# 每两秒才看一眼，模型只能归纳出三五个大段。这里改成按时长定帧数。
+_BREAKDOWN_FRAME_INTERVAL_SEC = 1.0
+_BREAKDOWN_MIN_FRAMES = 8
+# 场景检测扫全片时的安全上限：快剪素材一秒能切好几刀，不封顶会写出上千张图。
+_BREAKDOWN_SCENE_SCAN_LIMIT = 240
+# 拉片粒度：平均每镜多长。太小翻起来比原片还累，太大又退回「三五个大段」的流水账，
+# 2.5 秒是中等档 —— 45 秒的片子拆出 ~18 镜、4~5 个分镜组。
+_BREAKDOWN_SHOT_TARGET_SEC = 2.5
+# 送进视觉模型的帧宽上限。整帧是 base64 原图发出去的，帧数翻倍就得把单帧压下来。
+_BREAKDOWN_FRAME_WIDTH = 768
+
+
+def _bd_text(value: Any, default: str = "") -> str:
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text or default
+
+
+def _bd_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed != parsed or parsed in (float("inf"), float("-inf")):  # NaN / inf
+        return default
+    return parsed
+
+
+def _bd_int(value: Any, default: Optional[int] = None) -> Optional[int]:
+    parsed = _bd_float(value, None)
+    return default if parsed is None else int(parsed)
+
+
+def plan_breakdown_frame_count(*, duration_sec: Optional[float], max_frames: int) -> int:
+    """按视频时长定抽帧数：每 ~1 秒一帧，下限 8 帧，上限由调用方的 ``max_frames`` 封顶。
+
+    时长未知时只能退回上限 —— 与其猜一个密度，不如按用户给的预算抽满。
+    """
+
+    cap = max(1, int(max_frames))
+    floor = min(_BREAKDOWN_MIN_FRAMES, cap)
+    duration = _bd_float(duration_sec, None)
+    if duration is None or duration <= 0:
+        return cap
+    target = int(round(duration / _BREAKDOWN_FRAME_INTERVAL_SEC))
+    return max(floor, min(cap, target))
+
+
+def plan_breakdown_shot_range(
+    *,
+    frame_count: int,
+    duration_sec: Optional[float] = None,
+) -> tuple[int, int]:
+    """镜头数区间：按「平均每镜 2~3 秒」定中等粒度，再被帧数封顶。
+
+    直接拿帧数当镜头数（每秒一帧就每秒一镜）会把 45 秒的片子拆成 40 镜、11 个
+    分镜组，翻起来比原片还累。粒度由时长说了算，帧数只负责封顶 —— 毕竟没看过的
+    画面拆不出镜头。
+    """
+
+    frames = max(1, int(frame_count))
+    duration = _bd_float(duration_sec, None)
+    # 抽帧本来就是每秒一张，时长探测失败时用帧数当时长的近似。
+    span = duration if duration is not None and duration > 0 else float(frames)
+    target = int(round(span / _BREAKDOWN_SHOT_TARGET_SEC))
+    upper = max(3, min(frames, target))
+    lower = max(3, min(upper, int(round(upper * 0.7))))
+    return lower, upper
+
+
+def build_video_breakdown_prompt(
+    *,
+    frame_count: int,
+    duration_sec: Optional[float] = None,
+    group_size: int = 4,
+) -> str:
+    """拉片专用的 Vision prompt。
+
+    和 :func:`build_video_story_analysis_prompt` 有意分开：那份是「视频解读」用
+    的叙事表，拉片这边多出三个硬需求 —— ``segment`` 用来分组（前端要分镜组
+    01/02/03）、``lighting`` 必填（卡片标签是「景别·光线」）、外加一个整片级的
+    ``music`` 块（BGM 参考片段要有描述和起点）。混进同一个 prompt 只会让两边互
+    相迁就。
+    """
+
+    duration_hint = (
+        f"视频总时长约 {duration_sec:.2f} 秒，"
+        f"所有 start_time / end_time 必须落在 0 到 {duration_sec:.2f} 秒之间。"
+        if duration_sec and duration_sec > 0
+        else "未知视频总时长，请按关键帧顺序给出相对合理的时间，第一镜从 0 开始。"
+    )
+    shot_min, shot_max = plan_breakdown_shot_range(
+        frame_count=frame_count, duration_sec=duration_sec
+    )
+    return f"""你是专业的影视拉片师。下面给你 {frame_count} 张按时间顺序抽取的视频关键帧，
+请把这条视频拆解成可复用的参考素材。
+
+{duration_hint}
+
+要求：
+- 拆成 {shot_min}-{shot_max} 个镜头，粒度取中：机位、景别、场景发生明显变化才另起
+  一镜；同一场戏里的连续动作归进同一镜，不要逐帧拆。
+- 一镜可以跨多张关键帧，start_time / end_time 要盖住这一镜的完整过程。
+- segment 是分镜组编号，从 1 开始连续递增，每组最多 {group_size} 个镜头，
+  同一 segment 内的镜头必须属于同一个叙事段落；段落超过 {group_size} 镜就拆成
+  相邻的多个 segment。
+- description 是分镜卡片标题，中文，不超过 20 字，写清主体和动作。
+- narrative 写这一镜在故事里的作用，不要重复 description。
+- shot_size 和 lighting 都必填，会并排显示成「景别·光线」。
+- camera_movement 如实填写；确实没有运镜就写「固定」，不要为了好看编运镜。
+- image_prompt / motion_prompt 用英文，可直接喂给图生视频模型。
+- music 描述整片的背景音乐，start_time 指向最有代表性的一段 BGM 起点；
+  听不出音乐（或视频本身没有配乐）就把 music 设为 null。
+- 严格输出 JSON 对象，不要 markdown 包裹，不要任何解释。
+
+JSON schema:
+{{
+  "title": "中文短标题",
+  "summary": "中文一句话概括",
+  "segments": [
+    {{"segment": 1, "label": "中文段落名，<= 10 字"}}
+  ],
+  "shots": [
+    {{
+      "shot": 1,
+      "segment": 1,
+      "keyframe": 1,
+      "start_time": 0.0,
+      "end_time": 1.2,
+      "shot_size": "特写/近景/中近景/中景/全景/远景/大远景",
+      "lighting": "中文光线描述，<= 8 字",
+      "camera_angle": "平视/俯拍/仰拍/倾斜",
+      "camera_movement": "固定/推镜/拉镜/摇镜/移镜/跟镜/手持/升降",
+      "description": "中文画面描述，<= 20 字",
+      "narrative": "中文叙事作用",
+      "image_prompt": "English image prompt",
+      "motion_prompt": "English motion prompt"
+    }}
+  ],
+  "music": {{
+    "description": "中文 BGM 描述",
+    "mood": "中文情绪，<= 6 字",
+    "instruments": ["中文乐器名"],
+    "bpm": 96,
+    "start_time": 0.0
+  }}
+}}
+"""
+
+
+async def _extract_frame_at(*, source_path: str, output_path: Path, at_sec: float) -> None:
+    """在指定秒数抽一张图。``-ss`` 放在 ``-i`` 前面走关键帧 seek，比逐帧解码快得多。"""
+
+    await _run_cmd(
+        [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            f"{max(at_sec, 0.0):.3f}",
+            "-i",
+            source_path,
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            str(output_path),
+        ]
+    )
+
+
+def _pick_evenly(items: list[Path], count: int) -> list[Path]:
+    """从有序列表里等距挑 ``count`` 个，首尾必取。"""
+
+    if count <= 0:
+        return []
+    if count >= len(items):
+        return list(items)
+    if count == 1:
+        return [items[0]]
+    step = (len(items) - 1) / (count - 1)
+    return [items[round(index * step)] for index in range(count)]
+
+
+async def _extract_breakdown_frames(
+    *,
+    video_path: Path,
+    out_dir: Path,
+    target_frames: int,
+    scene_threshold: float,
+    duration_sec: Optional[float],
+) -> list[Path]:
+    """拉片专用抽帧：先扫全片切点，切点不够密再按时间等距补足。
+
+    和 :func:`run_freezone_extract_frames` 有两处刻意的不同，都是为了「拆得更细」：
+
+    1. 场景检测这一趟不拿目标帧数当 ``-frames:v``。那个写法会在扫到第 N 个切点时
+       就停止解码，长片只能看见开头一段，后面全靠模型脑补时间轴；这里扫完整片再
+       等距挑出目标张数，覆盖一直到片尾。
+    2. 帧统一缩到 ``_BREAKDOWN_FRAME_WIDTH`` 宽的 JPEG。视觉请求是把整帧原图
+       base64 发出去的，几十张
+       1080p PNG 能把网关打爆，缩完之后帧数翻倍反而更省。
+    """
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # format=yuvj420p 不能省：mjpeg 编码器拒绝 limited-range 的 yuv420p（ffmpeg 8
+    # 起直接报 "Non full-range YUV is non-standard" 开不了编码器），而绝大多数视频
+    # 都是 limited range。
+    scale = f"scale='min({_BREAKDOWN_FRAME_WIDTH},iw)':-2,format=yuvj420p"
+
+    # 一个切点都没有是合法结果（长镜头素材），所以这趟失败不抛，交给下面的等距兜底。
+    await _try_run_cmd(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-vf",
+            f"select='gt(scene,{scene_threshold})',{scale}",
+            "-fps_mode",
+            "vfr",
+            "-frames:v",
+            str(_BREAKDOWN_SCENE_SCAN_LIMIT),
+            "-frame_pts",
+            "true",
+            "-q:v",
+            "3",
+            str(out_dir / "scene_%05d.jpg"),
+        ]
+    )
+    scene_files = sort_extracted_frames_by_pts(out_dir.glob("scene_*.jpg"))
+
+    if len(scene_files) >= target_frames:
+        picked = _pick_evenly(scene_files, target_frames)
+        keep = {path.name for path in picked}
+        for path in scene_files:
+            if path.name not in keep:
+                path.unlink(missing_ok=True)
+        return picked
+
+    # 切点太少：长镜头、一镜到底的 AI 生成片都会走到这里。等距抽帧的密度只跟时长
+    # 有关，不受剪辑节奏影响，是这类素材唯一能拆细的办法。
+    for path in scene_files:
+        path.unlink(missing_ok=True)
+
+    duration = _bd_float(duration_sec, None)
+    if duration is None or duration <= 0:
+        duration = await _probe_video_duration(str(video_path))
+    # 直接给十进制 fps，别写成 "n/时长" 的分数：分母带小数时不同 ffmpeg 版本的
+    # 解析行为不一致。
+    fps_expr = f"{target_frames / duration:.6f}" if duration > 0 else "1"
+    await _run_cmd(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-vf",
+            f"fps={fps_expr},{scale}",
+            "-frames:v",
+            str(target_frames),
+            "-q:v",
+            "3",
+            str(out_dir / "even_%05d.jpg"),
+        ]
+    )
+    return sort_extracted_frames_by_pts(out_dir.glob("even_*.jpg"))
+
+
+def _normalize_breakdown_shots(
+    raw_shots: list[Any],
+    *,
+    duration_sec: float,
+    frame_count: int,
+    group_size: int,
+) -> list[dict[str, Any]]:
+    """把模型返回的 shots 洗成时间单调、字段齐全的列表。
+
+    模型经常在时间上偷懒（漏字段、给出倒序、超出片长），这里统一兜底：缺失就按
+    镜头数均分片长，越界就夹回去，保证下游切片的 ffmpeg 参数永远合法。
+    """
+
+    total = len(raw_shots)
+    slot = duration_sec / total if total and duration_sec > 0 else 0.0
+    shots: list[dict[str, Any]] = []
+    cursor = 0.0
+
+    for index, item in enumerate(raw_shots):
+        entry = item if isinstance(item, dict) else {}
+        default_start = index * slot
+        default_end = (index + 1) * slot if slot else 0.0
+
+        start = _bd_float(entry.get("start_time"), None)
+        end = _bd_float(entry.get("end_time"), None)
+        if start is None or start < 0:
+            start = default_start
+        if end is None or end <= start:
+            end = max(default_end, start + max(slot, 0.5))
+        if duration_sec > 0:
+            start = min(max(start, 0.0), duration_sec)
+            end = min(max(end, start), duration_sec)
+        # 单调递增：模型偶尔会把某一镜的 start 写回到上一镜中间。
+        start = max(start, cursor)
+        end = max(end, start)
+        cursor = end
+
+        segment = _bd_int(entry.get("segment"), None)
+        if segment is None or segment < 1:
+            segment = index // max(group_size, 1) + 1
+
+        keyframe = _bd_int(entry.get("keyframe"), None)
+        if keyframe is None or not (1 <= keyframe <= max(frame_count, 1)):
+            keyframe = min(index + 1, max(frame_count, 1))
+
+        shots.append(
+            {
+                "shot": _bd_int(entry.get("shot"), index + 1) or index + 1,
+                "segment": segment,
+                "keyframe": keyframe,
+                "start_time": round(start, 3),
+                "end_time": round(end, 3),
+                "duration": round(max(end - start, 0.0), 3),
+                "shot_size": _bd_text(entry.get("shot_size"), "中景"),
+                "lighting": _bd_text(entry.get("lighting"), "自然光"),
+                "camera_angle": _bd_text(entry.get("camera_angle"), "平视"),
+                "camera_movement": _bd_text(entry.get("camera_movement"), "固定"),
+                "description": _bd_text(entry.get("description"))
+                or _bd_text(entry.get("visual_description"), f"镜头 {index + 1}"),
+                "narrative": _bd_text(entry.get("narrative")),
+                "image_prompt": _bd_text(entry.get("image_prompt")),
+                "motion_prompt": _bd_text(entry.get("motion_prompt")),
+            }
+        )
+
+    return shots
+
+
+def _group_breakdown_shots(
+    shots: list[dict[str, Any]],
+    *,
+    segments: list[Any],
+    group_size: int,
+) -> list[dict[str, Any]]:
+    """按 ``segment`` 聚成分镜组；模型没给分组就按 ``group_size`` 均切。
+
+    每组最多 ``group_size`` 个镜头 —— 模型给的叙事段落长短不一，不封顶的话一组
+    能塞进十几张分镜图，画布上那一片就没法看了。超了就顺序切成多组。
+    """
+
+    labels: dict[int, str] = {}
+    for item in segments:
+        if not isinstance(item, dict):
+            continue
+        index = _bd_int(item.get("segment"), None)
+        if index is not None:
+            labels[index] = _bd_text(item.get("label"))
+
+    ordered: list[int] = []
+    buckets: dict[int, list[dict[str, Any]]] = {}
+    for shot in shots:
+        segment = int(shot["segment"])
+        if segment not in buckets:
+            buckets[segment] = []
+            ordered.append(segment)
+        buckets[segment].append(shot)
+
+    # 模型把所有镜头塞进同一个 segment 时，分组就失去意义了，退回均切。
+    if len(ordered) <= 1 and len(shots) > group_size:
+        ordered = []
+        buckets = {}
+        for index, shot in enumerate(shots):
+            segment = index // max(group_size, 1) + 1
+            shot["segment"] = segment
+            if segment not in buckets:
+                buckets[segment] = []
+                ordered.append(segment)
+            buckets[segment].append(shot)
+
+    size = max(group_size, 1)
+    groups: list[dict[str, Any]] = []
+    for segment in ordered:
+        members = buckets[segment]
+        chunks = [members[start : start + size] for start in range(0, len(members), size)]
+        base = labels.get(segment) or ""
+        for part, chunk in enumerate(chunks, start=1):
+            position = len(groups) + 1
+            if not base:
+                label = f"分镜组{position:02d}"
+            elif len(chunks) == 1:
+                label = base
+            else:
+                label = f"{base}（{part}/{len(chunks)}）"
+            for shot in chunk:
+                shot["segment"] = position
+            groups.append(
+                {
+                    "group_index": position,
+                    "segment": position,
+                    "label": label,
+                    "shots": chunk,
+                }
+            )
+    return groups
+
+
+def _select_motion_shots(
+    shots: list[dict[str, Any]],
+    *,
+    max_clips: int,
+) -> list[dict[str, Any]]:
+    """挑出最值得当运镜参考的几镜：有运镜的优先，同类里挑最长的。"""
+
+    moving = [
+        shot
+        for shot in shots
+        if _bd_text(shot.get("camera_movement")).lower() not in _STATIC_CAMERA_MOVEMENTS
+    ]
+    pool = moving or shots
+    ranked = sorted(pool, key=lambda shot: float(shot.get("duration") or 0.0), reverse=True)
+    picked = ranked[: max(max_clips, 1)]
+    return sorted(picked, key=lambda shot: float(shot.get("start_time") or 0.0))
+
+
+async def run_freezone_video_breakdown(
+    *,
+    project_dir: Path,
+    job_id: str,
+    video_path: Path,
+    dimensions: Optional[list[str]] = None,
+    max_frames: int = 40,
+    scene_threshold: float = 0.3,
+    duration_sec: Optional[float] = None,
+    storyboard_group_size: int = 4,
+    max_motion_clips: int = 3,
+    motion_clip_max_sec: float = 6.0,
+    music_clip_sec: float = 15.0,
+    model: Optional[str] = None,
+    progress: Optional[Callable[[float, str], None]] = None,
+) -> dict[str, Any]:
+    """逐帧拉片：抽帧 → Vision 拆解 → 真的把分镜图 / 运镜片段 / BGM 切出来。
+
+    和 ``analyze-video-story`` 的分工：那个只产一张文字表，拉片必须落地成画布上
+    能直接用的素材，所以三个维度都要真实文件 —— 分镜是按镜头时间点抽的图、动态
+    是按运镜切出的视频片段、音乐是从原片截的 BGM 片段。
+
+    返回的媒体字段全部是 ``*_path`` 绝对路径，由 runner 负责换成 static URL。
+    """
+
+    import json
+
+    from novelvideo.freezone.vision_gateway import (
+        FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+        VisionInput,
+        call_freezone_vision_model,
+        image_media_type,
+    )
+
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("ffmpeg not found on PATH; install via brew/apt")
+    if not video_path.exists():
+        raise FileNotFoundError(f"video not found: {video_path}")
+
+    wanted = [dim for dim in (dimensions or list(VIDEO_BREAKDOWN_DIMENSIONS)) if dim]
+    unknown = [dim for dim in wanted if dim not in VIDEO_BREAKDOWN_DIMENSIONS]
+    if unknown:
+        raise ValueError(f"unsupported breakdown dimensions: {unknown}")
+    if not wanted:
+        raise ValueError("at least one breakdown dimension is required")
+
+    out_dir = outputs_dir(project_dir, "freezone_video_breakdown") / job_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def report(ratio: float, message: str) -> None:
+        if progress is not None:
+            progress(ratio, message)
+
+    source_path = str(video_path)
+    total_duration = _bd_float(duration_sec, None)
+    if total_duration is None or total_duration <= 0:
+        total_duration = await _probe_video_duration(source_path)
+
+    frame_target = plan_breakdown_frame_count(
+        duration_sec=total_duration, max_frames=max_frames
+    )
+    report(0.08, f"ffmpeg 抽取关键帧（目标 {frame_target} 帧）...")
+    frame_paths = await _extract_breakdown_frames(
+        video_path=video_path,
+        out_dir=out_dir / "frames",
+        target_frames=frame_target,
+        scene_threshold=scene_threshold,
+        duration_sec=total_duration,
+    )
+    if not frame_paths:
+        raise RuntimeError("no keyframes extracted from video")
+
+    report(0.28, f"Vision 拉片解析 {len(frame_paths)} 帧...")
+    prompt = build_video_breakdown_prompt(
+        frame_count=len(frame_paths),
+        duration_sec=total_duration,
+        group_size=storyboard_group_size,
+    )
+    images = [
+        VisionInput(data=path.read_bytes(), media_type=image_media_type(str(path)))
+        for path in frame_paths
+        if path.exists()
+    ]
+
+    # 修不回来的输出就重来一次：拉片一趟要几分钟，宁可多花一次调用也别让用户重传视频。
+    raw: dict[str, Any] = {}
+    vision_model = ""
+    for attempt in (1, 2):
+        vision_model, text = await call_freezone_vision_model(
+            prompt=prompt,
+            images=images,
+            model_override=model,
+            timeout_seconds=FREEZONE_VIDEO_ANALYSIS_TIMEOUT_SECONDS,
+        )
+        try:
+            if not text:
+                raise ValueError("vision model returned no text")
+            parsed = loads_model_json(text)
+            if not isinstance(parsed, dict):
+                raise ValueError("vision model response is not an object")
+            if not isinstance(parsed.get("shots"), list) or not parsed["shots"]:
+                raise ValueError("vision model returned no shots")
+        except ValueError as exc:  # JSONDecodeError 也是 ValueError
+            (out_dir / "raw_response.txt").write_text(text or "", encoding="utf-8")
+            if attempt == 2:
+                raise RuntimeError(
+                    f"vision model returned unusable output: {exc}; raw saved"
+                ) from exc
+            logger.warning("breakdown vision output unusable (%s); retrying once", exc)
+            report(0.28, "模型输出无法解析，重试一次...")
+            continue
+        raw = parsed
+        break
+
+    raw_shots = raw["shots"]
+
+    shots = _normalize_breakdown_shots(
+        raw_shots,
+        duration_sec=total_duration,
+        frame_count=len(frame_paths),
+        group_size=storyboard_group_size,
+    )
+
+    payload: dict[str, Any] = {
+        "job_id": job_id,
+        "model": vision_model,
+        "duration_sec": round(total_duration, 3),
+        "title": _bd_text(raw.get("title")),
+        "summary": _bd_text(raw.get("summary")),
+        "dimensions": wanted,
+        "frame_paths": [str(path) for path in frame_paths],
+        "storyboard": None,
+        "motion": None,
+        "music": None,
+        "raw": raw,
+    }
+
+    # ---- 分镜：在每一镜的中点抽图 --------------------------------------
+    if "storyboard" in wanted:
+        report(0.5, f"切分镜图 {len(shots)} 张...")
+        segments = raw.get("segments")
+        groups = _group_breakdown_shots(
+            shots,
+            segments=segments if isinstance(segments, list) else [],
+            group_size=storyboard_group_size,
+        )
+        code = 0
+        for group in groups:
+            for shot in group["shots"]:
+                code += 1
+                start = float(shot["start_time"])
+                end = float(shot["end_time"])
+                image_path = out_dir / f"shot_{code:02d}.jpg"
+                await _extract_frame_at(
+                    source_path=source_path,
+                    output_path=image_path,
+                    at_sec=(start + end) / 2.0,
+                )
+                shot["code"] = f"S{code:02d}"
+                shot["image_path"] = str(image_path)
+        payload["storyboard"] = {"label": "分镜组", "groups": groups}
+
+    # ---- 动态：按运镜切视频片段 ----------------------------------------
+    if "motion" in wanted:
+        report(0.68, "切运镜参考片段...")
+        width, height = await _probe_video_size(source_path)
+        clips: list[dict[str, Any]] = []
+        for index, shot in enumerate(_select_motion_shots(shots, max_clips=max_motion_clips), 1):
+            start = float(shot["start_time"])
+            span = min(float(shot["duration"]) or motion_clip_max_sec, motion_clip_max_sec)
+            span = max(span, 1.0)
+            if total_duration > 0:
+                span = min(span, max(total_duration - start, 0.0))
+            if span <= 0.1:
+                continue
+            clip_path = out_dir / f"motion_{index:02d}.mp4"
+            await _render_video_clip(
+                source_path=source_path,
+                output_path=clip_path,
+                source_start=start,
+                duration=span,
+                width=width,
+                height=height,
+                fps=30,
+                background_color="#000000",
+                keep_original_audio=True,
+                volume=1.0,
+                muted=False,
+            )
+            preview_path = out_dir / f"motion_{index:02d}.jpg"
+            await _extract_frame_at(
+                source_path=source_path,
+                output_path=preview_path,
+                at_sec=start + span / 2.0,
+            )
+            clips.append(
+                {
+                    "code": f"M{index:02d}",
+                    "shot": shot["shot"],
+                    "start_time": round(start, 3),
+                    "end_time": round(start + span, 3),
+                    "duration_sec": round(span, 3),
+                    "camera_movement": shot["camera_movement"],
+                    "camera_angle": shot["camera_angle"],
+                    "description": shot["description"],
+                    "motion_prompt": shot["motion_prompt"],
+                    "video_path": str(clip_path),
+                    "preview_image_path": str(preview_path),
+                }
+            )
+        payload["motion"] = {"label": "动态｜运镜动作参考", "clips": clips}
+
+    # ---- 音乐：从原片截一段 BGM ----------------------------------------
+    if "music" in wanted:
+        report(0.86, "截取 BGM 参考片段...")
+        clip: Optional[dict[str, Any]] = None
+        if await _probe_has_audio(source_path):
+            raw_music = raw.get("music") if isinstance(raw.get("music"), dict) else {}
+            start = _bd_float(raw_music.get("start_time"), 0.0) or 0.0
+            span = music_clip_sec
+            if total_duration > 0:
+                start = min(max(start, 0.0), max(total_duration - 1.0, 0.0))
+                span = min(span, max(total_duration - start, 0.0))
+            if span > 0.5:
+                audio_path = out_dir / "music_01.m4a"
+                await _render_audio_clip(
+                    source_path=source_path,
+                    output_path=audio_path,
+                    source_start=start,
+                    duration=span,
+                    volume=1.0,
+                )
+                instruments = raw_music.get("instruments")
+                clip = {
+                    "code": "A01",
+                    "start_time": round(start, 3),
+                    "end_time": round(start + span, 3),
+                    "duration_sec": round(span, 3),
+                    "description": _bd_text(raw_music.get("description")),
+                    "mood": _bd_text(raw_music.get("mood")),
+                    "instruments": [
+                        _bd_text(item)
+                        for item in (instruments if isinstance(instruments, list) else [])
+                        if _bd_text(item)
+                    ],
+                    "bpm": _bd_int(raw_music.get("bpm"), None),
+                    "audio_path": str(audio_path),
+                }
+        # clip 为 None 表示源片没有音轨（或短到截不出来），前端据此不建音频节点。
+        payload["music"] = {"label": "音乐｜BGM参考片段", "clip": clip}
+
+    out_file = out_dir / "breakdown.json"
+    out_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload["output_path"] = str(out_file)
+    report(0.95, "拉片结果写入完成")
     return payload
 
 

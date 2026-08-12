@@ -33,6 +33,7 @@ export const DEFAULT_NODE_DISPLAY_NAME: Record<CanvasNodeType, string> = {
   [CANVAS_NODE_TYPES.audio]: '音频',
   [CANVAS_NODE_TYPES.videoStory]: '视频故事',
   [CANVAS_NODE_TYPES.videoCompose]: '视频合成',
+  [CANVAS_NODE_TYPES.videoBreakdown]: '逐帧拉片',
   [CANVAS_NODE_TYPES.script]: '脚本生成器',
   [CANVAS_NODE_TYPES.pano360Viewer]: '360° 全景查看器',
   [CANVAS_NODE_TYPES.threeDWorld]: '3D 世界',

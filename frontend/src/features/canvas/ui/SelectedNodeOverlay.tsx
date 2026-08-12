@@ -37,6 +37,14 @@ import {
   type GridActionRequest,
 } from './GridActionConfirmOverlay';
 
+// 这些节点在卡片内右上角自带「替换」按钮（NodeMediaReplaceButton），拖到素材库的
+// 手势由那颗一并承接，因此不再挂外侧的 AssetCommitHandle。
+const NODES_WITH_INLINE_COMMIT_BUTTON = new Set<string>([
+  CANVAS_NODE_TYPES.exportImage,
+  CANVAS_NODE_TYPES.video,
+  CANVAS_NODE_TYPES.audio,
+]);
+
 // Image/video nodes only need the floating action toolbar once they actually
 // have a resource to act on. While the node is empty (no upload, no generated
 // output), the toolbar entries (剪辑 / 高清 / 智能去字幕 / ...) are all no-ops,
@@ -562,9 +570,16 @@ export const SelectedNodeOverlay = memo(() => {
           onOpenRotate={handleOpenRotate}
         />
       )}
-      {selectedNode && !rotateNodeId && !effectiveOverlayNodeId && (
-        <AssetCommitHandle node={selectedNode} />
-      )}
+      {/* 图片/视频/音频节点把这颗按钮画在卡片内右上角（NodeMediaReplaceButton），
+          手势一并由它承接 —— 这里再挂一条外挂抓手就会在同一个角上摞出两个一样的
+          上传图标。其余可替换类型（imageGen / upload / 3D / 全景 …）还没有卡内位置，
+          仍然走这条浮在节点外侧的抓手。 */}
+      {selectedNode &&
+        !rotateNodeId &&
+        !effectiveOverlayNodeId &&
+        !NODES_WITH_INLINE_COMMIT_BUTTON.has(selectedNode.type ?? '') && (
+          <AssetCommitHandle node={selectedNode} />
+        )}
       {multiAngleNode && multiAngleImageSource && (
         <MultiAngleEditorOverlay
           node={multiAngleNode}

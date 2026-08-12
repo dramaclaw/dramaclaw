@@ -74,6 +74,7 @@ _TASK_TYPE_LABELS = {
     "freezone_extract": "视频抽帧",
     "freezone_analyze": "视频分析",
     "freezone_video_story": "视频解读",
+    "freezone_video_breakdown": "逐帧拉片",
     "freezone_video_erase": "视频擦除",
     "freezone_video_upscale": "视频放大",
     "freezone_audio_separate": "音频分离",

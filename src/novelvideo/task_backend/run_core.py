@@ -98,6 +98,7 @@ _PROJECT_TASK_RESOURCE_KINDS = {
     "freezone_video_gen": "video",
     "freezone_analyze": "video",
     "freezone_video_story": "video",
+    "freezone_video_breakdown": "video",
     "freezone_image_reverse_prompt": "script",
     "freezone_text_generate": "script",
     "freezone_story_script": "script",

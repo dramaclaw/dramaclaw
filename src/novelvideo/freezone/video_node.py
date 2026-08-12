@@ -460,12 +460,16 @@ def build_freezone_image_to_video_prompt(
     if marks_block:
         parts.append(marks_block)
 
-    if int(reference_image_count or 1) > 1:
+    # 0 张图时一句都不加：视频编辑复用的就是这个 builder（routes/freezone.py 的
+    # video-edit 端点），一张参考图都没有时还写「把输入图片作为主体…」是在描述一个
+    # 不存在的素材 —— 厂商靠提示词判定任务类型，这种无中生有的话只会干扰它。
+    image_count = 1 if reference_image_count is None else int(reference_image_count)
+    if image_count > 1:
         parts.append(
             "图片参考约束：综合参考多张输入图片，优先保持主体身份、外观、服装、场景线索与整体风格一致，"
             "不要把多张图拼贴成多画面。"
         )
-    else:
+    elif image_count == 1:
         parts.append(
             "图片参考约束：把输入图片作为主体、外观、色调、质感和整体风格参考，由提示词主导视频内容；"
             "不要强制把输入图片锁定为视频第一帧。"
