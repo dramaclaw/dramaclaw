@@ -125,9 +125,10 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "generate_freezone_audio_speech": LeafEgressRule(
         "novelvideo.freezone.audio_node", LeafEgress.NETWORK, "EG-15a"
     ),
-    # 自由区 eleven music 未登记进 egress-inventory，见 OI-56。
+    # 音乐与语音是同一个出网点的两个一跳调用方：都经 `_write_newapi_audio_speech`，
+    # claim 的 capability 也都是 `audio.tts.gateway`（`audio_node.py:558`）。
     "generate_freezone_audio_eleven_music": LeafEgressRule(
-        "novelvideo.freezone.audio_node", LeafEgress.NETWORK, "EG-未登记"
+        "novelvideo.freezone.audio_node", LeafEgress.NETWORK, "EG-15a"
     ),
     # EG-09a/09b：经 NanoBananaGridGenerator 出图，newapi 走网关，其余 provider 在
     # `nanobanana_grid.py:141` 对组织抛 ORG_EGRESS_DENIED。

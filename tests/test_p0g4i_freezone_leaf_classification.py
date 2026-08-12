@@ -385,6 +385,26 @@ def test_local_table_is_exactly_the_five_audited_leaves() -> None:
     assert denied == set()
 
 
+def test_every_rule_names_a_well_formed_atomic_eg_id() -> None:
+    """`eg_id` 必须长得像清单里的原子 ID，占位串一律不许过。
+
+    `generate_freezone_audio_eleven_music` 曾挂着 `"EG-未登记"` 活过一整轮：唯一
+    断言到字面量的只有 5 个本地 leaf 的 `"EG-20a"`，别的写什么都没人管（OI-56 ③）。
+    这条只做形状校验——跨仓核对 EE `egress-inventory.md` 不是单测能干的事。
+    """
+
+    import re
+
+    from novelvideo.task_backend.runners.freezone import FREEZONE_LEAF_EGRESS
+
+    malformed = {
+        name: rule.eg_id
+        for name, rule in FREEZONE_LEAF_EGRESS.items()
+        if not re.fullmatch(r"EG-\d+[a-z]?", rule.eg_id)
+    }
+    assert not malformed, f"这些 eg_id 不是原子 ID：{malformed}"
+
+
 def test_classification_matches_the_real_leaf_signatures() -> None:
     """遍历**真实** leaf 对象断言其分类自洽——用假 leaf 挡不住同类回潮。
 
