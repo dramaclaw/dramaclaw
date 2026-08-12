@@ -10,6 +10,12 @@ from typing import Any
 KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 PATH_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*){0,3}$")
 CONTROL_TYPES = {"select", "number", "switch", "text", "multiselect"}
+MINIMAX_V2_OPERATIONS = {
+    "create": "/v2/video_generation",
+    "query": "/v2/query/video_generation/{task_id}",
+    "list": "/v2/query/video_generation",
+    "delete": "/v2/video_generation/{task_id}",
+}
 JS_MAX_SAFE_INTEGER = 2**53 - 1
 MAX_MEDIA_IMAGE_PIXELS = 16_777_216
 BLOCKED_ROOTS = {
@@ -139,6 +145,12 @@ def validate_media_request_schema(schema: object) -> dict[str, Any]:
     endpoint = str(schema.get("endpoint") or "").strip()
     if endpoint not in {"images/generations", "video/generations", "audio/speech"}:
         raise MediaModelSchemaError("unsupported NewAPI media endpoint")
+    protocol = str(schema.get("protocol") or "").strip()
+    if protocol:
+        if protocol != "minimax_v2" or endpoint != "video/generations":
+            raise MediaModelSchemaError("unsupported media request protocol")
+        if schema.get("operations") != MINIMAX_V2_OPERATIONS:
+            raise MediaModelSchemaError("invalid MiniMax v2 lifecycle operations")
     parameters = schema.get("parameters") or []
     if not isinstance(parameters, list) or len(parameters) > 32:
         raise MediaModelSchemaError("parameters must be a list with at most 32 items")

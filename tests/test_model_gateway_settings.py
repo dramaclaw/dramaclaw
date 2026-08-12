@@ -3015,8 +3015,9 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     minimax = videos[-1]
     assert minimax["id"] == "MiniMax-H3"
     assert minimax["gatewayModel"] == "MiniMax-H3"
-    assert minimax["resolutionOptions"] == ["768P", "2K"]
+    assert minimax["resolutionOptions"] == ["2K"]
     assert minimax["ratioOptions"] == [
+        "adaptive",
         "21:9",
         "16:9",
         "4:3",
@@ -3037,6 +3038,13 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     assert minimax["referenceImageMax"] == 9
     assert minimax["referenceVideoMax"] == 3
     assert minimax["referenceAudioMax"] == 3
+    assert minimax["request"]["protocol"] == "minimax_v2"
+    assert minimax["request"]["operations"] == {
+        "create": "/v2/video_generation",
+        "query": "/v2/query/video_generation/{task_id}",
+        "list": "/v2/query/video_generation",
+        "delete": "/v2/video_generation/{task_id}",
+    }
 
 
 def test_custom_media_model_accepts_arbitrary_image_and_video_models():

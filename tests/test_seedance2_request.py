@@ -675,6 +675,129 @@ async def test_newapi_video_generator_handles_wrapped_failure_status(
     assert refunded["error"] == "InputImageSensitiveContentDetected.PolicyViolation"
 
 
+async def test_newapi_minimax_h3_uses_native_v2_lifecycle(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from novelvideo.generators import video_generator as video_module
+    from novelvideo.generators.video_generator import NewApiVideoGenerator, VideoGenStatus
+    from novelvideo.media_model_request_schema import MINIMAX_V2_OPERATIONS
+
+    captured: dict[str, object] = {}
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://relay.example/v1",
+        model="MiniMax-H3",
+        resolution="2K",
+        request_schema={
+            "endpoint": "video/generations",
+            "protocol": "minimax_v2",
+            "operations": dict(MINIMAX_V2_OPERATIONS),
+            "parameters": [],
+        },
+    )
+
+    async def fake_reserve(*_args, **_kwargs):
+        return "reservation-1"
+
+    async def fake_noop(*_args, **_kwargs):
+        return None
+
+    async def fake_post_json(url: str, payload: dict):
+        captured["create_url"] = url
+        captured["payload"] = payload
+        return {"task_id": "task-1"}
+
+    async def fake_get_json(url: str):
+        captured["query_url"] = url
+        return {
+            "task": {
+                "id": "task-1",
+                "status": "success",
+                "content": {"url": "https://example.com/out.mp4"},
+            }
+        }
+
+    async def fake_download_video(_url: str, output_path: str):
+        Path(output_path).write_bytes(b"video")
+        return b"video"
+
+    monkeypatch.setattr(video_module, "_reserve_video_model_call", fake_reserve)
+    monkeypatch.setattr(video_module, "_confirm_video_model_call", fake_noop)
+    monkeypatch.setattr(video_module, "_refund_video_model_call", fake_noop)
+    monkeypatch.setattr(generator, "_post_json", fake_post_json)
+    monkeypatch.setattr(generator, "_get_json", fake_get_json)
+    monkeypatch.setattr(generator, "_download_video", fake_download_video)
+
+    result = await generator.generate(
+        image_path="https://example.com/first.png",
+        prompt="A camera slowly approaches the subject.",
+        output_path=str(tmp_path / "out.mp4"),
+        duration=6,
+        aspect_ratio="adaptive",
+        poll_interval=0,
+        max_polls=1,
+    )
+
+    assert result.status == VideoGenStatus.DONE
+    assert captured["create_url"] == "https://relay.example/v2/video_generation"
+    assert captured["query_url"] == "https://relay.example/v2/query/video_generation/task-1"
+    assert captured["payload"] == {
+        "model": "MiniMax-H3",
+        "content": [
+            {"type": "text", "text": "A camera slowly approaches the subject."},
+            {
+                "type": "image_url",
+                "image_url": {"url": "https://example.com/first.png"},
+                "role": "first_frame",
+            },
+        ],
+        "resolution": "2K",
+        "duration": 6,
+        "ratio": "adaptive",
+    }
+    assert result.video_url == "https://example.com/out.mp4"
+
+
+async def test_newapi_minimax_h3_lists_and_deletes_native_tasks(monkeypatch):
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+    from novelvideo.media_model_request_schema import MINIMAX_V2_OPERATIONS
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://api.minimax.io",
+        model="MiniMax-H3",
+        request_schema={
+            "endpoint": "video/generations",
+            "protocol": "minimax_v2",
+            "operations": dict(MINIMAX_V2_OPERATIONS),
+            "parameters": [],
+        },
+    )
+    captured: dict[str, str] = {}
+
+    async def fake_get_json(url: str):
+        captured["list"] = url
+        return {"items": [], "total": 0}
+
+    async def fake_delete_json(url: str):
+        captured["delete"] = url
+        return {"task_id": "task/1", "action": "delete", "status": "success"}
+
+    monkeypatch.setattr(generator, "_get_json", fake_get_json)
+    monkeypatch.setattr(generator, "_delete_json", fake_delete_json)
+
+    assert await generator.list_tasks({"page_num": 1, "filter.status": "success"}) == {
+        "items": [],
+        "total": 0,
+    }
+    assert (await generator.delete_task("task/1"))["task_id"] == "task/1"
+    assert captured["list"] == (
+        "https://api.minimax.io/v2/query/video_generation?"
+        "page_num=1&filter.status=success"
+    )
+    assert captured["delete"] == "https://api.minimax.io/v2/video_generation/task%2F1"
+
+
 async def test_newapi_seedance1_generator_preserves_adaptive_ratio(tmp_path, monkeypatch):
     from novelvideo.generators import video_generator as video_module
     from novelvideo.generators.video_generator import NewApiVideoGenerator
