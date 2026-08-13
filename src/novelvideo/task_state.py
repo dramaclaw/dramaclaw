@@ -1294,13 +1294,20 @@ class TaskStateManager:
             return None
         return self._row_to_state(row)
 
-    def _sweep_interrupted_inline_tasks_once(self, conn, db_path: Path) -> None:
-        """把进程启动前遗留的 ACTIVE inline 任务落为 failed(僵尸回收)。
+    # celery/EE worker 独立于本进程,判不了「早于进程启动即已中断」,只能按
+    # TTL 收:40min = task_time_limit 35min(EE celery_app.py 的 celery 配置)
+    # + 5min 余量。超过它仍未更新的在途行,worker 已被硬超时杀掉。
+    CELERY_STALE_TTL = 40 * 60
 
-        inline worker 随 API 进程消亡,这类任务不可能仍在执行;不回收会永久
-        挡住去重守卫与并发限额。Celery/EE worker 独立于本进程,按 backend
-        标记排除。挂在 _connect_path 上、按库记忆化只跑一次/进程,因此
-        reserve/lane/legacy 等所有路径同样受益且无每次读写的写放大。
+    def _sweep_interrupted_inline_tasks_once(self, conn, db_path: Path) -> None:
+        """把不可能仍在执行的 ACTIVE 任务落为 failed(僵尸回收),两条轴:
+
+        - inline:worker 随 API 进程消亡,早于本进程启动的必然已中断;
+        - celery/EE:worker 独立于本进程,按 CELERY_STALE_TTL 判(见其注释)。
+
+        不回收会永久挡住去重守卫与并发限额。挂在 _connect_path 上、按库记忆化
+        只跑一次/进程,因此 reserve/lane/legacy 等所有路径同样受益且无每次读写
+        的写放大。两条轴按 backend 标记互斥,彼此不外溢。
         时间戳按字符串比较:两侧均为 utc_now_iso 产物且保证含小数位。
         """
         key = str(db_path)
@@ -1308,6 +1315,13 @@ class TaskStateManager:
             if key in self._swept_dbs:
                 return
         now = utc_now_iso()
+        celery_stale_before = (
+            datetime.now(timezone.utc) - timedelta(seconds=self.CELERY_STALE_TTL)
+        ).isoformat().replace("+00:00", "Z")
+        if "." not in celery_stale_before:
+            # 同 _PROCESS_STARTED_AT 的补位:整秒时 isoformat 省略小数位,
+            # "...:56Z" 字典序大于 "...:56.4Z",会多扫掉同秒内的活任务。
+            celery_stale_before = celery_stale_before.replace("Z", ".000000Z")
         try:
             conn.execute(
                 "UPDATE task_states SET status = 'failed', "
@@ -1323,6 +1337,22 @@ class TaskStateManager:
                     now,
                     compute_expiry(self.COMPLETED_TTL),
                     _PROCESS_STARTED_AT,
+                ),
+            )
+            conn.execute(
+                "UPDATE task_states SET status = 'failed', "
+                "error = COALESCE(NULLIF(error, ''), ?), "
+                "completed_at = ?, updated_at = ?, expires_at = ? "
+                "WHERE status IN ('submitting', 'queued', 'running') "
+                "AND updated_at < ? "
+                "AND json_valid(result_json) "
+                "AND json_extract(result_json, '$.task_metadata.backend') = 'celery'",
+                (
+                    "任务超时未更新,worker 已中断,请重新发起",
+                    now,
+                    now,
+                    compute_expiry(self.COMPLETED_TTL),
+                    celery_stale_before,
                 ),
             )
             conn.commit()
@@ -1645,3 +1675,13 @@ def get_task_manager() -> TaskStateManager:
     if _task_manager is None:
         _task_manager = TaskStateManager()
     return _task_manager
+
+
+def set_task_manager(manager: Optional[TaskStateManager]) -> None:
+    """注入 TaskStateManager 实现(EE 在 bootstrap 时覆写单例)。
+
+    Args:
+        manager: 实现实例;传 None 清空,下次 get_task_manager() 重建默认单例
+    """
+    global _task_manager
+    _task_manager = manager

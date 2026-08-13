@@ -1964,6 +1964,8 @@ tests/test_task_envelope_signing_config.py,Elastic-2.0,2026 SuperTale contributo
 tests/test_task_runner_cancel_checkpoints.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_script_runner_store_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_sketch_runner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_task_state_celery_zombie_ttl.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_task_state_manager_seam.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_state_restart_reconcile.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_state_timezones.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_timeout.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
