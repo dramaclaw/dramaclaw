@@ -1801,6 +1801,7 @@ tests/test_ce_allowlist.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml ag
 tests/test_ce_imports_lint.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_migrated_test_ratchet.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_port_closure.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_channel_task_limit_error_surface.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_character_identity_age_group.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_character_promotion_service.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_character_voice_storage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
