@@ -322,13 +322,22 @@ async def _resolve_freezone_project(
     user: dict,
     *,
     required_role: str = "editor",
+    require_home_node: bool = True,
 ) -> tuple[ProjectContext, str, str, Path, str]:
+    """解析 freezone 项目上下文。
+
+    `require_home_node=False` 只给画布那 13 条路由用（B2 步 11，按 `TCP-P60` 收窄）。
+    这一道守卫是**全部 72 条 freezone 路由**共用的，删掉它等于连另外 58 条读写
+    `Path(ctx.output_dir)` 本地文件、既无租约也无共享存储交代的路由一起放开，
+    与 B2 §6.3「逐个撤、不批量撤」冲突；故默认值保持 `True`，逐个调用点撤。
+    """
     ctx = await resolve_project_context(
         user=user,
         project_id=project,
         required_role=required_role,
     )
-    require_project_home_node(ctx, operation="access freezone project files")
+    if require_home_node:
+        require_project_home_node(ctx, operation="access freezone project files")
     return ctx, ctx.owner_username, ctx.project_name, Path(ctx.output_dir), str(ctx.output_dir)
 
 
@@ -10782,7 +10791,9 @@ async def create_canvas_from_preset(
     不断生成副本。
     """
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+        project,
+        user,
+        require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
 
@@ -11095,7 +11106,9 @@ async def build_projection_from_preset(
     user: dict = Depends(get_api_user),
 ):
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+        project,
+        user,
+        require_home_node=False,
     )
     payload, _preset_key, facts_signature = await _build_projection_payload_for_request(
         ctx=ctx,
@@ -11130,7 +11143,9 @@ async def project_canvas_from_preset(
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+        project,
+        user,
+        require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
 
@@ -11292,7 +11307,9 @@ async def remove_canvas_projection(
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+        project,
+        user,
+        require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
 
@@ -11420,7 +11437,10 @@ async def projection_status(
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+        project,
+        user,
+        required_role="viewer",
+        require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     existing = canvas_store.read_canvas(canvas_project_dir, canvas_id)
@@ -11519,7 +11539,10 @@ async def projection_status(
 @router.get("/projects/{project}/freezone/canvases", tags=[TAG_FREEZONE_CANVAS])
 async def list_canvases(project: str, user: dict = Depends(get_api_user)):
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+        project,
+        user,
+        required_role="viewer",
+        require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     try:
@@ -11538,7 +11561,10 @@ async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+        project,
+        user,
+        required_role="viewer",
+        require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     try:
@@ -11593,7 +11619,10 @@ async def list_canvas_history(
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+        project,
+        user,
+        required_role="viewer",
+        require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     try:
@@ -11617,7 +11646,9 @@ async def restore_canvas_history(
     history_id = str(body.get("history_id") or "").strip()
     base_revision = body.get("base_revision")
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+        project,
+        user,
+        require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
 
@@ -11692,6 +11723,7 @@ async def get_node_generation_history(
         project,
         user,
         required_role="viewer",
+        require_home_node=False,
     )
     try:
         records = read_generation_history(
@@ -11743,6 +11775,7 @@ async def get_canvas_generation_history(
         project,
         user,
         required_role="viewer",
+        require_home_node=False,
     )
     try:
         records = read_canvas_generation_history(
@@ -11781,7 +11814,9 @@ async def put_canvas(
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+        project,
+        user,
+        require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
 
@@ -11849,7 +11884,9 @@ async def delete_canvas(project: str, canvas_id: str, user: dict = Depends(get_a
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
     ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+        project,
+        user,
+        require_home_node=False,
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     try:
