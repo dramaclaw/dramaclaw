@@ -1675,3 +1675,13 @@ def get_task_manager() -> TaskStateManager:
     if _task_manager is None:
         _task_manager = TaskStateManager()
     return _task_manager
+
+
+def set_task_manager(manager: Optional[TaskStateManager]) -> None:
+    """注入 TaskStateManager 实现(EE 在 bootstrap 时覆写单例)。
+
+    Args:
+        manager: 实现实例;传 None 清空,下次 get_task_manager() 重建默认单例
+    """
+    global _task_manager
+    _task_manager = manager
