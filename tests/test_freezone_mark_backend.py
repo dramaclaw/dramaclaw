@@ -1,10 +1,12 @@
 import pytest
 from PIL import Image
 
+from novelvideo import ports
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.freezone import mark_node
 from novelvideo.freezone.mark_node import build_mark_detection_task, crop_mark_focus_image
 from novelvideo.freezone.vision_gateway import FREEZONE_MARK_TIMEOUT_SECONDS
+from novelvideo.ports.local import LocalAuthz
 
 
 def test_build_mark_detection_task_includes_point() -> None:
@@ -137,6 +139,12 @@ async def test_mark_detection_route_reserves_and_confirms_feature_credit(
     monkeypatch.setattr(freezone_routes, "_resolve_url_list", lambda *_args: [str(path)])
     monkeypatch.setattr(freezone_routes, "detect_freezone_mark", fake_detect)
     monkeypatch.setattr(freezone_routes, "get_usage_meter", lambda: FakeMeter())
+    # 路由现在在积分预留之前解析出网身份（OI-54 S1），而 `get_authz_port()` 刻意
+    # 没有 PortNotRegistered 回落——有回落即 fail-open。直调路由函数的用例本就未
+    # bootstrap 端口（生产由 `api/app.py:311` / `cli.py:55` 无条件执行）。写法照
+    # `tests/test_p0g4c_video_egress.py:803`：打 `ports` 模块属性换真实实现。
+    # `LocalAuthz` 产 kind="local" → 非组织 → 什么都不绑，平台路径逐字节不变。
+    monkeypatch.setattr(ports, "get_authz_port", lambda: LocalAuthz())
 
     result = await freezone_routes.freezone_mark_detect(
         project="project_59",
@@ -219,6 +227,12 @@ async def test_mark_detection_route_refunds_feature_credit_on_failure(
     monkeypatch.setattr(freezone_routes, "_resolve_url_list", lambda *_args: [str(path)])
     monkeypatch.setattr(freezone_routes, "detect_freezone_mark", failing_detect)
     monkeypatch.setattr(freezone_routes, "get_usage_meter", lambda: FakeMeter())
+    # 路由现在在积分预留之前解析出网身份（OI-54 S1），而 `get_authz_port()` 刻意
+    # 没有 PortNotRegistered 回落——有回落即 fail-open。直调路由函数的用例本就未
+    # bootstrap 端口（生产由 `api/app.py:311` / `cli.py:55` 无条件执行）。写法照
+    # `tests/test_p0g4c_video_egress.py:803`：打 `ports` 模块属性换真实实现。
+    # `LocalAuthz` 产 kind="local" → 非组织 → 什么都不绑，平台路径逐字节不变。
+    monkeypatch.setattr(ports, "get_authz_port", lambda: LocalAuthz())
 
     with pytest.raises(freezone_routes.HTTPException) as exc_info:
         await freezone_routes.freezone_mark_detect(
