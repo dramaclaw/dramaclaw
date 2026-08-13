@@ -30,9 +30,11 @@ from novelvideo.shared.billing_errors import (
 )
 from novelvideo.shared.api_coverage import mount_api_coverage_middleware
 from novelvideo.task_backend.limits import (
+    ChannelTaskLimitExceeded,
     GlobalLaneQueueLimitExceeded,
     ProjectTaskLimitExceeded,
     ProjectUserTaskLimitExceeded,
+    UserTaskLimitExceeded,
 )
 
 logger = logging.getLogger("novelvideo.api.app")
@@ -157,6 +159,54 @@ def create_app() -> FastAPI:
                     "limit": exc.limit,
                     "queued": exc.queued,
                     "limit_scope": "global_lane_queue",
+                },
+            },
+        )
+
+    @application.exception_handler(ChannelTaskLimitExceeded)
+    async def _channel_task_limit_exceeded(
+        request: Request,
+        exc: ChannelTaskLimitExceeded,
+    ) -> JSONResponse:
+        _ = request
+        return JSONResponse(
+            status_code=429,
+            content={
+                "ok": False,
+                "error": f"当前渠道 {exc.queue_kind} 队列任务已满，请等待已有任务完成后再提交",
+                "data": {
+                    "scope_kind": exc.scope_kind,
+                    "org_id": exc.org_id,
+                    "queue_kind": exc.queue_kind,
+                    "limit": exc.limit,
+                    "active": exc.active,
+                    "limit_scope": (
+                        "platform" if exc.scope_kind == "platform" else "channel"
+                    ),
+                },
+            },
+        )
+
+    @application.exception_handler(UserTaskLimitExceeded)
+    async def _user_task_limit_exceeded(
+        request: Request,
+        exc: UserTaskLimitExceeded,
+    ) -> JSONResponse:
+        _ = request
+        return JSONResponse(
+            status_code=429,
+            content={
+                "ok": False,
+                "error": (
+                    f"你在 {exc.queue_kind} 队列的在途任务已满，"
+                    "请等待自己的任务完成后再提交"
+                ),
+                "data": {
+                    "requester_user_id": exc.requester_user_id,
+                    "queue_kind": exc.queue_kind,
+                    "limit": exc.limit,
+                    "active": exc.active,
+                    "limit_scope": "user",
                 },
             },
         )

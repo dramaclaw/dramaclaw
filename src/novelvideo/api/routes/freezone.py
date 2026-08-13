@@ -282,7 +282,11 @@ from novelvideo.project_context import (
 from novelvideo.seedance2_i2v.voice_clone import resolve_character_voice
 from novelvideo.ports import get_task_backend
 from novelvideo.task_backend.limits import (
-    ProjectTaskLimitExceeded, ProjectUserTaskLimitExceeded,
+    ChannelTaskLimitExceeded,
+    GlobalLaneQueueLimitExceeded,
+    ProjectTaskLimitExceeded,
+    ProjectUserTaskLimitExceeded,
+    UserTaskLimitExceeded,
 )
 from novelvideo.task_identity import (
     project_task_state_key,
@@ -336,7 +340,22 @@ def _raise_project_context_required(task_type: str) -> None:
 
 
 def _raise_if_task_limit_exception(exc: RuntimeError) -> None:
-    if isinstance(exc, (ProjectTaskLimitExceeded, ProjectUserTaskLimitExceeded)):
+    # Every admission-limit exception here is a RuntimeError subclass, so the
+    # wide `except RuntimeError` in the callers below would turn it into a bare
+    # 503 unless it is re-raised for the app-level 429 handler (same reason as
+    # the AuthzError branch below). GlobalLaneQueueLimitExceeded was leaking
+    # exactly that way (M8 step 7 / TCP-P44); the channel and user gates are
+    # listed as defence in depth for the EE path.
+    if isinstance(
+        exc,
+        (
+            ProjectTaskLimitExceeded,
+            ProjectUserTaskLimitExceeded,
+            GlobalLaneQueueLimitExceeded,
+            ChannelTaskLimitExceeded,
+            UserTaskLimitExceeded,
+        ),
+    ):
         raise exc
 
 
