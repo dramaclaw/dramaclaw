@@ -11,6 +11,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from importlib.metadata import entry_points
 from pathlib import Path
 from typing import BinaryIO
 
@@ -80,6 +81,45 @@ HOT_SNAPSHOT_FILTER = _filter_text(
 
 class HotSnapshotError(RuntimeError):
     """The local hot-state snapshot could not be proven complete."""
+
+
+class ControlPlaneUnavailableError(RuntimeError):
+    """The canvas writer lock could not be proven to exclude other nodes."""
+
+
+# The same entry point group ports.registry loads adapters from. A pure local
+# install leaves it empty (scripts/check_ce_port_closure.py rule 3), so a
+# non-empty group means this install carries an external adapter package — the
+# multi-node shape whose canvas writer lock lives in the control plane.
+PORTS_BOOTSTRAP_ENTRY_POINT_GROUP = "novelvideo.ports_bootstrap"
+
+
+def _external_ports_adapter_installed() -> bool:
+    # Metadata only: never import or run adapter code from the backup CLI.
+    return bool(entry_points(group=PORTS_BOOTSTRAP_ENTRY_POINT_GROUP))
+
+
+def require_canvas_lock_mutual_exclusion() -> None:
+    """Refuse to snapshot canvases when the writer lock excludes nothing.
+
+    ``canvas_write_lock`` is a per-node file lock. On a single-node install that
+    is the whole story. On an install carrying an external ports adapter the
+    writers live in other pods, so the lock only holds if it is backed by the
+    control plane; without a reachable control plane the snapshot would race
+    every writer and produce a torn copy that only surfaces at restore time.
+    """
+
+    if not _external_ports_adapter_installed():
+        return
+    if os.environ.get("ST_CONTROL_PLANE_DSN", "").strip():
+        return
+    raise ControlPlaneUnavailableError(
+        "canvas writer lock has no cross-node mutual exclusion: "
+        f"entry point group {PORTS_BOOTSTRAP_ENTRY_POINT_GROUP} is not empty "
+        "(this install carries an external ports adapter) but "
+        "ST_CONTROL_PLANE_DSN is unset; refusing to snapshot hot state with a "
+        "node-local file lock"
+    )
 
 
 @dataclass(frozen=True)
@@ -617,6 +657,7 @@ def snapshot_hot_state(state_dir: Path, snapshot_dir: Path) -> tuple[int, int, i
     changes, so rclone never interprets a transiently missed file as a deletion.
     """
 
+    require_canvas_lock_mutual_exclusion()
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     before = _hot_state_inventory(state_dir)
     for root_rel, _, _ in before.root_identities:
