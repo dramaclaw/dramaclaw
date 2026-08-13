@@ -626,12 +626,14 @@ async def _stream_project_turn(
 async def _stream_home_turn(
     *,
     websocket: WebSocket,
+    user: dict[str, Any],
     username: str,
     scope: ChatScope,
     text: str,
     attachments: list[ChatAttachmentIn],
     turn_id: str,
 ) -> None:
+    from novelvideo.chat.hermes_egress import HOME_SCOPE_EGRESS_PROJECT_ID
     from novelvideo.chat.hermes_pool import pool as hermes_pool
 
     before_projects = set(list_user_projects(username))
@@ -652,11 +654,47 @@ async def _stream_home_turn(
         media=_attachment_payloads(attachments),
         turn_id=turn_id,
     )
-    thread = await hermes_pool.get_for_user(
-        username,
-        scope_kind="home",
-        project_id=None,
-    )
+    # home 态请求路径上唯一的出网身份绑定点。`_stream_home_turn` 是一段绕开
+    # `chat/service.py` 的独立流式循环，所以绑定必须在这里就地做——OI-61 只补了
+    # project 态，home 态因此漏到了 OI-63。
+    #
+    # 身份解析复用既有 helper，不另发明第二条信任链；home 分支会落到
+    # `user_id_from_api_user(user)`。
+    #
+    # 出网 project 身份用哨兵 `HOME_SCOPE_EGRESS_PROJECT_ID`：`TrustedEgressContext`
+    # 的 `project_id` 有非空不变量，而 home 态的**会话**身份必须是 None。两者是
+    # 两个口径，所以下面 `get_for_user` 里 `project_id` 与 `egress_project_id`
+    # 各传各的——哨兵只喂出网比对，不得漏进子进程的 DRAMACLAW_PROJECT_ID。
+    #
+    # 哨兵必须两跳一致：绑定、换 authorization、取号三处同值，否则
+    # `_strict_admission` 在 `authorize_credentialed_hermes` 与
+    # `build_hermes_child_env` 两处各比一次，任一处不一致即 TASK_ENVELOPE_INVALID。
+    #
+    # 非组织身份下 `request_egress_scope` 什么都不绑并 yield `None`，
+    # `authorize_hermes_launch` 随之返回 `None`，平台路径逐字节不变。
+    # 刻意不写成 if/else 两条调用路径。
+    requester_user_id = await _requester_user_id_for_chat(user, scope)
+    async with request_egress_scope(
+        requester_user_id=requester_user_id,
+        project_id=HOME_SCOPE_EGRESS_PROJECT_ID,
+        task_type=HERMES_TEXT_EGRESS_TASK_TYPE,
+    ) as egress_context:
+        authorization = await chat_service.authorize_hermes_launch(
+            egress_context=egress_context,
+            username=username,
+            requester_user_id=requester_user_id,
+            egress_project_id=HOME_SCOPE_EGRESS_PROJECT_ID,
+            prompt=agent_text,
+        )
+        thread = await hermes_pool.get_for_user(
+            username,
+            scope_kind="home",
+            # 会话身份：home 态恒为 None。出网身份走 egress_project_id。
+            project_id=None,
+            egress_project_id=HOME_SCOPE_EGRESS_PROJECT_ID,
+            requester_user_id=requester_user_id,
+            authorization=authorization,
+        )
 
     assistant_text = ""
     assistant_sent_text = ""
@@ -928,6 +966,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                 elif scope.kind == "home":
                     await _stream_home_turn(
                         websocket=websocket,
+                        user=user,
                         username=username,
                         scope=scope,
                         text=text,
