@@ -38,6 +38,8 @@ import {
   resolveNodeDisplayName,
 } from '@/features/canvas/domain/nodeDisplay';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
+import { stashExternalFile } from '@/features/canvas/application/pendingExternalFiles';
+import { useExternalFileHandoff } from '@/features/canvas/hooks/useExternalFileHandoff';
 import { isVideoFile, VIDEO_FILE_ACCEPT } from '@/features/canvas/application/videoFileTypes';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
@@ -501,8 +503,9 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
         sourceFileName: file.name,
       });
       if (!ok) return;
-      // Re-dispatch in a microtask so the new node mounts its subscription
-      // before the event fires.
+      // File 走暂存、事件只是敲一下：变形后的 video 节点在低缩放档同样先以 LOD
+      // shell 挂载，晚于下面这一帧才挂上订阅（见 [[pendingExternalFiles]]）。
+      stashExternalFile('video-node/external-file', id, file);
       requestAnimationFrame(() => {
         canvasEventBus.publish('video-node/external-file', { nodeId: id, file });
       });
@@ -521,8 +524,8 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
         sourceFileName: file.name,
       });
       if (!ok) return;
-      // Re-dispatch in a microtask so the new node mounts its subscription
-      // before the event fires.
+      // 同 morphToVideoWithFile：File 走暂存，事件只是敲一下。
+      stashExternalFile('audio-node/external-file', id, file);
       requestAnimationFrame(() => {
         canvasEventBus.publish('audio-node/external-file', { nodeId: id, file });
       });
@@ -604,14 +607,15 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
     });
   }, [id, processFile]);
 
-  useEffect(() => {
-    return canvasEventBus.subscribe('upload-node/external-file', ({ nodeId, file }) => {
-      if (nodeId !== id) {
-        return;
-      }
+  const consumeExternalFile = useCallback(
+    (file: File) => {
       void handleMediaFile(file);
-    });
-  }, [id, handleMediaFile]);
+    },
+    [handleMediaFile],
+  );
+  // File 本体走 pendingExternalFiles 暂存、挂载时补投 —— 低缩放档下本节点先以 LOD
+  // shell 挂载，只订阅事件会漏掉投递（见 useExternalFileHandoff）。
+  useExternalFileHandoff('upload-node/external-file', id, consumeExternalFile);
 
   const handleNodeClick = useCallback(() => {
     setSelectedNode(id);

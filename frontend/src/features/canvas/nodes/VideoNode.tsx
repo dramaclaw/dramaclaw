@@ -109,6 +109,7 @@ import {
   useAlbumPendingTotal,
 } from "@/features/canvas/nodes/shared/albumPendingTotals";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
+import { useExternalFileHandoff } from "@/features/canvas/hooks/useExternalFileHandoff";
 import {
   extractUpstreamContent,
   joinUpstreamText,
@@ -1388,15 +1389,16 @@ export const VideoNode = memo(
       });
     }, [id]);
 
-    useEffect(() => {
-      return canvasEventBus.subscribe(
-        "video-node/external-file",
-        ({ nodeId, file }) => {
-          if (nodeId !== id || !isVideoFile(file)) return;
-          void processFile(file);
-        },
-      );
-    }, [id, processFile]);
+    const consumeExternalFile = useCallback(
+      (file: File) => {
+        if (!isVideoFile(file)) return;
+        void processFile(file);
+      },
+      [processFile],
+    );
+    // File 本体走 pendingExternalFiles 暂存、挂载时补投 —— 低缩放档下本节点先以
+    // LOD shell 挂载，只订阅事件会漏掉投递（见 useExternalFileHandoff）。
+    useExternalFileHandoff("video-node/external-file", id, consumeExternalFile);
 
     // First time an upstream image becomes available, flip the gen mode so the
     // video actually consumes it. 默认模式按模型能力选（videoUpstreamImageDefaultMode）：

@@ -357,6 +357,7 @@ frontend/src/__tests__/features/canvas/cross-project-assets.test.ts,Elastic-2.0,
 frontend/src/__tests__/features/canvas/director-control-bundle-badge.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/director-world-sources.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/duplicate-group-nodes.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/external-file-handoff-low-zoom.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/fixed-feature-model-request.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/fixed-feature-overlay-submit.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/generation-resume-race.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -808,6 +809,7 @@ frontend/src/features/canvas/application/matteClient.ts,Elastic-2.0,2026 SuperTa
 frontend/src/features/canvas/application/matteWorker.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/nodeCatalog.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/nodeFactory.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/application/pendingExternalFiles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/ports.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/referenceTokenEditing.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/application/regenerateExportNode.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -863,6 +865,7 @@ frontend/src/features/canvas/edges/edgeRouting.ts,Elastic-2.0,2026 SuperTale con
 frontend/src/features/canvas/edges/index.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/hooks/useCanvasGenerationHistory.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/hooks/useDetachUpstream.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/hooks/useExternalFileHandoff.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/hooks/useFreezoneCameraOptions.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/hooks/useFreezoneImageModels.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/hooks/useFreezoneStyleTemplates.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
