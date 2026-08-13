@@ -29,6 +29,7 @@ from typing import Any, Awaitable, Callable
 
 from novelvideo.chat.hermes_sdk import HermesSdkClient, HermesSdkThread
 from novelvideo.chat.hermes_egress import (
+    EgressBoundaryError,
     HermesLaunchAuthorization,
     build_hermes_child_env,
 )
@@ -273,7 +274,7 @@ class HermesPool:
                 username,
                 model=model,
                 scope_kind=scope_kind,
-                project_id=project_id,
+                session_project_id=project_id,
                 authorization=authorization,
             )
             slot.authz_generation = authz_generation
@@ -315,10 +316,19 @@ class HermesPool:
         *,
         model: str | None,
         scope_kind: str,
-        project_id: str | None,
+        session_project_id: str | None,
+        egress_project_id: str | None = None,
         resume_session_id: str | None = None,
         authorization: HermesLaunchAuthorization | None = None,
     ) -> _WorkerSlot:
+        """Spawn a worker slot.
+
+        ``session_project_id`` carries the session/workspace project identity
+        (NULL in home scope). ``egress_project_id`` carries only the identity
+        compared against a trusted egress context; the two cannot be the same
+        parameter because home scope requires NULL for the former and a
+        non-empty value for the latter.
+        """
         cli_path = _hermes_cli_path()
         if not cli_path.exists():
             raise RuntimeError(
@@ -334,14 +344,15 @@ class HermesPool:
             agent_kind="hermes",
             worker_id=worker_id,
             current_scope_kind=scope_kind,
-            current_project_id=project_id,
+            current_project_id=session_project_id,
         )
-        project_env = await self._project_env(username, project_id)
+        project_env = await self._project_env(username, session_project_id)
         env = self._build_env(
             home,
             username,
             token,
-            project_id=project_id,
+            project_id=session_project_id,
+            egress_project_id=egress_project_id,
             project_env=project_env,
             authorization=authorization,
         )
@@ -354,7 +365,7 @@ class HermesPool:
         )
         session_id = (
             resume_session_id
-            or self._session_id_for(username, scope_kind, project_id)
+            or self._session_id_for(username, scope_kind, session_project_id)
             or ""
         ).strip()
         thread = (
@@ -374,7 +385,7 @@ class HermesPool:
             token=token,
             model=model,
             scope_kind=scope_kind,
-            project_id=project_id,
+            project_id=session_project_id,
             gateway_fingerprint=(
                 "" if authorization is not None else effective_gateway_fingerprint()
             ),
@@ -437,7 +448,7 @@ class HermesPool:
             slot.username,
             model=model if model is not None else slot.model,
             scope_kind=scope_kind,
-            project_id=project_id,
+            session_project_id=project_id,
             resume_session_id=resume_session_id,
         )
         _log.info(
@@ -508,11 +519,19 @@ class HermesPool:
         token: AgentSessionToken,
         *,
         project_id: str | None,
+        egress_project_id: str | None = None,
         project_env: dict[str, str] | None = None,
         authorization: HermesLaunchAuthorization | None = None,
     ) -> dict[str, str]:
-        """Build the strict environment passed only to this Hermes worker."""
+        """Build the strict environment passed only to this Hermes worker.
+
+        ``project_id`` feeds the child process environment; ``egress_project_id``
+        feeds only the trusted-context admission check and must be supplied
+        whenever an authorization is present.
+        """
         if authorization is not None:
+            if not egress_project_id:
+                raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
             agent_token_env = {
                 "DRAMACLAW_AGENT_TOKEN": token.value,
                 "DRAMACLAW_AGENT_TOKEN_TYPE": "Bearer",
@@ -526,9 +545,11 @@ class HermesPool:
             return build_hermes_child_env(
                 home=home,
                 username=username,
+                requester_user_id=authorization.context.requester_user_id,
                 api_url=self._api_url,
                 agent_token_env=agent_token_env,
                 project_id=project_id,
+                egress_project_id=egress_project_id,
                 project_env=project_env,
                 authorization=authorization,
             )

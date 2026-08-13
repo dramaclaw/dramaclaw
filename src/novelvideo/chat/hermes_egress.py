@@ -20,6 +20,20 @@ from novelvideo.ports.egress_operations import (
 from novelvideo.ports.model_credentials import CredentialReference, RequestCredential
 from novelvideo.task_backend.subprocesses import EgressBoundaryError
 
+HOME_SCOPE_EGRESS_PROJECT_ID = "__home__"
+"""home 态出网身份用的 project 哨兵值（本模块只定义，暂无产品代码消费）。
+
+home 态的 chat 会话同时受两个互斥约束挤压：
+`agent_sessions.current_project_id` 在 home 态必须是 NULL（EE 侧 agent_sessions
+迁移上的 home-project-null CHECK），而 `TrustedEgressContext.project_id` 有非空
+不变量（`egress_context.py` 的 `__post_init__` 必填字段循环）。同一个值满足不了
+两边，所以出网身份与会话身份被拆成两个形参：会话侧继续传 `None`，出网侧传本哨兵。
+
+写进账本是合法的：EE 侧的 egress_operations 迁移把 `project_id` 定义成 TEXT NOT NULL，
+只校验 `btrim(...) <> ''`，**没有指向 projects 的外键**，所以哨兵不需要对应一条真实
+project 记录。真实 project id 是 ULID（26 位 Crockford base32），取值域与本哨兵不相交。
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class HermesLaunchAuthorization:
@@ -56,12 +70,15 @@ class HermesLaunchAuthorization:
 def _strict_admission(
     context: TrustedEgressContext,
     *,
-    username: str,
+    requester_user_id: str,
     project_id: str,
 ) -> AdmissionContext:
     if type(context) is not TrustedEgressContext:
         raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
-    if context.requester_user_id != username or context.project_id != project_id:
+    if (
+        context.requester_user_id != requester_user_id
+        or context.project_id != project_id
+    ):
         raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
     if type(context.billing_principal) is not BillingPrincipal:
         raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
@@ -86,14 +103,22 @@ async def authorize_credentialed_hermes(
     *,
     context: TrustedEgressContext,
     username: str,
+    requester_user_id: str,
     project_id: str,
     prompt: str,
     credential_resolver: Any,
     operation_port: Any,
 ) -> HermesLaunchAuthorization:
-    """Claim the operation, then resolve the exact frozen Gateway reference."""
+    """Claim the operation, then resolve the exact frozen Gateway reference.
 
-    admission = _strict_admission(context, username=username, project_id=project_id)
+    ``username`` is the login name and is kept for the caller's workspace/env
+    plumbing; identity admission is decided by ``requester_user_id`` alone —
+    the two are different values in this repo.
+    """
+
+    admission = _strict_admission(
+        context, requester_user_id=requester_user_id, project_id=project_id
+    )
     credential = context.credential
     organization_id = credential.org_id or context.billing_principal.id
     spec = OperationSpec(
@@ -131,16 +156,26 @@ def build_hermes_child_env(
     *,
     home: Path,
     username: str,
+    requester_user_id: str,
     api_url: str,
     agent_token_env: dict[str, str],
     project_id: str | None,
+    egress_project_id: str,
     project_env: dict[str, str] | None,
     authorization: HermesLaunchAuthorization,
 ) -> dict[str, str]:
-    """Build a minimal child env without consulting workspace/process credentials."""
+    """Build a minimal child env without consulting workspace/process credentials.
+
+    ``project_id`` and ``egress_project_id`` are deliberately separate: the
+    former is the session/project identity handed to the child process as
+    ``DRAMACLAW_PROJECT_ID`` (absent in home scope), the latter is the identity
+    compared against the trusted egress context. In home scope they differ.
+    """
 
     context = authorization.context
-    _strict_admission(context, username=username, project_id=project_id or "")
+    _strict_admission(
+        context, requester_user_id=requester_user_id, project_id=egress_project_id
+    )
     env = {
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "LANG": os.environ.get("LANG", "C.UTF-8"),
@@ -173,6 +208,7 @@ def build_hermes_child_env(
 
 
 __all__ = [
+    "HOME_SCOPE_EGRESS_PROJECT_ID",
     "EgressBoundaryError",
     "HermesLaunchAuthorization",
     "authorize_credentialed_hermes",

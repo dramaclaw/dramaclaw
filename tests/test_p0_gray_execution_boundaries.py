@@ -20,7 +20,7 @@ def _context(*, kind: str = "organization") -> TrustedEgressContext:
         envelope_id="envelope-1",
         project_id="project-1",
         task_type="chat",
-        requester_user_id="user-1",
+        requester_user_id="user-id-1",
         root_task_id="root-1",
         admission_id="admission-1",
         admitted_at="2026-08-03T04:05:00Z",
@@ -107,6 +107,7 @@ async def test_c1_eg07_pos_claims_then_resolves_exact_gateway_credential(monkeyp
     authorization = await authorize_credentialed_hermes(
         context=_context(),
         username="user-1",
+        requester_user_id="user-id-1",
         project_id="project-1",
         prompt="hello",
         credential_resolver=resolver,
@@ -134,6 +135,7 @@ async def test_c1_eg07_nofb_rejects_forged_lineage_before_claim_or_resolve(monke
         await authorize_credentialed_hermes(
             context=_context(),
             username="different-user",
+            requester_user_id="different-user",
             project_id="project-1",
             prompt="hello",
             credential_resolver=resolver,
@@ -163,6 +165,7 @@ async def test_c1_eg07_nofb_existing_operation_never_resolves_or_restarts(state)
         await authorize_credentialed_hermes(
             context=_context(),
             username="user-1",
+            requester_user_id="user-id-1",
             project_id="project-1",
             prompt="hello",
             credential_resolver=resolver,
@@ -189,6 +192,7 @@ async def test_c1_eg07_resolver_failure_marks_safe_rejected_before_submit():
         await authorize_credentialed_hermes(
             context=_context(),
             username="user-1",
+            requester_user_id="user-id-1",
             project_id="project-1",
             prompt="hello",
             credential_resolver=_FailingResolver(),
@@ -229,9 +233,11 @@ def test_c1_eg07_child_env_is_minimal_and_ignores_process_provider_secrets(
     env = build_hermes_child_env(
         home=tmp_path,
         username="user-1",
+        requester_user_id="user-id-1",
         api_url="http://127.0.0.1:8780",
         agent_token_env={"DRAMACLAW_AGENT_TOKEN": "agent-token"},
         project_id="project-1",
+        egress_project_id="project-1",
         project_env={"DRAMACLAW_PROJECT_OUTPUT_DIR": str(tmp_path / "output")},
         authorization=authorization,
     )
@@ -445,6 +451,7 @@ def test_c1_eg07_pool_build_env_consumes_authorization_not_workspace_gateway(
         "user-1",
         token,
         project_id="project-1",
+        egress_project_id="project-1",
         project_env={"DRAMACLAW_PROJECT_OUTPUT_DIR": str(tmp_path / "output")},
         authorization=authorization,
     )
@@ -544,3 +551,242 @@ async def test_c1_eg20a_freezone_runner_uses_restricted_subprocess(
     assert launches[0][1]["egress_context"] == _context()
     assert launches[0][1]["restricted_policy"].command == ("ffmpeg", "-version")
     assert all("KEY" not in name for name in launches[0][1]["restricted_policy"].env)
+
+
+# --- OI54-S3: hermes 签名前置切片的钉子 ---------------------------------------
+# username（登录名）与 requester_user_id（user id）在本仓是两个不同的值；
+# 出网闸门只认后者。下面这组用例把这条口径、以及 project 身份的两层拆分钉住。
+
+
+def _authorization():
+    from novelvideo.chat.hermes_egress import HermesLaunchAuthorization
+
+    return HermesLaunchAuthorization.for_test(
+        context=_context(),
+        credential=RequestCredential(
+            reference=_context().credential,
+            api_key="gw-request-secret",
+            base_url="https://gateway.example/v1",
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_c1_s3_01_admission_matches_user_id_not_login_name():
+    from novelvideo.chat.hermes_egress import authorize_credentialed_hermes
+
+    resolver = _Resolver()
+    operations = _Operations()
+    authorization = await authorize_credentialed_hermes(
+        context=_context(),
+        username="a-login-name-that-is-not-the-user-id",
+        requester_user_id="user-id-1",
+        project_id="project-1",
+        prompt="hello",
+        credential_resolver=resolver,
+        operation_port=operations,
+    )
+
+    assert authorization.credential.api_key == "gw-request-secret"
+
+
+@pytest.mark.asyncio
+async def test_c1_s3_02_nofb_mismatched_user_id_rejected_before_claim_or_resolve():
+    from novelvideo.chat.hermes_egress import (
+        EgressBoundaryError,
+        authorize_credentialed_hermes,
+    )
+
+    resolver = _Resolver()
+    operations = _Operations()
+    with pytest.raises(EgressBoundaryError) as exc_info:
+        await authorize_credentialed_hermes(
+            context=_context(),
+            username="user-1",
+            requester_user_id="not-the-context-user-id",
+            project_id="project-1",
+            prompt="hello",
+            credential_resolver=resolver,
+            operation_port=operations,
+        )
+
+    assert exc_info.value.code == "TASK_ENVELOPE_INVALID"
+    assert resolver.admissions == []
+    assert operations.specs == []
+
+
+@pytest.mark.asyncio
+async def test_c1_s3_03_login_name_does_not_participate_in_admission():
+    from novelvideo.chat.hermes_egress import authorize_credentialed_hermes
+
+    for login_name in ("user-1", "someone-else-entirely"):
+        resolver = _Resolver()
+        operations = _Operations()
+        authorization = await authorize_credentialed_hermes(
+            context=_context(),
+            username=login_name,
+            requester_user_id="user-id-1",
+            project_id="project-1",
+            prompt="hello",
+            credential_resolver=resolver,
+            operation_port=operations,
+        )
+        assert authorization.credential.api_key == "gw-request-secret"
+
+
+def test_c1_s3_04_home_scope_env_has_no_project_id_but_egress_identity_matches(
+    tmp_path,
+):
+    from novelvideo.chat.hermes_egress import build_hermes_child_env
+
+    env = build_hermes_child_env(
+        home=tmp_path,
+        username="user-1",
+        requester_user_id="user-id-1",
+        api_url="http://127.0.0.1:8780",
+        agent_token_env={"DRAMACLAW_AGENT_TOKEN": "agent-token"},
+        project_id=None,
+        egress_project_id="project-1",
+        project_env=None,
+        authorization=_authorization(),
+    )
+
+    assert "DRAMACLAW_PROJECT_ID" not in env
+    assert env["NEWAPI_API_KEY"] == "gw-request-secret"
+
+
+def test_c1_s3_05_project_scope_env_keeps_project_id_and_minimal_allowlist(tmp_path):
+    from novelvideo.chat.hermes_egress import build_hermes_child_env
+
+    env = build_hermes_child_env(
+        home=tmp_path,
+        username="user-1",
+        requester_user_id="user-id-1",
+        api_url="http://127.0.0.1:8780",
+        agent_token_env={"DRAMACLAW_AGENT_TOKEN": "agent-token"},
+        project_id="project-1",
+        egress_project_id="project-1",
+        project_env={"DRAMACLAW_PROJECT_OUTPUT_DIR": str(tmp_path / "output")},
+        authorization=_authorization(),
+    )
+
+    assert env["DRAMACLAW_PROJECT_ID"] == "project-1"
+    assert set(env) <= {
+        "PATH",
+        "LANG",
+        "LC_ALL",
+        "HOME",
+        "HERMES_HOME",
+        "TMPDIR",
+        "DRAMACLAW_USER",
+        "DRAMACLAW_AGENT_TOKEN",
+        "DRAMACLAW_API_URL",
+        "DRAMACLAW_PROJECT_ID",
+        "DRAMACLAW_PROJECT_OUTPUT_DIR",
+        "NEWAPI_API_KEY",
+        "NEWAPI_BASE_URL",
+    }
+
+
+def test_c1_s3_06_nofb_egress_project_mismatch_rejects_child_env(tmp_path):
+    from novelvideo.chat.hermes_egress import (
+        EgressBoundaryError,
+        build_hermes_child_env,
+    )
+
+    with pytest.raises(EgressBoundaryError) as exc_info:
+        build_hermes_child_env(
+            home=tmp_path,
+            username="user-1",
+            requester_user_id="user-id-1",
+            api_url="http://127.0.0.1:8780",
+            agent_token_env={"DRAMACLAW_AGENT_TOKEN": "agent-token"},
+            project_id="project-1",
+            egress_project_id="another-project",
+            project_env=None,
+            authorization=_authorization(),
+        )
+
+    assert exc_info.value.code == "TASK_ENVELOPE_INVALID"
+
+
+def test_c1_s3_07_nofb_authorized_launch_without_egress_project_id_is_rejected(
+    tmp_path,
+):
+    from novelvideo.chat import hermes_pool
+    from novelvideo.chat.hermes_egress import EgressBoundaryError
+    from novelvideo.ports.auth_contract import AgentSessionToken
+
+    token = AgentSessionToken(
+        value="agent-token",
+        session_id="session-1",
+        user="user-1",
+        exp=9999999999,
+        scopes=("projects:read",),
+        worker_id="worker-1",
+    )
+    with pytest.raises(EgressBoundaryError) as exc_info:
+        hermes_pool.HermesPool()._build_env(
+            tmp_path,
+            "user-1",
+            token,
+            project_id=None,
+            egress_project_id=None,
+            project_env=None,
+            authorization=_authorization(),
+        )
+
+    assert exc_info.value.code == "TASK_ENVELOPE_INVALID"
+
+
+def test_c1_s3_08_home_scope_sentinel_is_frozen_and_context_legal():
+    from novelvideo.chat.hermes_egress import HOME_SCOPE_EGRESS_PROJECT_ID
+
+    assert HOME_SCOPE_EGRESS_PROJECT_ID == "__home__"
+
+    base = _context()
+    context = TrustedEgressContext(
+        envelope_id=base.envelope_id,
+        project_id=HOME_SCOPE_EGRESS_PROJECT_ID,
+        task_type=base.task_type,
+        requester_user_id=base.requester_user_id,
+        root_task_id=base.root_task_id,
+        admission_id=base.admission_id,
+        admitted_at=base.admitted_at,
+        membership_id=base.membership_id,
+        authz_version=base.authz_version,
+        billing_principal=base.billing_principal,
+        credential=base.credential,
+    )
+    assert context.project_id == HOME_SCOPE_EGRESS_PROJECT_ID
+
+
+def test_c1_s3_04b_pool_build_env_home_scope_keeps_the_two_project_ids_apart(tmp_path):
+    """home 态：会话 project 是 None，出网 project 是真值——两者必须各走各的形参。
+
+    这条钉的是 `_build_env` 这一层的接线：把 `egress_project_id` 错接成
+    `session project_id` 时，home 态会拿空串去比对，闸门当场拒绝。
+    """
+    from novelvideo.chat import hermes_pool
+    from novelvideo.ports.auth_contract import AgentSessionToken
+
+    token = AgentSessionToken(
+        value="agent-token",
+        session_id="session-1",
+        user="user-1",
+        exp=9999999999,
+        scopes=("projects:read",),
+        worker_id="worker-1",
+    )
+    env = hermes_pool.HermesPool()._build_env(
+        tmp_path,
+        "user-1",
+        token,
+        project_id=None,
+        egress_project_id="project-1",
+        project_env=None,
+        authorization=_authorization(),
+    )
+
+    assert "DRAMACLAW_PROJECT_ID" not in env
+    assert env["NEWAPI_API_KEY"] == "gw-request-secret"

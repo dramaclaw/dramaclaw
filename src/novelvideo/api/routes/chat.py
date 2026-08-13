@@ -27,7 +27,11 @@ from novelvideo.api.deps import list_user_projects
 from novelvideo.chat import service as chat_service
 from novelvideo.chat.store import ChatScope, chat_store
 from novelvideo.ports import get_usage_meter
-from novelvideo.project_context import ProjectContext, resolve_project_context
+from novelvideo.project_context import (
+    ProjectContext,
+    resolve_project_context,
+    user_id_from_api_user,
+)
 from novelvideo.shared.billing_errors import (
     BILLING_RULE_NOT_CONFIGURED_MESSAGE,
     INSUFFICIENT_CREDITS_MESSAGE,
@@ -350,10 +354,7 @@ async def _requester_user_id_for_chat(user: dict[str, Any], scope: ChatScope) ->
         project_ctx = await _project_context_for_scope(user, scope)
         if project_ctx is not None and project_ctx.requester_user_id:
             return project_ctx.requester_user_id
-    user_id = str(user.get("id") or user.get("user_id") or "").strip()
-    if user_id:
-        return user_id
-    return str(user.get("username") or "").strip()
+    return await user_id_from_api_user(user)
 
 
 async def _require_ai_assistant_access(
