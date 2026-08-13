@@ -90,7 +90,10 @@ async def test_start_sketch_edit_execute_enqueues_project_task(tmp_path, monkeyp
     assert result["task_id"] == "task-1"
     assert result["backend"] == "celery"
     assert calls[0]["task_type"] == "sketch_edit_execute"
-    assert calls[0]["queue_kind"] == "sketch"
+    # TCP-P55: "sketch" was never a lane in QUEUE_KINDS; this assertion mirrored
+    # the literal at verification/routes.py:210 and kept it invisible because the
+    # backend is mocked here. "default" is the lane this endpoint actually used.
+    assert calls[0]["queue_kind"] == "default"
     assert calls[0]["episode"] == 1
     assert calls[0]["payload"] == {
         "episode": 1,
