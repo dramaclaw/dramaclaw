@@ -46,6 +46,7 @@ export const FEATURE_MODEL_PROVIDERS: readonly FeatureModelProvider[] = [
   'xunfei',
   '360',
   'openrouter',
+  'orcarouter',
   'aiproxylibrary',
   'fastgpt',
   'tencent',

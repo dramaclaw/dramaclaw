@@ -94,6 +94,8 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 
 按渠道填写 API Key，然后点击 **保存并应用全部配置**。Key 独立保存，不会写入配置 JSON；已经保存的 Key 可以留空，重新输入会替换旧值。
 
+OrcaRouter 是内置的 OpenAI 兼容渠道。在 **我的配置** 中将 `"provider"` 设为 `"orcarouter"`，同时设置对应的 `channels[].id` 为 `"orcarouter"`，上游 Key 填写 `ORCAROUTER_API_KEY`；模型名使用带命名空间的写法（例如 `openai/gpt-5.5`）。
+
 内置推荐配置是只读模板。切换到 **我的配置** 后可以编辑 JSON，保存后的个人配置会在下次打开时恢复。JSON 的主要结构如下：
 
 ```json

@@ -98,6 +98,7 @@ export async function fetchCanvasGenerationHistory(
 export type FreezoneProvider =
   | "newapi"
   | "openrouter"
+  | "orcarouter"
   | "huimeng"
   | "openai";
 
@@ -930,6 +931,7 @@ function normalizeProviderId(raw: string | null): FreezoneProvider | null {
     lowered === "newapi" ||
     lowered === "huimeng" ||
     lowered === "openrouter" ||
+    lowered === "orcarouter" ||
     lowered === "openai"
   ) {
     return lowered;

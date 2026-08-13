@@ -2268,6 +2268,7 @@ const FEATURE_PROVIDER_LABELS: Record<string, string> = {
   xunfei: "Xunfei",
   "360": "360",
   openrouter: "OpenRouter",
+  orcarouter: "OrcaRouter",
   aiproxylibrary: "AIProxyLibrary",
   fastgpt: "FastGPT",
   tencent: "Tencent",

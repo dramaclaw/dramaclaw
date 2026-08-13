@@ -64,6 +64,11 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "type": 20,
         "base_url": "https://openrouter.ai/api",
     },
+    "orcarouter": {
+        "label": "OrcaRouter",
+        "type": 1,
+        "base_url": "https://api.orcarouter.ai/v1",
+    },
     "aiproxylibrary": {
         "label": "AIProxyLibrary",
         "type": 21,
