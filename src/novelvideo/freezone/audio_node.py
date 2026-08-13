@@ -413,24 +413,25 @@ async def _resolve_voice_ref(
     return None
 
 
-async def generate_freezone_audio_speech(
+async def resolve_speech_voice(
     *,
     store,
     username: str,
     project: str,
     account_voice_username: str | None = None,
     project_dir: Path,
-    job_id: str,
-    text: str,
-    emotion_prompt: str = "",
     voice_ref: dict | None = None,
-    egress_context: TrustedEgressContext | None = None,
-) -> FreezoneAudioSpeechResult:
-    """Generate standalone Freezone speech using the project narrator reference."""
-    clean_text = str(text or "").strip()
-    if not clean_text:
-        raise ValueError("text is required")
+) -> tuple[str, FreezoneVoiceRefResolution]:
+    """Resolve narration style + reference voice from project-bound state.
 
+    This is the body that used to sit inline in
+    :func:`generate_freezone_audio_speech`; it is unchanged, only lifted out so
+    the very same resolution can run **at dispatch time** on the home node
+    instead of on the worker (B2 §6.4 step 8). Everything it touches is home
+    node bound: ``load_effective_narration_style_for_voice`` /
+    ``load_narrator_reference_audio`` read the project state dir, and
+    ``store.list_characters()`` reads the project SQLite.
+    """
     narration_style = load_effective_narration_style_for_voice(username, project)
     selected_voice = await _resolve_voice_ref(
         store=store,
@@ -456,6 +457,97 @@ async def generate_freezone_audio_speech(
             voice.audio_path,
             voice.sha256,
             voice.source or "project_narrator",
+        )
+    return narration_style, selected_voice
+
+
+async def project_voice_selection(
+    *,
+    store,
+    username: str,
+    project: str,
+    account_voice_username: str | None = None,
+    project_dir: Path,
+    voice_ref: dict | None = None,
+) -> dict[str, str]:
+    """Project the resolved voice into a JSON-serializable task payload field.
+
+    Callers run this while they still have the project store at hand and put
+    the result under ``payload["resolved_voice"]``; the worker then needs no
+    project-bound state to synthesize. Paths stay absolute under ``OUTPUT_DIR``,
+    which is the shared surface (only the project SQLite and the state dir are
+    home node bound).
+    """
+    narration_style, selected_voice = await resolve_speech_voice(
+        store=store,
+        username=username,
+        project=project,
+        account_voice_username=account_voice_username,
+        project_dir=project_dir,
+        voice_ref=voice_ref,
+    )
+    return {
+        "narration_style": narration_style,
+        "audio_path": str(selected_voice.audio_path),
+        "sha256": selected_voice.sha256,
+        "source": selected_voice.source,
+    }
+
+
+def voice_selection_from_projection(
+    resolved_voice: dict,
+) -> tuple[str, FreezoneVoiceRefResolution]:
+    """Rebuild the resolution from what :func:`project_voice_selection` emitted."""
+    audio_path = str(resolved_voice.get("audio_path") or "").strip()
+    if not audio_path:
+        raise ValueError("resolved_voice.audio_path is required")
+    return (
+        str(resolved_voice.get("narration_style") or ""),
+        FreezoneVoiceRefResolution(
+            Path(audio_path),
+            str(resolved_voice.get("sha256") or ""),
+            str(resolved_voice.get("source") or "project_narrator"),
+        ),
+    )
+
+
+async def generate_freezone_audio_speech(
+    *,
+    store=None,
+    username: str,
+    project: str,
+    account_voice_username: str | None = None,
+    project_dir: Path,
+    job_id: str,
+    text: str,
+    emotion_prompt: str = "",
+    voice_ref: dict | None = None,
+    resolved_voice: dict | None = None,
+    egress_context: TrustedEgressContext | None = None,
+) -> FreezoneAudioSpeechResult:
+    """Generate standalone Freezone speech using the project narrator reference.
+
+    ``resolved_voice`` is the dispatch-time projection built by
+    :func:`project_voice_selection`. When it is supplied nothing project-bound
+    is read here and ``store`` may be ``None``; when it is absent the voice is
+    resolved exactly as before.
+    """
+    clean_text = str(text or "").strip()
+    if not clean_text:
+        raise ValueError("text is required")
+
+    if resolved_voice is not None:
+        narration_style, selected_voice = voice_selection_from_projection(
+            resolved_voice
+        )
+    else:
+        narration_style, selected_voice = await resolve_speech_voice(
+            store=store,
+            username=username,
+            project=project,
+            account_voice_username=account_voice_username,
+            project_dir=project_dir,
+            voice_ref=voice_ref,
         )
 
     output_path = freezone_audio_speech_output_path(project_dir, job_id)

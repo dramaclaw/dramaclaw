@@ -6,8 +6,19 @@ QUEUE_KINDS = {"default", "video", "world", "ffmpeg"}
 
 
 def normalize_queue_kind(kind: str | None) -> str:
-    value = (kind or "default").strip().lower()
-    return value if value in QUEUE_KINDS else "default"
+    """Normalize a lane name, rejecting unknown ones instead of falling back.
+
+    A misspelled lane used to land silently in ``default``. Once lanes carry
+    their own quotas that fallback hides the mistake instead of reporting it,
+    so an unknown lane is now a hard error.
+
+    An absent lane (``None`` or blank) still means ``default`` — that is what
+    "no lane given" has always meant here, and it is not a misspelling.
+    """
+    value = (kind or "default").strip().lower() or "default"
+    if value not in QUEUE_KINDS:
+        raise ValueError(f"unknown queue kind: {kind!r}")
+    return value
 
 
 def queue_name(home_node_id: str, kind: str | None = None) -> str:
