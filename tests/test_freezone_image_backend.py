@@ -2608,6 +2608,169 @@ async def test_put_canvas_lock_busy_returns_503(
 
 
 @pytest.mark.asyncio
+async def test_put_canvas_lease_lost_returns_503(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TCP-EU-C4 · 丢租约走的是同一个错误面（B2 §3.3.3）。
+
+    `CanvasLeaseLost` 继承 `CanvasLockBusy`，所以上面那条用例本来就会自动接住它。
+    照它的形状再写一条 lease 版本，是为了证明「路由零改动」不是巧合：
+    错误面契约（503 ＋ `canvas_lock_busy` ＋ `Retry-After: 1`）对两种失败逐字相同。
+    丢租约判 503 而不是 409：那是并发条件，不是 revision 条件 —— 客户端重试时
+    `_check_revision` 才**权威地**决定这次是 200 还是 409（B2 §3.3.3）。
+    """
+    from novelvideo.ports.canvas_mutex import CanvasLeaseLost
+
+    _patch_freezone_project(monkeypatch, tmp_path)
+
+    def fake_save_canvas(*_args, **_kwargs):
+        raise CanvasLeaseLost("default")
+
+    monkeypatch.setattr(freezone_routes.canvas_store, "save_canvas", fake_save_canvas)
+
+    with pytest.raises(freezone_routes.HTTPException) as exc:
+        await freezone_routes.put_canvas(
+            project="proj_freezone",
+            canvas_id="default",
+            body=CanvasPayload(nodes=[], edges=[]),
+            user={"username": "admin", "id": "owner_1"},
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.headers == {"Retry-After": "1"}
+    assert exc.value.detail == {"code": "canvas_lock_busy", "canvas_id": "default"}
+
+
+def _write_canvas_edited_by(
+    tmp_path: Path,
+    canvas_id: str,
+    *,
+    updated_by: str,
+    age_seconds: float,
+) -> Path:
+    from datetime import datetime, timedelta, timezone
+
+    updated_at = (
+        datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    path = _canvas_state_dir(tmp_path) / "freezone" / "canvases" / f"{canvas_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "canvas_id": canvas_id,
+                "revision": 3,
+                "nodes": [],
+                "edges": [],
+                "updated_by": updated_by,
+                "updated_at": updated_at,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.asyncio
+async def test_get_canvas_reports_another_actor_editing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TCP-EU-C4 步 6 · O2「另一个会话正在编辑」（B2 §3.9 O2 / §6.4 步 6）。"""
+    _patch_freezone_project(monkeypatch, tmp_path)
+    _write_canvas_edited_by(tmp_path, "beat_1", updated_by="bob", age_seconds=2)
+
+    result = await freezone_routes.get_canvas(
+        project="proj_freezone",
+        canvas_id="beat_1",
+        user={"username": "admin", "id": "owner_1"},
+    )
+
+    assert result["editing_by"] == "bob"
+    # 契约不变（B2-6）：提示字段挂在 `data` 之外，画布载荷形状一个字节都没动。
+    assert "editing_by" not in result["data"]
+
+
+@pytest.mark.asyncio
+async def test_get_canvas_omits_editing_by_for_the_viewers_own_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path)
+    _write_canvas_edited_by(tmp_path, "beat_1", updated_by="owner_1", age_seconds=2)
+
+    result = await freezone_routes.get_canvas(
+        project="proj_freezone",
+        canvas_id="beat_1",
+        user={"username": "admin", "id": "owner_1"},
+    )
+
+    assert "editing_by" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_canvas_editing_by_disappears_after_the_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novelvideo.freezone import canvas_store as canvas_store_module
+
+    _patch_freezone_project(monkeypatch, tmp_path)
+    _write_canvas_edited_by(
+        tmp_path,
+        "beat_1",
+        updated_by="bob",
+        age_seconds=canvas_store_module.CANVAS_EDITING_HINT_WINDOW_SECONDS + 5,
+    )
+
+    result = await freezone_routes.get_canvas(
+        project="proj_freezone",
+        canvas_id="beat_1",
+        user={"username": "admin", "id": "owner_1"},
+    )
+
+    assert "editing_by" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_canvas_editing_by_adds_no_round_trip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """步 6 的硬要求：读路径**不许新增数据库往返**（B2 §6.4 步 6）。
+
+    判据落成「读路径一次都不碰画布互斥端口」—— 端口是这条路径上唯一可能通往
+    Postgres 的东西（EE 的实现走租约表，`TCP-P40`）。
+    """
+    from novelvideo.ports import registry as ports_registry
+
+    _patch_freezone_project(monkeypatch, tmp_path)
+    _write_canvas_edited_by(tmp_path, "beat_1", updated_by="bob", age_seconds=2)
+
+    class _ExplodingMutex:
+        def __getattr__(self, name):
+            raise AssertionError(f"read path must not touch the canvas mutex port: {name}")
+
+    previous = ports_registry._PORTS.get("canvas_write_mutex")
+    ports_registry.register_port("canvas_write_mutex", _ExplodingMutex())
+    try:
+        result = await freezone_routes.get_canvas(
+            project="proj_freezone",
+            canvas_id="beat_1",
+            user={"username": "admin", "id": "owner_1"},
+        )
+    finally:
+        if previous is None:
+            ports_registry._PORTS.pop("canvas_write_mutex", None)
+        else:
+            ports_registry.register_port("canvas_write_mutex", previous)
+
+    assert result["editing_by"] == "bob"
+
+
+@pytest.mark.asyncio
 async def test_get_canvas_does_not_fallback_to_output_canvas(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

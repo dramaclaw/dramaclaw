@@ -191,15 +191,20 @@ async def test_save_canvas_async_propagates_canvas_lock_busy(
     打桩取锁而不是真的等满 3s 自旋——超时本身已由
     `tests/test_freezone_canvas_store.py:331` 覆盖，这里要证的是穿透。
     （打桩手法照 `tests/test_backup_files_sync.py:204` 的既有形状。）
+
+    `TCP-EU-C4` 把取锁挪到了 `canvas_write_mutex` 端口后面（B2 §3.8 版本接缝），
+    打桩点跟着挪到端口上（`TCP-P41`）。要证的东西一个字没变：取不到锁时抛出来的
+    还是那个 `CanvasLockBusy`，没有被包装、也没有被裹进 `ExceptionGroup`。
     """
 
     project_dir = tmp_path / "project"
     _seed_canvas(project_dir)
 
-    def busy(*_args, **_kwargs):
-        raise CanvasLockBusy("default")
+    class _BusyMutex:
+        def write_mutex(self, *_args, **_kwargs):
+            raise CanvasLockBusy("default")
 
-    monkeypatch.setattr(canvas_store, "canvas_write_lock", busy)
+    monkeypatch.setattr(canvas_store, "get_canvas_write_mutex", lambda: _BusyMutex())
 
     with pytest.raises(CanvasLockBusy) as excinfo:
         await canvas_store.save_canvas_async(project_dir, "default", **_save_kwargs())
