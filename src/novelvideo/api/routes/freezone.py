@@ -4549,17 +4549,40 @@ async def freezone_ai_staging_prop(
     request: dict[str, object] = Body(default_factory=dict),
     user: dict = Depends(get_api_user),
 ):
-    await _resolve_freezone_project(project, user, required_role="editor")
+    ctx, _username, _project_name, _project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="editor"
+    )
     # Product requests always use the edition's effective NewAPI gateway.
     # Keep low-level overrides available to offline helpers, but never accept
     # credentials or an endpoint from an HTTP payload.
     request = dict(request)
     request.pop("api_key", None)
     request.pop("base_url", None)
-    try:
-        result = await _run_ai_staging_prop(request)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    # 出网侧的闸门（`task_backend/subprocesses.py:122-128`，经
+    # `staging_prop_ai.py:233`）读的是 ambient context，而 `_MODEL_GATEWAY_CONTEXT`
+    # 的生产 set 点全在 worker 侧、请求路径上一个都没有。于是这道闸门此前永远读到
+    # `None`、永远放行，组织用户的调用落在平台 `MODEL_API_KEY` 上（台账 EG-17）。
+    # 绑定能穿过 `_run_ai_staging_prop` 的 `asyncio.to_thread`，因为它复制
+    # contextvars（`model_gateway_runtime.py:52-54`）；`run_in_executor` 不会。
+    from novelvideo.api.egress_binding import request_egress_scope
+    from novelvideo.ports.authz import AuthzError
+    from novelvideo.task_backend.subprocesses import EgressBoundaryError
+
+    async with request_egress_scope(
+        requester_user_id=ctx.requester_user_id,
+        project_id=ctx.project_id,
+        task_type="freezone_ai_staging_prop",
+    ):
+        try:
+            result = await _run_ai_staging_prop(request)
+        except EgressBoundaryError as exc:
+            # `EgressBoundaryError` 也是 `RuntimeError` 子类，没有这一支时组织拒绝
+            # 会被下面压成裸 502 + 自由文本，前端拿不到机器码。同形先例见 :353-358。
+            # 这一支必须在 `except RuntimeError` **之前**，且 `AuthzError`（自身也是
+            # `RuntimeError` 子类）由 app 级 handler 渲染成契约化 4xx。
+            raise AuthzError(exc.code) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
     if not result.get("ok"):
         raise HTTPException(
             status_code=502, detail=str(result.get("error") or "AI staging prop failed")

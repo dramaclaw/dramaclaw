@@ -1067,6 +1067,15 @@ def test_freezone_ai_staging_prop_endpoint_returns_ai_prop(monkeypatch, tmp_path
         }
 
     monkeypatch.setattr(freezone_routes, "_run_ai_staging_prop", fake_run_ai_staging_prop)
+    # 该路由自 OI-54 S2 起在请求路径上解析出网身份，而这个裸 app 不经
+    # `ensure_bootstrap()`，端口注册表是空的（`get_authz_port()` 刻意没有
+    # `PortNotRegistered` 回落——回落就等于「端口没注册就跳过身份绑定」）。
+    # 用真的 CE 单机降级实现顶上：`LocalAuthz` 产 `kind="local"` → 非组织 →
+    # 什么都不绑，本测试既有断言一字不改。seam 照 `test_p0g4c_video_egress.py:803`。
+    import novelvideo.ports as ports
+    from novelvideo.ports.local import LocalAuthz
+
+    monkeypatch.setattr(ports, "get_authz_port", lambda: LocalAuthz())
     app = FastAPI()
     app.include_router(freezone_routes.router, prefix="/api/v1")
     app.dependency_overrides[freezone_routes.get_api_user] = lambda: {
