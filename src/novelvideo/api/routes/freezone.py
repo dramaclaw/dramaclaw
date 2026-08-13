@@ -11474,7 +11474,15 @@ async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_
         project_name=ctx.project_name,
         project_dir=project_dir,
     )
-    return {"ok": True, "data": migrated_payload or {"nodes": [], "edges": []}}
+    response = {"ok": True, "data": migrated_payload or {"nodes": [], "edges": []}}
+    # B2 §3.9 O2:最近有别人写过就带一句提示,零额外往返——判断只用刚读出来的
+    # 那份载荷。字段挂在 `data` 之外,画布契约(`CanvasPayload`)一个字节不变(B2-6)。
+    editing_by = canvas_store.canvas_editing_hint(
+        payload, viewer_id=_canvas_actor_id(user)
+    )
+    if editing_by:
+        response["editing_by"] = editing_by
+    return response
 
 
 @router.get(

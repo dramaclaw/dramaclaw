@@ -14,14 +14,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from novelvideo.freezone.canvas_lock import canvas_write_lock
 from novelvideo.freezone.paths import canvas_path, canvases_dir
+from novelvideo.ports import get_canvas_write_mutex
 from novelvideo.utils.async_ops import call_blocking
 
 CANVAS_HISTORY_TS_FORMAT = "%Y%m%d_%H%M%S_%f"
 HISTORY_RETENTION_LIMIT = 100
 IDEMPOTENCY_LIMIT = 50
 IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
+# 「最近有别人写过这张画布」的提示窗口(秒)。取值与 EE 的租约 TTL 对齐:一个写者
+# 持有租约期间他的 `updated_at` 一定落在这个窗口里,所以窗口口径 ≈「他还持着」,
+# 而窗口过后提示自然消失,不需要任何一次额外查询(§3.9 O2 要求零额外往返)。
+CANVAS_EDITING_HINT_WINDOW_SECONDS = 60
 CANVAS_PAYLOAD_SIZE_LIMIT_BYTES = int(
     os.environ.get("FREEZONE_CANVAS_PAYLOAD_LIMIT_BYTES") or 5 * 1024 * 1024
 )
@@ -50,6 +54,43 @@ def parse_canvas_iso(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def canvas_editing_hint(
+    payload: dict | None,
+    *,
+    viewer_id: str,
+    now: datetime | None = None,
+) -> str | None:
+    """「最近 N 秒内有另一个人写过这张画布」——没有就返回 `None`（§3.9 O2）。
+
+    读路径**不许新增数据库往返**,所以这条提示只用读画布时已经在手里的东西:
+    载荷自己的 `updated_by` / `updated_at`。它回答的是「谁刚写过」而不是
+    「谁此刻持着写锁」——两者在 CE(没有租约表)与 EE 里是同一段代码、同一个口径,
+    代价是提示的消失点从「释放锁」变成「窗口过去」(TCP-P40)。
+
+    看不懂的时间戳一律当成「没有提示」:这是个 UI 提示,不是判据,宁可不显示。
+    """
+
+    if not isinstance(payload, dict):
+        return None
+    updated_by = str(payload.get("updated_by") or "").strip()
+    if not updated_by or updated_by == str(viewer_id or "").strip():
+        return None
+    raw_updated_at = payload.get("updated_at")
+    if not isinstance(raw_updated_at, str) or not raw_updated_at:
+        return None
+    try:
+        updated_at = parse_canvas_iso(raw_updated_at)
+    except ValueError:
+        return None
+    reference = now or datetime.now(timezone.utc)
+    # 多 Pod 之间的时钟偏移可以让 `updated_at` 落在「未来」几秒。用绝对值兜住,
+    # 否则一台机器快两秒就再也不会给出提示了。
+    age = abs((reference - updated_at).total_seconds())
+    if age > CANVAS_EDITING_HINT_WINDOW_SECONDS:
+        return None
+    return updated_by
 
 
 class CanvasStoreError(RuntimeError):
@@ -176,7 +217,7 @@ def ensure_default_canvas(
     project_id: str,
     actor_id: str = "",
 ) -> CanvasEnsureResult:
-    with canvas_write_lock(project_dir, "default"):
+    with get_canvas_write_mutex().write_mutex(project_dir, "default", actor=actor_id) as guard:
         path = canvas_path(project_dir, "default")
         existing = load_canvas_json(path)
         if isinstance(existing, dict):
@@ -186,11 +227,26 @@ def ensure_default_canvas(
         if isinstance(deleted, dict):
             return CanvasEnsureResult(payload=deleted, created=False)
         payload = default_canvas_payload(project_id=project_id, actor_id=actor_id)
-        atomic_write_json(path, payload)
+        atomic_write_json(path, payload, fence=guard.reassert)
         return CanvasEnsureResult(payload=payload, created=True)
 
 
-def atomic_write_json(path: Path, payload: dict) -> None:
+def atomic_write_json(
+    path: Path,
+    payload: dict,
+    *,
+    fence: Callable[[], None] | None = None,
+) -> None:
+    """写临时文件 → fsync → rename。`fence` 挂在 rename 之前的最后一刻。
+
+    `os.replace` 是这条路径上唯一不可逆的一步:过了它,别人的内容就被覆盖了,
+    而且覆盖是原子的、没有中间态可以回退。所以「我此刻是否仍然独占这张画布」
+    这个问题必须在**它的前一行**问,而不是函数开头(那时距离落盘还有一整段
+    可能跑几百毫秒的 I/O)、也不是它之后(那时问了也没用)。
+
+    `fence` 抛异常 = 这次写没有发生:正式文件一个字节没动,临时文件由 `finally`
+    清掉。调用方拿到的是与「一开始就没拿到锁」完全同类的失败(§3.3.3)。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     data = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -199,6 +255,8 @@ def atomic_write_json(path: Path, payload: dict) -> None:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
+        if fence is not None:
+            fence()
         tmp.replace(path)
         try:
             dir_fd = os.open(str(path.parent), os.O_RDONLY)
@@ -649,7 +707,7 @@ def save_canvas(
     save_source: str = "autosave",
     allow_empty_overwrite: bool = False,
 ) -> CanvasSaveResult:
-    with canvas_write_lock(project_dir, canvas_id):
+    with get_canvas_write_mutex().write_mutex(project_dir, canvas_id) as guard:
         path = canvas_path(project_dir, canvas_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         existing = load_canvas_json(path)
@@ -703,7 +761,7 @@ def save_canvas(
         )
         size_warning = canvas_payload_size_warning(payload)
         backup_path = backup_canvas_snapshot(path, existing)
-        atomic_write_json(path, payload)
+        atomic_write_json(path, payload, fence=guard.reassert)
         prune_canvas_history(project_dir, canvas_id)
         response_cache = {
             "saved": True,
@@ -759,7 +817,7 @@ def restore_canvas_version(
     base_revision: int | None,
     build_payload: Callable[[dict | None, dict], dict],
 ) -> CanvasRestoreResult:
-    with canvas_write_lock(project_dir, canvas_id):
+    with get_canvas_write_mutex().write_mutex(project_dir, canvas_id) as guard:
         path = canvas_path(project_dir, canvas_id)
         existing = load_canvas_json(path)
         _check_revision(existing, base_revision)
@@ -767,7 +825,7 @@ def restore_canvas_version(
         history_payload = load_canvas_json(history_file) or {"nodes": [], "edges": []}
         payload = build_payload(existing, history_payload)
         backup_path = backup_canvas_snapshot(path, existing)
-        atomic_write_json(path, payload)
+        atomic_write_json(path, payload, fence=guard.reassert)
         prune_canvas_history(project_dir, canvas_id)
         return CanvasRestoreResult(
             payload=payload,
@@ -783,7 +841,7 @@ def soft_delete_canvas(
     *,
     deleted_by: str,
 ) -> CanvasDeleteResult:
-    with canvas_write_lock(project_dir, canvas_id):
+    with get_canvas_write_mutex().write_mutex(project_dir, canvas_id, actor=deleted_by) as guard:
         path = canvas_path(project_dir, canvas_id)
         existing = load_canvas_json(path)
         if not path.exists():
@@ -791,6 +849,11 @@ def soft_delete_canvas(
         deleted_dir = canvas_deleted_dir_for_path(path)
         deleted_dir.mkdir(parents=True, exist_ok=True)
         target = deleted_dir / canvas_deleted_filename(existing)
+        # 这一次落盘不走 `atomic_write_json`,所以围栏要在这里**显式**再挂一道:
+        # `path.replace(target)` 同样是不可逆的一步(§3.3.3)。下面的墓碑跟在它
+        # 之后,已经过了不可逆点,再挂围栏只会把「删成了但没写墓碑」变成
+        # 「删成了且抛异常」,所以那一处故意不挂。
+        guard.reassert()
         path.replace(target)
         tombstone = path.with_name(f"{path.stem}.deleted.json")
         revision = existing.get("revision") if isinstance(existing, dict) else None

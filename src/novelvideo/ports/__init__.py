@@ -90,6 +90,21 @@ def get_task_projection():
         return NoOpTaskProjection()
 
 
+def get_canvas_write_mutex():
+    # Deliberately falls back instead of failing closed: on a single machine the
+    # file lock is the complete answer, so "no cross-machine mutex installed" is
+    # both the CE steady state and the EE rollback. See ports/canvas_mutex.py
+    # and the comment above _EE_REQUIRED_PORTS.
+    try:
+        return get_port("canvas_write_mutex")
+    except Exception as exc:
+        if exc.__class__.__name__ != "PortNotRegistered":
+            raise
+        from novelvideo.ports.local.canvas_mutex import FileLockCanvasWriteMutex
+
+        return FileLockCanvasWriteMutex()
+
+
 def get_product_surface_access():
     return get_port("product_surface_access")
 
@@ -116,6 +131,7 @@ __all__ = [
     "get_auth_session_port",
     "get_authz_port",
     "get_cancellation_store",
+    "get_canvas_write_mutex",
     "get_credit_quote",
     "get_egress_operation_port",
     "get_egress_port",
