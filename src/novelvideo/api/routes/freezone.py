@@ -7548,94 +7548,118 @@ async def freezone_mark_detect(
         or ""
     )
     billing_project_id = str(getattr(ctx, "project_id", "") or project)
-    reservation = await usage_meter.reserve_feature_start_credits(
-        user_id=billing_user_id,
-        feature_key="freezone.image_mark_detect",
-        product_surface="freezone",
-        project_id=billing_project_id,
-        resource_kind="image",
-        task_type="freezone_image_mark_detect",
-        metadata=billing_context,
-        params={"operation": billing_context["selection"]},
-        require_price_rule=True,
-        require_positive_cost=True,
-    )
-    reservation_id = str(reservation.get("id") or "")
-    model_billing_metadata = {
-        "model_call_credit_policy": "feature_included",
-        "feature_key": "freezone.image_mark_detect",
-        "source": "sync_api",
-    }
-    if reservation_id:
-        model_billing_metadata.update(
-            {
-                "feature_credit_reservation_id": reservation_id,
-                "feature_credit_charge_id": reservation_id,
-                "feature_credit_cost": str(reservation.get("cost") or 0),
-            }
-        )
+    # 出网身份必须绑在**积分预留之前**。`request_egress_scope` 的入口会因组织侧
+    # 真实拒绝抛 AuthzError；开在预留之后，一次拒绝就留下一笔已扣未退的预留——
+    # 那正是本条目要修的「两侧不同步」病。作用域一直覆盖到 detect 与结算返回。
+    # 非组织身份（平台／个人／CE local／灰度未开）下它什么都不绑，路径不变。
+    from novelvideo.api.egress_binding import request_egress_scope
 
-    try:
-        usage_meter.set_llm_usage_context(
-            billing_user_id,
+    async with request_egress_scope(
+        requester_user_id=ctx.requester_user_id,
+        project_id=ctx.project_id,
+        task_type="freezone_image_mark_detect",
+    ):
+        reservation = await usage_meter.reserve_feature_start_credits(
+            user_id=billing_user_id,
+            feature_key="freezone.image_mark_detect",
+            product_surface="freezone",
             project_id=billing_project_id,
             resource_kind="image",
-            billing_metadata=model_billing_metadata,
+            task_type="freezone_image_mark_detect",
+            metadata=billing_context,
+            params={"operation": billing_context["selection"]},
+            require_price_rule=True,
+            require_positive_cost=True,
         )
-        result = await detect_freezone_mark(
-            image_path=Path(source_paths[0]),
-            point_x=body.point_x,
-            point_y=body.point_y,
-            box_x=body.box_x,
-            box_y=body.box_y,
-            box_width=body.box_width,
-            box_height=body.box_height,
-        )
-    except Exception as exc:
+        reservation_id = str(reservation.get("id") or "")
+        model_billing_metadata = {
+            "model_call_credit_policy": "feature_included",
+            "feature_key": "freezone.image_mark_detect",
+            "source": "sync_api",
+        }
+        if reservation_id:
+            model_billing_metadata.update(
+                {
+                    "feature_credit_reservation_id": reservation_id,
+                    "feature_credit_charge_id": reservation_id,
+                    "feature_credit_cost": str(reservation.get("cost") or 0),
+                }
+            )
+
+        try:
+            usage_meter.set_llm_usage_context(
+                billing_user_id,
+                project_id=billing_project_id,
+                resource_kind="image",
+                billing_metadata=model_billing_metadata,
+            )
+            result = await detect_freezone_mark(
+                image_path=Path(source_paths[0]),
+                point_x=body.point_x,
+                point_y=body.point_y,
+                box_x=body.box_x,
+                box_y=body.box_y,
+                box_width=body.box_width,
+                box_height=body.box_height,
+            )
+        except Exception as exc:
+            if reservation_id:
+                try:
+                    await usage_meter.settle_cancelled_feature_credit_reservation(
+                        reservation_id,
+                        metadata={**billing_context, "error": str(exc)},
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to settle interrupted Freezone mark detection feature credit reservation"
+                    )
+            # 组织拒绝不得压成裸 5xx。两者都是 RuntimeError 子类，原来一起被吞成
+            # `HTTPException(500, ...)`，前端只拿到一句自由文本。照 `:353-358` 的
+            # 既有裁定办：上抛后由 `app.py:210-232` 的 handler 渲染契约信封，机器码
+            # 原样透传（表里没有的码按设计回落 403，`ports/authz.py:47`）。
+            # 放在退还逻辑之后：拒绝时预留照样被退。
+            from novelvideo.ports.authz import AuthzError
+            from novelvideo.task_backend.subprocesses import EgressBoundaryError
+
+            authz_denial = find_authz_error(exc)
+            if authz_denial is not None:
+                raise authz_denial from exc
+            if isinstance(exc, EgressBoundaryError):
+                raise AuthzError(exc.code) from exc
+            raise HTTPException(500, f"mark detect failed: {exc}") from exc
+        finally:
+            usage_meter.clear_llm_usage_context()
+
         if reservation_id:
             try:
-                await usage_meter.settle_cancelled_feature_credit_reservation(
+                await usage_meter.settle_feature_credit_reservation(
                     reservation_id,
-                    metadata={**billing_context, "error": str(exc)},
+                    action="confirm",
+                    metadata=billing_context,
                 )
             except Exception:
                 logger.exception(
-                    "Failed to settle interrupted Freezone mark detection feature credit reservation"
+                    "Freezone mark detection succeeded but credit confirmation remains pending"
                 )
-        raise HTTPException(500, f"mark detect failed: {exc}") from exc
-    finally:
-        usage_meter.clear_llm_usage_context()
 
-    if reservation_id:
-        try:
-            await usage_meter.settle_feature_credit_reservation(
-                reservation_id,
-                action="confirm",
-                metadata=billing_context,
-            )
-        except Exception:
-            logger.exception(
-                "Freezone mark detection succeeded but credit confirmation remains pending"
-            )
-
-    return {
-        "ok": True,
-        "data": {
-            "mark": {
-                "label": result["label"],
-                "source_url": body.source_url,
-                "point_x": body.point_x,
-                "point_y": body.point_y,
-                "box_x": body.box_x,
-                "box_y": body.box_y,
-                "box_width": body.box_width,
-                "box_height": body.box_height,
-                "note": result.get("note", ""),
+        return {
+            "ok": True,
+            "data": {
+                "mark": {
+                    "label": result["label"],
+                    "source_url": body.source_url,
+                    "point_x": body.point_x,
+                    "point_y": body.point_y,
+                    "box_x": body.box_x,
+                    "box_y": body.box_y,
+                    "box_width": body.box_width,
+                    "box_height": body.box_height,
+                    "note": result.get("note", ""),
+                },
+                "provider": result["provider"],
+                "model": result["model"],
             },
-            "provider": result["provider"],
-            "model": result["model"],
-        },
-    }
+        }
 
 
 @router.post(
