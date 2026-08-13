@@ -1177,6 +1177,39 @@ async def _mainline_single_beat_config(
     }
 
 
+async def _task_projection_payload(
+    *,
+    ctx: ProjectContext,
+    username: str,
+    project_name: str,
+    episode: int,
+    task_type: str,
+) -> dict:
+    """Build the ``projection`` fragment to merge into an enqueue payload.
+
+    Returns an empty dict when no projector is installed, so a default inline
+    deployment enqueues exactly the payload it enqueued before this existed --
+    same keys, same bytes, and no extra store opened either.  A backend that
+    does not run the task in this process installs a projector and gets the
+    inputs carried along with the task instead.
+    """
+    from novelvideo.ports import get_task_projection
+    from novelvideo.ports.local.projection import NoOpTaskProjection
+
+    projector = get_task_projection()
+    if isinstance(projector, NoOpTaskProjection):
+        return {}
+    store = await make_sqlite_store_for_context(ctx)
+    projection = await projector.build(
+        store,
+        {"username": username, "project_name": project_name, "episode": int(episode)},
+        task_type=task_type,
+    )
+    if projection is None:
+        return {}
+    return {"projection": projection}
+
+
 async def _start_or_enqueue_mainline_sketch_from_context_job(
     *,
     ctx: ProjectContext,
@@ -1235,6 +1268,13 @@ async def _start_or_enqueue_mainline_sketch_from_context_job(
         **(task_display or {}),
     }
     if ctx is not None:
+        projection_payload = await _task_projection_payload(
+            ctx=ctx,
+            username=username,
+            project_name=project_name,
+            episode=int(episode),
+            task_type=task_type,
+        )
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             product_surface="freezone",
@@ -1253,6 +1293,7 @@ async def _start_or_enqueue_mainline_sketch_from_context_job(
                 "node_id": node_id or "",
                 "billing": {"feature_key": "mainline.sketch_regen"},
                 **display_payload,
+                **projection_payload,
             },
         )
         return _project_job_response(
@@ -1422,6 +1463,13 @@ async def _start_or_enqueue_mainline_frame_from_context_job(
         **(task_display or {}),
     }
     if ctx is not None:
+        projection_payload = await _task_projection_payload(
+            ctx=ctx,
+            username=username,
+            project_name=project_name,
+            episode=int(episode),
+            task_type=task_type,
+        )
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             product_surface="freezone",
@@ -1441,6 +1489,7 @@ async def _start_or_enqueue_mainline_frame_from_context_job(
                 "node_id": node_id or "",
                 "billing": {"feature_key": "mainline.render_regen"},
                 **display_payload,
+                **projection_payload,
             },
         )
         return _project_job_response(
@@ -1767,6 +1816,13 @@ async def _start_or_enqueue_mainline_director_control_sketch_job(
     if not source_path.exists() or not source_path.is_file():
         raise HTTPException(404, f"director combined file not found: {source_path}")
     job_id = _new_job_id()
+    projection_payload = await _task_projection_payload(
+        ctx=ctx,
+        username=ctx.owner_username,
+        project_name=ctx.project_name,
+        episode=int(episode),
+        task_type=task_type,
+    )
     queued = await get_task_backend().enqueue_project_task(
         ctx,
         product_surface="freezone",
@@ -1793,6 +1849,7 @@ async def _start_or_enqueue_mainline_director_control_sketch_job(
             "source_label": "导演合成图",
             "target_label": "当前草图候选",
             **(task_display or {}),
+            **projection_payload,
         },
     )
     return _project_job_response(

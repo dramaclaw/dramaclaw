@@ -20,6 +20,7 @@ from novelvideo.task_backend.cancel import (
 )
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+from novelvideo.task_backend.projection import read_projection
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
 
@@ -718,6 +719,7 @@ async def _run_mainline_director_control_sketch_async(
             require_control_frame_path=True,
             candidate_output_path=output_path,
             promote=False,
+            projection=read_projection(payload),
         ),
         project_id=ctx.project_id,
         task_type=task_type,

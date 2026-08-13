@@ -76,6 +76,20 @@ def get_release_feed_port():
         return NoOpReleaseFeed()
 
 
+def get_task_projection():
+    # Deliberately falls back instead of failing closed: not installing a
+    # projector is the rollback, so it has to stay a legal state. See
+    # ports/projection.py and the comment above _EE_REQUIRED_PORTS.
+    try:
+        return get_port("task_projection")
+    except Exception as exc:
+        if exc.__class__.__name__ != "PortNotRegistered":
+            raise
+        from novelvideo.ports.local.projection import NoOpTaskProjection
+
+        return NoOpTaskProjection()
+
+
 def get_product_surface_access():
     return get_port("product_surface_access")
 
@@ -114,5 +128,6 @@ __all__ = [
     "get_release_feed_port",
     "get_task_backend",
     "get_task_envelope_consumer",
+    "get_task_projection",
     "get_usage_meter",
 ]
