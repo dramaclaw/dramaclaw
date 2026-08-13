@@ -1948,6 +1948,7 @@ tests/test_seedance2_voice_audio_records.py,Elastic-2.0,2026 SuperTale contribut
 tests/test_seedance2_voice_audio_task.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_seedance2_voice_clone.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_sketch_edit_execute_celery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_sketch_runner_reads_projection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_spa_static_serving.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_sqlite_pragmas.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_sqlite_schema_initialization.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
