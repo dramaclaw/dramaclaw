@@ -46,6 +46,7 @@ identical to one built without this module.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -65,6 +66,15 @@ SUPPORTED_PROJECTION_VERSIONS: frozenset[int] = frozenset({1, 2})
 
 #: Version stamped on newly built projections.
 CURRENT_PROJECTION_VERSION: int = 1
+
+#: Upper bound on the canonical JSON length of one projection.
+#:
+#: Measured worst case today is ~52 KiB (characters ~28 KiB + scenes ~24 KiB),
+#: against a ``beats`` block that already travels in ``payload`` at up to
+#: ~113 KiB.  256 KiB leaves ~5x headroom over the worst case while staying
+#: below 2.3x the largest block payloads already carry -- a cap an order of
+#: magnitude above current reality would not be a cap.
+MAX_PROJECTION_BYTES: int = 256 * 1024
 
 #: Which task type needs which projected fields.  The single definition point:
 #: the enqueue side builds against it and the worker side is validated against
@@ -135,6 +145,47 @@ class ProjectProjection:
                 "入队侧未投射该字段，执行侧不回落读项目数据"
             )
         return self.fields[name]
+
+
+def _normalize_field_name(key: str) -> str:
+    """Same normalization the envelope applies (``envelope.py:141``)."""
+    return re.sub(r"[^a-z0-9]", "", key.casefold())
+
+
+def _assert_no_sensitive_field_names(value: Any, path: str = "projection") -> None:
+    from novelvideo.task_backend.envelope import _SENSITIVE_PAYLOAD_FIELDS
+
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            if isinstance(key, str) and _normalize_field_name(key) in _SENSITIVE_PAYLOAD_FIELDS:
+                raise ValueError(
+                    f"投射含敏感字段名 {key!r}（位置 {path}）；"
+                    "该名字会让整个信封被拒，换一个字段名"
+                )
+            _assert_no_sensitive_field_names(nested, f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, nested in enumerate(value):
+            _assert_no_sensitive_field_names(nested, f"{path}[{index}]")
+
+
+def assert_projection_is_deliverable(projection: Mapping[str, Any]) -> None:
+    """Check a projection before it is handed to the envelope.  Enqueue side only.
+
+    Both checks belong here rather than on the worker: this still runs on the
+    machine that built the projection, so a failure names the thing that
+    produced it.  Discovering either problem after the task has been handed off
+    tells you only that something, somewhere, sent too much.
+    """
+    from novelvideo.task_backend.envelope import _canonical_json
+
+    _assert_no_sensitive_field_names(projection)
+
+    size = len(_canonical_json(projection).encode("utf-8"))
+    if size > MAX_PROJECTION_BYTES:
+        raise ValueError(
+            f"投射超出体积上限：{size} 字节 > {MAX_PROJECTION_BYTES} 字节。"
+            "只投射执行时真正读的字段，整表/整份配置不要进 payload"
+        )
 
 
 def _character_to_dict(character: Any) -> dict[str, Any]:
@@ -243,11 +294,13 @@ async def build_projection(
     if missing:
         raise ValueError(f"投射未覆盖 {task_type} 的必需字段: {sorted(missing)}")
 
-    return {
+    projection = {
         "projection_version": CURRENT_PROJECTION_VERSION,
         "task_type": task_type,
         "fields": fields,
     }
+    assert_projection_is_deliverable(projection)
+    return projection
 
 
 def read_projection(payload: Mapping[str, Any] | None) -> ProjectProjection | None:
