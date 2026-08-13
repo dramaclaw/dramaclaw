@@ -3,8 +3,12 @@ import pytest
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     apply_media_request_schema,
+    enforce_newapi_media_geometry_contract,
+    enforce_newapi_video_duration_contract,
     media_request_schema_for_mode,
+    normalize_media_model_catalog_config,
     normalize_media_model_mode,
+    normalize_media_resolution_value,
     validate_media_model_catalog_config,
     validate_media_model_params,
     validate_media_request_schema,
@@ -32,6 +36,155 @@ SCHEMA = {
     ],
     "omitPaths": ["metadata.legacy"],
 }
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("4K", "4k"),
+        ("0.5K", "0.5k"),
+        ("1080P", "1080p"),
+        ("2048x1376", "2048x1376"),
+    ],
+)
+def test_normalizes_named_media_resolution_tiers(raw, expected):
+    assert normalize_media_resolution_value(raw) == expected
+
+
+def test_normalizes_catalog_resolutions_without_case_duplicates():
+    config = {
+        "resolutionOptions": ["1K", "2k", "4K", "4k", "2048x1376"],
+        "ratioOptions": ["Auto", "adaptive", "16:9"],
+        "defaultGenerateAudio": False,
+    }
+
+    normalized = normalize_media_model_catalog_config(config)
+
+    assert normalized["resolutionOptions"] == ["1k", "2k", "4k", "2048x1376"]
+    assert normalized["ratioOptions"] == ["auto", "16:9"]
+    assert "defaultGenerateAudio" not in normalized
+    assert config["resolutionOptions"] == ["1K", "2k", "4K", "4k", "2048x1376"]
+
+
+@pytest.mark.parametrize(
+    ("media_type", "raw_ratio", "expected_ratio"),
+    [("image", "adaptive", "auto"), ("video", "adaptive", "auto")],
+)
+def test_auto_geometry_removes_conflicting_dimensions(
+    media_type, raw_ratio, expected_ratio
+):
+    result = enforce_newapi_media_geometry_contract(
+        {
+            "width": 1920,
+            "height": 1080,
+            "size": "1920x1080",
+            "aspect_ratio": raw_ratio,
+            "resolution": "1080P",
+            "metadata": {
+                "reference_images": ["https://example.com/reference.png"],
+            },
+        },
+        media_type=media_type,
+    )
+
+    assert "width" not in result
+    assert "height" not in result
+    assert "size" not in result
+    assert result["metadata"] == {
+        "ratio": expected_ratio,
+        "reference_images": ["https://example.com/reference.png"],
+        "resolution": "1080p",
+    }
+
+
+def test_fixed_geometry_keeps_ratio_and_removes_legacy_size():
+    result = enforce_newapi_media_geometry_contract(
+        {
+            "width": 1920,
+            "height": 1080,
+            "size": "1920x1080",
+            "metadata": {"ratio": "16:9", "resolution": "4K"},
+        },
+        media_type="video",
+    )
+
+    assert result == {
+        "width": 1920,
+        "height": 1080,
+        "metadata": {"ratio": "16:9", "resolution": "4k"},
+    }
+
+
+@pytest.mark.parametrize(
+    ("raw_duration", "expected"),
+    [("auto", "auto"), ("AUTO", "auto"), ("5", 5), (5.5, 5.5)],
+)
+def test_normalizes_generic_newapi_video_duration(raw_duration, expected):
+    result = enforce_newapi_video_duration_contract(
+        {"seconds": raw_duration, "model": "video-model"}
+    )
+
+    assert result == {"duration": expected, "model": "video-model"}
+
+
+def test_model_schema_can_override_numeric_video_duration_with_auto():
+    schema = {
+        "endpoint": "video/generations",
+        "parameters": [
+            {
+                "key": "duration_mode",
+                "label": "输出时长",
+                "control": "select",
+                "requestPath": "duration",
+                "options": ["auto"],
+                "default": "auto",
+            }
+        ],
+    }
+
+    configured = apply_media_request_schema(
+        {"model": "video-model", "duration": 5}, schema, {}
+    )
+    result = enforce_newapi_video_duration_contract(configured)
+
+    assert result == {"model": "video-model", "duration": "auto"}
+
+
+def test_video_edit_forces_auto_geometry_and_duration_after_model_parameters():
+    from novelvideo.media_model_request_schema import (
+        enforce_newapi_video_mode_contract,
+    )
+
+    result = enforce_newapi_video_mode_contract(
+        {
+            "model": "video-model",
+            "duration": 5,
+            "width": 1280,
+            "height": 720,
+            "metadata": {"ratio": "16:9", "resolution": "720p"},
+        },
+        mode="videoEdit",
+    )
+
+    assert result == {
+        "model": "video-model",
+        "duration": "auto",
+        "metadata": {"ratio": "auto", "resolution": "720p"},
+    }
+
+
+def test_non_edit_mode_rejects_model_parameter_auto_duration():
+    from novelvideo.media_model_request_schema import (
+        enforce_newapi_video_mode_contract,
+    )
+
+    result = enforce_newapi_video_mode_contract(
+        {"model": "video-model", "duration": "auto"},
+        mode="allReference",
+        fixed_duration=8,
+    )
+
+    assert result == {"model": "video-model", "duration": 8}
 
 
 def test_applies_validated_parameters_without_mutating_original_payload():
@@ -274,6 +427,7 @@ def test_validates_media_catalog_capabilities():
         "referenceVideoMax": 1,
         "referenceAudioMax": 0,
         "humanReview": True,
+        "supportsGenerateAudio": True,
         "request": {"endpoint": "video/generations", "parameters": []},
     }
 
@@ -297,6 +451,39 @@ def test_validates_media_catalog_capabilities():
         validate_media_model_catalog_config(
             {**valid, "supportedModes": ["text_to_video"]},
             "video",
+        )
+
+
+def test_validates_video_native_audio_capabilities():
+    base = {
+        "request": {"endpoint": "video/generations", "parameters": []},
+    }
+    assert validate_media_model_catalog_config(
+        {
+            **base,
+            "supportsGenerateAudio": True,
+        },
+        "video",
+    )
+    assert validate_media_model_catalog_config(
+        {
+            **base,
+            "supportsGenerateAudio": False,
+        },
+        "video",
+    )
+    with pytest.raises(MediaModelSchemaError, match="supportsGenerateAudio"):
+        validate_media_model_catalog_config(
+            {**base, "supportsGenerateAudio": "yes"},
+            "video",
+        )
+    with pytest.raises(MediaModelSchemaError, match="incompatible fields"):
+        validate_media_model_catalog_config(
+            {
+                "supportsGenerateAudio": True,
+                "request": {"endpoint": "images/generations", "parameters": []},
+            },
+            "image",
         )
 
 

@@ -2218,19 +2218,28 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         # reliably reconstruct them from an input image's exact pixel ratio.
         resolution = metadata.get("resolution", "")
         ratio = metadata.get("ratio", "")
+        if resolution:
+            metadata["resolution"] = str(resolution).strip().lower()
+            resolution = metadata["resolution"]
+        if ratio:
+            metadata["ratio"] = str(ratio).strip().lower()
+            ratio = metadata["ratio"]
 
         duration_value = payload.pop("duration", None)
         legacy_seconds = payload.pop("seconds", None)
         if duration_value is None:
             duration_value = legacy_seconds
-        try:
-            duration_number = float(str(duration_value))
-        except (TypeError, ValueError):
-            duration_number = 0
-        if duration_number > 0:
-            payload["duration"] = (
-                int(duration_number) if duration_number.is_integer() else duration_number
-            )
+        if str(duration_value or "").strip().lower() == "auto":
+            payload["duration"] = "auto"
+        else:
+            try:
+                duration_number = float(str(duration_value))
+            except (TypeError, ValueError):
+                duration_number = 0
+            if duration_number > 0:
+                payload["duration"] = (
+                    int(duration_number) if duration_number.is_integer() else duration_number
+                )
 
         first_frame = ""
         for key in ("first_frame_image", "image_url"):
@@ -2282,14 +2291,25 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         if last_frame.strip():
             metadata["last_frame_image"] = last_frame.strip()
 
-        dimensions = cls._video_dimensions(resolution, ratio)
-        if dimensions:
+        ratio_text = str(ratio or "").strip().lower()
+        if ratio_text in {"auto", "adaptive"}:
+            # Video follow-input geometry is expressed by ratio only. Sending
+            # width/height as well would turn an automatic request back into a
+            # fixed-size request at the NewAPI adapter boundary.
+            metadata["ratio"] = "auto"
+            metadata.pop("aspect_ratio", None)
+            payload.pop("width", None)
+            payload.pop("height", None)
+        elif dimensions := cls._video_dimensions(resolution, ratio_text):
             payload["width"], payload["height"] = dimensions
+            # Keep the selected ratio semantics beside the derived dimensions;
+            # resolution remains the independent model/charging tier.
+            metadata["ratio"] = ratio_text
+            metadata.pop("aspect_ratio", None)
         else:
-            ratio_text = str(ratio or "").strip()
             resolution_text = str(resolution or "").strip()
             if ratio_text:
-                metadata["aspect_ratio"] = ratio_text
+                metadata["ratio"] = ratio_text
             if resolution_text:
                 metadata["resolution"] = resolution_text
 
@@ -2556,7 +2576,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         ratio_text = str(aspect_ratio or "").strip().lower()
         # Seedance I2V uses ``adaptive`` to preserve the first-frame framing.
         # The old colon-only guard accidentally converted it back to 9:16.
-        ratio = ratio_text if ":" in ratio_text or ratio_text == "adaptive" else "9:16"
+        ratio = (
+            ratio_text
+            if ":" in ratio_text or ratio_text in {"auto", "adaptive"}
+            else "9:16"
+        )
         image_path = str(image_path or "").strip()
         requested_mode = str(kwargs.get("gen_mode") or "").strip()
 
@@ -2863,12 +2887,24 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 resolution=request_resolution,
                 duration_seconds=duration,
             )
-            from novelvideo.media_model_request_schema import apply_media_request_schema
+            from novelvideo.media_model_request_schema import (
+                apply_media_request_schema,
+                enforce_newapi_media_geometry_contract,
+                enforce_newapi_video_duration_contract,
+                enforce_newapi_video_mode_contract,
+            )
 
             self._canonicalize_video_payload(payload, metadata)
             payload = apply_media_request_schema(
                 payload, self.request_schema, self.model_params
             )
+            payload = enforce_newapi_video_mode_contract(
+                payload,
+                mode=requested_mode,
+                fixed_duration=duration,
+            )
+            payload = enforce_newapi_media_geometry_contract(payload, media_type="video")
+            payload = enforce_newapi_video_duration_contract(payload)
             submitted = await self._post_json(
                 f"{self.base_url}/video/generations", payload
             )
