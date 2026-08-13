@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useQueries } from "@tanstack/react-query";
+import { skipToken, useQueries, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
@@ -36,10 +36,68 @@ import {
   useRenderPlan,
 } from "@/lib/queries/render-plan";
 import { useRenderSettings } from "@/lib/queries/render-settings";
+import { queryKeys } from "@/lib/query-keys";
 import type { OkResponse } from "@/types/api";
-import type { PlanEntry, RenderPlan } from "@/types/render-plan";
+import type {
+  PlanEntry,
+  RejectedDispatch,
+  RenderExecuteResult,
+  RenderPlan,
+} from "@/types/render-plan";
+import type { Task, TaskStatus } from "@/types/task";
 
 const RENDER_REGEN_FEATURE_KEY = "mainline.render_regen";
+
+/** Same set `useTasks` uses to decide its 2s poll cadence (`queries/tasks.ts:59-66`). */
+const ACTIVE_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
+  "submitting",
+  "queued",
+  "pending",
+  "starting",
+  "running",
+]);
+
+// 文案不落 `public/locales/*`（不在本切片 ownership 内），走仓内既有的
+// `t(key, { defaultValue })` 内联兜底形制（先例 `batch-panel.tsx:570-572`）。
+// 三种 reason 必须是三条真的不一样的话 —— 用户能不能自己解掉，取决于撞的是
+// 哪条闸：自己的任务、同渠道别人的任务、还是整个平台。
+const PARTIAL_REASON_COPY: Record<
+  RejectedDispatch["reason"],
+  { key: string; defaultValue: string }
+> = {
+  channel: {
+    key: "episode.renderPlan.partial.reason.channel",
+    defaultValue: "渠道并发已满：剩余 {{fail}} 格要等同渠道的任务腾出位置",
+  },
+  platform: {
+    key: "episode.renderPlan.partial.reason.platform",
+    defaultValue: "平台整体并发已满：剩余 {{fail}} 格要等平台腾出位置",
+  },
+  user: {
+    key: "episode.renderPlan.partial.reason.user",
+    defaultValue: "你的并发已满：剩余 {{fail}} 格要等你自己的任务先跑完",
+  },
+};
+
+/**
+ * 一次尽力投递之后的残局。
+ *
+ * `entries` 是**被拒的 plan 条目逐字**（不是重算出来的）：后端 fanout 有序、
+ * 撞闸即 break，所以被拒的必是 `resolved_grids` 的尾段，取法就是
+ * `slice(task_ids.length)`（TCP-P63；在前端重算 `selection_scope` 会复制后端的
+ * 哈希真源）。`shapeOk` 记住那条长度断言 —— 不成立就只报信息，不重投。
+ */
+interface PartialDispatchState {
+  /** 本轮真的投出去了几格。 */
+  ok: number;
+  rejected: RejectedDispatch[];
+  entries: PlanEntry[];
+  /** 本轮投出去的 task id，用来从既有轮询里看「在途下降」。 */
+  watchTaskIds: string[];
+  /** 自动重投的那**一**轮是否已经用掉（此后只剩手动「继续」）。 */
+  autoUsed: boolean;
+  shapeOk: boolean;
+}
 
 interface RenderPlanDialogProps {
   open: boolean;
@@ -73,6 +131,17 @@ export function RenderPlanDialog({
   const renderSettings = useRenderSettings(project);
   const [plan, setPlan] = useState<RenderPlan | null>(null);
   const [staleBanner, setStaleBanner] = useState<"input" | "plan" | null>(null);
+  const [partial, setPartial] = useState<PartialDispatchState | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  // 复用**既有**的任务轮询：`skipToken` 表示这个订阅永远不自己发请求，只订阅
+  // `queryKeys.tasks(project)` 这份缓存 —— 写它的是页面上已经挂着的 `useTasks`
+  // （`batch-panel.tsx:392`，本对话框正是它渲染出来的）。这样既不新起定时器，
+  // 也不用把 `queries/tasks.ts` 那条 import 链（`@/i18n` / confirm-dialog）拽进来。
+  const tasksCache = useQuery({
+    queryKey: queryKeys.tasks(project),
+    queryFn: skipToken,
+  });
+  const taskRows = (tasksCache.data as OkResponse<Task[]> | undefined)?.data;
   const renderImageSelection = renderSettings.data?.data.render_image_selection ?? null;
   const renderCostModeKeys = useMemo(
     () => [...new Set((plan?.plan ?? []).map((entry) => entry.mode_key).filter(Boolean))],
@@ -112,6 +181,7 @@ export function RenderPlanDialog({
     if (!open) return;
     setPlan(null);
     setStaleBanner(null);
+    setPartial(null);
     planMutation.mutate(
       {
         beat_indices: beatIndices,
@@ -169,6 +239,105 @@ export function RenderPlanDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultForceOneByOne, beatIndices, aspectMode, project, episode]);
 
+  /**
+   * 消化一次 execute 的结果。`allowAuto` 只在**第一轮**为真 —— 自动重投至多一轮，
+   * 之后一律退回手动「继续」（任务书三条不许自由发挥的第 3 条）。
+   */
+  const applyExecuteResult = (data: RenderExecuteResult, allowAuto: boolean) => {
+    const taskIds = data.task_ids ?? [];
+    const rejected = data.rejected ?? [];
+    onDispatched(taskIds);
+    if (rejected.length === 0) {
+      setPartial(null);
+      onOpenChange(false);
+      return;
+    }
+    const grids = data.resolved_grids ?? [];
+    const entries = grids.slice(taskIds.length);
+    setPartial({
+      ok: taskIds.length,
+      rejected,
+      entries,
+      watchTaskIds: taskIds,
+      autoUsed: !allowAuto,
+      // 尾段长度对不上就说明「有序 + break」这个前提不成立了，宁可不投：
+      // 猜错会重复投递已经在跑的格子（= 双计费）。
+      shapeOk: entries.length > 0 && entries.length === rejected.length,
+    });
+  };
+
+  /**
+   * 只重投被拒的那部分，两步：
+   *  1. `/render/plan` 带**恰好是**被拒条目 beats 并集的 `beat_indices`，拿一份新的
+   *     `input_fingerprint`（多一个少一个都会被后端 `_custom_render_plan_error` 判
+   *     400 `invalid_custom_plan`）。
+   *  2. `/render/execute` 带 `custom_plan: true` ＋ 逐字的被拒条目。`custom_plan`
+   *     分支不重新分组，每格的 `entry_scope` 才会与被拒的那次逐字相同；走重算分支
+   *     会把子集重新编组，格子与任何一条被拒 scope 都对不上。
+   */
+  const redispatch = async (state: PartialDispatchState) => {
+    if (!state.shapeOk || retrying) return;
+    const beats = [
+      ...new Set(state.entries.flatMap((entry) => entry.beat_numbers)),
+    ].sort((a, b) => a - b);
+    const giveUp = () => setPartial({ ...state, autoUsed: true });
+    setRetrying(true);
+    try {
+      const planRes = await planMutation.mutateAsync({
+        beat_indices: beats,
+        strategy: "location",
+        aspect_mode: aspectMode,
+        force_one_by_one: defaultForceOneByOne,
+      });
+      if (!planRes.ok || !planRes.data) {
+        toast.error(t("common.error"));
+        giveUp();
+        return;
+      }
+      const res = await executeMutation.mutateAsync({
+        plan: state.entries,
+        plan_hash: planRes.data.plan_hash,
+        input_fingerprint: planRes.data.input_fingerprint,
+        strategy: "location",
+        aspect_mode: aspectMode,
+        beat_indices: beats,
+        custom_plan: true,
+        force_one_by_one: defaultForceOneByOne,
+        image_generation_selection: renderImageSelection ?? undefined,
+      });
+      if (!res.ok) {
+        toast.error(t("common.error"));
+        giveUp();
+        return;
+      }
+      applyExecuteResult(res.data, false);
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
+      giveUp();
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  // 自动重投的触发器：**复用既有轮询**，看本轮投出去的任务是否已全部离开在途。
+  useEffect(() => {
+    if (!open || retrying) return;
+    if (!partial || partial.autoUsed || !partial.shapeOk) return;
+    if (partial.watchTaskIds.length === 0 || !taskRows) return;
+    const byId = new Map<string, TaskStatus>();
+    for (const row of taskRows) {
+      if (row.task_id) byId.set(row.task_id, row.status);
+    }
+    // 「至少见过一次」守卫：轮询还没把这批任务带回来时不下判断。宁可不自动投
+    // （用户还有「继续」兜底），也不能把「没见到」误读成「已经跑完」。
+    if (!partial.watchTaskIds.every((id) => byId.has(id))) return;
+    if (partial.watchTaskIds.some((id) => ACTIVE_TASK_STATUSES.has(byId.get(id)!))) return;
+    const snapshot = { ...partial, autoUsed: true };
+    setPartial(snapshot);
+    void redispatch(snapshot);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, retrying, partial, taskRows]);
+
   const handleConfirm = async () => {
     if (!plan) return;
     try {
@@ -186,8 +355,7 @@ export function RenderPlanDialog({
         toast.error(t("common.error"));
         return;
       }
-      onDispatched(res.data.task_ids ?? []);
-      onOpenChange(false);
+      applyExecuteResult(res.data, true);
     } catch (err) {
       const anyErr = err as { response?: { status?: number; json?: () => Promise<unknown> } };
       const status = err instanceof BackendStatusError
@@ -229,6 +397,16 @@ export function RenderPlanDialog({
   };
 
   const loading = planMutation.isPending || executeMutation.isPending;
+  const partialReasonLines = useMemo(() => {
+    if (!partial) return [];
+    const reasons = [...new Set(partial.rejected.map((item) => item.reason))];
+    return reasons.map((reason) => {
+      const fail = partial.rejected.filter((item) => item.reason === reason).length;
+      const copy = PARTIAL_REASON_COPY[reason];
+      if (!copy) return t("common.error");
+      return t(copy.key, { defaultValue: copy.defaultValue, fail });
+    });
+  }, [partial, t]);
   const confirmLabel = plan
     ? t("episode.renderPlan.confirm", { grids: plan.total_grids })
     : planMutation.isPending
@@ -299,6 +477,23 @@ export function RenderPlanDialog({
           </div>
         )}
 
+        {partial && (
+          <div
+            role="status"
+            className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+          >
+            <AlertTriangle className="mr-1 inline size-3" />
+            {t("episode.renderPlan.partial.summary", {
+              defaultValue: "已投 {{ok}} / 被拒 {{fail}}",
+              ok: partial.ok,
+              fail: partial.rejected.length,
+            })}
+            {partialReasonLines.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
+          </div>
+        )}
+
         <div className="mt-4 max-h-[45vh] overflow-y-auto">
           {loading && !plan ? (
             <div className="flex items-center justify-center py-8">
@@ -322,10 +517,21 @@ export function RenderPlanDialog({
 
         <AlertDialogFooter className="px-4">
           <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+          {partial?.shapeOk && (
+            <AlertDialogAction
+              variant="outline"
+              onClick={() => void redispatch(partial)}
+              disabled={retrying || loading}
+            >
+              {t("episode.renderPlan.partial.continue", { defaultValue: "继续" })}
+            </AlertDialogAction>
+          )}
           <AlertDialogAction
             variant="outline"
             onClick={handleConfirm}
-            disabled={loading || !plan}
+            // 已经部分投出去之后，主按钮必须锁死：再点一次就是整批重放
+            // （前 k 个还活着 → 去重锁挡不住重复计费）。重投只能走「继续」。
+            disabled={loading || !plan || !!partial}
             className="relative pr-11 transition-transform active:scale-95"
           >
             {executeMutation.isPending ? (
