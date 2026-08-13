@@ -124,6 +124,13 @@ class _WorkerSlot:
     active_turns: int = 0
     authz_generation: int = 0
     one_shot: bool = False
+    # 出网身份，与上面的会话身份 (`scope_kind`/`project_id`) 是两套东西。
+    # 记在 slot 上只为一件事：`_rotate_slot_locked` 重建 worker 时必须带着它们，
+    # 否则替换出来的 worker 走 `authorization is None` 分支，静默退回部署级
+    # `NEWAPI_API_KEY`——组织身份被洗掉，不报错也不留痕（OI-54 同一种病）。
+    egress_project_id: str | None = None
+    requester_user_id: str | None = None
+    authorization: HermesLaunchAuthorization | None = None
 
 
 class _ManagedHermesThread:
@@ -204,12 +211,20 @@ class HermesPool:
         model: str | None = None,
         scope_kind: str = "home",
         project_id: str | None = None,
+        egress_project_id: str | None = None,
+        requester_user_id: str | None = None,
         authorization: HermesLaunchAuthorization | None = None,
     ) -> HermesSdkThread:
         """Lazily create / return the per-user hermes thread.
 
         Bumps last_used so idle reaper resets the clock. Caller should
         ``await thread.stream(prompt)`` to send messages.
+
+        ``egress_project_id`` and ``requester_user_id`` carry the *egress*
+        identity of this turn and are only consumed when ``authorization`` is
+        present. They come from the caller — never from the authorization's own
+        context — so the admission re-check in ``build_hermes_child_env`` keeps
+        an independent source to compare against.
         """
         authz_generation = await self._authz_generation(username)
         async with self._lock:
@@ -275,6 +290,8 @@ class HermesPool:
                 model=model,
                 scope_kind=scope_kind,
                 session_project_id=project_id,
+                egress_project_id=egress_project_id,
+                requester_user_id=requester_user_id,
                 authorization=authorization,
             )
             slot.authz_generation = authz_generation
@@ -318,6 +335,7 @@ class HermesPool:
         scope_kind: str,
         session_project_id: str | None,
         egress_project_id: str | None = None,
+        requester_user_id: str | None = None,
         resume_session_id: str | None = None,
         authorization: HermesLaunchAuthorization | None = None,
     ) -> _WorkerSlot:
@@ -327,7 +345,8 @@ class HermesPool:
         (NULL in home scope). ``egress_project_id`` carries only the identity
         compared against a trusted egress context; the two cannot be the same
         parameter because home scope requires NULL for the former and a
-        non-empty value for the latter.
+        non-empty value for the latter. ``requester_user_id`` is the caller's
+        own copy of the egress user identity, kept separate for the same reason.
         """
         cli_path = _hermes_cli_path()
         if not cli_path.exists():
@@ -353,6 +372,7 @@ class HermesPool:
             token,
             project_id=session_project_id,
             egress_project_id=egress_project_id,
+            requester_user_id=requester_user_id,
             project_env=project_env,
             authorization=authorization,
         )
@@ -390,6 +410,9 @@ class HermesPool:
                 "" if authorization is not None else effective_gateway_fingerprint()
             ),
             one_shot=authorization is not None,
+            egress_project_id=egress_project_id,
+            requester_user_id=requester_user_id,
+            authorization=authorization,
         )
 
     def _token_needs_renewal(self, slot: _WorkerSlot) -> bool:
@@ -435,6 +458,16 @@ class HermesPool:
         Spawn first; if control-plane issuance fails, keep the old worker alive.
         Track the replacement before closing the old slot so a cancelled request
         cannot leave the fresh token unmanaged.
+
+        The replacement inherits the *egress* identity of the slot it replaces.
+        Rotation is triggered by callers that carry no authorization of their own
+        (``prewarm``, a home-scope turn, a second browser tab), and an org slot
+        always rotates on the first such touch because ``gateway_fingerprint`` is
+        left empty for it. Dropping the identity here would hand that user's
+        resumed session to a worker credentialed with the deployment-level
+        ``NEWAPI_API_KEY`` — the platform paying for the org's compute, silently.
+        The session identity still follows the caller's scope; only the egress
+        identity is inherited, which is exactly why S3 split the two parameters.
         """
         self._remember_session(slot)
         same_scope = self._scope_key(
@@ -449,7 +482,10 @@ class HermesPool:
             model=model if model is not None else slot.model,
             scope_kind=scope_kind,
             session_project_id=project_id,
+            egress_project_id=slot.egress_project_id,
+            requester_user_id=slot.requester_user_id,
             resume_session_id=resume_session_id,
+            authorization=slot.authorization,
         )
         _log.info(
             "rotating hermes worker for user=%s old_agent_session=%s new_agent_session=%s reason=%s",
@@ -520,17 +556,24 @@ class HermesPool:
         *,
         project_id: str | None,
         egress_project_id: str | None = None,
+        requester_user_id: str | None = None,
         project_env: dict[str, str] | None = None,
         authorization: HermesLaunchAuthorization | None = None,
     ) -> dict[str, str]:
         """Build the strict environment passed only to this Hermes worker.
 
         ``project_id`` feeds the child process environment; ``egress_project_id``
-        feeds only the trusted-context admission check and must be supplied
-        whenever an authorization is present.
+        and ``requester_user_id`` feed only the trusted-context admission check
+        and must both be supplied whenever an authorization is present.
         """
         if authorization is not None:
             if not egress_project_id:
+                raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
+            # 身份复核要有独立来源才叫复核。取 `authorization.context` 自己的值，
+            # `build_hermes_child_env` 里那次 `_strict_admission` 就退化成 `x != x`
+            # 恒真通过。缺了就拒，**不得回落成 `authorization.context.requester_user_id`**
+            # ——那等于把刚修好的洞原样填回去。
+            if not requester_user_id:
                 raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
             agent_token_env = {
                 "DRAMACLAW_AGENT_TOKEN": token.value,
@@ -545,7 +588,7 @@ class HermesPool:
             return build_hermes_child_env(
                 home=home,
                 username=username,
-                requester_user_id=authorization.context.requester_user_id,
+                requester_user_id=requester_user_id,
                 api_url=self._api_url,
                 agent_token_env=agent_token_env,
                 project_id=project_id,

@@ -3611,6 +3611,11 @@ async def _stream_assistant_reply_hermes(
         username,
         scope_kind="project" if project else "home",
         project_id=project or None,
+        # 出网身份与会话身份分开传。这两个必须来自调用方，不得从
+        # `authorization.context` 自己取——那样 `build_hermes_child_env` 里的
+        # 身份复核就退化成自证。home 态的出网 project 哨兵是 S5 的事，本片不碰。
+        egress_project_id=project or None,
+        requester_user_id=requester_user_id,
         authorization=authorization,
     )
     previous_assistant = (

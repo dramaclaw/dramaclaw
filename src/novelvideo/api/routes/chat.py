@@ -24,7 +24,9 @@ from novelvideo.api.auth import (
     get_api_user,
 )
 from novelvideo.api.deps import list_user_projects
+from novelvideo.api.egress_binding import request_egress_scope
 from novelvideo.chat import service as chat_service
+from novelvideo.chat.hermes_egress import EgressBoundaryError
 from novelvideo.chat.store import ChatScope, chat_store
 from novelvideo.ports import get_usage_meter
 from novelvideo.project_context import (
@@ -46,6 +48,11 @@ from novelvideo.shared.billing_errors import (
 router = APIRouter()
 
 AI_ASSISTANT_CHAT_FEATURE_KEY = "assistant.chat"
+
+# 出网台账里这条链路的 capability 口径。取自
+# `chat/hermes_egress.py:131` 的 `capability="agent.hermes.text"`，与 EG-07 对齐；
+# 绑定侧与账本侧必须是同一个字符串，不另取。
+HERMES_TEXT_EGRESS_TASK_TYPE = "agent.hermes.text"
 
 
 @router.post("/chat/cancel")
@@ -482,8 +489,14 @@ async def _stream_project_turn(
 ) -> None:
     project = str(scope.id)
     project_ctx = await _project_context_for_scope(user, scope)
-    project_dir = project_ctx.output_dir if project_ctx is not None else None
-    project_state_dir = project_ctx.state_dir if project_ctx is not None else None
+    if project_ctx is None:
+        # `ChatScope.from_payload`（`chat/store.py:82-83`）保证 project 态的 id 非空，
+        # 所以这里在本分支里够不着。够不着也必须 fail-closed：没有 registry 校验过的
+        # 身份就没法判定出网身份，绕过绑定直接开聊正是 OI-61 那条漏。
+        # 不新造错误码，复用既有词汇。
+        raise EgressBoundaryError("ORG_CONTEXT_REQUIRED")
+    project_dir = project_ctx.output_dir
+    project_state_dir = project_ctx.state_dir
     agent_text = _text_with_attachment_context(text, attachments)
     chat_service.add_user_message(
         username,
@@ -575,14 +588,29 @@ async def _stream_project_turn(
             )
 
     try:
-        await chat_service.stream_assistant_reply(
-            username,
-            project,
-            agent_text,
-            on_event,
-            project_dir=project_dir,
-            project_state_dir=project_state_dir,
-        )
+        # 请求路径上唯一的出网身份绑定点。放在这里而不是分发块，是为了复用
+        # `_project_context_for_scope` 已经解出的 `ProjectContext`——身份取值只走
+        # registry 校验过的 `project_ctx`，不用客户端输入的 `scope.id`，也不新增
+        # 第二次身份解析（第二条信任链就是第二个漏洞面）。
+        # 非组织身份（平台／个人／CE local／灰度未开）下 `request_egress_scope`
+        # 什么都不绑并 yield `None`；`egress_context=None` 照传，
+        # `service.py` 的 `if egress_context is not None` 会把它当平台路径跳过，
+        # 平台行为逐字节不变。刻意不写成 if/else 两条调用路径。
+        async with request_egress_scope(
+            requester_user_id=project_ctx.requester_user_id,
+            project_id=project_ctx.project_id,
+            task_type=HERMES_TEXT_EGRESS_TASK_TYPE,
+        ) as egress_context:
+            await chat_service.stream_assistant_reply(
+                username,
+                project,
+                agent_text,
+                on_event,
+                project_dir=project_dir,
+                project_state_dir=project_state_dir,
+                egress_context=egress_context,
+                requester_user_id=project_ctx.requester_user_id,
+            )
     finally:
         heartbeat_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
