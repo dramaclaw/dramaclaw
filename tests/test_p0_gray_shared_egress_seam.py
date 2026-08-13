@@ -106,6 +106,10 @@ def _run_core(
         SimpleNamespace(
             project_id=context_project_id or delivery.project_id,
             requester_user_id=context_requester_user_id or delivery.requester_user_id,
+            # run_core now checks placement at entry, so the stand-in ctx has to
+            # carry the field the real ProjectContext always has (see the real
+            # factory at :131 below).
+            is_home_node=True,
         ),
         _TaskManager(),
         run_task_id=run_task_id or delivery.admission.root_task_id,

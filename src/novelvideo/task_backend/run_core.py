@@ -16,6 +16,7 @@ from novelvideo.egress_context import (
 from novelvideo.model_gateway_runtime import model_gateway_scope_for_runner
 from novelvideo.ports import get_usage_meter
 from novelvideo.ports.authz import AdmissionContext
+from novelvideo.project_context import require_project_home_node
 from novelvideo.shared.billing_errors import (
     INSUFFICIENT_CREDITS_MESSAGE,
     billing_error_payload,
@@ -30,7 +31,10 @@ from novelvideo.task_backend.cancel import (
     TaskTimedOut,
     is_cancel_requested,
 )
-from novelvideo.task_backend.registry import get_project_task_runner
+from novelvideo.task_backend.registry import (
+    get_project_task_runner,
+    project_task_requires_home_node,
+)
 from novelvideo.task_backend.subprocesses import project_task_subprocess_context
 from novelvideo.task_state import project_task_run_context
 
@@ -571,6 +575,14 @@ def run_project_task_core_sync(
     )
 
     task_type = str(delivery.task_type)
+    # Placement is checked once, here, before anything is started. Until now a
+    # misrouted task only tripped over the guard inside the first progress
+    # write, i.e. after it had already taken the dedup slot and begun working.
+    # The registry is populated lazily, so make sure it is loaded before asking
+    # it — an empty registry would read as "unregistered", not as "free".
+    _ensure_builtin_runners_registered()
+    if project_task_requires_home_node(task_type):
+        require_project_home_node(ctx, operation="run project task")
     episode = int(delivery.episode or 0)
     beat_num = delivery.beat_num
     scope = delivery.scope
