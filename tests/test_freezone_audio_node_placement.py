@@ -1,27 +1,36 @@
-"""B2 §6.4 步 8：音频节点解耦 —— 投递时解析音色、放进 payload。
+"""Speech synthesis runs from the payload projection, not from project state.
 
-依据：
-- B2 §2.5：`freezone/audio_node.py:329`/`:445` 的 `store.list_characters()` 走的是
-  `task_backend/runners/freezone.py:1293` 的 `make_sqlite_store_for_context(ctx)`
-  ＝ 项目 SQLite，钉 home node（`api/deps.py:185` 的
-  `require_project_home_node(ctx, operation="open project SQLite store")`）。
-- B2 §6.2 批 1a：「音频节点解耦：在投递时解析音色、放进 payload」。
-- B2 §6.4 步 8 RED：「账号级音色在**非 home node** 的 worker 上可解析」。
+The inputs the voice resolution needs (narration style, the narrator reference
+descriptor, and the one or two character rows actually consulted) are pinned
+into ``payload["projection"]`` when the task is submitted.  A worker that gets
+such a payload reads no project database and no project config file, which is
+what lets the task run somewhere other than the machine holding that state.
 
-本 EU 的交付是「输入自带」：payload 里带 `resolved_voice` 时，runner 不再回头开项目
-store，音色与叙述风格全部来自 payload；不带时行为与今天逐字相同（不翻任何开关）。
+The other half matters just as much: a payload without a projection behaves
+exactly as it always has, reading project state on the spot.  That is the
+rollback -- installing no projector leaves this file's behaviour untouched --
+so it is asserted as its own case rather than assumed.
 """
 
 from __future__ import annotations
 
+import re
+import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from novelvideo.freezone import audio_node
 from novelvideo.freezone.audio_node import USER_VOICE_SCOPE
+from novelvideo.models import NovelCharacter
 from novelvideo.project_context import ProjectContext
+from novelvideo.task_backend.projection import (
+    CURRENT_PROJECTION_VERSION,
+    SUPPORTED_PROJECTION_VERSIONS,
+    read_projection,
+)
+
+TASK_TYPE = "freezone_audio_speech"
 
 
 class FakeTTSGenerator:
@@ -67,7 +76,7 @@ class ExplodingStore:
 
 def _ctx(tmp_path: Path) -> ProjectContext:
     return ProjectContext(
-        project_id="proj_audio_d1",
+        project_id="proj_audio_e2",
         project_name="demo",
         owner_type="user",
         owner_id="user_owner",
@@ -84,93 +93,68 @@ def _ctx(tmp_path: Path) -> ProjectContext:
     )
 
 
+def _voice_file(project_dir: Path, name: str) -> Path:
+    path = project_dir / "assets" / "voices" / f"{name}.wav"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(f"{name}-reference-audio".encode())
+    return path
+
+
+def _character(name: str, *, is_main: bool = False) -> NovelCharacter:
+    return NovelCharacter(
+        name=name,
+        is_main=is_main,
+        reference_audio_path=f"assets/voices/{name}.wav",
+        reference_audio_sha256=f"sha-{name}",
+    )
+
+
 def _character_project(tmp_path: Path) -> tuple[Path, FakeCharacterStore]:
     project_dir = tmp_path / "output" / "alice" / "demo"
-    reference = project_dir / "assets" / "voices" / "xiaoming.wav"
-    reference.parent.mkdir(parents=True, exist_ok=True)
-    reference.write_bytes(b"character-reference-audio")
-    store = FakeCharacterStore(
-        [
-            SimpleNamespace(
-                name="小明",
-                reference_audio_path="assets/voices/xiaoming.wav",
-                reference_audio_sha256="sha-xiaoming",
-            )
-        ]
-    )
-    return project_dir, store
+    _voice_file(project_dir, "小明")
+    return project_dir, FakeCharacterStore([_character("小明")])
 
 
-# --------------------------------------------------------------------------
-# 投递侧：把项目级音色解析成可序列化的投射
-# --------------------------------------------------------------------------
+def _projection_fields(
+    *,
+    voice_character=None,
+    narrator_main_character=None,
+    narration_style: str = "third_person",
+    narrator_reference_audio: dict | None = None,
+) -> dict:
+    from novelvideo.task_backend.projection import _character_to_dict
 
-
-@pytest.mark.asyncio
-async def test_project_voice_selection_projects_character_voice(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_dir, store = _character_project(tmp_path)
-    monkeypatch.setattr(
-        audio_node,
-        "load_effective_narration_style_for_voice",
-        lambda *_a, **_k: "first_person",
-    )
-
-    projection = await audio_node.project_voice_selection(
-        store=store,
-        username="alice",
-        project="demo",
-        project_dir=project_dir,
-        voice_ref={"scope": "character_default", "character_name": "小明"},
-    )
-
-    assert projection["narration_style"] == "first_person"
-    assert projection["source"] == "character_default"
-    assert projection["sha256"] == "sha-xiaoming"
-    assert Path(projection["audio_path"]) == project_dir / "assets" / "voices" / "xiaoming.wav"
-    # 投射必须是可序列化的（要塞进任务 payload）。
-    import json
-
-    assert json.loads(json.dumps(projection)) == projection
-
-
-@pytest.mark.asyncio
-async def test_project_voice_selection_projects_account_voice_without_store(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    voice_path = tmp_path / "viewer_voice.mp3"
-    voice_path.write_bytes(b"account-voice")
-    monkeypatch.setattr(
-        audio_node,
-        "load_effective_narration_style_for_voice",
-        lambda *_a, **_k: "third_person",
-    )
-    monkeypatch.setattr(
-        audio_node,
-        "resolve_user_audio_voice",
-        lambda username, voice_id: audio_node.FreezoneVoiceRefResolution(
-            voice_path, "sha-account", USER_VOICE_SCOPE
+    return {
+        "voice_character": _character_to_dict(voice_character) if voice_character else None,
+        "narrator_main_character": (
+            _character_to_dict(narrator_main_character) if narrator_main_character else None
         ),
-    )
+        "narration_style": narration_style,
+        "narrator_reference_audio": narrator_reference_audio
+        or {"path": "", "sha256": "", "updated_at": ""},
+    }
 
-    projection = await audio_node.project_voice_selection(
-        store=ExplodingStore(),
-        username="alice",
-        project="demo",
-        account_voice_username="bob",
-        project_dir=tmp_path,
-        voice_ref={"scope": USER_VOICE_SCOPE, "voice_id": "fv_viewer"},
-    )
 
-    assert projection["source"] == USER_VOICE_SCOPE
-    assert projection["audio_path"] == str(voice_path)
+def _projection_payload(fields: dict, *, version: int = CURRENT_PROJECTION_VERSION) -> dict:
+    return {
+        "projection": {
+            "projection_version": version,
+            "task_type": TASK_TYPE,
+            "fields": fields,
+        }
+    }
+
+
+def _stub_tts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(audio_node, "IndexTTS2FalClient", FakeTTSGenerator)
+    monkeypatch.setattr(
+        audio_node, "build_reference_audio_url", lambda path: f"data://{Path(path).name}"
+    )
+    FakeTTSGenerator.calls = []
 
 
 # --------------------------------------------------------------------------
-# 执行侧：payload 带投射时不碰项目 store
+# 执行侧：payload 带投射时不碰项目态
 # --------------------------------------------------------------------------
 
 
@@ -180,20 +164,16 @@ async def test_generate_speech_consumes_projection_without_project_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_dir = tmp_path / "output" / "alice" / "demo"
-    voice_path = tmp_path / "projected.wav"
-    voice_path.write_bytes(b"projected-voice")
+    voice_path = _voice_file(project_dir, "小明")
 
     def _explode(*_a, **_k):  # pragma: no cover - 触发即失败
-        raise AssertionError("project-local narration style must not be read")
+        raise AssertionError("project-local state must not be read")
 
     monkeypatch.setattr(audio_node, "load_effective_narration_style_for_voice", _explode)
     monkeypatch.setattr(audio_node, "load_narrator_reference_audio", _explode)
-    monkeypatch.setattr(audio_node, "IndexTTS2FalClient", FakeTTSGenerator)
-    monkeypatch.setattr(
-        audio_node, "build_reference_audio_url", lambda path: f"data://{Path(path).name}"
-    )
-    FakeTTSGenerator.calls = []
+    _stub_tts(monkeypatch)
 
+    payload = _projection_payload(_projection_fields(voice_character=_character("小明")))
     result = await audio_node.generate_freezone_audio_speech(
         store=None,
         username="alice",
@@ -201,17 +181,65 @@ async def test_generate_speech_consumes_projection_without_project_state(
         project_dir=project_dir,
         job_id="job-projected",
         text="旁白响起。",
-        resolved_voice={
-            "narration_style": "third_person",
-            "audio_path": str(voice_path),
-            "sha256": "sha-projected",
-            "source": "character_default",
-        },
+        voice_ref={"scope": "character_default", "character_name": "小明"},
+        projection=read_projection(payload),
     )
 
     assert result.voice_source == "character_default"
-    assert result.voice_sha256 == "sha-projected"
-    assert FakeTTSGenerator.calls[0]["audio_url"] == "data://projected.wav"
+    assert result.voice_sha256 == "sha-小明"
+    assert FakeTTSGenerator.calls[0]["audio_url"] == f"data://{voice_path.name}"
+
+
+@pytest.mark.asyncio
+async def test_generate_speech_resolves_the_narrator_main_from_the_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``first_person`` narration is the branch that reaches voice_clone.py:284."""
+    project_dir = tmp_path / "output" / "alice" / "demo"
+    _voice_file(project_dir, "旁白主角")
+
+    def _explode(*_a, **_k):  # pragma: no cover - 触发即失败
+        raise AssertionError("project-local state must not be read")
+
+    monkeypatch.setattr(audio_node, "load_effective_narration_style_for_voice", _explode)
+    monkeypatch.setattr(audio_node, "load_narrator_reference_audio", _explode)
+    _stub_tts(monkeypatch)
+
+    payload = _projection_payload(
+        _projection_fields(
+            narrator_main_character=_character("旁白主角", is_main=True),
+            narration_style="first_person",
+        )
+    )
+    result = await audio_node.generate_freezone_audio_speech(
+        store=None,
+        username="alice",
+        project="demo",
+        project_dir=project_dir,
+        job_id="job-narrator",
+        text="旁白响起。",
+        projection=read_projection(payload),
+    )
+
+    assert result.voice_source == "protagonist_identity"
+    assert FakeTTSGenerator.calls[0]["audio_url"] == "data://旁白主角.wav"
+
+
+@pytest.mark.asyncio
+async def test_generate_speech_raises_when_the_projection_is_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A projection that is present but short of a field is a defect, not a fallback."""
+    project_dir = tmp_path / "output" / "alice" / "demo"
+    _voice_file(project_dir, "小明")
+
+    fields = _projection_fields(voice_character=_character("小明"))
+    fields.pop("narration_style")
+
+    with pytest.raises(ValueError, match="必需字段"):
+        read_projection(_projection_payload(fields))
 
 
 @pytest.mark.asyncio
@@ -226,11 +254,7 @@ async def test_generate_speech_without_projection_still_reads_project_store(
         "load_effective_narration_style_for_voice",
         lambda *_a, **_k: "third_person",
     )
-    monkeypatch.setattr(audio_node, "IndexTTS2FalClient", FakeTTSGenerator)
-    monkeypatch.setattr(
-        audio_node, "build_reference_audio_url", lambda path: f"data://{Path(path).name}"
-    )
-    FakeTTSGenerator.calls = []
+    _stub_tts(monkeypatch)
 
     result = await audio_node.generate_freezone_audio_speech(
         store=store,
@@ -243,6 +267,71 @@ async def test_generate_speech_without_projection_still_reads_project_store(
     )
 
     assert store.list_characters_calls == 1
+    assert result.voice_source == "character_default"
+
+
+@pytest.mark.asyncio
+async def test_account_level_voice_never_touches_the_project_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """账号级音色本来就不读项目库，投射与否都一样。"""
+    voice_path = tmp_path / "viewer_voice.mp3"
+    voice_path.write_bytes(b"account-voice")
+    monkeypatch.setattr(
+        audio_node,
+        "load_effective_narration_style_for_voice",
+        lambda *_a, **_k: "third_person",
+    )
+    monkeypatch.setattr(
+        audio_node,
+        "resolve_user_audio_voice",
+        lambda username, voice_id: audio_node.FreezoneVoiceRefResolution(
+            voice_path, "sha-account", USER_VOICE_SCOPE
+        ),
+    )
+    _stub_tts(monkeypatch)
+
+    result = await audio_node.generate_freezone_audio_speech(
+        store=ExplodingStore(),
+        username="alice",
+        project="demo",
+        account_voice_username="bob",
+        project_dir=tmp_path,
+        job_id="job-account",
+        text="旁白响起。",
+        voice_ref={"scope": USER_VOICE_SCOPE, "voice_id": "fv_viewer"},
+    )
+
+    assert result.voice_source == USER_VOICE_SCOPE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", sorted(SUPPORTED_PROJECTION_VERSIONS))
+async def test_speech_accepts_every_version_in_the_tolerance_window(
+    version: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mixed-version fleet has to work in both directions, not just forwards."""
+    project_dir = tmp_path / "output" / "alice" / "demo"
+    _voice_file(project_dir, "小明")
+    _stub_tts(monkeypatch)
+
+    payload = _projection_payload(
+        _projection_fields(voice_character=_character("小明")), version=version
+    )
+    result = await audio_node.generate_freezone_audio_speech(
+        store=None,
+        username="alice",
+        project="demo",
+        project_dir=project_dir,
+        job_id=f"job-v{version}",
+        text="旁白响起。",
+        voice_ref={"scope": "character_default", "character_name": "小明"},
+        projection=read_projection(payload),
+    )
+
     assert result.voice_source == "character_default"
 
 
@@ -286,36 +375,30 @@ async def test_audio_speech_runner_with_projection_never_opens_project_store(
             mime_type="audio/mpeg",
             model="indextts2",
             voice_source="character_default",
-            voice_sha256="sha-projected",
+            voice_sha256="sha-小明",
         )
 
     _install_runner_stubs(monkeypatch)
-    monkeypatch.setattr(
-        "novelvideo.api.deps.make_sqlite_store_for_context", _explode_store
-    )
+    monkeypatch.setattr("novelvideo.api.deps.make_sqlite_store_for_context", _explode_store)
     monkeypatch.setattr(audio_node, "generate_freezone_audio_speech", fake_generate)
 
-    projection = {
-        "narration_style": "third_person",
-        "audio_path": str(tmp_path / "projected.wav"),
-        "sha256": "sha-projected",
-        "source": "character_default",
-    }
+    fields = _projection_fields(voice_character=_character("小明"))
     result = await freezone_runner._run_freezone_audio_speech_async(
         {
-            "task_type": "freezone_audio_speech",
+            "task_type": TASK_TYPE,
             "payload": {
                 "job_id": "job-1",
                 "project_dir": str(project_dir),
                 "text": "旁白响起。",
-                "resolved_voice": projection,
+                **_projection_payload(fields),
             },
         },
         ctx,
     )
 
-    assert seen["resolved_voice"] == projection
     assert seen["store"] is None
+    assert seen["projection"].task_type == TASK_TYPE
+    assert seen["projection"].fields == fields
     assert result["voice_source"] == "character_default"
 
 
@@ -356,7 +439,7 @@ async def test_audio_speech_runner_without_projection_still_opens_project_store(
 
     await freezone_runner._run_freezone_audio_speech_async(
         {
-            "task_type": "freezone_audio_speech",
+            "task_type": TASK_TYPE,
             "payload": {
                 "job_id": "job-2",
                 "project_dir": str(project_dir),
@@ -368,4 +451,110 @@ async def test_audio_speech_runner_without_projection_still_opens_project_store(
 
     assert opened == ["opened"]
     assert seen["store"] is store
-    assert seen.get("resolved_voice") is None
+    assert seen.get("projection") is None
+
+
+@pytest.mark.asyncio
+async def test_audio_speech_runner_runs_with_every_project_data_entrypoint_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T2 -- the whole leaf, not a stub, with project data made unreachable.
+
+    ``resolve_narrator_source`` carries a database fallback that today's callers
+    never reach (``seedance2_i2v/voice_clone.py:284`` falls back to
+    ``store.get_all_characters()`` when no character rows are handed in).  Being
+    unreachable is not the same as being absent, and grepping for the store API
+    does not find it, so the only way to hold that line is to make every project
+    data entrypoint fail and run the first-person branch through it for real.
+    """
+    from novelvideo.cognee.store import CogneeStore
+    from novelvideo.sqlite_store import SQLiteStore
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    ctx = _ctx(tmp_path)
+    project_dir = Path(ctx.output_dir)
+    _voice_file(project_dir, "旁白主角")
+    touched: list[str] = []
+
+    def _explode(name: str):
+        def _raise(*_args, **_kwargs):
+            touched.append(name)
+            raise AssertionError(f"{name} must not be reachable for a projected task")
+
+        return _raise
+
+    _install_runner_stubs(monkeypatch)
+    _stub_tts(monkeypatch)
+    monkeypatch.setattr(SQLiteStore, "__init__", _explode("SQLiteStore.__init__"))
+    monkeypatch.setattr(CogneeStore, "__init__", _explode("CogneeStore.__init__"))
+    monkeypatch.setattr(
+        "novelvideo.project_config.load_project_config_file",
+        _explode("load_project_config_file"),
+    )
+
+    payload = {
+        "job_id": "job-t2",
+        "project_dir": str(project_dir),
+        "text": "旁白响起。",
+        **_projection_payload(
+            _projection_fields(
+                narrator_main_character=_character("旁白主角", is_main=True),
+                narration_style="first_person",
+            )
+        ),
+    }
+    result = await freezone_runner._run_freezone_audio_speech_async(
+        {"task_type": TASK_TYPE, "payload": payload}, ctx
+    )
+
+    assert touched == []
+    assert result["voice_source"] == "protagonist_identity"
+    assert FakeTTSGenerator.calls[0]["audio_url"] == "data://旁白主角.wav"
+
+
+# --------------------------------------------------------------------------
+# 静态断言：payload 里只剩投射一套约定
+# --------------------------------------------------------------------------
+
+
+def test_no_production_code_carries_a_resolved_voice_payload_key() -> None:
+    """Audio inputs travel one way only -- inside ``payload['projection']``.
+
+    Two conventions for the same concern means the field-name, size and version
+    guards built around the projection cover only half of what ships, and every
+    later protocol change has to be made twice.  The local variable of the same
+    name in the beat-audio task is a different thing entirely and is not counted.
+    """
+    src = Path(__file__).resolve().parents[1] / "src" / "novelvideo"
+    key = re.compile(r"""resolved_voice""")
+    hits: dict[str, list[str]] = {}
+    for path in sorted(src.rglob("*.py")):
+        lines = [
+            f"{path.relative_to(src)}:{number}: {line.strip()}"
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if key.search(line)
+        ]
+        if lines:
+            hits[str(path.relative_to(src))] = lines
+
+    payload_hits = [
+        line
+        for lines in hits.values()
+        for line in lines
+        if '"resolved_voice"' in line or "'resolved_voice'" in line or "resolved_voice=" in line
+    ]
+    assert payload_hits == []
+    assert set(hits) == {"audio/indextts2_beat_audio_task.py"}
+
+
+def test_the_beat_audio_task_name_is_a_local_variable_not_a_payload_key() -> None:
+    """Guard the exclusion above so it cannot quietly become an escape hatch."""
+    module = sys.modules.get("novelvideo.audio.indextts2_beat_audio_task")
+    if module is None:
+        import novelvideo.audio.indextts2_beat_audio_task as module
+
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    assert '"resolved_voice"' not in source
+    assert "'resolved_voice'" not in source
+    assert "resolved_voice = await _resolve_dialogue_voice(" in source
