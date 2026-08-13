@@ -10,7 +10,7 @@
 ContextVar。它**不接任何路由**；接线是 OI-54 族 S1／S2／S4／S5 的事。
 
 信任链：身份**只能**来自 `get_authz_port().admit_model_task`
-（抽象 `ports/authz.py:191`；EE `novelvideo_ee/authz/port.py:156` → PG
+（抽象 `ports/authz.py:191`；EE 侧 authz port 实现走 PG
 `product_admit_model_task`；CE 单机降级 `ports/local/__init__.py:64-79` 产
 `kind="local"`）。这里不另发明身份解析——第二条信任链就是第二个漏洞面。
 """
@@ -66,7 +66,7 @@ async def build_request_egress_context(
     if authz_error_code is not None:
         # 分支 1：灰度关＝平台语义，路径逐字节不变。
         # `ST_P0_GRAY_ENABLED` 缺省关时 `admit_model_task` 首句 require_enabled()
-        # 就抛这个码（`novelvideo_ee/authz/port.py:157`、`config.py:47-51`）。
+        # 就抛这个码（EE 侧 authz port 实现与其灰度开关配置）。
         if authz_error_code == "P0_GRAY_DISABLED":
             return None
         # 分支 2：其余任何 AuthzError 原样上抛，fail-closed。

@@ -8,7 +8,7 @@
 OI-54 记录的假绿写法之一（EE `tests/b2b/test_p0g4k_grid_family_egress_integration.py:305`）。
 
 假 port 一律**回显**调用方传入的 `user_id` / `root_task_id`，与两个真实实现一致：
-EE `novelvideo_ee/authz/port.py:169` 的 `_context_from_facts(..., user_id=, root_task_id=)`、
+EE 侧 authz port 实现的 `_context_from_facts(..., user_id=, root_task_id=)`、
 CE `src/novelvideo/ports/local/__init__.py:67-79` 的 `LocalAuthz`。
 只有 C1-9／C1-10 两条刻意打破回显，用来钉住校验分支。
 """
