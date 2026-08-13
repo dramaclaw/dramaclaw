@@ -16,6 +16,7 @@ from typing import Callable
 
 from novelvideo.freezone.canvas_lock import canvas_write_lock
 from novelvideo.freezone.paths import canvas_path, canvases_dir
+from novelvideo.utils.async_ops import call_blocking
 
 CANVAS_HISTORY_TS_FORMAT = "%Y%m%d_%H%M%S_%f"
 HISTORY_RETENTION_LIMIT = 100
@@ -729,6 +730,25 @@ def save_canvas(
             backup_path=backup_path,
             response_cache=response_cache,
         )
+
+
+async def save_canvas_async(*args, **kwargs) -> CanvasSaveResult:
+    """事件循环上的调用方**必须**走这一个,不许直接调 `save_canvas`。
+
+    `save_canvas` 是阻塞的:`canvas_write_lock` 的自旋用 `time.sleep(0.02)`,
+    落盘是同步文件 I/O。今天锁永远瞬间拿到(跨机器根本没生效),所以在 `async def`
+    路由里同步调它没有症状;一旦画布互斥真正生效,一次被争用的保存就会把该
+    uvicorn worker 的**整个事件循环**冻住最多 3 秒——冻住的不只是这张画布,是
+    那个 worker 上所有请求(别人的画布、任务轮询、无关项目)。
+
+    所以「保存挪下事件循环」必须**先于**互斥生效,且单独发布,留一个独立回滚点。
+
+    签名逐字透传给 `save_canvas`,不在这里复制它的关键字参数——复制一份会在
+    `save_canvas` 加参数时无声漂移。CLI、worker 与备份进程不在事件循环上,继续
+    直接调 `save_canvas`,行为逐字不变。
+    """
+
+    return await call_blocking(save_canvas, *args, **kwargs)
 
 
 def restore_canvas_version(

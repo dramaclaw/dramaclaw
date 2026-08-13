@@ -10865,7 +10865,7 @@ async def create_canvas_from_preset(
         }
 
     try:
-        saved_canvas = canvas_store.save_canvas(
+        saved_canvas = await canvas_store.save_canvas_async(
             canvas_project_dir,
             canvas_id,
             base_revision=body.base_revision,
@@ -11052,7 +11052,7 @@ async def project_canvas_from_preset(
     projection_client_save_id = f"projection:{canvas_id}:{projection_stable_hash}"
 
     try:
-        saved_canvas = canvas_store.save_canvas(
+        saved_canvas = await canvas_store.save_canvas_async(
             canvas_project_dir,
             canvas_id,
             base_revision=body.base_revision,
@@ -11190,7 +11190,7 @@ async def remove_canvas_projection(
     remove_client_save_id = f"projection-remove:{canvas_id}:{remove_stable_hash}"
 
     try:
-        saved_canvas = canvas_store.save_canvas(
+        saved_canvas = await canvas_store.save_canvas_async(
             canvas_project_dir,
             canvas_id,
             base_revision=body.base_revision,
@@ -11636,7 +11636,7 @@ async def put_canvas(
         return prepared
 
     try:
-        saved_canvas = canvas_store.save_canvas(
+        saved_canvas = await canvas_store.save_canvas_async(
             canvas_project_dir,
             canvas_id,
             base_revision=body.base_revision,
