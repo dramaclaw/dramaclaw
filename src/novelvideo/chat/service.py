@@ -3564,6 +3564,56 @@ async def prewarm_chat_backend(username: str, *, project: str | None = None) -> 
         return
 
 
+async def authorize_hermes_launch(
+    *,
+    egress_context,
+    username: str,
+    requester_user_id: str | None,
+    egress_project_id: str,
+    prompt: str,
+):
+    """Turn this request's trusted egress context into a one-shot launch authorization.
+
+    请求路径上 project 态与 home 态是两条独立实现（home 的流式循环在
+    `api/routes/chat.py` 里，完全绕开本模块），但「怎么换取 authorization」
+    必须只有一份。抽在这里而不是 `hermes_egress.py`：后者刻意用依赖注入收
+    `credential_resolver` / `operation_port`，把端口查找塞进去会破坏那个设计。
+
+    `egress_context` 为 `None`（平台／个人／CE local／灰度未开）时返回 `None`，
+    调用方照传给 `get_for_user`，平台路径逐字节不变。
+
+    `egress_project_id` 是**出网身份**，不是会话身份：project 态传真实 project id，
+    home 态传 `HOME_SCOPE_EGRESS_PROJECT_ID` 哨兵。它必须与绑定时
+    `request_egress_scope(project_id=...)` 用的值一致——`_strict_admission` 在
+    `authorize_credentialed_hermes` 与 `build_hermes_child_env` 两处各比一次。
+    """
+
+    if egress_context is None:
+        return None
+
+    # 函数内局部导入：规避循环导入（本模块被 `hermes_pool` 一侧间接引用）。
+    # 这是抽 helper 之前就有的写法，原样保留，不提到模块顶层。
+    from novelvideo.chat.hermes_egress import (
+        EgressBoundaryError,
+        authorize_credentialed_hermes,
+    )
+    from novelvideo.ports import get_egress_operation_port, get_model_credentials
+
+    # 身份判定只认 user_id。缺了就拒，不得回落成登录名 username——
+    # 那是两个不同的值，回落会把坏口径固化成"看起来能用"。
+    if not requester_user_id:
+        raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
+    return await authorize_credentialed_hermes(
+        context=egress_context,
+        username=username,
+        requester_user_id=requester_user_id,
+        project_id=egress_project_id,
+        prompt=prompt,
+        credential_resolver=get_model_credentials(),
+        operation_port=get_egress_operation_port(),
+    )
+
+
 async def _stream_assistant_reply_hermes(
     username: str,
     project: str,
@@ -3584,27 +3634,13 @@ async def _stream_assistant_reply_hermes(
     """
     from novelvideo.chat.hermes_pool import pool as _hermes_pool
 
-    authorization = None
-    if egress_context is not None:
-        from novelvideo.chat.hermes_egress import (
-            EgressBoundaryError,
-            authorize_credentialed_hermes,
-        )
-        from novelvideo.ports import get_egress_operation_port, get_model_credentials
-
-        # 身份判定只认 user_id。缺了就拒，不得回落成登录名 username——
-        # 那是两个不同的值，回落会把坏口径固化成"看起来能用"。
-        if not requester_user_id:
-            raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
-        authorization = await authorize_credentialed_hermes(
-            context=egress_context,
-            username=username,
-            requester_user_id=requester_user_id,
-            project_id=project,
-            prompt=prompt,
-            credential_resolver=get_model_credentials(),
-            operation_port=get_egress_operation_port(),
-        )
+    authorization = await authorize_hermes_launch(
+        egress_context=egress_context,
+        username=username,
+        requester_user_id=requester_user_id,
+        egress_project_id=project,
+        prompt=prompt,
+    )
 
     agent_prompt = _prompt_with_user_context(username, project, prompt)
     thread = await _hermes_pool.get_for_user(
