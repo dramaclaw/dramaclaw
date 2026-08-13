@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, unquote, urlencode, urlsplit
@@ -1177,6 +1178,48 @@ async def _mainline_single_beat_config(
     }
 
 
+def _installed_task_projector():
+    """Return the installed projector, or ``None`` when nothing is installed.
+
+    Answering this before any store is opened is what keeps the default inline
+    deployment on exactly its old code path.
+    """
+    from novelvideo.ports import get_task_projection
+    from novelvideo.ports.local.projection import NoOpTaskProjection
+
+    projector = get_task_projection()
+    if isinstance(projector, NoOpTaskProjection):
+        return None
+    return projector
+
+
+async def _build_task_projection(
+    projector,
+    *,
+    store,
+    username: str,
+    project_name: str,
+    episode: int,
+    task_type: str,
+    extra_config: Mapping[str, Any] | None = None,
+) -> dict | None:
+    """Resolve one task's project-state inputs into a frozen fragment.
+
+    ``extra_config`` carries the request-shaped inputs a task type needs in
+    order to know *which* rows to read -- the caller's own request body, not
+    project state.  Every mount point goes through this one function so the
+    invocation shape stays in a single place.
+    """
+    config: dict[str, Any] = {
+        "username": username,
+        "project_name": project_name,
+        "episode": int(episode),
+    }
+    if extra_config:
+        config.update(extra_config)
+    return await projector.build(store, config, task_type=task_type)
+
+
 async def _task_projection_payload(
     *,
     ctx: ProjectContext,
@@ -1184,6 +1227,7 @@ async def _task_projection_payload(
     project_name: str,
     episode: int,
     task_type: str,
+    extra_config: Mapping[str, Any] | None = None,
 ) -> dict:
     """Build the ``projection`` fragment to merge into an enqueue payload.
 
@@ -1193,17 +1237,18 @@ async def _task_projection_payload(
     does not run the task in this process installs a projector and gets the
     inputs carried along with the task instead.
     """
-    from novelvideo.ports import get_task_projection
-    from novelvideo.ports.local.projection import NoOpTaskProjection
-
-    projector = get_task_projection()
-    if isinstance(projector, NoOpTaskProjection):
+    projector = _installed_task_projector()
+    if projector is None:
         return {}
     store = await make_sqlite_store_for_context(ctx)
-    projection = await projector.build(
-        store,
-        {"username": username, "project_name": project_name, "episode": int(episode)},
+    projection = await _build_task_projection(
+        projector,
+        store=store,
+        username=username,
+        project_name=project_name,
+        episode=episode,
         task_type=task_type,
+        extra_config=extra_config,
     )
     if projection is None:
         return {}
@@ -6458,7 +6503,25 @@ def _start_freezone_audio_speech_task(
                 current_task="calling_tts_provider",
                 logs=["正在调用 TTS 服务"],
             )
+            voice_ref_payload = body.voice_ref.model_dump() if body.voice_ref else None
             store = await make_sqlite_store(username, project)
+            # 同进程执行也走同一条投射路径，好让两个入口读到的项目态形状一致。
+            projector = _installed_task_projector()
+            projection = None
+            if projector is not None:
+                built = await _build_task_projection(
+                    projector,
+                    store=store,
+                    username=username,
+                    project_name=project,
+                    episode=int(body.target_episode or 0),
+                    task_type=task_type,
+                    extra_config={"voice_ref": voice_ref_payload},
+                )
+                if built is not None:
+                    from novelvideo.task_backend.projection import read_projection
+
+                    projection = read_projection({"projection": built})
             result = await generate_freezone_audio_speech(
                 store=store,
                 username=username,
@@ -6468,7 +6531,8 @@ def _start_freezone_audio_speech_task(
                 job_id=job_id,
                 text=body.text,
                 emotion_prompt=body.emotion_prompt,
-                voice_ref=body.voice_ref.model_dump() if body.voice_ref else None,
+                voice_ref=voice_ref_payload,
+                projection=projection,
             )
             rel = result.audio_path.relative_to(project_dir).as_posix()
             audio_url = project_static_url(project_id, rel, local_path=result.audio_path)
@@ -8852,6 +8916,8 @@ async def freezone_audio_speech(
         raise HTTPException(400, "text must be <= 10000 characters")
     billable_chars = count_billable_text_chars(body.text)
 
+    voice_ref_payload = body.voice_ref.model_dump() if body.voice_ref else None
+
     try:
         job_id = _new_job_id()
         if ctx is not None:
@@ -8859,6 +8925,16 @@ async def freezone_audio_speech(
                 freezone_audio_task_billing,
             )
 
+            # 音色解析要读的项目态在这里定型：投递方就是存放该项目的那台机器，
+            # 执行方不必再回头读项目库。没装投射器时返回空片段，payload 逐字不变。
+            projection_payload = await _task_projection_payload(
+                ctx=ctx,
+                username=username,
+                project_name=project_name,
+                episode=int(body.target_episode or 0),
+                task_type="freezone_audio_speech",
+                extra_config={"voice_ref": voice_ref_payload},
+            )
             return await _enqueue_freezone_background_job(
                 ctx=ctx,
                 project_dir=project_dir,
@@ -8867,7 +8943,7 @@ async def freezone_audio_speech(
                 payload={
                     "text": body.text,
                     "emotion_prompt": body.emotion_prompt,
-                    "voice_ref": body.voice_ref.model_dump() if body.voice_ref else None,
+                    "voice_ref": voice_ref_payload,
                     "account_voice_username": account_voice_username,
                     "target_episode": body.target_episode,
                     "target_beat": body.target_beat,
@@ -8879,6 +8955,7 @@ async def freezone_audio_speech(
                             "pricing_quantity": billable_chars,
                         },
                     ),
+                    **projection_payload,
                 },
             )
         _start_freezone_audio_speech_task(

@@ -1292,11 +1292,11 @@ async def _run_freezone_audio_speech_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, "freezone_audio_speech", job_id, 0.1, "开始文本生成语音...")
-    # 音色已在投递时解析好放进 payload 时（B2 §6.4 步 8），这里不再回头开项目
-    # SQLite —— 那一步经 `api/deps.py` 的 `require_project_home_node` 把本任务
-    # 钉在 home node 上。payload 里没有投射时行为逐字不变。
-    resolved_voice = payload.get("resolved_voice")
-    store = None if resolved_voice else await make_sqlite_store_for_context(ctx)
+    # 音色所需的项目态已在投递时定型放进 payload 时，这里不再回头开项目 SQLite
+    # —— 那一步经 `api/deps.py` 的 `require_project_home_node` 把本任务钉在
+    # 存放该项目的那台机器上。payload 里没有投射时行为逐字不变。
+    projection = read_projection(payload)
+    store = None if projection is not None else await make_sqlite_store_for_context(ctx)
     try:
         result = await _call_freezone_leaf(
             envelope,
@@ -1315,7 +1315,7 @@ async def _run_freezone_audio_speech_async(
             text=str(payload.get("text") or ""),
             emotion_prompt=str(payload.get("emotion_prompt") or ""),
             voice_ref=payload.get("voice_ref"),
-            resolved_voice=resolved_voice,
+            projection=projection,
         )
     finally:
         close = getattr(store, "close", None)
