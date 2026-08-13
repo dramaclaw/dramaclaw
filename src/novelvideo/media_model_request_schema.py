@@ -161,7 +161,7 @@ def enforce_newapi_media_geometry_contract(
         metadata.pop("aspect_ratio", None)
         result.pop("width", None)
         result.pop("height", None)
-    elif "width" in result and "height" in result:
+    else:
         if ratio:
             metadata["ratio"] = ratio
         metadata.pop("aspect_ratio", None)

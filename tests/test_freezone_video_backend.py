@@ -469,6 +469,15 @@ def test_happyhorse_backend_detection_accepts_newapi_value() -> None:
     assert not is_freezone_happyhorse_backend("newapi_seedance-2.0-fast")
 
 
+def test_direct_seedance_ratio_accepts_canonical_and_legacy_auto_values() -> None:
+    from novelvideo.generators.video_generator import SeedanceVideoGenerator
+
+    assert SeedanceVideoGenerator._normalize_aspect_ratio("auto") == "auto"
+    assert SeedanceVideoGenerator._normalize_aspect_ratio("adaptive") == "adaptive"
+    assert SeedanceVideoGenerator._normalize_aspect_ratio("16:9") == "16:9"
+    assert SeedanceVideoGenerator._normalize_aspect_ratio("unsupported") == "9:16"
+
+
 def test_freezone_rejects_removed_wan26_backend() -> None:
     with pytest.raises(ValueError, match="unknown video model"):
         resolve_freezone_video_backend("wan26")

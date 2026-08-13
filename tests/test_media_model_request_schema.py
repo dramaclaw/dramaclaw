@@ -115,6 +115,20 @@ def test_fixed_geometry_keeps_ratio_and_removes_legacy_size():
     }
 
 
+def test_fixed_ratio_is_preserved_without_dimensions():
+    result = enforce_newapi_media_geometry_contract(
+        {
+            "aspect_ratio": "16:9",
+            "resolution": "2K",
+        },
+        media_type="video",
+    )
+
+    assert result == {
+        "metadata": {"ratio": "16:9", "resolution": "2k"},
+    }
+
+
 @pytest.mark.parametrize(
     ("raw_duration", "expected"),
     [("auto", "auto"), ("AUTO", "auto"), ("5", 5), (5.5, 5.5)],

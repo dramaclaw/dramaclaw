@@ -358,6 +358,13 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
 
         return f"data:{mime_type};base64,{image_data}"
 
+    @staticmethod
+    def _normalize_aspect_ratio(value: str | None) -> str:
+        """Accept both legacy and canonical follow-input ratio values."""
+
+        ratio = str(value or "").strip().lower()
+        return ratio if ":" in ratio or ratio in {"auto", "adaptive"} else "9:16"
+
     async def _download_video(self, url: str, output_path: str, max_retries: int = 3) -> bool:
         """下载视频文件，失败自动重试。"""
         import httpx
@@ -471,10 +478,10 @@ class SeedanceVideoGenerator(VideoGeneratorBase):
         duration = normalize_video_duration_for_backend("seedance_fast", duration)
 
         # 映射 aspect_ratio 格式
-        ratio_text = str(aspect_ratio or "").strip().lower()
-        # Seedance I2V uses ``adaptive`` to preserve the first-frame framing.
-        # The old colon-only guard accidentally converted it back to 9:16.
-        ratio = ratio_text if ":" in ratio_text or ratio_text == "adaptive" else "9:16"
+        # Existing direct-Seedance deployments used ``adaptive`` while the
+        # canonical media contract uses ``auto``. Accept both at this legacy
+        # boundary instead of silently falling back to 9:16.
+        ratio = self._normalize_aspect_ratio(aspect_ratio)
 
         # 处理首帧
         if image_path.startswith(("http://", "https://", "data:")):
