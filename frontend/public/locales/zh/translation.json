@@ -458,6 +458,35 @@
         "days": "{{count}} 天前"
       }
     },
+    "canvasOutline": {
+      "title": "画布元素",
+      "groupMembers": "{{count}} 个节点",
+      "empty": "当前画布还没有节点",
+      "duplicate": "复制",
+      "rename": "重命名",
+      "download": "下载",
+      "locate": "定位到节点",
+      "moreActions": "更多操作",
+      "matched": "匹配 {{count}} 个",
+      "expandAll": "展开全部分组",
+      "collapseAll": "收起全部分组",
+      "search": "搜索节点",
+      "closeSearch": "关闭搜索",
+      "filter": "按类型筛选",
+      "noMatch": "没有匹配的节点",
+      "types": {
+        "all": "全部",
+        "text": "文本",
+        "image": "图片",
+        "video": "视频",
+        "storyboard": "分镜",
+        "beat": "镜头上下文",
+        "audio": "音频",
+        "script": "脚本",
+        "world": "3D / 全景",
+        "skill": "技能"
+      }
+    },
     "projections": {
       "staleCount": "{{count}} 个主线投影有更新",
       "activeCount": "{{count}} 个主线投影",
@@ -1298,8 +1327,6 @@
     "props": {
       "title": "道具管理",
       "count": "{{count}} 个道具",
-      "batchGenerate": "批量生成参考图",
-      "batchStatusTitle": "批量参考图生成",
       "newProp": "新建道具",
       "newPropHint": "AI自动提取道具需要在虾镜中按集数分集提取",
       "editProp": "编辑道具",
@@ -1415,7 +1442,7 @@
     "title": "虾料",
     "subtitle": "上传剧本，开启你的创意之旅",
     "dropzoneHint": "点击或拖拽上传小说文件",
-    "supportedFormats": "支持 .txt / .md / .docx · 文件不超过 1MB · 正文不超过 10 万字",
+    "supportedFormats": "支持 .txt / .md / .docx · 文件不超过 512KB · 正文不超过 10 万字",
     "uploadingTitle": "正在上传小说…",
     "uploadingHint": "上传完成前请勿离开本页面，网络较慢时可能需要多等一会儿。",
     "inputMode": {
@@ -1432,6 +1459,7 @@
     "settingsSaved": "项目设置已保存",
     "settingsSaveFailed": "项目设置保存失败",
     "processing": "处理中...",
+    "elapsed": "已耗时 {{time}}",
     "projectSettings": "项目设置",
     "advancedSettings": "高级设置",
     "visualStyle": "视觉风格",
@@ -1650,6 +1678,12 @@
       "selected_regen": "选中重生成",
       "compose_episode": "视频合成",
       "freezone_image_reverse_prompt": "图片反推提示词"
+    },
+    "cancelRunning": {
+      "title": "终止任务",
+      "fallbackMessage": "任务已开始执行。现在终止不会退还积分，是否确认终止？",
+      "confirm": "确认终止",
+      "keepRunning": "继续执行"
     }
   },
   "taskCenter": {
@@ -3371,7 +3405,8 @@
     "thinkingLevelDesc": "仅对 fal 的 Nano Banana 2 生效；高思考会额外增加费用。",
     "thinkingDisabled": "关闭",
     "thinkingMinimal": "标准",
-    "thinkingHigh": "高"
+    "thinkingHigh": "高",
+    "noModelsAvailable": "管理员尚未配置任何图片模型"
   },
   "node": {
     "menu": {
@@ -3426,7 +3461,8 @@
       "promptRequired": "请输入提示词",
       "apiKeyRequired": "后端 provider 未配置",
       "resultTitle": "结果图片",
-      "promptPlaceholder": "描述任何你想要生成或编辑的内容"
+      "promptPlaceholder": "描述任何你想要生成或编辑的内容",
+      "noModelAvailable": "管理员尚未配置任何图片模型，暂时无法生成"
     },
     "imageGen": {
       "contextPalette": {
@@ -3527,6 +3563,8 @@
         "textToMusicGen": "文字生成音乐"
       },
       "placeholder": "写下故事、场景或角色灵感。例如：雨夜旧车站里，一封迟到的信改变了所有人的选择。",
+      "generatePlaceholder": "描述你想生成的故事、场景、角色设定、对白或创作提示词…",
+      "generateText": "AI 生成文本",
       "modelPickerHint": "选择模型",
       "submit": "提交",
       "translate": "翻译（中英文互译）"
@@ -3597,9 +3635,18 @@
         "off": "关闭",
         "durationTooShort": "单条音频时长不能低于 {{min}} 秒：{{clips}}。请替换或补长后再试。",
         "durationTooLong": "单条音频时长不能超过 {{max}} 秒：{{clips}}。请裁剪或替换后再试。",
+        "durationTotalTooShort": "所有音频合计不能低于 {{min}} 秒，当前共 {{total}} 秒：{{clips}}。请增加或延长音频后再试。",
+        "durationTotalTooLong": "所有音频加起来不能超过 {{max}} 秒，当前共 {{total}} 秒：{{clips}}。请裁剪或去掉部分音频后再试。",
         "clipDuration": "{{label}}（{{seconds}}s）",
         "clipSeparator": "、",
         "clipFallbackLabel": "音频{{index}}"
+      },
+      "referenceDuration": {
+        "videoFallbackLabel": "视频{{index}}",
+        "videoTooShort": "单条视频时长不能低于 {{min}} 秒：{{clips}}。请替换或延长后再试。",
+        "videoTooLong": "单条视频时长不能超过 {{max}} 秒：{{clips}}。请裁剪或替换后再试。",
+        "videoTotalTooShort": "所有视频合计不能低于 {{min}} 秒，当前共 {{total}} 秒：{{clips}}。请增加或延长视频后再试。",
+        "videoTotalTooLong": "所有视频合计不能超过 {{max}} 秒，当前共 {{total}} 秒：{{clips}}。请裁剪或移除部分视频后再试。"
       },
       "count": {
         "format": "{{count}}个"
@@ -3986,19 +4033,24 @@
     },
     "modelConfig": {
       "title": "模型配置",
-      "description": "选择模型网关渠道：使用平台官方网关，或自配本地 NewAPI。",
+      "description": "选择模型网关渠道：使用平台官方网关、自定义 NewAPI，或组合使用本地与官方服务。",
       "baseUrlHint": "本地 NewAPI 地址由 CE 运行环境自动配置。",
       "effectiveBadge": "当前生效：{{channel}}",
+      "guide": "配置手册",
       "loading": "加载中…",
       "requestFailed": "请求失败，请重试。",
+      "activateMode": "设为当前配置",
+      "configureBeforeActivate": "请先完成该配置后再启用。",
+      "modeActivated": "已启用{{mode}}配置。",
       "statusConfigured": "已配置",
       "statusNotConfigured": "未配置",
       "statusActive": "当前生效",
       "gatewayWarningIconLabel": "模型网关未配置",
       "gatewayNotConfiguredImpact": "当前生效的模型网关未配置。文本、图片、视频、音频等模型调用会失败；请配置官方渠道或初始化本地 NewAPI 后再生成内容。",
       "modes": {
-        "official": "官方渠道",
-        "custom": "本地 NewAPI"
+        "official": "官方",
+        "custom": "自定义",
+        "hybrid": "本地 + 官方混合"
       },
       "fields": {
         "baseUrl": "New API 地址",
@@ -4015,7 +4067,19 @@
         "saved": "已保存并切换为官方渠道。",
         "enabled": "已切换为官方渠道。",
         "missingFields": "请填写 API Key。",
-        "registerLink": "请前往 RelayClaw 进行注册"
+        "registerLink": "请前往 RelayClaw 进行注册",
+        "mediaCatalogTitle": "官方媒体模型列表",
+        "mediaCatalogStatus": "版本 {{version}} · {{count}} 个模型 · {{source}}",
+        "mediaCatalogSources": {
+          "bundled": "应用内置",
+          "remote": "在线更新"
+        },
+        "mediaCatalogAutoUpdate": "自动更新官方模型列表",
+        "mediaCatalogAutoUpdateHint": "后台定时检查，并在打开设置时立即应用兼容的模型目录更新。",
+        "mediaCatalogCheckNow": "立即检查更新",
+        "mediaCatalogUpdated": "官方媒体模型列表已更新。",
+        "mediaCatalogUpToDate": "官方媒体模型列表已是最新版本。",
+        "mediaCatalogCheckFailed": "检查官方媒体模型列表失败，请稍后重试。"
       },
       "custom": {
         "description": "CE 使用本机 SQLite NewAPI。DramaClaw 会自动连接数据库、创建运行令牌并启用本地渠道。",
@@ -4045,6 +4109,40 @@
         "setupPasswordTooShort": "初始化密码至少需要 8 位。",
         "setupPasswordMismatch": "两次输入的初始化密码不一致。"
       },
+      "quick": {
+        "title": "推荐配置",
+        "description": "本地 NewAPI 初始化完成后，使用一份配置同时完成供应商渠道、业务模型、Embedding 和媒体模型映射。",
+        "recommended": "推荐配置",
+        "custom": "我的配置",
+        "active": "使用中",
+        "upstreamKey": "上游 API Key",
+        "upstreamKeyPlaceholder": "输入模型供应商的 API Key",
+        "channelKeysTitle": "渠道 API Key",
+        "keyHint": "Key 按渠道单独填写，不会写入配置 JSON；已保存过对应供应商 Key 时可以留空。",
+        "savedKeyPlaceholder": "已保存 · {{preview}}（重新输入可替换）",
+        "fixJsonFirst": "请先修正配置 JSON，解析成功后会在这里显示渠道 Key 输入框。",
+        "editJson": "查看或编辑推荐配置 JSON",
+        "jsonHint": "channels 定义渠道；业务模型、Embedding 和每个媒体模型通过 channel 字段选择渠道。当前暂不支持重复 provider。",
+        "recommendedJsonHint": "推荐配置为内置只读模板。切换到我的配置可基于该模板修改并长期保存。",
+        "apply": "保存并应用全部配置",
+        "applyHint": "一次写入全部配置；现有逐项配置可在下方高级配置中继续调整。",
+        "applying": "正在处理：{{step}}",
+        "applied": "推荐配置已全部保存并启用。",
+        "initializeFirst": "请先初始化本地 NewAPI，确认数据库和管理员访问正常后再应用配置。",
+        "comfyConfig": "ComfyUI 配置",
+        "comfyTemplateHint": "需要本地 MiniMax H3 示例时再主动载入，打开混合配置不会自动创建 ComfyUI 渠道。",
+        "loadComfyTemplate": "载入 MiniMax H3 模板",
+        "advanced": "高级配置",
+        "invalidJson": "配置 JSON 无效：{{message}}",
+        "missingKeys": "以下渠道缺少上游 API Key：{{channels}}",
+        "steps": {
+          "initialize": "初始化本地 NewAPI",
+          "channel": "保存供应商渠道",
+          "features": "保存业务模型",
+          "embedding": "保存 Embedding",
+          "media": "保存媒体模型"
+        }
+      },
       "featureModels": {
         "title": "业务模型映射",
         "description": "为文本理解、内容生成和视觉理解功能指定上游模型；未设置则使用后端默认。",
@@ -4053,6 +4151,22 @@
         "addChannel": "新增渠道",
         "saveChannels": "保存渠道配置",
         "channelsSaved": "渠道配置已保存到本地。",
+        "comfyWorkflows": "ComfyUI Workflows",
+        "comfyWorkflowHint": "一个模型可以添加多份 API Format Workflow，具体路由由虾驿处理。API Key 可选。",
+        "comfyAddWorkflow": "添加 Workflow",
+        "comfyExpandWorkflow": "展开查看",
+        "comfyCollapseWorkflow": "收起",
+        "comfyModelName": "模型名称",
+        "comfyModelPlaceholder": "模型名称，例如 MiniMax-H3",
+        "comfyWorkflowId": "Workflow ID",
+        "comfyWorkflowJson": "Workflow JSON",
+        "comfyWorkflowIdPlaceholder": "Workflow ID，例如 minimax-h3-t2v",
+        "comfyDuplicateWorkflow": "Workflow ID 不能重复。",
+        "comfyInvalidWorkflow": "Workflow 必须是有效的 JSON 对象。",
+        "clearComfy": "清除 ComfyUI 配置",
+        "clearComfyTitle": "清除 ComfyUI 配置？",
+        "clearComfyConfirm": "将删除本地及 NewAPI 中的 ComfyUI 渠道、Workflow 和对应媒体模型映射。已生成的项目和媒体不会被删除。",
+        "comfyCleared": "ComfyUI 配置已清除。",
         "channelsSaveHint": "这里只保存 CE 本地渠道预设，不会立刻修改 NewAPI 已有渠道；下次保存模型映射时会使用这些预设更新 NewAPI 渠道。如需立即替换 NewAPI 渠道 Key，请点击对应渠道的更新按钮。",
         "syncChannel": "更新 NewAPI 渠道",
         "syncChannelHint": "立刻更新 NewAPI 中该供应商已有渠道的 Key 和 Base URL，不改模型映射。",
@@ -4110,6 +4224,7 @@
           "EPISODE_PROP_PLANNER": "规划本集道具",
           "SCENE_BUILD": "解析并完善场景描述",
           "FREEZONE_TRANSLATION": "文本提示词中英互译",
+          "FREEZONE_TEXT_WRITER": "AI 文本生成",
           "FREEZONE_STORY_SCRIPT": "故事脚本生成",
           "FREEZONE_VISION": "图片与视频内容解析",
           "STYLE_ANALYZER": "从参考图分析自定义风格",
@@ -4144,9 +4259,46 @@
       },
       "mediaModels": {
         "title": "图片 / 视频 / 音频生成模型",
-        "description": "这些模型已经由后端适配，固定模型名不能改；用户可以选择渠道，并填写 NewAPI model_mapping 的上游模型名，不填则使用固定模型名自身。-value 后缀为官方渠道专用模型。",
+        "description": "模型列表来自当前自定义本地配置。可新增图片、视频模型并配置其在虾画中显示的能力。",
+        "addModel": "新增模型",
+        "addModelTitle": "新增媒体模型",
+        "editModelTitle": "编辑媒体模型",
+        "editCapabilities": "编辑模型能力",
+        "removeModel": "移除模型",
+        "colActions": "操作",
+        "modelId": "模型 ID",
+        "displayName": "显示名称",
+        "mediaType": "媒体类型",
+        "sortOrder": "排序",
+        "enabled": "在虾画中启用",
+        "capabilitiesJson": "能力配置 JSON",
+        "commonCapabilities": "虾画能力",
+        "resolutionOptions": "分辨率",
+        "ratioOptions": "画面比例",
+        "customOptionPlaceholder": "输入自定义值，多个值用逗号分隔",
+        "addCustomOption": "添加自定义值",
+        "qualityOptions": "图片质量（逗号分隔）",
+        "minDuration": "最短时长（秒）",
+        "maxDuration": "最长时长（秒）",
+        "referenceImageMax": "参考图片上限",
+        "referenceVideoMax": "参考视频上限",
+        "referenceAudioMax": "参考音频上限",
+        "referenceAudioMinSeconds": "单条音频最短（秒）",
+        "referenceAudioMaxSeconds": "单条音频最长（秒）",
+        "referenceAudioTotalMinSeconds": "音频合计最短（秒）",
+        "referenceAudioTotalMaxSeconds": "音频合计最长（秒）",
+        "referenceVideoMinSeconds": "单条视频最短（秒）",
+        "referenceVideoMaxSeconds": "单条视频最长（秒）",
+        "referenceVideoTotalMinSeconds": "视频合计最短（秒）",
+        "referenceVideoTotalMaxSeconds": "视频合计最长（秒）",
+        "humanReview": "支持真人审核",
+        "supportedModes": "视频生成模式",
+        "capabilitiesHint": "使用与 EE 媒体模型目录一致的 config；保存全部配置后在虾画生效。",
+        "applyModelEdit": "应用到配置",
+        "missingModelFields": "请填写模型 ID、显示名称并选择渠道。",
+        "invalidCapabilitiesJson": "能力配置必须是有效的 JSON 对象。",
         "colType": "类型",
-        "colModel": "固定模型",
+        "colModel": "模型 ID",
         "colProvider": "已配置渠道",
         "colUpstreamModel": "上游模型名",
         "defaultProvider": "使用默认",
@@ -4154,6 +4306,7 @@
         "upstreamModelPlaceholder": "默认使用 {{model}}",
         "saveHint": "保存后会写入 NewAPI，并记录到本地配置。",
         "save": "保存图片 / 视频 / 音频配置",
+        "saveVideo": "保存视频配置",
         "saved": "图片 / 视频 / 音频模型映射已保存。",
         "noMappings": "请先为至少一个图片 / 视频 / 音频模型选择渠道。",
         "noChannelsHint": "请先在上方添加供应商渠道，再为图片 / 视频 / 音频模型选择渠道。",
@@ -4336,7 +4489,9 @@
     "copyReport": "复制报错信息",
     "technicalDetails": "技术详情",
     "serviceConfigTitle": "生成服务未配置",
-    "openRouterConfigMessage": "当前模型需要 OpenRouter 服务，但后端还没有配置 API Key。请联系管理员处理。"
+    "openRouterConfigMessage": "当前模型需要 OpenRouter 服务，但后端还没有配置 API Key。请联系管理员处理。",
+    "stillRunningTitle": "仍在生成中",
+    "stillRunningMessage": "本次生成耗时较长，页面已停止等待，但任务仍在后台继续。可稍后刷新页面查看结果，或到任务中心查看进度。"
   },
   "videoCompose": {
     "title": "视频合成",

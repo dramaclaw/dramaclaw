@@ -25,6 +25,7 @@ export interface UseFreezoneVideoModelsResult {
 const states = new Map<string, UseFreezoneVideoModelsResult>();
 const listeners = new Map<string, Set<() => void>>();
 const inFlightProjects = new Set<string>();
+const pendingRefreshProjects = new Set<string>();
 
 // Lazy singleton — circular import with `ProviderModelPicker.tsx` means we
 // can't touch `VIDEO_MODELS` at module top level (TDZ).
@@ -55,7 +56,11 @@ function toModelOptions(models: FreezoneVideoModelInfo[]): ModelOption[] {
 }
 
 function ensureLoaded(project: string, force = false) {
-  if (inFlightProjects.has(project) || (!force && states.has(project))) return;
+  if (inFlightProjects.has(project)) {
+    if (force) pendingRefreshProjects.add(project);
+    return;
+  }
+  if (!force && states.has(project)) return;
   inFlightProjects.add(project);
 
   const current = states.get(project);
@@ -92,6 +97,7 @@ function ensureLoaded(project: string, force = false) {
     })
     .finally(() => {
       inFlightProjects.delete(project);
+      if (pendingRefreshProjects.delete(project)) ensureLoaded(project, true);
     });
 }
 
@@ -102,6 +108,43 @@ function ensureLoaded(project: string, force = false) {
 export function prefetchFreezoneVideoModels(project: string): void {
   if (!project) return;
   ensureLoaded(project);
+}
+
+function refreshKnownVideoModelCatalogs() {
+  const projects = new Set(states.keys());
+  const currentProject = readUrl().project;
+  if (currentProject) projects.add(currentProject);
+  projects.forEach((project) => ensureLoaded(project, true));
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "media-model-catalog-updated",
+    refreshKnownVideoModelCatalogs,
+  );
+  import.meta.hot?.dispose(() => {
+    window.removeEventListener(
+      "media-model-catalog-updated",
+      refreshKnownVideoModelCatalogs,
+    );
+  });
+}
+
+/**
+ * 非 hook 的读取口：store / 建边校验这类跑在 React 之外的代码要按当前模型算能力
+ * （比如引用上限）时用。读的是同一个 module-level store，所以和组件看到的是同一份
+ * 目录；还没加载出来时回落到硬编码的 VIDEO_MODELS，与 hook 的初始状态一致。
+ *
+ * 不在这里触发 ensureLoaded —— 建边是同步路径，等不到网络回来，而且这个函数会被
+ * 高频调用。目录的加载由 FreezoneShell 的 prefetch 和各视频节点的 hook 负责。
+ */
+export function readFreezoneVideoModels(
+  projectOverride?: string | null,
+): ModelOption[] {
+  const project =
+    projectOverride !== undefined ? projectOverride : readUrl().project;
+  const state = project ? states.get(project) : undefined;
+  return state?.models ?? getNoProjectState().models;
 }
 
 function subscribe(project: string | null, callback: () => void) {

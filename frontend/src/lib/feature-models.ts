@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 // 系统各功能使用的 LLM 映射定义。
 // 每个功能对应后端一个 *_MODEL 环境变量，前端允许用户为其覆盖模型。
-// 思考强度（*_THINKING_LEVEL）与 provider 不在前端配置，后端保留默认。
+// 结构化任务由后端统一关闭推理，不提供逐功能思考强度配置。
 
 export interface FeatureModelDef {
   /** 稳定 id，对应后端 *_MODEL 环境变量前缀，如 GLOBAL_VIDEO_OPTIMIZER。 */
@@ -64,6 +64,7 @@ export const FEATURE_MODEL_GROUPS: readonly FeatureModelGroup[] = [
     key: "freezone",
     features: [
       { id: "FREEZONE_TRANSLATION", defaultModel: "DC-freezone-translator-LLM" },
+      { id: "FREEZONE_TEXT_WRITER", defaultModel: "DC-freezone-text-writer-LLM" },
       { id: "FREEZONE_STORY_SCRIPT", defaultModel: "DC-freezone-story-script-writer-LLM" },
       {
         id: "FREEZONE_VISION",
@@ -126,6 +127,7 @@ export const FEATURE_MODEL_PRODUCT_GROUPS: readonly FeatureModelGroup[] = [
     key: "xiahua",
     features: [
       productFeature("FREEZONE_TRANSLATION"),
+      productFeature("FREEZONE_TEXT_WRITER"),
       productFeature("FREEZONE_STORY_SCRIPT"),
       productFeature("FREEZONE_VISION"),
       productFeature("STAGING_PROP"),

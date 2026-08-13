@@ -27,10 +27,14 @@ export function TaskActions({ task }: { task: TaskState }) {
         scope: task.scope ?? undefined,
       },
       {
-        onSuccess: () =>
-          toast.success(
-            t("taskCenter.toast.canceled", { label: task.task_type }),
-          ),
+        onSuccess: (result) => {
+          if (result.ok) {
+            toast.success(
+              result.message ??
+                t("taskCenter.toast.canceled", { label: task.task_type }),
+            );
+          }
+        },
       },
     );
   };

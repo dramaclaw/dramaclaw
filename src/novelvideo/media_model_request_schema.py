@@ -23,7 +23,10 @@ BLOCKED_ROOTS = {
 }
 MODE_ALIASES = {
     "textToVideo": "text_to_video",
-    "imageToVideo": "first_frame",
+    "firstFrame": "first_frame",
+    # 画布「图生视频」是单张图片参考：图片影响整体画面，但不锁定第一帧。
+    # 真正的首帧模式由首尾帧入口按槽位派生为 first_frame。
+    "imageToVideo": "image_to_video",
     "firstLastFrame": "first_last_frame",
     "imageReference": "image_reference",
     "allReference": "all_reference",
@@ -33,6 +36,7 @@ MEDIA_MODEL_MODES = {
     "text_to_video",
     "first_frame",
     "first_last_frame",
+    "image_to_video",
     "image_reference",
     "all_reference",
     "video_edit",
@@ -63,6 +67,12 @@ RESERVED_CATALOG_CONFIG_FIELDS = {
 
 class MediaModelSchemaError(ValueError):
     pass
+
+
+def normalize_media_model_mode(mode: str | None) -> str:
+    """Normalize canvas business mode names to media catalog mode names."""
+    raw_mode = str(mode or "")
+    return MODE_ALIASES.get(raw_mode, raw_mode)
 
 
 def _validate_js_number(value: int | float, field: str) -> None:
@@ -235,6 +245,14 @@ def validate_media_model_catalog_config(
             "supportedModes",
             "referenceVideoMax",
             "referenceAudioMax",
+            "referenceAudioMinSeconds",
+            "referenceAudioMaxSeconds",
+            "referenceAudioTotalMinSeconds",
+            "referenceAudioTotalMaxSeconds",
+            "referenceVideoMinSeconds",
+            "referenceVideoMaxSeconds",
+            "referenceVideoTotalMinSeconds",
+            "referenceVideoTotalMaxSeconds",
             "humanReview",
             "sceneOptimizeOptions",
             "defaultSceneOptimize",
@@ -285,6 +303,52 @@ def validate_media_model_catalog_config(
         value = config.get(field)
         if value is not None and (type(value) is not int or value < 0):
             raise MediaModelSchemaError(f"{field} must be a non-negative integer")
+
+    duration_fields = (
+        "referenceAudioMinSeconds",
+        "referenceAudioMaxSeconds",
+        "referenceAudioTotalMinSeconds",
+        "referenceAudioTotalMaxSeconds",
+        "referenceVideoMinSeconds",
+        "referenceVideoMaxSeconds",
+        "referenceVideoTotalMinSeconds",
+        "referenceVideoTotalMaxSeconds",
+    )
+    for field in duration_fields:
+        value = config.get(field)
+        if value is not None and (
+            type(value) not in (int, float)
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise MediaModelSchemaError(f"{field} must be a positive finite number")
+
+    for minimum_field, maximum_field in (
+        ("referenceAudioMinSeconds", "referenceAudioMaxSeconds"),
+        ("referenceAudioTotalMinSeconds", "referenceAudioTotalMaxSeconds"),
+        ("referenceVideoMinSeconds", "referenceVideoMaxSeconds"),
+        ("referenceVideoTotalMinSeconds", "referenceVideoTotalMaxSeconds"),
+    ):
+        minimum_value = config.get(minimum_field)
+        maximum_value = config.get(maximum_field)
+        if (
+            minimum_value is not None
+            and maximum_value is not None
+            and minimum_value > maximum_value
+        ):
+            raise MediaModelSchemaError(f"{minimum_field} cannot exceed {maximum_field}")
+
+    if media_type == "video":
+        video_limit = config.get("referenceVideoMax")
+        configured_modes = set(modes or [])
+        if (
+            type(video_limit) is int
+            and video_limit > 0
+            and not configured_modes.intersection({"all_reference", "video_edit"})
+        ):
+            raise MediaModelSchemaError(
+                "referenceVideoMax requires all_reference or video_edit mode"
+            )
 
     min_pixels = config.get("minPixels")
     if min_pixels is not None and (
@@ -344,7 +408,7 @@ def media_request_schema_for_mode(schema: object, mode: str | None) -> dict[str,
     normalized_schema = validate_media_request_schema(schema)
     if not normalized_schema:
         return {}
-    normalized_mode = MODE_ALIASES.get(str(mode or ""), str(mode or ""))
+    normalized_mode = normalize_media_model_mode(mode)
     filtered = copy.deepcopy(normalized_schema)
     filtered["parameters"] = [
         item

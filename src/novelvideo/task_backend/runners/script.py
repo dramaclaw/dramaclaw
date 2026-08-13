@@ -104,9 +104,6 @@ async def _run_script_writer(envelope: dict[str, Any], ctx: ProjectContext) -> d
     store = CogneeStore(ctx.owner_project_label, output_dir=output_dir)
     await store.initialize()
     try:
-        await store.load_graph_state()
-        update_progress(0.10, "图谱状态已加载")
-
         project_config = load_project_config(ctx.owner_username, ctx.project_name)
         merged_config = {**project_config, **config}
         workflow = create_script_writing_workflow(
@@ -138,19 +135,10 @@ async def _run_script_writer(envelope: dict[str, Any], ctx: ProjectContext) -> d
             )
 
         try:
-            char_dicts = [
-                {
-                    "name": c.name,
-                    "identities": [
-                        {"identity_id": identity.identity_id} for identity in (c.identities or [])
-                    ],
-                }
-                for c in store.get_all_characters()
-            ]
             beats_data = [beat.model_dump() for beat in script.beats]
             existing_colors = dict(store.get_sketch_colors(episode) or {})
             colors = EpisodeOptimizer.assign_sketch_colors(
-                char_dicts,
+                [],
                 episode_beats=beats_data,
                 existing_colors=existing_colors,
             )
@@ -176,6 +164,9 @@ async def _run_script_writer(envelope: dict[str, Any], ctx: ProjectContext) -> d
             "beats_data": [beat.model_dump() for beat in script.beats],
             "review_passed": workflow.last_review_passed,
             "review_summary": workflow.last_review_summary,
+            "degraded_lines": list(
+                getattr(workflow, "last_degraded_lines", []) or []
+            ),
             "output_dir": str(Path(output_dir)),
         }
         return result

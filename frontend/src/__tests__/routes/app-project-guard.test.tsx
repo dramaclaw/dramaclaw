@@ -49,6 +49,10 @@ vi.mock("@/stores/app-store", () => ({
 vi.mock("@/lib/queries/projects", () => ({
   useAllProjectSummaries: () => projectSummariesState,
 }));
+vi.mock("@/lib/queries/product-surfaces", () => ({
+  surfaceAccess: () => undefined,
+  useProductSurfaces: () => ({ data: undefined }),
+}));
 vi.mock("@/stores/region-store", () => ({
   useRegionStore: {
     getState: () => ({ sanitizeAgainstConfig: vi.fn() }),

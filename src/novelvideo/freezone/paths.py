@@ -68,11 +68,22 @@ def resolve_static_url_to_path(url: str, project_dir: Path) -> Path:
     """Map a same-origin static URL to a local file path.
 
     Falls back to interpreting the input as a project-relative path. Raises
-    ValueError if the resolved path escapes `project_dir`.
+    ValueError if the input is not same-origin, or if the resolved path
+    escapes `project_dir`.
     """
+    parts = urlsplit(url)
+    # 只接受同源引用。带 scheme/netloc 的外链在下一行会被削成 path，攻击者只要把
+    # 自己上传素材的真实路径拼在自己的域名后面，削出来的 path 就落在项目里、校验
+    # 照过——而调用方放行后存/回显的是原始字符串（文件夹封面、素材 URL 都是这样），
+    # 于是外链就进了所有协作者的 <img src>。所以要校验整个字符串，不是削剩的 path。
+    if parts.scheme or parts.netloc:
+        raise ValueError(f"url must be a same-origin path: {url!r}")
+    # 浏览器把 `/\host` 和 `\\host` 等同于协议相对外链，urlsplit 却当普通 path。
+    if "\\" in url:
+        raise ValueError(f"url must be a same-origin path: {url!r}")
     # Strip query string + fragment — frontend cache-busters like `?v=<ts>`
     # must not become part of the filesystem path.
-    url = urlsplit(url).path or url
+    url = parts.path or url
     candidate: Path
     if url.startswith("/static/"):
         m = _STATIC_RE.match(url)

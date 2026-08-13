@@ -13,13 +13,24 @@ import {
 } from "react";
 import {
   AudioLines,
+  BookOpen,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ImageOff,
   Video,
 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AssetLibraryModal } from "@/features/canvas/ui/AssetLibraryModal";
+import type {
+  AssetFolder,
+  LibraryItem,
+} from "@/features/canvas/ui/assetLibraryItems";
+import { queryKeys } from "@/lib/query-keys";
 import { CanvasesTab } from "./CanvasesTab";
+import { AssetLibraryBrowser } from "./AssetLibraryBrowser";
 import { hasLegacyPresetCanvasMetadata } from "@/features/freezone/projections";
 import {
   type FreezoneBeatContextBeat,
@@ -30,8 +41,20 @@ import {
   useFreezoneBeatContext,
   useFreezoneProjectAssets,
 } from "@/lib/queries/freezone";
-import { DEFAULT_NODE_WIDTH } from "@/features/canvas/domain/canvasNodes";
-import { withImageCacheBust } from "@/features/canvas/application/imageData";
+import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
+import {
+  DEFAULT_NODE_WIDTH,
+  EXPORT_RESULT_NODE_MIN_HEIGHT,
+  EXPORT_RESULT_NODE_MIN_WIDTH,
+} from "@/features/canvas/domain/canvasNodes";
+import {
+  resolveImageDisplayUrl,
+  withImageCacheBust,
+} from "@/features/canvas/application/imageData";
+import {
+  aspectRatioFromImageDimensions,
+  resolveMinEdgeFittedSize,
+} from "@/features/canvas/application/imageNodeSizing";
 import {
   CANVAS_ASSET_DRAG_MIME,
   spawnAssetNode,
@@ -155,7 +178,8 @@ const BEAT_SCOPED_LIBRARY_ASSET_ROLES = new Set([
 
 const BEAT_SCOPED_LIBRARY_ASSET_KINDS = new Set(["video", "audio"]);
 
-type PanelTab = "library" | "canvases";
+/** library = 主线资产，canvases = 项目画布，assets = 项目级资产库（只读浏览）。 */
+type PanelTab = "library" | "canvases" | "assets";
 
 interface AssetLibraryPanelProps {
   project: string;
@@ -511,8 +535,26 @@ export function AssetLibraryPanel({
   ];
 
   const [panelTab, setPanelTab] = useState<PanelTab>("canvases");
+  // 后台可以按用户组关掉「虾集(主线)」;关掉后左侧的「主线资产」tab 也要一起隐藏
+  //(「项目画布」保留),否则顶部导航没了虾集、这里却还能翻出主线的资产。
+  // 加载中先按可用处理,与顶部导航一致。
+  const productSurfaces = useProductSurfaces();
+  const mainlineAvailable =
+    surfaceAccess(productSurfaces.data, "mainline")?.available ?? productSurfaces.isPending;
+  useEffect(() => {
+    if (!mainlineAvailable) setPanelTab("canvases");
+  }, [mainlineAvailable]);
+  const panelTabItems: Array<{ id: PanelTab; label: string }> = [
+    { id: "canvases", label: "项目画布" },
+    ...(mainlineAvailable ? [{ id: "library" as const, label: "主线资产" }] : []),
+    { id: "assets", label: "资产库" },
+  ];
   const [tab, setTab] = useState<AssetTab>("beat");
   const [query, setQuery] = useState("");
+  // 侧栏的「资产库」只读，写操作都在弹窗里；tab 条右端常驻一个入口，不管当前停在
+  // 哪个 tab 都能打开。
+  const [assetManagerOpen, setAssetManagerOpen] = useState(false);
+  const queryClient = useQueryClient();
   const hasPresetLabel = hasLegacyPresetCanvasMetadata(metadata);
   // 替换/提交成功后自增,用于强制重新拉取素材列表。
   const [internalReloadToken, setInternalReloadToken] = useState(0);
@@ -695,7 +737,7 @@ export function AssetLibraryPanel({
         {/* 折叠/展开胶囊 — 停在卡片右侧的画布上 */}
         <div
           className="group/handle pointer-events-auto absolute top-3 z-30 flex h-10 w-10 items-center justify-center transition-[left] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
-          style={{ left: collapsed ? 16 : 316 }}
+          style={{ left: collapsed ? 16 : 312 }}
         >
           <button
             type="button"
@@ -729,42 +771,52 @@ export function AssetLibraryPanel({
           </span>
         </div>
 
-        {/* 悬浮圆角卡片 */}
+        {/* 贴左边直出的抽屉：满高、不留外边距，收起时整块滑到屏幕外 */}
         <div
-          className={`flex flex-col min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-[rgba(var(--surface-rgb)/0.86)] backdrop-blur-2xl transition-[opacity,transform] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
+          className={`flex h-full flex-col min-h-0 overflow-hidden rounded-r-2xl border-r border-[rgb(var(--border-rgb))] bg-[rgb(var(--surface-rgb))] transition-transform duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
             collapsed
-              ? "pointer-events-none -translate-x-3 opacity-0"
-              : "pointer-events-auto translate-x-0 opacity-100"
+              ? "pointer-events-none -translate-x-full"
+              : "pointer-events-auto translate-x-0"
           }`}
-          style={{ width: 288, marginLeft: 16, marginTop: 16, marginBottom: 16, height: 'calc(100% - 32px)' }}
+          style={{ width: 300 }}
         >
-          {/* ─ 分段 Tab 栏 ── */}
-          <div className="flex rounded-full border border-white/10 mx-3 mt-4 mb-1.5 p-0.5 gap-0.5">
-            <button
-              type="button"
-              onClick={() => setPanelTab("canvases")}
-              className={`flex-1 py-1.5 text-xs font-medium transition-colors rounded-full ${
-                panelTab === "canvases"
-                  ? "bg-white/[0.08] text-white"
-                  : "text-white/40 hover:text-white/65"
-              }`}
-            >
-              项目画布
-            </button>
-            <button
-              type="button"
-              onClick={() => setPanelTab("library")}
-              className={`flex-1 py-1.5 text-xs font-medium transition-colors rounded-full ${
-                panelTab === "library"
-                  ? "bg-white/[0.08] text-white"
-                  : "text-white/40 hover:text-white/65"
-              }`}
-            >
-              主线资产
-            </button>
-          </div>
+          {/* ─ 面板 Tab 栏 ── 与下面的画布条同一种下划线 tab，后续加新 tab 只往
+              panelTabItems 里塞一项即可 */}
+          <Tabs
+            value={panelTab}
+            onValueChange={(value) => setPanelTab(value as PanelTab)}
+            className="shrink-0 gap-0 px-3 pt-3"
+          >
+            {/* 整行共用一条基线，选中 tab 的下划线正好压在上面 */}
+            <div className="flex items-center gap-1 border-b border-white/[0.07]">
+              <TabsList variant="line" className="gap-0 p-0">
+                {panelTabItems.map((item) => (
+                  <TabsTrigger
+                    key={item.id}
+                    value={item.id}
+                    // after:bottom-0 让下划线落在整行的基线上，而不是浮在下面 5px
+                    className="h-full flex-none rounded-none px-2.5 text-xs group-data-horizontal/tabs:after:bottom-0"
+                  >
+                    {item.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <button
+                type="button"
+                onClick={() => setAssetManagerOpen(true)}
+                aria-label="资产管理"
+                title="资产管理"
+                className="group/assets relative ml-auto mb-1.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-white/[0.10] text-white/60 transition-colors hover:border-white/[0.22] hover:bg-white/[0.06] hover:text-white/90"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                <span className="pointer-events-none absolute right-0 top-8 z-20 whitespace-nowrap rounded-[6px] border border-white/10 bg-[#101116]/95 px-2 py-1 text-[11px] font-medium text-white/75 opacity-0 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-md transition-opacity duration-150 group-hover/assets:opacity-100">
+                  资产管理
+                </span>
+              </button>
+            </div>
+          </Tabs>
 
-          {panelTab === "library" ? (
+          {panelTab === "library" && mainlineAvailable ? (
             <>
               {/* ── 分类标签 + 搜索（固定头部） ── */}
               <div className="sticky top-0 z-10">
@@ -830,6 +882,8 @@ export function AssetLibraryPanel({
                 </div>
               )}
             </>
+          ) : panelTab === "assets" ? (
+            <AssetLibraryBrowser project={project} />
           ) : (
             <CanvasesTab
               project={project}
@@ -837,10 +891,28 @@ export function AssetLibraryPanel({
               onRestoreMainlineDefault={onRestoreMainlineDefault}
               hasPresetLabel={hasPresetLabel}
               reloadToken={reloadToken}
+              collapsed={collapsed}
             />
           )}
         </div>
       </aside>
+
+      {/* 纯管理态：不传 onConfirm，弹窗里选中只是浏览，「确定」等同关闭。关掉后把
+          资产库的两个查询作废，新建的文件夹/上传的素材立刻反映到侧栏。 */}
+      <AssetLibraryModal
+        open={assetManagerOpen}
+        project={project}
+        onSendFolderToCanvas={(folder) => void sendAssetFolderToCanvas(folder)}
+        onClose={() => {
+          setAssetManagerOpen(false);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.freezoneAssetLibrary(project),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.freezoneAssetLibraryFolders(project),
+          });
+        }}
+      />
     </AssetReplaceContext.Provider>
   );
 }
@@ -1940,6 +2012,19 @@ function isThreeDAsset(asset: LibraryAsset): boolean {
   return false;
 }
 
+/** 视口中心在画布坐标系里的位置；拿不到视口尺寸时退回原点附近的固定点。 */
+function viewportCenter(
+  store: ReturnType<typeof useCanvasStore.getState>,
+): { x: number; y: number } {
+  const { width, height } = store.canvasViewportSize;
+  if (width <= 0 || height <= 0) return { x: -720, y: 120 };
+  const zoom = Math.max(0.01, store.currentViewport.zoom || 1);
+  return {
+    x: -store.currentViewport.x / zoom + width / (2 * zoom),
+    y: -store.currentViewport.y / zoom + height / (2 * zoom),
+  };
+}
+
 function viewportCenteredPosition(
   store: ReturnType<typeof useCanvasStore.getState>,
   index: number,
@@ -2040,6 +2125,140 @@ function assetToDragPayload(asset: LibraryAsset): CanvasAssetDragPayload | null 
   }
   if (asset.mediaType === "text" || asset.mediaType === "file") return null;
   return { kind: "image", label: asset.label, url: asset.url, aspectRatio: asset.aspectRatio, source: sourceMeta, mainlineContext: mainline };
+}
+
+/** 资产库条目 → 画布节点 payload。库里只有图/视频/音频三种，没有 3D。 */
+function libraryItemToDragPayload(entry: LibraryItem): CanvasAssetDragPayload | null {
+  if (!entry.url) return null;
+  return {
+    kind: entry.media,
+    label: entry.name,
+    url: entry.url,
+    // 溯源信息按需最小化：够 commit / 替换时认出「这是资产库来的」即可，不把整条
+    // 库记录塞进节点(里面还带着 image_urls 之类会过期的字段)。
+    source: {
+      origin: "asset_library",
+      asset_library_id: entry.id,
+      asset_library_folder: entry.folder,
+    },
+  };
+}
+
+/**
+ * 量素材的真实宽高比，给不出就返回 null。
+ *
+ * 资产库的条目只存了 URL，没有尺寸；不带 aspectRatio 建出来的图片/视频节点一律
+ * 按 1:1 铺开，宽图就会上下留两条黑边（节点内是 object-contain）。
+ *
+ * 加载失败或太慢都当量不出来处理——发到画布不该被一张坏图卡住。
+ */
+function measureAspectRatio(payload: CanvasAssetDragPayload): Promise<string | null> {
+  if (payload.kind !== "image" && payload.kind !== "video") return Promise.resolve(null);
+  if (typeof document === "undefined") return Promise.resolve(null);
+  const src = resolveImageDisplayUrl(payload.url);
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = window.setTimeout(() => done(null), 4000);
+
+    if (payload.kind === "image") {
+      const image = new Image();
+      image.onload = () =>
+        done(aspectRatioFromImageDimensions(image.naturalWidth, image.naturalHeight));
+      image.onerror = () => done(null);
+      image.src = src;
+      return;
+    }
+
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.onloadedmetadata = () =>
+      done(aspectRatioFromImageDimensions(video.videoWidth, video.videoHeight));
+    video.onerror = () => done(null);
+    video.src = src;
+  });
+}
+
+/**
+ * 节点建出来大概多大——只用来排网格，不写进节点。
+ *
+ * 图片节点的尺寸跟着比例走（最小短边 300），视频和音频节点是各自组件里的固定
+ * 尺寸，这里跟着写一份常量即可：排版差几像素没关系，别让节点压在一起就行。
+ */
+function spawnedNodeSize(payload: CanvasAssetDragPayload): { width: number; height: number } {
+  if (payload.kind === "audio") return { width: 480, height: 210 };
+  if (payload.kind === "video") return { width: 580, height: 380 };
+  return resolveMinEdgeFittedSize(payload.aspectRatio || "1:1", {
+    minWidth: EXPORT_RESULT_NODE_MIN_WIDTH,
+    minHeight: EXPORT_RESULT_NODE_MIN_HEIGHT,
+  });
+}
+
+/**
+ * 把整个文件夹发到画布：素材在视口中心铺成网格，再编成一个组，组名 = 文件夹名。
+ *
+ * 不复用 addAssetToCanvas 的逐个落位——那个函数每次都拿同一份 store 快照做碰撞
+ * 检测，连发多个时新节点互相看不见，会叠在一起。这里一次算好整块网格。
+ *
+ * 网格按每个节点的实际尺寸排（列宽取该列最宽、行高取该行最高），因为节点大小是
+ * 跟着图片比例走的，用一个固定格子会让竖图互相压住。
+ */
+async function sendAssetFolderToCanvas(folder: AssetFolder): Promise<void> {
+  const payloads = folder.items
+    .map(libraryItemToDragPayload)
+    .filter((payload): payload is CanvasAssetDragPayload => payload !== null);
+  if (payloads.length === 0) return;
+
+  const ratios = await Promise.all(payloads.map(measureAspectRatio));
+  const sized = payloads.map((payload, index) => {
+    const withRatio = ratios[index] ? { ...payload, aspectRatio: ratios[index] } : payload;
+    return { payload: withRatio, size: spawnedNodeSize(withRatio) };
+  });
+
+  const GAP = 32;
+  const cols = Math.min(4, Math.ceil(Math.sqrt(sized.length)));
+  const rows = Math.ceil(sized.length / cols);
+  const colWidths = Array.from({ length: cols }, (_, c) =>
+    Math.max(...sized.filter((_, i) => i % cols === c).map((it) => it.size.width)),
+  );
+  const rowHeights = Array.from({ length: rows }, (_, r) =>
+    Math.max(
+      ...sized
+        .filter((_, i) => Math.floor(i / cols) === r)
+        .map((it) => it.size.height),
+    ),
+  );
+  const blockWidth =
+    colWidths.reduce((sum, w) => sum + w, 0) + GAP * (cols - 1);
+  const blockHeight =
+    rowHeights.reduce((sum, h) => sum + h, 0) + GAP * (rows - 1);
+
+  const store = useCanvasStore.getState();
+  const { x: cx, y: cy } = viewportCenter(store);
+  const startX = cx - blockWidth / 2;
+  const startY = cy - blockHeight / 2;
+
+  const ids = sized.map(({ payload }, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const x =
+      startX + colWidths.slice(0, col).reduce((sum, w) => sum + w + GAP, 0);
+    const y =
+      startY + rowHeights.slice(0, row).reduce((sum, h) => sum + h + GAP, 0);
+    return spawnAssetNode(store, payload, { x, y });
+  });
+
+  // groupNodes 要求 ≥2 个成员，单个素材成不了组、保持独立节点即可。
+  const groupId =
+    ids.length >= 2 ? store.groupNodes(ids, { label: folder.label }) : null;
+  store.requestFocusNode(groupId ?? ids[0]);
+  toast.success(`已发送到画布：${folder.label}`);
 }
 
 function addAssetToCanvas(asset: LibraryAsset, index: number): void {

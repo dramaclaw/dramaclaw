@@ -1153,7 +1153,11 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       try {
         const taskKey = typeof data.generationTaskKey === 'string' ? data.generationTaskKey : '';
         if (taskKey) {
-          await awaitTaskCompletion(taskKey, projectId);
+          await awaitTaskCompletion(taskKey, projectId, {
+            // 续接时用持久化的类型取同一份预算（见 pollTimeoutForTaskType）。
+            taskType:
+              typeof data.generationTaskType === 'string' ? data.generationTaskType : null,
+          });
         }
         const result = await awaitSkillRunResult(projectId, runId);
         if (cancelled) {
@@ -1371,7 +1375,9 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
         setTaskRecordGraceUntil(Date.now() + TASK_RECORD_GRACE_MS);
         setSubmitInFlight(false);
         submitInFlightRef.current = false;
-        await awaitTaskCompletion(response.task_key, projectId);
+        await awaitTaskCompletion(response.task_key, projectId, {
+          taskType: response.task_type ?? null,
+        });
       }
       const result = await awaitSkillRunResult(projectId, response.run_id);
       if (isFailureStatus(result.status)) {

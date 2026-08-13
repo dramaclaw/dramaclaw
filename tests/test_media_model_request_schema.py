@@ -4,6 +4,7 @@ from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     apply_media_request_schema,
     media_request_schema_for_mode,
+    normalize_media_model_mode,
     validate_media_model_catalog_config,
     validate_media_model_params,
     validate_media_request_schema,
@@ -115,6 +116,80 @@ def test_filters_mode_specific_parameters_and_defaults():
 
 
 @pytest.mark.parametrize(
+    ("business_mode", "catalog_mode"),
+    [
+        ("textToVideo", "text_to_video"),
+        ("firstFrame", "first_frame"),
+        ("firstLastFrame", "first_last_frame"),
+        ("imageToVideo", "image_to_video"),
+        ("imageReference", "image_reference"),
+        ("allReference", "all_reference"),
+        ("videoEdit", "video_edit"),
+    ],
+)
+def test_normalizes_all_canvas_video_modes(business_mode, catalog_mode):
+    assert normalize_media_model_mode(business_mode) == catalog_mode
+
+
+def test_first_frame_alias_keeps_and_validates_mode_specific_parameters():
+    schema = {
+        "endpoint": "video/generations",
+        "parameters": [
+            {
+                "key": "camera_fixed",
+                "control": "switch",
+                "requestPath": "camera_fixed",
+                "required": True,
+                "modes": ["first_frame"],
+            },
+            {
+                "key": "reference_strength",
+                "control": "number",
+                "requestPath": "reference_strength",
+                "modes": ["image_reference"],
+            },
+        ],
+    }
+
+    filtered = media_request_schema_for_mode(schema, "firstFrame")
+
+    assert [item["key"] for item in filtered["parameters"]] == ["camera_fixed"]
+    assert validate_media_model_params(filtered, {"camera_fixed": True}) == {
+        "camera_fixed": True
+    }
+    with pytest.raises(MediaModelSchemaError, match="parameter is required: camera_fixed"):
+        validate_media_model_params(filtered, {})
+
+
+def test_image_to_video_and_image_reference_parameters_are_independent():
+    schema = {
+        "endpoint": "video/generations",
+        "parameters": [
+            {
+                "key": "i2v_only",
+                "control": "switch",
+                "requestPath": "i2v_only",
+                "modes": ["image_to_video"],
+            },
+            {
+                "key": "reference_only",
+                "control": "switch",
+                "requestPath": "reference_only",
+                "modes": ["image_reference"],
+            },
+        ],
+    }
+
+    image_to_video = media_request_schema_for_mode(schema, "imageToVideo")
+    image_reference = media_request_schema_for_mode(schema, "imageReference")
+
+    assert [item["key"] for item in image_to_video["parameters"]] == ["i2v_only"]
+    assert [item["key"] for item in image_reference["parameters"]] == [
+        "reference_only"
+    ]
+
+
+@pytest.mark.parametrize(
     ("parameter", "message"),
     [
         (
@@ -187,7 +262,12 @@ def test_rejects_invalid_parameter_definitions(parameter, message):
 def test_validates_media_catalog_capabilities():
     valid = {
         "resolutionOptions": ["720p", "1080p"],
-        "supportedModes": ["text_to_video", "all_reference"],
+        "supportedModes": [
+            "text_to_video",
+            "image_to_video",
+            "image_reference",
+            "all_reference",
+        ],
         "minDuration": 4,
         "maxDuration": 12,
         "referenceImageMax": 4,
@@ -212,6 +292,46 @@ def test_validates_media_catalog_capabilities():
         validate_media_model_catalog_config(
             {**valid, "supportedModes": ["unknown_mode"]},
             "video",
+        )
+    with pytest.raises(MediaModelSchemaError, match="referenceVideoMax requires"):
+        validate_media_model_catalog_config(
+            {**valid, "supportedModes": ["text_to_video"]},
+            "video",
+        )
+
+
+def test_validates_reference_audio_total_max_seconds():
+    """参考音频**总时长**上限：收小数（厂商口径 15.2 本身就不是整数），只拒非正数。"""
+    base = {
+        "supportedModes": ["all_reference"],
+        "request": {"endpoint": "video/generations", "parameters": []},
+    }
+    for value in (15.2, 15, 0.5):
+        config = {**base, "referenceAudioTotalMaxSeconds": value}
+        assert validate_media_model_catalog_config(config, "video") is config
+    # 没配 = 走后端 15.2s 兜底，不是错误。
+    assert validate_media_model_catalog_config({**base}, "video") is not None
+
+    # True 也要拒：`type(True) is bool`，不能让布尔当成 1 秒混进来。
+    # inf / nan 也要拒：`inf > 0` 是 True、`nan <= 0` 是 False，只写「正数」两个都会漏进来，
+    # 配成 inf 就等于把这个上限静默关掉。
+    for bad in (0, -1, "15.2", True, [], float("inf"), float("nan"), float("-inf")):
+        with pytest.raises(
+            MediaModelSchemaError, match="referenceAudioTotalMaxSeconds"
+        ):
+            validate_media_model_catalog_config(
+                {**base, "referenceAudioTotalMaxSeconds": bad},
+                "video",
+            )
+
+    # 图片模型没有参考音频这回事，配了要报「不兼容」而不是默默收下。
+    with pytest.raises(MediaModelSchemaError, match="incompatible fields"):
+        validate_media_model_catalog_config(
+            {
+                "referenceAudioTotalMaxSeconds": 15.2,
+                "request": {"endpoint": "images/generations", "parameters": []},
+            },
+            "image",
         )
 
 
@@ -359,4 +479,41 @@ def test_image_catalog_rejects_invalid_min_pixels(value):
                 "request": {"endpoint": "images/generations", "parameters": []},
             },
             "image",
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "referenceAudioMinSeconds",
+        "referenceAudioMaxSeconds",
+        "referenceAudioTotalMinSeconds",
+        "referenceAudioTotalMaxSeconds",
+        "referenceVideoMinSeconds",
+        "referenceVideoMaxSeconds",
+        "referenceVideoTotalMinSeconds",
+        "referenceVideoTotalMaxSeconds",
+    ],
+)
+def test_video_catalog_validates_reference_duration_fields(field):
+    config = {
+        field: 1.5,
+        "request": {"endpoint": "video/generations", "parameters": []},
+    }
+    assert validate_media_model_catalog_config(config, "video") is config
+
+    config[field] = 0
+    with pytest.raises(MediaModelSchemaError, match=field):
+        validate_media_model_catalog_config(config, "video")
+
+
+def test_video_catalog_rejects_inverted_reference_duration_range():
+    with pytest.raises(MediaModelSchemaError, match="cannot exceed"):
+        validate_media_model_catalog_config(
+            {
+                "referenceAudioTotalMinSeconds": 20,
+                "referenceAudioTotalMaxSeconds": 10,
+                "request": {"endpoint": "video/generations", "parameters": []},
+            },
+            "video",
         )

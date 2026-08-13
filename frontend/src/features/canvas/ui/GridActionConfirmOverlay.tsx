@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar, Position } from '@xyflow/react';
 import { ArrowUp, Image as ImageIcon, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -12,7 +12,7 @@ import {
   EXPORT_RESULT_NODE_LAYOUT_HEIGHT,
   type CanvasNode,
 } from '@/features/canvas/domain/canvasNodes';
-import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
+import { resolveFixedFeatureModelRequest } from '@/features/canvas/domain/fixedFeatureModelRequest';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
   fetchFreezoneJobResult,
@@ -20,9 +20,13 @@ import {
   type FreezoneTemplateEditMode,
 } from '@/api/ops';
 import { CreditCostInline } from '@/components/credit-cost-inline';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
+import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
@@ -52,16 +56,6 @@ const GRID_ACTION_MODE_MAP: Record<GridActionKey, FreezoneTemplateEditMode> = {
   frameProjection3sLater: 'image_projection_after_3s',
   frameProjection5sEarlier: 'image_projection_before_5s',
 };
-
-function imageModelSupportsQuality(apiModel: string | null | undefined): boolean {
-  const normalized = String(apiModel ?? '').trim().toLowerCase();
-  return (
-    normalized === 'gpt-image-2'
-    || normalized === 'image-2'
-    || normalized === 'image-2-official'
-    || normalized.includes('gpt-image')
-  );
-}
 
 export interface GridActionRequest {
   nodeId: string;
@@ -98,30 +92,37 @@ export const GridActionConfirmOverlay = memo(
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const findNodePosition = useCanvasStore((state) => state.findNodePosition);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
-    const { models: imageModels } = useFreezoneImageModels();
+    const imageCatalog = useFreezoneImageModels();
+    const imageModels = imageCatalog.models;
     const selectedModel = imageModels[0];
+    // 后台确实一个图片模型都没配时禁止提交：这个面板没有模型选择器，提交下去
+    // 后端拿不到目录条目会直接 409，先让用户点一下再报错是最糟的体验。
+    const catalogIsEmpty = isAuthoritativeEmptyCatalog(imageCatalog);
     const gridMode = GRID_ACTION_MODE_MAP[request.key];
+    // 宫格动作没有尺寸/画质选择器，按后台对该模型配置的档位取默认值。报价与提交
+    // 必须来自同一次解析，见 `resolveFixedFeatureModelRequest` 的注释。
+    const modelRequest = useMemo(
+      () => resolveFixedFeatureModelRequest(selectedModel, { mode: gridMode }),
+      [gridMode, selectedModel],
+    );
     const gridActionCost = useGenerationCreditCost(
       'feature',
       selectedModel ? FREEZONE_IMAGE_FEATURES.grid : null,
       {
         surface: 'canvas',
-        params: buildImageFeatureBillingParams(selectedModel, {
-          size: '2K',
-          ...(imageModelSupportsQuality(selectedModel?.apiModel)
-            ? { quality: 'medium' }
-            : {}),
-          mode: gridMode,
-        }),
+        params: modelRequest.billingParams,
       },
     );
     const billingRuleMissing =
       gridActionCost.error instanceof BillingRuleNotConfiguredError;
+    const submitDisabled = billingRuleMissing || catalogIsEmpty;
     const costDisplay =
       gridActionCost.data?.data.display ??
       (billingRuleMissing ? t('common.billingRuleNotConfiguredShort') : null);
 
     const handleSubmit = useCallback(async () => {
+      // 按钮已经禁用，这里再挡一道：没有模型就绝不该发出请求。
+      if (catalogIsEmpty) return;
       const project = readUrl().project;
       if (!project) {
         console.error('[grid-action] no project in URL — cannot submit');
@@ -160,9 +161,10 @@ export const GridActionConfirmOverlay = memo(
           sourceUrl: imageSource.split('?')[0],
           mode: gridMode,
           prompt: request.label,
+          ...modelRequest.submit,
         });
         updateNodeData(nextNodeId, generationTaskDescriptor(ref));
-        const completed = await awaitTaskCompletion(ref.task_key, project);
+        const completed = await awaitTaskCompletion(ref.task_key, project, { taskType: ref.task_type });
         const directUrl = completed.result?.['output_url'] as string | undefined;
         let url = directUrl;
         if (!url) {
@@ -177,6 +179,12 @@ export const GridActionConfirmOverlay = memo(
           generationError: null,
         });
       } catch (err) {
+        // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接。
+        // 写错误横幅会把一个还活着的任务标成失败，并清掉句柄。
+        if (isTaskPollTimeoutError(err)) {
+          notifyTaskStillRunning(t);
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
         console.error('[grid-action] generation failed', err);
         updateNodeData(nextNodeId, {
@@ -188,13 +196,16 @@ export const GridActionConfirmOverlay = memo(
     }, [
       addEdge,
       addNode,
+      catalogIsEmpty,
       findNodePosition,
       gridMode,
       imageSource,
+      modelRequest,
       node,
       onClose,
       request,
       setSelectedNode,
+      t,
       updateNodeData,
     ]);
 
@@ -231,10 +242,14 @@ export const GridActionConfirmOverlay = memo(
 
           <button
             type="button"
-            disabled={billingRuleMissing}
+            disabled={submitDisabled}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-bg-dark transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={handleSubmit}
-            title={t('nodeToolbar.gridMenu.confirmBar.submit')}
+            title={
+              catalogIsEmpty
+                ? t('modelParams.noModelsAvailable')
+                : t('nodeToolbar.gridMenu.confirmBar.submit')
+            }
           >
             <ArrowUp className="h-4 w-4" />
           </button>

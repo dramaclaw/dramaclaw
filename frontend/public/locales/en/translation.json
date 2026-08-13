@@ -458,6 +458,35 @@
         "days": "{{count}} days ago"
       }
     },
+    "canvasOutline": {
+      "title": "Canvas elements",
+      "groupMembers": "{{count}} nodes",
+      "empty": "This canvas has no nodes yet",
+      "duplicate": "Duplicate",
+      "rename": "Rename",
+      "download": "Download",
+      "locate": "Locate on canvas",
+      "moreActions": "More actions",
+      "matched": "{{count}} matches",
+      "expandAll": "Expand all groups",
+      "collapseAll": "Collapse all groups",
+      "search": "Search nodes",
+      "closeSearch": "Close search",
+      "filter": "Filter by type",
+      "noMatch": "No matching nodes",
+      "types": {
+        "all": "All",
+        "text": "Text",
+        "image": "Image",
+        "video": "Video",
+        "storyboard": "Storyboard",
+        "beat": "Shot context",
+        "audio": "Audio",
+        "script": "Script",
+        "world": "3D / Pano",
+        "skill": "Skill"
+      }
+    },
     "projections": {
       "staleCount": "{{count}} mainline projection has updates",
       "activeCount": "{{count}} mainline projection",
@@ -1298,8 +1327,6 @@
     "props": {
       "title": "Props",
       "count": "{{count}} props",
-      "batchGenerate": "Batch generate refs",
-      "batchStatusTitle": "Batch reference generation",
       "newProp": "New prop",
       "newPropHint": "AI prop extraction runs per episode in Episode Studio",
       "editProp": "Edit prop",
@@ -1415,7 +1442,7 @@
     "title": "Story Source",
     "subtitle": "Upload a script and start your creative journey.",
     "dropzoneHint": "Click or drop your novel file here",
-    "supportedFormats": "Supports .txt / .md / .docx · File up to 1MB · Text up to 100,000 characters",
+    "supportedFormats": "Supports .txt / .md / .docx · File up to 512KB · Text up to 100,000 characters",
     "uploadingTitle": "Uploading novel…",
     "uploadingHint": "Please stay on this page until the upload finishes. It may take a moment on a slow connection.",
     "inputMode": {
@@ -1432,6 +1459,7 @@
     "settingsSaved": "Project settings saved",
     "settingsSaveFailed": "Failed to save project settings",
     "processing": "Processing...",
+    "elapsed": "Elapsed {{time}}",
     "projectSettings": "Project Settings",
     "advancedSettings": "Advanced settings",
     "visualStyle": "Visual Style",
@@ -1650,6 +1678,12 @@
       "selected_regen": "Selected regen",
       "compose_episode": "Video compose",
       "freezone_image_reverse_prompt": "Image reverse prompt"
+    },
+    "cancelRunning": {
+      "title": "Stop task",
+      "fallbackMessage": "The task has already started. Stopping now will not refund the spent credits. Stop anyway?",
+      "confirm": "Stop task",
+      "keepRunning": "Keep running"
     }
   },
   "taskCenter": {
@@ -3371,7 +3405,8 @@
     "thinkingLevelDesc": "Only applies to fal Nano Banana 2. High thinking adds extra cost.",
     "thinkingDisabled": "Off",
     "thinkingMinimal": "Standard",
-    "thinkingHigh": "High"
+    "thinkingHigh": "High",
+    "noModelsAvailable": "No image model has been configured by the administrator"
   },
   "node": {
     "menu": {
@@ -3426,7 +3461,8 @@
       "promptRequired": "Please enter a prompt",
       "apiKeyRequired": "Backend provider is not configured",
       "resultTitle": "Result Image",
-      "promptPlaceholder": "Describe anything you want to generate or edit"
+      "promptPlaceholder": "Describe anything you want to generate or edit",
+      "noModelAvailable": "No image model has been configured by the administrator yet"
     },
     "imageGen": {
       "contextPalette": {
@@ -3527,6 +3563,8 @@
         "textToMusicGen": "Text to Music"
       },
       "placeholder": "Write a story, scene, or character idea. For example: in an old station on a rainy night, a late letter changes everyone's choice.",
+      "generatePlaceholder": "Describe the story, scene, character, dialogue, or creative prompt you want to generate…",
+      "generateText": "Generate text with AI",
       "modelPickerHint": "Pick a model",
       "submit": "Submit",
       "translate": "Translate (zh ↔ en)"
@@ -3597,9 +3635,18 @@
         "off": "Off",
         "durationTooShort": "Each audio clip must be at least {{min}} seconds: {{clips}}. Replace it or use a longer clip and try again.",
         "durationTooLong": "Each audio clip must be at most {{max}} seconds: {{clips}}. Trim it or use a shorter clip and try again.",
+        "durationTotalTooShort": "All audio clips combined must be at least {{min}} seconds, currently {{total}} seconds: {{clips}}. Add or extend audio and try again.",
+        "durationTotalTooLong": "All audio clips combined must be at most {{max}} seconds, currently {{total}} seconds: {{clips}}. Trim them or remove some clips and try again.",
         "clipDuration": "{{label}} ({{seconds}}s)",
         "clipSeparator": ", ",
         "clipFallbackLabel": "Audio {{index}}"
+      },
+      "referenceDuration": {
+        "videoFallbackLabel": "Video {{index}}",
+        "videoTooShort": "Each video clip must be at least {{min}} seconds: {{clips}}. Replace or extend it and try again.",
+        "videoTooLong": "Each video clip must be at most {{max}} seconds: {{clips}}. Trim or replace it and try again.",
+        "videoTotalTooShort": "All video clips combined must be at least {{min}} seconds, currently {{total}} seconds: {{clips}}. Add or extend video and try again.",
+        "videoTotalTooLong": "All video clips combined must be at most {{max}} seconds, currently {{total}} seconds: {{clips}}. Trim or remove video and try again."
       },
       "count": {
         "format": "{{count}}"
@@ -3986,11 +4033,15 @@
     },
     "modelConfig": {
       "title": "Model Config",
-      "description": "Choose a model gateway channel: the platform official gateway, or your own local NewAPI.",
+      "description": "Choose the official gateway, configure your own NewAPI, or combine local and official services.",
       "baseUrlHint": "The CE runtime configures the Local NewAPI URL automatically.",
       "effectiveBadge": "Active: {{channel}}",
+      "guide": "Configuration guide",
       "loading": "Loading…",
       "requestFailed": "Request failed, please retry.",
+      "activateMode": "Set as active",
+      "configureBeforeActivate": "Configure this mode before activating it.",
+      "modeActivated": "{{mode}} is now active.",
       "statusConfigured": "Configured",
       "statusNotConfigured": "Not configured",
       "statusActive": "Active",
@@ -3998,7 +4049,8 @@
       "gatewayNotConfiguredImpact": "The active model gateway is not configured. Text, image, video, and audio model calls will fail; configure the official channel or initialize Local NewAPI before generating content.",
       "modes": {
         "official": "Official",
-        "custom": "Local NewAPI"
+        "custom": "Custom",
+        "hybrid": "Local + Official Hybrid"
       },
       "fields": {
         "baseUrl": "New API URL",
@@ -4015,7 +4067,19 @@
         "saved": "Saved and switched to the official channel.",
         "enabled": "Switched to the official channel.",
         "missingFields": "Please fill in the API Key.",
-        "registerLink": "Register at RelayClaw"
+        "registerLink": "Register at RelayClaw",
+        "mediaCatalogTitle": "Official media model catalog",
+        "mediaCatalogStatus": "Version {{version}} · {{count}} models · {{source}}",
+        "mediaCatalogSources": {
+          "bundled": "Bundled",
+          "remote": "Online update"
+        },
+        "mediaCatalogAutoUpdate": "Automatically update official models",
+        "mediaCatalogAutoUpdateHint": "Check periodically in the background and apply compatible updates immediately when Settings opens.",
+        "mediaCatalogCheckNow": "Check for updates",
+        "mediaCatalogUpdated": "The official media model catalog was updated.",
+        "mediaCatalogUpToDate": "The official media model catalog is up to date.",
+        "mediaCatalogCheckFailed": "Could not check the official media model catalog. Try again later."
       },
       "custom": {
         "description": "CE uses a local SQLite-backed NewAPI. DramaClaw connects the database, creates a runtime token, and enables the local channel automatically.",
@@ -4045,6 +4109,40 @@
         "setupPasswordTooShort": "The setup password must be at least 8 characters.",
         "setupPasswordMismatch": "The setup passwords do not match."
       },
+      "quick": {
+        "title": "Recommended Setup",
+        "description": "After Local NewAPI is initialized, use one profile to configure provider channels, feature models, embedding, and media mappings.",
+        "recommended": "Recommended",
+        "custom": "My Config",
+        "active": "Active",
+        "upstreamKey": "Upstream API Key",
+        "upstreamKeyPlaceholder": "Enter the model provider API Key",
+        "channelKeysTitle": "Channel API Keys",
+        "keyHint": "Keys are entered separately for each channel and never stored in the profile JSON. Leave a key empty when that provider already has a saved key.",
+        "savedKeyPlaceholder": "Saved · {{preview}} (enter a new value to replace)",
+        "fixJsonFirst": "Fix the profile JSON first. Channel key fields appear here after it parses successfully.",
+        "editJson": "View or edit profile JSON",
+        "jsonHint": "channels defines providers. Feature models, embedding, and each media model select one through channel. Duplicate providers are not supported yet.",
+        "recommendedJsonHint": "The recommended profile is a built-in read-only template. Switch to My Config to edit and persist your own profile.",
+        "apply": "Save & Apply All",
+        "applyHint": "Writes the complete setup once. Use Advanced Settings below for individual changes.",
+        "applying": "Working on: {{step}}",
+        "applied": "The recommended setup has been saved and enabled.",
+        "initializeFirst": "Initialize Local NewAPI first, then apply the profile after its database and administrator access are ready.",
+        "comfyConfig": "ComfyUI Configuration",
+        "comfyTemplateHint": "Load the local MiniMax H3 example only when needed. Opening Hybrid mode will not create a ComfyUI channel.",
+        "loadComfyTemplate": "Load MiniMax H3 Template",
+        "advanced": "Advanced Settings",
+        "invalidJson": "Invalid profile JSON: {{message}}",
+        "missingKeys": "Missing upstream API Key for channel(s): {{channels}}",
+        "steps": {
+          "initialize": "Initialize Local NewAPI",
+          "channel": "Save provider channel",
+          "features": "Save feature models",
+          "embedding": "Save embedding",
+          "media": "Save media models"
+        }
+      },
       "featureModels": {
         "title": "Business Model Mapping",
         "description": "Assign upstream models to text understanding, content generation, and vision understanding features. Unset features use backend defaults.",
@@ -4053,6 +4151,22 @@
         "addChannel": "Add Channel",
         "saveChannels": "Save Channels",
         "channelsSaved": "Provider channel settings were saved locally.",
+        "comfyWorkflows": "ComfyUI Workflows",
+        "comfyWorkflowHint": "Add multiple API Format workflows to one model. RelayClaw handles workflow routing. The API key is optional.",
+        "comfyAddWorkflow": "Add Workflow",
+        "comfyExpandWorkflow": "Expand",
+        "comfyCollapseWorkflow": "Collapse",
+        "comfyModelName": "Model name",
+        "comfyModelPlaceholder": "Model name, e.g. MiniMax-H3",
+        "comfyWorkflowId": "Workflow ID",
+        "comfyWorkflowJson": "Workflow JSON",
+        "comfyWorkflowIdPlaceholder": "Workflow ID, e.g. minimax-h3-t2v",
+        "comfyDuplicateWorkflow": "Workflow IDs must be unique.",
+        "comfyInvalidWorkflow": "Workflow must be a valid JSON object.",
+        "clearComfy": "Clear ComfyUI configuration",
+        "clearComfyTitle": "Clear ComfyUI configuration?",
+        "clearComfyConfirm": "This removes the ComfyUI channel, workflows, and related media model mappings from local settings and NewAPI. Existing projects and generated media are not deleted.",
+        "comfyCleared": "ComfyUI configuration cleared.",
         "channelsSaveHint": "This only saves CE local channel presets and does not immediately modify existing NewAPI channels. The next model-mapping save will update NewAPI channels with these presets. To replace a NewAPI channel key now, use the update button on that channel.",
         "syncChannel": "Update NewAPI Channel",
         "syncChannelHint": "Immediately updates the existing NewAPI channel key and Base URL for this provider without changing model mappings.",
@@ -4110,6 +4224,7 @@
           "EPISODE_PROP_PLANNER": "Plan episode props",
           "SCENE_BUILD": "Analyze and enrich scene descriptions",
           "FREEZONE_TRANSLATION": "Prompt zh/en translation",
+          "FREEZONE_TEXT_WRITER": "AI text generation",
           "FREEZONE_STORY_SCRIPT": "Story script generation",
           "FREEZONE_VISION": "Image and video content analysis",
           "STYLE_ANALYZER": "Analyze a custom style from reference images",
@@ -4144,9 +4259,46 @@
       },
       "mediaModels": {
         "title": "Image / Video / Audio Generation Models",
-        "description": "These models are already adapted by the backend. Fixed model names cannot be changed; choose a channel and optionally fill the upstream model used as the NewAPI model_mapping value. Empty values default to the fixed model name. Models ending in -value are official-channel only.",
+        "description": "Models come from the current custom local configuration. Add image or video models and configure the capabilities shown in XiaHua.",
+        "addModel": "Add model",
+        "addModelTitle": "Add media model",
+        "editModelTitle": "Edit media model",
+        "editCapabilities": "Edit capabilities",
+        "removeModel": "Remove model",
+        "colActions": "Actions",
+        "modelId": "Model ID",
+        "displayName": "Display name",
+        "mediaType": "Media type",
+        "sortOrder": "Sort order",
+        "enabled": "Enable in XiaHua",
+        "capabilitiesJson": "Capability config JSON",
+        "commonCapabilities": "XiaHua capabilities",
+        "resolutionOptions": "Resolutions",
+        "ratioOptions": "Aspect ratios",
+        "customOptionPlaceholder": "Enter custom values, separated by commas",
+        "addCustomOption": "Add custom values",
+        "qualityOptions": "Image qualities (comma-separated)",
+        "minDuration": "Minimum duration (seconds)",
+        "maxDuration": "Maximum duration (seconds)",
+        "referenceImageMax": "Reference image limit",
+        "referenceVideoMax": "Reference video limit",
+        "referenceAudioMax": "Reference audio limit",
+        "referenceAudioMinSeconds": "Minimum per audio clip (seconds)",
+        "referenceAudioMaxSeconds": "Maximum per audio clip (seconds)",
+        "referenceAudioTotalMinSeconds": "Minimum total audio (seconds)",
+        "referenceAudioTotalMaxSeconds": "Maximum total audio (seconds)",
+        "referenceVideoMinSeconds": "Minimum per video clip (seconds)",
+        "referenceVideoMaxSeconds": "Maximum per video clip (seconds)",
+        "referenceVideoTotalMinSeconds": "Minimum total video (seconds)",
+        "referenceVideoTotalMaxSeconds": "Maximum total video (seconds)",
+        "humanReview": "Supports human review",
+        "supportedModes": "Video generation modes",
+        "capabilitiesHint": "Uses the same config contract as the EE media catalog. Save the complete configuration to apply it in XiaHua.",
+        "applyModelEdit": "Apply to config",
+        "missingModelFields": "Enter a model ID and display name, then choose a provider.",
+        "invalidCapabilitiesJson": "Capability config must be a valid JSON object.",
         "colType": "Type",
-        "colModel": "Fixed Model",
+        "colModel": "Model ID",
         "colProvider": "Configured Channel",
         "colUpstreamModel": "Upstream Model",
         "defaultProvider": "Use Default",
@@ -4154,6 +4306,7 @@
         "upstreamModelPlaceholder": "Defaults to {{model}}",
         "saveHint": "Saving writes to NewAPI and stores the mapping locally.",
         "save": "Save Image / Video / Audio Config",
+        "saveVideo": "Save Video Config",
         "saved": "Image / video / audio model mappings saved.",
         "noMappings": "Choose a channel for at least one image / video / audio model first.",
         "noChannelsHint": "Add provider channels above before choosing channels for image / video / audio models.",
@@ -4336,7 +4489,9 @@
     "copyReport": "Copy error report",
     "technicalDetails": "Technical details",
     "serviceConfigTitle": "Generation service is not configured",
-    "openRouterConfigMessage": "This model requires OpenRouter, but the backend API key is not configured. Please contact an administrator."
+    "openRouterConfigMessage": "This model requires OpenRouter, but the backend API key is not configured. Please contact an administrator.",
+    "stillRunningTitle": "Still generating",
+    "stillRunningMessage": "This generation is taking longer than usual. The page stopped waiting, but the job is still running in the background — refresh later to pick up the result, or check its progress in the task center."
   },
   "videoCompose": {
     "title": "Video Compose",

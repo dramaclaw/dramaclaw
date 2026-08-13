@@ -485,6 +485,13 @@ class FreezoneEditRequest(BaseModel):
         default=None, description="可选：注册表模型 id，用于还原节点时回填 model"
     )
     gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    model_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "媒体模型目录声明的动态参数取值。与 /freezone/gen 同一口径 —— "
+            "带参考图的图编辑走这条路由，少了这个字段目录参数在图编辑侧等于没生效"
+        ),
+    )
 
 
 class FreezoneSketchFromContextRequest(BaseModel):
@@ -546,6 +553,10 @@ class FreezoneScene360Request(BaseModel):
     model: str = Field(
         default=FREEZONE_DEFAULT_IMAGE_MODEL,
         description=f"图片模型名，默认 {FREEZONE_DEFAULT_IMAGE_MODEL}",
+    )
+    catalog_id: str = Field(
+        default="",
+        description="媒体模型目录条目 id。前端按目录条目报价时必须一并下发，否则计费口径与报价不一致",
     )
     quality: Optional[str] = Field(default="medium", description="图片画质档位，默认 medium")
 
@@ -772,6 +783,10 @@ class FreezoneTemplateEditRequest(BaseModel):
         default=FREEZONE_DEFAULT_IMAGE_MODEL,
         description=f"图片模型名，默认 {FREEZONE_DEFAULT_IMAGE_MODEL}",
     )
+    catalog_id: str = Field(
+        default="",
+        description="媒体模型目录条目 id。前端按目录条目报价时必须一并下发，否则计费口径与报价不一致",
+    )
     quality: Optional[str] = Field(default="medium", description="图片画质档位，默认 medium")
 
 
@@ -988,6 +1003,34 @@ class FreezoneVideoCharacterLibraryItemRequest(BaseModel):
         default=None,
         description="音频静态地址（media=audio 时必填）",
     )
+    category: Literal["other", "character", "scene", "prop", "style", "audio"] | None = Field(
+        default=None,
+        description="用途类目（其它/人物/场景/物品/风格/音效）；不传时后端按 source/media 兜底推导",
+    )
+    folder: str | None = Field(
+        default=None,
+        description=(
+            "保存位置：系统文件夹 key（其它/人物/场景/物品/风格/音效同名，"
+            "对应 other/character/scene/prop/style/audio）或用户自建文件夹 id；"
+            "不传时按类目落到同名系统文件夹"
+        ),
+    )
+
+
+class FreezoneAssetLibraryFolderRequest(BaseModel):
+    """新建资产库文件夹请求。文件夹只管保存位置，和素材的类目标签互不影响。"""
+
+    name: str = Field(description="文件夹名称，最长 20 字，不能与系统文件夹重名")
+
+
+class FreezoneAssetLibraryFolderPatchRequest(BaseModel):
+    """改文件夹。两个字段都可选，只改传上来的那个。"""
+
+    name: str | None = Field(default=None, description="新名称；不传表示不改名")
+    cover: str | None = Field(
+        default=None,
+        description="封面图 URL，取自该文件夹内的素材；传空串表示清掉封面",
+    )
 
 
 class FreezoneVideoGenRequest(BaseModel):
@@ -1037,7 +1080,10 @@ class FreezoneVideoGenRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    gen_mode: Literal["textToVideo"] = Field(
+        default="textToVideo",
+        description="文生视频入口的固定业务模式",
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1045,13 +1091,13 @@ class FreezoneImageToVideoRequest(BaseModel):
     """图片参考视频请求。
 
     统一承接图生视频和图片参考视频：
-    - 1 张图片：首帧图生视频
+    - 图生视频：1 张图片作为整体画面参考，不锁定第一帧
     - 2-9 张图片：多图图片参考视频
     """
 
     image_urls: list[str] = Field(
         default_factory=list,
-        description="图片参考静态地址列表，支持 1-9 张。第一张默认作为主参考图/首帧参考图",
+        description="图片参考静态地址列表。图生视频只允许 1 张，图片参考模式按模型上限接收多张",
     )
     prompt: str = Field(default="", description="用户补充视频描述，可为空")
     camera_template_id: Optional[str] = Field(
@@ -1090,14 +1136,19 @@ class FreezoneImageToVideoRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    gen_mode: Literal["imageToVideo", "imageReference"] = Field(
+        description=(
+            "必填：imageToVideo 表示单图整体参考；imageReference 表示按目录上限接收图片参考。"
+            "两者执行时都使用 image_reference 协议，不代表首帧。"
+        )
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class FreezoneKeyframeVideoRequest(BaseModel):
-    """首尾帧视频请求。
+    """关键帧视频请求。
 
-    接受首帧 / 尾帧两个输入，至少需要提供一个。
+    接受仅首帧、首帧+尾帧或仅尾帧，至少需要提供一个槽位。
     """
 
     first_frame_url: Optional[str] = Field(
@@ -1145,7 +1196,9 @@ class FreezoneKeyframeVideoRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    gen_mode: Literal["firstFrame", "firstLastFrame"] = Field(
+        description="必填：首帧或首尾帧业务模式；不能根据实际上传的帧数推断",
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1197,7 +1250,10 @@ class FreezoneVideoEditRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    gen_mode: Literal["videoEdit"] = Field(
+        default="videoEdit",
+        description="视频编辑入口的固定业务模式",
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1359,7 +1415,10 @@ class FreezoneVideoOmniGenRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
-    gen_mode: Optional[str] = Field(default=None, description="可选：生成模式，用于还原节点时回填 genMode")
+    gen_mode: Literal["allReference"] = Field(
+        default="allReference",
+        description="全能参考入口的固定业务模式",
+    )
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1596,6 +1655,14 @@ class FreezoneTextTranslateRequest(BaseModel):
         default="generic",
         description="使用场景。用于帮助翻译器按节点类型保留合适的提示词语气",
     )
+    canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
+    node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+
+
+class FreezoneTextGenerateRequest(BaseModel):
+    """Freezone 文本节点：根据创作要求生成自由文本。"""
+
+    prompt: str = Field(min_length=1, max_length=20000, description="文本创作要求")
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
 

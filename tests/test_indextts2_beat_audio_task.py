@@ -1,12 +1,63 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from novelvideo.shared.billing_errors import InsufficientCreditsError
 
 pytestmark = pytest.mark.m07
+
+
+@pytest.mark.asyncio
+async def test_audio_runner_fails_when_no_usable_audio_was_generated(monkeypatch, tmp_path):
+    from novelvideo.audio.indextts2_beat_audio_task import (
+        IndexTTS2BeatAudioTaskResult,
+    )
+    from novelvideo.task_backend.runners import audio
+
+    class RunnerStore:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def initialize(self):
+            return None
+
+        async def close(self):
+            return None
+
+    class RunnerManager:
+        def update_progress_for_project(self, *_args, **_kwargs):
+            return None
+
+    async def fake_generate(**_kwargs):
+        return IndexTTS2BeatAudioTaskResult(
+            mode="redo_selected",
+            total_targets=2,
+            generated=0,
+            failed=["Beat 01: provider failed", "Beat 02: provider failed"],
+        )
+
+    monkeypatch.setattr("novelvideo.sqlite_store.SQLiteStore", RunnerStore)
+    monkeypatch.setattr(
+        "novelvideo.audio.indextts2_beat_audio_task.run_indextts2_beat_audio_generation",
+        fake_generate,
+    )
+    monkeypatch.setattr(audio, "get_task_manager", lambda: RunnerManager())
+    ctx = SimpleNamespace(
+        owner_project_label="alice/demo",
+        output_dir=tmp_path,
+        state_dir=tmp_path / "state",
+        owner_username="alice",
+        project_name="demo",
+    )
+
+    with pytest.raises(RuntimeError, match="没有生成可用结果"):
+        await audio._run_indextts2_audio(
+            {"payload": {"episode": 1, "beat_numbers": [1, 2]}},
+            ctx,
+        )
 
 
 class FakeGenerator:
@@ -412,7 +463,7 @@ async def test_indextts2_narrated_project_ignores_beat_uploaded_narration_voice(
     )
 
     assert errors == [
-        "Beat 01 解说声线缺失：项目解说人声线缺失，请上传或录制解说人音频"
+        "Beat 01 解说声线缺失：项目解说人声线未配置，请上传或录制解说人音频"
     ]
 
 
@@ -842,6 +893,7 @@ async def test_indextts2_audio_plan_returns_only_billable_beats(tmp_path, monkey
 
     assert plan.beat_numbers == [1]
     assert plan.errors == ["Beat 02 角色声线缺失：谢铮_青年时期"]
+    assert plan.billable_chars == 5
 
 
 @pytest.mark.asyncio
@@ -874,7 +926,7 @@ async def test_indextts2_voice_prereq_check_reports_missing_narrator_before_task
     )
 
     assert errors == [
-        "Beat 01 解说声线缺失：项目解说人声线缺失，请上传或录制解说人音频"
+        "Beat 01 解说声线缺失：项目解说人声线未配置，请上传或录制解说人音频"
     ]
 
 

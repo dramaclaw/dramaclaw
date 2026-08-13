@@ -1,0 +1,38 @@
+name: publish-official-media-catalog
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/novelvideo/official_media_models.json
+      - scripts/publish_official_media_catalog.py
+      - .github/workflows/publish-official-media-catalog.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-media-catalog-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: official-media-catalog
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install OSS client
+        run: python -m pip install oss2==2.19.1
+      - name: Validate and publish immutable catalog
+        env:
+          PYTHONPATH: src
+          OFFICIAL_CATALOG_OSS_ENDPOINT: ${{ vars.OFFICIAL_CATALOG_OSS_ENDPOINT || 'https://oss-cn-chengdu.aliyuncs.com' }}
+          OFFICIAL_CATALOG_OSS_BUCKET: ${{ vars.OFFICIAL_CATALOG_OSS_BUCKET || 'dramaclaw-dl' }}
+          OFFICIAL_CATALOG_OSS_PREFIX: ${{ vars.OFFICIAL_CATALOG_OSS_PREFIX || 'official-media-catalog' }}
+          OFFICIAL_CATALOG_OSS_ACCESS_KEY_ID: ${{ secrets.OFFICIAL_CATALOG_OSS_ACCESS_KEY_ID || secrets.OSS_RELAY_AK }}
+          OFFICIAL_CATALOG_OSS_ACCESS_KEY_SECRET: ${{ secrets.OFFICIAL_CATALOG_OSS_ACCESS_KEY_SECRET || secrets.OSS_RELAY_SK }}
+        run: python scripts/publish_official_media_catalog.py

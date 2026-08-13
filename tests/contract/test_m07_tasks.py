@@ -492,7 +492,7 @@ def test_m07_http_coverage_exercises_task_center_routes(monkeypatch, tmp_path):
             return []
 
     class FakeBackend:
-        async def cancel_project_task(self, ctx_arg, task_state):
+        async def cancel_project_task(self, ctx_arg, task_state, **_kwargs):
             assert ctx_arg is ctx
             manager.update_progress_for_project(
                 ctx_arg,
@@ -505,7 +505,7 @@ def test_m07_http_coverage_exercises_task_center_routes(monkeypatch, tmp_path):
                 status="cancelled",
                 expected_task_id=task_state.task_id,
             )
-            return True
+            return {"ok": True, "status": "cancelled"}
 
     monkeypatch.setattr(tasks, "resolve_project_context", fake_resolve_project_context)
     monkeypatch.setattr(tasks, "get_task_manager", lambda: manager)
@@ -561,7 +561,7 @@ class _FakeTaskBackend:
         self.backend = backend
         self.calls = []
 
-    async def cancel_project_task(self, ctx, task_state):
+    async def cancel_project_task(self, ctx, task_state, **_kwargs):
         self.calls.append({"ctx": ctx, "task_id": task_state.task_id})
         get_task_manager().update_progress_for_project(
             ctx,
@@ -574,7 +574,7 @@ class _FakeTaskBackend:
             status="cancelled",
             expected_task_id=task_state.task_id,
         )
-        return True
+        return {"ok": True, "status": "cancelled"}
 
 
 @pytest.mark.asyncio
@@ -641,7 +641,7 @@ async def test_m07_task_backend_read_and_stream_shapes_are_ce_ee_isomorphic(
     celery_summary = await collect("celery")
 
     assert inline_summary == celery_summary
-    assert inline_summary["cancel_keys"] == ["message", "ok"]
+    assert inline_summary["cancel_keys"] == ["ok", "status"]
     assert inline_summary["project_event"] == "task_updated"
     assert inline_summary["task_event"] == "cancelled"
     assert inline_summary["task_payload_keys"] == [
@@ -686,7 +686,12 @@ async def test_inline_cancel_is_cooperative_runner_stop(tmp_path):
 
     register_project_task_runner(task_type, runner)
 
-    queued = await backend.enqueue_project_task(ctx, task_type=task_type, episode=1)
+    queued = await backend.enqueue_project_task(
+        ctx,
+        task_type=task_type,
+        product_surface="mainline",
+        episode=1,
+    )
     assert await asyncio.to_thread(runner_started.wait, 3) is True
     await backend.cancel_project_task(ctx, queued.task_state)
     assert (
@@ -731,6 +736,11 @@ async def test_inline_backend_runs_sync_core_outside_active_event_loop(monkeypat
         fake_run_project_task_core_sync,
     )
 
-    await backend.enqueue_project_task(ctx, task_type="m07_no_asyncio_run_in_loop", episode=1)
+    await backend.enqueue_project_task(
+        ctx,
+        task_type="m07_no_asyncio_run_in_loop",
+        product_surface="mainline",
+        episode=1,
+    )
 
     assert await asyncio.to_thread(observed.wait, 3) is True

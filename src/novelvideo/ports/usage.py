@@ -30,6 +30,7 @@ class UsageMeter(Protocol):
         *,
         user_id: str,
         feature_key: str,
+        product_surface: str,
         project_id: str = "",
         resource_kind: str = "",
         task_id: str = "",
@@ -79,7 +80,9 @@ class UsageMeter(Protocol):
         reservation_id: str,
         *,
         metadata: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]: ...
+    ) -> dict[str, Any]:
+        """Refund a reservation when no usable business result was delivered."""
+        ...
 
     async def mark_current_paid_execution_attempt(
         self,

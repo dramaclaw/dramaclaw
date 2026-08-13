@@ -30,7 +30,9 @@ describe("freezone viewer contracts", () => {
     expect(registry).toContain("node.menu.pano360Viewer");
     expect(nodeSelectionMenu).toContain("CANVAS_NODE_TYPES.pano360Viewer");
     expect(spawnOverlay).toContain("CANVAS_NODE_TYPES.pano360Viewer");
-    expect(nodesIndex).toContain("pano360ViewerNode: Pano360ViewerNode");
+    expect(nodesIndex).toContain(
+      "pano360ViewerNode: withLodShell('pano360ViewerNode', Pano360ViewerNode)"
+    );
     expect(nodesIndex).toContain("Pano360ViewerNode");
   });
 
@@ -353,7 +355,8 @@ describe("freezone viewer contracts", () => {
     expect(overlay).not.toContain("activeSourceId");
     expect(overlay).toContain("output_role: 'scene_360_candidate'");
     expect(overlay).toContain("media_kind: 'pano360'");
-    expect(overlay).toContain("aspectRatio,");
+    expect(overlay).toContain("const SCENE_360_OUTPUT_ASPECT_RATIO = '2:1' as const;");
+    expect(overlay).toContain("aspectRatio: SCENE_360_OUTPUT_ASPECT_RATIO");
   });
 
   it("lets canvas ThreeDWorldNode open pano360 image sources when explicitly connected", () => {

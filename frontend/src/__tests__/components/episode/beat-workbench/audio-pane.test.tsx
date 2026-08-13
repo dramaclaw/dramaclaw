@@ -15,6 +15,7 @@ const i18n = i18next.createInstance();
 const mutateRegenerate = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
+const audioPrereqErrors = vi.hoisted(() => ({ current: [] as string[] }));
 
 beforeAll(async () => {
   await i18n.use(initReactI18next).init({
@@ -66,14 +67,16 @@ beforeAll(async () => {
 });
 
 vi.mock("@/lib/queries/audio", () => ({
+  useAudioBillingQuote: () => ({
+    data: {
+      ok: true,
+      data: { display: "", prereq_errors: audioPrereqErrors.current },
+    },
+  }),
   useRegenerateBeatAudio: () => ({
     mutateAsync: mutateRegenerate,
     isPending: false,
   }),
-}));
-
-vi.mock("@/lib/queries/generation-credit-cost", () => ({
-  useGenerationCreditCost: () => ({ data: { ok: true, data: { display: "" } } }),
 }));
 
 vi.mock("@/hooks/use-task-controller", () => ({
@@ -145,6 +148,7 @@ function makeBeat(overrides: Partial<Beat> = {}): Beat {
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
+  audioPrereqErrors.current = [];
   mutateRegenerate.mockResolvedValue({
     ok: true,
     scope: "ep001:beat_01:__narrator__",
@@ -152,6 +156,36 @@ beforeEach(() => {
 });
 
 describe("AudioPane", () => {
+  it("uses quote prerequisite errors to avoid submitting an invalid audio task", async () => {
+    audioPrereqErrors.current = [
+      "Beat 01 解说声线缺失：项目解说人声线已配置，但声线文件无法读取，请重新上传或检查项目存储",
+    ];
+    const user = userEvent.setup();
+
+    render(
+      <Wrapper>
+        <AudioPane
+          beat={makeBeat()}
+          project="demo"
+          episode={1}
+          state="missing"
+          spineTemplate="narrated"
+        />
+      </Wrapper>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "去配置" }));
+
+    expect(mutateRegenerate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "确认" })).not.toBeInTheDocument();
+    expect(toastError).toHaveBeenCalledWith(
+      "Beat 01 解说声线缺失：项目解说人声线已配置，但声线文件无法读取，请重新上传或检查项目存储。请到「资产 > 声线」上传或裁剪默认解说声线。",
+      expect.objectContaining({
+        action: expect.objectContaining({ label: "去配置" }),
+      }),
+    );
+  });
+
   it("keeps beat voice upload and project narrator voice controls out of drama narration", () => {
     render(
       <Wrapper>
@@ -229,7 +263,7 @@ describe("AudioPane", () => {
     mutateRegenerate.mockResolvedValueOnce({
       ok: false,
       code: "voice_prereq_required",
-      error: "Beat 01 解说声线缺失：项目解说人声线缺失，请上传或录制解说人音频",
+      error: "Beat 01 解说声线缺失：项目解说人声线未配置，请上传或录制解说人音频",
     });
     const user = userEvent.setup();
 
@@ -249,7 +283,7 @@ describe("AudioPane", () => {
     await user.click(screen.getByRole("button", { name: "确认" }));
 
     expect(toastError).toHaveBeenCalledWith(
-      "Beat 01 解说声线缺失：项目解说人声线缺失，请上传或录制解说人音频。请到「资产 > 声线」上传或裁剪默认解说声线。",
+      "Beat 01 解说声线缺失：项目解说人声线未配置，请上传或录制解说人音频。请到「资产 > 声线」上传或裁剪默认解说声线。",
       expect.objectContaining({
         action: expect.objectContaining({ label: "去配置" }),
       }),

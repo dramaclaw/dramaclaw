@@ -1,47 +1,30 @@
 ---
-version: 1.2.0
-attention: medium
+version: 1.3.2
+attention: low
 ---
-# v1.2.0
+# v1.3.2
 
 ## User-facing Highlights (zh)
 
-- **功能积分更透明**: 统一展示功能价格、预计扣费、账户余额和使用记录,批量创作及图片、视频、音频等任务的扣费状态更清晰。
-- **虾画创作能力升级**: 完善图片参考、视频参考、音频连接和 Seedance 模型模式切换,并修复 NewAPI 图片尺寸、水印、参考图和视频结果兼容问题。
-- **剧本导入更准确**: 导入前可预览原文、章节和场景识别结果,新增对常见中英文场景标题、括号标题和精品短剧格式的支持。
-- **任务执行更稳定**: 构建类任务统一接入任务中心,修复结束任务持续加载、知识图谱日志阻塞队列及多个规划和模型调用超时问题。
-- **外部智能体可连接 CE**: Claude Code 等本地智能体可通过 MCP 直接调用 DramaClaw CE 的项目和创作能力,无需额外配置访问令牌。
+- **本地 ComfyUI 配置更简单**: MiniMax H3 现在以单一模型接入多个 Workflow，由虾驿根据文生视频、首帧或全能参考模式自动选择流程，并支持一键清理本地配置。
+- **视频生成模式更准确**: 画布选择的首帧、首尾帧等业务模式会在校验、计费、任务执行和历史恢复中保持一致，不再根据素材数量被静默改写。
+- **主线生成默认值优化**: 场景参考图提升为中等质量，主线视频模型列表加入 Seedance 2.0 Mini 并精简不推荐选项，同时将新小说上传上限调整为 512KB。
 
 ## User-facing Highlights (en)
 
-- **More transparent feature credits**: See feature prices, estimated charges, account balances, and usage history consistently across batch creation, image, video, and audio workflows.
-- **Upgraded canvas creation workflows**: Improved image, video, and audio references, automatic Seedance mode selection, and compatibility for NewAPI image sizing, watermarks, references, and normalized video results.
-- **More accurate screenplay imports**: Preview source text, chapters, and detected scenes before import, with broader support for common Chinese and English scene headings, bracketed headings, and premium short-drama formats.
-- **More reliable task execution**: Build operations now report through the task center, while completed-task loading, queue-blocking graph logs, planning failures, and model timeouts are handled more reliably.
-- **External agents can connect to CE**: Local agents such as Claude Code can use MCP to operate DramaClaw CE projects and creation workflows without configuring an additional access token.
+- **Simpler local ComfyUI setup**: MiniMax H3 now uses one model entry for multiple workflows, with RelayClaw selecting the appropriate text-to-video, first-frame, or all-reference workflow and an option to clear local configuration in one action.
+- **More accurate video generation modes**: Canvas selections such as first-frame and first/last-frame now remain consistent through validation, billing, task execution, and history restoration instead of being silently changed based on reference count.
+- **Improved mainline defaults**: Scene reference images now use medium quality, Seedance 2.0 Mini is available while less suitable mainline choices are hidden, and the new novel upload limit is set to 512KB.
 
 ## New Features
 
-- 新增统一功能积分价格、预估扣费、余额与使用记录展示 (#210).
-- 虾画底部工具栏新增移动和抓手工具,支持快捷键 V/H (#202).
-- CE 提供无需额外令牌的 MCP 接入,支持外部智能体操作项目与创作流程 (#190).
-- 小说导入页新增原文、章节和场景识别预览 (#220).
-- 支持更多常见中英文剧本场景标题格式 (#227).
+- 简化本地 ComfyUI 配置，使用单一 MiniMax-H3-local 模型承载多个 Workflow，并支持一键清理配置 (#277).
+- 主线视频模型新增 Seedance 2.0 Mini，并保留已有项目和任务对旧模型的执行兼容性 (#267).
 
 ## Bug Fixes
 
-- Beat 生成与剧集规划统一使用同一正文来源优先级：显式 `beat_source_text` 优先，其次为改编稿、原文和内容摘要；存量项目若已有改编稿且未显式指定 Beat 来源，重新生成时将改用改编稿。
-- 修复 Seedance 1.x 单图模式被错误禁用,并在接入视频或音频时自动切换到 Seedance 2.0 全能参考 (#203).
-- 修复音频节点连接范围和音视频分离后背景音节点孤立的问题 (#204).
-- 修复视频参考生成脚本未读取视频内容,以及角色图和参考列为空的问题 (#209).
-- 修复知识图谱日志阻塞 Celery 心跳和规划任务超时的问题 (#206, #215).
-- 修复括号场景标题及精品短剧场景标题识别问题 (#213, #214).
-- 完善剧本格式错误说明和上传限制校验,避免无效或超限内容进入导入流程 (#229).
-- 修复虾驿标准化视频任务结果无法读取的问题 (#217).
-- 修复构建类任务和已结束任务仍持续显示加载状态的问题 (#219, #222).
-- 修复 NewAPI 图片生成与编辑中的参考图、默认水印和分辨率参数问题 (#221).
+- 修复首帧、首尾帧等视频生成模式会因参考图片数量而被错误改写的问题 (#273).
 
 ## Improvements
 
-- 降低积分汇总接口的重复请求压力 (#223).
-- 统一界面视觉规范和设计变量,提升页面样式一致性 (#212).
+- 将场景参考图质量提升为 medium，并同步实际请求的计费参数；新小说上传限制调整为 512KB (#267).

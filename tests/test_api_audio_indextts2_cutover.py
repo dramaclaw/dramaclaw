@@ -138,23 +138,23 @@ def _fake_enqueue(calls):
     return fake_enqueue_project_task
 
 
-def test_happyhorse_video_backend_options_expose_mainline_limits() -> None:
+def test_mainline_video_backend_options_hide_legacy_models_and_expose_mini() -> None:
     from novelvideo.api.routes import generation
 
     options = {
         item.value: item.model_dump()
         for item in generation._api_video_backend_options()
     }
-    happyhorse = options["newapi_happyhorse-1.0"]
+    assert "newapi_seedance-2.0-value" not in options
+    assert "newapi_seedance-2.0-fast-value" not in options
+    assert "newapi_happyhorse-1.0" not in options
 
-    assert happyhorse["is_happyhorse"] is True
-    assert happyhorse["is_seedance2"] is False
-    assert happyhorse["resolution_options"] == ["720p", "1080p"]
-    assert happyhorse["ratio_options"] == ["16:9", "9:16", "1:1", "4:3", "3:4"]
-    assert happyhorse["supported_modes"] == ["first_frame", "multimodal_reference"]
-    assert happyhorse["reference_image_max"] == 9
-    assert happyhorse["reference_video_max"] == 1
-    assert happyhorse["reference_audio_max"] == 0
+    mini = options["newapi_seedance-2.0-mini"]
+    assert mini["label"] == "Seedance2.0 Mini"
+    assert mini["is_seedance2"] is True
+    assert mini["is_happyhorse"] is False
+    assert mini["min_duration"] == 4
+    assert mini["max_duration"] == 15
 
 
 @pytest.mark.asyncio
@@ -182,6 +182,7 @@ async def test_audio_generate_route_dispatches_indextts2(monkeypatch, tmp_path):
     assert calls == [
         {
             "ctx": ctx,
+            "product_surface": "mainline",
             "task_type": "audio_generation_indextts2",
             "episode": 3,
             "payload": {
@@ -190,10 +191,55 @@ async def test_audio_generate_route_dispatches_indextts2(monkeypatch, tmp_path):
                 "beat_numbers": [2],
                 "output_dir": str(tmp_path),
                 "state_dir": str(tmp_path / "state"),
-                "billing": generation._audio_billing_payload([2]),
+                "billing": generation._audio_billing_payload([2], billable_chars=2),
             },
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_audio_generate_route_does_not_enqueue_when_voice_file_is_missing(
+    monkeypatch, tmp_path
+):
+    from novelvideo.api.routes import generation
+    from novelvideo.api.schemas import TTSGenerateRequest
+
+    calls = []
+    _patch_generation_celery(monkeypatch, generation, tmp_path, _FakeStore())
+
+    async def fake_plan(**_kwargs):
+        return (
+            [],
+            [
+                "Beat 02 解说声线缺失：项目解说人声线已配置，"
+                "但声线文件无法读取，请重新上传或检查项目存储"
+            ],
+            0,
+        )
+
+    monkeypatch.setattr(generation, "_audio_generation_plan", fake_plan)
+    monkeypatch.setattr(
+        generation,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=_fake_enqueue(calls)),
+    )
+
+    response = await generation.generate_audio(
+        project="demo",
+        episode_num=3,
+        body=TTSGenerateRequest(mode="redo_selected", beat_numbers=[2]),
+        user={"username": "alice"},
+    )
+
+    assert response == {
+        "ok": False,
+        "code": "voice_prereq_required",
+        "error": (
+            "Beat 02 解说声线缺失：项目解说人声线已配置，"
+            "但声线文件无法读取，请重新上传或检查项目存储"
+        ),
+    }
+    assert calls == []
 
 
 def test_audio_generate_http_route_dispatches_indextts2(monkeypatch, tmp_path):
@@ -230,7 +276,7 @@ def test_audio_generate_http_route_dispatches_indextts2(monkeypatch, tmp_path):
         "beat_numbers": [2],
         "output_dir": str(tmp_path),
         "state_dir": str(tmp_path / "state"),
-        "billing": generation._audio_billing_payload([2]),
+        "billing": generation._audio_billing_payload([2], billable_chars=2),
     }
 
 
@@ -248,7 +294,7 @@ async def test_audio_billing_quote_uses_server_planned_quantity(monkeypatch, tmp
     async def fake_plan(**kwargs):
         assert kwargs["mode"] == "redo_selected"
         assert kwargs["beat_numbers"] == [2, 4]
-        return [2, 4], []
+        return [2, 4], [], 9
 
     class FakeCreditQuote:
         async def generation_credit_quote(self, **kwargs):
@@ -288,8 +334,9 @@ async def test_audio_billing_quote_uses_server_planned_quantity(monkeypatch, tmp
     assert captured == {
         "kind": "feature",
         "model": "mainline.beat_audio_generation",
-        "params": generation._audio_billing_payload([2, 4]),
+        "params": generation._audio_billing_payload([2, 4], billable_chars=9),
         "quantity": 2,
+        "product_surface": "mainline",
         "user_id": "user_1",
     }
 
@@ -319,6 +366,7 @@ async def test_single_beat_audio_route_dispatches_indextts2(monkeypatch, tmp_pat
     assert calls == [
         {
             "ctx": ctx,
+            "product_surface": "mainline",
             "task_type": "audio_generation_indextts2",
             "episode": 3,
             "payload": {
@@ -327,7 +375,7 @@ async def test_single_beat_audio_route_dispatches_indextts2(monkeypatch, tmp_pat
                 "beat_numbers": [2],
                 "output_dir": str(tmp_path),
                 "state_dir": str(tmp_path / "state"),
-                "billing": generation._audio_billing_payload([2]),
+                "billing": generation._audio_billing_payload([2], billable_chars=2),
             },
         }
     ]
@@ -472,10 +520,20 @@ async def test_seedance2_single_video_passes_prepared_config_and_duration(
         "pricing_kind": "video",
         "pricing_model": "seedance-2.0-fast",
         "pricing_model_selection": "huimeng_seedance-2.0-fast",
-        "pricing_params": {"resolution": "720p"},
+        "pricing_params": {"resolution": "720p", "video_input": "none"},
         "pricing_quantity": 11,
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "duration_seconds": 11,
+            "output_duration_seconds": 11,
+            "input_video_duration_ms": 0,
+            "input_video_billed_seconds": 0,
+        },
         "resolution": "720p",
         "video_backend": "huimeng_seedance-2.0-fast",
+        "video_input_present": False,
+        "input_video_duration_seconds": 0.0,
     }
 
 

@@ -65,6 +65,7 @@ async def test_inline_task_backend_returns_immediately_and_completes_in_backgrou
     queued = await InlineTaskBackend().enqueue_project_task(
         ctx,
         task_type=task_type,
+        product_surface="mainline",
         episode=1,
     )
 
@@ -91,7 +92,12 @@ async def test_inline_task_backend_runs_runner_outside_active_event_loop(tmp_pat
 
     register_project_task_runner(task_type, runner)
 
-    queued = await InlineTaskBackend().enqueue_project_task(ctx, task_type=task_type, episode=1)
+    queued = await InlineTaskBackend().enqueue_project_task(
+        ctx,
+        task_type=task_type,
+        product_surface="mainline",
+        episode=1,
+    )
 
     assert queued.backend == "inline"
     completed = await _wait_for_status(ctx, task_type, "completed")

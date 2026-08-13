@@ -35,6 +35,11 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import {
+  resolveModelAspectOptions,
+  resolveModelQualityOptions,
+  resolveModelSizeOptions,
+} from '@/features/canvas/domain/mediaModelOptions';
+import {
   parseAspectRatio,
   pickClosestAspectRatio,
   resolveImageDisplayUrl,
@@ -99,7 +104,8 @@ import {
   type ThreeDDirectorCaptureMeta,
 } from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
 import type { DirectorStageManifest } from '@/features/viewer-kit/three-d/directorManifest';
-import { awaitTaskCompletion } from '@/api/tasks';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
+import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import {
   BillingRuleNotConfiguredError,
@@ -131,6 +137,7 @@ import {
 } from '@/features/canvas/nodes/CameraPickerPopover';
 import {
   buildImageGenerationSuccessPatch,
+  GENERATION_ERROR_CLEARED_PATCH,
   isStaleGenerationTask,
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
@@ -276,6 +283,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const isComposingRef = useRef(false);
   const hasUserEditedPromptRef = useRef(false);
   const submittingRef = useRef(false);
+  // A user-selected history image supersedes every still-settling request from
+  // the previous batch. Async completions must match this local generation
+  // attempt before they may write either a result or an error back to the node.
+  const generationAttemptRef = useRef(0);
   useEffect(() => {
     if (isComposingRef.current) return;
     setPromptDraft(externalPrompt);
@@ -363,6 +374,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         return;
       }
       setHistoryPreviewUrl(null);
+      generationAttemptRef.current += 1;
       updateNodeData(id, {
         imageUrl: url,
         previewImageUrl: url,
@@ -371,6 +383,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         // 恢复的是单张历史结果，旧批次画册已与主图脱钩（没有任何一张会命中
         // 「主图」标记，点画册格还会静默丢掉刚恢复的图）——一并清掉。
         generationBatch: null,
+        // 节点上已经换成历史里那张成功的图了，上一次失败的横幅不能再盖着。
+        ...GENERATION_ERROR_CLEARED_PATCH,
       });
     },
     [id, isGenerating, updateNodeData],
@@ -401,22 +415,21 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     );
   }, [data.model, availableModels]);
   const modelId = selectedModel?.id ?? '';
-  const modelSizeOptions = useMemo(() => {
-    const configured = selectedModel?.resolutionOptions
-      ?.map((item) => item.trim())
-      .filter(Boolean);
-    return configured?.length ? configured : SIZE_OPTIONS;
-  }, [selectedModel]);
-  const modelAspectOptions = useMemo(() => {
-    const configured = (selectedModel?.ratioOptions ?? [])
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .map((value) => ({
+  const modelSizeOptions = useMemo(
+    () => resolveModelSizeOptions(selectedModel, SIZE_OPTIONS),
+    [selectedModel],
+  );
+  const modelAspectOptions = useMemo(
+    () =>
+      resolveModelAspectOptions(
+        selectedModel,
+        ASPECT_OPTIONS.map((item) => item.value),
+      ).map((value) => ({
         value,
         label: ASPECT_OPTIONS.find((item) => item.value === value)?.label ?? value,
-      }));
-    return configured.length ? configured : ASPECT_OPTIONS;
-  }, [selectedModel]);
+      })),
+    [selectedModel],
+  );
   const effectiveImageSize = modelSizeOptions.includes(size) ? size : modelSizeOptions[0];
   const effectiveAspectRatio = snapToAllowedAspectRatio(
     aspectRatio,
@@ -424,7 +437,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     modelAspectOptions[0]?.value ?? '1:1',
   );
   const qualityOptions = useMemo(
-    () => (selectedModel?.qualityOptions ?? []).map((item) => item.trim()).filter(Boolean),
+    () => resolveModelQualityOptions(selectedModel),
     [selectedModel],
   );
   const supportsImageQuality = qualityOptions.length > 0;
@@ -517,6 +530,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     () => orderedReferenceUrlsWithOwnFirst(referenceImageUrl, upstreamReferenceUrls),
     [referenceImageUrl, upstreamReferenceUrls],
   );
+  // 图片节点没有模式选择器，模式完全由「有没有参考图」决定 —— 提交时
+  // freezoneAiGateway 也是按这个分流去 /freezone/gen 还是 /freezone/edit。
+  // 目录参数按 modes 过滤，缺了它声明了 modes 的参数在控件里根本不显示、
+  // 提交时又会被后端整批丢掉。
+  const generationMode = orderedReferenceUrls.length > 0 ? 'image_to_image' : 'text_to_image';
   // collectCandidateBindingsForNode 只关心连到 this node 的边。用 useShallow 只订阅
   // 本节点相连的边(逐元素比较),拖动无关节点时边引用稳定,本节点不再重渲染。
   const connectedEdges = useCanvasStore(
@@ -735,7 +753,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
 
   const handleSetAlbumMainImage = useCallback(
     (url: string) => {
-      updateNodeData(id, { imageUrl: url, previewImageUrl: url });
+      updateNodeData(id, {
+        imageUrl: url,
+        previewImageUrl: url,
+        ...GENERATION_ERROR_CLEARED_PATCH,
+      });
       setAlbumExpanded(false);
     },
     [id, updateNodeData],
@@ -814,14 +836,21 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       setIsUploading(true);
       try {
         const result = await uploadFreezoneImage(projectId, file, file.name);
-        updateNodeData(id, { referenceImageUrl: result.url });
+        // 参考图在显示优先级里排最后（previewImageUrl → imageUrl → referenceImageUrl），
+        // 只有节点还没有生成结果时它才会顶到主体上——这时旧的失败横幅盖的是新图，得清掉。
+        // 已经有生成图时主体不变，失败信息仍然对得上那张图，保留；等用户真正重新提交，
+        // handleSubmit 自己会清。
+        updateNodeData(id, {
+          referenceImageUrl: result.url,
+          ...(hasGeneratedResult ? {} : GENERATION_ERROR_CLEARED_PATCH),
+        });
       } catch (error) {
         console.error('[image-gen] upload failed', error);
       } finally {
         setIsUploading(false);
       }
     },
-    [id, updateNodeData],
+    [hasGeneratedResult, id, updateNodeData],
   );
 
   const handleClearReference = useCallback(() => {
@@ -861,7 +890,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         canvasId: readUrl().canvas ?? 'default',
         nodeId: id,
       });
-      await awaitTaskCompletion(ref.task_key, projectId);
+      await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
       const result = await fetchFreezoneTextTranslateResult(projectId, ref.job_id);
       if (result.translated_text) {
         setPromptDraft(result.translated_text);
@@ -907,6 +936,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       console.error('[image-gen] no project in URL');
       return;
     }
+    const generationAttempt = generationAttemptRef.current + 1;
+    generationAttemptRef.current = generationAttempt;
+    const isCurrentGenerationAttempt = () =>
+      generationAttemptRef.current === generationAttempt;
 
     // apiModel comes from the SAME reconciled model the picker displays, so the
     // backend always receives the model the user actually sees.
@@ -944,6 +977,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       model: apiModel,
       modelId: selectedModel?.catalogId ?? modelId,
       modelParams: data.modelParams,
+      generationMode,
       camera: hasCamera
         ? {
             cameraBodyId: cameraSelection?.cameraBodyId ?? null,
@@ -991,7 +1025,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         if (runIndex === 0) {
           updateNodeData(id, generationTaskDescriptor(ref));
         }
-        const completed = await awaitTaskCompletion(ref.task_key, projectId);
+        const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
         let url = resolveOutputUrl(completed.result as Record<string, unknown> | null);
         if (!url) {
           try {
@@ -1002,6 +1036,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           }
         }
         if (url) {
+          if (!isCurrentGenerationAttempt()) return;
           completedUrls.push(url);
           const isFirstCompleted = completedUrls.length === 1;
           updateNodeData(id, {
@@ -1016,6 +1051,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             });
           }
         } else {
+          if (!isCurrentGenerationAttempt()) return;
           console.warn('[image-gen] generation completed without output url', completed);
           // 只有 run 0（任务句柄的归属者）且尚无任何成功时才终结 loading——
           // 非首个任务先「无 URL 完成」不能把还在跑的整体 loading 提前掐掉。
@@ -1024,10 +1060,18 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           }
         }
       } catch (error) {
+        if (!isCurrentGenerationAttempt()) return;
         console.error('[image-gen] generation failed', error);
         // 已有同批其它图完成（主图已落）时不覆盖成功态为错误——部分失败只
         // 影响画册张数。
         if (completedUrls.length > 0) return;
+        // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接（刷新后
+        // resumeNodeGeneration 会重新接上）。写错误横幅只会把一个还活着的任务
+        // 标成失败、并清掉可续接的句柄。
+        if (isTaskPollTimeoutError(error)) {
+          notifyTaskStillRunning(t);
+          return;
+        }
         // 任务仲裁（stale / shouldWrite）只对 run 0 有意义：节点上只持久化了
         // run 0 的任务句柄，其余 run 的 taskKey 必然对不上，套用仲裁会把
         // 它们的失败全部误判为「过期任务」而静默吞掉。
@@ -1103,6 +1147,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     styleTemplateId,
     submitDisabled,
     shouldInlineUpstreamTextAsPrompt,
+    t,
     updateNodeData,
     upstreamTextJoined,
     refreshHistory,
@@ -1206,6 +1251,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           episode: effectiveEpisode,
           beat: effectiveBeat,
         },
+        ...GENERATION_ERROR_CLEARED_PATCH,
       });
       canvasEventBus.publish('freezone/assets-updated', undefined);
     },
@@ -1885,7 +1931,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               <MediaModelParameterChip
                 parameters={selectedModel?.request?.parameters}
                 values={data.modelParams}
-                mode={typeof data.generationMode === 'string' ? data.generationMode : undefined}
+                mode={generationMode}
                 onChange={(modelParams) => updateNodeData(id, { modelParams })}
               />
               <CameraChip

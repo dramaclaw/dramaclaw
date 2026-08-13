@@ -1570,8 +1570,18 @@ def _api_video_backend_options() -> list[VideoBackendOption]:
         parse_newapi_video_backend,
     )
 
-    options = newapi_video_backend_options(include_seedance2_variants=True)
-    options.setdefault("newapi_happyhorse-1.0", "HappyHorse 1.0")
+    hidden_mainline_backends = {
+        "newapi_seedance-2.0-value",
+        "newapi_seedance-2.0-fast-value",
+        "newapi_happyhorse-1.0",
+    }
+    options = {
+        value: label
+        for value, label in newapi_video_backend_options(
+            include_seedance2_variants=True
+        ).items()
+        if value not in hidden_mainline_backends
+    }
     duration_bounds = NewApiVideoGenerator._parse_duration_bounds_config(
         NEWAPI_VIDEO_DURATION_BOUNDS
     )
@@ -1580,6 +1590,8 @@ def _api_video_backend_options() -> list[VideoBackendOption]:
     for value, label in options.items():
         model = parse_newapi_video_backend(value)
         bounds = duration_bounds.get(model or "")
+        if model == "seedance-2.0-mini" and not bounds:
+            bounds = (4, 15)
         if model == "happyhorse-1.0" and not bounds:
             bounds = (3, 15)
         if model == "grok-video-channel" and not bounds:
@@ -1919,6 +1931,7 @@ async def compose_video(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="compose_episode",
             queue_kind="ffmpeg",
             episode=episode_num,
@@ -2116,6 +2129,7 @@ async def generate_sketches(
             )
             queued = await get_task_backend().enqueue_project_task(
                 ctx,
+                product_surface="mainline",
                 task_type="sketch_grid_generation",
                 queue_kind="default",
                 episode=episode_num,
@@ -2209,7 +2223,7 @@ async def _audio_generation_plan(
     episode: int,
     beat_numbers,
     mode: str,
-) -> tuple[list[int], list[str]]:
+) -> tuple[list[int], list[str], int]:
     from novelvideo.audio.indextts2_beat_audio_task import (
         build_indextts2_audio_generation_plan,
     )
@@ -2223,7 +2237,11 @@ async def _audio_generation_plan(
             beat_numbers=beat_numbers,
             mode=mode,
         )
-        return list(plan.beat_numbers), list(plan.errors)
+        return (
+            list(plan.beat_numbers),
+            list(plan.errors),
+            int(getattr(plan, "billable_chars", 0) or 0),
+        )
     except AttributeError:
         # Narrow route-test stores do not expose the voice and audio-state
         # surfaces used by the production planner.
@@ -2235,16 +2253,42 @@ async def _audio_generation_plan(
             if int(beat.get("beat_number") or 0) > 0
             and (not selected or int(beat.get("beat_number") or 0) in selected)
         ]
-        return planned, []
+        from novelvideo.seedance2_i2v.voice_clone import (
+            dialogue_text,
+            narration_beat_text,
+            normalize_seedance2_audio_type,
+        )
+        from novelvideo.utils.document_parsers import count_billable_text_chars
+
+        planned_set = set(planned)
+        billable_chars = 0
+        for beat in beats:
+            if int(beat.get("beat_number") or 0) not in planned_set:
+                continue
+            audio_type = normalize_seedance2_audio_type(beat)
+            text = (
+                narration_beat_text(beat)
+                if audio_type == "narration"
+                else dialogue_text(beat)
+            )
+            billable_chars += count_billable_text_chars(text)
+        return planned, [], billable_chars
 
 
-def _audio_billing_payload(beat_numbers: list[int]) -> dict:
+def _audio_billing_payload(
+    beat_numbers: list[int],
+    *,
+    billable_chars: int = 0,
+) -> dict:
     from novelvideo.audio.indextts2_beat_audio_task import (
         indextts2_audio_billing_params,
     )
 
     return {
-        **indextts2_audio_billing_params(len(beat_numbers)),
+        **indextts2_audio_billing_params(
+            len(beat_numbers),
+            billable_chars=billable_chars,
+        ),
         "beat_numbers": list(beat_numbers),
     }
 
@@ -2274,7 +2318,7 @@ async def audio_generation_billing_quote(
         else await make_sqlite_store(resolved.username, resolved.project_name)
     )
     mode = body.mode or "sync_changed"
-    beat_numbers, errors = await _audio_generation_plan(
+    beat_numbers, errors, billable_chars = await _audio_generation_plan(
         store=store,
         username=resolved.username,
         project=resolved.project_name,
@@ -2298,18 +2342,17 @@ async def audio_generation_billing_quote(
     quote_args = {
         "kind": "feature",
         "model": "mainline.beat_audio_generation",
-        "params": _audio_billing_payload(beat_numbers),
+        "params": _audio_billing_payload(
+            beat_numbers,
+            billable_chars=billable_chars,
+        ),
         "quantity": quantity,
+        "product_surface": "mainline",
     }
-    try:
-        quote = await get_credit_quote().generation_credit_quote(
-            **quote_args,
-            user_id=str(user.get("id") or user.get("user_id") or ""),
-        )
-    except TypeError as exc:
-        if "user_id" not in str(exc):
-            raise
-        quote = await get_credit_quote().generation_credit_quote(**quote_args)
+    quote = await get_credit_quote().generation_credit_quote(
+        **quote_args,
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
     return {
         "ok": True,
         "data": {
@@ -2357,7 +2400,7 @@ async def generate_audio(
         return {"ok": False, "error": f"No beats found for episode {episode_num}"}
 
     mode = body.mode or "sync_changed"
-    billable_beat_numbers, missing_voice = await _audio_generation_plan(
+    billable_beat_numbers, missing_voice, billable_chars = await _audio_generation_plan(
         store=store,
         username=username,
         project=project_name,
@@ -2377,6 +2420,7 @@ async def generate_audio(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="audio_generation_indextts2",
             queue_kind="default",
             episode=episode_num,
@@ -2386,7 +2430,10 @@ async def generate_audio(
                 "beat_numbers": billable_beat_numbers,
                 "output_dir": output_dir,
                 "state_dir": state_dir,
-                "billing": _audio_billing_payload(billable_beat_numbers),
+                "billing": _audio_billing_payload(
+                    billable_beat_numbers,
+                    billable_chars=billable_chars,
+                ),
             },
         )
         return {
@@ -2464,18 +2511,19 @@ async def global_optimize_video_billing_quote(
     quote_args = {
         "kind": "feature",
         "model": "mainline.beat_video_prompt",
-        "params": {},
+        "params": {
+            "pricing_metrics": {
+                "call_count": quantity,
+                "item_count": quantity,
+            }
+        },
         "quantity": quantity,
+        "product_surface": "mainline",
     }
-    try:
-        quote = await get_credit_quote().generation_credit_quote(
-            **quote_args,
-            user_id=str(user.get("id") or user.get("user_id") or ""),
-        )
-    except TypeError as exc:
-        if "user_id" not in str(exc):
-            raise
-        quote = await get_credit_quote().generation_credit_quote(**quote_args)
+    quote = await get_credit_quote().generation_credit_quote(
+        **quote_args,
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
     return {
         "ok": True,
         "data": {
@@ -2551,6 +2599,7 @@ async def global_optimize_video(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="global_optimize_video",
             queue_kind="default",
             episode=episode_num,
@@ -2563,6 +2612,10 @@ async def global_optimize_video(
                 "billing": {
                     "items": billable_beat_count,
                     "beat_numbers": billable_beat_numbers,
+                    "pricing_metrics": {
+                        "call_count": billable_beat_count,
+                        "item_count": billable_beat_count,
+                    },
                 },
                 "beat_numbers": billable_beat_numbers,
             },
@@ -2718,6 +2771,7 @@ async def regenerate_grid(
         )
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="grid_regenerate",
             queue_kind="default",
             episode=episode_num,
@@ -3030,6 +3084,7 @@ async def render_execute(
             )
             queued = await get_task_backend().enqueue_project_task(
                 ctx,
+                product_surface="mainline",
                 task_type="selected_regen",
                 queue_kind="default",
                 episode=episode_num,
@@ -3159,6 +3214,7 @@ async def regenerate_beats(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="selected_regen",
             queue_kind="default",
             episode=episode_num,
@@ -3259,6 +3315,7 @@ async def regenerate_sketches(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="sketch_regen",
             queue_kind="default",
             episode=episode_num,
@@ -4075,6 +4132,7 @@ async def director_control_to_sketch(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="director_control_to_sketch",
             queue_kind="default",
             episode=int(episode_num),
@@ -4404,6 +4462,7 @@ async def generate_missing_manual_sketches(
         if ctx is not None:
             await get_task_backend().enqueue_project_task(
                 ctx,
+                product_surface="mainline",
                 task_type="sketch_regen",
                 queue_kind="default",
                 episode=episode_num,
@@ -4710,6 +4769,7 @@ async def generate_single_video(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="single_video",
             queue_kind="video",
             episode=episode_num,
@@ -5250,7 +5310,7 @@ async def regenerate_beat_audio(
         else:
             return {"ok": False, "error": f"Beat {beat_num} not found"}
 
-    billable_beat_numbers, missing_voice = await _audio_generation_plan(
+    billable_beat_numbers, missing_voice, billable_chars = await _audio_generation_plan(
         store=store,
         username=username,
         project=project_name,
@@ -5270,6 +5330,7 @@ async def regenerate_beat_audio(
     if ctx is not None:
         queued = await get_task_backend().enqueue_project_task(
             ctx,
+            product_surface="mainline",
             task_type="audio_generation_indextts2",
             queue_kind="default",
             episode=episode_num,
@@ -5279,7 +5340,10 @@ async def regenerate_beat_audio(
                 "beat_numbers": billable_beat_numbers,
                 "output_dir": output_dir,
                 "state_dir": state_dir,
-                "billing": _audio_billing_payload(billable_beat_numbers),
+                "billing": _audio_billing_payload(
+                    billable_beat_numbers,
+                    billable_chars=billable_chars,
+                ),
             },
         )
         return {
@@ -5978,6 +6042,7 @@ async def detect_sketch_identities(
     reservation = await usage_meter.reserve_feature_start_credits(
         user_id=_requester_user_id_for_billing(resolved, user),
         feature_key=AI_IDENTITY_DETECTION_FEATURE_KEY,
+        product_surface="mainline",
         project_id=project_id,
         resource_kind="sketch",
         task_type=AI_IDENTITY_DETECTION_TASK_TYPE,

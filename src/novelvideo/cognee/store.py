@@ -16,6 +16,7 @@ from uuid import UUID
 
 # 重要：必须先导入 config，在 cognee 被导入之前设置环境变量
 from .config import init_cognee  # noqa: F401
+from novelvideo.config import get_newapi_structured_output_litellm_kwargs
 from .concurrency import cognee_pipeline_concurrency
 from .ladybug_access import cognee_project_context, ladybug_graph_access
 
@@ -26,7 +27,6 @@ with preserve_st_env():
     from cognee.api.v1.search import SearchType
     from cognee.modules.engine.operations.setup import setup
 from rich.console import Console
-from novelvideo.config import get_newapi_reasoning_kwargs
 from novelvideo.embedding_models import (
     embedding_model_for_legacy_project,
     embedding_model_scope as project_embedding_model_scope,
@@ -68,6 +68,21 @@ from novelvideo.models import (
 )
 
 console = Console()
+
+INGEST_PROGRESS_MILESTONES = {
+    "read": 0.02,
+    "prune": 0.06,
+    "parse": 0.10,
+    "parsed": 0.25,
+    "graph": 0.30,
+    "graph_validated": 0.65,
+    "index": 0.70,
+    "indexed": 0.85,
+    "preview": 0.90,
+    "preview_saved": 0.95,
+    "save": 0.98,
+    "complete": 1.0,
+}
 
 
 def _json_list_payload(values: list[str]) -> str:
@@ -541,6 +556,7 @@ class CogneeStore:
 
         from .config import init_cognee
 
+        report(INGEST_PROGRESS_MILESTONES["read"], "读取并校验原文...")
         log(f"读取文件: {novel_path}")
         content = load_novel_text(novel_path)
         if not content.strip():
@@ -564,7 +580,7 @@ class CogneeStore:
             )
 
         if rebuild:
-            report(0.05, "重建图谱...")
+            report(INGEST_PROGRESS_MILESTONES["prune"], "清理旧图谱...")
             # novel.txt 是前端和后续流水线判断“已导入”的持久标志。旧图谱已经
             # 清除前必须先让旧标志失效：即使清理中途失败，也不能继续显示成功。
             imported_novel_path = Path(self.project_dir) / "novel.txt"
@@ -577,7 +593,7 @@ class CogneeStore:
         init_cognee()
 
         # Step 1: 添加原文到 Cognee
-        report(0.1, "解析原文...")
+        report(INGEST_PROGRESS_MILESTONES["parse"], "解析原文...")
         log("Step 1/3: 导入原文到 Cognee...")
         await self._run_cognee_pipeline_with_retry(
             stage_name="原文导入",
@@ -585,10 +601,11 @@ class CogneeStore:
             log=log,
         )
         log("原文导入完成")
+        report(INGEST_PROGRESS_MILESTONES["parsed"], "原文解析完成")
         await asyncio.sleep(0)
 
         # Step 2: 构建知识图谱
-        report(0.3, "构建知识图谱...")
+        report(INGEST_PROGRESS_MILESTONES["graph"], "构建知识图谱...")
         log("Step 2/3: 构建知识图谱（这可能需要几分钟）...")
         await self._run_cognee_pipeline_with_retry(
             stage_name="知识图谱构建",
@@ -600,9 +617,10 @@ class CogneeStore:
         if not await self._dataset_graph_has_nodes():
             raise RuntimeError("知识图谱构建失败：未生成任何图谱节点")
         log("知识图谱校验完成")
+        report(INGEST_PROGRESS_MILESTONES["graph_validated"], "知识图谱校验完成")
 
         # Step 3: 创建向量索引（memify）
-        report(0.7, "创建向量索引...")
+        report(INGEST_PROGRESS_MILESTONES["index"], "创建向量索引...")
         log("Step 3/3: 创建向量索引（用于三元组检索）...")
         await self._run_cognee_pipeline_with_retry(
             stage_name="向量索引创建",
@@ -610,20 +628,24 @@ class CogneeStore:
             log=log,
         )
         log("向量索引创建完成")
+        report(INGEST_PROGRESS_MILESTONES["indexed"], "向量索引创建完成")
 
         # API workers render this bounded sidecar and never open Ladybug merely
         # for graph visualization.  Persist it before novel.txt, because the
         # latter is the public "import succeeded" marker.
+        report(INGEST_PROGRESS_MILESTONES["preview"], "生成图谱预览...")
         await self.materialize_graph_preview()
         log("知识图谱预览已保存")
+        report(INGEST_PROGRESS_MILESTONES["preview_saved"], "图谱预览已保存")
 
         # 原文落库放在图谱构建成功之后：失败时不留下"已导入"的痕迹。
         # /chapters 仅凭已存原文判定"导入完成"，若提前落库，cognify/memify 失败
         # 仍会让界面误报导入成功且锁死重新上传入口。
+        report(INGEST_PROGRESS_MILESTONES["save"], "保存导入结果...")
         self.save_novel_content(content)
         log("原文已保存到文件")
 
-        report(1.0, "导入完成")
+        report(INGEST_PROGRESS_MILESTONES["complete"], "导入完成")
 
         return {
             "char_count": len(content),
@@ -1290,10 +1312,7 @@ class CogneeStore:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 response_format={"type": "json_object"},
-                **get_newapi_reasoning_kwargs(
-                    thinking_env="COGNEE_LLM_THINKING_LEVEL",
-                    default_thinking_level="high",
-                ),
+                **get_newapi_structured_output_litellm_kwargs(),
             )
 
             result = json.loads(response.choices[0].message.content)
@@ -1343,10 +1362,7 @@ class CogneeStore:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 response_format={"type": "json_object"},
-                **get_newapi_reasoning_kwargs(
-                    thinking_env="COGNEE_LLM_THINKING_LEVEL",
-                    default_thinking_level="high",
-                ),
+                **get_newapi_structured_output_litellm_kwargs(),
             )
 
             import json
@@ -1748,99 +1764,6 @@ class CogneeStore:
         if len(char.identities) != 1:
             return None
         return char.identities[0]
-
-    async def select_identity_for_beat(
-        self,
-        character_ref: str,
-        episode_number: int,
-        visual_description: str = "",
-    ) -> Optional[CharacterIdentity]:
-        """为 beat 选择角色应该使用的身份。"""
-        char = self.get_character(character_ref)
-        if not char or not char.identities:
-            return None
-
-        episode = self.get_episode(episode_number)
-        ep_identity_ids = set(episode.identity_ids) if episode and episode.identity_ids else set()
-
-        valid_identities = [id_ for id_ in char.identities if id_.identity_id in ep_identity_ids]
-
-        if len(valid_identities) == 1:
-            return valid_identities[0]
-
-        if not valid_identities:
-            return None
-
-        if visual_description and len(valid_identities) > 1:
-            selected = await self._ai_select_identity(
-                character_name=char.name,
-                character_ref=character_ref,
-                visual_description=visual_description,
-                identities=valid_identities,
-            )
-            if selected:
-                return selected
-
-        return valid_identities[0] if valid_identities else None
-
-    async def _ai_select_identity(
-        self,
-        character_name: str,
-        character_ref: str,
-        visual_description: str,
-        identities: List[CharacterIdentity],
-    ) -> Optional[CharacterIdentity]:
-        """使用 AI 根据画面描述选择最合适的身份。"""
-        try:
-            import litellm
-
-            identity_options = []
-            for i, identity in enumerate(identities):
-                desc = f"{i+1}. {identity.identity_name}"
-                if identity.appearance_details:
-                    desc += f" - {identity.appearance_details}"
-                identity_options.append(desc)
-
-            prompt = f"""根据画面描述，判断角色"{character_name}"在这个场景中应该使用哪个身份形象。
-
-画面描述：{visual_description}
-
-脚本中的角色称呼：{character_ref}
-
-可选身份：
-{chr(10).join(identity_options)}
-
-请直接回复身份编号（如 1、2、3），不要有其他内容。"""
-
-            response = await litellm.acompletion(
-                model=os.environ.get("LLM_MODEL", "").strip()
-                or DEFAULT_COGNEE_LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_tokens=10,
-                **get_newapi_reasoning_kwargs(
-                    thinking_env="COGNEE_LLM_THINKING_LEVEL",
-                    default_thinking_level="high",
-                ),
-            )
-
-            answer = response.choices[0].message.content.strip()
-
-            for char in answer:
-                if char.isdigit():
-                    idx = int(char) - 1
-                    if 0 <= idx < len(identities):
-                        selected = identities[idx]
-                        console.print(
-                            f"[dim]AI 身份选择: {character_name} → {selected.identity_name}[/dim]"
-                        )
-                        return selected
-                    break
-
-        except Exception as e:
-            console.print(f"[yellow]AI 身份选择失败: {e}[/yellow]")
-
-        return None
 
     async def add_episode(self, episode: NovelEpisode):
         """添加单个剧集。"""

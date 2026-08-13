@@ -122,6 +122,36 @@ def test_age_group_slots_cover_known_values():
     assert set(AGE_GROUP_SLOTS) == {"child", "youth", "middle", "elder"}
 
 
+def test_probe_voice_sample_duration_times_out_as_value_error(monkeypatch, tmp_path):
+    """ffprobe 卡住必须限时并转成 ValueError。
+
+    这个函数现在挂在同步请求路径上（freezone omni-gen 的音频时长兜底），入参是用户
+    上传的文件。没有 timeout 的话一个畸形容器就能吊死 HTTP 请求并占死线程池 worker；
+    漏出 TimeoutExpired 则会让只 catch ValueError 的调用方变成 500 而不是「测不出」。
+    """
+    import shutil
+    import subprocess
+
+    from novelvideo.seedance2_i2v import character_voice_storage
+
+    sample = tmp_path / "hang.wav"
+    sample.write_bytes(b"RIFF----WAVEfmt ")
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/ffprobe")
+
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(ValueError, match="超时"):
+        character_voice_storage.probe_voice_sample_duration_seconds(sample)
+    assert seen["timeout"] == character_voice_storage.PROBE_DURATION_TIMEOUT_SECONDS
+
+
 def test_trim_voice_sample_content_outputs_seedance2_ready_clip(tmp_path):
     import shutil
     import subprocess

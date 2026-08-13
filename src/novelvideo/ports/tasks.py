@@ -65,6 +65,7 @@ class TaskBackend(Protocol):
         ctx,
         *,
         task_type: str,
+        product_surface: str,
         queue_kind: str = "default",
         episode: int = 0,
         beat_num: int | None = None,
@@ -72,7 +73,14 @@ class TaskBackend(Protocol):
         payload: dict[str, Any] | None = None,
     ) -> QueuedTask: ...
 
-    async def cancel_project_task(self, ctx, task_state) -> bool: ...
+    async def cancel_project_task(
+        self,
+        ctx,
+        task_state,
+        *,
+        force: bool = False,
+        acknowledge_no_refund: bool = False,
+    ) -> dict[str, Any]: ...
 
 
 class CancellationStore(Protocol):

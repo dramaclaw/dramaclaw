@@ -49,6 +49,8 @@ def video_duration_bounds_for_backend(
         if bounds:
             return bounds
         lowered_model = model.lower()
+        if lowered_model == "seedance-2.0-mini":
+            return (4, 15)
         if lowered_model == "happyhorse-1.0":
             return (3, 15)
         if lowered_model == "grok-video-channel":

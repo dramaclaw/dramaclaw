@@ -183,10 +183,23 @@ class _FakeTaskBackend:
 
 
 class _FakeCreditQuote:
-    async def generation_credit_quote(self, *, kind, model, params, quantity):
+    async def generation_credit_quote(
+        self,
+        *,
+        kind,
+        model,
+        params,
+        quantity,
+        product_surface,
+        user_id="",
+    ):
         assert kind == "feature"
         assert model == "mainline.beat_video_prompt"
-        assert params == {}
+        assert product_surface == "mainline"
+        assert user_id == "local"
+        assert params == {
+            "pricing_metrics": {"call_count": quantity, "item_count": quantity}
+        }
         return SimpleNamespace(
             total_cost=6 * quantity,
             display=str(6 * quantity),
@@ -563,6 +576,10 @@ def test_global_video_prompt_batch_bills_existing_sketches(
     )
     assert call["payload"]["billing"]["items"] == 2
     assert call["payload"]["billing"]["beat_numbers"] == [1, 2]
+    assert call["payload"]["billing"]["pricing_metrics"] == {
+        "call_count": 2,
+        "item_count": 2,
+    }
     assert call["payload"]["beat_numbers"] == [1, 2]
 
 

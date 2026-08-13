@@ -14,6 +14,7 @@ async def enqueue_project_task(
     ctx: ProjectContext,
     *,
     task_type: str,
+    product_surface: str,
     queue_kind: str = "default",
     episode: int = 0,
     beat_num: int | None = None,
@@ -23,6 +24,7 @@ async def enqueue_project_task(
     return await get_task_backend().enqueue_project_task(
         ctx,
         task_type=task_type,
+        product_surface=product_surface,
         queue_kind=queue_kind,
         episode=episode,
         beat_num=beat_num,
@@ -34,5 +36,13 @@ async def enqueue_project_task(
 async def cancel_project_task(
     ctx: ProjectContext,
     task_state: TaskState,
-) -> bool:
-    return await get_task_backend().cancel_project_task(ctx, task_state)
+    *,
+    force: bool = False,
+    acknowledge_no_refund: bool = False,
+) -> dict[str, Any]:
+    return await get_task_backend().cancel_project_task(
+        ctx,
+        task_state,
+        force=force,
+        acknowledge_no_refund=acknowledge_no_refund,
+    )

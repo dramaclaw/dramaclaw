@@ -40,6 +40,12 @@ DYNAMIC_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 THIRD_PARTY_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = ()
 COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"^(?:GITHUB_SHA|OFFICIAL_CATALOG_OSS_(?:ACCESS_KEY_ID|ACCESS_KEY_SECRET|BUCKET|ENDPOINT|PREFIX))$"
+        ),
+        "Official media catalog publishing CI input, not application runtime configuration.",
+    ),
     (re.compile(r"^ST_EDITION$"), "Launcher/test gate env, not operator template config."),
     (re.compile(r"^DRAMACLAW_CE_ROOT$"), "Audit script discovery override, not runtime app config."),
     (
@@ -101,7 +107,7 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
         "Legacy/internal feature flag or integration env outside the current public template contract.",
     ),
     (
-        re.compile(r"^(?:BACKUP_ENV_NAME|BACKUP_SYNC_OUTPUT|INDEXTTS2_FAL_ENDPOINT)$"),
+        re.compile(r"^(?:BACKUP_ENV_NAME|BACKUP_STAGE_DIR|BACKUP_SYNC_OUTPUT|INDEXTTS2_FAL_ENDPOINT)$"),
         "Optional backup/FAL integration env outside the current NewAPI-first template contract.",
     ),
     (

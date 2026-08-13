@@ -54,6 +54,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+// 产品决定：这两个批量入口从工具栏下线，任何 spineTemplate 下都不给。后端路由、
+// 账单口径和任务控制都原样留着（其它入口和历史任务仍要用），这里只掐掉入口。
+// 恢复时把常量翻回 true，下面原有的 spineTemplate 条件继续生效。
+const SHOW_GLOBAL_OPTIMIZE_ENTRY = false;
+const SHOW_EPISODE_AUDIO_ENTRY = false;
+
 const TOOLBAR_CONTROL_CLASS =
   "h-[26px] gap-1.5 rounded-[6px] border border-white/10 bg-transparent px-2 py-0 text-[11px] font-medium text-foreground/85 transition-colors hover:border-primary/40 hover:bg-white/[0.04] hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring disabled:text-muted-foreground/50";
 
@@ -151,12 +157,14 @@ export function BatchBar({
     (option) => option.value === videoBackend,
   );
   const audioUnavailableForVideoBackend = selectedVideoBackend?.is_seedance2 === true;
-  const showGlobalOptimize = spineTemplate === "narrated";
+  const showGlobalOptimize = SHOW_GLOBAL_OPTIMIZE_ENTRY && spineTemplate === "narrated";
   const episodeAudioCostDisplay =
     episodeAudioBillingQuote.data?.data.display ??
     (episodeAudioBillingQuote.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : "");
+  const episodeAudioPrereqErrors =
+    episodeAudioBillingQuote.data?.data.prereq_errors ?? [];
   const detectIdentitiesCostDisplay =
     detectIdentitiesCost.data?.data.display ??
     (detectIdentitiesCost.error instanceof BillingRuleNotConfiguredError
@@ -345,7 +353,7 @@ export function BatchBar({
             {t("episode.workbench.batch.reassignColors")}
           </Button>
           {/* 精品剧 (spine_template === "drama") 把解说烘进渲染视频，没有独立音频阶段 —— 隐藏「生成全集音频」 */}
-          {spineTemplate !== "drama" && (
+          {SHOW_EPISODE_AUDIO_ENTRY && spineTemplate !== "drama" && (
           <Tooltip>
             <TooltipTrigger
               delay={150}
@@ -356,6 +364,13 @@ export function BatchBar({
                   variant="ghost"
                   onClick={() => {
                     if (audioUnavailableForVideoBackend) return;
+                    if (episodeAudioPrereqErrors.length > 0) {
+                      showError(
+                        t("episode.workbench.batch.genAudioTitle"),
+                        episodeAudioPrereqErrors.join("\n"),
+                      );
+                      return;
+                    }
                     askConfirm(
                       t("episode.workbench.batch.genAudioTitle"),
                       t("episode.workbench.batch.genAudioDesc"),
@@ -380,12 +395,14 @@ export function BatchBar({
               )}
               {t("episode.workbench.batch.genAudio")}
               <span aria-hidden="true" className="inline-flex min-w-7 justify-start">
-                <CreditCostPill
-                  display={episodeAudioCostDisplay}
-                  promotion={episodeAudioBillingQuote.data?.data.promotion}
-                  disabled={audioUnavailableForVideoBackend}
-                  className="h-4 bg-transparent px-0 text-[11px]"
-                />
+                {episodeAudioPrereqErrors.length === 0 && (
+                  <CreditCostPill
+                    display={episodeAudioCostDisplay}
+                    promotion={episodeAudioBillingQuote.data?.data.promotion}
+                    disabled={audioUnavailableForVideoBackend}
+                    className="h-4 bg-transparent px-0 text-[11px]"
+                  />
+                )}
               </span>
             </TooltipTrigger>
             {audioUnavailableForVideoBackend && (

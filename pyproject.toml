@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "supertale-ce"
-version = "1.2.0"
+version = "1.3.2"
 description = "SuperTale Community Edition API and video pipeline"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -114,7 +114,6 @@ select = ["E4", "E7", "E9", "F"]
 "src/novelvideo/api/routes/styles.py" = ["E402"]
 "src/novelvideo/chat/hermes_sdk.py" = ["F401", "F841"]
 "src/novelvideo/cognee/pipeline.py" = ["F401", "F541", "F811"]
-"src/novelvideo/cognee/tools.py" = ["F401"]
 "src/novelvideo/config.py" = ["F401"]
 "src/novelvideo/director_world/scene_overlap_analyzer.py" = ["F401"]
 "src/novelvideo/director_world/sync_global_props.py" = ["F401"]

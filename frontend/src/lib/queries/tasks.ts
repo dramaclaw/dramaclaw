@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { HTTPError } from "ky";
+import i18n from "@/i18n";
+import { confirmDialog } from "@/components/confirm-dialog-host";
 import { api } from "@/lib/api";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
@@ -12,6 +15,16 @@ interface UseTasksFilter {
   /** Route project id. Legacy task.project may still contain the display/path name. */
   project?: string;
   episode?: number;
+}
+
+export interface CancelTaskResult {
+  ok: boolean;
+  status: string;
+  message?: string;
+  requires_confirmation?: boolean;
+  refund_eligible?: boolean;
+  refund_status?: string;
+  continued?: boolean;
 }
 
 export function useTasks(filter?: UseTasksFilter) {
@@ -74,7 +87,7 @@ export function useTasks(filter?: UseTasksFilter) {
 export function useCancelTask() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       type,
       project,
       episode,
@@ -93,9 +106,44 @@ export function useCancelTask() {
       if (beatNum !== undefined) searchParams.beat_num = String(beatNum);
       if (scope) searchParams.scope = scope;
       const path = p`api/v1/projects/${project}/tasks/${type}/${episode}`;
-      return api
-        .delete(path, Object.keys(searchParams).length ? { searchParams } : undefined)
-        .json<OkResponse<unknown>>();
+      const send = (force = false) => {
+        const params = { ...searchParams };
+        if (force) {
+          params.force = "true";
+          params.acknowledge_no_refund = "true";
+        }
+        return api
+          .delete(path, Object.keys(params).length ? { searchParams: params } : undefined)
+          .json<CancelTaskResult>();
+      };
+      try {
+        return await send();
+      } catch (error) {
+        if (!(error instanceof HTTPError) || error.response.status !== 409) {
+          throw error;
+        }
+        const conflict =
+          error.data && typeof error.data === "object"
+            ? (error.data as CancelTaskResult)
+            : null;
+        if (!conflict?.requires_confirmation) throw error;
+        const confirmed = await confirmDialog({
+          title: i18n.t("tasks.cancelRunning.title"),
+          description: conflict.message ?? i18n.t("tasks.cancelRunning.fallbackMessage"),
+          confirmText: i18n.t("tasks.cancelRunning.confirm"),
+          cancelText: i18n.t("tasks.cancelRunning.keepRunning"),
+          confirmVariant: "destructive",
+        });
+        if (!confirmed) {
+          return {
+            ...conflict,
+            ok: false,
+            continued: true,
+            message: "已继续执行任务",
+          };
+        }
+        return send(true);
+      }
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: queryKeys.tasks(variables.project) });

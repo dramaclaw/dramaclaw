@@ -6,7 +6,15 @@ import { Box, Check, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MediaModelRequestSchema } from '@/api/ops';
 
-import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
+import {
+  FALLBACK_IMAGE_ASPECT_OPTIONS,
+  FALLBACK_IMAGE_SIZE_OPTIONS,
+  FALLBACK_VIDEO_ASPECT_OPTIONS,
+} from '@/features/canvas/domain/mediaModelOptions';
+import {
+  isAuthoritativeEmptyCatalog,
+  useFreezoneImageModels,
+} from '@/features/canvas/hooks/useFreezoneImageModels';
 import { useFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
 import {
   NODE_FLOATING_PANEL_SURFACE_CLASS,
@@ -54,6 +62,15 @@ export interface ModelOption {
   referenceImageMax?: number | null;
   referenceVideoMax?: number | null;
   referenceAudioMax?: number | null;
+  referenceAudioMinSeconds?: number | null;
+  referenceAudioMaxSeconds?: number | null;
+  referenceAudioTotalMinSeconds?: number | null;
+  /** 参考音频总时长上限（秒，可为小数）；没配时前端按 15.2s 兜底。 */
+  referenceAudioTotalMaxSeconds?: number | null;
+  referenceVideoMinSeconds?: number | null;
+  referenceVideoMaxSeconds?: number | null;
+  referenceVideoTotalMinSeconds?: number | null;
+  referenceVideoTotalMaxSeconds?: number | null;
   request?: MediaModelRequestSchema;
 }
 
@@ -64,24 +81,34 @@ export const SHARED_PROVIDERS: ProviderOption[] = [
   { id: 'openai', label: 'OpenAI' },
 ];
 
+// 兜底模型列表。仅在 /freezone/image/models 拉取失败时顶上 —— 正常路径下模型
+// 及其能力全部来自后台「媒体模型」配置。这里的能力字段跟着一起给，是为了让
+// 兜底状态下的尺寸 / 比例选择器仍有可用档位，而不是散落回各个面板里去硬编码。
 export const SHARED_MODELS: ModelOption[] = [
   {
     id: 'huimeng/gpt-image-2',
     providerId: 'huimeng',
     apiModel: 'huimeng_gpt_image2',
     label: 'LingShan-G2',
+    resolutionOptions: [...FALLBACK_IMAGE_SIZE_OPTIONS],
+    ratioOptions: [...FALLBACK_IMAGE_ASPECT_OPTIONS],
   },
   {
     id: 'openrouter/gemini-2.5-flash-image',
     providerId: 'openrouter',
     apiModel: 'google/gemini-2.5-flash-image-preview',
     label: 'Gemini 2.5 Flash Image',
+    resolutionOptions: [...FALLBACK_IMAGE_SIZE_OPTIONS],
+    ratioOptions: [...FALLBACK_IMAGE_ASPECT_OPTIONS],
   },
   {
     id: 'openai/gpt-image-2',
     providerId: 'openai',
     apiModel: 'gpt-image-2',
     label: 'GPT Image 2',
+    resolutionOptions: [...FALLBACK_IMAGE_SIZE_OPTIONS],
+    ratioOptions: [...FALLBACK_IMAGE_ASPECT_OPTIONS],
+    qualityOptions: ['low', 'medium', 'high'],
   },
 ];
 
@@ -94,6 +121,8 @@ export const VIDEO_PROVIDERS: ProviderOption[] = [
   { id: 'huimeng', label: '绘梦 / HuiMeng' },
 ];
 
+// 兜底视频模型列表。同 SHARED_MODELS：仅在 /freezone/video/models 拉取失败时
+// 顶上，能力字段随行以保证兜底状态下参数面板仍有档位可选。
 export const VIDEO_MODELS: ModelOption[] = [
   {
     id: 'newapi_seedance-2.0-fast',
@@ -101,6 +130,7 @@ export const VIDEO_MODELS: ModelOption[] = [
     apiModel: 'newapi_seedance-2.0-fast',
     label: 'Seedance2.0 Fast',
     resolutionOptions: ['480p', '720p'],
+    ratioOptions: [...FALLBACK_VIDEO_ASPECT_OPTIONS],
     minDuration: 4,
     maxDuration: 15,
   },
@@ -110,6 +140,7 @@ export const VIDEO_MODELS: ModelOption[] = [
     apiModel: 'newapi_seedance-2.0',
     label: 'Seedance2.0',
     resolutionOptions: ['480p', '720p', '1080p'],
+    ratioOptions: [...FALLBACK_VIDEO_ASPECT_OPTIONS],
     minDuration: 4,
     maxDuration: 15,
   },
@@ -119,6 +150,7 @@ export const VIDEO_MODELS: ModelOption[] = [
     apiModel: 'newapi_seedance-2.0-value',
     label: 'Seedance2.0 Value',
     resolutionOptions: ['720p', '1080p'],
+    ratioOptions: [...FALLBACK_VIDEO_ASPECT_OPTIONS],
     minDuration: 4,
     maxDuration: 15,
     sceneOptimizeOptions: ['anime', 'realistic'],
@@ -130,6 +162,7 @@ export const VIDEO_MODELS: ModelOption[] = [
     apiModel: 'newapi_seedance-2.0-fast-value',
     label: 'Seedance2.0 Fast Value',
     resolutionOptions: ['720p', '1080p'],
+    ratioOptions: [...FALLBACK_VIDEO_ASPECT_OPTIONS],
     minDuration: 4,
     maxDuration: 15,
     sceneOptimizeOptions: ['anime', 'realistic'],
@@ -140,6 +173,7 @@ export const VIDEO_MODELS: ModelOption[] = [
     providerId: 'seedance',
     apiModel: 'newapi_seedance-1.5-pro',
     label: 'Seedance1.5 Pro',
+    ratioOptions: [...FALLBACK_VIDEO_ASPECT_OPTIONS],
     minDuration: 4,
     maxDuration: 12,
   },
@@ -148,6 +182,7 @@ export const VIDEO_MODELS: ModelOption[] = [
     providerId: 'seedance',
     apiModel: 'newapi_seedance-1.0-pro-fast',
     label: 'Seedance1.0 Pro Fast',
+    ratioOptions: [...FALLBACK_VIDEO_ASPECT_OPTIONS],
     minDuration: 2,
     maxDuration: 12,
   },
@@ -203,8 +238,12 @@ export function ProviderModelPicker({
   const skipFetch = models ? null : undefined;
   const imageHook = useFreezoneImageModels(domain === 'image' ? skipFetch : null);
   const videoHook = useFreezoneVideoModels(domain === 'video' ? skipFetch : null);
-  const apiModels = domain === 'video' ? videoHook.models : imageHook.models;
-  const effectiveModels = models ?? apiModels;
+  const apiHook = domain === 'video' ? videoHook : imageHook;
+  const effectiveModels = models ?? apiHook.models;
+  // 后台**确实**一个模型都没配（接口成功返回空列表，不是拉取失败兜底、也不是
+  // 还在加载）。此时触发器上原来会直接显示 `selectedModelId` —— 一个前端硬编码
+  // 的默认 id，看着像有个模型可用，点开却是空列表。
+  const catalogIsEmpty = !models && isAuthoritativeEmptyCatalog(apiHook);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -271,7 +310,10 @@ export function ProviderModelPicker({
         className={NODE_TEXT_CONTROL_TRIGGER_CLASS}
       >
         <Box className={NODE_TEXT_CONTROL_ICON_CLASS} />
-        <span className="font-medium">{selectedModel?.label ?? selectedModelId}</span>
+        <span className="font-medium">
+          {selectedModel?.label
+            ?? (catalogIsEmpty ? t('modelParams.noModelsAvailable') : selectedModelId)}
+        </span>
         <ChevronDown className="h-3 w-3 text-text-muted/90" />
       </button>
       {isOpen && popoverPosition && createPortal(

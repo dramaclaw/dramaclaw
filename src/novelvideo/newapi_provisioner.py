@@ -336,8 +336,7 @@ def get_provisioner_config(
     else:
         resolved_sql_dsn = env_sql_dsn or "local"
         resolved_sqlite_path = (
-            str(os.environ.get("NEWAPI_SQLITE_PATH", "")).strip()
-            or _ce_sqlite_path()
+            str(os.environ.get("NEWAPI_SQLITE_PATH", "")).strip() or _ce_sqlite_path()
         )
     return NewApiProvisionerConfig(
         admin_base_url=normalize_admin_base_url(
@@ -751,15 +750,16 @@ def create_or_reuse_relay_token(
 def build_channel_payload(
     *,
     provider: str,
+    channel_type: int | None = None,
     upstream_key: str,
     model_mapping: dict[str, str],
-    channel_type: int | None = None,
     name: str | None = None,
     group: str = "default",
     priority: int = 0,
     weight: int = 0,
     base_url: str | None = None,
     test_model: str | None = None,
+    other_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     provider_key = (provider or "").strip()
     preset = PROVIDER_PRESETS.get(provider_key)
@@ -770,12 +770,20 @@ def build_channel_payload(
     resolved_base_url = (base_url or (preset or {}).get("base_url") or "").strip()
     if preset:
         channel_name = f"DC-{provider_key}"
+    elif provider_key:
+        channel_name = (name or f"DC-{provider_key}").strip()
     else:
         channel_name = (name or f"DC-type-{channel_type}").strip()
+    resolved_upstream_key = upstream_key.strip()
+    # NewAPI's generic channel validator rejects an empty key even for ComfyUI.
+    # ComfyUI itself may run without authentication, so keep the CE setting
+    # empty while using a non-secret sentinel only in the NewAPI channel row.
+    if provider_key == "comfyui" and not resolved_upstream_key:
+        resolved_upstream_key = "none"
     channel = {
         "name": channel_name,
         "type": int(channel_type or preset["type"]),
-        "key": upstream_key.strip(),
+        "key": resolved_upstream_key,
         "base_url": resolved_base_url,
         "models": ",".join(model_keys),
         "group": normalize_group(group),
@@ -788,11 +796,13 @@ def build_channel_payload(
         "weight": int(weight),
         "test_model": (test_model or model_keys[0]).strip(),
         "setting": "{}",
-        "settings": "{}",
+        "settings": json.dumps(
+            other_settings or {}, ensure_ascii=False, separators=(",", ":")
+        ),
         "other": "",
         "remark": f"created by DramaClaw CE provisioner for {provider_label}",
     }
-    if not channel["key"]:
+    if not channel["key"] and provider_key != "comfyui":
         raise ValueError("upstreamKey is required")
     return {"mode": "single", "channel": channel}
 
@@ -835,7 +845,11 @@ def _merge_channel_payload(
     incoming = dict(payload["channel"])
     existing_mapping = _parse_model_mapping(existing.get("model_mapping"))
     incoming_mapping = _parse_model_mapping(incoming.get("model_mapping"))
-    merged_mapping = {**existing_mapping, **incoming_mapping}
+    merged_mapping = (
+        incoming_mapping
+        if int(incoming.get("type") or 0) == 63
+        else {**existing_mapping, **incoming_mapping}
+    )
     model_keys = validate_model_mapping(merged_mapping)
 
     allowed_fields = {
@@ -847,7 +861,6 @@ def _merge_channel_payload(
         "models",
         "group",
         "model_mapping",
-        "status",
         "auto_ban",
         "priority",
         "weight",
@@ -928,6 +941,42 @@ def find_channel_by_name(
     return sorted(matches, key=lambda item: int(item.get("id") or 0), reverse=True)[0]
 
 
+def delete_channel_by_name(
+    cfg: NewApiProvisionerConfig,
+    admin: AdminToken,
+    *,
+    name: str,
+    channel_type: int | None = None,
+) -> bool:
+    """Delete one managed NewAPI channel; return False when it does not exist."""
+    existing = find_channel_by_name(
+        cfg,
+        admin,
+        name=name,
+        channel_type=channel_type,
+    )
+    if not existing:
+        return False
+    channel_id = existing.get("id")
+    if channel_id is None:
+        raise RuntimeError(f"delete channel {name} failed: missing channel id")
+    with httpx.Client(timeout=15) as client:
+        res = client.delete(
+            f"{cfg.admin_base_url}/api/channel/{channel_id}",
+            headers=admin_headers(admin),
+        )
+    try:
+        body: Any = res.json()
+    except ValueError:
+        body = res.text
+    if res.status_code >= 400:
+        raise RuntimeError(
+            f"delete channel {name} failed: HTTP {res.status_code} {body}"
+        )
+    require_newapi_success(body, f"delete channel {name}")
+    return True
+
+
 def get_channel_detail(
     cfg: NewApiProvisionerConfig,
     admin: AdminToken,
@@ -951,6 +1000,65 @@ def get_channel_detail(
     return data
 
 
+def list_channel_types(
+    cfg: NewApiProvisionerConfig,
+    admin: AdminToken,
+) -> list[dict[str, Any]]:
+    """Return the channel adapters exposed by the connected NewAPI instance."""
+    with httpx.Client(timeout=15) as client:
+        res = client.get(
+            f"{cfg.admin_base_url}/api/channel/types",
+            params={"status": 1},
+            headers=admin_headers(admin),
+        )
+    try:
+        body: Any = res.json()
+    except ValueError:
+        body = res.text
+    if res.status_code >= 400:
+        raise RuntimeError(f"list channel types failed: HTTP {res.status_code} {body}")
+    require_newapi_success(body, "list channel types")
+    data = response_data(body)
+    raw_items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(raw_items, list):
+        raise RuntimeError("list channel types failed: missing data.items")
+
+    items: list[dict[str, Any]] = []
+    seen_providers: set[str] = set()
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        provider = str(raw.get("provider") or "").strip().lower()
+        channel_type = int(raw.get("type") or 0)
+        if not provider or channel_type <= 0 or provider in seen_providers:
+            continue
+        seen_providers.add(provider)
+        capabilities = raw.get("capabilities")
+        items.append(
+            {
+                "type": channel_type,
+                "provider": provider,
+                "name": str(raw.get("name") or provider).strip(),
+                "description": str(raw.get("description") or "").strip(),
+                "icon": str(raw.get("icon") or "").strip(),
+                "defaultBaseUrl": str(raw.get("default_base_url") or "").strip(),
+                "status": int(raw.get("status") or 0),
+                "capabilities": (
+                    [
+                        str(value).strip().lower()
+                        for value in capabilities
+                        if str(value).strip()
+                    ]
+                    if isinstance(capabilities, list)
+                    else []
+                ),
+                "requiresBaseUrl": bool(raw.get("requires_base_url")),
+                "supportsBaseUrlOverride": bool(raw.get("supports_base_url_override")),
+            }
+        )
+    return sorted(items, key=lambda item: (item["type"], item["provider"]))
+
+
 def update_channel(
     cfg: NewApiProvisionerConfig,
     admin: AdminToken,
@@ -958,12 +1066,15 @@ def update_channel(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     channel = dict(payload["channel"])
+    # NewAPI treats channel status as read-only on the general update endpoint.
+    channel.pop("status", None)
     channel["id"] = channel_id
+    sanitized_payload = {**payload, "channel": channel}
     attempts = [
         ("PUT", f"{cfg.admin_base_url}/api/channel/", channel),
         ("PUT", f"{cfg.admin_base_url}/api/channel/{channel_id}", channel),
-        ("PUT", f"{cfg.admin_base_url}/api/channel/", payload),
-        ("PUT", f"{cfg.admin_base_url}/api/channel/{channel_id}", payload),
+        ("PUT", f"{cfg.admin_base_url}/api/channel/", sanitized_payload),
+        ("PUT", f"{cfg.admin_base_url}/api/channel/{channel_id}", sanitized_payload),
     ]
     last_status = 0
     last_body: Any = None
@@ -1039,12 +1150,13 @@ def update_provider_channel_credentials(
     admin: AdminToken,
     *,
     provider: str,
+    channel_type: int | None = None,
     upstream_key: str,
     base_url: str | None = None,
 ) -> dict[str, Any]:
     provider_key = str(provider or "").strip().lower()
     preset = PROVIDER_PRESETS.get(provider_key)
-    if not preset:
+    if not preset and channel_type is None:
         raise ValueError("unknown provider")
     key = str(upstream_key or "").strip()
     if not key:
@@ -1055,7 +1167,7 @@ def update_provider_channel_credentials(
         cfg,
         admin,
         name=channel_name,
-        channel_type=int(preset["type"]),
+        channel_type=int(channel_type or preset["type"]),
     )
     if not existing:
         raise LookupError(f"NewAPI channel {channel_name} does not exist")
@@ -1070,7 +1182,6 @@ def update_provider_channel_credentials(
         "models",
         "group",
         "model_mapping",
-        "status",
         "auto_ban",
         "priority",
         "weight",
@@ -1085,7 +1196,7 @@ def update_provider_channel_credentials(
     }
     channel["id"] = existing["id"]
     channel["name"] = channel_name
-    channel["type"] = int(preset["type"])
+    channel["type"] = int(channel_type or preset["type"])
     channel["key"] = key
     if base_url is not None:
         channel["base_url"] = str(base_url or "").strip().rstrip("/")
@@ -1140,7 +1251,6 @@ def _channel_update_payload_without_models(
         "models",
         "group",
         "model_mapping",
-        "status",
         "auto_ban",
         "priority",
         "weight",

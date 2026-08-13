@@ -11,7 +11,7 @@
 |---|---|---|
 | `ST_EDITION` | `ce`(compose/镜像强制) | 版本标识。CE 模式不可降级。 |
 | `NOVELVIDEO_DATA_ROOT` | `.`(Docker 设为 `/data`) | 数据根目录,下面三项默认派生于此。 |
-| `NOVELVIDEO_OUTPUT_DIR` | `$DATA_ROOT/output` | 成片与产物输出目录。注:`.env.example` 显式设为 `output`(相对路径),Docker 内会落到 `/app/output` 而非 `/data` 卷;要持久化到卷请设为 `/data/output` 或留空用默认。 |
+| `NOVELVIDEO_OUTPUT_DIR` | `$DATA_ROOT/output` | 成片与产物输出目录。Docker Compose 固定为 `/data/output`，随 `ce-data` 卷持久化。 |
 | `NOVELVIDEO_STATE_DIR` | `$DATA_ROOT/state` | 本地状态。 |
 | `NOVELVIDEO_RUNTIME_DIR` | `$DATA_ROOT/runtime` | 运行时临时目录。 |
 | `ST_CONTROL_PLANE_DSN` / `ST_REDIS_URL` / `ST_CELERY_BROKER_URL` / `ST_CELERY_RESULT_BACKEND` | 空(CE 强制清空) | EE/分布式才用;CE 任务进程内 inline 执行,留空。 |

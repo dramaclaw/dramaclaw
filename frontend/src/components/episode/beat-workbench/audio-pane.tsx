@@ -6,8 +6,10 @@ import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Loader2, RefreshCw } from "lucide-react";
 
-import { useRegenerateBeatAudio } from "@/lib/queries/audio";
-import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
+import {
+  useAudioBillingQuote,
+  useRegenerateBeatAudio,
+} from "@/lib/queries/audio";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import {
@@ -43,7 +45,6 @@ interface AudioPaneProps {
 type VoiceConfigTarget = "characters" | "voices";
 
 const ASSET_TAB_STORAGE_KEY_PREFIX = "supertale-asset-tab:";
-const BEAT_AUDIO_GENERATION_FEATURE_KEY = "mainline.beat_audio_generation";
 
 function assetTabStorageKey(project: string): string {
   return `${ASSET_TAB_STORAGE_KEY_PREFIX}${encodeURIComponent(project)}`;
@@ -75,16 +76,18 @@ export function AudioPane({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const regenerate = useRegenerateBeatAudio(project, episode);
-  const audioCost = useGenerationCreditCost(
-    "feature",
-    BEAT_AUDIO_GENERATION_FEATURE_KEY,
-    { quantity: 1 },
+  const audioCost = useAudioBillingQuote(
+    project,
+    episode,
+    { beatNumbers: [beat.beat_number], mode: "redo_selected" },
+    [beat.audio_type, beat.speaker, beat.narration_segment].join(":"),
   );
   const audioCostDisplay =
     audioCost.data?.data.display ??
     (audioCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
+  const audioPrereqError = audioCost.data?.data.prereq_errors?.[0] ?? "";
   const audioTask = useTaskController({
     key: { taskType: TASK_TYPES.AUDIO_GENERATION_INDEXTTS2, project, episode },
     alsoReconcile: [TASK_TYPES.AUDIO_GENERATION],
@@ -161,7 +164,13 @@ export function AudioPane({
           <Button
             size="xs"
             variant="outline"
-            onClick={() => setRegenConfirm(true)}
+            onClick={() => {
+              if (audioPrereqError) {
+                showAudioError(audioPrereqError);
+                return;
+              }
+              setRegenConfirm(true);
+            }}
             disabled={regenerate.isPending || audioTask.started}
             className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
           >
@@ -170,11 +179,15 @@ export function AudioPane({
             ) : (
               <RefreshCw className="size-3" />
             )}
-            {t("common.regenerate")}
-            <CreditCostInline
-              display={audioCostDisplay}
-              promotion={audioCost.data?.data.promotion}
-            />
+            {audioPrereqError
+              ? t("episode.workbench.audio.configureVoiceAction")
+              : t("common.regenerate")}
+            {!audioPrereqError && (
+              <CreditCostInline
+                display={audioCostDisplay}
+                promotion={audioCost.data?.data.promotion}
+              />
+            )}
           </Button>
         </div>
       )}

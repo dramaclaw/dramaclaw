@@ -15,9 +15,9 @@ A preset must not override the concrete content of the story. Exact era, locatio
 
 ## Field Semantics
 
-`label` is the product-facing name. It may describe the intended look in user language, but it should be precise enough that users understand the content bias. For example, the built-in `guoman_fantasy` preset is labeled `3D玄幻国漫` because its instructions intentionally include xianxia, Dunhuang, and fantasy-drama traits; it is not a generic Guoman preset.
+`label` is the product-facing name. It may describe the intended look in familiar user language, but it is not injected into generation prompts and must not act as a hidden content fallback. For example, the built-in `guoman_fantasy` preset keeps the familiar `3D玄幻国漫` label while its prompt controls only the 3D Guoman rendering medium and finish.
 
-Content bias inside a preset is a default flavor, not a hard rule. For `guoman_fantasy`, fantasy-drama rendering traits, Dunhuang-inspired garments, xianxia robes, and black-gold luxury accents apply only when character descriptions, identity references, scene context, and wardrobe do not specify a stronger choice. Exact facial traits, expression, temperament, ethnicity, age, costume, and identity details belong to character/scene/prop content, not the preset. Explicit character or reference-image details always win.
+Content bias inside a preset may only be conditional genre tone, never a hard rule or a fallback source for concrete entities. Exact facial traits, expression, temperament, ethnicity, age, costume, identity, props, and environment details belong to character/scene/prop content. Explicit descriptions and reference images always win.
 
 `style_tag` is the short, high-signal anchor injected near every generated panel. It should describe medium and grade, not era or story content. Avoid words like `PERIOD`, `REPUBLICAN`, `ERA`, `DYNASTY`, `MODERN`, `ANCIENT`, `DRAMA`, `民国`, or `古装` in `style_tag`.
 

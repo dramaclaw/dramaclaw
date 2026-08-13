@@ -44,7 +44,8 @@ def test_video_history_persists_model_and_gen_mode(tmp_path: Path) -> None:
         "canvas_id": "default",
         "prompt": "深夜古街",
         "model_id": "happyhouse_1_0",
-        "gen_mode": "firstLastFrame",
+        "gen_mode": "first_last_frame",
+        "requested_gen_mode": "firstLastFrame",
     }
     rec = _append_freezone_video_node_history(
         ctx=ctx,

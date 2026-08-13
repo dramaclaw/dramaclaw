@@ -74,6 +74,7 @@ class InlineTaskBackend:
         ctx,
         *,
         task_type: str,
+        product_surface: str,
         queue_kind: str = "default",
         episode: int = 0,
         beat_num: int | None = None,
@@ -88,6 +89,7 @@ class InlineTaskBackend:
             "backend": "inline",
             "queue_kind": lane_name,
             "project_id": ctx.project_id,
+            "product_surface": product_surface,
             **display_metadata_for_task(task_type, payload),
         }
         project_lane_limit = project_lane_effective_active_limit(
@@ -253,7 +255,15 @@ class InlineTaskBackend:
             )
         self._drain_lane(lane_name)
 
-    async def cancel_project_task(self, ctx, task_state) -> bool:
+    async def cancel_project_task(
+        self,
+        ctx,
+        task_state,
+        *,
+        force: bool = False,
+        acknowledge_no_refund: bool = False,
+    ) -> dict:
+        del force, acknowledge_no_refund
         await get_cancellation_store().request_cancel(
             project_id=ctx.project_id,
             task_type=task_state.task_type,
@@ -278,7 +288,12 @@ class InlineTaskBackend:
         await asyncio.get_running_loop().run_in_executor(
             None, kill_task_processes, task_state.task_id
         )
-        return True
+        return {
+            "ok": True,
+            "status": "cancelled",
+            "refund_eligible": True,
+            "refund_status": "not_applicable",
+        }
 
 
 class InMemoryCancellationStore:

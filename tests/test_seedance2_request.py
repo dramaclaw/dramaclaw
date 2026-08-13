@@ -763,6 +763,50 @@ def test_newapi_video_payload_keeps_public_fields_and_model_semantics():
     }
 
 
+def test_newapi_image_reference_payload_does_not_promote_reference_to_first_frame():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    metadata = {
+        "resolution": "720p",
+        "ratio": "16:9",
+        "reference_images": ["https://example.com/reference.png"],
+    }
+    payload = {
+        "model": "video-model",
+        "prompt": "animate the reference",
+        "seconds": "5",
+        "metadata": metadata,
+    }
+
+    NewApiVideoGenerator._canonicalize_video_payload(payload, metadata)
+
+    assert "image" not in payload
+    assert payload["metadata"]["reference_images"] == [
+        "https://example.com/reference.png"
+    ]
+
+
+def test_newapi_last_only_payload_keeps_tail_without_top_level_first_frame():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    metadata = {
+        "resolution": "720p",
+        "ratio": "16:9",
+        "last_frame_image": "https://example.com/last.png",
+    }
+    payload = {
+        "model": "video-model",
+        "prompt": "finish at the target frame",
+        "seconds": "5",
+        "metadata": metadata,
+    }
+
+    NewApiVideoGenerator._canonicalize_video_payload(payload, metadata)
+
+    assert "image" not in payload
+    assert payload["metadata"]["last_frame_image"] == "https://example.com/last.png"
+
+
 @pytest.mark.parametrize(
     ("resolution", "ratio", "expected"),
     [
@@ -891,6 +935,22 @@ def test_newapi_video_result_url_keeps_legacy_fallbacks(task, expected):
     from novelvideo.generators.video_generator import NewApiVideoGenerator
 
     assert NewApiVideoGenerator._extract_video_url(task) == expected
+
+
+def test_newapi_video_resolves_gateway_local_result_url():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="http://newapi:3000/v1",
+        model="h3-t2v",
+    )
+
+    assert generator._resolve_result_url(
+        "http://localhost:3000/v1/public/videos/task-1/content?expires=1&signature=abc"
+    ) == (
+        "http://newapi:3000/v1/public/videos/task-1/content?expires=1&signature=abc"
+    )
 
 
 async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_path, monkeypatch):
@@ -1100,6 +1160,67 @@ async def test_newapi_catalog_model_builds_huimeng_protocol_multimedia_reference
     }
 
 
+async def test_newapi_image_to_video_uses_single_reference_image_not_first_frame():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator, ShotReference
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="seedance-2-0-mini",
+    )
+    metadata: dict[str, object] = {}
+
+    await generator._apply_huimeng_protocol_media_inputs(
+        metadata,
+        mode="imageToVideo",
+        image_path="https://example.com/ref.png",
+        last_frame_path=None,
+        references=[ShotReference("image", "https://example.com/ref.png", "图片参考")],
+        log=lambda _message: None,
+    )
+
+    assert metadata == {"reference_images": ["https://example.com/ref.png"]}
+
+
+@pytest.mark.parametrize(
+    ("first_frame", "last_frame", "expected"),
+    [
+        (
+            "https://example.com/first.png",
+            None,
+            {"first_frame_image": "https://example.com/first.png"},
+        ),
+        (
+            None,
+            "https://example.com/last.png",
+            {"last_frame_image": "https://example.com/last.png"},
+        ),
+    ],
+)
+async def test_newapi_keyframe_protocol_accepts_single_first_or_last_frame(
+    first_frame, last_frame, expected
+):
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="seedance-2-0-mini",
+    )
+    metadata: dict[str, object] = {}
+
+    await generator._apply_huimeng_protocol_media_inputs(
+        metadata,
+        mode="first_last_frame",
+        image_path=first_frame or "",
+        last_frame_path=last_frame,
+        references=[],
+        log=lambda _message: None,
+    )
+
+    assert metadata == expected
+
+
 @pytest.mark.parametrize("model", ["seedance-2-0-mini", "kling-v3-omni"])
 async def test_newapi_catalog_models_use_same_first_last_frame_protocol(model):
     from novelvideo.generators.video_generator import NewApiVideoGenerator
@@ -1136,24 +1257,33 @@ async def test_newapi_video_relay_frame_input_normalizes_local_image_refs(
     frame_path.write_bytes(b"fake-png")
     captured: dict[str, object] = {}
 
-    def fake_upload_image_bytes(data, *, ext="png", ttl=None, image_transform=None):
+    def fake_upload_media_bytes(
+        data,
+        *,
+        ext="png",
+        ttl=None,
+        resource_type="image",
+        image_transform=None,
+    ):
         captured.update(
             {
                 "data": data,
                 "ext": ext,
                 "ttl": ttl,
+                "resource_type": resource_type,
                 "image_transform": image_transform,
             }
         )
         return f"https://relay.example/frame.{ext}"
 
-    monkeypatch.setattr(video_module, "upload_image_bytes", fake_upload_image_bytes)
+    monkeypatch.setattr(video_module, "upload_media_bytes", fake_upload_media_bytes)
 
     result = await NewApiVideoGenerator._relay_frame_input(str(frame_path))
 
     assert result == "https://relay.example/frame.png"
     assert captured["data"] == b"fake-png"
     assert captured["ext"] == "png"
+    assert captured["resource_type"] == "image"
     assert captured["image_transform"] == video_module.IMAGE_TRANSFORM_AI_REFERENCE_JPEG
 
 
@@ -1171,18 +1301,26 @@ async def test_newapi_video_seedance2_references_normalize_only_image_refs(
     audio_path.write_bytes(b"fake-mp3")
     captured: list[dict[str, object]] = []
 
-    def fake_upload_image_bytes(data, *, ext="png", ttl=None, image_transform=None):
+    def fake_upload_media_bytes(
+        data,
+        *,
+        ext="png",
+        ttl=None,
+        resource_type="image",
+        image_transform=None,
+    ):
         captured.append(
             {
                 "data": data,
                 "ext": ext,
                 "ttl": ttl,
+                "resource_type": resource_type,
                 "image_transform": image_transform,
             }
         )
         return f"https://relay.example/{len(captured)}.{ext}"
 
-    monkeypatch.setattr(video_module, "upload_image_bytes", fake_upload_image_bytes)
+    monkeypatch.setattr(video_module, "upload_media_bytes", fake_upload_media_bytes)
     generator = NewApiVideoGenerator(
         api_key="test-key",
         endpoint="https://newapi.example",
@@ -1204,6 +1342,7 @@ async def test_newapi_video_seedance2_references_normalize_only_image_refs(
         "reference_audios": ["https://relay.example/3.mp3"],
     }
     assert captured[0]["image_transform"] == video_module.IMAGE_TRANSFORM_AI_REFERENCE_JPEG
+    assert [item["resource_type"] for item in captured] == ["image", "video", "video"]
     assert captured[1]["image_transform"] is None
     assert captured[2]["image_transform"] is None
     assert all(

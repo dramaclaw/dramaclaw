@@ -579,6 +579,13 @@ export const ModelParamsControls = memo(({
                   {t('modelParams.model')}
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {/* 后台一个模型都没配时列表是空的——说清楚，别只留一片空白让用户
+                      以为是没加载出来。提交侧由各节点的 imageModelsEmpty 拦死。 */}
+                  {modelGroups.length === 0 && (
+                    <span className="text-xs text-text-muted">
+                      {t('modelParams.noModelsAvailable')}
+                    </span>
+                  )}
                   {modelGroups.map((group) => {
                     const active = group.models.some((model) => model.id === selectedModel.id);
                     const targetModel = group.models.find((model) => model.id === selectedModel.id)

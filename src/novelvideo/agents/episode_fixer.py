@@ -10,7 +10,10 @@ from typing import Callable, Optional
 from pydantic_ai import Agent
 from pydantic import BaseModel, Field
 
-from novelvideo.config import get_pydantic_model
+from novelvideo.config import (
+    get_newapi_structured_output_model_settings,
+    get_pydantic_model,
+)
 from novelvideo.agents.episode_reviewer import (
     EpisodePlanIssueType,
     EpisodePlanIssue,
@@ -285,6 +288,7 @@ def create_episode_fixer_agent(tools: Optional[list[Callable]] = None) -> Agent:
         system_prompt=EPISODE_FIXER_PROMPT,
         tools=tools or [],
         output_type=FixedSeriesPlan,
+        model_settings=get_newapi_structured_output_model_settings(),
         name="分集规划修复员",
     )
 
@@ -308,6 +312,7 @@ def create_patch_fixer_agent(tools: Optional[list[Callable]] = None) -> Agent:
         system_prompt=PATCH_FIXER_PROMPT,
         tools=tools or [],
         output_type=FixPlan,
+        model_settings=get_newapi_structured_output_model_settings(),
         name="分集规划修复员",
     )
 

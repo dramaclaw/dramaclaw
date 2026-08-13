@@ -268,16 +268,24 @@ def get_newapi_text_pydantic_model(
     )
 
 
-def get_newapi_text_pydantic_model_settings(
-    thinking_env: str,
-    default_thinking_level: str,
-) -> dict | None:
-    """Build PydanticAI model settings for a newAPI text task."""
-    thinking_level = get_text_thinking_level(thinking_env, default_thinking_level)
-    reasoning_effort = _normalize_openai_compat_reasoning_effort(thinking_level)
-    if not reasoning_effort:
-        return None
-    return {"openai_reasoning_effort": reasoning_effort}
+def get_newapi_structured_output_model_settings() -> dict:
+    """Disable reasoning for PydanticAI structured output requests.
+
+    DramaClaw sends opaque ``DC-*`` aliases through an OpenAI-compatible
+    NewAPI endpoint.  PydanticAI cannot infer thinking capabilities from those
+    aliases, so its unified ``thinking=False`` setting is silently ignored.
+    Use the explicit OpenAI-compatible wire contract that existing deployments
+    already send when their task-level thinking setting is ``none``.
+    """
+    return {"openai_reasoning_effort": "none"}
+
+
+def get_newapi_structured_output_litellm_kwargs() -> dict:
+    """Disable reasoning for Cognee/Instructor calls routed through LiteLLM."""
+    return {
+        "reasoning_effort": "none",
+        "allowed_openai_params": ["reasoning_effort"],
+    }
 
 
 def get_superpower_pydantic_model(
@@ -308,93 +316,6 @@ def get_superpower_pydantic_model(
         provider_override=provider_override,
         model_name_override=model_name_override,
     )
-
-
-def get_pydantic_model_settings(
-    provider_override: str | None = None,
-    model_name_override: str | None = None,
-    *,
-    max_tokens: int | None = None,
-    thinking_level_override: str | None = None,
-) -> dict | None:
-    """Build settings for the legacy factory's NewAPI transport.
-
-    Provider/model arguments remain in the signature for existing callers; the
-    transport is always OpenAI-compatible NewAPI.
-    """
-    thinking_level = (
-        thinking_level_override
-        or os.environ.get("MODEL_THINKING_LEVEL")
-        or "low"
-    )
-
-    settings: dict[str, object] = {}
-    if max_tokens is not None:
-        settings["max_tokens"] = max_tokens
-
-    if thinking_level:
-        reasoning_effort = _normalize_openai_compat_reasoning_effort(thinking_level)
-        if reasoning_effort:
-            settings["openai_reasoning_effort"] = reasoning_effort
-
-    return settings or None
-
-
-def get_text_thinking_level(env_name: str, default: str) -> str:
-    """Read a path-specific thinking level.
-
-    Missing env vars use the caller default. Explicit empty env vars mean
-    "do not send a thinking/reasoning setting" for that path.
-    """
-    return os.environ.get(env_name, default).strip()
-
-
-_OPENAI_COMPAT_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
-
-
-def _normalize_openai_compat_reasoning_effort(value: str | None) -> str:
-    normalized = str(value or "").strip().lower()
-    return normalized if normalized in _OPENAI_COMPAT_REASONING_EFFORTS else ""
-
-
-def _is_openai_compatible_runtime() -> bool:
-    provider = (
-        (
-            os.environ.get("LLM_PROVIDER")
-            or os.environ.get("MODEL_PROVIDER")
-            or ""
-        )
-        .strip()
-        .lower()
-    )
-    return provider in {"newapi", "custom"}
-
-
-def get_newapi_reasoning_kwargs(
-    *,
-    thinking_env: str | None = None,
-    default_thinking_level: str | None = None,
-) -> dict:
-    """Build reasoning kwargs for OpenAI-compatible newAPI/Cognee calls.
-
-    Explicit empty env values disable sending reasoning parameters.
-    Direct providers keep their original request shape.
-    """
-    if not _is_openai_compatible_runtime():
-        return {}
-    if thinking_env and thinking_env in os.environ:
-        thinking_level = os.environ.get(thinking_env, "").strip()
-    elif default_thinking_level is not None:
-        thinking_level = default_thinking_level
-    else:
-        thinking_level = os.environ.get("MODEL_THINKING_LEVEL", "").strip()
-    reasoning_effort = _normalize_openai_compat_reasoning_effort(thinking_level)
-    if not reasoning_effort:
-        return {}
-    return {
-        "reasoning_effort": reasoning_effort,
-        "allowed_openai_params": ["reasoning_effort"],
-    }
 
 
 def get_model_info() -> dict:
@@ -791,7 +712,7 @@ def _csv_env(name: str, default: str) -> list[str]:
 # newAPI 视频网关。VIDEO_BACKEND 使用 newapi_<model> 时会通过 NEWAPI_BASE_URL 调用。
 NEWAPI_VIDEO_MODELS = _csv_env(
     "NEWAPI_VIDEO_MODELS",
-    "seedance-1.0-pro-fast,seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,happyhorse-1.0",
+    "seedance-1.0-pro-fast,seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,happyhorse-1.0,seedance-2.0-mini",
 )
 DEFAULT_VIDEO_MODEL = os.environ.get(
     "DEFAULT_VIDEO_MODEL",
@@ -801,11 +722,11 @@ NEWAPI_VIDEO_MODEL = os.environ.get("NEWAPI_VIDEO_MODEL", DEFAULT_VIDEO_MODEL).s
 NEWAPI_VIDEO_RESOLUTION = os.environ.get("NEWAPI_VIDEO_RESOLUTION", "720p")
 NEWAPI_VIDEO_AUDIO_MODELS = _csv_env(
     "NEWAPI_VIDEO_AUDIO_MODELS",
-    "seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value",
+    "seedance-1.5-pro,seedance-2.0,seedance-2.0-fast,seedance-2.0-value,seedance-2.0-fast-value,seedance-2.0-mini",
 )
 NEWAPI_VIDEO_DURATION_BOUNDS = os.environ.get(
     "NEWAPI_VIDEO_DURATION_BOUNDS",
-    "seedance-1.0-pro-fast:2-12,seedance-1.5-pro:4-12,seedance-2.0:4-15,seedance-2.0-fast:4-15,seedance-2.0-value:4-15,seedance-2.0-fast-value:4-15,happyhorse-1.0:3-15",
+    "seedance-1.0-pro-fast:2-12,seedance-1.5-pro:4-12,seedance-2.0:4-15,seedance-2.0-fast:4-15,seedance-2.0-value:4-15,seedance-2.0-fast-value:4-15,happyhorse-1.0:3-15,seedance-2.0-mini:4-15",
 ).strip()
 
 # 视频生成后端: newapi_seedance-1.0-pro-fast (默认), newapi_seedance-2.0-fast,

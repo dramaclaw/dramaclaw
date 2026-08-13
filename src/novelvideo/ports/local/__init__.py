@@ -10,6 +10,7 @@ from novelvideo.ports.local.project import AllowAllProjectAccess, SQLiteProjectR
 from novelvideo.ports.local.release_feed import LocalReleaseFeed
 from novelvideo.ports.local.tasks import InlineTaskBackend, InMemoryCancellationStore
 from novelvideo.ports.local.usage import NoOpProviderInstrumentation, NoOpUsageMeter
+from novelvideo.ports.product_surface_access import LocalProductSurfaceAccess
 from novelvideo.ports.registry import get_port, register_port
 
 
@@ -26,4 +27,5 @@ def register_local_ports() -> None:
     register_port("audit_sink", NoOpAuditSink())
     register_port("lifecycle", NoOpLifecycle())
     register_port("release_feed", LocalReleaseFeed())
+    register_port("product_surface_access", LocalProductSurfaceAccess())
     get_port("provider_instrumentation").install()

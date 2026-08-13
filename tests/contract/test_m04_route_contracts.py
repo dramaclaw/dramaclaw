@@ -542,7 +542,6 @@ def test_m04_l2_exercises_all_57_endpoint_contracts(m04_client_factory):
     )
     _assert_ok(client.post(f"/api/v1/projects/{_PROJECT}/props/铜令/delete"))
     _assert_ok(client.post(f"/api/v1/projects/{_PROJECT}/props/{_PROP}/reference/generate-async"))
-    _assert_ok(client.post(f"/api/v1/projects/{_PROJECT}/props/reference/batch-generate"))
 
     _assert_ok(client.get("/api/v1/styles", params={"project": _PROJECT}))
     _assert_ok(client.get("/api/v1/styles/custom_drama", params={"project": _PROJECT}))
@@ -638,10 +637,6 @@ def test_m04_task_backend_responses_are_ce_ee_isomorphic(m04_client_factory, bac
             client.post(f"/api/v1/projects/{_PROJECT}/props/{_PROP}/reference/generate-async"),
         ),
         (
-            "batch_prop_ref",
-            client.post(f"/api/v1/projects/{_PROJECT}/props/reference/batch-generate"),
-        ),
-        (
             "audio_generation_indextts2",
             client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/audio/generate", json={}),
         ),
@@ -660,7 +655,6 @@ def test_m04_task_backend_responses_are_ce_ee_isomorphic(m04_client_factory, bac
         "character_portrait",
         "identity_image",
         "prop_reference_asset",
-        "batch_prop_ref",
         "audio_generation_indextts2",
         "audio_generation_indextts2",
     ]
@@ -678,3 +672,13 @@ def test_m04_legacy_tts_routes_return_410_with_indextts2_hint(m04_client_factory
     for response in responses:
         assert response.status_code == 410
         assert "IndexTTS2" in json.dumps(response.json(), ensure_ascii=False)
+
+
+def test_m04_batch_prop_reference_generation_route_is_removed(m04_client_factory):
+    client, _backend, _project_dir = m04_client_factory("inline")
+
+    response = client.post(
+        f"/api/v1/projects/{_PROJECT}/props/reference/batch-generate"
+    )
+
+    assert response.status_code == 404

@@ -7,9 +7,12 @@ keeps its deployment environment as the sole credential source.
 
 from __future__ import annotations
 
-import os
+import hashlib
 import json
+import os
 import sqlite3
+import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,18 +25,32 @@ from novelvideo.official_defaults import (
     DEFAULT_EMBEDDING_BATCH_SIZE,
     OFFICIAL_NEWAPI_BASE_URL,
 )
+from novelvideo.official_media_catalog_schema import (
+    catalog_version as _catalog_version,
+    validate_official_media_catalog as _validate_official_media_catalog,
+)
 from novelvideo.shared.runtime_env import is_ce_effective
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 MODE_OFFICIAL = "official"
 MODE_CUSTOM = "custom"
-VALID_MODES = {MODE_OFFICIAL, MODE_CUSTOM}
+MODE_HYBRID = "hybrid"
+VALID_MODES = {MODE_OFFICIAL, MODE_CUSTOM, MODE_HYBRID}
 PLACEHOLDER_API_KEYS = {
     "your_newapi_token",
     "your_model_api_key",
     "your_api_key",
     "your_dc_key",
 }
+OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY = "official_media_catalog_auto_update"
+OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY = "official_media_catalog_last_checked_at"
+OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY = "official_media_catalog_remote_url"
+OFFICIAL_MEDIA_CATALOG_ETAG_KEY = "official_media_catalog_etag"
+OFFICIAL_MEDIA_CATALOG_REVISION_KEY = "official_media_catalog_revision"
+OFFICIAL_MEDIA_CATALOG_PUBLISHED_AT_KEY = "official_media_catalog_published_at"
+OFFICIAL_MEDIA_CATALOG_SHA256_KEY = "official_media_catalog_sha256"
+OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY = "official_media_catalog_last_error"
+_OFFICIAL_MEDIA_CATALOG_WRITE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -223,7 +240,7 @@ def save_newapi_database_config(
     )
 
 
-def _decode_provider_channels(value: str | None) -> list[dict[str, str]]:
+def _decode_provider_channels(value: str | None) -> list[dict[str, Any]]:
     if not value:
         return []
     try:
@@ -233,7 +250,7 @@ def _decode_provider_channels(value: str | None) -> list[dict[str, str]]:
     if not isinstance(raw, list):
         return []
 
-    channels: list[dict[str, str]] = []
+    channels: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in raw:
         if not isinstance(item, dict):
@@ -245,14 +262,21 @@ def _decode_provider_channels(value: str | None) -> list[dict[str, str]]:
         channels.append(
             {
                 "provider": provider,
+                "type": max(0, int(item.get("type") or 0)),
                 "upstreamKey": str(item.get("upstreamKey") or "").strip(),
                 "baseUrl": str(item.get("baseUrl") or "").strip().rstrip("/"),
+                "priority": int(item.get("priority") or 0),
+                "settings": (
+                    item.get("settings")
+                    if isinstance(item.get("settings"), dict)
+                    else {}
+                ),
             }
         )
     return channels
 
 
-def _decode_media_model_mappings(value: str | None) -> dict[str, dict[str, str]]:
+def _decode_media_model_mappings(value: str | None) -> dict[str, dict[str, Any]]:
     if not value:
         return {}
     try:
@@ -262,7 +286,7 @@ def _decode_media_model_mappings(value: str | None) -> dict[str, dict[str, str]]
     if not isinstance(raw, dict):
         return {}
 
-    mappings: dict[str, dict[str, str]] = {}
+    mappings: dict[str, dict[str, Any]] = {}
     for model, item in raw.items():
         model_name = str(model or "").strip()
         if not model_name or not isinstance(item, dict):
@@ -270,10 +294,23 @@ def _decode_media_model_mappings(value: str | None) -> dict[str, dict[str, str]]
         provider = str(item.get("provider") or "").strip().lower()
         if not provider:
             continue
-        mappings[model_name] = {
+        media_type = str(item.get("mediaType") or "").strip().lower()
+        config = item.get("config") if isinstance(item.get("config"), dict) else {}
+        mapping: dict[str, Any] = {
             "provider": provider,
             "upstreamModel": str(item.get("upstreamModel") or "").strip(),
         }
+        if media_type in {"image", "video", "audio"}:
+            mapping["mediaType"] = media_type
+        if str(item.get("label") or "").strip():
+            mapping["label"] = str(item.get("label") or "").strip()
+        if "enabled" in item:
+            mapping["enabled"] = item.get("enabled") is not False
+        if "sortOrder" in item:
+            mapping["sortOrder"] = int(item.get("sortOrder") or 100)
+        if config:
+            mapping["config"] = config
+        mappings[model_name] = mapping
     return mappings
 
 
@@ -311,12 +348,12 @@ def _decode_embedding_model_config(value: str | None) -> dict[str, Any]:
     return result
 
 
-def get_newapi_provider_channels() -> list[dict[str, str]]:
+def get_newapi_provider_channels() -> list[dict[str, Any]]:
     settings = get_model_gateway_settings()
     return _decode_provider_channels(settings.get("custom_newapi_provider_channels"))
 
 
-def get_newapi_provider_channel(provider: str) -> dict[str, str] | None:
+def get_newapi_provider_channel(provider: str) -> dict[str, Any] | None:
     wanted = str(provider or "").strip().lower()
     if not wanted:
         return None
@@ -326,13 +363,88 @@ def get_newapi_provider_channel(provider: str) -> dict[str, str] | None:
     return None
 
 
+def parse_comfyui_channel_workflows(
+    settings: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    comfyui = settings.get("comfyui")
+    if not isinstance(comfyui, dict):
+        raise ValueError("ComfyUI settings are required")
+    routes = comfyui.get("workflow_routes")
+    if routes is not None:
+        if not isinstance(routes, list) or not routes:
+            raise ValueError("ComfyUI requires at least one workflow route")
+        route_ids: list[str] = []
+        configured_model = str(comfyui.get("model_name") or "").strip()
+        models: set[str] = {configured_model} if configured_model else set()
+        for route in routes:
+            if not isinstance(route, dict):
+                raise ValueError("each ComfyUI workflow route must be an object")
+            route_id = str(route.get("id") or "").strip()
+            workflow = route.get("workflow")
+            match = route.get("match")
+            route_models = match.get("models") if isinstance(match, dict) else None
+            if not route_id or route_id in route_ids:
+                raise ValueError("each ComfyUI workflow route requires a unique id")
+            if route_models is not None:
+                if (
+                    not isinstance(route_models, list)
+                    or len(route_models) != 1
+                    or not str(route_models[0] or "").strip()
+                ):
+                    raise ValueError(
+                        "each ComfyUI workflow route accepts at most one model name"
+                    )
+                models.add(str(route_models[0]).strip())
+            if not isinstance(workflow, dict) or not workflow:
+                raise ValueError(
+                    "each ComfyUI workflow route requires an API Format JSON object"
+                )
+            if not any(
+                isinstance(node, dict) and ("class_type" in node or "inputs" in node)
+                for node in workflow.values()
+            ):
+                raise ValueError(
+                    f"ComfyUI workflow {route_id} must use exported API Format"
+                )
+            route_ids.append(route_id)
+        if len(models) != 1:
+            raise ValueError("a ComfyUI channel supports one model name")
+        return sorted(models), route_ids
+
+    workflows = comfyui.get("workflow_by_model")
+    if not isinstance(workflows, dict) or not workflows:
+        raise ValueError("ComfyUI requires at least one model workflow")
+    for model, workflow in workflows.items():
+        if (
+            not str(model or "").strip()
+            or not isinstance(workflow, dict)
+            or not workflow
+        ):
+            raise ValueError(
+                "each ComfyUI workflow requires a model name and JSON object"
+            )
+        if not any(
+            isinstance(node, dict) and ("class_type" in node or "inputs" in node)
+            for node in workflow.values()
+        ):
+            raise ValueError(
+                f"ComfyUI workflow for {model} must use exported API Format"
+            )
+    return (
+        [str(model).strip() for model in workflows],
+        [str(model) for model in workflows],
+    )
+
+
 def save_newapi_provider_channels(
-    channels: list[dict[str, str]],
-) -> list[dict[str, str]]:
+    channels: list[dict[str, Any]],
+    *,
+    preserve_unmentioned: bool = False,
+) -> list[dict[str, Any]]:
     existing_by_provider = {
         channel["provider"]: channel for channel in get_newapi_provider_channels()
     }
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in channels:
         provider = str(item.get("provider") or "").strip().lower()
@@ -345,14 +457,39 @@ def save_newapi_provider_channels(
             "",
         )
         base_url = str(item.get("baseUrl") or "").strip().rstrip("/")
-        if not upstream_key:
+        channel_type = max(
+            0,
+            int(item.get("type") or previous.get("type") or 0),
+        )
+        if provider == "comfyui" and channel_type == 0:
+            channel_type = 63
+        raw_priority = item.get("priority")
+        priority = int(
+            previous.get("priority", 0) if raw_priority is None else raw_priority
+        )
+        raw_settings = item.get("settings", previous.get("settings", {}))
+        channel_settings = raw_settings if isinstance(raw_settings, dict) else {}
+        if provider == "comfyui":
+            if not base_url:
+                raise ValueError("baseUrl is required for provider comfyui")
+            parse_comfyui_channel_workflows(channel_settings)
+        if not upstream_key and provider != "comfyui":
             raise ValueError(f"upstreamKey is required for provider {provider}")
         normalized.append(
             {
                 "provider": provider,
+                "type": channel_type,
                 "upstreamKey": upstream_key,
                 "baseUrl": base_url,
+                "priority": priority,
+                "settings": channel_settings,
             }
+        )
+    if preserve_unmentioned:
+        normalized.extend(
+            channel
+            for provider, channel in existing_by_provider.items()
+            if provider not in seen
         )
     _write_many(
         {
@@ -366,7 +503,7 @@ def save_newapi_provider_channels(
     return normalized
 
 
-def get_newapi_media_model_mappings() -> dict[str, dict[str, str]]:
+def get_newapi_media_model_mappings() -> dict[str, dict[str, Any]]:
     settings = get_model_gateway_settings()
     return _decode_media_model_mappings(
         settings.get("custom_newapi_media_model_mappings")
@@ -374,9 +511,13 @@ def get_newapi_media_model_mappings() -> dict[str, dict[str, str]]:
 
 
 def save_newapi_media_model_mappings(
-    mappings: dict[str, dict[str, str]],
-) -> dict[str, dict[str, str]]:
-    normalized: dict[str, dict[str, str]] = {}
+    mappings: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    from novelvideo.media_model_request_schema import (
+        validate_media_model_catalog_config,
+    )
+
+    normalized: dict[str, dict[str, Any]] = {}
     for model, item in mappings.items():
         model_name = str(model or "").strip()
         if not model_name:
@@ -384,10 +525,26 @@ def save_newapi_media_model_mappings(
         provider = str(item.get("provider") or "").strip().lower()
         if not provider:
             raise ValueError(f"provider is required for media model {model_name}")
-        normalized[model_name] = {
+        media_type = str(item.get("mediaType") or "").strip().lower()
+        config = item.get("config") if isinstance(item.get("config"), dict) else {}
+        if media_type in {"image", "video"}:
+            validate_media_model_catalog_config(config, media_type)
+        normalized_item: dict[str, Any] = {
             "provider": provider,
             "upstreamModel": str(item.get("upstreamModel") or "").strip(),
         }
+        if media_type in {"image", "video", "audio"}:
+            normalized_item["mediaType"] = media_type
+        label = str(item.get("label") or "").strip()
+        if label:
+            normalized_item["label"] = label
+        if "enabled" in item:
+            normalized_item["enabled"] = item.get("enabled") is not False
+        if "sortOrder" in item:
+            normalized_item["sortOrder"] = int(item.get("sortOrder") or 100)
+        if config:
+            normalized_item["config"] = config
+        normalized[model_name] = normalized_item
     _write_many(
         {
             "custom_newapi_media_model_mappings": json.dumps(
@@ -400,8 +557,254 @@ def save_newapi_media_model_mappings(
     return normalized
 
 
-def build_newapi_media_model_mappings_status() -> dict[str, dict[str, str]]:
+def build_newapi_media_model_mappings_status() -> dict[str, dict[str, Any]]:
     return get_newapi_media_model_mappings()
+
+
+def _official_media_catalog_bundle_path() -> Path:
+    return Path(__file__).with_name("official_media_models.json")
+
+
+def _official_media_catalog_cache_path() -> Path:
+    from novelvideo import config
+
+    return Path(config.STATE_DIR) / "local" / "official_media_models.json"
+
+
+def _read_official_media_catalog(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("official media model configuration is invalid") from exc
+    try:
+        return _validate_official_media_catalog(payload)
+    except ValueError as exc:
+        raise RuntimeError("official media model configuration is invalid") from exc
+
+
+def _effective_official_media_catalog() -> tuple[dict[str, Any], str]:
+    bundled = _read_official_media_catalog(_official_media_catalog_bundle_path())
+    cache_path = _official_media_catalog_cache_path()
+    if cache_path.is_file():
+        try:
+            cached = _read_official_media_catalog(cache_path)
+            if _catalog_version(cached) >= _catalog_version(bundled):
+                return cached, "remote"
+        except RuntimeError:
+            pass
+    return bundled, "bundled"
+
+
+def _official_media_catalog_digest(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def get_official_media_catalog_update_status() -> dict[str, Any]:
+    settings = _read_all()
+    payload, source = _effective_official_media_catalog()
+    digest = _official_media_catalog_digest(payload)
+    metadata_matches = settings.get(OFFICIAL_MEDIA_CATALOG_SHA256_KEY) == digest
+    return {
+        "autoUpdate": settings.get(OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY, "0")
+        != "0",
+        "source": source,
+        "schemaVersion": int(payload.get("version") or 1),
+        "catalogVersion": str(
+            payload.get("catalogVersion") or payload.get("version") or "1"
+        ),
+        "modelCount": len(payload["mediaModels"]),
+        "lastCheckedAt": settings.get(OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY, ""),
+        "sha256": digest,
+        "revision": (
+            settings.get(OFFICIAL_MEDIA_CATALOG_REVISION_KEY, "")
+            if metadata_matches
+            else ""
+        ),
+        "publishedAt": (
+            settings.get(OFFICIAL_MEDIA_CATALOG_PUBLISHED_AT_KEY, "")
+            if metadata_matches
+            else ""
+        ),
+        "remoteUrl": settings.get(OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY, ""),
+        "lastError": settings.get(OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY, ""),
+    }
+
+
+def save_official_media_catalog_auto_update(enabled: bool) -> dict[str, Any]:
+    _write_many({OFFICIAL_MEDIA_CATALOG_AUTO_UPDATE_KEY: "1" if enabled else "0"})
+    return get_official_media_catalog_update_status()
+
+
+def get_official_media_catalog_remote_etag(source_url: str) -> str:
+    settings = _read_all()
+    if settings.get(OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY) != str(source_url).strip():
+        return ""
+    payload, _source = _effective_official_media_catalog()
+    if settings.get(OFFICIAL_MEDIA_CATALOG_SHA256_KEY) != _official_media_catalog_digest(
+        payload
+    ):
+        return ""
+    return settings.get(OFFICIAL_MEDIA_CATALOG_ETAG_KEY, "")
+
+
+def record_official_media_catalog_check(
+    *, source_url: str, etag: str = "", error: str = ""
+) -> dict[str, Any]:
+    values = {
+        OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY: _now_iso(),
+        OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY: str(source_url or "").strip(),
+        OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY: str(error or "").strip()[:500],
+        OFFICIAL_MEDIA_CATALOG_ETAG_KEY: str(etag or "").strip(),
+    }
+    _write_many(values)
+    return get_official_media_catalog_update_status()
+
+
+def install_official_media_catalog(
+    payload: dict[str, Any],
+    *,
+    source_url: str,
+    expected_sha256: str = "",
+    revision: str = "",
+    published_at: str = "",
+    etag: str = "",
+) -> tuple[bool, dict[str, Any]]:
+    validated = _validate_official_media_catalog(payload)
+    candidate_digest = _official_media_catalog_digest(validated)
+    normalized_expected_digest = str(expected_sha256 or "").strip().lower()
+    if normalized_expected_digest and candidate_digest != normalized_expected_digest:
+        raise ValueError("official media catalog SHA256 does not match manifest")
+    with _OFFICIAL_MEDIA_CATALOG_WRITE_LOCK:
+        current, _source = _effective_official_media_catalog()
+        candidate_version = _catalog_version(validated)
+        current_version = _catalog_version(current)
+        current_digest = _official_media_catalog_digest(current)
+        if candidate_version < current_version:
+            raise ValueError("official media catalog downgrade is not allowed")
+        if candidate_version == current_version and candidate_digest != current_digest:
+            raise ValueError(
+                "official media catalog version already exists with different content"
+            )
+        updated = candidate_digest != current_digest
+        if updated:
+            cache_path = _official_media_catalog_cache_path()
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=cache_path.parent,
+                    prefix=f".{cache_path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as temporary:
+                    temporary.write(
+                        json.dumps(validated, ensure_ascii=False, indent=2) + "\n"
+                    )
+                    temporary.flush()
+                    os.fsync(temporary.fileno())
+                    temporary_path = Path(temporary.name)
+                temporary_path.replace(cache_path)
+            finally:
+                if temporary_path is not None:
+                    temporary_path.unlink(missing_ok=True)
+    _write_many(
+        {
+            OFFICIAL_MEDIA_CATALOG_LAST_CHECKED_KEY: _now_iso(),
+            OFFICIAL_MEDIA_CATALOG_REMOTE_URL_KEY: str(source_url or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_ETAG_KEY: str(etag or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_REVISION_KEY: str(revision or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_PUBLISHED_AT_KEY: str(published_at or "").strip(),
+            OFFICIAL_MEDIA_CATALOG_SHA256_KEY: candidate_digest,
+            OFFICIAL_MEDIA_CATALOG_LAST_ERROR_KEY: "",
+        }
+    )
+    return updated, get_official_media_catalog_update_status()
+
+
+def get_official_media_model_mappings() -> dict[str, dict[str, Any]]:
+    payload, _source = _effective_official_media_catalog()
+    models = payload["mediaModels"]
+    return {
+        str(model): dict(item)
+        for model, item in models.items()
+        if str(model).strip() and isinstance(item, dict)
+    }
+
+
+def _media_model_catalog(
+    mappings: dict[str, dict[str, Any]],
+    media_type: str,
+    *,
+    provider: str | None = None,
+    include_disabled: bool = False,
+) -> list[dict[str, Any]]:
+    wanted = str(media_type or "").strip().lower()
+    if wanted not in {"image", "video"}:
+        return []
+    result: list[dict[str, Any]] = []
+    for model, item in mappings.items():
+        if provider and item.get("provider") != provider:
+            continue
+        disabled = item.get("enabled") is False
+        if item.get("mediaType") != wanted or (disabled and not include_disabled):
+            continue
+        config = item.get("config") if isinstance(item.get("config"), dict) else {}
+        config = dict(config)
+        config.setdefault(
+            "request",
+            {
+                "endpoint": (
+                    "images/generations" if wanted == "image" else "video/generations"
+                ),
+                "parameters": [],
+            },
+        )
+        gateway_model = str(item.get("upstreamModel") or model)
+        api_model = model if wanted == "image" else f"newapi_{model}"
+        aliases = item.get("aliases") if isinstance(item.get("aliases"), list) else []
+        result.append(
+            {
+                **config,
+                "catalogId": model,
+                "catalog_id": model,
+                "id": model,
+                "providerId": "newapi",
+                "provider": "newapi",
+                "apiModel": api_model,
+                "api_model": api_model,
+                "gatewayModel": gateway_model,
+                "gateway_model": gateway_model,
+                "aliases": [str(alias) for alias in aliases if str(alias).strip()],
+                "label": str(item.get("label") or model),
+                "sortOrder": int(item.get("sortOrder") or 100),
+                **({"enabled": False} if disabled else {}),
+            }
+        )
+    return sorted(result, key=lambda entry: (int(entry["sortOrder"]), str(entry["id"])))
+
+
+def get_official_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
+    return _media_model_catalog(get_official_media_model_mappings(), media_type)
+
+
+def get_ce_media_model_catalog(
+    media_type: str,
+    *,
+    provider: str | None = None,
+    include_disabled: bool = False,
+) -> list[dict[str, Any]]:
+    """Expose CE-local media settings using the EE catalog response contract."""
+    return _media_model_catalog(
+        get_newapi_media_model_mappings(),
+        media_type,
+        provider=provider,
+        include_disabled=include_disabled,
+    )
 
 
 def get_newapi_embedding_model_config() -> dict[str, Any]:
@@ -458,9 +861,17 @@ def build_newapi_provider_channels_status() -> list[dict[str, Any]]:
     return [
         {
             "provider": channel["provider"],
-            "configured": bool(channel["upstreamKey"]),
+            "type": channel.get("type", 0),
+            "configured": bool(channel["upstreamKey"])
+            or (
+                channel["provider"] == "comfyui"
+                and bool(channel["baseUrl"])
+                and bool(channel.get("settings"))
+            ),
             "upstreamKeyPreview": mask_secret(channel["upstreamKey"]),
             "baseUrl": channel["baseUrl"],
+            "priority": channel.get("priority", 0),
+            "settings": channel.get("settings", {}),
         }
         for channel in get_newapi_provider_channels()
     ]
@@ -543,13 +954,15 @@ def get_ce_newapi_config_for_mode(mode: str) -> EffectiveNewApiConfig:
         return EffectiveNewApiConfig(
             mode=MODE_CUSTOM,
             source="custom",
-            base_url=normalize_relay_base_url(settings.get("custom_newapi_base_url", "")),
+            base_url=normalize_relay_base_url(
+                settings.get("custom_newapi_base_url", "")
+            ),
             api_key=normalize_api_key(settings.get("custom_newapi_api_key", "")),
         )
     db_official_api_key = normalize_api_key(settings.get("official_newapi_api_key", ""))
     return EffectiveNewApiConfig(
-        mode=MODE_OFFICIAL,
-        source="official",
+        mode=mode,
+        source="hybrid" if mode == MODE_HYBRID else "official",
         base_url=normalize_relay_base_url(OFFICIAL_NEWAPI_BASE_URL),
         api_key=db_official_api_key,
     )
@@ -842,14 +1255,12 @@ def build_newapi_database_status(
         else "environment"
     )
     configured = bool(
-        effective_sql_dsn
-        and (effective_sql_dsn != "local" or effective_sqlite_path)
+        effective_sql_dsn and (effective_sql_dsn != "local" or effective_sqlite_path)
     )
     available = configured
     if effective_sql_dsn == "local":
         available = bool(
-            effective_sqlite_path
-            and Path(effective_sqlite_path).expanduser().is_file()
+            effective_sqlite_path and Path(effective_sqlite_path).expanduser().is_file()
         )
     return {
         "configured": configured,

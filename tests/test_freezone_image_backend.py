@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -192,33 +193,6 @@ def _patch_limit_exceeded_enqueue(
     monkeypatch.setattr(freezone_routes, "get_task_backend", lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task))
 
 
-def _override_api_user(app: FastAPI, dependency) -> None:
-    for route in app.routes:
-        dependant = getattr(route, "dependant", None)
-        if dependant is None:
-            continue
-        for dep in dependant.dependencies:
-            if getattr(dep.call, "__name__", "") == "get_api_user":
-                app.dependency_overrides[dep.call] = dependency
-
-
-def _patch_freezone_endpoint_globals(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
-    for route in app.routes:
-        endpoint = getattr(route, "endpoint", None)
-        if getattr(endpoint, "__name__", "") != "freezone_video_omni_gen":
-            continue
-        monkeypatch.setitem(
-            endpoint.__globals__,
-            "_resolve_freezone_project",
-            freezone_routes._resolve_freezone_project,
-        )
-        monkeypatch.setitem(
-            endpoint.__globals__,
-            "get_task_backend",
-            freezone_routes.get_task_backend,
-        )
-
-
 def _patch_runtime_error_enqueue(
     monkeypatch: pytest.MonkeyPatch,
     message: str = "broker unavailable",
@@ -255,16 +229,19 @@ def test_freezone_omni_video_limit_returns_429_envelope_through_asgi(
 
     _patch_freezone_project(monkeypatch, tmp_path)
     _patch_limit_exceeded_enqueue(monkeypatch, queue_kind="video")
-    app = create_app()
+    production_app = create_app()
+    # Keep this an ASGI-level contract test while isolating it from the shared
+    # router/port state accumulated by the full sequential test suite.
+    app = FastAPI()
+    app.exception_handlers.update(production_app.exception_handlers)
+    app.include_router(freezone_routes.router, prefix="/api/v1")
 
     async def fake_user():
-        return {"username": "admin"}
+        return {"id": "owner_1", "username": "admin"}
 
-    _patch_freezone_endpoint_globals(app, monkeypatch)
-    _override_api_user(app, fake_user)
-    client = TestClient(app)
+    app.dependency_overrides[freezone_routes.get_api_user] = fake_user
 
-    response = client.post(
+    response = TestClient(app).post(
         "/api/v1/projects/58/freezone/video/omni-gen",
         json={"prompt": "雨夜街头，人物缓慢回头。"},
     )
@@ -339,6 +316,365 @@ async def test_freezone_video_omni_gen_rejects_happyhorse_model(
 
     assert exc.value.status_code == 400
     assert "HappyHorse video does not support omni reference mode" in str(exc.value.detail)
+
+
+def _audio_reference(project_dir: Path, name: str) -> dict[str, str]:
+    """落一个占位音频文件并返回对应的 reference 条目（时长由测试直接打桩）。"""
+    path = project_dir / "freezone" / "_uploads" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"RIFF----WAVEfmt ")
+    return {"type": "audio", "url": f"/static/admin/58/freezone/_uploads/{name}"}
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_rejects_audio_total_duration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """3 条各 6s：逐条全合规、总计 18s —— 后端兜底必须在计费前 400 掉。
+
+    这就是 2026-08-06 3060 环境两次任务失败的形状：前端那层若被绕过（老画布数据、
+    <audio> 探测失败），厂商会在扣费之后才拒。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    references = [_audio_reference(project_dir, f"clip{i}.wav") for i in range(3)]
+    async def fake_probe(_path: str) -> float:
+        return 6.0
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 400
+    assert "total duration must be <= 15.2s" in str(exc.value.detail)
+    assert "got 18s" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_allows_audio_within_total_duration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """总计正好顶格 15.2s 必须放行——兜底拦过头比不拦更难查。"""
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    references = [_audio_reference(project_dir, f"ok{i}.wav") for i in range(2)]
+    durations = iter([9.0, 6.2])
+
+    async def fake_probe(_path: str) -> float:
+        return next(durations)
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    # 走到 enqueue 就说明时长这关过了，不必真的排任务。
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_skips_unprobeable_audio(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """ffprobe 测不出时不能把正常提交拦死——这层只在「知道超了」时才拦。"""
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    references = [_audio_reference(project_dir, f"blind{i}.wav") for i in range(3)]
+    async def fake_probe(_path: str) -> None:
+        return None
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 503
+
+
+def _patch_video_catalog(monkeypatch: pytest.MonkeyPatch, entry: dict[str, object]) -> None:
+    """视频目录替身：只放一条，omni-gen 会按它解析 backend / capabilities。"""
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]] | None:
+        return [entry] if media_type == "video" else None
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_uses_catalog_audio_total_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """后台 referenceAudioTotalMaxSeconds 可以把上限**收得更严**（这里 8s < 厂商 15.2s）。
+
+    配宽的方向由 `..._clamps_catalog_total_to_vendor_cap` 盯着：那边取小之后厂商硬顶仍然
+    生效。两条合起来才是「取小」这个语义。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-omni",
+            "id": "cat-omni",
+            "apiModel": "newapi_seedance-2.0-fast",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+            "referenceAudioTotalMaxSeconds": 8,
+        },
+    )
+    references = [_audio_reference(project_dir, f"cfg{i}.wav") for i in range(2)]
+
+    async def fake_probe(_path: str) -> float:
+        return 5.0
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-omni",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    # 10s 在厂商 15.2s 之内，是后台那条 8s 把它拦下的。
+    assert exc.value.status_code == 400
+    assert "total duration must be <= 8s" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_skips_duration_guard_for_unknown_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """边界未知的模型（这里是 seedance-1.5-pro，由目录打开 all_reference）不套 2.0 的数字。
+
+    1.8~15.2s 是从 2.0 的报文里实测出来的，别人家的模型凭空 400 比漏拦更糟；要卡就在
+    目录里配 referenceAudioTotalMaxSeconds 显式声明。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-other",
+            "id": "cat-other",
+            "apiModel": "newapi_seedance-1.5-pro",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+        },
+    )
+    references = [_audio_reference(project_dir, f"other{i}.wav") for i in range(3)]
+
+    async def fake_probe(_path: str) -> float:
+        return 6.0  # 总计 18s，若误套 Seedance 口径就会 400
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-other",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_catalog_total_does_not_apply_per_clip_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """后台配了总时长≠授权用 Seedance 的逐条边界卡它。
+
+    referenceAudioTotalMaxSeconds=60 的非 2.0 模型：一条 25s 的音频在总时长之内，必须放行。
+    早先这里的开关是一个 `audio_bounds_known`，配了总时长就连 1.8~15.2s 一起套上去，
+    正好会把这条 25s 凭空 400 掉。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-long",
+            "id": "cat-long",
+            "apiModel": "newapi_seedance-1.5-pro",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+            "referenceAudioTotalMaxSeconds": 60,
+        },
+    )
+    references = [_audio_reference(project_dir, "long.wav")]
+
+    async def fake_probe(_path: str) -> float:
+        return 25.0  # > 15.2s，但对这个模型没有逐条上限
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-long",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    # 503 = 走到了入队（被替身打回），说明时长守卫放行了。
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_uses_explicit_catalog_total_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """显式目录配置是权威值，不能再被代码里的隐藏厂商常量覆盖。"""
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-wide",
+            "id": "cat-wide",
+            "apiModel": "newapi_seedance-2.0-fast",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+            "referenceAudioTotalMaxSeconds": 60,
+        },
+    )
+    references = [_audio_reference(project_dir, f"wide{i}.wav") for i in range(3)]
+
+    async def fake_probe(_path: str) -> float:
+        return 6.0
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-wide",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    # 503 = 通过时长校验并走到入队（测试替身故意返回 broker unavailable）。
+    assert exc.value.status_code == 503
+
+
+def test_catalog_audio_total_duration_max_rejects_non_finite() -> None:
+    """inf 不能当成上限：`inf > 0` 是 True，漏进来就等于静默关掉总时长判定。
+
+    写入侧 schema 已经挡了，但目录条目可能是那道校验存在之前落的库，读出来再挡一次。
+    """
+    read = freezone_routes._catalog_audio_total_duration_max
+    assert read({"referenceAudioTotalMaxSeconds": 15.2}) == 15.2
+    for bad in (float("inf"), float("nan"), float("-inf"), 0, -1, "15.2", None):
+        assert read({"referenceAudioTotalMaxSeconds": bad}) is None
+    assert read(None) is None
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_omni_gen_probes_audio_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """3 条音频必须并发探测。
+
+    ffprobe 单条有 20s 超时，串行 await 会把 3 条叠成最长 60s 的请求耗时。这里让每个
+    探测在返回前先 `asyncio.sleep(0)` 让出一次，只有并发调度才可能出现「3 个都进来了、
+    还没有一个返回」的时刻。
+    """
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _patch_video_catalog(
+        monkeypatch,
+        {
+            "catalogId": "cat-conc",
+            "id": "cat-conc",
+            "apiModel": "newapi_seedance-2.0-fast",
+            "providerId": "newapi",
+            "supportedModes": ["all_reference"],
+        },
+    )
+    references = [_audio_reference(project_dir, f"conc{i}.wav") for i in range(3)]
+
+    in_flight = 0
+    peak = 0
+
+    async def fake_probe(_path: str) -> float:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0)
+        in_flight -= 1
+        return 3.0
+
+    monkeypatch.setattr(freezone_routes, "_probe_reference_audio_seconds", fake_probe)
+    _patch_runtime_error_enqueue(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes.freezone_video_omni_gen(
+            project="58",
+            body=freezone_routes.FreezoneVideoOmniGenRequest(
+                prompt="雨夜街头，人物缓慢回头。",
+                model="cat-conc",
+                references=references,
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 503  # 9s 未超限，走到入队被替身打回
+    assert peak == 3
+
+
+@pytest.mark.asyncio
+async def test_probe_reference_audio_seconds_returns_none_when_probe_fails(
+    tmp_path: Path,
+) -> None:
+    """ffprobe 失败必须回 None，不能像 utils.media_io.get_audio_duration 那样返回 5.0。
+
+    5.0 是个合法值，会让兜底变成静默放行——这个断言就是防它被顺手换掉。
+    """
+    broken = tmp_path / "not-audio.wav"
+    broken.write_bytes(b"not audio at all")
+    assert await freezone_routes._probe_reference_audio_seconds(str(broken)) is None
 
 
 @pytest.mark.asyncio
@@ -428,7 +764,8 @@ async def test_freezone_video_generation_enqueues_feature_billing(
         human_review=False,
         scene_optimize=None,
         backend="newapi_seedance-1.0-pro-fast",
-        gen_mode="imageToVideo",
+        gen_mode="image_reference",
+        requested_gen_mode="imageToVideo",
     )
 
     assert result["data"]["task_type"] == "freezone_video_gen"
@@ -443,9 +780,128 @@ async def test_freezone_video_generation_enqueues_feature_billing(
         "generate_audio": True,
         "pricing_kind": "video",
         "pricing_model": "seedance-1.0-pro-fast",
-        "pricing_params": {"resolution": "1080p"},
+        "pricing_params": {"resolution": "1080p", "video_input": "none"},
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "duration_seconds": 8,
+            "output_duration_seconds": 8,
+            "input_video_duration_ms": 0,
+            "input_video_billed_seconds": 0,
+        },
         "pricing_model_selection": "newapi_seedance-1.0-pro-fast",
+        "video_input_present": False,
+        "input_video_duration_seconds": 0.0,
     }
+    assert captured["payload"]["gen_mode"] == "image_reference"
+    assert captured["payload"]["requested_gen_mode"] == "imageToVideo"
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_generation_probes_reference_duration_before_billing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_video_ref"),
+            backend="celery",
+            queue="node.node_a.video",
+        )
+
+    async def fake_probe(paths):
+        assert list(paths) == ["/project/a.mp4", "/project/b.mp4"]
+        return 11.95
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+    monkeypatch.setattr(
+        freezone_routes,
+        "probe_total_video_duration_seconds",
+        fake_probe,
+    )
+
+    await freezone_routes._start_or_enqueue_freezone_video_gen(
+        ctx=_project_ctx(tmp_path),
+        username="admin",
+        project="demo",
+        project_dir=tmp_path / "project",
+        output_dir=str(tmp_path / "output"),
+        job_id="job_video_ref",
+        prompt="参考视频生成",
+        reference_items=[
+            {"type": "video", "path": "/project/a.mp4"},
+            {"type": "video", "path": "/project/b.mp4"},
+        ],
+        aspect_ratio="16:9",
+        resolution="720p",
+        duration_seconds=12,
+        generate_audio=False,
+        human_review=False,
+        scene_optimize=None,
+        backend="newapi_seedance-2.0",
+        gen_mode="allReference",
+    )
+
+    billing = captured["payload"]["billing"]
+    assert billing["pricing_params"] == {
+        "resolution": "720p",
+        "video_input": "present",
+    }
+    assert billing["pricing_quantity"] == 23
+    assert billing["pricing_metrics"]["input_video_billed_seconds"] == 11
+
+
+@pytest.mark.asyncio
+async def test_freezone_video_generation_validates_catalog_video_duration_before_billing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def unexpected_enqueue(*_args, **_kwargs):
+        raise AssertionError("duration validation must happen before enqueue")
+
+    async def fake_probe(path: str) -> float:
+        return 4.0 if path.endswith("a.mp4") else 7.0
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=unexpected_enqueue),
+    )
+    monkeypatch.setattr(freezone_routes, "probe_video_duration_seconds", fake_probe)
+
+    with pytest.raises(HTTPException) as exc:
+        await freezone_routes._start_or_enqueue_freezone_video_gen(
+            ctx=_project_ctx(tmp_path),
+            username="admin",
+            project="demo",
+            project_dir=tmp_path / "project",
+            output_dir=str(tmp_path / "output"),
+            job_id="job_video_limit",
+            prompt="参考视频生成",
+            reference_items=[
+                {"type": "video", "path": "/project/a.mp4"},
+                {"type": "video", "path": "/project/b.mp4"},
+            ],
+            aspect_ratio="16:9",
+            resolution="720p",
+            duration_seconds=12,
+            generate_audio=False,
+            human_review=False,
+            scene_optimize=None,
+            backend="newapi_seedance-2.0",
+            gen_mode="allReference",
+            capabilities={"referenceVideoTotalMaxSeconds": 10},
+        )
+
+    assert exc.value.status_code == 400
+    assert "video references total duration must be <= 10s" in str(exc.value.detail)
 
 
 @pytest.mark.asyncio
@@ -496,6 +952,11 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
         "pricing_kind": "audio",
         "pricing_model": INDEXTTS2_RECORD_MODEL,
         "pricing_params": {},
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "billable_chars": 7,
+        },
         "items": 7,
     }
 
@@ -510,6 +971,11 @@ async def test_freezone_audio_generation_enqueues_two_feature_billings(
         "pricing_model": "LingShan-MU-11",
         "pricing_params": {},
         "pricing_quantity": 31,
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "duration_seconds": 31,
+        },
     }
 
 
@@ -557,6 +1023,11 @@ async def test_freezone_image_reverse_prompt_enqueues_feature_billing(
         "pricing_kind": "text",
         "pricing_model": "freezone-vision-model",
         "pricing_params": {},
+        "pricing_metrics": {
+            "call_count": 1,
+            "item_count": 1,
+            "billable_chars": 5,
+        },
     }
     assert captured["payload"]["instruction"] == "电影感光影"
 
@@ -598,7 +1069,10 @@ def test_freezone_ai_staging_prop_endpoint_returns_ai_prop(monkeypatch, tmp_path
     monkeypatch.setattr(freezone_routes, "_run_ai_staging_prop", fake_run_ai_staging_prop)
     app = FastAPI()
     app.include_router(freezone_routes.router, prefix="/api/v1")
-    app.dependency_overrides[freezone_routes.get_api_user] = lambda: {"username": "admin"}
+    app.dependency_overrides[freezone_routes.get_api_user] = lambda: {
+        "id": "owner_1",
+        "username": "admin",
+    }
     client = TestClient(app)
 
     response = client.post(
@@ -2789,6 +3263,54 @@ async def test_freezone_celery_text_runner_records_project_node_history(
 
 
 @pytest.mark.asyncio
+async def test_freezone_celery_text_generate_runner_records_project_node_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novelvideo.freezone.history import read_generation_history
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    ctx = _project_ctx(tmp_path)
+    project_dir = ctx.output_dir
+
+    async def fake_generate_freezone_text(*, prompt: str):
+        assert prompt == "写一段雨夜重逢"
+        return "DC-freezone-text-writer-LLM", "雨夜里，他们在旧站台重逢。"
+
+    class FakeTaskManager:
+        def update_progress_for_project(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        "novelvideo.freezone.text_node.generate_freezone_text",
+        fake_generate_freezone_text,
+    )
+    monkeypatch.setattr(freezone_runner, "get_task_manager", lambda: FakeTaskManager())
+
+    result = await freezone_runner._run_freezone_text_generate_async(
+        {
+            "payload": {
+                "job_id": "job_text_generate",
+                "project_dir": str(project_dir),
+                "prompt": "写一段雨夜重逢",
+                "canvas_id": "canvas_a",
+                "node_id": "node_text",
+            }
+        },
+        ctx,
+    )
+
+    history = read_generation_history(
+        project_dir=project_dir,
+        canvas_id="canvas_a",
+        node_id="node_text",
+    )
+    assert result["generated_text"] == "雨夜里，他们在旧站台重逢。"
+    assert history[-1]["task_type"] == "freezone_text_generate"
+    assert history[-1]["model"] == "DC-freezone-text-writer-LLM"
+
+
+@pytest.mark.asyncio
 async def test_freezone_image_to_3gs_task_includes_fixed_feature_billing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3015,6 +3537,48 @@ async def test_freezone_text_job_preserves_canvas_node_context_in_celery_payload
     assert captured["payload"]["canvas_id"] == "canvas_a"
     assert captured["payload"]["node_id"] == "node_text"
     assert captured["payload"]["billing"] == {"billable_chars": 2}
+
+
+@pytest.mark.asyncio
+async def test_freezone_text_generate_job_uses_visible_chars_for_billing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _project_ctx(tmp_path)
+    captured: dict = {}
+
+    async def fake_resolve_freezone_project(*_args, **_kwargs):
+        return ctx, "admin", "demo", ctx.output_dir, str(ctx.output_dir)
+
+    async def fake_enqueue_freezone_background_job(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "data": {"task_key": "task_key"}}
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve_freezone_project)
+    monkeypatch.setattr(
+        freezone_routes,
+        "_enqueue_freezone_background_job",
+        fake_enqueue_freezone_background_job,
+    )
+    monkeypatch.setattr(freezone_routes, "_new_job_id", lambda: "job_text_generate")
+
+    await freezone_routes.freezone_text_generate(
+        project="proj_freezone",
+        body=freezone_routes.FreezoneTextGenerateRequest(
+            prompt=" 写一段\n雨夜故事 ",
+            canvas_id="canvas_a",
+            node_id="node_text",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert captured["task_type"] == "freezone_text_generate"
+    assert captured["payload"]["canvas_id"] == "canvas_a"
+    assert captured["payload"]["node_id"] == "node_text"
+    assert captured["payload"]["billing"] == {
+        "billable_chars": 7,
+        "operation": "text_generate",
+    }
 
 
 @pytest.mark.asyncio
@@ -3254,6 +3818,391 @@ async def test_scene_360_endpoint_caps_mainline_image_size_to_2k(
     assert captured["payload"]["billing"]["size"] == "2K"
     assert captured["payload"]["billing"]["quality"] == "low"
     assert captured["payload"]["billing"]["pricing_kind"] == "image"
+
+
+@pytest.mark.asyncio
+async def test_scene_360_endpoint_keeps_image_size_below_the_cap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """低于 2K 的档位必须原样透传，并带上目录身份一起计费。
+
+    画布面板按媒体模型目录里那一档报价 —— 目录只给 1K 的模型如果在这里被抬到
+    2K，报价与执行、计费口径就全对不上。
+    """
+    ctx = _project_ctx(tmp_path)
+    captured: dict = {}
+
+    async def fake_resolve_freezone_project(*_args, **_kwargs):
+        return ctx, "admin", "demo", ctx.output_dir, str(ctx.output_dir)
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        captured["payload"] = kwargs.get("payload") or {}
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_scene_360"),
+            backend="celery",
+            queue="node.node_a.world",
+        )
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve_freezone_project)
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+    _write_image(ctx.output_dir / "assets" / "scenes" / "小区" / "master.png")
+
+    await freezone_routes.freezone_scene_360(
+        project="proj_freezone",
+        body=freezone_routes.FreezoneScene360Request(
+            reference_url="/api/v1/projects/proj_freezone/media/assets/scenes/小区/master.png",
+            image_size="1k",
+            canvas_id="canvas_a",
+            node_id="node_scene_360",
+            quality="low",
+            model="google/gemini-2.5-flash-image-preview",
+            catalog_id="cat-77",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert captured["payload"]["params"]["image_size"] == "1K"
+    assert captured["payload"]["billing"]["size"] == "1K"
+    assert captured["payload"]["billing"]["catalog_id"] == "cat-77"
+    assert captured["payload"]["billing"]["pricing_model"] == "google/gemini-2.5-flash-image-preview"
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [
+        ("512", "512"),
+        ("1K", "1K"),
+        ("1k", "1K"),
+        ("2k", "2K"),
+        ("4k", "2K"),
+        ("invalid", "2K"),
+    ],
+)
+def test_scene_360_image_size_is_case_insensitive_and_capped(
+    requested: str,
+    expected: str,
+) -> None:
+    assert freezone_routes._cap_mainline_scene_360_image_size(requested) == expected
+
+
+def _fake_media_model_catalog(entries: list[dict[str, object]]):
+    """权威（EE）图片目录的替身：非空列表 = 目录里只认这几条。"""
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return entries
+
+    return fake_catalog
+
+
+def _patch_scene_360_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    captured: dict,
+) -> ProjectContext:
+    ctx = _project_ctx(tmp_path)
+
+    async def fake_resolve_freezone_project(*_args, **_kwargs):
+        return ctx, "admin", "demo", ctx.output_dir, str(ctx.output_dir)
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        captured.update(kwargs)
+        captured["payload"] = kwargs.get("payload") or {}
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_scene_360"),
+            backend="celery",
+            queue="node.node_a.world",
+        )
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve_freezone_project)
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+    _write_image(ctx.output_dir / "assets" / "scenes" / "小区" / "master.png")
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_scene_360_takes_model_and_billing_identity_from_the_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """身份以目录条目为准，不采信 body。
+
+    body 里的 catalog_id 直接决定按哪条目录规则扣费 —— 采信它就等于允许客户端
+    报一个便宜的 catalog_id、配一个贵的 model。
+    """
+    captured: dict = {}
+    _patch_scene_360_enqueue(monkeypatch, tmp_path, captured)
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {},
+            {},
+            {
+                "catalogId": "cat-real",
+                "id": "cat-real",
+                "providerId": "newapi",
+                "apiModel": "real-pano-model",
+                "gatewayModel": "real-pano-model",
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes, "_resolve_catalog_request", fake_resolve_catalog_request
+    )
+
+    await freezone_routes.freezone_scene_360(
+        project="proj_freezone",
+        body=freezone_routes.FreezoneScene360Request(
+            reference_url="/api/v1/projects/proj_freezone/media/assets/scenes/小区/master.png",
+            model="real-pano-model",
+            catalog_id="cat-cheap",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert captured["payload"]["params"]["model"] == "real-pano-model"
+    assert captured["payload"]["billing"]["catalog_id"] == "cat-real"
+    assert captured["payload"]["billing"]["pricing_model"] == "real-pano-model"
+
+
+@pytest.mark.asyncio
+async def test_scene_360_rejects_a_model_the_catalog_does_not_have(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """目录权威时非目录模型必须被拦掉，而不是拿默认模型偷偷跑掉。"""
+    captured: dict = {}
+    _patch_scene_360_enqueue(monkeypatch, tmp_path, captured)
+    monkeypatch.setattr(
+        freezone_routes,
+        "_ee_media_model_catalog",
+        _fake_media_model_catalog([{"catalogId": "cat-real", "apiModel": "real-pano-model"}]),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_scene_360(
+            project="proj_freezone",
+            body=freezone_routes.FreezoneScene360Request(
+                reference_url=(
+                    "/api/v1/projects/proj_freezone/media/assets/scenes/小区/master.png"
+                ),
+                model="not-in-catalog",
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc_info.value.status_code == 409
+    assert not captured
+
+
+@pytest.mark.asyncio
+async def test_template_edit_takes_provider_model_and_identity_from_the_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """宫格动作与 /freezone/edit 共用同一条执行链，provider 也要跟着目录走。
+
+    只发裸 model 的话网关按默认 provider 路由，目录里配的 openrouter 模型会被
+    送错家。
+    """
+    username = "admin"
+    project = "59"
+    project_dir, _output_dir = _patch_freezone_project(
+        monkeypatch, tmp_path, username=username, project=project
+    )
+    source = project_dir / "freezone" / "_uploads" / "portrait.png"
+    _write_image(source, size=(1080, 1920))
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {},
+            {},
+            {
+                "catalogId": "cat-grid",
+                "id": "cat-grid",
+                "providerId": "openrouter",
+                "apiModel": "google/gemini-2.5-flash-image-preview",
+                "gatewayModel": "google/gemini-2.5-flash-image-preview",
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes, "_resolve_catalog_request", fake_resolve_catalog_request
+    )
+    captured: dict[str, object] = {}
+    _patch_celery_edit_enqueue(monkeypatch, captured)
+
+    result = await freezone_routes.freezone_template_edit(
+        project=project,
+        body=freezone_routes.FreezoneTemplateEditRequest(
+            source_url="/static/admin/59/freezone/_uploads/portrait.png",
+            mode="multi_camera_nine_grid",
+            model="google/gemini-2.5-flash-image-preview",
+            catalog_id="cat-cheap",
+        ),
+        user={"username": username},
+    )
+
+    assert result["ok"] is True
+    assert captured["provider"] == "openrouter"
+    assert captured["model"] == "google/gemini-2.5-flash-image-preview"
+    assert captured["catalog_id"] == "cat-grid"
+    assert captured["billing"]["catalog_id"] == "cat-grid"
+
+
+@pytest.mark.asyncio
+async def test_template_edit_rejects_a_model_the_catalog_does_not_have(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    username = "admin"
+    project = "59"
+    project_dir, _output_dir = _patch_freezone_project(
+        monkeypatch, tmp_path, username=username, project=project
+    )
+    _write_image(project_dir / "freezone" / "_uploads" / "portrait.png", size=(1080, 1920))
+    monkeypatch.setattr(
+        freezone_routes,
+        "_ee_media_model_catalog",
+        _fake_media_model_catalog([{"catalogId": "cat-grid", "apiModel": "grid-model"}]),
+    )
+    captured: dict[str, object] = {}
+    _patch_celery_edit_enqueue(monkeypatch, captured)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_template_edit(
+            project=project,
+            body=freezone_routes.FreezoneTemplateEditRequest(
+                source_url="/static/admin/59/freezone/_uploads/portrait.png",
+                mode="multi_camera_nine_grid",
+                model="not-in-catalog",
+            ),
+            user={"username": username},
+        )
+
+    assert exc_info.value.status_code == 409
+    assert not captured
+
+
+@pytest.mark.asyncio
+async def test_freezone_edit_forwards_catalog_model_params_into_task_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """带参考图的图编辑走 /freezone/edit，目录动态参数必须一路到任务负载。
+
+    schema 要和取值一起下发 —— runner 只有拿到 requestPath 才知道把参数写进网关
+    请求体的哪个位置，只带值等于没生效。
+    """
+    username = "admin"
+    project = "58"
+    project_dir, _output_dir = _patch_freezone_project(
+        monkeypatch, tmp_path, username=username, project=project
+    )
+    source = project_dir / "freezone" / "_uploads" / "base.png"
+    _write_image(source, size=(1024, 1024))
+
+    schema = {
+        "endpoint": "images/edits",
+        "parameters": [
+            {"key": "quality", "requestPath": "quality", "modes": ["image_to_image"]},
+        ],
+    }
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            schema,
+            {"quality": "high"},
+            {
+                "catalogId": "cat-edit",
+                "id": "cat-edit",
+                "providerId": "newapi",
+                "apiModel": "custom-edit",
+                "gatewayModel": "custom-edit",
+            },
+        )
+
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
+    captured: dict[str, object] = {}
+    _patch_celery_edit_enqueue(monkeypatch, captured)
+
+    result = await freezone_routes.freezone_edit(
+        project=project,
+        body=freezone_routes.FreezoneEditRequest(
+            prompt="换成夜景",
+            base_url="/static/admin/58/freezone/_uploads/base.png",
+            model="custom-edit",
+            model_id="cat-edit",
+            gen_mode="image_to_image",
+            model_params={"quality": "high"},
+        ),
+        user={"username": username},
+    )
+
+    assert result["ok"] is True
+    assert captured["model_params"] == {"quality": "high"}
+    assert captured["request_schema"] == schema
+    assert captured["catalog_id"] == "cat-edit"
+
+
+@pytest.mark.asyncio
+async def test_run_freezone_edit_writes_model_params_into_gateway_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """runner 侧同 run_freezone_gen 一个口径：参数与 schema 都要落到网关 config。"""
+    from novelvideo import config as novelvideo_config
+    from novelvideo.freezone import jobs as freezone_jobs
+    from novelvideo.generators import nanobanana_grid
+
+    base = tmp_path / "base.png"
+    _write_image(base, size=(64, 64))
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        novelvideo_config,
+        "get_grid_generation_config",
+        lambda **_kwargs: {"provider": "newapi", "model": "custom-edit"},
+    )
+
+    async def fake_generate_reference_edit_image(**kwargs):
+        captured.update(kwargs)
+        Path(kwargs["output_path"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(kwargs["output_path"]).write_bytes(b"")
+        return kwargs["output_path"]
+
+    monkeypatch.setattr(
+        nanobanana_grid,
+        "generate_reference_edit_image",
+        fake_generate_reference_edit_image,
+    )
+
+    schema = {"endpoint": "images/edits", "parameters": [{"key": "quality"}]}
+    await freezone_jobs.run_freezone_edit(
+        project_dir=tmp_path,
+        job_id="job_edit",
+        prompt="换成夜景",
+        base_path=str(base),
+        model_params={"quality": "high"},
+        request_schema=schema,
+    )
+
+    assert captured["config"]["newapi_model_params"] == {"quality": "high"}
+    assert captured["config"]["newapi_request_schema"] == schema
 
 
 def _skill_beat_input() -> dict:
@@ -3779,6 +4728,7 @@ async def test_skill_run_frame_accepts_plain_canvas_image_as_sketch_input(
     )
 
     assert captured["task_type"] == "mainline_frame_from_context"
+    assert captured["product_surface"] == "freezone"
     assert captured["payload"]["billing"] == {
         "feature_key": "mainline.render_regen"
     }
@@ -3924,6 +4874,7 @@ async def test_skill_run_normalizes_project_media_url_before_dispatch(
     )
 
     assert captured["task_type"] == "mainline_sketch_from_context"
+    assert captured["product_surface"] == "freezone"
     assert captured["payload"]["billing"] == {
         "feature_key": "mainline.sketch_regen"
     }
@@ -6335,6 +7286,90 @@ async def test_freezone_image_models_prefers_ee_catalog(
     )
 
     assert result == {"ok": True, "data": catalog}
+
+
+def test_ce_media_catalog_overlay_preserves_unconfigured_defaults() -> None:
+    defaults = [
+        {
+            "catalogId": "default-image",
+            "id": "default-image",
+            "apiModel": "default-image",
+            "label": "Default",
+        },
+        {
+            "catalogId": "other-image",
+            "id": "other-image",
+            "apiModel": "other-image",
+            "label": "Other",
+        },
+    ]
+    configured = [
+        {
+            "catalogId": "default-image",
+            "id": "default-image",
+            "apiModel": "default-image",
+            "gatewayModel": "custom-upstream",
+        },
+        {
+            "catalogId": "custom-image",
+            "id": "custom-image",
+            "apiModel": "custom-image",
+            "label": "Custom",
+        },
+    ]
+
+    result = freezone_routes._merge_media_model_catalog_defaults(defaults, configured)
+
+    assert result == [
+        {
+            "catalogId": "default-image",
+            "id": "default-image",
+            "apiModel": "default-image",
+            "label": "Default",
+            "gatewayModel": "custom-upstream",
+        },
+        {
+            "catalogId": "other-image",
+            "id": "other-image",
+            "apiModel": "other-image",
+            "label": "Other",
+        },
+        {
+            "catalogId": "custom-image",
+            "id": "custom-image",
+            "apiModel": "custom-image",
+            "label": "Custom",
+        },
+    ]
+
+
+def test_ce_media_catalog_overlay_returns_defaults_without_local_models() -> None:
+    defaults = [{"id": "official-image", "apiModel": "official-image"}]
+
+    assert freezone_routes._merge_media_model_catalog_defaults(defaults, []) == defaults
+
+
+def test_ce_media_catalog_does_not_match_custom_upstream_model_as_catalog_id() -> None:
+    defaults = [
+        {
+            "catalogId": "LingShan-G2",
+            "id": "LingShan-G2",
+            "gatewayModel": "LingShan-G2",
+            "label": "Official",
+        }
+    ]
+    configured = [
+        {
+            "catalogId": "my-image",
+            "id": "my-image",
+            "gatewayModel": "LingShan-G2",
+            "label": "Custom",
+        }
+    ]
+
+    result = freezone_routes._merge_media_model_catalog_defaults(defaults, configured)
+
+    assert [entry["catalogId"] for entry in result] == ["LingShan-G2", "my-image"]
 
 
 @pytest.mark.asyncio

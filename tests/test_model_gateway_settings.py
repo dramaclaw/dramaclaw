@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+from pathlib import Path
 
 import pytest
 import respx
@@ -10,30 +12,45 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from novelvideo import config
+from novelvideo import model_gateway_settings
+from novelvideo import official_media_catalog_remote
+from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.api.routes import model_gateway
 from novelvideo.official_defaults import OFFICIAL_NEWAPI_BASE_URL
 from novelvideo.model_gateway_settings import (
     MODE_CUSTOM,
+    MODE_HYBRID,
     MODE_OFFICIAL,
     build_newapi_database_status,
     build_model_gateway_status,
     get_effective_cognee_embedding_config,
     get_effective_newapi_config,
+    get_ce_media_model_catalog,
+    get_official_media_model_catalog,
+    get_newapi_media_model_mappings,
+    get_newapi_provider_channels,
     normalize_relay_base_url,
     save_official_newapi_key,
     save_custom_newapi_gateway,
     save_newapi_embedding_model_config,
+    save_newapi_media_model_mappings,
     save_media_relay_config,
     save_newapi_database_config,
     save_newapi_provider_channels,
     set_model_gateway_mode,
 )
 from novelvideo.model_gateway_runtime import refresh_model_gateway_runtime
+from novelvideo.generators.video_generator import (
+    NewApiVideoGenerator,
+    newapi_video_backend_options,
+)
 from novelvideo.newapi_provisioner import (
+    _merge_channel_payload,
     AdminToken,
     build_channel_payload,
     ensure_newapi_setup,
     get_provisioner_config,
+    list_channel_types,
     NewApiSetupCredentials,
     NewApiProvisionerConfig,
     normalize_admin_base_url,
@@ -42,6 +59,96 @@ from novelvideo.newapi_provisioner import (
     update_provider_channel_credentials,
     upsert_channel,
 )
+
+
+def test_generic_comfyui_i2v_defaults_to_widescreen():
+    config = model_gateway._default_comfyui_media_model_config("wan-i2v")
+
+    assert config["ratioOptions"][0] == "16:9"
+
+
+def test_comfyui_channel_update_replaces_removed_workflow_models():
+    existing = {
+        "id": 9,
+        "type": 63,
+        "model_mapping": json.dumps({"old-model": "old-model", "kept": "kept"}),
+        "models": "old-model,kept",
+        "base_url": "http://127.0.0.1:8188",
+    }
+    incoming = build_channel_payload(
+        provider="comfyui",
+        channel_type=63,
+        upstream_key="",
+        model_mapping={"kept": "kept"},
+        base_url="http://127.0.0.1:8188",
+        other_settings={"comfyui": {"workflow_by_model": {"kept": {"1": {}}}}},
+    )
+
+    merged = _merge_channel_payload(existing, incoming)["channel"]
+
+    assert merged["models"] == "kept"
+    assert json.loads(merged["model_mapping"]) == {"kept": "kept"}
+
+
+@respx.mock
+def test_list_channel_types_normalizes_newapi_metadata():
+    cfg = NewApiProvisionerConfig(
+        admin_base_url="http://new-api:3000",
+        sql_dsn="local",
+        sqlite_path="/tmp/one-api.db",
+        admin_username="root",
+        init_timeout_ms=1000,
+        relay_token_name="dramaclaw-ce-runtime",
+    )
+    admin = AdminToken(
+        admin_user_id=1,
+        admin_username="root",
+        access_token="admin-secret",
+        token_created=False,
+    )
+    route = respx.get(
+        "http://new-api:3000/api/channel/types",
+        params={"status": 1},
+    ).mock(
+        return_value=Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "items": [
+                        {
+                            "type": 62,
+                            "provider": "TokenHub",
+                            "name": "TokenHub",
+                            "description": "Telecom gateway",
+                            "icon": "TokenHub",
+                            "default_base_url": "https://aigw.telecomjs.com",
+                            "status": 1,
+                            "capabilities": ["text", "video"],
+                            "requires_base_url": False,
+                            "supports_base_url_override": True,
+                        }
+                    ]
+                },
+            },
+        )
+    )
+
+    assert list_channel_types(cfg, admin) == [
+        {
+            "type": 62,
+            "provider": "tokenhub",
+            "name": "TokenHub",
+            "description": "Telecom gateway",
+            "icon": "TokenHub",
+            "defaultBaseUrl": "https://aigw.telecomjs.com",
+            "status": 1,
+            "capabilities": ["text", "video"],
+            "requiresBaseUrl": False,
+            "supportsBaseUrlOverride": True,
+        }
+    ]
+    assert route.called
 
 
 def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
@@ -55,6 +162,103 @@ def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
         "NEWAPI_BASE_URL",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+def test_comfyui_provider_channel_defaults_to_channel_type_63(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+
+    saved = save_newapi_provider_channels(
+        [
+            {
+                "provider": "comfyui",
+                "baseUrl": "http://host.docker.internal:8188",
+                "settings": {
+                    "comfyui": {
+                        "workflow_by_model": {
+                            "h3-t2v": {
+                                "1": {
+                                    "class_type": "SaveVideo",
+                                    "inputs": {},
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        ]
+    )
+
+    assert saved[0]["type"] == 63
+
+
+@pytest.mark.asyncio
+async def test_custom_catalog_disabled_mapping_removes_official_model(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_media_model_mappings(
+        {
+            "LingShan-G2": {
+                "provider": "openrouter",
+                "mediaType": "image",
+                "enabled": False,
+            }
+        }
+    )
+    set_model_gateway_mode(MODE_CUSTOM)
+
+    catalog = await freezone_routes._ee_media_model_catalog("image")
+
+    assert catalog is not None
+    assert all(item.get("id") != "LingShan-G2" for item in catalog)
+
+
+def test_provider_channel_partial_save_preserves_unmentioned_channels(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_provider_channels(
+        [
+            {"provider": "openrouter", "upstreamKey": "sk-openrouter-old"},
+            {"provider": "volcengine", "upstreamKey": "sk-volcengine-old"},
+        ]
+    )
+
+    saved = save_newapi_provider_channels(
+        [{"provider": "volcengine", "upstreamKey": "sk-volcengine-new"}],
+        preserve_unmentioned=True,
+    )
+
+    by_provider = {channel["provider"]: channel for channel in saved}
+    assert by_provider["openrouter"]["upstreamKey"] == "sk-openrouter-old"
+    assert by_provider["volcengine"]["upstreamKey"] == "sk-volcengine-new"
+
+
+def test_provider_channel_priority_can_be_reset_to_zero(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_provider_channels(
+        [
+            {
+                "provider": "openrouter",
+                "upstreamKey": "sk-openrouter",
+                "priority": 100,
+            }
+        ]
+    )
+
+    saved = save_newapi_provider_channels(
+        [{"provider": "openrouter", "upstreamKey": "", "priority": 0}]
+    )
+    payload = model_gateway._build_channel_payload_from_spec(
+        model_gateway.ChannelSpec(
+            provider="openrouter",
+            modelMapping={"DC-test-LLM": "openai/test"},
+            priority=0,
+        )
+    )
+
+    assert saved[0]["priority"] == 0
+    assert payload["channel"]["priority"] == 0
 
 
 def test_model_gateway_uses_explicit_custom_mode(monkeypatch, tmp_path):
@@ -76,6 +280,83 @@ def test_model_gateway_uses_explicit_custom_mode(monkeypatch, tmp_path):
     assert effective.mode == MODE_CUSTOM
     assert effective.base_url == "http://127.0.0.1:3000/v1"
     assert effective.api_key == "sk-custom-secret"
+
+
+def test_hybrid_mode_uses_official_gateway_by_default(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_custom_newapi_gateway(
+        base_url="http://127.0.0.1:3000",
+        api_key="sk-custom-secret",
+        activate=False,
+    )
+    save_official_newapi_key(api_key="sk-official-secret", activate=False)
+    set_model_gateway_mode(MODE_HYBRID)
+
+    effective = get_effective_newapi_config()
+
+    assert effective.mode == MODE_HYBRID
+    assert effective.source == "hybrid"
+    assert effective.api_key == "sk-official-secret"
+
+
+def test_hybrid_video_routes_only_comfyui_models_to_local_gateway(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_custom_newapi_gateway(
+        base_url="http://127.0.0.1:3000",
+        api_key="sk-custom-secret",
+        activate=False,
+    )
+    save_official_newapi_key(api_key="sk-official-secret", activate=False)
+    save_newapi_media_model_mappings(
+        {
+            "wan-i2v": {"provider": "comfyui", "upstreamModel": ""},
+            "seedance-2.0": {"provider": "volcengine", "upstreamModel": ""},
+        }
+    )
+    set_model_gateway_mode(MODE_HYBRID)
+
+    local = NewApiVideoGenerator(model="wan-i2v")
+    official = NewApiVideoGenerator(model="seedance-2.0")
+
+    assert local.base_url == "http://127.0.0.1:3000/v1"
+    assert local.api_key == "sk-custom-secret"
+    assert official.api_key == "sk-official-secret"
+    assert newapi_video_backend_options()["newapi_wan-i2v"] == "wan-i2v"
+
+
+def test_newapi_video_backends_only_include_enabled_comfyui_video_models(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_media_model_mappings(
+        {
+            "legacy-video": {"provider": "comfyui"},
+            "enabled-video": {
+                "provider": "comfyui",
+                "mediaType": "video",
+                "enabled": True,
+            },
+            "disabled-video": {
+                "provider": "comfyui",
+                "mediaType": "video",
+                "enabled": False,
+            },
+            "comfy-image": {
+                "provider": "comfyui",
+                "mediaType": "image",
+                "enabled": True,
+            },
+        }
+    )
+
+    options = newapi_video_backend_options()
+
+    assert "newapi_legacy-video" in options
+    assert "newapi_enabled-video" in options
+    assert "newapi_disabled-video" not in options
+    assert "newapi_comfy-image" not in options
 
 
 def test_newapi_runtime_credentials_prefer_saved_custom_gateway(monkeypatch, tmp_path):
@@ -192,17 +473,6 @@ def test_legacy_pydantic_factory_uses_ee_deployment_gateway(monkeypatch, tmp_pat
     assert captured["model_name"] == "DC-legacy-agent-LLM"
     assert captured["api_key"] == "sk-ee-secret"
     assert captured["base_url"] == "https://ee-gateway.example/v1"
-
-
-def test_legacy_pydantic_model_settings_match_newapi_transport(monkeypatch):
-    monkeypatch.setenv("MODEL_PROVIDER", "openrouter")
-
-    settings = config.get_pydantic_model_settings(
-        provider_override="openrouter",
-        thinking_level_override="low",
-    )
-
-    assert settings == {"openai_reasoning_effort": "low"}
 
 
 def test_cognee_newapi_resolution_prefers_saved_gateway(monkeypatch, tmp_path):
@@ -757,6 +1027,7 @@ def test_upsert_channel_merges_existing_dc_provider_channel():
     assert channel["name"] == "DC-ali"
     assert channel["key"] == "sk-upstream-new"
     assert channel["base_url"] == "https://dashscope-new.example.com"
+    assert "status" not in channel
     assert channel["models"] == "DC-old-model,DC-screenplay-normalizer-LLM"
     assert json.loads(channel["model_mapping"]) == {
         "DC-old-model": "qwen-old",
@@ -1256,6 +1527,305 @@ def test_enable_official_gateway_route_switches_mode_when_enabled(
     )
 
 
+def test_official_media_catalog_preferences_and_remote_update(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    source_url = "https://catalog.example.test/official_media_models.json"
+    monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_URL", source_url)
+    payload = {
+        "version": 1,
+        "catalogVersion": "2026.08.06.2",
+        "name": "Test official media models",
+        "mediaModels": {
+            "test-video": {
+                "provider": "newapi",
+                "upstreamModel": "test-video",
+                "mediaType": "video",
+                "label": "Test Video",
+                "enabled": True,
+                "sortOrder": 10,
+                "config": {
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    }
+                },
+            }
+        },
+    }
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    initial = client.get("/model-gateway/official/media-catalog")
+    enabled = client.post(
+        "/model-gateway/official/media-catalog/preferences",
+        json={"autoUpdate": True},
+    )
+    with respx.mock:
+        respx.get(source_url).mock(return_value=Response(200, json=payload))
+        checked = client.post("/model-gateway/official/media-catalog/check")
+    current = client.get("/model-gateway/official/media-catalog")
+
+    assert initial.status_code == 200
+    assert initial.json()["data"]["autoUpdate"] is False
+    assert initial.json()["data"]["source"] == "bundled"
+    assert enabled.json()["data"]["autoUpdate"] is True
+    assert checked.status_code == 200, checked.text
+    assert checked.json()["data"]["updated"] is True
+    assert current.json()["data"]["source"] == "remote"
+    assert current.json()["data"]["catalogVersion"] == "2026.08.06.2"
+    assert current.json()["data"]["modelCount"] == 1
+
+
+def test_official_media_catalog_defaults_to_dramaclaw_download_bucket(monkeypatch):
+    monkeypatch.delenv("OFFICIAL_MEDIA_CATALOG_MANIFEST_URL", raising=False)
+    monkeypatch.delenv("OFFICIAL_MEDIA_CATALOG_URL", raising=False)
+
+    assert official_media_catalog_remote._remote_source() == (
+        "https://dramaclaw-dl.oss-cn-chengdu.aliyuncs.com/"
+        "official-media-catalog/manifest.json",
+        True,
+    )
+
+
+def test_official_media_catalog_manifest_verifies_hash_and_revalidates_etag(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    manifest_url = "https://catalog.example.test/official-media-catalog/manifest.json"
+    monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_MANIFEST_URL", manifest_url)
+    payload = {
+        "version": 1,
+        "catalogVersion": "2026.08.07.1",
+        "name": "Test official media models",
+        "mediaModels": {
+            "test-video": {
+                "provider": "newapi",
+                "upstreamModel": "test-video",
+                "mediaType": "video",
+                "label": "Test Video",
+                "enabled": True,
+                "sortOrder": 10,
+                "config": {
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    }
+                },
+            }
+        },
+    }
+    canonical = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    digest = hashlib.sha256(canonical).hexdigest()
+    catalog_path = f"catalogs/{digest}.json"
+    catalog_url = f"https://catalog.example.test/official-media-catalog/{catalog_path}"
+    manifest = {
+        "schemaVersion": 1,
+        "catalogVersion": payload["catalogVersion"],
+        "revision": "a" * 40,
+        "publishedAt": "2026-08-07T12:00:00Z",
+        "sha256": digest,
+        "path": catalog_path,
+    }
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    with respx.mock:
+        manifest_route = respx.get(manifest_url).mock(
+            side_effect=[
+                Response(200, json=manifest, headers={"etag": '"release-1"'}),
+                Response(304, headers={"etag": '"release-1"'}),
+            ]
+        )
+        catalog_route = respx.get(catalog_url).mock(
+            return_value=Response(200, content=canonical)
+        )
+        installed = client.post("/model-gateway/official/media-catalog/check")
+        unchanged = client.post("/model-gateway/official/media-catalog/check")
+
+    assert installed.status_code == 200, installed.text
+    installed_data = installed.json()["data"]
+    assert installed_data["updated"] is True
+    assert installed_data["source"] == "remote"
+    assert installed_data["revision"] == "a" * 40
+    assert installed_data["publishedAt"] == "2026-08-07T12:00:00Z"
+    assert installed_data["sha256"] == digest
+    assert installed_data["remoteUrl"] == manifest_url
+    assert installed_data["lastError"] == ""
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["data"]["updated"] is False
+    assert len(catalog_route.calls) == 1
+    assert len(manifest_route.calls) == 2
+    assert manifest_route.calls[1].request.headers["if-none-match"] == '"release-1"'
+
+
+def test_official_media_catalog_manifest_rejects_hash_mismatch(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    manifest_url = "https://catalog.example.test/releases/manifest.json"
+    monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_MANIFEST_URL", manifest_url)
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+    payload = {**bundled, "catalogVersion": "2026.08.07.2"}
+    actual_digest = hashlib.sha256(
+        json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    manifest = {
+        "schemaVersion": 1,
+        "catalogVersion": payload["catalogVersion"],
+        "revision": "b" * 40,
+        "publishedAt": "2026-08-07T12:00:00Z",
+        "sha256": "0" * 64,
+        "path": f"catalogs/{'0' * 64}.json",
+    }
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    with respx.mock:
+        respx.get(manifest_url).mock(return_value=Response(200, json=manifest))
+        respx.get(
+            f"https://catalog.example.test/releases/catalogs/{'0' * 64}.json"
+        ).mock(return_value=Response(200, json=payload))
+        response = client.post("/model-gateway/official/media-catalog/check")
+
+    assert response.status_code == 502
+    assert "SHA256" in response.json()["detail"]
+    status = client.get("/model-gateway/official/media-catalog").json()["data"]
+    assert status["source"] == "bundled"
+    assert "SHA256" in status["lastError"]
+    assert actual_digest != manifest["sha256"]
+
+
+def test_official_media_catalog_manifest_rejects_absolute_content_url():
+    with pytest.raises(ValueError, match="path"):
+        official_media_catalog_remote.validate_official_media_catalog_manifest(
+            {
+                "schemaVersion": 1,
+                "catalogVersion": "2026.08.07.1",
+                "revision": "c" * 40,
+                "publishedAt": "2026-08-07T12:00:00Z",
+                "sha256": "d" * 64,
+                "path": "https://attacker.example/catalog.json",
+            }
+        )
+
+
+def test_official_media_catalog_rejects_downgrade(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    source_url = "https://catalog.example.test/official_media_models.json"
+    monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_URL", source_url)
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+    downgraded = {**bundled, "catalogVersion": "2026.08.05.9"}
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    with respx.mock:
+        route = respx.get(source_url)
+        route.mock(return_value=Response(200, json=downgraded))
+        downgrade_response = client.post(
+            "/model-gateway/official/media-catalog/check"
+        )
+
+    assert downgrade_response.status_code == 502
+    assert "downgrade" in downgrade_response.json()["detail"]
+    status = client.get("/model-gateway/official/media-catalog").json()["data"]
+    assert status["source"] == "bundled"
+
+
+def test_official_media_catalog_rejects_reused_version_with_different_content(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+    changed = {**bundled, "name": "Changed without a version bump"}
+
+    with pytest.raises(ValueError, match="version already exists"):
+        model_gateway_settings.install_official_media_catalog(
+            changed,
+            source_url="https://catalog.example.test/official_media_models.json",
+        )
+
+    cache_path = Path(config.STATE_DIR) / "local" / "official_media_models.json"
+    assert not cache_path.exists()
+
+
+def test_official_media_catalog_rejects_invalid_model_before_cache_write(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    source_url = "https://catalog.example.test/official_media_models.json"
+    monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_URL", source_url)
+    payload = {
+        "version": 1,
+        "catalogVersion": "2026.08.06.2",
+        "mediaModels": {
+            "broken-video": {
+                "provider": "newapi",
+                "upstreamModel": "broken-video",
+                "mediaType": "video",
+                "sortOrder": "not-a-number",
+                "config": {
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    }
+                },
+            }
+        },
+    }
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    with respx.mock:
+        respx.get(source_url).mock(return_value=Response(200, json=payload))
+        response = client.post("/model-gateway/official/media-catalog/check")
+
+    assert response.status_code == 502
+    assert "sortOrder must be an integer" in response.json()["detail"]
+    cache_path = Path(config.STATE_DIR) / "local" / "official_media_models.json"
+    assert not cache_path.exists()
+    assert client.get("/model-gateway/official/media-catalog").json()["data"][
+        "source"
+    ] == "bundled"
+
+
+def test_official_media_catalog_ignores_cache_older_than_bundle(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+    cached = json.loads(json.dumps(bundled))
+    cached["catalogVersion"] = "2026.08.05.9"
+    cache_path = Path(config.STATE_DIR) / "local" / "official_media_models.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(cached), encoding="utf-8")
+
+    status = model_gateway_settings.get_official_media_catalog_update_status()
+
+    assert status["source"] == "bundled"
+    assert status["catalogVersion"] == bundled["catalogVersion"]
+
+
 def test_save_official_gateway_route_persists_user_registered_key(
     monkeypatch, tmp_path
 ):
@@ -1602,19 +2172,299 @@ def test_custom_newapi_provider_channels_route_persists_and_masks_keys(
     assert channels == [
         {
             "provider": "ali",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "https://dashscope.example.com",
+            "priority": 0,
+            "settings": {},
         },
         {
             "provider": "deepseek",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-d...cret",
             "baseUrl": "",
+            "priority": 0,
+            "settings": {},
         },
     ]
     assert "sk-ali-upstream-secret" not in config_response.text
     assert "sk-deepseek-upstream-secret" not in config_response.text
+
+
+def test_comfyui_provider_channel_writes_workflows_to_newapi(
+    monkeypatch,
+    tmp_path,
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        model_gateway,
+        "get_provisioner_config",
+        lambda: type("Cfg", (), {"admin_base_url": "http://new-api:3000"})(),
+    )
+    monkeypatch.setattr(
+        model_gateway,
+        "ensure_admin_access_token",
+        lambda _cfg: type("Admin", (), {"access_token": "admin-secret"})(),
+    )
+
+    def fake_upsert(_cfg, _admin, payload):
+        captured["payload"] = payload
+        return {"ok": True, "httpStatus": 200, "newApiResponse": {"success": True}}
+
+    monkeypatch.setattr(model_gateway, "upsert_channel", fake_upsert)
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+    workflow = {
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}},
+    }
+
+    response = client.post(
+        "/model-gateway/custom/newapi/provider-channels",
+        json={
+            "channels": [
+                {
+                    "provider": "comfyui",
+                    "type": 63,
+                    "baseUrl": "http://127.0.0.1:8188",
+                    "priority": 100,
+                    "settings": {
+                        "comfyui": {"workflow_by_model": {"wan-i2v": workflow}}
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    channel = captured["payload"]["channel"]
+    assert channel["type"] == 63
+    assert channel["key"] == "none"
+    assert channel["models"] == "wan-i2v"
+    assert channel["priority"] == 100
+    assert json.loads(channel["settings"])["comfyui"]["workflow_by_model"] == {
+        "wan-i2v": workflow
+    }
+    comfy_mapping = get_newapi_media_model_mappings()["wan-i2v"]
+    assert comfy_mapping["provider"] == "comfyui"
+    assert comfy_mapping["upstreamModel"] == ""
+    assert comfy_mapping["mediaType"] == "video"
+    assert comfy_mapping["config"]["request"]["endpoint"] == "video/generations"
+    assert comfy_mapping["config"]["resolutionOptions"] == ["480p", "640p"]
+    assert comfy_mapping["config"]["ratioOptions"] == ["16:9", "1:1"]
+    assert comfy_mapping["config"]["supportedModes"] == [
+        "image_to_video",
+        "image_reference",
+    ]
+    assert comfy_mapping["config"]["referenceImageMax"] == 1
+    assert "humanReview" not in comfy_mapping["config"]
+    assert comfy_mapping["config"]["_dcManagedByWorkflow"] is True
+
+
+def test_comfyui_workflow_routes_create_one_media_model(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        model_gateway,
+        "get_provisioner_config",
+        lambda: type("Cfg", (), {"admin_base_url": "http://new-api:3000"})(),
+    )
+    monkeypatch.setattr(
+        model_gateway,
+        "ensure_admin_access_token",
+        lambda _cfg: type("Admin", (), {"access_token": "admin-secret"})(),
+    )
+
+    def fake_upsert(_cfg, _admin, payload):
+        captured["payload"] = payload
+        return {"ok": True, "httpStatus": 200, "newApiResponse": {"success": True}}
+
+    monkeypatch.setattr(model_gateway, "upsert_channel", fake_upsert)
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+    workflow = {"6": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}}}
+    routes = [
+        {
+            "id": route_id,
+            "match": {},
+            "workflow": workflow,
+        }
+        for route_id in ("minimax_h3_t2v", "minimax_h3_i2v", "minimax_h3_r2v")
+    ]
+
+    response = client.post(
+        "/model-gateway/custom/newapi/provider-channels",
+        json={
+            "channels": [
+                {
+                    "provider": "comfyui",
+                    "type": 63,
+                    "baseUrl": "http://127.0.0.1:8188",
+                    "settings": {
+                        "comfyui": {
+                            "model_name": "MiniMax-H3-local",
+                            "workflow_routes": routes,
+                        }
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    channel = captured["payload"]["channel"]
+    assert channel["models"] == "MiniMax-H3-local"
+    assert json.loads(channel["settings"])["comfyui"]["workflow_routes"] == routes
+    mappings = get_newapi_media_model_mappings()
+    assert set(mappings) == {"MiniMax-H3-local"}
+    config = mappings["MiniMax-H3-local"]["config"]
+    assert config["resolutionOptions"] == ["480p", "768p", "1080p"]
+    assert config["ratioOptions"] == [
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16",
+    ]
+    assert config["supportedModes"] == [
+        "text_to_video",
+        "first_frame",
+        "all_reference",
+    ]
+    assert config["referenceImageMax"] == 9
+    assert config["referenceVideoMax"] == 3
+    assert config["referenceAudioMax"] == 3
+
+
+def test_comfyui_workflow_routes_require_one_model_name(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/model-gateway/custom/newapi/provider-channels",
+        json={
+            "channels": [
+                {
+                    "provider": "comfyui",
+                    "type": 63,
+                    "baseUrl": "http://127.0.0.1:8188",
+                    "settings": {
+                        "comfyui": {
+                            "workflow_routes": [
+                                {
+                                    "id": "minimax_h3_t2v",
+                                    "match": {},
+                                    "workflow": {
+                                        "6": {
+                                            "class_type": "CLIPTextEncode",
+                                            "inputs": {"text": ""},
+                                        }
+                                    },
+                                }
+                            ]
+                        }
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert "one model name" in response.json()["detail"]
+
+
+def test_clear_comfyui_removes_channel_and_media_models(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+    save_newapi_provider_channels(
+        [
+            {
+                "provider": "openrouter",
+                "type": 20,
+                "upstreamKey": "secret",
+                "baseUrl": "",
+                "settings": {},
+            },
+            {
+                "provider": "comfyui",
+                "type": 63,
+                "upstreamKey": "",
+                "baseUrl": "http://127.0.0.1:8188",
+                "settings": {
+                    "comfyui": {
+                            "model_name": "MiniMax-H3-local",
+                            "workflow_routes": [
+                                {
+                                    "id": "minimax_h3_t2v",
+                                    "match": {},
+                                    "workflow": {
+                                        "6": {
+                                            "class_type": "CLIPTextEncode",
+                                            "inputs": {"text": ""},
+                                        }
+                                    },
+                                }
+                            ],
+                    }
+                },
+            },
+        ]
+    )
+    save_newapi_media_model_mappings(
+        {
+            "MiniMax-H3-local": {
+                "provider": "comfyui",
+                "upstreamModel": "",
+                "mediaType": "video",
+                "config": {},
+            },
+            "seedance-2.0": {
+                "provider": "volcengine",
+                "upstreamModel": "doubao-seedance-2-0",
+                "mediaType": "video",
+                "config": {},
+            },
+        }
+    )
+    monkeypatch.setattr(
+        model_gateway,
+        "get_provisioner_config",
+        lambda: type("Cfg", (), {"admin_base_url": "http://new-api:3000"})(),
+    )
+    monkeypatch.setattr(
+        model_gateway,
+        "ensure_admin_access_token",
+        lambda _cfg: type("Admin", (), {"access_token": "admin-secret"})(),
+    )
+    deleted: dict[str, object] = {}
+
+    def fake_delete(_cfg, _admin, **kwargs):
+        deleted.update(kwargs)
+        return True
+
+    monkeypatch.setattr(model_gateway, "delete_channel_by_name", fake_delete)
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    response = client.delete("/model-gateway/custom/newapi/comfyui")
+
+    assert response.status_code == 200, response.text
+    assert deleted == {"name": "DC-comfyui", "channel_type": 63}
+    assert [item["provider"] for item in get_newapi_provider_channels()] == [
+        "openrouter"
+    ]
+    assert set(get_newapi_media_model_mappings()) == {"seedance-2.0"}
 
 
 def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(
@@ -1705,9 +2555,12 @@ def test_custom_newapi_provider_channel_sync_updates_newapi_and_local_config(
     assert channels == [
         {
             "provider": "ali",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "https://dashscope-new.example.com",
+            "priority": 0,
+            "settings": {},
         }
     ]
     assert "sk-ali-new-upstream-secret" not in config_response.text
@@ -1804,9 +2657,12 @@ def test_custom_newapi_provider_channel_sync_allows_clearing_saved_base_url(
     assert channels == [
         {
             "provider": "ali",
+            "type": 0,
             "configured": True,
             "upstreamKeyPreview": "sk-a...cret",
             "baseUrl": "",
+            "priority": 0,
+            "settings": {},
         }
     ]
 
@@ -2058,7 +2914,7 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
 
     config_response = client.get("/model-gateway/config")
     media_models = config_response.json()["data"]["provisioner"]["mediaModels"]
-    assert media_models == {
+    expected_mappings = {
         "LingShan-G2": {
             "provider": "openai",
             "upstreamModel": "gpt-image-upstream",
@@ -2080,6 +2936,136 @@ def test_custom_newapi_media_models_groups_by_provider_and_persists_mapping(
             "upstreamModel": "lingshan-mu-upstream",
         },
     }
+    assert {
+        model: {
+            "provider": entry["provider"],
+            "upstreamModel": entry["upstreamModel"],
+        }
+        for model, entry in media_models.items()
+    } == expected_mappings
+    assert media_models["LingShan-G2"]["mediaType"] == "image"
+    assert media_models["seedance-1.5-pro"]["mediaType"] == "video"
+    assert media_models["index-tts-2"]["mediaType"] == "audio"
+
+
+def test_ce_media_model_catalog_uses_saved_custom_model_capabilities(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_media_model_mappings(
+        {
+            "custom-video": {
+                "provider": "volcengine",
+                "upstreamModel": "doubao-custom-video",
+                "mediaType": "video",
+                "label": "Custom Video",
+                "enabled": True,
+                "sortOrder": 12,
+                "config": {
+                    "resolutionOptions": ["720p", "1080p"],
+                    "ratioOptions": ["16:9", "9:16"],
+                    "minDuration": 4,
+                    "maxDuration": 10,
+                    "supportedModes": ["text_to_video", "first_frame"],
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    },
+                },
+            },
+            "disabled-image": {
+                "provider": "openrouter",
+                "upstreamModel": "disabled-image",
+                "mediaType": "image",
+                "enabled": False,
+                "config": {},
+            },
+        }
+    )
+
+    catalog = get_ce_media_model_catalog("video")
+
+    assert len(catalog) == 1
+    assert catalog[0]["id"] == "custom-video"
+    assert catalog[0]["apiModel"] == "newapi_custom-video"
+    assert catalog[0]["label"] == "Custom Video"
+    assert catalog[0]["resolutionOptions"] == ["720p", "1080p"]
+    assert catalog[0]["supportedModes"] == ["text_to_video", "first_frame"]
+    assert get_ce_media_model_catalog("image") == []
+    assert get_ce_media_model_catalog("video", provider="comfyui") == []
+
+
+def test_official_media_model_catalog_uses_ce_export_shape():
+    images = get_official_media_model_catalog("image")
+    videos = get_official_media_model_catalog("video")
+
+    assert len(images) == 6
+    assert len(videos) == 7
+    assert [entry["id"] for entry in videos[:2]] == [
+        "seedance-2.0-fast",
+        "seedance-2.0",
+    ]
+    seedream = next(entry for entry in images if entry["id"] == "seedream-5.0-pro")
+    assert seedream["gatewayModel"] == "seedream-5.0-pro"
+    assert seedream["resolutionOptions"] == ["1K", "2K"]
+    assert seedream["minPixels"] == 3686400
+    seedance = next(entry for entry in videos if entry["id"] == "seedance-2.0-mini")
+    assert seedance["apiModel"] == "newapi_seedance-2.0-mini"
+    assert "video_edit" in seedance["supportedModes"]
+    minimax = videos[-1]
+    assert minimax["id"] == "MiniMax-H3"
+    assert minimax["gatewayModel"] == "MiniMax-H3"
+    assert minimax["resolutionOptions"] == ["768P", "2K"]
+    assert minimax["ratioOptions"] == [
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16",
+    ]
+    assert minimax["minDuration"] == 4
+    assert minimax["maxDuration"] == 15
+    assert minimax["supportedModes"] == [
+        "text_to_video",
+        "first_frame",
+        "first_last_frame",
+        "image_to_video",
+        "image_reference",
+        "all_reference",
+    ]
+    assert minimax["referenceImageMax"] == 9
+    assert minimax["referenceVideoMax"] == 3
+    assert minimax["referenceAudioMax"] == 3
+
+
+def test_custom_media_model_accepts_arbitrary_image_and_video_models():
+    specs, normalized = model_gateway._build_media_model_channel_specs(
+        {
+            "kling-custom": model_gateway.MediaModelConfigBody(
+                provider="openrouter",
+                upstreamModel="kling-v2",
+                mediaType="video",
+                label="Kling Custom",
+                config={
+                    "resolutionOptions": ["720p", "1080p"],
+                    "supportedModes": ["text_to_video", "first_frame"],
+                    "request": {
+                        "endpoint": "video/generations",
+                        "parameters": [],
+                    },
+                },
+            )
+        }
+    )
+
+    assert specs[0].model_mapping == {"kling-custom": "kling-v2"}
+    assert normalized["kling-custom"]["mediaType"] == "video"
+    assert normalized["kling-custom"]["label"] == "Kling Custom"
+    assert normalized["kling-custom"]["config"]["resolutionOptions"] == [
+        "720p",
+        "1080p",
+    ]
 
 
 def test_custom_newapi_media_models_rejects_official_value_models(
@@ -2196,8 +3182,7 @@ def test_custom_newapi_embedding_model_writes_mapping_and_persists_dimension(
     }
 
 
-def test_custom_newapi_embedding_model_accepts_positive_project_dimension(
-):
+def test_custom_newapi_embedding_model_accepts_positive_project_dimension():
     body = model_gateway.SaveEmbeddingModelBody.model_validate(
         {
             "provider": "openai",

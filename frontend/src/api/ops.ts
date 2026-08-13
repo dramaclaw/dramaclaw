@@ -155,6 +155,7 @@ export interface FreezoneJobRef {
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
     | "freezone_image_reverse_prompt"
+    | "freezone_text_generate"
     | "freezone_text_translate"
     | "freezone_story_script"
     | "freezone_analyze_video_story"
@@ -195,8 +196,8 @@ export interface FreezoneVideoGenPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** Backend model id, e.g. huimeng_seedance20_fast / seedance_pro. */
   model?: string;
-  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
-  genMode?: string;
+  /** 文生视频入口的固定业务模式。 */
+  genMode: "textToVideo";
   /**
    * Real-person material review. Set `true` when the input contains real
    * human faces so the backend routes the job through the human-review path
@@ -234,7 +235,7 @@ export async function submitFreezoneVideoGen(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -291,8 +292,8 @@ export interface FreezoneVideoKeyframesPayload extends FreezoneNodeContext {
   durationSeconds?: number;
   generateAudio?: boolean;
   model?: string;
-  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
-  genMode?: string;
+  /** 关键帧业务模式。首尾帧可只提供首帧、只提供尾帧或同时提供。 */
+  genMode: "firstFrame" | "firstLastFrame";
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -327,7 +328,7 @@ export async function submitFreezoneVideoKeyframes(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -338,12 +339,11 @@ export async function submitFreezoneVideoKeyframes(
 
 // /freezone/video/i2v ----------------------------------------------------- //
 //
-// Unified endpoint for 图生视频 (single image, treated as first-frame ref)
-// and 图片参考视频 (2-9 images, multi-reference). The backend distinguishes
-// these two modes by `image_urls.length`.
+// Unified endpoint for single-image 图生视频 and multi-image 图片参考. Both
+// use image_reference provider semantics and never occupy the first-frame slot.
 
 export interface FreezoneVideoI2vPayload extends FreezoneNodeContext {
-  /** 1-9 image static URLs. First entry is the primary/first-frame ref. */
+  /** Image reference URLs. imageToVideo requires one; imageReference uses the catalog cap. */
   imageUrls: string[];
   prompt?: string;
   cameraTemplateId?: string | null;
@@ -354,8 +354,8 @@ export interface FreezoneVideoI2vPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** default huimeng_seedance10_fast (matches keyframes); multi-image prefers seedance 2.0. */
   model?: string;
-  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
-  genMode?: string;
+  /** Required product entry; both values execute as image_reference. */
+  genMode: "imageToVideo" | "imageReference";
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -389,7 +389,7 @@ export async function submitFreezoneVideoI2v(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -418,8 +418,8 @@ export interface FreezoneVideoEditPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** default newapi_happyhorse-1.0. */
   model?: string;
-  /** 生成模式（还原用）：videoEdit。 */
-  genMode?: string;
+  /** 视频编辑入口的固定业务模式。 */
+  genMode: "videoEdit";
   humanReview?: boolean;
 }
 
@@ -453,7 +453,7 @@ export async function submitFreezoneVideoEdit(
         audio_setting: payload.audioSetting ?? "auto",
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         ...nodeContextBody(payload),
       },
@@ -485,8 +485,8 @@ export interface FreezoneVideoOmniGenPayload extends FreezoneNodeContext {
   generateAudio?: boolean;
   /** default huimeng_seedance20_fast per backend default. */
   model?: string;
-  /** 生成模式（还原用）：textToVideo / imageToVideo / firstLastFrame / imageReference / allReference。 */
-  genMode?: string;
+  /** 全能参考入口的固定业务模式。 */
+  genMode: "allReference";
   /** See {@link FreezoneVideoGenPayload.humanReview}. */
   humanReview?: boolean;
   sceneOptimize?: "anime" | "realistic" | null;
@@ -526,7 +526,7 @@ export async function submitFreezoneVideoOmniGen(
         duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
-        ...(payload.genMode ? { gen_mode: payload.genMode } : {}),
+        gen_mode: payload.genMode,
         human_review: payload.humanReview ?? false,
         scene_optimize: payload.sceneOptimize ?? null,
         ...nodeContextBody(payload),
@@ -1058,6 +1058,19 @@ export interface FreezoneVideoModelInfo {
   referenceImageMax?: number | null;
   referenceVideoMax?: number | null;
   referenceAudioMax?: number | null;
+  referenceAudioMinSeconds?: number | null;
+  referenceAudioMaxSeconds?: number | null;
+  referenceAudioTotalMinSeconds?: number | null;
+  /**
+   * 参考音频**总时长**上限（秒）。厂商 r2v 除了逐条 1.8~15.2s，还另有一条总和限制
+   * （见 videoModelCapabilities 里的说明），这项就是它的后台可配值；没配时前端按
+   * 15.2s 兜底。允许小数，别当成整数字段处理。
+   */
+  referenceAudioTotalMaxSeconds?: number | null;
+  referenceVideoMinSeconds?: number | null;
+  referenceVideoMaxSeconds?: number | null;
+  referenceVideoTotalMinSeconds?: number | null;
+  referenceVideoTotalMaxSeconds?: number | null;
   request?: MediaModelRequestSchema;
 }
 
@@ -1126,6 +1139,46 @@ function videoModelEntryFromObject(
     referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
     referenceVideoMax: pickNumber(entry, "referenceVideoMax", "reference_video_max"),
     referenceAudioMax: pickNumber(entry, "referenceAudioMax", "reference_audio_max"),
+    referenceAudioMinSeconds: pickNumber(
+      entry,
+      "referenceAudioMinSeconds",
+      "reference_audio_min_seconds",
+    ),
+    referenceAudioMaxSeconds: pickNumber(
+      entry,
+      "referenceAudioMaxSeconds",
+      "reference_audio_max_seconds",
+    ),
+    referenceAudioTotalMinSeconds: pickNumber(
+      entry,
+      "referenceAudioTotalMinSeconds",
+      "reference_audio_total_min_seconds",
+    ),
+    referenceAudioTotalMaxSeconds: pickNumber(
+      entry,
+      "referenceAudioTotalMaxSeconds",
+      "reference_audio_total_max_seconds",
+    ),
+    referenceVideoMinSeconds: pickNumber(
+      entry,
+      "referenceVideoMinSeconds",
+      "reference_video_min_seconds",
+    ),
+    referenceVideoMaxSeconds: pickNumber(
+      entry,
+      "referenceVideoMaxSeconds",
+      "reference_video_max_seconds",
+    ),
+    referenceVideoTotalMinSeconds: pickNumber(
+      entry,
+      "referenceVideoTotalMinSeconds",
+      "reference_video_total_min_seconds",
+    ),
+    referenceVideoTotalMaxSeconds: pickNumber(
+      entry,
+      "referenceVideoTotalMaxSeconds",
+      "reference_video_total_max_seconds",
+    ),
     request: pickMediaRequestSchema(entry.request),
   };
 }
@@ -1471,6 +1524,22 @@ export type FreezoneRedrawAspectRatio =
   | "16:9"
   | "9:16";
 
+/**
+ * 重绘接口自身接受的比例取值（与后端 `FreezoneRedrawRequest.aspect_ratio` 的
+ * Literal 保持一致）。
+ *
+ * 这不是某个模型的能力，而是接口契约：即便后台给模型配了别的比例档位，重绘也
+ * 只能提交这几个值，所以前端取「模型配置 ∩ 接口契约」。
+ */
+export const FREEZONE_REDRAW_ASPECT_RATIOS: readonly FreezoneRedrawAspectRatio[] = [
+  "original",
+  "1:1",
+  "4:3",
+  "3:4",
+  "16:9",
+  "9:16",
+];
+
 export interface FreezoneRedrawPayload {
   sourceUrl: string;
   /** Optional mask static URL. Transparent pixels = editable region (局部重绘). */
@@ -1683,20 +1752,13 @@ export async function submitFreezoneRelight(
 
 // /freezone/scene-360 ----------------------------------------------------- //
 
-/** 全景输出比例。后端不传时按 "2:1" 处理；传其他值会被 Pydantic 校验拒绝。 */
-export type FreezoneScene360AspectRatio = "2:1" | "21:9";
-
-export const FREEZONE_SCENE_360_ASPECT_RATIOS: readonly FreezoneScene360AspectRatio[] =
-  ["2:1", "21:9"];
-
-export const DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO: FreezoneScene360AspectRatio =
-  "2:1";
-
 export interface FreezoneScene360Payload {
   referenceUrl: string;
   imageSize?: string;
-  aspectRatio?: FreezoneScene360AspectRatio;
   model?: string;
+  /** 媒体模型目录身份，后端据此按目录定价规则计费（与前端报价同口径）。 */
+  catalogId?: string;
+  quality?: string;
   mode?: "candidate" | "commit";
 }
 
@@ -1721,10 +1783,11 @@ export async function submitFreezoneScene360(
         reference_url: referenceUrl,
         image_size: payload.imageSize ?? "2K",
         mode: payload.mode ?? "candidate",
-        aspect_ratio:
-          payload.aspectRatio ?? DEFAULT_FREEZONE_SCENE_360_ASPECT_RATIO,
-        // 前端不能选模型，不传 model 让后端用默认；调用方显式传了才带上。
+        // 360 的最终产物合同固定为 2:1；上游比例适配属于后端实现细节。
+        // 面板上没有模型选择器，报价和执行必须使用同一个固定模型。
         ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.catalogId ? { catalog_id: payload.catalogId } : {}),
+        ...(payload.quality ? { quality: payload.quality } : {}),
       },
     },
   );
@@ -1818,6 +1881,9 @@ export interface FreezoneTemplateEditPayload {
   prompt?: string;
   imageSize?: string;
   model?: string;
+  /** 媒体模型目录身份，后端据此按目录定价规则计费（与前端报价同口径）。 */
+  catalogId?: string;
+  quality?: string;
 }
 
 export async function submitFreezoneTemplateEdit(
@@ -1833,7 +1899,10 @@ export async function submitFreezoneTemplateEdit(
         mode: payload.mode,
         prompt: payload.prompt ?? "",
         image_size: payload.imageSize ?? "2K",
+        // 同 scene-360：报价按目录首模型算，执行也必须用同一个模型/画质。
         ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.catalogId ? { catalog_id: payload.catalogId } : {}),
+        ...(payload.quality ? { quality: payload.quality } : {}),
       },
     },
   );
@@ -1870,6 +1939,7 @@ export async function fetchFreezoneJobResult(
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
     | "freezone_image_reverse_prompt"
+    | "freezone_text_generate"
     | "freezone_text_translate"
     | "freezone_story_script"
     | "freezone_analyze_video_story"
@@ -2122,6 +2192,40 @@ export async function createFreezoneAudioVoice(
 }
 
 // /freezone/text/translate ------------------------------------------------ //
+
+export interface FreezoneTextGeneratePayload extends FreezoneNodeContext {
+  prompt: string;
+}
+
+export async function submitFreezoneTextGenerate(
+  project: string,
+  payload: FreezoneTextGeneratePayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/text/generate`,
+    {
+      method: "POST",
+      json: {
+        prompt: payload.prompt,
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
+export interface FreezoneTextGenerateResult {
+  generated_text: string;
+  model: string;
+}
+
+export async function fetchFreezoneTextGenerateResult(
+  project: string,
+  jobId: string,
+): Promise<FreezoneTextGenerateResult> {
+  return await apiCall<FreezoneTextGenerateResult>(
+    `projects/${encodeURIComponent(project)}/freezone/jobs/freezone_text_generate/${encodeURIComponent(jobId)}/result`,
+  );
+}
 
 export type FreezoneTextTranslateNodeType =
   | "generic"
@@ -2473,11 +2577,35 @@ export type FreezoneAssetLibrarySource =
   | "scene"
   | "prop";
 
+/** 用途类目。老条目没有该字段，读取侧按 source/media 兜底推导。 */
+export type FreezoneAssetLibraryCategory =
+  | "other"
+  | "character"
+  | "scene"
+  | "prop"
+  | "style"
+  | "audio";
+
+/**
+ * 用户自建的资产库文件夹。系统文件夹（主线 / 待分类资产 / 各类目同名目录）不落盘，
+ * 由前端按保留 key 生成，只有这里的自建文件夹会从后端读回来。
+ */
+export interface FreezoneAssetLibraryFolder {
+  id: string;
+  name: string;
+  /** 封面图 URL，取自文件夹内某个素材；没设过时为空,前端画默认文件夹图标。 */
+  cover?: string | null;
+  created_at?: string;
+}
+
 export interface FreezoneVideoCharacterLibraryItem {
   id?: string;
   name: string;
   media?: FreezoneAssetLibraryMedia;
   source?: FreezoneAssetLibrarySource;
+  category?: FreezoneAssetLibraryCategory;
+  /** 保存位置：系统文件夹 key 或自建文件夹 id。老条目没有，读取侧按类目兜底。 */
+  folder?: string;
   image_urls?: string[];
   video_url?: string | null;
   audio_url?: string | null;
@@ -2493,6 +2621,8 @@ export interface FreezoneAddVideoCharacterLibraryItemPayload {
   imageUrls?: string[];
   videoUrl?: string;
   audioUrl?: string;
+  category?: FreezoneAssetLibraryCategory;
+  folder?: string;
 }
 
 export async function fetchFreezoneVideoCharacterLibrary(
@@ -2516,9 +2646,52 @@ export async function submitFreezoneAddVideoCharacterLibraryItem(
   }
   if (payload.videoUrl) body.video_url = payload.videoUrl;
   if (payload.audioUrl) body.audio_url = payload.audioUrl;
+  if (payload.category) body.category = payload.category;
+  if (payload.folder) body.folder = payload.folder;
   return await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/video/character-library`,
     { method: "POST", json: body },
+  );
+}
+
+export async function fetchFreezoneAssetLibraryFolders(
+  project: string,
+): Promise<FreezoneAssetLibraryFolder[]> {
+  return await apiCall<FreezoneAssetLibraryFolder[]>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders`,
+  );
+}
+
+export async function createFreezoneAssetLibraryFolder(
+  project: string,
+  name: string,
+): Promise<FreezoneAssetLibraryFolder> {
+  return await apiCall<FreezoneAssetLibraryFolder>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders`,
+    { method: "POST", json: { name } },
+  );
+}
+
+/** 改名 / 换封面。只传要改的字段,另一个原样保留。 */
+export async function updateFreezoneAssetLibraryFolder(
+  project: string,
+  folderId: string,
+  patch: { name?: string; cover?: string },
+): Promise<FreezoneAssetLibraryFolder> {
+  return await apiCall<FreezoneAssetLibraryFolder>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders/${encodeURIComponent(folderId)}`,
+    { method: "PATCH", json: patch },
+  );
+}
+
+/** 整柜清空:删掉文件夹连同里面的素材。返回被删掉的素材条数。 */
+export async function deleteFreezoneAssetLibraryFolder(
+  project: string,
+  folderId: string,
+): Promise<{ deleted_items: number }> {
+  return await apiCall<{ deleted_items: number }>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders/${encodeURIComponent(folderId)}`,
+    { method: "DELETE" },
   );
 }
 

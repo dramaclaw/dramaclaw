@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { VideoGenMode } from "@/features/canvas/domain/canvasNodes";
+import type {
+  VideoGenMode,
+  VideoKeyframeSlot,
+} from "@/features/canvas/domain/canvasNodes";
 
 /**
  * Freezone 画布视频模型的**能力口径**——与后端 `freezone.py` 各视频端点的模型门禁
@@ -50,6 +53,80 @@ function isBaseSeedance2VideoModel(modelId: string | null | undefined): boolean 
   return /seedance20$/.test(normalizeVideoModelId(modelId));
 }
 
+/** 前端模式与媒体模型目录能力的唯一映射。 */
+export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
+  textToVideo: "text_to_video",
+  firstFrame: "first_frame",
+  imageToVideo: "image_to_video",
+  firstLastFrame: "first_last_frame",
+  imageReference: "image_reference",
+  allReference: "all_reference",
+  videoEdit: "video_edit",
+};
+
+export interface VideoKeyframeCandidate {
+  url: string;
+  slot?: VideoKeyframeSlot | null;
+  legacyDisplayName?: string | null;
+}
+
+/**
+ * 从视频节点的上游图片中解析稳定的首帧/尾帧槽位。
+ *
+ * 新画布以 edge.data.keyframeSlot 为准，节点名称只负责展示，用户重命名不会改变语义。
+ * 旧画布没有槽位字段时才兼容“首帧/尾帧”标题，最后按连线顺序补齐未分配图片。
+ */
+export function resolveVideoKeyframeUrls(
+  candidates: readonly VideoKeyframeCandidate[],
+): { firstFrameUrl: string | null; lastFrameUrl: string | null } {
+  let firstFrameUrl: string | null = null;
+  let lastFrameUrl: string | null = null;
+  const unassigned: string[] = [];
+
+  for (const candidate of candidates) {
+    if (candidate.slot === "first") {
+      if (!firstFrameUrl) firstFrameUrl = candidate.url;
+      continue;
+    }
+    if (candidate.slot === "last") {
+      if (!lastFrameUrl) lastFrameUrl = candidate.url;
+      continue;
+    }
+
+    const displayName = String(candidate.legacyDisplayName ?? "").trim();
+    if (displayName.includes("首帧") && !firstFrameUrl) {
+      firstFrameUrl = candidate.url;
+    } else if (displayName.includes("尾帧") && !lastFrameUrl) {
+      lastFrameUrl = candidate.url;
+    } else {
+      unassigned.push(candidate.url);
+    }
+  }
+
+  if (!firstFrameUrl) firstFrameUrl = unassigned.shift() ?? null;
+  if (!lastFrameUrl) lastFrameUrl = unassigned.shift() ?? null;
+  return { firstFrameUrl, lastFrameUrl };
+}
+
+/**
+ * 模型入参的统一形态：既可以只给一个 id 字符串，也可以给媒体目录下发的模型对象
+ * （`supportedModes` 存在时以它为准，那是 Admin 显式配置的能力声明）。
+ */
+export type VideoModelRef =
+  | string
+  | {
+      id?: string;
+      apiModel?: string;
+      supportedModes?: string[];
+    }
+  | null
+  | undefined;
+
+/** 从模型入参里取出用于能力启发式判定的 id（优先 apiModel，它才是打给上游的名字）。 */
+function videoModelIdOf(model: VideoModelRef): string | null | undefined {
+  return typeof model === "string" ? model : (model?.apiModel ?? model?.id);
+}
+
 /**
  * 指定模型是否支持某 genMode（与可见 tab / 切模型时是否重置残留模式口径一致）。
  * - HappyHorse：文生 / 首帧(i2v) / 图片参考(r2v) / 视频编辑。
@@ -59,35 +136,23 @@ function isBaseSeedance2VideoModel(modelId: string | null | undefined): boolean 
  */
 export function isVideoModeSupportedByModel(
   mode: VideoGenMode,
-  model:
-    | string
-    | {
-        id?: string;
-        apiModel?: string;
-        supportedModes?: string[];
-      }
-    | null
-    | undefined,
+  model: VideoModelRef,
 ): boolean {
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
-    const modeKey: Record<VideoGenMode, string> = {
-      textToVideo: "text_to_video",
-      imageToVideo: "first_frame",
-      firstLastFrame: "first_last_frame",
-      imageReference: "image_reference",
-      allReference: "all_reference",
-      videoEdit: "video_edit",
-    };
-    return model.supportedModes?.includes(modeKey[mode]) ?? false;
+    return model.supportedModes?.includes(GEN_MODE_TO_CATALOG_MODE[mode]) ?? false;
   }
-  const modelId = typeof model === "string" ? model : (model?.apiModel ?? model?.id);
+  const modelId = videoModelIdOf(model);
   if (isHappyHorseVideoModel(modelId)) {
     return (
       mode === "textToVideo" ||
+      mode === "firstFrame" ||
       mode === "imageToVideo" ||
       mode === "imageReference" ||
       mode === "videoEdit"
     );
+  }
+  if (isSeedance1xVideoModel(modelId)) {
+    return mode === "textToVideo" || mode === "firstFrame";
   }
   if (mode === "videoEdit") return false;
   if (mode === "allReference" || mode === "firstLastFrame") {
@@ -103,6 +168,7 @@ export function isVideoModeSupportedByModel(
 export type VideoEmptyStateCtaMode =
   | "allReference"
   | "imageReference"
+  | "firstFrame"
   | "imageToVideo"
   | "firstLastFrame";
 
@@ -114,15 +180,26 @@ export type VideoEmptyStateCtaMode =
  *   多图参考也不支持，只给确实可用的「首帧」。
  */
 export function videoEmptyStateCtaModes(
-  modelId: string | null | undefined,
+  model: VideoModelRef,
 ): VideoEmptyStateCtaMode[] {
+  if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    const order: VideoEmptyStateCtaMode[] = [
+      "allReference",
+      "imageToVideo",
+      "firstFrame",
+      "imageReference",
+      "firstLastFrame",
+    ];
+    return order.filter((mode) => isVideoModeSupportedByModel(mode, model));
+  }
+  const modelId = videoModelIdOf(model);
   if (isHappyHorseVideoModel(modelId)) {
-    return ["imageToVideo", "imageReference"];
+    return ["imageToVideo", "firstFrame", "imageReference"];
   }
   if (isSeedance2VideoModel(modelId)) {
-    return ["allReference", "imageReference", "firstLastFrame"];
+    return ["allReference", "imageToVideo", "firstFrame", "imageReference", "firstLastFrame"];
   }
-  return ["imageToVideo"];
+  return ["firstFrame"];
 }
 
 /**
@@ -131,70 +208,255 @@ export function videoEmptyStateCtaModes(
  * 退到确实可用的「首帧」，避免默认推导把 1.x 顶进一个提交必 400 的模式。
  */
 export function videoUpstreamImageDefaultMode(
-  modelId: string | null | undefined,
-): VideoGenMode {
-  return isSeedance2VideoModel(modelId) ? "allReference" : "imageToVideo";
+  model: VideoModelRef,
+): VideoGenMode | null {
+  if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    for (const mode of [
+      "allReference",
+      "imageToVideo",
+      "firstFrame",
+      "imageReference",
+    ] as const) {
+      if (isVideoModeSupportedByModel(mode, model)) return mode;
+    }
+    return null;
+  }
+  const modelId = videoModelIdOf(model);
+  if (isHappyHorseVideoModel(modelId)) return "imageToVideo";
+  return isSeedance2VideoModel(modelId) ? "allReference" : "firstFrame";
 }
 
 /**
  * 该 genMode 是否**必须带提示词**才能提交：文生 / 全能参考 后端强校验 prompt；
- * 首帧(i2v) / 图片参考 / 首尾帧 / 视频编辑 允许空提示词（只要素材齐备即可提交）。
+ * 首帧 / 图生视频 / 图片参考 / 首尾帧 / 视频编辑允许空提示词（只要素材齐备即可提交）。
  */
 export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
   return mode === "textToVideo" || mode === "allReference";
 }
 
 /**
- * Seedance 2.0 音频引用的时长边界。厂商口径是**逐条**，没有一个字提到总和：
- * `[InvalidParameter.DurationTooShort] Duration must be between 1.8s and 15.2s`。
+ * 该模型的 i2v 端点是否放行多图（>1）。后端只在「非 2.0 且非 HappyHorse」时对
+ * `len(source_paths) > 1` 直接 400（freezone.py），所以这两族之外的模型（Seedance
+ * 1.x 等）一次只能吃一张图 —— 对它们来说换模式救不了，得换模型。
+ */
+export function videoModelAcceptsMultipleImages(
+  model: VideoModelRef,
+): boolean {
+  if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    return (
+      isVideoModeSupportedByModel("allReference", model) ||
+      isVideoModeSupportedByModel("imageReference", model)
+    );
+  }
+  const modelId = videoModelIdOf(model);
+  return isSeedance2VideoModel(modelId) || isHappyHorseVideoModel(modelId);
+}
+
+/**
+ * 「首帧生成视频」(imageToVideo / i2v) 接了多图时该切到哪个模式，null = 不动。
  *
- * 所以这里也逐条卡，两头都卡。**别再回到按总时长判定**：那会把 3 条各 6s（每条都
- * 在 1.8~15.2 区间内、厂商必然放行）的合法组合拦在本地，用一条我们自己臆想出来的
- * 规则挡住用户。后端 freezone omni-gen 端点（`validate_omni_reference_limits`）只
- * 校验条数（图≤9 / 视频≤3 / 音频≤3 / 总数≤12），同样没有总时长这回事。
+ * 为什么必须切：后端 i2v 端点按**图片张数**分流（1 张 = 图生视频，2-9 张 = 图片
+ * 参考视频），多连一张不会报错，而是悄悄变成另一种生成方式 —— 界面上模式却还写着
+ * 「首帧生成视频」。用户把第二张图连上来这个动作本身就是明确意图，直接把模式导到
+ * 真正在做的事情上：优先「全能参考」(omni，还能继续接视频 / 音频)，模型不支持
+ * omni 时退「图片参考」。
  *
- * 注：`seedance2_i2v/pipeline.py` 里那个 `MAX_SEEDANCE2_REFERENCE_AUDIO_TOTAL_SECONDS`
- * 总时长守卫属于**剧集 beat 流水线的参考声线**（角色工作台 3-5s 声音克隆样本），与画布
- * 这条 omni-gen 路径无关，不要拿它给这里的总时长限制背书。
+ * 三种情况**不动**：
+ * - HappyHorse 有自己那套完整状态机（videos>0→视频编辑 / images>1→图片参考 /
+ *   images===1→首帧），在那儿统一收口，这里再插一脚只会两处来回打架；
+ * - 模型压根消费不了多图（Seedance 1.x：i2v 端点 >1 图直接 400），换到哪个模式都是
+ *   400。留在首帧上，让提交守卫那句「该模型单次仅支持 1 张图片」把话说清楚，别用
+ *   一次模式跳变把真正的问题（该换模型）盖掉；
+ * - 两个候选模式该模型都不支持 —— 宁可不动，也不要顶进一个提交必 400 的模式。
+ */
+export function videoMultiImageAutoSwitchMode(
+  mode: VideoGenMode,
+  model: VideoModelRef,
+  imageCount: number,
+): VideoGenMode | null {
+  if (mode !== "imageToVideo" || imageCount <= 1) return null;
+  const modelId = videoModelIdOf(model);
+  if (isHappyHorseVideoModel(modelId)) return null;
+  if (!videoModelAcceptsMultipleImages(model)) return null;
+  const candidates: VideoGenMode[] = ["allReference", "imageReference"];
+  return candidates.find((candidate) => isVideoModeSupportedByModel(candidate, model)) ?? null;
+}
+
+/**
+ * Seedance 2.0 音频引用的时长边界。厂商有**两条互相独立**的规则，都会以 400 打回：
  *
- * 文案里的秒数一律从这两个常量推（`/ 1000`），别在调用点另写一遍字面量，否则改阈值
+ * 1. 逐条：`[InvalidParameter.DurationTooShort] Duration must be between 1.8s and 15.2s`
+ * 2. 总和：`the parameter audio total duration (seconds) specified in the request must
+ *    be less than or equal to 15.2 for model doubao-seedance-2-0 in r2v`
+ *
+ * **这里曾经只卡第 1 条**，注释里还写着「厂商口径是逐条，没有一个字提到总和」「别再
+ * 回到按总时长判定」。那是错的：2026-08-06 3060 环境两次任务失败
+ * （freezone_video_gen/01KZ5R8ZZZY9M8T9F01H159RP7，gen_mode=allReference）实测抓到了
+ * 第 2 条报文——3 条各 6s 每条都在 1.8~15.2 区间内、逐条判定必然放行，总计 18s 却被
+ * 厂商直接拒。所以总时长这条**不是我们臆想的规则**，删掉它就等于把这个故障放回去。
+ *
+ * 总时长上限优先读媒体模型目录的 `referenceAudioTotalMaxSeconds`（后台可配），没配才用
+ * 下面这个 15.2s 的厂商兜底值。兜底值刻意与单条上限取同一个数：单条 15.2s 是厂商明确
+ * 放行的，兜底若取更小（比如 15s）就会把一条合法的顶格音频误拦在本地。想留安全余量
+ * 请在后台把 `referenceAudioTotalMaxSeconds` 配小，而不是改这里的常量。
+ *
+ * 后端 freezone omni-gen 端点有同一套兜底（`validate_omni_reference_audio_durations`，
+ * src/novelvideo/freezone/video_node.py），那层拿的是落地文件路径 + ffprobe，是本地
+ * `<audio>` 探测失败时最后一道能在计费前拦下的闸门。
+ *
+ * 文案里的秒数一律从这些常量推（`/ 1000`），别在调用点另写一遍字面量，否则改阈值
  * 时提示会静默漂移。
  */
 export const MIN_AUDIO_REFERENCE_DURATION_MS = 1_800;
 export const MAX_AUDIO_REFERENCE_DURATION_MS = 15_200;
+export const MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS = 15_200;
 
-export type AudioDurationRejection = {
-  kind: "tooShort" | "tooLong";
-  clips: { label: string; durationMs: number }[];
-};
+/** 媒体目录里与音频时长相关的那个字段（`ModelOption` 的子集）。 */
+export interface AudioDurationLimitModel {
+  referenceAudioMinSeconds?: number | null;
+  referenceAudioMaxSeconds?: number | null;
+  referenceAudioTotalMinSeconds?: number | null;
+  referenceAudioTotalMaxSeconds?: number | null;
+  referenceVideoMinSeconds?: number | null;
+  referenceVideoMaxSeconds?: number | null;
+  referenceVideoTotalMinSeconds?: number | null;
+  referenceVideoTotalMaxSeconds?: number | null;
+}
+
+export interface ReferenceDurationLimitsMs {
+  minMs?: number;
+  maxMs?: number;
+  totalMinMs?: number;
+  totalMaxMs?: number;
+}
+
+export function referenceDurationLimitsMs(
+  model: AudioDurationLimitModel | null | undefined,
+  media: "audio" | "video",
+): ReferenceDurationLimitsMs {
+  const prefix = media === "audio" ? "referenceAudio" : "referenceVideo";
+  const read = (suffix: string): number | undefined => {
+    const seconds = (model as Record<string, unknown> | null | undefined)?.[
+      `${prefix}${suffix}`
+    ];
+    return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0
+      ? Math.round(seconds * 1000)
+      : undefined;
+  };
+  return {
+    minMs: read("MinSeconds"),
+    maxMs: read("MaxSeconds"),
+    totalMinMs: read("TotalMinSeconds"),
+    totalMaxMs: read("TotalMaxSeconds"),
+  };
+}
 
 /**
- * 提交前音频时长守卫（仅 Seedance 2.0 的全能参考路径调用，其它模型边界未知）。
+ * 所选模型的**有效**音频总时长上限（毫秒）：目录配置优先，没配才用 15.2s。
+ *
+ * 与后端 `_catalog_audio_total_duration_max`（api/routes/freezone.py）同一口径：只认
+ * 有限正数，null / 0 / 负数 / NaN / Infinity 一律当作没配。允许小数——15.2 本身就不是
+ * 整数，这与那几个「非负整数」的计数字段不同，别顺手套 `Number.isInteger`。
+ *
+ * `vendorCapMs` = 这个模型的厂商硬顶（seedance2 传 15.2s，边界未知的模型不传）。传了
+ * 就与目录值**取小**：管理员可以配得更严，但配宽了不该让厂商也跟着放行——给 seedance2
+ * 配 60s 的话，3 条 6s 在本地全过、到厂商那儿照样 400，正是这套守卫要消灭的失败。
+ */
+export function audioReferenceTotalDurationLimitMs(
+  model: AudioDurationLimitModel | null | undefined,
+  { vendorCapMs }: { vendorCapMs?: number } = {},
+): number {
+  const seconds = model?.referenceAudioTotalMaxSeconds;
+  const configured =
+    typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0
+      ? Math.round(seconds * 1000)
+      : null;
+  if (vendorCapMs == null) {
+    return configured ?? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS;
+  }
+  return configured == null ? vendorCapMs : Math.min(configured, vendorCapMs);
+}
+
+/**
+ * 三个 kind 必须各占一个联合分支：写成 `kind: "tooShort" | "tooLong"` 合并那两个的话，
+ * TS 无法靠 `kind !== "tooLong"` 把整个分支从联合里剔掉，调用点的三元链就取不到
+ * totalTooLong 独有的 totalMs / limitMs。
+ */
+export type AudioDurationRejection =
+  | { kind: "tooShort"; clips: { label: string; durationMs: number }[] }
+  | { kind: "tooLong"; clips: { label: string; durationMs: number }[] }
+  | {
+      kind: "totalTooShort";
+      clips: { label: string; durationMs: number }[];
+      totalMs: number;
+      limitMs: number;
+    }
+  | {
+      kind: "totalTooLong";
+      clips: { label: string; durationMs: number }[];
+      totalMs: number;
+      limitMs: number;
+    };
+
+/**
+ * 提交前音频时长守卫。
  *
  * `durationMs` 为 null = 探测不出时长（音频节点没渲染过波形，且 `<audio>` 探测撞上
  * CORS / 网络 / 超时）。这类一律**不参与判定**——宁可放过去让后端兜底，也不要凭空
- * 拦住一次正常提交。
+ * 拦住一次正常提交。对总时长来说这意味着算出来的和是个**下界**，但判定方向仍然安全：
+ * 漏算只会让和变小，所以「算出来超了」必定真超，不会因此误拦。
  *
- * 太短优先于太长上报：同时越界时先修哪条都行，报一类比混在一起列更好读。
+ * 两类边界**分开授权**，与后端 `validate_omni_reference_audio_durations` 一一对应：
+ *   - `perClipLimits`：逐条 1.8~15.2s，这两个数字是从 Seedance 2.0 的报文里实测出来的，
+ *     只对它成立。别家模型传 `false` —— 拿 2.0 的数字去卡它，一条正常的 25s 音频会被
+ *     我们凭空拦在本地。
+ *   - `totalLimitMs`：总时长，优先听目录里的 `referenceAudioTotalMaxSeconds`
+ *     （见 `audioReferenceTotalDurationLimitMs`），没配才落到 15.2s 兜底。
+ *
+ * 上报顺序 太短 → 单条太长 → 总和太长：前两类是「换掉这条」，最后一类是「整体裁一裁」，
+ * 混在一起列用户不知道先动哪个。
  */
 export function audioReferenceDurationRejection(
   clips: readonly { label: string; durationMs: number | null }[],
+  options: {
+    totalLimitMs?: number | null;
+    totalMinMs?: number;
+    minMs?: number | null;
+    maxMs?: number | null;
+    perClipLimits?: boolean;
+  } = {},
 ): AudioDurationRejection | null {
+  const {
+    totalLimitMs = MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
+    totalMinMs,
+    minMs = MIN_AUDIO_REFERENCE_DURATION_MS,
+    maxMs = MAX_AUDIO_REFERENCE_DURATION_MS,
+    perClipLimits = true,
+  } = options;
   const measured = clips.filter(
     (clip): clip is { label: string; durationMs: number } =>
       typeof clip.durationMs === "number" && clip.durationMs > 0,
   );
-  const tooShort = measured.filter(
-    (clip) => clip.durationMs < MIN_AUDIO_REFERENCE_DURATION_MS,
-  );
-  if (tooShort.length > 0) {
-    return { kind: "tooShort", clips: tooShort };
+  if (perClipLimits) {
+    const tooShort = minMs == null
+      ? []
+      : measured.filter((clip) => clip.durationMs < minMs);
+    if (tooShort.length > 0) {
+      return { kind: "tooShort", clips: tooShort };
+    }
+    const tooLong = maxMs == null
+      ? []
+      : measured.filter((clip) => clip.durationMs > maxMs);
+    if (tooLong.length > 0) {
+      return { kind: "tooLong", clips: tooLong };
+    }
   }
-  const tooLong = measured.filter(
-    (clip) => clip.durationMs > MAX_AUDIO_REFERENCE_DURATION_MS,
-  );
-  if (tooLong.length > 0) {
-    return { kind: "tooLong", clips: tooLong };
+  const totalMs = measured.reduce((sum, clip) => sum + clip.durationMs, 0);
+  if (totalMinMs != null && measured.length === clips.length && totalMs < totalMinMs) {
+    return { kind: "totalTooShort", clips: measured, totalMs, limitMs: totalMinMs };
+  }
+  if (totalLimitMs != null && measured.length > 0 && totalMs > totalLimitMs) {
+    return { kind: "totalTooLong", clips: measured, totalMs, limitMs: totalLimitMs };
   }
   return null;
 }
@@ -207,12 +469,12 @@ export function audioReferenceDurationRejection(
  * （`Math.round(secs * 1000)`），所以按毫秒精度展示，再去掉无意义的尾随 0：
  * 900 → `0.9`、1799 → `1.799`、15201 → `15.201`、6000 → `6`。
  */
-function formatClipSeconds(durationMs: number): string {
+export function formatAudioDurationSeconds(durationMs: number): string {
   return (durationMs / 1000).toFixed(3).replace(/\.?0+$/, "");
 }
 
 /**
- * 把违规条目拼成提示里的 `{{clips}}`（tooShort / tooLong 共用）。
+ * 把违规条目拼成提示里的 `{{clips}}`（tooShort / tooLong / totalTooLong 共用）。
  *
  * 括号和分隔符都从 locale 取（zh 用全角括号 + 顿号，en 用半角括号 + 逗号），别在
  * 调用点写死——这里曾经硬编码 `（）` 和 `、`，en 用户会看到一串中文标点。
@@ -225,7 +487,7 @@ export function formatAudioDurationClips(
     .map((clip) =>
       translate("node.videoNode.audio.clipDuration", {
         label: clip.label,
-        seconds: formatClipSeconds(clip.durationMs),
+        seconds: formatAudioDurationSeconds(clip.durationMs),
       }),
     )
     .join(translate("node.videoNode.audio.clipSeparator"));
@@ -248,7 +510,7 @@ export function formatAudioDurationClips(
  */
 export function videoSubmitMediaRejectionReason(
   mode: VideoGenMode,
-  modelId: string | null | undefined,
+  model: VideoModelRef,
   counts: { images: number; videos: number; audios: number },
 ): string | null {
   if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit") {
@@ -257,11 +519,7 @@ export function videoSubmitMediaRejectionReason(
   if (counts.audios > 0 && mode !== "allReference") {
     return "该模型不支持音频素材";
   }
-  if (
-    counts.images > 1 &&
-    !isSeedance2VideoModel(modelId) &&
-    !isHappyHorseVideoModel(modelId)
-  ) {
+  if (counts.images > 1 && !videoModelAcceptsMultipleImages(model)) {
     return "该模型单次仅支持 1 张图片";
   }
   return null;
@@ -290,9 +548,24 @@ export function videoSubmitMediaRejectionReason(
  *   （`FREEZONE_DISABLED_VIDEO_BACKENDS`），不会出现在选择器里，这条分支是休眠的。
  */
 export function videoModelReferenceDisabledReason(
-  modelId: string | null | undefined,
+  model: VideoModelRef,
   counts: { images: number; videos: number; audios: number },
 ): string | null {
+  if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    const supportsAllReference = isVideoModeSupportedByModel("allReference", model);
+    const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);
+    if (counts.videos > 0 && !supportsAllReference && !supportsVideoEdit) {
+      return "该模型不支持视频素材";
+    }
+    if (counts.audios > 0 && !supportsAllReference) {
+      return "该模型不支持音频素材";
+    }
+    if (counts.images > 1 && !videoModelAcceptsMultipleImages(model)) {
+      return "该模型单次仅支持 1 张图片";
+    }
+    return null;
+  }
+  const modelId = videoModelIdOf(model);
   if (isGrokVideoChannelModel(modelId)) {
     if (counts.videos > 0 || counts.audios > 0) {
       return "Grok Video Channel 仅支持图片素材";

@@ -489,6 +489,7 @@ export function BatchPanel({
     (audioBillingQuote.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : "");
+  const audioPrereqErrors = audioBillingQuote.data?.data.prereq_errors ?? [];
   const sketchPlanItems = useMemo(
     () => createSketchRegenPlanItems(
       beats,
@@ -911,21 +912,31 @@ export function BatchPanel({
                 variant="outline"
                 size="sm"
                 disabled={actionDisabled.audio}
-                onClick={() => askConfirm(
-                  t("episode.workbench.batch.genBatchAudioTitle", { count }),
-                  t("episode.workbench.batch.genBatchAudioDesc", { beats: beatList.join(", #") }),
-                  handleBatchAudio,
-                )}
+                onClick={() => {
+                  if (audioPrereqErrors.length > 0) {
+                    toast.error(audioPrereqErrors.join("\n"));
+                    return;
+                  }
+                  askConfirm(
+                    t("episode.workbench.batch.genBatchAudioTitle", { count }),
+                    t("episode.workbench.batch.genBatchAudioDesc", {
+                      beats: beatList.join(", #"),
+                    }),
+                    handleBatchAudio,
+                  );
+                }}
                 className="h-7 gap-1 px-2 text-[11px]"
               >
                 {generateAudio.isPending || audioTask.started ? (
                   <Loader2 className="size-3 animate-spin" />
                 ) : null}
                 {t("episode.workbench.batch.genBatchAudio", { count })}
-                <CreditCostInline
-                  display={audioCostDisplay}
-                  promotion={audioBillingQuote.data?.data.promotion}
-                />
+                {audioPrereqErrors.length === 0 && (
+                  <CreditCostInline
+                    display={audioCostDisplay}
+                    promotion={audioBillingQuote.data?.data.promotion}
+                  />
+                )}
               </Button>
             </div>
           )}

@@ -432,10 +432,11 @@ def build_freezone_image_to_video_prompt(
         )
     else:
         parts.append(
-            "首帧约束：严格继承输入图片中的主体、构图、服装、光线和场景信息，把输入图作为视频首帧参考。"
+            "图片参考约束：把输入图片作为主体、外观、色调、质感和整体风格参考，由提示词主导视频内容；"
+            "不要强制把输入图片锁定为视频第一帧。"
         )
     parts.append(
-        "输出要求：生成单条连贯视频镜头，动作自然，运动平滑，避免闪烁、变形、跳帧、主体身份漂移和首帧偏移。"
+        "输出要求：生成单条连贯视频镜头，动作自然，运动平滑，避免闪烁、变形、跳帧和主体身份漂移。"
     )
     return "\n".join(part for part in parts if part)
 
@@ -538,6 +539,113 @@ def validate_omni_reference_limits(
         raise ValueError(f"audio references count must be <= {audio_max}")
 
 
+# 全能参考音频时长：厂商（doubao-seedance-2-0 / r2v）有**两条互相独立**的规则，
+# 两条都以 400 打回，只卡其中一条就等于没卡：
+#   1. 逐条：`[InvalidParameter.DurationTooShort] Duration must be between 1.8s and 15.2s`
+#   2. 总和：`the parameter audio total duration (seconds) specified in the request must
+#      be less than or equal to 15.2 for model doubao-seedance-2-0 in r2v`
+#
+# 第 2 条是 2026-08-06 从 3060 环境两次失败任务里实测抓到的
+# （freezone_video_gen/01KZ5R8ZZZY9M8T9F01H159RP7，gen_mode=allReference）。在那之前
+# 前后端都只按第 1 条判定，3 条各 6s 每条都合法、总计 18s 必被厂商拒——用户白等一轮。
+# 别再把总时长这条当成「我们自己臆想的规则」删掉。
+MIN_OMNI_REFERENCE_AUDIO_SECONDS = 1.8
+MAX_OMNI_REFERENCE_AUDIO_SECONDS = 15.2
+MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS = 15.2
+
+
+def _format_seconds(value: float) -> str:
+    """按毫秒精度展示，去掉无意义尾随 0：15.2 → `15.2`、6.0 → `6`、1.799 → `1.799`。
+
+    不能 `round(x, 1)`：15.201 显示成「15.2」时，用户看到的正好是合法边界值却被告知
+    越界，只会怀疑我们算错了。前端 `formatClipSeconds` 是同一口径。
+    """
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def _exceeds(value: float, limit: float) -> bool:
+    """`value > limit`，但先归整到毫秒。
+
+    浮点和会自己漂出去：6 + 6 + 3.2 == 15.200000000000001，裸比较会把一组正好顶格
+    15.2s 的合法音频判成超限。
+    """
+    return round(value - limit, 3) > 0
+
+
+def validate_omni_reference_audio_durations(
+    durations: list[tuple[str, float | None]],
+    *,
+    min_seconds: float | None = MIN_OMNI_REFERENCE_AUDIO_SECONDS,
+    max_seconds: float | None = MAX_OMNI_REFERENCE_AUDIO_SECONDS,
+    total_min_seconds: float | None = None,
+    total_max_seconds: float | None = MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
+    media_label: str = "audio",
+) -> None:
+    """全能参考音频时长兜底校验，入参是 `(标签, 秒数)`，秒数 None = 探测不出。
+
+    探测不出的条目**不参与判定**：ffprobe 缺失 / 文件读不了时，宁可放过去让厂商判，
+    也不要凭空拦死一次正常提交。这让总和成为**下界**，但判定方向仍然安全——漏算只会
+    让和更小，所以「算出来超了」必定真超，不存在因此产生的误拦。
+
+    三个上限各自可以传 `None` = **这项不判定**。逐条边界（1.8~15.2s）是从 Seedance 2.0
+    的报文里实测出来的，只对它成立；管理员在目录里配了总时长、但模型不是 2.0 时，调用方
+    应当把 min/max 传 None ——拿 2.0 的数字去卡别家模型就是凭空 400。
+
+    太短 → 单条太长 → 总和太长，逐类上报；同时越界时报一类比混在一起列更好读。
+    """
+    measured = [
+        (label, float(seconds))
+        for label, seconds in durations
+        if isinstance(seconds, (int, float))
+        and not isinstance(seconds, bool)
+        and seconds > 0
+    ]
+    if not measured:
+        return
+
+    def _clips(items: list[tuple[str, float]]) -> str:
+        return ", ".join(f"{label} ({_format_seconds(value)}s)" for label, value in items)
+
+    too_short = (
+        [item for item in measured if _exceeds(min_seconds, item[1])]
+        if min_seconds is not None
+        else []
+    )
+    if too_short:
+        raise ValueError(
+            f"{media_label} reference duration must be >= {_format_seconds(min_seconds)}s: "
+            + _clips(too_short)
+        )
+    too_long = (
+        [item for item in measured if _exceeds(item[1], max_seconds)]
+        if max_seconds is not None
+        else []
+    )
+    if too_long:
+        raise ValueError(
+            f"{media_label} reference duration must be <= {_format_seconds(max_seconds)}s: "
+            + _clips(too_long)
+        )
+    total = sum(value for _, value in measured)
+    # 总时长下限只有在每一条素材都成功探测时才可判定；漏测会让和偏小，不能据此误拦。
+    if (
+        total_min_seconds is not None
+        and len(measured) == len(durations)
+        and _exceeds(total_min_seconds, total)
+    ):
+        raise ValueError(
+            f"{media_label} references total duration must be >= "
+            f"{_format_seconds(total_min_seconds)}s, got {_format_seconds(total)}s: "
+            + _clips(measured)
+        )
+    if total_max_seconds is not None and _exceeds(total, total_max_seconds):
+        raise ValueError(
+            f"{media_label} references total duration must be <= "
+            f"{_format_seconds(total_max_seconds)}s, got {_format_seconds(total)}s: "
+            + _clips(measured)
+        )
+
+
 def video_character_library_path(project_dir: Path) -> Path:
     return freezone_root(project_dir) / "video_character_library.json"
 
@@ -561,6 +669,174 @@ def save_video_character_library(project_dir: Path, items: list[dict[str, Any]])
     path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+LIBRARY_CATEGORIES = ("other", "character", "scene", "prop", "style", "audio")
+
+# 资产库目录树。文件夹（保存位置）和类目（标签）是两个独立维度：类目只管
+# 「这素材是干嘛的」，文件夹管「它放在哪」。系统文件夹两个——主线同步来的一律
+# 收进 mainline；本地上传缺省落在 other（前端显示为「待分类资产」）。类目 key
+# 同时充当同名系统文件夹的 key，这样老条目（没有 folder 字段）按类目归位即可，
+# 不需要数据迁移。用户新建的文件夹用随机 id，不会和这些保留 key 撞上。
+MAINLINE_FOLDER_KEY = "mainline"
+RESERVED_FOLDER_KEYS = (MAINLINE_FOLDER_KEY, *LIBRARY_CATEGORIES)
+# 与前端 assetLibraryItems.ts 的系统文件夹名保持一致，防止用户建出同名文件夹。
+RESERVED_FOLDER_NAMES = ("主线", "待分类资产", "其它", "人物", "场景", "物品", "风格", "音效")
+FOLDER_NAME_MAX_LEN = 20
+
+
+def video_character_folders_path(project_dir: Path) -> Path:
+    return freezone_root(project_dir) / "video_character_folders.json"
+
+
+def load_video_character_folders(project_dir: Path) -> list[dict[str, Any]]:
+    """读用户自建的资产库文件夹（系统文件夹不落盘，由前端按保留 key 生成）。"""
+    path = video_character_folders_path(project_dir)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict) and item.get("id")]
+
+
+def save_video_character_folders(project_dir: Path, folders: list[dict[str, Any]]) -> None:
+    path = video_character_folders_path(project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(folders, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def add_video_character_folder(project_dir: Path, *, name: str) -> dict[str, Any]:
+    """新建一个资产库文件夹。重名（含系统文件夹名）直接拒绝，避免目录里两个同名项。"""
+    clean = name.strip()
+    folders = load_video_character_folders(project_dir)
+    _validate_folder_name(clean, folders)
+    folder = {
+        "id": uuid.uuid4().hex[:12],
+        "name": clean,
+        "created_at": datetime.now().isoformat(),
+    }
+    folders.append(folder)
+    save_video_character_folders(project_dir, folders)
+    return folder
+
+
+def _validate_folder_name(clean: str, folders: list[dict[str, Any]], *, skip_id: str = "") -> None:
+    """新建/重命名共用的一套校验：非空、不超长、不撞系统名、不与其它文件夹重名。"""
+    if not clean:
+        raise ValueError("folder name is required")
+    if len(clean) > FOLDER_NAME_MAX_LEN:
+        raise ValueError(f"folder name must be <= {FOLDER_NAME_MAX_LEN} characters")
+    if clean in RESERVED_FOLDER_NAMES:
+        raise ValueError(f"folder name is reserved: {clean}")
+    for folder in folders:
+        if skip_id and str(folder.get("id")) == skip_id:
+            continue
+        if str(folder.get("name") or "").strip() == clean:
+            raise ValueError(f"folder already exists: {clean}")
+
+
+def update_video_character_folder(
+    project_dir: Path,
+    folder_id: str,
+    *,
+    name: str | None = None,
+    cover: str | None = None,
+) -> dict[str, Any] | None:
+    """改名 / 换封面。只动传进来的字段，两者都不传视作空操作。
+
+    封面存的是素材本身的 URL（前端从文件夹里挑一张），所以不需要额外的文件管理；
+    素材被删掉后封面会指向失效 URL，前端按缺省封面渲染即可。
+    """
+    folders = load_video_character_folders(project_dir)
+    target = next((f for f in folders if str(f.get("id")) == folder_id), None)
+    if target is None:
+        return None
+    if name is not None:
+        clean = name.strip()
+        _validate_folder_name(clean, folders, skip_id=folder_id)
+        target["name"] = clean
+    if cover is not None:
+        target["cover"] = cover.strip() or None
+    save_video_character_folders(project_dir, folders)
+    return target
+
+
+def delete_video_character_folder(project_dir: Path, folder_id: str) -> int | None:
+    """整柜清空：删掉文件夹本身，连同落在里面的素材条目。
+
+    返回被删掉的素材条数；文件夹不存在时返回 ``None``。系统文件夹（主线/类目同名
+    目录）不落盘，也就永远走不到这里——路由层按 id 找不到直接 404。
+    """
+    folders = load_video_character_folders(project_dir)
+    kept_folders = [f for f in folders if str(f.get("id")) != folder_id]
+    if len(kept_folders) == len(folders):
+        return None
+    items = load_video_character_library(project_dir)
+    kept_items = [item for item in items if str(item.get("folder") or "") != folder_id]
+    removed = len(items) - len(kept_items)
+    if removed:
+        save_video_character_library(project_dir, kept_items)
+    save_video_character_folders(project_dir, kept_folders)
+    return removed
+
+
+def library_folder_keys(project_dir: Path) -> set[str]:
+    """当前可用作「保存位置」的文件夹 key：系统保留 key + 用户自建文件夹 id。"""
+    keys = set(RESERVED_FOLDER_KEYS)
+    for folder in load_video_character_folders(project_dir):
+        keys.add(str(folder.get("id")))
+    return keys
+
+
+def _resolve_library_folder(
+    folder: str | None,
+    *,
+    existing: dict[str, Any] | None,
+    source: str,
+    category: str,
+) -> str:
+    """定出条目落在哪个文件夹，与前端 assetLibraryItems.ts 的归位逻辑保持一致。
+
+    显式指定优先；其次沿用条目已有的位置（重复同步/重复登记不能把用户挪好的
+    位置冲掉）；最后兜底——主线同步来的进 mainline，本地上传按类目进同名系统
+    文件夹（没归类的就是 other，即「待分类资产」）。
+    """
+    if folder:
+        return str(folder)
+    if existing is not None:
+        kept = existing.get("folder")
+        if kept:
+            return str(kept)
+    if source != "upload":
+        return MAINLINE_FOLDER_KEY
+    return category
+
+
+def _resolve_library_category(
+    category: str | None,
+    *,
+    existing: dict[str, Any] | None,
+    source: str,
+    media: str,
+) -> str:
+    """定出条目的用途类目，与前端 assetLibraryItems.ts 的 deriveCategory 保持一致。
+
+    优先用显式传入的类目；其次沿用条目已有的类目（主线重复同步不能把用户归好的
+    类冲掉）；最后按来源/媒介兜底——人物/场景/道具对号入座，音频归音效，其余归其它。
+    """
+    if category in LIBRARY_CATEGORIES:
+        return str(category)
+    if existing is not None:
+        kept = existing.get("category")
+        if kept in LIBRARY_CATEGORIES:
+            return str(kept)
+    if source in ("character", "scene", "prop"):
+        return source
+    return "audio" if media == "audio" else "other"
+
+
 def _upsert_library_item(
     items: list[dict[str, Any]],
     *,
@@ -571,6 +847,8 @@ def _upsert_library_item(
     video_url: str | None,
     audio_url: str | None,
     item_id: str | None,
+    category: str | None = None,
+    folder: str | None = None,
 ) -> dict[str, Any]:
     """纯内存 upsert：按 id 就地更新或追加 ``items``，返回写入的条目。
 
@@ -589,11 +867,18 @@ def _upsert_library_item(
         (i for i, it in enumerate(items) if it.get("id") == resolved_id), None
     )
     existing = items[existing_idx] if existing_idx is not None else None
+    resolved_category = _resolve_library_category(
+        category, existing=existing, source=source, media=media
+    )
     item = {
         "id": resolved_id,
         "name": name.strip(),
         "media": media,
         "source": source,
+        "category": resolved_category,
+        "folder": _resolve_library_folder(
+            folder, existing=existing, source=source, category=resolved_category
+        ),
         "image_urls": urls,
         "video_url": video_url,
         "audio_url": audio_url,
@@ -618,11 +903,15 @@ def add_video_character_library_item(
     video_url: str | None = None,
     audio_url: str | None = None,
     item_id: str | None = None,
+    category: str | None = None,
+    folder: str | None = None,
 ) -> dict[str, Any]:
     """把一条素材登记到资产库。
 
     图片走 ``image_urls``，视频/音频走 ``video_url`` / ``audio_url``。``item_id``
     非空时按 id upsert（主线同步用稳定合成 id，重复同步是更新而非新增）。
+    ``category`` 是用途类目（标签），``folder`` 是保存位置，两者互不影响，缺省时
+    分别按来源/媒介、按类目兜底推导。
     """
     items = load_video_character_library(project_dir)
     item = _upsert_library_item(
@@ -634,6 +923,8 @@ def add_video_character_library_item(
         video_url=video_url,
         audio_url=audio_url,
         item_id=item_id,
+        category=category,
+        folder=folder,
     )
     save_video_character_library(project_dir, items)
     return item
@@ -674,6 +965,7 @@ def sync_mainline_assets_into_library(
             media=media,
             source=str(asset.get("source") or "upload"),
             item_id=str(asset.get("id") or "") or None,
+            category=str(asset.get("category") or "") or None,
             image_urls=[url] if media == "image" else None,
             video_url=url if media == "video" else None,
             audio_url=url if media == "audio" else None,
