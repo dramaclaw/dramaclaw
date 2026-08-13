@@ -2148,7 +2148,7 @@ async def generate_sketches(
     if ctx is not None:
         queued_tasks = []
         rejected: list[dict[str, Any]] = []
-        for grid_index in dispatch_grid_indices:
+        for position, grid_index in enumerate(dispatch_grid_indices):
             scope = f"grid_{grid_index}"
             billing = _sketch_regen_billing_metadata(
                 sketch_image_selection,
@@ -2174,8 +2174,14 @@ async def generate_sketches(
                     # 一个都没投出去＝纯粹超限：裸抛，交 api/app.py 的 handler
                     # 渲染 429 ＋ 正确的 limit_scope（M8 不变量 7）。
                     raise
-                rejected.append(_task_limit_rejection(scope, exc))
-                # 闸是全局的，第 k+1 个必然也被拒 —— 撞点即停，不是 continue。
+                # 闸是全局的，后面每一个都必然被拒 —— 所以**只投这一次**（break），
+                # 但要把「当前这条 ＋ 后面还没尝试的」全部如实记进 rejected：
+                # 契约要 N−k 条（M8 :722 / :755），下游按尾段长度对齐
+                # （render-plan-dialog.tsx:265 断言 entries.length == rejected.length）。
+                for pending_index in dispatch_grid_indices[position:]:
+                    rejected.append(
+                        _task_limit_rejection(f"grid_{pending_index}", exc)
+                    )
                 break
             queued_tasks.append(
                 {
@@ -3114,7 +3120,7 @@ async def render_execute(
     rejected: list[dict[str, Any]] = []
 
     if ctx is not None:
-        for entry in execution_plan:
+        for position, entry in enumerate(execution_plan):
             entry_beats = [int(beat) for beat in entry.beat_numbers]
             entry_scope = selection_scope(entry.mode_key, entry_beats)
             billing = _render_regen_billing_metadata(
@@ -3145,7 +3151,14 @@ async def render_execute(
                 if not dispatched_task_ids:
                     # k == 0：裸抛交 handler 渲染 429（M8 不变量 7）。
                     raise
-                rejected.append(_task_limit_rejection(entry_scope, exc))
+                # 只投这一次，但把未投的尾段逐条如实上报（N−k 条，M8 :722 / :755）。
+                for pending in execution_plan[position:]:
+                    pending_beats = [int(beat) for beat in pending.beat_numbers]
+                    rejected.append(
+                        _task_limit_rejection(
+                            selection_scope(pending.mode_key, pending_beats), exc
+                        )
+                    )
                 break
             dispatched_task_ids.append(queued.task_state.task_id)
     else:
@@ -4493,7 +4506,7 @@ async def generate_missing_manual_sketches(
     dispatched_scopes: list[str] = []
     dispatched_segments: list[list[int]] = []
     rejected: list[dict[str, Any]] = []
-    for beat_numbers in segments:
+    for position, beat_numbers in enumerate(segments):
         beat_indices = [int(n) for n in beat_numbers]
         mode_key = choose_manual_sketch_mode_key(len(beat_indices))
         config = {
@@ -4527,7 +4540,15 @@ async def generate_missing_manual_sketches(
                 if not dispatched_scopes:
                     # k == 0：裸抛交 handler 渲染 429（M8 不变量 7）。
                     raise
-                rejected.append(_task_limit_rejection(scope, exc))
+                # 只投这一次，但把未投的尾段逐条如实上报（N−k 条，M8 :722 / :755）。
+                for pending in segments[position:]:
+                    pending_beats = [int(n) for n in pending]
+                    pending_mode_key = choose_manual_sketch_mode_key(len(pending_beats))
+                    rejected.append(
+                        _task_limit_rejection(
+                            selection_scope(pending_mode_key, pending_beats), exc
+                        )
+                    )
                 break
             dispatched_scopes.append(scope)
             dispatched_segments.append(beat_indices)

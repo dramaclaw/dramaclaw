@@ -5,13 +5,18 @@
 
 本文件逐循环钉死 M8 §8.2 冻结的契约：
 
-1. **只捕两个闸异常**（``ChannelTaskLimitExceeded`` / ``UserTaskLimitExceeded``）→ 记进
-   ``rejected`` 后 **``break``**；别的异常照旧穿透（宽捕 ``Exception`` 就是 ``TCP-P44``
-   刚堵上的那条 503 复发路径）。
+1. **只捕两个闸异常**（``ChannelTaskLimitExceeded`` / ``UserTaskLimitExceeded``）→ 记账后
+   **``break``**；别的异常照旧穿透（宽捕 ``Exception`` 就是 ``TCP-P44`` 刚堵上的那条
+   503 复发路径）。
 2. **k == 0 必须裸抛** —— 交 ``api/app.py`` 的 handler 渲染 429 ＋ 正确的 ``limit_scope``
    （M8 不变量 7）；循环 1 的单格分支 ``:2178`` 直接读 ``queued_tasks[0]``，k=0 时必崩。
-3. 响应体加 ``rejected: [{scope, reason, limit, active}]``，并把 ``:2166`` 的
-   ``dispatched`` 从**意图数**改成**实投数**（M8 不变量 17）。
+3. 响应体加 ``rejected: [{scope, reason, limit, active}]``，**恰 N−k 条**
+   （M8 ``:722``；验证矩阵 ``:755`` 的 cap=3 / N=5 → ``rejected`` 恰 2 条）：撞点那条
+   **以及它后面所有还没尝试的**条目，各带自己的 scope、顺序与计划一致。
+   「只投一次」与「上报 N−k 条」不矛盾 —— ``break`` 省的是**投递**，不是**上报**。
+   下游 ``TCP-EU-B4b``（``render-plan-dialog.tsx:265``）按
+   ``entries.length === rejected.length`` 对齐未投尾段，少报一条就整个降级成不自动补投。
+4. 把 ``:2166`` 的 ``dispatched`` 从**意图数**改成**实投数**（M8 不变量 17）。
 
 ``reason`` 的算法与 ``api/app.py`` 的 ``limit_scope`` **是同一组分支**
 （``:183-185`` 渠道闸 / ``:209`` 人闸）—— 两侧同算法即跨 EU（``TCP-EU-B2``）漂移探测器，
@@ -33,6 +38,7 @@ from novelvideo.task_backend.limits import (
     ChannelTaskLimitExceeded,
     UserTaskLimitExceeded,
 )
+from novelvideo.task_identity import selection_scope
 
 # ---------------------------------------------------------------------------
 # 共用：注入闸异常的假 task backend
@@ -64,12 +70,15 @@ class _GateBackend:
         self.exc = exc
         self.fail_from = fail_from
         self.calls: list[dict] = []
+        # 真正进了队列的那几个（M8 :755 的「Celery 里恰 3 个任务」）。
+        self.succeeded: list[dict] = []
 
     async def enqueue_project_task(self, ctx, **kwargs):
         self.calls.append(kwargs)
         if self.fail_from is not None and len(self.calls) >= self.fail_from:
             assert self.exc is not None
             raise self.exc
+        self.succeeded.append(kwargs)
         return SimpleNamespace(
             task_state=SimpleNamespace(task_id=f"task-{len(self.calls)}"),
             backend="celery",
@@ -191,9 +200,12 @@ def _post_sketches(client: TestClient, grid_index: int = -1):
 def test_loop1_partial_dispatch_reports_dispatched_and_rejected(
     monkeypatch, tmp_path, exc, reason, _scope
 ) -> None:
-    """第 4 个撞闸：前 3 个仍已投递，dispatched==3，rejected 恰一项且 reason 正确。"""
+    """N=6 第 4 个撞闸：前 3 个仍已投递，dispatched==3，rejected 恰 N−k==3 条。
+
+    被拒的三条＝撞点那条 ＋ 它后面两条还没尝试的，各带自己的 scope、顺序与计划一致。
+    """
     backend = _GateBackend(exc, fail_from=4)
-    response = _post_sketches(_sketch_client(monkeypatch, tmp_path, backend, grids=4))
+    response = _post_sketches(_sketch_client(monkeypatch, tmp_path, backend, grids=6))
 
     assert response.status_code == 200
     data = response.json()["data"]
@@ -201,22 +213,48 @@ def test_loop1_partial_dispatch_reports_dispatched_and_rejected(
     assert len(data["tasks"]) == 3
     assert data["scopes"] == ["grid_0", "grid_1", "grid_2"]
     assert data["rejected"] == [
-        {"scope": "grid_3", "reason": reason, "limit": exc.limit, "active": exc.active}
+        {"scope": f"grid_{n}", "reason": reason, "limit": exc.limit, "active": exc.active}
+        for n in (3, 4, 5)
     ]
+
+
+def test_loop1_m8_755_cap3_n5(monkeypatch, tmp_path) -> None:
+    """M8 验证矩阵 :755 那一行逐字：cap=3、N=5 → 200、dispatched=3、rejected 恰 2 条。"""
+    backend = _GateBackend(_CHANNEL_GATE, fail_from=4)
+    response = _post_sketches(_sketch_client(monkeypatch, tmp_path, backend, grids=5))
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["dispatched"] == 3
+    assert len(data["rejected"]) == 2
+    assert [item["scope"] for item in data["rejected"]] == ["grid_3", "grid_4"]
+    # 「Celery 里恰 3 个任务」：真正入队的只有 3 个（第 4 次调用撞闸，第 5 个根本没试）。
+    assert len(backend.succeeded) == 3
+    assert len(backend.calls) == 4
 
 
 def test_loop1_stops_at_the_gate_instead_of_retrying_every_remaining_item(
     monkeypatch, tmp_path
 ) -> None:
-    """撞点即停：循环体被调用的次数恰为 k+1（3），不是 N（6）。"""
+    """撞点即停：后端只被调 3 次（2 成 + 1 撞），不是 N=6 次 —— 但仍报满 4 条。
+
+    这条是「break 省的是投递、不是上报」的钉子：rejected 有 4 条，后端却没为后 3 条
+    各发一次投递。
+    """
     backend = _GateBackend(_CHANNEL_GATE, fail_from=3)
     response = _post_sketches(_sketch_client(monkeypatch, tmp_path, backend, grids=6))
 
     assert response.status_code == 200
     assert len(backend.calls) == 3
+    assert len(backend.succeeded) == 2
     data = response.json()["data"]
     assert data["dispatched"] == 2
-    assert [item["scope"] for item in data["rejected"]] == ["grid_2"]
+    assert [item["scope"] for item in data["rejected"]] == [
+        "grid_2",
+        "grid_3",
+        "grid_4",
+        "grid_5",
+    ]
 
 
 @pytest.mark.parametrize(("exc", "_reason", "scope"), _GATE_CASES, ids=_GATE_IDS)
@@ -410,8 +448,6 @@ def _render_execute(client: TestClient, beat_indices: list[int]):
 
 
 def _expected_scopes(plan: dict) -> list[str]:
-    from novelvideo.task_identity import selection_scope
-
     return [
         selection_scope(entry["mode_key"], [int(b) for b in entry["beat_numbers"]])
         for entry in plan["plan"]
@@ -424,7 +460,7 @@ def test_loop2_partial_dispatch_reports_task_ids_and_rejected(
 ) -> None:
     backend = _GateBackend(exc, fail_from=4)
     plan, response = _render_execute(
-        _render_client(monkeypatch, tmp_path, backend), [1, 2, 3, 4]
+        _render_client(monkeypatch, tmp_path, backend), [1, 2, 3, 4, 5, 6]
     )
 
     assert response.status_code == 200, response.text
@@ -432,15 +468,33 @@ def test_loop2_partial_dispatch_reports_task_ids_and_rejected(
     assert len(data["task_ids"]) == 3
     assert data["rejected"] == [
         {
-            "scope": _expected_scopes(plan)[3],
+            "scope": _expected_scopes(plan)[idx],
             "reason": reason,
             "limit": exc.limit,
             "active": exc.active,
         }
+        for idx in (3, 4, 5)
     ]
 
 
+def test_loop2_m8_755_cap3_n5(monkeypatch, tmp_path) -> None:
+    """M8 :755：cap=3、N=5 → 200、实投 3（task_ids 3 条）、rejected 恰 2 条。"""
+    backend = _GateBackend(_CHANNEL_GATE, fail_from=4)
+    plan, response = _render_execute(
+        _render_client(monkeypatch, tmp_path, backend), [1, 2, 3, 4, 5]
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert len(data["task_ids"]) == 3
+    assert len(data["rejected"]) == 2
+    assert [item["scope"] for item in data["rejected"]] == _expected_scopes(plan)[3:]
+    assert len(backend.succeeded) == 3
+    assert len(backend.calls) == 4
+
+
 def test_loop2_stops_at_the_gate(monkeypatch, tmp_path) -> None:
+    """只投 3 次（2 成 + 1 撞），但未投的尾段 4 条全数上报。"""
     backend = _GateBackend(_PLATFORM_GATE, fail_from=3)
     plan, response = _render_execute(
         _render_client(monkeypatch, tmp_path, backend), [1, 2, 3, 4, 5, 6]
@@ -448,9 +502,33 @@ def test_loop2_stops_at_the_gate(monkeypatch, tmp_path) -> None:
 
     assert response.status_code == 200, response.text
     assert len(backend.calls) == 3
+    assert len(backend.succeeded) == 2
     data = response.json()["data"]
     assert len(data["task_ids"]) == 2
-    assert [item["scope"] for item in data["rejected"]] == [_expected_scopes(plan)[2]]
+    assert [item["scope"] for item in data["rejected"]] == _expected_scopes(plan)[2:]
+
+
+def test_loop2_rejected_length_matches_the_untried_tail_the_frontend_slices(
+    monkeypatch, tmp_path
+) -> None:
+    """下游对齐：``resolved_grids[len(task_ids):]`` 的长度必须等于 ``rejected`` 的长度。
+
+    这正是 ``TCP-EU-B4b`` 的 ``render-plan-dialog.tsx:265``
+    （``entries = grids.slice(taskIds.length)``；``shapeOk: entries.length ===
+    rejected.length``）—— 对不上前端就不自动补投，且横幅上的失败数会少报。
+    """
+    backend = _GateBackend(_USER_GATE, fail_from=3)
+    _plan, response = _render_execute(
+        _render_client(monkeypatch, tmp_path, backend), [1, 2, 3, 4, 5, 6]
+    )
+
+    data = response.json()["data"]
+    entries = data["resolved_grids"][len(data["task_ids"]) :]
+    assert len(entries) == len(data["rejected"]) == 4
+    assert [item["scope"] for item in data["rejected"]] == [
+        selection_scope(entry["mode_key"], [int(b) for b in entry["beat_numbers"]])
+        for entry in entries
+    ]
 
 
 @pytest.mark.parametrize(("exc", "_reason", "scope"), _GATE_CASES, ids=_GATE_IDS)
@@ -586,8 +664,6 @@ def _post_missing_manual(client: TestClient):
 
 
 def _manual_scope(beat_numbers: list[int]) -> str:
-    from novelvideo.task_identity import selection_scope
-
     return selection_scope("1x1_2-3_sketch", beat_numbers)
 
 
@@ -596,7 +672,7 @@ def test_loop3_partial_dispatch_reports_dispatched_and_rejected(
     monkeypatch, tmp_path, exc, reason, _scope
 ) -> None:
     backend = _GateBackend(exc, fail_from=4)
-    segments = [[1], [2], [3], [4]]
+    segments = [[1], [2], [3], [4], [5], [6]]
     response = _post_missing_manual(
         _manual_client(monkeypatch, tmp_path, backend, segments)
     )
@@ -608,15 +684,36 @@ def test_loop3_partial_dispatch_reports_dispatched_and_rejected(
     assert data["scopes"] == [_manual_scope(seg) for seg in segments[:3]]
     assert data["rejected"] == [
         {
-            "scope": _manual_scope([4]),
+            "scope": _manual_scope(seg),
             "reason": reason,
             "limit": exc.limit,
             "active": exc.active,
         }
+        for seg in segments[3:]
     ]
 
 
+def test_loop3_m8_755_cap3_n5(monkeypatch, tmp_path) -> None:
+    """M8 :755：cap=3、N=5 → 200、dispatched=3、rejected 恰 2 条。"""
+    backend = _GateBackend(_CHANNEL_GATE, fail_from=4)
+    segments = [[1], [2], [3], [4], [5]]
+    response = _post_missing_manual(
+        _manual_client(monkeypatch, tmp_path, backend, segments)
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["dispatched"] == 3
+    assert len(data["rejected"]) == 2
+    assert [item["scope"] for item in data["rejected"]] == [
+        _manual_scope(seg) for seg in segments[3:]
+    ]
+    assert len(backend.succeeded) == 3
+    assert len(backend.calls) == 4
+
+
 def test_loop3_stops_at_the_gate(monkeypatch, tmp_path) -> None:
+    """只投 3 次（2 成 + 1 撞），未投的尾段 4 条全数上报。"""
     backend = _GateBackend(_USER_GATE, fail_from=3)
     segments = [[1], [2], [3], [4], [5], [6]]
     response = _post_missing_manual(
@@ -625,9 +722,12 @@ def test_loop3_stops_at_the_gate(monkeypatch, tmp_path) -> None:
 
     assert response.status_code == 200, response.text
     assert len(backend.calls) == 3
+    assert len(backend.succeeded) == 2
     data = response.json()["data"]
     assert data["dispatched"] == 2
-    assert [item["scope"] for item in data["rejected"]] == [_manual_scope([3])]
+    assert [item["scope"] for item in data["rejected"]] == [
+        _manual_scope(seg) for seg in segments[2:]
+    ]
 
 
 @pytest.mark.parametrize(("exc", "_reason", "scope"), _GATE_CASES, ids=_GATE_IDS)
