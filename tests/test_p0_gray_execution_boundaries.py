@@ -452,6 +452,7 @@ def test_c1_eg07_pool_build_env_consumes_authorization_not_workspace_gateway(
         token,
         project_id="project-1",
         egress_project_id="project-1",
+        requester_user_id="user-id-1",
         project_env={"DRAMACLAW_PROJECT_OUTPUT_DIR": str(tmp_path / "output")},
         authorization=authorization,
     )
@@ -784,6 +785,7 @@ def test_c1_s3_04b_pool_build_env_home_scope_keeps_the_two_project_ids_apart(tmp
         token,
         project_id=None,
         egress_project_id="project-1",
+        requester_user_id="user-id-1",
         project_env=None,
         authorization=_authorization(),
     )
