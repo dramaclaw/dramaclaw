@@ -1816,6 +1816,7 @@ tests/test_cognee_store_close.py,Elastic-2.0,2026 SuperTale contributors,REUSE.t
 tests/test_compose_episode_audio_source.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_content_adapter.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_control_frame_to_sketch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_control_frame_to_sketch_projection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_dependency_license_gate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_detected_empty_markers.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_director_staging_shape_presets.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -1816,6 +1816,13 @@ async def _start_or_enqueue_mainline_director_control_sketch_job(
     if not source_path.exists() or not source_path.is_file():
         raise HTTPException(404, f"director combined file not found: {source_path}")
     job_id = _new_job_id()
+    projection_payload = await _task_projection_payload(
+        ctx=ctx,
+        username=ctx.owner_username,
+        project_name=ctx.project_name,
+        episode=int(episode),
+        task_type=task_type,
+    )
     queued = await get_task_backend().enqueue_project_task(
         ctx,
         product_surface="freezone",
@@ -1842,6 +1849,7 @@ async def _start_or_enqueue_mainline_director_control_sketch_job(
             "source_label": "导演合成图",
             "target_label": "当前草图候选",
             **(task_display or {}),
+            **projection_payload,
         },
     )
     return _project_job_response(
