@@ -3419,6 +3419,7 @@ async def stream_assistant_reply(
     project_dir: str | Path | None = None,
     project_state_dir: str | Path | None = None,
     egress_context=None,
+    requester_user_id: str | None = None,
 ) -> dict[str, Any]:
     run_lock_id = _acquire_chat_run_lock(username, project)
     heartbeat_task = asyncio.create_task(
@@ -3456,6 +3457,7 @@ async def stream_assistant_reply(
                 project_dir=project_dir,
                 project_state_dir=project_state_dir,
                 egress_context=egress_context,
+                requester_user_id=requester_user_id,
             )
         if backend != "claude":
             raise RuntimeError(f"Unsupported chat backend: {backend}")
@@ -3571,6 +3573,7 @@ async def _stream_assistant_reply_hermes(
     project_dir: str | Path | None = None,
     project_state_dir: str | Path | None = None,
     egress_context=None,
+    requester_user_id: str | None = None,
 ) -> dict[str, Any]:
     """Stream via Hermes ACP subprocess (per-user, sandboxed).
 
@@ -3583,12 +3586,20 @@ async def _stream_assistant_reply_hermes(
 
     authorization = None
     if egress_context is not None:
-        from novelvideo.chat.hermes_egress import authorize_credentialed_hermes
+        from novelvideo.chat.hermes_egress import (
+            EgressBoundaryError,
+            authorize_credentialed_hermes,
+        )
         from novelvideo.ports import get_egress_operation_port, get_model_credentials
 
+        # 身份判定只认 user_id。缺了就拒，不得回落成登录名 username——
+        # 那是两个不同的值，回落会把坏口径固化成"看起来能用"。
+        if not requester_user_id:
+            raise EgressBoundaryError("TASK_ENVELOPE_INVALID")
         authorization = await authorize_credentialed_hermes(
             context=egress_context,
             username=username,
+            requester_user_id=requester_user_id,
             project_id=project,
             prompt=prompt,
             credential_resolver=get_model_credentials(),
