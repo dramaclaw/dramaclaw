@@ -34,7 +34,6 @@ class FileLockCanvasWriteMutex:
         *,
         actor: str | None = None,
         timeout_seconds: float | None = None,
-        **kwargs,
     ) -> Iterator[FileLockCanvasWriteGuard]:
         _ = actor  # 文件锁不记谁在持有：锁的生命周期就是进程的生命周期。
         with canvas_write_lock(
@@ -43,6 +42,5 @@ class FileLockCanvasWriteMutex:
             timeout_seconds=(
                 FILE_LOCK_WAIT_SECONDS if timeout_seconds is None else timeout_seconds
             ),
-            **kwargs,
         ):
             yield FileLockCanvasWriteGuard()
