@@ -1533,7 +1533,7 @@ def test_official_media_catalog_preferences_and_remote_update(monkeypatch, tmp_p
     monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_URL", source_url)
     payload = {
         "version": 1,
-        "catalogVersion": "2026.08.10.2",
+        "catalogVersion": "2026.08.14.2",
         "name": "Test official media models",
         "mediaModels": {
             "test-video": {
@@ -1573,7 +1573,7 @@ def test_official_media_catalog_preferences_and_remote_update(monkeypatch, tmp_p
     assert checked.status_code == 200, checked.text
     assert checked.json()["data"]["updated"] is True
     assert current.json()["data"]["source"] == "remote"
-    assert current.json()["data"]["catalogVersion"] == "2026.08.10.2"
+    assert current.json()["data"]["catalogVersion"] == "2026.08.14.2"
     assert current.json()["data"]["modelCount"] == 1
 
 
@@ -1596,7 +1596,7 @@ def test_official_media_catalog_manifest_verifies_hash_and_revalidates_etag(
     monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_MANIFEST_URL", manifest_url)
     payload = {
         "version": 1,
-        "catalogVersion": "2026.08.11.1",
+        "catalogVersion": "2026.08.14.3",
         "name": "Test official media models",
         "mediaModels": {
             "test-video": {
