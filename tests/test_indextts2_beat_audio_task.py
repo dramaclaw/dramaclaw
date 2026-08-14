@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,21 @@ import pytest
 from novelvideo.shared.billing_errors import BillingError, InsufficientCreditsError
 
 pytestmark = pytest.mark.m07
+
+
+def test_indextts2_resolves_project_config_from_current_module(monkeypatch):
+    from novelvideo.audio import indextts2_beat_audio_task as task
+
+    current_project_config = SimpleNamespace(
+        is_narrated_project=lambda _username, _project: True,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "novelvideo.project_config",
+        current_project_config,
+    )
+
+    assert task._is_narrated_project("alice", "demo") is True
 
 
 class _ForeignBillingError(BillingError):

@@ -1,4 +1,4 @@
-"""B2 步 11 · 只撤画布 13 条路由的 home node 守卫，别的 58 条一行不动。
+"""B2 步 11 · 只撤画布 13 条路由的 home node 守卫，别的 62 条一行不动。
 
 方案文档（`B2-canvas-placement-free.md` §6.4 步 11）的原话是「撤掉
 `api/routes/freezone.py:326` 的 home node 守卫」。**照字面删是错的**，
@@ -7,9 +7,9 @@
 - 那一行（集成线上已漂到 `:331`，在 `_resolve_freezone_project` 内）
   **不是画布路由的守卫，是 freezone 全部路由的守卫** —— 本文件
   `test_only_canvas_routes_opt_out_of_the_home_node_guard` 现场点数：
-  `@router.` 72 条 ≡ `_resolve_freezone_project` 71 处调用，
+  `@router.` 76 条 ≡ `_resolve_freezone_project` 75 处调用，
   其中 `tags=[TAG_FREEZONE_CANVAS]` 只有 13 条。
-- 删那一行 ＝ 一次性放开另外 ~58 条读写 `Path(ctx.output_dir)` 本地项目文件、
+- 删那一行 ＝ 一次性放开另外 ~62 条读写 `Path(ctx.output_dir)` 本地项目文件、
   **既没有租约也没有共享存储交代**的路由，与 §6.3 的「逐个撤、不批量撤」直接冲突。
 
 故落地形态是给 `_resolve_freezone_project` 加一个**带默认值 `True` 的关键字参数**
@@ -25,7 +25,7 @@
    在非 home node 上**过得了这道守卫**。只断言这一件：真正落盘还依赖共享存储，
    那是 `dispatch-and-branching.md` §11 第 4 行的交接项，不在本 EU 内。
 3. `test_non_canvas_freezone_routes_are_still_blocked_on_a_non_home_node` ——
-   另外 58 条挑 3 条，**仍然被拦**且错误体逐字相同。
+   另外 62 条挑 3 条，**仍然被拦**且错误体逐字相同。
 4. `test_only_canvas_routes_opt_out_of_the_home_node_guard` —— AST 静态护栏（双向）：
    传 `require_home_node=False` 的调用点必须都在画布路由里，且 13 条画布路由必须全传了。
    形制照同目录 `tests/test_freezone_canvas_route_to_thread.py:180` 的 AST 不变量。
@@ -108,7 +108,7 @@ def _assert_not_a_home_node_rejection(exc: BaseException | None) -> None:
 async def test_default_still_rejects_a_non_home_node_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """不传新参数 ＝ 今天的行为，逐字不变（58 条非画布路由靠这个默认值不改一行）。"""
+    """不传新参数 ＝ 今天的行为，逐字不变（62 条非画布路由靠这个默认值不改一行）。"""
 
     ctx = _patch_remote_project(monkeypatch, tmp_path)
 
@@ -169,7 +169,7 @@ async def test_canvas_write_route_passes_the_home_node_guard(
 async def test_non_canvas_freezone_routes_are_still_blocked_on_a_non_home_node(
     handler_name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """另外 58 条一行不改：仍然被拦，错误体逐字相同。"""
+    """另外 62 条一行不改：仍然被拦，错误体逐字相同。"""
 
     ctx = _patch_remote_project(monkeypatch, tmp_path)
     handler = getattr(freezone_routes, handler_name)
@@ -256,8 +256,8 @@ def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
         and _opts_out_of_the_guard(call)
     }
 
-    # 取证口径（`TCP-P60`）：freezone 72 条路由全过同一个解析器，画布只占 13 条。
-    assert router_decorators == 72
+    # 取证口径（`TCP-P60`）：freezone 76 条路由全过同一个解析器，画布只占 13 条。
+    assert router_decorators == 76
     assert len(canvas_routes) == 13
 
     # 正向：13 条画布路由必须全部、且每一处调用都 opt-out。

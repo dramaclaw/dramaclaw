@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,11 +18,6 @@ from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.shared.billing_errors import (
     is_fatal_billing_error,
     is_insufficient_credits_error,
-)
-from novelvideo.project_config import (
-    is_narrated_project,
-    load_effective_narration_style_for_voice,
-    load_narrator_reference_audio,
 )
 from novelvideo.seedance2_i2v.models import parse_seedance2_config
 from novelvideo.seedance2_i2v.voice_audio_records import (
@@ -174,7 +170,8 @@ def _audio_usage_request_id(
 
 
 def _is_narrated_project(username: str, project: str) -> bool:
-    return is_narrated_project(username, project)
+    project_config = importlib.import_module("novelvideo.project_config")
+    return project_config.is_narrated_project(username, project)
 
 
 def _resolve_beat_uploaded_narration_voice(
@@ -249,8 +246,11 @@ async def _resolve_narrator_voice(
     username: str,
     project: str,
 ) -> tuple[Path | None, str, str, str]:
-    narration_style = load_effective_narration_style_for_voice(username, project)
-    narrator_reference = load_narrator_reference_audio(username, project)
+    project_config = importlib.import_module("novelvideo.project_config")
+    narration_style = project_config.load_effective_narration_style_for_voice(
+        username, project
+    )
+    narrator_reference = project_config.load_narrator_reference_audio(username, project)
     characters = await store.list_characters()
     resolution = resolve_narrator_source(
         store=store,
@@ -278,7 +278,8 @@ async def _resolve_narration_voice_for_beat(
     if not _is_narrated_project(username, project):
         beat_voice = _resolve_beat_uploaded_narration_voice(beat, store.project_dir)
         if beat_voice is not None:
-            narration_style = load_effective_narration_style_for_voice(
+            project_config = importlib.import_module("novelvideo.project_config")
+            narration_style = project_config.load_effective_narration_style_for_voice(
                 username, project
             )
             return beat_voice, file_sha256(beat_voice), narration_style, ""
