@@ -38,7 +38,10 @@ export function useDesktopRelease(): Releases {
     ).then((entries) => {
       const next = pending();
       for (const [os, release] of entries) next[os] = release;
-      cached = next;
+      // 只缓存解析成功的结果。失败也写缓存的话,一次瞬时抖动(CDN 504、
+      // 切网)就把整个会话钉死在 GitHub 兜底上,再怎么跳页都恢复不了;
+      // 不写则下一次挂载会重试一遍。
+      if (Object.values(next).every((r) => r.version !== null)) cached = next;
       if (active) setReleases(next);
     });
     return () => {

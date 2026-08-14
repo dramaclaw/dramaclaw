@@ -42,16 +42,42 @@ export type DesktopRelease = {
   releaseDate: string | null;
 };
 
-/** 从 electron-updater 清单文本里挑出目标平台的安装包文件名。 */
+/**
+ * 从 electron-updater 清单文本里挑出目标平台的安装包文件名。
+ *
+ * 取到行尾再 trim,不用 `\S+`:electron-builder 的 NSIS 默认 artifactName 会
+ * 产出带空格的文件名(`DramaClaw Setup 1.3.2.exe`),YAML 里就是不加引号的
+ * 裸标量,`\S+` 会在第一个空格处截断,拼出必然 404 的直链。带引号的形式
+ * (值里含 `:`、`#` 等特殊字符时 js-yaml 会加引号)顺手剥掉。
+ */
 export function pickInstallerFromManifest(
   manifest: string,
   platform: DesktopPlatform,
 ): string | null {
   const ext = INSTALLER_EXT[platform];
-  for (const match of manifest.matchAll(/url:\s*(\S+)/g)) {
-    if (match[1].endsWith(ext)) return match[1];
+  for (const match of manifest.matchAll(/^\s*-?\s*url:\s*(.+)$/gm)) {
+    const file = match[1].trim().replace(/^(['"])(.*)\1$/, "$2");
+    if (file.endsWith(ext)) return file;
   }
   return null;
+}
+
+/**
+ * 文件名转成 URL 里的一个路径段。
+ *
+ * 清单里的 url 有时已经是编码过的(空格写成 %20),直接再 encode 会变成
+ * %2520 —— 链接照样 404。所以先 decode 一次再统一编码,两种写法都归一。
+ * encodeURIComponent 本身是安全边界,别去掉:它把文件名钉死成路径末节,
+ * `../` 穿越和 `//evil.com` 这类开放重定向都拼不出来。
+ */
+function encodeInstallerPath(file: string): string {
+  let decoded = file;
+  try {
+    decoded = decodeURIComponent(file);
+  } catch {
+    // 非法转义序列(比如文件名里有裸 %),按原样编码即可。
+  }
+  return encodeURIComponent(decoded);
 }
 
 /**
@@ -82,16 +108,31 @@ export async function resolveDesktopRelease(
     const res = await fetch(DOWNLOAD_BASE + MANIFEST[platform], {
       cache: "no-store",
     });
-    if (!res.ok) return fallback;
+    if (!res.ok) {
+      warnUnresolved(platform, `manifest responded ${res.status}`);
+      return fallback;
+    }
     const manifest = await res.text();
     const file = pickInstallerFromManifest(manifest, platform);
+    if (!file) warnUnresolved(platform, "no installer url in manifest");
     return {
-      url: file ? DOWNLOAD_BASE + encodeURIComponent(file) : FALLBACK_DOWNLOAD_URL,
+      url: file ? DOWNLOAD_BASE + encodeInstallerPath(file) : FALLBACK_DOWNLOAD_URL,
       ...parseManifestRelease(manifest),
     };
-  } catch {
+  } catch (err) {
+    // CSP 拦截、CORS、断网在页面上是同一副样子(都退成 GitHub 兜底按钮),
+    // 不留一行日志就没法区分"CDN 挂了"和"nginx 少放行一个域名"。
+    warnUnresolved(platform, err);
     return fallback;
   }
+}
+
+function warnUnresolved(platform: DesktopPlatform, cause: unknown): void {
+  console.warn(
+    `[desktop-download] ${platform} 版本指针解析失败,退到 GitHub Releases 兜底。` +
+      ` 若为网络错误,先查 CSP connect-src 是否放行 ${DOWNLOAD_BASE}`,
+    cause,
+  );
 }
 
 /**
