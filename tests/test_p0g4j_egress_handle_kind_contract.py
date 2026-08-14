@@ -2,7 +2,7 @@
 
 `0039_p0_gray_egress_operations.py:138-146` 的 `egress_operations_output_check`
 读上去像「出网必留上游句柄」，实际只校验 `btrim(...) <> ''`。于是四处写入点塞占位
-串就能满足它：`tts_generator.py:141` 的 `"sync-audio"`、三条服务路径的
+串就能满足它：`tts_generator.py:141` 的 `"sync-audio"`、两条服务路径的
 `"service-operation-completed"`、`model_gateway_runtime.py` 拿 `operation_id` 自引用
 当句柄。约束、写入点、和一条把占位串钉成期望值的绿色用例三方互相背书——保证是假的。
 
@@ -18,7 +18,7 @@
 起成立。字段**必填、无默认值**——给默认值就把「我声明它没有句柄」和「我忘了写」
 压回同一个值，那正是 OI-48 的教训。
 
-顺带修一个本文件之前无人撞见的真缺陷：三条服务路径在 `dispatching` 态直接调
+顺带修一个本文件之前无人撞见的真缺陷：两条服务路径在 `dispatching` 态直接调
 `mark_completed`，而 `0039:294-338` 的 `transition_egress_operation` 要求
 `completed` 必须来自 `accepted`——真库上必抛 P0001。它一直是绿的，只因替身
 `FakeOperations` 根本没有 `mark_accepted`、也不建状态机。所以替身也要一起补：
@@ -179,16 +179,17 @@ def test_operation_key_ignores_handle_kind() -> None:
     才说明既有行的 replay 语义没被这次改动搬走。
     """
 
-    assert _spec(handle_kind=HandleKind.PROVIDER_JOB).operation_key == _spec(
-        handle_kind=HandleKind.NONE
-    ).operation_key
+    assert (
+        _spec(handle_kind=HandleKind.PROVIDER_JOB).operation_key
+        == _spec(handle_kind=HandleKind.NONE).operation_key
+    )
     assert _spec().operation_key == (
         "6364e3f1e602b759bbecf2a8fccc6c119bed41c263c30b25b8b98cc6fb40b1b2"
     )
 
 
 def test_every_claim_site_declares_a_handle_kind() -> None:
-    """9 个生产构造点逐个显式声明；新增一个不声明的即红。
+    """8 个生产构造点逐个显式声明；新增一个不声明的即红。
 
     只认字面量 `HandleKind.X`：间接取值等于把类别推迟到运行期，那就没法在这里看出
     它到底声明了什么。
@@ -214,20 +215,16 @@ def test_every_claim_site_declares_a_handle_kind() -> None:
             ), f"{site} 的 handle_kind 不是 HandleKind 字面量"
             declared[site] = value.attr
 
-    assert len(declared) == 9, declared
+    assert len(declared) == 8, declared
 
 
 @pytest.mark.asyncio
 async def test_service_paths_reach_completed_through_accepted() -> None:
-    """三条服务路径必须走完 dispatching→accepted→completed，且两列都不留假值。
+    """NewAPI 服务路径必须走完 dispatching→accepted→completed，且两列都不留假值。
 
     现在它们从 `dispatching` 直接 `mark_completed`，真库上是 P0001。
     """
 
-    from novelvideo.backup.files_sync import (
-        run_backup_operation,
-        trusted_backup_cli_context,
-    )
     from novelvideo.newapi_provisioner import (
         NewApiAdminServiceIdentity,
         run_newapi_admin_operation,
@@ -248,29 +245,18 @@ async def test_service_paths_reach_completed_through_accepted() -> None:
         invoke=lambda: {"ok": True},
     )
 
-    backup_ops = StateMachineOperations()
-    await run_backup_operation(
-        context=trusted_backup_cli_context("root-op-1"),
-        capability="backup.storage.files",
-        business_task_id="files-sync-1",
-        request={"action": "sync"},
-        operations=backup_ops,
-        invoke=lambda: {"ok": True},
+    verbs = [verb for verb, _kwargs in newapi_ops.transitions]
+    assert verbs == ["accepted", "completed"]
+    assert newapi_ops.claims[0].handle_kind is HandleKind.NONE
+    accepted_kwargs = newapi_ops.transitions[0][1]
+    completed_kwargs = newapi_ops.transitions[1][1]
+    assert accepted_kwargs["provider_job_id"] is None
+    assert completed_kwargs["result_ref"] is None
+    # expected_version 必须跟着 accepted 的返回走：插入一步之后版本已经 +1，
+    # 继续拿 claim 时的版本会被乐观锁挡掉。
+    assert (
+        completed_kwargs["expected_version"] == accepted_kwargs["expected_version"] + 1
     )
-
-    for label, ops in (("newapi", newapi_ops), ("backup", backup_ops)):
-        verbs = [verb for verb, _kwargs in ops.transitions]
-        assert verbs == ["accepted", "completed"], f"{label}: {verbs}"
-        assert ops.claims[0].handle_kind is HandleKind.NONE, label
-        accepted_kwargs = ops.transitions[0][1]
-        completed_kwargs = ops.transitions[1][1]
-        assert accepted_kwargs["provider_job_id"] is None, label
-        assert completed_kwargs["result_ref"] is None, label
-        # expected_version 必须跟着 accepted 的返回走：插入一步之后版本已经 +1，
-        # 继续拿 claim 时的版本会被乐观锁挡掉。
-        assert completed_kwargs["expected_version"] == accepted_kwargs[
-            "expected_version"
-        ] + 1, label
 
 
 @pytest.mark.asyncio
@@ -385,10 +371,7 @@ def test_no_operation_id_is_reused_as_its_own_upstream_handle() -> None:
             if keyword.arg not in {"provider_job_id", "result_ref"}:
                 continue
             value = keyword.value
-            if (
-                isinstance(value, ast.Attribute)
-                and value.attr == "operation_id"
-            ):
+            if isinstance(value, ast.Attribute) and value.attr == "operation_id":
                 offenders.append(f"{keyword.arg}@{node.lineno}")
 
     assert offenders == []

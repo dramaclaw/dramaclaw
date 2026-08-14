@@ -1,6 +1,6 @@
 """OI-58 C 层：`mark_unknown` 失败时,那行泄漏必须留下痕迹。
 
-三条服务出网路径（relay / newapi 管理面 / 备份同步）的收尾形状逐字相同：
+两条服务出网路径（relay / newapi 管理面）的收尾形状逐字相同：
 
     except Exception:
         try:
@@ -32,11 +32,6 @@ import logging
 
 import pytest
 
-from novelvideo.backup.files_sync import (
-    BackupInvocationFailed,
-    run_backup_operation,
-    trusted_backup_cli_context,
-)
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.newapi_provisioner import (
     NewApiAdminServiceIdentity,
@@ -162,32 +157,17 @@ async def _drive_newapi_admin(operations) -> None:
     )
 
 
-async def _drive_backup(operations) -> None:
-    def _boom():
-        raise RuntimeError(f"ossutil failed with {CANARY}")
-
-    await run_backup_operation(
-        context=trusted_backup_cli_context("files-sync-oi58"),
-        capability="backup.storage.files.sync",
-        business_task_id="task-oi58",
-        request={"bucket": "oi58"},
-        operations=operations,
-        invoke=_boom,
-    )
-
-
-# `capability` 逐条写死而不是从 driver 回读：这三个串是日志里唯一能区分「哪条服务路径
+# `capability` 逐条写死而不是从 driver 回读：这两个串是日志里唯一能区分「哪条服务路径
 # 漏了」的东西，从被测代码回读就等于用它自己证明自己。
 CALL_SITES = [
-    pytest.param(_drive_relay, ServiceInvocationFailed, "storage.media.relay", id="relay"),
+    pytest.param(
+        _drive_relay, ServiceInvocationFailed, "storage.media.relay", id="relay"
+    ),
     pytest.param(
         _drive_newapi_admin,
         NewApiInvocationFailed,
         "gateway.provisioning.channel.create",
         id="newapi-admin",
-    ),
-    pytest.param(
-        _drive_backup, BackupInvocationFailed, "backup.storage.files.sync", id="backup"
     ),
 ]
 
@@ -199,7 +179,9 @@ async def test_a_swallowed_mark_unknown_names_the_operation_it_left_behind(
 ):
     """行停在 `dispatching` 了，日志得说清是哪一行、哪条能力、被什么挡住的。"""
 
-    operations = _Operations(unknown_error=RuntimeError("egress operation transition is invalid"))
+    operations = _Operations(
+        unknown_error=RuntimeError("egress operation transition is invalid")
+    )
 
     with caplog.at_level(logging.WARNING, logger=LEDGER_LOGGER):
         with pytest.raises(expected_error):
@@ -251,7 +233,9 @@ async def test_a_mark_unknown_that_succeeded_says_nothing(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("drive", "expected_error", "capability"), CALL_SITES)
-async def test_the_swallowing_itself_is_unchanged(caplog, drive, expected_error, capability):
+async def test_the_swallowing_itself_is_unchanged(
+    caplog, drive, expected_error, capability
+):
     """本次只加日志：台账写不进去，**仍然**不许改变调用方看到的失败。
 
     把这里改成向上抛，等于让一次出网失败根据「台账能不能写」分裂成两种错误，

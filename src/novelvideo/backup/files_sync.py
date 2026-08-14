@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import inspect
 import os
 import stat
 import subprocess
@@ -16,10 +15,6 @@ from typing import BinaryIO
 
 from novelvideo.freezone.canvas_lock import canvas_write_lock
 from novelvideo.freezone.paths import CANVAS_ID_RE
-from novelvideo.service_operation_gate import (
-    ServiceOperationExcluded,
-    require_legacy_local_service_operation,
-)
 
 # Per-user .hermes dirs hold agent runtime state: keep only config/memory — never
 # sync .env (secrets), caches, logs, lock files or tmp to the backup bucket.
@@ -93,11 +88,7 @@ class HotStateInventory:
 
 
 def build_rclone_env() -> dict[str, str]:
-    env = {
-        name: os.environ[name]
-        for name in BACKUP_SUBPROCESS_ENV_ALLOWLIST
-        if name in os.environ
-    }
+    env = dict(os.environ)
     endpoint = os.environ["BACKUP_OSS_ENDPOINT"]
     env.update(
         RCLONE_CONFIG_OSS_TYPE="s3",
@@ -132,162 +123,6 @@ def build_sync_cmd(
 
 
 SNAPSHOT_SUFFIX = ".snapshot"
-
-BACKUP_SUBPROCESS_ENV_ALLOWLIST = (
-    "PATH",
-    "LANG",
-    "LC_ALL",
-    "TZ",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-)
-
-
-class BackupServiceEgressDenied(RuntimeError):
-    """Stable denial for an invalid backup execution boundary."""
-
-    code = "ORG_SERVICE_EGRESS_DENIED"
-
-    def __init__(self) -> None:
-        super().__init__("organization service egress is denied")
-
-
-class BackupOperationNotReplayable(RuntimeError):
-    """Raised when a durable backup operation was already claimed."""
-
-
-class BackupInvocationFailed(RuntimeError):
-    """Secret-free failure after a claimed backup invocation."""
-
-    def __init__(self) -> None:
-        super().__init__("backup operation failed")
-
-
-@dataclass(frozen=True, slots=True)
-class BackupServiceIdentity:
-    credential_id: str
-    credential_version: int
-
-    def __post_init__(self) -> None:
-        if type(self.credential_id) is not str or not self.credential_id.strip():
-            raise ValueError("credential_id is required")
-        if type(self.credential_version) is not int or self.credential_version < 1:
-            raise ValueError("credential_version must be positive")
-
-
-@dataclass(frozen=True, slots=True)
-class BackupExecutionContext:
-    source: str
-    identity: BackupServiceIdentity
-    root_operation_id: str
-    request_context: object | None = None
-
-    def __post_init__(self) -> None:
-        if self.source not in {"cli", "operations"}:
-            return
-        if type(self.identity) is not BackupServiceIdentity:
-            raise TypeError("identity must be a BackupServiceIdentity")
-        if (
-            type(self.root_operation_id) is not str
-            or not self.root_operation_id.strip()
-        ):
-            raise ValueError("root_operation_id is required")
-
-
-def trusted_backup_cli_context(root_operation_id: str) -> BackupExecutionContext:
-    """Construct the explicit service identity used only by backup CLI entrypoints."""
-
-    return BackupExecutionContext(
-        source="cli",
-        identity=BackupServiceIdentity(
-            credential_id="svc-backup",
-            credential_version=1,
-        ),
-        root_operation_id=root_operation_id,
-    )
-
-
-def require_backup_execution_context(context: BackupExecutionContext) -> None:
-    if (
-        type(context) is not BackupExecutionContext
-        or context.source not in {"cli", "operations"}
-        or type(context.identity) is not BackupServiceIdentity
-        or context.request_context is not None
-    ):
-        raise BackupServiceEgressDenied()
-
-
-async def run_backup_operation(
-    *,
-    context: BackupExecutionContext,
-    capability: str,
-    business_task_id: str,
-    request: object,
-    operations,
-    invoke,
-):
-    """Run one CLI/operations-only backup side effect under a durable claim."""
-
-    from novelvideo.egress_context import TrustedEgressContext
-    from novelvideo.ports.egress_operations import (
-        HandleKind,
-        OperationSpec,
-        canonical_request_digest,
-        record_unknown_outcome,
-    )
-
-    require_backup_execution_context(context)
-    if (
-        type(capability) is not str
-        or not capability.startswith("backup.storage.")
-        or not business_task_id
-        or not callable(getattr(operations, "claim", None))
-    ):
-        raise BackupServiceEgressDenied()
-    if (
-        type(context.request_context) is TrustedEgressContext
-        and context.request_context.is_organization
-    ):
-        raise BackupServiceEgressDenied()
-
-    claim = await operations.claim(
-        spec=OperationSpec(
-            organization_id="service:backup",
-            project_id="operations",
-            root_task_id=context.root_operation_id,
-            business_task_id=business_task_id,
-            capability=capability,
-            credential_id=context.identity.credential_id,
-            credential_version=context.identity.credential_version,
-            request_digest=canonical_request_digest(request),
-            handle_kind=HandleKind.NONE,
-        )
-    )
-    if not claim.won:
-        raise BackupOperationNotReplayable("backup operation already claimed")
-
-    try:
-        result = invoke()
-        if inspect.isawaitable(result):
-            result = await result
-    except Exception:
-        await record_unknown_outcome(operations, claim=claim, capability=capability)
-        raise BackupInvocationFailed() from None
-    # `completed` 只能来自 `accepted`（`0039:294-338`）。原先从 `dispatching` 直跳
-    # completed，真库上必抛 P0001；替身没有状态机才一直是绿的。
-    accepted = await operations.mark_accepted(
-        operation_id=claim.operation.operation_id,
-        transition_token=claim.transition_token,
-        expected_version=claim.operation.version,
-        provider_job_id=None,
-    )
-    await operations.mark_completed(
-        operation_id=accepted.operation_id,
-        transition_token=claim.transition_token,
-        expected_version=accepted.version,
-        result_ref=None,
-    )
-    return result
 
 
 def build_snapshot_copyto_cmd(*, src: Path, dst: str, history_dst: str) -> list[str]:
@@ -609,14 +444,12 @@ def _copy_hot_file(source_dir: Path, snapshot_dir: Path, relative_path: Path) ->
 
 
 def snapshot_hot_state(state_dir: Path, snapshot_dir: Path) -> tuple[int, int, int]:
-    """Create stable local copies of current high-churn Freezone state.
+    """Create transaction-safe copies of current high-churn Freezone state.
 
-    Locally stored canvas JSON and its idempotency record are copied while
-    holding the CE file lock used by ``save_canvas``. EE canvas persistence and
-    backup are handled by OSS and are outside this command. Event logs are copied
-    up to the size observed on their open descriptor. A before/after inventory
-    rejects path-set changes, so rclone never interprets a transiently missed
-    file as a deletion.
+    Current canvas JSON and its idempotency record are copied while holding the
+    same writer lock used by ``save_canvas``. Event logs are copied up to the size
+    observed on their open descriptor. A before/after inventory rejects path-set
+    changes, so rclone never interprets a transiently missed file as a deletion.
     """
 
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -740,15 +573,7 @@ def _sync_snapshot_and_live(
     )
 
 
-def main(*, execution_context: BackupExecutionContext | None = None) -> int:
-    try:
-        require_legacy_local_service_operation()
-    except ServiceOperationExcluded as exc:
-        print(exc.code, file=sys.stderr, flush=True)
-        return 2
-    require_backup_execution_context(
-        execution_context or trusted_backup_cli_context("files-sync-cli")
-    )
+def main() -> int:
     bucket = os.environ["BACKUP_OSS_BUCKET"]
     prefix = os.environ["BACKUP_OSS_PREFIX"].strip("/")
     state_dir = _required_source_dir("NOVELVIDEO_STATE_DIR")

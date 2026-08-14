@@ -72,8 +72,6 @@ def test_failed_snapshot_keeps_yesterday_and_no_tmp(tmp_path):
 def test_main_empty_tree_is_success(tmp_path, monkeypatch):
     state = tmp_path / "state"
     state.mkdir()
-    monkeypatch.setenv("ST_EDITION", "ce")
-    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state))
     from novelvideo.backup.db_daily import main
 
@@ -81,8 +79,6 @@ def test_main_empty_tree_is_success(tmp_path, monkeypatch):
 
 
 def test_main_missing_state_dir_fails(tmp_path, monkeypatch):
-    monkeypatch.setenv("ST_EDITION", "ce")
-    monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "missing"))
     from novelvideo.backup.db_daily import main
 

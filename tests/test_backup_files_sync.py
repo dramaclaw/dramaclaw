@@ -19,24 +19,6 @@ from novelvideo.backup.files_sync import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _allow_legacy_local_service_operation(monkeypatch):
-    """Neutralize the CE-local deployment gate for the staging/filter tests.
-
-    ``main()`` gained ``require_legacy_local_service_operation()`` on this
-    branch, so main's staging tests would otherwise die on
-    ``ORG_SERVICE_EGRESS_DENIED`` before reaching the behaviour they assert.
-    The gate itself is covered by
-    ``tests/test_p0g4t_service_operation_exclusion.py``, which parametrizes
-    ``files_sync.main`` directly — the same pattern as
-    ``tests/test_p0g4f_storage_control.py``.
-    """
-
-    monkeypatch.setattr(
-        files_sync_module, "require_legacy_local_service_operation", lambda: None
-    )
-
-
 def test_filter_excludes_all_sqlite_and_litestream_state():
     lines = [line.strip() for line in RCLONE_FILTER.strip().splitlines()]
     for required in (

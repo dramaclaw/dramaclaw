@@ -59,3 +59,31 @@ def test_snapshot_does_not_require_control_plane_dsn(
     assert (roots, files) == (2, 1)
     assert copied_bytes > 0
     assert staged.read_text(encoding="utf-8") == '{"revision": 3}'
+
+
+def test_backup_entrypoint_is_not_gated_by_ee_control_plane(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo.backup import db_daily
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("ST_EDITION", "ee")
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://control-plane.invalid/db")
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_dir))
+
+    assert db_daily.main() == 0
+
+
+def test_rclone_subprocess_keeps_the_existing_process_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novelvideo.backup.files_sync import build_rclone_env
+
+    monkeypatch.setenv("BACKUP_OSS_AK", "backup-ak")
+    monkeypatch.setenv("BACKUP_OSS_SK", "backup-sk")
+    monkeypatch.setenv("BACKUP_OSS_ENDPOINT", "oss-cn-chengdu.aliyuncs.com")
+    monkeypatch.setenv("BACKUP_ENV_INHERITANCE_CANARY", "preserved")
+
+    assert build_rclone_env()["BACKUP_ENV_INHERITANCE_CANARY"] == "preserved"
