@@ -1788,7 +1788,6 @@ tests/test_asset_resolver.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml 
 tests/test_auth_contract_snapshot.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_authz_error_http_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_background_anchor_service.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-tests/test_backup_control_plane_boundary.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_backup_db_daily.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_backup_files_sync.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_backup_restore_cli.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
