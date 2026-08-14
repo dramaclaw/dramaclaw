@@ -79,6 +79,11 @@ export interface SpawnExternalAssetsDeps {
  * 同步 stash 进 [[pendingExternalFiles]] 的 —— 低缩放档下新节点会先以 LOD shell 挂
  * 载,完整组件晚于那一帧才订阅,只靠事件必丢(总线无重放)。消费侧挂载时会来取。
  *
+ * 这里刻意不调 focusNewNodeIfLowZoom:那是给「从画布空白处凭空新建节点」用的 ——
+ * 拖入/粘贴落点在哪、用户未必看得见,所以要拉到 0.6 让他确认。本函数是从一个已选中
+ * 的目标节点派生上游素材,视野已经在目标节点上,再改一次缩放反而是抢镜头。缺省不是
+ * 漏了。
+ *
  * 多文件竖直排布、与目标节点垂直居中,口径对齐 VideoNode.tsx 的
  * spawnCharacterLibraryReferences:同一套 UPLOAD_WIDTH/UPLOAD_HEIGHT/GAP_X/GAP_Y,
  * 目标节点没给 height 时按 FALLBACK_TARGET_HEIGHT(=VideoNode 的 DEFAULT_HEIGHT)
@@ -129,7 +134,7 @@ export function spawnExternalAssetNodes(
     // File 本体走暂存（同步落，不等 schedule），事件只是敲一下已挂载的节点。
     stashExternalFile('upload-node/external-file', nodeId, file);
     schedule(() => {
-      deps.publish('upload-node/external-file', { nodeId, file });
+      deps.publish('upload-node/external-file', { nodeId });
     });
     newIds.push(nodeId);
   });

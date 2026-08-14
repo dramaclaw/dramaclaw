@@ -507,7 +507,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
       // shell 挂载，晚于下面这一帧才挂上订阅（见 [[pendingExternalFiles]]）。
       stashExternalFile('video-node/external-file', id, file);
       requestAnimationFrame(() => {
-        canvasEventBus.publish('video-node/external-file', { nodeId: id, file });
+        canvasEventBus.publish('video-node/external-file', { nodeId: id });
       });
     },
     [convertNodeType, id]
@@ -527,7 +527,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
       // 同 morphToVideoWithFile：File 走暂存，事件只是敲一下。
       stashExternalFile('audio-node/external-file', id, file);
       requestAnimationFrame(() => {
-        canvasEventBus.publish('audio-node/external-file', { nodeId: id, file });
+        canvasEventBus.publish('audio-node/external-file', { nodeId: id });
       });
     },
     [convertNodeType, id]

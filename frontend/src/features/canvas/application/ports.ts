@@ -165,33 +165,31 @@ export interface CanvasEventMap {
    * handleMediaFile，视频与音频会原地 convertNodeType 变形成 video/audio 节点
    * （不换 id，先连的边不丢）。非媒体文件会被静默丢弃，投递方应自行先过滤。
    *
-   * File 本体的载体是 [[pendingExternalFiles]] 的模块级暂存，不是这里的 payload：
-   * 投递方必须 stashExternalFile + 发事件两件都做，消费方（useExternalFileHandoff）
-   * 只认暂存里的东西。原因是总线无重放，而低缩放档下新节点先以 LOD shell 挂载，
-   * 完整组件挂上订阅时早发的事件已经丢了。
+   * File 本体的载体是 [[pendingExternalFiles]] 的模块级暂存，payload 里刻意不带
+   * file：投递方必须 stashExternalFile + 发事件两件都做，事件本身只是「敲一下已
+   * 挂载的节点」，消费方（useExternalFileHandoff）只认暂存里的东西。原因是总线无
+   * 重放，而低缩放档下新节点先以 LOD shell 挂载，完整组件挂上订阅时早发的事件已经
+   * 丢了。payload 不带 file 是为了让「只 publish 不 stash」这种写法压根编译不过。
    */
   'upload-node/external-file': {
     nodeId: string;
-    file: File;
   };
   'video-node/reupload': {
     nodeId: string;
   };
   /**
    * 「上传资源」菜单等外部入口注入 File 给 video 节点（仅视频）。
-   * 同 upload-node/external-file：File 走 [[pendingExternalFiles]] 暂存。
+   * 同 upload-node/external-file：File 走 [[pendingExternalFiles]] 暂存，不进 payload。
    */
   'video-node/external-file': {
     nodeId: string;
-    file: File;
   };
   /**
    * 「上传资源」菜单等外部入口注入 File 给 audio 节点（仅音频）。
-   * 同 upload-node/external-file：File 走 [[pendingExternalFiles]] 暂存。
+   * 同 upload-node/external-file：File 走 [[pendingExternalFiles]] 暂存，不进 payload。
    */
   'audio-node/external-file': {
     nodeId: string;
-    file: File;
   };
   'video-viewer/open': {
     videoUrl: string;

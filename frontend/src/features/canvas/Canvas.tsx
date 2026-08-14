@@ -2696,7 +2696,7 @@ export function Canvas({
         // 与文件拖放同样先暂存再发事件，见 handleCanvasDrop 的说明。
         stashExternalFile('upload-node/external-file', newNodeId, file);
         requestAnimationFrame(() => {
-          canvasEventBus.publish('upload-node/external-file', { nodeId: newNodeId, file });
+          canvasEventBus.publish('upload-node/external-file', { nodeId: newNodeId });
         });
       });
 
@@ -3081,7 +3081,7 @@ export function Canvas({
         // 只发事件会被总线的无重放语义直接丢掉（见 [[pendingExternalFiles]]）。
         stashExternalFile('upload-node/external-file', newNodeId, file);
         requestAnimationFrame(() => {
-          canvasEventBus.publish('upload-node/external-file', { nodeId: newNodeId, file });
+          canvasEventBus.publish('upload-node/external-file', { nodeId: newNodeId });
         });
       });
 

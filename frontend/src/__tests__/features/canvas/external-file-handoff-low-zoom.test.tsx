@@ -82,7 +82,7 @@ function dropFile(nodeId: string, name: string) {
   const file = new File(['x'], name, { type: 'image/png' });
   stashExternalFile('upload-node/external-file', nodeId, file);
   requestAnimationFrame(() => {
-    canvasEventBus.publish('upload-node/external-file', { nodeId, file });
+    canvasEventBus.publish('upload-node/external-file', { nodeId });
   });
 }
 

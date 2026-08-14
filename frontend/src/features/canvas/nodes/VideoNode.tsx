@@ -1391,7 +1391,14 @@ export const VideoNode = memo(
 
     const consumeExternalFile = useCallback(
       (file: File) => {
-        if (!isVideoFile(file)) return;
+        // 走到这里文件已经从暂存里被取走了,直接 return 等于把它丢在地上 ——
+        // 留一句警告,别静默。口径参照 UploadNode.tsx 的 `[upload-node] …`。
+        if (!isVideoFile(file)) {
+          console.warn(
+            `[video-node] external file "${file.name}" (${file.type || "no mime"}) is not a video; dropped`,
+          );
+          return;
+        }
         void processFile(file);
       },
       [processFile],
