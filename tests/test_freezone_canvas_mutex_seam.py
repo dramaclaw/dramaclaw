@@ -19,6 +19,7 @@ EE 的租约实现、自旋契约与跨进程判据在 EE 仓 `tests/b2b/test_ca
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -85,7 +86,9 @@ def injected_mutex():
             ports_registry.register_port("canvas_write_mutex", previous)
 
 
-def _seed_canvas(project_dir: Path, canvas_id: str = "default", revision: int = 1) -> Path:
+def _seed_canvas(
+    project_dir: Path, canvas_id: str = "default", revision: int = 1
+) -> Path:
     path = project_dir / "freezone" / "canvases" / f"{canvas_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -119,6 +122,16 @@ def test_canvas_write_mutex_defaults_to_the_file_lock() -> None:
     assert isinstance(get_canvas_write_mutex(), FileLockCanvasWriteMutex)
 
 
+def test_ce_canvas_mutex_signature_has_no_catch_all_kwargs() -> None:
+    parameters = inspect.signature(
+        FileLockCanvasWriteMutex.write_mutex
+    ).parameters.values()
+
+    assert all(
+        parameter.kind is not inspect.Parameter.VAR_KEYWORD for parameter in parameters
+    )
+
+
 def test_canvas_write_mutex_is_not_an_ee_required_port() -> None:
     # 进了 `_EE_REQUIRED_PORTS` 就等于「没装 EE 适配器的构建拒绝启动」，
     # 与 §6.4 步 5 的回滚口径（不注入 EE 实现）直接冲突。
@@ -150,7 +163,9 @@ def test_ce_still_excludes_with_the_file_lock(tmp_path: Path) -> None:
                 pass
 
 
-def test_save_canvas_behaviour_is_byte_identical_without_injection(tmp_path: Path) -> None:
+def test_save_canvas_behaviour_is_byte_identical_without_injection(
+    tmp_path: Path,
+) -> None:
     project_dir = tmp_path / "project"
     canvas_file = _seed_canvas(project_dir)
 
@@ -158,7 +173,11 @@ def test_save_canvas_behaviour_is_byte_identical_without_injection(tmp_path: Pat
         project_dir,
         "default",
         base_revision=1,
-        build_payload=lambda _existing: {"revision": 2, "nodes": [{"id": "n"}], "edges": []},
+        build_payload=lambda _existing: {
+            "revision": 2,
+            "nodes": [{"id": "n"}],
+            "edges": [],
+        },
     )
 
     assert result.payload["revision"] == 2
@@ -181,7 +200,11 @@ def test_save_canvas_takes_the_injected_mutex(tmp_path: Path, injected_mutex) ->
         project_dir,
         "default",
         base_revision=1,
-        build_payload=lambda _existing: {"revision": 2, "nodes": [{"id": "n"}], "edges": []},
+        build_payload=lambda _existing: {
+            "revision": 2,
+            "nodes": [{"id": "n"}],
+            "edges": [],
+        },
     )
 
     assert mutex.entered == [(project_dir, "default")]
@@ -190,11 +213,15 @@ def test_save_canvas_takes_the_injected_mutex(tmp_path: Path, injected_mutex) ->
     assert not (project_dir / "freezone" / "canvases" / "_locks").exists()
 
 
-def test_ensure_default_canvas_takes_the_injected_mutex(tmp_path: Path, injected_mutex) -> None:
+def test_ensure_default_canvas_takes_the_injected_mutex(
+    tmp_path: Path, injected_mutex
+) -> None:
     project_dir = tmp_path / "project"
     mutex = injected_mutex(_RecordingMutex())
 
-    canvas_store.ensure_default_canvas(project_dir, project_id="proj", actor_id="owner_1")
+    canvas_store.ensure_default_canvas(
+        project_dir, project_id="proj", actor_id="owner_1"
+    )
 
     assert mutex.entered == [(project_dir, "default")]
 
@@ -204,7 +231,9 @@ def test_restore_canvas_version_takes_the_injected_mutex(
 ) -> None:
     project_dir = tmp_path / "project"
     canvas_file = _seed_canvas(project_dir)
-    history = canvas_file.parent / "_history" / "default.rev1.20260813_101010_000001.json"
+    history = (
+        canvas_file.parent / "_history" / "default.rev1.20260813_101010_000001.json"
+    )
     history.parent.mkdir(parents=True, exist_ok=True)
     history.write_text(
         json.dumps({"revision": 1, "nodes": [{"id": "old"}], "edges": []}),
@@ -223,7 +252,9 @@ def test_restore_canvas_version_takes_the_injected_mutex(
     assert mutex.entered == [(project_dir, "default")]
 
 
-def test_soft_delete_canvas_takes_the_injected_mutex(tmp_path: Path, injected_mutex) -> None:
+def test_soft_delete_canvas_takes_the_injected_mutex(
+    tmp_path: Path, injected_mutex
+) -> None:
     project_dir = tmp_path / "project"
     _seed_canvas(project_dir)
     mutex = injected_mutex(_RecordingMutex())
@@ -245,7 +276,9 @@ def test_fence_runs_after_fsync_and_before_replace(tmp_path: Path) -> None:
 
     def fence() -> None:
         observed["target"] = json.loads(path.read_text(encoding="utf-8"))
-        observed["tmp_files"] = sorted(p.name for p in tmp_path.glob(".canvas.json.*.tmp"))
+        observed["tmp_files"] = sorted(
+            p.name for p in tmp_path.glob(".canvas.json.*.tmp")
+        )
 
     canvas_store.atomic_write_json(path, {"revision": 2}, fence=fence)
 
@@ -281,7 +314,11 @@ def test_save_canvas_fences_and_a_lost_lease_does_not_land(
             project_dir,
             "default",
             base_revision=1,
-            build_payload=lambda _existing: {"revision": 2, "nodes": [{"id": "n"}], "edges": []},
+            build_payload=lambda _existing: {
+                "revision": 2,
+                "nodes": [{"id": "n"}],
+                "edges": [],
+            },
         )
 
     assert mutex.fence_calls == ["default"]
@@ -340,7 +377,11 @@ def _atomic_write_calls() -> list[tuple[str, ast.Call]]:
             if not isinstance(node, ast.Call):
                 continue
             target = node.func
-            called = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+            called = (
+                target.attr
+                if isinstance(target, ast.Attribute)
+                else getattr(target, "id", "")
+            )
             if called == "atomic_write_json":
                 calls.append((name, node))
     return calls
