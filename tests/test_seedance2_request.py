@@ -1067,6 +1067,96 @@ async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_pat
     assert "generate_audio" not in metadata
 
 
+async def test_newapi_happyhorse_11_uses_canonical_catalog_driven_protocol(
+    tmp_path, monkeypatch
+):
+    from pathlib import Path
+
+    from novelvideo.generators import video_generator as video_module
+    from novelvideo.generators.video_generator import (
+        NewApiVideoGenerator,
+        ShotReference,
+        VideoGenStatus,
+    )
+
+    captured: dict[str, object] = {}
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="happyhorse-1.1",
+        resolution="720p",
+        generate_audio=False,
+    )
+
+    async def fake_reserve(*_args, **_kwargs):
+        return "reservation-1"
+
+    async def fake_confirm(*_args, **_kwargs):
+        return None
+
+    async def fake_refund(*_args, **_kwargs):
+        return None
+
+    async def fake_post_json(url: str, payload: dict):
+        captured["url"] = url
+        captured["payload"] = payload
+        return {"id": "task-1", "_newapi_request_id": "req-1"}
+
+    async def fake_get_json(_url: str):
+        return {"status": "completed", "url": "https://example.com/out.mp4"}
+
+    async def fake_download_video(_url: str, output_path: str):
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"video")
+        return b"video"
+
+    monkeypatch.setattr(video_module, "_reserve_video_model_call", fake_reserve)
+    monkeypatch.setattr(video_module, "_confirm_video_model_call", fake_confirm)
+    monkeypatch.setattr(video_module, "_refund_video_model_call", fake_refund)
+    monkeypatch.setattr(generator, "_post_json", fake_post_json)
+    monkeypatch.setattr(generator, "_get_json", fake_get_json)
+    monkeypatch.setattr(generator, "_download_video", fake_download_video)
+
+    prompt = "镜头环绕" * 1300
+    result = await generator.generate(
+        image_path="",
+        prompt=prompt,
+        output_path=str(tmp_path / "happyhorse-11.mp4"),
+        duration=5,
+        aspect_ratio="21:9",
+        poll_interval=0,
+        max_polls=1,
+        gen_mode="image_reference",
+        references=[
+            ShotReference("image", "https://example.com/a.png", "图片参考"),
+            ShotReference("image", "https://example.com/b.png", "图片参考"),
+        ],
+    )
+
+    assert result.status == VideoGenStatus.DONE
+    assert not generator._is_happyhorse_model()
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["model"] == "happyhorse-1.1"
+    assert payload["prompt"] == prompt
+    assert payload["duration"] == 5
+    assert payload["width"] == 1680
+    assert payload["height"] == 720
+    assert payload["metadata"] == {
+        "resolution": "720p",
+        "ratio": "21:9",
+        "watermark": False,
+        "generate_audio": False,
+        "reference_images": [
+            "https://example.com/a.png",
+            "https://example.com/b.png",
+        ],
+        "return_last_frame": False,
+    }
+
+
 async def test_newapi_grok_video_channel_uses_relayclaw_video_payload(tmp_path, monkeypatch):
     from pathlib import Path
 

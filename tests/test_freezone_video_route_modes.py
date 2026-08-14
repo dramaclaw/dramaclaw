@@ -245,6 +245,28 @@ async def test_image_reference_keeps_multi_image_reference_protocol(
     ]
 
 
+@pytest.mark.asyncio
+async def test_video_edit_rejects_model_without_catalog_capability(
+    monkeypatch, tmp_path: Path
+) -> None:
+    await _install_route_fakes(
+        monkeypatch,
+        tmp_path,
+        _catalog("text_to_video", "first_frame", "image_reference"),
+    )
+
+    with pytest.raises(HTTPException, match="video_edit"):
+        await freezone_routes.freezone_video_edit(
+            "project",
+            FreezoneVideoEditRequest(
+                video_url="https://example.com/input.mp4",
+                model="happyhorse-1.1",
+                gen_mode="videoEdit",
+            ),
+            {"username": "admin"},
+        )
+
+
 def test_image_to_video_requires_an_explicit_new_mode() -> None:
     with pytest.raises(ValidationError, match="gen_mode"):
         FreezoneImageToVideoRequest(

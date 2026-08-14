@@ -466,6 +466,7 @@ def test_seedance2_backend_detection_accepts_newapi_and_legacy_values() -> None:
 
 def test_happyhorse_backend_detection_accepts_newapi_value() -> None:
     assert is_freezone_happyhorse_backend("newapi_happyhorse-1.0")
+    assert not is_freezone_happyhorse_backend("newapi_happyhorse-1.1")
     assert not is_freezone_happyhorse_backend("newapi_seedance-2.0-fast")
 
 
