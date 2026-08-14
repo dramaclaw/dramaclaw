@@ -39,6 +39,8 @@ from novelvideo.api.schemas import (
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
     FreezoneAnalyzeVideoStoryRequest,
+    FreezoneAssetLibraryFolderPatchRequest,
+    FreezoneAssetLibraryFolderRequest,
     FreezoneAudioMusicRequest,
     FreezoneAudioSeparateRequest,
     FreezoneAudioSpeechRequest,
@@ -244,17 +246,22 @@ from novelvideo.freezone.text_node import (
     translate_freezone_text,
 )
 from novelvideo.freezone.video_node import (
+    MAINLINE_FOLDER_KEY,
+    add_video_character_folder,
     add_video_character_library_item,
     build_freezone_image_to_video_prompt,
     build_freezone_keyframe_video_prompt,
     build_freezone_omni_video_prompt,
     build_freezone_video_prompt,
+    delete_video_character_folder,
     delete_video_character_library_item,
     get_freezone_video_model_options,
     get_video_camera_template,
     get_video_camera_templates,
     is_freezone_happyhorse_backend,
     is_freezone_seedance2_backend,
+    library_folder_keys,
+    load_video_character_folders,
     load_video_character_library,
     sync_mainline_assets_into_library,
     normalize_freezone_seedance2_scene_optimize,
@@ -263,6 +270,7 @@ from novelvideo.freezone.video_node import (
     normalize_video_resolution_for_backend,
     resolve_freezone_video_backend,
     summarize_omni_reference_counts,
+    update_video_character_folder,
     validate_omni_reference_audio_durations,
     validate_omni_reference_limits,
     MAX_OMNI_REFERENCE_AUDIO_SECONDS,
@@ -400,7 +408,7 @@ async def _start_or_enqueue_freezone_video_gen(
     reference_items: list[dict],
     aspect_ratio: str,
     resolution: str,
-    duration_seconds: int,
+    duration_seconds: int | None,
     generate_audio: bool,
     human_review: bool,
     scene_optimize: str | None,
@@ -420,6 +428,13 @@ async def _start_or_enqueue_freezone_video_gen(
     from novelvideo.api.routes.model_credits import (
         freezone_video_generate_task_billing,
     )
+
+    # Catalog fields are optional for backward compatibility. Missing means
+    # the legacy behavior (native audio supported); an explicit false is an
+    # authoritative capability boundary and cannot be bypassed by old clients.
+    effective_generate_audio = bool(generate_audio)
+    if (capabilities or {}).get("supportsGenerateAudio") is False:
+        effective_generate_audio = False
 
     video_input_paths = [
         str(item.get("path") or "").strip()
@@ -461,13 +476,29 @@ async def _start_or_enqueue_freezone_video_gen(
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+    normalized_mode = str(gen_mode or "").strip()
+    if normalized_mode == "video_edit":
+        if not video_input_paths or input_video_duration_seconds <= 0:
+            raise HTTPException(400, "video editing requires a readable source video")
+        # 视频编辑的输出时长跟随主输入视频。输入和输出沿用同一套整秒
+        # 计费口径，不为视频编辑额外引入向上取整规则；发给 NewAPI 的
+        # 最终协议仍会强制使用 duration=auto。
+        effective_duration_seconds = max(
+            int(math.floor(input_video_duration_seconds)),
+            1,
+        )
+    elif duration_seconds is not None:
+        effective_duration_seconds = max(int(duration_seconds), 1)
+    else:
+        raise HTTPException(400, "duration_seconds is required for this video mode")
+
     billing = freezone_video_generate_task_billing(
         {
             "video_backend": backend,
             "resolution": resolution,
-            "pricing_quantity": duration_seconds,
+            "pricing_quantity": effective_duration_seconds,
             "operation": requested_gen_mode or gen_mode or "textToVideo",
-            "generate_audio": generate_audio,
+            "generate_audio": effective_generate_audio,
             "video_input_present": bool(video_input_paths),
             "input_video_duration_seconds": input_video_duration_seconds,
             **({"catalog_id": catalog_id} if catalog_id else {}),
@@ -485,8 +516,8 @@ async def _start_or_enqueue_freezone_video_gen(
         "reference_items": reference_items,
         "aspect_ratio": aspect_ratio,
         "resolution": resolution,
-        "duration_seconds": duration_seconds,
-        "generate_audio": generate_audio,
+        "duration_seconds": effective_duration_seconds,
+        "generate_audio": effective_generate_audio,
         "human_review": human_review,
         "scene_optimize": normalize_freezone_seedance2_scene_optimize(
             backend, scene_optimize
@@ -7611,6 +7642,46 @@ async def _probe_reference_audio_seconds(path: str) -> float | None:
         return None
 
 
+async def _validate_catalog_reference_audio_items(
+    reference_items: list[dict[str, str]],
+    *,
+    capabilities: dict[str, Any] | None,
+    backend: str,
+) -> None:
+    """按媒体目录校验参考音频时长；旧 Seedance 2.0 目录保留历史兜底。"""
+    audio_items = [item for item in reference_items if item["type"] == "audio"]
+    if not audio_items:
+        return
+
+    audio_bounds = list(_catalog_reference_duration_bounds(capabilities, "audio"))
+    if is_freezone_seedance2_backend(backend):
+        if audio_bounds[0] is None:
+            audio_bounds[0] = MIN_OMNI_REFERENCE_AUDIO_SECONDS
+        if audio_bounds[1] is None:
+            audio_bounds[1] = MAX_OMNI_REFERENCE_AUDIO_SECONDS
+        if audio_bounds[3] is None:
+            audio_bounds[3] = MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS
+    if not any(value is not None for value in audio_bounds):
+        return
+
+    probed_seconds = await asyncio.gather(
+        *(_probe_reference_audio_seconds(item["path"]) for item in audio_items)
+    )
+    probed = [
+        (Path(item["path"]).name or f"audio{index}", seconds)
+        for index, (item, seconds) in enumerate(
+            zip(audio_items, probed_seconds), start=1
+        )
+    ]
+    validate_omni_reference_audio_durations(
+        probed,
+        min_seconds=audio_bounds[0],
+        max_seconds=audio_bounds[1],
+        total_min_seconds=audio_bounds[2],
+        total_max_seconds=audio_bounds[3],
+    )
+
+
 def _catalog_duration_bounds(
     capabilities: dict[str, Any] | None,
 ) -> tuple[int | None, int | None]:
@@ -7956,6 +8027,13 @@ async def freezone_add_video_character_library_item(
         for url in body.image_urls:
             _require_local(url, "image")
 
+    # 保存位置必须是已存在的文件夹；主线是同步产物，不接受上传。
+    if body.folder:
+        if body.folder == MAINLINE_FOLDER_KEY:
+            raise HTTPException(400, "cannot upload into the mainline folder")
+        if body.folder not in library_folder_keys(project_dir):
+            raise HTTPException(404, f"folder not found: {body.folder}")
+
     item = add_video_character_library_item(
         project_dir,
         name=body.name,
@@ -7963,8 +8041,104 @@ async def freezone_add_video_character_library_item(
         image_urls=body.image_urls,
         video_url=body.video_url,
         audio_url=body.audio_url,
+        category=body.category,
+        folder=body.folder,
     )
     return {"ok": True, "data": item}
+
+
+@router.get(
+    "/projects/{project}/freezone/video/asset-library/folders",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_asset_library_folders(
+    project: str,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：列出用户自建的资产库文件夹（系统文件夹由前端按保留 key 生成）。"""
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="viewer"
+    )
+    return {"ok": True, "data": load_video_character_folders(project_dir)}
+
+
+@router.post(
+    "/projects/{project}/freezone/video/asset-library/folders",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_add_asset_library_folder(
+    project: str,
+    body: FreezoneAssetLibraryFolderRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：新建一个资产库文件夹。"""
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    try:
+        folder = add_video_character_folder(project_dir, name=body.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "data": folder}
+
+
+@router.patch(
+    "/projects/{project}/freezone/video/asset-library/folders/{folder_id}",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_update_asset_library_folder(
+    project: str,
+    folder_id: str,
+    body: FreezoneAssetLibraryFolderPatchRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：给资产库文件夹改名或换封面。系统文件夹没有实体记录，一律 404。"""
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    if body.cover:
+        # 封面只能是本项目 static 下的素材。这个字段会被所有打开资产库的协作者当
+        # <img src> 渲染，放行外链等于让别人的浏览器替你去访问第三方地址（referrer
+        # 和 IP 都带过去）。和录入素材那条路由的 _require_local 同一套要求。
+        try:
+            cover_path = resolve_static_url_to_path(body.cover, project_dir)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not cover_path.exists():
+            # 只回传进来的 URL：cover_path 是绝对路径，带用户名和落盘目录。
+            raise HTTPException(404, f"cover not found: {body.cover}")
+    try:
+        folder = update_video_character_folder(
+            project_dir, folder_id, name=body.name, cover=body.cover
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if folder is None:
+        raise HTTPException(404, f"folder not found: {folder_id}")
+    return {"ok": True, "data": folder}
+
+
+@router.delete(
+    "/projects/{project}/freezone/video/asset-library/folders/{folder_id}",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_delete_asset_library_folder(
+    project: str,
+    folder_id: str,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：删掉一个自建文件夹，柜内素材条目一并从资产库移除。
+
+    只删索引，磁盘上的素材文件保留——画布节点可能还引用着同一个 URL，真删文件会
+    造成裂图。孤儿文件归项目级清理负责，不在这条路由的职责里。
+    """
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    removed = delete_video_character_folder(project_dir, folder_id)
+    if removed is None:
+        raise HTTPException(404, f"folder not found: {folder_id}")
+    return {"ok": True, "data": {"deleted_items": removed}}
 
 
 @router.post(
@@ -8396,7 +8570,8 @@ async def freezone_video_keyframes(
             job_id=job_id,
             prompt=final_prompt,
             reference_items=reference_items,
-            aspect_ratio=normalize_video_aspect_ratio(body.aspect_ratio),
+            # 关键帧画幅跟随首帧；仅尾帧时跟随尾帧，不接受固定比例。
+            aspect_ratio="auto",
             resolution=normalize_video_resolution_for_backend(
                 backend,
                 body.resolution,
@@ -8513,45 +8688,22 @@ async def freezone_video_omni_gen(
             }
         )
 
-    # 音频时长必须在预扣积分和投递任务之前校验。目录配置是服务端权威值；Seedance 2.0
-    # 的历史边界仅在旧目录尚未补齐新字段时兜底，显式配置不再被隐藏常量覆盖。
-    audio_items = [item for item in reference_items if item["type"] == "audio"]
-    audio_bounds = list(_catalog_reference_duration_bounds(capabilities, "audio"))
-    if is_freezone_seedance2_backend(backend):
-        if audio_bounds[0] is None:
-            audio_bounds[0] = MIN_OMNI_REFERENCE_AUDIO_SECONDS
-        if audio_bounds[1] is None:
-            audio_bounds[1] = MAX_OMNI_REFERENCE_AUDIO_SECONDS
-        if audio_bounds[3] is None:
-            audio_bounds[3] = MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS
-    if audio_items and any(value is not None for value in audio_bounds):
-        # 并发探测：ffprobe 单条有 20s 超时，串行 await 会把 3 条参考音频叠成最长 60s 的
-        # 请求耗时。gather 之后最坏就是一个超时的墙钟，也就顺带成了整体上限。
-        probed_seconds = await asyncio.gather(
-            *(_probe_reference_audio_seconds(item["path"]) for item in audio_items)
+    # 音频时长必须在预扣积分和投递任务之前校验。
+    try:
+        await _validate_catalog_reference_audio_items(
+            reference_items,
+            capabilities=capabilities,
+            backend=backend,
         )
-        probed = [
-            (Path(item["path"]).name or f"audio{index}", seconds)
-            for index, (item, seconds) in enumerate(
-                zip(audio_items, probed_seconds), start=1
-            )
-        ]
-        try:
-            validate_omni_reference_audio_durations(
-                probed,
-                min_seconds=audio_bounds[0],
-                max_seconds=audio_bounds[1],
-                total_min_seconds=audio_bounds[2],
-                total_max_seconds=audio_bounds[3],
-            )
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     final_prompt = build_freezone_omni_video_prompt(
         user_prompt=body.prompt,
         theme=body.theme,
         camera_template_id=body.camera_template_id,
         marks=[item.model_dump() for item in body.marks],
+        reference_items=reference_items,
     )
     job_id = _new_job_id()
 
@@ -8611,9 +8763,9 @@ async def freezone_video_edit(
     body: FreezoneVideoEditRequest,
     user: dict = Depends(get_api_user),
 ):
-    """视频处理：视频编辑（HappyHorse 视频编辑功能）。
+    """视频处理：视频编辑。
 
-    输入 1 个源视频 + 0-5 张参考图，走上游 video_url + reference_images。
+    输入 1 个源视频，并按目录能力发送参考图片和独立参考音频。
     """
     ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
         project, user
@@ -8635,7 +8787,7 @@ async def freezone_video_edit(
     if mode_enabled is False or (
         mode_enabled is None and not is_freezone_happyhorse_backend(backend)
     ):
-        raise HTTPException(400, "video edit currently only supports HappyHorse models")
+        raise HTTPException(400, "this model does not support video_edit mode")
 
     if not body.video_url.strip():
         raise HTTPException(400, "video_url is required")
@@ -8646,6 +8798,9 @@ async def freezone_video_edit(
     image_paths = _resolve_url_list(project_dir, list(body.image_urls))
     if len(image_paths) != len(body.image_urls):
         raise HTTPException(400, "some image_urls could not be resolved")
+    audio_paths = _resolve_url_list(project_dir, list(body.audio_urls))
+    if len(audio_paths) != len(body.audio_urls):
+        raise HTTPException(400, "some audio_urls could not be resolved")
     reference_limits = _catalog_reference_limits(
         capabilities,
         image_default=5,
@@ -8659,12 +8814,28 @@ async def freezone_video_edit(
             400,
             f"this model supports at most {reference_limits['image']} image references",
         )
+    if len(audio_paths) > reference_limits["audio"]:
+        raise HTTPException(
+            400,
+            f"this model supports at most {reference_limits['audio']} audio references",
+        )
 
     reference_items: list[dict[str, str]] = [
         {"type": "video", "path": video_paths[0], "role": "视频编辑源"}
     ]
     for path in image_paths:
         reference_items.append({"type": "image", "path": path, "role": "图片参考"})
+    for path in audio_paths:
+        reference_items.append({"type": "audio", "path": path, "role": "配乐参考"})
+
+    try:
+        await _validate_catalog_reference_audio_items(
+            reference_items,
+            capabilities=capabilities,
+            backend=backend,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     final_prompt = build_freezone_image_to_video_prompt(
         user_prompt=body.prompt,
@@ -8684,17 +8855,14 @@ async def freezone_video_edit(
             job_id=job_id,
             prompt=final_prompt,
             reference_items=reference_items,
-            aspect_ratio=normalize_video_aspect_ratio(body.aspect_ratio),
+            # 视频编辑的画幅与输出时长均跟随源视频；用户只选择分辨率。
+            aspect_ratio="auto",
             resolution=normalize_video_resolution_for_backend(
                 backend,
                 body.resolution,
                 _catalog_resolution_options(capabilities),
             ),
-            duration_seconds=normalize_video_duration_for_backend(
-                backend,
-                body.duration_seconds,
-                *_catalog_duration_bounds(capabilities),
-            ),
+            duration_seconds=None,
             generate_audio=body.generate_audio,
             human_review=body.human_review,
             scene_optimize=None,

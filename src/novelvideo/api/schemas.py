@@ -1003,6 +1003,34 @@ class FreezoneVideoCharacterLibraryItemRequest(BaseModel):
         default=None,
         description="音频静态地址（media=audio 时必填）",
     )
+    category: Literal["other", "character", "scene", "prop", "style", "audio"] | None = Field(
+        default=None,
+        description="用途类目（其它/人物/场景/物品/风格/音效）；不传时后端按 source/media 兜底推导",
+    )
+    folder: str | None = Field(
+        default=None,
+        description=(
+            "保存位置：系统文件夹 key（其它/人物/场景/物品/风格/音效同名，"
+            "对应 other/character/scene/prop/style/audio）或用户自建文件夹 id；"
+            "不传时按类目落到同名系统文件夹"
+        ),
+    )
+
+
+class FreezoneAssetLibraryFolderRequest(BaseModel):
+    """新建资产库文件夹请求。文件夹只管保存位置，和素材的类目标签互不影响。"""
+
+    name: str = Field(description="文件夹名称，最长 20 字，不能与系统文件夹重名")
+
+
+class FreezoneAssetLibraryFolderPatchRequest(BaseModel):
+    """改文件夹。两个字段都可选，只改传上来的那个。"""
+
+    name: str | None = Field(default=None, description="新名称；不传表示不改名")
+    cover: str | None = Field(
+        default=None,
+        description="封面图 URL，取自该文件夹内的素材；传空串表示清掉封面",
+    )
 
 
 class FreezoneVideoGenRequest(BaseModel):
@@ -1141,8 +1169,8 @@ class FreezoneKeyframeVideoRequest(BaseModel):
         description="局部元素标记列表。来自前端点击图片选中的主体/物体局部区域，不是普通 tags",
     )
     aspect_ratio: str = Field(
-        default="16:9",
-        description="视频比例；auto 当前回退为 16:9",
+        default="auto",
+        description="关键帧模式固定为 auto，输出比例跟随首帧或尾帧",
     )
     resolution: str = Field(
         default="720p",
@@ -1175,15 +1203,19 @@ class FreezoneKeyframeVideoRequest(BaseModel):
 
 
 class FreezoneVideoEditRequest(BaseModel):
-    """视频编辑请求（HappyHorse 视频编辑功能）。
+    """视频编辑请求。
 
-    输入 1 个源视频 + 0-5 张参考图，对视频进行编辑改写。
+    输入 1 个源视频，并按媒体模型目录配置接收参考图片和独立参考音频。
     """
 
     video_url: str = Field(description="源视频静态地址，必填")
     image_urls: list[str] = Field(
         default_factory=list,
-        description="参考图静态地址列表，0-5 张，单张 <= 10MB",
+        description="参考图静态地址列表；数量上限由媒体模型目录决定",
+    )
+    audio_urls: list[str] = Field(
+        default_factory=list,
+        description="独立参考音频静态地址列表；数量和时长上限由媒体模型目录决定",
     )
     prompt: str = Field(default="", description="用户编辑指令/视频描述，可为空")
     camera_template_id: Optional[str] = Field(
@@ -1194,18 +1226,9 @@ class FreezoneVideoEditRequest(BaseModel):
         default_factory=list,
         description="局部元素标记列表",
     )
-    aspect_ratio: str = Field(
-        default="16:9",
-        description="视频比例；视频编辑画幅由源视频决定，此字段仅占位",
-    )
     resolution: str = Field(
         default="720p",
         description="输出清晰度档位",
-    )
-    duration_seconds: int = Field(
-        default=5,
-        ge=1,
-        description="视频时长，至少 1 秒；不同模型支持的时长范围可能不同",
     )
     audio_setting: Literal["auto", "origin"] = Field(
         default="auto",

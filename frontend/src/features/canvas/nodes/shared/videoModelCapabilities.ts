@@ -64,6 +64,14 @@ export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
   videoEdit: "video_edit",
 };
 
+/**
+ * 这些模式的输出画幅由输入关键帧/源视频决定，不能提交用户保存的固定比例。
+ * 只计算本次请求的有效值，不覆盖节点中的比例，切回其它模式时可恢复用户选择。
+ */
+export function videoModeForcesAutomaticAspectRatio(mode: VideoGenMode): boolean {
+  return mode === "firstFrame" || mode === "firstLastFrame" || mode === "videoEdit";
+}
+
 export interface VideoKeyframeCandidate {
   url: string;
   slot?: VideoKeyframeSlot | null;
@@ -118,9 +126,20 @@ export type VideoModelRef =
       id?: string;
       apiModel?: string;
       supportedModes?: string[];
+      referenceAudioMax?: number | null;
+      supportsGenerateAudio?: boolean;
     }
   | null
   | undefined;
+
+/** 未配置的新字段沿用旧行为：支持原生音频，且默认开启。 */
+export function videoModelSupportsGenerateAudio(model: VideoModelRef): boolean {
+  return typeof model === "string" || model?.supportsGenerateAudio !== false;
+}
+
+export function videoModelDefaultGenerateAudio(model: VideoModelRef): boolean {
+  return videoModelSupportsGenerateAudio(model);
+}
 
 /** 从模型入参里取出用于能力启发式判定的 id（优先 apiModel，它才是打给上游的名字）。 */
 function videoModelIdOf(model: VideoModelRef): string | null | undefined {
@@ -500,7 +519,8 @@ export function formatAudioDurationClips(
  * 规则对齐后端 freezone i2v / omni-gen 端点（src/novelvideo/api/routes/freezone.py）：
  * - 视频素材：仅「全能参考」(omni，Seedance 2.0) 与「视频编辑」(HappyHorse) 消费，
  *   其余模式静默丢弃 → 拦；
- * - 音频素材：仅「全能参考」(omni，Seedance 2.0) 消费，其余模式静默丢弃 → 拦；
+ * - 音频素材：「全能参考」消费；「视频编辑」仅在媒体目录显式配置音频上限时消费；
+ *   其余模式静默丢弃 → 拦；
  * - 多图(>1)：i2v 端点仅 Seedance 2.0 / HappyHorse 放行，非 2.0 非 HappyHorse
  *   （Seedance 1.x）传 >1 图后端直接 400 → 拦。
  *
@@ -516,7 +536,14 @@ export function videoSubmitMediaRejectionReason(
   if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit") {
     return "该模型不支持视频素材";
   }
-  if (counts.audios > 0 && mode !== "allReference") {
+  const videoEditAcceptsAudio =
+    mode === "videoEdit" &&
+    typeof model === "object" &&
+    model !== null &&
+    isVideoModeSupportedByModel("videoEdit", model) &&
+    typeof model.referenceAudioMax === "number" &&
+    model.referenceAudioMax > 0;
+  if (counts.audios > 0 && mode !== "allReference" && !videoEditAcceptsAudio) {
     return "该模型不支持音频素材";
   }
   if (counts.images > 1 && !videoModelAcceptsMultipleImages(model)) {
@@ -557,7 +584,11 @@ export function videoModelReferenceDisabledReason(
     if (counts.videos > 0 && !supportsAllReference && !supportsVideoEdit) {
       return "该模型不支持视频素材";
     }
-    if (counts.audios > 0 && !supportsAllReference) {
+    const supportsVideoEditAudio =
+      supportsVideoEdit &&
+      typeof model.referenceAudioMax === "number" &&
+      model.referenceAudioMax > 0;
+    if (counts.audios > 0 && !supportsAllReference && !supportsVideoEditAudio) {
       return "该模型不支持音频素材";
     }
     if (counts.images > 1 && !videoModelAcceptsMultipleImages(model)) {

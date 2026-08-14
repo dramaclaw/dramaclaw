@@ -400,19 +400,19 @@ export async function submitFreezoneVideoI2v(
 
 // /freezone/video/video-edit ---------------------------------------------- //
 //
-// HappyHorse 视频编辑：1 个源视频 + 0-5 张参考图 → 上游 video_url + reference_images。
+// 视频编辑：1 个源视频，并按媒体目录能力附带参考图片 / 独立参考音频。
 
 export interface FreezoneVideoEditPayload extends FreezoneNodeContext {
   /** 源视频静态地址，必填。 */
   videoUrl: string;
   /** 0-5 张参考图静态地址。 */
   imageUrls?: string[];
+  /** 独立参考音频静态地址；数量和时长上限由媒体模型目录决定。 */
+  audioUrls?: string[];
   prompt?: string;
   cameraTemplateId?: string | null;
   marks?: FreezoneVideoMark[];
-  aspectRatio?: FreezoneVideoAspectRatio;
   resolution?: FreezoneVideoResolution;
-  durationSeconds?: number;
   /** 视频编辑音频策略：auto 自动 / origin 保留原声。 */
   audioSetting?: "auto" | "origin";
   generateAudio?: boolean;
@@ -434,6 +434,7 @@ export async function submitFreezoneVideoEdit(
       json: {
         video_url: payload.videoUrl,
         image_urls: payload.imageUrls ?? [],
+        audio_urls: payload.audioUrls ?? [],
         prompt: payload.prompt ?? "",
         camera_template_id: payload.cameraTemplateId ?? null,
         marks: (payload.marks ?? []).map((m) => ({
@@ -447,9 +448,7 @@ export async function submitFreezoneVideoEdit(
           box_height: m.boxHeight ?? null,
           note: m.note ?? "",
         })),
-        aspect_ratio: payload.aspectRatio ?? "16:9",
         resolution: payload.resolution ?? "720p",
-        duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         audio_setting: payload.audioSetting ?? "auto",
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
@@ -1045,6 +1044,8 @@ export interface FreezoneVideoModelInfo {
   /** Supported output resolution values for this model, when advertised by backend. */
   resolutionOptions?: FreezoneVideoResolution[];
   humanReview?: boolean;
+  /** Whether this model can produce native synchronized audio. Missing means legacy-supported. */
+  supportsGenerateAudio?: boolean;
   /** Smallest supported duration in seconds, when advertised by backend. */
   minDuration?: number | null;
   /** Largest supported duration in seconds, when advertised by backend. */
@@ -1130,6 +1131,11 @@ function videoModelEntryFromObject(
     label,
     ...(resolutionOptions.length > 0 ? { resolutionOptions } : {}),
     humanReview: pickBoolean(entry, "humanReview", "human_review"),
+    supportsGenerateAudio: pickBoolean(
+      entry,
+      "supportsGenerateAudio",
+      "supports_generate_audio",
+    ),
     minDuration: pickNumber(entry, "minDuration", "min_duration"),
     maxDuration: pickNumber(entry, "maxDuration", "max_duration"),
     ...(sceneOptimizeOptions.length > 0 ? { sceneOptimizeOptions } : {}),
@@ -2577,11 +2583,35 @@ export type FreezoneAssetLibrarySource =
   | "scene"
   | "prop";
 
+/** 用途类目。老条目没有该字段，读取侧按 source/media 兜底推导。 */
+export type FreezoneAssetLibraryCategory =
+  | "other"
+  | "character"
+  | "scene"
+  | "prop"
+  | "style"
+  | "audio";
+
+/**
+ * 用户自建的资产库文件夹。系统文件夹（主线 / 待分类资产 / 各类目同名目录）不落盘，
+ * 由前端按保留 key 生成，只有这里的自建文件夹会从后端读回来。
+ */
+export interface FreezoneAssetLibraryFolder {
+  id: string;
+  name: string;
+  /** 封面图 URL，取自文件夹内某个素材；没设过时为空,前端画默认文件夹图标。 */
+  cover?: string | null;
+  created_at?: string;
+}
+
 export interface FreezoneVideoCharacterLibraryItem {
   id?: string;
   name: string;
   media?: FreezoneAssetLibraryMedia;
   source?: FreezoneAssetLibrarySource;
+  category?: FreezoneAssetLibraryCategory;
+  /** 保存位置：系统文件夹 key 或自建文件夹 id。老条目没有，读取侧按类目兜底。 */
+  folder?: string;
   image_urls?: string[];
   video_url?: string | null;
   audio_url?: string | null;
@@ -2597,6 +2627,8 @@ export interface FreezoneAddVideoCharacterLibraryItemPayload {
   imageUrls?: string[];
   videoUrl?: string;
   audioUrl?: string;
+  category?: FreezoneAssetLibraryCategory;
+  folder?: string;
 }
 
 export async function fetchFreezoneVideoCharacterLibrary(
@@ -2620,9 +2652,52 @@ export async function submitFreezoneAddVideoCharacterLibraryItem(
   }
   if (payload.videoUrl) body.video_url = payload.videoUrl;
   if (payload.audioUrl) body.audio_url = payload.audioUrl;
+  if (payload.category) body.category = payload.category;
+  if (payload.folder) body.folder = payload.folder;
   return await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/video/character-library`,
     { method: "POST", json: body },
+  );
+}
+
+export async function fetchFreezoneAssetLibraryFolders(
+  project: string,
+): Promise<FreezoneAssetLibraryFolder[]> {
+  return await apiCall<FreezoneAssetLibraryFolder[]>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders`,
+  );
+}
+
+export async function createFreezoneAssetLibraryFolder(
+  project: string,
+  name: string,
+): Promise<FreezoneAssetLibraryFolder> {
+  return await apiCall<FreezoneAssetLibraryFolder>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders`,
+    { method: "POST", json: { name } },
+  );
+}
+
+/** 改名 / 换封面。只传要改的字段,另一个原样保留。 */
+export async function updateFreezoneAssetLibraryFolder(
+  project: string,
+  folderId: string,
+  patch: { name?: string; cover?: string },
+): Promise<FreezoneAssetLibraryFolder> {
+  return await apiCall<FreezoneAssetLibraryFolder>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders/${encodeURIComponent(folderId)}`,
+    { method: "PATCH", json: patch },
+  );
+}
+
+/** 整柜清空:删掉文件夹连同里面的素材。返回被删掉的素材条数。 */
+export async function deleteFreezoneAssetLibraryFolder(
+  project: string,
+  folderId: string,
+): Promise<{ deleted_items: number }> {
+  return await apiCall<{ deleted_items: number }>(
+    `projects/${encodeURIComponent(project)}/freezone/video/asset-library/folders/${encodeURIComponent(folderId)}`,
+    { method: "DELETE" },
   );
 }
 

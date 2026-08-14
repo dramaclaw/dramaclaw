@@ -46,3 +46,30 @@ def test_resolve_static_url_still_rejects_escaped_encoded_paths(tmp_path: Path) 
             "/static/projects/proj_123/%2E%2E/secret.png",
             project_dir,
         )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.example/freezone/_uploads/foo.png",
+        "http://evil.example/static/projects/proj_123/a.png",
+        "//evil.example/freezone/_uploads/foo.png",
+        "javascript:alert(1)",
+        "data:image/svg+xml;base64,PHN2Zy8+",
+        # 浏览器把 `/\` 当成 `//` 处理，等价于协议相对外链。
+        "/\\evil.example/freezone/_uploads/foo.png",
+    ],
+)
+def test_resolve_static_url_rejects_cross_origin_urls(tmp_path: Path, url: str) -> None:
+    """外链不能靠「path 部分恰好落在项目内」蒙混过关。
+
+    调用方拿校验结果放行、却把原始字符串存下来（文件夹封面就是这样），
+    所以这里必须校验整个字符串，不能只看削出来的 path。
+    """
+    project_dir = tmp_path / "project"
+    decoy = project_dir / "freezone" / "_uploads" / "foo.png"
+    decoy.parent.mkdir(parents=True)
+    decoy.write_bytes(b"png")
+
+    with pytest.raises(ValueError, match="same-origin"):
+        resolve_static_url_to_path(url, project_dir)

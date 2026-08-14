@@ -467,8 +467,8 @@ describe("BatchBar", () => {
     expect(screen.queryByText("0.5K")).not.toBeInTheDocument();
   });
 
-  it("shows the backend batch quote for narrated projects", async () => {
-    const user = userEvent.setup();
+  it("hides whole-beat video prompt generation from the batch toolbar", () => {
+    // 解说片 (narrated) 是这个入口原先唯一露头的地方，现在也不给了。
     const { rerender } = render(
       <I18nextProvider i18n={i18n}>
         <BatchBar
@@ -483,13 +483,9 @@ describe("BatchBar", () => {
       </I18nextProvider>,
     );
 
-    const batchButton = screen.getByRole("button", {
-      name: /生成全 Beat 视频提示词/,
-    });
-    expect(batchButton).toHaveTextContent("12");
-    await user.click(batchButton);
-    expect(screen.getAllByText("12").length).toBeGreaterThanOrEqual(2);
-    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(
+      screen.queryByRole("button", { name: /生成全 Beat 视频提示词/ }),
+    ).not.toBeInTheDocument();
 
     rerender(
       <I18nextProvider i18n={i18n}>
@@ -528,96 +524,30 @@ describe("BatchBar", () => {
     expect(screen.queryByRole("button", { name: "补生成草图" })).not.toBeInTheDocument();
   });
 
-  it("shows whole-episode audio cost on the button and confirm action", async () => {
-    const user = userEvent.setup();
-    render(
-      <I18nextProvider i18n={i18n}>
-        <BatchBar
-          project="demo"
-          episode={1}
-          beats={DEFAULT_BEATS}
-          videoBackend="seedance"
-          spineTemplate="narrated"
-          sketchAspectRatio="2:3"
-          onSketchAspectRatioChange={vi.fn()}
-        />
-      </I18nextProvider>,
-    );
+  it.each([
+    ["narrated" as const, "seedance"],
+    ["narrated" as const, "huimeng_seedance-2.0-fast"],
+    ["drama" as const, "seedance"],
+  ])(
+    "hides whole-episode audio from the batch toolbar (%s / %s)",
+    (spineTemplate, videoBackend) => {
+      render(
+        <I18nextProvider i18n={i18n}>
+          <BatchBar
+            project="demo"
+            episode={1}
+            beats={DEFAULT_BEATS}
+            videoBackend={videoBackend}
+            spineTemplate={spineTemplate}
+            sketchAspectRatio="2:3"
+            onSketchAspectRatioChange={vi.fn()}
+          />
+        </I18nextProvider>,
+      );
 
-    expect(screen.getByRole("button", { name: "生成音频" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "生成音频" }));
-
-    expect(screen.getByRole("button", { name: "确认执行" })).toBeInTheDocument();
-    expect(screen.getAllByText("18").length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("stops whole-episode audio before confirmation when the quote reports a voice prerequisite", async () => {
-    audioQuoteState.prereqErrors = [
-      "Beat 01 解说声线缺失：项目解说人声线未配置，请上传或录制解说人音频",
-    ];
-    const user = userEvent.setup();
-    render(
-      <I18nextProvider i18n={i18n}>
-        <BatchBar
-          project="demo"
-          episode={1}
-          beats={DEFAULT_BEATS}
-          videoBackend="seedance"
-          spineTemplate="narrated"
-          sketchAspectRatio="2:3"
-          onSketchAspectRatioChange={vi.fn()}
-        />
-      </I18nextProvider>,
-    );
-
-    await user.click(screen.getByRole("button", { name: "生成音频" }));
-
-    expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Beat 01 解说声线缺失：项目解说人声线未配置，请上传或录制解说人音频",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("keeps whole-episode TTS generation visible but unavailable when Seedance2 is selected", async () => {
-    render(
-      <I18nextProvider i18n={i18n}>
-        <BatchBar
-          project="demo"
-          episode={1}
-          beats={DEFAULT_BEATS}
-          videoBackend="huimeng_seedance-2.0-fast"
-          spineTemplate="narrated"
-          sketchAspectRatio="2:3"
-          onSketchAspectRatioChange={vi.fn()}
-        />
-      </I18nextProvider>,
-    );
-
-    expect(screen.getByRole("button", { name: "生成音频" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-  });
-
-  it("hides whole-episode audio for 精品剧 (drama) projects", () => {
-    render(
-      <I18nextProvider i18n={i18n}>
-        <BatchBar
-          project="demo"
-          episode={1}
-          beats={DEFAULT_BEATS}
-          videoBackend="seedance"
-          spineTemplate="drama"
-          sketchAspectRatio="2:3"
-          onSketchAspectRatioChange={vi.fn()}
-        />
-      </I18nextProvider>,
-    );
-
-    expect(screen.queryByRole("button", { name: "生成音频" })).not.toBeInTheDocument();
-  });
+      expect(screen.queryByRole("button", { name: "生成音频" })).not.toBeInTheDocument();
+    },
+  );
 
   it("shows AI detect and reassign color actions in the top batch toolbar", async () => {
     const user = userEvent.setup();

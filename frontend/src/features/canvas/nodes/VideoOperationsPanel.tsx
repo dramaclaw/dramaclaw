@@ -34,9 +34,12 @@ import {
   type VideoGenQuality,
   type VideoNodeData,
 } from "@/features/canvas/domain/canvasNodes";
+import { formatResolutionLabel } from "@/features/canvas/domain/mediaModelOptions";
 import {
   isHappyHorseVideoModel,
   isVideoModeSupportedByModel,
+  videoModeForcesAutomaticAspectRatio,
+  videoModelDefaultGenerateAudio,
   videoModelReferenceDisabledReason,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
@@ -209,6 +212,7 @@ interface VideoOperationsPanelProps {
   durationBounds: { min: number; max: number };
   sceneOptimize: Seedance2SceneOptimize | undefined;
   sceneOptimizeOptions: readonly Seedance2SceneOptimize[];
+  supportsGenerateAudio: boolean;
   generateAudio: boolean;
   supportsHumanReview: boolean;
   humanReview: boolean;
@@ -252,6 +256,7 @@ export function VideoOperationsPanel({
   durationBounds,
   sceneOptimize,
   sceneOptimizeOptions,
+  supportsGenerateAudio,
   generateAudio,
   supportsHumanReview,
   humanReview,
@@ -346,7 +351,10 @@ export function VideoOperationsPanel({
     );
     const videoCount = Math.min(Math.max(debouncedCount, 1), 4);
     const videoPricingQuantity =
-      videoCount * debouncedDurationSec;
+      videoCount *
+      (genMode === "videoEdit"
+        ? Math.max(Math.floor(debouncedInputVideoDuration), 1)
+        : debouncedDurationSec);
     const videoCreditCost = useGenerationCreditCost(
       "feature",
       debouncedBackend && videoInputBillingReady
@@ -713,6 +721,9 @@ export function VideoOperationsPanel({
                   <ProviderModelPicker
                     selectedModelId={modelId}
                     onChange={(nextModelId) => {
+                      const nextModel = availableVideoModels.find(
+                        (item) => item.id === nextModelId,
+                      );
                       // 切换模型后，若当前 genMode 不被新模型支持（如 HappyHorse
                       // 专属的 videoEdit 切到普通模型），重置为通用安全值 textToVideo，
                       // 让状态机按新模型 + 上游重新推导；否则残留模式会在提交时打到
@@ -721,11 +732,12 @@ export function VideoOperationsPanel({
                         data.genMode != null &&
                         !isVideoModeSupportedByModel(
                           data.genMode,
-                          availableVideoModels.find((item) => item.id === nextModelId),
+                          nextModel,
                         );
                       updateNodeData(id, {
                         model: nextModelId,
                         modelParams: {},
+                        generateAudio: videoModelDefaultGenerateAudio(nextModel),
                         ...(resetGenMode
                           ? { genMode: "textToVideo" as VideoGenMode }
                           : {}),
@@ -752,6 +764,8 @@ export function VideoOperationsPanel({
                     }
                   />
                   <VideoConfigChip
+                    followInputAspectRatio={videoModeForcesAutomaticAspectRatio(genMode)}
+                    followInputDuration={genMode === "videoEdit"}
                     aspectRatio={aspectRatio}
                     aspectRatioOptions={aspectRatioOptions}
                     quality={quality}
@@ -760,6 +774,7 @@ export function VideoOperationsPanel({
                     durationBounds={durationBounds}
                     sceneOptimize={sceneOptimize}
                     sceneOptimizeOptions={sceneOptimizeOptions}
+                    supportsGenerateAudio={supportsGenerateAudio}
                     generateAudio={generateAudio}
                     onChange={(patch) => updateNodeData(id, patch)}
                   />
@@ -1126,6 +1141,8 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
 }
 
 interface VideoConfigChipProps {
+  followInputAspectRatio: boolean;
+  followInputDuration: boolean;
   aspectRatio: FreezoneVideoAspectRatio;
   aspectRatioOptions: readonly FreezoneVideoAspectRatio[];
   quality: VideoGenQuality;
@@ -1134,11 +1151,14 @@ interface VideoConfigChipProps {
   durationBounds: { min: number; max: number };
   sceneOptimize?: Seedance2SceneOptimize;
   sceneOptimizeOptions: readonly Seedance2SceneOptimize[];
+  supportsGenerateAudio: boolean;
   generateAudio: boolean;
   onChange: (patch: Partial<VideoNodeData>) => void;
 }
 
 function VideoConfigChip({
+  followInputAspectRatio,
+  followInputDuration,
   aspectRatio,
   aspectRatioOptions,
   quality,
@@ -1147,6 +1167,7 @@ function VideoConfigChip({
   durationBounds,
   sceneOptimize,
   sceneOptimizeOptions,
+  supportsGenerateAudio,
   generateAudio,
   onChange,
 }: VideoConfigChipProps) {
@@ -1216,18 +1237,24 @@ function VideoConfigChip({
         className={NODE_TEXT_CONTROL_TRIGGER_CLASS}
       >
         <span>
-          {aspectRatio === "auto"
+          {followInputAspectRatio || aspectRatio === "auto"
             ? t("node.videoNode.aspect.auto")
             : aspectRatio}
         </span>
         <span className="text-text-muted/80">·</span>
-        <span>{quality}</span>
-        <span className="text-text-muted/80">·</span>
-        <span>{durationSec}s</span>
-        {generateAudio ? (
-          <Volume2 className="ml-0.5 h-3.5 w-3.5 text-text-muted/90" />
-        ) : (
-          <VolumeX className="ml-0.5 h-3.5 w-3.5 text-text-muted/90" />
+        <span>{formatResolutionLabel(quality)}</span>
+        {!followInputDuration && (
+          <>
+            <span className="text-text-muted/80">·</span>
+            <span>{durationSec}s</span>
+          </>
+        )}
+        {supportsGenerateAudio && (
+          generateAudio ? (
+            <Volume2 className="ml-0.5 h-3.5 w-3.5 text-text-muted/90" />
+          ) : (
+            <VolumeX className="ml-0.5 h-3.5 w-3.5 text-text-muted/90" />
+          )
         )}
         <ChevronDown className="h-3 w-3 text-text-muted/90" />
       </button>
@@ -1238,28 +1265,48 @@ function VideoConfigChip({
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
-          <div className={VIDEO_PARAM_LABEL_CLASS}>
-            {t("node.videoNode.aspect.title")}
-          </div>
-          <div className={`grid grid-cols-5 ${VIDEO_PARAM_ROW_CLASS}`}>
-            {aspectRatioOptions.map((ratio) => {
-              const isActive = aspectRatio === ratio;
-              return (
+          {!followInputAspectRatio && (
+            <>
+              <div className={VIDEO_PARAM_LABEL_CLASS}>
+                {t("node.videoNode.aspect.title")}
+              </div>
+              <div className={`grid grid-cols-5 ${VIDEO_PARAM_ROW_CLASS}`}>
+                {aspectRatioOptions.map((ratio) => {
+                  const isActive = aspectRatio === ratio;
+                  return (
+                    <button
+                      key={ratio}
+                      type="button"
+                      onClick={() => onChange({ aspectRatio: ratio })}
+                      className={`${VIDEO_PARAM_BUTTON_BASE_CLASS} ${
+                        isActive
+                          ? VIDEO_PARAM_ACTIVE_BUTTON_CLASS
+                          : VIDEO_PARAM_IDLE_BUTTON_CLASS
+                      }`}
+                    >
+                      {ratio === "auto" ? t("node.videoNode.aspect.auto") : ratio}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          {followInputAspectRatio && (
+            <>
+              <div className={VIDEO_PARAM_LABEL_CLASS}>
+                {t("node.videoNode.aspect.title")}
+              </div>
+              <div className={`grid grid-cols-5 ${VIDEO_PARAM_ROW_CLASS}`}>
                 <button
-                  key={ratio}
                   type="button"
-                  onClick={() => onChange({ aspectRatio: ratio })}
-                  className={`${VIDEO_PARAM_BUTTON_BASE_CLASS} ${
-                    isActive
-                      ? VIDEO_PARAM_ACTIVE_BUTTON_CLASS
-                      : VIDEO_PARAM_IDLE_BUTTON_CLASS
-                  }`}
+                  disabled
+                  className={`${VIDEO_PARAM_BUTTON_BASE_CLASS} ${VIDEO_PARAM_ACTIVE_BUTTON_CLASS} cursor-not-allowed`}
                 >
-                  {ratio === "auto" ? t("node.videoNode.aspect.auto") : ratio}
+                  {t("node.videoNode.aspect.auto")}
                 </button>
-              );
-            })}
-          </div>
+              </div>
+            </>
+          )}
 
           <div className={VIDEO_PARAM_LABEL_CLASS}>
             {t("node.videoNode.quality.title")}
@@ -1278,16 +1325,18 @@ function VideoConfigChip({
                       : VIDEO_PARAM_IDLE_BUTTON_CLASS
                   }`}
                 >
-                  {q}
+                  {formatResolutionLabel(q)}
                 </button>
               );
             })}
           </div>
 
-          <div className={VIDEO_PARAM_LABEL_CLASS}>
-            {t("node.videoNode.duration.title")}
-          </div>
-          <div className="mb-4 flex items-center gap-3">
+          {!followInputDuration && (
+            <>
+              <div className={VIDEO_PARAM_LABEL_CLASS}>
+                {t("node.videoNode.duration.title")}
+              </div>
+              <div className="mb-4 flex items-center gap-3">
             <input
               type="range"
               min={durationBounds.min}
@@ -1323,7 +1372,9 @@ function VideoConfigChip({
               />
               <span className="text-[11px] text-text-muted/80">s</span>
             </div>
-          </div>
+              </div>
+            </>
+          )}
 
           {sceneOptimizeOptions.length > 0 && (
             <>
@@ -1352,34 +1403,38 @@ function VideoConfigChip({
             </>
           )}
 
-          <div className={VIDEO_PARAM_LABEL_CLASS}>
-            {t("node.videoNode.audio.title")}
-          </div>
-          <div className="flex items-center justify-between rounded-md bg-white/[0.045] px-2.5 py-1.5">
-            <span className="text-xs font-medium text-text-dark/88">
-              {generateAudio
-                ? t("node.videoNode.audio.on")
-                : t("node.videoNode.audio.off")}
-            </span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={generateAudio}
-              aria-label={t("node.videoNode.audio.title")}
-              onClick={() => onChange({ generateAudio: !generateAudio })}
-              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
-                generateAudio
-                  ? "border-white/24 bg-white/[0.18]"
-                  : "border-white/10 bg-white/[0.08]"
-              }`}
-            >
-              <span
-                className={`h-4 w-4 rounded-full bg-text-dark shadow-[0_2px_8px_rgba(0,0,0,0.35)] transition-transform ${
-                  generateAudio ? "translate-x-[18px]" : "translate-x-0.5"
-                }`}
-              />
-            </button>
-          </div>
+          {supportsGenerateAudio && (
+            <>
+              <div className={VIDEO_PARAM_LABEL_CLASS}>
+                {t("node.videoNode.audio.title")}
+              </div>
+              <div className="flex items-center justify-between rounded-md bg-white/[0.045] px-2.5 py-1.5">
+                <span className="text-xs font-medium text-text-dark/88">
+                  {generateAudio
+                    ? t("node.videoNode.audio.on")
+                    : t("node.videoNode.audio.off")}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={generateAudio}
+                  aria-label={t("node.videoNode.audio.title")}
+                  onClick={() => onChange({ generateAudio: !generateAudio })}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+                    generateAudio
+                      ? "border-white/24 bg-white/[0.18]"
+                      : "border-white/10 bg-white/[0.08]"
+                  }`}
+                >
+                  <span
+                    className={`h-4 w-4 rounded-full bg-text-dark shadow-[0_2px_8px_rgba(0,0,0,0.35)] transition-transform ${
+                      generateAudio ? "translate-x-[18px]" : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

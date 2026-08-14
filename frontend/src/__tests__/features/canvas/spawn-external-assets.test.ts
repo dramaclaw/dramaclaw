@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   EXTERNAL_ASSET_GROUP_LABEL,
   spawnExternalAssetNodes,
   type SpawnExternalAssetsDeps,
 } from '@/features/canvas/application/spawnExternalAssets';
+import {
+  resetPendingExternalFilesForTest,
+  takeExternalFile,
+} from '@/features/canvas/application/pendingExternalFiles';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 
 const TARGET = { id: 'video-1', position: { x: 1000, y: 500 }, height: 380 };
@@ -33,6 +37,15 @@ function makeDeps() {
 }
 
 describe('spawnExternalAssetNodes', () => {
+  // 暂存是模块级的,而这里每个用例的节点 id 都从 up-0 重新开始 —— 不清就会串味。
+  beforeEach(() => {
+    resetPendingExternalFilesForTest();
+  });
+
+  afterEach(() => {
+    resetPendingExternalFilesForTest();
+  });
+
   it('图片/视频/音频一律先落成 upload 节点,由 UploadNode 自行分流', () => {
     const { deps, addNode } = makeDeps();
     const files = [
@@ -87,7 +100,7 @@ describe('spawnExternalAssetNodes', () => {
     expect(addEdge).toHaveBeenCalledExactlyOnceWith('up-0', 'video-1');
   });
 
-  it('把原 File 对象投给对应的新节点', () => {
+  it('把原 File 对象暂存到对应的新节点名下,事件只带 nodeId', () => {
     const { deps, publish } = makeDeps();
     const file = makeFile('a.png', 'image/png');
 
@@ -98,8 +111,9 @@ describe('spawnExternalAssetNodes', () => {
     const [type, payload] = publish.mock.calls[0]!;
     expect(type).toBe('upload-node/external-file');
     expect(payload.nodeId).toBe('up-0');
-    // 契约是「把原 File 对象投过去」,身份而非结构。
-    expect(payload.file).toBe(file);
+    // 契约是「把原 File 对象交给那个节点」,身份而非结构。File 不走 payload,
+    // 走模块级暂存 —— 总线无重放,低缩放档下新节点先以 LOD shell 挂载,只发事件必丢。
+    expect(takeExternalFile('upload-node/external-file', 'up-0')).toBe(file);
   });
 
   it('多文件时每个节点各收到自己的那个文件、各连自己的边', () => {
@@ -116,8 +130,8 @@ describe('spawnExternalAssetNodes', () => {
       ['up-1', 'video-1'],
     ]);
     expect(publish.mock.calls.map((c) => c[1].nodeId)).toEqual(['up-0', 'up-1']);
-    expect(publish.mock.calls[0]?.[1].file).toBe(files[0]);
-    expect(publish.mock.calls[1]?.[1].file).toBe(files[1]);
+    expect(takeExternalFile('upload-node/external-file', 'up-0')).toBe(files[0]);
+    expect(takeExternalFile('upload-node/external-file', 'up-1')).toBe(files[1]);
   });
 
   it('投递发生时边已经连好了,变形才有边可继承', () => {

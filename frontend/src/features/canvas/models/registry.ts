@@ -70,9 +70,13 @@ export function resolveImageModelResolution(
 
   return (
     (requestedResolution
-      ? resolutionOptions.find((item) => item.value === requestedResolution)
+      ? resolutionOptions.find(
+          (item) => item.value.toLowerCase() === requestedResolution.toLowerCase(),
+        )
       : undefined) ??
-    resolutionOptions.find((item) => item.value === model.defaultResolution) ??
+    resolutionOptions.find(
+      (item) => item.value.toLowerCase() === model.defaultResolution.toLowerCase(),
+    ) ??
     resolutionOptions[0] ??
     model.resolutions[0]
   );
