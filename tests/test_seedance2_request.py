@@ -1067,7 +1067,9 @@ async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_pat
     assert "generate_audio" not in metadata
 
 
-async def test_newapi_happyhorse_11_uses_happyhorse_protocol_defaults(tmp_path, monkeypatch):
+async def test_newapi_happyhorse_11_uses_canonical_catalog_driven_protocol(
+    tmp_path, monkeypatch
+):
     from pathlib import Path
 
     from novelvideo.generators import video_generator as video_module
@@ -1083,6 +1085,7 @@ async def test_newapi_happyhorse_11_uses_happyhorse_protocol_defaults(tmp_path, 
         endpoint="https://newapi.example",
         model="happyhorse-1.1",
         resolution="720p",
+        generate_audio=False,
     )
 
     async def fake_reserve(*_args, **_kwargs):
@@ -1115,9 +1118,10 @@ async def test_newapi_happyhorse_11_uses_happyhorse_protocol_defaults(tmp_path, 
     monkeypatch.setattr(generator, "_get_json", fake_get_json)
     monkeypatch.setattr(generator, "_download_video", fake_download_video)
 
+    prompt = "镜头环绕" * 1300
     result = await generator.generate(
         image_path="",
-        prompt="镜头环绕" * 1300,
+        prompt=prompt,
         output_path=str(tmp_path / "happyhorse-11.mp4"),
         duration=5,
         aspect_ratio="21:9",
@@ -1132,27 +1136,24 @@ async def test_newapi_happyhorse_11_uses_happyhorse_protocol_defaults(tmp_path, 
 
     assert result.status == VideoGenStatus.DONE
     assert not generator._is_happyhorse_model()
-    assert generator._uses_happyhorse_protocol()
-    assert generator._duration_bounds() == (3, 15)
-    assert generator._happyhorse_resolution("720p") == "720P"
-    for ratio in ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "9:21", "5:4", "4:5"):
-        assert generator._happyhorse_ratio(ratio) == ratio
 
     payload = captured["payload"]
     assert isinstance(payload, dict)
     assert payload["model"] == "happyhorse-1.1"
-    assert len(payload["prompt"]) == 2500
+    assert payload["prompt"] == prompt
     assert payload["duration"] == 5
     assert payload["width"] == 1680
     assert payload["height"] == 720
     assert payload["metadata"] == {
-        "resolution": "720P",
+        "resolution": "720p",
         "ratio": "21:9",
         "watermark": False,
+        "generate_audio": False,
         "reference_images": [
             "https://example.com/a.png",
             "https://example.com/b.png",
         ],
+        "return_last_frame": False,
     }
 
 

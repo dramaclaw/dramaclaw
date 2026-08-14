@@ -255,7 +255,7 @@ async def test_video_edit_rejects_model_without_catalog_capability(
         _catalog("text_to_video", "first_frame", "image_reference"),
     )
 
-    with pytest.raises(HTTPException, match="video edit"):
+    with pytest.raises(HTTPException, match="video_edit"):
         await freezone_routes.freezone_video_edit(
             "project",
             FreezoneVideoEditRequest(

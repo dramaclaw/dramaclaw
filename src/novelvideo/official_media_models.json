@@ -210,6 +210,7 @@
         "maxDuration": 15,
         "ratioOptions": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "9:21", "5:4", "4:5"],
         "supportedModes": ["text_to_video", "first_frame", "image_to_video", "image_reference"],
+        "supportsGenerateAudio": false,
         "referenceAudioMax": 0,
         "referenceImageMax": 9,
         "referenceVideoMax": 0,
