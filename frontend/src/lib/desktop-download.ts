@@ -32,6 +32,16 @@ const INSTALLER_EXT: Record<DesktopPlatform, string> = {
 export const FALLBACK_DOWNLOAD_URL =
   "https://github.com/dramaclaw/dramaclaw/releases/latest";
 
+/** 一个平台的当前发布:安装包直链 + 清单里自报的版本与发布日期。 */
+export type DesktopRelease = {
+  /** 安装包直链;解析失败时退到 GitHub Releases 兜底页,按钮永远可点。 */
+  url: string;
+  /** 清单里的版本号(如 "1.3.2");字段缺失或格式漂移时为 null。 */
+  version: string | null;
+  /** 清单里的发布日期,截到 YYYY-MM-DD;解析不出时为 null。 */
+  releaseDate: string | null;
+};
+
 /** 从 electron-updater 清单文本里挑出目标平台的安装包文件名。 */
 export function pickInstallerFromManifest(
   manifest: string,
@@ -44,19 +54,43 @@ export function pickInstallerFromManifest(
   return null;
 }
 
-/** 解析当前版本安装包的 CDN 直链;任何一步失败都返回 null(调用方走兜底)。 */
-export async function resolveDesktopDownloadUrl(
+/**
+ * 从清单里读版本号与发布日期。下载页拿它当"当前版本"的唯一事实来源 ——
+ * 写死在文案里的版本号必随发版腐烂,而这份清单就是发布流水线自己写的。
+ */
+export function parseManifestRelease(manifest: string): {
+  version: string | null;
+  releaseDate: string | null;
+} {
+  return {
+    version: manifest.match(/^version:\s*(\S+)/m)?.[1] ?? null,
+    releaseDate:
+      manifest.match(/^releaseDate:\s*'?(\d{4}-\d{2}-\d{2})/m)?.[1] ?? null,
+  };
+}
+
+/** 解析当前发布;任何一步失败都退到兜底(url 保底可点,版本字段留空)。 */
+export async function resolveDesktopRelease(
   platform: DesktopPlatform,
-): Promise<string | null> {
+): Promise<DesktopRelease> {
+  const fallback: DesktopRelease = {
+    url: FALLBACK_DOWNLOAD_URL,
+    version: null,
+    releaseDate: null,
+  };
   try {
     const res = await fetch(DOWNLOAD_BASE + MANIFEST[platform], {
       cache: "no-store",
     });
-    if (!res.ok) return null;
-    const file = pickInstallerFromManifest(await res.text(), platform);
-    return file ? DOWNLOAD_BASE + encodeURIComponent(file) : null;
+    if (!res.ok) return fallback;
+    const manifest = await res.text();
+    const file = pickInstallerFromManifest(manifest, platform);
+    return {
+      url: file ? DOWNLOAD_BASE + encodeURIComponent(file) : FALLBACK_DOWNLOAD_URL,
+      ...parseManifestRelease(manifest),
+    };
   } catch {
-    return null;
+    return fallback;
   }
 }
 

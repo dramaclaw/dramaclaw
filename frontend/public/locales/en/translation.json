@@ -27,6 +27,140 @@
   "loginCinematic": {
     "moreInfo": "More information"
   },
+  "downloadPage": {
+    "nav": {
+      "capability": "Capabilities",
+      "release": "Release",
+      "faq": "FAQ"
+    },
+    "hero": {
+      "subtitle": "From a novel to the finished cut: episode planning, character design, storyboards, first frames, video generation, and the final composite. The mainline walks the pipeline step by step, while the canvas arranges the same work as a node graph — both share one set of assets. The desktop client takes over local media, long renders, and auto-updates.",
+      "note": "Installers come straight from the CDN and update themselves — install once and you're done.",
+      "history": "Past releases for every platform are on"
+    },
+    "platform": {
+      "detected": "Your system",
+      "format": "Format",
+      "arch": "Architecture",
+      "requirement": "Requires",
+      "mac": {
+        "name": "macOS",
+        "format": ".dmg",
+        "arch": "Apple silicon / Intel",
+        "requirement": "macOS 12 or later",
+        "cta": "Download for macOS"
+      },
+      "windows": {
+        "name": "Windows",
+        "format": ".exe",
+        "arch": "x64",
+        "requirement": "Windows 10 or later",
+        "cta": "Download for Windows"
+      }
+    },
+    "preview": {
+      "eyebrow": "Interface",
+      "title": "A guided pipeline and a free-form canvas",
+      "lede": "The mainline breaks a novel into episodes, characters, storyboards, first frames, video, and the final cut, one page per step. The canvas projects any of those shots onto a node graph where you can rework them freely and sync the result back. Both sides read from the same assets.",
+      "windowTitle": "DramaClaw — Episode 03 · Canvas",
+      "alt": "Sketch of the DramaClaw desktop canvas: episode tabs across the top, shot outline on the left, node canvas in the middle, parameter panel on the right.",
+      "caption": "Illustration (canvas view) — replace with a real desktop screenshot before launch"
+    },
+    "capability": {
+      "eyebrow": "Capabilities",
+      "title": "Four things only the desktop app does",
+      "lede": "Everything the web version runs, the app runs too. These four come with installing it.",
+      "items": {
+        "localFiles": {
+          "title": "Drag local files onto the canvas",
+          "description": "Video, images and audio drop straight in from Finder or File Explorer using their local path — no upload round trip first."
+        },
+        "longTasks": {
+          "title": "Long renders survive your browser",
+          "description": "Full-episode renders and batch first frames run for tens of minutes inside the app, so a closed tab can't throw the work away."
+        },
+        "autoUpdate": {
+          "title": "Install once, stay current",
+          "description": "New versions download in the background and apply on next launch — you never come back for another installer."
+        },
+        "localExport": {
+          "title": "Exports land on your own disk",
+          "description": "Shot boards, first frames and finished cuts are filed into local folders per episode instead of piling up in a browser download list."
+        }
+      }
+    },
+    "release": {
+      "eyebrow": "Release",
+      "title": "Current version and recent changes",
+      "spec": {
+        "version": "Version",
+        "pending": "Checking",
+        "released": "Released",
+        "macValue": "12+ · universal",
+        "windowsValue": "10+ · x64",
+        "autoUpdate": "Auto-update",
+        "autoUpdateValue": "Enabled",
+        "license": "License"
+      }
+    },
+    "changelog": {
+      "v132": {
+        "title": "Simpler local ComfyUI setup, consistent video modes",
+        "description": "MiniMax H3 covers several workflows through one model entry, and canvas modes such as first-frame stay consistent across validation, billing, and execution."
+      },
+      "v131": {
+        "title": "Updatable official media catalog",
+        "description": "Settings can check the official media model catalog manually or automatically; image and video model options refresh as soon as a new catalog takes effect."
+      },
+      "v130": {
+        "title": "Model channels and capabilities served from the backend",
+        "description": "Image and video models, parameters, and reference limits now come from backend configuration. MiniMax-H3 ships with the official preset, and a local ComfyUI can take over generation."
+      },
+      "v121": {
+        "title": "More reliable media parameters and import progress",
+        "description": "Video ratio, resolution, and model-specific parameters are passed through intact with corrected 2K/4K sizing, and novel import shows stage, percentage, and elapsed time throughout."
+      },
+      "v120": {
+        "title": "Transparent feature credits, external agents welcome",
+        "description": "Feature prices, estimated charges, and usage history live in one place, and local agents such as Claude Code can drive DramaClaw CE over MCP."
+      }
+    },
+    "faq": {
+      "eyebrow": "FAQ",
+      "title": "What tends to come up",
+      "items": {
+        "macGatekeeper": {
+          "question": "macOS says the developer cannot be verified. Now what?",
+          "answer": "Find DramaClaw in Finder → Applications, Control-click the icon, choose Open, then confirm with Open in the dialog. You only do this once; after that it launches normally."
+        },
+        "winSmartScreen": {
+          "question": "Windows says it protected my PC. Now what?",
+          "answer": "Click More info, then Run anyway. SmartScreen blocks installers by default until they have enough downloads; it says nothing about whether this one is intact."
+        },
+        "offline": {
+          "question": "Does the app still need an internet connection?",
+          "answer": "Yes. Script generation, first-frame rendering and video assembly all run on cloud compute; the app handles orchestration, media management and writing results to disk. Cuts already downloaded stay playable offline."
+        },
+        "update": {
+          "question": "How do I upgrade?",
+          "answer": "You don't have to. The app checks on launch, downloads new versions in the background and applies them next time it starts. To install a specific version by hand, see",
+          "linkLabel": "GitHub Releases"
+        },
+        "storage": {
+          "question": "Where do projects and exports live?",
+          "answer": "Project data lives in the cloud with your account, so every device signed in sees the same episodes. Exported boards, first frames and finished cuts are written to local disk, and you can change that path in settings."
+        },
+        "openSource": {
+          "question": "Is it open source?",
+          "answer": "It is licensed under Elastic-2.0: use, modify and self-host freely, but don't resell it as a hosted service. The source lives at",
+          "linkLabel": "github.com/dramaclaw/dramaclaw"
+        }
+      }
+    },
+    "footer": {
+      "meta": "© 2026 CLAYMORELAB · ELASTIC-2.0 · MACOS 12+ / WINDOWS 10+"
+    }
+  },
   "header": {
     "partyFounding105": "庆祝建党105周年",
     "settings": "Settings",

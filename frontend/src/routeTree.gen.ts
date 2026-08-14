@@ -12,6 +12,7 @@ import { createFileRoute } from '@tanstack/react-router'
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as DownloadRouteImport } from './routes/download'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as WatchWorkRouteImport } from './routes/watch.$work'
@@ -54,6 +55,11 @@ const AppProjectsProjectEpisodesEpisodeAudioLazyRouteImport = createFileRoute(
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DownloadRoute = DownloadRouteImport.update({
+  id: '/download',
+  path: '/download',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppRoute = AppRouteImport.update({
@@ -207,6 +213,7 @@ const AppProjectsProjectEpisodesEpisodeAudioLazyRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
+  '/download': typeof DownloadRoute
   '/login': typeof LoginRoute
   '/credits': typeof AppCreditsRoute
   '/watch/$work': typeof WatchWorkRoute
@@ -227,6 +234,7 @@ export interface FileRoutesByFullPath {
   '/projects/$project/episodes/$episode/': typeof AppProjectsProjectEpisodesEpisodeIndexLazyRoute
 }
 export interface FileRoutesByTo {
+  '/download': typeof DownloadRoute
   '/login': typeof LoginRoute
   '/credits': typeof AppCreditsRoute
   '/watch/$work': typeof WatchWorkRoute
@@ -250,6 +258,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
+  '/download': typeof DownloadRoute
   '/login': typeof LoginRoute
   '/_app/credits': typeof AppCreditsRoute
   '/watch/$work': typeof WatchWorkRoute
@@ -274,6 +283,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/download'
     | '/login'
     | '/credits'
     | '/watch/$work'
@@ -294,6 +304,7 @@ export interface FileRouteTypes {
     | '/projects/$project/episodes/$episode/'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/download'
     | '/login'
     | '/credits'
     | '/watch/$work'
@@ -316,6 +327,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_app'
+    | '/download'
     | '/login'
     | '/_app/credits'
     | '/watch/$work'
@@ -339,6 +351,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
+  DownloadRoute: typeof DownloadRoute
   LoginRoute: typeof LoginRoute
   WatchWorkRoute: typeof WatchWorkRoute
 }
@@ -350,6 +363,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/download': {
+      id: '/download'
+      path: '/download'
+      fullPath: '/download'
+      preLoaderRoute: typeof DownloadRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app': {
@@ -552,6 +572,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
+  DownloadRoute: DownloadRoute,
   LoginRoute: LoginRoute,
   WatchWorkRoute: WatchWorkRoute,
 }

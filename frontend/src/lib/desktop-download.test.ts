@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   detectDesktopPlatform,
+  parseManifestRelease,
   pickInstallerFromManifest,
 } from "./desktop-download";
 
@@ -48,6 +49,27 @@ describe("pickInstallerFromManifest", () => {
   it("returns null when the wanted installer type is absent", () => {
     expect(pickInstallerFromManifest(WINDOWS_MANIFEST, "mac")).toBeNull();
     expect(pickInstallerFromManifest("", "windows")).toBeNull();
+  });
+});
+
+describe("parseManifestRelease", () => {
+  it("reads version and release date off the manifest", () => {
+    expect(parseManifestRelease(WINDOWS_MANIFEST)).toEqual({
+      version: "1.1.0",
+      releaseDate: "2026-07-15",
+    });
+  });
+
+  // path: 那行也含版本号,但只有行首的 version: 才算数。
+  it("ignores version-looking text on other lines", () => {
+    expect(parseManifestRelease(MAC_MANIFEST).version).toBe("1.1.0");
+  });
+
+  it("returns nulls when the fields are missing", () => {
+    expect(parseManifestRelease("")).toEqual({
+      version: null,
+      releaseDate: null,
+    });
   });
 });
 
