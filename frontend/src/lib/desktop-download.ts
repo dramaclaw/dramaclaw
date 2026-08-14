@@ -40,26 +40,59 @@ export type DesktopRelease = {
   version: string | null;
   /** 清单里的发布日期,截到 YYYY-MM-DD;解析不出时为 null。 */
   releaseDate: string | null;
+  /**
+   * 这一个安装包自己的 sha512(base64,electron-builder 的原样格式),
+   * 供用户下载后核验完整性。清单缺字段时为 null。
+   */
+  sha512: string | null;
 };
 
+/** 清单 `files:` 列表里的一条:安装包文件名 + 它自己的校验和。 */
+export type ManifestInstaller = {
+  file: string;
+  sha512: string | null;
+};
+
+/** 去掉 YAML 标量两侧的引号(值含 `:`、`#` 等特殊字符时 js-yaml 会加)。 */
+function unquote(value: string): string {
+  return value.trim().replace(/^(['"])(.*)\1$/, "$2");
+}
+
 /**
- * 从 electron-updater 清单文本里挑出目标平台的安装包文件名。
+ * 从 electron-updater 清单文本里挑出目标平台的安装包 —— 文件名与校验和。
  *
- * 取到行尾再 trim,不用 `\S+`:electron-builder 的 NSIS 默认 artifactName 会
- * 产出带空格的文件名(`DramaClaw Setup 1.3.2.exe`),YAML 里就是不加引号的
- * 裸标量,`\S+` 会在第一个空格处截断,拼出必然 404 的直链。带引号的形式
- * (值里含 `:`、`#` 等特殊字符时 js-yaml 会加引号)顺手剥掉。
+ * 逐行扫而不是一把正则,因为 sha512 必须**跟着它所属的那条 files: 条目**走:
+ * 清单末尾还有一份顶层 sha512,对应的是顶层 path:(mac 上那是自动更新用的
+ * zip),挂到 dmg 上会让用户按错的值去核验,比不显示更糟。
+ *
+ * 文件名取到行尾再 trim,不用 `\S+`:electron-builder 的 NSIS 默认
+ * artifactName 会产出带空格的文件名(`DramaClaw Setup 1.3.2.exe`),YAML 里
+ * 就是不加引号的裸标量,`\S+` 会在第一个空格处截断,拼出必然 404 的直链。
  */
 export function pickInstallerFromManifest(
   manifest: string,
   platform: DesktopPlatform,
-): string | null {
+): ManifestInstaller | null {
   const ext = INSTALLER_EXT[platform];
-  for (const match of manifest.matchAll(/^\s*-?\s*url:\s*(.+)$/gm)) {
-    const file = match[1].trim().replace(/^(['"])(.*)\1$/, "$2");
-    if (file.endsWith(ext)) return file;
+  let open: ManifestInstaller | null = null;
+
+  for (const line of manifest.split("\n")) {
+    // 零缩进且非列表项的行(version:/path:/releaseDate:)结束当前条目。
+    if (/^\S/.test(line)) {
+      if (open?.file.endsWith(ext)) return open;
+      open = null;
+      continue;
+    }
+    const url = line.match(/^\s*-?\s*url:\s*(.+)$/);
+    if (url) {
+      if (open?.file.endsWith(ext)) return open;
+      open = { file: unquote(url[1]), sha512: null };
+      continue;
+    }
+    const sha = line.match(/^\s*sha512:\s*(.+)$/);
+    if (sha && open) open.sha512 = unquote(sha[1]);
   }
-  return null;
+  return open?.file.endsWith(ext) ? open : null;
 }
 
 /**
@@ -103,6 +136,7 @@ export async function resolveDesktopRelease(
     url: FALLBACK_DOWNLOAD_URL,
     version: null,
     releaseDate: null,
+    sha512: null,
   };
   try {
     const res = await fetch(DOWNLOAD_BASE + MANIFEST[platform], {
@@ -113,10 +147,13 @@ export async function resolveDesktopRelease(
       return fallback;
     }
     const manifest = await res.text();
-    const file = pickInstallerFromManifest(manifest, platform);
-    if (!file) warnUnresolved(platform, "no installer url in manifest");
+    const installer = pickInstallerFromManifest(manifest, platform);
+    if (!installer) warnUnresolved(platform, "no installer url in manifest");
     return {
-      url: file ? DOWNLOAD_BASE + encodeInstallerPath(file) : FALLBACK_DOWNLOAD_URL,
+      url: installer
+        ? DOWNLOAD_BASE + encodeInstallerPath(installer.file)
+        : FALLBACK_DOWNLOAD_URL,
+      sha512: installer?.sha512 ?? null,
       ...parseManifestRelease(manifest),
     };
   } catch (err) {

@@ -14,10 +14,13 @@ let cached: Releases | null = null;
 
 /** 解析完成前的占位:按钮指向 GitHub Releases,版本字段留空由调用方决定怎么显示。 */
 function pending(): Releases {
-  return {
-    mac: { url: FALLBACK_DOWNLOAD_URL, version: null, releaseDate: null },
-    windows: { url: FALLBACK_DOWNLOAD_URL, version: null, releaseDate: null },
+  const blank: DesktopRelease = {
+    url: FALLBACK_DOWNLOAD_URL,
+    version: null,
+    releaseDate: null,
+    sha512: null,
   };
+  return { mac: { ...blank }, windows: { ...blank } };
 }
 
 /**

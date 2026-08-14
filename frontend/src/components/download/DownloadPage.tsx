@@ -67,6 +67,55 @@ function formatLogDate(iso: string): string {
   return iso.slice(5);
 }
 
+/**
+ * 安装包校验和。值取自清单里**这一个文件**自己的 sha512(不是顶层那个,
+ * 那属于自动更新用的包),整段可见不截断 —— 核验时要能原样比对。
+ */
+function ChecksumRow({ sha512 }: { sha512: string | null }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+
+  // 复制成功的反馈自己退回去;组件卸载时清掉定时器,避免对已卸载组件 setState。
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  async function copy() {
+    if (!sha512) return;
+    try {
+      await navigator.clipboard.writeText(sha512);
+      setCopied(true);
+    } catch {
+      // 无剪贴板权限(非安全上下文等)时不弹错:值本来就明文可选中手动复制。
+    }
+  }
+
+  return (
+    <div className={styles.checksum}>
+      <div className={styles.checksumHead}>
+        <span>{t("downloadPage.release.checksum.label")}</span>
+        {sha512 && (
+          <button type="button" className={styles.checksumCopy} onClick={copy}>
+            {t(
+              copied
+                ? "downloadPage.release.checksum.copied"
+                : "downloadPage.release.checksum.copy",
+            )}
+          </button>
+        )}
+      </div>
+      <p className={styles.checksumValue}>
+        {sha512 ?? t("downloadPage.release.checksum.pending")}
+      </p>
+      <p className={styles.checksumNote}>
+        {t("downloadPage.release.checksum.note")}
+      </p>
+    </div>
+  );
+}
+
 export function DownloadPage() {
   const { t } = useTranslation();
   const reducedMotion = useReducedMotion();
@@ -329,6 +378,7 @@ export function DownloadPage() {
                   <dt>{t("downloadPage.release.spec.license")}</dt>
                   <dd>Elastic-2.0</dd>
                 </dl>
+                <ChecksumRow sha512={current.sha512} />
               </aside>
 
               <ol className={clsx(styles.changelog, styles.rise)} data-reveal="">

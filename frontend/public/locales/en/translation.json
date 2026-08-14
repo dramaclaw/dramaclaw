@@ -64,7 +64,7 @@
       "lede": "The mainline breaks a novel into episodes, characters, storyboards, first frames, video, and the final cut, one page per step. The canvas projects any of those shots onto a node graph where you can rework them freely and sync the result back. Both sides read from the same assets.",
       "windowTitle": "DramaClaw — Episode 03 · Canvas",
       "alt": "Sketch of the DramaClaw desktop canvas: episode tabs across the top, shot outline on the left, node canvas in the middle, parameter panel on the right.",
-      "caption": "Illustration (canvas view) — replace with a real desktop screenshot before launch"
+      "caption": "Illustration (canvas view)"
     },
     "capability": {
       "eyebrow": "Capabilities",
@@ -101,6 +101,13 @@
         "autoUpdate": "Auto-update",
         "autoUpdateValue": "Enabled",
         "license": "License"
+      },
+      "checksum": {
+        "label": "SHA-512",
+        "note": "base64, for the installer the button above downloads",
+        "copy": "Copy",
+        "copied": "Copied",
+        "pending": "Checking"
       }
     },
     "changelog": {

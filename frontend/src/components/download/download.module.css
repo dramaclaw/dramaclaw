@@ -608,6 +608,60 @@
   color: var(--zinc);
 }
 
+/* SHA-512 是 88 个 base64 字符,塞不进上面那张两列 dl。单独一行,整段可见
+   不做省略号 —— 核验的动作就是原样比对,截断了这块就白放了。 */
+.checksum {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.checksumHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  color: var(--dim-deep);
+}
+
+.checksumCopy {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: none;
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--text-mid);
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.checksumCopy:hover {
+  border-color: var(--rust-hot);
+  color: var(--rust-hot);
+}
+
+.checksumValue {
+  margin: 9px 0 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.75;
+  word-break: break-all;
+  color: var(--text-mid);
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+.checksumNote {
+  margin: 7px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--dim-deep);
+}
+
 /* 更新日志是真时间序,所以左列的日期刻度是信息而不是装饰 */
 .changelog {
   list-style: none;

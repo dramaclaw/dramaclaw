@@ -47,15 +47,18 @@ releaseDate: '2026-07-15T08:45:34.419Z'
 
 describe("pickInstallerFromManifest", () => {
   it("picks the .exe from the Windows manifest", () => {
-    expect(pickInstallerFromManifest(WINDOWS_MANIFEST, "windows")).toBe(
-      "DramaClaw-Setup-1.1.0.exe",
-    );
+    expect(pickInstallerFromManifest(WINDOWS_MANIFEST, "windows")).toEqual({
+      file: "DramaClaw-Setup-1.1.0.exe",
+      sha512: "occFiM5M3gMp2RqWdM+5Fjw==",
+    });
   });
 
-  it("picks the .dmg (not the auto-update .zip) from the mac manifest", () => {
-    expect(pickInstallerFromManifest(MAC_MANIFEST, "mac")).toBe(
-      "DramaClaw-1.1.0-arm64.dmg",
-    );
+  // 顶层 sha512 属于顶层 path:(zip),挂到 dmg 上会让用户按错的值核验。
+  it("pairs the .dmg with its own sha512, not the zip's or the top-level one", () => {
+    expect(pickInstallerFromManifest(MAC_MANIFEST, "mac")).toEqual({
+      file: "DramaClaw-1.1.0-arm64.dmg",
+      sha512: "5xw1uPGkX0Yl3m2n4o5p6q==",
+    });
   });
 
   it("returns null when the wanted installer type is absent", () => {
@@ -63,16 +66,23 @@ describe("pickInstallerFromManifest", () => {
     expect(pickInstallerFromManifest("", "windows")).toBeNull();
   });
 
+  it("leaves sha512 null when the entry has none", () => {
+    expect(
+      pickInstallerFromManifest("files:\n  - url: DramaClaw-1.0.dmg\n", "mac"),
+    ).toEqual({ file: "DramaClaw-1.0.dmg", sha512: null });
+  });
+
   // electron-builder 的 NSIS 默认 artifactName 带空格,YAML 里是裸标量。
   it("keeps spaces in the filename", () => {
-    expect(
-      pickInstallerFromManifest(SPACED_MANIFEST, "windows"),
-    ).toBe("DramaClaw Setup 1.1.0.exe");
+    expect(pickInstallerFromManifest(SPACED_MANIFEST, "windows")?.file).toBe(
+      "DramaClaw Setup 1.1.0.exe",
+    );
   });
 
   it("strips quoting when the manifest quotes the value", () => {
     expect(
-      pickInstallerFromManifest("files:\n  - url: 'DramaClaw 1.0.dmg'\n", "mac"),
+      pickInstallerFromManifest("files:\n  - url: 'DramaClaw 1.0.dmg'\n", "mac")
+        ?.file,
     ).toBe("DramaClaw 1.0.dmg");
   });
 });
@@ -119,6 +129,16 @@ describe("resolveDesktopRelease", () => {
     );
   });
 
+  it("carries the installer's own checksum through", async () => {
+    stubManifest(MAC_MANIFEST);
+    await expect(resolveDesktopRelease("mac")).resolves.toEqual({
+      url: "https://dramaclaw-dl.cdnfg.com/desktop/DramaClaw-1.1.0-arm64.dmg",
+      version: "1.1.0",
+      releaseDate: "2026-07-15",
+      sha512: "5xw1uPGkX0Yl3m2n4o5p6q==",
+    });
+  });
+
   // 清单里已经是编码过的写法,再 encode 一次会变成 %2520。
   it("does not double-encode an already-encoded filename", async () => {
     stubManifest("files:\n  - url: DramaClaw%20Setup%201.1.0.exe\n");
@@ -140,6 +160,7 @@ describe("resolveDesktopRelease", () => {
       url: FALLBACK_DOWNLOAD_URL,
       version: null,
       releaseDate: null,
+      sha512: null,
     });
     expect(warn).toHaveBeenCalled();
   });
