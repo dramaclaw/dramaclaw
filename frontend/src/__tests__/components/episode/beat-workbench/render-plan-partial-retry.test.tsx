@@ -387,9 +387,9 @@ describe("render plan dialog — 尽力投递 / 只重投被拒的那部分", ()
     expect(exec3.input_fingerprint).toBe("f3");
   });
 
-  it("三种 reason 给三条不同文案，而不是一条通用报错", async () => {
+  it("四种 reason 给四条不同文案，而不是一条通用报错", async () => {
     const texts: string[] = [];
-    for (const reason of ["channel", "platform", "user"]) {
+    for (const reason of ["channel", "platform", "user", "project"]) {
       recorded = { plan: [], execute: [] };
       executeResponses = [
         () =>
@@ -408,10 +408,31 @@ describe("render plan dialog — 尽力投递 / 只重投被拒的那部分", ()
       texts.push(banner.textContent ?? "");
       cleanup();
     }
-    expect(new Set(texts).size).toBe(3);
+    expect(new Set(texts).size).toBe(4);
     expect(texts[0]).toMatch(/渠道/);
     expect(texts[1]).toMatch(/平台/);
     expect(texts[2]).toMatch(/你的/);
+    expect(texts[3]).toMatch(/项目/);
+  });
+
+  it("未知 reason 只提示部分失败，不开放补投", async () => {
+    executeResponses = [
+      () =>
+        okExecute({
+          taskIds: ["t0", "t1"],
+          resolvedGrids: FULL_PLAN,
+          rejected: [
+            { scope: "s2", reason: "future_scope", limit: 12, active: 12 },
+            { scope: "s3", reason: "future_scope", limit: 12, active: 12 },
+          ],
+        }),
+    ];
+
+    renderDialog();
+    await confirm();
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/已投 2 \/ 被拒 2/);
+    expect(screen.queryByRole("button", { name: "继续" })).not.toBeInTheDocument();
   });
 
   it("429（一个都没投出去）仍走既有 429 路径，不当部分投递", async () => {

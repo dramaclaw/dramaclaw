@@ -73,6 +73,8 @@ from novelvideo.project_context import ProjectContext
 from novelvideo.ports import get_credit_quote, get_task_backend, get_usage_meter
 from novelvideo.task_backend.limits import (
     ChannelTaskLimitExceeded,
+    ProjectTaskLimitExceeded,
+    ProjectUserTaskLimitExceeded,
     UserTaskLimitExceeded,
 )
 from novelvideo.task_identity import project_task_state_key
@@ -437,9 +439,22 @@ def _find_pool_grid_entry(
     return None
 
 
+_FANOUT_ACTIVE_LIMIT_ERRORS = (
+    ChannelTaskLimitExceeded,
+    UserTaskLimitExceeded,
+    ProjectTaskLimitExceeded,
+    ProjectUserTaskLimitExceeded,
+)
+
+
 def _task_limit_rejection(
     scope: str,
-    exc: ChannelTaskLimitExceeded | UserTaskLimitExceeded,
+    exc: (
+        ChannelTaskLimitExceeded
+        | UserTaskLimitExceeded
+        | ProjectTaskLimitExceeded
+        | ProjectUserTaskLimitExceeded
+    ),
 ) -> dict[str, Any]:
     """把撞闸异常翻成扇出响应里的一条 ``rejected``（M8 §8.2 冻结形状）。
 
@@ -447,10 +462,16 @@ def _task_limit_rejection(
     （``:183-185`` 渠道闸 / ``:209`` 人闸）—— 两侧同算法是跨 EU 的漂移探测器，
     故三处扇出循环共用这一个 helper，而不是各自内联一份。
     """
-    if isinstance(exc, ChannelTaskLimitExceeded):
+    if isinstance(exc, ProjectTaskLimitExceeded):
+        reason = "project"
+    elif isinstance(exc, ChannelTaskLimitExceeded):
         reason = "platform" if exc.scope_kind == "platform" else "channel"
-    else:
+    elif isinstance(exc, (ProjectUserTaskLimitExceeded, UserTaskLimitExceeded)):
         reason = "user"
+    else:  # pragma: no cover - the precise catch tuple keeps this unreachable
+        raise TypeError(
+            f"unsupported fanout task-limit exception: {type(exc).__name__}"
+        )
     return {
         "scope": scope,
         "reason": reason,
@@ -2169,7 +2190,7 @@ async def generate_sketches(
                         "billing": billing,
                     },
                 )
-            except (ChannelTaskLimitExceeded, UserTaskLimitExceeded) as exc:
+            except _FANOUT_ACTIVE_LIMIT_ERRORS as exc:
                 if not queued_tasks:
                     # 一个都没投出去＝纯粹超限：裸抛，交 api/app.py 的 handler
                     # 渲染 429 ＋ 正确的 limit_scope（M8 不变量 7）。
@@ -3147,7 +3168,7 @@ async def render_execute(
                         "billing": billing,
                     },
                 )
-            except (ChannelTaskLimitExceeded, UserTaskLimitExceeded) as exc:
+            except _FANOUT_ACTIVE_LIMIT_ERRORS as exc:
                 if not dispatched_task_ids:
                     # k == 0：裸抛交 handler 渲染 429（M8 不变量 7）。
                     raise
@@ -4536,7 +4557,7 @@ async def generate_missing_manual_sketches(
                         "config": {**config, "mode_key": mode_key},
                     },
                 )
-            except (ChannelTaskLimitExceeded, UserTaskLimitExceeded) as exc:
+            except _FANOUT_ACTIVE_LIMIT_ERRORS as exc:
                 if not dispatched_scopes:
                     # k == 0：裸抛交 handler 渲染 429（M8 不变量 7）。
                     raise

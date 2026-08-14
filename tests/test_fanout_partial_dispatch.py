@@ -5,7 +5,7 @@
 
 本文件逐循环钉死 M8 §8.2 冻结的契约：
 
-1. **只捕两个闸异常**（``ChannelTaskLimitExceeded`` / ``UserTaskLimitExceeded``）→ 记账后
+1. **只捕四个 active 闸异常**（渠道／用户／项目／项目用户）→ 记账后
    **``break``**；别的异常照旧穿透（宽捕 ``Exception`` 就是 ``TCP-P44`` 刚堵上的那条
    503 复发路径）。
 2. **k == 0 必须裸抛** —— 交 ``api/app.py`` 的 handler 渲染 429 ＋ 正确的 ``limit_scope``
@@ -20,7 +20,7 @@
 
 ``reason`` 的算法与 ``api/app.py`` 的 ``limit_scope`` **是同一组分支**
 （``:183-185`` 渠道闸 / ``:209`` 人闸）—— 两侧同算法即跨 EU（``TCP-EU-B2``）漂移探测器，
-故本文件三种 ``reason`` 全落到，并另有一条用例把两侧逐字对上。
+故本文件四种 ``reason`` 全落到，并另有一条用例把两侧逐字对上。
 
 真闸在 EE（``TCP-EU-B1`` 的 ``ee_reserve_task()``），故此处一律**手工注入异常**取证。
 """
@@ -36,6 +36,9 @@ from fastapi.testclient import TestClient
 from novelvideo.api.app import create_app
 from novelvideo.task_backend.limits import (
     ChannelTaskLimitExceeded,
+    GlobalLaneQueueLimitExceeded,
+    ProjectTaskLimitExceeded,
+    ProjectUserTaskLimitExceeded,
     UserTaskLimitExceeded,
 )
 from novelvideo.task_identity import selection_scope
@@ -53,14 +56,29 @@ _PLATFORM_GATE = ChannelTaskLimitExceeded(
 _USER_GATE = UserTaskLimitExceeded(
     requester_user_id="user_7", queue_kind="default", limit=2, active=2
 )
+_PROJECT_GATE = ProjectTaskLimitExceeded(
+    project_id="project_7", queue_kind="default", limit=3, active=3
+)
+_PROJECT_USER_GATE = ProjectUserTaskLimitExceeded(
+    project_id="project_7",
+    requester_user_id="user_7",
+    queue_kind="default",
+    limit=2,
+    active=2,
+)
+_GLOBAL_QUEUE_GATE = GlobalLaneQueueLimitExceeded(
+    project_id="project_7", queue_kind="default", limit=8, queued=8
+)
 
 # (异常, 期望的 rejected.reason, 期望的 429 limit_scope)
 _GATE_CASES = [
     (_CHANNEL_GATE, "channel", "channel"),
     (_PLATFORM_GATE, "platform", "platform"),
     (_USER_GATE, "user", "user"),
+    (_PROJECT_GATE, "project", "project"),
+    (_PROJECT_USER_GATE, "user", "user"),
 ]
-_GATE_IDS = ["channel", "platform", "user"]
+_GATE_IDS = ["channel", "platform", "user", "project", "project-user"]
 
 
 class _GateBackend:
@@ -292,6 +310,24 @@ def test_loop1_non_gate_exception_is_not_swallowed(monkeypatch, tmp_path) -> Non
 
     assert response.status_code == 500
     assert len(backend.calls) == 3
+
+
+def test_loop1_global_queue_limit_is_not_treated_as_active_limit(
+    monkeypatch, tmp_path
+) -> None:
+    """TCP-P99：queued 不是 active；CE-2 不得把队深异常塞进 rejected。"""
+    backend = _GateBackend(_GLOBAL_QUEUE_GATE, fail_from=4)
+    response = _post_sketches(_sketch_client(monkeypatch, tmp_path, backend, grids=6))
+
+    assert response.status_code == 429
+    assert response.json()["data"] == {
+        "project_id": "project_7",
+        "queue_kind": "default",
+        "limit": 8,
+        "queued": 8,
+        "limit_scope": "global_lane_queue",
+    }
+    assert len(backend.succeeded) == 3
 
 
 def test_loop1_dispatched_is_the_real_count_not_the_intended_one(
@@ -554,6 +590,21 @@ def test_loop2_non_gate_exception_is_not_swallowed(monkeypatch, tmp_path) -> Non
     assert len(backend.calls) == 3
 
 
+def test_loop2_global_queue_limit_is_not_treated_as_active_limit(
+    monkeypatch, tmp_path
+) -> None:
+    """TCP-P99：render execute 也必须保留 queued 形状，留给后续契约修复。"""
+    backend = _GateBackend(_GLOBAL_QUEUE_GATE, fail_from=4)
+    _plan, response = _render_execute(
+        _render_client(monkeypatch, tmp_path, backend), [1, 2, 3, 4, 5, 6]
+    )
+
+    assert response.status_code == 429
+    assert response.json()["data"]["limit_scope"] == "global_lane_queue"
+    assert response.json()["data"]["queued"] == 8
+    assert len(backend.succeeded) == 3
+
+
 def test_loop2_happy_path_body_is_unchanged_and_has_no_rejected_key(
     monkeypatch, tmp_path
 ) -> None:
@@ -751,6 +802,26 @@ def test_loop3_non_gate_exception_is_not_swallowed(monkeypatch, tmp_path) -> Non
 
     assert response.status_code == 500
     assert len(backend.calls) == 3
+
+
+def test_loop3_global_queue_limit_is_not_treated_as_active_limit(
+    monkeypatch, tmp_path
+) -> None:
+    """TCP-P99：missing-manual 扇出不许把 queued 冒充 active。"""
+    backend = _GateBackend(_GLOBAL_QUEUE_GATE, fail_from=4)
+    response = _post_missing_manual(
+        _manual_client(
+            monkeypatch,
+            tmp_path,
+            backend,
+            [[1], [2], [3], [4], [5], [6]],
+        )
+    )
+
+    assert response.status_code == 429
+    assert response.json()["data"]["limit_scope"] == "global_lane_queue"
+    assert response.json()["data"]["queued"] == 8
+    assert len(backend.succeeded) == 3
 
 
 def test_loop3_happy_path_keeps_its_existing_shape(monkeypatch, tmp_path) -> None:

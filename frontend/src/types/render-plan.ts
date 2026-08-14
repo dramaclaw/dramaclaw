@@ -26,12 +26,12 @@ export interface RenderPlan {
  * dispatches until a lane rejects, then stops and reports the remainder here.
  *
  * `reason` mirrors the 429 taxonomy the same limits raise when *nothing* could
- * be dispatched — platform-wide lane / per-channel lane / per-user lane.
+ * be dispatched — project / platform-wide / per-channel / per-user lane.
  */
 export interface RejectedDispatch {
   /** Backend-computed selection scope of the refused entry (opaque to the UI). */
   scope: string;
-  reason: "channel" | "platform" | "user";
+  reason: "project" | "channel" | "platform" | "user";
   limit: number;
   active: number;
 }

@@ -59,12 +59,16 @@ const ACTIVE_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
 
 // 文案不落 `public/locales/*`（不在本切片 ownership 内），走仓内既有的
 // `t(key, { defaultValue })` 内联兜底形制（先例 `batch-panel.tsx:570-572`）。
-// 三种 reason 必须是三条真的不一样的话 —— 用户能不能自己解掉，取决于撞的是
-// 哪条闸：自己的任务、同渠道别人的任务、还是整个平台。
+// 四种 reason 必须是四条真的不一样的话 —— 用户能不能自己解掉，取决于撞的是
+// 哪条闸：当前项目、自己的任务、同渠道别人的任务、还是整个平台。
 const PARTIAL_REASON_COPY: Record<
   RejectedDispatch["reason"],
   { key: string; defaultValue: string }
 > = {
+  project: {
+    key: "episode.renderPlan.partial.reason.project",
+    defaultValue: "当前项目并发已满：剩余 {{fail}} 格要等该项目已有任务完成",
+  },
   channel: {
     key: "episode.renderPlan.partial.reason.channel",
     defaultValue: "渠道并发已满：剩余 {{fail}} 格要等同渠道的任务腾出位置",
@@ -254,6 +258,9 @@ export function RenderPlanDialog({
     }
     const grids = data.resolved_grids ?? [];
     const entries = grids.slice(taskIds.length);
+    const reasonsKnown = rejected.every((item) =>
+      Object.prototype.hasOwnProperty.call(PARTIAL_REASON_COPY, item.reason),
+    );
     setPartial({
       ok: taskIds.length,
       rejected,
@@ -262,7 +269,10 @@ export function RenderPlanDialog({
       autoUsed: !allowAuto,
       // 尾段长度对不上就说明「有序 + break」这个前提不成立了，宁可不投：
       // 猜错会重复投递已经在跑的格子（= 双计费）。
-      shapeOk: entries.length > 0 && entries.length === rejected.length,
+      shapeOk:
+        entries.length > 0 &&
+        entries.length === rejected.length &&
+        reasonsKnown,
     });
   };
 
@@ -403,7 +413,11 @@ export function RenderPlanDialog({
     return reasons.map((reason) => {
       const fail = partial.rejected.filter((item) => item.reason === reason).length;
       const copy = PARTIAL_REASON_COPY[reason];
-      if (!copy) return t("common.error");
+      if (!copy) {
+        return t("episode.renderPlan.partial.reason.unknown", {
+          defaultValue: "部分任务暂未投递",
+        });
+      }
       return t(copy.key, { defaultValue: copy.defaultValue, fail });
     });
   }, [partial, t]);
