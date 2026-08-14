@@ -47,6 +47,12 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
         "Official media catalog publishing CI input, not application runtime configuration.",
     ),
     (re.compile(r"^ST_EDITION$"), "Launcher/test gate env, not operator template config."),
+    (
+        re.compile(r"^ST_ORG_(?:EGRESS_MODE|GATEWAY_API_KEY|GATEWAY_BASE_URL)$"),
+        "Process-local handoff written by the parent when it launches a model child "
+        "(task_backend/subprocesses.build_model_child_env); never operator-set, and "
+        "setting it externally has no effect because the parent rebuilds the child env.",
+    ),
     (re.compile(r"^DRAMACLAW_CE_ROOT$"), "Audit script discovery override, not runtime app config."),
     (
         re.compile(
