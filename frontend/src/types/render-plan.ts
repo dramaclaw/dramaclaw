@@ -20,6 +20,22 @@ export interface RenderPlan {
   total_grids: number;
 }
 
+/**
+ * One fanout entry the backend refused to dispatch because a concurrency lane
+ * was full. Present on best-effort ("尽力投递") fanout responses: the backend
+ * dispatches until a lane rejects, then stops and reports the remainder here.
+ *
+ * `reason` mirrors the 429 taxonomy the same limits raise when *nothing* could
+ * be dispatched — project / platform-wide / per-channel / per-user lane.
+ */
+export interface RejectedDispatch {
+  /** Backend-computed selection scope of the refused entry (opaque to the UI). */
+  scope: string;
+  reason: "project" | "channel" | "platform" | "user";
+  limit: number;
+  active: number;
+}
+
 export interface RenderExecuteResult {
   task_type: "render_plan";
   message: string;
@@ -28,6 +44,13 @@ export interface RenderExecuteResult {
   resolved_grids: PlanEntry[];
   /** One `selected_regen` task id per resolved grid. Track these for completion. */
   task_ids: string[];
+  /**
+   * Absent (or empty) when every grid was dispatched. Otherwise the tail of
+   * `resolved_grids` that hit a lane limit — the fanout loop is ordered and
+   * breaks on the first rejection, so the refused entries are exactly
+   * `resolved_grids.slice(task_ids.length)` (see TCP-P63).
+   */
+  rejected?: RejectedDispatch[];
 }
 
 export interface RenderPlanStaleError {

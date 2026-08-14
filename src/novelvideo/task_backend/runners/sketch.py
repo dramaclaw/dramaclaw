@@ -9,6 +9,7 @@ from typing import Any
 
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import await_envelope_with_cancel_watch
+from novelvideo.task_backend.projection import read_projection
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_state import get_task_manager
 
@@ -101,6 +102,28 @@ def _log(
     )
 
 
+def _projected_scene_name(scenes: list[Any], scene_id: str) -> str | None:
+    """Resolve a scene id against projected scene rows.
+
+    Mirrors ``SQLiteStore.get_scene``: exact name first, then aliases, using the
+    store's own normalisation, so reading the payload instead of the store
+    cannot quietly become the stricter of the two.
+    """
+    from novelvideo.sqlite_store import SQLiteStore
+
+    for scene in scenes:
+        if isinstance(scene, dict) and str(scene.get("name") or "") == scene_id:
+            return str(scene["name"])
+    lookup = SQLiteStore._normalize_alias_lookup(scene_id)
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            continue
+        for alias in scene.get("aliases") or []:
+            if SQLiteStore._normalize_alias_lookup(str(alias)) == lookup:
+                return str(scene["name"])
+    return None
+
+
 async def _ensure_scene_refs_for_beats(
     *,
     ctx: ProjectContext,
@@ -110,12 +133,18 @@ async def _ensure_scene_refs_for_beats(
     director_ref_mode: str,
     director_ref_beat_numbers: list[int] | None,
     log,
+    projection: Any = None,
 ) -> dict[str, int]:
     """Check scene assets for the current sketch grid.
 
     This intentionally does not generate scene assets. The default storyboard
     path uses master/reverse as weak references; director refs are only consumed
     when explicit per-beat DirectorWorld renders already exist.
+
+    Scene rows come from ``projection`` when the task carried one, and from the
+    store otherwise. There is deliberately no third case: a projection that is
+    missing the field it promised raises rather than reaching for the store,
+    because a silent fallback would make such an omission permanently invisible.
     """
     from novelvideo.cognee import CogneeStore
     from novelvideo.models import beat_scene_id
@@ -134,24 +163,33 @@ async def _ensure_scene_refs_for_beats(
         log("当前 beats 无 scene_id，跳过场景资产检查")
         return {"requested": 0, "generated": 0, "skipped": 0, "missing": 0, "director_refs": 0}
 
-    store = CogneeStore(ctx.owner_project_label, output_dir=output_dir)
-    await store.initialize()
-    await store.load_graph_state()
+    projected_scenes = None
+    store = None
+    if projection is None:
+        store = CogneeStore(ctx.owner_project_label, output_dir=output_dir)
+        await store.initialize()
+        await store.load_graph_state()
+    else:
+        projected_scenes = projection.require("scenes")
 
     skipped = 0
     missing = 0
     for requested_scene_id in requested_scene_ids:
-        scene = await store.sqlite_store.get_scene(requested_scene_id)
-        if not scene:
+        if projected_scenes is None:
+            scene = await store.sqlite_store.get_scene(requested_scene_id)
+            scene_name = scene.name if scene else None
+        else:
+            scene_name = _projected_scene_name(projected_scenes, requested_scene_id)
+        if not scene_name:
             missing += 1
             log(f"未找到场景，跳过场景资产检查: {requested_scene_id}")
             continue
-        if compute_scene_master_path(Path(output_dir), scene.name):
+        if compute_scene_master_path(Path(output_dir), scene_name):
             skipped += 1
-            log(f"场景资产就绪: {scene.name} (master=yes)")
+            log(f"场景资产就绪: {scene_name} (master=yes)")
         else:
             missing += 1
-            log(f"场景缺少主线资产: {scene.name} (需要 master 作为默认 sketch 场景参考)")
+            log(f"场景缺少主线资产: {scene_name} (需要 master 作为默认 sketch 场景参考)")
 
     prepare_director_refs = str(director_ref_mode or "off").strip().lower() not in {
         "",
@@ -411,6 +449,7 @@ async def _run_sketch_generation_async(
             director_ref_mode=director_ref_mode,
             director_ref_beat_numbers=selected_director_ref_beats,
             log=log,
+            projection=read_projection(payload),
         )
         log(
             "当前网格场景参考图检查完成: "

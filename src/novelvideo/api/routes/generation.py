@@ -71,6 +71,12 @@ from novelvideo.seedance2_i2v.voice_clone import normalize_seedance2_audio_type
 from novelvideo.project_config import load_project_config, save_project_config
 from novelvideo.project_context import ProjectContext
 from novelvideo.ports import get_credit_quote, get_task_backend, get_usage_meter
+from novelvideo.task_backend.limits import (
+    ChannelTaskLimitExceeded,
+    ProjectTaskLimitExceeded,
+    ProjectUserTaskLimitExceeded,
+    UserTaskLimitExceeded,
+)
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.models import beat_scene_id
 from novelvideo.services.background_anchor_service import (
@@ -431,6 +437,47 @@ def _find_pool_grid_entry(
         if not image_grid_paths or entry.grid_path in image_grid_paths:
             return entry
     return None
+
+
+_FANOUT_ACTIVE_LIMIT_ERRORS = (
+    ChannelTaskLimitExceeded,
+    UserTaskLimitExceeded,
+    ProjectTaskLimitExceeded,
+    ProjectUserTaskLimitExceeded,
+)
+
+
+def _task_limit_rejection(
+    scope: str,
+    exc: (
+        ChannelTaskLimitExceeded
+        | UserTaskLimitExceeded
+        | ProjectTaskLimitExceeded
+        | ProjectUserTaskLimitExceeded
+    ),
+) -> dict[str, Any]:
+    """把撞闸异常翻成扇出响应里的一条 ``rejected``（M8 §8.2 冻结形状）。
+
+    ``reason`` 的分支必须与 ``api/app.py`` 的 ``limit_scope`` 逐字同源
+    （``:183-185`` 渠道闸 / ``:209`` 人闸）—— 两侧同算法是跨 EU 的漂移探测器，
+    故三处扇出循环共用这一个 helper，而不是各自内联一份。
+    """
+    if isinstance(exc, ProjectTaskLimitExceeded):
+        reason = "project"
+    elif isinstance(exc, ChannelTaskLimitExceeded):
+        reason = "platform" if exc.scope_kind == "platform" else "channel"
+    elif isinstance(exc, (ProjectUserTaskLimitExceeded, UserTaskLimitExceeded)):
+        reason = "user"
+    else:  # pragma: no cover - the precise catch tuple keeps this unreachable
+        raise TypeError(
+            f"unsupported fanout task-limit exception: {type(exc).__name__}"
+        )
+    return {
+        "scope": scope,
+        "reason": reason,
+        "limit": exc.limit,
+        "active": exc.active,
+    }
 
 
 def _custom_render_plan_error(plan: list[Any], beat_indices: list[int]) -> str | None:
@@ -2121,26 +2168,42 @@ async def generate_sketches(
     dispatch_grid_indices = list(range(len(grid_plan))) if generate_all_grids else [body.grid_index]
     if ctx is not None:
         queued_tasks = []
-        for grid_index in dispatch_grid_indices:
+        rejected: list[dict[str, Any]] = []
+        for position, grid_index in enumerate(dispatch_grid_indices):
             scope = f"grid_{grid_index}"
             billing = _sketch_regen_billing_metadata(
                 sketch_image_selection,
                 billing_mode_keys[grid_index],
             )
-            queued = await get_task_backend().enqueue_project_task(
-                ctx,
-                product_surface="mainline",
-                task_type="sketch_grid_generation",
-                queue_kind="default",
-                episode=episode_num,
-                scope=scope,
-                payload={
-                    "episode": episode_num,
-                    "output_dir": output_dir,
-                    "config": {**base_config, "grid_index": grid_index},
-                    "billing": billing,
-                },
-            )
+            try:
+                queued = await get_task_backend().enqueue_project_task(
+                    ctx,
+                    product_surface="mainline",
+                    task_type="sketch_grid_generation",
+                    queue_kind="default",
+                    episode=episode_num,
+                    scope=scope,
+                    payload={
+                        "episode": episode_num,
+                        "output_dir": output_dir,
+                        "config": {**base_config, "grid_index": grid_index},
+                        "billing": billing,
+                    },
+                )
+            except _FANOUT_ACTIVE_LIMIT_ERRORS as exc:
+                if not queued_tasks:
+                    # 一个都没投出去＝纯粹超限：裸抛，交 api/app.py 的 handler
+                    # 渲染 429 ＋ 正确的 limit_scope（M8 不变量 7）。
+                    raise
+                # 闸是全局的，后面每一个都必然被拒 —— 所以**只投这一次**（break），
+                # 但要把「当前这条 ＋ 后面还没尝试的」全部如实记进 rejected：
+                # 契约要 N−k 条（M8 :722 / :755），下游按尾段长度对齐
+                # （render-plan-dialog.tsx:265 断言 entries.length == rejected.length）。
+                for pending_index in dispatch_grid_indices[position:]:
+                    rejected.append(
+                        _task_limit_rejection(f"grid_{pending_index}", exc)
+                    )
+                break
             queued_tasks.append(
                 {
                     "grid_index": grid_index,
@@ -2163,9 +2226,11 @@ async def generate_sketches(
                 "task_type": "sketch_grid_generation",
                 "backend": queued_tasks[0]["backend"] if queued_tasks else "inline",
                 "data": {
-                    "dispatched": len(dispatch_grid_indices),
+                    # 实投数，不是意图数（M8 不变量 17）。
+                    "dispatched": len(queued_tasks),
                     "tasks": queued_tasks,
                     "scopes": [item["scope"] for item in queued_tasks],
+                    "rejected": rejected,
                 },
                 "message": f"第 {episode_num} 集全集草图生成已进入队列 ({grid_labels})",
             }
@@ -3073,34 +3138,49 @@ async def render_execute(
     }
     scope = f"{dispatch_strategy}__{execution_hash}"
     dispatched_task_ids: list[str] = []
+    rejected: list[dict[str, Any]] = []
 
     if ctx is not None:
-        for entry in execution_plan:
+        for position, entry in enumerate(execution_plan):
             entry_beats = [int(beat) for beat in entry.beat_numbers]
             entry_scope = selection_scope(entry.mode_key, entry_beats)
             billing = _render_regen_billing_metadata(
                 render_image_selection,
                 entry.mode_key,
             )
-            queued = await get_task_backend().enqueue_project_task(
-                ctx,
-                product_surface="mainline",
-                task_type="selected_regen",
-                queue_kind="default",
-                episode=episode_num,
-                scope=entry_scope,
-                payload={
-                    "episode": episode_num,
-                    "mode_key": entry.mode_key,
-                    "output_dir": output_dir,
-                    "config": {
-                        **base_config,
+            try:
+                queued = await get_task_backend().enqueue_project_task(
+                    ctx,
+                    product_surface="mainline",
+                    task_type="selected_regen",
+                    queue_kind="default",
+                    episode=episode_num,
+                    scope=entry_scope,
+                    payload={
+                        "episode": episode_num,
                         "mode_key": entry.mode_key,
-                        "selected_beat_numbers": entry_beats,
+                        "output_dir": output_dir,
+                        "config": {
+                            **base_config,
+                            "mode_key": entry.mode_key,
+                            "selected_beat_numbers": entry_beats,
+                        },
+                        "billing": billing,
                     },
-                    "billing": billing,
-                },
-            )
+                )
+            except _FANOUT_ACTIVE_LIMIT_ERRORS as exc:
+                if not dispatched_task_ids:
+                    # k == 0：裸抛交 handler 渲染 429（M8 不变量 7）。
+                    raise
+                # 只投这一次，但把未投的尾段逐条如实上报（N−k 条，M8 :722 / :755）。
+                for pending in execution_plan[position:]:
+                    pending_beats = [int(beat) for beat in pending.beat_numbers]
+                    rejected.append(
+                        _task_limit_rejection(
+                            selection_scope(pending.mode_key, pending_beats), exc
+                        )
+                    )
+                break
             dispatched_task_ids.append(queued.task_state.task_id)
     else:
         return {
@@ -3122,7 +3202,8 @@ async def render_execute(
             scope=scope,
             resolved_grids=[PlanEntryOut(**entry) for entry in _plan_to_dicts(execution_plan)],
         ).model_dump()
-        | ({"task_ids": dispatched_task_ids} if dispatched_task_ids else {}),
+        | ({"task_ids": dispatched_task_ids} if dispatched_task_ids else {})
+        | ({"rejected": rejected} if rejected else {}),
     }
 
 
@@ -4445,7 +4526,8 @@ async def generate_missing_manual_sketches(
 
     dispatched_scopes: list[str] = []
     dispatched_segments: list[list[int]] = []
-    for beat_numbers in segments:
+    rejected: list[dict[str, Any]] = []
+    for position, beat_numbers in enumerate(segments):
         beat_indices = [int(n) for n in beat_numbers]
         mode_key = choose_manual_sketch_mode_key(len(beat_indices))
         config = {
@@ -4460,20 +4542,35 @@ async def generate_missing_manual_sketches(
         }
         scope = selection_scope(mode_key, beat_indices)
         if ctx is not None:
-            await get_task_backend().enqueue_project_task(
-                ctx,
-                product_surface="mainline",
-                task_type="sketch_regen",
-                queue_kind="default",
-                episode=episode_num,
-                scope=scope,
-                payload={
-                    "episode": episode_num,
-                    "mode_key": mode_key,
-                    "output_dir": output_dir,
-                    "config": {**config, "mode_key": mode_key},
-                },
-            )
+            try:
+                await get_task_backend().enqueue_project_task(
+                    ctx,
+                    product_surface="mainline",
+                    task_type="sketch_regen",
+                    queue_kind="default",
+                    episode=episode_num,
+                    scope=scope,
+                    payload={
+                        "episode": episode_num,
+                        "mode_key": mode_key,
+                        "output_dir": output_dir,
+                        "config": {**config, "mode_key": mode_key},
+                    },
+                )
+            except _FANOUT_ACTIVE_LIMIT_ERRORS as exc:
+                if not dispatched_scopes:
+                    # k == 0：裸抛交 handler 渲染 429（M8 不变量 7）。
+                    raise
+                # 只投这一次，但把未投的尾段逐条如实上报（N−k 条，M8 :722 / :755）。
+                for pending in segments[position:]:
+                    pending_beats = [int(n) for n in pending]
+                    pending_mode_key = choose_manual_sketch_mode_key(len(pending_beats))
+                    rejected.append(
+                        _task_limit_rejection(
+                            selection_scope(pending_mode_key, pending_beats), exc
+                        )
+                    )
+                break
             dispatched_scopes.append(scope)
             dispatched_segments.append(beat_indices)
             continue
@@ -4495,6 +4592,7 @@ async def generate_missing_manual_sketches(
             "dispatched": len(dispatched_segments),
             "scopes": dispatched_scopes,
             "segments": dispatched_segments,
+            "rejected": rejected,
         },
         "message": f"已启动 {len(dispatched_segments)} 组新增分镜草图生成",
     }

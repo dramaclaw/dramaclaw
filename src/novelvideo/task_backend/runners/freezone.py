@@ -20,6 +20,7 @@ from novelvideo.task_backend.cancel import (
 )
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+from novelvideo.task_backend.projection import read_projection
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
 
@@ -718,6 +719,7 @@ async def _run_mainline_director_control_sketch_async(
             require_control_frame_path=True,
             candidate_output_path=output_path,
             promote=False,
+            projection=read_projection(payload),
         ),
         project_id=ctx.project_id,
         task_type=task_type,
@@ -1290,7 +1292,11 @@ async def _run_freezone_audio_speech_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, "freezone_audio_speech", job_id, 0.1, "开始文本生成语音...")
-    store = await make_sqlite_store_for_context(ctx)
+    # 音色所需的项目态已在投递时定型放进 payload 时，这里不再回头开项目 SQLite
+    # —— 那一步经 `api/deps.py` 的 `require_project_home_node` 把本任务钉在
+    # 存放该项目的那台机器上。payload 里没有投射时行为逐字不变。
+    projection = read_projection(payload)
+    store = None if projection is not None else await make_sqlite_store_for_context(ctx)
     try:
         result = await _call_freezone_leaf(
             envelope,
@@ -1309,6 +1315,7 @@ async def _run_freezone_audio_speech_async(
             text=str(payload.get("text") or ""),
             emotion_prompt=str(payload.get("emotion_prompt") or ""),
             voice_ref=payload.get("voice_ref"),
+            projection=projection,
         )
     finally:
         close = getattr(store, "close", None)

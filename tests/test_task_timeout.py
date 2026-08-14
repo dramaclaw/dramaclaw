@@ -166,7 +166,9 @@ def test_run_project_task_core_injects_deadline_for_runner(monkeypatch):
     manager = _FakeTaskManager()
     result = run_core.run_project_task_core_sync(
         _verified_delivery(),
-        SimpleNamespace(project_id="proj_timeout", requester_user_id="usr_1"),
+        SimpleNamespace(
+            project_id="proj_timeout", requester_user_id="usr_1", is_home_node=True
+        ),
         manager,
         run_task_id="task_1",
     )
@@ -185,7 +187,9 @@ def test_run_project_task_core_rejects_raw_dict_before_side_effects():
     with pytest.raises(InvalidTaskEnvelope):
         run_core.run_project_task_core_sync(
             {"task_type": "timeout_probe"},
-            SimpleNamespace(project_id="proj_timeout", requester_user_id="usr_1"),
+            SimpleNamespace(
+                project_id="proj_timeout", requester_user_id="usr_1", is_home_node=True
+            ),
             manager,
             run_task_id="task_1",
         )
@@ -242,7 +246,9 @@ def test_run_project_task_core_persists_result_before_confirming_credit(monkeypa
             project_id="proj_result",
             billing_metadata={"feature_credit_reservation_id": "reservation_1"},
         ),
-        SimpleNamespace(project_id="proj_result", requester_user_id="usr_1"),
+        SimpleNamespace(
+            project_id="proj_result", requester_user_id="usr_1", is_home_node=True
+        ),
         manager,
         run_task_id="task_1",
     )
@@ -292,7 +298,9 @@ def test_run_project_task_core_confirms_delivered_result_when_task_state_write_f
                 project_id="proj_result",
                 billing_metadata={"feature_credit_reservation_id": "reservation_1"},
             ),
-            SimpleNamespace(project_id="proj_result", requester_user_id="usr_1"),
+            SimpleNamespace(
+                project_id="proj_result", requester_user_id="usr_1", is_home_node=True
+            ),
             FailingTaskManager(),
             run_task_id="task_1",
         )
@@ -350,7 +358,9 @@ def test_run_project_task_core_confirms_runner_result_even_when_read_model_ignor
             project_id="proj_result",
             billing_metadata={"feature_credit_reservation_id": "reservation_1"},
         ),
-        SimpleNamespace(project_id="proj_result", requester_user_id="usr_1"),
+        SimpleNamespace(
+            project_id="proj_result", requester_user_id="usr_1", is_home_node=True
+        ),
         CancelledTaskManager(),
         run_task_id="task_1",
     )

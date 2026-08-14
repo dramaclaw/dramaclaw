@@ -609,12 +609,14 @@ def _copy_hot_file(source_dir: Path, snapshot_dir: Path, relative_path: Path) ->
 
 
 def snapshot_hot_state(state_dir: Path, snapshot_dir: Path) -> tuple[int, int, int]:
-    """Create transaction-safe copies of current high-churn Freezone state.
+    """Create stable local copies of current high-churn Freezone state.
 
-    Current canvas JSON and its idempotency record are copied while holding the
-    same writer lock used by ``save_canvas``. Event logs are copied up to the size
-    observed on their open descriptor. A before/after inventory rejects path-set
-    changes, so rclone never interprets a transiently missed file as a deletion.
+    Locally stored canvas JSON and its idempotency record are copied while
+    holding the CE file lock used by ``save_canvas``. EE canvas persistence and
+    backup are handled by OSS and are outside this command. Event logs are copied
+    up to the size observed on their open descriptor. A before/after inventory
+    rejects path-set changes, so rclone never interprets a transiently missed
+    file as a deletion.
     """
 
     snapshot_dir.mkdir(parents=True, exist_ok=True)

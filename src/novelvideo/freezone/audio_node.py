@@ -304,6 +304,37 @@ def _project_path(project_dir: Path, stored_path: str) -> Path | None:
     return path if path.exists() else None
 
 
+@dataclass(frozen=True)
+class _PathOnlyStore:
+    """Stands in for the project store where only ``project_dir`` is ever read.
+
+    ``resolve_narrator_source`` takes a store for exactly two things: the
+    project directory, and -- if no character rows are handed to it -- a lookup
+    of every character in the database.  Once the rows travel with the task the
+    second use is gone, and passing this instead of a real store keeps that
+    function unchanged while making the difference impossible to lose: any
+    attribute other than ``project_dir`` fails loudly instead of quietly
+    reopening project state.
+    """
+
+    project_dir: str
+
+
+def _projected_character_rows(row: Any) -> list[Any]:
+    """Rebuild the character rows the projection carried as plain JSON.
+
+    The resolution below reads characters as model objects, so they are
+    validated back into the model here rather than teaching four call sites to
+    accept a row in two shapes.  An absent row becomes an empty list, never
+    ``None``: ``None`` is what the callee reads as "go look them up yourself".
+    """
+    from novelvideo.models import NovelCharacter
+
+    if not isinstance(row, dict):
+        return []
+    return [NovelCharacter.model_validate(dict(row))]
+
+
 async def _resolve_voice_ref(
     *,
     store,
@@ -311,6 +342,7 @@ async def _resolve_voice_ref(
     account_voice_username: str | None = None,
     project_dir: Path,
     voice_ref: dict | None,
+    characters: list[Any] | None = None,
 ) -> FreezoneVoiceRefResolution | None:
     if not isinstance(voice_ref, dict):
         return None
@@ -326,7 +358,10 @@ async def _resolve_voice_ref(
             str(voice_ref.get("voice_id") or ""),
         )
 
-    characters = list(await store.list_characters())
+    if characters is None:
+        characters = list(await store.list_characters())
+    else:
+        characters = list(characters)
 
     def _find_character():
         return next(
@@ -413,39 +448,62 @@ async def _resolve_voice_ref(
     return None
 
 
-async def generate_freezone_audio_speech(
+async def resolve_speech_voice(
     *,
     store,
     username: str,
     project: str,
     account_voice_username: str | None = None,
     project_dir: Path,
-    job_id: str,
-    text: str,
-    emotion_prompt: str = "",
     voice_ref: dict | None = None,
-    egress_context: TrustedEgressContext | None = None,
-) -> FreezoneAudioSpeechResult:
-    """Generate standalone Freezone speech using the project narrator reference."""
-    clean_text = str(text or "").strip()
-    if not clean_text:
-        raise ValueError("text is required")
+    projection: Any = None,
+) -> tuple[str, FreezoneVoiceRefResolution]:
+    """Resolve narration style + reference voice for one speech job.
 
-    narration_style = load_effective_narration_style_for_voice(username, project)
+    Without a projection this reads project-bound state exactly as it always
+    has: ``load_effective_narration_style_for_voice`` /
+    ``load_narrator_reference_audio`` read the project state directory and
+    ``store.list_characters()`` reads the project database, all of which only
+    exist on the machine that holds the project.
+
+    With a projection those same values arrive with the task, pinned when it was
+    submitted, and nothing project-bound is read here.  A projection that is
+    present but missing a field raises rather than falling back to the database:
+    a silent fallback would hide the very thing the projection exists to make
+    visible.
+    """
+    if projection is None:
+        narration_style = load_effective_narration_style_for_voice(username, project)
+        voice_characters = None
+        narrator_store = store
+    else:
+        narration_style = str(projection.require("narration_style") or "")
+        voice_characters = _projected_character_rows(projection.require("voice_character"))
+        narrator_store = _PathOnlyStore(str(project_dir))
+
     selected_voice = await _resolve_voice_ref(
         store=store,
         username=username,
         account_voice_username=account_voice_username,
         project_dir=project_dir,
         voice_ref=voice_ref,
+        characters=voice_characters,
     )
     if selected_voice is None:
-        descriptor = load_narrator_reference_audio(username, project)
-        characters = (
-            await store.list_characters() if narration_style == "first_person" else None
-        )
+        if projection is None:
+            descriptor = load_narrator_reference_audio(username, project)
+            characters = (
+                await store.list_characters() if narration_style == "first_person" else None
+            )
+        else:
+            descriptor = dict(projection.require("narrator_reference_audio") or {})
+            characters = (
+                _projected_character_rows(projection.require("narrator_main_character"))
+                if narration_style == "first_person"
+                else None
+            )
         voice = resolve_narrator_source(
-            store=store,
+            store=narrator_store,
             narration_style=narration_style,
             project_narrator_stored_path=descriptor.get("path", ""),
             characters=characters,
@@ -457,6 +515,43 @@ async def generate_freezone_audio_speech(
             voice.sha256,
             voice.source or "project_narrator",
         )
+    return narration_style, selected_voice
+
+
+async def generate_freezone_audio_speech(
+    *,
+    store=None,
+    username: str,
+    project: str,
+    account_voice_username: str | None = None,
+    project_dir: Path,
+    job_id: str,
+    text: str,
+    emotion_prompt: str = "",
+    voice_ref: dict | None = None,
+    projection: Any = None,
+    egress_context: TrustedEgressContext | None = None,
+) -> FreezoneAudioSpeechResult:
+    """Generate standalone Freezone speech using the project narrator reference.
+
+    ``projection`` is the payload projection pinned when the task was submitted
+    (``task_backend.projection.read_projection``). When it is supplied nothing
+    project-bound is read here and ``store`` may be ``None``; when it is absent
+    the voice is resolved from project state exactly as before.
+    """
+    clean_text = str(text or "").strip()
+    if not clean_text:
+        raise ValueError("text is required")
+
+    narration_style, selected_voice = await resolve_speech_voice(
+        store=store,
+        username=username,
+        project=project,
+        account_voice_username=account_voice_username,
+        project_dir=project_dir,
+        voice_ref=voice_ref,
+        projection=projection,
+    )
 
     output_path = freezone_audio_speech_output_path(project_dir, job_id)
     if egress_context is None:

@@ -207,7 +207,7 @@ async def start_sketch_edit_execute(
             ctx,
             product_surface="mainline",
             task_type="sketch_edit_execute",
-            queue_kind="sketch",
+            queue_kind="default",
             episode=episode_num,
             scope=scope,
             payload={

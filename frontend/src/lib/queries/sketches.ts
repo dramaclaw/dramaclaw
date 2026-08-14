@@ -11,6 +11,7 @@ import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
 import type { ApiResponse, ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { Beat } from "@/types/episode";
+import type { RejectedDispatch } from "@/types/render-plan";
 
 // Mirrors backend `PoolImage` (novelvideo/models.py) plus the route-injected
 // `cell_url` / `grid_url` / `stale` fields from `GET /grids`.
@@ -326,12 +327,19 @@ export function useCropBeatBackgroundAnchor(project: string, episode: number, be
   });
 }
 
-// Mirrors backend response from /sketches/generate-missing-manual:
-// scopes / segments are surfaced for diagnostics only (not currently rendered).
+// Mirrors backend response from /sketches/generate-missing-manual.
+// `scopes` / `segments` are informational (not currently rendered). `rejected`
+// is NOT: it reports the entries a concurrency lane refused, and re-dispatch is
+// driven off it. This endpoint is self-healing — the backend recomputes
+// `missing_manual_shot_segments` on every call — so re-dispatching the refused
+// part is literally the same request again: no body change, no scope, no new
+// parameter. Never widen the request to replay (that double-bills the part
+// that WAS dispatched). See TCP-P65.
 export interface GenerateMissingManualResult {
   dispatched: number;
   scopes: string[];
   segments: number[][];
+  rejected?: RejectedDispatch[];
 }
 
 export function useGenerateMissingManualSketches(

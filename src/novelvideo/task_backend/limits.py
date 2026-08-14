@@ -101,6 +101,62 @@ class GlobalLaneQueueLimitExceeded(RuntimeError):
         )
 
 
+@dataclass
+class ChannelTaskLimitExceeded(RuntimeError):
+    """Channel (organization or platform pool) in-flight lane limit.
+
+    ``scope_kind`` is ``"platform"`` for the shared pool (``org_id is None``)
+    and ``"organization"`` for a sold channel. The HTTP ``limit_scope`` is
+    derived from it in the app-level handler, not stored here — same as the
+    three project-level classes above.
+    """
+
+    scope_kind: str
+    org_id: str | None
+    queue_kind: str
+    limit: int
+    active: int
+
+    def __post_init__(self) -> None:
+        super().__init__(
+            self.scope_kind,
+            self.org_id,
+            self.queue_kind,
+            self.limit,
+            self.active,
+        )
+
+    def __str__(self) -> str:
+        return (
+            f"channel {self.org_id or self.scope_kind} {self.queue_kind} lane is full "
+            f"({self.active}/{self.limit})"
+        )
+
+
+@dataclass
+class UserTaskLimitExceeded(RuntimeError):
+    """Per-user in-flight lane limit inside a channel (not scoped to a project)."""
+
+    requester_user_id: str
+    queue_kind: str
+    limit: int
+    active: int
+
+    def __post_init__(self) -> None:
+        super().__init__(
+            self.requester_user_id,
+            self.queue_kind,
+            self.limit,
+            self.active,
+        )
+
+    def __str__(self) -> str:
+        return (
+            f"user {self.requester_user_id} {self.queue_kind} lane is full "
+            f"({self.active}/{self.limit})"
+        )
+
+
 def _lane_active_limit(
     queue_kind: str | None,
     *,

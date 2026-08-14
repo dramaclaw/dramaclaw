@@ -3,9 +3,11 @@
 inline 后端的 worker 随 API 进程消亡:进程启动时间之前仍标记
 submitting/queued/running 的 inline 任务必然已中断,读取路径应将其
 落为 failed,避免僵尸任务永久挡住新任务(去重守卫/并发限额)。
-Celery/EE worker 独立于 API 进程,同规则绝不适用。
+Celery/EE worker 独立于 API 进程,**这条进程启动时间的规则对它绝不适用**;
+它按自己的 40min TTL 回收,那一轴在 test_task_state_celery_zombie_ttl.py。
 """
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -37,11 +39,30 @@ def _ctx(tmp_path: Path) -> ProjectContext:
     )
 
 
-def _backdate(manager: TaskStateManager, ctx: ProjectContext, task_id: str) -> None:
+def _before_process_start_within_celery_ttl() -> str:
+    """早于本进程启动、但未过 celery 的 40min TTL(CELERY_STALE_TTL)。
+
+    用来把两条轴分开:落在这个窗口里的 celery 行,只有「进程启动时间」那条
+    规则会碰它——而它不该碰。
+    """
+    stamp = (
+        datetime.now(timezone.utc) - timedelta(minutes=39)
+    ).isoformat().replace("+00:00", "Z")
+    if "." not in stamp:
+        stamp = stamp.replace("Z", ".000000Z")
+    return stamp
+
+
+def _backdate(
+    manager: TaskStateManager,
+    ctx: ProjectContext,
+    task_id: str,
+    when: str = _ANCIENT,
+) -> None:
     with manager._connect_context(ctx) as conn:
         conn.execute(
             "UPDATE task_states SET updated_at = ?, created_at = ? WHERE task_id = ?",
-            (_ANCIENT, _ANCIENT, task_id),
+            (when, when, task_id),
         )
 
 
@@ -72,13 +93,14 @@ def test_stale_inline_running_task_is_failed_on_read(tmp_path: Path) -> None:
 
 
 def test_stale_celery_running_task_is_untouched(tmp_path: Path) -> None:
+    """celery 行早于进程启动也不该被这条规则碰(它有自己的 TTL 轴)。"""
     manager = TaskStateManager()
     ctx = _ctx(tmp_path)
     created = manager.create_task_for_project(
         ctx, "ingest_fast", 0, scope="job_celery", metadata={"backend": "celery"}
     )
     manager.update_progress_for_project(ctx, "ingest_fast", 0, progress=0.1, scope="job_celery")
-    _backdate(manager, ctx, created.task_id)
+    _backdate(manager, ctx, created.task_id, when=_before_process_start_within_celery_ttl())
     manager = _restarted()
 
     listed = manager.list_tasks_for_project(ctx)
