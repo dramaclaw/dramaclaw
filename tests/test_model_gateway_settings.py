@@ -3007,7 +3007,7 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     ]
     seedream = next(entry for entry in images if entry["id"] == "seedream-5.0-pro")
     assert seedream["gatewayModel"] == "seedream-5.0-pro"
-    assert seedream["resolutionOptions"] == ["1K", "2K"]
+    assert seedream["resolutionOptions"] == ["1k", "2k"]
     assert seedream["minPixels"] == 3686400
     seedance = next(entry for entry in videos if entry["id"] == "seedance-2.0-mini")
     assert seedance["apiModel"] == "newapi_seedance-2.0-mini"
@@ -3015,7 +3015,7 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     minimax = videos[-1]
     assert minimax["id"] == "MiniMax-H3"
     assert minimax["gatewayModel"] == "MiniMax-H3"
-    assert minimax["resolutionOptions"] == ["768P", "2K"]
+    assert minimax["resolutionOptions"] == ["768p", "2k"]
     assert minimax["ratioOptions"] == [
         "21:9",
         "16:9",

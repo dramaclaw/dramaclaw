@@ -675,7 +675,9 @@ async def test_newapi_video_generator_handles_wrapped_failure_status(
     assert refunded["error"] == "InputImageSensitiveContentDetected.PolicyViolation"
 
 
-async def test_newapi_seedance1_generator_preserves_adaptive_ratio(tmp_path, monkeypatch):
+async def test_newapi_seedance1_generator_normalizes_adaptive_ratio_to_auto(
+    tmp_path, monkeypatch
+):
     from novelvideo.generators import video_generator as video_module
     from novelvideo.generators.video_generator import NewApiVideoGenerator
 
@@ -713,9 +715,11 @@ async def test_newapi_seedance1_generator_preserves_adaptive_ratio(tmp_path, mon
     metadata = payload["metadata"]
     assert isinstance(metadata, dict)
     assert payload["image"] == "https://example.com/first.png"
-    assert metadata["aspect_ratio"] == "adaptive"
     assert metadata["resolution"] == "720p"
-    assert metadata["ratio"] == "adaptive"
+    assert metadata["ratio"] == "auto"
+    assert "aspect_ratio" not in metadata
+    assert "width" not in payload
+    assert "height" not in payload
 
 
 def test_newapi_video_payload_keeps_public_fields_and_model_semantics():
@@ -828,10 +832,10 @@ def test_newapi_video_dimensions_distinguish_p_and_k_tiers(
     assert NewApiVideoGenerator._video_dimensions(resolution, ratio) == expected
 
 
-def test_newapi_video_4k_payload_uses_real_dimensions_and_preserves_request_value():
+def test_newapi_video_payload_uses_real_dimensions_and_lowercase_resolution():
     from novelvideo.generators.video_generator import NewApiVideoGenerator
 
-    metadata = {"resolution": "4k", "ratio": "16:9"}
+    metadata = {"resolution": "4K", "ratio": "16:9"}
     payload = {
         "model": "seedance-2.0",
         "prompt": "海边日落。",
@@ -845,6 +849,26 @@ def test_newapi_video_4k_payload_uses_real_dimensions_and_preserves_request_valu
     assert payload["height"] == 2160
     assert payload["metadata"]["resolution"] == "4k"
     assert payload["metadata"]["ratio"] == "16:9"
+
+
+def test_newapi_video_payload_preserves_auto_duration_and_ratio():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    metadata = {"resolution": "720P", "ratio": "adaptive"}
+    payload = {
+        "model": "seedance-2.5",
+        "prompt": "自动决定画幅和时长。",
+        "seconds": "auto",
+        "metadata": metadata,
+    }
+
+    NewApiVideoGenerator._canonicalize_video_payload(payload, metadata)
+
+    assert payload["duration"] == "auto"
+    assert "width" not in payload
+    assert "height" not in payload
+    assert payload["metadata"]["ratio"] == "auto"
+    assert payload["metadata"]["resolution"] == "720p"
 
 
 def test_newapi_seedance15_payload_preserves_480p_21_9_semantics():
@@ -1032,7 +1056,7 @@ async def test_newapi_happyhorse_video_generator_uses_happyhorse_payload(tmp_pat
     assert "image" not in payload
     assert "image_url" not in metadata
     assert "aspect_ratio" not in metadata
-    assert metadata["resolution"] == "1080P"
+    assert metadata["resolution"] == "1080p"
     assert metadata["reference_videos"] == ["https://example.com/input.mp4"]
     assert metadata["audio_setting"] == "origin"
     assert metadata["reference_images"] == [
@@ -1157,6 +1181,34 @@ async def test_newapi_catalog_model_builds_huimeng_protocol_multimedia_reference
         "reference_images",
         "reference_videos",
         "reference_audios",
+    }
+
+
+async def test_newapi_video_edit_keeps_independent_audio_reference():
+    from novelvideo.generators.video_generator import NewApiVideoGenerator, ShotReference
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model="happyhorse-1.0",
+    )
+    metadata: dict[str, object] = {}
+
+    await generator._apply_huimeng_protocol_media_inputs(
+        metadata,
+        mode="video_edit",
+        image_path="",
+        last_frame_path=None,
+        references=[
+            ShotReference("video", "https://example.com/source.mp4", "视频编辑源"),
+            ShotReference("audio", "https://example.com/music.mp3", "配乐参考"),
+        ],
+        log=lambda _message: None,
+    )
+
+    assert metadata == {
+        "reference_videos": ["https://example.com/source.mp4"],
+        "reference_audios": ["https://example.com/music.mp3"],
     }
 
 

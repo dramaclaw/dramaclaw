@@ -228,7 +228,8 @@ def test_video_character_folder_update_and_delete(tmp_path: Path) -> None:
 
 
 def test_video_ratio_and_resolution_normalization() -> None:
-    assert normalize_video_aspect_ratio("auto") == "16:9"
+    assert normalize_video_aspect_ratio("auto") == "auto"
+    assert normalize_video_aspect_ratio("adaptive") == "auto"
     assert normalize_video_aspect_ratio("9:16") == "9:16"
     assert normalize_video_resolution("720P") == "720p"
 
@@ -244,6 +245,35 @@ def test_build_freezone_omni_video_prompt_includes_theme() -> None:
     assert "压抑、克制、纪实感" in prompt
     assert "盘旋抬升" in prompt
     assert "氧气管" in prompt
+
+
+def test_build_freezone_omni_video_prompt_marks_single_video_as_reference() -> None:
+    prompt = build_freezone_omni_video_prompt(
+        user_prompt="参考人物动作，生成新的镜头。",
+        reference_items=[{"type": "video", "path": "/tmp/reference.mp4"}],
+    )
+
+    assert prompt.count("这是视频参考生成新的视频，不是视频编辑。") == 1
+
+
+@pytest.mark.parametrize(
+    "reference_items",
+    [
+        [{"type": "video"}, {"type": "video"}],
+        [{"type": "video"}, {"type": "image"}],
+        [{"type": "video"}, {"type": "audio"}],
+        [{"type": "image"}],
+    ],
+)
+def test_build_freezone_omni_video_prompt_does_not_mark_other_inputs(
+    reference_items: list[dict[str, str]],
+) -> None:
+    prompt = build_freezone_omni_video_prompt(
+        user_prompt="参考素材生成新的镜头。",
+        reference_items=reference_items,
+    )
+
+    assert "这是视频参考生成新的视频，不是视频编辑。" not in prompt
 
 
 def test_build_freezone_image_to_video_prompt_uses_image_reference_semantics() -> None:
@@ -338,7 +368,7 @@ def test_catalog_resolution_options_override_legacy_video_whitelist() -> None:
             "4K",
             ["1080p", "4K"],
         )
-        == "4K"
+        == "4k"
     )
 
 
@@ -437,6 +467,15 @@ def test_seedance2_backend_detection_accepts_newapi_and_legacy_values() -> None:
 def test_happyhorse_backend_detection_accepts_newapi_value() -> None:
     assert is_freezone_happyhorse_backend("newapi_happyhorse-1.0")
     assert not is_freezone_happyhorse_backend("newapi_seedance-2.0-fast")
+
+
+def test_direct_seedance_ratio_accepts_canonical_and_legacy_auto_values() -> None:
+    from novelvideo.generators.video_generator import SeedanceVideoGenerator
+
+    assert SeedanceVideoGenerator._normalize_aspect_ratio("auto") == "auto"
+    assert SeedanceVideoGenerator._normalize_aspect_ratio("adaptive") == "adaptive"
+    assert SeedanceVideoGenerator._normalize_aspect_ratio("16:9") == "16:9"
+    assert SeedanceVideoGenerator._normalize_aspect_ratio("unsupported") == "9:16"
 
 
 def test_freezone_rejects_removed_wan26_backend() -> None:

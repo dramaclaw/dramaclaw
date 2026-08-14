@@ -23,6 +23,7 @@ import {
 } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { SHARED_MODELS } from '@/features/canvas/ui/ProviderModelPicker';
 import {
+  formatResolutionLabel,
   resolveModelAspectOptions,
   resolveModelSizeOptions,
 } from '@/features/canvas/domain/mediaModelOptions';
@@ -45,7 +46,7 @@ export interface CatalogImageModelEntry {
 }
 
 /** 目录没给分辨率时，节点默认想要的档位（仍需落在实际可选档位里）。 */
-const PREFERRED_DEFAULT_RESOLUTION = '2K';
+const PREFERRED_DEFAULT_RESOLUTION = '2k';
 
 /** 把一条目录条目适配成节点用的 `ImageModelDefinition`。 */
 export function toImageModelDefinition(
@@ -53,7 +54,7 @@ export function toImageModelDefinition(
 ): ImageModelDefinition {
   const resolutions = resolveModelSizeOptions(info).map((value) => ({
     value,
-    label: value,
+    label: formatResolutionLabel(value),
   }));
   const aspectRatios = resolveModelAspectOptions(info).map((value) => ({
     value,
@@ -73,7 +74,9 @@ export function toImageModelDefinition(
     eta: '',
     defaultAspectRatio: aspectRatios[0]?.value ?? '1:1',
     defaultResolution:
-      resolutions.find((item) => item.value === PREFERRED_DEFAULT_RESOLUTION)?.value
+      resolutions.find(
+        (item) => item.value.toLowerCase() === PREFERRED_DEFAULT_RESOLUTION,
+      )?.value
       ?? resolutions[0]?.value
       ?? PREFERRED_DEFAULT_RESOLUTION,
     aspectRatios,

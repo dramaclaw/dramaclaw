@@ -398,7 +398,6 @@ const videoNodeDefinition: CanvasNodeDefinition<VideoNodeData> = {
     model: readLastVideoModel() ?? DEFAULT_VIDEO_MODEL_ID,
     quality: '720P',
     durationSec: 5,
-    generateAudio: true,
     count: 1,
     isGenerating: false,
     generationStartedAt: null,

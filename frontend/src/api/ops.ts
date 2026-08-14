@@ -400,19 +400,19 @@ export async function submitFreezoneVideoI2v(
 
 // /freezone/video/video-edit ---------------------------------------------- //
 //
-// HappyHorse 视频编辑：1 个源视频 + 0-5 张参考图 → 上游 video_url + reference_images。
+// 视频编辑：1 个源视频，并按媒体目录能力附带参考图片 / 独立参考音频。
 
 export interface FreezoneVideoEditPayload extends FreezoneNodeContext {
   /** 源视频静态地址，必填。 */
   videoUrl: string;
   /** 0-5 张参考图静态地址。 */
   imageUrls?: string[];
+  /** 独立参考音频静态地址；数量和时长上限由媒体模型目录决定。 */
+  audioUrls?: string[];
   prompt?: string;
   cameraTemplateId?: string | null;
   marks?: FreezoneVideoMark[];
-  aspectRatio?: FreezoneVideoAspectRatio;
   resolution?: FreezoneVideoResolution;
-  durationSeconds?: number;
   /** 视频编辑音频策略：auto 自动 / origin 保留原声。 */
   audioSetting?: "auto" | "origin";
   generateAudio?: boolean;
@@ -434,6 +434,7 @@ export async function submitFreezoneVideoEdit(
       json: {
         video_url: payload.videoUrl,
         image_urls: payload.imageUrls ?? [],
+        audio_urls: payload.audioUrls ?? [],
         prompt: payload.prompt ?? "",
         camera_template_id: payload.cameraTemplateId ?? null,
         marks: (payload.marks ?? []).map((m) => ({
@@ -447,9 +448,7 @@ export async function submitFreezoneVideoEdit(
           box_height: m.boxHeight ?? null,
           note: m.note ?? "",
         })),
-        aspect_ratio: payload.aspectRatio ?? "16:9",
         resolution: payload.resolution ?? "720p",
-        duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         audio_setting: payload.audioSetting ?? "auto",
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
@@ -1045,6 +1044,8 @@ export interface FreezoneVideoModelInfo {
   /** Supported output resolution values for this model, when advertised by backend. */
   resolutionOptions?: FreezoneVideoResolution[];
   humanReview?: boolean;
+  /** Whether this model can produce native synchronized audio. Missing means legacy-supported. */
+  supportsGenerateAudio?: boolean;
   /** Smallest supported duration in seconds, when advertised by backend. */
   minDuration?: number | null;
   /** Largest supported duration in seconds, when advertised by backend. */
@@ -1130,6 +1131,11 @@ function videoModelEntryFromObject(
     label,
     ...(resolutionOptions.length > 0 ? { resolutionOptions } : {}),
     humanReview: pickBoolean(entry, "humanReview", "human_review"),
+    supportsGenerateAudio: pickBoolean(
+      entry,
+      "supportsGenerateAudio",
+      "supports_generate_audio",
+    ),
     minDuration: pickNumber(entry, "minDuration", "min_duration"),
     maxDuration: pickNumber(entry, "maxDuration", "max_duration"),
     ...(sceneOptimizeOptions.length > 0 ? { sceneOptimizeOptions } : {}),
