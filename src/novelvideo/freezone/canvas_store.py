@@ -791,19 +791,13 @@ def save_canvas(
 
 
 async def save_canvas_async(*args, **kwargs) -> CanvasSaveResult:
-    """事件循环上的调用方**必须**走这一个,不许直接调 `save_canvas`。
+    """在线程中执行同步画布保存，避免阻塞调用方的事件循环。
 
-    `save_canvas` 是阻塞的:`canvas_write_lock` 的自旋用 `time.sleep(0.02)`,
-    落盘是同步文件 I/O。今天锁永远瞬间拿到(跨机器根本没生效),所以在 `async def`
-    路由里同步调它没有症状;一旦画布互斥真正生效,一次被争用的保存就会把该
-    uvicorn worker 的**整个事件循环**冻住最多 3 秒——冻住的不只是这张画布,是
-    那个 worker 上所有请求(别人的画布、任务轮询、无关项目)。
+    `save_canvas` 会等待当前配置的画布写互斥，并执行同步文件 I/O；互斥的等待
+    策略及作用范围由注入的 `CanvasWriteMutex` 实现决定。
 
-    所以「保存挪下事件循环」必须**先于**互斥生效,且单独发布,留一个独立回滚点。
-
-    签名逐字透传给 `save_canvas`,不在这里复制它的关键字参数——复制一份会在
-    `save_canvas` 加参数时无声漂移。CLI、worker 与备份进程不在事件循环上,继续
-    直接调 `save_canvas`,行为逐字不变。
+    参数、返回值和异常均由 `save_canvas` 透传。事件循环上的调用方应 await
+    本函数；同步调用方可直接调用 `save_canvas`。
     """
 
     return await call_blocking(save_canvas, *args, **kwargs)

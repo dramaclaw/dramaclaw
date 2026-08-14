@@ -1,14 +1,8 @@
-"""B2 步 2 接线 · HTTP 路径上的画布保存不许冻结事件循环。
+"""HTTP 路径上的画布保存必须通过异步适配器移出事件循环。
 
-步 2 只造了接缝（`canvas_store.save_canvas_async`）。接缝没有调用方时，
-`api/routes/freezone.py` 的四个 `async def` handler 仍然直接调同步的
-`save_canvas`，`to_thread` 在 HTTP 路径上等于没生效 —— 而 B2-10 要求
-`to_thread` **先于**租约生效（登记册 `TCP-P6`，`dispatch-and-branching.md`
-§4 v1.7 把这四处调用点划归 `TCP-EU-C1`）。
-
-危害本体见 `B2-canvas-placement-free.md` §3.9 N3：`canvas_write_lock` 的自旋是
-`time.sleep(0.02)`；租约（`TCP-EU-C4`）一上，一次被争用的保存会把该 uvicorn
-worker 的整个事件循环冻住最多 3 秒。
+`save_canvas` 会同步等待当前配置的画布写互斥并执行同步文件 I/O。四个异步 HTTP
+handler 必须 `await canvas_store.save_canvas_async(...)`，不得直接调用同步的
+`save_canvas`；互斥的等待算法和作用范围由注入的端口实现决定，不属于本模块契约。
 
 两条用例分工：
 
