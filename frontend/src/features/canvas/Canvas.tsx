@@ -44,6 +44,7 @@ import { getSkillRegistry } from '@/api/skills';
 import { SKILL_SCHEMA_VERSION, type SkillDefinition } from '@/features/freezone/context/skillRoles';
 import { translateSkillName } from '@/features/freezone/context/skillI18n';
 import { canvasAiGateway, canvasEventBus } from '@/features/canvas/application/canvasServices';
+import { stashExternalFile } from '@/features/canvas/application/pendingExternalFiles';
 import {
   CANVAS_NODE_TYPES,
   type BeatContextNodeData,
@@ -2692,13 +2693,16 @@ export function Canvas({
           { user_spawned: true } as Partial<CanvasNodeData>,
         );
         lastNodeId = newNodeId;
+        // 与文件拖放同样先暂存再发事件，见 handleCanvasDrop 的说明。
+        stashExternalFile('upload-node/external-file', newNodeId, file);
         requestAnimationFrame(() => {
-          canvasEventBus.publish('upload-node/external-file', { nodeId: newNodeId, file });
+          canvasEventBus.publish('upload-node/external-file', { nodeId: newNodeId });
         });
       });
 
       if (lastNodeId) {
         setSelectedNode(lastNodeId);
+        focusNewNodeIfLowZoom(lastNodeId);
       }
       scheduleCanvasPersist(0);
     };
@@ -2709,6 +2713,7 @@ export function Canvas({
     };
   }, [
     addNode,
+    focusNewNodeIfLowZoom,
     reactFlowInstance,
     scheduleCanvasPersist,
     selectedUploadNodeId,
@@ -3071,19 +3076,26 @@ export function Canvas({
           { user_spawned: true } as Partial<CanvasNodeData>,
         );
         lastNodeId = newNodeId;
-        // 等新节点挂载并订阅事件后再投递文件（与 UploadNode 内部 morph 的时序一致）。
+        // File 本体走暂存，事件只是敲一下已挂载的节点：低缩放档下新节点先以 LOD
+        // shell 挂载，完整组件要等升级队列放行，必然晚于下面这一帧才挂上订阅，
+        // 只发事件会被总线的无重放语义直接丢掉（见 [[pendingExternalFiles]]）。
+        stashExternalFile('upload-node/external-file', newNodeId, file);
         requestAnimationFrame(() => {
-          canvasEventBus.publish('upload-node/external-file', { nodeId: newNodeId, file });
+          canvasEventBus.publish('upload-node/external-file', { nodeId: newNodeId });
         });
       });
 
       if (lastNodeId) {
         setSelectedNode(lastNodeId);
+        // 与其他「凭空新建节点」的入口一致：低缩放档下把视口拉到新节点（zoom 提到
+        // ≥0.6），否则用户在 10% 下只看到一个几十像素的灰块。
+        focusNewNodeIfLowZoom(lastNodeId);
       }
       scheduleCanvasPersist(0);
     },
     [
       addNode,
+      focusNewNodeIfLowZoom,
       hasDraggedAnyPayload,
       reactFlowInstance,
       scheduleCanvasPersist,

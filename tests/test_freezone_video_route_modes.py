@@ -44,16 +44,96 @@ async def _install_route_fakes(monkeypatch, tmp_path: Path, capabilities: dict) 
         captured["start"] = kwargs
         return {"job_id": "job-test"}
 
+    async def validate_audio(reference_items, *, capabilities, backend):
+        captured["validated_audio_items"] = reference_items
+
     monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", resolve_project)
     monkeypatch.setattr(freezone_routes, "_resolve_catalog_video_backend", resolve_backend)
     monkeypatch.setattr(freezone_routes, "_resolve_catalog_request", resolve_request)
     monkeypatch.setattr(freezone_routes, "_start_or_enqueue_freezone_video_gen", start)
     monkeypatch.setattr(
         freezone_routes,
+        "_validate_catalog_reference_audio_items",
+        validate_audio,
+    )
+    monkeypatch.setattr(
+        freezone_routes,
         "_resolve_url_list",
         lambda _project_dir, urls: [str(url) for url in urls if url],
     )
     return captured
+
+
+@pytest.mark.asyncio
+async def test_video_edit_forwards_configured_independent_audio(
+    monkeypatch, tmp_path: Path
+) -> None:
+    capabilities = _catalog("video_edit")
+    capabilities.update(
+        {
+            "referenceVideoMax": 1,
+            "referenceAudioMax": 2,
+            "referenceAudioMinSeconds": 1,
+            "referenceAudioMaxSeconds": 15,
+        }
+    )
+    captured = await _install_route_fakes(monkeypatch, tmp_path, capabilities)
+
+    await freezone_routes.freezone_video_edit(
+        "project",
+        FreezoneVideoEditRequest(
+            video_url="https://example.com/source.mp4",
+            image_urls=["https://example.com/style.png"],
+            audio_urls=["https://example.com/music.mp3"],
+            model="catalog-video",
+            gen_mode="videoEdit",
+        ),
+        {"username": "admin"},
+    )
+
+    assert captured["request_mode"] == "videoEdit"
+    assert captured["start"]["gen_mode"] == "video_edit"
+    assert captured["start"]["aspect_ratio"] == "auto"
+    assert captured["start"]["duration_seconds"] is None
+    assert captured["start"]["reference_items"] == [
+        {
+            "type": "video",
+            "path": "https://example.com/source.mp4",
+            "role": "视频编辑源",
+        },
+        {
+            "type": "image",
+            "path": "https://example.com/style.png",
+            "role": "图片参考",
+        },
+        {
+            "type": "audio",
+            "path": "https://example.com/music.mp3",
+            "role": "配乐参考",
+        },
+    ]
+    assert captured["validated_audio_items"] == captured["start"]["reference_items"]
+
+
+@pytest.mark.asyncio
+async def test_video_edit_rejects_audio_when_catalog_cap_is_zero(
+    monkeypatch, tmp_path: Path
+) -> None:
+    capabilities = _catalog("video_edit")
+    capabilities.update({"referenceVideoMax": 1, "referenceAudioMax": 0})
+    await _install_route_fakes(monkeypatch, tmp_path, capabilities)
+
+    with pytest.raises(HTTPException, match="at most 0 audio references"):
+        await freezone_routes.freezone_video_edit(
+            "project",
+            FreezoneVideoEditRequest(
+                video_url="https://example.com/source.mp4",
+                audio_urls=["https://example.com/music.mp3"],
+                model="catalog-video",
+                gen_mode="videoEdit",
+            ),
+            {"username": "admin"},
+        )
 
 
 @pytest.mark.asyncio
@@ -165,6 +245,28 @@ async def test_image_reference_keeps_multi_image_reference_protocol(
     ]
 
 
+@pytest.mark.asyncio
+async def test_video_edit_rejects_model_without_catalog_capability(
+    monkeypatch, tmp_path: Path
+) -> None:
+    await _install_route_fakes(
+        monkeypatch,
+        tmp_path,
+        _catalog("text_to_video", "first_frame", "image_reference"),
+    )
+
+    with pytest.raises(HTTPException, match="video_edit"):
+        await freezone_routes.freezone_video_edit(
+            "project",
+            FreezoneVideoEditRequest(
+                video_url="https://example.com/input.mp4",
+                model="happyhorse-1.1",
+                gen_mode="videoEdit",
+            ),
+            {"username": "admin"},
+        )
+
+
 def test_image_to_video_requires_an_explicit_new_mode() -> None:
     with pytest.raises(ValidationError, match="gen_mode"):
         FreezoneImageToVideoRequest(
@@ -253,11 +355,38 @@ async def test_keyframe_route_preserves_selected_mode_for_all_frame_combinations
     assert captured["request_mode"] == requested_mode
     assert captured["start"]["gen_mode"] == expected_mode
     assert captured["start"]["requested_gen_mode"] == requested_mode
+    assert captured["start"]["aspect_ratio"] == "auto"
+    assert captured["start"]["duration_seconds"] == 5
     assert captured["start"]["last_frame_path"] == last_url
     first_items = [
         item for item in captured["start"]["reference_items"] if item["role"] == "首帧"
     ]
     assert (first_items[0]["path"] if first_items else None) == expected_image_path
+
+
+@pytest.mark.asyncio
+async def test_text_to_video_preserves_selected_ratio_and_duration(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured = await _install_route_fakes(
+        monkeypatch,
+        tmp_path,
+        _catalog("text_to_video"),
+    )
+
+    await freezone_routes.freezone_video_gen(
+        "project",
+        FreezoneVideoGenRequest(
+            prompt="rainy street",
+            aspect_ratio="9:16",
+            duration_seconds=9,
+            model="catalog-video",
+        ),
+        {"username": "admin"},
+    )
+
+    assert captured["start"]["aspect_ratio"] == "9:16"
+    assert captured["start"]["duration_seconds"] == 9
 
 
 @pytest.mark.asyncio

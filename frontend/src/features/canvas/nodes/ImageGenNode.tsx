@@ -35,6 +35,7 @@ import {
 } from '@/features/canvas/domain/canvasNodes';
 import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
 import {
+  formatResolutionLabel,
   resolveModelAspectOptions,
   resolveModelQualityOptions,
   resolveModelSizeOptions,
@@ -430,7 +431,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       })),
     [selectedModel],
   );
-  const effectiveImageSize = modelSizeOptions.includes(size) ? size : modelSizeOptions[0];
+  const effectiveImageSize =
+    modelSizeOptions.find((option) => option.toLowerCase() === size.toLowerCase())
+    ?? modelSizeOptions[0];
   const effectiveAspectRatio = snapToAllowedAspectRatio(
     aspectRatio,
     modelAspectOptions.map((item) => item.value),
@@ -2169,7 +2172,7 @@ function AspectSizeChip({ aspectRatio, size, sizeOptions, aspectOptions, quality
           </>
         )}
         <span className="text-text-muted/80">·</span>
-        <span>{size}</span>
+        <span>{formatResolutionLabel(size)}</span>
         <ChevronDown className="h-3 w-3 text-text-muted/90" />
       </button>
       {isOpen && (
@@ -2219,7 +2222,7 @@ function AspectSizeChip({ aspectRatio, size, sizeOptions, aspectOptions, quality
                       : IMAGE_PARAM_IDLE_BUTTON_CLASS
                   }`}
                 >
-                  {option}
+                  {formatResolutionLabel(option)}
                 </button>
               );
             })}

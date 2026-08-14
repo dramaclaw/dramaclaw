@@ -23,6 +23,9 @@ describe("canvas video generation credit contract", () => {
     );
     expect(panelSource).toContain("video_backend: debouncedBackend");
     expect(panelSource).toContain("pricing_quantity: videoPricingQuantity");
+    expect(panelSource).toContain(
+      "Math.max(Math.floor(debouncedInputVideoDuration), 1)",
+    );
     expect(panelSource).toContain("quantity: videoCount");
     expect(panelSource).toContain("operation: genMode");
     expect(panelSource).toContain(
@@ -66,6 +69,9 @@ describe("canvas video generation credit contract", () => {
     );
     expect(nodeSource).toContain(
       "input_video_duration_seconds: videoInputBilling.durationSeconds",
+    );
+    expect(nodeSource).toContain(
+      "Math.max(Math.floor(videoInputBilling.durationSeconds), 1)",
     );
     expect(nodeSource).toContain(
       "retryBillingProbe.error instanceof BillingRuleNotConfiguredError",

@@ -135,7 +135,9 @@ def get_video_camera_template(template_id: str | None) -> dict[str, str] | None:
 
 def normalize_video_aspect_ratio(value: str | None) -> str:
     text = str(value or "").strip().lower()
-    if not text or text == "auto":
+    if text in {"auto", "adaptive"}:
+        return "auto"
+    if not text:
         return "16:9"
     return text
 
@@ -219,12 +221,12 @@ def normalize_video_resolution_for_backend(
             None,
         )
         if matched is not None:
-            return matched
+            return normalize_video_resolution(matched)
         preferred = next(
             (option for option in configured if option.lower() == "720p"),
             None,
         )
-        return preferred or configured[0]
+        return normalize_video_resolution(preferred or configured[0])
     options = freezone_video_resolution_options(backend)
     if resolution in options:
         return resolution
@@ -485,6 +487,7 @@ def build_freezone_omni_video_prompt(
     theme: str = "",
     camera_template_id: str | None = None,
     marks: list[dict[str, Any]] | None = None,
+    reference_items: list[dict[str, Any]] | None = None,
 ) -> str:
     parts = [str(user_prompt or "").strip()]
 
@@ -502,6 +505,15 @@ def build_freezone_omni_video_prompt(
     parts.append(
         "全能参考模式要求：综合文本、图像、视频和音频参考进行统一建模，优先保持主体身份、场景连续性、风格一致性和动作自然性。"
     )
+    counts = summarize_omni_reference_counts(reference_items or [])
+    single_video_reference_instruction = "这是视频参考生成新的视频，不是视频编辑。"
+    if (
+        counts["video_count"] == 1
+        and counts["image_count"] == 0
+        and counts["audio_count"] == 0
+        and single_video_reference_instruction not in "\n".join(parts)
+    ):
+        parts.append(single_video_reference_instruction)
     parts.append(
         "输出要求：生成单条连贯视频镜头，动作自然，运动平滑，避免闪烁、变形、跳帧和主体身份漂移。"
     )

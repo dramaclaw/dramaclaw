@@ -53,6 +53,7 @@ export interface ModelOption {
   resolutionOptions?: string[];
   qualityOptions?: string[];
   humanReview?: boolean;
+  supportsGenerateAudio?: boolean;
   minDuration?: number | null;
   maxDuration?: number | null;
   sceneOptimizeOptions?: Array<'anime' | 'realistic'>;

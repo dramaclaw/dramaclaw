@@ -19,7 +19,10 @@ import {
   referenceDurationLimitsMs,
   resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
+  videoModeForcesAutomaticAspectRatio,
   videoModeRequiresPrompt,
+  videoModelDefaultGenerateAudio,
+  videoModelSupportsGenerateAudio,
   videoModelReferenceDisabledReason,
   videoMultiImageAutoSwitchMode,
   videoReferenceAutoSwitchAction,
@@ -27,6 +30,20 @@ import {
   videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
+
+describe("视频模式有效比例", () => {
+  it.each([
+    ["firstFrame", true],
+    ["firstLastFrame", true],
+    ["videoEdit", true],
+    ["textToVideo", false],
+    ["imageToVideo", false],
+    ["imageReference", false],
+    ["allReference", false],
+  ] as const)("%s 是否强制跟随输入素材", (mode, expected) => {
+    expect(videoModeForcesAutomaticAspectRatio(mode)).toBe(expected);
+  });
+});
 
 // 对齐后端 freezone/video_node.py 的真实模型 id（apiModel == id == 后端 model）。
 const SEEDANCE2_FAST = "newapi_seedance-2.0-fast";
@@ -65,6 +82,27 @@ describe("video model family detection", () => {
     }
     // 分隔符不敏感：normalize 后 `seedance20` 仍是 2.0，不会漏成 1.x。
     expect(isSeedance2VideoModel("SEEDANCE 2.0 FAST")).toBe(true);
+  });
+});
+
+describe("video native audio capability", () => {
+  it("preserves legacy support and default when catalog fields are absent", () => {
+    expect(videoModelSupportsGenerateAudio(SEEDANCE2_FAST)).toBe(true);
+    expect(videoModelDefaultGenerateAudio({ apiModel: SEEDANCE2_FAST })).toBe(true);
+  });
+
+  it("defaults native audio on whenever the model supports it", () => {
+    expect(videoModelSupportsGenerateAudio({ supportsGenerateAudio: true })).toBe(true);
+    expect(
+      videoModelDefaultGenerateAudio({
+        supportsGenerateAudio: true,
+      }),
+    ).toBe(true);
+    expect(
+      videoModelDefaultGenerateAudio({
+        supportsGenerateAudio: false,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -289,6 +327,28 @@ describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", ()
       videoSubmitMediaRejectionReason("imageReference", HAPPYHORSE, { images: 5, videos: 0, audios: 0 }),
     ).toBeNull();
   });
+
+  it("目录显式开放音频后，视频编辑消费独立音频", () => {
+    const audioVideoEditModel = {
+      apiModel: "custom-video-editor",
+      supportedModes: ["video_edit"],
+      referenceAudioMax: 2,
+    };
+    expect(
+      videoSubmitMediaRejectionReason("videoEdit", audioVideoEditModel, {
+        images: 0,
+        videos: 1,
+        audios: 1,
+      }),
+    ).toBeNull();
+    expect(
+      videoSubmitMediaRejectionReason(
+        "videoEdit",
+        { ...audioVideoEditModel, referenceAudioMax: 0 },
+        { images: 0, videos: 1, audios: 1 },
+      ),
+    ).toBeTruthy();
+  });
 });
 
 describe("videoMultiImageAutoSwitchMode — 首帧接多图时的自动改模式", () => {
@@ -476,6 +536,19 @@ describe("videoModelReferenceDisabledReason — 模型选择器置灰守卫", ()
     expect(
       videoModelReferenceDisabledReason(HAPPYHORSE, { ...none, audios: 1 }),
     ).toBeTruthy();
+  });
+
+  it("目录声明 video_edit 且音频上限大于 0 时，带音频仍可选择模型", () => {
+    expect(
+      videoModelReferenceDisabledReason(
+        {
+          apiModel: "custom-video-editor",
+          supportedModes: ["video_edit"],
+          referenceAudioMax: 1,
+        },
+        { ...none, videos: 1, audios: 1 },
+      ),
+    ).toBeNull();
   });
 
   // 后台把某个模型的「视频编辑」下掉后，启发式那套「HappyHorse 天生能吃视频」的假设
