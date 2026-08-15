@@ -1785,6 +1785,7 @@ tests/test_api_narrator_voice.py,Elastic-2.0,2026 SuperTale contributors,REUSE.t
 tests/test_api_novel_prerequisites.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_pipeline_manual_shots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_project_resolution.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_project_summary_paths.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_render_regenerate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_render_settings.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_scripts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

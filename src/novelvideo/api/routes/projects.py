@@ -13,7 +13,6 @@ from fastapi.responses import JSONResponse
 
 from novelvideo.api.auth import get_api_user, require_scope
 from novelvideo.api.deps import (
-    get_project_paths,
     make_sqlite_store_for_context,
     make_static_url_for_context,
     validate_project_name,
@@ -97,10 +96,10 @@ def _project_updated_at(paths) -> str | None:
     return datetime.fromtimestamp(latest, tz=timezone.utc).isoformat()
 
 
-def _project_counts(username: str, project: str, status: str) -> tuple[int | None, int | None]:
+def _project_counts(paths, status: str) -> tuple[int | None, int | None]:
     if status == "deleted":
         return None, None
-    db_path = get_project_paths(username, project).data_db
+    db_path = paths.data_db
     if not db_path.exists():
         return None, None
     try:
@@ -112,7 +111,7 @@ def _project_counts(username: str, project: str, status: str) -> tuple[int | Non
         finally:
             conn.close()
     except sqlite3.Error:
-        logger.debug("project count failed: %s/%s", username, project, exc_info=True)
+        logger.debug("project count failed: %s", db_path, exc_info=True)
         return None, None
 
 
@@ -145,7 +144,7 @@ async def _summary_for_record(
     paths._runtime_dir_override = Path(record.runtime_dir)
     config = load_project_config_file_from_state_dir(record.state_dir)
     status = record.status or "active"
-    episode_count, beat_count = _project_counts(record.owner_username, record.name, status)
+    episode_count, beat_count = _project_counts(paths, status)
     return ProjectSummary(
         id=record.id,
         name=record.name,
