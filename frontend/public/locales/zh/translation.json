@@ -1603,6 +1603,8 @@
     "globalOptimize": "全局优化",
     "videoGenerating": "视频生成中...",
     "addSubtitles": "添加字幕",
+    "addBgm": "背景音乐",
+    "bgmQueryPlaceholder": "情绪或风格（可选）",
     "composeVideo": "合成视频",
     "composing": "合成中...",
     "composeHint": "配置选项后点击「合成视频」生成最终视频",

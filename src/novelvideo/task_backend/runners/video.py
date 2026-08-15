@@ -8,6 +8,7 @@ from typing import Any
 
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
+    TaskCancelled,
     TaskTimedOut,
     await_envelope_with_cancel_watch,
     raise_if_envelope_cancel_requested,
@@ -426,9 +427,189 @@ def run_video_generation(envelope: dict[str, Any], ctx: ProjectContext) -> dict[
     )
 
 
+def _probe_media_duration(path: str, *, timeout_seconds: int | None) -> float:
+    """Return a media file's duration in seconds via ffprobe (0.0 on failure)."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+        return float((out.stdout or "").strip() or 0)
+    except Exception:
+        return 0.0
+
+
+# --- Provider-neutral BGM source selection ------------------------------------
+# ``add_bgm=true`` alone is NOT enough to pick a vendor: the caller must name an
+# explicit source so the compose contract stays provider-neutral. Add future
+# providers here (e.g. an internal catalog) without touching the runner logic.
+_BGM_SOURCE_NONE = "none"
+_BGM_SOURCE_ARTLIST = "artlist"
+SUPPORTED_BGM_SOURCES = (_BGM_SOURCE_ARTLIST, _BGM_SOURCE_NONE)
+
+
+def _resolve_bgm_source(add_bgm: bool, raw_source: object) -> str | None:
+    """Resolve which BGM provider to apply, provider-neutrally.
+
+    Returns the provider key to use, or ``None`` for no BGM. ``add_bgm=true``
+    must be paired with an explicit ``bgm_source``; a missing or unknown source
+    raises ``ValueError`` so misconfiguration fails loudly instead of silently
+    defaulting to a specific vendor. ``"none"`` is an explicit opt-out.
+    """
+    source = str(raw_source or "").strip().lower()
+    if not add_bgm:
+        return None
+    if not source:
+        raise ValueError(
+            "add_bgm=true requires an explicit bgm_source "
+            f"(one of: {', '.join(SUPPORTED_BGM_SOURCES)}); "
+            "refusing to assume a background-music provider"
+        )
+    if source == _BGM_SOURCE_NONE:
+        return None
+    if source not in SUPPORTED_BGM_SOURCES:
+        raise ValueError(
+            f"Unknown bgm_source {source!r}; supported: {', '.join(SUPPORTED_BGM_SOURCES)}"
+        )
+    return source
+
+
+def _write_bgm_provenance(final_video_path: Path, provenance: dict[str, Any]) -> str | None:
+    """Persist a BGM provenance sidecar next to the exported media.
+
+    A log line is not sufficient provenance for exported commercial media, so we
+    record the track/license reference on disk beside the final video. Returns
+    the sidecar path, or ``None`` if it could not be written (best-effort).
+    """
+    import json
+
+    sidecar = final_video_path.with_suffix(".bgm.json")
+    try:
+        sidecar.write_text(
+            json.dumps(provenance, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return sidecar.as_posix()
+    except OSError:
+        return None
+
+
+def _apply_artlist_bgm(
+    *,
+    video_path: Path,
+    tmp_dir: Path,
+    query: str,
+    volume: float,
+    run_checked,
+    subprocess_timeout,
+    fmt: str = "mp3",
+) -> tuple[str, dict[str, Any]]:
+    """Mix an Artlist background track under the episode audio, in place.
+
+    Searches Artlist for a track near the episode length, loops/ducks it under
+    the existing dialogue/narration, and overwrites ``video_path``. Raises on
+    failure so the caller can log-and-skip — BGM never blocks delivery.
+
+    Returns ``(status_message, provenance)`` where ``provenance`` is a structured
+    record of the selected track, its source/provider, and the license/account
+    reference — sufficient to attribute the track in exported commercial media.
+    """
+    import asyncio
+    import shutil
+    from datetime import datetime, timezone
+
+    from novelvideo.music import ArtlistMusicProvider
+
+    duration = _probe_media_duration(
+        str(video_path), timeout_seconds=subprocess_timeout(30)
+    )
+    provider = ArtlistMusicProvider()
+    bgm_source = str(tmp_dir / "bgm_source.mp3")
+    track, _ = asyncio.run(
+        provider.fetch_bgm(
+            bgm_source,
+            query=query or None,
+            duration_target=duration or None,
+            fmt=fmt,
+        )
+    )
+
+    mixed_path = tmp_dir / "episode_with_bgm.mp4"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-stream_loop",
+        "-1",
+        "-i",
+        bgm_source,
+        "-filter_complex",
+        # Music at a low fixed level, mixed under the full-length dialogue track.
+        f"[1:a]volume={volume}[bg];"
+        f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+        "-map",
+        "0:v:0",
+        "-map",
+        "[aout]",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "160k",
+        "-shortest",
+        str(mixed_path),
+    ]
+    result = run_checked(cmd, default_timeout_seconds=30 * 60)
+    if result.returncode != 0:
+        raise RuntimeError(f"BGM mix failed: {result.stderr[:300]}")
+
+    shutil.move(str(mixed_path), str(video_path))
+
+    provenance: dict[str, Any] = {
+        "provider": _BGM_SOURCE_ARTLIST,
+        "source": _BGM_SOURCE_ARTLIST,
+        "track_id": track.id,
+        "track_name": track.name or track.id,
+        "genres": list(track.genres),
+        "duration_seconds": round(float(track.duration), 3),
+        "download_format": fmt,
+        "query": query or None,
+        "mix_volume": volume,
+        # License / account reference for the exported track. The Artlist
+        # Business (Enterprise) catalog is royalty-free under the account keyed
+        # by ARTLIST_CLIENT_ID (the client id, not the secret).
+        "license": "Artlist Business API royalty-free license",
+        "account_ref": provider.client_id,
+        "mixed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    status = f"Artlist BGM applied: {track.name or track.id} ({track.duration:.0f}s)"
+    return status, provenance
+
+
 def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
+    import os
     import subprocess
     import tempfile
+
+    def _bgm_volume() -> float:
+        try:
+            return float(os.environ.get("ARTLIST_BGM_VOLUME") or 0.15)
+        except ValueError:
+            return 0.15
 
     from novelvideo.utils.path_resolver import PathResolver
 
@@ -438,6 +619,13 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
     beats = list(payload.get("beats") or [])
     resolution = str(payload.get("resolution") or "720x1280")
     add_subtitles = bool(payload.get("add_subtitles"))
+    add_bgm = bool(payload.get("add_bgm"))
+    # Provider-neutral: add_bgm alone does not select a vendor. Resolve (and
+    # validate) the explicit source up front so a bad selection fails fast,
+    # before any expensive ffmpeg work.
+    bgm_source = _resolve_bgm_source(
+        add_bgm, payload.get("bgm_source") or payload.get("bgm_provider")
+    )
     manager = get_task_manager()
     paths = PathResolver(output_dir, episode)
     final_dir = Path(output_dir) / "videos" / "episodes"
@@ -641,10 +829,65 @@ def run_compose_episode(envelope: dict[str, Any], ctx: ProjectContext) -> dict[s
         if result.returncode != 0:
             raise RuntimeError(f"拼接失败: {result.stderr[:500]}")
 
-    return {
+        bgm_applied = False
+        bgm_provenance: dict[str, Any] | None = None
+        if bgm_source == _BGM_SOURCE_ARTLIST:
+            check_cancel()
+            manager.update_progress_for_project(
+                ctx,
+                "compose_episode",
+                episode,
+                current_task="Adding background music...",
+            )
+            try:
+                status, bgm_provenance = _apply_artlist_bgm(
+                    video_path=output_path,
+                    tmp_dir=tmp_dir,
+                    query=str(
+                        payload.get("bgm_query")
+                        or os.environ.get("ARTLIST_BGM_QUERY")
+                        or "cinematic"
+                    ),
+                    volume=_bgm_volume(),
+                    run_checked=run_checked,
+                    subprocess_timeout=subprocess_timeout,
+                )
+                bgm_applied = True
+                # Persist provenance beside the exported media (a log line alone
+                # is not sufficient provenance for commercial media).
+                sidecar = _write_bgm_provenance(output_path, bgm_provenance)
+                if sidecar:
+                    bgm_provenance["provenance_sidecar"] = sidecar
+                manager.update_progress_for_project(
+                    ctx, "compose_episode", episode, logs=[status]
+                )
+            except (TaskCancelled, TaskTimedOut):
+                # Control-flow exceptions (user cancellation / cooperative
+                # timeout) must propagate — never mask them as a skipped BGM,
+                # or a cancelled/timed-out compose would report success.
+                raise
+            except Exception as exc:
+                # BGM is best-effort: never fail delivery over it.
+                bgm_provenance = None
+                manager.update_progress_for_project(
+                    ctx,
+                    "compose_episode",
+                    episode,
+                    logs=[f"Background music skipped: {exc}"],
+                )
+
+    result: dict[str, Any] = {
         "video_path": output_path.as_posix(),
         "add_subtitles_requested": add_subtitles,
+        "bgm_applied": bgm_applied,
+        # Provider-neutral record of what BGM (if any) was requested.
+        "bgm_source": bgm_source,
     }
+    if bgm_provenance is not None:
+        # Structured provenance attached to the composition result: track id,
+        # name, source/provider, and license/account reference.
+        result["bgm"] = bgm_provenance
+    return result
 
 
 register_project_task_runner("compose_episode", run_compose_episode)

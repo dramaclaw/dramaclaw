@@ -1498,6 +1498,8 @@ src/novelvideo/media_model_request_schema.py,Elastic-2.0,2026 SuperTale contribu
 src/novelvideo/model_gateway_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/model_gateway_settings.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/music/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/music/artlist_provider.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/newapi_provisioner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/novel_source.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/official_defaults.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1754,6 +1756,7 @@ tests/test_api_sketch_pose_editor.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_api_sketch_regenerate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_style_analysis_billing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_styles.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_artlist_bgm.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_asset_compiler_prop_planning.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_asset_compiler_scene_enrichment.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_asset_resolver.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
