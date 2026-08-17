@@ -541,6 +541,7 @@ function ModelConfigSection({ open }: { open: boolean }) {
                   }
                   savedEmbeddingModel={config?.provisioner?.embeddingModel}
                   savedMediaModels={config?.provisioner?.mediaModels ?? {}}
+                  defaultComfyWorkflows={HYBRID_COMFYUI_WORKFLOWS}
                 />
               </div>
             </details>
@@ -2450,59 +2451,6 @@ function FeatureModelsBlock({
     updateFeatureProviderChannel,
   ]);
 
-  const handleLoadDefaultComfyWorkflows = () => {
-    if (!defaultComfyWorkflows) return;
-    const current = providerChannels.comfyui;
-    const currentSettings = current?.settings ?? {};
-    const currentComfyUI =
-      currentSettings.comfyui &&
-      typeof currentSettings.comfyui === "object" &&
-      !Array.isArray(currentSettings.comfyui)
-        ? (currentSettings.comfyui as Record<string, unknown>)
-        : {};
-    const currentWorkflows = readComfyUIWorkflows(currentSettings);
-    const currentModel = readComfyUIModelName(currentSettings);
-    const model = currentModel || defaultComfyWorkflows.model;
-    const workflows = {
-      ...defaultComfyWorkflows.workflows,
-      ...currentWorkflows,
-    };
-    const nextComfyUI = { ...currentComfyUI };
-    delete nextComfyUI.workflow_by_model;
-    delete nextComfyUI.workflow;
-    addFeatureProviderChannel("comfyui");
-    updateFeatureProviderChannel("comfyui", {
-      baseUrl: current?.baseUrl || "http://127.0.0.1:8188",
-      priority: current?.priority ?? 0,
-      settings: {
-        ...currentSettings,
-        comfyui: {
-          ...nextComfyUI,
-          model_name: model,
-          workflow_routes: buildComfyUIWorkflowRoutes(workflows),
-        },
-      },
-    });
-  };
-
-  useEffect(() => {
-    if (!defaultComfyWorkflows) return;
-    const current = providerChannels.comfyui;
-    if (!current || current.baseUrl.trim()) return;
-    const workflows = readComfyUIWorkflows(current.settings);
-    const hasLoadedTemplate = Object.keys(defaultComfyWorkflows.workflows).some(
-      (model) => workflows[model],
-    );
-    if (!hasLoadedTemplate) return;
-    updateFeatureProviderChannel("comfyui", {
-      baseUrl: "http://127.0.0.1:8188",
-    });
-  }, [
-    defaultComfyWorkflows,
-    providerChannels.comfyui,
-    updateFeatureProviderChannel,
-  ]);
-
   // 把功能行按 provider 分组拼成渠道：modelMapping = { DC内部模型名: 上游模型名 }。
   const buildChannels = (): CustomChannelInput[] => {
     const byProvider = new Map<FeatureModelProvider, Record<string, string>>();
@@ -2597,23 +2545,6 @@ function FeatureModelsBlock({
 
   return (
     <>
-      {defaultComfyWorkflows ? (
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2.5">
-          <p className="text-xs text-muted-foreground">
-            {t("settings.modelConfig.quick.comfyTemplateHint")}
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            onClick={handleLoadDefaultComfyWorkflows}
-          >
-            <Plus className="size-3.5" />
-            {t("settings.modelConfig.quick.loadComfyTemplate")}
-          </Button>
-        </div>
-      ) : null}
       <ProviderChannelsBlock
         savedProviderChannels={savedProviderChannels}
         newApiBaseUrl={newApiBaseUrl}
@@ -2624,6 +2555,7 @@ function FeatureModelsBlock({
         channelTypesLoading={channelTypesQuery.isLoading}
         allowedProviders={comfyOnly ? ["comfyui"] : undefined}
         excludedProviders={excludeComfyUI ? ["comfyui"] : undefined}
+        defaultComfyWorkflows={defaultComfyWorkflows}
       />
 
       {!mediaOnly ? (
@@ -4218,6 +4150,7 @@ function ProviderChannelsBlock({
   channelTypesLoading,
   allowedProviders,
   excludedProviders,
+  defaultComfyWorkflows,
 }: {
   savedProviderChannels: SavedProviderChannelConfig[];
   newApiBaseUrl: string;
@@ -4226,6 +4159,10 @@ function ProviderChannelsBlock({
   channelTypesLoading: boolean;
   allowedProviders?: readonly string[];
   excludedProviders?: readonly string[];
+  defaultComfyWorkflows?: {
+    model: string;
+    workflows: Record<string, Record<string, unknown>>;
+  };
 }) {
   const { t } = useTranslation();
   const providerChannels = useSettingsStore(
@@ -4441,6 +4378,7 @@ function ProviderChannelsBlock({
                 savedChannel={savedChannelByProvider.get(provider)}
                 newApiBaseUrl={newApiBaseUrl}
                 database={database}
+                defaultComfyWorkflows={defaultComfyWorkflows}
               />
             ))}
           </div>
@@ -4476,12 +4414,17 @@ function ProviderChannelRow({
   savedChannel,
   newApiBaseUrl,
   database,
+  defaultComfyWorkflows,
 }: {
   provider: FeatureModelProvider;
   channelType: NewApiChannelType | undefined;
   savedChannel: SavedProviderChannelConfig | undefined;
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
+  defaultComfyWorkflows?: {
+    model: string;
+    workflows: Record<string, Record<string, unknown>>;
+  };
 }) {
   const { t } = useTranslation();
   const channel = useSettingsStore(
@@ -4591,6 +4534,35 @@ function ProviderChannelRow({
         ),
       );
     }
+  };
+  const handleLoadDefaultComfyWorkflows = () => {
+    if (!isComfyUI || !defaultComfyWorkflows) return;
+    const currentSettings = channel?.settings ?? {};
+    const currentComfyUI =
+      currentSettings.comfyui &&
+      typeof currentSettings.comfyui === "object" &&
+      !Array.isArray(currentSettings.comfyui)
+        ? (currentSettings.comfyui as Record<string, unknown>)
+        : {};
+    const nextComfyUI = { ...currentComfyUI };
+    delete nextComfyUI.workflow_by_model;
+    delete nextComfyUI.workflow;
+    updateFeatureProviderChannel(provider, {
+      baseUrl: channel?.baseUrl || "http://127.0.0.1:8188",
+      settings: {
+        ...currentSettings,
+        comfyui: {
+          ...nextComfyUI,
+          model_name:
+            readComfyUIModelName(currentSettings) ||
+            defaultComfyWorkflows.model,
+          workflow_routes: buildComfyUIWorkflowRoutes({
+            ...defaultComfyWorkflows.workflows,
+            ...readComfyUIWorkflows(currentSettings),
+          }),
+        },
+      },
+    });
   };
 
   return (
@@ -4730,6 +4702,11 @@ function ProviderChannelRow({
       {isComfyUI ? (
         <ComfyUIWorkflowsEditor
           settings={channel?.settings ?? {}}
+          onLoadDefaultTemplate={
+            defaultComfyWorkflows
+              ? handleLoadDefaultComfyWorkflows
+              : undefined
+          }
           onChange={(settings) =>
             updateFeatureProviderChannel(provider, { settings })
           }
@@ -4852,9 +4829,11 @@ function normalizeProviderChannelSettings(
 function ComfyUIWorkflowsEditor({
   settings,
   onChange,
+  onLoadDefaultTemplate,
 }: {
   settings: Record<string, unknown>;
   onChange: (settings: Record<string, unknown>) => void;
+  onLoadDefaultTemplate?: () => void;
 }) {
   const { t } = useTranslation();
   const workflows = readComfyUIWorkflows(settings);
@@ -4943,10 +4922,28 @@ function ComfyUIWorkflowsEditor({
             {t("settings.modelConfig.featureModels.comfyWorkflowHint")}
           </p>
         </div>
-        <Button type="button" size="sm" variant="outline" onClick={addWorkflow}>
-          <Plus className="size-3.5" />
-          {t("settings.modelConfig.featureModels.comfyAddWorkflow")}
-        </Button>
+        <div className="flex items-center gap-2">
+          {onLoadDefaultTemplate ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onLoadDefaultTemplate}
+            >
+              <Plus className="size-3.5" />
+              {t("settings.modelConfig.quick.loadComfyTemplate")}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={addWorkflow}
+          >
+            <Plus className="size-3.5" />
+            {t("settings.modelConfig.featureModels.comfyAddWorkflow")}
+          </Button>
+        </div>
       </div>
       <div className="mt-3">
         <Label className="text-xs text-muted-foreground">
