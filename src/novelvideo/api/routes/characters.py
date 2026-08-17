@@ -51,6 +51,7 @@ from novelvideo.project_config import (
     load_project_config_file,
     update_project_config_file,
 )
+from novelvideo.utils.asset_names import path_safe_asset_name
 from novelvideo.utils.path_resolver import (
     compute_portrait_path,
     compute_identity_path,
@@ -551,6 +552,29 @@ async def _repair_duplicate_main_characters(
     return repaired
 
 
+async def _heal_path_unsafe_character_names(
+    store: SQLiteStore, project_dir: Path
+) -> None:
+    """修好库里名字带斜杠的存量角色，原名转成别名。
+
+    ``NovelCharacter.sanitize_name`` 一直在挡新数据，但它是**读的时候**才生效：主键里
+    留着斜杠的老行读出来名字已经是干净的，``DELETE ... WHERE name = ?`` 却一行都删不掉。
+    和场景 / 道具同一个毛病，见 :mod:`novelvideo.utils.asset_names`。
+    """
+
+    def move_assets(old_name: str, new_name: str) -> None:
+        old_dir = project_dir / "assets" / "characters" / old_name
+        new_dir = project_dir / "assets" / "characters" / new_name
+        if not old_dir.exists():
+            return
+        if new_dir.exists():
+            raise ValueError(f"Target asset directory already exists: {new_dir}")
+        new_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(old_dir), str(new_dir))
+
+    await store.repair_path_unsafe_asset_names("character", move_assets)
+
+
 @router.get("/projects/{project}/characters")
 async def list_characters(
     project: str,
@@ -561,6 +585,7 @@ async def list_characters(
         await _resolve_character_project(project, user, required_role="viewer")
     )
 
+    await _heal_path_unsafe_character_names(store, project_dir)
     characters = await _repair_duplicate_main_characters(
         store, store.get_all_characters()
     )
@@ -615,16 +640,21 @@ async def add_character(
 
     from novelvideo.models import NovelCharacter
 
+    # 在查重之前消毒，否则两个只差斜杠的名字会双双通过查重、后写的静默覆盖先写的。
+    name = path_safe_asset_name(str(body.name or "").strip(), kind="character")
+    if not name:
+        return {"ok": False, "error": "Character name is required"}
+
     # 检查角色是否已存在
-    existing = store.get_character(body.name)
+    existing = store.get_character(name)
     if existing is not None:
-        return {"ok": False, "error": f"Character '{body.name}' already exists"}
+        return {"ok": False, "error": f"Character '{name}' already exists"}
 
     if body.is_main:
-        await _unset_other_main_characters(store, body.name)
+        await _unset_other_main_characters(store, name)
 
     char = NovelCharacter(
-        name=body.name,
+        name=name,
         role=body.role,
         is_main=body.is_main,
         gender=body.gender,
@@ -1018,7 +1048,10 @@ async def update_character(
     updates = body.model_dump(exclude_none=True)
     requested_name = None
     if "name" in updates:
-        requested_name = str(updates.pop("name") or "").strip()
+        # 消毒后再查重、再改名：斜杠会让这个角色的 {name} 接口整排 404。
+        requested_name = path_safe_asset_name(
+            str(updates.pop("name") or "").strip(), kind="character"
+        )
         if not requested_name:
             return {"ok": False, "error": "Character name cannot be empty"}
 

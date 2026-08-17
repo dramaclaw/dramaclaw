@@ -14,7 +14,7 @@ import json
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import aiosqlite
 from rich.console import Console
@@ -33,10 +33,22 @@ from novelvideo.models import (
 from novelvideo.novel_source import load_imported_novel_content
 from novelvideo.sqlite_pragmas import configure_sqlite_connection_async
 from novelvideo.sqlite_schema import ensure_sqlite_schema
+from novelvideo.utils.asset_names import (
+    is_path_safe_asset_name,
+    path_safe_asset_name,
+    unique_path_safe_asset_name,
+)
 from novelvideo.utils.path_resolver import compute_identity_path
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+_PATH_UNSAFE_REPAIR_TABLES = {
+    "scene": "scenes",
+    "character": "characters",
+    "prop": "props",
+}
 
 
 class StoreClosedError(RuntimeError):
@@ -329,6 +341,11 @@ class SQLiteStore:
         self._drained = asyncio.Event()
         self._drained.set()
         self._lease_depth_by_task: dict[Any, int] = {}
+        # 存量名字自愈每种资产只跑一次，并且串行。两个并发的列表请求会同时看见
+        # `old_dir.exists()`，一个搬走目录、另一个的 shutil.move 抛异常被吞掉，那一行就
+        # 停在「盘上已改名、库里还是旧名」的错位状态。
+        self._path_repair_lock = asyncio.Lock()
+        self._path_repair_done: set[str] = set()
 
         if output_dir:
             self.project_dir = output_dir
@@ -721,6 +738,10 @@ class SQLiteStore:
             return 0
 
     async def rename_character(self, old_name: str, new_name: str) -> None:
+        # 必须用角色口径：下面是 `char.name = new_name` 直接赋值，绕过了模型校验器，
+        # 窄口径放过的 `王:小明` 会原样写进主键，而每次读出来都被改写成 `王_小明`——
+        # 又是一行删不掉的记录。
+        new_name = path_safe_asset_name(new_name, kind="character")
         char = self.get_character(old_name)
         if not char:
             raise ValueError(f"角色 {old_name} 不存在")
@@ -763,6 +784,127 @@ class SQLiteStore:
         for key in remove_keys:
             self._alias_index.pop(key, None)
         console.print(f"[green]已删除角色: {name}[/green]")
+
+    async def repair_path_unsafe_asset_names(
+        self,
+        kind: str,
+        move_assets: Optional[Callable[[str, str], None]] = None,
+    ) -> Dict[str, str]:
+        """把库里名字带斜杠的存量资产改名归位，原名转成别名，返回 ``{旧名: 新名}``。
+
+        写入口的消毒（``NovelScene.sanitize_name`` 等）只管新数据，这道闸加上之前落库的
+        ``家中客厅/哥哥卧室`` 还躺在表里：它的 ``{name}`` 接口全是 404，删不掉也生不出图。
+
+        **必须走裸 SQL，不能走模型**：模型的 ``sanitize_name`` 会在读出来那一刻就把斜杠
+        抹平，模型层根本看不见坏名字，可主键里那个斜杠还在——``DELETE ... WHERE name = ?``
+        于是一行都删不掉，表现就是用户报的「点了删除，刷新还在」。
+
+        ``move_assets(old, new)`` 由调用方提供，负责搬 ``assets/<kind>s/<name>`` 那棵目录树；
+        它抛异常就跳过这一条不改名——宁可留着坏名字，也不能让记录指向别人的图。
+
+        名字都干净时只做一次 SELECT，不写库也不碰磁盘。
+
+        每种 kind 每个 store 实例只跑一次，且串行——列表接口是并发入口，见 ``__init__``
+        里 ``_path_repair_lock`` 的说明。
+        """
+
+        if kind in self._path_repair_done:
+            return {}
+        async with self._path_repair_lock:
+            if kind in self._path_repair_done:
+                return {}
+            renamed = await self._repair_path_unsafe_asset_names(kind, move_assets)
+            self._path_repair_done.add(kind)
+            return renamed
+
+    async def _repair_path_unsafe_asset_names(
+        self,
+        kind: str,
+        move_assets: Optional[Callable[[str, str], None]] = None,
+    ) -> Dict[str, str]:
+        table = _PATH_UNSAFE_REPAIR_TABLES[kind]
+        # 角色的身份记录把角色名嵌进了 character_name 和 identity_id，改名后不跟着改，
+        # 身份图的落盘路径就指向一个不存在的目录（rename_character 一直在做这件事）。
+        columns = "name, aliases_json, identities_json" if kind == "character" else "name, aliases_json"
+        db = await self._ensure_db()
+        async with db.execute(f"SELECT {columns} FROM {table}") as cursor:
+            rows = await cursor.fetchall()
+
+        taken = {str(row["name"] or "") for row in rows}
+        if all(is_path_safe_asset_name(name, kind=kind) for name in taken):
+            return {}
+
+        renamed: Dict[str, str] = {}
+        for row in rows:
+            old_name = str(row["name"] or "")
+            if is_path_safe_asset_name(old_name, kind=kind):
+                continue
+            taken.discard(old_name)
+            new_name = unique_path_safe_asset_name(old_name, taken, kind=kind)
+            if not new_name or new_name == old_name:
+                taken.add(old_name)
+                continue
+            if move_assets is not None:
+                try:
+                    move_assets(old_name, new_name)
+                except (OSError, ValueError):
+                    logger.warning(
+                        "资产目录迁移失败，跳过改名: %s → %s", old_name, new_name, exc_info=True
+                    )
+                    taken.add(old_name)
+                    continue
+            aliases = json.loads(row["aliases_json"] or "[]")
+            if old_name not in aliases:
+                aliases.append(old_name)
+            if kind == "character":
+                identities = json.loads(row["identities_json"] or "[]")
+                for identity in identities:
+                    if not isinstance(identity, dict):
+                        continue
+                    identity["character_name"] = new_name
+                    identity_name = str(identity.get("identity_name") or "")
+                    if identity_name:
+                        identity["identity_id"] = f"{new_name}_{identity_name}"
+                await db.execute(
+                    f"UPDATE {table} SET name = ?, aliases_json = ?, identities_json = ?, "
+                    f"updated_at = datetime('now') WHERE name = ?",
+                    (
+                        new_name,
+                        json.dumps(aliases, ensure_ascii=False),
+                        json.dumps(identities, ensure_ascii=False),
+                        old_name,
+                    ),
+                )
+            else:
+                await db.execute(
+                    f"UPDATE {table} SET name = ?, aliases_json = ?, "
+                    f"updated_at = datetime('now') WHERE name = ?",
+                    (new_name, json.dumps(aliases, ensure_ascii=False), old_name),
+                )
+            if kind == "scene":
+                # 派生场景按名字挂在母场景上，母场景改名后这些指针要跟着走，否则分组会
+                # 散架。必须和上面的改名同一个事务：一旦这一行提交了，名字就已经安全，
+                # 下次启动的自愈不会再看这一行，落下的 base_scene_id 就永远不会被补。
+                await db.execute(
+                    "UPDATE scenes SET base_scene_id = ?, updated_at = datetime('now') "
+                    "WHERE base_scene_id = ?",
+                    (new_name, old_name),
+                )
+            # 逐行提交：目录已经搬到新名下了，这一行的改名必须立刻落库。攒到最后一次性
+            # 提交的话，中途任何一行抛异常都会让「盘上新名、库里旧名」这批错位留在磁盘
+            # 上——正是上面那句「宁可留着坏名字」要避免的状态，只是方向反过来。
+            await db.commit()
+            taken.add(new_name)
+            renamed[old_name] = new_name
+
+        if not renamed:
+            return {}
+
+        # 两种 kind 都走 load_graph_state：`_props.clear()` 只清不填，而 list_props()
+        # 直接读 SQLite、不回填缓存，本次请求剩下的 get_cached_prop() 会对每个道具都
+        # 返回 None。
+        await self.load_graph_state()
+        return renamed
 
     @staticmethod
     def _normalize_alias_lookup(value: str) -> str:
@@ -869,7 +1011,7 @@ class SQLiteStore:
     async def rename_scene(self, old_name: str, new_name: str) -> bool:
         """重命名场景记录。资源目录迁移由调用方处理。"""
         old_name = str(old_name or "").strip()
-        new_name = str(new_name or "").strip()
+        new_name = path_safe_asset_name(new_name)
         if not old_name or not new_name or old_name == new_name:
             return False
         if await self.get_scene(new_name) is not None:
@@ -1004,7 +1146,7 @@ class SQLiteStore:
     async def rename_prop(self, old_name: str, new_name: str) -> bool:
         """重命名道具记录。资源目录迁移由调用方处理。"""
         old_name = str(old_name or "").strip()
-        new_name = str(new_name or "").strip()
+        new_name = path_safe_asset_name(new_name)
         if not old_name or not new_name or old_name == new_name:
             return False
         if await self.get_prop(new_name) is not None:

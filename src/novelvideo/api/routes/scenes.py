@@ -41,6 +41,7 @@ from novelvideo.project_context import ProjectContext, resolve_project_context
 from novelvideo.sqlite_store import SQLiteStore
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_scopes import scene_reference_asset_scope, stage_asset_scope
+from novelvideo.utils.asset_names import path_safe_asset_name
 from novelvideo.utils.derived_scenes import (
     compose_derived_scene_name,
 )
@@ -611,6 +612,20 @@ def _compose_scene_asset_name(
     return scene_name
 
 
+async def _heal_path_unsafe_scene_names(store: SQLiteStore, project_dir: Path) -> None:
+    """修好库里名字带斜杠的存量场景。
+
+    模型层的 ``NovelScene.sanitize_name`` 只管新数据；那道闸加上之前落库的
+    ``家中客厅/哥哥卧室`` 还躺在表里，它的 ``{name}`` 接口全是 404，删不掉也生不出源图。
+    挂在 list 上顺手治，用户打开资产页就归位了，不用额外的迁移脚本。
+    """
+
+    def move_assets(old_name: str, new_name: str) -> None:
+        _rename_scene_asset_dirs(project_dir, old_name, new_name)
+
+    await store.repair_path_unsafe_asset_names("scene", move_assets)
+
+
 @router.get("/projects/{project}/scenes")
 async def list_scenes(
     project: str,
@@ -619,6 +634,7 @@ async def list_scenes(
     ctx, _username, _project_name, project_dir, _output_dir, store = (
         await _resolve_scene_project(project, user, required_role="viewer")
     )
+    await _heal_path_unsafe_scene_names(store, project_dir)
     scenes = await store.list_scenes()
     scenes_by_name = {
         scene.name: scene for scene in scenes if str(scene.name or "").strip()
@@ -886,11 +902,15 @@ async def create_scene(
     ctx, username, project_name, project_dir, _output_dir, store = (
         await _resolve_scene_project(project, user)
     )
-    name = _compose_scene_asset_name(
-        body.name,
-        body.base_scene_id,
-        body.variant_id,
-        body.time_of_day,
+    # 在查重之前消毒：留到 add_scene 再改名的话，两个只差斜杠的名字会双双通过查重，
+    # 后写的那个把先写的静默覆盖掉。
+    name = path_safe_asset_name(
+        _compose_scene_asset_name(
+            body.name,
+            body.base_scene_id,
+            body.variant_id,
+            body.time_of_day,
+        )
     )
     if not name:
         return {"ok": False, "error": "Scene name is required"}
@@ -952,6 +972,9 @@ async def update_scene(
     )
     if next_base:
         requested_name = structured_name
+    # 在挪目录之前消毒：store.rename_scene 里也会消毒，但目录迁移先于它执行，
+    # 不在这里统一就会出现「库里 a_b、盘上 a/b」的错位。
+    requested_name = path_safe_asset_name(str(requested_name or "").strip())
     if requested_name and requested_name != scene.name:
         guard_error = await _derived_scene_guard_error(store, scene.name)
         if guard_error:

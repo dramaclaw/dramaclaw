@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from novelvideo.time_of_day import is_time_of_day_token, time_of_day_name_candidates
+from novelvideo.utils.asset_names import coerce_path_safe_asset_name, path_safe_asset_name
 from novelvideo.utils.derived_scenes import compose_derived_scene_name
 
 
@@ -1122,8 +1123,13 @@ class NovelCharacter(BaseModel):
 
     @model_validator(mode="after")
     def sanitize_name(self):
-        """清理角色名称中的文件系统不安全字符。"""
-        self.name = re.sub(r'[/\\:*?"<>|]', "_", self.name)
+        """清理角色名称中的文件系统不安全字符。
+
+        字符集定义在 :mod:`novelvideo.utils.asset_names`，路由层查重用的是同一个函数——
+        两边各写一份正则的话，窄的那边会放过一个宽的那边要改写的名字，``ON CONFLICT``
+        随即静默覆盖同名行。
+        """
+        self.name = path_safe_asset_name(self.name, kind="character")
         return self
 
     @property
@@ -1465,6 +1471,17 @@ class NovelScene(BaseModel):
     notes: str = Field(default="")
     updated_at: str = Field(default="", description="场景资产最后一次内容变化时间 ISO 字符串")
 
+    @model_validator(mode="after")
+    def sanitize_name(self):
+        """清理场景名称中的路径不安全字符，原名留作别名。
+
+        场景名同时是 SQLite 主键、REST 路径段和磁盘目录名，混进斜杠会让这个场景的
+        ``{name}`` 接口整排 404（详见 :mod:`novelvideo.utils.asset_names`）。
+        ``NovelCharacter.sanitize_name`` 早就这么做了，场景 / 道具补齐同一道闸。
+        """
+        self.name, self.aliases = coerce_path_safe_asset_name(self.name, self.aliases)
+        return self
+
 
 def build_scene_effective_prompt(scene: NovelScene, base_scene: NovelScene | None = None) -> str:
     """Build the display/generation fallback prompt for a scene record.
@@ -1530,6 +1547,12 @@ class NovelProp(BaseModel):
     owner: str = Field(default="", description="所属角色名")
     notes: str = Field(default="")
     updated_at: str = Field(default="", description="道具资产最后一次内容变化时间 ISO 字符串")
+
+    @model_validator(mode="after")
+    def sanitize_name(self):
+        """清理道具名称中的路径不安全字符，原名留作别名。见 NovelScene.sanitize_name。"""
+        self.name, self.aliases = coerce_path_safe_asset_name(self.name, self.aliases)
+        return self
 
 
 # =============================================================================

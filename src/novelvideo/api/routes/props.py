@@ -23,6 +23,7 @@ from novelvideo.sqlite_store import SQLiteStore
 from novelvideo.ports import get_task_backend
 from novelvideo.task_scopes import prop_reference_asset_scope
 from novelvideo.task_identity import project_task_state_key
+from novelvideo.utils.asset_names import path_safe_asset_name
 from novelvideo.utils.path_resolver import compute_prop_reference_path
 
 router = APIRouter()
@@ -135,6 +136,19 @@ async def _require_prop(store: SQLiteStore, name: str) -> NovelProp | None:
     return await store.get_prop(name)
 
 
+async def _heal_path_unsafe_prop_names(store: SQLiteStore, project_dir: Path) -> None:
+    """修好库里名字带斜杠的存量道具，原名转成别名。
+
+    和场景同一个毛病：``{name}`` 路由匹配不到带斜杠的名字，那一排接口全 404。
+    详见 :mod:`novelvideo.utils.asset_names`。
+    """
+
+    def move_assets(old_name: str, new_name: str) -> None:
+        _rename_prop_asset_dir(project_dir, old_name, new_name)
+
+    await store.repair_path_unsafe_asset_names("prop", move_assets)
+
+
 @router.get("/projects/{project}/props")
 async def list_props(
     project: str,
@@ -148,6 +162,7 @@ async def list_props(
         else await make_sqlite_store(resolved.username, resolved.project_name)
     )
     project_dir = resolved.project_dir
+    await _heal_path_unsafe_prop_names(store, project_dir)
     props = await store.list_props()
     global_names = {prop.name for prop in props}
     data: list[dict[str, Any]] = []
@@ -177,7 +192,8 @@ async def create_prop(
         else await make_sqlite_store(resolved.username, resolved.project_name)
     )
     project_dir = resolved.project_dir
-    name = body.name.strip()
+    # 在查重之前消毒，否则两个只差斜杠的名字会双双通过查重、后写的静默覆盖先写的。
+    name = path_safe_asset_name(str(body.name or "").strip())
     if not name:
         return {"ok": False, "error": "Prop name is required"}
     existing = await store.get_prop(name)
@@ -219,7 +235,9 @@ async def update_prop(
         return {"ok": False, "error": f"Prop '{name}' not found"}
 
     updates = body.model_dump(exclude_unset=True, exclude_none=True)
-    requested_name = str(updates.pop("name", "") or "").strip()
+    # 在挪目录之前消毒：store.rename_prop 里也会消毒，但目录迁移先于它执行，
+    # 不在这里统一就会出现「库里 a_b、盘上 a/b」的错位。
+    requested_name = path_safe_asset_name(str(updates.pop("name", "") or "").strip())
     if requested_name and requested_name != prop.name:
         if await store.get_prop(requested_name) is not None:
             return {"ok": False, "error": f"Prop '{requested_name}' already exists"}

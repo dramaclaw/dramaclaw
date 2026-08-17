@@ -46,6 +46,10 @@ class _SceneStore:
     async def delete_scene(self, name: str):
         return self.scenes.pop(name, None) is not None
 
+    async def repair_path_unsafe_asset_names(self, kind: str, move_assets=None):
+        # 这里的名字都是干净的，list 接口上那道存量自愈是空跑。
+        return {}
+
 
 class _PropStore:
     def __init__(self, props: list[NovelProp]):
@@ -74,6 +78,10 @@ class _PropStore:
 
     async def delete_prop(self, name: str):
         return self.props.pop(name, None) is not None
+
+    async def repair_path_unsafe_asset_names(self, kind: str, move_assets=None):
+        # 这里的名字都是干净的，list 接口上那道存量自愈是空跑。
+        return {}
 
 
 class _PropEpisodeStore(_PropStore):

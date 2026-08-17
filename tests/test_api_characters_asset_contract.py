@@ -40,6 +40,10 @@ class _CharacterStore:
     async def delete_character(self, name: str):
         self.characters.pop(name, None)
 
+    async def repair_path_unsafe_asset_names(self, kind: str, move_assets=None):
+        # 这里的名字都是干净的，list 接口上那道存量自愈是空跑。
+        return {}
+
 
 def _client(monkeypatch, tmp_path, store: _CharacterStore):
     from novelvideo.api.routes import characters
