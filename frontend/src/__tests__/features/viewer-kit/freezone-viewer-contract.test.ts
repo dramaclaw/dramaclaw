@@ -487,6 +487,8 @@ describe("freezone viewer contracts", () => {
     expect(shell).toContain("clearCanvasProjectionStatuses()");
     expect(groupNode).toContain("useCanvasProjectionStatus(projectionKey)");
     expect(groupNode).toContain("projection-stale-frame");
+    // 主线投影组不管新不新都得有黄色呼吸边框——它是身份标识。
+    expect(groupNode).toContain("projection-frame");
     expect(groupNode).toContain("projection-stale-banner");
     expect(groupNode).toContain("freezone.projections.staleBadge");
     expect(ports).toContain("'freezone/projection-sync'");

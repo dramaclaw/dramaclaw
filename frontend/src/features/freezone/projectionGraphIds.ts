@@ -30,12 +30,33 @@ function projectionKeyFromEdge(edge: CanvasEdge): string | null {
   return projectionKey;
 }
 
+/**
+ * 一个 projection_key 一个 id 命名空间。
+ *
+ * safeKey 只是给人看的可读部分，是**有损**的：中文角色名会被整段换成 `_` 再 strip
+ * 掉，`asset:character:林小满` 和 `asset:character:顾南城` 都会塌成 `asset_character`。
+ * 后端对两个角色又产出同名的原始节点 id（`character_profile` 等），前缀一撞，第二个
+ * 人物进虾画时就会顶掉第一个人物的组——组名被换、两个人物的节点挤进同一个组。
+ * 唯一性一律交给 key 的稳定摘要来保证。
+ */
 function projectionIdPrefix(projectionKey: string): string {
-  const safeKey = projectionKey
-    .trim()
+  const key = projectionKey.trim();
+  const safeKey = key
     .replace(/[^a-zA-Z0-9_-]+/g, "_")
-    .replace(/^_+|_+$/g, "") || "projection";
-  return `projection_${safeKey}__`;
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+  const digest = projectionKeyDigest(key);
+  return safeKey ? `projection_${safeKey}_${digest}__` : `projection_${digest}__`;
+}
+
+/** FNV-1a：只要求稳定 + 无碰撞倾向，不要求密码学强度。 */
+function projectionKeyDigest(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function stampInheritedProjectionData<T extends { data?: unknown }>(
@@ -63,9 +84,28 @@ function stampInheritedProjectionData<T extends { data?: unknown }>(
   };
 }
 
+/** 旧命名空间：不带 key 摘要，中文角色名会互相撞车。仅用于识别存量 id。 */
+function legacyProjectionIdPrefix(projectionKey: string): string {
+  const safeKey =
+    projectionKey
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "projection";
+  return `projection_${safeKey}__`;
+}
+
 export function projectionScopedId(projectionKey: string, id: string): string {
   const prefix = projectionIdPrefix(projectionKey);
-  return id.startsWith(prefix) ? id : `${prefix}${id}`;
+  if (id.startsWith(prefix)) {
+    return id;
+  }
+  // 存量画布里的 id 带旧前缀：剥掉后重新加新前缀（而不是再套一层）。
+  // setCanvasData 每次都会过一遍 scopeProjectionGraphIds，所以本地节点会在 hydrate
+  // 时就地迁移、和后端下发的新 id 对上，布局不丢；节点各自按 data.projection_key
+  // 归位，原先撞在一起的两个人物也就此分开。
+  const legacy = legacyProjectionIdPrefix(projectionKey);
+  const rawId = id.startsWith(legacy) ? id.slice(legacy.length) : id;
+  return `${prefix}${rawId}`;
 }
 
 export function scopeProjectionGraphIds(

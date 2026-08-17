@@ -9959,6 +9959,37 @@ def _is_replaceable_projection_node(node: dict, projection_key: str) -> bool:
     return data.get("preset_managed") is True and data.get("projection_key") == projection_key
 
 
+def _projection_is_intact_in_payload(existing_payload: dict | None, projection_key: str) -> bool:
+    """画布里这个投影是不是还「成组」的。
+
+    facts_signature 只描述上游事实（角色/分镜的内容），完全看不到画布自己的结构。
+    组节点一旦丢了——历史 id 撞车被别人的组顶掉、迁移后成员脱离 parent——上游事实又
+    没变，refresh 就会一路 noop，散落的成员永远收不回组里。所以 noop 之前还得确认
+    结构是完好的。
+
+    判据：该 projection_key 的每个成员节点都挂在同一个属于自己的组节点下。没有成员
+    时视为完好（没有可修的东西）。
+    """
+    if not isinstance(existing_payload, dict):
+        return True
+    nodes = [node for node in existing_payload.get("nodes") or [] if isinstance(node, dict)]
+    own_group_ids = {
+        str(node.get("id"))
+        for node in nodes
+        if node.get("type") == "groupNode"
+        and node.get("id")
+        and _is_replaceable_projection_node(node, projection_key)
+    }
+    members = [
+        node
+        for node in nodes
+        if node.get("type") != "groupNode" and _is_replaceable_projection_node(node, projection_key)
+    ]
+    if not members:
+        return True
+    return all(str(node.get("parentId") or "") in own_group_ids for node in members)
+
+
 def _is_replaceable_projection_edge(edge: dict, projection_key: str) -> bool:
     data = edge.get("data") if isinstance(edge.get("data"), dict) else {}
     if data.get("user_spawned") is True:
@@ -10298,13 +10329,18 @@ def _stamp_projection_key(payload: dict, projection_key: str) -> None:
 
 
 def _projection_group_id(projection_key: str) -> str:
-    slug = re.sub(r"[^A-Za-z0-9]+", "_", projection_key).strip("_").lower()
+    """一个 projection_key 一个组 id。
+
+    slug 只是给人看的可读部分，是**有损**的：中文角色名会被整段换成 ``_`` 再 strip
+    掉，``asset:character:林小满`` 和 ``asset:character:顾南城`` 都会塌成
+    ``asset_character``——两个角色于是共用一个组 id，第二个人进虾画时组名被顶掉、
+    两个人的节点挤进同一个组。唯一性一律交给 key 的稳定摘要来保证。
+    """
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", projection_key).strip("_").lower()[:35]
+    digest = canvas_store.canvas_request_hash({"projection_key": projection_key})[:12]
     if not slug:
-        slug = canvas_store.canvas_request_hash({"projection_key": projection_key})[:12]
-    if len(slug) > 48:
-        digest = canvas_store.canvas_request_hash({"projection_key": projection_key})[:12]
-        slug = f"{slug[:35]}_{digest}"
-    return f"projection_group_{slug}"
+        return f"projection_group_{digest}"
+    return f"projection_group_{slug}_{digest}"
 
 
 def _projection_group_label(body: ProjectionPresetCanvasRequest) -> str:
@@ -10324,18 +10360,61 @@ def _projection_group_label(body: ProjectionPresetCanvasRequest) -> str:
     return body.projection_key
 
 
+# 各节点类型的实际渲染尺寸（前端 CSS 里的设计宽高）。preset 产出的节点大多不带
+# width/height/style，兜底值 320x180 比真实渲染小一大截，组框按它算出来就会把成员
+# 夹成一堆（成员带 extent:"parent"，React Flow 会把它们钳回小框里）。
+_NODE_DESIGN_SIZES: dict[str, tuple[float, float]] = {
+    "textAnnotationNode": (440.0, 320.0),
+    "uploadNode": (320.0, 350.0),
+    "imageNode": (640.0, 520.0),
+    "imageGenNode": (580.0, 360.0),
+    "exportImageNode": (580.0, 360.0),
+    "beatContextNode": (420.0, 560.0),
+    "skillNode": (380.0, 520.0),
+    "videoNode": (580.0, 380.0),
+    "audioNode": (480.0, 210.0),
+    "scriptNode": (480.0, 320.0),
+    "videoStoryNode": (720.0, 360.0),
+    "pano360ViewerNode": (900.0, 480.0),
+    "threeDWorldNode": (480.0, 360.0),
+}
+_DEFAULT_NODE_DESIGN_SIZE = (320.0, 200.0)
+
+
 def _node_display_size(node: dict) -> tuple[float, float]:
+    """节点的渲染尺寸，优先取前端量出来的真值。
+
+    measured 是前端把节点渲染出来后回写的实际盒子，最准；其次是显式 width/height，
+    再次是 style，最后按节点类型取设计尺寸。
+    """
     style = node.get("style") if isinstance(node.get("style"), dict) else {}
-    raw_width = node.get("width") or style.get("width")
-    raw_height = node.get("height") or style.get("height")
-    try:
-        width = float(raw_width)
-    except (TypeError, ValueError):
-        width = 320.0
-    try:
-        height = float(raw_height)
-    except (TypeError, ValueError):
-        height = 180.0
+    measured = node.get("measured") if isinstance(node.get("measured"), dict) else {}
+    design_width, design_height = _NODE_DESIGN_SIZES.get(
+        str(node.get("type") or ""), _DEFAULT_NODE_DESIGN_SIZE
+    )
+
+    def _pick(*candidates, fallback: float) -> float:
+        for candidate in candidates:
+            try:
+                value = float(candidate)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return fallback
+
+    width = _pick(
+        measured.get("width"),
+        node.get("width"),
+        style.get("width"),
+        fallback=design_width,
+    )
+    height = _pick(
+        measured.get("height"),
+        node.get("height"),
+        style.get("height"),
+        fallback=design_height,
+    )
     return max(1.0, width), max(1.0, height)
 
 
@@ -11050,6 +11129,9 @@ async def project_canvas_from_preset(
             != incoming_facts_signature
         ):
             return None
+        # 事实没变但组散了：照样得重建，否则这张画布再也回不到成组状态。
+        if not _projection_is_intact_in_payload(existing_payload, body.projection_key):
+            return None
         revision = existing_payload.get("revision") if isinstance(existing_payload, dict) else None
         updated_at = (
             existing_payload.get("updated_at") if isinstance(existing_payload, dict) else None
@@ -11392,6 +11474,8 @@ async def projection_status(
             continue
         stored_signature = projection.get("facts_signature")
         stored_signature = stored_signature if isinstance(stored_signature, str) else ""
+        # 组散了也算 stale：上游事实一致但画布结构坏了，同样需要一次 refresh 才能修。
+        intact = _projection_is_intact_in_payload(existing, projection_key)
         statuses.append(
             {
                 "projection_key": projection_key,
@@ -11402,7 +11486,7 @@ async def projection_status(
                 "asset_id": request_body.asset_id,
                 "stored_facts_signature": stored_signature,
                 "current_facts_signature": current_signature,
-                "stale": stored_signature != current_signature,
+                "stale": stored_signature != current_signature or not intact,
             }
         )
 

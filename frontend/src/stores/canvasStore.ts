@@ -3541,12 +3541,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     if (!isGroupNode(group)) {
       return;
     }
-    // Capture style while `group` is still narrowed to a group node. The
-    // storyboard / projection predicates below share isGroupNode's type
-    // predicate, so chaining them would collapse `group` to `never` for the
-    // rest of the function (TS subtracts the identical predicate type).
+    // Capture geometry while `group` is still narrowed to a group node. The
+    // storyboard predicate below shares isGroupNode's type predicate, so
+    // chaining it would collapse `group` to `never` for the rest of the
+    // function (TS subtracts the identical predicate type).
     const groupStyle = group.style;
-    if (isProtectedProjectionGroupNode(group) || isStoryboardGroupNode(group)) {
+    const groupWidth = group.width;
+    const groupHeight = group.height;
+    // 主线投影组也要贴合：组框由后端按估算尺寸算出，成员的实际渲染尺寸（图片加载
+    // 后、文本换行后）只有前端知道。不贴合的话成员带 extent:"parent" 会被 React
+    // Flow 夹回小框里叠成一堆。这里只放开「几何贴合」——拓扑保护（不能解组）仍由
+    // ungroupNode 拦住。
+    if (isStoryboardGroupNode(group)) {
       return;
     }
     const children = state.nodes.filter((node) => node.parentId === groupNodeId);
@@ -3577,8 +3583,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // Push members inward only when they spill past the top/left edge.
     const shiftX = Math.max(0, Math.round(SIDE_PAD - minX));
     const shiftY = Math.max(0, Math.round(TOP_PAD - minY));
-    const curWidth = typeof groupStyle?.width === 'number' ? groupStyle.width : 0;
-    const curHeight = typeof groupStyle?.height === 'number' ? groupStyle.height : 0;
+    // 手动缩放走 React Flow 的 dimensions change，只写显式 width/height 不写
+    // style；后端下发的投影组反过来只带 style。两边都读，否则 grow-only 会把另一
+    // 侧当成 0、把用户刚拉大的组又缩回内容尺寸。
+    const curWidth = Math.max(
+      typeof groupStyle?.width === 'number' ? groupStyle.width : 0,
+      typeof groupWidth === 'number' ? groupWidth : 0
+    );
+    const curHeight = Math.max(
+      typeof groupStyle?.height === 'number' ? groupStyle.height : 0,
+      typeof groupHeight === 'number' ? groupHeight : 0
+    );
     const neededWidth = Math.round(maxX + shiftX + SIDE_PAD);
     const neededHeight = Math.round(maxY + shiftY + SIDE_PAD);
     // Grow-only so a manual enlarge is never clawed back.
@@ -3619,11 +3634,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   arrangeGroupChildren: (groupNodeId, mode) => {
     const state = get();
     const group = state.nodes.find((node) => node.id === groupNodeId);
-    if (
-      !isGroupNode(group) ||
-      isProtectedProjectionGroupNode(group) ||
-      isStoryboardGroupNode(group)
-    ) {
+    // 主线投影组同样可以整理排列：「主线投影 · 锁定」锁的是拓扑（解组 / 删成员），
+    // 排列只搬成员位置、不改归属，而后端算出来的布局不合意时用户需要有补救手段。
+    // 分镜板的位置由缩略图板自己算，成员还是隐藏的，仍然不参与。
+    if (!isGroupNode(group) || isStoryboardGroupNode(group)) {
       return;
     }
     const children = state.nodes.filter((node) => node.parentId === groupNodeId);

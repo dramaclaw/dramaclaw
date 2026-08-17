@@ -22,6 +22,7 @@ import {
   queueLocalFreezoneProjection,
   removeLocalFreezoneProjection,
 } from "@/features/freezone/canvasSyncRuntime";
+import { projectionScopedId } from "@/features/freezone/projectionGraphIds";
 import { useShotMetadataStore } from "@/features/freezone/shotMetadataStore";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import { useCanvasStore } from "@/stores/canvasStore";
@@ -366,7 +367,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
 
   it("clears a saved projection draft when server metadata contains extra fields", async () => {
     const projectionNode = {
-      id: "projection_beat_1_4__projection_group_beat_1_4",
+      id: projectionScopedId("beat:1:4", "projection_group_beat_1_4"),
       type: "groupNode",
       position: { x: 0, y: 0 },
       data: { projection_key: "beat:1:4" },
@@ -1541,7 +1542,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
     });
     expect(hook.result.current.status).toBe("ready");
     expect(useCanvasStore.getState().nodes.map((node) => node.id)).toContain(
-      "projection_beat_1_4__context_beat",
+      projectionScopedId("beat:1:4", "context_beat"),
     );
     expect(useCanvasStore.getState().userEditsSinceHydrate).toBeGreaterThan(0);
 
@@ -1688,7 +1689,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
     expect(vi.mocked(putFreezoneCanvas).mock.calls[0][2].nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "projection_beat_1_4__projection_group_beat_1_4",
+          id: projectionScopedId("beat:1:4", "projection_group_beat_1_4"),
         }),
       ]),
     );
@@ -1699,7 +1700,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
   it("does not restore a stale local draft after a projection save then refresh", async () => {
     vi.useFakeTimers();
     const projectedNode = {
-      id: "projection_beat_1_4__projection_group_beat_1_4",
+      id: projectionScopedId("beat:1:4", "projection_group_beat_1_4"),
       type: "groupNode",
       position: { x: 0, y: 0 },
       data: { projection_key: "beat:1:4" },
@@ -1805,7 +1806,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
   it("does not write a local draft on browser refresh after projection save is settled", async () => {
     vi.useFakeTimers();
     const projectedNode = {
-      id: "projection_beat_1_4__projection_group_beat_1_4",
+      id: projectionScopedId("beat:1:4", "projection_group_beat_1_4"),
       type: "groupNode",
       position: { x: 0, y: 0 },
       data: { projection_key: "beat:1:4" },
@@ -1910,7 +1911,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
   it("does not conflict after moving a saved projection group and refreshing", async () => {
     vi.useFakeTimers();
     const projectionNode = (x: number, y: number) => ({
-      id: "projection_beat_1_4__projection_group_beat_1_4",
+      id: projectionScopedId("beat:1:4", "projection_group_beat_1_4"),
       type: "groupNode",
       position: { x, y },
       data: { projection_key: "beat:1:4" },
@@ -1989,7 +1990,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
       useCanvasStore
         .getState()
         .updateNodePosition(
-          "projection_beat_1_4__projection_group_beat_1_4",
+          projectionScopedId("beat:1:4", "projection_group_beat_1_4"),
           { x: 120, y: 80 },
         );
     });
@@ -2004,7 +2005,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
       base_revision: 8,
       nodes: [
         expect.objectContaining({
-          id: "projection_beat_1_4__projection_group_beat_1_4",
+          id: projectionScopedId("beat:1:4", "projection_group_beat_1_4"),
           position: { x: 120, y: 80 },
         }),
       ],
@@ -2030,7 +2031,7 @@ describe("useCanvasSync hydrate lifecycle", () => {
     expect(second.result.current.error).toBeNull();
     expect(useCanvasStore.getState().nodes).toEqual([
       expect.objectContaining({
-        id: "projection_beat_1_4__projection_group_beat_1_4",
+        id: projectionScopedId("beat:1:4", "projection_group_beat_1_4"),
         position: { x: 120, y: 80 },
       }),
     ]);

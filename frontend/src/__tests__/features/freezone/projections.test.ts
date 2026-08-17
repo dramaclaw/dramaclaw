@@ -341,6 +341,148 @@ describe("freezone projection helpers", () => {
     ]);
   });
 
+  /**
+   * 一个人物一个主线投影组。中文角色名被 projectionIdPrefix 的
+   * [^a-zA-Z0-9_-] 清洗后只剩 "asset_character"，两个角色的 scope 前缀塌成同一个，
+   * 后端又对两个角色产出同名的原始 id（组 id 同样由 projection_key 清洗而来）——
+   * 于是第二个角色的组直接顶掉第一个角色的组：组名被换、两个角色的节点挤进同一个组。
+   */
+  it("keeps one projection group per character when raw ids collide across keys", () => {
+    const linKey = "asset:character:林小满";
+    const guKey = "asset:character:顾南城";
+    const remoteFor = (key: string, label: string) =>
+      [
+        {
+          id: "projection_group_asset_character",
+          type: "groupNode",
+          position: { x: 0, y: 0 },
+          data: { preset_managed: true, projection_key: key, label },
+        },
+        {
+          id: "character_profile",
+          type: "textAnnotationNode",
+          parentId: "projection_group_asset_character",
+          position: { x: 20, y: 34 },
+          data: { preset_managed: true, projection_key: key },
+        },
+      ] as any[];
+
+    const first = mergeProjectedCanvasWithLocalCanvas(
+      remoteFor(linKey, "林小满"),
+      [],
+      [],
+      [],
+      linKey,
+    );
+    const next = mergeProjectedCanvasWithLocalCanvas(
+      remoteFor(guKey, "顾南城"),
+      [],
+      first.nodes,
+      first.edges,
+      guKey,
+    );
+
+    const groups = next.nodes.filter((node) => node.type === "groupNode");
+    expect(groups.map((node) => (node.data as { label?: string }).label)).toEqual([
+      "林小满",
+      "顾南城",
+    ]);
+    const linChild = next.nodes.find(
+      (node) => node.id === scoped(linKey, "character_profile"),
+    );
+    const guChild = next.nodes.find(
+      (node) => node.id === scoped(guKey, "character_profile"),
+    );
+    expect(linChild?.parentId).toBe(scoped(linKey, "projection_group_asset_character"));
+    expect(guChild?.parentId).toBe(scoped(guKey, "projection_group_asset_character"));
+    expect(linChild?.id).not.toBe(guChild?.id);
+  });
+
+  it("re-adopts orphaned projection members back into the rebuilt group", () => {
+    const key = "asset:character:林小满";
+    // 组丢了之后的残局：成员留在画布上、parentId 被 detachMissingParents 摘掉，
+    // 位置也已经变成画布绝对坐标。
+    const localNodes = [
+      {
+        id: scoped(key, "ref_identity_costume_1"),
+        type: "imageGenNode",
+        position: { x: 880, y: 640 },
+        data: { preset_managed: true, projection_key: key },
+      },
+    ] as any[];
+    const remoteNodes = [
+      {
+        id: "projection_group_asset_character_abc",
+        type: "groupNode",
+        position: { x: 0, y: 0 },
+        data: { preset_managed: true, projection_key: key, label: "林小满" },
+      },
+      {
+        id: "ref_identity_costume_1",
+        type: "imageGenNode",
+        parentId: "projection_group_asset_character_abc",
+        extent: "parent",
+        position: { x: 20, y: 34 },
+        data: { preset_managed: true, projection_key: key },
+      },
+    ] as any[];
+
+    const merged = mergeProjectedCanvasWithLocalCanvas(remoteNodes, [], localNodes, [], key);
+
+    const child = merged.nodes.find(
+      (node) => node.id === scoped(key, "ref_identity_costume_1"),
+    );
+    expect(child?.parentId).toBe(scoped(key, "projection_group_asset_character_abc"));
+    expect(child?.extent).toBe("parent");
+    // 认了新爹就得用新爹的相对坐标，否则会被 extent:"parent" 夹到组外边缘。
+    expect(child?.position).toEqual({ x: 20, y: 34 });
+  });
+
+  it("keeps the local layout when the member is still in its group", () => {
+    const key = "asset:character:林小满";
+    const groupId = scoped(key, "projection_group_asset_character_abc");
+    const localNodes = [
+      {
+        id: groupId,
+        type: "groupNode",
+        position: { x: 0, y: 0 },
+        data: { preset_managed: true, projection_key: key, label: "林小满" },
+      },
+      {
+        id: scoped(key, "ref_identity_costume_1"),
+        type: "imageGenNode",
+        parentId: groupId,
+        extent: "parent",
+        position: { x: 600, y: 120 },
+        data: { preset_managed: true, projection_key: key },
+      },
+    ] as any[];
+    const remoteNodes = [
+      {
+        id: "projection_group_asset_character_abc",
+        type: "groupNode",
+        position: { x: 0, y: 0 },
+        data: { preset_managed: true, projection_key: key, label: "林小满" },
+      },
+      {
+        id: "ref_identity_costume_1",
+        type: "imageGenNode",
+        parentId: "projection_group_asset_character_abc",
+        extent: "parent",
+        position: { x: 20, y: 34 },
+        data: { preset_managed: true, projection_key: key },
+      },
+    ] as any[];
+
+    const merged = mergeProjectedCanvasWithLocalCanvas(remoteNodes, [], localNodes, [], key);
+
+    const child = merged.nodes.find(
+      (node) => node.id === scoped(key, "ref_identity_costume_1"),
+    );
+    expect(child?.parentId).toBe(groupId);
+    expect(child?.position).toEqual({ x: 600, y: 120 });
+  });
+
   it("treats projection_key as projection ownership without requiring preset_managed", () => {
     const localNodes = [
       {

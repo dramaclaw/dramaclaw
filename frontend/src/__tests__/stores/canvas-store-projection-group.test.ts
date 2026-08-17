@@ -319,6 +319,63 @@ describe("canvasStore projection groups", () => {
     expect(useCanvasStore.getState().nodes.find((node) => node.id === scoped("beat:1:5", child))?.parentId).toBe(scoped("beat:1:5", group));
   });
 
+  /**
+   * 「主线投影 · 锁定」锁的是**拓扑**（不能解组、不能删成员），不该连几何一起锁死。
+   * 用户反馈投影组「不能调整」：整理排列只搬成员位置、不改归属，必须放开，
+   * 否则后端算出来的布局一旦不合意，用户毫无补救手段。
+   */
+  it("arranges children of a backend-managed projection group", () => {
+    const group = "projection_group_beat_1_7";
+    useCanvasStore.getState().setCanvasData([
+      {
+        id: group,
+        type: CANVAS_NODE_TYPES.group,
+        position: { x: 0, y: 0 },
+        width: 900,
+        height: 600,
+        style: { width: 900, height: 600 },
+        data: { label: "EP1/B7", preset_managed: true, projection_key: "beat:1:7" },
+      },
+      {
+        id: "member_right",
+        type: CANVAS_NODE_TYPES.imageEdit,
+        position: { x: 400, y: 300 },
+        parentId: group,
+        extent: "parent",
+        width: 200,
+        height: 120,
+        style: { width: 200, height: 120 },
+        data: { imageUrl: "a.png", preset_managed: true, projection_key: "beat:1:7" },
+      },
+      {
+        id: "member_left",
+        type: CANVAS_NODE_TYPES.imageEdit,
+        position: { x: 40, y: 300 },
+        parentId: group,
+        extent: "parent",
+        width: 200,
+        height: 120,
+        style: { width: 200, height: 120 },
+        data: { imageUrl: "b.png", preset_managed: true, projection_key: "beat:1:7" },
+      },
+    ], []);
+
+    useCanvasStore.getState().arrangeGroupChildren(scoped("beat:1:7", group), "horizontal");
+
+    const left = useCanvasStore
+      .getState()
+      .nodes.find((node) => node.id === scoped("beat:1:7", "member_left"));
+    const right = useCanvasStore
+      .getState()
+      .nodes.find((node) => node.id === scoped("beat:1:7", "member_right"));
+    expect(left?.position).toEqual({ x: 20, y: 34 });
+    expect(right?.position).toEqual({ x: 252, y: 34 });
+    // 只动几何：成员仍归属同一个投影组。
+    expect(right?.parentId).toBe(scoped("beat:1:7", group));
+    // 解组依旧被拦（拓扑保护不受影响）。
+    expect(useCanvasStore.getState().ungroupNode(scoped("beat:1:7", group))).toBe(false);
+  });
+
   it("deduplicates hydrated edges by id before React Flow renders them", () => {
     useCanvasStore.getState().setCanvasData([
       {

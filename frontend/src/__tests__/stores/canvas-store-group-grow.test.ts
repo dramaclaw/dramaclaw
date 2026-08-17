@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { useCanvasStore } from "@/stores/canvasStore";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
+import { projectionScopedId } from "@/features/freezone/projectionGraphIds";
 
 /**
  * 拖动组内成员松手后的收尾 fitGroupToChildren（libtv 式：按成员最终落点重新包住）。
@@ -115,6 +116,60 @@ describe("fitGroupToChildren (drop-position refit)", () => {
     const size = groupSize(groupId);
     expect(group(groupId).width).toBe(size.width);
     expect(group(groupId).height).toBe(size.height);
+  });
+
+  /**
+   * 主线投影组同样要贴合成员：组框由后端按估算尺寸算出，成员实际渲染尺寸（图片
+   * 加载后、文本换行后）只有前端知道。不贴合的话成员带 extent:"parent" 会被
+   * React Flow 夹回小框里叠成一堆，用户又没法手动救——组框是只读的。
+   * 只放开「几何贴合」，拓扑保护（不能解组）仍由 ungroupNode 拦住。
+   */
+  it("also re-encloses members of a backend-managed projection group", () => {
+    const groupId = "projection_group_asset_character_x";
+    useCanvasStore.getState().setCanvasData(
+      [
+        {
+          id: groupId,
+          type: CANVAS_NODE_TYPES.group,
+          position: { x: 0, y: 0 },
+          width: 360,
+          height: 240,
+          style: { width: 360, height: 240 },
+          data: {
+            label: "林小满",
+            preset_managed: true,
+            projection_key: "asset:character:x",
+          },
+        },
+        {
+          id: "profile",
+          type: CANVAS_NODE_TYPES.textAnnotation,
+          position: { x: 20, y: 34 },
+          parentId: groupId,
+          extent: "parent",
+          // 实际测得的渲染尺寸远大于后端估算，组框包不住。
+          measured: { width: 440, height: 320 },
+          data: {
+            content: "profile",
+            preset_managed: true,
+            projection_key: "asset:character:x",
+          },
+        },
+      ],
+      [],
+    );
+
+    // setCanvasData 会把投影节点 id 重写成 projectionScopedId(...)，用原始 id 调不到。
+    const scopedGroupId = projectionScopedId("asset:character:x", groupId);
+    useCanvasStore.getState().fitGroupToChildren(scopedGroupId);
+
+    const g = useCanvasStore.getState().nodes.find((n) => n.id === scopedGroupId)!;
+    const child = useCanvasStore.getState().nodes.find((n) => n.id.endsWith("profile"))!;
+    expect(child.position.x + 440).toBeLessThanOrEqual(g.width as number);
+    expect(child.position.y + 320).toBeLessThanOrEqual(g.height as number);
+    // 与普通组一致：显式 width/height 必须与 style 同步，否则 React Flow 不重绘。
+    expect(g.style?.width).toBe(g.width);
+    expect(g.style?.height).toBe(g.height);
   });
 
   it("never shrinks below a manual enlarge (grow-only)", () => {
