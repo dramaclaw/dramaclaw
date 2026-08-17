@@ -2800,10 +2800,19 @@ function EmbeddingModelBlock({
       : undefined;
     const next = fromBackend ?? localSavedEmbeddingModel;
     const nextKey = JSON.stringify(next ?? null);
+    if (fromBackend && localSavedKey !== nextKey) {
+      setEmbeddingModel(fromBackend);
+    }
     setLocalModel((current) =>
       JSON.stringify(current ?? null) === nextKey ? current : next,
     );
-  }, [localSavedEmbeddingModel, localSavedKey, savedEmbeddingModel, savedKey]);
+  }, [
+    localSavedEmbeddingModel,
+    localSavedKey,
+    savedEmbeddingModel,
+    savedKey,
+    setEmbeddingModel,
+  ]);
 
   const selectedProvider = localModel?.provider ?? "";
   const upstreamModel = localModel?.upstreamModel ?? "";
@@ -3213,10 +3222,20 @@ function MediaModelsBlock({
     const next =
       Object.keys(fromBackend).length > 0 ? fromBackend : localSavedMediaModels;
     const nextKey = JSON.stringify(next ?? {});
+    if (
+      Object.keys(fromBackend).length > 0 &&
+      localSavedMediaModelsKey !== nextKey
+    ) {
+      setMediaModels(fromBackend);
+    }
     setLocalMediaModels((current) =>
       JSON.stringify(current ?? {}) === nextKey ? current : (next ?? {}),
     );
-  }, [localSavedMediaModelsKey, savedMediaModelsKey]);
+  }, [
+    localSavedMediaModelsKey,
+    savedMediaModelsKey,
+    setMediaModels,
+  ]);
 
   useEffect(() => {
     setLocalMediaModels((current) => {

@@ -580,6 +580,14 @@ export const useSettingsStore = create<SettingsState>()(
                   provider: normalizeFeatureModelProvider(model.provider),
                   upstreamModel: model.upstreamModel.trim(),
                   dimension: Math.max(1, Math.round(Number(model.dimension) || 0)),
+                  ...(model.batchSize != null
+                    ? {
+                        batchSize: Math.max(
+                          1,
+                          Math.round(Number(model.batchSize) || 0),
+                        ),
+                      }
+                    : {}),
                 }
               : undefined,
           },
