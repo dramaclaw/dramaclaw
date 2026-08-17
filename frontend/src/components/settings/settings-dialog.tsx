@@ -1372,18 +1372,18 @@ const HYBRID_COMFYUI_WORKFLOWS = {
 
 const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
   "LingShan-G2": {
-    channel: "openrouter",
-    model: "openai/gpt-image-2",
+    channel: "fal_ai",
+    model: "gpt-image-2",
     mediaType: "image",
   },
   "LingShan-NB-2": {
-    channel: "openrouter",
-    model: "google/gemini-3.1-flash-image",
+    channel: "fal_ai",
+    model: "nano-banana-2",
     mediaType: "image",
   },
   "seedance-1.0-pro-fast": {
     channel: "volcengine",
-    model: "seedance-1.0-pro-fast",
+    model: "doubao-seedance-1-0-pro-fast-251015",
     mediaType: "video",
   },
   "seedance-1.0-pro": {
@@ -1417,20 +1417,20 @@ const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
     mediaType: "video",
   },
   "index-tts-2": {
-    channel: "openrouter",
-    model: "openai/gpt-audio",
+    channel: "fal_ai",
+    model: "fal-ai/index-tts-2/text-to-speech",
     mediaType: "audio",
   },
   "LingShan-MU-11": {
-    channel: "openrouter",
-    model: "openai/gpt-audio",
+    channel: "fal_ai",
+    model: "fal-ai/elevenlabs/music",
     mediaType: "audio",
   },
 };
 
 const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
   version: 2,
-  name: "OpenRouter+ VolCengine",
+  name: "OpenRouter + VolcEngine + fal.ai",
   channels: [
     {
       id: "openrouter",
@@ -1442,6 +1442,14 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
     {
       id: "volcengine",
       provider: "volcengine",
+      baseUrl: "",
+      priority: 0,
+      settings: {},
+    },
+    {
+      id: "fal_ai",
+      provider: "fal_ai",
+      type: 61,
       baseUrl: "",
       priority: 0,
       settings: {},
@@ -1811,10 +1819,11 @@ function QuickLocalNewApiSetup({
       2,
     );
     if (syncedJson === appliedProfileJson) return;
+    setSelectedProfileKind("custom");
     setCustomProfileJson(syncedJson);
     setAppliedProfileJson(syncedJson);
     saveStoredQuickProfiles({
-      selected: selectedProfileKind,
+      selected: "custom",
       customProfileJson: syncedJson,
       appliedProfileJson: syncedJson,
     });
@@ -1822,7 +1831,6 @@ function QuickLocalNewApiSetup({
     advancedSettings,
     advancedSettingsKey,
     appliedProfileJson,
-    selectedProfileKind,
   ]);
   const localNewApiReady = Boolean(
     config?.custom?.configured && config?.provisioner?.database?.available,
