@@ -43,6 +43,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: false }));
+const queryMocks = vi.hoisted(() => ({ useUserSearch: vi.fn() }));
 
 vi.mock("@/lib/runtime-config", () => ({
   isCeRuntime: () => runtimeState.isCeRuntime,
@@ -50,7 +51,10 @@ vi.mock("@/lib/runtime-config", () => ({
 
 vi.mock("@/lib/queries/projects", () => ({
   useProjectGrants: () => ({ data: { data: [] } }),
-  useUserSearch: () => ({ data: { data: [] } }),
+  useUserSearch: (...args: unknown[]) => {
+    queryMocks.useUserSearch(...args);
+    return { data: { data: [] } };
+  },
   useAddProjectGrant: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateProjectGrant: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteProjectGrant: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -72,11 +76,13 @@ function renderDialog() {
 describe("ShareProjectDialog (edition gating)", () => {
   beforeEach(() => {
     runtimeState.isCeRuntime = false;
+    queryMocks.useUserSearch.mockClear();
   });
 
   it("renders the share dialog in EE runtime", () => {
     renderDialog();
     expect(screen.getByText("共享项目")).toBeInTheDocument();
+    expect(queryMocks.useUserSearch).toHaveBeenCalledWith("p1", "");
   });
 
   it("renders nothing in CE runtime", () => {

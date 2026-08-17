@@ -269,6 +269,83 @@ async def test_project_task_clear_completed_uses_editor_role(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_project_task_clear_completed_passes_expected_task_id(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, role="editor")
+    manager = TaskStateManager()
+    completed = manager.create_task_for_project(ctx, "single_video", 1, beat_num=15)
+    manager.complete_task_for_project(
+        ctx,
+        "single_video",
+        1,
+        beat_num=15,
+        expected_task_id=completed.task_id,
+    )
+    original_delete = manager.delete_task_for_project
+    delete_calls: list[str | None] = []
+
+    def tracked_delete(*args, expected_task_id=None, **kwargs):
+        delete_calls.append(expected_task_id)
+        return original_delete(
+            *args,
+            expected_task_id=expected_task_id,
+            **kwargs,
+        )
+
+    async def fake_resolve_project_context(**kwargs):
+        return ctx
+
+    monkeypatch.setattr(tasks_route, "resolve_project_context", fake_resolve_project_context)
+    monkeypatch.setattr(tasks_route, "get_task_manager", lambda: manager)
+    monkeypatch.setattr(manager, "delete_task_for_project", tracked_delete)
+
+    response = await tasks_route.clear_project_completed_tasks(
+        "proj_123", user={"username": "bob"}
+    )
+
+    assert response == {"ok": True, "data": {"deleted": 1}}
+    assert delete_calls == [completed.task_id]
+
+
+@pytest.mark.asyncio
+async def test_project_task_clear_completed_does_not_count_stale_delete(
+    tmp_path,
+    monkeypatch,
+):
+    ctx = _ctx(tmp_path, role="editor")
+    manager = TaskStateManager()
+    completed = manager.create_task_for_project(ctx, "single_video", 1, beat_num=15)
+    manager.complete_task_for_project(
+        ctx,
+        "single_video",
+        1,
+        beat_num=15,
+        expected_task_id=completed.task_id,
+    )
+
+    async def fake_resolve_project_context(**kwargs):
+        return ctx
+
+    monkeypatch.setattr(tasks_route, "resolve_project_context", fake_resolve_project_context)
+    monkeypatch.setattr(tasks_route, "get_task_manager", lambda: manager)
+    monkeypatch.setattr(manager, "delete_task_for_project", lambda *args, **kwargs: False)
+
+    response = await tasks_route.clear_project_completed_tasks(
+        "proj_123", user={"username": "bob"}
+    )
+
+    assert response == {"ok": True, "data": {"deleted": 0}}
+
+
+def test_project_task_delete_requires_expected_task_id(tmp_path):
+    ctx = _ctx(tmp_path, role="editor")
+    manager = TaskStateManager()
+    manager.create_task_for_project(ctx, "single_video", 1, beat_num=15)
+
+    with pytest.raises(ValueError, match="expected_task_id is required"):
+        manager.delete_task_for_project(ctx, "single_video", 1, beat_num=15)
+
+
+@pytest.mark.asyncio
 async def test_project_task_clear_completed_removes_stale_full_progress(
     tmp_path,
     monkeypatch,

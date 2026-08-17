@@ -1443,14 +1443,21 @@ class TaskStateManager:
         episode: int,
         beat_num: int = None,
         scope: str | None = None,
-    ):
+        expected_task_id: str | None = None,
+    ) -> bool:
+        if not expected_task_id:
+            raise ValueError("expected_task_id is required to delete project task state")
         key = self._project_key(task_type, ctx.project_id, episode, beat_num, scope)
         with self._connect_context(ctx) as conn:
-            conn.execute(
-                "DELETE FROM task_states WHERE task_key = ? AND project_id = ?",
-                (key, ctx.project_id),
+            cursor = conn.execute(
+                """DELETE FROM task_states
+                   WHERE task_key = ? AND project_id = ? AND task_id = ?""",
+                (key, ctx.project_id, expected_task_id),
             )
-        logger.debug("Project task deleted: %s", key)
+        deleted = cursor.rowcount > 0
+        if deleted:
+            logger.debug("Project task deleted: %s", key)
+        return deleted
 
     def list_tasks_for_project(self, ctx: ProjectContext) -> List[TaskState]:
         tasks: list[TaskState] = []

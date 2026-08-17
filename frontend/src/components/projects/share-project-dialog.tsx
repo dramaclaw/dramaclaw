@@ -74,7 +74,7 @@ export function ShareProjectDialog({
   const [role, setRole] = useState<GrantRole>("editor");
   const projectId = project?.id ?? "";
   const grants = useProjectGrants(projectId, open && Boolean(projectId));
-  const users = useUserSearch(query);
+  const users = useUserSearch(projectId, query);
   const addGrant = useAddProjectGrant(projectId);
   const updateGrant = useUpdateProjectGrant(projectId);
   const deleteGrant = useDeleteProjectGrant(projectId);

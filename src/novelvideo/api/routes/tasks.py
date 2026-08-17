@@ -336,14 +336,16 @@ async def clear_project_completed_tasks(
         deleted = 0
         for task in mgr.list_tasks_for_project(ctx):
             if _effective_task_status(task) == "completed":
-                mgr.delete_task_for_project(
+                was_deleted = mgr.delete_task_for_project(
                     ctx,
                     task.task_type,
                     task.episode,
                     beat_num=task.beat_num,
                     scope=task.scope,
+                    expected_task_id=task.task_id,
                 )
-                deleted += 1
+                if was_deleted:
+                    deleted += 1
         return deleted
 
     deleted = await run_in_threadpool(clear_completed)
