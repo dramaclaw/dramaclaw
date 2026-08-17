@@ -1261,6 +1261,7 @@
         "description": "系统正在从图谱中提取场景，完成后会显示在这里。"
       },
       "confirmDelete": "删除场景「{{name}}」？",
+      "deleteTitle": "删除场景",
       "deleted": "场景已删除",
       "master": "源图",
       "pano": "360 全景",

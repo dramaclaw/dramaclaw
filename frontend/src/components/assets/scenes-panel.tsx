@@ -42,6 +42,7 @@ import {
   BillingRuleNotConfiguredError,
   humanizeTaskError,
 } from "@/lib/api-errors";
+import { confirmDialog } from "@/components/confirm-dialog-host";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import { Button } from "@/components/ui/button";
 import { SUBTLE_HEADER_ACTION_BUTTON_CLASS } from "@/components/ui/header-action-styles";
@@ -1293,9 +1294,21 @@ export function ScenesPanel({
   }
 
   async function handleDelete(scene: SceneAsset) {
-    if (!window.confirm(t("assets.scenes.confirmDelete", { name: scene.name })))
+    const confirmed = await confirmDialog({
+      title: t("assets.scenes.deleteTitle"),
+      description: t("assets.scenes.confirmDelete", { name: scene.name }),
+      confirmText: t("common.delete"),
+      confirmVariant: "destructive",
+    });
+    if (!confirmed) return;
+    // ky 对 4xx/5xx 直接 reject，不接住的话删除失败就是「点了没反应」——用户会以为删掉了。
+    let res;
+    try {
+      res = await deleteScene.mutateAsync(scene.name);
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
       return;
-    const res = await deleteScene.mutateAsync(scene.name);
+    }
     if (isErrorResponse(res)) {
       toast.error(res.error);
       return;

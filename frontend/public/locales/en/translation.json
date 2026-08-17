@@ -1261,6 +1261,7 @@
         "description": "The system is extracting scenes from the graph. They will appear here when ready."
       },
       "confirmDelete": "Delete scene \"{{name}}\"?",
+      "deleteTitle": "Delete scene",
       "deleted": "Scene deleted",
       "master": "Master",
       "pano": "360 panorama",
