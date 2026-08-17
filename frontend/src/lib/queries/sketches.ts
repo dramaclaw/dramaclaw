@@ -5,7 +5,7 @@ import { useMemo } from "react";
 
 import type { PanoViewerManifest } from "@/features/viewer-kit/pano/panoManifest";
 import type { DirectorStageManifest } from "@/features/viewer-kit/three-d/directorManifest";
-import { api } from "@/lib/api";
+import { api, uploadApi } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
@@ -269,7 +269,7 @@ export function useUploadBeatBackgroundAnchor(project: string, episode: number, 
     mutationFn: ({ file }: { file: File }) => {
       const form = new FormData();
       form.append("file", file, file.name);
-      return api
+      return uploadApi
         .post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/background-anchor/upload`,
           { body: form },
@@ -547,7 +547,7 @@ export function useUploadBeatImage(
     mutationFn: ({ beatNum, file }: { beatNum: number; file: File }) => {
       const body = new FormData();
       body.append("file", file, file.name);
-      return api
+      return uploadApi
         .post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/${imageType}/upload`,
           { body },
@@ -696,7 +696,7 @@ export function useUploadGrid(project: string, episode: number) {
       body.append("grid_type", gridType);
       body.append("mode_key", modeKey);
       body.append("beat_numbers", beatNumbers.join(","));
-      return api
+      return uploadApi
         .post(
           p`api/v1/projects/${project}/episodes/${episode}/grids/${gridIndex}/upload`,
           { body },

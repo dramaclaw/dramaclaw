@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
 import {
