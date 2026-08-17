@@ -578,7 +578,10 @@ export const useSettingsStore = create<SettingsState>()(
             embeddingModel: model
               ? {
                   provider: normalizeFeatureModelProvider(model.provider),
-                  upstreamModel: model.upstreamModel.trim(),
+                  upstreamModel:
+                    typeof model.upstreamModel === 'string'
+                      ? model.upstreamModel.trim()
+                      : '',
                   dimension: Math.max(1, Math.round(Number(model.dimension) || 0)),
                   ...(model.batchSize != null
                     ? {

@@ -2722,18 +2722,35 @@ function EmbeddingModelBlock({
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
-    const fromBackend = savedEmbeddingModel
+    const savedProvider =
+      typeof savedEmbeddingModel?.provider === "string"
+        ? savedEmbeddingModel.provider.trim()
+        : "";
+    const savedUpstreamModel =
+      typeof savedEmbeddingModel?.upstreamModel === "string"
+        ? savedEmbeddingModel.upstreamModel.trim()
+        : "";
+    const savedDimension = Number(savedEmbeddingModel?.dimension);
+    const fromBackend =
+      savedProvider &&
+      savedUpstreamModel &&
+      Number.isFinite(savedDimension) &&
+      savedDimension > 0
       ? {
-          provider: savedEmbeddingModel.provider as FeatureModelProvider,
-          upstreamModel: savedEmbeddingModel.upstreamModel,
-          dimension: savedEmbeddingModel.dimension,
-          batchSize: savedEmbeddingModel.batchSize,
+          provider: savedProvider as FeatureModelProvider,
+          upstreamModel: savedUpstreamModel,
+          dimension: savedDimension,
+          batchSize: savedEmbeddingModel?.batchSize,
         }
       : undefined;
-    const next = fromBackend ?? localSavedEmbeddingModel;
+    // The API returns {} when no embedding model has been configured. Treat
+    // that loaded empty snapshot as authoritative instead of reviving a stale
+    // browser draft.
+    const backendSnapshotLoaded = savedEmbeddingModel !== undefined;
+    const next = backendSnapshotLoaded ? fromBackend : localSavedEmbeddingModel;
     const nextKey = JSON.stringify(next ?? null);
-    if (fromBackend && localSavedKey !== nextKey) {
-      setEmbeddingModel(fromBackend);
+    if (backendSnapshotLoaded && localSavedKey !== nextKey) {
+      setEmbeddingModel(next);
     }
     setLocalModel((current) =>
       JSON.stringify(current ?? null) === nextKey ? current : next,
