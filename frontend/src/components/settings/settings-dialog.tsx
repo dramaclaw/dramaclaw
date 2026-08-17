@@ -515,7 +515,9 @@ function ModelConfigSection({ open }: { open: boolean }) {
                     config?.provisioner?.providerChannels ?? []
                   }
                   savedEmbeddingModel={config?.provisioner?.embeddingModel}
-                  savedMediaModels={config?.provisioner?.mediaModels ?? {}}
+                  savedMediaModels={
+                    config ? (config.provisioner?.mediaModels ?? {}) : undefined
+                  }
                   defaultComfyWorkflows={HYBRID_COMFYUI_WORKFLOWS}
                   mediaOnly
                   comfyOnly
@@ -540,7 +542,9 @@ function ModelConfigSection({ open }: { open: boolean }) {
                     config?.provisioner?.providerChannels ?? []
                   }
                   savedEmbeddingModel={config?.provisioner?.embeddingModel}
-                  savedMediaModels={config?.provisioner?.mediaModels ?? {}}
+                  savedMediaModels={
+                    config ? (config.provisioner?.mediaModels ?? {}) : undefined
+                  }
                   defaultComfyWorkflows={HYBRID_COMFYUI_WORKFLOWS}
                 />
               </div>
@@ -2339,7 +2343,7 @@ function FeatureModelsBlock({
   database: NewApiDatabaseConfigInput | undefined;
   savedProviderChannels: SavedProviderChannelConfig[];
   savedEmbeddingModel: SavedEmbeddingModelConfig | undefined;
-  savedMediaModels: Record<string, SavedMediaModelConfig>;
+  savedMediaModels: Record<string, SavedMediaModelConfig> | undefined;
   mediaOnly?: boolean;
   comfyOnly?: boolean;
   excludeComfyUI?: boolean;
@@ -3085,7 +3089,7 @@ function MediaModelsBlock({
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
   savedChannelByProvider: Map<string, SavedProviderChannelConfig>;
-  savedMediaModels: Record<string, SavedMediaModelConfig>;
+  savedMediaModels: Record<string, SavedMediaModelConfig> | undefined;
   comfyOnly?: boolean;
   excludeComfyUI?: boolean;
 }) {
@@ -3155,7 +3159,7 @@ function MediaModelsBlock({
 
   useEffect(() => {
     const fromBackend = Object.fromEntries(
-      Object.entries(savedMediaModels).map(([model, entry]) => [
+      Object.entries(savedMediaModels ?? {}).map(([model, entry]) => [
         model,
         {
           provider: entry.provider as FeatureModelProvider,
@@ -3168,13 +3172,10 @@ function MediaModelsBlock({
         },
       ]),
     );
-    const next =
-      Object.keys(fromBackend).length > 0 ? fromBackend : localSavedMediaModels;
+    const backendSnapshotLoaded = savedMediaModels !== undefined;
+    const next = backendSnapshotLoaded ? fromBackend : localSavedMediaModels;
     const nextKey = JSON.stringify(next ?? {});
-    if (
-      Object.keys(fromBackend).length > 0 &&
-      localSavedMediaModelsKey !== nextKey
-    ) {
+    if (backendSnapshotLoaded && localSavedMediaModelsKey !== nextKey) {
       setMediaModels(fromBackend);
     }
     setLocalMediaModels((current) =>
@@ -4570,9 +4571,7 @@ function ProviderChannelRow({
         ...currentSettings,
         comfyui: {
           ...nextComfyUI,
-          model_name:
-            readComfyUIModelName(currentSettings) ||
-            defaultComfyWorkflows.model,
+          model_name: defaultComfyWorkflows.model,
           workflow_routes: buildComfyUIWorkflowRoutes({
             ...defaultComfyWorkflows.workflows,
             ...readComfyUIWorkflows(currentSettings),
