@@ -17,6 +17,7 @@ import {
 import { useTaskStream } from "@/hooks/use-task-stream";
 import { useCancelTask, useTasks } from "@/lib/queries/tasks";
 import { mergeTaskLogs } from "@/lib/script-feedback";
+import { taskBeatNumbers } from "@/lib/task-types";
 
 /**
  * Public handle returned by `useTaskController`. Mirrors `useStageTask`'s
@@ -30,8 +31,23 @@ export interface TaskControllerHandle {
    * Mark the task as started and open the SSE stream. Pass `{ scope, taskId }`
    * from the backend TaskResponse so the first stream request hits the right
    * row and terminal reconciliation ignores stale rows from older runs.
+   * `beatNumbers` records which beats this run covers — see `covers`.
    */
-  start: (override?: { scope?: string; taskId?: string }) => void;
+  start: (override?: {
+    scope?: string;
+    taskId?: string;
+    beatNumbers?: number[];
+  }) => void;
+  /**
+   * Whether the tracked run covers `beatNum`.
+   *
+   * Per-beat panels for selection-scoped tasks share one registry entry (one
+   * SSE stream per episode), so `started` alone can't tell beat 9's regen from
+   * beat 11's idle panel. Gate the progress UI on `started && covers(n)`.
+   * Returns `true` when the run carries no beat attribution at all, so an
+   * older task row never hides a beat that really is generating.
+   */
+  covers: (beatNum: number) => boolean;
   stop: () => Promise<void>;
   stopping: boolean;
 }
@@ -173,16 +189,33 @@ export function useTaskController(
     // `key.scope` undefined means "no scope filter" (legacy unscoped
     // controllers); when defined, require an exact match on `task.scope`
     // (nullish-normalized).
-    const match = tasks.find(
-      (t) =>
-        candidates.includes(t.task_type) &&
-        (key.beatNum === undefined || t.beat_num === key.beatNum) &&
-        (key.scope === undefined || (t.scope ?? null) === (key.scope ?? null)) &&
-        isActiveStatus(t.status),
-    );
+    const prev = entry.getSnapshot();
+    // When `start()` handed us the exact task id, prefer that row. Otherwise a
+    // concurrent run of the same type (e.g. a batch `sketch_regen` alongside
+    // this beat's) can win `find` and repoint this entry's scope and beat
+    // coverage onto someone else's run. Purely a preference — it never removes
+    // a match, so plain discovery (page reload, activeTaskId still null) is
+    // unaffected.
+    const match =
+      (prev.activeTaskId !== null
+        ? tasks.find((t) => t.task_id === prev.activeTaskId && isActiveStatus(t.status))
+        : undefined) ??
+      tasks.find(
+        (t) =>
+          candidates.includes(t.task_type) &&
+          (key.beatNum === undefined || t.beat_num === key.beatNum) &&
+          (key.scope === undefined || (t.scope ?? null) === (key.scope ?? null)) &&
+          isActiveStatus(t.status),
+      );
     if (match) {
+      // A silent row means "unknown", not "no beats" — but if it is the very
+      // run `start()` just submitted, we already know its beats and must not
+      // throw that away. Older BEs never write `metadata.beat_numbers`, and
+      // reconcile fires right after `start()`; without this the caller's list
+      // is wiped back to null and every beat's panel lights up again.
+      const sameRun = prev.activeTaskId !== null && match.task_id === prev.activeTaskId;
       entry.setSnapshot({
-        ...entry.getSnapshot(),
+        ...prev,
         started: true,
         activeTaskType: match.task_type,
         activeTaskId: match.task_id ?? null,
@@ -191,6 +224,11 @@ export function useTaskController(
         // task SSE endpoint returns "Task not found" and completion events
         // never reach the FE, so callers' invalidateKeys never fire.
         activeScope: match.scope ?? null,
+        // Which beats this run touches. Survives refresh because the BE
+        // persists it on the task row; without it every per-beat panel on the
+        // episode would show this run's progress.
+        activeBeatNumbers:
+          taskBeatNumbers(match) ?? (sameRun ? prev.activeBeatNumbers : null),
       });
     }
     entry.reconciled = true;
@@ -449,7 +487,7 @@ export function useTaskController(
   const cancelTask = useCancelTask();
 
   const start = useCallback(
-    (override?: { scope?: string; taskId?: string }) => {
+    (override?: { scope?: string; taskId?: string; beatNumbers?: number[] }) => {
       logsRef.current = [];
       // Re-open the reconcile window so the NEXT /tasks poll tick can discover
       // the server-assigned scope for this run. Callers that *know* the scope
@@ -464,6 +502,11 @@ export function useTaskController(
         activeTaskType: key.taskType,
         activeTaskId: override?.taskId ?? null,
         activeScope: override?.scope ?? key.scope ?? null,
+        // The caller knows the beats it just submitted; reconcile will confirm
+        // them from the task row on the next /tasks tick.
+        activeBeatNumbers:
+          override?.beatNumbers ??
+          (key.beatNum === undefined ? null : [key.beatNum]),
         streamState: {
           status: "idle",
           progress: 0,
@@ -474,7 +517,14 @@ export function useTaskController(
         },
       });
     },
-    [entry, key.taskType, key.scope],
+    [entry, key.taskType, key.scope, key.beatNum],
+  );
+
+  const activeBeatNumbers = snapshot.activeBeatNumbers;
+  const covers = useCallback(
+    (beatNum: number) =>
+      activeBeatNumbers === null || activeBeatNumbers.includes(beatNum),
+    [activeBeatNumbers],
   );
 
   const stop = useCallback(async () => {
@@ -503,6 +553,7 @@ export function useTaskController(
     stream: snapshot.streamState,
     logs: logsRef.current,
     start,
+    covers,
     stop,
     stopping: cancelTask.isPending,
   };

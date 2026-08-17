@@ -67,3 +67,37 @@ export const SCOPED_TASK_TYPES = new Set<TaskType>([
 export function isScopedTask(type: string): boolean {
   return SCOPED_TASK_TYPES.has(type as TaskType);
 }
+
+/**
+ * Beats a task row covers, or `null` when the row doesn't say.
+ *
+ * Selection-scoped runs (`sketch_regen` / `selected_regen`) carry `beat_num =
+ * null` and a scope that is a server-side hash of the beat list, so the beat
+ * numbers only reach the FE through `metadata.beat_numbers` (written by the
+ * BE's `display_metadata_for_task`). Single-beat rows still answer through
+ * `beat_num`.
+ *
+ * `null` means "unknown" and callers must treat it as "covers everything" —
+ * a row enqueued before the BE started writing the metadata still belongs to
+ * a beat that is genuinely generating, and hiding its progress would be the
+ * worse failure.
+ */
+export function taskBeatNumbers(task: {
+  beat_num?: number | null;
+  metadata?: Record<string, unknown> | null;
+}): number[] | null {
+  const raw = task.metadata?.beat_numbers;
+  if (Array.isArray(raw)) {
+    // Deliberately not `Number(value)`: that coerces null/""/false to 0 and
+    // true to 1, which would invent coverage of beat 0/1 out of a malformed
+    // row. Only accept what is already an integer, or a string that is one.
+    const beats = raw
+      .map((value) =>
+        typeof value === "string" && value.trim() !== "" ? Number(value) : value,
+      )
+      .filter((value): value is number => typeof value === "number" && Number.isInteger(value));
+    if (beats.length > 0) return beats;
+  }
+  if (typeof task.beat_num === "number") return [task.beat_num];
+  return null;
+}
