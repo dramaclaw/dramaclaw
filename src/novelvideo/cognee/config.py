@@ -936,17 +936,16 @@ async def _run_project_embedding_with_billing(
             expected_count=expected_count,
         )
     except BaseException:
-        if reservation_id:
-            try:
-                await get_usage_meter().refund_model_call_credit_reservation(
-                    reservation_id,
-                    metadata={
-                        "source": "cognee_embedding_gateway_exception",
-                        "embedding_gateway": spec.gateway,
-                    },
-                )
-            except Exception:
-                pass
+        try:
+            await get_usage_meter().refund_model_call_credit_reservation(
+                reservation_id,
+                metadata={
+                    "source": "cognee_embedding_gateway_exception",
+                    "embedding_gateway": spec.gateway,
+                },
+            )
+        except Exception:
+            pass
         raise
     finally:
         if active_token is not None:

@@ -42,8 +42,6 @@ async def _refund_tts_model_call(
     error: str,
     provider_request_id: str = "",
 ) -> None:
-    if not reservation_id:
-        return
     try:
         metadata: dict[str, Any] = {"source": source, "error": error[:200]}
         if provider_request_id:

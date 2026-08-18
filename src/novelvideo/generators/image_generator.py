@@ -62,8 +62,6 @@ async def _refund_image_model_call(
     source: str,
     error: str,
 ) -> None:
-    if not reservation_id:
-        return
     try:
         await get_usage_meter().refund_model_call_credit_reservation(
             reservation_id,

@@ -102,8 +102,6 @@ async def _refund_music_model_call(
     source: str,
     error: str,
 ) -> None:
-    if not reservation_id:
-        return
     try:
         from novelvideo.ports import get_usage_meter
 

@@ -3457,8 +3457,6 @@ async def _call_openai_image_api(
         )
 
     async def _refund(reservation_id: str, source: str, error: str) -> None:
-        if not reservation_id:
-            return
         try:
             await get_usage_meter().refund_model_call_credit_reservation(
                 reservation_id,
@@ -3757,8 +3755,6 @@ async def _call_newapi_image_api(
         http_status: int | None = None,
         headers: dict[str, str] | None = None,
     ) -> None:
-        if not reservation_id:
-            return
         try:
             metadata: dict[str, object] = {"source": source, "error": error[:200]}
             if request_id:

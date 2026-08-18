@@ -142,8 +142,6 @@ async def _refund_video_model_call(
     provider_request_id: str = "",
     provider_task_id: str = "",
 ) -> None:
-    if not reservation_id:
-        return
     try:
         metadata: dict[str, object] = {"source": source, "error": error[:200]}
         if provider_request_id:
