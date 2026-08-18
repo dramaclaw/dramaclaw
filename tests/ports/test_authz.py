@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from inspect import signature
 
 import pytest
 
@@ -53,6 +54,36 @@ def test_authz_snapshot_rejects_stale_version():
         _snapshot().require_active(expected_authz_version=8)
 
     assert exc.value.code == "ORG_AUTHZ_STALE"
+
+
+@pytest.mark.parametrize(
+    ("exception_name", "failure_kind"),
+    [
+        ("AuthzServiceUnavailable", "unavailable"),
+        ("AuthzServiceFault", "fault"),
+    ],
+)
+def test_authz_service_failures_have_safe_fixed_public_contract(
+    exception_name, failure_kind
+):
+    from novelvideo.ports import authz
+
+    exception_type = getattr(authz, exception_name)
+    exc = exception_type()
+
+    assert isinstance(exc, authz.AuthzError)
+    assert exc.code == "ORG_AUTHZ_UNAVAILABLE"
+    assert exc.failure_kind == failure_kind
+    assert exc.http_status == 503
+    assert exc.user_message == "授权服务暂时不可用，请稍后重试"
+    assert str(exc) == "organization authorization service is unavailable"
+    assert "postgres" not in repr(exc).lower()
+
+
+def test_authz_error_base_constructor_remains_code_only() -> None:
+    from novelvideo.ports.authz import AuthzError
+
+    assert tuple(signature(AuthzError).parameters) == ("code",)
 
 
 @pytest.mark.parametrize("authz_version", [True, False, 0, -1, "1", 1.0])

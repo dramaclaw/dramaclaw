@@ -9,7 +9,12 @@ import pytest
 
 from novelvideo.project_context import ProjectContext
 from novelvideo.ports import registry
-from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
+from novelvideo.ports.authz import (
+    AdmissionContext,
+    AuthzServiceFault,
+    AuthzServiceUnavailable,
+    BillingPrincipal,
+)
 from novelvideo.ports.local.tasks import InlineTaskBackend, InMemoryCancellationStore
 from novelvideo.ports.model_credentials import CredentialReference
 from novelvideo.task_backend import cancel as cancel_module
@@ -80,6 +85,19 @@ class FakeAuthz:
             root_task_id=root_task_id,
             key_version=self.key_version,
         )
+
+
+class SequencedAuthz:
+    def __init__(self, outcomes):
+        self.outcomes = iter(outcomes)
+        self.calls = []
+
+    async def admit_model_task(self, *, user_id, root_task_id):
+        self.calls.append({"user_id": user_id, "root_task_id": root_task_id})
+        outcome = next(self.outcomes)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return _admission(user_id=user_id, root_task_id=root_task_id)
 
 
 def _inline_backend(*, producer=None, authz=None):
@@ -183,6 +201,32 @@ async def test_inline_consumer_precedes_run_core_and_runner(monkeypatch, tmp_pat
     await backend._run_inline(backend._lanes["default"], job)
 
     assert events == ["consumer", "run_core", "runner"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [AuthzServiceUnavailable(), AuthzServiceFault()])
+async def test_inline_enqueue_preserves_authz_service_failure_subtype(
+    monkeypatch, tmp_path, failure
+):
+    ctx = _ctx(tmp_path)
+    submitted = []
+    backend = _inline_backend(producer=FakeProducer(failure=failure))
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+
+    with pytest.raises(type(failure)) as caught:
+        await backend.enqueue_project_task(
+            ctx,
+            task_type="single_video",
+            product_surface="mainline",
+            episode=1,
+        )
+
+    assert caught.value is failure
+    assert submitted == []
+    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
+    assert state is not None
+    assert state.status == "failed"
+    assert state.metadata["error_code"] == "ORG_AUTHZ_UNAVAILABLE"
 
 
 @pytest.mark.asyncio
@@ -432,7 +476,12 @@ async def test_inline_stale_authority_refunds_the_enqueue_side_reservation(
         ctx, task_type="single_video", product_surface="mainline", episode=1
     )
     job = submitted[0]
-    job.envelope["billing_metadata"] = {"feature_credit_reservation_id": "reservation-1"}
+    job.metadata["billing_metadata"] = {
+        "feature_credit_reservation_id": "reservation-1"
+    }
+    job.envelope["billing_metadata"] = {
+        "feature_credit_reservation_id": "attacker-controlled-reservation"
+    }
 
     await backend._run_inline(backend._lanes["default"], job)
 
@@ -440,6 +489,115 @@ async def test_inline_stale_authority_refunds_the_enqueue_side_reservation(
     assert meter.refunds[0]["metadata"]["error_code"] == "TASK_ENVELOPE_STALE"
     state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
     assert state.status == "failed"
+
+
+def _disable_inline_authz_retry_wait(monkeypatch):
+    async def no_wait(_delay):
+        return None
+
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks._AUTHZ_RETRY_SLEEP",
+        no_wait,
+    )
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks._AUTHZ_RETRY_RANDOM",
+        lambda: 0.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_inline_authz_retry_recovers_before_running_once(monkeypatch, tmp_path):
+    from novelvideo.ports.authz import AuthzServiceUnavailable
+
+    ctx = _ctx(tmp_path)
+    authz = SequencedAuthz(
+        [AuthzServiceUnavailable(), AuthzServiceUnavailable(), object()]
+    )
+    backend = _inline_backend(authz=authz)
+    submitted = []
+    runner_calls = []
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks.run_project_task_core_sync",
+        lambda *_args, **_kwargs: runner_calls.append("run"),
+    )
+    _disable_inline_authz_retry_wait(monkeypatch)
+
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1
+    )
+    await backend._run_inline(backend._lanes["default"], submitted[0])
+
+    assert len(authz.calls) == 3
+    assert runner_calls == ["run"]
+
+
+@pytest.mark.asyncio
+async def test_inline_authz_fault_fails_without_retry(monkeypatch, tmp_path):
+    from novelvideo.ports.authz import AuthzServiceFault
+
+    ctx = _ctx(tmp_path)
+    authz = SequencedAuthz([AuthzServiceFault()])
+    backend = _inline_backend(authz=authz)
+    submitted = []
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+    _disable_inline_authz_retry_wait(monkeypatch)
+
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1
+    )
+    await backend._run_inline(backend._lanes["default"], submitted[0])
+
+    assert len(authz.calls) == 1
+    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
+    assert state is not None
+    assert state.status == "failed"
+    assert state.metadata["error_code"] == "TASK_AUTHZ_CHECK_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_inline_authz_retry_exhaustion_fails_exact_task_and_refunds_trusted_marker(
+    monkeypatch, tmp_path
+):
+    from novelvideo.ports.authz import AuthzServiceUnavailable
+
+    ctx = _ctx(tmp_path)
+    failures = [AuthzServiceUnavailable() for _ in range(6)]
+    authz = SequencedAuthz(failures)
+    backend = _inline_backend(authz=authz)
+    meter = FakeUsageMeter()
+    submitted = []
+    runner_calls = []
+    monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks.run_project_task_core_sync",
+        lambda *_args, **_kwargs: runner_calls.append("run"),
+    )
+    monkeypatch.setattr(
+        "novelvideo.task_backend.run_core.get_usage_meter", lambda: meter
+    )
+    _disable_inline_authz_retry_wait(monkeypatch)
+
+    await backend.enqueue_project_task(
+        ctx, task_type="single_video", product_surface="mainline", episode=1
+    )
+    job = submitted[0]
+    job.metadata["billing_metadata"] = {
+        "feature_credit_reservation_id": "trusted-reservation"
+    }
+    job.envelope["billing_metadata"] = {
+        "feature_credit_reservation_id": "attacker-reservation"
+    }
+
+    await backend._run_inline(backend._lanes["default"], job)
+
+    assert len(authz.calls) == 6
+    assert runner_calls == []
+    assert [item["reservation_id"] for item in meter.refunds] == ["trusted-reservation"]
+    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
+    assert state is not None
+    assert state.status == "failed"
+    assert state.metadata["error_code"] == "TASK_AUTHZ_UNAVAILABLE"
 
 
 @pytest.mark.asyncio
@@ -462,7 +620,9 @@ async def test_inline_unverified_rejection_moves_zero_credits(monkeypatch, tmp_p
         ctx, task_type="single_video", product_surface="mainline", episode=1
     )
     job = submitted[0]
-    job.envelope["billing_metadata"] = {"feature_credit_reservation_id": "reservation-1"}
+    job.envelope["billing_metadata"] = {
+        "feature_credit_reservation_id": "reservation-1"
+    }
     job.envelope["episode"] = True
 
     await backend._run_inline(backend._lanes["default"], job)

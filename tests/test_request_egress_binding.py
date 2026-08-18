@@ -18,13 +18,20 @@ from __future__ import annotations
 import pytest
 
 from novelvideo import ports
+from novelvideo.api import egress_binding
 from novelvideo.api.egress_binding import (
     build_request_egress_context,
     request_egress_scope,
 )
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.model_gateway_runtime import current_model_gateway_context
-from novelvideo.ports.authz import AdmissionContext, AuthzError, BillingPrincipal
+from novelvideo.ports.authz import (
+    AdmissionContext,
+    AuthzError,
+    AuthzServiceFault,
+    AuthzServiceUnavailable,
+    BillingPrincipal,
+)
 from novelvideo.ports.local import LocalAuthz
 from novelvideo.ports.model_credentials import CredentialReference
 
@@ -85,7 +92,7 @@ class _RaisingAuthz:
         # 于是 `__context__` 上挂着原始异常（EE `admission_repository.py:53-54`
         # 把任何 PostgresError 映射成 ORG_AUTHZ_STALE 就是这个形状）。
         try:
-            raise RuntimeError("relation \"users\" does not exist -- raw pg detail")
+            raise RuntimeError('relation "users" does not exist -- raw pg detail')
         except RuntimeError as exc:
             raise AuthzError(self.code) from exc
 
@@ -107,6 +114,25 @@ class _MismatchingAuthz:
         )
 
 
+class _SequencedAuthz:
+    def __init__(self, outcomes) -> None:
+        self._outcomes = iter(outcomes)
+        self.calls: list[tuple[str, str]] = []
+
+    async def admit_model_task(
+        self, *, user_id: str, root_task_id: str
+    ) -> AdmissionContext:
+        self.calls.append((user_id, root_task_id))
+        outcome = next(self._outcomes)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return _admission(
+            kind="organization",
+            user_id=user_id,
+            root_task_id=root_task_id,
+        )
+
+
 def _use(monkeypatch: pytest.MonkeyPatch, port: object) -> None:
     # 与 `tests/test_p0g4c_video_egress.py:803` 同一写法；被测模块按
     # `generators/video_generator.py:2733` 的先例在函数体内惰性取端口。
@@ -119,6 +145,14 @@ async def _build() -> TrustedEgressContext | None:
         project_id=_PROJECT_ID,
         task_type=_TASK_TYPE,
     )
+
+
+def _disable_retry_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def no_wait(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(egress_binding, "_AUTHZ_RETRY_SLEEP", no_wait)
+    monkeypatch.setattr(egress_binding, "_AUTHZ_RETRY_RANDOM", lambda: 0.0)
 
 
 # --- C1-1 ------------------------------------------------------------------
@@ -235,6 +269,43 @@ async def test_c1_08_raised_authz_error_carries_no_exception_chain(monkeypatch):
     assert exc.__context__ is None
     assert exc.__suppress_context__ is True
     assert "does not exist" not in str(exc)
+
+
+async def test_request_authz_read_recovers_within_short_retry_budget(monkeypatch):
+    port = _SequencedAuthz(
+        [
+            AuthzServiceUnavailable(),
+            AuthzServiceFault(),
+            object(),
+        ]
+    )
+    _use(monkeypatch, port)
+    _disable_retry_wait(monkeypatch)
+
+    context = await _build()
+
+    assert type(context) is TrustedEgressContext
+    assert len(port.calls) == 3
+    assert {root_task_id for _, root_task_id in port.calls} == {context.root_task_id}
+
+
+async def test_request_authz_retry_exhaustion_preserves_service_subtype(monkeypatch):
+    failures = [
+        AuthzServiceUnavailable(),
+        AuthzServiceFault(),
+        AuthzServiceUnavailable(),
+    ]
+    port = _SequencedAuthz(failures)
+    _use(monkeypatch, port)
+    _disable_retry_wait(monkeypatch)
+
+    with pytest.raises(AuthzServiceUnavailable) as caught:
+        await _build()
+
+    assert caught.value is failures[-1]
+    assert caught.value.http_status == 503
+    assert len(port.calls) == 3
+    assert len({root_task_id for _, root_task_id in port.calls}) == 1
 
 
 # --- C1-9 ------------------------------------------------------------------

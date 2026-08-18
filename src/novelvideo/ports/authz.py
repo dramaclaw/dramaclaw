@@ -7,7 +7,6 @@ from typing import Protocol
 
 from novelvideo.ports.model_credentials import CredentialReference
 
-
 # Redacted exception text. This is what lands in a failed task's `error`
 # column (see ports/local/tasks.py and the EE task backend), so it must cover
 # every code the admission definer can reject with — a missing entry degrades
@@ -23,6 +22,7 @@ _AUTHZ_ERROR_MESSAGES = {
     "ORG_CREDENTIAL_DISABLED": "organization credential is disabled",
     "ORG_CREDENTIAL_VERSION_MISMATCH": "organization credential version mismatch",
     "ORG_CREDENTIAL_DECRYPT_FAILED": "organization credential could not be resolved",
+    "ORG_AUTHZ_UNAVAILABLE": "organization authorization service is unavailable",
     "P0_GRAY_DISABLED": "organization task rollout is disabled",
 }
 
@@ -41,6 +41,7 @@ AUTHZ_ERROR_HTTP_STATUS = {
     "ORG_CREDENTIAL_DISABLED": 409,
     "ORG_CREDENTIAL_VERSION_MISMATCH": 409,
     "ORG_CREDENTIAL_DECRYPT_FAILED": 503,
+    "ORG_AUTHZ_UNAVAILABLE": 503,
     "P0_GRAY_DISABLED": 503,
 }
 
@@ -56,6 +57,7 @@ _AUTHZ_USER_MESSAGES = {
     "ORG_CREDENTIAL_DISABLED": "组织 Key 当前不可用，请联系组织管理员",
     "ORG_CREDENTIAL_VERSION_MISMATCH": "Key 状态已更新，请刷新后重试",
     "ORG_CREDENTIAL_DECRYPT_FAILED": "凭证服务异常，请联系支持",
+    "ORG_AUTHZ_UNAVAILABLE": "授权服务暂时不可用，请稍后重试",
     "P0_GRAY_DISABLED": "组织任务功能当前未开放，请联系支持",
 }
 
@@ -86,6 +88,24 @@ class AuthzError(RuntimeError):
     @property
     def user_message(self) -> str:
         return authz_error_user_message(self.code)
+
+
+class AuthzServiceUnavailable(AuthzError):
+    """Retryable authorization dependency outage with a redacted surface."""
+
+    failure_kind = "unavailable"
+
+    def __init__(self) -> None:
+        super().__init__("ORG_AUTHZ_UNAVAILABLE")
+
+
+class AuthzServiceFault(AuthzError):
+    """Unexpected authorization service response with a redacted surface."""
+
+    failure_kind = "fault"
+
+    def __init__(self) -> None:
+        super().__init__("ORG_AUTHZ_UNAVAILABLE")
 
 
 def authz_error_payload(exc: AuthzError) -> dict[str, str]:
@@ -173,7 +193,9 @@ class AdmissionContext:
             if not self.membership_id:
                 raise ValueError("organization admission requires membership_id")
             if self.credential.source != "organization":
-                raise ValueError("organization admission requires organization credential")
+                raise ValueError(
+                    "organization admission requires organization credential"
+                )
             if self.credential.org_id != self.billing_principal.id:
                 raise ValueError("organization admission credential org mismatch")
 
@@ -188,4 +210,6 @@ class AuthzPort(Protocol):
         expected_authz_version: int | None = None,
     ) -> None: ...
 
-    async def admit_model_task(self, *, user_id: str, root_task_id: str) -> AdmissionContext: ...
+    async def admit_model_task(
+        self, *, user_id: str, root_task_id: str
+    ) -> AdmissionContext: ...

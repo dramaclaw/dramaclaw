@@ -8,12 +8,19 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Any
 
-from novelvideo.ports.authz import AdmissionContext, AuthzError, AuthzPort
+from novelvideo.ports.authz import (
+    AdmissionContext,
+    AuthzError,
+    AuthzPort,
+    AuthzServiceFault,
+    AuthzServiceUnavailable,
+)
 from novelvideo.task_backend.envelope import (
     InvalidTaskEnvelope,
     RejectedTaskSettlement,
     SignedTaskEnvelope,
     StaleTaskEnvelope,
+    TaskAuthorityUnavailable,
 )
 
 _DELIVERY_FIELDS = {
@@ -37,18 +44,16 @@ def _allow_execution() -> None:
 def _rejected_settlement(
     signed: SignedTaskEnvelope,
     signed_payload: dict[str, Any],
-    raw_delivery: dict[str, Any],
 ) -> RejectedTaskSettlement:
     """Build the settlement identity for a refusal raised after verification."""
-    billing_metadata = raw_delivery.get("billing_metadata")
     return RejectedTaskSettlement(
         project_id=signed.project_id,
         requester_user_id=signed.admission.requester_user_id,
+        root_task_id=signed.admission.root_task_id,
         task_type=signed.task_type,
         episode=signed_payload["episode"],
         beat_num=signed_payload["beat_num"],
         scope=signed_payload["scope"],
-        billing_metadata=MappingProxyType(dict(billing_metadata or {})),
     )
 
 
@@ -56,9 +61,8 @@ def _refuse_verified(
     error: InvalidTaskEnvelope,
     signed: SignedTaskEnvelope,
     signed_payload: dict[str, Any],
-    raw_delivery: dict[str, Any],
 ) -> InvalidTaskEnvelope:
-    error.settlement = _rejected_settlement(signed, signed_payload, raw_delivery)
+    error.settlement = _rejected_settlement(signed, signed_payload)
     return error
 
 
@@ -200,10 +204,10 @@ class TaskEnvelopeConsumer:
                 _PreExecutionPolicyError("P0_GRAY_DISABLED"),
                 signed,
                 signed_payload,
-                raw_delivery,
             ) from None
 
         authority_failed = False
+        authority_failure_kind: str | None = None
         current_admission: AdmissionContext | None = None
         try:
             current_admission = await self._authz.admit_model_task(
@@ -214,14 +218,24 @@ class TaskEnvelopeConsumer:
                 signed.admission
             ):
                 authority_failed = True
-        except Exception:
+        except AuthzServiceUnavailable:
+            authority_failure_kind = "unavailable"
+        except AuthzServiceFault:
+            authority_failure_kind = "fault"
+        except AuthzError:
             authority_failed = True
+        except Exception:
+            authority_failure_kind = "fault"
+        if authority_failure_kind is not None:
+            raise TaskAuthorityUnavailable(
+                failure_kind=authority_failure_kind,
+                settlement=_rejected_settlement(signed, signed_payload),
+            ) from None
         if authority_failed:
             raise _refuse_verified(
                 StaleTaskEnvelope(),
                 signed,
                 signed_payload,
-                raw_delivery,
             ) from None
 
         return VerifiedTaskDelivery(

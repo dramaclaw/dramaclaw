@@ -84,6 +84,15 @@ class UsageMeter(Protocol):
         """Refund a reservation when no usable business result was delivered."""
         ...
 
+    async def mark_feature_credit_settlement_for_review(
+        self,
+        reservation_id: str,
+        *,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Keep a post-start reservation in review without refund or confirm."""
+        ...
+
     async def mark_current_paid_execution_attempt(
         self,
         *,

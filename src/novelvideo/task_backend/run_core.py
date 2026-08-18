@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import logging
 import os
 import time
@@ -25,7 +26,10 @@ from novelvideo.shared.billing_errors import (
     is_insufficient_credits_error,
 )
 from novelvideo.task_backend.consumer import VerifiedTaskDelivery
-from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+from novelvideo.task_backend.envelope import (
+    InvalidTaskEnvelope,
+    RunningTaskAuthorityIndeterminate,
+)
 from novelvideo.task_backend.cancel import (
     TaskCancelled,
     TaskTimedOut,
@@ -39,6 +43,14 @@ from novelvideo.task_backend.subprocesses import project_task_subprocess_context
 from novelvideo.task_state import project_task_run_context
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SettlementIntentResult:
+    """Whether the canonical usage adapter accepted a settlement intent."""
+
+    accepted: bool
+
 
 _PROJECT_TASK_RESOURCE_KINDS = {
     "ingest_fast": "ingest",
@@ -321,7 +333,7 @@ async def refund_undelivered_feature_credit_reservation(
     reservation_id: str,
     *,
     metadata: dict[str, Any] | None = None,
-) -> None:
+) -> SettlementIntentResult:
     """Refund a failed or cancelled task that delivered no usable result.
 
     Paid provider attempts are recorded independently for platform cost
@@ -333,17 +345,19 @@ async def refund_undelivered_feature_credit_reservation(
     through this one path rather than growing a second refund.
     """
     if not reservation_id:
-        return
+        return SettlementIntentResult(accepted=True)
     try:
         await get_usage_meter().settle_cancelled_feature_credit_reservation(
             reservation_id,
             metadata=metadata,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.error(
-            "undelivered feature credit refund remains awaiting retry: %s",
-            exc,
+            "undelivered feature credit refund remains awaiting retry",
+            extra={"failure_kind": "settlement_adapter_failure"},
         )
+        return SettlementIntentResult(accepted=False)
+    return SettlementIntentResult(accepted=True)
 
 
 _refund_undelivered_feature_credit_reservation = (
@@ -479,7 +493,9 @@ def _project_task_failure_for_exception(
 
     billing_error = find_billing_error(exc)
     if billing_error is not None:
-        logger.warning("typed billing failure in project task: %s", billing_error, exc_info=exc)
+        logger.warning(
+            "typed billing failure in project task: %s", billing_error, exc_info=exc
+        )
         return (
             billing_error.user_message,
             billing_error_payload(billing_error),
@@ -722,6 +738,57 @@ def run_project_task_core_sync(
                 with model_gateway_scope_for_runner(envelope):
                     result = runner(envelope, ctx)
             except BaseException as exc:
+                if isinstance(exc, RunningTaskAuthorityIndeterminate):
+                    logger.warning(
+                        "running_task_authz_outcome_indeterminate",
+                        extra={"failure_kind": exc.failure_kind},
+                    )
+                    if feature_reservation_id:
+                        try:
+                            asyncio.run(
+                                get_usage_meter().mark_feature_credit_settlement_for_review(
+                                    feature_reservation_id,
+                                    metadata={
+                                        "source": "task_authz_revalidation_indeterminate",
+                                        "error_code": exc.code,
+                                        "failure_kind": exc.failure_kind,
+                                    },
+                                )
+                            )
+                        except Exception:  # noqa: BLE001
+                            logger.error(
+                                "failed to persist post-start settlement review",
+                                extra={"failure_kind": exc.failure_kind},
+                            )
+                    failure_payload = {
+                        "error_code": exc.code,
+                        "failure_kind": exc.failure_kind,
+                    }
+                    logger.info(
+                        "task_refund_deferred_to_review",
+                        extra={"failure_kind": exc.failure_kind},
+                    )
+                    manager.fail_task_for_project(
+                        ctx,
+                        task_type,
+                        episode,
+                        beat_num=beat_num,
+                        scope=scope,
+                        error=str(exc),
+                        metadata={**run_metadata, **failure_payload},
+                        expected_task_id=run_task_id,
+                    )
+                    asyncio.run(
+                        _emit_project_task_metrics(
+                            ctx,
+                            task_type,
+                            episode=episode,
+                            beat_num=beat_num,
+                            scope=scope,
+                            outcome="failed",
+                        )
+                    )
+                    return {"failed": True, **failure_payload}
                 if isinstance(exc, TaskCancelled):
                     asyncio.run(
                         _refund_undelivered_feature_credit_reservation(

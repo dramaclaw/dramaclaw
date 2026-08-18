@@ -6,7 +6,12 @@ from importlib import import_module
 
 import pytest
 
-from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
+from novelvideo.ports.authz import (
+    AdmissionContext,
+    AuthzServiceFault,
+    AuthzServiceUnavailable,
+    BillingPrincipal,
+)
 from novelvideo.ports.model_credentials import CredentialReference
 from novelvideo.task_backend.envelope import SignedTaskEnvelope
 
@@ -118,6 +123,16 @@ class FakeAuthz:
     async def admit_model_task(self, *, user_id: str, root_task_id: str):
         self.calls.append({"user_id": user_id, "root_task_id": root_task_id})
         return self.admission
+
+
+class RaisingAuthz:
+    def __init__(self, failure: BaseException) -> None:
+        self.failure = failure
+        self.calls: list[dict[str, str]] = []
+
+    async def admit_model_task(self, *, user_id: str, root_task_id: str):
+        self.calls.append({"user_id": user_id, "root_task_id": root_task_id})
+        raise self.failure
 
 
 @pytest.mark.asyncio
@@ -312,7 +327,10 @@ async def test_consumer_verifies_envelope_before_running_policy():
 async def test_policy_rejection_carries_verified_settlement_identity():
     """灰度关闭发生在 verify 成功之后，所以身份是可信的，允许驱动退款。"""
     from novelvideo.ports.authz import AuthzError
-    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer, VerifiedTaskDelivery
+    from novelvideo.task_backend.consumer import (
+        TaskEnvelopeConsumer,
+        VerifiedTaskDelivery,
+    )
 
     authz = FakeAuthz()
 
@@ -339,7 +357,8 @@ async def test_policy_rejection_carries_verified_settlement_identity():
     assert settlement.episode == 3
     assert settlement.beat_num == 2
     assert settlement.scope == "selected"
-    assert dict(settlement.billing_metadata) == BILLING_METADATA
+    assert settlement.root_task_id == "task-root"
+    assert not hasattr(settlement, "billing_metadata")
     assert "policy-secret-canary" not in str(captured.value)
     assert captured.value.code == "P0_GRAY_DISABLED"
     assert captured.value.__cause__ is None
@@ -368,10 +387,48 @@ async def test_stale_authority_rejection_carries_verified_settlement_identity():
     assert settlement is not None
     assert settlement.project_id == "project-1"
     assert settlement.task_type == "single_video"
-    assert dict(settlement.billing_metadata) == BILLING_METADATA
+    assert settlement.root_task_id == "task-root"
+    assert not hasattr(settlement, "billing_metadata")
     assert captured.value.code == "TASK_ENVELOPE_STALE"
     assert captured.value.__cause__ is None
     assert captured.value.__context__ is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "failure_kind"),
+    [
+        (AuthzServiceUnavailable(), "unavailable"),
+        (AuthzServiceFault(), "fault"),
+    ],
+)
+async def test_authz_service_failure_is_not_misclassified_as_stale(
+    failure, failure_kind
+):
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+    from novelvideo.task_backend.envelope import (
+        InvalidTaskEnvelope,
+        TaskAuthorityUnavailable,
+    )
+
+    authz = RaisingAuthz(failure)
+    consumer = TaskEnvelopeConsumer(keyring=KEYRING, authz=authz, clock=lambda: NOW)
+    delivery = _billed_delivery()
+    delivery["billing_metadata"] = {
+        "feature_credit_reservation_id": "attacker-controlled-reservation"
+    }
+
+    with pytest.raises(TaskAuthorityUnavailable) as captured:
+        await consumer.consume(delivery, expected_root_task_id="task-root")
+
+    assert not isinstance(captured.value, InvalidTaskEnvelope)
+    assert captured.value.failure_kind == failure_kind
+    assert captured.value.settlement.root_task_id == "task-root"
+    assert captured.value.settlement.project_id == "project-1"
+    assert not hasattr(captured.value.settlement, "billing_metadata")
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    assert authz.calls == [{"user_id": "user-1", "root_task_id": "task-root"}]
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,8 @@ import pytest
 from novelvideo.ports.authz import (
     AdmissionContext,
     AuthzError,
+    AuthzServiceFault,
+    AuthzServiceUnavailable,
     BillingPrincipal,
 )
 from novelvideo.ports.model_credentials import CredentialReference
@@ -204,6 +206,25 @@ async def test_authz_error_preserves_safe_code_and_message_without_chain():
     assert str(captured.value) == "organization membership is inactive"
     assert captured.value.__cause__ is None
     assert captured.value.__context__ is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [AuthzServiceUnavailable(), AuthzServiceFault()])
+async def test_authz_service_failure_preserves_subtype_at_producer_boundary(failure):
+    producer = _producer(FakeAuthz(failure=failure))
+
+    with pytest.raises(type(failure)) as captured:
+        await producer.sign_top_level(
+            user_id="user-1",
+            root_task_id="reserved-task-1",
+            task_type="single_video",
+            project_id="project-1",
+            payload={},
+        )
+
+    assert captured.value is failure
+    assert captured.value.code == "ORG_AUTHZ_UNAVAILABLE"
+    assert captured.value.__cause__ is None
 
 
 @pytest.mark.asyncio

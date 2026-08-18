@@ -28,6 +28,7 @@ paths = [
 regexTarget = "match"
 regexes = [
   '''authz_error_code\s*==\s*["']P0_GRAY_DISABLED["']''',
+  '''authz_failure\.code\s*==\s*["']P0_GRAY_DISABLED["']''',
 ]
 
 [[rules]]

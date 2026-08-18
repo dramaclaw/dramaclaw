@@ -17,13 +17,22 @@ ContextVar。它**不接任何路由**；接线是 OI-54 族 S1／S2／S4／S5 �
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+import random
 from typing import AsyncIterator
 from uuid import uuid4
 
+from novelvideo.authz_retry import retry_authz_read
 from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.model_gateway_runtime import model_gateway_request_scope
 from novelvideo.ports.authz import AdmissionContext, AuthzError
+
+_AUTHZ_RETRY_MAX_RETRIES = 2
+_AUTHZ_RETRY_BASE_DELAY = 0.1
+_AUTHZ_RETRY_CAP_DELAY = 0.5
+_AUTHZ_RETRY_SLEEP = asyncio.sleep
+_AUTHZ_RETRY_RANDOM = random.random
 
 
 async def build_request_egress_context(
@@ -49,25 +58,31 @@ async def build_request_egress_context(
     # 的既定形状（那里先有 `state.task_id` 才调 `sign_top_level`）。
     root_task_id = uuid4().hex
 
-    # 照抄 `task_backend/producer.py:124-141`：在 except 块内只记 `exc.code`，
-    # 退出 except 块之后才 raise ... from None。`from None` 是刻意断异常链——
-    # EE `authz/admission_repository.py:53-54` 把任何 PostgresError 映射成
-    # ORG_AUTHZ_STALE，原始 PG 错误文本会挂在异常上下文里随之外泄。
-    authz_error_code: str | None = None
+    # 只重试无副作用的 authz read。root_task_id 在重试外生成，确保所有尝试
+    # 请求同一份 admission identity；provider 调用尚未发生。
+    authz_failure: AuthzError | None = None
     admission: AdmissionContext | None = None
     try:
-        admission = await get_authz_port().admit_model_task(
-            user_id=requester_user_id,
-            root_task_id=root_task_id,
+        authz_port = get_authz_port()
+        admission = await retry_authz_read(
+            lambda: authz_port.admit_model_task(
+                user_id=requester_user_id,
+                root_task_id=root_task_id,
+            ),
+            max_retries=_AUTHZ_RETRY_MAX_RETRIES,
+            base_delay=_AUTHZ_RETRY_BASE_DELAY,
+            cap_delay=_AUTHZ_RETRY_CAP_DELAY,
+            sleep=_AUTHZ_RETRY_SLEEP,
+            random=_AUTHZ_RETRY_RANDOM,
         )
     except AuthzError as exc:
-        authz_error_code = exc.code
+        authz_failure = exc
         admission = None
-    if authz_error_code is not None:
+    if authz_failure is not None:
         # 分支 1：灰度关＝平台语义，路径逐字节不变。
         # `ST_P0_GRAY_ENABLED` 缺省关时 `admit_model_task` 首句 require_enabled()
         # 就抛这个码（EE 侧 authz port 实现与其灰度开关配置）。
-        if authz_error_code == "P0_GRAY_DISABLED":
+        if authz_failure.code == "P0_GRAY_DISABLED":
             return None
         # 分支 2：其余任何 AuthzError 原样上抛，fail-closed。
         #
@@ -76,7 +91,10 @@ async def build_request_egress_context(
         # 「平台用户不会被拒」是错的；压成 None 会把真拒绝读成「非组织，放行」。
         # ORG_AUTHZ_STALE 上抛确实会波及平台用户，但这已经是今天的生产语义：
         # `producer.sign_top_level` 对所有用户在同样情形下就是这么抛的。
-        raise AuthzError(authz_error_code) from None
+        authz_failure.__cause__ = None
+        authz_failure.__context__ = None
+        authz_failure.__traceback__ = None
+        raise authz_failure from None
 
     # 非 AuthzError 的异常不在这里兜。producer 那里把它们转成 `_invalid()`，
     # 是因为它必须交出一个信封；这里没有信封可交，让它原样上抛即 fail-closed。

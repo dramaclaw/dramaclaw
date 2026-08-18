@@ -118,6 +118,18 @@ class NoOpUsageMeter:
             "status": "completed",
         }
 
+    async def mark_feature_credit_settlement_for_review(
+        self,
+        reservation_id: str,
+        *,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        return {
+            "reservation_id": reservation_id,
+            "action": "review",
+            "status": "awaiting",
+        }
+
     async def mark_current_paid_execution_attempt(
         self,
         *,

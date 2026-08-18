@@ -31,11 +31,11 @@ class RejectedTaskSettlement:
 
     project_id: str
     requester_user_id: str
+    root_task_id: str
     task_type: str
     episode: int
     beat_num: Any
     scope: Any
-    billing_metadata: Mapping[str, Any]
 
 
 class InvalidTaskEnvelope(ValueError):
@@ -54,6 +54,45 @@ class StaleTaskEnvelope(InvalidTaskEnvelope):
 
     code = "TASK_ENVELOPE_STALE"
     _message = "stale task envelope"
+
+
+class TaskAuthorityUnavailable(RuntimeError):
+    """A verified task whose execution-time authority could not be read."""
+
+    _CODE_BY_FAILURE_KIND = {
+        "unavailable": "TASK_AUTHZ_UNAVAILABLE",
+        "fault": "TASK_AUTHZ_CHECK_FAILED",
+    }
+    _MESSAGE_BY_FAILURE_KIND = {
+        "unavailable": "task authorization service is unavailable",
+        "fault": "task authorization check failed",
+    }
+
+    def __init__(
+        self,
+        *,
+        failure_kind: str,
+        settlement: RejectedTaskSettlement,
+    ) -> None:
+        if failure_kind not in self._CODE_BY_FAILURE_KIND:
+            raise ValueError("unsupported task authority failure kind")
+        super().__init__(self._MESSAGE_BY_FAILURE_KIND[failure_kind])
+        self.failure_kind = failure_kind
+        self.code = self._CODE_BY_FAILURE_KIND[failure_kind]
+        self.settlement = settlement
+
+
+class RunningTaskAuthorityIndeterminate(RuntimeError):
+    """Authority could not be safely established after provider acceptance."""
+
+    code = "TASK_AUTHZ_REVALIDATION_INDETERMINATE"
+    _message = "task authorization revalidation is indeterminate"
+
+    def __init__(self, *, failure_kind: str) -> None:
+        if failure_kind not in {"drift", "unavailable", "fault"}:
+            raise ValueError("unsupported running authority failure kind")
+        super().__init__(self._message)
+        self.failure_kind = failure_kind
 
 
 _SENSITIVE_PAYLOAD_FIELDS = {
