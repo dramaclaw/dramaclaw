@@ -4969,8 +4969,8 @@
       "subtitleTodo": "字幕（待实现）",
       "extractingFrames": "提取画面帧中…",
       "framesFailed": "画面帧加载失败",
-      "dragStart": "拖动以调整起点",
-      "dragEnd": "拖动以调整终点",
+      "dragStart": "拖动或用方向键调整起点",
+      "dragEnd": "拖动或用方向键调整终点",
       "muteTodo": "静音（待实现）",
       "loopTodo": "循环（待实现）",
       "submitting": "剪辑中…",
@@ -5229,7 +5229,9 @@
       "fullscreen": "全屏播放",
       "notImplementedYet": "该功能暂未上线",
       "requiresVideo": "请先上传视频",
-      "reshootRequiresSeedance25": "片段重拍仅支持 Seedance 2.5，当前项目未开放该模型"
+      "reshootRequiresSeedance25": "片段重拍仅支持 Seedance 2.5，当前项目未开放该模型",
+      "extendRequiresSeedance25": "智能续写仅支持 Seedance 2.5，当前项目未开放该模型",
+      "extendPickHint": "请截取续写前置视频"
     },
     "audio": {
       "requiresAudio": "请先准备音频",

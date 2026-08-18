@@ -1696,6 +1696,17 @@ export const NodeActionToolbar = memo(
                   setSelectedNode(reshootNodeId);
                 };
 
+                // 智能续写：入口不建节点，只是把源节点切进「截前置视频」态 ——
+                // 底下浮出一条只能选一段的轨道，用户确认区间后才由 VideoNode 建
+                // 下游节点（区间是新节点 prompt 前缀的一部分，得先有区间）。
+                const handleVideoExtendPick = () => {
+                  if (!hasVideo || !videoUrl || !reshootModel) {
+                    return;
+                  }
+                  updateNodeData(node.id, { isExtendPickMode: true });
+                  toast.info(t("nodeToolbar.video.extendPickHint"));
+                };
+
                 const handleVideoAnalyze = async () => {
                   if (!hasVideo || !videoUrl || isAnalyzing) {
                     return;
@@ -2222,16 +2233,22 @@ export const NodeActionToolbar = memo(
                     </UiChipButton>
                     <UiChipButton
                       key="video-extend"
-                      className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
+                      className={`${stubButtonClass} ${
+                        !hasVideo || !reshootModel
+                          ? "opacity-50 cursor-not-allowed"
+                          : ""
+                      }`}
                       title={
                         !hasVideo
                           ? t("nodeToolbar.video.requiresVideo")
-                          : undefined
+                          : !reshootModel
+                            ? t("nodeToolbar.video.extendRequiresSeedance25")
+                            : undefined
                       }
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (!hasVideo) return;
-                        handleVideoComingSoon("extend");
+                        if (!hasVideo || !reshootModel) return;
+                        handleVideoExtendPick();
                       }}
                     >
                       <ClockPlus className="h-3.5 w-3.5" />

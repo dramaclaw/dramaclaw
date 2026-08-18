@@ -584,6 +584,98 @@
   content: attr(data-placeholder);
 }
 
+/* 智能续写的固定引子：`[缩略图] 对 视频 (2) 的 00:00-00:04 片段进行续写：`。
+   比 mention chip 收敛得多 —— 它是这个节点的题面，不是用户插进去的一块引用，
+   做得跟 chip 一样醒目会喧宾夺主，反倒看不清自己写了什么。 */
+/* 续写前缀：一枚「缩略图 + 文案」的胶囊，跟用户正文在同一行流下去。
+   给底/描边是为了让它一眼看出来「这段不是我打的字」——纯文本混在正文里，
+   用户会当成可以随手改的开头。 */
+.prompt-prefix-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 6px;
+  padding: 1px 9px 1px 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgb(var(--text-rgb));
+  font-size: 14px;
+  line-height: 22px;
+  vertical-align: baseline;
+  cursor: default;
+  user-select: none;
+}
+
+/* 缩略图和删除按钮叠在同一格里：平时露图，hover 换成 ×。两者都绝对定位撑满
+   这一格，切换只改 opacity —— 用 display 切会让 chip 宽度在 hover 时抖一下。 */
+.prompt-prefix-chip-slot {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.prompt-prefix-chip-slot > img,
+.prompt-prefix-chip-slot > video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  transition: opacity 0.12s ease;
+}
+
+.prompt-prefix-chip-remove {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.6);
+  color: rgb(var(--text-rgb));
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.prompt-prefix-chip-remove > svg {
+  width: 11px;
+  height: 11px;
+}
+
+.prompt-prefix-chip:hover .prompt-prefix-chip-slot > img,
+.prompt-prefix-chip:hover .prompt-prefix-chip-slot > video {
+  opacity: 0;
+}
+
+.prompt-prefix-chip:hover .prompt-prefix-chip-remove {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.prompt-prefix-chip-label {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 挂了前缀之后编辑器不再是 :empty，占位符改从 ::after 出，接在前缀右边。
+   非空时属性是空串，伪元素自然什么都不画。 */
+.prompt-mention-editor::after {
+  content: attr(data-prefix-placeholder);
+  color: rgba(160, 160, 170, 0.7);
+  pointer-events: none;
+}
+
+.canvas-node-input-placeholder::after {
+  color: var(--canvas-node-input-placeholder);
+}
+
 .canvas-node-input-placeholder:empty::before {
   color: var(--canvas-node-input-placeholder);
 }

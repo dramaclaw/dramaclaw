@@ -43,11 +43,29 @@ export interface MentionCandidate {
   displayName?: string | null;
 }
 
+/**
+ * 输入框最前面那枚不可编辑的引子（目前只有「智能续写」用）。
+ *
+ * 它不是 `value` 的一部分：前缀是节点的**身份**（对哪条素材的哪一段续写），混进
+ * 正文里用户一个退格就能删掉半句，模型收到的就是残句。所以它只渲染、不序列化，
+ * 由调用方在提交时拼到最终 prompt 的最前面。
+ */
+export interface PromptEditorPrefix {
+  text: string;
+  thumbnailUrl?: string | null;
+  /** 没有静态缩略图时的兜底：拿它当首帧画（与引用素材 chip 同一套做法）。 */
+  videoUrl?: string | null;
+  title?: string;
+}
+
 interface PromptMentionEditorProps {
   value: string;
   onChange: (next: string) => void;
   candidates: MentionCandidate[];
   placeholder?: string;
+  prefix?: PromptEditorPrefix | null;
+  /** 传了就在前缀 chip 左边挂一枚删除按钮（hover 时替掉缩略图）；不传则前缀只读。 */
+  onPrefixRemove?: () => void;
   className?: string;
   onCompositionStart?: () => void;
   onCompositionEnd?: (next: string) => void;
@@ -199,6 +217,57 @@ function buildTimecodeChipElement(token: string): HTMLElement {
   return span;
 }
 
+function buildPrefixElement(prefix: PromptEditorPrefix, removable: boolean): HTMLElement {
+  const span = document.createElement('span');
+  span.contentEditable = 'false';
+  span.dataset.promptPrefix = '';
+  span.className = 'prompt-prefix-chip';
+  if (prefix.title) span.title = prefix.title;
+
+  // 缩略图和删除按钮共用左边这一格：平时露缩略图，hover 时换成 ×（设计稿口径）。
+  // 缩略图优先用静态图；没有就挂一个 muted 静止 <video> 画首帧 —— 视频节点的
+  // thumbUrl 是懒生成的，常常为空，缺图会让这枚 chip 看着只剩半截文字。
+  const slot = document.createElement('span');
+  slot.className = 'prompt-prefix-chip-slot';
+  if (prefix.thumbnailUrl) {
+    const img = document.createElement('img');
+    img.src = prefix.thumbnailUrl;
+    img.alt = '';
+    img.draggable = false;
+    slot.appendChild(img);
+  } else if (prefix.videoUrl) {
+    const video = document.createElement('video');
+    video.src = prefix.videoUrl;
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.draggable = false;
+    slot.appendChild(video);
+  }
+  if (removable) {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.contentEditable = 'false';
+    remove.dataset.promptPrefixRemove = '';
+    remove.className = 'prompt-prefix-chip-remove';
+    remove.setAttribute('aria-label', '删除前缀');
+    remove.title = '删除';
+    remove.innerHTML =
+      '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+      '<path d="M3.2 3.2 8.8 8.8M8.8 3.2 3.2 8.8" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.5" stroke-linecap="round"/></svg>';
+    slot.appendChild(remove);
+  }
+  // 既没缩略图又不可删时这一格是空的，别占位。
+  if (slot.childElementCount > 0) span.appendChild(slot);
+
+  const labelEl = document.createElement('span');
+  labelEl.className = 'prompt-prefix-chip-label';
+  labelEl.textContent = prefix.text;
+  span.appendChild(labelEl);
+  return span;
+}
+
 /**
  * 光标紧贴着的时间码 chip：退格看它前面那个，Delete 看后面那个；不贴着返回 null。
  *
@@ -230,6 +299,25 @@ function adjacentTimecodeChip(direction: 'backward' | 'forward'): HTMLElement | 
       direction === 'backward' ? (children[offset - 1] ?? null) : (children[offset] ?? null);
   }
   return target instanceof HTMLElement && target.dataset.timecode ? target : null;
+}
+
+/** 光标是不是就贴在前缀 chip 后面。判定方式与 [[adjacentTimecodeChip]] 同源。 */
+function adjacentPrefixChip(): HTMLElement | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const node = range.startContainer;
+  const offset = range.startOffset;
+  let target: Node | null = null;
+  if (node.nodeType === Node.TEXT_NODE) {
+    if (offset !== 0) return null;
+    target = node.previousSibling;
+  } else {
+    target = node.childNodes[offset - 1] ?? null;
+  }
+  return target instanceof HTMLElement && target.dataset.promptPrefix !== undefined
+    ? target
+    : null;
 }
 
 function appendTextWithLineBreaks(root: HTMLElement, text: string): void {
@@ -292,10 +380,17 @@ function insertPlainTextAtRange(range: Range, text: string): Range {
   return after;
 }
 
-function rebuildDOM(root: HTMLElement, text: string, candidates: MentionCandidate[]): void {
+function rebuildDOM(
+  root: HTMLElement,
+  text: string,
+  candidates: MentionCandidate[],
+  prefix?: PromptEditorPrefix | null,
+  prefixRemovable = false,
+): void {
   while (root.firstChild) {
     root.removeChild(root.firstChild);
   }
+  if (prefix) root.appendChild(buildPrefixElement(prefix, prefixRemovable));
   if (!text) return;
   const names = candidates
     .map((c) => c.name)
@@ -350,6 +445,9 @@ function serialize(root: HTMLElement): string {
       out += el.dataset.timecode;
       return;
     }
+    // 前缀只渲染不入库：它由调用方在提交时拼，序列化进 value 会被当成用户输入
+    // 存回节点，然后跟渲染出来的那枚叠成两份。
+    if (el.dataset.promptPrefix !== undefined) return;
     if (el.tagName === 'BR') {
       out += '\n';
       return;
@@ -415,6 +513,8 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
       onChange,
       candidates,
       placeholder,
+      prefix,
+      onPrefixRemove,
       className,
       onCompositionStart,
       onCompositionEnd,
@@ -449,13 +549,21 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
     // External value → DOM sync. Only re-render if the incoming value
     // differs from our own last-emitted serialization, otherwise we'd
     // wipe the caret on every keystroke.
+    // 前缀换了也要重建（改名 / 换区间），哪怕 value 一个字都没动 —— 否则输入框里
+    // 还挂着上一段的时间码，跟提交时拼出去的那句对不上。
+    const lastPrefixRef = useRef<string | null>(null);
+    const prefixRemovable = Boolean(onPrefixRemove);
+    const prefixKey = prefix
+      ? `${prefix.thumbnailUrl ?? ''}|${prefix.videoUrl ?? ''}|${prefixRemovable}|${prefix.text}`
+      : null;
     useLayoutEffect(() => {
       const el = editorRef.current;
       if (!el) return;
-      if (value === lastSerializedRef.current) return;
-      rebuildDOM(el, value, candidates);
+      if (value === lastSerializedRef.current && prefixKey === lastPrefixRef.current) return;
+      rebuildDOM(el, value, candidates, prefix, prefixRemovable);
       lastSerializedRef.current = value;
-    }, [value, candidates]);
+      lastPrefixRef.current = prefixKey;
+    }, [value, candidates, prefix, prefixKey, prefixRemovable]);
 
     const commitChange = useCallback(() => {
       const el = editorRef.current;
@@ -776,6 +884,12 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
         }
         // 退格 / Delete 吃掉紧邻的时间码 chip：一下删干净，光标停在它原来的位置，
         // 接着按就继续往前删（含它独占的那个换行）——跟删一段普通文字的手感一致。
+        // 前缀不可删：它在 DOM 里就是个 contenteditable=false 的行内块，各家浏览器
+        // 对退格吃掉这种块的处理并不一致，删掉之后 value 又不含它，重建时补不回来。
+        if (event.key === 'Backspace' && adjacentPrefixChip()) {
+          event.preventDefault();
+          return;
+        }
         if (event.key === 'Backspace' || event.key === 'Delete') {
           const chip = adjacentTimecodeChip(
             event.key === 'Backspace' ? 'backward' : 'forward',
@@ -823,7 +937,15 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           }
           return;
         }
-        const playEl = (event.target as HTMLElement | null)?.closest('[data-audio-play]');
+        const target = event.target as HTMLElement | null;
+        if (target?.closest('[data-prompt-prefix-remove]')) {
+          // preventDefault：这枚按钮长在 contenteditable=false 的 chip 里，放任
+          // 默认行为会把光标塞进 chip 内部，删完还留个跑偏的插入点。
+          event.preventDefault();
+          onPrefixRemove?.();
+          return;
+        }
+        const playEl = target?.closest('[data-audio-play]');
         if (!playEl) return;
         const chip = playEl.closest('.mention-chip');
         if (chip instanceof HTMLElement) {
@@ -831,7 +953,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           toggleAudio(chip);
         }
       },
-      [openReplaceFor, toggleAudio],
+      [openReplaceFor, onPrefixRemove, toggleAudio],
     );
 
     const handleMouseOver = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
@@ -891,6 +1013,9 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           suppressContentEditableWarning
           className={`prompt-mention-editor cursor-text ${className ?? ''}`}
           data-placeholder={placeholder ?? ''}
+          // 挂了前缀之后 root 永远不是 :empty，原来那条占位规则失效。空文本时把
+          // 占位符走 ::after 补在前缀右边，与设计稿里「前缀 + 灰字提示」同一行。
+          data-prefix-placeholder={prefix && value.length === 0 ? (placeholder ?? '') : ''}
           spellCheck={false}
           onInput={handleInput}
           onPaste={handlePaste}

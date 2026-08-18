@@ -4969,8 +4969,8 @@
       "subtitleTodo": "Subtitles (not implemented yet)",
       "extractingFrames": "Extracting frames…",
       "framesFailed": "Failed to load frames",
-      "dragStart": "Drag to move the in point",
-      "dragEnd": "Drag to move the out point",
+      "dragStart": "Drag or use arrow keys to move the in point",
+      "dragEnd": "Drag or use arrow keys to move the out point",
       "muteTodo": "Mute (not implemented yet)",
       "loopTodo": "Loop (not implemented yet)",
       "submitting": "Trimming…",
@@ -5229,7 +5229,9 @@
       "fullscreen": "Fullscreen",
       "notImplementedYet": "Coming soon",
       "requiresVideo": "Upload a video first",
-      "reshootRequiresSeedance25": "Reshoot Clip requires Seedance 2.5, which is not enabled for this project"
+      "reshootRequiresSeedance25": "Reshoot Clip requires Seedance 2.5, which is not enabled for this project",
+      "extendRequiresSeedance25": "Smart Extend requires Seedance 2.5, which is not enabled for this project",
+      "extendPickHint": "Select the clip to extend from"
     },
     "audio": {
       "requiresAudio": "No audio to download yet",

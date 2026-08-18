@@ -155,6 +155,23 @@ export interface VideoNodeData extends NodeDisplayData {
   isReshootMode?: boolean;
   /** 见 [[videoReshootClips]]；顺序按 startMs 升序，互不重叠。 */
   reshootClips?: VideoReshootClip[];
+  // smart extend (libtv-style 智能续写) --------------------------------------
+  /**
+   * **源**视频节点上的临时态：正在截「续写前置视频」，卡片底下挂选段轨道。
+   * 选区不落盘（拖十几次才拍板，每次都写 store 会冲掉撤销栈），只有点了
+   * 「确认续写」才把区间带进新建的下游节点。与 isClipMode 互斥。
+   */
+  isExtendPickMode?: boolean;
+  /**
+   * 「智能续写」产出的下游节点：模型锁 Seedance 2.5、模式锁全能参考，prompt 前面
+   * 挂一句固定的「对 X 的 mm:ss-mm:ss 片段进行续写：」。前缀不写进 prompt 本身
+   * （见 [[videoExtendClip]] 的 extendPromptPrefix），只在提交时拼进去。
+   */
+  isExtendMode?: boolean;
+  /** 前缀里的素材名，取自源节点的 displayName。源节点改名不回溯——指令已经发出去了。 */
+  extendSourceName?: string;
+  extendStartMs?: number;
+  extendEndMs?: number;
   // subtitle erase (libtv-style 智能去字幕) ----------------------------------
   /** `smart` = auto-estimate bottom subtitle band; `box` = user-drawn region. */
   subtitleEraseMode?: 'smart' | 'box' | null;

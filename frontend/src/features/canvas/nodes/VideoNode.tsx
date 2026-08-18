@@ -178,6 +178,12 @@ import {
   useAssetCommitDragById,
 } from "@/features/canvas/ui/useAssetCommitDrag";
 import { VideoClipPanel } from "@/features/canvas/nodes/VideoClipPanel";
+import { VideoExtendPanel } from "@/features/canvas/nodes/VideoExtendPanel";
+import {
+  extendNodeDisplayName,
+  extendPromptPrefix,
+  type ExtendClipRange,
+} from "@/features/canvas/application/videoExtendClip";
 import {
   RESHOOT_TIMELINE_HEIGHT,
   VideoReshootTimeline,
@@ -1159,6 +1165,95 @@ export const VideoNode = memo(
       [data, t],
     );
 
+    // 智能续写 --------------------------------------------------------------
+    // 一个功能两个身份：源节点上 isExtendPickMode 是临时态（正在截「续写前置
+    // 视频」，底下浮出一条只能选一段的轨道）；产出的下游节点上 isExtendMode 是
+    // 常驻态（钉死 2.5 + 全能参考，并给 prompt 挂一段只读前缀）。
+    const isExtendPickMode = Boolean(data.isExtendPickMode);
+    const isExtendMode = Boolean(data.isExtendMode);
+    // 前缀只用于渲染和提交时拼接，**不写进 data.prompt**：写进去的话用户一个退格
+    // 就能把「对 X 的 00:00-00:04 片段进行续写：」啃掉半句，模型收到的指令就残了。
+    const extendPrefixText =
+      isExtendMode &&
+      typeof data.extendStartMs === "number" &&
+      typeof data.extendEndMs === "number"
+        ? extendPromptPrefix(
+            typeof data.extendSourceName === "string"
+              ? data.extendSourceName
+              : "",
+            { startMs: data.extendStartMs, endMs: data.extendEndMs },
+          )
+        : null;
+
+    const handleExtendExit = useCallback(() => {
+      updateNodeData(id, { isExtendPickMode: false });
+    }, [id, updateNodeData]);
+
+    const handleExtendConfirm = useCallback(
+      (range: ExtendClipRange) => {
+        const store = useCanvasStore.getState();
+        const position = store.findNodePosition(
+          id,
+          DEFAULT_WIDTH,
+          DEFAULT_HEIGHT,
+        );
+        const extendModel = findReshootVideoModel(availableVideoModels);
+        const newNodeId = addNode(CANVAS_NODE_TYPES.video, position, {
+          displayName: extendNodeDisplayName(resolvedTitle),
+          isExtendMode: true,
+          extendSourceName: resolvedTitle,
+          extendStartMs: range.startMs,
+          extendEndMs: range.endMs,
+          // 建节点时就把这两个钉好，省得先落到目录第一个模型上、再被下面那条
+          // effect 纠正一次（每次纠正都要多压一份画布历史）。
+          genMode: "allReference",
+          ...(extendModel ? { model: extendModel.id } : {}),
+        });
+        // 源视频顺着这根边成为新节点的上游参考素材——全能参考就是靠它拿到前情。
+        addEdge(id, newNodeId);
+        updateNodeData(id, { isExtendPickMode: false });
+        // 选中态要同时改 React Flow 自己那份，否则新节点的操作面板不浮出来。
+        store.onNodesChange([
+          { id, type: "select", selected: false },
+          { id: newNodeId, type: "select", selected: true },
+        ]);
+        setSelectedNode(newNodeId);
+      },
+      [
+        addEdge,
+        addNode,
+        availableVideoModels,
+        id,
+        resolvedTitle,
+        setSelectedNode,
+        updateNodeData,
+      ],
+    );
+
+    // 续写节点上模型 / 模式的**唯一作者**（同上面 isReshootMode 那条）：面板里
+    // 其他模型和其他模式只是灰掉、不是不存在，而目录换版或这条被下架时解析会
+    // 回退成列表第一个模型，得在这里纠回来。
+    useEffect(() => {
+      if (!isExtendMode) return;
+      if (videoModelsLoading) return;
+      const patch: Record<string, unknown> = {};
+      if (genMode !== "allReference") patch.genMode = "allReference";
+      const extendModel = findReshootVideoModel(availableVideoModels);
+      if (extendModel && !isSeedance25VideoModel(selectedVideoModelId)) {
+        patch.model = extendModel.id;
+      }
+      if (Object.keys(patch).length === 0) return;
+      updateNodeData(id, patch);
+    }, [
+      availableVideoModels,
+      genMode,
+      id,
+      isExtendMode,
+      selectedVideoModelId,
+      updateNodeData,
+      videoModelsLoading,
+    ]);
+
     // 「从画布选择」拾取模式：某个节点（逐帧拉片）正在等一段视频素材时，本节点浮出
     // 一层可点选的覆盖层，点中就把自己回填给发起方并连一根边。
     const pickRequest = useCanvasPickStore((state) => state.request);
@@ -2090,7 +2185,10 @@ export const VideoNode = memo(
     //   全能参考图/视频/音频任意一类 ≥1）—— 对齐 handleSubmit 各分支的空素材早退。
     // 全能参考是唯一两条都要的模式，所以这里不能写成「要提示词的就只看提示词」。
     const hasPromptText =
-      prompt.trim().length > 0 || upstreamTextJoined.length > 0;
+      prompt.trim().length > 0 ||
+      upstreamTextJoined.length > 0 ||
+      // 续写节点的只读前缀本身就是一句完整指令，正文留空也能提交。
+      extendPrefixText !== null;
     const hasRequiredMediaForMode =
       genMode === "videoEdit"
         ? upstreamCounts.videos > 0
@@ -2217,11 +2315,16 @@ export const VideoNode = memo(
       const userPrompt = [upstreamTextJoined, trimmedPrompt]
         .filter((s) => s.length > 0)
         .join("\n\n");
-      const composedPrompt = fragment
+      const composedPromptBody = fragment
         ? userPrompt
           ? `${fragment}，${userPrompt}`
           : fragment
         : userPrompt;
+      // 续写的时间码指令是渲染层挂在输入框里的只读前缀（不在 data.prompt 里，
+      // 免得一个退格就啃掉半句），提交时才拼到最前面，模型才知道从哪一段往后接。
+      const composedPrompt = extendPrefixText
+        ? `${extendPrefixText}${composedPromptBody}`
+        : composedPromptBody;
       try {
         // Walk the current edges/nodes once — used by every non-textToVideo
         // branch to collect upstream resources. 必须与 UI 编号侧（useUpstreamNodes）
@@ -2861,6 +2964,7 @@ export const VideoNode = memo(
       data.referenceOrder,
       durationBounds,
       durationSec,
+      extendPrefixText,
       generateAudio,
       genMode,
       humanReview,
@@ -2906,6 +3010,8 @@ export const VideoNode = memo(
       !isBoxSelecting &&
       !albumExpanded &&
       !isClipMode &&
+      // 截「续写前置视频」时底下那块位置让给续写轨道，跟剪辑条一个道理。
+      !isExtendPickMode &&
       !subtitleEraseMode &&
       !data.referenceOnly &&
       // 视频高清节点用自己的 VideoUpscaleEditorOverlay 配置面板，不走常规生成面板。
@@ -2916,10 +3022,16 @@ export const VideoNode = memo(
     // 轨道就得收起来 —— 留着只会截出一串没人消费的区间。已截的片段不清空：切回
     // 2.5 立刻原样回来，prompt 里那几行时间码也一直在，两边始终对得上。
     const showReshootTimeline =
+      // 只在选中这个节点时才挂出来：轨道是外挑 240px 的一长条，节点没被选中还
+      // 铺在那儿的话，画布上一排视频节点就会拖出一串谁也不看的轨道，互相压叠。
+      // 跟着它定位的操作面板 / 历史面板本来就只在 selected 时出现，收起来正好对齐。
+      selected &&
+      !isBoxSelecting &&
       isReshootMode &&
       isSeedance25VideoModel(selectedVideoModelId) &&
       Boolean(videoSource) &&
       !isClipMode &&
+      !isExtendPickMode &&
       !subtitleEraseMode &&
       !albumExpanded;
     // 轨道占掉的高度：下面的操作面板 / 历史面板都相对节点底边定位，得一起往下让。
@@ -3566,8 +3678,14 @@ export const VideoNode = memo(
 
         {isClipMode && videoSource && (
           <div
-            className="absolute left-0 right-0 z-10 flex flex-col gap-1"
-            style={{ top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)` }}
+            // 剪辑条宽度由素材时长决定（见 VideoClipPanel 的 trackMinWidth），
+            // 所以这里不能锁死 left-0/right-0：用 w-max 让面板自己顶开，居中挂在
+            // 节点下方，再用 min-width 兜到和操作面板同宽（两边各外挑一截）。
+            className="absolute left-1/2 z-10 flex w-max -translate-x-1/2 flex-col gap-1"
+            style={{
+              top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
+              minWidth: `calc(100% + ${panelOverhang * 2}px)`,
+            }}
           >
             <VideoClipPanel
               videoUrl={videoSource}
@@ -3590,6 +3708,33 @@ export const VideoNode = memo(
                 {t("node.videoNode.clip.failed", { detail: clipError })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* 只在选中时挂出来：跟重拍轨道同理，一排视频节点各拖一条轨道会互相压叠。
+            退出截取只认 X（isExtendPickMode 不随取消选中清掉），重新点回来轨道还在。 */}
+        {isExtendPickMode &&
+          selected &&
+          !isBoxSelecting &&
+          videoSource &&
+          !isClipMode &&
+          !subtitleEraseMode &&
+          !albumExpanded && (
+          <div
+            // 与剪辑条同一套定位：宽度由素材时长决定，所以用 w-max 让它自己顶开，
+            // 居中挂在节点下方，再用 min-width 兜到跟操作面板一样宽。
+            className="absolute left-1/2 z-10 flex w-max -translate-x-1/2 flex-col gap-1"
+            style={{
+              top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)`,
+              minWidth: `calc(100% + ${panelOverhang * 2}px)`,
+            }}
+          >
+            <VideoExtendPanel
+              videoUrl={videoSource}
+              durationMs={durationMs}
+              onExit={handleExtendExit}
+              onConfirm={handleExtendConfirm}
+            />
           </div>
         )}
 
@@ -3643,6 +3788,9 @@ export const VideoNode = memo(
           !isBoxSelecting &&
           !albumExpanded &&
           !isClipMode &&
+          // 截「续写前置视频」时轨道占着节点底下那块，历史面板跟着操作面板一起
+          // 让位——它是按 panelHeight 往下推的，操作面板不在时会浮在半空。
+          !isExtendPickMode &&
           !subtitleEraseMode &&
           !data.referenceOnly &&
           hasCompletedHistoryRecords(historyRecords) && (
