@@ -221,7 +221,12 @@ interface SettingsState {
   featureModelConfig: FeatureModelSettings;
   featureModelConfigUserRevision: number;
   featureModelConfigProfileSyncedRevision: number;
-  markFeatureModelConfigProfileSynced: () => void;
+  featureModelConfigProfileSyncPending: boolean;
+  featureModelConfigProviderChannelsHydrationKey: string;
+  comfyUIBaseUrlAutoFillDismissed: boolean;
+  markFeatureModelConfigProfileSynced: (consumedRevision: number) => void;
+  markFeatureModelConfigProviderChannelsHydrated: (snapshotKey: string) => void;
+  setComfyUIBaseUrlAutoFillDismissed: (dismissed: boolean) => void;
   updateFeatureModel: (
     featureId: string,
     patch: Partial<FeatureModelEntry>,
@@ -470,6 +475,22 @@ function nextFeatureModelConfigUserRevision(
     : current + 1;
 }
 
+function nextFeatureModelConfigMutationMeta(
+  currentRevision: number,
+  currentPending: boolean,
+  options: FeatureModelConfigMutationOptions | undefined
+): Pick<
+  SettingsState,
+  'featureModelConfigUserRevision' | 'featureModelConfigProfileSyncPending'
+> {
+  const nextRevision = nextFeatureModelConfigUserRevision(currentRevision, options);
+  return {
+    featureModelConfigUserRevision: nextRevision,
+    featureModelConfigProfileSyncPending:
+      nextRevision !== currentRevision ? true : currentPending,
+  };
+}
+
 function prepareFeatureModelSettingsForPersistence(
   input: Partial<FeatureModelSettings> | null | undefined
 ): FeatureModelSettings {
@@ -593,11 +614,19 @@ export const useSettingsStore = create<SettingsState>()(
       featureModelConfig: DEFAULT_FEATURE_MODEL_SETTINGS,
       featureModelConfigUserRevision: 0,
       featureModelConfigProfileSyncedRevision: 0,
-      markFeatureModelConfigProfileSynced: () =>
+      featureModelConfigProfileSyncPending: false,
+      featureModelConfigProviderChannelsHydrationKey: '',
+      comfyUIBaseUrlAutoFillDismissed: false,
+      markFeatureModelConfigProfileSynced: (consumedRevision) =>
         set((state) => ({
-          featureModelConfigProfileSyncedRevision:
-            state.featureModelConfigUserRevision,
+          featureModelConfigProfileSyncedRevision: consumedRevision,
+          featureModelConfigProfileSyncPending:
+            state.featureModelConfigUserRevision > consumedRevision,
         })),
+      markFeatureModelConfigProviderChannelsHydrated: (snapshotKey) =>
+        set({ featureModelConfigProviderChannelsHydrationKey: snapshotKey }),
+      setComfyUIBaseUrlAutoFillDismissed: (dismissed) =>
+        set({ comfyUIBaseUrlAutoFillDismissed: dismissed }),
       updateFeatureModel: (featureId, patch, options) =>
         set((state) => {
           const nextFeatureModels = { ...state.featureModelConfig.featureModels };
@@ -614,8 +643,9 @@ export const useSettingsStore = create<SettingsState>()(
             nextFeatureModels[featureId] = { provider, model };
           }
           return {
-            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+            ...nextFeatureModelConfigMutationMeta(
               state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
               options
             ),
             featureModelConfig: {
@@ -626,8 +656,9 @@ export const useSettingsStore = create<SettingsState>()(
         }),
       setMediaModels: (models, options) =>
         set((state) => ({
-          featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+          ...nextFeatureModelConfigMutationMeta(
             state.featureModelConfigUserRevision,
+            state.featureModelConfigProfileSyncPending,
             options
           ),
           featureModelConfig: {
@@ -637,8 +668,9 @@ export const useSettingsStore = create<SettingsState>()(
         })),
       setEmbeddingModel: (model, options) =>
         set((state) => ({
-          featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+          ...nextFeatureModelConfigMutationMeta(
             state.featureModelConfigUserRevision,
+            state.featureModelConfigProfileSyncPending,
             options
           ),
           featureModelConfig: {
@@ -678,8 +710,9 @@ export const useSettingsStore = create<SettingsState>()(
             nextChannels[normalized] = { ...nextChannels[normalized], upstreamKey: trimmed };
           }
           return {
-            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+            ...nextFeatureModelConfigMutationMeta(
               state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
               options
             ),
             featureModelConfig: {
@@ -696,8 +729,9 @@ export const useSettingsStore = create<SettingsState>()(
             return state;
           }
           return {
-            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+            ...nextFeatureModelConfigMutationMeta(
               state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
               options
             ),
             featureModelConfig: {
@@ -736,8 +770,9 @@ export const useSettingsStore = create<SettingsState>()(
             delete nextKeys[normalized];
           }
           return {
-            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+            ...nextFeatureModelConfigMutationMeta(
               state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
               options
             ),
             featureModelConfig: {
@@ -760,8 +795,9 @@ export const useSettingsStore = create<SettingsState>()(
             nextChannels[normalized] = { ...nextChannels[normalized], upstreamKey: '' };
           }
           return {
-            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+            ...nextFeatureModelConfigMutationMeta(
               state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
               options
             ),
             featureModelConfig: {
@@ -800,8 +836,9 @@ export const useSettingsStore = create<SettingsState>()(
               : state.featureModelConfig.embeddingModel;
 
           return {
-            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+            ...nextFeatureModelConfigMutationMeta(
               state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
               options
             ),
             featureModelConfig: {
@@ -891,12 +928,25 @@ export const useSettingsStore = create<SettingsState>()(
       // workflows. The backend settings database is their source of truth;
       // keeping them in the global startup store can exhaust localStorage or
       // make hydration block the whole application after a refresh.
-      partialize: (state) => ({
-        ...state,
-        featureModelConfig: prepareFeatureModelSettingsForPersistence(
-          state.featureModelConfig
-        ),
-      }),
+      partialize: (state) => {
+        const {
+          featureModelConfigUserRevision: _featureModelConfigUserRevision,
+          featureModelConfigProfileSyncedRevision:
+            _featureModelConfigProfileSyncedRevision,
+          featureModelConfigProviderChannelsHydrationKey:
+            _featureModelConfigProviderChannelsHydrationKey,
+          ...persisted
+        } = state;
+        void _featureModelConfigUserRevision;
+        void _featureModelConfigProfileSyncedRevision;
+        void _featureModelConfigProviderChannelsHydrationKey;
+        return {
+          ...persisted,
+          featureModelConfig: prepareFeatureModelSettingsForPersistence(
+            state.featureModelConfig
+          ),
+        };
+      },
       onRehydrateStorage: () => {
         return (_state, error) => {
           if (error) {
