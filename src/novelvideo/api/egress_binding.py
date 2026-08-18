@@ -74,6 +74,7 @@ async def build_request_egress_context(
             cap_delay=_AUTHZ_RETRY_CAP_DELAY,
             sleep=_AUTHZ_RETRY_SLEEP,
             random=_AUTHZ_RETRY_RANDOM,
+            call_site="request_egress_scope",
         )
     except AuthzError as exc:
         authz_failure = exc

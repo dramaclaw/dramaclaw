@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -9,6 +10,69 @@ from novelvideo.ports.authz import (
     AuthzServiceFault,
     AuthzServiceUnavailable,
 )
+
+
+@pytest.mark.asyncio
+async def test_retry_authz_read_logs_scheduled_and_recovered_events(caplog) -> None:
+    from novelvideo.authz_retry import retry_authz_read
+
+    attempts = 0
+
+    async def operation() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise AuthzServiceUnavailable()
+        return "admitted"
+
+    with caplog.at_level(logging.INFO, logger="novelvideo.authz_retry"):
+        result = await retry_authz_read(
+            operation,
+            max_retries=1,
+            base_delay=2.0,
+            cap_delay=2.0,
+            sleep=lambda _delay: asyncio.sleep(0),
+            random=lambda: 0.5,
+            call_site="request_egress_scope",
+        )
+
+    assert result == "admitted"
+    assert [record.message for record in caplog.records] == [
+        "authz_local_retry_scheduled",
+        "authz_local_retry_recovered",
+    ]
+    assert caplog.records[0].call_site == "request_egress_scope"
+    assert caplog.records[0].countdown_bucket == "1_to_5_seconds"
+    assert caplog.records[1].attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_authz_read_logs_exhaustion_without_exception_details(
+    caplog,
+) -> None:
+    from novelvideo.authz_retry import retry_authz_read
+
+    async def operation() -> None:
+        raise AuthzServiceFault()
+
+    with caplog.at_level(logging.WARNING, logger="novelvideo.authz_retry"):
+        with pytest.raises(AuthzServiceFault):
+            await retry_authz_read(
+                operation,
+                max_retries=0,
+                base_delay=1.0,
+                cap_delay=1.0,
+                call_site="video_post_accept_revalidation",
+            )
+
+    assert [record.message for record in caplog.records] == [
+        "authz_local_retry_exhausted"
+    ]
+    record = caplog.records[0]
+    assert record.call_site == "video_post_accept_revalidation"
+    assert record.failure_kind == "fault"
+    assert record.attempts == 1
+    assert "exception" not in record.__dict__
 
 
 @pytest.mark.asyncio

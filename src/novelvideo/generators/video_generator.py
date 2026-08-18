@@ -2784,6 +2784,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             cap_delay=_POST_ACCEPT_AUTHZ_RETRY_CAP_SECONDS,
             sleep=_POST_ACCEPT_AUTHZ_RETRY_SLEEP,
             random=_POST_ACCEPT_AUTHZ_RETRY_RANDOM,
+            call_site="video_post_accept_revalidation",
         )
         if (
             current.requester_user_id != context.requester_user_id
