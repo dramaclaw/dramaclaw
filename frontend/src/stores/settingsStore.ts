@@ -222,11 +222,15 @@ interface SettingsState {
   featureModelConfigUserRevision: number;
   featureModelConfigProfileSyncedRevision: number;
   featureModelConfigProfileSyncPending: boolean;
-  featureModelConfigProviderChannelsHydrationKey: string;
-  comfyUIBaseUrlAutoFillDismissed: boolean;
+  featureModelConfigBackendSnapshotKey: string;
   markFeatureModelConfigProfileSynced: (consumedRevision: number) => void;
-  markFeatureModelConfigProviderChannelsHydrated: (snapshotKey: string) => void;
-  setComfyUIBaseUrlAutoFillDismissed: (dismissed: boolean) => void;
+  hydrateFeatureModelConfigFromBackend: (
+    snapshot: Pick<
+      FeatureModelSettings,
+      'providerChannels' | 'providerKeys' | 'mediaModels' | 'embeddingModel'
+    >,
+    snapshotKey: string
+  ) => void;
   updateFeatureModel: (
     featureId: string,
     patch: Partial<FeatureModelEntry>,
@@ -496,7 +500,9 @@ function prepareFeatureModelSettingsForPersistence(
 ): FeatureModelSettings {
   const normalized = normalizeFeatureModelSettings(input);
   return {
-    ...normalized,
+    featureModels: normalized.featureModels,
+    mediaModels: {},
+    embeddingModel: undefined,
     providerKeys: {},
     providerChannels: {},
   };
@@ -615,18 +621,39 @@ export const useSettingsStore = create<SettingsState>()(
       featureModelConfigUserRevision: 0,
       featureModelConfigProfileSyncedRevision: 0,
       featureModelConfigProfileSyncPending: false,
-      featureModelConfigProviderChannelsHydrationKey: '',
-      comfyUIBaseUrlAutoFillDismissed: false,
+      featureModelConfigBackendSnapshotKey: '',
       markFeatureModelConfigProfileSynced: (consumedRevision) =>
         set((state) => ({
           featureModelConfigProfileSyncedRevision: consumedRevision,
           featureModelConfigProfileSyncPending:
             state.featureModelConfigUserRevision > consumedRevision,
         })),
-      markFeatureModelConfigProviderChannelsHydrated: (snapshotKey) =>
-        set({ featureModelConfigProviderChannelsHydrationKey: snapshotKey }),
-      setComfyUIBaseUrlAutoFillDismissed: (dismissed) =>
-        set({ comfyUIBaseUrlAutoFillDismissed: dismissed }),
+      hydrateFeatureModelConfigFromBackend: (snapshot, snapshotKey) =>
+        set((state) => {
+          const next = normalizeFeatureModelSettings({
+            featureModels: state.featureModelConfig.featureModels,
+            ...snapshot,
+          });
+          const backendChanged =
+            JSON.stringify({
+              providerChannels: state.featureModelConfig.providerChannels,
+              providerKeys: state.featureModelConfig.providerKeys,
+              mediaModels: state.featureModelConfig.mediaModels,
+              embeddingModel: state.featureModelConfig.embeddingModel,
+            }) !==
+            JSON.stringify({
+              providerChannels: next.providerChannels,
+              providerKeys: next.providerKeys,
+              mediaModels: next.mediaModels,
+              embeddingModel: next.embeddingModel,
+            });
+          return {
+            featureModelConfig: next,
+            featureModelConfigBackendSnapshotKey: snapshotKey,
+            featureModelConfigProfileSyncPending:
+              backendChanged || state.featureModelConfigProfileSyncPending,
+          };
+        }),
       updateFeatureModel: (featureId, patch, options) =>
         set((state) => {
           const nextFeatureModels = { ...state.featureModelConfig.featureModels };
@@ -933,13 +960,16 @@ export const useSettingsStore = create<SettingsState>()(
           featureModelConfigUserRevision: _featureModelConfigUserRevision,
           featureModelConfigProfileSyncedRevision:
             _featureModelConfigProfileSyncedRevision,
-          featureModelConfigProviderChannelsHydrationKey:
-            _featureModelConfigProviderChannelsHydrationKey,
+          featureModelConfigProfileSyncPending:
+            _featureModelConfigProfileSyncPending,
+          featureModelConfigBackendSnapshotKey:
+            _featureModelConfigBackendSnapshotKey,
           ...persisted
         } = state;
         void _featureModelConfigUserRevision;
         void _featureModelConfigProfileSyncedRevision;
-        void _featureModelConfigProviderChannelsHydrationKey;
+        void _featureModelConfigProfileSyncPending;
+        void _featureModelConfigBackendSnapshotKey;
         return {
           ...persisted,
           featureModelConfig: prepareFeatureModelSettingsForPersistence(
