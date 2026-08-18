@@ -827,6 +827,21 @@ export interface ActiveToolDialog {
   toolType: NodeToolType;
 }
 
+/**
+ * 卡片内右上角那颗「替换素材」按钮（NodeMediaReplaceButton）的唯一开关。
+ *
+ * 只有逐帧拉片的产出组（分镜 / 动态 / 音乐）带 allowLocalReplace —— 那是一组参考
+ * 素材，换成自己的图/曲子是高频动作，所以按钮常驻在卡片上。其余节点一律不给卡内
+ * 按钮（否则满画布挂着一排上传图标，还容易误点把生成结果换掉），它们的「拖到素材库
+ * 替换」手势走浮在节点外侧的 AssetCommitHandle —— 两条入口互斥，见
+ * SelectedNodeOverlay。
+ */
+export function hasInlineMediaReplaceButton(
+  data: { allowLocalReplace?: boolean } | null | undefined
+): boolean {
+  return data?.allowLocalReplace === true;
+}
+
 export function isUploadNode(
   node: CanvasNode | null | undefined
 ): node is Node<UploadImageNodeData, typeof CANVAS_NODE_TYPES.upload> {

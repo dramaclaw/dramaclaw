@@ -53,6 +53,7 @@ import {
   isAudioNode,
   isExportImageNode,
   isImageEditNode,
+  hasInlineMediaReplaceButton,
   isImageGenNode,
   isStoryboardGenNode,
   isUploadNode,
@@ -3254,17 +3255,17 @@ export const VideoNode = memo(
             albumExpanded && hasAlbum ? "invisible" : ""
           }`}
         >
-          {/* 卡片内右上角唯一的「替换」入口：点击换本地文件 —— 复用节点自己那条
+          {/* 卡片内右上角的「替换」入口：点击换本地文件 —— 复用节点自己那条
               上传路径（processFile，含 HEVC 转码 + uploadFreezoneVideo 落 OSS），
               换完 onLoadedMetadata 会重算时长/像素；按住拖则丢进左侧素材库。
-              选中即出现（allowLocalReplace 的卡片常驻），因为这颗按钮接管了
-              原来浮在节点外侧的 AssetCommitHandle，见 SelectedNodeOverlay。
+              只给 allowLocalReplace 的卡片（逐帧拉片产出的参考素材）—— 其余视频节点
+              的替换手势走浮在节点外侧的 AssetCommitHandle，见 SelectedNodeOverlay。
               空态不给：那时本来就有 NodeSideActionRail 那颗上传按钮。 */}
           {canCommitAsset &&
             videoSource &&
             !isGenerating &&
             !albumExpanded &&
-            (data.allowLocalReplace === true || selected) && (
+            hasInlineMediaReplaceButton(data) && (
               <NodeMediaReplaceButton
                 accept={VIDEO_FILE_ACCEPT}
                 busy={isUploading}

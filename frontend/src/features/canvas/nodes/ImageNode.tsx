@@ -18,6 +18,7 @@ import {
   EXPORT_RESULT_NODE_MIN_WIDTH,
   EXPORT_RESULT_NODE_MIN_HEIGHT,
   EXPORT_RESULT_NODE_RESIZE_MIN_EDGE,
+  hasInlineMediaReplaceButton,
   type CanvasNodeType,
   type ExportImageNodeData,
   type ImageEditNodeData,
@@ -465,12 +466,13 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
           />
         )}
 
-        {/* 卡片内右上角唯一的「替换」入口：点击换本地文件，按住拖则丢进左侧素材库
-            替换同类型素材。选中即出现（allowLocalReplace 的卡片常驻）—— 这颗按钮
-            接管了原来浮在节点外侧的 AssetCommitHandle，见 SelectedNodeOverlay。 */}
+        {/* 卡片内右上角的「替换」入口：点击换本地文件，按住拖则丢进左侧素材库
+            替换同类型素材。只给 allowLocalReplace 的卡片（逐帧拉片产出的参考素材）——
+            其余节点的替换手势仍走浮在节点外侧的 AssetCommitHandle，见
+            SelectedNodeOverlay；两者互斥，同一个角上不会摞出两颗上传图标。 */}
         {canCommitAsset &&
           !isGenerating &&
-          (data.allowLocalReplace === true || selected) && (
+          hasInlineMediaReplaceButton(data) && (
             <NodeMediaReplaceButton
               accept="image/*"
               busy={isReplacing}

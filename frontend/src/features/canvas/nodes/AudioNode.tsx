@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 
 import {
   CANVAS_NODE_TYPES,
+  hasInlineMediaReplaceButton,
   type AudioNodeData,
   type AudioVoiceRef,
 } from '@/features/canvas/domain/canvasNodes';
@@ -362,12 +363,13 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
           </div>
         )}
 
-        {/* 卡片内右上角唯一的「替换」入口：点击换本地文件，按住拖则丢进左侧素材库。
-            选中即出现（allowLocalReplace 的卡片常驻）—— 这颗按钮接管了原来浮在
-            节点外侧的 AssetCommitHandle，见 SelectedNodeOverlay。 */}
+        {/* 卡片内右上角的「替换」入口：点击换本地文件，按住拖则丢进左侧素材库。
+            只给 allowLocalReplace 的卡片（逐帧拉片产出的 BGM 参考）—— 其余音频节点
+            本来就不是上传入口（见上），替换手势走浮在节点外侧的 AssetCommitHandle，
+            见 SelectedNodeOverlay。 */}
         {canCommitAsset &&
           !isGenerating &&
-          (data.allowLocalReplace === true || selected) && (
+          hasInlineMediaReplaceButton(data) && (
             <NodeMediaReplaceButton
               accept="audio/*"
               busy={Boolean(data.isUploading)}

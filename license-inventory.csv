@@ -438,6 +438,7 @@ frontend/src/__tests__/features/canvas/image-reverse-prompt-credit-contract.test
 frontend/src/__tests__/features/canvas/image-tool-feature-billing-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/infer-skill-connection-role.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/inherit-mainline-fields.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/inline-media-replace-gate.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/lod-audio-playback.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/lod-shell-fallback-sizes.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/media-model-options.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
