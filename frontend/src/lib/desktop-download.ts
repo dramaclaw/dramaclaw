@@ -36,6 +36,15 @@ export const FALLBACK_DOWNLOAD_URL =
 export type DesktopRelease = {
   /** 安装包直链;解析失败时退到 GitHub Releases 兜底页,按钮永远可点。 */
   url: string;
+  /**
+   * 是否真的从清单里解出了安装包直链。
+   *
+   * 不能拿 `version !== null` 当"解析成功"的判据:清单有版本号、`files:` 里却
+   * 没有目标后缀(命名模式漂移、mac 那次只发了 zip)时,version 照样解得出来,
+   * url 已经退回 GitHub 兜底 —— 调用方按 version 判定就会把这种半成功当成功
+   * 缓存下来,整个会话钉死在兜底链接上。
+   */
+  resolved: boolean;
   /** 清单里的版本号(如 "1.3.2");字段缺失或格式漂移时为 null。 */
   version: string | null;
   /** 清单里的发布日期,截到 YYYY-MM-DD;解析不出时为 null。 */
@@ -134,6 +143,7 @@ export async function resolveDesktopRelease(
 ): Promise<DesktopRelease> {
   const fallback: DesktopRelease = {
     url: FALLBACK_DOWNLOAD_URL,
+    resolved: false,
     version: null,
     releaseDate: null,
     sha512: null,
@@ -153,6 +163,7 @@ export async function resolveDesktopRelease(
       url: installer
         ? DOWNLOAD_BASE + encodeInstallerPath(installer.file)
         : FALLBACK_DOWNLOAD_URL,
+      resolved: installer !== null,
       sha512: installer?.sha512 ?? null,
       ...parseManifestRelease(manifest),
     };

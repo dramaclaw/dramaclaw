@@ -26,6 +26,9 @@ dist-ssr
 *.sln
 *.sw?
 
+# TanStack Router 插件的临时目录(生成 routeTree 时落的中间文件)
+.tanstack/
+
 # Jarvis
 .jarvis/
 .gstack/

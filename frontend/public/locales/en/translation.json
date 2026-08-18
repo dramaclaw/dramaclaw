@@ -46,7 +46,7 @@
       "mac": {
         "name": "macOS",
         "format": ".dmg",
-        "arch": "Apple silicon / Intel",
+        "arch": "Apple silicon (arm64)",
         "requirement": "macOS 12 or later",
         "cta": "Download for macOS"
       },
@@ -96,7 +96,7 @@
         "version": "Version",
         "pending": "Checking",
         "released": "Released",
-        "macValue": "12+ · universal",
+        "macValue": "12+ · Apple silicon",
         "windowsValue": "10+ · x64",
         "autoUpdate": "Auto-update",
         "autoUpdateValue": "Enabled",
@@ -104,7 +104,7 @@
       },
       "checksum": {
         "label": "SHA-512",
-        "note": "base64, for the installer the button above downloads",
+        "note": "base64, each line matching the installer for that platform above",
         "copy": "Copy",
         "copied": "Copied",
         "pending": "Checking"

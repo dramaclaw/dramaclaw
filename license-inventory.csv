@@ -1264,7 +1264,7 @@ frontend/src/routes/_app/projects.$project/freezone.lazy.tsx,Elastic-2.0,2026 Su
 frontend/src/routes/_app/projects.$project/ingest.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/routes/_app/projects.$project/styles.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/routes/_app/projects.$project/tasks.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/src/routes/download.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/routes/download.lazy.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/routes/login.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/routes/watch.$work.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/stores/app-store.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

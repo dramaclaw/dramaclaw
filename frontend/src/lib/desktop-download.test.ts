@@ -133,6 +133,7 @@ describe("resolveDesktopRelease", () => {
     stubManifest(MAC_MANIFEST);
     await expect(resolveDesktopRelease("mac")).resolves.toEqual({
       url: "https://dramaclaw-dl.cdnfg.com/desktop/DramaClaw-1.1.0-arm64.dmg",
+      resolved: true,
       version: "1.1.0",
       releaseDate: "2026-07-15",
       sha512: "5xw1uPGkX0Yl3m2n4o5p6q==",
@@ -158,7 +159,26 @@ describe("resolveDesktopRelease", () => {
     );
     await expect(resolveDesktopRelease("mac")).resolves.toEqual({
       url: FALLBACK_DOWNLOAD_URL,
+      resolved: false,
       version: null,
+      releaseDate: null,
+      sha512: null,
+    });
+    expect(warn).toHaveBeenCalled();
+  });
+
+  // 半成功:清单读得到版本号,files: 里却没有 dmg(命名漂移、那一版只发了
+  // zip)。version 非空但 url 已经是兜底 —— 调用方要能分辨,否则会把它当
+  // 成功结果缓存一整个会话。
+  it("reports resolved=false when the manifest has a version but no installer", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubManifest(
+      "version: 1.1.0\nfiles:\n  - url: DramaClaw-1.1.0-arm64.zip\n",
+    );
+    await expect(resolveDesktopRelease("mac")).resolves.toEqual({
+      url: FALLBACK_DOWNLOAD_URL,
+      resolved: false,
+      version: "1.1.0",
       releaseDate: null,
       sha512: null,
     });

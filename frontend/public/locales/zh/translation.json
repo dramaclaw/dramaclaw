@@ -46,7 +46,7 @@
       "mac": {
         "name": "macOS",
         "format": ".dmg",
-        "arch": "Apple 芯片 / Intel",
+        "arch": "Apple 芯片（arm64）",
         "requirement": "macOS 12 或更高",
         "cta": "下载 macOS 版"
       },
@@ -96,7 +96,7 @@
         "version": "版本号",
         "pending": "获取中",
         "released": "发布日期",
-        "macValue": "12+ · 通用二进制",
+        "macValue": "12+ · Apple 芯片",
         "windowsValue": "10+ · x64",
         "autoUpdate": "自动更新",
         "autoUpdateValue": "已启用",
@@ -104,7 +104,7 @@
       },
       "checksum": {
         "label": "SHA-512",
-        "note": "base64 编码,对应上方按钮下载的安装包",
+        "note": "base64 编码，每条各自对应上方同名平台的安装包",
         "copy": "复制",
         "copied": "已复制",
         "pending": "获取中"

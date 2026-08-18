@@ -70,8 +70,18 @@ function formatLogDate(iso: string): string {
 /**
  * 安装包校验和。值取自清单里**这一个文件**自己的 sha512(不是顶层那个,
  * 那属于自动更新用的包),整段可见不截断 —— 核验时要能原样比对。
+ *
+ * 每个平台各出一条并在标题里点名平台:页面上两个平台的下载按钮是并排的,
+ * 只放"当前系统"那一条的话,Windows 用户点旁边那颗 macOS 按钮,底下显示的
+ * 仍是 EXE 的校验和 —— 拿它去核验必然对不上,比不显示更糟。
  */
-function ChecksumRow({ sha512 }: { sha512: string | null }) {
+function ChecksumRow({
+  platform,
+  sha512,
+}: {
+  platform: DesktopPlatform;
+  sha512: string | null;
+}) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
@@ -95,7 +105,10 @@ function ChecksumRow({ sha512 }: { sha512: string | null }) {
   return (
     <div className={styles.checksum}>
       <div className={styles.checksumHead}>
-        <span>{t("downloadPage.release.checksum.label")}</span>
+        <span>
+          {t("downloadPage.release.checksum.label")} ·{" "}
+          {t(`downloadPage.platform.${platform}.name`)}
+        </span>
         {sha512 && (
           <button type="button" className={styles.checksumCopy} onClick={copy}>
             {t(
@@ -108,9 +121,6 @@ function ChecksumRow({ sha512 }: { sha512: string | null }) {
       </div>
       <p className={styles.checksumValue}>
         {sha512 ?? t("downloadPage.release.checksum.pending")}
-      </p>
-      <p className={styles.checksumNote}>
-        {t("downloadPage.release.checksum.note")}
       </p>
     </div>
   );
@@ -134,7 +144,8 @@ export function DownloadPage() {
   const ordered: DesktopPlatform[] =
     platform === "windows" ? ["windows", "mac"] : ["mac", "windows"];
 
-  // 版本区展示当前系统那一档的清单信息(两个平台同版发布,取哪个都一样)。
+  // 版本号/发布日期取当前系统那一档(两个平台同版发布,取哪个都一样);
+  // 校验和不能这么取 —— 它是逐安装包的,见 ChecksumRow。
   const current = releases[platform];
 
   // 滚动进场。这里直接操作 DOM 而不是给每个元素挂 state:要露出的元素有二十来个,
@@ -378,7 +389,12 @@ export function DownloadPage() {
                   <dt>{t("downloadPage.release.spec.license")}</dt>
                   <dd>Elastic-2.0</dd>
                 </dl>
-                <ChecksumRow sha512={current.sha512} />
+                {ordered.map((os) => (
+                  <ChecksumRow key={os} platform={os} sha512={releases[os].sha512} />
+                ))}
+                <p className={styles.checksumNote}>
+                  {t("downloadPage.release.checksum.note")}
+                </p>
               </aside>
 
               <ol className={clsx(styles.changelog, styles.rise)} data-reveal="">
