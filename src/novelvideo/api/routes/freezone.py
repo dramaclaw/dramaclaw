@@ -85,6 +85,7 @@ from novelvideo.api.schemas import (
     ProjectionStatusRequest,
     PushRequest,
 )
+from novelvideo.api.task_start_errors import handle_task_start_runtime_error
 from novelvideo.config import (
     IMAGE_GENERATION_SELECTIONS,
     image_generation_selection_options,
@@ -101,11 +102,6 @@ from novelvideo.media_model_request_schema import (
     validate_media_request_schema,
 )
 from novelvideo.ports.authz import find_authz_error
-from novelvideo.shared.billing_errors import (
-    find_billing_error,
-    find_billing_rule_not_configured_error,
-    find_insufficient_credits_error,
-)
 from novelvideo.freezone.audio_node import (
     create_user_audio_voice,
     freezone_audio_eleven_music_output_path,
@@ -289,13 +285,6 @@ from novelvideo.project_context import (
 )
 from novelvideo.seedance2_i2v.voice_clone import resolve_character_voice
 from novelvideo.ports import get_task_backend
-from novelvideo.task_backend.limits import (
-    ChannelTaskLimitExceeded,
-    GlobalLaneQueueLimitExceeded,
-    ProjectTaskLimitExceeded,
-    ProjectUserTaskLimitExceeded,
-    UserTaskLimitExceeded,
-)
 from novelvideo.task_identity import (
     project_task_state_key,
     selection_scope,
@@ -356,44 +345,8 @@ def _raise_project_context_required(task_type: str) -> None:
     )
 
 
-def _raise_if_task_limit_exception(exc: RuntimeError) -> None:
-    # Every admission-limit exception here is a RuntimeError subclass, so the
-    # wide `except RuntimeError` in the callers below would turn it into a bare
-    # 503 unless it is re-raised for the app-level 429 handler (same reason as
-    # the AuthzError branch below). GlobalLaneQueueLimitExceeded was leaking
-    # exactly that way (M8 step 7 / TCP-P44); the channel and user gates are
-    # listed as defence in depth for the EE path.
-    if isinstance(
-        exc,
-        (
-            ProjectTaskLimitExceeded,
-            ProjectUserTaskLimitExceeded,
-            GlobalLaneQueueLimitExceeded,
-            ChannelTaskLimitExceeded,
-            UserTaskLimitExceeded,
-        ),
-    ):
-        raise exc
-
-
 def _handle_task_start_runtime_error(message: str, exc: RuntimeError) -> None:
-    _raise_if_task_limit_exception(exc)
-    insufficient_credits = find_insufficient_credits_error(exc)
-    if insufficient_credits is not None:
-        raise insufficient_credits
-    billing_rule_not_configured = find_billing_rule_not_configured_error(exc)
-    if billing_rule_not_configured is not None:
-        raise billing_rule_not_configured
-    billing = find_billing_error(exc)
-    if billing is not None:
-        raise billing
-    # AuthzError is a RuntimeError subclass, so without this it fell through to
-    # the warning below and callers turned an organization denial into a bare
-    # 503. Re-raise so the app-level handler renders the contracted 4xx.
-    authz_denial = find_authz_error(exc)
-    if authz_denial is not None:
-        raise authz_denial
-    logger.warning("%s: %s", message, exc, exc_info=True)
+    handle_task_start_runtime_error(logger, message, exc)
 
 
 async def _start_or_enqueue_freezone_video_gen(
