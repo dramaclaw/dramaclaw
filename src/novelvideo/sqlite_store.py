@@ -41,8 +41,10 @@ from novelvideo.utils.asset_names import (
 from novelvideo.utils.identity_refs import (
     remap_default_map,
     remap_id_list,
+    remap_identity_id,
     remap_identity_markers,
     remap_keyed_by_identity,
+    remap_object_field,
 )
 from novelvideo.utils.path_resolver import compute_identity_path
 
@@ -820,11 +822,14 @@ class SQLiteStore:
         console.print(f"[green]已删除角色: {name}[/green]")
 
     async def _cascade_character_rename(self, old_name: str, new_name: str) -> None:
-        """角色改名后，把散在 episodes / beats 里的引用一起改掉。
+        """角色改名后，把散在库里各处的角色名 / identity_id 引用一起改掉。
 
         ``identity_id`` 是 ``<角色名>_<身份名>`` 拼出来的，改名等于让所有落库的
         identity_id 一起失效：身份图按 identity_id 找不到文件，sketch 颜色分配的键对不
-        上，分镜 marker 检出的身份不在身份表里。
+        上，分镜 marker 检出的身份不在身份表里，道具找不到所属身份。
+
+        **要改这个方法，先去 ``novelvideo.utils.identity_refs`` 的模块 docstring 核对那
+        份列清单**——那是把 ``SQLITE_SCHEMA_SQL`` 每一列过了一遍数出来的。凭直觉补会漏。
 
         走裸 SQL 而不是模型层：存量名字自愈本身就必须绕开模型（模型读的时候会把斜杠抹
         平，看不见坏名字），级联跟着走同一条路，两个调用点才能共用这一份实现。
@@ -839,7 +844,8 @@ class SQLiteStore:
         db = await self._ensure_db()
         async with db.execute(
             "SELECT number, character_names, identity_ids, "
-            "identity_default_map_json, sketch_colors_json FROM episodes"
+            "identity_default_map_json, sketch_colors_json, prop_menu_json "
+            "FROM episodes"
         ) as cursor:
             episodes = await cursor.fetchall()
         for row in episodes:
@@ -860,6 +866,12 @@ class SQLiteStore:
             )
             if colors is not None:
                 updates["sketch_colors_json"] = colors
+            # PropMenuItem.owner_identity_id 是身份 ID，道具「属于谁」全靠它。
+            prop_menu = remap_object_field(
+                row["prop_menu_json"], "owner_identity_id", old_name, new_name
+            )
+            if prop_menu is not None:
+                updates["prop_menu_json"] = prop_menu
             if not updates:
                 # 没引用过这个角色的集不写库，免得平白刷 updated_at。
                 continue
@@ -902,7 +914,55 @@ class SQLiteStore:
                 (*updates.values(), row["episode_number"], row["beat_number"]),
             )
 
+        # props.owner 两种格式混着存：字段声明写的是「所属角色名」，而
+        # ``prop_promotion_service`` 把菜单项提升成全局道具时，是把
+        # ``owner_identity_id`` 原样抄进来的（``owner=str(item.owner_identity_id ...)``）。
+        # ``remap_identity_id`` 对两种都成立：等于旧角色名就换成新的，``旧角色名_`` 开头
+        # 就换前缀，其余不动。
+        async with db.execute("SELECT name, owner FROM props") as cursor:
+            props = await cursor.fetchall()
+        for row in props:
+            owner = str(row["owner"] or "")
+            remapped_owner = remap_identity_id(owner, old_name, new_name)
+            if remapped_owner == owner:
+                continue
+            await db.execute(
+                "UPDATE props SET owner = ?, updated_at = datetime('now') WHERE name = ?",
+                (remapped_owner, row["name"]),
+            )
+
+        await self._cascade_voice_record_speaker(db, old_name, new_name)
+
         await db.commit()
+
+    async def _cascade_voice_record_speaker(
+        self, db: Any, old_name: str, new_name: str
+    ) -> None:
+        """``seedance2_voice_audio_records.speaker`` 也是角色名，跟着改。
+
+        这张表是音频复用的凭证（``classify_seedance2_voice_audio`` 按
+        ``(episode, beat, speaker)`` 精确查）。不改的话改名后每一条都查不中，被当成
+        missing 重新生成一遍——不会产出错内容，就是白烧一遍配音。
+
+        ``UPDATE OR REPLACE``：speaker 是主键的一部分，万一同一个 beat 下已经有新名字的
+        行，撞主键会让整个级联炸掉。宁可丢一条缓存凭证（大不了重生成一次），也不能把改名
+        卡在半路。
+
+        建表 SQL 里有这张表，但老库可能在它加进来之前就记下了 schema 版本、跳过了初始化，
+        所以先确认表在不在。
+        """
+
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'seedance2_voice_audio_records'"
+        ) as cursor:
+            if await cursor.fetchone() is None:
+                return
+        await db.execute(
+            "UPDATE OR REPLACE seedance2_voice_audio_records SET speaker = ? "
+            "WHERE speaker = ?",
+            (new_name, old_name),
+        )
 
     async def repair_path_unsafe_asset_names(
         self,

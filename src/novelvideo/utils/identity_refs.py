@@ -4,9 +4,24 @@
 落库的 identity_id 就同时失效——身份图找不到、sketch 颜色分配对不上、分镜 marker 检出
 的身份不在身份表里。
 
-引用散在五个地方（见 ``SQLiteStore._cascade_character_rename``）：``episodes`` 的
-``identity_ids`` / ``identity_default_map_json`` / ``sketch_colors_json`` / ``character_names``，
-以及 ``beats`` 的 ``detected_identities_json`` / ``visual_description`` / ``speaker``。
+引用散得比想象中广。下面这份清单是把建表 SQL 里每一列都过了一遍数出来的——上一轮
+只补了 review 点名的几列，结果 ``prop_menu_json`` 整个漏掉，又被打回来一次。改这块
+之前请先回去核对 ``SQLITE_SCHEMA_SQL``，别再照着直觉补：
+
+- ``episodes.character_names`` —— 角色名数组
+- ``episodes.identity_ids`` —— identity_id 数组
+- ``episodes.identity_default_map_json`` —— ``{角色名: identity_id}``，键和值都嵌
+- ``episodes.sketch_colors_json`` —— ``{identity_id: 颜色}``，只有键嵌
+- ``episodes.prop_menu_json`` —— 数组里每项的 ``owner_identity_id``
+- ``beats.detected_identities_json`` —— identity_id 数组
+- ``beats.visual_description`` —— ``{{角色名_身份名}}`` 文本 marker
+- ``beats.speaker`` —— 角色名，仅当 ``speaker_kind`` 为 ``character``
+- ``props.owner`` —— 角色名**或** identity_id，两种都有，见下
+- ``seedance2_voice_audio_records.speaker`` —— 角色名，还是主键的一部分
+
+明确**不**在清单里的：``episodes.scene_menu_json``（只有场景 ID）、
+``beats.detected_props_json``（只有道具 ID）、``director_world`` 那张跨项目共享的全局
+道具表（一个项目改名不该改写共享库）。
 
 这里只放纯函数：给一段旧 JSON（或文本），返回改好的新值，**没变就返回 ``None``**。
 调用方拿 ``None`` 当「这一行不用写」的信号，免得给没引用过这个角色的行平白刷
@@ -34,6 +49,34 @@ def remap_identity_id(identity_id: Any, old_name: str, new_name: str) -> str:
     if value.startswith(prefix):
         return f"{new_name}_{value[len(prefix) :]}"
     return value
+
+
+def remap_object_field(
+    raw_json: str | None, field: str, old_name: str, new_name: str
+) -> str | None:
+    """重映射 ``[{...}, ...]`` 里每个对象的某个字段（``prop_menu_json.owner_identity_id``）。
+
+    只动指定字段，同一个对象里的 ``prop_id`` / ``visual_prompt`` 原样保留——道具菜单项
+    里除了 owner 之外没有别的东西嵌角色名。
+    """
+
+    try:
+        items = json.loads(raw_json or "[]")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(items, list):
+        return None
+    remapped: list[Any] = []
+    for item in items:
+        if not isinstance(item, dict) or field not in item:
+            remapped.append(item)
+            continue
+        updated = dict(item)
+        updated[field] = remap_identity_id(item[field], old_name, new_name)
+        remapped.append(updated)
+    if remapped == items:
+        return None
+    return json.dumps(remapped, ensure_ascii=False)
 
 
 def remap_id_list(raw_json: str | None, old_name: str, new_name: str) -> str | None:

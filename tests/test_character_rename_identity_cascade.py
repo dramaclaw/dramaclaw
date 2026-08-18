@@ -1,13 +1,20 @@
-"""角色改名后，散在 episodes / beats 里的 identity_id 引用必须跟着改。
+"""角色改名后，散在库里各处的角色名 / identity_id 引用必须跟着改。
 
 ``identity_id`` 的格式是 ``<角色名>_<身份名>``，所以角色一改名，所有存下来的
-identity_id 就同时失效。这些引用分布在五个地方：
+identity_id 就同时失效。引用的完整清单在
+``novelvideo.utils.identity_refs`` 的模块 docstring 里（那是把建表 SQL 逐列过了一遍数
+出来的），这里逐个覆盖：
 
+* ``episodes.character_names``         —— 角色名
 * ``episodes.identity_ids``            —— 本集出场的身份
 * ``episodes.identity_default_map_json`` —— ``{角色名: identity_id}``，键和值都带角色名
 * ``episodes.sketch_colors_json``      —— ``{identity_id: 颜色}``
+* ``episodes.prop_menu_json``          —— 每项的 ``owner_identity_id``
 * ``beats.detected_identities_json``   —— 本 beat 检出的身份
 * ``beats.visual_description``         —— ``{{角色名_身份名}}`` 文本 marker
+* ``beats.speaker``                    —— 角色名
+* ``props.owner``                      —— 角色名**或** identity_id，两种格式都在用
+* ``seedance2_voice_audio_records.speaker`` —— 角色名，且是主键的一部分
 
 漏掉任何一处，身份图和颜色分配就断链：``rename_character`` 是手动触发的低频操作，
 存量名字自愈却是用户一打开角色列表就自动跑的，断链会一次性铺开。
@@ -43,7 +50,8 @@ def _seed_episode_and_beat(project_dir, char_name: str) -> None:
     try:
         conn.execute(
             "INSERT INTO episodes (number, title, character_names, identity_ids, "
-            "identity_default_map_json, sketch_colors_json) VALUES (?, ?, ?, ?, ?, ?)",
+            "identity_default_map_json, sketch_colors_json, prop_menu_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 1,
                 "第一集",
@@ -51,7 +59,32 @@ def _seed_episode_and_beat(project_dir, char_name: str) -> None:
                 json.dumps([identity_id], ensure_ascii=False),
                 json.dumps({char_name: identity_id}, ensure_ascii=False),
                 json.dumps({identity_id: "#ff0000"}, ensure_ascii=False),
+                json.dumps(
+                    [
+                        {
+                            "prop_id": "怀表",
+                            "prop_type": "object",
+                            "owner_identity_id": identity_id,
+                        },
+                        # 没主人的道具项：不该被动，也不该让整份菜单被判成「有变化」。
+                        {"prop_id": "路灯", "prop_type": "object", "owner_identity_id": ""},
+                    ],
+                    ensure_ascii=False,
+                ),
             ),
+        )
+        # props.owner 两种格式都得覆盖：``怀表`` 走 prop_promotion_service 提升，owner 里
+        # 存的是 identity_id；``钥匙`` 走 API 手填，存的是角色名。
+        conn.execute(
+            "INSERT INTO props (name, owner) VALUES (?, ?)", ("怀表", identity_id)
+        )
+        conn.execute("INSERT INTO props (name, owner) VALUES (?, ?)", ("钥匙", char_name))
+        conn.execute("INSERT INTO props (name, owner) VALUES (?, ?)", ("路灯", ""))
+        conn.execute(
+            "INSERT INTO seedance2_voice_audio_records (episode_number, beat_number, "
+            "speaker, audio_path, voice_sha256, mode, provider, model, generated_at, "
+            "status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, 1, char_name, "a.wav", "sha", "clone", "indextts2", "m", "now", "ok"),
         )
         conn.execute(
             "INSERT INTO beats (episode_number, beat_number, visual_description, "
@@ -77,6 +110,10 @@ def _read_refs(project_dir) -> dict:
         beat = conn.execute(
             "SELECT * FROM beats WHERE episode_number = 1 AND beat_number = 1"
         ).fetchone()
+        props = conn.execute("SELECT name, owner FROM props").fetchall()
+        voice = conn.execute(
+            "SELECT speaker FROM seedance2_voice_audio_records"
+        ).fetchall()
     finally:
         conn.close()
     refs = {
@@ -84,6 +121,9 @@ def _read_refs(project_dir) -> dict:
         "identity_ids": json.loads(ep["identity_ids"] or "[]"),
         "identity_default_map": json.loads(ep["identity_default_map_json"] or "{}"),
         "sketch_colors": json.loads(ep["sketch_colors_json"] or "{}"),
+        "prop_menu": json.loads(ep["prop_menu_json"] or "[]"),
+        "prop_owners": {row["name"]: row["owner"] for row in props},
+        "voice_speakers": sorted(row["speaker"] for row in voice),
     }
     if beat is not None:
         refs.update(
@@ -107,6 +147,12 @@ def _assert_remapped_to(refs: dict, new_name: str) -> None:
     assert refs["detected_identities"] == [identity_id]
     assert refs["visual_description"] == f"{{{{{identity_id}}}}} 走进客厅"
     assert refs["speaker"] == new_name
+    assert refs["prop_menu"] == [
+        {"prop_id": "怀表", "prop_type": "object", "owner_identity_id": identity_id},
+        {"prop_id": "路灯", "prop_type": "object", "owner_identity_id": ""},
+    ]
+    assert refs["prop_owners"] == {"怀表": identity_id, "钥匙": new_name, "路灯": ""}
+    assert refs["voice_speakers"] == [new_name]
 
 
 @pytest.mark.asyncio
