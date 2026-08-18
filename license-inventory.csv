@@ -577,6 +577,7 @@ frontend/src/__tests__/stores/canvas-store-undo-history.test.ts,Elastic-2.0,2026
 frontend/src/__tests__/stores/canvas-store-video-reference-limits.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/canvas-store-viewport-bookmarks.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/episode-workbench-store.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/stores/settings-store-feature-model-config.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/region-store.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/save-status-store.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/stores/seen-pool-store.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -80,6 +80,7 @@ import {
 import {
   useSettingsStore,
   FEATURE_MODEL_PROVIDERS,
+  normalizeMediaModelEntries,
   type AliyunOssStorageConfig,
   type CloudinaryStorageConfig,
   type EmbeddingModelEntry,
@@ -1375,6 +1376,15 @@ const HYBRID_COMFYUI_WORKFLOWS = {
   },
 };
 
+const CUSTOM_PROVIDER_CHANNEL_TYPES: Readonly<Record<string, number>> = {
+  fal_ai: 61,
+  comfyui: 63,
+};
+
+function customProviderChannelType(provider: string): number | undefined {
+  return CUSTOM_PROVIDER_CHANNEL_TYPES[provider];
+}
+
 const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
   "LingShan-G2": {
     channel: "fal_ai",
@@ -1642,7 +1652,9 @@ function syncQuickProfileFromAdvancedSettings(
     channels.push({
       id,
       provider,
-      ...(provider === "comfyui" ? { type: 63 } : {}),
+      ...(customProviderChannelType(provider)
+        ? { type: customProviderChannelType(provider) }
+        : {}),
       baseUrl: settings.providerChannels[provider]?.baseUrl ?? "",
       priority: settings.providerChannels[provider]?.priority ?? 0,
       settings: normalizeProviderChannelSettings(
@@ -1747,6 +1759,9 @@ function QuickLocalNewApiSetup({
   const setEmbeddingModel = useSettingsStore((s) => s.setEmbeddingModel);
   const setMediaModels = useSettingsStore((s) => s.setMediaModels);
   const advancedSettings = useSettingsStore((s) => s.featureModelConfig);
+  const advancedSettingsUserRevision = useSettingsStore(
+    (s) => s.featureModelConfigUserRevision,
+  );
   const [upstreamKeys, setUpstreamKeys] = useState<Record<string, string>>({});
   const [recentlySavedChannels, setRecentlySavedChannels] = useState<
     SavedProviderChannelConfig[]
@@ -1782,11 +1797,10 @@ function QuickLocalNewApiSetup({
       return null;
     }
   }, [profileJson]);
-  const advancedSettingsKey = JSON.stringify(advancedSettings);
-  const previousAdvancedSettingsKey = useRef("");
+  const previousAdvancedSettingsUserRevision = useRef(
+    advancedSettingsUserRevision,
+  );
   useEffect(() => {
-    if (previousAdvancedSettingsKey.current === advancedSettingsKey) return;
-    previousAdvancedSettingsKey.current = advancedSettingsKey;
     if (!appliedProfileJson) {
       const hasExistingAdvancedSettings =
         Object.keys(advancedSettings.providerChannels).length > 0 ||
@@ -1810,8 +1824,16 @@ function QuickLocalNewApiSetup({
         customProfileJson: recoveredJson,
         appliedProfileJson: recoveredJson,
       });
+      previousAdvancedSettingsUserRevision.current =
+        advancedSettingsUserRevision;
       return;
     }
+    if (
+      previousAdvancedSettingsUserRevision.current ===
+      advancedSettingsUserRevision
+    )
+      return;
+    previousAdvancedSettingsUserRevision.current = advancedSettingsUserRevision;
     let appliedProfile: QuickModelProfile;
     try {
       appliedProfile = parseQuickModelProfile(appliedProfileJson);
@@ -1832,11 +1854,7 @@ function QuickLocalNewApiSetup({
       customProfileJson: syncedJson,
       appliedProfileJson: syncedJson,
     });
-  }, [
-    advancedSettings,
-    advancedSettingsKey,
-    appliedProfileJson,
-  ]);
+  }, [advancedSettings, advancedSettingsUserRevision, appliedProfileJson]);
   const localNewApiReady = Boolean(
     config?.custom?.configured && config?.provisioner?.database?.available,
   );
@@ -2028,39 +2046,45 @@ function QuickLocalNewApiSetup({
       }
 
       for (const channel of profile.channels) {
-        addProviderChannel(channel.provider);
-        updateProviderChannel(channel.provider, {
-          upstreamKey: "",
-          baseUrl: channel.baseUrl,
-          priority: channel.priority ?? 0,
-          settings: normalizeProviderChannelSettings(
-            channel.provider,
-            channel.settings ?? {},
-          ),
-        });
+        addProviderChannel(channel.provider, { source: "profile" });
+        updateProviderChannel(
+          channel.provider,
+          {
+            upstreamKey: "",
+            baseUrl: channel.baseUrl,
+            priority: channel.priority ?? 0,
+            settings: normalizeProviderChannelSettings(
+              channel.provider,
+              channel.settings ?? {},
+            ),
+          },
+          { source: "profile" },
+        );
       }
       for (const group of FEATURE_MODEL_GROUPS) {
         for (const feature of group.features) {
           const selected = selectedFeatureModels.get(feature.id)!;
           const channel = channelById.get(selected.channel)!;
-          updateFeatureModel(feature.id, {
-            provider: channel.provider,
-            model: selected.model,
-          });
+          updateFeatureModel(
+            feature.id,
+            {
+              provider: channel.provider,
+              model: selected.model,
+            },
+            { source: "profile" },
+          );
         }
       }
-      setEmbeddingModel({
-        provider: embeddingChannel.provider,
-        upstreamModel: profile.embedding.model,
-        dimension: profile.embedding.dimension,
-        batchSize: profile.embedding.batchSize,
-      });
-      setMediaModels(mediaModels);
-      // Applying a profile updates the advanced store by design. Mark that
-      // snapshot as synchronized so it is not mistaken for a manual edit.
-      previousAdvancedSettingsKey.current = JSON.stringify(
-        useSettingsStore.getState().featureModelConfig,
+      setEmbeddingModel(
+        {
+          provider: embeddingChannel.provider,
+          upstreamModel: profile.embedding.model,
+          dimension: profile.embedding.dimension,
+          batchSize: profile.embedding.batchSize,
+        },
+        { source: "profile" },
       );
+      setMediaModels(mediaModels, { source: "profile" });
       const nextCustomProfileJson =
         selectedProfileKind === "custom" ? profileJson : customProfileJson;
       setAppliedProfileJson(profileJson);
@@ -2426,26 +2450,34 @@ function FeatureModelsBlock({
         ];
       const savedBaseUrl = channel.baseUrl ?? "";
       if (!current) {
-        addFeatureProviderChannel(provider);
-        updateFeatureProviderChannel(provider, {
-          baseUrl: savedBaseUrl,
-          priority: channel.priority ?? 0,
-          settings: normalizeProviderChannelSettings(
-            channel.provider,
-            channel.settings ?? {},
-          ),
-        });
+        addFeatureProviderChannel(provider, { source: "hydrate" });
+        updateFeatureProviderChannel(
+          provider,
+          {
+            baseUrl: savedBaseUrl,
+            priority: channel.priority ?? 0,
+            settings: normalizeProviderChannelSettings(
+              channel.provider,
+              channel.settings ?? {},
+            ),
+          },
+          { source: "hydrate" },
+        );
         continue;
       }
       if (!current.upstreamKey) {
-        updateFeatureProviderChannel(provider, {
-          baseUrl: savedBaseUrl,
-          priority: channel.priority ?? current.priority,
-          settings: normalizeProviderChannelSettings(
-            channel.provider,
-            channel.settings ?? current.settings,
-          ),
-        });
+        updateFeatureProviderChannel(
+          provider,
+          {
+            baseUrl: savedBaseUrl,
+            priority: channel.priority ?? current.priority,
+            settings: normalizeProviderChannelSettings(
+              channel.provider,
+              channel.settings ?? current.settings,
+            ),
+          },
+          { source: "hydrate" },
+        );
       }
     }
   }, [
@@ -2474,7 +2506,8 @@ function FeatureModelsBlock({
         provider,
         type:
           channelTypeByProvider.get(provider)?.type ||
-          savedChannelByProvider.get(provider)?.type,
+          savedChannelByProvider.get(provider)?.type ||
+          customProviderChannelType(provider),
         upstreamKey: (channel?.upstreamKey ?? "").trim(),
         modelMapping,
         group: "default",
@@ -2722,10 +2755,13 @@ function EmbeddingModelBlock({
     localSavedEmbeddingModel,
   );
   const savedKey = JSON.stringify(savedEmbeddingModel ?? null);
-  const localSavedKey = JSON.stringify(localSavedEmbeddingModel ?? null);
+  const lastSyncedBackendKey = useRef<string | null>(null);
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
+    if (savedEmbeddingModel === undefined) return;
+    if (lastSyncedBackendKey.current === savedKey) return;
+    lastSyncedBackendKey.current = savedKey;
     const savedProvider =
       typeof savedEmbeddingModel?.provider === "string"
         ? savedEmbeddingModel.provider.trim()
@@ -2740,32 +2776,27 @@ function EmbeddingModelBlock({
       savedUpstreamModel &&
       Number.isFinite(savedDimension) &&
       savedDimension > 0
-      ? {
-          provider: savedProvider as FeatureModelProvider,
-          upstreamModel: savedUpstreamModel,
-          dimension: savedDimension,
-          batchSize: savedEmbeddingModel?.batchSize,
-        }
-      : undefined;
+        ? {
+            provider: savedProvider as FeatureModelProvider,
+            upstreamModel: savedUpstreamModel,
+            dimension: savedDimension,
+            batchSize: savedEmbeddingModel?.batchSize,
+          }
+        : undefined;
     // The API returns {} when no embedding model has been configured. Treat
     // that loaded empty snapshot as authoritative instead of reviving a stale
     // browser draft.
-    const backendSnapshotLoaded = savedEmbeddingModel !== undefined;
-    const next = backendSnapshotLoaded ? fromBackend : localSavedEmbeddingModel;
+    const next = fromBackend;
     const nextKey = JSON.stringify(next ?? null);
-    if (backendSnapshotLoaded && localSavedKey !== nextKey) {
-      setEmbeddingModel(next);
+    const current =
+      useSettingsStore.getState().featureModelConfig.embeddingModel;
+    if (JSON.stringify(current ?? null) !== nextKey) {
+      setEmbeddingModel(next, { source: "hydrate" });
     }
     setLocalModel((current) =>
       JSON.stringify(current ?? null) === nextKey ? current : next,
     );
-  }, [
-    localSavedEmbeddingModel,
-    localSavedKey,
-    savedEmbeddingModel,
-    savedKey,
-    setEmbeddingModel,
-  ]);
+  }, [savedEmbeddingModel, savedKey, setEmbeddingModel]);
 
   const selectedProvider = localModel?.provider ?? "";
   const upstreamModel = localModel?.upstreamModel ?? "";
@@ -3108,7 +3139,7 @@ function MediaModelsBlock({
   const [editingModel, setEditingModel] = useState<string | null>(null);
   const [creatingModel, setCreatingModel] = useState(false);
   const savedMediaModelsKey = JSON.stringify(savedMediaModels);
-  const localSavedMediaModelsKey = JSON.stringify(localSavedMediaModels);
+  const lastSyncedBackendKey = useRef<string | null>(null);
   const comfyWorkflowModels = useMemo(() => {
     const model = readComfyUIModelName(
       providerChannels.comfyui?.settings ?? {},
@@ -3158,34 +3189,35 @@ function MediaModelsBlock({
   }, [comfyOnly, excludeComfyUI, mediaModels]);
 
   useEffect(() => {
-    const fromBackend = Object.fromEntries(
-      Object.entries(savedMediaModels ?? {}).map(([model, entry]) => [
-        model,
-        {
-          provider: entry.provider as FeatureModelProvider,
-          upstreamModel: entry.upstreamModel,
-          ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
-          ...(entry.label ? { label: entry.label } : {}),
-          enabled: entry.enabled !== false,
-          sortOrder: entry.sortOrder ?? 100,
-          config: entry.config ?? {},
-        },
-      ]),
+    if (savedMediaModels === undefined) return;
+    if (lastSyncedBackendKey.current === savedMediaModelsKey) return;
+    lastSyncedBackendKey.current = savedMediaModelsKey;
+    const fromBackend = normalizeMediaModelEntries(
+      Object.fromEntries(
+        Object.entries(savedMediaModels ?? {}).map(([model, entry]) => [
+          model,
+          {
+            provider: entry.provider as FeatureModelProvider,
+            upstreamModel: entry.upstreamModel,
+            ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
+            ...(entry.label ? { label: entry.label } : {}),
+            enabled: entry.enabled !== false,
+            sortOrder: entry.sortOrder ?? 100,
+            config: entry.config ?? {},
+          },
+        ]),
+      ),
     );
-    const backendSnapshotLoaded = savedMediaModels !== undefined;
-    const next = backendSnapshotLoaded ? fromBackend : localSavedMediaModels;
+    const next = fromBackend;
     const nextKey = JSON.stringify(next ?? {});
-    if (backendSnapshotLoaded && localSavedMediaModelsKey !== nextKey) {
-      setMediaModels(fromBackend);
+    const current = useSettingsStore.getState().featureModelConfig.mediaModels;
+    if (JSON.stringify(current ?? {}) !== nextKey) {
+      setMediaModels(fromBackend, { source: "hydrate" });
     }
     setLocalMediaModels((current) =>
       JSON.stringify(current ?? {}) === nextKey ? current : (next ?? {}),
     );
-  }, [
-    localSavedMediaModelsKey,
-    savedMediaModelsKey,
-    setMediaModels,
-  ]);
+  }, [savedMediaModels, savedMediaModelsKey, setMediaModels]);
 
   useEffect(() => {
     setLocalMediaModels((current) => {
@@ -4224,14 +4256,18 @@ function ProviderChannelsBlock({
             (!allowedProviderSet || allowedProviderSet.has(item.provider)) &&
             !excludedProviderSet.has(item.provider),
         )
-      : FEATURE_MODEL_PROVIDERS.filter(
-          (provider) =>
-            (!allowedProviderSet || allowedProviderSet.has(provider)) &&
-            !excludedProviderSet.has(provider),
-        ).map((provider) => ({
-          provider,
-          name: featureProviderLabel(provider),
-        }));
+      : Array.from(
+          new Set([...FEATURE_MODEL_PROVIDERS, ...(allowedProviders ?? [])]),
+        )
+          .filter(
+            (provider) =>
+              (!allowedProviderSet || allowedProviderSet.has(provider)) &&
+              !excludedProviderSet.has(provider),
+          )
+          .map((provider) => ({
+            provider,
+            name: featureProviderLabel(provider),
+          }));
   const availableProviders = providerOptions.filter(
     (item) => !providerChannels[item.provider],
   );
@@ -4283,7 +4319,8 @@ function ProviderChannelsBlock({
         provider,
         type:
           channelTypeByProvider.get(provider)?.type ||
-          savedChannelByProvider.get(provider)?.type,
+          savedChannelByProvider.get(provider)?.type ||
+          customProviderChannelType(provider),
         upstreamKey:
           (providerChannels[provider]?.upstreamKey ?? "").trim() || undefined,
         baseUrl: (providerChannels[provider]?.baseUrl ?? "").trim(),
@@ -4470,6 +4507,26 @@ function ProviderChannelRow({
   useEffect(() => {
     if (!upstreamKeyValue) setRevealed(false);
   }, [upstreamKeyValue]);
+  useEffect(() => {
+    if (!isComfyUI || !defaultComfyWorkflows || channel?.baseUrl?.trim()) return;
+    const workflows = readComfyUIWorkflows(channel?.settings ?? {});
+    const hasTemplateWorkflow = Object.keys(
+      defaultComfyWorkflows.workflows,
+    ).some((workflowId) => Boolean(workflows[workflowId]));
+    if (!hasTemplateWorkflow) return;
+    updateFeatureProviderChannel(
+      provider,
+      { baseUrl: "http://127.0.0.1:8188" },
+      { source: "hydrate" },
+    );
+  }, [
+    channel?.baseUrl,
+    channel?.settings,
+    defaultComfyWorkflows,
+    isComfyUI,
+    provider,
+    updateFeatureProviderChannel,
+  ]);
   const handleSync = async () => {
     if (!newApiBaseUrl.trim()) {
       toast.error(t("settings.modelConfig.featureModels.missingBaseUrl"));
@@ -4553,9 +4610,25 @@ function ProviderChannelRow({
       );
     }
   };
-  const handleLoadDefaultComfyWorkflows = () => {
+  const handleLoadDefaultComfyWorkflows = async () => {
     if (!isComfyUI || !defaultComfyWorkflows) return;
     const currentSettings = channel?.settings ?? {};
+    const currentModel = readComfyUIModelName(currentSettings);
+    if (currentModel && currentModel !== defaultComfyWorkflows.model) {
+      const confirmed = await confirmDialog({
+        title: t("settings.modelConfig.featureModels.replaceComfyModelTitle"),
+        description: t(
+          "settings.modelConfig.featureModels.replaceComfyModelConfirm",
+          {
+            currentModel,
+            nextModel: defaultComfyWorkflows.model,
+          },
+        ),
+        confirmText: t("settings.modelConfig.featureModels.replaceComfyModel"),
+        confirmVariant: "destructive",
+      });
+      if (!confirmed) return;
+    }
     const currentComfyUI =
       currentSettings.comfyui &&
       typeof currentSettings.comfyui === "object" &&
@@ -4719,9 +4792,7 @@ function ProviderChannelRow({
         <ComfyUIWorkflowsEditor
           settings={channel?.settings ?? {}}
           onLoadDefaultTemplate={
-            defaultComfyWorkflows
-              ? handleLoadDefaultComfyWorkflows
-              : undefined
+            defaultComfyWorkflows ? handleLoadDefaultComfyWorkflows : undefined
           }
           onChange={(settings) =>
             updateFeatureProviderChannel(provider, { settings })
@@ -4944,7 +5015,7 @@ function ComfyUIWorkflowsEditor({
               type="button"
               size="sm"
               variant="outline"
-              onClick={onLoadDefaultTemplate}
+              onClick={() => void onLoadDefaultTemplate()}
             >
               <Plus className="size-3.5" />
               {t("settings.modelConfig.quick.loadComfyTemplate")}

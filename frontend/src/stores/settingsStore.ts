@@ -113,6 +113,12 @@ export interface MediaModelEntry {
   config?: Record<string, unknown>;
 }
 
+export type FeatureModelConfigChangeSource = 'user' | 'hydrate' | 'profile';
+
+export interface FeatureModelConfigMutationOptions {
+  source?: FeatureModelConfigChangeSource;
+}
+
 export interface EmbeddingModelEntry {
   provider: FeatureModelProvider;
   /** 固定内部模型名 DC-cognee-embedding 对应的上游 embedding 模型。 */
@@ -213,17 +219,42 @@ interface SettingsState {
   enableUpdateDialog: boolean;
   mediaStorage: MediaStorageSettings;
   featureModelConfig: FeatureModelSettings;
-  updateFeatureModel: (featureId: string, patch: Partial<FeatureModelEntry>) => void;
-  setMediaModels: (models: Record<string, MediaModelEntry>) => void;
-  setEmbeddingModel: (model: EmbeddingModelEntry | undefined) => void;
-  setProviderUpstreamKey: (provider: string, key: string) => void;
-  addFeatureProviderChannel: (provider: FeatureModelProvider) => void;
+  featureModelConfigUserRevision: number;
+  updateFeatureModel: (
+    featureId: string,
+    patch: Partial<FeatureModelEntry>,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
+  setMediaModels: (
+    models: Record<string, MediaModelEntry>,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
+  setEmbeddingModel: (
+    model: EmbeddingModelEntry | undefined,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
+  setProviderUpstreamKey: (
+    provider: string,
+    key: string,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
+  addFeatureProviderChannel: (
+    provider: FeatureModelProvider,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
   updateFeatureProviderChannel: (
     provider: FeatureModelProvider,
-    patch: Partial<Omit<FeatureProviderChannel, 'provider'>>
+    patch: Partial<Omit<FeatureProviderChannel, 'provider'>>,
+    options?: FeatureModelConfigMutationOptions
   ) => void;
-  clearFeatureProviderUpstreamKey: (provider: FeatureModelProvider) => void;
-  removeFeatureProviderChannel: (provider: FeatureModelProvider) => void;
+  clearFeatureProviderUpstreamKey: (
+    provider: FeatureModelProvider,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
+  removeFeatureProviderChannel: (
+    provider: FeatureModelProvider,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
   setMediaStorageProvider: (provider: MediaStorageProvider) => void;
   setMediaStorageFullyManagedUpload: (enabled: boolean) => void;
   updateCloudinaryStorageConfig: (patch: Partial<CloudinaryStorageConfig>) => void;
@@ -406,6 +437,37 @@ function normalizeFeatureModelSettings(
   return { featureModels, mediaModels, embeddingModel, providerKeys, providerChannels };
 }
 
+export function normalizeMediaModelEntries(
+  models: Record<string, MediaModelEntry>
+): Record<string, MediaModelEntry> {
+  return Object.fromEntries(
+    Object.entries(models)
+      .map(([model, entry]) => [
+        model.trim(),
+        {
+          provider: normalizeFeatureModelProvider(entry.provider),
+          upstreamModel:
+            typeof entry.upstreamModel === 'string' ? entry.upstreamModel.trim() : '',
+          ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
+          ...(entry.label?.trim() ? { label: entry.label.trim() } : {}),
+          enabled: entry.enabled !== false,
+          sortOrder: entry.sortOrder ?? 100,
+          config: entry.config ?? {},
+        },
+      ] as const)
+      .filter(([model]) => Boolean(model))
+  );
+}
+
+function nextFeatureModelConfigUserRevision(
+  current: number,
+  options: FeatureModelConfigMutationOptions | undefined
+): number {
+  return options?.source === 'hydrate' || options?.source === 'profile'
+    ? current
+    : current + 1;
+}
+
 function prepareFeatureModelSettingsForPersistence(
   input: Partial<FeatureModelSettings> | null | undefined
 ): FeatureModelSettings {
@@ -527,7 +589,8 @@ export const useSettingsStore = create<SettingsState>()(
       enableUpdateDialog: true,
       mediaStorage: DEFAULT_MEDIA_STORAGE_SETTINGS,
       featureModelConfig: DEFAULT_FEATURE_MODEL_SETTINGS,
-      updateFeatureModel: (featureId, patch) =>
+      featureModelConfigUserRevision: 0,
+      updateFeatureModel: (featureId, patch, options) =>
         set((state) => {
           const nextFeatureModels = { ...state.featureModelConfig.featureModels };
           const prev = nextFeatureModels[featureId] ?? {
@@ -543,36 +606,33 @@ export const useSettingsStore = create<SettingsState>()(
             nextFeatureModels[featureId] = { provider, model };
           }
           return {
+            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+              state.featureModelConfigUserRevision,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               featureModels: nextFeatureModels,
             },
           };
         }),
-      setMediaModels: (models) =>
+      setMediaModels: (models, options) =>
         set((state) => ({
+          featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+            state.featureModelConfigUserRevision,
+            options
+          ),
           featureModelConfig: {
             ...state.featureModelConfig,
-            mediaModels: Object.fromEntries(
-              Object.entries(models)
-                .map(([model, entry]) => [
-                  model.trim(),
-                  {
-                    provider: normalizeFeatureModelProvider(entry.provider),
-                    upstreamModel: entry.upstreamModel.trim(),
-                    ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
-                    ...(entry.label?.trim() ? { label: entry.label.trim() } : {}),
-                    enabled: entry.enabled !== false,
-                    sortOrder: entry.sortOrder ?? 100,
-                    config: entry.config ?? {},
-                  },
-                ] as const)
-                .filter(([model]) => Boolean(model))
-            ),
+            mediaModels: normalizeMediaModelEntries(models),
           },
         })),
-      setEmbeddingModel: (model) =>
+      setEmbeddingModel: (model, options) =>
         set((state) => ({
+          featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+            state.featureModelConfigUserRevision,
+            options
+          ),
           featureModelConfig: {
             ...state.featureModelConfig,
             embeddingModel: model
@@ -595,7 +655,7 @@ export const useSettingsStore = create<SettingsState>()(
               : undefined,
           },
         })),
-      setProviderUpstreamKey: (provider, key) =>
+      setProviderUpstreamKey: (provider, key, options) =>
         set((state) => {
           const normalized = normalizeFeatureModelProvider(provider);
           const nextKeys = { ...state.featureModelConfig.providerKeys };
@@ -610,6 +670,10 @@ export const useSettingsStore = create<SettingsState>()(
             nextChannels[normalized] = { ...nextChannels[normalized], upstreamKey: trimmed };
           }
           return {
+            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+              state.featureModelConfigUserRevision,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               providerKeys: nextKeys,
@@ -617,13 +681,17 @@ export const useSettingsStore = create<SettingsState>()(
             },
           };
         }),
-      addFeatureProviderChannel: (provider) =>
+      addFeatureProviderChannel: (provider, options) =>
         set((state) => {
           const normalized = normalizeFeatureModelProvider(provider);
           if (state.featureModelConfig.providerChannels[normalized]) {
             return state;
           }
           return {
+            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+              state.featureModelConfigUserRevision,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               providerChannels: {
@@ -639,7 +707,7 @@ export const useSettingsStore = create<SettingsState>()(
             },
           };
         }),
-      updateFeatureProviderChannel: (provider, patch) =>
+      updateFeatureProviderChannel: (provider, patch, options) =>
         set((state) => {
           const normalized = normalizeFeatureModelProvider(provider);
           const prev = state.featureModelConfig.providerChannels[normalized] ?? {
@@ -660,6 +728,10 @@ export const useSettingsStore = create<SettingsState>()(
             delete nextKeys[normalized];
           }
           return {
+            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+              state.featureModelConfigUserRevision,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               providerKeys: nextKeys,
@@ -670,7 +742,7 @@ export const useSettingsStore = create<SettingsState>()(
             },
           };
         }),
-      clearFeatureProviderUpstreamKey: (provider) =>
+      clearFeatureProviderUpstreamKey: (provider, options) =>
         set((state) => {
           const normalized = normalizeFeatureModelProvider(provider);
           const nextKeys = { ...state.featureModelConfig.providerKeys };
@@ -680,6 +752,10 @@ export const useSettingsStore = create<SettingsState>()(
             nextChannels[normalized] = { ...nextChannels[normalized], upstreamKey: '' };
           }
           return {
+            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+              state.featureModelConfigUserRevision,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               providerKeys: nextKeys,
@@ -687,7 +763,7 @@ export const useSettingsStore = create<SettingsState>()(
             },
           };
         }),
-      removeFeatureProviderChannel: (provider) =>
+      removeFeatureProviderChannel: (provider, options) =>
         set((state) => {
           const normalized = normalizeFeatureModelProvider(provider);
           const nextChannels = { ...state.featureModelConfig.providerChannels };
@@ -716,6 +792,10 @@ export const useSettingsStore = create<SettingsState>()(
               : state.featureModelConfig.embeddingModel;
 
           return {
+            featureModelConfigUserRevision: nextFeatureModelConfigUserRevision(
+              state.featureModelConfigUserRevision,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               featureModels: nextFeatureModels,
@@ -803,12 +883,19 @@ export const useSettingsStore = create<SettingsState>()(
       // workflows. The backend settings database is their source of truth;
       // keeping them in the global startup store can exhaust localStorage or
       // make hydration block the whole application after a refresh.
-      partialize: (state) => ({
-        ...state,
-        featureModelConfig: prepareFeatureModelSettingsForPersistence(
-          state.featureModelConfig
-        ),
-      }),
+      partialize: (state) => {
+        const {
+          featureModelConfigUserRevision: _featureModelConfigUserRevision,
+          ...persisted
+        } = state;
+        void _featureModelConfigUserRevision;
+        return {
+          ...persisted,
+          featureModelConfig: prepareFeatureModelSettingsForPersistence(
+            state.featureModelConfig
+          ),
+        };
+      },
       onRehydrateStorage: () => {
         return (_state, error) => {
           if (error) {
