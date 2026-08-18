@@ -272,7 +272,9 @@ export const VideoReshootTimeline = memo(function VideoReshootTimeline({
         {clips.map((clip) => (
           <div
             key={clip.id}
-            className="absolute inset-y-0 z-10 rounded-md border-2 border-white bg-[#2f6bff]/75"
+            // 选区内部不铺色：那块正是要对着画面找镜头的地方，糊一层 75% 的蓝
+            // 等于把帧盖掉了。改成只有上下描边 + 两端手柄带蓝，画面照样看得见。
+            className="absolute inset-y-0 z-10 rounded-md border-y-2 border-[#2f6bff]"
             style={{ left: `${pct(clip.startMs)}%`, right: `${100 - pct(clip.endMs)}%` }}
             title={clipTimecodeToken(clip)}
             // 已有片段身上的按下/点击不该再触发「截一段」——否则拖手柄顺带多一段。
@@ -280,18 +282,18 @@ export const VideoReshootTimeline = memo(function VideoReshootTimeline({
             onClick={(event) => event.stopPropagation()}
           >
             <div
-              className="absolute inset-y-0 left-0 flex w-3 cursor-ew-resize items-center justify-center rounded-l-md bg-white"
+              className="absolute inset-y-0 left-0 flex w-3 cursor-ew-resize items-center justify-center rounded-l-md bg-[#2f6bff]"
               onPointerDown={startResize(clip.id, 'start')}
               title="拖动以调整起点"
             >
-              <div className="h-4 w-[2px] rounded-full bg-black/40" />
+              <div className="pointer-events-none h-4 w-[2px] rounded-full bg-white/85" />
             </div>
             <div
-              className="absolute inset-y-0 right-0 flex w-3 cursor-ew-resize items-center justify-center rounded-r-md bg-white"
+              className="absolute inset-y-0 right-0 flex w-3 cursor-ew-resize items-center justify-center rounded-r-md bg-[#2f6bff]"
               onPointerDown={startResize(clip.id, 'end')}
               title="拖动以调整终点"
             >
-              <div className="h-4 w-[2px] rounded-full bg-black/40" />
+              <div className="pointer-events-none h-4 w-[2px] rounded-full bg-white/85" />
             </div>
             <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap text-[11px] font-medium text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">
               {formatClipDuration(clip)}
