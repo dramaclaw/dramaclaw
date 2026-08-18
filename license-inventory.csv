@@ -1625,6 +1625,7 @@ src/novelvideo/utils/debug_context.py,Elastic-2.0,2026 SuperTale contributors,RE
 src/novelvideo/utils/derived_scenes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/utils/document_parsers.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/utils/error_redaction.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/utils/identity_refs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/utils/identity_resolver.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/utils/logging.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/utils/media_io.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1770,6 +1771,7 @@ tests/test_ce_migrated_test_ratchet.py,Elastic-2.0,2026 SuperTale contributors,R
 tests/test_ce_port_closure.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_character_identity_age_group.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_character_promotion_service.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_character_rename_identity_cascade.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_character_voice_storage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_replay_strip.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_route_prewarm.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
