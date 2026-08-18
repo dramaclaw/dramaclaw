@@ -220,6 +220,8 @@ interface SettingsState {
   mediaStorage: MediaStorageSettings;
   featureModelConfig: FeatureModelSettings;
   featureModelConfigUserRevision: number;
+  featureModelConfigProfileSyncedRevision: number;
+  markFeatureModelConfigProfileSynced: () => void;
   updateFeatureModel: (
     featureId: string,
     patch: Partial<FeatureModelEntry>,
@@ -590,6 +592,12 @@ export const useSettingsStore = create<SettingsState>()(
       mediaStorage: DEFAULT_MEDIA_STORAGE_SETTINGS,
       featureModelConfig: DEFAULT_FEATURE_MODEL_SETTINGS,
       featureModelConfigUserRevision: 0,
+      featureModelConfigProfileSyncedRevision: 0,
+      markFeatureModelConfigProfileSynced: () =>
+        set((state) => ({
+          featureModelConfigProfileSyncedRevision:
+            state.featureModelConfigUserRevision,
+        })),
       updateFeatureModel: (featureId, patch, options) =>
         set((state) => {
           const nextFeatureModels = { ...state.featureModelConfig.featureModels };
@@ -883,19 +891,12 @@ export const useSettingsStore = create<SettingsState>()(
       // workflows. The backend settings database is their source of truth;
       // keeping them in the global startup store can exhaust localStorage or
       // make hydration block the whole application after a refresh.
-      partialize: (state) => {
-        const {
-          featureModelConfigUserRevision: _featureModelConfigUserRevision,
-          ...persisted
-        } = state;
-        void _featureModelConfigUserRevision;
-        return {
-          ...persisted,
-          featureModelConfig: prepareFeatureModelSettingsForPersistence(
-            state.featureModelConfig
-          ),
-        };
-      },
+      partialize: (state) => ({
+        ...state,
+        featureModelConfig: prepareFeatureModelSettingsForPersistence(
+          state.featureModelConfig
+        ),
+      }),
       onRehydrateStorage: () => {
         return (_state, error) => {
           if (error) {

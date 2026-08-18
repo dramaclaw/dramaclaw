@@ -13,6 +13,7 @@ describe("settingsStore feature model configuration", () => {
     useSettingsStore.setState({
       featureModelConfig: DEFAULT_FEATURE_MODEL_SETTINGS,
       featureModelConfigUserRevision: 0,
+      featureModelConfigProfileSyncedRevision: 0,
     });
   });
 
@@ -34,6 +35,14 @@ describe("settingsStore feature model configuration", () => {
       baseUrl: "https://openrouter.ai/api/v1",
     });
     expect(useSettingsStore.getState().featureModelConfigUserRevision).toBe(1);
+    expect(
+      useSettingsStore.getState().featureModelConfigProfileSyncedRevision,
+    ).toBe(0);
+
+    useSettingsStore.getState().markFeatureModelConfigProfileSynced();
+    expect(
+      useSettingsStore.getState().featureModelConfigProfileSyncedRevision,
+    ).toBe(1);
   });
 
   it("normalizes backend media model snapshots before comparison", () => {

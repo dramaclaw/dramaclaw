@@ -1762,6 +1762,12 @@ function QuickLocalNewApiSetup({
   const advancedSettingsUserRevision = useSettingsStore(
     (s) => s.featureModelConfigUserRevision,
   );
+  const advancedSettingsProfileSyncedRevision = useSettingsStore(
+    (s) => s.featureModelConfigProfileSyncedRevision,
+  );
+  const markAdvancedSettingsProfileSynced = useSettingsStore(
+    (s) => s.markFeatureModelConfigProfileSynced,
+  );
   const [upstreamKeys, setUpstreamKeys] = useState<Record<string, string>>({});
   const [recentlySavedChannels, setRecentlySavedChannels] = useState<
     SavedProviderChannelConfig[]
@@ -1797,9 +1803,6 @@ function QuickLocalNewApiSetup({
       return null;
     }
   }, [profileJson]);
-  const previousAdvancedSettingsUserRevision = useRef(
-    advancedSettingsUserRevision,
-  );
   useEffect(() => {
     if (!appliedProfileJson) {
       const hasExistingAdvancedSettings =
@@ -1824,16 +1827,14 @@ function QuickLocalNewApiSetup({
         customProfileJson: recoveredJson,
         appliedProfileJson: recoveredJson,
       });
-      previousAdvancedSettingsUserRevision.current =
-        advancedSettingsUserRevision;
+      markAdvancedSettingsProfileSynced();
       return;
     }
     if (
-      previousAdvancedSettingsUserRevision.current ===
+      advancedSettingsProfileSyncedRevision ===
       advancedSettingsUserRevision
     )
       return;
-    previousAdvancedSettingsUserRevision.current = advancedSettingsUserRevision;
     let appliedProfile: QuickModelProfile;
     try {
       appliedProfile = parseQuickModelProfile(appliedProfileJson);
@@ -1845,7 +1846,10 @@ function QuickLocalNewApiSetup({
       null,
       2,
     );
-    if (syncedJson === appliedProfileJson) return;
+    if (syncedJson === appliedProfileJson) {
+      markAdvancedSettingsProfileSynced();
+      return;
+    }
     setSelectedProfileKind("custom");
     setCustomProfileJson(syncedJson);
     setAppliedProfileJson(syncedJson);
@@ -1854,7 +1858,14 @@ function QuickLocalNewApiSetup({
       customProfileJson: syncedJson,
       appliedProfileJson: syncedJson,
     });
-  }, [advancedSettings, advancedSettingsUserRevision, appliedProfileJson]);
+    markAdvancedSettingsProfileSynced();
+  }, [
+    advancedSettings,
+    advancedSettingsProfileSyncedRevision,
+    advancedSettingsUserRevision,
+    appliedProfileJson,
+    markAdvancedSettingsProfileSynced,
+  ]);
   const localNewApiReady = Boolean(
     config?.custom?.configured && config?.provisioner?.database?.available,
   );
@@ -2085,6 +2096,7 @@ function QuickLocalNewApiSetup({
         { source: "profile" },
       );
       setMediaModels(mediaModels, { source: "profile" });
+      markAdvancedSettingsProfileSynced();
       const nextCustomProfileJson =
         selectedProfileKind === "custom" ? profileJson : customProfileJson;
       setAppliedProfileJson(profileJson);
@@ -4257,7 +4269,11 @@ function ProviderChannelsBlock({
             !excludedProviderSet.has(item.provider),
         )
       : Array.from(
-          new Set([...FEATURE_MODEL_PROVIDERS, ...(allowedProviders ?? [])]),
+          new Set([
+            ...FEATURE_MODEL_PROVIDERS,
+            ...Object.keys(CUSTOM_PROVIDER_CHANNEL_TYPES),
+            ...(allowedProviders ?? []),
+          ]),
         )
           .filter(
             (provider) =>
@@ -4504,16 +4520,26 @@ function ProviderChannelRow({
   const upstreamPlaceholder = savedKeyPreview || "sk-...";
   const isComfyUI = provider === "comfyui";
   const hasComfyUIConfig = isComfyUI && savedChannel?.configured === true;
+  const comfyBaseUrlEditedByUser = useRef(false);
+  const didSelfHealComfyBaseUrl = useRef(false);
   useEffect(() => {
     if (!upstreamKeyValue) setRevealed(false);
   }, [upstreamKeyValue]);
   useEffect(() => {
-    if (!isComfyUI || !defaultComfyWorkflows || channel?.baseUrl?.trim()) return;
+    if (
+      !isComfyUI ||
+      !defaultComfyWorkflows ||
+      channel?.baseUrl?.trim() ||
+      comfyBaseUrlEditedByUser.current ||
+      didSelfHealComfyBaseUrl.current
+    )
+      return;
     const workflows = readComfyUIWorkflows(channel?.settings ?? {});
     const hasTemplateWorkflow = Object.keys(
       defaultComfyWorkflows.workflows,
     ).some((workflowId) => Boolean(workflows[workflowId]));
     if (!hasTemplateWorkflow) return;
+    didSelfHealComfyBaseUrl.current = true;
     updateFeatureProviderChannel(
       provider,
       { baseUrl: "http://127.0.0.1:8188" },
@@ -4612,8 +4638,8 @@ function ProviderChannelRow({
   };
   const handleLoadDefaultComfyWorkflows = async () => {
     if (!isComfyUI || !defaultComfyWorkflows) return;
-    const currentSettings = channel?.settings ?? {};
-    const currentModel = readComfyUIModelName(currentSettings);
+    const initialSettings = channel?.settings ?? {};
+    const currentModel = readComfyUIModelName(initialSettings);
     if (currentModel && currentModel !== defaultComfyWorkflows.model) {
       const confirmed = await confirmDialog({
         title: t("settings.modelConfig.featureModels.replaceComfyModelTitle"),
@@ -4629,6 +4655,9 @@ function ProviderChannelRow({
       });
       if (!confirmed) return;
     }
+    const latestChannel =
+      useSettingsStore.getState().featureModelConfig.providerChannels[provider];
+    const currentSettings = latestChannel?.settings ?? {};
     const currentComfyUI =
       currentSettings.comfyui &&
       typeof currentSettings.comfyui === "object" &&
@@ -4639,7 +4668,7 @@ function ProviderChannelRow({
     delete nextComfyUI.workflow_by_model;
     delete nextComfyUI.workflow;
     updateFeatureProviderChannel(provider, {
-      baseUrl: channel?.baseUrl || "http://127.0.0.1:8188",
+      baseUrl: latestChannel?.baseUrl || "http://127.0.0.1:8188",
       settings: {
         ...currentSettings,
         comfyui: {
@@ -4726,11 +4755,12 @@ function ProviderChannelRow({
           </Label>
           <Input
             value={channel?.baseUrl ?? ""}
-            onChange={(e) =>
+            onChange={(e) => {
+              if (isComfyUI) comfyBaseUrlEditedByUser.current = true;
               updateFeatureProviderChannel(provider, {
                 baseUrl: e.target.value,
-              })
-            }
+              });
+            }}
             placeholder={
               channelType?.defaultBaseUrl ||
               t("settings.modelConfig.featureModels.baseUrlPlaceholder")
