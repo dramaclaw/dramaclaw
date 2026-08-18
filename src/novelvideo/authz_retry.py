@@ -10,7 +10,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
-from novelvideo.ports.authz import AuthzServiceFault, AuthzServiceUnavailable
+from novelvideo.ports.authz import AuthzServiceUnavailable
 
 T = TypeVar("T")
 logger = logging.getLogger("novelvideo.authz_retry")
@@ -86,7 +86,7 @@ async def retry_authz_read(
                     extra={"call_site": call_site, "attempts": retry_index + 1},
                 )
             return result
-        except (AuthzServiceUnavailable, AuthzServiceFault) as error:
+        except AuthzServiceUnavailable as error:
             if retry_index >= max_retries:
                 logger.warning(
                     "authz_local_retry_exhausted",

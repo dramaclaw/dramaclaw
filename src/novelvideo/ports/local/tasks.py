@@ -306,10 +306,7 @@ class InlineTaskBackend:
                     consumer_failure = exc
                     break
                 except TaskAuthorityUnavailable as exc:
-                    if (
-                        exc.failure_kind != "unavailable"
-                        or retry_index >= _AUTHZ_RETRY_MAX_RETRIES
-                    ):
+                    if retry_index >= _AUTHZ_RETRY_MAX_RETRIES:
                         consumer_failure = exc
                         break
                     upper_bound = min(

@@ -99,13 +99,13 @@ class AuthzServiceUnavailable(AuthzError):
         super().__init__("ORG_AUTHZ_UNAVAILABLE")
 
 
-class AuthzServiceFault(AuthzError):
+class AuthzServiceFault(AuthzServiceUnavailable):
     """Unexpected authorization service response with a redacted surface."""
 
     failure_kind = "fault"
 
     def __init__(self) -> None:
-        super().__init__("ORG_AUTHZ_UNAVAILABLE")
+        super().__init__()
 
 
 def authz_error_payload(exc: AuthzError) -> dict[str, str]:

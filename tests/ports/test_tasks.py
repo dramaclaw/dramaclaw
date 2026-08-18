@@ -533,14 +533,19 @@ async def test_inline_authz_retry_recovers_before_running_once(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
-async def test_inline_authz_fault_fails_without_retry(monkeypatch, tmp_path):
+async def test_inline_authz_fault_recovers_within_retry_budget(monkeypatch, tmp_path):
     from novelvideo.ports.authz import AuthzServiceFault
 
     ctx = _ctx(tmp_path)
-    authz = SequencedAuthz([AuthzServiceFault()])
+    authz = SequencedAuthz([AuthzServiceFault(), object()])
     backend = _inline_backend(authz=authz)
     submitted = []
+    runner_calls = []
     monkeypatch.setattr(backend, "_submit_lane_job", submitted.append)
+    monkeypatch.setattr(
+        "novelvideo.ports.local.tasks.run_project_task_core_sync",
+        lambda *_args, **_kwargs: runner_calls.append("run"),
+    )
     _disable_inline_authz_retry_wait(monkeypatch)
 
     await backend.enqueue_project_task(
@@ -548,11 +553,8 @@ async def test_inline_authz_fault_fails_without_retry(monkeypatch, tmp_path):
     )
     await backend._run_inline(backend._lanes["default"], submitted[0])
 
-    assert len(authz.calls) == 1
-    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
-    assert state is not None
-    assert state.status == "failed"
-    assert state.metadata["error_code"] == "TASK_AUTHZ_CHECK_FAILED"
+    assert len(authz.calls) == 2
+    assert runner_calls == ["run"]
 
 
 @pytest.mark.asyncio

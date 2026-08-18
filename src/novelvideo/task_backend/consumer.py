@@ -12,7 +12,6 @@ from novelvideo.ports.authz import (
     AdmissionContext,
     AuthzError,
     AuthzPort,
-    AuthzServiceFault,
     AuthzServiceUnavailable,
 )
 from novelvideo.task_backend.envelope import (
@@ -218,10 +217,8 @@ class TaskEnvelopeConsumer:
                 signed.admission
             ):
                 authority_failed = True
-        except AuthzServiceUnavailable:
-            authority_failure_kind = "unavailable"
-        except AuthzServiceFault:
-            authority_failure_kind = "fault"
+        except AuthzServiceUnavailable as exc:
+            authority_failure_kind = exc.failure_kind
         except AuthzError:
             authority_failed = True
         except Exception:

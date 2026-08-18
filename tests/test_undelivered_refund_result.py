@@ -16,6 +16,7 @@ async def test_undelivered_refund_without_reservation_is_accepted(monkeypatch) -
     result = await run_core.refund_undelivered_feature_credit_reservation("")
 
     assert result.accepted is True
+    assert result.retryable is False
 
 
 @pytest.mark.asyncio
@@ -35,6 +36,7 @@ async def test_undelivered_refund_reports_adapter_acceptance(monkeypatch) -> Non
     )
 
     assert result.accepted is True
+    assert result.retryable is False
     assert calls == [("reservation-1", {"source": "task_delivery_terminalizer"})]
 
 
@@ -53,4 +55,26 @@ async def test_undelivered_refund_reports_adapter_failure_without_leaking_detail
     )
 
     assert result.accepted is False
+    assert result.retryable is True
     assert "secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_undelivered_refund_reports_permanent_settlement_conflict(
+    monkeypatch, caplog
+) -> None:
+    from novelvideo.ports import usage
+
+    class Meter:
+        async def settle_cancelled_feature_credit_reservation(self, *_args, **_kwargs):
+            raise usage.FeatureCreditSettlementConflict()
+
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: Meter())
+
+    result = await run_core.refund_undelivered_feature_credit_reservation(
+        "reservation-1"
+    )
+
+    assert result.accepted is False
+    assert result.retryable is False
+    assert "reservation-1" not in caplog.text

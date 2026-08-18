@@ -5,6 +5,15 @@ from __future__ import annotations
 from typing import Any, Optional, Protocol
 
 
+class FeatureCreditSettlementConflict(RuntimeError):
+    """A reservation has already advanced to an incompatible final action."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "feature credit settlement action conflicts with durable state"
+        )
+
+
 class UsageMeter(Protocol):
     async def reserve_current_model_call_credit(
         self,

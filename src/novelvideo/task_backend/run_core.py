@@ -17,6 +17,7 @@ from novelvideo.egress_context import (
 from novelvideo.model_gateway_runtime import model_gateway_scope_for_runner
 from novelvideo.ports import get_usage_meter
 from novelvideo.ports.authz import AdmissionContext
+from novelvideo.ports.usage import FeatureCreditSettlementConflict
 from novelvideo.project_context import require_project_home_node
 from novelvideo.shared.billing_errors import (
     INSUFFICIENT_CREDITS_MESSAGE,
@@ -50,6 +51,7 @@ class SettlementIntentResult:
     """Whether the canonical usage adapter accepted a settlement intent."""
 
     accepted: bool
+    retryable: bool
 
 
 _PROJECT_TASK_RESOURCE_KINDS = {
@@ -345,19 +347,25 @@ async def refund_undelivered_feature_credit_reservation(
     through this one path rather than growing a second refund.
     """
     if not reservation_id:
-        return SettlementIntentResult(accepted=True)
+        return SettlementIntentResult(accepted=True, retryable=False)
     try:
         await get_usage_meter().settle_cancelled_feature_credit_reservation(
             reservation_id,
             metadata=metadata,
         )
+    except FeatureCreditSettlementConflict:
+        logger.warning(
+            "undelivered feature credit refund conflicts with durable settlement",
+            extra={"failure_kind": "settlement_action_conflict"},
+        )
+        return SettlementIntentResult(accepted=False, retryable=False)
     except Exception:  # noqa: BLE001
         logger.error(
             "undelivered feature credit refund remains awaiting retry",
             extra={"failure_kind": "settlement_adapter_failure"},
         )
-        return SettlementIntentResult(accepted=False)
-    return SettlementIntentResult(accepted=True)
+        return SettlementIntentResult(accepted=False, retryable=True)
+    return SettlementIntentResult(accepted=True, retryable=False)
 
 
 _refund_undelivered_feature_credit_reservation = (
