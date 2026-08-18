@@ -63,11 +63,20 @@ async def list_styles(
 
     username = user["username"]
     project_name = project
+    project_dir = None
+    state_dir = None
     if project:
         resolved = await resolve_project_scope(project, user, required_role="viewer")
         username = resolved.username
         project_name = resolved.project_name
-    styles = StyleService.list_all_styles(username=username, project=project_name)
+        project_dir = resolved.project_dir
+        state_dir = resolved.state_dir
+    styles = StyleService.list_all_styles(
+        username=username,
+        project=project_name,
+        project_dir=project_dir,
+        state_dir=state_dir,
+    )
     for style in styles:
         if style.get("type") == "custom":
             style["preview_url"] = _custom_preview_url(
@@ -88,11 +97,21 @@ async def get_style(
 
     username = user["username"]
     project_name = project
+    project_dir = None
+    state_dir = None
     if project:
         resolved = await resolve_project_scope(project, user, required_role="viewer")
         username = resolved.username
         project_name = resolved.project_name
-    style = StyleService.get_style(style_id, username=username, project=project_name)
+        project_dir = resolved.project_dir
+        state_dir = resolved.state_dir
+    style = StyleService.get_style(
+        style_id,
+        username=username,
+        project=project_name,
+        project_dir=project_dir,
+        state_dir=state_dir,
+    )
     if style is None:
         return {"ok": False, "error": f"Style '{style_id}' not found"}
 
@@ -113,16 +132,22 @@ async def get_style_preview(
 
     username = user["username"]
     project_name = project
+    project_dir = None
+    state_dir = None
     if project:
         resolved = await resolve_project_scope(project, user, required_role="viewer")
         username = resolved.username
         project_name = resolved.project_name
+        project_dir = resolved.project_dir
+        state_dir = resolved.state_dir
 
     if not StyleService.get_preset(style_id):
         style = StyleService.get_style(
             style_id,
             username=username,
             project=project_name,
+            project_dir=project_dir,
+            state_dir=state_dir,
         )
         if style:
             if not project or not getattr(style, "preview_path", None):
@@ -184,6 +209,8 @@ async def create_style(body: dict, user: dict = Depends(get_api_user)):
             config,
             username=resolved.username,
             project=resolved.project_name,
+            project_dir=resolved.project_dir,
+            state_dir=resolved.state_dir,
         )
         if not success:
             return {"ok": False, "error": "保存自定义风格失败"}
@@ -215,6 +242,8 @@ async def delete_style(
         style_id,
         username=resolved.username,
         project=resolved.project_name,
+        project_dir=resolved.project_dir,
+        state_dir=resolved.state_dir,
     )
     if not success:
         return {"ok": False, "error": f"Custom style '{style_id}' not found"}
@@ -231,14 +260,20 @@ async def preview_style(
 
     username = user["username"]
     project_name = body.project
+    project_dir = None
+    state_dir = None
     if body.project:
         resolved = await resolve_project_scope(body.project, user, required_role="viewer")
         username = resolved.username
         project_name = resolved.project_name
+        project_dir = resolved.project_dir
+        state_dir = resolved.state_dir
     style = StyleService.get_style(
         style_id,
         username=username,
         project=project_name,
+        project_dir=project_dir,
+        state_dir=state_dir,
     )
     if style is None:
         return {"ok": False, "error": f"Style '{style_id}' not found"}
@@ -257,6 +292,7 @@ async def preview_style(
             model=body.model,
             output_dir=tmp_dir,
             project_dir=tmp_dir,
+            state_dir=state_dir or "",
             count=1,
         )
     except Exception as e:

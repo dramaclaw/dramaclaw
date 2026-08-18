@@ -145,25 +145,17 @@ class CogneeStore:
             self.project_dir = ensure_project_dirs(project_name)["base"]
 
         if state_dir:
-            default_state_dir = Path(state_dir)
-            if not sqlite_state_dir and "/" in project_name:
-                from novelvideo.utils.project_paths import ProjectPaths
-
-                parts = project_name.split("/", 1)
-                paths = ProjectPaths(parts[0], parts[1])
-                if Path(state_dir).resolve() == paths.state_dir.resolve():
-                    paths.bootstrap_from_legacy_output()
+            resolved_state_dir = Path(state_dir)
         elif sqlite_state_dir:
-            default_state_dir = Path(sqlite_state_dir)
+            resolved_state_dir = Path(sqlite_state_dir)
         elif "/" in project_name:
             from novelvideo.utils.project_paths import ProjectPaths
 
             parts = project_name.split("/", 1)
             paths = ProjectPaths(parts[0], parts[1])
-            paths.bootstrap_from_legacy_output()
-            default_state_dir = paths.state_dir
+            resolved_state_dir = paths.state_dir
         else:
-            default_state_dir = Path(self.project_dir)
+            resolved_state_dir = Path(self.project_dir)
 
         if (
             state_dir
@@ -174,11 +166,6 @@ class CogneeStore:
                 "CogneeStore state_dir must match injected SQLiteStore state_dir: "
                 f"state_dir={state_dir}, sqlite_store.state_dir={sqlite_state_dir}"
             )
-        if state_dir:
-            resolved_state_dir = Path(state_dir)
-        else:
-            resolved_state_dir = default_state_dir
-
         resolved_state_dir.mkdir(parents=True, exist_ok=True)
         self.state_dir = str(resolved_state_dir)
         self.db_path = str(resolved_state_dir / "data.db")

@@ -70,12 +70,17 @@ def build_prop_reference_prompt(
     style_keywords: str = "",
     style: str | None = None,
     project_dir: str = "",
+    state_dir: str = "",
 ) -> str:
     """Build the exact prompt used for prop reference-sheet generation."""
     if style is None:
         style = IMAGE_DEFAULT_STYLE
 
-    style_preset = get_style_preset(style, project_dir=project_dir or None)
+    style_preset = get_style_preset(
+        style,
+        project_dir=project_dir or None,
+        state_dir=state_dir or None,
+    )
     preset_style = style_preset.get("style_instructions", "")
     preset_negative = style_preset.get("avoid_instructions", "")
 
@@ -131,6 +136,7 @@ async def generate_prop_reference(
     style_keywords: str = "",
     style: str = None,
     project_dir: str = "",
+    state_dir: str = "",
     model: str | None = None,
     egress_context: TrustedEgressContext | None = None,
 ) -> Optional[str]:
@@ -164,6 +170,7 @@ async def generate_prop_reference(
             style_keywords=style_keywords,
             style=style,
             project_dir=project_dir,
+            state_dir=state_dir,
         )
         await generate_text_to_image(
             prompt=prompt,
@@ -222,6 +229,7 @@ async def generate_prop_reference(
         style_keywords=style_keywords,
         style=style,
         project_dir=project_dir,
+        state_dir=state_dir,
     )
 
     print(f"[PropRefGen] 生成道具三视图: {visual_prompt[:60]}...")

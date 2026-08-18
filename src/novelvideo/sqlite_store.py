@@ -340,27 +340,21 @@ class SQLiteStore:
 
         parts = project_name.split("/", 1)
         if state_dir:
-            default_state_dir = Path(state_dir)
+            resolved_state_dir = Path(state_dir)
+            if len(parts) == 2:
+                from novelvideo.utils.project_paths import ProjectPaths
+
+                paths = ProjectPaths(parts[0], parts[1])
+                if resolved_state_dir.resolve() == paths.state_dir.resolve():
+                    paths.bootstrap_from_legacy_output()
         elif len(parts) == 2:
             from novelvideo.utils.project_paths import ProjectPaths
 
             paths = ProjectPaths(parts[0], parts[1])
             paths.bootstrap_from_legacy_output()
-            default_state_dir = paths.state_dir
+            resolved_state_dir = paths.state_dir
         else:
-            default_state_dir = Path(self.project_dir)
-
-        if state_dir and len(parts) == 2:
-            from novelvideo.utils.project_paths import ProjectPaths
-
-            paths = ProjectPaths(parts[0], parts[1])
-            if Path(state_dir).resolve() == paths.state_dir.resolve():
-                paths.bootstrap_from_legacy_output()
-
-        if state_dir:
-            resolved_state_dir = Path(state_dir)
-        else:
-            resolved_state_dir = default_state_dir
+            resolved_state_dir = Path(self.project_dir)
 
         resolved_state_dir.mkdir(parents=True, exist_ok=True)
         self.state_dir = str(resolved_state_dir)

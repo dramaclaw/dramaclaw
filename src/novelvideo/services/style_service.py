@@ -30,6 +30,7 @@ from novelvideo.project_config import (
     load_project_config_file,
     load_project_config_file_from_state_dir,
     update_project_config_file,
+    update_project_config_file_in_state_dir,
 )
 
 
@@ -197,15 +198,19 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> bool:
+        def _apply(existing: dict) -> None:
+            existing["custom_styles"] = styles
+
+        if state_dir is not None:
+            update_project_config_file_in_state_dir(state_dir, _apply)
+            return True
+
         username, project = cls._resolve_project_context(username, project, project_dir)
         if not username or not project:
             print("[StyleService] 保存自定义风格失败: 缺少项目上下文")
             return False
-
-        def _apply(existing: dict) -> None:
-            existing["custom_styles"] = styles
-
         update_project_config_file(username, project, _apply)
         return True
 
@@ -279,6 +284,7 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> bool:
         """保存自定义风格到项目配置。
 
@@ -295,13 +301,19 @@ class StyleService:
             config.is_preset = False
             if not config.created_at:
                 config.created_at = datetime.now()
-            styles = cls._load_project_custom_style_map(username, project, project_dir)
+            styles = cls._load_project_custom_style_map(
+                username,
+                project,
+                project_dir,
+                state_dir,
+            )
             styles[style_id] = config.model_dump(mode="json")
             if not cls._save_project_custom_style_map(
                 styles,
                 username=username,
                 project=project,
                 project_dir=project_dir,
+                state_dir=state_dir,
             ):
                 return False
 
@@ -318,6 +330,7 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> bool:
         """删除自定义风格。
 
@@ -328,7 +341,12 @@ class StyleService:
             是否删除成功
         """
         try:
-            styles = cls._load_project_custom_style_map(username, project, project_dir)
+            styles = cls._load_project_custom_style_map(
+                username,
+                project,
+                project_dir,
+                state_dir,
+            )
             if style_id not in styles:
                 return False
             styles.pop(style_id, None)
@@ -337,6 +355,7 @@ class StyleService:
                 username=username,
                 project=project,
                 project_dir=project_dir,
+                state_dir=state_dir,
             ):
                 return False
             root = Path(project_dir) if project_dir else Path(OUTPUT_DIR) / str(username) / str(project)
@@ -353,6 +372,7 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> list[str]:
         """列出所有自定义风格 ID。
 
@@ -360,7 +380,12 @@ class StyleService:
             自定义风格 ID 列表
         """
         try:
-            styles = cls._load_project_custom_style_map(username, project, project_dir)
+            styles = cls._load_project_custom_style_map(
+                username,
+                project,
+                project_dir,
+                state_dir,
+            )
             return sorted(styles.keys())
         except Exception as e:
             print(f"[StyleService] 列出自定义风格失败: {e}")
@@ -465,6 +490,7 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> list[dict]:
         """列出所有可用风格（预设 + 自定义）。
 
@@ -477,8 +503,19 @@ class StyleService:
         styles.extend(cls.list_preset_styles())
 
         # 自定义风格
-        for style_id in cls.list_custom_styles(username=username, project=project, project_dir=project_dir):
-            config = cls.get_custom_style(style_id, username=username, project=project, project_dir=project_dir)
+        for style_id in cls.list_custom_styles(
+            username=username,
+            project=project,
+            project_dir=project_dir,
+            state_dir=state_dir,
+        ):
+            config = cls.get_custom_style(
+                style_id,
+                username=username,
+                project=project,
+                project_dir=project_dir,
+                state_dir=state_dir,
+            )
             if config:
                 styles.append({
                     "id": style_id,

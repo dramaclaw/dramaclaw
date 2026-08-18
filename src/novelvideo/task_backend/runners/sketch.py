@@ -176,60 +176,64 @@ async def _ensure_scene_refs_for_beats(
     else:
         projected_scenes = projection.require("scenes")
 
-    skipped = 0
-    missing = 0
-    for requested_scene_id in requested_scene_ids:
-        if projected_scenes is None:
-            scene = await store.sqlite_store.get_scene(requested_scene_id)
-            scene_name = scene.name if scene else None
-        else:
-            scene_name = _projected_scene_name(projected_scenes, requested_scene_id)
-        if not scene_name:
-            missing += 1
-            log(f"未找到场景，跳过场景资产检查: {requested_scene_id}")
-            continue
-        if compute_scene_master_path(Path(output_dir), scene_name):
-            skipped += 1
-            log(f"场景资产就绪: {scene_name} (master=yes)")
-        else:
-            missing += 1
-            log(f"场景缺少主线资产: {scene_name} (需要 master 作为默认 sketch 场景参考)")
-
-    prepare_director_refs = str(director_ref_mode or "off").strip().lower() not in {
-        "",
-        "0",
-        "false",
-        "off",
-        "none",
-    } or bool(director_ref_beat_numbers)
-    director_refs = 0
-    if prepare_director_refs:
-        paths = PathResolver(output_dir, episode)
-        selected = (
-            {int(bn) for bn in director_ref_beat_numbers if bn is not None}
-            if director_ref_beat_numbers is not None
-            else None
-        )
-        for beat in beats or []:
-            beat_num = int(beat.get("beat_number") or 0)
-            if beat_num <= 0:
+    try:
+        skipped = 0
+        missing = 0
+        for requested_scene_id in requested_scene_ids:
+            if projected_scenes is None:
+                scene = await store.sqlite_store.get_scene(requested_scene_id)
+                scene_name = scene.name if scene else None
+            else:
+                scene_name = _projected_scene_name(projected_scenes, requested_scene_id)
+            if not scene_name:
+                missing += 1
+                log(f"未找到场景，跳过场景资产检查: {requested_scene_id}")
                 continue
-            if selected is not None and beat_num not in selected:
-                continue
-            if paths.director_render(beat_num).exists():
-                director_refs += 1
-        if director_refs:
-            log(f"DirectorWorld 控制图已就绪: {director_refs} 个 beat")
-        else:
-            log("未发现 DirectorWorld 控制图；导演单镜不会回退到旧参考图。")
+            if compute_scene_master_path(Path(output_dir), scene_name):
+                skipped += 1
+                log(f"场景资产就绪: {scene_name} (master=yes)")
+            else:
+                missing += 1
+                log(f"场景缺少主线资产: {scene_name} (需要 master 作为默认 sketch 场景参考)")
 
-    return {
-        "requested": len(requested_scene_ids),
-        "generated": 0,
-        "skipped": skipped,
-        "missing": missing,
-        "director_refs": director_refs,
-    }
+        prepare_director_refs = str(director_ref_mode or "off").strip().lower() not in {
+            "",
+            "0",
+            "false",
+            "off",
+            "none",
+        } or bool(director_ref_beat_numbers)
+        director_refs = 0
+        if prepare_director_refs:
+            paths = PathResolver(output_dir, episode)
+            selected = (
+                {int(bn) for bn in director_ref_beat_numbers if bn is not None}
+                if director_ref_beat_numbers is not None
+                else None
+            )
+            for beat in beats or []:
+                beat_num = int(beat.get("beat_number") or 0)
+                if beat_num <= 0:
+                    continue
+                if selected is not None and beat_num not in selected:
+                    continue
+                if paths.director_render(beat_num).exists():
+                    director_refs += 1
+            if director_refs:
+                log(f"DirectorWorld 控制图已就绪: {director_refs} 个 beat")
+            else:
+                log("未发现 DirectorWorld 控制图；导演单镜不会回退到旧参考图。")
+
+        return {
+            "requested": len(requested_scene_ids),
+            "generated": 0,
+            "skipped": skipped,
+            "missing": missing,
+            "director_refs": director_refs,
+        }
+    finally:
+        if store is not None:
+            await store.close()
 
 
 def _build_director_blocking_sheet_for_grid(

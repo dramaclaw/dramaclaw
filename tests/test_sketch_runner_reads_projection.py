@@ -148,6 +148,7 @@ async def test_without_a_projection_the_store_is_still_used(tmp_path, monkeypatc
     from novelvideo.cognee import CogneeStore
 
     opened: list[tuple[str, dict]] = []
+    closed: list[bool] = []
 
     def record(self, label, *args, **kwargs):
         opened.append((label, kwargs))
@@ -155,12 +156,16 @@ async def test_without_a_projection_the_store_is_still_used(tmp_path, monkeypatc
     async def noop(self, *args, **kwargs):
         return None
 
+    async def close(self):
+        closed.append(True)
+
     async def one_scene(name):
         return SimpleNamespace(name="皇宫·大殿")
 
     monkeypatch.setattr(CogneeStore, "__init__", record)
     monkeypatch.setattr(CogneeStore, "initialize", noop)
     monkeypatch.setattr(CogneeStore, "load_graph_state", noop)
+    monkeypatch.setattr(CogneeStore, "close", close)
     monkeypatch.setattr(
         CogneeStore,
         "sqlite_store",
@@ -180,6 +185,7 @@ async def test_without_a_projection_the_store_is_still_used(tmp_path, monkeypatc
         )
     ]
     assert stats["requested"] == 1
+    assert closed == [True]
 
 
 class _StopHere(Exception):

@@ -84,6 +84,7 @@ async def _run_prop_reference_asset(
                 output_path=str(output_path),
                 style=style,
                 project_dir=str(output_dir),
+                state_dir=str(ctx.state_dir),
                 model=model,
                 egress_context=egress_context,
             )

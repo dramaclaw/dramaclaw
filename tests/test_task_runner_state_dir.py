@@ -57,32 +57,6 @@ def test_sqlite_store_explicit_personal_state_dir_migrates_legacy_config(
     )
 
 
-def test_cognee_store_explicit_personal_state_dir_migrates_legacy_config(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from novelvideo.cognee import CogneeStore
-    from novelvideo.cognee import store as cognee_store_module
-
-    output_dir, state_dir = _legacy_project_paths(monkeypatch, tmp_path)
-
-    class FakeSQLiteStore:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-    monkeypatch.setattr(cognee_store_module, "SQLiteStore", FakeSQLiteStore)
-
-    CogneeStore(
-        "alice/demo",
-        output_dir=str(output_dir),
-        state_dir=str(state_dir),
-    )
-
-    assert (state_dir / "project_config.json").read_text(encoding="utf-8") == (
-        '{"spine_template":"narrated"}'
-    )
-
-
 def test_explicit_state_dir_does_not_create_derived_fallback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -142,6 +116,41 @@ def test_style_preset_reads_custom_style_from_explicit_state_dir(
     assert preset["style_instructions"] == "scope-owned lighting"
 
 
+def test_prop_prompt_reads_custom_style_from_explicit_state_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo import project_config
+    from novelvideo.generators.nanobanana_prop import build_prop_reference_prompt
+
+    state_dir = tmp_path / "state" / "_scopes" / "scope_123" / "alice" / "demo"
+    state_dir.mkdir(parents=True)
+    (state_dir / "project_config.json").write_text(
+        json.dumps(
+            {
+                "custom_styles": {
+                    "scope_style": {
+                        "id": "scope_style",
+                        "name": "Scope Style",
+                        "style_instructions": "scope-owned prop lighting",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(project_config, "OUTPUT_DIR", tmp_path / "fallback-state")
+
+    prompt = build_prop_reference_prompt(
+        "brass key",
+        style="scope_style",
+        project_dir=str(tmp_path / "output"),
+        state_dir=str(state_dir),
+    )
+
+    assert "scope-owned prop lighting" in prompt
+
+
 @pytest.mark.asyncio
 async def test_scene_reference_passes_context_state_dir_to_style_lookup(
     monkeypatch: pytest.MonkeyPatch,
@@ -190,6 +199,53 @@ async def test_scene_reference_passes_context_state_dir_to_style_lookup(
             },
             ctx,
         )
+
+    assert captured["state_dir"] == str(ctx.state_dir)
+
+
+@pytest.mark.asyncio
+async def test_prop_reference_passes_context_state_dir_to_generator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import novelvideo.cognee as cognee
+    from novelvideo.generators import nanobanana_prop
+    from novelvideo.task_backend.runners import prop_reference
+
+    ctx = _scoped_ctx(tmp_path)
+    captured: dict[str, object] = {}
+
+    class FakeSQLiteStore:
+        async def get_prop(self, name: str):
+            return SimpleNamespace(name=name, visual_prompt="brass key", description="")
+
+    class FakeStore:
+        def __init__(self, *args, **kwargs) -> None:
+            self.sqlite_store = FakeSQLiteStore()
+
+        async def initialize(self) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    async def capture_generator(**kwargs):
+        captured.update(kwargs)
+        return str(tmp_path / "reference.png")
+
+    monkeypatch.setattr(cognee, "CogneeStore", FakeStore)
+    monkeypatch.setattr(nanobanana_prop, "generate_prop_reference", capture_generator)
+    monkeypatch.setattr(prop_reference, "get_task_manager", lambda: _Manager())
+
+    await prop_reference._run_prop_reference_asset(
+        {
+            "payload": {
+                "prop_name": "Key",
+                "style": "scope_style",
+            }
+        },
+        ctx,
+    )
 
     assert captured["state_dir"] == str(ctx.state_dir)
 
@@ -302,9 +358,19 @@ async def test_store_backed_runner_uses_context_state_dir(
 
 
 @pytest.mark.asyncio
-async def test_character_image_reads_ethnicity_from_context_state_dir(
+@pytest.mark.parametrize(
+    ("mode", "generator_name"),
+    [
+        ("portrait", "_generate_character_portrait"),
+        ("identity_portrait", "_generate_identity_portrait"),
+        ("identity_image", "_generate_identity_image"),
+    ],
+)
+async def test_character_image_passes_context_state_to_generation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    mode: str,
+    generator_name: str,
 ) -> None:
     import novelvideo.cognee as cognee
     from novelvideo import project_config
@@ -337,19 +403,21 @@ async def test_character_image_reads_ethnicity_from_context_state_dir(
 
     captured: dict[str, str] = {}
 
-    async def capture_portrait(**kwargs) -> Path:
+    async def capture_image(**kwargs) -> Path:
         captured["ethnicity"] = kwargs["ethnicity"]
+        captured["state_dir"] = kwargs["state_dir"]
         return tmp_path / "portrait.png"
 
     monkeypatch.setattr(cognee, "CogneeStore", FakeStore)
-    monkeypatch.setattr(character_image, "_generate_character_portrait", capture_portrait)
+    monkeypatch.setattr(character_image, generator_name, capture_image)
 
     await character_image._run_character_image(
         {
             "task_type": "character_portrait",
-            "payload": {"mode": "portrait", "character_name": "Lin"},
+            "payload": {"mode": mode, "character_name": "Lin"},
         },
         ctx,
     )
 
     assert captured["ethnicity"] == "configured-ethnicity"
+    assert captured["state_dir"] == str(ctx.state_dir)
