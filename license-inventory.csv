@@ -539,6 +539,7 @@ frontend/src/__tests__/lib/script-feedback.test.ts,Elastic-2.0,2026 SuperTale co
 frontend/src/__tests__/lib/sketch-pose-editor-model.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/style-preview-url.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/time-of-day.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/lib/upload-timeout-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/url-params.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/lib/version-update-watch.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/routes/app-project-guard.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
