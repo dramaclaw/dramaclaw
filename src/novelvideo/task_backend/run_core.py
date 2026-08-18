@@ -8,6 +8,7 @@ import logging
 import os
 import time
 from typing import Any, Mapping
+import uuid
 
 from novelvideo.egress_context import (
     TRUSTED_EGRESS_CONTEXT_KEY,
@@ -359,10 +360,14 @@ async def refund_undelivered_feature_credit_reservation(
             extra={"failure_kind": "settlement_action_conflict"},
         )
         return SettlementIntentResult(accepted=False, retryable=False)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         logger.error(
             "undelivered feature credit refund remains awaiting retry",
-            extra={"failure_kind": "settlement_adapter_failure"},
+            extra={
+                "failure_kind": "settlement_adapter_failure",
+                "safe_error_type": type(exc).__name__,
+                "error_id": uuid.uuid4().hex,
+            },
         )
         return SettlementIntentResult(accepted=False, retryable=True)
     return SettlementIntentResult(accepted=True, retryable=False)

@@ -716,11 +716,8 @@ async def test_newapi_accepted_failures_become_unknown_without_provider_leak(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "disabled_code", ["P0_GRAY_DISABLED", "ORG_MEMBERSHIP_INACTIVE"]
-)
-async def test_newapi_disabled_after_acceptance_stops_poll_and_becomes_unknown(
-    monkeypatch, tmp_path: Path, disabled_code: str
+async def test_newapi_authority_drift_after_acceptance_stops_poll_and_enters_review(
+    monkeypatch, tmp_path: Path
 ) -> None:
     from novelvideo.generators.video_generator import (
         NewApiVideoGenerator,
@@ -740,7 +737,7 @@ async def test_newapi_disabled_after_acceptance_stops_poll_and_becomes_unknown(
         return {"id": "provider-job-1"}
 
     async def disabled(_context):
-        raise AuthzError(disabled_code)
+        raise AuthzError("ORG_MEMBERSHIP_INACTIVE")
 
     async def forbidden(*_args, **_kwargs):
         raise AssertionError("poll/fetch must remain zero")
@@ -771,13 +768,111 @@ async def test_newapi_disabled_after_acceptance_stops_poll_and_becomes_unknown(
 
 
 @pytest.mark.asyncio
+async def test_newapi_gray_disable_after_acceptance_uses_existing_failure_refund_path(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from novelvideo.generators.video_generator import (
+        NewApiVideoGenerator,
+        VideoGenStatus,
+    )
+    from novelvideo.ports.authz import AuthzError
+
+    context = _context()
+    operation_port = _OperationPort()
+    events: list[str] = []
+    _install_newapi_ports(monkeypatch, context, operation_port, events)
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+    refunds: list[str] = []
+
+    async def post(*_args, **_kwargs):
+        return {"id": "provider-job-1"}
+
+    async def disabled(_context):
+        raise AuthzError("P0_GRAY_DISABLED")
+
+    async def capture_refund(*_args, **kwargs):
+        refunds.append(str(kwargs.get("error") or ""))
+
+    monkeypatch.setattr(generator, "_post_json", post)
+    monkeypatch.setattr(generator, "_revalidate_organization", disabled)
+    monkeypatch.setattr(
+        "novelvideo.generators.video_generator._refund_video_model_call",
+        capture_refund,
+    )
+
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+        max_polls=1,
+    )
+
+    assert result.status is VideoGenStatus.FAILED
+    assert result.error == "P0_GRAY_DISABLED"
+    assert refunds == ["P0_GRAY_DISABLED"]
+    assert [name for name, _ in operation_port.events] == [
+        "claim",
+        "accepted",
+        "unknown",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_newapi_generic_post_accept_authz_failure_is_redacted(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    context = _context()
+    operation_port = _OperationPort()
+    events: list[str] = []
+    _install_newapi_ports(monkeypatch, context, operation_port, events)
+    generator = NewApiVideoGenerator(
+        model="seedance-1.0-pro-fast", egress_context=context
+    )
+
+    async def post(*_args, **_kwargs):
+        return {"id": "provider-job-1"}
+
+    async def broken_authz(_context):
+        raise RuntimeError("postgres://user:secret-canary@internal")
+
+    monkeypatch.setattr(generator, "_post_json", post)
+    monkeypatch.setattr(generator, "_revalidate_organization", broken_authz)
+
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+        max_polls=1,
+    )
+
+    assert result.error == "ORG_AUTHZ_STALE"
+    assert "secret-canary" not in repr(result)
+    assert [name for name, _ in operation_port.events] == [
+        "claim",
+        "accepted",
+        "unknown",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_newapi_generate_supplied_context_is_revalidated_after_acceptance(
     monkeypatch, tmp_path: Path
 ) -> None:
     import novelvideo.ports as ports
     from novelvideo.generators.video_generator import NewApiVideoGenerator
     from novelvideo.ports.authz import AuthzError
-    from novelvideo.task_backend.envelope import RunningTaskAuthorityIndeterminate
 
     context = _context()
     operation_port = _OperationPort()
@@ -804,18 +899,18 @@ async def test_newapi_generate_supplied_context_is_revalidated_after_acceptance(
     monkeypatch.setattr(generator, "_get_json", forbidden)
     monkeypatch.setattr(generator, "_download_video", forbidden)
 
-    with pytest.raises(RunningTaskAuthorityIndeterminate):
-        await generator.generate(
-            image_path=None,
-            prompt="prompt",
-            output_path=str(tmp_path / "video.mp4"),
-            egress_context=context,
-            episode=1,
-            beat_num=2,
-            scope="beat",
-            task_type="single_video",
-            max_polls=1,
-        )
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        egress_context=context,
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+        max_polls=1,
+    )
+    assert result.error == "P0_GRAY_DISABLED"
     assert [name for name, _ in operation_port.events] == [
         "claim",
         "accepted",
@@ -885,7 +980,6 @@ async def test_newapi_disable_between_poll_and_fetch_stops_fetch(
 ) -> None:
     from novelvideo.generators.video_generator import NewApiVideoGenerator
     from novelvideo.ports.authz import AuthzError
-    from novelvideo.task_backend.envelope import RunningTaskAuthorityIndeterminate
 
     context = _context()
     operation_port = _OperationPort()
@@ -916,17 +1010,17 @@ async def test_newapi_disable_between_poll_and_fetch_stops_fetch(
     monkeypatch.setattr(generator, "_revalidate_organization", revalidate)
     monkeypatch.setattr(generator, "_download_video", forbidden_fetch)
 
-    with pytest.raises(RunningTaskAuthorityIndeterminate):
-        await generator.generate(
-            image_path=None,
-            prompt="prompt",
-            output_path=str(tmp_path / "video.mp4"),
-            episode=1,
-            beat_num=2,
-            scope="beat",
-            task_type="single_video",
-            max_polls=1,
-        )
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+        max_polls=1,
+    )
+    assert result.error == "P0_GRAY_DISABLED"
     assert revalidations == 2
     assert [name for name, _ in operation_port.events] == [
         "claim",
@@ -941,7 +1035,6 @@ async def test_newapi_disable_between_video_and_last_frame_fetch_stops_second_fe
 ) -> None:
     from novelvideo.generators.video_generator import NewApiVideoGenerator
     from novelvideo.ports.authz import AuthzError
-    from novelvideo.task_backend.envelope import RunningTaskAuthorityIndeterminate
 
     context = _context()
     operation_port = _OperationPort()
@@ -978,19 +1071,19 @@ async def test_newapi_disable_between_video_and_last_frame_fetch_stops_second_fe
     monkeypatch.setattr(generator, "_revalidate_organization", revalidate)
     monkeypatch.setattr(generator, "_download_video", download)
 
-    with pytest.raises(RunningTaskAuthorityIndeterminate):
-        await generator.generate(
-            image_path=None,
-            prompt="prompt",
-            output_path=str(tmp_path / "video.mp4"),
-            gen_mode="text_to_video",
-            seedance2_config={"return_last_frame": True},
-            episode=1,
-            beat_num=2,
-            scope="beat",
-            task_type="single_video",
-            max_polls=1,
-        )
+    result = await generator.generate(
+        image_path=None,
+        prompt="prompt",
+        output_path=str(tmp_path / "video.mp4"),
+        gen_mode="text_to_video",
+        seedance2_config={"return_last_frame": True},
+        episode=1,
+        beat_num=2,
+        scope="beat",
+        task_type="single_video",
+        max_polls=1,
+    )
+    assert result.error == "P0_GRAY_DISABLED"
     assert revalidations == 3
     assert fetched == ["https://result.example/video.mp4"]
     assert [name for name, _ in operation_port.events] == [

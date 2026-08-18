@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from novelvideo.task_backend import run_core
@@ -50,13 +52,22 @@ async def test_undelivered_refund_reports_adapter_failure_without_leaking_detail
 
     monkeypatch.setattr(run_core, "get_usage_meter", lambda: Meter())
 
-    result = await run_core.refund_undelivered_feature_credit_reservation(
-        "reservation-1"
-    )
+    with caplog.at_level(logging.ERROR, logger=run_core.__name__):
+        result = await run_core.refund_undelivered_feature_credit_reservation(
+            "reservation-1"
+        )
 
     assert result.accepted is False
     assert result.retryable is True
     assert "secret" not in caplog.text
+    record = next(
+        item
+        for item in caplog.records
+        if item.message == "undelivered feature credit refund remains awaiting retry"
+    )
+    assert record.failure_kind == "settlement_adapter_failure"
+    assert record.safe_error_type == "RuntimeError"
+    assert len(record.error_id) == 32
 
 
 @pytest.mark.asyncio

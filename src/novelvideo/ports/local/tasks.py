@@ -13,8 +13,9 @@ import threading
 import time
 from typing import Any
 
+from novelvideo.authz_retry import retry_authz_read
 from novelvideo.ports import get_cancellation_store
-from novelvideo.ports.authz import AuthzError
+from novelvideo.ports.authz import AuthzError, detach_authz_error
 from novelvideo.ports.tasks import QueuedTask, cancel_key, display_metadata_for_task
 from novelvideo.project_context import require_project_home_node
 from novelvideo.task_backend.envelope import (
@@ -28,11 +29,7 @@ from novelvideo.task_backend.limits import (
     project_lane_effective_active_limit,
 )
 from novelvideo.task_backend.queues import QUEUE_KINDS, normalize_queue_kind
-from novelvideo.task_backend.run_core import (
-    feature_credit_reservation_id,
-    refund_undelivered_feature_credit_reservation,
-    run_project_task_core_sync,
-)
+from novelvideo.task_backend.run_core import run_project_task_core_sync
 from novelvideo.task_backend.subprocesses import kill_task_processes
 from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
 
@@ -187,7 +184,7 @@ class InlineTaskBackend:
                     expected_task_id=state.task_id,
                 )
                 if authz_failure is not None:
-                    raise authz_failure from None
+                    raise detach_authz_error(authz_failure) from None
                 raise InvalidTaskEnvelope from None
             envelope["task_envelope_v2"] = signed.to_dict()
         self._submit_lane_job(
@@ -295,39 +292,23 @@ class InlineTaskBackend:
         if self._consumer is None:
             consumer_failure = InvalidTaskEnvelope()
         else:
-            for retry_index in range(_AUTHZ_RETRY_MAX_RETRIES + 1):
-                try:
-                    verified = await self._consumer.consume(
+            try:
+                verified = await retry_authz_read(
+                    lambda: self._consumer.consume(
                         job.envelope,
                         expected_root_task_id=job.run_task_id,
-                    )
-                    break
-                except InvalidTaskEnvelope as exc:
-                    consumer_failure = exc
-                    break
-                except TaskAuthorityUnavailable as exc:
-                    if retry_index >= _AUTHZ_RETRY_MAX_RETRIES:
-                        consumer_failure = exc
-                        break
-                    upper_bound = min(
-                        _AUTHZ_RETRY_CAP_DELAY,
-                        _AUTHZ_RETRY_BASE_DELAY * (2**retry_index),
-                    )
-                    await _AUTHZ_RETRY_SLEEP(_AUTHZ_RETRY_RANDOM() * upper_bound)
-        if consumer_failure is not None:
-            settlement = consumer_failure.settlement
-            if settlement is not None:
-                # 预留发生在入队侧、退款发生在 run_core 里,而这里是两者之间。
-                # 只有签名已验证的拒绝才带 settlement——未验证的信封不驱动资金。
-                await refund_undelivered_feature_credit_reservation(
-                    feature_credit_reservation_id(
-                        job.metadata.get("billing_metadata") or {}
                     ),
-                    metadata={
-                        "source": "task_rejected_before_worker",
-                        "error_code": consumer_failure.code,
-                    },
+                    max_retries=_AUTHZ_RETRY_MAX_RETRIES,
+                    base_delay=_AUTHZ_RETRY_BASE_DELAY,
+                    cap_delay=_AUTHZ_RETRY_CAP_DELAY,
+                    sleep=_AUTHZ_RETRY_SLEEP,
+                    random=_AUTHZ_RETRY_RANDOM,
+                    call_site="inline_task_consumer",
+                    retryable_error_types=(TaskAuthorityUnavailable,),
                 )
+            except (InvalidTaskEnvelope, TaskAuthorityUnavailable) as exc:
+                consumer_failure = exc
+        if consumer_failure is not None:
             job.manager.fail_task_for_project(
                 job.ctx,
                 str(job.envelope.get("task_type") or ""),

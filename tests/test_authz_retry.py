@@ -47,6 +47,44 @@ async def test_retry_authz_read_logs_scheduled_and_recovered_events(caplog) -> N
 
 
 @pytest.mark.asyncio
+async def test_retry_authz_read_accepts_an_explicit_retryable_boundary_type(
+    caplog,
+) -> None:
+    from novelvideo.authz_retry import retry_authz_read
+
+    class BoundaryUnavailable(RuntimeError):
+        failure_kind = "unavailable"
+
+    attempts = 0
+
+    async def operation() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise BoundaryUnavailable
+        return "verified"
+
+    with caplog.at_level(logging.INFO, logger="novelvideo.authz_retry"):
+        result = await retry_authz_read(
+            operation,
+            max_retries=1,
+            base_delay=1.0,
+            cap_delay=1.0,
+            sleep=lambda _delay: asyncio.sleep(0),
+            random=lambda: 0.0,
+            call_site="inline_task_consumer",
+            retryable_error_types=(BoundaryUnavailable,),
+        )
+
+    assert result == "verified"
+    assert [record.message for record in caplog.records] == [
+        "authz_local_retry_scheduled",
+        "authz_local_retry_recovered",
+    ]
+    assert caplog.records[0].failure_kind == "unavailable"
+
+
+@pytest.mark.asyncio
 async def test_retry_authz_read_logs_exhaustion_without_exception_details(
     caplog,
 ) -> None:

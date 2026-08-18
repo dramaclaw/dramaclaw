@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 from novelvideo.egress_context import ambient_egress_context
 from novelvideo.authz_retry import retry_authz_read
 from novelvideo.ports import get_usage_meter
-from novelvideo.ports.authz import AuthzError
+from novelvideo.ports.authz import AuthzError, detach_authz_error
 from novelvideo.video_request_usage import (
     record_video_request,
     update_video_request_status,
@@ -2796,7 +2796,11 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             raise AuthzError("ORG_AUTHZ_STALE")
 
     @staticmethod
-    def _running_authority_error(exc: AuthzError) -> RunningTaskAuthorityIndeterminate:
+    def _running_authority_error(
+        exc: AuthzError,
+    ) -> AuthzError | RunningTaskAuthorityIndeterminate:
+        if exc.code == "P0_GRAY_DISABLED":
+            return detach_authz_error(exc)
         return RunningTaskAuthorityIndeterminate(
             failure_kind=str(getattr(exc, "failure_kind", "drift"))
         )

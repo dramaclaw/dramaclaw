@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -225,6 +226,41 @@ async def test_authz_service_failure_preserves_subtype_at_producer_boundary(fail
     assert captured.value is failure
     assert captured.value.code == "ORG_AUTHZ_UNAVAILABLE"
     assert captured.value.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_authz_service_failure_detaches_an_existing_internal_chain():
+    try:
+        raise RuntimeError("postgres-dsn-canary")
+    except RuntimeError as internal:
+        failure = AuthzServiceUnavailable()
+        failure.__context__ = internal
+        failure.__cause__ = internal
+        failure.__traceback__ = internal.__traceback__
+
+    producer = _producer(FakeAuthz(failure=failure))
+
+    with pytest.raises(AuthzServiceUnavailable) as captured:
+        await producer.sign_top_level(
+            user_id="user-1",
+            root_task_id="reserved-task-1",
+            task_type="single_video",
+            project_id="project-1",
+            payload={},
+        )
+
+    assert captured.value is failure
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    frames = traceback.extract_tb(captured.value.__traceback__)
+    assert (
+        sum(
+            frame.name
+            == "test_authz_service_failure_detaches_an_existing_internal_chain"
+            for frame in frames
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio

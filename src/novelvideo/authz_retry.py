@@ -63,6 +63,7 @@ async def retry_authz_read(
     deadline: float | None = None,
     check_cancelled: Callable[[], None] | None = None,
     call_site: str = "unspecified",
+    retryable_error_types: tuple[type[BaseException], ...] = (AuthzServiceUnavailable,),
 ) -> T:
     """Retry only typed authz service failures using bounded full jitter.
 
@@ -86,7 +87,7 @@ async def retry_authz_read(
                     extra={"call_site": call_site, "attempts": retry_index + 1},
                 )
             return result
-        except AuthzServiceUnavailable as error:
+        except retryable_error_types as error:
             if retry_index >= max_retries:
                 logger.warning(
                     "authz_local_retry_exhausted",

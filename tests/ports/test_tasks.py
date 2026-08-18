@@ -2,7 +2,9 @@ import asyncio
 import base64
 from datetime import datetime, timezone
 import json
+import logging
 import time
+import traceback
 from pathlib import Path
 
 import pytest
@@ -227,6 +229,43 @@ async def test_inline_enqueue_preserves_authz_service_failure_subtype(
     assert state is not None
     assert state.status == "failed"
     assert state.metadata["error_code"] == "ORG_AUTHZ_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_inline_enqueue_detaches_internal_authz_exception_chain(
+    monkeypatch, tmp_path
+):
+    try:
+        raise RuntimeError("postgres-password-canary")
+    except RuntimeError as internal:
+        failure = AuthzServiceUnavailable()
+        failure.__context__ = internal
+        failure.__cause__ = internal
+        failure.__traceback__ = internal.__traceback__
+
+    ctx = _ctx(tmp_path)
+    backend = _inline_backend(producer=FakeProducer(failure=failure))
+    monkeypatch.setattr(backend, "_submit_lane_job", lambda _job: None)
+
+    with pytest.raises(AuthzServiceUnavailable) as caught:
+        await backend.enqueue_project_task(
+            ctx,
+            task_type="single_video",
+            product_surface="mainline",
+            episode=1,
+        )
+
+    assert caught.value is failure
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    frames = traceback.extract_tb(caught.value.__traceback__)
+    assert (
+        sum(
+            frame.name == "test_inline_enqueue_detaches_internal_authz_exception_chain"
+            for frame in frames
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -455,10 +494,10 @@ class FakeUsageMeter:
 
 
 @pytest.mark.asyncio
-async def test_inline_stale_authority_refunds_the_enqueue_side_reservation(
+async def test_inline_stale_authority_never_initiates_feature_credit_settlement(
     monkeypatch, tmp_path
 ):
-    """预留在入队侧发生、退款在 worker 里发生，被拒的任务夹在中间会白扣。"""
+    """CE inline 不创建 feature reservation，拒绝路径不得伪造第二条退款通路。"""
     ctx = _ctx(tmp_path)
     backend = _inline_backend(authz=FakeAuthz(key_version=2))
     meter = FakeUsageMeter()
@@ -476,17 +515,13 @@ async def test_inline_stale_authority_refunds_the_enqueue_side_reservation(
         ctx, task_type="single_video", product_surface="mainline", episode=1
     )
     job = submitted[0]
-    job.metadata["billing_metadata"] = {
-        "feature_credit_reservation_id": "reservation-1"
-    }
     job.envelope["billing_metadata"] = {
         "feature_credit_reservation_id": "attacker-controlled-reservation"
     }
 
     await backend._run_inline(backend._lanes["default"], job)
 
-    assert [refund["reservation_id"] for refund in meter.refunds] == ["reservation-1"]
-    assert meter.refunds[0]["metadata"]["error_code"] == "TASK_ENVELOPE_STALE"
+    assert meter.refunds == []
     state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
     assert state.status == "failed"
 
@@ -558,8 +593,8 @@ async def test_inline_authz_fault_recovers_within_retry_budget(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
-async def test_inline_authz_retry_exhaustion_fails_exact_task_and_refunds_trusted_marker(
-    monkeypatch, tmp_path
+async def test_inline_authz_retry_exhaustion_fails_exact_task_without_settlement(
+    monkeypatch, tmp_path, caplog
 ):
     from novelvideo.ports.authz import AuthzServiceUnavailable
 
@@ -584,18 +619,27 @@ async def test_inline_authz_retry_exhaustion_fails_exact_task_and_refunds_truste
         ctx, task_type="single_video", product_surface="mainline", episode=1
     )
     job = submitted[0]
-    job.metadata["billing_metadata"] = {
-        "feature_credit_reservation_id": "trusted-reservation"
-    }
     job.envelope["billing_metadata"] = {
         "feature_credit_reservation_id": "attacker-reservation"
     }
 
-    await backend._run_inline(backend._lanes["default"], job)
+    with caplog.at_level(logging.INFO, logger="novelvideo.authz_retry"):
+        await backend._run_inline(backend._lanes["default"], job)
 
     assert len(authz.calls) == 6
     assert runner_calls == []
-    assert [item["reservation_id"] for item in meter.refunds] == ["trusted-reservation"]
+    assert meter.refunds == []
+    authz_records = [
+        record for record in caplog.records if record.name == "novelvideo.authz_retry"
+    ]
+    assert [record.message for record in authz_records] == [
+        "authz_local_retry_scheduled",
+        "authz_local_retry_scheduled",
+        "authz_local_retry_scheduled",
+        "authz_local_retry_scheduled",
+        "authz_local_retry_scheduled",
+        "authz_local_retry_exhausted",
+    ]
     state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
     assert state is not None
     assert state.status == "failed"

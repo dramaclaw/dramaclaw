@@ -108,6 +108,14 @@ class AuthzServiceFault(AuthzServiceUnavailable):
         super().__init__()
 
 
+def detach_authz_error(error: AuthzError) -> AuthzError:
+    """Remove internal exception state before an authz error crosses a boundary."""
+    error.__cause__ = None
+    error.__context__ = None
+    error.__traceback__ = None
+    return error
+
+
 def authz_error_payload(exc: AuthzError) -> dict[str, str]:
     """Rendered payload for an authz denial. Carries no identity or credential."""
     return {"error_code": exc.code, "message": exc.user_message}
