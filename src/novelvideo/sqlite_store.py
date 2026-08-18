@@ -899,12 +899,20 @@ class SQLiteStore:
             )
             if description is not None:
                 updates["visual_description"] = description
-            # speaker 存的是角色名本身，只有 speaker_kind 为 character 时才是角色。
-            if (
-                str(row["speaker_kind"] or "character") == "character"
-                and str(row["speaker"] or "") == old_name
-            ):
-                updates["speaker"] = new_name
+            # speaker 存的是 **identity_id**，不是角色名：``BeatUpdate.speaker`` 标的是
+            # 「说话人身份ID」，``resolve_dialogue_reference_audio`` 和
+            # ``indextts2_beat_audio_task`` 都是 ``speaker.startswith(角色名)`` 之后再
+            # ``identity.identity_id == speaker`` 精确配。所以这里必须走
+            # ``remap_identity_id``（裸角色名的历史值它也照顾得到），拿 ``== old_name``
+            # 比会把 ``林/小满_casual`` 整个漏掉，配音解析就找不到身份了。
+            #
+            # ``speaker_kind`` 只有 character / non_character 两种，广播、画外音那类
+            # non_character 的 speaker 不是角色，不能动。
+            speaker = str(row["speaker"] or "")
+            if str(row["speaker_kind"] or "character") == "character":
+                remapped_speaker = remap_identity_id(speaker, old_name, new_name)
+                if remapped_speaker != speaker:
+                    updates["speaker"] = remapped_speaker
             if not updates:
                 continue
             assignments = ", ".join(f"{column} = ?" for column in updates)
@@ -938,31 +946,60 @@ class SQLiteStore:
     async def _cascade_voice_record_speaker(
         self, db: Any, old_name: str, new_name: str
     ) -> None:
-        """``seedance2_voice_audio_records.speaker`` 也是角色名，跟着改。
+        """``seedance2_voice_audio_records.speaker`` 跟着改。
+
+        这里的 speaker 是从 beat 的 speaker 传下来的（``voice_audio_task`` 一路带着走），
+        所以和 ``beats.speaker`` 同一个契约：**identity_id**。旁白那条走
+        ``NARRATOR_SPEAKER`` 哨兵，不带角色名前缀，``remap_identity_id`` 天然不碰。
 
         这张表是音频复用的凭证（``classify_seedance2_voice_audio`` 按
         ``(episode, beat, speaker)`` 精确查）。不改的话改名后每一条都查不中，被当成
         missing 重新生成一遍——不会产出错内容，就是白烧一遍配音。
 
-        ``UPDATE OR REPLACE``：speaker 是主键的一部分，万一同一个 beat 下已经有新名字的
-        行，撞主键会让整个级联炸掉。宁可丢一条缓存凭证（大不了重生成一次），也不能把改名
-        卡在半路。
+        speaker 是主键的一部分，逐条处理冲突：目标主键已经有行了，说明那条是在新名字下
+        写的、比手上这条旧的更可信，删掉旧的即可。整批 ``UPDATE OR REPLACE`` 也能不炸，
+        但那是闷头覆盖新行，方向反了。
 
         建表 SQL 里有这张表，但老库可能在它加进来之前就记下了 schema 版本、跳过了初始化，
         所以先确认表在不在。
         """
 
+        table = "seedance2_voice_audio_records"
         async with db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' "
-            "AND name = 'seedance2_voice_audio_records'"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
         ) as cursor:
             if await cursor.fetchone() is None:
                 return
-        await db.execute(
-            "UPDATE OR REPLACE seedance2_voice_audio_records SET speaker = ? "
-            "WHERE speaker = ?",
-            (new_name, old_name),
-        )
+
+        async with db.execute(
+            f"SELECT episode_number, beat_number, speaker FROM {table}"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        for row in rows:
+            speaker = str(row["speaker"] or "")
+            remapped = remap_identity_id(speaker, old_name, new_name)
+            if remapped == speaker:
+                continue
+            key = (row["episode_number"], row["beat_number"])
+            async with db.execute(
+                f"SELECT 1 FROM {table} WHERE episode_number = ? AND beat_number = ? "
+                "AND speaker = ?",
+                (*key, remapped),
+            ) as probe:
+                occupied = await probe.fetchone() is not None
+            if occupied:
+                await db.execute(
+                    f"DELETE FROM {table} WHERE episode_number = ? AND beat_number = ? "
+                    "AND speaker = ?",
+                    (*key, speaker),
+                )
+                continue
+            await db.execute(
+                f"UPDATE {table} SET speaker = ? WHERE episode_number = ? "
+                "AND beat_number = ? AND speaker = ?",
+                (remapped, *key, speaker),
+            )
 
     async def repair_path_unsafe_asset_names(
         self,

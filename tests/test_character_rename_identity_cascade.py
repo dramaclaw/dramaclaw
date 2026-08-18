@@ -80,11 +80,14 @@ def _seed_episode_and_beat(project_dir, char_name: str) -> None:
         )
         conn.execute("INSERT INTO props (name, owner) VALUES (?, ?)", ("钥匙", char_name))
         conn.execute("INSERT INTO props (name, owner) VALUES (?, ?)", ("路灯", ""))
+        # speaker 存的是 identity_id，不是角色名——``BeatUpdate.speaker`` 标的是「说话人
+        # 身份ID」，配音解析按 ``identity.identity_id == speaker`` 精确配。voice record
+        # 的 speaker 又是从 beat 传下来的，同一个契约。
         conn.execute(
             "INSERT INTO seedance2_voice_audio_records (episode_number, beat_number, "
             "speaker, audio_path, voice_sha256, mode, provider, model, generated_at, "
             "status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (1, 1, char_name, "a.wav", "sha", "clone", "indextts2", "m", "now", "ok"),
+            (1, 1, identity_id, "a.wav", "sha", "clone", "indextts2", "m", "now", "ok"),
         )
         conn.execute(
             "INSERT INTO beats (episode_number, beat_number, visual_description, "
@@ -94,7 +97,7 @@ def _seed_episode_and_beat(project_dir, char_name: str) -> None:
                 1,
                 f"{{{{{identity_id}}}}} 走进客厅",
                 json.dumps([identity_id], ensure_ascii=False),
-                char_name,
+                identity_id,
             ),
         )
         conn.commit()
@@ -146,13 +149,13 @@ def _assert_remapped_to(refs: dict, new_name: str) -> None:
     assert refs["sketch_colors"] == {identity_id: "#ff0000"}
     assert refs["detected_identities"] == [identity_id]
     assert refs["visual_description"] == f"{{{{{identity_id}}}}} 走进客厅"
-    assert refs["speaker"] == new_name
+    assert refs["speaker"] == identity_id
     assert refs["prop_menu"] == [
         {"prop_id": "怀表", "prop_type": "object", "owner_identity_id": identity_id},
         {"prop_id": "路灯", "prop_type": "object", "owner_identity_id": ""},
     ]
     assert refs["prop_owners"] == {"怀表": identity_id, "钥匙": new_name, "路灯": ""}
-    assert refs["voice_speakers"] == [new_name]
+    assert refs["voice_speakers"] == [identity_id]
 
 
 @pytest.mark.asyncio
@@ -250,3 +253,98 @@ async def test_cascade_survives_reload(store, tmp_path):
     episode = store.get_episode(1)
     assert episode is not None
     assert episode.identity_ids == ["林满_casual"]
+
+
+@pytest.mark.asyncio
+async def test_bare_character_name_speaker_still_remaps(store, tmp_path):
+    """speaker 的契约是 identity_id，但存量数据里有裸角色名，两种都得迁。"""
+    project_dir = tmp_path / "user" / "project"
+    await store.add_character(NovelCharacter(name="林小满"))
+    conn = sqlite3.connect(project_dir / "data.db")
+    try:
+        conn.execute(
+            "INSERT INTO beats (episode_number, beat_number, speaker) VALUES (?, ?, ?)",
+            (1, 1, "林小满"),
+        )
+        conn.execute(
+            "INSERT INTO seedance2_voice_audio_records (episode_number, beat_number, "
+            "speaker, audio_path, voice_sha256, mode, provider, model, generated_at, "
+            "status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, 1, "林小满", "a.wav", "sha", "clone", "indextts2", "m", "now", "ok"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    await store.load_graph_state()
+
+    await store.rename_character("林小满", "林满")
+
+    conn = sqlite3.connect(project_dir / "data.db")
+    try:
+        speaker = conn.execute("SELECT speaker FROM beats").fetchone()[0]
+        voice = conn.execute(
+            "SELECT speaker FROM seedance2_voice_audio_records"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert speaker == "林满"
+    assert voice == "林满"
+
+
+@pytest.mark.asyncio
+async def test_non_character_speaker_is_left_alone(store, tmp_path):
+    """广播 / 画外音的 speaker 不是角色，别顺手改了。"""
+    project_dir = tmp_path / "user" / "project"
+    await store.add_character(NovelCharacter(name="林小满"))
+    conn = sqlite3.connect(project_dir / "data.db")
+    try:
+        conn.execute(
+            "INSERT INTO beats (episode_number, beat_number, speaker, speaker_kind) "
+            "VALUES (?, ?, ?, ?)",
+            (1, 1, "林小满_广播", "non_character"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    await store.load_graph_state()
+
+    await store.rename_character("林小满", "林满")
+
+    conn = sqlite3.connect(project_dir / "data.db")
+    try:
+        speaker = conn.execute("SELECT speaker FROM beats").fetchone()[0]
+    finally:
+        conn.close()
+    assert speaker == "林小满_广播"
+
+
+@pytest.mark.asyncio
+async def test_voice_record_conflict_drops_the_stale_row(store, tmp_path):
+    """speaker 在主键里，撞上了不能炸，也不能反过来盖掉新名字下已有的那条。"""
+    project_dir = tmp_path / "user" / "project"
+    await store.add_character(NovelCharacter(name="林小满"))
+    conn = sqlite3.connect(project_dir / "data.db")
+    try:
+        for speaker, audio in (("林小满_casual", "old.wav"), ("林满_casual", "new.wav")):
+            conn.execute(
+                "INSERT INTO seedance2_voice_audio_records (episode_number, "
+                "beat_number, speaker, audio_path, voice_sha256, mode, provider, "
+                "model, generated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (1, 1, speaker, audio, "sha", "clone", "indextts2", "m", "now", "ok"),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    await store.load_graph_state()
+
+    await store.rename_character("林小满", "林满")
+
+    conn = sqlite3.connect(project_dir / "data.db")
+    try:
+        rows = conn.execute(
+            "SELECT speaker, audio_path FROM seedance2_voice_audio_records"
+        ).fetchall()
+    finally:
+        conn.close()
+    # 新名字下已有的那条留着，旧的丢掉——不是反过来。
+    assert rows == [("林满_casual", "new.wav")]
