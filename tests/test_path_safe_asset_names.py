@@ -387,3 +387,171 @@ async def test_repair_commits_each_row_before_moving_the_next(store, tmp_path):
     assert rows["派生"] == "家中客厅_哥哥卧室"
     # 炸掉的那一行原样留着，下次自愈会重来。
     assert "厨房/储物间" in rows
+
+
+# ── dot-segment：`.` / `..` 也会改变路径结构 ────────────────
+
+
+@pytest.mark.parametrize("raw", [".", "..", "..."])
+def test_dot_only_names_are_not_path_safe(raw):
+    """``assets/scenes/..`` 就是 assets 根目录本身，和斜杠一样能逃出资产目录。"""
+    assert not is_path_safe_asset_name(raw)
+    assert not is_path_safe_asset_name(raw, kind="character")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(".", "_"), ("..", "__"), ("../..", ".._.."), ("..\\..", ".._..")],
+)
+def test_dot_only_names_are_sanitized(raw, expected):
+    assert path_safe_asset_name(raw) == expected
+
+
+def test_dots_inside_a_real_name_are_kept():
+    """只有整名是点才危险；``第1.5集客厅`` 是正经名字，不能动。"""
+    assert path_safe_asset_name("第1.5集客厅") == "第1.5集客厅"
+    assert is_path_safe_asset_name("第1.5集客厅")
+
+
+# ── 目录迁移必须留在资产根目录内 ────────────────────────────
+
+
+def test_asset_dir_within_rejects_traversal(tmp_path):
+    from novelvideo.utils.asset_names import asset_dir_within
+
+    root = tmp_path / "assets" / "scenes"
+    root.mkdir(parents=True)
+    assert asset_dir_within(root, "客厅") == root / "客厅"
+    assert asset_dir_within(root, "../../config.json") is None
+    assert asset_dir_within(root, "..") is None
+    assert asset_dir_within(root, "") is None
+
+
+@pytest.mark.asyncio
+async def test_repair_never_touches_files_outside_the_asset_root(store, tmp_path):
+    """存量脏值是直接拼进源路径的：``../../config.json`` 不能让迁移碰到资产根之外。"""
+    from novelvideo.api.routes.scenes import _heal_path_unsafe_scene_names
+
+    project_dir = tmp_path / "user" / "project"
+    outsider = project_dir / "config.json"
+    outsider.write_text("{}", encoding="utf-8")
+    (project_dir / "assets" / "scenes").mkdir(parents=True)
+    _insert_dirty(project_dir, "scenes", "../../config.json")
+
+    await _heal_path_unsafe_scene_names(store, project_dir)
+
+    # 资产根之外的文件原封不动。
+    assert outsider.exists()
+    # 记录本身还是要治好，否则它的 {name} 接口永远 404。
+    assert _db_names(project_dir, "scenes") == [".._.._config.json"]
+
+
+# ── 并发：store 是按请求新建的 ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_repair_guard_survives_a_new_store_instance(tmp_path):
+    """自愈的「只跑一次」必须记在进程上，记在 store 实例上等于没记。
+
+    ``api/deps.py`` 的 ``make_sqlite_store`` 每个请求新建一个 store 实例，所以实例级的
+    锁和 done 集合谁也拦不住谁：两个并发的列表请求各拿各的锁双双进到迁移里，一个搬走
+    目录、另一个的 ``shutil.move`` 抛异常被 ``except (OSError, ValueError)`` 吞掉，那一行
+    就停在「盘上已改名、库里还是旧名」的错位状态。顺带，实例级还意味着每个请求都要做
+    一次全表扫描。
+
+    这里用两个独立 store 串行地测同一个不变量——竞态本身是时序相关的，测不稳。
+    """
+    from novelvideo.sqlite_store import reset_path_repair_state
+
+    reset_path_repair_state()
+    project_dir = tmp_path / "user" / "project"
+    project_dir.mkdir(parents=True)
+
+    def open_store() -> SQLiteStore:
+        return SQLiteStore(
+            "user/project", output_dir=str(project_dir), state_dir=str(project_dir)
+        )
+
+    first = open_store()
+    await first._ensure_db()
+    try:
+        _insert_dirty(project_dir, "scenes", "家中客厅/哥哥卧室")
+        assert await first.repair_path_unsafe_asset_names("scene") == {
+            "家中客厅/哥哥卧室": "家中客厅_哥哥卧室"
+        }
+    finally:
+        await first.close()
+
+    _insert_dirty(project_dir, "scenes", "厨房/储物间")
+    moved: list[tuple[str, str]] = []
+    second = open_store()
+    await second._ensure_db()
+    try:
+        assert (
+            await second.repair_path_unsafe_asset_names(
+                "scene", lambda old, new: moved.append((old, new))
+            )
+            == {}
+        )
+    finally:
+        await second.close()
+
+    assert moved == []
+    reset_path_repair_state()
+
+
+@pytest.mark.asyncio
+async def test_repair_guard_is_scoped_per_project(tmp_path):
+    """一个进程同时服务很多项目，A 项目跑过不能把 B 项目也记成已完成。"""
+    from novelvideo.sqlite_store import reset_path_repair_state
+
+    reset_path_repair_state()
+    stores = []
+    try:
+        for name in ("alpha", "beta"):
+            project_dir = tmp_path / "user" / name
+            project_dir.mkdir(parents=True)
+            store = SQLiteStore(
+                f"user/{name}", output_dir=str(project_dir), state_dir=str(project_dir)
+            )
+            await store._ensure_db()
+            stores.append((project_dir, store))
+            _insert_dirty(project_dir, "scenes", "家中客厅/哥哥卧室")
+
+        for project_dir, store in stores:
+            assert await store.repair_path_unsafe_asset_names("scene") == {
+                "家中客厅/哥哥卧室": "家中客厅_哥哥卧室"
+            }
+            assert _db_names(project_dir, "scenes") == ["家中客厅_哥哥卧室"]
+    finally:
+        for _project_dir, store in stores:
+            await store.close()
+        reset_path_repair_state()
+
+
+# ── 只读协作者不该触发迁移 ──────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("role", "expected"),
+    [("viewer", False), ("editor", True), ("admin", True), ("owner", True)],
+)
+def test_only_write_roles_may_run_asset_repair(role, expected):
+    """自愈是写操作（搬目录 + 改主键 + 刷 updated_at），不能挂在只读身份上。
+
+    三个列表接口都是 ``required_role="viewer"``，只读协作者打开一次资产页就会替整个
+    项目做迁移。收到 editor 及以上：只读的人看到的还是原样（他们本来也删不掉、生不出
+    图），第一个有写权限的人打开资产页时统一治好。
+    """
+    from types import SimpleNamespace
+
+    from novelvideo.api.deps import may_run_asset_repair
+
+    assert may_run_asset_repair(SimpleNamespace(effective_role=role)) is expected
+
+
+def test_asset_repair_allowed_without_project_context():
+    """单机 / CE 路径没有 ctx，也就没有协作者概念，按有写权限处理。"""
+    from novelvideo.api.deps import may_run_asset_repair
+
+    assert may_run_asset_repair(None) is True

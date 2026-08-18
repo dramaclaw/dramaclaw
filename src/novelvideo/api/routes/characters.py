@@ -16,6 +16,7 @@ logger = logging.getLogger("novelvideo.api.characters")
 from novelvideo.api.asset_metadata import newest_updated_at, tree_updated_at
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import (
+    may_run_asset_repair,
     make_sqlite_store,
     make_sqlite_store_for_context,
     make_static_url_for_context,
@@ -51,7 +52,7 @@ from novelvideo.project_config import (
     load_project_config_file,
     update_project_config_file,
 )
-from novelvideo.utils.asset_names import path_safe_asset_name
+from novelvideo.utils.asset_names import move_asset_dir, path_safe_asset_name
 from novelvideo.utils.path_resolver import (
     compute_portrait_path,
     compute_identity_path,
@@ -554,25 +555,21 @@ async def _repair_duplicate_main_characters(
 
 async def _heal_path_unsafe_character_names(
     store: SQLiteStore, project_dir: Path
-) -> None:
+) -> dict[str, str]:
     """修好库里名字带斜杠的存量角色，原名转成别名。
 
     ``NovelCharacter.sanitize_name`` 一直在挡新数据，但它是**读的时候**才生效：主键里
     留着斜杠的老行读出来名字已经是干净的，``DELETE ... WHERE name = ?`` 却一行都删不掉。
     和场景 / 道具同一个毛病，见 :mod:`novelvideo.utils.asset_names`。
+
+    调用方要先过 ``may_run_asset_repair``：这是一次写操作，不该由只读协作者触发。
     """
 
     def move_assets(old_name: str, new_name: str) -> None:
-        old_dir = project_dir / "assets" / "characters" / old_name
-        new_dir = project_dir / "assets" / "characters" / new_name
-        if not old_dir.exists():
-            return
-        if new_dir.exists():
-            raise ValueError(f"Target asset directory already exists: {new_dir}")
-        new_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(old_dir), str(new_dir))
+        # 见 ``move_asset_dir``：old_name 是库里没消毒过的旧值，直接拼路径会爬出资产根。
+        move_asset_dir(project_dir / "assets" / "characters", old_name, new_name)
 
-    await store.repair_path_unsafe_asset_names("character", move_assets)
+    return await store.repair_path_unsafe_asset_names("character", move_assets)
 
 
 @router.get("/projects/{project}/characters")
@@ -585,7 +582,8 @@ async def list_characters(
         await _resolve_character_project(project, user, required_role="viewer")
     )
 
-    await _heal_path_unsafe_character_names(store, project_dir)
+    if may_run_asset_repair(ctx):
+        await _heal_path_unsafe_character_names(store, project_dir)
     characters = await _repair_duplicate_main_characters(
         store, store.get_all_characters()
     )

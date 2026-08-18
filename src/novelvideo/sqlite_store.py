@@ -38,10 +38,46 @@ from novelvideo.utils.asset_names import (
     path_safe_asset_name,
     unique_path_safe_asset_name,
 )
+from novelvideo.utils.identity_refs import (
+    remap_default_map,
+    remap_id_list,
+    remap_identity_markers,
+    remap_keyed_by_identity,
+)
 from novelvideo.utils.path_resolver import compute_identity_path
 
 console = Console()
 logger = logging.getLogger(__name__)
+
+# 存量名字自愈的「每种资产只跑一次、并且串行」必须记在**进程**上，不能记在 store 实例上：
+# store 是按请求新建的（``api/deps.py`` 的 ``make_sqlite_store`` / ``make_sqlite_store_for_context``），
+# 实例级的锁谁也拦不住谁——两个并发的列表请求各拿各的锁双双进到迁移里，一个搬走目录、
+# 另一个的 ``shutil.move`` 抛异常被吞掉，那一行就停在「盘上已改名、库里还是旧名」的错位
+# 状态。记在进程上顺带也免掉「每个请求都做一次全表扫描」。
+#
+# key 用 ``(db_path, kind)``：一个进程可能同时服务很多项目，别让 A 项目的自愈把 B 项目的
+# 记成已完成。锁连着创建它的 event loop 一起存——跨 loop 复用 ``asyncio.Lock`` 会炸，测试
+# 里每个用例一个 loop。
+_PATH_REPAIR_LOCKS: Dict[tuple[str, str], tuple[Any, asyncio.Lock]] = {}
+_PATH_REPAIR_DONE: set[tuple[str, str]] = set()
+
+
+def reset_path_repair_state() -> None:
+    """清空进程级的自愈记账。测试用。"""
+
+    _PATH_REPAIR_LOCKS.clear()
+    _PATH_REPAIR_DONE.clear()
+
+
+def _path_repair_lock(key: tuple[str, str]) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    cached = _PATH_REPAIR_LOCKS.get(key)
+    if cached is not None and cached[0] is loop:
+        return cached[1]
+    lock = asyncio.Lock()
+    _PATH_REPAIR_LOCKS[key] = (loop, lock)
+    return lock
+
 
 
 _PATH_UNSAFE_REPAIR_TABLES = {
@@ -341,11 +377,6 @@ class SQLiteStore:
         self._drained = asyncio.Event()
         self._drained.set()
         self._lease_depth_by_task: dict[Any, int] = {}
-        # 存量名字自愈每种资产只跑一次，并且串行。两个并发的列表请求会同时看见
-        # `old_dir.exists()`，一个搬走目录、另一个的 shutil.move 抛异常被吞掉，那一行就
-        # 停在「盘上已改名、库里还是旧名」的错位状态。
-        self._path_repair_lock = asyncio.Lock()
-        self._path_repair_done: set[str] = set()
 
         if output_dir:
             self.project_dir = output_dir
@@ -765,10 +796,13 @@ class SQLiteStore:
             new_alias_index[key] = new_name if value == old_name else value
         self._alias_index.clear()
         self._alias_index.update(new_alias_index)
+        await self._cascade_character_rename(old_name, new_name)
         old_dir = Path(self.project_dir) / "assets" / "characters" / old_name
         new_dir = Path(self.project_dir) / "assets" / "characters" / new_name
         if old_dir.exists() and not new_dir.exists():
             old_dir.replace(new_dir)
+        # 级联走的是裸 SQL，内存里的 episodes / beats 还是旧引用，重载一次对齐。
+        await self.load_graph_state()
         console.print(f"[green]已重命名角色: {old_name} → {new_name}[/green]")
 
     async def delete_character(self, name: str) -> None:
@@ -784,6 +818,91 @@ class SQLiteStore:
         for key in remove_keys:
             self._alias_index.pop(key, None)
         console.print(f"[green]已删除角色: {name}[/green]")
+
+    async def _cascade_character_rename(self, old_name: str, new_name: str) -> None:
+        """角色改名后，把散在 episodes / beats 里的引用一起改掉。
+
+        ``identity_id`` 是 ``<角色名>_<身份名>`` 拼出来的，改名等于让所有落库的
+        identity_id 一起失效：身份图按 identity_id 找不到文件，sketch 颜色分配的键对不
+        上，分镜 marker 检出的身份不在身份表里。
+
+        走裸 SQL 而不是模型层：存量名字自愈本身就必须绕开模型（模型读的时候会把斜杠抹
+        平，看不见坏名字），级联跟着走同一条路，两个调用点才能共用这一份实现。
+
+        ``rename_character`` 和 ``_repair_path_unsafe_asset_names`` 都调它——前者是用户
+        手动改名的低频操作，后者是打开资产页就跑的自愈，只补一边等于没补。
+        """
+
+        if not old_name or old_name == new_name:
+            return
+
+        db = await self._ensure_db()
+        async with db.execute(
+            "SELECT number, character_names, identity_ids, "
+            "identity_default_map_json, sketch_colors_json FROM episodes"
+        ) as cursor:
+            episodes = await cursor.fetchall()
+        for row in episodes:
+            updates: Dict[str, str] = {}
+            names = remap_id_list(row["character_names"], old_name, new_name)
+            if names is not None:
+                updates["character_names"] = names
+            ids = remap_id_list(row["identity_ids"], old_name, new_name)
+            if ids is not None:
+                updates["identity_ids"] = ids
+            default_map = remap_default_map(
+                row["identity_default_map_json"], old_name, new_name
+            )
+            if default_map is not None:
+                updates["identity_default_map_json"] = default_map
+            colors = remap_keyed_by_identity(
+                row["sketch_colors_json"], old_name, new_name
+            )
+            if colors is not None:
+                updates["sketch_colors_json"] = colors
+            if not updates:
+                # 没引用过这个角色的集不写库，免得平白刷 updated_at。
+                continue
+            assignments = ", ".join(f"{column} = ?" for column in updates)
+            await db.execute(
+                f"UPDATE episodes SET {assignments}, updated_at = datetime('now') "
+                "WHERE number = ?",
+                (*updates.values(), row["number"]),
+            )
+
+        async with db.execute(
+            "SELECT episode_number, beat_number, detected_identities_json, "
+            "visual_description, speaker, speaker_kind FROM beats"
+        ) as cursor:
+            beats = await cursor.fetchall()
+        for row in beats:
+            updates = {}
+            detected = remap_id_list(
+                row["detected_identities_json"], old_name, new_name
+            )
+            if detected is not None:
+                updates["detected_identities_json"] = detected
+            description = remap_identity_markers(
+                row["visual_description"], old_name, new_name
+            )
+            if description is not None:
+                updates["visual_description"] = description
+            # speaker 存的是角色名本身，只有 speaker_kind 为 character 时才是角色。
+            if (
+                str(row["speaker_kind"] or "character") == "character"
+                and str(row["speaker"] or "") == old_name
+            ):
+                updates["speaker"] = new_name
+            if not updates:
+                continue
+            assignments = ", ".join(f"{column} = ?" for column in updates)
+            await db.execute(
+                f"UPDATE beats SET {assignments}, updated_at = datetime('now') "
+                "WHERE episode_number = ? AND beat_number = ?",
+                (*updates.values(), row["episode_number"], row["beat_number"]),
+            )
+
+        await db.commit()
 
     async def repair_path_unsafe_asset_names(
         self,
@@ -804,17 +923,18 @@ class SQLiteStore:
 
         名字都干净时只做一次 SELECT，不写库也不碰磁盘。
 
-        每种 kind 每个 store 实例只跑一次，且串行——列表接口是并发入口，见 ``__init__``
-        里 ``_path_repair_lock`` 的说明。
+        每种 kind 每个项目**每个进程**只跑一次，且串行——列表接口是并发入口，而 store 是
+        按请求新建的，记在实例上等于没记，见模块顶上 ``_PATH_REPAIR_DONE`` 的说明。
         """
 
-        if kind in self._path_repair_done:
+        key = (self.db_path, kind)
+        if key in _PATH_REPAIR_DONE:
             return {}
-        async with self._path_repair_lock:
-            if kind in self._path_repair_done:
+        async with _path_repair_lock(key):
+            if key in _PATH_REPAIR_DONE:
                 return {}
             renamed = await self._repair_path_unsafe_asset_names(kind, move_assets)
-            self._path_repair_done.add(kind)
+            _PATH_REPAIR_DONE.add(key)
             return renamed
 
     async def _repair_path_unsafe_asset_names(
@@ -875,6 +995,9 @@ class SQLiteStore:
                         old_name,
                     ),
                 )
+                # identity_id 把角色名嵌在里面，散在 episodes / beats 里的引用要一起改。
+                # 和上面的改名同一个事务（下面统一 commit），不能只改一半。
+                await self._cascade_character_rename(old_name, new_name)
             else:
                 await db.execute(
                     f"UPDATE {table} SET name = ?, aliases_json = ?, "
