@@ -188,6 +188,36 @@ async def test_without_a_projection_the_store_is_still_used(tmp_path, monkeypatc
     assert closed == [True]
 
 
+@pytest.mark.asyncio
+async def test_store_is_closed_when_graph_state_loading_fails(tmp_path, monkeypatch) -> None:
+    """Opening the fallback store transfers cleanup responsibility immediately."""
+    from novelvideo.cognee import CogneeStore
+
+    closed: list[bool] = []
+
+    def record(self, *args, **kwargs):
+        pass
+
+    async def noop(self):
+        pass
+
+    async def fail(self):
+        raise RuntimeError("graph state unavailable")
+
+    async def close(self):
+        closed.append(True)
+
+    monkeypatch.setattr(CogneeStore, "__init__", record)
+    monkeypatch.setattr(CogneeStore, "initialize", noop)
+    monkeypatch.setattr(CogneeStore, "load_graph_state", fail)
+    monkeypatch.setattr(CogneeStore, "close", close)
+
+    with pytest.raises(RuntimeError, match="graph state unavailable"):
+        await _ensure(tmp_path, projection=None)
+
+    assert closed == [True]
+
+
 class _StopHere(Exception):
     """Cut the runner off once it has reached the point under test."""
 

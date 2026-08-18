@@ -165,18 +165,18 @@ async def _ensure_scene_refs_for_beats(
 
     projected_scenes = None
     store = None
-    if projection is None:
-        store = CogneeStore(
-            ctx.owner_project_label,
-            output_dir=output_dir,
-            state_dir=str(ctx.state_dir),
-        )
-        await store.initialize()
-        await store.load_graph_state()
-    else:
-        projected_scenes = projection.require("scenes")
-
     try:
+        if projection is None:
+            store = CogneeStore(
+                ctx.owner_project_label,
+                output_dir=output_dir,
+                state_dir=str(ctx.state_dir),
+            )
+            await store.initialize()
+            await store.load_graph_state()
+        else:
+            projected_scenes = projection.require("scenes")
+
         skipped = 0
         missing = 0
         for requested_scene_id in requested_scene_ids:

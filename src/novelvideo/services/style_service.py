@@ -440,6 +440,7 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> StyleConfig:
         """获取风格配置，如果不存在返回默认风格。
 
@@ -449,7 +450,13 @@ class StyleService:
         Returns:
             StyleConfig 实例（保证不为 None）
         """
-        style = cls.get_style(style_id, username=username, project=project, project_dir=project_dir)
+        style = cls.get_style(
+            style_id,
+            username=username,
+            project=project,
+            project_dir=project_dir,
+            state_dir=state_dir,
+        )
         if style:
             return style
 
@@ -558,8 +565,15 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> tuple[str, str]:
-        config = cls.get_style_or_default(style_id, username=username, project=project, project_dir=project_dir)
+        config = cls.get_style_or_default(
+            style_id,
+            username=username,
+            project=project,
+            project_dir=project_dir,
+            state_dir=state_dir,
+        )
         return config.style_family or "live_action", (config.animation_subtype or "").lower()
 
     @classmethod

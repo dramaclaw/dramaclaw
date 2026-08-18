@@ -151,6 +151,93 @@ def test_prop_prompt_reads_custom_style_from_explicit_state_dir(
     assert "scope-owned prop lighting" in prompt
 
 
+def _write_scoped_animation_style(state_dir: Path) -> None:
+    state_dir.mkdir(parents=True)
+    (state_dir / "project_config.json").write_text(
+        json.dumps(
+            {
+                "custom_styles": {
+                    "scope_animation": {
+                        "id": "scope_animation",
+                        "name": "Scope Animation",
+                        "style_family": "animation",
+                        "animation_subtype": "3d",
+                        "style_instructions": "scope-owned animation style",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_character_prompt_branch_reads_style_from_explicit_state_dir(tmp_path: Path) -> None:
+    from novelvideo.generators.nanobanana_character import NanoBananaCharacterGenerator
+
+    state_dir = tmp_path / "state" / "_scopes" / "scope_123" / "alice" / "demo"
+    _write_scoped_animation_style(state_dir)
+    generator = object.__new__(NanoBananaCharacterGenerator)
+
+    prompt = generator._build_character_prompt(
+        character_name="Lin",
+        character_prompt="young hero",
+        character_tag="lin_1",
+        style_name="scope_animation",
+        project_dir=str(tmp_path / "output"),
+        state_dir=str(state_dir),
+        style_keywords="scope-owned animation style",
+        negative_keywords="",
+    )
+
+    assert "animated character identity portrait" in prompt
+    assert "stylized 3D animated character rendering" in prompt
+
+
+def test_identity_prompt_branch_reads_style_from_explicit_state_dir(tmp_path: Path) -> None:
+    from novelvideo.generators.nanobanana_character import NanoBananaCharacterGenerator
+
+    state_dir = tmp_path / "state" / "_scopes" / "scope_123" / "alice" / "demo"
+    _write_scoped_animation_style(state_dir)
+    generator = object.__new__(NanoBananaCharacterGenerator)
+
+    prompt = generator._build_identity_locked_prompt(
+        character_name="Lin",
+        character_prompt="formal costume",
+        character_tag="lin_1",
+        target_view="front",
+        style_name="scope_animation",
+        project_dir=str(tmp_path / "output"),
+        state_dir=str(state_dir),
+        style_keywords="scope-owned animation style",
+        negative_keywords="",
+    )
+
+    assert "Animated character turnaround" in prompt
+    assert "stylized 3D animated character rendering" in prompt
+
+
+@pytest.mark.asyncio
+async def test_seedream_character_style_reads_explicit_state_dir(tmp_path: Path) -> None:
+    from novelvideo.generators.image_generator import VolcengineImageGenerator
+
+    state_dir = tmp_path / "state" / "_scopes" / "scope_123" / "alice" / "demo"
+    _write_scoped_animation_style(state_dir)
+    generator = object.__new__(VolcengineImageGenerator)
+    generator.default_style = "scope_animation"
+
+    paths = await generator.generate_character_reference(
+        character_name="Lin",
+        appearance_prompt="young hero",
+        output_dir=str(tmp_path / "references"),
+        count=0,
+        style="scope_animation",
+        project_dir=str(tmp_path / "output"),
+        state_dir=str(state_dir),
+    )
+
+    assert paths == []
+
+
 @pytest.mark.asyncio
 async def test_scene_reference_passes_context_state_dir_to_style_lookup(
     monkeypatch: pytest.MonkeyPatch,

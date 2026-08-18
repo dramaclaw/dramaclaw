@@ -977,6 +977,7 @@ class VolcengineImageGenerator:
         count: int = 3,
         style: str = None,
         project_dir: str = "",
+        state_dir: str = "",
     ) -> list[str]:
         """生成角色参考图。
 
@@ -995,7 +996,11 @@ class VolcengineImageGenerator:
         os.makedirs(output_dir, exist_ok=True)
 
         style = style or self.default_style
-        style_preset = get_style_preset(style, project_dir=project_dir)
+        style_preset = get_style_preset(
+            style,
+            project_dir=project_dir,
+            state_dir=state_dir or None,
+        )
         style_keywords = style_preset.get("style_instructions", "")
         negative_prompt = style_preset.get("avoid_instructions", "")
 
@@ -1293,6 +1298,7 @@ async def generate_character_reference_unified(
                 count=count,
                 style=style,
                 project_dir=project_dir,
+                state_dir=state_dir,
             )
         except ValueError as e:
             print(f"[Character] Seedream 配置错误: {e}，使用 Mock")
