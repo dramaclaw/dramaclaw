@@ -339,7 +339,9 @@ class SQLiteStore:
             self.project_dir = ensure_project_dirs(project_name)["base"]
 
         parts = project_name.split("/", 1)
-        if len(parts) == 2:
+        if state_dir:
+            default_state_dir = Path(state_dir)
+        elif len(parts) == 2:
             from novelvideo.utils.project_paths import ProjectPaths
 
             paths = ProjectPaths(parts[0], parts[1])

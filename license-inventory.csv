@@ -2003,6 +2003,7 @@ tests/test_task_payload_projection.py,Elastic-2.0,2026 SuperTale contributors,RE
 tests/test_task_payload_projection_guardrails.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_runner_cancel_checkpoints.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_runner_home_node_placement.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_task_runner_state_dir.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_script_runner_store_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_sketch_runner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_state_celery_zombie_ttl.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

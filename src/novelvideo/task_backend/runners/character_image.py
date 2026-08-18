@@ -102,7 +102,7 @@ async def _run_character_image(
     ctx: ProjectContext,
 ) -> dict[str, Any] | None:
     from novelvideo.cognee import CogneeStore
-    from novelvideo.project_config import load_project_config_file
+    from novelvideo.project_config import load_project_config_file_from_state_dir
 
     payload = envelope.get("payload") or {}
     mode = str(payload["mode"])
@@ -129,14 +129,18 @@ async def _run_character_image(
         )
 
     update(0.10, "加载角色数据...")
-    store = CogneeStore(ctx.owner_project_label, output_dir=str(output_dir))
+    store = CogneeStore(
+        ctx.owner_project_label,
+        output_dir=str(output_dir),
+        state_dir=str(ctx.state_dir),
+    )
     await store.initialize()
     await store.load_graph_state()
     try:
         character = await store.get_character_from_graph(character_name)
         if character is None:
             raise RuntimeError(f"找不到角色: {character_name}")
-        project_config = load_project_config_file(ctx.owner_username, ctx.project_name)
+        project_config = load_project_config_file_from_state_dir(ctx.state_dir)
         ethnicity = project_config.get("ethnicity", "Chinese")
 
         update(0.25, "准备生成参数...")

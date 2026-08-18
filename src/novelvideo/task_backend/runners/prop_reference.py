@@ -56,7 +56,11 @@ async def _run_prop_reference_asset(
     manager = get_task_manager()
     egress_context = _image_egress_context(envelope)
 
-    store = CogneeStore(ctx.owner_project_label, output_dir=str(output_dir))
+    store = CogneeStore(
+        ctx.owner_project_label,
+        output_dir=str(output_dir),
+        state_dir=str(ctx.state_dir),
+    )
     await store.initialize()
     try:
         prop = await store.sqlite_store.get_prop(prop_name)

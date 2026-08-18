@@ -50,7 +50,11 @@ def _projection(scenes: list[dict]) -> object:
 
 
 def _ctx():
-    return SimpleNamespace(owner_project_label="alice/demo", output_dir="/nonexistent")
+    return SimpleNamespace(
+        owner_project_label="alice/demo",
+        output_dir="/nonexistent",
+        state_dir="/state/_scopes/scope_123/alice/demo",
+    )
 
 
 async def _ensure(tmp_path, *, projection, director_ref_mode="off", beats=None):
@@ -143,10 +147,10 @@ async def test_without_a_projection_the_store_is_still_used(tmp_path, monkeypatc
     """The rollback: no projection in the payload, no change in behaviour."""
     from novelvideo.cognee import CogneeStore
 
-    opened: list[str] = []
+    opened: list[tuple[str, dict]] = []
 
     def record(self, label, *args, **kwargs):
-        opened.append(label)
+        opened.append((label, kwargs))
 
     async def noop(self, *args, **kwargs):
         return None
@@ -166,7 +170,15 @@ async def test_without_a_projection_the_store_is_still_used(tmp_path, monkeypatc
 
     stats = await _ensure(tmp_path, projection=None)
 
-    assert opened == ["alice/demo"]
+    assert opened == [
+        (
+            "alice/demo",
+            {
+                "output_dir": str(tmp_path),
+                "state_dir": "/state/_scopes/scope_123/alice/demo",
+            },
+        )
+    ]
     assert stats["requested"] == 1
 
 

@@ -86,13 +86,21 @@ async def test_beat_video_prompt_runner_closes_sqlite_store(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_script_writer_runner_closes_cognee_store(monkeypatch, tmp_path):
+async def test_script_writer_reads_scoped_config_and_closes_store(monkeypatch, tmp_path):
     import novelvideo.cognee as cognee
     from novelvideo import project_config
     from novelvideo.task_backend.runners import script as runner
     from novelvideo.workflows import script_writing
 
     store = _ClosableStore()
+    ctx = _ctx(tmp_path)
+    ctx.state_dir.mkdir(parents=True)
+    (ctx.state_dir / "project_config.json").write_text(
+        '{"genre":"thriller","story_setting":"night city","spine_template":"narrated"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(project_config, "OUTPUT_DIR", tmp_path / "fallback-state")
+    workflow_config: dict = {}
 
     class FakeCogneeStore:
         def __new__(cls, *args, **kwargs):
@@ -106,11 +114,11 @@ async def test_script_writer_runner_closes_cognee_store(monkeypatch, tmp_path):
             return SimpleNamespace(beats=[])
 
     def fake_create_script_writing_workflow(*args, **kwargs):
+        workflow_config.update(kwargs)
         return FakeWorkflow()
 
     monkeypatch.setattr(runner, "get_task_manager", lambda: _Manager())
     monkeypatch.setattr(cognee, "CogneeStore", FakeCogneeStore)
-    monkeypatch.setattr(project_config, "load_project_config", lambda *args, **kwargs: {})
     monkeypatch.setattr(
         script_writing,
         "create_script_writing_workflow",
@@ -119,9 +127,14 @@ async def test_script_writer_runner_closes_cognee_store(monkeypatch, tmp_path):
 
     result = await runner._run_script_writer(
         {"episode": 1, "payload": {"output_dir": str(tmp_path)}},
-        _ctx(tmp_path),
+        ctx,
     )
 
+    assert workflow_config == {
+        "genre": "thriller",
+        "story_setting": "night city",
+        "spine_template": "narrated",
+    }
     assert result["beats"] == 0
     assert result["degraded_lines"] == []
     assert store.closed is True

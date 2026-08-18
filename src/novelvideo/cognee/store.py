@@ -144,7 +144,9 @@ class CogneeStore:
 
             self.project_dir = ensure_project_dirs(project_name)["base"]
 
-        if sqlite_state_dir:
+        if state_dir:
+            default_state_dir = Path(state_dir)
+        elif sqlite_state_dir:
             default_state_dir = Path(sqlite_state_dir)
         elif "/" in project_name:
             from novelvideo.utils.project_paths import ProjectPaths
