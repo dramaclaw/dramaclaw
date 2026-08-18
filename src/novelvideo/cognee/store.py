@@ -146,6 +146,13 @@ class CogneeStore:
 
         if state_dir:
             default_state_dir = Path(state_dir)
+            if not sqlite_state_dir and "/" in project_name:
+                from novelvideo.utils.project_paths import ProjectPaths
+
+                parts = project_name.split("/", 1)
+                paths = ProjectPaths(parts[0], parts[1])
+                if Path(state_dir).resolve() == paths.state_dir.resolve():
+                    paths.bootstrap_from_legacy_output()
         elif sqlite_state_dir:
             default_state_dir = Path(sqlite_state_dir)
         elif "/" in project_name:

@@ -26,7 +26,11 @@ from typing import Optional
 
 from novelvideo.config import OUTPUT_DIR
 from novelvideo.models import StyleConfig
-from novelvideo.project_config import load_project_config_file, update_project_config_file
+from novelvideo.project_config import (
+    load_project_config_file,
+    load_project_config_file_from_state_dir,
+    update_project_config_file,
+)
 
 
 class StyleService:
@@ -172,7 +176,12 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> dict[str, dict]:
+        if state_dir is not None:
+            config = load_project_config_file_from_state_dir(state_dir)
+            styles = config.get("custom_styles") or {}
+            return styles if isinstance(styles, dict) else {}
         username, project = cls._resolve_project_context(username, project, project_dir)
         if not username or not project:
             return {}
@@ -236,6 +245,7 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> Optional[StyleConfig]:
         """获取自定义风格（从项目配置）。
 
@@ -246,7 +256,12 @@ class StyleService:
             StyleConfig 实例，如果不存在返回 None
         """
         try:
-            styles = cls._load_project_custom_style_map(username, project, project_dir)
+            styles = cls._load_project_custom_style_map(
+                username,
+                project,
+                project_dir,
+                state_dir,
+            )
             config_data = styles.get(style_id)
             if config_data:
                 config_data["is_preset"] = False
@@ -359,6 +374,7 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> Optional[StyleConfig]:
         """获取风格配置（统一入口）。
 
@@ -375,7 +391,13 @@ class StyleService:
             StyleConfig 实例，如果不存在返回 None
         """
         # 优先查找自定义风格（允许覆盖预设）
-        custom = cls.get_custom_style(style_id, username=username, project=project, project_dir=project_dir)
+        custom = cls.get_custom_style(
+            style_id,
+            username=username,
+            project=project,
+            project_dir=project_dir,
+            state_dir=state_dir,
+        )
         if custom:
             return custom
 

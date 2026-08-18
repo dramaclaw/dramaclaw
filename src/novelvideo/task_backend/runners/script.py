@@ -95,7 +95,7 @@ async def _run_script_writer_scoped(
 ) -> dict[str, Any] | None:
     from novelvideo.cognee import CogneeStore
     from novelvideo.generators.episode_optimizer import EpisodeOptimizer
-    from novelvideo.project_config import load_project_config_file_from_state_dir
+    from novelvideo.project_config import load_project_config_from_state_dir
     from novelvideo.utils.path_resolver import PathResolver
     from novelvideo.workflows.script_writing import create_script_writing_workflow
 
@@ -124,7 +124,11 @@ async def _run_script_writer_scoped(
     )
     await store.initialize()
     try:
-        project_config = load_project_config_file_from_state_dir(ctx.state_dir)
+        project_config = load_project_config_from_state_dir(
+            ctx.state_dir,
+            username=ctx.owner_username,
+            project=ctx.project_name,
+        )
         merged_config = {**project_config, **config}
         workflow = create_script_writing_workflow(
             store,

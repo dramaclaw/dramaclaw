@@ -18,6 +18,71 @@ class _Manager:
         pass
 
 
+def _legacy_project_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> tuple[Path, Path]:
+    from novelvideo.utils import project_paths
+
+    output_root = tmp_path / "legacy-output"
+    state_root = tmp_path / "state"
+    monkeypatch.setattr(project_paths, "OUTPUT_DIR", output_root)
+    monkeypatch.setattr(project_paths, "STATE_DIR", state_root)
+    monkeypatch.setattr(project_paths, "RUNTIME_DIR", tmp_path / "runtime")
+    legacy_project_dir = output_root / "alice" / "demo"
+    legacy_project_dir.mkdir(parents=True)
+    (legacy_project_dir / "project_config.json").write_text(
+        '{"spine_template":"narrated"}',
+        encoding="utf-8",
+    )
+    return legacy_project_dir, state_root / "alice" / "demo"
+
+
+def test_sqlite_store_explicit_personal_state_dir_migrates_legacy_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo.sqlite_store import SQLiteStore
+
+    output_dir, state_dir = _legacy_project_paths(monkeypatch, tmp_path)
+
+    SQLiteStore(
+        "alice/demo",
+        output_dir=str(output_dir),
+        state_dir=str(state_dir),
+    )
+
+    assert (state_dir / "project_config.json").read_text(encoding="utf-8") == (
+        '{"spine_template":"narrated"}'
+    )
+
+
+def test_cognee_store_explicit_personal_state_dir_migrates_legacy_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo.cognee import CogneeStore
+    from novelvideo.cognee import store as cognee_store_module
+
+    output_dir, state_dir = _legacy_project_paths(monkeypatch, tmp_path)
+
+    class FakeSQLiteStore:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    monkeypatch.setattr(cognee_store_module, "SQLiteStore", FakeSQLiteStore)
+
+    CogneeStore(
+        "alice/demo",
+        output_dir=str(output_dir),
+        state_dir=str(state_dir),
+    )
+
+    assert (state_dir / "project_config.json").read_text(encoding="utf-8") == (
+        '{"spine_template":"narrated"}'
+    )
+
+
 def test_explicit_state_dir_does_not_create_derived_fallback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -38,6 +103,95 @@ def test_explicit_state_dir_does_not_create_derived_fallback(
 
     assert Path(store.state_dir) == scoped_state_dir
     assert not (state_root / "alice" / "demo").exists()
+
+
+def test_style_preset_reads_custom_style_from_explicit_state_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novelvideo import project_config
+    from novelvideo.config import get_style_preset
+
+    state_dir = tmp_path / "state" / "_scopes" / "scope_123" / "alice" / "demo"
+    state_dir.mkdir(parents=True)
+    (state_dir / "project_config.json").write_text(
+        json.dumps(
+            {
+                "custom_styles": {
+                    "scope_style": {
+                        "id": "scope_style",
+                        "name": "Scope Style",
+                        "style_instructions": "scope-owned lighting",
+                        "avoid_instructions": "avoid flat lighting",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(project_config, "OUTPUT_DIR", tmp_path / "fallback-state")
+
+    preset = get_style_preset(
+        "scope_style",
+        username="alice",
+        project="demo",
+        project_dir=str(tmp_path / "output"),
+        state_dir=state_dir,
+    )
+
+    assert preset["style_instructions"] == "scope-owned lighting"
+
+
+@pytest.mark.asyncio
+async def test_scene_reference_passes_context_state_dir_to_style_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import novelvideo.cognee as cognee
+    from novelvideo import config
+    from novelvideo.task_backend.runners import scene_reference
+
+    ctx = _scoped_ctx(tmp_path)
+    captured: dict[str, object] = {}
+
+    class StyleRead(Exception):
+        pass
+
+    class FakeSQLiteStore:
+        async def get_scene(self, name: str):
+            return SimpleNamespace(name=name, base_scene_id="")
+
+    class FakeStore:
+        def __init__(self, *args, **kwargs) -> None:
+            self.sqlite_store = FakeSQLiteStore()
+
+        async def initialize(self) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    def capture_style(*args, **kwargs):
+        captured.update(kwargs)
+        raise StyleRead
+
+    monkeypatch.setattr(cognee, "CogneeStore", FakeStore)
+    monkeypatch.setattr(config, "get_style_preset", capture_style)
+    monkeypatch.setattr(scene_reference, "get_task_manager", lambda: _Manager())
+
+    with pytest.raises(StyleRead):
+        await scene_reference._run_scene_reference_asset(
+            {
+                "payload": {
+                    "scene_name": "Rooftop",
+                    "kind": "master",
+                    "style": "scope_style",
+                }
+            },
+            ctx,
+        )
+
+    assert captured["state_dir"] == str(ctx.state_dir)
 
 
 def _scoped_ctx(tmp_path: Path) -> ProjectContext:

@@ -5,6 +5,7 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -556,6 +557,7 @@ def get_style_preset(
     username: str | None = None,
     project: str | None = None,
     project_dir: str | None = None,
+    state_dir: str | Path | None = None,
 ) -> dict:
     """获取视觉风格预设配置。
 
@@ -574,6 +576,7 @@ def get_style_preset(
         username=username,
         project=project,
         project_dir=project_dir,
+        state_dir=state_dir,
     )
     if not config:
         raise KeyError(f"Style '{style}' not found")

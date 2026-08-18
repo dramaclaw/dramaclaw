@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -86,7 +87,7 @@ async def test_beat_video_prompt_runner_closes_sqlite_store(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_script_writer_reads_scoped_config_and_closes_store(monkeypatch, tmp_path):
+async def test_script_writer_reads_effective_scoped_config_and_closes_store(monkeypatch, tmp_path):
     import novelvideo.cognee as cognee
     from novelvideo import project_config
     from novelvideo.task_backend.runners import script as runner
@@ -135,6 +136,8 @@ async def test_script_writer_reads_scoped_config_and_closes_store(monkeypatch, t
         "story_setting": "night city",
         "spine_template": "narrated",
     }
+    saved_config = json.loads((ctx.state_dir / "project_config.json").read_text(encoding="utf-8"))
+    assert saved_config["project_uuid"]
     assert result["beats"] == 0
     assert result["degraded_lines"] == []
     assert store.closed is True
