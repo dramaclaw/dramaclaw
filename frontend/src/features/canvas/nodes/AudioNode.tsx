@@ -22,7 +22,7 @@ import {
   type AudioVoiceRef,
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
-import { canvasEventBus } from '@/features/canvas/application/canvasServices';
+import { useExternalFileHandoff } from '@/features/canvas/hooks/useExternalFileHandoff';
 import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import {
   NodeHeader,
@@ -169,15 +169,17 @@ export const AudioNode = memo(({ id, data, selected, width, height }: AudioNodeP
     [id, t, updateNodeData],
   );
 
-  // 「上传资源」菜单上传音频时，UploadNode 会先把自己转成音频节点，再通过事件
-  // 总线把 File 投递过来。这里订阅并复用上传流程。
-  useEffect(() => {
-    return canvasEventBus.subscribe('audio-node/external-file', ({ nodeId, file }) => {
-      if (nodeId !== id) return;
+  // 「上传资源」菜单上传音频时，UploadNode 会先把自己转成音频节点，再把 File 投递
+  // 过来。File 本体走 pendingExternalFiles 暂存、挂载时补投 —— 低缩放档下本节点先
+  // 以 LOD shell 挂载，只订阅事件会漏掉投递（见 useExternalFileHandoff）。
+  const consumeExternalFile = useCallback(
+    (file: File) => {
       // 类型校验统一交给 processFile（含非音频拒绝 + toast 提示）。
       void processFile(file);
-    });
-  }, [id, processFile]);
+    },
+    [processFile],
+  );
+  useExternalFileHandoff('audio-node/external-file', id, consumeExternalFile);
 
   useEffect(() => {
     updateNodeInternals(id);

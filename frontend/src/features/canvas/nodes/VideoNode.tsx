@@ -76,8 +76,11 @@ import {
   isVideoModeSupportedByModel,
   resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
+  videoModeForcesAutomaticAspectRatio,
   videoModeRequiresPrompt,
+  videoModelDefaultGenerateAudio,
   videoModelReferenceDisabledReason,
+  videoModelSupportsGenerateAudio,
   videoMultiImageAutoSwitchMode,
   videoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
@@ -109,6 +112,7 @@ import {
   useAlbumPendingTotal,
 } from "@/features/canvas/nodes/shared/albumPendingTotals";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
+import { useExternalFileHandoff } from "@/features/canvas/hooks/useExternalFileHandoff";
 import {
   extractUpstreamContent,
   joinUpstreamText,
@@ -259,6 +263,8 @@ const VIDEO_EMPTY_STATE_CTA_META: Record<
 //                            referenceAudioTotalMaxSeconds）——都在提交前单独校验，
 //                            见 audioReferenceDurationRejection。时长口径不进这张表：
 //                            这里只表达条数。
+//   - videoEdit            ：默认 1 个源视频 + 5 张参考图；独立音频默认关闭，媒体目录
+//                            配置 referenceAudioMax > 0 后按该上限开放。
 //   - firstLastFrame       ：仅图片 2 张（首帧 + 尾帧），不允许任何视频 / 音频。
 //                            图片 >2 时另有自动切到 allReference 的兜底（见
 //                            VideoNode 内部 effect）。
@@ -655,9 +661,13 @@ export const VideoNode = memo(
             VIDEO_GENERATION_ASPECT_RATIOS,
             "16:9",
           );
-    // Admin 配置存在时原样提交模型声明的比例；未配置时保留旧版 auto 推导逻辑。
+    const followsInputAspectRatio = videoModeForcesAutomaticAspectRatio(genMode);
+    // 关键帧/视频编辑的画幅跟随输入素材；只改变本次请求值，不覆盖节点保存的比例。
+    // 其它模式在 Admin 配置存在时原样提交，未配置时保留旧版 auto 推导逻辑。
     const submitAspectRatio: FreezoneVideoAspectRatio =
-      !hasConfiguredAspectRatios && aspectRatio === "auto"
+      followsInputAspectRatio
+        ? "auto"
+        : !hasConfiguredAspectRatios && aspectRatio === "auto"
         ? snapToAllowedAspectRatio(
             typeof data.widthPx === "number" &&
               typeof data.heightPx === "number" &&
@@ -691,7 +701,18 @@ export const VideoNode = memo(
       sceneOptimizeOptions,
       defaultSceneOptimizeForModel(selectedVideoModel),
     );
-    const generateAudio = Boolean(data.generateAudio);
+    // Missing catalog fields preserve the legacy behavior: native audio is
+    // supported and enabled by default. Admin can explicitly disable support,
+    // in which case the control disappears and every submit path sends false.
+    const supportsGenerateAudio =
+      videoModelSupportsGenerateAudio(selectedVideoModel);
+    const defaultGenerateAudio =
+      videoModelDefaultGenerateAudio(selectedVideoModel);
+    const generateAudio =
+      supportsGenerateAudio &&
+      (typeof data.generateAudio === "boolean"
+        ? data.generateAudio
+        : defaultGenerateAudio);
     // 家族判定必须喂 `selectedVideoModelId`(apiModel ?? id)，**不能用 `modelId`**：
     // `modelId` 是 `selectedVideoModel.id`，在 EE 里是 media_model_catalog 的 ULID
     // 主键（如 `01KZ58VSE52RFFDASY2T9SY4NC`），根本不含模型名，判定恒为 false ——
@@ -702,6 +723,13 @@ export const VideoNode = memo(
       "allReference",
       selectedVideoModel,
     );
+    const supportsVideoEdit = isVideoModeSupportedByModel(
+      "videoEdit",
+      selectedVideoModel,
+    );
+    const videoEditAcceptsAudio =
+      supportsVideoEdit &&
+      (referenceCapsForMode(selectedVideoModel, "videoEdit")?.audio ?? 0) > 0;
     const supportsHumanReview = selectedVideoModel?.humanReview === true;
     const humanReview = Boolean(data.humanReview);
     const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
@@ -1388,15 +1416,23 @@ export const VideoNode = memo(
       });
     }, [id]);
 
-    useEffect(() => {
-      return canvasEventBus.subscribe(
-        "video-node/external-file",
-        ({ nodeId, file }) => {
-          if (nodeId !== id || !isVideoFile(file)) return;
-          void processFile(file);
-        },
-      );
-    }, [id, processFile]);
+    const consumeExternalFile = useCallback(
+      (file: File) => {
+        // 走到这里文件已经从暂存里被取走了,直接 return 等于把它丢在地上 ——
+        // 留一句警告,别静默。口径参照 UploadNode.tsx 的 `[upload-node] …`。
+        if (!isVideoFile(file)) {
+          console.warn(
+            `[video-node] external file "${file.name}" (${file.type || "no mime"}) is not a video; dropped`,
+          );
+          return;
+        }
+        void processFile(file);
+      },
+      [processFile],
+    );
+    // File 本体走 pendingExternalFiles 暂存、挂载时补投 —— 低缩放档下本节点先以
+    // LOD shell 挂载，只订阅事件会漏掉投递（见 useExternalFileHandoff）。
+    useExternalFileHandoff("video-node/external-file", id, consumeExternalFile);
 
     // First time an upstream image becomes available, flip the gen mode so the
     // video actually consumes it. 默认模式按模型能力选（videoUpstreamImageDefaultMode）：
@@ -1462,9 +1498,8 @@ export const VideoNode = memo(
       updateNodeData,
     ]);
 
-    // Audio refs only carry meaning under the omni-gen (allReference) path —
-    // textToVideo / firstFrame / firstLastFrame / imageToVideo discard them. So when an
-    // audio upstream first appears, force the mode to `allReference`. Tracked
+    // 音频引用由全能参考消费；媒体目录明确为 video_edit 配置音频上限后，视频编辑也
+    // 可以消费。其它模式仍会丢弃音频，因此音频首次接入时切到 allReference。Tracked
     // through a ref so we only fire on the 0 → ≥1 transition; once the user
     // disconnects all audio and reconnects, it fires again.
     // 是否可消费音频由媒体目录的 all_reference 能力决定；未声明该能力的模型由
@@ -1481,6 +1516,7 @@ export const VideoNode = memo(
         !prev &&
         hasAudioUpstream &&
         data.genMode !== "allReference" &&
+        !(data.genMode === "videoEdit" && videoEditAcceptsAudio) &&
         !isHappyHorseModel &&
         supportsAllReference
       ) {
@@ -1493,6 +1529,7 @@ export const VideoNode = memo(
       isHappyHorseModel,
       supportsAllReference,
       updateNodeData,
+      videoEditAcceptsAudio,
     ]);
 
     // Seedance 1.x 吃不下视频 / 音频，留在上面只能收获一次必然失败的提交。用户把
@@ -1526,7 +1563,14 @@ export const VideoNode = memo(
       }
       if (action.kind === "none") return;
       autoSwitchedForMediaRef.current = true;
-      updateNodeData(id, { model: action.modelId, genMode: action.genMode });
+      const nextModel = availableVideoModels.find(
+        (model) => model.id === action.modelId,
+      );
+      updateNodeData(id, {
+        model: action.modelId,
+        genMode: action.genMode,
+        generateAudio: videoModelDefaultGenerateAudio(nextModel),
+      });
       // 刻意不调 writeLastVideoModel：这是替用户救场，不是他表达的偏好，不该顺手
       // 把后续新建视频节点继承的默认模型也改掉。
     }, [
@@ -1538,15 +1582,15 @@ export const VideoNode = memo(
       videoModelsLoading,
     ]);
 
-    // 上游接入视频素材时，只有「全能参考」能消费视频；其它模式（文生 / 图生 /
-    // 首尾帧 / 图片参考）都会把视频丢弃。所以只要上游存在视频就强制切到
-    // allReference 并锁死——下面的 tab 禁用规则会把其它 tab 一并禁用。
+    // 上游接入视频素材时，「全能参考」和目录声明的「视频编辑」都能消费；其它模式
+    // 会把视频丢弃。已经处于合法 videoEdit 时不要再强制改成 allReference。
     // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
     // 是否可消费视频由媒体目录的 all_reference 能力决定；未声明该能力的模型不强推，
     // 以免顶进提交必 400 的模式。
     useEffect(() => {
       if (upstreamCounts.videos === 0) return;
       if (isHappyHorseModel) return;
+      if (genMode === "videoEdit" && supportsVideoEdit) return;
       if (!supportsAllReference) return;
       if (genMode === "allReference") return;
       updateNodeData(id, { genMode: "allReference" });
@@ -1556,6 +1600,7 @@ export const VideoNode = memo(
       id,
       isHappyHorseModel,
       supportsAllReference,
+      supportsVideoEdit,
       updateNodeData,
     ]);
 
@@ -1892,7 +1937,11 @@ export const VideoNode = memo(
             : {}),
           video_backend: videoBackendForCost,
           resolution: qualityToResolution(quality),
-          pricing_quantity: Math.min(Math.max(count, 1), 4) * durationSec,
+          pricing_quantity:
+            Math.min(Math.max(count, 1), 4) *
+            (genMode === "videoEdit"
+              ? Math.max(Math.floor(videoInputBilling.durationSeconds), 1)
+              : durationSec),
           operation: genMode,
           generate_audio: generateAudio,
           video_input_present: videoInputBilling.present,
@@ -1995,6 +2044,97 @@ export const VideoNode = memo(
           return resolveVideoKeyframeUrls(candidates);
         };
 
+        const validateReferenceDurations = async (
+          media: "audio" | "video",
+          refs: Array<{ url: string; label: string; durationMs: number | null }>,
+        ): Promise<boolean> => {
+          const configured = referenceDurationLimitsMs(selectedVideoModel, media);
+          const limits = {
+            minMs:
+              configured.minMs ??
+              (media === "audio" && isSeedance20Model
+                ? MIN_AUDIO_REFERENCE_DURATION_MS
+                : undefined),
+            maxMs:
+              configured.maxMs ??
+              (media === "audio" && isSeedance20Model
+                ? MAX_AUDIO_REFERENCE_DURATION_MS
+                : undefined),
+            totalMinMs: configured.totalMinMs,
+            totalMaxMs:
+              configured.totalMaxMs ??
+              (media === "audio" && isSeedance20Model
+                ? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS
+                : undefined),
+          };
+          if (refs.length === 0 || Object.values(limits).every((value) => value == null)) {
+            return true;
+          }
+          const resolvedDurations = await Promise.all(
+            refs.map((ref) =>
+              typeof ref.durationMs === "number" && ref.durationMs > 0
+                ? Promise.resolve(ref.durationMs)
+                : media === "audio"
+                  ? probeAudioDurationMs(ref.url)
+                  : probeVideoDurationMs(ref.url),
+            ),
+          );
+          const rejection = audioReferenceDurationRejection(
+            refs.map((ref, index) => ({
+              label: ref.label,
+              durationMs: resolvedDurations[index] ?? null,
+            })),
+            {
+              minMs: limits.minMs ?? null,
+              maxMs: limits.maxMs ?? null,
+              totalMinMs: limits.totalMinMs,
+              totalLimitMs: limits.totalMaxMs ?? null,
+              perClipLimits: limits.minMs != null || limits.maxMs != null,
+            },
+          );
+          if (!rejection) return true;
+
+          const clips = formatAudioDurationClips(rejection.clips, (key, vars) =>
+            t(key, vars),
+          );
+          const prefix =
+            media === "audio" ? "node.videoNode.audio" : "node.videoNode.referenceDuration";
+          const message =
+            rejection.kind === "tooShort"
+              ? t(`${prefix}.${media === "audio" ? "durationTooShort" : "videoTooShort"}`, {
+                  min: formatAudioDurationSeconds(limits.minMs ?? 0),
+                  clips,
+                })
+              : rejection.kind === "tooLong"
+                ? t(`${prefix}.${media === "audio" ? "durationTooLong" : "videoTooLong"}`, {
+                    max: formatAudioDurationSeconds(limits.maxMs ?? 0),
+                    clips,
+                  })
+                : rejection.kind === "totalTooShort"
+                  ? t(
+                      `${prefix}.${media === "audio" ? "durationTotalTooShort" : "videoTotalTooShort"}`,
+                      {
+                        min: formatAudioDurationSeconds(rejection.limitMs),
+                        total: formatAudioDurationSeconds(rejection.totalMs),
+                        clips,
+                      },
+                    )
+                  : t(
+                      `${prefix}.${media === "audio" ? "durationTotalTooLong" : "videoTotalTooLong"}`,
+                      {
+                        max: formatAudioDurationSeconds(rejection.limitMs),
+                        total: formatAudioDurationSeconds(rejection.totalMs),
+                        clips,
+                      },
+                    );
+          toast.error(message, { duration: 5_000 });
+          updateNodeData(id, {
+            isGenerating: false,
+            generationStartedAt: null,
+          });
+          return false;
+        };
+
         const durationClamped = clampVideoDuration(durationSec, durationBounds);
         const cameraTemplateId = cameraMovementId;
         // 后端按 canvas_id + node_id 记录每个节点的生成历史。多条生成时每个
@@ -2068,9 +2208,8 @@ export const VideoNode = memo(
               nodeId: targetId,
             });
         } else if (genMode === "videoEdit") {
-          // 视频编辑：1 个源视频 + 0-5 张参考图 → video_url + reference_images。
-          // 不再是 HappyHorse 专属 —— 目录里声明了 video_edit 的模型都走这条路，
-          // 提交时带的是各自的 catalogId，能力由后端按目录校验。
+          // 视频编辑：1 个源视频，并按媒体目录上限附带参考图片和独立参考音频。
+          // 不再是 HappyHorse 专属 —— 目录里声明了 video_edit 的模型都走这条路。
           const upstream = collectUpstream();
           const videoUrl =
             upstream
@@ -2092,15 +2231,41 @@ export const VideoNode = memo(
             );
           }
           const imageUrls = allImageUrls.slice(0, imageLimit);
+          const audioLimit = referenceCaps?.audio ?? 0;
+          const audioRefs = upstream
+            .filter(isAudioNode)
+            .map((node, index) => {
+              const url =
+                typeof node.data.audioUrl === "string" ? node.data.audioUrl : "";
+              const rawLabel =
+                (typeof node.data.sourceFileName === "string"
+                  ? node.data.sourceFileName
+                  : "") ||
+                (typeof node.data.displayName === "string"
+                  ? node.data.displayName
+                  : "");
+              return {
+                url,
+                label:
+                  rawLabel ||
+                  t("node.videoNode.audio.clipFallbackLabel", { index: index + 1 }),
+                durationMs:
+                  typeof node.data.durationMs === "number"
+                    ? node.data.durationMs
+                    : null,
+              };
+            })
+            .filter((item) => item.url.length > 0)
+            .slice(0, audioLimit);
+          if (!(await validateReferenceDurations("audio", audioRefs))) return;
           doSubmit = (targetId) =>
             submitFreezoneVideoEdit(projectId, {
               videoUrl,
               imageUrls,
+              audioUrls: audioRefs.map((item) => item.url),
               prompt: composedPrompt,
               cameraTemplateId,
-              aspectRatio: submitAspectRatio,
               resolution: qualityToResolution(quality),
-              durationSeconds: durationClamped,
               audioSetting: "auto",
               generateAudio,
               model: selectedVideoModel?.catalogId ?? modelId,
@@ -2220,97 +2385,6 @@ export const VideoNode = memo(
             });
             return;
           }
-          const validateReferenceDurations = async (
-            media: "audio" | "video",
-            refs: typeof audioRefs,
-          ): Promise<boolean> => {
-            const configured = referenceDurationLimitsMs(selectedVideoModel, media);
-            const limits = {
-              minMs:
-                configured.minMs ??
-                (media === "audio" && isSeedance20Model
-                  ? MIN_AUDIO_REFERENCE_DURATION_MS
-                  : undefined),
-              maxMs:
-                configured.maxMs ??
-                (media === "audio" && isSeedance20Model
-                  ? MAX_AUDIO_REFERENCE_DURATION_MS
-                  : undefined),
-              totalMinMs: configured.totalMinMs,
-              totalMaxMs:
-                configured.totalMaxMs ??
-                (media === "audio" && isSeedance20Model
-                  ? MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS
-                  : undefined),
-            };
-            if (refs.length === 0 || Object.values(limits).every((value) => value == null)) {
-              return true;
-            }
-            const resolvedDurations = await Promise.all(
-              refs.map((ref) =>
-                typeof ref.durationMs === "number" && ref.durationMs > 0
-                  ? Promise.resolve(ref.durationMs)
-                  : media === "audio"
-                    ? probeAudioDurationMs(ref.url)
-                    : probeVideoDurationMs(ref.url),
-              ),
-            );
-            const rejection = audioReferenceDurationRejection(
-              refs.map((ref, index) => ({
-                label: ref.label,
-                durationMs: resolvedDurations[index] ?? null,
-              })),
-              {
-                minMs: limits.minMs ?? null,
-                maxMs: limits.maxMs ?? null,
-                totalMinMs: limits.totalMinMs,
-                totalLimitMs: limits.totalMaxMs ?? null,
-                perClipLimits: limits.minMs != null || limits.maxMs != null,
-              },
-            );
-            if (rejection) {
-              const clips = formatAudioDurationClips(rejection.clips, (key, vars) =>
-                t(key, vars),
-              );
-              const prefix =
-                media === "audio" ? "node.videoNode.audio" : "node.videoNode.referenceDuration";
-              const message =
-                rejection.kind === "tooShort"
-                  ? t(`${prefix}.${media === "audio" ? "durationTooShort" : "videoTooShort"}`, {
-                      min: formatAudioDurationSeconds(limits.minMs ?? 0),
-                      clips,
-                    })
-                  : rejection.kind === "tooLong"
-                    ? t(`${prefix}.${media === "audio" ? "durationTooLong" : "videoTooLong"}`, {
-                        max: formatAudioDurationSeconds(limits.maxMs ?? 0),
-                        clips,
-                      })
-                    : rejection.kind === "totalTooShort"
-                      ? t(
-                          `${prefix}.${media === "audio" ? "durationTotalTooShort" : "videoTotalTooShort"}`,
-                          {
-                            min: formatAudioDurationSeconds(rejection.limitMs),
-                            total: formatAudioDurationSeconds(rejection.totalMs),
-                            clips,
-                          },
-                        )
-                      : t(
-                          `${prefix}.${media === "audio" ? "durationTotalTooLong" : "videoTotalTooLong"}`,
-                          {
-                            max: formatAudioDurationSeconds(rejection.limitMs),
-                            total: formatAudioDurationSeconds(rejection.totalMs),
-                            clips,
-                          },
-                        );
-              toast.error(message, { duration: 5_000 });
-              updateNodeData(id, {
-                isGenerating: false,
-                generationStartedAt: null,
-              });
-              return false;
-            }
-            return true;
-          };
           if (!(await validateReferenceDurations("audio", audioRefs))) return;
           if (!(await validateReferenceDurations("video", videoRefs))) return;
           doSubmit = (targetId) =>
@@ -3210,6 +3284,7 @@ export const VideoNode = memo(
             durationBounds={durationBounds}
             sceneOptimize={sceneOptimize}
             sceneOptimizeOptions={sceneOptimizeOptions}
+            supportsGenerateAudio={supportsGenerateAudio}
             generateAudio={generateAudio}
             supportsHumanReview={supportsHumanReview}
             humanReview={humanReview}

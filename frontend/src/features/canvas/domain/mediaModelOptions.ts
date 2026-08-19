@@ -61,6 +61,26 @@ function normalizeOptions(values: string[] | null | undefined): string[] {
   return (values ?? []).map((item) => item.trim()).filter(Boolean);
 }
 
+/**
+ * 分辨率在界面上一律使用小写展示。
+ *
+ * 只用于显示，不改变节点保存值、计费档位或提交给后端的原始值；这样也能兼容
+ * 旧目录里仍然存在的 `2K` / `1080P`。
+ */
+export function formatResolutionLabel(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function normalizeRatioOptions(values: string[] | null | undefined): string[] {
+  return [
+    ...new Set(
+      normalizeOptions(values).map((item) =>
+        ['auto', 'adaptive'].includes(item.toLowerCase()) ? 'auto' : item,
+      ),
+    ),
+  ];
+}
+
 /** 选中模型支持的分辨率档位；目录没配就用兜底。 */
 export function resolveModelSizeOptions(
   model: MediaModelCapabilities | null | undefined,
@@ -75,7 +95,7 @@ export function resolveModelAspectOptions(
   model: MediaModelCapabilities | null | undefined,
   fallback: readonly string[] = FALLBACK_IMAGE_ASPECT_OPTIONS,
 ): string[] {
-  const configured = normalizeOptions(model?.ratioOptions);
+  const configured = normalizeRatioOptions(model?.ratioOptions);
   return configured.length > 0 ? configured : [...fallback];
 }
 

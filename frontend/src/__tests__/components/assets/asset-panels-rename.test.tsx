@@ -14,6 +14,7 @@ import { server } from "@/__mocks__/msw/server";
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
 const taskControllerMock = vi.hoisted(() => vi.fn());

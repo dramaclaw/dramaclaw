@@ -17,6 +17,7 @@ const handleSessionExpiredMock = vi.hoisted(() => vi.fn(async () => undefined));
 // test-only ky instance with an absolute `baseUrl` so requests reach MSW.
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
   handleSessionExpired: handleSessionExpiredMock,
 }));
 

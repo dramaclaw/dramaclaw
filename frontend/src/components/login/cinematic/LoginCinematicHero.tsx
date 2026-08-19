@@ -5,13 +5,10 @@ import { useTranslation } from "react-i18next";
 import { Brand } from "@/components/login/login-stage";
 import Aurora from "@/components/react-bits/aurora";
 import SplitText from "@/components/react-bits/split-text";
+import { AppleMark, GithubMark, WindowsMark } from "@/components/platform-marks";
+import { useDesktopRelease } from "@/hooks/use-desktop-release";
 import { PRODUCT_MANUAL_URL } from "@/lib/product-manual";
-import {
-  FALLBACK_DOWNLOAD_URL,
-  detectDesktopPlatform,
-  resolveDesktopDownloadUrl,
-  type DesktopPlatform,
-} from "@/lib/desktop-download";
+import { detectDesktopPlatform, type DesktopPlatform } from "@/lib/desktop-download";
 import styles from "@/components/login/login.module.css";
 import layout from "./hero-layout.module.css";
 import { businessWechatQrUrl } from "./media";
@@ -59,71 +56,6 @@ function useGithubStars(repo: string): number {
   return stars;
 }
 
-let cachedDownloadUrls: Record<DesktopPlatform, string> | null = null;
-
-/**
- * 按钮初始指向 GitHub Releases 兜底(永远可点),挂载后解析 CDN 上的版本
- * 指针(latest*.yml)原地替换成当前安装包直链;解析失败保持兜底。模块级
- * 缓存与 useGithubStars 同款:同一次会话只解析一遍。
- */
-function useDesktopDownloadUrls(): Record<DesktopPlatform, string> {
-  const [urls, setUrls] = useState<Record<DesktopPlatform, string>>(
-    cachedDownloadUrls ?? {
-      mac: FALLBACK_DOWNLOAD_URL,
-      windows: FALLBACK_DOWNLOAD_URL,
-    },
-  );
-
-  useEffect(() => {
-    if (cachedDownloadUrls !== null) return;
-    let active = true;
-    Promise.all(
-      (["mac", "windows"] as const).map(
-        async (os) => [os, await resolveDesktopDownloadUrl(os)] as const,
-      ),
-    ).then((entries) => {
-      const next: Record<DesktopPlatform, string> = {
-        mac: FALLBACK_DOWNLOAD_URL,
-        windows: FALLBACK_DOWNLOAD_URL,
-      };
-      for (const [os, url] of entries) {
-        if (url) next[os] = url;
-      }
-      cachedDownloadUrls = next;
-      if (active) setUrls(next);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  return urls;
-}
-
-function GithubMark() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 2.9-.39c.98 0 1.97.13 2.9.39 2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.06.78 2.14 0 1.55-.01 2.8-.01 3.18 0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5z" />
-    </svg>
-  );
-}
-
-function AppleMark() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M16.36 12.72c.02-2.32 1.9-3.43 1.98-3.49-1.08-1.58-2.76-1.8-3.36-1.82-1.43-.14-2.79.84-3.52.84-.72 0-1.84-.82-3.03-.8-1.56.02-3 .9-3.8 2.29-1.62 2.81-.41 6.97 1.16 9.25.77 1.11 1.69 2.36 2.9 2.32 1.16-.05 1.6-.75 3.01-.75 1.4 0 1.8.75 3.03.72 1.25-.02 2.04-1.13 2.8-2.25.88-1.29 1.25-2.54 1.27-2.6-.03-.01-2.43-.94-2.44-3.71zM14.1 5.98c.64-.78 1.07-1.85.95-2.93-.92.04-2.03.61-2.69 1.38-.59.69-1.11 1.79-.97 2.84 1.02.08 2.07-.52 2.71-1.29z" />
-    </svg>
-  );
-}
-
-function WindowsMark() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M3 5.7l7.2-.98v6.95H3V5.7zm0 12.6l7.2.98v-6.86H3v5.88zm8.05 1.09L21 20.75v-8.34h-9.95v6.98zM11.05 4.6v7.07H21V3.25l-9.95 1.35z" />
-    </svg>
-  );
-}
-
 /**
  * Installer downloads, in the header next to 商务联系 / Star. The detected
  * platform is listed first so the common case is the first thing under the
@@ -132,7 +64,7 @@ function WindowsMark() {
 function DesktopDownload() {
   const { t } = useTranslation();
   const [platform, setPlatform] = useState<DesktopPlatform>("mac");
-  const downloadUrls = useDesktopDownloadUrls();
+  const releases = useDesktopRelease();
 
   // Detect after mount so a cached/prerendered shell can't bake in the wrong
   // platform's ordering.
@@ -166,7 +98,7 @@ function DesktopDownload() {
               <a
                 key={os}
                 className={styles.desktopDownloadItem}
-                href={downloadUrls[os]}
+                href={releases[os].url}
                 download
               >
                 <Mark />

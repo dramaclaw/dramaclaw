@@ -113,6 +113,12 @@ export interface MediaModelEntry {
   config?: Record<string, unknown>;
 }
 
+export type FeatureModelConfigChangeSource = 'user' | 'hydrate' | 'profile';
+
+export interface FeatureModelConfigMutationOptions {
+  source?: FeatureModelConfigChangeSource;
+}
+
 export interface EmbeddingModelEntry {
   provider: FeatureModelProvider;
   /** 固定内部模型名 DC-cognee-embedding 对应的上游 embedding 模型。 */
@@ -213,17 +219,53 @@ interface SettingsState {
   enableUpdateDialog: boolean;
   mediaStorage: MediaStorageSettings;
   featureModelConfig: FeatureModelSettings;
-  updateFeatureModel: (featureId: string, patch: Partial<FeatureModelEntry>) => void;
-  setMediaModels: (models: Record<string, MediaModelEntry>) => void;
-  setEmbeddingModel: (model: EmbeddingModelEntry | undefined) => void;
-  setProviderUpstreamKey: (provider: string, key: string) => void;
-  addFeatureProviderChannel: (provider: FeatureModelProvider) => void;
+  featureModelConfigUserRevision: number;
+  featureModelConfigProfileSyncedRevision: number;
+  featureModelConfigProfileSyncPending: boolean;
+  featureModelConfigBackendSnapshotKey: string;
+  markFeatureModelConfigProfileSynced: (consumedRevision: number) => void;
+  hydrateFeatureModelConfigFromBackend: (
+    snapshot: Pick<
+      FeatureModelSettings,
+      'providerChannels' | 'providerKeys' | 'mediaModels' | 'embeddingModel'
+    >,
+    snapshotKey: string
+  ) => void;
+  updateFeatureModel: (
+    featureId: string,
+    patch: Partial<FeatureModelEntry>,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
+  setMediaModels: (
+    models: Record<string, MediaModelEntry>,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
+  setEmbeddingModel: (
+    model: EmbeddingModelEntry | undefined,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
+  setProviderUpstreamKey: (
+    provider: string,
+    key: string,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
+  addFeatureProviderChannel: (
+    provider: FeatureModelProvider,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
   updateFeatureProviderChannel: (
     provider: FeatureModelProvider,
-    patch: Partial<Omit<FeatureProviderChannel, 'provider'>>
+    patch: Partial<Omit<FeatureProviderChannel, 'provider'>>,
+    options?: FeatureModelConfigMutationOptions
   ) => void;
-  clearFeatureProviderUpstreamKey: (provider: FeatureModelProvider) => void;
-  removeFeatureProviderChannel: (provider: FeatureModelProvider) => void;
+  clearFeatureProviderUpstreamKey: (
+    provider: FeatureModelProvider,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
+  removeFeatureProviderChannel: (
+    provider: FeatureModelProvider,
+    options?: FeatureModelConfigMutationOptions
+  ) => void;
   setMediaStorageProvider: (provider: MediaStorageProvider) => void;
   setMediaStorageFullyManagedUpload: (enabled: boolean) => void;
   updateCloudinaryStorageConfig: (patch: Partial<CloudinaryStorageConfig>) => void;
@@ -406,12 +448,61 @@ function normalizeFeatureModelSettings(
   return { featureModels, mediaModels, embeddingModel, providerKeys, providerChannels };
 }
 
+export function normalizeMediaModelEntries(
+  models: Record<string, MediaModelEntry>
+): Record<string, MediaModelEntry> {
+  return Object.fromEntries(
+    Object.entries(models)
+      .map(([model, entry]) => [
+        model.trim(),
+        {
+          provider: normalizeFeatureModelProvider(entry.provider),
+          upstreamModel:
+            typeof entry.upstreamModel === 'string' ? entry.upstreamModel.trim() : '',
+          ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
+          ...(entry.label?.trim() ? { label: entry.label.trim() } : {}),
+          enabled: entry.enabled !== false,
+          sortOrder: entry.sortOrder ?? 100,
+          config: entry.config ?? {},
+        },
+      ] as const)
+      .filter(([model]) => Boolean(model))
+  );
+}
+
+function nextFeatureModelConfigUserRevision(
+  current: number,
+  options: FeatureModelConfigMutationOptions | undefined
+): number {
+  return options?.source === 'hydrate' || options?.source === 'profile'
+    ? current
+    : current + 1;
+}
+
+function nextFeatureModelConfigMutationMeta(
+  currentRevision: number,
+  currentPending: boolean,
+  options: FeatureModelConfigMutationOptions | undefined
+): Pick<
+  SettingsState,
+  'featureModelConfigUserRevision' | 'featureModelConfigProfileSyncPending'
+> {
+  const nextRevision = nextFeatureModelConfigUserRevision(currentRevision, options);
+  return {
+    featureModelConfigUserRevision: nextRevision,
+    featureModelConfigProfileSyncPending:
+      nextRevision !== currentRevision ? true : currentPending,
+  };
+}
+
 function prepareFeatureModelSettingsForPersistence(
   input: Partial<FeatureModelSettings> | null | undefined
 ): FeatureModelSettings {
   const normalized = normalizeFeatureModelSettings(input);
   return {
-    ...normalized,
+    featureModels: normalized.featureModels,
+    mediaModels: {},
+    embeddingModel: undefined,
     providerKeys: {},
     providerChannels: {},
   };
@@ -527,7 +618,43 @@ export const useSettingsStore = create<SettingsState>()(
       enableUpdateDialog: true,
       mediaStorage: DEFAULT_MEDIA_STORAGE_SETTINGS,
       featureModelConfig: DEFAULT_FEATURE_MODEL_SETTINGS,
-      updateFeatureModel: (featureId, patch) =>
+      featureModelConfigUserRevision: 0,
+      featureModelConfigProfileSyncedRevision: 0,
+      featureModelConfigProfileSyncPending: false,
+      featureModelConfigBackendSnapshotKey: '',
+      markFeatureModelConfigProfileSynced: (consumedRevision) =>
+        set((state) => ({
+          featureModelConfigProfileSyncedRevision: consumedRevision,
+          featureModelConfigProfileSyncPending:
+            state.featureModelConfigUserRevision > consumedRevision,
+        })),
+      hydrateFeatureModelConfigFromBackend: (snapshot, snapshotKey) =>
+        set((state) => {
+          const next = normalizeFeatureModelSettings({
+            featureModels: state.featureModelConfig.featureModels,
+            ...snapshot,
+          });
+          const backendChanged =
+            JSON.stringify({
+              providerChannels: state.featureModelConfig.providerChannels,
+              providerKeys: state.featureModelConfig.providerKeys,
+              mediaModels: state.featureModelConfig.mediaModels,
+              embeddingModel: state.featureModelConfig.embeddingModel,
+            }) !==
+            JSON.stringify({
+              providerChannels: next.providerChannels,
+              providerKeys: next.providerKeys,
+              mediaModels: next.mediaModels,
+              embeddingModel: next.embeddingModel,
+            });
+          return {
+            featureModelConfig: next,
+            featureModelConfigBackendSnapshotKey: snapshotKey,
+            featureModelConfigProfileSyncPending:
+              backendChanged || state.featureModelConfigProfileSyncPending,
+          };
+        }),
+      updateFeatureModel: (featureId, patch, options) =>
         set((state) => {
           const nextFeatureModels = { ...state.featureModelConfig.featureModels };
           const prev = nextFeatureModels[featureId] ?? {
@@ -543,48 +670,59 @@ export const useSettingsStore = create<SettingsState>()(
             nextFeatureModels[featureId] = { provider, model };
           }
           return {
+            ...nextFeatureModelConfigMutationMeta(
+              state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               featureModels: nextFeatureModels,
             },
           };
         }),
-      setMediaModels: (models) =>
+      setMediaModels: (models, options) =>
         set((state) => ({
+          ...nextFeatureModelConfigMutationMeta(
+            state.featureModelConfigUserRevision,
+            state.featureModelConfigProfileSyncPending,
+            options
+          ),
           featureModelConfig: {
             ...state.featureModelConfig,
-            mediaModels: Object.fromEntries(
-              Object.entries(models)
-                .map(([model, entry]) => [
-                  model.trim(),
-                  {
-                    provider: normalizeFeatureModelProvider(entry.provider),
-                    upstreamModel: entry.upstreamModel.trim(),
-                    ...(entry.mediaType ? { mediaType: entry.mediaType } : {}),
-                    ...(entry.label?.trim() ? { label: entry.label.trim() } : {}),
-                    enabled: entry.enabled !== false,
-                    sortOrder: entry.sortOrder ?? 100,
-                    config: entry.config ?? {},
-                  },
-                ] as const)
-                .filter(([model]) => Boolean(model))
-            ),
+            mediaModels: normalizeMediaModelEntries(models),
           },
         })),
-      setEmbeddingModel: (model) =>
+      setEmbeddingModel: (model, options) =>
         set((state) => ({
+          ...nextFeatureModelConfigMutationMeta(
+            state.featureModelConfigUserRevision,
+            state.featureModelConfigProfileSyncPending,
+            options
+          ),
           featureModelConfig: {
             ...state.featureModelConfig,
             embeddingModel: model
               ? {
                   provider: normalizeFeatureModelProvider(model.provider),
-                  upstreamModel: model.upstreamModel.trim(),
+                  upstreamModel:
+                    typeof model.upstreamModel === 'string'
+                      ? model.upstreamModel.trim()
+                      : '',
                   dimension: Math.max(1, Math.round(Number(model.dimension) || 0)),
+                  ...(model.batchSize != null
+                    ? {
+                        batchSize: Math.max(
+                          1,
+                          Math.round(Number(model.batchSize) || 0),
+                        ),
+                      }
+                    : {}),
                 }
               : undefined,
           },
         })),
-      setProviderUpstreamKey: (provider, key) =>
+      setProviderUpstreamKey: (provider, key, options) =>
         set((state) => {
           const normalized = normalizeFeatureModelProvider(provider);
           const nextKeys = { ...state.featureModelConfig.providerKeys };
@@ -599,6 +737,11 @@ export const useSettingsStore = create<SettingsState>()(
             nextChannels[normalized] = { ...nextChannels[normalized], upstreamKey: trimmed };
           }
           return {
+            ...nextFeatureModelConfigMutationMeta(
+              state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               providerKeys: nextKeys,
@@ -606,13 +749,18 @@ export const useSettingsStore = create<SettingsState>()(
             },
           };
         }),
-      addFeatureProviderChannel: (provider) =>
+      addFeatureProviderChannel: (provider, options) =>
         set((state) => {
           const normalized = normalizeFeatureModelProvider(provider);
           if (state.featureModelConfig.providerChannels[normalized]) {
             return state;
           }
           return {
+            ...nextFeatureModelConfigMutationMeta(
+              state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               providerChannels: {
@@ -628,7 +776,7 @@ export const useSettingsStore = create<SettingsState>()(
             },
           };
         }),
-      updateFeatureProviderChannel: (provider, patch) =>
+      updateFeatureProviderChannel: (provider, patch, options) =>
         set((state) => {
           const normalized = normalizeFeatureModelProvider(provider);
           const prev = state.featureModelConfig.providerChannels[normalized] ?? {
@@ -649,6 +797,11 @@ export const useSettingsStore = create<SettingsState>()(
             delete nextKeys[normalized];
           }
           return {
+            ...nextFeatureModelConfigMutationMeta(
+              state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               providerKeys: nextKeys,
@@ -659,7 +812,7 @@ export const useSettingsStore = create<SettingsState>()(
             },
           };
         }),
-      clearFeatureProviderUpstreamKey: (provider) =>
+      clearFeatureProviderUpstreamKey: (provider, options) =>
         set((state) => {
           const normalized = normalizeFeatureModelProvider(provider);
           const nextKeys = { ...state.featureModelConfig.providerKeys };
@@ -669,6 +822,11 @@ export const useSettingsStore = create<SettingsState>()(
             nextChannels[normalized] = { ...nextChannels[normalized], upstreamKey: '' };
           }
           return {
+            ...nextFeatureModelConfigMutationMeta(
+              state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               providerKeys: nextKeys,
@@ -676,7 +834,7 @@ export const useSettingsStore = create<SettingsState>()(
             },
           };
         }),
-      removeFeatureProviderChannel: (provider) =>
+      removeFeatureProviderChannel: (provider, options) =>
         set((state) => {
           const normalized = normalizeFeatureModelProvider(provider);
           const nextChannels = { ...state.featureModelConfig.providerChannels };
@@ -705,6 +863,11 @@ export const useSettingsStore = create<SettingsState>()(
               : state.featureModelConfig.embeddingModel;
 
           return {
+            ...nextFeatureModelConfigMutationMeta(
+              state.featureModelConfigUserRevision,
+              state.featureModelConfigProfileSyncPending,
+              options
+            ),
             featureModelConfig: {
               ...state.featureModelConfig,
               featureModels: nextFeatureModels,
@@ -792,12 +955,28 @@ export const useSettingsStore = create<SettingsState>()(
       // workflows. The backend settings database is their source of truth;
       // keeping them in the global startup store can exhaust localStorage or
       // make hydration block the whole application after a refresh.
-      partialize: (state) => ({
-        ...state,
-        featureModelConfig: prepareFeatureModelSettingsForPersistence(
-          state.featureModelConfig
-        ),
-      }),
+      partialize: (state) => {
+        const {
+          featureModelConfigUserRevision: _featureModelConfigUserRevision,
+          featureModelConfigProfileSyncedRevision:
+            _featureModelConfigProfileSyncedRevision,
+          featureModelConfigProfileSyncPending:
+            _featureModelConfigProfileSyncPending,
+          featureModelConfigBackendSnapshotKey:
+            _featureModelConfigBackendSnapshotKey,
+          ...persisted
+        } = state;
+        void _featureModelConfigUserRevision;
+        void _featureModelConfigProfileSyncedRevision;
+        void _featureModelConfigProfileSyncPending;
+        void _featureModelConfigBackendSnapshotKey;
+        return {
+          ...persisted,
+          featureModelConfig: prepareFeatureModelSettingsForPersistence(
+            state.featureModelConfig
+          ),
+        };
+      },
       onRehydrateStorage: () => {
         return (_state, error) => {
           if (error) {

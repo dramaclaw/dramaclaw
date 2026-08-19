@@ -87,6 +87,9 @@ export async function uploadBeatBackgroundAnchor(
     {
       method: "POST",
       body: form,
+      // No timeout on uploads: the clock would race the user's uplink, not the
+      // server (see uploadApi in lib/api.ts).
+      timeout: false,
     },
   );
 }

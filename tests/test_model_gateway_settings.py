@@ -1533,7 +1533,7 @@ def test_official_media_catalog_preferences_and_remote_update(monkeypatch, tmp_p
     monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_URL", source_url)
     payload = {
         "version": 1,
-        "catalogVersion": "2026.08.06.2",
+        "catalogVersion": "2026.08.14.2",
         "name": "Test official media models",
         "mediaModels": {
             "test-video": {
@@ -1573,7 +1573,7 @@ def test_official_media_catalog_preferences_and_remote_update(monkeypatch, tmp_p
     assert checked.status_code == 200, checked.text
     assert checked.json()["data"]["updated"] is True
     assert current.json()["data"]["source"] == "remote"
-    assert current.json()["data"]["catalogVersion"] == "2026.08.06.2"
+    assert current.json()["data"]["catalogVersion"] == "2026.08.14.2"
     assert current.json()["data"]["modelCount"] == 1
 
 
@@ -1596,7 +1596,7 @@ def test_official_media_catalog_manifest_verifies_hash_and_revalidates_etag(
     monkeypatch.setenv("OFFICIAL_MEDIA_CATALOG_MANIFEST_URL", manifest_url)
     payload = {
         "version": 1,
-        "catalogVersion": "2026.08.07.1",
+        "catalogVersion": "2026.08.14.3",
         "name": "Test official media models",
         "mediaModels": {
             "test-video": {
@@ -3000,22 +3000,47 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     videos = get_official_media_model_catalog("video")
 
     assert len(images) == 6
-    assert len(videos) == 7
+    assert len(videos) == 8
     assert [entry["id"] for entry in videos[:2]] == [
         "seedance-2.0-fast",
         "seedance-2.0",
     ]
     seedream = next(entry for entry in images if entry["id"] == "seedream-5.0-pro")
     assert seedream["gatewayModel"] == "seedream-5.0-pro"
-    assert seedream["resolutionOptions"] == ["1K", "2K"]
+    assert seedream["resolutionOptions"] == ["1k", "2k"]
     assert seedream["minPixels"] == 3686400
     seedance = next(entry for entry in videos if entry["id"] == "seedance-2.0-mini")
     assert seedance["apiModel"] == "newapi_seedance-2.0-mini"
     assert "video_edit" in seedance["supportedModes"]
+    happyhorse_11 = next(entry for entry in videos if entry["id"] == "happyhorse-1.1")
+    assert happyhorse_11["gatewayModel"] == "happyhorse-1.1"
+    assert happyhorse_11["minDuration"] == 3
+    assert happyhorse_11["maxDuration"] == 15
+    assert happyhorse_11["ratioOptions"] == [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4",
+        "21:9",
+        "9:21",
+        "5:4",
+        "4:5",
+    ]
+    assert happyhorse_11["supportedModes"] == [
+        "text_to_video",
+        "first_frame",
+        "image_to_video",
+        "image_reference",
+    ]
+    assert happyhorse_11["supportsGenerateAudio"] is False
+    assert happyhorse_11["referenceImageMax"] == 9
+    assert happyhorse_11["referenceVideoMax"] == 0
+    assert happyhorse_11["referenceAudioMax"] == 0
     minimax = videos[-1]
     assert minimax["id"] == "MiniMax-H3"
     assert minimax["gatewayModel"] == "MiniMax-H3"
-    assert minimax["resolutionOptions"] == ["768P", "2K"]
+    assert minimax["resolutionOptions"] == ["768p", "2k"]
     assert minimax["ratioOptions"] == [
         "21:9",
         "16:9",

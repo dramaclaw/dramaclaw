@@ -514,6 +514,7 @@ def save_newapi_media_model_mappings(
     mappings: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     from novelvideo.media_model_request_schema import (
+        normalize_media_model_catalog_config,
         validate_media_model_catalog_config,
     )
 
@@ -528,6 +529,7 @@ def save_newapi_media_model_mappings(
         media_type = str(item.get("mediaType") or "").strip().lower()
         config = item.get("config") if isinstance(item.get("config"), dict) else {}
         if media_type in {"image", "video"}:
+            config = normalize_media_model_catalog_config(config)
             validate_media_model_catalog_config(config, media_type)
         normalized_item: dict[str, Any] = {
             "provider": provider,
@@ -743,6 +745,8 @@ def _media_model_catalog(
     provider: str | None = None,
     include_disabled: bool = False,
 ) -> list[dict[str, Any]]:
+    from novelvideo.media_model_request_schema import normalize_media_model_catalog_config
+
     wanted = str(media_type or "").strip().lower()
     if wanted not in {"image", "video"}:
         return []
@@ -754,7 +758,7 @@ def _media_model_catalog(
         if item.get("mediaType") != wanted or (disabled and not include_disabled):
             continue
         config = item.get("config") if isinstance(item.get("config"), dict) else {}
-        config = dict(config)
+        config = normalize_media_model_catalog_config(config)
         config.setdefault(
             "request",
             {

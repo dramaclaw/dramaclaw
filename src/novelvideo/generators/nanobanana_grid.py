@@ -167,11 +167,20 @@ def _newapi_safe_request_context(
 ) -> dict[str, object]:
     reference_images = payload.get("image")
     reference_image_count = len(reference_images) if isinstance(reference_images, list) else 0
+    raw_metadata = payload.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    geometry_metadata = {
+        key: metadata[key]
+        for key in ("ratio", "aspect_ratio", "resolution")
+        if key in metadata
+    }
     return {
         "endpoint": f"{endpoint}{request_path}",
         "model": model,
         "payload_keys": sorted(payload.keys()),
-        "size": payload.get("size") or "",
+        "width": payload.get("width") or "",
+        "height": payload.get("height") or "",
+        "geometry_metadata": geometry_metadata,
         "reference_image_count": reference_image_count,
         "prompt_chars": len(prompt or ""),
         "prompt_sha256": hashlib.sha256((prompt or "").encode("utf-8")).hexdigest()[:16],
@@ -183,7 +192,9 @@ def _newapi_context_for_error(context: dict[str, object]) -> str:
         f"model={context.get('model')}; "
         f"endpoint={context.get('endpoint')}; "
         f"payload_keys={context.get('payload_keys')}; "
-        f"size={context.get('size')}; "
+        f"width={context.get('width')}; "
+        f"height={context.get('height')}; "
+        f"geometry_metadata={context.get('geometry_metadata')}; "
         f"reference_image_count={context.get('reference_image_count')}; "
         f"prompt_sha256={context.get('prompt_sha256')}"
     )
@@ -443,10 +454,15 @@ def resolve_openai_image_size(
     long_edges = {
         "512": 1024,
         "0.5K": 1024,
+        "0.5k": 1024,
         "1K": 1024,
+        "1k": 1024,
         "2K": 2048,
+        "2k": 2048,
         "3K": 3072,
+        "3k": 3072,
         "4K": 3840,
+        "4k": 3840,
     }
     long_edge = long_edges.get(normalized_size)
     dynamic_max_edge = _OPENAI_MAX_EDGE
@@ -3398,28 +3414,44 @@ async def _call_newapi_image_api(
         return None, "", "DramaClawAPI API key is missing"
 
     image_config = image_config or {}
-    aspect_ratio = str(image_config.get("aspect_ratio") or "1:1").strip() or "1:1"
+    aspect_ratio = str(image_config.get("aspect_ratio") or "1:1").strip().lower() or "1:1"
     image_size = normalize_image_size(str(image_config.get("image_size") or "1K"), "newapi")
     request_schema = image_config.get("request_schema") or {}
-    try:
-        size = resolve_openai_image_size(
-            aspect_ratio,
-            image_size,
-            model,
-            allow_dynamic_resolution=True,
-            min_pixels=request_schema.get("minPixels"),
-        )
-    except ValueError as exc:
-        return None, "", str(exc)
+    from novelvideo.media_model_request_schema import normalize_media_resolution_value
 
+    resolution = normalize_media_resolution_value(image_size)
+
+    metadata: dict[str, object] = {"resolution": resolution}
     payload: dict[str, object] = {
         "model": model,
         "prompt": prompt,
-        "size": size,
         "n": 1,
         "response_format": "b64_json",
         "watermark": False,
+        "metadata": metadata,
     }
+    if aspect_ratio in {"auto", "adaptive"}:
+        # Images use ``auto`` as the public follow-input ratio value. Keep
+        # resolution independent and let NewAPI infer the geometry.
+        metadata["ratio"] = "auto"
+    else:
+        # Fixed geometry keeps the selected ratio as semantic metadata while
+        # width/height carry the pixel expectation. All three values come from
+        # this same aspect-ratio/resolution pair.
+        metadata["ratio"] = aspect_ratio
+        try:
+            size = resolve_openai_image_size(
+                aspect_ratio,
+                image_size,
+                model,
+                allow_dynamic_resolution=True,
+                min_pixels=request_schema.get("minPixels"),
+            )
+        except ValueError as exc:
+            return None, "", str(exc)
+        width, height = (int(value) for value in size.split("x", 1))
+        payload["width"] = width
+        payload["height"] = height
     include_quality = bool(
         request_schema.get("includeQuality")
     ) or _newapi_image_model_supports_quality(model)
@@ -3445,13 +3477,17 @@ async def _call_newapi_image_api(
     else:
         request_path = "/images/generations"
 
-    from novelvideo.media_model_request_schema import apply_media_request_schema
+    from novelvideo.media_model_request_schema import (
+        apply_media_request_schema,
+        enforce_newapi_media_geometry_contract,
+    )
 
     payload = apply_media_request_schema(
         payload,
         request_schema,
         image_config.get("model_params") or {},
     )
+    payload = enforce_newapi_media_geometry_contract(payload, media_type="image")
 
     if base_url:
         endpoint = base_url.rstrip("/")

@@ -1,0 +1,897 @@
+/* SPDX-License-Identifier: Elastic-2.0
+ * Copyright (c) 2026 ClaymoreLab
+ *
+ * 下载页样式。与登录页同属对外落地页,不走应用内主题 token:
+ * 这一页锁死深色,配色取自品牌 DC 标本身的材质 —— 镀锌钢板(锌灰刻度)
+ * 加锈蚀氧化(锈橙)。静止态的锈橙只给 hero 的 DC 字样、「你的系统」标记、
+ * 主下载按钮、hero 底部校准条和预览里渲染中的节点;其余只能是焦点环和
+ * hover 反馈。偏离主规范的边界见 DESIGN.md 的 Scope & Exceptions。
+ */
+
+.page {
+  --ink: #101216;
+  --ink-deep: #0b0c0f;
+  --panel: #171a1f;
+  --card: #1d2127;
+  --card-hi: #23282f;
+
+  --line: rgba(168, 180, 190, 0.12);
+  --line-soft: rgba(168, 180, 190, 0.07);
+  --line-hard: rgba(168, 180, 190, 0.22);
+
+  --text: #e9ecef;
+  --text-mid: #b4bdc6;
+  --dim: #868f99;
+  --dim-deep: #5c646d;
+
+  --zinc: #a8b4be;
+  --rust: #d9603a;
+  --rust-hot: #ee7549;
+  --rust-dim: rgba(217, 96, 58, 0.16);
+
+  --s2: 16px;
+  --s3: 24px;
+  --s4: 40px;
+  --s5: 64px;
+
+  --sans: "Geist Variable", -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono",
+    "Roboto Mono", monospace;
+
+  /* 应用外壳把 html/body/#root 锁成 height:100% + overflow:hidden(固定视口的
+     工作台布局),落地页得自己开一个滚动容器,否则整页滚不动。 */
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scroll-behavior: smooth;
+
+  min-height: 100dvh;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.page :focus-visible {
+  outline: 2px solid var(--rust-hot);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.wrap {
+  width: 100%;
+  max-width: 1440px;
+  margin-inline: auto;
+  padding-inline: clamp(20px, 4vw, 56px);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 区块眉标:中文名 / 英文名,右侧补一条发丝线拉满宽度 */
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 var(--s3);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--dim-deep);
+}
+
+.eyebrow::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line-soft);
+}
+
+.eyebrow b {
+  color: var(--zinc);
+  font-weight: 500;
+}
+
+.h2 {
+  margin: 0;
+  font-size: clamp(1.7rem, 3.2vw, 2.4rem);
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.lede {
+  margin: var(--s2) 0 0;
+  max-width: 58ch;
+  color: var(--text-mid);
+}
+
+.section {
+  padding-block: clamp(64px, 10vh, 112px);
+}
+
+/* ── 顶栏 ───────────────────────────────────────── */
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(16, 18, 22, 0.72);
+  backdrop-filter: saturate(150%) blur(14px);
+  -webkit-backdrop-filter: saturate(150%) blur(14px);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* 顶栏不跟内容区共用居中容器:品牌贴页面左上角,GitHub 贴右上角。 */
+.topInner {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  height: 64px;
+  padding-inline: clamp(20px, 2.4vw, 36px);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: auto;
+}
+
+.brandMark {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+}
+
+.brandWordmark {
+  display: block;
+  height: 15px;
+  width: auto;
+  opacity: 0.92;
+}
+
+.topNav {
+  display: flex;
+  gap: var(--s3);
+}
+
+.topNav a {
+  font-size: 13.5px;
+  color: var(--dim);
+  transition: color 180ms ease;
+}
+
+.topNav a:hover {
+  color: var(--text);
+}
+
+.star {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding-inline: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 12.5px;
+  color: var(--text-mid);
+  transition:
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.star:hover {
+  border-color: var(--line-hard);
+  color: var(--text);
+}
+
+.star svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Hero ───────────────────────────────────────── */
+.hero {
+  position: relative;
+  padding-top: clamp(56px, 11vh, 118px);
+  overflow: hidden;
+}
+
+/* 顶光:一束很淡的锌白模拟机身打光,底下压一点锈橙 */
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: -220px 0 auto;
+  height: 520px;
+  pointer-events: none;
+  background:
+    radial-gradient(58% 100% at 50% 0%, rgba(168, 180, 190, 0.1), transparent 70%),
+    radial-gradient(30% 70% at 50% 0%, rgba(217, 96, 58, 0.07), transparent 72%);
+}
+
+/* 宽屏两栏:左边文案,右边下载卡片,免得内容全挤在左半边、右边空一整片。
+   窄屏(<1040px)回落成单栏,卡片跟在文案下面。 */
+.heroInner {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s5);
+  align-items: start;
+}
+
+@media (min-width: 1040px) {
+  .heroInner {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+    gap: clamp(40px, 5vw, 88px);
+  }
+}
+
+/* 右栏顶部与左栏字标齐平,不让卡片浮在半空。 */
+.heroAside {
+  padding-top: 6px;
+}
+
+.heroWordmark {
+  display: block;
+  width: min(460px, 74%);
+  height: auto;
+  margin-bottom: var(--s4);
+}
+
+.heroTitle {
+  margin: 0;
+  max-width: 17ch;
+  font-size: clamp(2.3rem, 5.6vw, 3.9rem);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.06;
+  text-wrap: balance;
+}
+
+.heroTitle em {
+  font-style: normal;
+  color: var(--zinc);
+}
+
+/* 与登录页同一句 slogan:中文主句在上,英文副线宽字距排在下,DC 挑出来上重音。 */
+.heroSlogan {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin: 14px 0 0;
+  font-family: var(--mono);
+  font-size: clamp(0.8rem, 1.4vw, 1rem);
+  letter-spacing: 0.38em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.heroSlogan em {
+  font-style: normal;
+  color: var(--rust-hot);
+}
+
+.heroSub {
+  margin: var(--s3) 0 0;
+  max-width: 52ch;
+  font-size: clamp(1rem, 1.4vw, 1.0625rem);
+  color: var(--text-mid);
+}
+
+.heroNote {
+  margin: var(--s3) 0 0;
+  max-width: 760px;
+  font-size: 12.5px;
+  color: var(--dim-deep);
+}
+
+.heroNote a {
+  color: var(--zinc);
+  border-bottom: 1px solid var(--line);
+}
+
+.heroNote a:hover {
+  color: var(--text);
+}
+
+/* ── 平台卡 ─────────────────────────────────────── */
+.platforms {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s2);
+}
+
+/* 进了右栏就只有一列宽度,两张卡改成上下叠。 */
+@media (min-width: 1040px) {
+  .platforms {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.platform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--card) 0%, var(--panel) 100%);
+  transition:
+    border-color 200ms ease,
+    transform 200ms ease;
+}
+
+.platform:hover {
+  border-color: var(--line-hard);
+  transform: translateY(-2px);
+}
+
+.platformDetected {
+  border-color: rgba(217, 96, 58, 0.34);
+  background:
+    linear-gradient(180deg, rgba(217, 96, 58, 0.07) 0%, transparent 55%),
+    linear-gradient(180deg, var(--card) 0%, var(--panel) 100%);
+}
+
+.platformDetected:hover {
+  border-color: rgba(217, 96, 58, 0.55);
+}
+
+.platformHead {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.platformHead svg {
+  flex: none;
+  width: 21px;
+  height: 21px;
+  color: var(--text);
+}
+
+.platformName {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.platformTag {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 1px solid rgba(217, 96, 58, 0.34);
+  border-radius: 3px;
+  background: var(--rust-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rust);
+}
+
+/* 读数表:像机身上的铭牌 */
+.readout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px var(--s2);
+  margin: 0;
+  padding-block: 12px;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.readout dt {
+  color: var(--dim-deep);
+  letter-spacing: 0.06em;
+}
+
+.readout dd {
+  margin: 0;
+  text-align: right;
+  color: var(--text-mid);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding-inline: 20px;
+  border: 1px solid var(--line-hard);
+  border-radius: 7px;
+  background: var(--card-hi);
+  color: var(--text);
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease;
+}
+
+.button:hover {
+  background: #2a3038;
+  border-color: rgba(168, 180, 190, 0.34);
+}
+
+.button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.buttonPrimary {
+  background: var(--rust);
+  border-color: var(--rust);
+  color: #14100e;
+}
+
+.buttonPrimary:hover {
+  background: var(--rust-hot);
+  border-color: var(--rust-hot);
+}
+
+/* ── 校准条:全页唯一横贯的高饱和元素 ───────────── */
+.strip {
+  position: relative;
+  margin-top: clamp(56px, 9vh, 96px);
+  height: 26px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
+  background: repeating-linear-gradient(
+    90deg,
+    var(--line-hard) 0 1px,
+    transparent 1px 14px
+  );
+}
+
+.strip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -1px;
+  height: 2px;
+  width: var(--strip-width, 0%);
+  background: linear-gradient(90deg, var(--rust), rgba(217, 96, 58, 0));
+  transition: width 1400ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── 界面窗口 ───────────────────────────────────── */
+.shotFrame {
+  margin: var(--s4) 0 0;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  overflow: hidden;
+  background: var(--panel);
+  box-shadow: 0 32px 80px -40px rgba(0, 0, 0, 0.9);
+}
+
+.shotBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding-inline: 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.shotDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #33393f;
+}
+
+.shotTitle {
+  margin-left: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--dim-deep);
+}
+
+.shotBody {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--ink-deep);
+}
+
+.shotCaption {
+  margin: var(--s2) 0 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--dim-deep);
+}
+
+/* ── 能力四宫格 ─────────────────────────────────── */
+.capabilityGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(248px, 1fr));
+  gap: 1px;
+  margin-top: var(--s4);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--line-soft);
+}
+
+.capabilityCell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px 24px 30px;
+  background: var(--ink);
+  transition: background 220ms ease;
+}
+
+.capabilityCell:hover {
+  background: var(--panel);
+}
+
+.capabilityCell svg {
+  width: 22px;
+  height: 22px;
+  color: var(--zinc);
+}
+
+.capabilityCell h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.capabilityCell p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--dim);
+}
+
+/* ── 版本 + 更新日志 ────────────────────────────── */
+.releaseGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  gap: clamp(32px, 6vw, 72px);
+  align-items: start;
+  margin-top: var(--s4);
+}
+
+.spec {
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.spec dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 11px var(--s2);
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spec dt {
+  white-space: nowrap;
+  letter-spacing: 0.06em;
+  color: var(--dim-deep);
+}
+
+.spec dd {
+  margin: 0;
+  text-align: right;
+  color: var(--text-mid);
+}
+
+.specOk {
+  color: var(--zinc);
+}
+
+/* SHA-512 是 88 个 base64 字符,塞不进上面那张两列 dl。单独一行,整段可见
+   不做省略号 —— 核验的动作就是原样比对,截断了这块就白放了。 */
+.checksum {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.checksumHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  color: var(--dim-deep);
+}
+
+.checksumCopy {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: none;
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--text-mid);
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.checksumCopy:hover {
+  border-color: var(--rust-hot);
+  color: var(--rust-hot);
+}
+
+.checksumValue {
+  margin: 9px 0 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.75;
+  word-break: break-all;
+  color: var(--text-mid);
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+.checksumNote {
+  margin: 7px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--dim-deep);
+}
+
+/* 更新日志是真时间序,所以左列的日期刻度是信息而不是装饰 */
+.changelog {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.changelog li {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: var(--s3);
+  padding-block: 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.changelog li:first-child {
+  padding-top: 0;
+}
+
+.changelog li:last-child {
+  border-bottom: 0;
+}
+
+/* 左栏:版本号在上(读得见),发布日期在下(次要)。 */
+.changelogMeta {
+  padding-top: 2px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  line-height: 1.7;
+}
+
+.changelogMeta span {
+  display: block;
+  color: var(--zinc);
+}
+
+.changelog time {
+  display: block;
+  color: var(--dim-deep);
+}
+
+.changelog b {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.008em;
+}
+
+.changelog p {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+
+/* ── FAQ ────────────────────────────────────────── */
+.faq {
+  margin-top: var(--s4);
+  border-top: 1px solid var(--line-soft);
+}
+
+.faq details {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.faq summary {
+  position: relative;
+  display: block;
+  padding: 20px 44px 20px 0;
+  list-style: none;
+  cursor: pointer;
+  font-size: 15.5px;
+  font-weight: 500;
+  letter-spacing: -0.008em;
+  color: var(--text-mid);
+  transition: color 180ms ease;
+}
+
+.faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.faq summary:hover {
+  color: var(--text);
+}
+
+.faq summary::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -6px;
+  border-right: 1.5px solid var(--dim);
+  border-bottom: 1.5px solid var(--dim);
+  transform: rotate(45deg);
+  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.faq details[open] summary {
+  color: var(--text);
+}
+
+.faq details[open] summary::after {
+  margin-top: -2px;
+  transform: rotate(-135deg);
+}
+
+.faqAnswer {
+  margin: 0;
+  padding: 0 44px 24px 0;
+  max-width: 66ch;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--dim);
+}
+
+.faqAnswer code {
+  padding: 1px 5px;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  background: var(--card);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--zinc);
+}
+
+.faqAnswer a {
+  color: var(--zinc);
+  border-bottom: 1px solid var(--line);
+}
+
+.faqAnswer a:hover {
+  color: var(--text);
+}
+
+/* ── 页脚 ───────────────────────────────────────── */
+.footer {
+  padding: var(--s4) 0 var(--s5);
+  border-top: 1px solid var(--line-soft);
+  background: var(--ink-deep);
+}
+
+.footerRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.footerWordmark {
+  height: 13px;
+  width: auto;
+  opacity: 0.55;
+}
+
+.footerLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  margin-left: auto;
+}
+
+.footerLinks a {
+  font-size: 13px;
+  color: var(--dim);
+  transition: color 180ms ease;
+}
+
+.footerLinks a:hover {
+  color: var(--text);
+}
+
+.footerMeta {
+  margin: var(--s3) 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--dim-deep);
+}
+
+/* ── 进场 ───────────────────────────────────────── */
+.rise {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 700ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 700ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.riseIn {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page *,
+  .page *::after,
+  .page *::before {
+    animation: none !important;
+    transition-duration: 1ms !important;
+  }
+
+  .rise {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .releaseGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .topNav {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .platforms {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .changelog li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}

@@ -69,10 +69,161 @@ class MediaModelSchemaError(ValueError):
     pass
 
 
+def normalize_media_resolution_value(value: object) -> str:
+    """Normalize named resolution tiers without rewriting explicit pixel sizes."""
+
+    clean = str(value or "").strip()
+    lowered = clean.lower()
+    if re.fullmatch(r"(?:\d+(?:\.\d+)?k|\d{3,4}p)", lowered):
+        return lowered
+    return clean
+
+
+def normalize_media_model_catalog_config(config: object) -> dict[str, Any]:
+    """Return a storage-safe catalog config with canonical public option values."""
+
+    if not isinstance(config, dict):
+        raise MediaModelSchemaError("media model config must be an object")
+    normalized = copy.deepcopy(config)
+    # Briefly introduced during development, then removed when native-audio
+    # defaults were fixed by product policy (supported => on by default).
+    # Drop it on save/import so previewed local configs do not retain dead data.
+    normalized.pop("defaultGenerateAudio", None)
+    resolutions = normalized.get("resolutionOptions")
+    if isinstance(resolutions, list):
+        seen: set[str] = set()
+        canonical: list[object] = []
+        for item in resolutions:
+            value = normalize_media_resolution_value(item) if isinstance(item, str) else item
+            identity = f"{type(value).__name__}:{value!s}"
+            if identity in seen:
+                continue
+            seen.add(identity)
+            canonical.append(value)
+        normalized["resolutionOptions"] = canonical
+    ratios = normalized.get("ratioOptions")
+    if isinstance(ratios, list):
+        seen_ratios: set[str] = set()
+        canonical_ratios: list[object] = []
+        for item in ratios:
+            value: object = item
+            if isinstance(item, str):
+                clean = item.strip()
+                value = "auto" if clean.lower() in {"auto", "adaptive"} else clean
+            identity = f"{type(value).__name__}:{value!s}"
+            if identity in seen_ratios:
+                continue
+            seen_ratios.add(identity)
+            canonical_ratios.append(value)
+        normalized["ratioOptions"] = canonical_ratios
+    return normalized
+
+
 def normalize_media_model_mode(mode: str | None) -> str:
     """Normalize canvas business mode names to media catalog mode names."""
     raw_mode = str(mode or "")
     return MODE_ALIASES.get(raw_mode, raw_mode)
+
+
+def enforce_newapi_media_geometry_contract(
+    payload: dict[str, Any], *, media_type: str
+) -> dict[str, Any]:
+    """Enforce the final mutually exclusive NewAPI geometry representation.
+
+    Fixed geometry keeps its semantic ratio and derived width/height together.
+    Follow-input geometry is expressed by a canonical ratio value without
+    dimensions. Resolution remains independent in metadata for both forms.
+    """
+
+    result = copy.deepcopy(payload)
+    raw_metadata = result.get("metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    resolution = normalize_media_resolution_value(
+        metadata.get("resolution") or result.pop("resolution", None)
+    )
+    if resolution:
+        metadata["resolution"] = resolution
+
+    ratio = str(
+        metadata.get("ratio")
+        or metadata.get("aspect_ratio")
+        or result.get("ratio")
+        or result.get("aspect_ratio")
+        or ""
+    ).strip().lower()
+    result.pop("ratio", None)
+    result.pop("aspect_ratio", None)
+    # ``size`` is a retired merged geometry alias. Public NewAPI requests use
+    # numeric width/height for fixed geometry and omit all dimensions for auto.
+    result.pop("size", None)
+    if ratio in {"auto", "adaptive"}:
+        metadata["ratio"] = "auto"
+        metadata.pop("aspect_ratio", None)
+        result.pop("width", None)
+        result.pop("height", None)
+    else:
+        if ratio:
+            metadata["ratio"] = ratio
+        metadata.pop("aspect_ratio", None)
+
+    if metadata:
+        result["metadata"] = metadata
+    else:
+        result.pop("metadata", None)
+    return result
+
+
+def enforce_newapi_video_duration_contract(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the final generic NewAPI duration without provider aliases."""
+
+    result = copy.deepcopy(payload)
+    raw_duration = result.get("duration", result.get("seconds"))
+    result.pop("seconds", None)
+    if str(raw_duration or "").strip().lower() == "auto":
+        result["duration"] = "auto"
+        return result
+    try:
+        duration = float(str(raw_duration))
+    except (TypeError, ValueError):
+        result.pop("duration", None)
+        return result
+    if duration <= 0:
+        result.pop("duration", None)
+        return result
+    result["duration"] = int(duration) if duration.is_integer() else duration
+    return result
+
+
+def enforce_newapi_video_mode_contract(
+    payload: dict[str, Any],
+    *,
+    mode: str | None,
+    fixed_duration: int | float | None = None,
+) -> dict[str, Any]:
+    """Apply product-level invariants that model parameters may not override."""
+
+    result = copy.deepcopy(payload)
+    if normalize_media_model_mode(mode) != "video_edit":
+        if (
+            str(result.get("duration") or result.get("seconds") or "")
+            .strip()
+            .lower()
+            == "auto"
+            and fixed_duration is not None
+        ):
+            result["duration"] = fixed_duration
+            result.pop("seconds", None)
+        return result
+
+    raw_metadata = result.get("metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    metadata["ratio"] = "auto"
+    metadata.pop("aspect_ratio", None)
+    result["metadata"] = metadata
+    result["duration"] = "auto"
+    for key in ("seconds", "ratio", "aspect_ratio", "size", "width", "height"):
+        result.pop(key, None)
+    return result
 
 
 def _validate_js_number(value: int | float, field: str) -> None:
@@ -254,6 +405,7 @@ def validate_media_model_catalog_config(
             "referenceVideoTotalMinSeconds",
             "referenceVideoTotalMaxSeconds",
             "humanReview",
+            "supportsGenerateAudio",
             "sceneOptimizeOptions",
             "defaultSceneOptimize",
         }
@@ -364,6 +516,11 @@ def validate_media_model_catalog_config(
     if human_review is not None and not isinstance(human_review, bool):
         raise MediaModelSchemaError("humanReview must be boolean")
 
+    supports_generate_audio = config.get("supportsGenerateAudio")
+    if supports_generate_audio is not None and not isinstance(
+        supports_generate_audio, bool
+    ):
+        raise MediaModelSchemaError("supportsGenerateAudio must be boolean")
     default_scene = config.get("defaultSceneOptimize")
     scene_options = config.get("sceneOptimizeOptions") or []
     if default_scene is not None and (

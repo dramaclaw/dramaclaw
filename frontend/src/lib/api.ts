@@ -135,3 +135,21 @@ export const api = ky.create({
     ],
   },
 });
+
+/**
+ * The same client with the request timeout switched off — use it for every
+ * multipart/file upload.
+ *
+ * ky's `timeout` wraps the whole fetch, request body included, so on an upload
+ * it races the user's upstream bandwidth rather than the server's health: a
+ * 4 MB portrait on a 1 Mbps uplink needs ~32s and gets aborted at 30. The edge
+ * logs it as HTTP 499 with `upstream_addr: "-"` — the request body never even
+ * finished streaming, so the backend never saw the file. Users just see
+ * "upload timed out" and retry until the network happens to be fast enough.
+ *
+ * There is no timeout value that is right here: upload duration is
+ * file size / uplink, both unknown to us. Uploads are bounded by the caller's
+ * AbortSignal (page navigation, region switch, an explicit cancel button)
+ * instead of by a clock.
+ */
+export const uploadApi = api.extend({ timeout: false });
