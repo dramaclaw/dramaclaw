@@ -49,7 +49,9 @@ def test_resolved_feature_settlement_builds_authoritative_billing_snapshot() -> 
 
 
 @pytest.mark.parametrize("field", ["feature_key", "model_call_credit_policy"])
-def test_non_resolved_feature_settlement_rejects_authoritative_fields(field: str) -> None:
+def test_non_resolved_feature_settlement_rejects_authoritative_fields(
+    field: str,
+) -> None:
     from novelvideo.ports.usage import FeatureSettlementResolution
 
     with pytest.raises(ValueError, match="non-resolved"):
@@ -69,4 +71,3 @@ def test_feature_settlement_rejects_unknown_outcome() -> None:
 
     with pytest.raises(ValueError, match="outcome"):
         FeatureSettlementResolution(outcome="unknown")
-
