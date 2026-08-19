@@ -729,16 +729,25 @@ def run_project_task_core_sync(
                 "error_id": uuid.uuid4().hex,
             },
         )
-        manager.fail_task_for_project(
-            ctx,
-            task_type,
-            episode,
-            beat_num=beat_num,
-            scope=scope,
-            error="feature settlement resolution failed",
-            metadata={**run_metadata, "error_code": error_code},
-            expected_task_id=run_task_id,
-        )
+        try:
+            manager.fail_task_for_project(
+                ctx,
+                task_type,
+                episode,
+                beat_num=beat_num,
+                scope=scope,
+                error="feature settlement resolution failed",
+                metadata={**run_metadata, "error_code": error_code},
+                expected_task_id=run_task_id,
+            )
+        except Exception as terminalization_exc:  # noqa: BLE001
+            logger.error(
+                "feature_settlement_resolution_fast_path_failed",
+                extra={
+                    "safe_error_type": type(terminalization_exc).__name__,
+                    "error_id": uuid.uuid4().hex,
+                },
+            )
         asyncio.run(
             _emit_project_task_metrics(
                 ctx,
