@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -31,12 +32,27 @@ async def _install_route_fakes(monkeypatch, tmp_path: Path, capabilities: dict) 
     captured: dict = {}
 
     async def resolve_project(_project, _user):
-        return object(), "admin", "project", tmp_path, str(tmp_path / "output")
+        return (
+            SimpleNamespace(requester_user_id="user-1"),
+            "admin",
+            "project",
+            tmp_path,
+            str(tmp_path / "output"),
+        )
 
-    async def resolve_backend(_model):
+    async def resolve_backend(_model, *, requester_user_id):
+        assert requester_user_id == "user-1"
         return "newapi_seedance-2.0-mini"
 
-    async def resolve_request(_media_type, _model, _params, *, mode):
+    async def resolve_request(
+        _media_type,
+        _model,
+        _params,
+        *,
+        mode,
+        requester_user_id,
+    ):
+        assert requester_user_id == "user-1"
         captured["request_mode"] = mode
         return None, {}, capabilities
 
