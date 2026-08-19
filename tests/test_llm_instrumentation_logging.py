@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from novelvideo import llm_instrumentation
@@ -74,3 +76,56 @@ async def test_video_failure_forwards_empty_reservation_for_observability(
             {"source": "seedance_2", "error": "provider unavailable"},
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_feature_included_agent_and_litellm_share_one_instrumentation_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic_ai import Agent
+
+    events: list[tuple[str, object]] = []
+    fake_litellm = SimpleNamespace()
+
+    async def provider_acompletion(*args, **kwargs):
+        events.append(
+            (
+                "provider",
+                llm_instrumentation._MODEL_CALL_INSTRUMENTATION_ACTIVE.get(),
+            )
+        )
+        return SimpleNamespace(id="response_1", usage={})
+
+    fake_litellm.acompletion = provider_acompletion
+
+    async def original_agent_run(self, *args, **kwargs):
+        await fake_litellm.acompletion(model="gateway-text-model", messages=[])
+        return SimpleNamespace(output="ok")
+
+    async def reserve_feature_included(**kwargs):
+        events.append(("reserve", kwargs["metadata"]["source"]))
+        return ""
+
+    async def forward_agent_usage(self, result, *, credit_reservation_id: str):
+        events.append(("finish", credit_reservation_id))
+
+    monkeypatch.setattr(Agent, "run", original_agent_run)
+    monkeypatch.setattr(llm_instrumentation, "_agent_run_patched", False)
+    monkeypatch.setattr(llm_instrumentation, "_litellm_acompletion_patched", False)
+    monkeypatch.setattr(llm_instrumentation, "_meter_reserve", reserve_feature_included)
+    monkeypatch.setattr(
+        llm_instrumentation, "_forward_agent_usage", forward_agent_usage
+    )
+
+    llm_instrumentation._patch_litellm_acompletion(fake_litellm)
+    llm_instrumentation._install_agent_run_patch()
+
+    result = await Agent.run(SimpleNamespace(model="gateway-text-model"), "prompt")
+
+    assert result.output == "ok"
+    assert events == [
+        ("reserve", "pydantic_ai_agent_run"),
+        ("provider", True),
+        ("finish", ""),
+    ]
+    assert llm_instrumentation._MODEL_CALL_INSTRUMENTATION_ACTIVE.get() is False

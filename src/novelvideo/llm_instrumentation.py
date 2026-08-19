@@ -29,10 +29,14 @@ _CREDIT_RESERVATION_STACK: contextvars.ContextVar[tuple[str, ...]] = contextvars
     "st_credit_reservation_stack",
     default=(),
 )
-_AGENT_CREDIT_RESERVATION_ACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "st_agent_credit_reservation_active",
+_MODEL_CALL_INSTRUMENTATION_ACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "st_model_call_instrumentation_active",
     default=False,
 )
+# Compatibility for EE releases that imported the old internal name. New code
+# must use the instrumentation-scope name: an empty billing reservation can
+# still own the single model-call log for a feature-included invocation.
+_AGENT_CREDIT_RESERVATION_ACTIVE = _MODEL_CALL_INSTRUMENTATION_ACTIVE
 
 _ALLOWED_RESOURCE_KINDS = frozenset(
     {"portrait", "sketch", "render", "video", "tts", "script", "ingest"}
@@ -111,12 +115,22 @@ def _pop_credit_reservation() -> str:
     return reservation_id
 
 
+def set_model_call_instrumentation_active(active: bool = True):
+    return _MODEL_CALL_INSTRUMENTATION_ACTIVE.set(active)
+
+
+def reset_model_call_instrumentation_active(token) -> None:
+    _MODEL_CALL_INSTRUMENTATION_ACTIVE.reset(token)
+
+
 def set_model_call_reservation_active(active: bool):
-    return _AGENT_CREDIT_RESERVATION_ACTIVE.set(active)
+    """Compatibility alias; the flag represents logging ownership, not billing."""
+    return set_model_call_instrumentation_active(active)
 
 
 def reset_model_call_reservation_active(token) -> None:
-    _AGENT_CREDIT_RESERVATION_ACTIVE.reset(token)
+    """Compatibility alias for older EE integrations."""
+    reset_model_call_instrumentation_active(token)
 
 
 def _extract_model_name(agent: object) -> str:
@@ -428,6 +442,30 @@ async def _forward_agent_usage(
     from novelvideo.ports import get_usage_meter
 
     meter = get_usage_meter()
+    try:
+        usage_fn = getattr(result, "usage", None)
+        usage = usage_fn() if callable(usage_fn) else None
+        if usage is not None:
+            in_tok = (
+                getattr(usage, "input_tokens", None)
+                or getattr(usage, "request_tokens", None)
+                or 0
+            )
+            out_tok = (
+                getattr(usage, "output_tokens", None)
+                or getattr(usage, "response_tokens", None)
+                or 0
+            )
+            await meter.record_llm_tokens(
+                user_id=user_id,
+                input_tokens=int(in_tok or 0),
+                output_tokens=int(out_tok or 0),
+                model=model,
+                project_id=project_id,
+                resource_kind=resource_kind,
+            )
+    except Exception as e:
+        logger.debug("forward_agent_usage failed: %s", e)
     await meter.bump_model_call(
         user_id=user_id,
         model=model,
@@ -438,25 +476,6 @@ async def _forward_agent_usage(
         credit_reservation_id=credit_reservation_id,
         metadata=meta,
     )
-    try:
-        usage_fn = getattr(result, "usage", None)
-        usage = usage_fn() if callable(usage_fn) else None
-        if usage is None:
-            return
-        in_tok = getattr(usage, "input_tokens", None) or getattr(usage, "request_tokens", None) or 0
-        out_tok = (
-            getattr(usage, "output_tokens", None) or getattr(usage, "response_tokens", None) or 0
-        )
-        await meter.record_llm_tokens(
-            user_id=user_id,
-            input_tokens=int(in_tok or 0),
-            output_tokens=int(out_tok or 0),
-            model=model,
-            project_id=project_id,
-            resource_kind=resource_kind,
-        )
-    except Exception as e:
-        logger.debug("forward_agent_usage failed: %s", e)
 
 
 def _install_pydantic_ai_openai_trace_patch() -> None:
@@ -540,7 +559,7 @@ def _install_agent_run_patch() -> None:
                 },
             },
         )
-        token = _AGENT_CREDIT_RESERVATION_ACTIVE.set(bool(reservation_id))
+        token = _MODEL_CALL_INSTRUMENTATION_ACTIVE.set(True)
         try:
             result = await original_run(self, *args, **kwargs)
         except BaseException as exc:
@@ -550,7 +569,7 @@ def _install_agent_run_patch() -> None:
             )
             raise
         finally:
-            _AGENT_CREDIT_RESERVATION_ACTIVE.reset(token)
+            _MODEL_CALL_INSTRUMENTATION_ACTIVE.reset(token)
         try:
             await _forward_agent_usage(self, result, credit_reservation_id=reservation_id)
         except Exception:
@@ -581,6 +600,18 @@ async def _forward_litellm_success(
     from novelvideo.ports import get_usage_meter
 
     meter = get_usage_meter()
+    if in_tok > 0 or out_tok > 0:
+        try:
+            await meter.record_llm_tokens(
+                user_id=user_id,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                model=model,
+                project_id=project_id,
+                resource_kind=resource_kind,
+            )
+        except Exception as e:
+            logger.debug("litellm usage emit failed: %s", e)
     await meter.bump_model_call(
         user_id=user_id,
         model=model,
@@ -591,19 +622,6 @@ async def _forward_litellm_success(
         credit_reservation_id=credit_reservation_id,
         metadata=meta,
     )
-    if in_tok <= 0 and out_tok <= 0:
-        return
-    try:
-        await meter.record_llm_tokens(
-            user_id=user_id,
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-            model=model,
-            project_id=project_id,
-            resource_kind=resource_kind,
-        )
-    except Exception as e:
-        logger.debug("litellm usage emit failed: %s", e)
 
 
 def _patch_litellm_acompletion(litellm_module: object) -> None:
@@ -615,7 +633,7 @@ def _patch_litellm_acompletion(litellm_module: object) -> None:
         return
 
     async def _tracked_acompletion(*args, **kwargs):
-        if _AGENT_CREDIT_RESERVATION_ACTIVE.get() or not _USER_CTX.get():
+        if _MODEL_CALL_INSTRUMENTATION_ACTIVE.get() or not _USER_CTX.get():
             return await original_acompletion(*args, **kwargs)
         model = str(kwargs.get("model") or (args[0] if args else "") or "").strip()
         if not model:
@@ -630,7 +648,7 @@ def _patch_litellm_acompletion(litellm_module: object) -> None:
                 "request_payload": _json_log_value(kwargs),
             },
         )
-        token = _AGENT_CREDIT_RESERVATION_ACTIVE.set(bool(reservation_id))
+        token = _MODEL_CALL_INSTRUMENTATION_ACTIVE.set(True)
         try:
             response = await original_acompletion(*args, **kwargs)
         except BaseException as exc:
@@ -640,7 +658,7 @@ def _patch_litellm_acompletion(litellm_module: object) -> None:
             )
             raise
         finally:
-            _AGENT_CREDIT_RESERVATION_ACTIVE.reset(token)
+            _MODEL_CALL_INSTRUMENTATION_ACTIVE.reset(token)
         call_kwargs = dict(kwargs)
         call_kwargs.setdefault("model", model)
         try:
@@ -670,7 +688,7 @@ def _install_litellm_hook() -> None:
             return _extract_litellm_usage(kwargs, response_obj)
 
         async def _forward_success(self, kwargs, response_obj) -> None:
-            if _AGENT_CREDIT_RESERVATION_ACTIVE.get():
+            if _MODEL_CALL_INSTRUMENTATION_ACTIVE.get():
                 return
             reservation_id = _pop_credit_reservation()
             await _forward_litellm_success(
@@ -678,7 +696,7 @@ def _install_litellm_hook() -> None:
             )
 
         async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
-            if _AGENT_CREDIT_RESERVATION_ACTIVE.get():
+            if _MODEL_CALL_INSTRUMENTATION_ACTIVE.get():
                 return None
             if not _USER_CTX.get():
                 return None
@@ -699,6 +717,8 @@ def _install_litellm_hook() -> None:
             return None
 
         async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
+            if _MODEL_CALL_INSTRUMENTATION_ACTIVE.get():
+                return
             reservation_id = _pop_credit_reservation()
             error = kwargs.get("exception") if isinstance(kwargs, dict) else None
             if not isinstance(error, BaseException):
@@ -711,6 +731,8 @@ def _install_litellm_hook() -> None:
         def log_failure_event(self, kwargs, response_obj, start_time, end_time):
             import asyncio
 
+            if _MODEL_CALL_INSTRUMENTATION_ACTIVE.get():
+                return
             reservation_id = _pop_credit_reservation()
             error = kwargs.get("exception") if isinstance(kwargs, dict) else None
             if not isinstance(error, BaseException):
