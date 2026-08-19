@@ -2,7 +2,51 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol
+from dataclasses import dataclass
+from typing import Any, Literal, Optional, Protocol
+
+
+@dataclass(frozen=True)
+class VerifiedTaskSettlementIdentity:
+    """Signed task identity used to resolve durable settlement state."""
+
+    root_task_id: str
+    project_id: str
+    requester_user_id: str
+    task_type: str
+    episode: int
+    beat_num: int | None
+    scope: str | None
+
+
+@dataclass(frozen=True)
+class FeatureSettlementResolution:
+    """Authoritative feature-reservation lookup result."""
+
+    outcome: Literal["not_applicable", "resolved", "ambiguous", "conflict"]
+    reservation_id: str = ""
+
+    def __post_init__(self) -> None:
+        allowed = {"not_applicable", "resolved", "ambiguous", "conflict"}
+        if self.outcome not in allowed:
+            raise ValueError("unsupported feature settlement outcome")
+        clean_reservation_id = str(self.reservation_id or "").strip()
+        if self.outcome == "resolved" and not clean_reservation_id:
+            raise ValueError("resolved settlement requires reservation_id")
+        if self.outcome != "resolved" and clean_reservation_id:
+            raise ValueError("non-resolved settlement forbids reservation_id")
+        object.__setattr__(self, "reservation_id", clean_reservation_id)
+
+
+class FeatureSettlementResolutionRejected(RuntimeError):
+    """Durable evidence cannot select one reservation safely."""
+
+    def __init__(self, outcome: Literal["ambiguous", "conflict"]) -> None:
+        if outcome not in {"ambiguous", "conflict"}:
+            raise ValueError("unsupported rejected settlement outcome")
+        self.outcome = outcome
+        self.code = f"FEATURE_SETTLEMENT_RESOLUTION_{outcome.upper()}"
+        super().__init__("feature settlement resolution is not safe to execute")
 
 
 class FeatureCreditSettlementConflict(RuntimeError):
@@ -15,6 +59,11 @@ class FeatureCreditSettlementConflict(RuntimeError):
 
 
 class UsageMeter(Protocol):
+    async def resolve_feature_credit_reservation(
+        self,
+        identity: VerifiedTaskSettlementIdentity,
+    ) -> FeatureSettlementResolution: ...
+
     async def reserve_current_model_call_credit(
         self,
         *,

@@ -8,9 +8,19 @@ from novelvideo.llm_instrumentation import (
     clear_llm_usage_context,
     set_llm_usage_context,
 )
+from novelvideo.ports.usage import (
+    FeatureSettlementResolution,
+    VerifiedTaskSettlementIdentity,
+)
 
 
 class NoOpUsageMeter:
+    async def resolve_feature_credit_reservation(
+        self,
+        identity: VerifiedTaskSettlementIdentity,
+    ) -> FeatureSettlementResolution:
+        return FeatureSettlementResolution(outcome="not_applicable")
+
     async def reserve_current_model_call_credit(
         self,
         *,
