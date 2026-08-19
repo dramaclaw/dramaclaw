@@ -22,6 +22,7 @@ import {
   ListTree,
   MoreHorizontal,
   Navigation,
+  Palette,
   Pencil,
   Play,
   ScrollText,
@@ -88,6 +89,7 @@ const NODE_TYPE_ICON: Record<CanvasNodeType, LucideIcon> = {
   [CANVAS_NODE_TYPES.pano360Viewer]: Globe,
   [CANVAS_NODE_TYPES.threeDWorld]: Box,
   [CANVAS_NODE_TYPES.skill]: Sparkles,
+  [CANVAS_NODE_TYPES.style]: Palette,
 };
 
 /** 缩略图取节点自己的画面；视频/音频这类没有静帧的走图标兜底。 */
