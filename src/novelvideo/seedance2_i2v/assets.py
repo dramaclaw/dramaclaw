@@ -21,9 +21,7 @@ from novelvideo.models import (
     resolve_scene_plate,
 )
 from novelvideo.project_config import (
-    load_effective_narration_style_for_voice,
     load_effective_narration_style_for_voice_from_state_dir,
-    load_narrator_reference_audio,
     load_narrator_reference_audio_from_state_dir,
 )
 from novelvideo.seedance2_i2v.character_voice_storage import probe_voice_sample_duration_seconds
@@ -792,25 +790,14 @@ def _dialogue_voice_assets(
     return refs
 
 
-def _project_owner_from_output(project_output: Path) -> tuple[str, str]:
-    project = _text(project_output.name)
-    username = _text(project_output.parent.name)
-    return username, project
-
-
 def _narration_voice_asset(
     *,
     project_output: Path,
     characters: list[Any],
-    state_dir: str | Path | None = None,
+    state_dir: str | Path,
 ) -> dict[str, Any]:
-    username, project = _project_owner_from_output(project_output)
     try:
-        style = (
-            load_effective_narration_style_for_voice_from_state_dir(state_dir)
-            if state_dir
-            else load_effective_narration_style_for_voice(username, project)
-        )
+        style = load_effective_narration_style_for_voice_from_state_dir(state_dir)
     except Exception:
         style = DEFAULT_NARRATION_STYLE
 
@@ -827,11 +814,7 @@ def _narration_voice_asset(
             }
 
     try:
-        descriptor = (
-            load_narrator_reference_audio_from_state_dir(state_dir)
-            if state_dir
-            else load_narrator_reference_audio(username, project)
-        )
+        descriptor = load_narrator_reference_audio_from_state_dir(state_dir)
     except Exception:
         descriptor = {}
     stored_path = _text(descriptor.get("path")) if isinstance(descriptor, dict) else ""
@@ -854,10 +837,10 @@ def build_seedance2_project_assets(
     episode: int,
     beat: dict[str, Any],
     mode: Seedance2I2VMode,
+    state_dir: str | Path,
     next_beat: dict[str, Any] | None = None,
     characters: list[Any] | None = None,
     prop_menu: list[Any] | None = None,
-    state_dir: str | Path | None = None,
 ) -> list[Seedance2ResolvedAsset]:
     """Resolve project assets in the order used for Seedance 2.0 requests."""
 

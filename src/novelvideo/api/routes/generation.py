@@ -934,6 +934,7 @@ async def _prepare_seedance2_api_beat(
     )
     prepared = await prepare_seedance2_generation_inputs(
         project_output=output_dir,
+        state_dir=Path(store.state_dir),
         episode=episode,
         beat=beat,
         next_beat=all_beats[index + 1] if index + 1 < len(all_beats) else None,
@@ -966,6 +967,7 @@ async def _prepare_seedance2_api_beat(
 async def _prepare_happyhorse_api_beat(
     *,
     output_dir: str | Path,
+    state_dir: str | Path,
     episode: int,
     beat: dict[str, Any],
     next_beat: dict[str, Any] | None,
@@ -1016,6 +1018,7 @@ async def _prepare_happyhorse_api_beat(
             episode=episode,
             beat=beat,
             mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+            state_dir=state_dir,
             next_beat=next_beat,
             prop_menu=prop_menu,
         )
@@ -1046,6 +1049,7 @@ async def _prepare_happyhorse_api_beat(
 async def _prepare_grok_video_api_beat(
     *,
     output_dir: str | Path,
+    state_dir: str | Path,
     episode: int,
     beat: dict[str, Any],
     next_beat: dict[str, Any] | None,
@@ -1096,6 +1100,7 @@ async def _prepare_grok_video_api_beat(
             episode=episode,
             beat=beat,
             mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+            state_dir=state_dir,
             next_beat=next_beat,
             prop_menu=prop_menu,
         )
@@ -1355,7 +1360,7 @@ def _seedance2_status_response(
         next_beat=ctx["next_beat"],
         characters=ctx["characters"],
         prop_menu=ctx["prop_menu"],
-        state_dir=str(getattr(ctx["store"], "state_dir", "") or "") or None,
+        state_dir=Path(ctx["store"].state_dir),
     )
     assets = state.assets
     selected_assets = [asset for asset in assets if asset.selected]
@@ -4730,6 +4735,7 @@ async def generate_single_video(
             prop_menu = await _runtime_prop_menu_with_global_props(store, episode_obj, beats)
             prepared = await _prepare_happyhorse_api_beat(
                 output_dir=output_dir,
+                state_dir=Path(store.state_dir),
                 episode=episode_num,
                 beat=beat,
                 next_beat=beats[beat_index + 1] if beat_index + 1 < len(beats) else None,
@@ -4776,6 +4782,7 @@ async def generate_single_video(
             prop_menu = await _runtime_prop_menu_with_global_props(store, episode_obj, beats)
             prepared = await _prepare_grok_video_api_beat(
                 output_dir=output_dir,
+                state_dir=Path(store.state_dir),
                 episode=episode_num,
                 beat=beat,
                 next_beat=beats[beat_index + 1] if beat_index + 1 < len(beats) else None,

@@ -231,21 +231,13 @@ async def _build_director_control_sketch_fields(
 
 async def _build_audio_speech_fields(store: Any, config: Mapping[str, Any]) -> dict[str, Any]:
     from novelvideo.project_config import (
-        load_effective_narration_style_for_voice,
         load_effective_narration_style_for_voice_from_state_dir,
-        load_narrator_reference_audio,
         load_narrator_reference_audio_from_state_dir,
     )
 
-    username = config["username"]
-    project_name = config["project_name"]
-    state_dir = str(getattr(store, "state_dir", "") or "")
-    if state_dir:
-        narration_style = load_effective_narration_style_for_voice_from_state_dir(state_dir)
-        narrator_reference_audio = load_narrator_reference_audio_from_state_dir(state_dir)
-    else:
-        narration_style = load_effective_narration_style_for_voice(username, project_name)
-        narrator_reference_audio = load_narrator_reference_audio(username, project_name)
+    state_dir = store.state_dir
+    narration_style = load_effective_narration_style_for_voice_from_state_dir(state_dir)
+    narrator_reference_audio = load_narrator_reference_audio_from_state_dir(state_dir)
 
     voice_ref = config.get("voice_ref")
     wanted_name = ""

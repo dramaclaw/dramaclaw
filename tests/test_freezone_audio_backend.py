@@ -49,8 +49,9 @@ def _isolate_settings_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
 
 
 class FakeProjectStore:
-    def __init__(self, project_dir: Path):
+    def __init__(self, project_dir: Path, state_dir: Path | None = None):
         self.project_dir = str(project_dir)
+        self.state_dir = str(state_dir or project_dir)
 
     async def list_characters(self):
         from novelvideo.models import CharacterIdentity, NovelCharacter
@@ -338,7 +339,7 @@ async def test_freezone_audio_speech_drama_first_person_uses_project_narrator(
     )
 
     result = await audio_node.generate_freezone_audio_speech(
-        store=FakeProjectStore(project_dir),
+            store=FakeProjectStore(project_dir, tmp_path / "state" / "alice" / "demo"),
         username="alice",
         project="demo",
         project_dir=project_dir,

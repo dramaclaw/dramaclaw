@@ -163,6 +163,7 @@ async def _run_single_video_async(
 
         prepared = await prepare_seedance2_generation_inputs(
             project_output=output_dir,
+            state_dir=ctx.state_dir,
             episode=episode,
             beat={**beat, "seedance2_config_json": seedance2_config or "{}"},
             next_beat=config.get("next_beat"),

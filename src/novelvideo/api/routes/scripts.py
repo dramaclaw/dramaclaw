@@ -571,6 +571,7 @@ async def generate_seedance2_prompt(
 
         saved_json = await generate_seedance2_prompt_for_panel(
             store=store,
+            state_dir=Path(resolved.state_dir),
             episode=episode_num,
             beat=target,
             project_dir=project_dir,

@@ -15,7 +15,7 @@ def test_indextts2_resolves_project_config_from_current_module(monkeypatch):
     from novelvideo.audio import indextts2_beat_audio_task as task
 
     current_project_config = SimpleNamespace(
-        is_narrated_project=lambda _username, _project: True,
+        is_narrated_project_from_state_dir=lambda _state_dir: True,
     )
     monkeypatch.setitem(
         sys.modules,
@@ -23,7 +23,9 @@ def test_indextts2_resolves_project_config_from_current_module(monkeypatch):
         current_project_config,
     )
 
-    assert task._is_narrated_project(SimpleNamespace(), "alice", "demo") is True
+    assert task._is_narrated_project(
+        SimpleNamespace(state_dir="/state/alice/demo"), "alice", "demo"
+    ) is True
 
 
 class _ForeignBillingError(BillingError):

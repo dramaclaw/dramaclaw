@@ -10,10 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.manual_shots import resolve_target_video_duration
-from novelvideo.project_config import (
-    load_project_config_file,
-    set_narrator_reference_audio_in_state_dir,
-)
+from novelvideo.project_config import set_narrator_reference_audio_in_state_dir
 from novelvideo.seedance2_i2v.assets import (
     Seedance2ResolvedAsset,
     apply_prompt_audio_selection,
@@ -75,6 +72,7 @@ class Seedance2VideoPanelState:
 async def save_seedance2_video_panel_config(
     *,
     store: Any,
+    state_dir: str | Path,
     episode: int,
     beat: dict[str, Any],
     mode: str | None = None,
@@ -123,6 +121,7 @@ async def save_seedance2_video_panel_config(
             project_dir=project_dir,
             episode=episode,
             beat=beat,
+            state_dir=state_dir,
             next_beat=next_beat,
             prop_menu=prop_menu,
         )
@@ -167,6 +166,7 @@ async def append_seedance2_prompt_guidance_template(
 async def generate_seedance2_prompt_for_panel(
     *,
     store: Any,
+    state_dir: str | Path,
     episode: int,
     beat: dict[str, Any],
     project_dir: Path,
@@ -184,6 +184,7 @@ async def generate_seedance2_prompt_for_panel(
         episode=episode,
         beat=beat,
         mode=config.mode,
+        state_dir=state_dir,
         next_beat=next_beat,
         prop_menu=prop_menu,
     )
@@ -384,13 +385,13 @@ async def trim_seedance2_audio_to_reference(
     )
 
     if str(asset_key or "").strip() == "voice:narrator":
+        state_dir = str(getattr(store, "state_dir", "") or "")
+        if not state_dir:
+            raise ValueError("项目 state_dir 未解析，无法保存解说声线")
         target = Path(project_dir) / "assets" / "narrator" / "voice.mp3"
         target.parent.mkdir(parents=True, exist_ok=True)
         _archive_narrator_voice_siblings(target)
         target.write_bytes(content)
-        state_dir = str(getattr(store, "state_dir", "") or "")
-        if not state_dir:
-            raise ValueError("项目 state_dir 未解析，无法保存解说声线")
         set_narrator_reference_audio_in_state_dir(
             state_dir,
             relative_path=_project_relative_path(Path(project_dir), target),
@@ -454,10 +455,10 @@ def build_seedance2_video_panel_state(
     project_dir: Path,
     episode: int,
     beat: dict[str, Any],
+    state_dir: str | Path,
     next_beat: dict[str, Any] | None = None,
     characters: list[Any] | None = None,
     prop_menu: list[Any] | None = None,
-    state_dir: str | Path | None = None,
 ) -> Seedance2VideoPanelState:
     config = parse_seedance2_config(beat.get("seedance2_config_json"))
     duration_floor = _seedance2_duration_floor(
@@ -534,54 +535,13 @@ def _unique_paths(values: list[str]) -> list[str]:
     return result
 
 
-def _project_owner_from_output(project_dir: Path) -> tuple[str, str]:
-    return str(project_dir.parent.name or "").strip(), str(project_dir.name or "").strip()
-
-
-def _is_narrated_project(project_dir: Path) -> bool:
-    username, project = _project_owner_from_output(project_dir)
-    config = load_project_config_file(username, project)
-    return str(config.get("spine_template") or "drama") == "narrated"
-
-
-def _existing_user_audio_paths(config: Any, project_dir: Path) -> list[str]:
-    result: list[str] = []
-    for value in list(config.reference_audio_paths):
-        path = Path(str(value or "").strip())
-        if not str(path):
-            continue
-        resolved = path if path.is_absolute() else project_dir / path
-        if resolved.exists():
-            result.append(str(value))
-    return result
-
-
-def _drop_auto_narration_audio_when_user_audio_selected(
-    *,
-    assets: list[Seedance2ResolvedAsset],
-    config: Any,
-    project_dir: Path,
-    beat: dict[str, Any],
-) -> list[Seedance2ResolvedAsset]:
-    if _is_narrated_project(project_dir):
-        return assets
-    if normalize_seedance2_audio_type(beat) != "narration":
-        return assets
-    if not _existing_user_audio_paths(config, project_dir):
-        return assets
-    return [
-        asset
-        for asset in assets
-        if not (asset.media_type == "audio" and str(asset.key).startswith("voice:"))
-    ]
-
-
 def _sync_seedance2_asset_paths(
     *,
     config: Any,
     project_dir: Path,
     episode: int,
     beat: dict[str, Any],
+    state_dir: str | Path,
     next_beat: dict[str, Any] | None = None,
     prop_menu: list[Any] | None = None,
 ) -> None:
@@ -590,6 +550,7 @@ def _sync_seedance2_asset_paths(
         episode=episode,
         beat=beat,
         mode=config.mode,
+        state_dir=state_dir,
         next_beat=next_beat,
         prop_menu=prop_menu,
     )

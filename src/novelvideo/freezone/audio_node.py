@@ -26,8 +26,8 @@ from novelvideo.generators.tts_generator import (
 )
 from novelvideo.ports.model_credentials import ModelCredentialError
 from novelvideo.project_config import (
-    load_effective_narration_style_for_voice,
-    load_narrator_reference_audio,
+    load_effective_narration_style_for_voice_from_state_dir,
+    load_narrator_reference_audio_from_state_dir,
 )
 from novelvideo.seedance2_i2v.voice_clone import (
     build_reference_audio_url,
@@ -473,7 +473,9 @@ async def resolve_speech_voice(
     visible.
     """
     if projection is None:
-        narration_style = load_effective_narration_style_for_voice(username, project)
+        narration_style = load_effective_narration_style_for_voice_from_state_dir(
+            store.state_dir
+        )
         voice_characters = None
         narrator_store = store
     else:
@@ -491,7 +493,7 @@ async def resolve_speech_voice(
     )
     if selected_voice is None:
         if projection is None:
-            descriptor = load_narrator_reference_audio(username, project)
+            descriptor = load_narrator_reference_audio_from_state_dir(store.state_dir)
             characters = (
                 await store.list_characters() if narration_style == "first_person" else None
             )

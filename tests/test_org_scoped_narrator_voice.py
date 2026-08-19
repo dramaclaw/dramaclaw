@@ -319,6 +319,84 @@ def test_seedance2_narration_asset_reads_explicit_state_dir(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_seedance2_prepare_uses_org_state_dir_when_personal_config_conflicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from novelvideo import project_config
+    from novelvideo.seedance2_i2v.pipeline import prepare_seedance2_generation_inputs
+
+    suffix = Path("_orgs") / "org_123" / "alice" / "demo"
+    project_dir = tmp_path / "output" / suffix
+    state_root = tmp_path / "state"
+    state_dir = state_root / suffix
+    scoped_voice = project_dir / "assets" / "narrator" / "scoped.wav"
+    scoped_voice.parent.mkdir(parents=True, exist_ok=True)
+    scoped_voice.write_bytes(b"scoped")
+    monkeypatch.setattr(project_config, "OUTPUT_DIR", state_root)
+    project_config.save_project_config_in_state_dir(
+        state_root / "alice" / "demo",
+        spine_template="narrated",
+        narration_style="first_person",
+    )
+    project_config.save_project_config_in_state_dir(
+        state_dir,
+        spine_template="narrated",
+        narration_style="third_person",
+        narrator_reference_audio_path="assets/narrator/scoped.wav",
+    )
+
+    prepared = await prepare_seedance2_generation_inputs(
+        project_output=project_dir,
+        state_dir=state_dir,
+        episode=1,
+        beat={
+            "beat_number": 1,
+            "audio_type": "narration",
+            "seedance2_config_json": '{"final_prompt":"使用@音频1"}',
+        },
+        video_mode="first_frame",
+        prompt="unused",
+        duration=4,
+    )
+
+    narration = next(asset for asset in prepared.assets if asset.key == "voice:narrator")
+    assert narration.path == scoped_voice
+
+
+@pytest.mark.asyncio
+async def test_seedance2_narrator_trim_without_state_dir_has_no_file_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from novelvideo.seedance2_i2v import panel_service
+
+    project_dir = tmp_path / "output" / "alice" / "demo"
+    source = project_dir / "audio" / "source.wav"
+    target = project_dir / "assets" / "narrator" / "voice.mp3"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"source")
+    target.write_bytes(b"existing")
+    monkeypatch.setattr(
+        panel_service,
+        "trim_voice_sample_content",
+        lambda *_args, **_kwargs: (b"trimmed", "voice.mp3"),
+    )
+
+    with pytest.raises(ValueError, match="state_dir"):
+        await panel_service.trim_seedance2_audio_to_reference(
+            store=SimpleNamespace(),
+            episode=1,
+            beat={"beat_number": 1},
+            project_dir=project_dir,
+            asset_key="voice:narrator",
+            source_path=source,
+        )
+
+    assert target.read_bytes() == b"existing"
+    assert list(target.parent.glob("voice_*")) == []
+
+
+@pytest.mark.asyncio
 async def test_org_scoped_third_person_narrator_uses_project_reference(tmp_path: Path) -> None:
     from novelvideo.audio.indextts2_beat_audio_task import (
         collect_indextts2_voice_prereq_errors,
