@@ -25,17 +25,50 @@ class FeatureSettlementResolution:
 
     outcome: Literal["not_applicable", "resolved", "ambiguous", "conflict"]
     reservation_id: str = ""
+    feature_key: str = ""
+    model_call_credit_policy: str = ""
 
     def __post_init__(self) -> None:
         allowed = {"not_applicable", "resolved", "ambiguous", "conflict"}
         if self.outcome not in allowed:
             raise ValueError("unsupported feature settlement outcome")
         clean_reservation_id = str(self.reservation_id or "").strip()
+        clean_feature_key = str(self.feature_key or "").strip()
+        clean_model_call_credit_policy = str(
+            self.model_call_credit_policy or ""
+        ).strip()
         if self.outcome == "resolved" and not clean_reservation_id:
             raise ValueError("resolved settlement requires reservation_id")
-        if self.outcome != "resolved" and clean_reservation_id:
-            raise ValueError("non-resolved settlement forbids reservation_id")
+        if self.outcome != "resolved" and any(
+            (
+                clean_reservation_id,
+                clean_feature_key,
+                clean_model_call_credit_policy,
+            )
+        ):
+            raise ValueError(
+                "non-resolved settlement forbids reservation_id or authoritative fields"
+            )
         object.__setattr__(self, "reservation_id", clean_reservation_id)
+        object.__setattr__(self, "feature_key", clean_feature_key)
+        object.__setattr__(
+            self,
+            "model_call_credit_policy",
+            clean_model_call_credit_policy,
+        )
+
+    def trusted_billing_metadata(self) -> dict[str, str]:
+        if self.outcome != "resolved":
+            return {}
+        return {
+            key: value
+            for key, value in {
+                "feature_credit_reservation_id": self.reservation_id,
+                "feature_key": self.feature_key,
+                "model_call_credit_policy": self.model_call_credit_policy,
+            }.items()
+            if value
+        }
 
 
 class FeatureSettlementResolutionRejected(RuntimeError):

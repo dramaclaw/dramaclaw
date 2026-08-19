@@ -31,6 +31,31 @@ def test_resolved_feature_settlement_requires_reservation_id() -> None:
         FeatureSettlementResolution(outcome="resolved")
 
 
+def test_resolved_feature_settlement_builds_authoritative_billing_snapshot() -> None:
+    from novelvideo.ports.usage import FeatureSettlementResolution
+
+    resolved = FeatureSettlementResolution(
+        outcome="resolved",
+        reservation_id="feature-res-1",
+        feature_key="mainline.single_video",
+        model_call_credit_policy="feature_included",
+    )
+
+    assert resolved.trusted_billing_metadata() == {
+        "feature_credit_reservation_id": "feature-res-1",
+        "feature_key": "mainline.single_video",
+        "model_call_credit_policy": "feature_included",
+    }
+
+
+@pytest.mark.parametrize("field", ["feature_key", "model_call_credit_policy"])
+def test_non_resolved_feature_settlement_rejects_authoritative_fields(field: str) -> None:
+    from novelvideo.ports.usage import FeatureSettlementResolution
+
+    with pytest.raises(ValueError, match="non-resolved"):
+        FeatureSettlementResolution(outcome="not_applicable", **{field: "forged"})
+
+
 @pytest.mark.parametrize("outcome", ["not_applicable", "ambiguous", "conflict"])
 def test_non_resolved_feature_settlement_rejects_reservation_id(outcome: str) -> None:
     from novelvideo.ports.usage import FeatureSettlementResolution
