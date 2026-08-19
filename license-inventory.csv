@@ -1902,6 +1902,7 @@ tests/test_indextts2_fal.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml a
 tests/test_indextts2_fal_smoke.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ingest_progress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_literal_script_writing_audio_type.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_llm_instrumentation_logging.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_m10_final_gate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_manual_shots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_mcp_ce_owner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
