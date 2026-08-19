@@ -568,7 +568,7 @@ async def test_inline_authz_retry_recovers_before_running_once(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
-async def test_inline_authz_fault_recovers_within_retry_budget(monkeypatch, tmp_path):
+async def test_inline_authz_fault_fails_fast_without_running(monkeypatch, tmp_path):
     from novelvideo.ports.authz import AuthzServiceFault
 
     ctx = _ctx(tmp_path)
@@ -588,8 +588,11 @@ async def test_inline_authz_fault_recovers_within_retry_budget(monkeypatch, tmp_
     )
     await backend._run_inline(backend._lanes["default"], submitted[0])
 
-    assert len(authz.calls) == 2
-    assert runner_calls == ["run"]
+    assert len(authz.calls) == 1
+    assert runner_calls == []
+    state = get_task_manager().get_task_for_project(ctx, "single_video", 1)
+    assert state.status == "failed"
+    assert state.metadata["error_code"] == "TASK_AUTHZ_CHECK_FAILED"
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import logging
 import math
 import os
 import random
@@ -45,6 +46,8 @@ from novelvideo.storage.media_relay import (
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
 from novelvideo.task_backend.envelope import RunningTaskAuthorityIndeterminate
 from novelvideo.task_backend.subprocesses import run_project_subprocess
+
+logger = logging.getLogger(__name__)
 
 # 确保加载 .env 环境变量
 load_dotenv()
@@ -3368,6 +3371,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
             for poll_count in range(max_polls):
                 if organization_request:
+                    running_authority_error = None
                     try:
                         await self._revalidate_organization(egress_context)
                     except AuthzError as exc:
@@ -3377,7 +3381,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             expected_version=operation_version,
                         )
                         operation_terminal = True
-                        raise self._running_authority_error(exc) from None
+                        running_authority_error = self._running_authority_error(exc)
                     except Exception as exc:
                         await self._mark_operation_unknown(
                             operation_port,
@@ -3390,6 +3394,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             error=_safe_video_error_code(exc, "ORG_AUTHZ_STALE"),
                             task_id=task_id,
                         )
+                    if running_authority_error is not None:
+                        raise running_authority_error from None
                     polled = await self._get_json(
                         f"{request_base_url}/video/generations/{task_id}",
                         headers=request_headers,
@@ -3438,6 +3444,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             task_id=task_id,
                         )
                     if organization_request:
+                        running_authority_error = None
                         try:
                             await self._revalidate_organization(egress_context)
                         except AuthzError as exc:
@@ -3447,7 +3454,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                 expected_version=operation_version,
                             )
                             operation_terminal = True
-                            raise self._running_authority_error(exc) from None
+                            running_authority_error = self._running_authority_error(exc)
                         except Exception as exc:
                             await self._mark_operation_unknown(
                                 operation_port,
@@ -3460,6 +3467,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                 error=_safe_video_error_code(exc, "ORG_AUTHZ_STALE"),
                                 task_id=task_id,
                             )
+                        if running_authority_error is not None:
+                            raise running_authority_error from None
                     log("视频生成完成，正在下载...")
                     video_content = await self._download_video(video_url, output_path)
                     provider_task_id = self._extract_provider_task_id(
@@ -3472,6 +3481,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         last_frame_url = self._extract_returned_last_frame_url(task)
                         if last_frame_url:
                             if organization_request:
+                                running_authority_error = None
                                 try:
                                     await self._revalidate_organization(egress_context)
                                 except AuthzError as exc:
@@ -3481,7 +3491,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                         expected_version=operation_version,
                                     )
                                     operation_terminal = True
-                                    raise self._running_authority_error(exc) from None
+                                    running_authority_error = (
+                                        self._running_authority_error(exc)
+                                    )
                                 except Exception as exc:
                                     await self._mark_operation_unknown(
                                         operation_port,
@@ -3496,6 +3508,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                         ),
                                         task_id=task_id,
                                     )
+                                if running_authority_error is not None:
+                                    raise running_authority_error from None
                             last_frame_output_path = (
                                 self._returned_last_frame_output_path(
                                     output_path,
@@ -3607,10 +3621,28 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 error="Timeout waiting for DramaClawAPI video task",
                 task_id=task_id,
             )
-        except RunningTaskAuthorityIndeterminate:
+        except RunningTaskAuthorityIndeterminate as exc:
             # Provider acceptance is already durable.  This branch must not
-            # resubmit the provider request or decide refund/confirm locally;
-            # run_core moves the feature settlement to review.
+            # resubmit the provider request or decide refund/confirm locally.
+            if reservation_id:
+                try:
+                    await get_usage_meter().mark_model_call_credit_settlement_for_review(
+                        reservation_id,
+                        metadata={
+                            "source": "video_post_accept_authz_indeterminate",
+                            "failure_kind": exc.failure_kind,
+                            "provider_request_id": provider_request_id,
+                            "provider_task_id": task_id or "",
+                        },
+                    )
+                except Exception as review_exc:  # noqa: BLE001
+                    logger.error(
+                        "model_call_settlement_review_enqueue_failed",
+                        extra={
+                            "safe_error_type": type(review_exc).__name__,
+                            "error_id": uuid.uuid4().hex,
+                        },
+                    )
             raise
         except VideoEgressError:
             raise

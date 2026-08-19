@@ -20,6 +20,7 @@ from novelvideo.ports.tasks import QueuedTask, cancel_key, display_metadata_for_
 from novelvideo.project_context import require_project_home_node
 from novelvideo.task_backend.envelope import (
     InvalidTaskEnvelope,
+    TaskAuthorityFault,
     TaskAuthorityUnavailable,
 )
 from novelvideo.task_backend.limits import (
@@ -287,7 +288,9 @@ class InlineTaskBackend:
         lane: _InlineLane,
         job: _InlineLaneJob,
     ) -> None:
-        consumer_failure: InvalidTaskEnvelope | TaskAuthorityUnavailable | None = None
+        consumer_failure: (
+            InvalidTaskEnvelope | TaskAuthorityUnavailable | TaskAuthorityFault | None
+        ) = None
         verified = None
         if self._consumer is None:
             consumer_failure = InvalidTaskEnvelope()
@@ -306,7 +309,11 @@ class InlineTaskBackend:
                     call_site="inline_task_consumer",
                     retryable_error_types=(TaskAuthorityUnavailable,),
                 )
-            except (InvalidTaskEnvelope, TaskAuthorityUnavailable) as exc:
+            except (
+                InvalidTaskEnvelope,
+                TaskAuthorityUnavailable,
+                TaskAuthorityFault,
+            ) as exc:
                 consumer_failure = exc
         if consumer_failure is not None:
             job.manager.fail_task_for_project(

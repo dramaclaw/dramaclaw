@@ -122,8 +122,16 @@ class _CredentialPort:
 
 
 class _UsageMeter:
+    reviews: list[tuple[str, dict]] = []
+
     async def mark_current_paid_execution_attempt(self, **_kwargs) -> None:
         return None
+
+    async def mark_model_call_credit_settlement_for_review(
+        self, reservation_id, *, metadata=None
+    ):
+        self.reviews.append((reservation_id, metadata or {}))
+        return {"status": "awaiting"}
 
 
 def _install_newapi_ports(monkeypatch, context, operation_port, events):
@@ -728,6 +736,7 @@ async def test_newapi_authority_drift_after_acceptance_stops_poll_and_enters_rev
     context = _context()
     operation_port = _OperationPort()
     events: list[str] = []
+    _UsageMeter.reviews.clear()
     _install_newapi_ports(monkeypatch, context, operation_port, events)
     generator = NewApiVideoGenerator(
         model="seedance-1.0-pro-fast", egress_context=context
@@ -737,7 +746,10 @@ async def test_newapi_authority_drift_after_acceptance_stops_poll_and_enters_rev
         return {"id": "provider-job-1"}
 
     async def disabled(_context):
-        raise AuthzError("ORG_MEMBERSHIP_INACTIVE")
+        try:
+            raise RuntimeError("postgres://user:secret-canary@internal")
+        except RuntimeError:
+            raise AuthzError("ORG_MEMBERSHIP_INACTIVE") from None
 
     async def forbidden(*_args, **_kwargs):
         raise AssertionError("poll/fetch must remain zero")
@@ -760,6 +772,19 @@ async def test_newapi_authority_drift_after_acceptance_stops_poll_and_enters_rev
         )
 
     assert captured.value.failure_kind == "drift"
+    assert captured.value.__context__ is None
+    assert "secret-canary" not in repr(captured.value)
+    assert _UsageMeter.reviews == [
+        (
+            "reservation-1",
+            {
+                "source": "video_post_accept_authz_indeterminate",
+                "failure_kind": "drift",
+                "provider_request_id": "",
+                "provider_task_id": "provider-job-1",
+            },
+        )
+    ]
     assert [name for name, _ in operation_port.events] == [
         "claim",
         "accepted",
