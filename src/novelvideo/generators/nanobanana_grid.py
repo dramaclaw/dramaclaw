@@ -34,7 +34,7 @@ from novelvideo.config import (
     get_grid_generation_config,
     get_style_preset,
 )
-from novelvideo.ports import get_usage_meter
+from novelvideo.ports import get_usage_meter, update_current_model_call_log
 from novelvideo.egress_context import (
     TrustedEgressContext,
     ambient_organization_egress_context,
@@ -3810,6 +3810,9 @@ async def _call_newapi_image_api(
     provider_request_id = ""
     try:
         reservation_id = await _reserve("newapi_image_api")
+        await update_current_model_call_log(
+            request_payload=payload,
+        )
 
         async with httpx.AsyncClient(
             timeout=NEWAPI_IMAGE_HTTP_TIMEOUT_SECONDS,
@@ -3830,6 +3833,9 @@ async def _call_newapi_image_api(
             response_headers = getattr(response, "headers", {}) or {}
             provider_request_id = _newapi_request_id_from_headers(response_headers)
             result = response.json()
+            await update_current_model_call_log(
+                response_payload=result,
+            )
             logger.info(
                 "DramaClawAPI image POST parsed: data_count=%d keys=%s",
                 len(result.get("data") or []),
@@ -3911,6 +3917,14 @@ async def _call_newapi_image_api(
         response_headers = getattr(exc.response, "headers", {}) or {}
         safe_headers = _newapi_safe_header_summary(response_headers)
         request_id = _newapi_request_id_from_headers(response_headers) or provider_request_id
+        await update_current_model_call_log(
+            response_payload={
+                "status_code": exc.response.status_code,
+                "headers": safe_headers,
+                "body": body,
+            },
+            error_message=f"HTTP {exc.response.status_code}",
+        )
         if is_definite_no_cost_http_rejection(exc.response.status_code):
             try:
                 await get_usage_meter().mark_current_paid_execution_attempt(
@@ -3951,6 +3965,9 @@ async def _call_newapi_image_api(
             f"HTTP {exc.response.status_code}: {header_context}{error_context}; body={body}",
         )
     except Exception as exc:
+        await update_current_model_call_log(
+            error_message=type(exc).__name__,
+        )
         await _refund(
             reservation_id,
             "newapi_image_api",

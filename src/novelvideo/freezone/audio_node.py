@@ -632,7 +632,7 @@ async def _write_newapi_audio_speech(
     timeout_seconds: float = 600.0,
     egress_context: TrustedEgressContext | None = None,
     business_task_id: str | None = None,
-) -> None:
+) -> dict[str, Any]:
     import base64
 
     import httpx
@@ -693,6 +693,7 @@ async def _write_newapi_audio_speech(
         body["metadata"] = metadata
 
     transport_started = False
+    response_log_payload: dict[str, Any] = {}
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         async with httpx.AsyncClient(
@@ -711,9 +712,14 @@ async def _write_newapi_audio_speech(
             response.raise_for_status()
             content_type = str(response.headers.get("content-type") or "").lower()
             if "application/json" not in content_type:
+                response_log_payload = {
+                    "content_type": content_type,
+                    "content_length": len(response.content),
+                }
                 output_path.write_bytes(response.content)
             else:
                 payload = response.json()
+                response_log_payload = payload
                 audio = (
                     payload.get("audio")
                     if isinstance(payload.get("audio"), dict)
@@ -757,6 +763,7 @@ async def _write_newapi_audio_speech(
                     output_path.write_bytes(audio_response.content)
         if lease is not None:
             await complete_audio_operation(lease, result_ref="audio:newapi:completed")
+        return response_log_payload
     except BaseException as exc:
         if lease is not None:
             if transport_started:
@@ -782,6 +789,8 @@ async def generate_freezone_audio_eleven_music(
     egress_context: TrustedEgressContext | None = None,
 ) -> FreezoneAudioSpeechResult:
     """Generate standalone Freezone music through NewAPI's audio/speech endpoint."""
+    from novelvideo.ports import update_current_model_call_log
+
     clean_prompt = str(prompt or "").strip()
     if not clean_prompt:
         raise ValueError("prompt is required")
@@ -810,6 +819,15 @@ async def generate_freezone_audio_eleven_music(
             music_length_ms=length,
             source="freezone_audio_music",
         )
+        request_payload = {
+            "model": model_name,
+            "input": clean_prompt,
+            "response_format": fmt,
+            "metadata": metadata,
+        }
+        await update_current_model_call_log(
+            request_payload=request_payload,
+        )
         write_kwargs: dict[str, Any] = {
             "output_path": output_path,
             "model": model_name,
@@ -823,13 +841,19 @@ async def generate_freezone_audio_eleven_music(
                 egress_context=egress_context,
                 business_task_id=f"freezone-audio-music:{job_id}",
             )
-        await _write_newapi_audio_speech(
+        response_payload = await _write_newapi_audio_speech(
             **write_kwargs,
+        )
+        await update_current_model_call_log(
+            response_payload=response_payload,
         )
         if not output_path.exists() or output_path.stat().st_size <= 0:
             raise RuntimeError("NewAPI music audio file was not created")
         await _confirm_music_model_call(model=model_name, reservation_id=reservation_id)
     except Exception as exc:
+        await update_current_model_call_log(
+            error_message=type(exc).__name__,
+        )
         await _refund_music_model_call(
             reservation_id,
             source="freezone_audio_music",
