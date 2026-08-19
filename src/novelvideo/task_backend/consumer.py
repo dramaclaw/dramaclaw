@@ -19,6 +19,7 @@ from novelvideo.task_backend.envelope import (
     RejectedTaskSettlement,
     SignedTaskEnvelope,
     StaleTaskEnvelope,
+    TaskAuthorityFault,
     TaskAuthorityUnavailable,
 )
 
@@ -224,6 +225,10 @@ class TaskEnvelopeConsumer:
         except Exception:
             authority_failure_kind = "fault"
         if authority_failure_kind is not None:
+            if authority_failure_kind == "fault":
+                raise TaskAuthorityFault(
+                    settlement=_rejected_settlement(signed, signed_payload),
+                ) from None
             raise TaskAuthorityUnavailable(
                 failure_kind=authority_failure_kind,
                 settlement=_rejected_settlement(signed, signed_payload),

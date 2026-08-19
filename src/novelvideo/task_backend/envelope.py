@@ -61,11 +61,9 @@ class TaskAuthorityUnavailable(RuntimeError):
 
     _CODE_BY_FAILURE_KIND = {
         "unavailable": "TASK_AUTHZ_UNAVAILABLE",
-        "fault": "TASK_AUTHZ_CHECK_FAILED",
     }
     _MESSAGE_BY_FAILURE_KIND = {
         "unavailable": "task authorization service is unavailable",
-        "fault": "task authorization check failed",
     }
 
     def __init__(
@@ -79,6 +77,17 @@ class TaskAuthorityUnavailable(RuntimeError):
         super().__init__(self._MESSAGE_BY_FAILURE_KIND[failure_kind])
         self.failure_kind = failure_kind
         self.code = self._CODE_BY_FAILURE_KIND[failure_kind]
+        self.settlement = settlement
+
+
+class TaskAuthorityFault(RuntimeError):
+    """A verified task whose authority check failed unexpectedly."""
+
+    code = "TASK_AUTHZ_CHECK_FAILED"
+    failure_kind = "fault"
+
+    def __init__(self, *, settlement: RejectedTaskSettlement) -> None:
+        super().__init__("task authorization check failed")
         self.settlement = settlement
 
 

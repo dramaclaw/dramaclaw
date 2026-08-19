@@ -737,7 +737,10 @@ async def test_newapi_authority_drift_after_acceptance_stops_poll_and_enters_rev
         return {"id": "provider-job-1"}
 
     async def disabled(_context):
-        raise AuthzError("ORG_MEMBERSHIP_INACTIVE")
+        try:
+            raise RuntimeError("postgres://user:secret-canary@internal")
+        except RuntimeError:
+            raise AuthzError("ORG_MEMBERSHIP_INACTIVE") from None
 
     async def forbidden(*_args, **_kwargs):
         raise AssertionError("poll/fetch must remain zero")
@@ -760,6 +763,8 @@ async def test_newapi_authority_drift_after_acceptance_stops_poll_and_enters_rev
         )
 
     assert captured.value.failure_kind == "drift"
+    assert captured.value.__context__ is None
+    assert "secret-canary" not in repr(captured.value)
     assert [name for name, _ in operation_port.events] == [
         "claim",
         "accepted",

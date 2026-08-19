@@ -6,7 +6,6 @@ import asyncio
 import logging
 import math
 import random as random_module
-import time
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -59,16 +58,12 @@ async def retry_authz_read(
     cap_delay: float,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     random: Callable[[], float] = random_module.random,
-    monotonic: Callable[[], float] = time.monotonic,
-    deadline: float | None = None,
-    check_cancelled: Callable[[], None] | None = None,
     call_site: str = "unspecified",
     retryable_error_types: tuple[type[BaseException], ...] = (AuthzServiceUnavailable,),
 ) -> T:
     """Retry only typed authz service failures using bounded full jitter.
 
-    ``max_retries`` counts calls after the initial attempt. ``deadline`` is an
-    absolute value in the injected monotonic clock's domain.
+    ``max_retries`` counts calls after the initial attempt.
     """
     validate_authz_retry_policy(
         max_retries=max_retries,
@@ -77,8 +72,6 @@ async def retry_authz_read(
     )
 
     for retry_index in range(max_retries + 1):
-        if check_cancelled is not None:
-            check_cancelled()
         try:
             result = await operation()
             if retry_index:
@@ -110,18 +103,6 @@ async def retry_authz_read(
             upper_bound = min(cap_delay, base_delay * (2**retry_index))
             delay = float(jitter_ratio) * upper_bound
 
-            if check_cancelled is not None:
-                check_cancelled()
-            if deadline is not None and monotonic() + delay > deadline:
-                logger.warning(
-                    "authz_local_retry_exhausted",
-                    extra={
-                        "call_site": call_site,
-                        "attempts": retry_index + 1,
-                        "failure_kind": error.failure_kind,
-                    },
-                )
-                raise
             logger.warning(
                 "authz_local_retry_scheduled",
                 extra={

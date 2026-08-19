@@ -408,6 +408,7 @@ async def test_authz_service_failure_is_not_misclassified_as_stale(
     from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
     from novelvideo.task_backend.envelope import (
         InvalidTaskEnvelope,
+        TaskAuthorityFault,
         TaskAuthorityUnavailable,
     )
 
@@ -418,7 +419,12 @@ async def test_authz_service_failure_is_not_misclassified_as_stale(
         "feature_credit_reservation_id": "attacker-controlled-reservation"
     }
 
-    with pytest.raises(TaskAuthorityUnavailable) as captured:
+    expected_error = (
+        TaskAuthorityUnavailable
+        if failure_kind == "unavailable"
+        else TaskAuthorityFault
+    )
+    with pytest.raises(expected_error) as captured:
         await consumer.consume(delivery, expected_root_task_id="task-root")
 
     assert not isinstance(captured.value, InvalidTaskEnvelope)

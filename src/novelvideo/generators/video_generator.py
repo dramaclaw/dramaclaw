@@ -3368,6 +3368,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
 
             for poll_count in range(max_polls):
                 if organization_request:
+                    running_authority_error = None
                     try:
                         await self._revalidate_organization(egress_context)
                     except AuthzError as exc:
@@ -3377,7 +3378,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             expected_version=operation_version,
                         )
                         operation_terminal = True
-                        raise self._running_authority_error(exc) from None
+                        running_authority_error = self._running_authority_error(exc)
                     except Exception as exc:
                         await self._mark_operation_unknown(
                             operation_port,
@@ -3390,6 +3391,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             error=_safe_video_error_code(exc, "ORG_AUTHZ_STALE"),
                             task_id=task_id,
                         )
+                    if running_authority_error is not None:
+                        raise running_authority_error from None
                     polled = await self._get_json(
                         f"{request_base_url}/video/generations/{task_id}",
                         headers=request_headers,
@@ -3438,6 +3441,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             task_id=task_id,
                         )
                     if organization_request:
+                        running_authority_error = None
                         try:
                             await self._revalidate_organization(egress_context)
                         except AuthzError as exc:
@@ -3447,7 +3451,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                 expected_version=operation_version,
                             )
                             operation_terminal = True
-                            raise self._running_authority_error(exc) from None
+                            running_authority_error = self._running_authority_error(exc)
                         except Exception as exc:
                             await self._mark_operation_unknown(
                                 operation_port,
@@ -3460,6 +3464,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                 error=_safe_video_error_code(exc, "ORG_AUTHZ_STALE"),
                                 task_id=task_id,
                             )
+                        if running_authority_error is not None:
+                            raise running_authority_error from None
                     log("视频生成完成，正在下载...")
                     video_content = await self._download_video(video_url, output_path)
                     provider_task_id = self._extract_provider_task_id(
@@ -3472,6 +3478,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         last_frame_url = self._extract_returned_last_frame_url(task)
                         if last_frame_url:
                             if organization_request:
+                                running_authority_error = None
                                 try:
                                     await self._revalidate_organization(egress_context)
                                 except AuthzError as exc:
@@ -3481,7 +3488,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                         expected_version=operation_version,
                                     )
                                     operation_terminal = True
-                                    raise self._running_authority_error(exc) from None
+                                    running_authority_error = (
+                                        self._running_authority_error(exc)
+                                    )
                                 except Exception as exc:
                                     await self._mark_operation_unknown(
                                         operation_port,
@@ -3496,6 +3505,8 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                         ),
                                         task_id=task_id,
                                     )
+                                if running_authority_error is not None:
+                                    raise running_authority_error from None
                             last_frame_output_path = (
                                 self._returned_last_frame_output_path(
                                     output_path,
