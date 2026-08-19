@@ -1851,6 +1851,7 @@ tests/test_egress_dispatching_leak_diagnosability.py,Elastic-2.0,2026 SuperTale 
 tests/test_env_config_ratchet.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_episode_optimizer_colors.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_fanout_partial_dispatch.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_feature_settlement_safe_logging.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_fish_speech_prompt_removed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_format_check.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_freezone_ai_staging_prop_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2018,6 +2019,7 @@ tests/test_task_video_global_optimizer_lifecycle.py,Elastic-2.0,2026 SuperTale c
 tests/test_task_video_runner_returned_last_frame.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_tasks_stream_list.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_transport_retry_disabled.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_trusted_task_settlement_resolution.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_undelivered_refund_result.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_upload_sanitization.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_video_billing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
