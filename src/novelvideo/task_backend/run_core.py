@@ -20,6 +20,7 @@ from novelvideo.ports import get_usage_meter
 from novelvideo.ports.authz import AdmissionContext
 from novelvideo.ports.usage import (
     FeatureCreditSettlementConflict,
+    FeatureSettlementResolution,
     FeatureSettlementResolutionRejected,
     VerifiedTaskSettlementIdentity,
 )
@@ -230,19 +231,6 @@ def _without_settlement_handles(metadata: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _trusted_metrics_billing_metadata(
-    metadata: Mapping[str, Any],
-    *,
-    feature_reservation_id: str,
-) -> dict[str, Any]:
-    """Rehydrate private billing context from authoritative settlement state."""
-    trusted = _without_settlement_handles(metadata)
-    clean_reservation_id = str(feature_reservation_id or "").strip()
-    if clean_reservation_id:
-        trusted["feature_credit_reservation_id"] = clean_reservation_id
-    return trusted
-
-
 async def _resolve_feature_reservation_id(
     delivery: VerifiedTaskDelivery,
     *,
@@ -250,7 +238,7 @@ async def _resolve_feature_reservation_id(
     episode: int,
     beat_num: Any,
     scope: Any,
-) -> str:
+) -> FeatureSettlementResolution:
     identity = VerifiedTaskSettlementIdentity(
         root_task_id=delivery.admission.root_task_id,
         project_id=delivery.project_id,
@@ -262,9 +250,9 @@ async def _resolve_feature_reservation_id(
     )
     resolution = await get_usage_meter().resolve_feature_credit_reservation(identity)
     if resolution.outcome == "resolved":
-        return resolution.reservation_id
+        return resolution
     if resolution.outcome == "not_applicable":
-        return ""
+        return resolution
     raise FeatureSettlementResolutionRejected(resolution.outcome)
 
 
@@ -696,9 +684,6 @@ def run_project_task_core_sync(
     episode = int(delivery.episode or 0)
     beat_num = delivery.beat_num
     scope = delivery.scope
-    billing_metadata = _without_settlement_handles(
-        _clean_billing_metadata(delivery.billing_metadata)
-    )
     envelope = TrustedRunnerEnvelope(
         {
             "project_id": delivery.project_id,
@@ -712,11 +697,9 @@ def run_project_task_core_sync(
             TRUSTED_EGRESS_CONTEXT_KEY: trusted_egress_context,
         }
     )
-    run_metadata = _without_settlement_handles(
-        {**dict(metadata or {}), **billing_metadata}
-    )
+    run_metadata = _without_settlement_handles(dict(metadata or {}))
     try:
-        feature_reservation_id = asyncio.run(
+        feature_settlement_resolution = asyncio.run(
             _resolve_feature_reservation_id(
                 delivery,
                 task_type=task_type,
@@ -767,9 +750,9 @@ def run_project_task_core_sync(
             )
         )
         return {"failed": True, "error_code": error_code}
-    trusted_billing_metadata = _trusted_metrics_billing_metadata(
-        billing_metadata,
-        feature_reservation_id=feature_reservation_id,
+    feature_reservation_id = feature_settlement_resolution.reservation_id
+    trusted_billing_metadata = (
+        feature_settlement_resolution.trusted_billing_metadata()
     )
     if trusted_billing_metadata:
         envelope["billing_metadata"] = trusted_billing_metadata

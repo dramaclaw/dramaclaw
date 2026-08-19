@@ -43,7 +43,13 @@ def _delivery() -> VerifiedTaskDelivery:
         scope=None,
         queue_kind="default",
         payload={},
-        billing_metadata={"feature_credit_reservation_id": "foreign-reservation"},
+        billing_metadata={
+            "feature_credit_reservation_id": "foreign-reservation",
+            "feature_credit_charge_id": "foreign-charge",
+            "feature_key": "forged.feature",
+            "model_call_credit_policy": "forged-policy",
+            "feature_credit_cost": 0,
+        },
     )
 
 
@@ -62,7 +68,10 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
             assert identity.project_id == "project-1"
             assert identity.requester_user_id == "user-1"
             return FeatureSettlementResolution(
-                outcome="resolved", reservation_id="reservation-1"
+                outcome="resolved",
+                reservation_id="reservation-1",
+                feature_key="mainline.beat_video_generation",
+                model_call_credit_policy="feature_included",
             )
 
         async def mark_feature_credit_settlement_for_review(
@@ -79,7 +88,9 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
 
     def runner(runner_envelope, _ctx):
         assert runner_envelope["billing_metadata"] == {
-            "feature_credit_reservation_id": "reservation-1"
+            "feature_credit_reservation_id": "reservation-1",
+            "feature_key": "mainline.beat_video_generation",
+            "model_call_credit_policy": "feature_included",
         }
         raise RunningTaskAuthorityIndeterminate(failure_kind="unavailable")
 
@@ -129,8 +140,16 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
     assert manager.failures[0]["metadata"]["error_code"] == (
         "TASK_AUTHZ_REVALIDATION_INDETERMINATE"
     )
-    assert metric_contexts == [{"feature_credit_reservation_id": "reservation-1"}]
+    assert metric_contexts == [
+        {
+            "feature_credit_reservation_id": "reservation-1",
+            "feature_key": "mainline.beat_video_generation",
+            "model_call_credit_policy": "feature_included",
+        }
+    ]
     assert "foreign-reservation" not in repr(metric_contexts)
+    assert "forged" not in repr(metric_contexts)
+    assert "feature_credit_cost" not in repr(metric_contexts)
 
 
 def test_ambiguous_settlement_resolution_fails_before_runner(monkeypatch) -> None:
