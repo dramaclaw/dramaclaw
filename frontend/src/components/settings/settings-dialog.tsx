@@ -18,6 +18,7 @@ import {
   Pencil,
   Plus,
   RotateCw,
+  Search,
   Trash2,
 } from "lucide-react";
 
@@ -25,6 +26,7 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -79,7 +81,6 @@ import {
 } from "@/lib/queries/model-gateway";
 import {
   useSettingsStore,
-  FEATURE_MODEL_PROVIDERS,
   normalizeMediaModelEntries,
   type AliyunOssStorageConfig,
   type CloudinaryStorageConfig,
@@ -1426,6 +1427,37 @@ function customProviderChannelType(provider: string): number | undefined {
   return CUSTOM_PROVIDER_CHANNEL_TYPES[provider];
 }
 
+type ChannelCapability =
+  | "text"
+  | "vision"
+  | "embedding"
+  | "rerank"
+  | "image"
+  | "video"
+  | "audio";
+
+export function providersSupportingCapability(
+  configuredProviders: readonly FeatureModelProvider[],
+  channelTypeByProvider: ReadonlyMap<string, NewApiChannelType>,
+  capability: ChannelCapability,
+  currentProvider?: FeatureModelProvider,
+): FeatureModelProvider[] {
+  const supported = configuredProviders.filter((provider) => {
+    const channelType = channelTypeByProvider.get(provider);
+    // Keep the existing behavior when channel metadata is unavailable. Once
+    // metadata is present, capabilities are authoritative.
+    return !channelType || channelType.capabilities.includes(capability);
+  });
+  if (
+    currentProvider &&
+    configuredProviders.includes(currentProvider) &&
+    !supported.includes(currentProvider)
+  ) {
+    return [currentProvider, ...supported];
+  }
+  return supported;
+}
+
 const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
   "LingShan-G2": {
     channel: "fal_ai",
@@ -2544,6 +2576,10 @@ function FeatureModelsBlock({
     (s) => s.featureModelConfig.providerChannels,
   );
   const channelTypesQuery = useNewApiChannelTypes(channelTypesEnabled);
+  const channelTypesLoadFailed =
+    channelTypesQuery.isError ||
+    (channelTypesQuery.data !== undefined &&
+      channelTypesQuery.data.ok !== true);
   const channelTypeByProvider = useMemo(
     () =>
       new Map(
@@ -2774,7 +2810,9 @@ function FeatureModelsBlock({
         channelTypes={
           channelTypesQuery.data?.ok ? channelTypesQuery.data.data.items : []
         }
-        channelTypesLoading={channelTypesQuery.isLoading}
+        channelTypesLoading={channelTypesQuery.isFetching}
+        channelTypesLoadFailed={channelTypesLoadFailed}
+        onRetryChannelTypes={() => void channelTypesQuery.refetch()}
         allowedProviders={comfyOnly ? ["comfyui"] : undefined}
         excludedProviders={excludeComfyUI ? ["comfyui"] : undefined}
         defaultComfyWorkflows={defaultComfyWorkflows}
@@ -2783,6 +2821,7 @@ function FeatureModelsBlock({
       {!mediaOnly ? (
         <CogneeModelsBlock
           configuredProviders={configuredProviders}
+          channelTypeByProvider={channelTypeByProvider}
           newApiBaseUrl={newApiBaseUrl}
           database={database}
           providerChannels={providerChannels}
@@ -2808,6 +2847,8 @@ function FeatureModelsBlock({
             newApiBaseUrl={newApiBaseUrl}
             database={database}
             configuredProviders={configuredProviders}
+            channelTypeByProvider={channelTypeByProvider}
+            capability="text"
             providerChannels={providerChannels}
             savedChannelByProvider={savedChannelByProvider}
           />
@@ -2821,6 +2862,8 @@ function FeatureModelsBlock({
             newApiBaseUrl={newApiBaseUrl}
             database={database}
             configuredProviders={configuredProviders}
+            channelTypeByProvider={channelTypeByProvider}
+            capability="vision"
             providerChannels={providerChannels}
             savedChannelByProvider={savedChannelByProvider}
           />
@@ -2847,6 +2890,7 @@ function FeatureModelsBlock({
 
       <MediaModelsBlock
         configuredProviders={configuredProviders}
+        channelTypeByProvider={channelTypeByProvider}
         newApiBaseUrl={newApiBaseUrl}
         database={database}
         savedChannelByProvider={savedChannelByProvider}
@@ -2860,6 +2904,7 @@ function FeatureModelsBlock({
 
 function CogneeModelsBlock({
   configuredProviders,
+  channelTypeByProvider,
   newApiBaseUrl,
   database,
   providerChannels,
@@ -2868,6 +2913,7 @@ function CogneeModelsBlock({
   backendSnapshotLoaded,
 }: {
   configuredProviders: readonly FeatureModelProvider[];
+  channelTypeByProvider: ReadonlyMap<string, NewApiChannelType>;
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
   providerChannels: Record<string, { upstreamKey: string; baseUrl: string }>;
@@ -2904,6 +2950,8 @@ function CogneeModelsBlock({
           newApiBaseUrl={newApiBaseUrl}
           database={database}
           configuredProviders={configuredProviders}
+          channelTypeByProvider={channelTypeByProvider}
+          capability="text"
           providerChannels={providerChannels}
           savedChannelByProvider={savedChannelByProvider}
         />
@@ -2911,6 +2959,7 @@ function CogneeModelsBlock({
 
       <EmbeddingModelBlock
         configuredProviders={configuredProviders}
+        channelTypeByProvider={channelTypeByProvider}
         newApiBaseUrl={newApiBaseUrl}
         database={database}
         savedChannelByProvider={savedChannelByProvider}
@@ -2923,6 +2972,7 @@ function CogneeModelsBlock({
 
 function EmbeddingModelBlock({
   configuredProviders,
+  channelTypeByProvider,
   newApiBaseUrl,
   database,
   savedChannelByProvider,
@@ -2930,6 +2980,7 @@ function EmbeddingModelBlock({
   backendSnapshotLoaded,
 }: {
   configuredProviders: readonly FeatureModelProvider[];
+  channelTypeByProvider: ReadonlyMap<string, NewApiChannelType>;
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
   savedChannelByProvider: Map<string, SavedProviderChannelConfig>;
@@ -2994,11 +3045,21 @@ function EmbeddingModelBlock({
     localModel === undefined
       ? DEFAULT_EMBEDDING_BATCH_SIZE
       : localModel.batchSize;
+  const embeddingProviders = useMemo(
+    () =>
+      providersSupportingCapability(
+        configuredProviders,
+        channelTypeByProvider,
+        "embedding",
+        selectedProvider,
+      ),
+    [channelTypeByProvider, configuredProviders, selectedProvider],
+  );
 
   const updateLocal = (patch: Partial<EmbeddingModelEntry>) => {
     setLocalModel((prev) => ({
       provider:
-        patch.provider ?? prev?.provider ?? configuredProviders[0] ?? "ali",
+        patch.provider ?? prev?.provider ?? embeddingProviders[0] ?? "ali",
       upstreamModel: patch.upstreamModel ?? prev?.upstreamModel ?? "",
       dimension:
         patch.dimension ?? prev?.dimension ?? DEFAULT_EMBEDDING_DIMENSION,
@@ -3011,12 +3072,12 @@ function EmbeddingModelBlock({
 
   const handleSave = async () => {
     setSaveError("");
-    if (configuredProviders.length === 0) {
+    if (embeddingProviders.length === 0) {
       toast.error(t("settings.modelConfig.embeddingModel.noChannels"));
       return;
     }
     const provider = localModel?.provider;
-    if (!provider || !configuredProviders.includes(provider)) {
+    if (!provider || !embeddingProviders.includes(provider)) {
       toast.error(t("settings.modelConfig.embeddingModel.missingProvider"));
       return;
     }
@@ -3114,7 +3175,7 @@ function EmbeddingModelBlock({
             onValueChange={(provider) =>
               updateLocal({ provider: provider as FeatureModelProvider })
             }
-            disabled={configuredProviders.length === 0}
+            disabled={embeddingProviders.length === 0}
           >
             <SelectTrigger size="sm" className="w-full">
               <SelectValue
@@ -3126,7 +3187,7 @@ function EmbeddingModelBlock({
               </SelectValue>
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
-              {configuredProviders.map((provider) => (
+              {embeddingProviders.map((provider) => (
                 <SelectItem key={provider} value={provider}>
                   {featureProviderLabel(provider)}
                 </SelectItem>
@@ -3142,7 +3203,7 @@ function EmbeddingModelBlock({
               "settings.modelConfig.embeddingModel.upstreamModelPlaceholder",
             )}
             className="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
-            disabled={configuredProviders.length === 0}
+            disabled={embeddingProviders.length === 0}
           />
           <Input
             value={String(dimension)}
@@ -3158,7 +3219,7 @@ function EmbeddingModelBlock({
             step={1}
             type="number"
             className="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
-            disabled={configuredProviders.length === 0}
+            disabled={embeddingProviders.length === 0}
           />
           <Input
             value={batchSize == null ? "" : String(batchSize)}
@@ -3177,7 +3238,7 @@ function EmbeddingModelBlock({
               "settings.modelConfig.embeddingModel.batchSizePlaceholder",
             )}
             className="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
-            disabled={configuredProviders.length === 0}
+            disabled={embeddingProviders.length === 0}
           />
         </div>
         <p className="mt-2 text-[11px] leading-relaxed text-amber-300/80">
@@ -3193,7 +3254,7 @@ function EmbeddingModelBlock({
 
       <div className="mt-3 flex items-center justify-end gap-3">
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          {configuredProviders.length > 0
+          {embeddingProviders.length > 0
             ? t("settings.modelConfig.embeddingModel.saveHint")
             : t("settings.modelConfig.embeddingModel.noChannelsHint")}
         </p>
@@ -3203,7 +3264,7 @@ function EmbeddingModelBlock({
           className="shrink-0"
           onClick={handleSave}
           disabled={
-            configuredProviders.length === 0 || saveEmbeddingModel.isPending
+            embeddingProviders.length === 0 || saveEmbeddingModel.isPending
           }
         >
           {saveEmbeddingModel.isPending ? (
@@ -3295,6 +3356,7 @@ function isBareComfyWorkflowMediaModel(entry: MediaModelEntry): boolean {
 
 function MediaModelsBlock({
   configuredProviders,
+  channelTypeByProvider,
   newApiBaseUrl,
   database,
   savedChannelByProvider,
@@ -3303,6 +3365,7 @@ function MediaModelsBlock({
   excludeComfyUI = false,
 }: {
   configuredProviders: readonly FeatureModelProvider[];
+  channelTypeByProvider: ReadonlyMap<string, NewApiChannelType>;
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
   savedChannelByProvider: Map<string, SavedProviderChannelConfig>;
@@ -3617,6 +3680,12 @@ function MediaModelsBlock({
         {mediaModelRows.map((row, index) => {
           const entry = mediaModels[row.model];
           const value = entry?.provider ?? "";
+          const capableProviders = providersSupportingCapability(
+            configuredProviders,
+            channelTypeByProvider,
+            row.kind,
+            entry?.provider,
+          );
           return (
             <div
               key={row.model}
@@ -3649,7 +3718,7 @@ function MediaModelsBlock({
                       },
                     }))
                   }
-                  disabled={configuredProviders.length === 0}
+                  disabled={capableProviders.length === 0}
                 >
                   <SelectTrigger size="sm" className="w-full">
                     <SelectValue
@@ -3661,7 +3730,7 @@ function MediaModelsBlock({
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent alignItemWithTrigger={false}>
-                    {configuredProviders.map((provider) => (
+                    {capableProviders.map((provider) => (
                       <SelectItem key={provider} value={provider}>
                         {featureProviderLabel(provider)}
                       </SelectItem>
@@ -3683,7 +3752,7 @@ function MediaModelsBlock({
                         ...detachComfyWorkflowManagedConfig(prev[row.model]),
                         provider:
                           prev[row.model]?.provider ??
-                          configuredProviders[0] ??
+                          capableProviders[0] ??
                           "ali",
                         upstreamModel: event.target.value,
                       },
@@ -3696,7 +3765,7 @@ function MediaModelsBlock({
                     },
                   )}
                   className="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
-                  disabled={configuredProviders.length === 0}
+                  disabled={capableProviders.length === 0}
                 />
               )}
               <div className="flex items-center justify-end gap-1">
@@ -3765,6 +3834,7 @@ function MediaModelsBlock({
               originalModel={editingModel}
               entry={editingModel ? mediaModels[editingModel] : undefined}
               configuredProviders={configuredProviders}
+              channelTypeByProvider={channelTypeByProvider}
               comfyOnly={comfyOnly}
               onCancel={() => {
                 setCreatingModel(false);
@@ -3827,6 +3897,7 @@ function LocalMediaModelEditor({
   originalModel,
   entry,
   configuredProviders,
+  channelTypeByProvider,
   comfyOnly,
   onCancel,
   onSave,
@@ -3834,6 +3905,7 @@ function LocalMediaModelEditor({
   originalModel: string | null;
   entry?: MediaModelEntry;
   configuredProviders: readonly FeatureModelProvider[];
+  channelTypeByProvider: ReadonlyMap<string, NewApiChannelType>;
   comfyOnly: boolean;
   onCancel: () => void;
   onSave: (model: string, entry: MediaModelEntry) => void;
@@ -3843,8 +3915,14 @@ function LocalMediaModelEditor({
   const [model, setModel] = useState(originalModel ?? "");
   const [label, setLabel] = useState(entry?.label ?? originalModel ?? "");
   const [mediaType, setMediaType] = useState<"image" | "video">(initialType);
+  const initialProviders = providersSupportingCapability(
+    configuredProviders,
+    channelTypeByProvider,
+    initialType,
+    entry?.provider,
+  );
   const [provider, setProvider] = useState<FeatureModelProvider>(
-    entry?.provider ?? configuredProviders[0] ?? "comfyui",
+    entry?.provider ?? initialProviders[0] ?? "",
   );
   const [upstreamModel, setUpstreamModel] = useState(
     entry?.upstreamModel ?? originalModel ?? "",
@@ -3860,6 +3938,16 @@ function LocalMediaModelEditor({
   };
   const [configJson, setConfigJson] = useState(
     JSON.stringify(entry?.config ?? defaultConfig, null, 2),
+  );
+  const capableProviders = useMemo(
+    () =>
+      providersSupportingCapability(
+        configuredProviders,
+        channelTypeByProvider,
+        mediaType,
+        provider,
+      ),
+    [channelTypeByProvider, configuredProviders, mediaType, provider],
   );
   const parsedConfig = useMemo(() => {
     try {
@@ -3890,6 +3978,14 @@ function LocalMediaModelEditor({
 
   const handleMediaTypeChange = (nextType: "image" | "video") => {
     setMediaType(nextType);
+    const nextProviders = providersSupportingCapability(
+      configuredProviders,
+      channelTypeByProvider,
+      nextType,
+    );
+    if (!nextProviders.includes(provider)) {
+      setProvider(nextProviders[0] ?? "");
+    }
     try {
       const current = JSON.parse(configJson) as Record<string, unknown>;
       const request =
@@ -4013,13 +4109,13 @@ function LocalMediaModelEditor({
             onValueChange={(value) =>
               setProvider(value as FeatureModelProvider)
             }
-            disabled={comfyOnly}
+            disabled={comfyOnly || capableProviders.length === 0}
           >
             <SelectTrigger size="sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
-              {configuredProviders.map((item) => (
+              {capableProviders.map((item) => (
                 <SelectItem key={item} value={item}>
                   {featureProviderLabel(item)}
                 </SelectItem>
@@ -4380,6 +4476,8 @@ function ProviderChannelsBlock({
   database,
   channelTypes,
   channelTypesLoading,
+  channelTypesLoadFailed,
+  onRetryChannelTypes,
   allowedProviders,
   excludedProviders,
   defaultComfyWorkflows,
@@ -4389,6 +4487,8 @@ function ProviderChannelsBlock({
   database: NewApiDatabaseConfigInput | undefined;
   channelTypes: NewApiChannelType[];
   channelTypesLoading: boolean;
+  channelTypesLoadFailed: boolean;
+  onRetryChannelTypes: () => void;
   allowedProviders?: readonly string[];
   excludedProviders?: readonly string[];
   defaultComfyWorkflows?: {
@@ -4406,7 +4506,16 @@ function ProviderChannelsBlock({
   const updateFeatureProviderChannel = useSettingsStore(
     (s) => s.updateFeatureProviderChannel,
   );
+  const removeFeatureProviderChannel = useSettingsStore(
+    (s) => s.removeFeatureProviderChannel,
+  );
   const saveProviderChannels = useSaveProviderChannels();
+  const clearComfyUIConfig = useClearComfyUIConfig();
+  const [channelCatalogOpen, setChannelCatalogOpen] = useState(false);
+  const [removingProvider, setRemovingProvider] = useState<string | null>(null);
+  const [latestAddedProvider, setLatestAddedProvider] = useState<string | null>(
+    null,
+  );
   const channelTypeByProvider = useMemo(
     () => new Map(channelTypes.map((item) => [item.provider, item])),
     [channelTypes],
@@ -4427,66 +4536,128 @@ function ProviderChannelsBlock({
           (provider) => !allowedProviderSet || allowedProviderSet.has(provider),
         )
         .filter((provider) => !excludedProviderSet.has(provider))
-        .sort(),
-    [allowedProviderSet, excludedProviderSet, providerChannels],
+        .sort((left, right) => {
+          if (left === latestAddedProvider) return -1;
+          if (right === latestAddedProvider) return 1;
+          return left.localeCompare(right);
+        }),
+    [
+      allowedProviderSet,
+      excludedProviderSet,
+      latestAddedProvider,
+      providerChannels,
+    ],
   );
-  const providerOptions =
-    channelTypes.length > 0
-      ? channelTypes.filter(
-          (item) =>
-            item.status === 1 &&
-            (!allowedProviderSet || allowedProviderSet.has(item.provider)) &&
-            !excludedProviderSet.has(item.provider),
-        )
-      : Array.from(
-          new Set([
-            ...FEATURE_MODEL_PROVIDERS,
-            ...Object.keys(CUSTOM_PROVIDER_CHANNEL_TYPES),
-            ...(allowedProviders ?? []),
-          ]),
-        )
-          .filter(
-            (provider) =>
-              (!allowedProviderSet || allowedProviderSet.has(provider)) &&
-              !excludedProviderSet.has(provider),
-          )
-          .map((provider) => ({
-            provider,
-            name: featureProviderLabel(provider),
-          }));
-  const availableProviders = providerOptions.filter(
-    (item) => !providerChannels[item.provider],
+  const configuredProviderSet = useMemo(
+    () => new Set(configuredProviders),
+    [configuredProviders],
+  );
+  const visibleChannelTypes = channelTypes.filter(
+    (item) =>
+      (!allowedProviderSet || allowedProviderSet.has(item.provider)) &&
+      !excludedProviderSet.has(item.provider),
   );
   const savedChannelByProvider = useMemo(() => {
     return new Map(
       savedProviderChannels.map((channel) => [channel.provider, channel]),
     );
   }, [savedProviderChannels]);
-  const [selectedProvider, setSelectedProvider] =
-    useState<FeatureModelProvider>(
-      availableProviders[0]?.provider ??
-        allowedProviders?.[0] ??
-        FEATURE_MODEL_PROVIDERS[0],
-    );
-
-  useEffect(() => {
-    if (
-      !availableProviders.some((item) => item.provider === selectedProvider) &&
-      availableProviders[0]
-    ) {
-      setSelectedProvider(availableProviders[0].provider);
-    }
-  }, [availableProviders, selectedProvider]);
-
-  const handleAdd = () => {
-    if (!availableProviders.some((item) => item.provider === selectedProvider))
-      return;
-    addFeatureProviderChannel(selectedProvider);
-    const channelType = channelTypeByProvider.get(selectedProvider);
+  const addProvider = (provider: FeatureModelProvider) => {
+    if (providerChannels[provider]) return;
+    const channelType = channelTypeByProvider.get(provider);
+    if (channelType && channelType.status !== 1) return;
+    addFeatureProviderChannel(provider);
     if (channelType?.requiresBaseUrl && channelType.defaultBaseUrl) {
-      updateFeatureProviderChannel(selectedProvider, {
+      updateFeatureProviderChannel(provider, {
         baseUrl: channelType.defaultBaseUrl,
       });
+    }
+    setLatestAddedProvider(provider);
+  };
+
+  const removeProvider = async (provider: FeatureModelProvider) => {
+    if (!providerChannels[provider]) return;
+    const hasSavedComfyUIConfig =
+      provider === "comfyui" &&
+      savedChannelByProvider.get("comfyui")?.configured === true;
+    if (!hasSavedComfyUIConfig) {
+      const currentConfig = useSettingsStore.getState().featureModelConfig;
+      const featureCount = Object.values(currentConfig.featureModels).filter(
+        (entry) => entry.provider === provider,
+      ).length;
+      const mediaCount = Object.values(currentConfig.mediaModels ?? {}).filter(
+        (entry) => entry.provider === provider,
+      ).length;
+      const embeddingCount =
+        currentConfig.embeddingModel?.provider === provider ? 1 : 0;
+      const confirmed = await confirmDialog({
+        title: t("settings.modelConfig.featureModels.removeChannelTitle"),
+        description: t(
+          "settings.modelConfig.featureModels.removeChannelConfirm",
+          {
+            provider: featureProviderLabel(provider, channelTypeByProvider),
+            featureCount,
+            mediaCount,
+            embeddingCount,
+          },
+        ),
+        confirmText: t("settings.modelConfig.featureModels.removeChannelShort"),
+        confirmVariant: "destructive",
+      });
+      if (!confirmed) return;
+
+      removeFeatureProviderChannel(provider);
+      setLatestAddedProvider((current) =>
+        current === provider ? null : current,
+      );
+      return;
+    }
+
+    const confirmed = await confirmDialog({
+      title: t("settings.modelConfig.featureModels.clearComfyTitle"),
+      description: t("settings.modelConfig.featureModels.clearComfyConfirm"),
+      confirmText: t("settings.modelConfig.featureModels.clearComfy"),
+      confirmVariant: "destructive",
+    });
+    if (!confirmed) return;
+
+    setRemovingProvider(provider);
+    try {
+      const response = await clearComfyUIConfig.mutateAsync();
+      if (response.ok !== true) {
+        toast.error(
+          getResponseErrorMessage(
+            response,
+            t("settings.modelConfig.requestFailed"),
+          ),
+        );
+        return;
+      }
+      removeFeatureProviderChannel(provider);
+      setLatestAddedProvider((current) =>
+        current === provider ? null : current,
+      );
+      const currentMediaModels =
+        useSettingsStore.getState().featureModelConfig.mediaModels ?? {};
+      useSettingsStore
+        .getState()
+        .setMediaModels(
+          Object.fromEntries(
+            Object.entries(currentMediaModels).filter(
+              ([, entry]) => entry.provider !== "comfyui",
+            ),
+          ),
+        );
+      toast.success(t("settings.modelConfig.featureModels.comfyCleared"));
+    } catch (error) {
+      toast.error(
+        await getRequestErrorMessage(
+          error,
+          t("settings.modelConfig.requestFailed"),
+        ),
+      );
+    } finally {
+      setRemovingProvider(null);
     }
   };
 
@@ -4571,42 +4742,32 @@ function ProviderChannelsBlock({
             {t("settings.modelConfig.featureModels.channelsDescription")}
           </p>
         </div>
-        <div className="flex min-w-[260px] items-center gap-2">
-          <Select
-            value={selectedProvider}
-            onValueChange={(value) =>
-              setSelectedProvider(value as FeatureModelProvider)
-            }
-            disabled={channelTypesLoading || availableProviders.length === 0}
-          >
-            <SelectTrigger size="sm" className="min-w-[170px] flex-1">
-              <SelectValue>
-                {(value: string) =>
-                  featureProviderLabel(value, channelTypeByProvider)
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
-              {availableProviders.map((item) => (
-                <SelectItem key={item.provider} value={item.provider}>
-                  {item.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex items-center justify-end">
           <Button
             type="button"
             size="sm"
             variant="outline"
             className="shrink-0"
-            onClick={handleAdd}
-            disabled={channelTypesLoading || availableProviders.length === 0}
+            onClick={() => setChannelCatalogOpen(true)}
           >
             <Plus className="size-3.5" />
-            {t("settings.modelConfig.featureModels.addChannel")}
+            {t("settings.modelConfig.featureModels.manageChannels")}
           </Button>
         </div>
       </div>
+
+      <ChannelCapabilitiesDialog
+        open={channelCatalogOpen}
+        onOpenChange={setChannelCatalogOpen}
+        channelTypes={visibleChannelTypes}
+        configuredProviders={configuredProviderSet}
+        loading={channelTypesLoading}
+        loadError={channelTypesLoadFailed}
+        onRetry={onRetryChannelTypes}
+        onAdd={addProvider}
+        onRemove={(provider) => void removeProvider(provider)}
+        removingProvider={removingProvider}
+      />
 
       {configuredProviders.length > 0 ? (
         <>
@@ -4646,6 +4807,257 @@ function ProviderChannelsBlock({
         </p>
       )}
     </div>
+  );
+}
+
+const CHANNEL_CAPABILITY_FILTERS: readonly ChannelCapability[] = [
+  "text",
+  "vision",
+  "embedding",
+  "rerank",
+  "image",
+  "video",
+  "audio",
+];
+
+function ChannelCapabilitiesDialog({
+  open,
+  onOpenChange,
+  channelTypes,
+  configuredProviders,
+  loading,
+  loadError,
+  onRetry,
+  onAdd,
+  onRemove,
+  removingProvider,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  channelTypes: readonly NewApiChannelType[];
+  configuredProviders: ReadonlySet<string>;
+  loading: boolean;
+  loadError: boolean;
+  onRetry: () => void;
+  onAdd: (provider: FeatureModelProvider) => void;
+  onRemove: (provider: FeatureModelProvider) => void;
+  removingProvider: string | null;
+}) {
+  const { t } = useTranslation();
+  const [query, setQuery] = useState("");
+  const [capability, setCapability] = useState<ChannelCapability | "all">(
+    "all",
+  );
+  const filteredChannelTypes = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return channelTypes.filter((item) => {
+      if (capability !== "all" && !item.capabilities.includes(capability)) {
+        return false;
+      }
+      if (!normalizedQuery) return true;
+      return [item.name, item.provider, item.description]
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(normalizedQuery);
+    });
+  }, [capability, channelTypes, query]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[78vh] w-[calc(100vw-2rem)] max-w-[880px] flex-col gap-0 overflow-hidden rounded-lg border border-border bg-popover p-0 sm:max-w-[880px]">
+        <DialogHeader className="border-b border-border px-5 py-4 pr-12">
+          <DialogTitle>
+            {t("settings.modelConfig.featureModels.channelCatalogTitle")}
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            {t("settings.modelConfig.featureModels.channelCatalogDescription")}
+          </DialogDescription>
+        </DialogHeader>
+
+        {!loadError ? (
+          <div className="grid grid-cols-1 gap-2 border-b border-border px-5 py-3 sm:grid-cols-[minmax(0,1fr)_180px]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                aria-label={t(
+                  "settings.modelConfig.featureModels.channelCatalogSearch",
+                )}
+                placeholder={t(
+                  "settings.modelConfig.featureModels.channelCatalogSearch",
+                )}
+                className="h-8 pl-8"
+              />
+            </div>
+            <Select
+              value={capability}
+              onValueChange={(value) =>
+                setCapability(value as ChannelCapability | "all")
+              }
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full"
+                aria-label={t(
+                  "settings.modelConfig.featureModels.channelCapabilityFilter",
+                )}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectItem value="all">
+                  {t("settings.modelConfig.featureModels.capabilities.all")}
+                </SelectItem>
+                {CHANNEL_CAPABILITY_FILTERS.map((item) => (
+                  <SelectItem key={item} value={item}>
+                    {t(
+                      `settings.modelConfig.featureModels.capabilities.${item}`,
+                    )}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
+
+        <div className="min-h-0 flex-1 overflow-auto">
+          {loadError ? (
+            <div className="flex min-h-52 flex-col items-center justify-center gap-3 px-5 py-10 text-center">
+              <AlertTriangle className="size-5 text-destructive" />
+              <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
+                {t("settings.modelConfig.featureModels.channelTypesLoadFailed")}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={onRetry}
+                disabled={loading}
+              >
+                <RotateCw
+                  className={cn("size-3.5", loading && "animate-spin")}
+                />
+                {t("settings.modelConfig.featureModels.retryChannelTypes")}
+              </Button>
+            </div>
+          ) : loading ? (
+            <div className="flex min-h-52 items-center justify-center gap-2 px-5 py-10 text-xs text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              {t("settings.modelConfig.featureModels.channelTypesLoading")}
+            </div>
+          ) : (
+            <div className="min-w-[720px]">
+              <div className="grid grid-cols-[160px_minmax(210px,1fr)_minmax(220px,1.2fr)_90px] gap-3 border-b border-border px-5 py-2 text-[11px] font-medium text-muted-foreground">
+                <span>
+                  {t("settings.modelConfig.featureModels.channelProvider")}
+                </span>
+                <span>
+                  {t("settings.modelConfig.featureModels.channelCapabilities")}
+                </span>
+                <span>
+                  {t("settings.modelConfig.featureModels.channelDescription")}
+                </span>
+                <span className="text-right">
+                  {t("settings.modelConfig.featureModels.channelAction")}
+                </span>
+              </div>
+              {filteredChannelTypes.length > 0 ? (
+                filteredChannelTypes.map((item) => {
+                  const configured = configuredProviders.has(item.provider);
+                  return (
+                    <div
+                      key={item.provider}
+                      className="grid grid-cols-[160px_minmax(210px,1fr)_minmax(220px,1.2fr)_90px] items-center gap-3 border-b border-border/70 px-5 py-3 last:border-b-0"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-medium text-foreground">
+                          {item.name || featureProviderLabel(item.provider)}
+                        </p>
+                        <code className="block truncate text-[10px] text-muted-foreground">
+                          {item.provider}
+                        </code>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {item.capabilities.length > 0 ? (
+                          [...new Set(item.capabilities)].map(
+                            (itemCapability) => (
+                              <span
+                                key={itemCapability}
+                                className="rounded-sm border border-border/70 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                              >
+                                {t(
+                                  `settings.modelConfig.featureModels.capabilities.${itemCapability}`,
+                                  { defaultValue: itemCapability },
+                                )}
+                              </span>
+                            ),
+                          )
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground">
+                            {t(
+                              "settings.modelConfig.featureModels.noCapabilityData",
+                            )}
+                          </span>
+                        )}
+                      </div>
+                      <p className="line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
+                        {item.description || "-"}
+                      </p>
+                      <div className="flex justify-end">
+                        {configured ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() =>
+                              onRemove(item.provider as FeatureModelProvider)
+                            }
+                            disabled={removingProvider !== null}
+                          >
+                            {removingProvider === item.provider ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="size-3.5" />
+                            )}
+                            {t(
+                              "settings.modelConfig.featureModels.removeChannelShort",
+                            )}
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              onAdd(item.provider as FeatureModelProvider)
+                            }
+                            disabled={item.status !== 1}
+                          >
+                            {item.status === 1
+                              ? t(
+                                  "settings.modelConfig.featureModels.addChannelShort",
+                                )
+                              : t(
+                                  "settings.modelConfig.featureModels.channelUnavailable",
+                                )}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="px-5 py-10 text-center text-xs text-muted-foreground">
+                  {t("settings.modelConfig.featureModels.noMatchingChannels")}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -5313,6 +5725,8 @@ function FeatureModelCapabilitySection({
   newApiBaseUrl,
   database,
   configuredProviders,
+  channelTypeByProvider,
+  capability,
   providerChannels,
   savedChannelByProvider,
 }: {
@@ -5322,12 +5736,23 @@ function FeatureModelCapabilitySection({
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
   configuredProviders: readonly FeatureModelProvider[];
+  channelTypeByProvider: ReadonlyMap<string, NewApiChannelType>;
+  capability: "text" | "vision";
   providerChannels: Record<string, { upstreamKey: string; baseUrl: string }>;
   savedChannelByProvider: Map<string, SavedProviderChannelConfig>;
 }) {
   const { t } = useTranslation();
+  const capableProviders = useMemo(
+    () =>
+      providersSupportingCapability(
+        configuredProviders,
+        channelTypeByProvider,
+        capability,
+      ),
+    [capability, channelTypeByProvider, configuredProviders],
+  );
   const [bulkProvider, setBulkProvider] = useState<FeatureModelProvider | "">(
-    configuredProviders[0] ?? "",
+    capableProviders[0] ?? "",
   );
   const [bulkModel, setBulkModel] = useState("");
   const updateFeatureModel = useSettingsStore((s) => s.updateFeatureModel);
@@ -5337,10 +5762,10 @@ function FeatureModelCapabilitySection({
   );
 
   useEffect(() => {
-    if (!bulkProvider || !configuredProviders.includes(bulkProvider)) {
-      setBulkProvider(configuredProviders[0] ?? "");
+    if (!bulkProvider || !capableProviders.includes(bulkProvider)) {
+      setBulkProvider(capableProviders[0] ?? "");
     }
-  }, [bulkProvider, configuredProviders]);
+  }, [bulkProvider, capableProviders]);
 
   const handleApplyBulk = () => {
     const provider = bulkProvider;
@@ -5379,7 +5804,7 @@ function FeatureModelCapabilitySection({
           onValueChange={(value) =>
             setBulkProvider(value as FeatureModelProvider)
           }
-          disabled={configuredProviders.length === 0}
+          disabled={capableProviders.length === 0}
         >
           <SelectTrigger size="sm" className="w-full">
             <SelectValue
@@ -5391,7 +5816,7 @@ function FeatureModelCapabilitySection({
             </SelectValue>
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false}>
-            {configuredProviders.map((provider) => (
+            {capableProviders.map((provider) => (
               <SelectItem key={provider} value={provider}>
                 {featureProviderLabel(provider)}
               </SelectItem>
@@ -5405,14 +5830,14 @@ function FeatureModelCapabilitySection({
             "settings.modelConfig.featureModels.bulkModelPlaceholder",
           )}
           className="h-8 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
-          disabled={configuredProviders.length === 0}
+          disabled={capableProviders.length === 0}
         />
         <Button
           type="button"
           size="sm"
           className="shrink-0"
           onClick={handleApplyBulk}
-          disabled={configuredProviders.length === 0}
+          disabled={capableProviders.length === 0}
         >
           {t("settings.modelConfig.featureModels.applyToAll")}
         </Button>
@@ -5439,6 +5864,8 @@ function FeatureModelCapabilitySection({
             newApiBaseUrl={newApiBaseUrl}
             database={database}
             configuredProviders={configuredProviders}
+            channelTypeByProvider={channelTypeByProvider}
+            capability={capability}
             providerChannels={providerChannels}
             savedChannelByProvider={savedChannelByProvider}
           />
@@ -5454,6 +5881,8 @@ function FeatureModelGroupBlock({
   newApiBaseUrl,
   database,
   configuredProviders,
+  channelTypeByProvider,
+  capability,
   providerChannels,
   savedChannelByProvider,
 }: {
@@ -5462,6 +5891,8 @@ function FeatureModelGroupBlock({
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
   configuredProviders: readonly FeatureModelProvider[];
+  channelTypeByProvider: ReadonlyMap<string, NewApiChannelType>;
+  capability: "text" | "vision";
   providerChannels: Record<string, { upstreamKey: string; baseUrl: string }>;
   savedChannelByProvider: Map<string, SavedProviderChannelConfig>;
 }) {
@@ -5496,6 +5927,8 @@ function FeatureModelGroupBlock({
               newApiBaseUrl={newApiBaseUrl}
               database={database}
               configuredProviders={configuredProviders}
+              channelTypeByProvider={channelTypeByProvider}
+              capability={capability}
               providerChannels={providerChannels}
               savedChannelByProvider={savedChannelByProvider}
             />
@@ -5513,6 +5946,8 @@ function FeatureModelRow({
   newApiBaseUrl,
   database,
   configuredProviders,
+  channelTypeByProvider,
+  capability,
   providerChannels,
   savedChannelByProvider,
 }: {
@@ -5522,6 +5957,8 @@ function FeatureModelRow({
   newApiBaseUrl: string;
   database: NewApiDatabaseConfigInput | undefined;
   configuredProviders: readonly FeatureModelProvider[];
+  channelTypeByProvider: ReadonlyMap<string, NewApiChannelType>;
+  capability: "text" | "vision";
   providerChannels: Record<string, { upstreamKey: string; baseUrl: string }>;
   savedChannelByProvider: Map<string, SavedProviderChannelConfig>;
 }) {
@@ -5531,11 +5968,21 @@ function FeatureModelRow({
   );
   const updateFeatureModel = useSettingsStore((s) => s.updateFeatureModel);
   const saveChannel = useSaveCustomChannel();
-  const configuredSet = useMemo(
-    () => new Set(configuredProviders),
-    [configuredProviders],
+  const capableProviders = useMemo(
+    () =>
+      providersSupportingCapability(
+        configuredProviders,
+        channelTypeByProvider,
+        capability,
+        entry?.provider,
+      ),
+    [capability, channelTypeByProvider, configuredProviders, entry?.provider],
   );
-  const fallbackProvider = configuredProviders[0];
+  const configuredSet = useMemo(
+    () => new Set(capableProviders),
+    [capableProviders],
+  );
+  const fallbackProvider = capableProviders[0];
   const provider =
     entry?.provider && configuredSet.has(entry.provider)
       ? entry.provider
@@ -5609,7 +6056,7 @@ function FeatureModelRow({
             provider: value as FeatureModelProvider,
           })
         }
-        disabled={configuredProviders.length === 0}
+        disabled={capableProviders.length === 0}
       >
         <SelectTrigger size="sm" className="w-full">
           <SelectValue
@@ -5621,7 +6068,7 @@ function FeatureModelRow({
           </SelectValue>
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
-          {configuredProviders.map((p) => (
+          {capableProviders.map((p) => (
             <SelectItem key={p} value={p}>
               {featureProviderLabel(p)}
             </SelectItem>
@@ -5641,14 +6088,14 @@ function FeatureModelRow({
             "settings.modelConfig.featureModels.upstreamModelPlaceholder",
           )}
           className="h-9 flex-1 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30"
-          disabled={configuredProviders.length === 0}
+          disabled={capableProviders.length === 0}
         />
         <Button
           type="button"
           size="sm"
           className="shrink-0"
           onClick={handleSaveRow}
-          disabled={saveChannel.isPending || configuredProviders.length === 0}
+          disabled={saveChannel.isPending || capableProviders.length === 0}
           title={t("settings.modelConfig.featureModels.saveRow")}
         >
           {saveChannel.isPending ? (
