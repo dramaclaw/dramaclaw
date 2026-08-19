@@ -52,6 +52,7 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
     from novelvideo.task_backend.registry import register_project_task_runner
 
     reviews: list[tuple[str, dict]] = []
+    metric_contexts: list[dict] = []
 
     class Usage:
         async def resolve_feature_credit_reservation(self, identity):
@@ -76,7 +77,10 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
         async def settle_feature_credit_reservation(self, *_args, **_kwargs):
             raise AssertionError("running uncertainty must not confirm")
 
-    def runner(_envelope, _ctx):
+    def runner(runner_envelope, _ctx):
+        assert runner_envelope["billing_metadata"] == {
+            "feature_credit_reservation_id": "reservation-1"
+        }
         raise RunningTaskAuthorityIndeterminate(failure_kind="unavailable")
 
     async def not_cancelled(**_kwargs):
@@ -91,7 +95,9 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
     monkeypatch.setattr(run_core, "get_usage_meter", lambda: Usage())
     monkeypatch.setattr(run_core, "_emit_project_task_metrics", no_metrics)
     monkeypatch.setattr(
-        run_core, "_set_project_task_metrics_context", lambda *_a, **_k: None
+        run_core,
+        "_set_project_task_metrics_context",
+        lambda *_a, **kwargs: metric_contexts.append(kwargs["billing_metadata"]),
     )
     monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
 
@@ -123,6 +129,8 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
     assert manager.failures[0]["metadata"]["error_code"] == (
         "TASK_AUTHZ_REVALIDATION_INDETERMINATE"
     )
+    assert metric_contexts == [{"feature_credit_reservation_id": "reservation-1"}]
+    assert "foreign-reservation" not in repr(metric_contexts)
 
 
 def test_ambiguous_settlement_resolution_fails_before_runner(monkeypatch) -> None:
@@ -162,3 +170,48 @@ def test_ambiguous_settlement_resolution_fails_before_runner(monkeypatch) -> Non
     assert manager.failures[0]["metadata"]["error_code"] == (
         "FEATURE_SETTLEMENT_RESOLUTION_AMBIGUOUS"
     )
+
+
+def test_settlement_resolution_fault_fails_task_before_runner(monkeypatch) -> None:
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    invoked = False
+    metric_outcomes: list[str] = []
+
+    class Usage:
+        async def resolve_feature_credit_reservation(self, _identity):
+            raise ConnectionError("postgres://user:secret-canary@internal")
+
+    def runner(_envelope, _ctx):
+        nonlocal invoked
+        invoked = True
+
+    async def capture_metrics(*_args, **kwargs):
+        metric_outcomes.append(str(kwargs.get("outcome") or ""))
+
+    register_project_task_runner("running_authz_probe", runner)
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: Usage())
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", capture_metrics)
+
+    manager = Manager()
+    result = run_core.run_project_task_core_sync(
+        _delivery(),
+        SimpleNamespace(
+            project_id="project-1", requester_user_id="user-1", is_home_node=True
+        ),
+        manager,
+        run_task_id="task-1",
+    )
+
+    assert result == {
+        "failed": True,
+        "error_code": "FEATURE_SETTLEMENT_RESOLUTION_FAILED",
+    }
+    assert invoked is False
+    assert metric_outcomes == ["failed"]
+    assert manager.failures[0]["metadata"]["error_code"] == (
+        "FEATURE_SETTLEMENT_RESOLUTION_FAILED"
+    )
+    assert "secret-canary" not in str(manager.failures)
