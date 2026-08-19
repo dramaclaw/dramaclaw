@@ -234,3 +234,46 @@ def test_settlement_resolution_fault_fails_task_before_runner(monkeypatch) -> No
         "FEATURE_SETTLEMENT_RESOLUTION_FAILED"
     )
     assert "secret-canary" not in str(manager.failures)
+
+
+def test_resolution_failure_remains_durably_owned_when_fast_path_write_fails(
+    monkeypatch,
+) -> None:
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    metric_outcomes: list[str] = []
+
+    class Usage:
+        async def resolve_feature_credit_reservation(self, _identity):
+            raise ConnectionError("postgres://user:secret-canary@internal")
+
+    class FailingManager(Manager):
+        def fail_task_for_project(self, *_args, **_kwargs) -> None:
+            raise ConnectionError("postgres://user:second-secret@internal")
+
+    def runner(_envelope, _ctx):
+        raise AssertionError("resolver failure must not start runner")
+
+    async def capture_metrics(*_args, **kwargs):
+        metric_outcomes.append(str(kwargs.get("outcome") or ""))
+
+    register_project_task_runner("running_authz_probe", runner)
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: Usage())
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", capture_metrics)
+
+    result = run_core.run_project_task_core_sync(
+        _delivery(),
+        SimpleNamespace(
+            project_id="project-1", requester_user_id="user-1", is_home_node=True
+        ),
+        FailingManager(),
+        run_task_id="task-1",
+    )
+
+    assert result == {
+        "failed": True,
+        "error_code": "FEATURE_SETTLEMENT_RESOLUTION_FAILED",
+    }
+    assert metric_outcomes == ["failed"]
