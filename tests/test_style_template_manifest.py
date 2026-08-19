@@ -150,6 +150,11 @@ def test_loaded_templates_are_not_shared_by_reference(
     manifest.reset_style_template_cache()
 
     first = manifest.load_style_templates()
+    first[0]["label"] = "被改过的名字"
+    first[0]["samples"].append("intruder.webp")
     first.clear()
 
-    assert len(manifest.load_style_templates()) == 1
+    second = manifest.load_style_templates()
+    assert len(second) == 1
+    assert second[0]["label"] == _template()["label"]
+    assert second[0]["samples"] == _template()["samples"]

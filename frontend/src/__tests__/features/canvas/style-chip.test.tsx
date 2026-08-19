@@ -30,6 +30,29 @@ describe("StyleTriggerChip", () => {
 
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
+
+  // 「查不到模板」不等于「没选风格」—— 那个 id 照样会跟着生成请求发出去，
+  // chip 说成「风格」会让用户以为自己没选，出图带了风格反而像是撞了鬼。
+  it.each([
+    ["loading" as const, "风格 · 加载中"],
+    ["failed" as const, "风格 · 加载失败"],
+    ["missing" as const, "风格 · 已失效"],
+  ])("tells the truth in the %s state", (state, label) => {
+    render(<StyleTriggerChip state={state} onOpen={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+  });
+
+  it("still opens the gallery from a degraded state", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+
+    render(<StyleTriggerChip state="failed" onOpen={onOpen} />);
+
+    await user.click(screen.getByRole("button", { name: "风格 · 加载失败" }));
+
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("StyleThumbnail", () => {

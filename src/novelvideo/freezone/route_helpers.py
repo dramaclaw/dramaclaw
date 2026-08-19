@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -28,6 +29,8 @@ from novelvideo.freezone.style_templates import (
 )
 from novelvideo.freezone.video_node import load_video_character_library
 from novelvideo.task_identity import task_state_key
+
+logger = logging.getLogger(__name__)
 
 FREEZONE_DEFAULT_IMAGE_SELECTION = "newapi_gpt_image2"
 FREEZONE_DEFAULT_IMAGE_MODEL = FREEZONE_DEFAULT_IMAGE_SELECTION
@@ -121,6 +124,9 @@ def get_freezone_image_style_manifest_version() -> str:
     return get_style_manifest_version()
 
 
+_ASSET_BASE_WARNED = False
+
+
 def get_freezone_image_style_asset_base() -> str:
     """风格图片的地址前缀。
 
@@ -128,7 +134,20 @@ def get_freezone_image_style_asset_base() -> str:
     `<前缀>/<清单里的相对路径>` 拼绝对地址。留空则前端回落到同源
     `/style-gallery/`,而那个目录默认是空的 —— 图墙会显示占位块。
     """
-    return os.environ.get("STYLE_GALLERY_ASSET_BASE", "").strip()
+    base = os.environ.get("STYLE_GALLERY_ASSET_BASE", "").strip()
+    # 没配就是一整墙占位块,而前端没法区分「没配」和「图挂了」。这里出一条日志,
+    # 让部署方在看到空图墙时能直接定位到是环境变量没配,而不是去查 CDN。
+    # 只在首次下发时警告一次,避免每次拉清单都刷屏。
+    global _ASSET_BASE_WARNED
+    if not base and not _ASSET_BASE_WARNED:
+        _ASSET_BASE_WARNED = True
+        logger.warning(
+            "STYLE_GALLERY_ASSET_BASE 未配置,风格图墙将只显示占位块。"
+            "请把它指向存放封面/示例图的 OSS/CDN 前缀,"
+            "并确认该域名已加进前端 CSP 的 img-src 白名单"
+            "(frontend/docker/nginx.conf.template)。"
+        )
+    return base
 
 
 def build_camera_prompt(camera: Optional[FreezoneImageCameraConfig]) -> str:

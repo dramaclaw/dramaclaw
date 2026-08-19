@@ -53,7 +53,9 @@ import type { CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
  * 与各组件的 DEFAULT_WIDTH/HEIGHT 对齐；只影响首帧盒子大小，放大跨档后完整组件
  * 渲染会触发 ResizeObserver 重测自动纠正。
  */
-const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; height: number }>> = {
+// 导出只为让测试上棘轮：新增节点类型要么在这里登记尺寸，要么进 LOD 豁免名单，
+// 漏了就会拿 400×300 的通用兜底，首屏低缩放下盒子明显不对。
+export const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; height: number }>> = {
   uploadNode: { width: 320, height: 350 },
   imageNode: { width: 580, height: 360 },
   imageGenNode: { width: 580, height: 360 },
@@ -68,6 +70,7 @@ const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; height: numb
   threeDWorldNode: { width: 340, height: 210 },
   storyboardNode: { width: 800, height: 600 },
   storyboardGenNode: { width: 800, height: 600 },
+  styleNode: { width: 220, height: 124 },
 };
 
 const DEFAULT_SHELL_SIZE = { width: 400, height: 300 };

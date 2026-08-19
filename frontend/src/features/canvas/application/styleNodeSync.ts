@@ -21,6 +21,11 @@
 export interface StyleNodeSnapshot {
   id: string;
   templateId: string | null;
+  /**
+   * 这个风格节点是否还连着别的下游节点。正常情况恒为 false —— 一对一是本模块
+   * 全部规则的前提，见 {@link resolveStyleNodeSyncAction} 里的共用分支。
+   */
+  sharedWithOtherTargets: boolean;
 }
 
 export interface StyleNodeSyncInput {
@@ -47,6 +52,26 @@ export type StyleNodeSyncAction =
 
 const NONE: StyleNodeSyncAction = { kind: 'none' };
 
+/**
+ * 对账的准入判据:清单已经到手,且当前选择在清单里认得出来。
+ *
+ * 两条都不能省。清单还没到就动手,`create` 会拿着一个查不到的 id 建节点;而
+ * 「认得出来」防的是另一件事 —— 这一版把 30 套旧风格整体换成了 45 套新的,新旧
+ * id 零重叠,存量画布里那些旧 id 在新清单里一个都查不到。照建就是用户只打开看一眼,
+ * 画布上就凭空长出一个空壳风格节点,还顺带判脏、自动落盘、进 undo 栈。
+ *
+ * 查不到就一直不动手:节点数据里那个失效 id 留着无害(后端对失效 id 是降级忽略),
+ * 用户下次真选了风格自然覆盖掉。不写永远比写错安全。
+ */
+export function isStyleSyncReady(
+  selectedTemplateId: string | null,
+  templates: ReadonlyArray<{ id: string }>,
+): boolean {
+  if (templates.length === 0) return false;
+  if (selectedTemplateId === null) return true;
+  return templates.some((template) => template.id === selectedTemplateId);
+}
+
 export function resolveStyleNodeSyncAction({
   selectedTemplateId,
   styleNode,
@@ -59,7 +84,9 @@ export function resolveStyleNodeSyncAction({
     // 首次对账时「没选风格」是常态,别把画布上碰巧连着的节点当脏数据删掉 ——
     // 那可能是用户自己拖出来的,等他真的动了选择再说。
     if (isFirstSync || lastSyncedTemplateId === null) return NONE;
-    return styleNode ? { kind: 'remove', nodeId: styleNode.id } : NONE;
+    // 共用节点不是本节点一个人的，清自己的选择不该把别人的投影一起删掉。
+    if (!styleNode || styleNode.sharedWithOtherTargets) return NONE;
+    return { kind: 'remove', nodeId: styleNode.id };
   }
 
   if (!styleNode) {
@@ -68,6 +95,17 @@ export function resolveStyleNodeSyncAction({
       return { kind: 'create', templateId: selectedTemplateId };
     }
     return everObservedStyleNode ? { kind: 'clear-selection' } : NONE;
+  }
+
+  if (styleNode.sharedWithOtherTargets) {
+    // 一个风格节点连着两个图片节点时，谁都不许改它 —— A 把它改成自己的选择，
+    // B 的对账立刻看见不匹配又改回去，两边 effect 靠 store 写入互相触发，
+    // 每轮都是一次 commit，React 到 50 层就抛 Maximum update depth exceeded。
+    // 收敛不了，所以这里干脆不动手：画布上两边显示不一致，但不会把画布跑挂。
+    //
+    // 共用本身是异常态。SYSTEM_ONLY_CONNECTIONS 挡了手工连线，复制节点时克隆
+    // 入边那条路已经在 canvasStore 里按类型跳过了，这里只是最后一道兜底。
+    return NONE;
   }
 
   if (styleNode.templateId !== selectedTemplateId) {
@@ -132,6 +170,34 @@ export function advanceStyleNodeSync(
         },
       };
   }
+}
+
+/* ------------------------------------------------------------------------- *
+ * 记账状态的存放处
+ *
+ * 不能放在 ImageGenNode 的 ref 里：低缩放档下 imageGenNode 会被换成 LodShellNode，
+ * 组件真卸载，ref 跟着没。于是「缩小 → 删掉风格节点 → 放大」时组件重新挂载，
+ * `lastSyncedTemplateId` 回到 undefined，对账按首次处理，把用户刚删掉的节点又
+ * 建回来。提到模块级按 nodeId 存，跨卸载存活。
+ *
+ * 换画布必须清空：重新 hydrate 后风格节点可能压根没被存下来（比如画布被旧版本
+ * 前端打开过、未知类型的节点连边一起被丢掉），此时残留的记账会让对账把「该补建」
+ * 判成「用户删了节点」，反手把选择也清掉。
+ * ------------------------------------------------------------------------- */
+
+const syncStates = new Map<string, StyleNodeSyncState>();
+
+export function readStyleNodeSyncState(nodeId: string): StyleNodeSyncState {
+  return syncStates.get(nodeId) ?? INITIAL_STYLE_NODE_SYNC_STATE;
+}
+
+export function writeStyleNodeSyncState(nodeId: string, state: StyleNodeSyncState): void {
+  syncStates.set(nodeId, state);
+}
+
+/** 换画布 / 清空画布时调用，见上面的注释。 */
+export function resetStyleNodeSyncStates(): void {
+  syncStates.clear();
 }
 
 /** 风格节点与图片节点之间留的水平间距（px）。 */

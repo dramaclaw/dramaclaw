@@ -5,7 +5,10 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { FreezoneStyleTemplate } from "@/api/ops";
-import { StyleGalleryModal } from "@/features/canvas/ui/StyleGalleryModal";
+import {
+  StyleGalleryModal,
+  resolveStyleSelectionState,
+} from "@/features/canvas/ui/StyleGalleryModal";
 
 function makeTemplate(
   id: string,
@@ -237,5 +240,56 @@ describe("StyleGalleryModal", () => {
     await user.click(screen.getByRole("button", { name: "返回" }));
 
     expect(screen.getByRole("button", { name: "武侠江湖" })).toBeInTheDocument();
+  });
+});
+
+describe("resolveStyleSelectionState", () => {
+  const template = TEMPLATES[0];
+
+  it("没选就是没选", () => {
+    expect(
+      resolveStyleSelectionState(null, null, {
+        isLoading: false,
+        hasError: false,
+      }),
+    ).toBe("none");
+  });
+
+  it("选了且查得到才是 ready", () => {
+    expect(
+      resolveStyleSelectionState("golden_age", template, {
+        isLoading: false,
+        hasError: false,
+      }),
+    ).toBe("ready");
+  });
+
+  // 下面三种都会让 describeStyleSelection 返回 null，但成因完全不同，
+  // UI 不能一律显示成「未选择风格」—— 那个 id 还在跟着生成请求走。
+  it("清单还在路上是 loading", () => {
+    expect(
+      resolveStyleSelectionState("golden_age", null, {
+        isLoading: true,
+        hasError: false,
+      }),
+    ).toBe("loading");
+  });
+
+  it("清单拉取失败是 failed", () => {
+    expect(
+      resolveStyleSelectionState("golden_age", null, {
+        isLoading: false,
+        hasError: true,
+      }),
+    ).toBe("failed");
+  });
+
+  it("清单到了但 id 不在里面是 missing", () => {
+    expect(
+      resolveStyleSelectionState("three_oclock_2300", null, {
+        isLoading: false,
+        hasError: false,
+      }),
+    ).toBe("missing");
   });
 });

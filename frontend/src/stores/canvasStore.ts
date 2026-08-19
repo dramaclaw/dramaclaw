@@ -33,6 +33,7 @@ import {
   isProtectedProjectionGroupNode,
   isStoryboardGroupNode,
   isStoryboardSplitNode,
+  isStyleNode,
 } from '@/features/canvas/domain/canvasNodes';
 import {
   DEFAULT_STORYBOARD_ASPECT,
@@ -61,6 +62,7 @@ import {
 } from '@/features/canvas/domain/viewportBookmarks';
 import { nodeCatalog } from '@/features/canvas/application/nodeCatalog';
 import { canvasNodeFactory } from '@/features/canvas/application/canvasServices';
+import { resetStyleNodeSyncStates } from '@/features/canvas/application/styleNodeSync';
 import {
   aspectRatioFromImageDimensions,
   ensureAtLeastOneMinEdge,
@@ -1452,6 +1454,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   setCanvasData: (nodes, edges, history) => {
+    // 换画布/清空后，上一份画布留下的风格对账记账必须作废，否则重新 hydrate
+    // 出来的图片节点会被当成「同一个节点接着算」，该补建的判成用户删了节点。
+    resetStyleNodeSyncStates();
     const normalizedCanvas = normalizeCanvasData(nodes, edges);
 
     set({
@@ -1495,6 +1500,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   hydrateCanvasDraft: (draft) => {
+    // 换画布/清空后，上一份画布留下的风格对账记账必须作废，否则重新 hydrate
+    // 出来的图片节点会被当成「同一个节点接着算」，该补建的判成用户删了节点。
+    resetStyleNodeSyncStates();
     const normalizedCanvas = normalizeCanvasData(draft.nodes, draft.edges);
 
     set({
@@ -1630,9 +1638,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     // Mirror the source's upstream connections so the clone resolves the same
-    // references (上游图/文本) as the original generation.
+    // references (上游图/文本) as the original generation. 风格节点除外 ——
+    // 见下面 duplicateNodesAsSiblings 里的同一处说明。
+    const styleNodeIds = new Set(
+      state.nodes.filter((node) => isStyleNode(node)).map((node) => node.id),
+    );
     const clonedEdges: CanvasEdge[] = state.edges
-      .filter((edge) => edge.target === sourceNodeId)
+      .filter((edge) => edge.target === sourceNodeId && !styleNodeIds.has(edge.source))
       .map((edge) => ({
         id: `e-${edge.source}-${newNode.id}`,
         source: edge.source,
@@ -1729,9 +1741,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // that source's clone so the duplicated subgraph stays internally wired
     // rather than re-attaching to the originals.
     const newEdges: CanvasEdge[] = [];
+    const styleNodeIds = new Set(
+      state.nodes.filter((node) => isStyleNode(node)).map((node) => node.id),
+    );
     for (const edge of state.edges) {
       const newTarget = idMap.get(edge.target);
       if (!newTarget) {
+        continue;
+      }
+      // 风格节点没跟着一起复制时，这条边会克隆成「同一个风格节点 → 两个图片节点」。
+      // 那是 styleNodeSync 全部规则的前提被打破：两个下游各按自己的选择去改同一个
+      // 节点，互相触发对方的 effect，谁也收敛不了，React 到 50 层直接把画布抛挂。
+      // 副本自己的对账会走补建那一支给它配一个新的，所以这里丢掉正好。
+      if (styleNodeIds.has(edge.source) && !idMap.has(edge.source)) {
         continue;
       }
       const newSource = idMap.get(edge.source) ?? edge.source;
@@ -3910,6 +3932,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   clearCanvas: () => {
+    // 换画布/清空后，上一份画布留下的风格对账记账必须作废，否则重新 hydrate
+    // 出来的图片节点会被当成「同一个节点接着算」，该补建的判成用户删了节点。
+    resetStyleNodeSyncStates();
     set((state) => {
       if (state.nodes.length === 0 && state.edges.length === 0) {
         return {};

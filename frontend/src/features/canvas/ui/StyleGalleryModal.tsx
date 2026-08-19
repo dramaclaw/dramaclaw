@@ -73,14 +73,17 @@ export function StyleGalleryModal({
   );
 
   useEffect(() => {
+    // 冒泡阶段监听，跟画布上别的弹层一个路数（见 CanvasHistoryAssetsModal）。
+    // 早先挂在 capture 上还 stopPropagation，等于把 Esc 从整个页面手里抢走 ——
+    // 事件连 target 都到不了，别人的输入法/内嵌弹层就都失灵了。详情页先自己吃掉
+    // 一次 Esc（退回图墙），第二次才关整个弹层。
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
+      if (event.key !== 'Escape' || event.isComposing) return;
       if (detailId) setDetailId(null);
       else onClose();
     };
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => document.removeEventListener('keydown', onKeyDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
   }, [detailId, onClose]);
 
   return createPortal(
@@ -92,6 +95,9 @@ export function StyleGalleryModal({
     >
       <div
         className={STYLE_GALLERY_MODAL_CLASS}
+        role="dialog"
+        aria-modal="true"
+        aria-label={detail ? `风格 ${detail.label}` : '风格图墙'}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.08] px-4">
@@ -134,9 +140,11 @@ export function StyleGalleryModal({
         {detail ? (
           <div className="flex flex-1 gap-4 overflow-hidden p-4">
             <div className="ui-scrollbar grid flex-1 grid-cols-2 content-start gap-2 overflow-y-auto">
+              {/* 同一条风格里出现两张同名示例图并非不可能（外部清单是运维自己写的），
+                  用路径当 key 会撞车，索引才是这里稳定的身份。 */}
               {detail.samples.map((sample, index) => (
                 <StyleAssetImage
-                  key={sample}
+                  key={`${detail.id}-${index}`}
                   rel={sample}
                   assetBase={assetBase}
                   alt={`${detail.label} 示例 ${index + 1}`}
@@ -181,67 +189,65 @@ export function StyleGalleryModal({
                 })}
               </div>
             )}
-            {isLoading && templates.length === 0 && (
+            {/* 空态和网格是二选一：以前两块都挂 flex-1 同时渲染，
+                「加载中」被挤到上半屏，下半屏是一片空白网格。 */}
+            {templates.length === 0 ? (
               <div className="flex flex-1 items-center justify-center text-xs text-text-muted">
-                加载中…
+                {isLoading ? '加载中…' : '暂无风格模板'}
               </div>
-            )}
-            {!isLoading && templates.length === 0 && (
-              <div className="flex flex-1 items-center justify-center text-xs text-text-muted">
-                暂无风格模板
-              </div>
-            )}
-            <div className="ui-scrollbar flex-1 overflow-y-auto p-4">
-              <div className="grid grid-cols-4 gap-3">
-                {visible.map((item) => {
-                  const isActive = item.id === selectedId;
-                  return (
-                    <div
-                      key={item.id}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={item.label}
-                      onClick={() => onSelect(item.id)}
-                      onKeyDown={(event) => {
-                        if (event.key !== 'Enter' && event.key !== ' ') return;
-                        event.preventDefault();
-                        onSelect(item.id);
-                      }}
-                      className={`group relative cursor-pointer overflow-hidden rounded-[12px] border bg-white/[0.04] transition-colors ${
-                        isActive
-                          ? 'border-white/[0.30] ring-1 ring-white/24'
-                          : 'border-white/[0.10] hover:border-white/[0.18] hover:bg-white/[0.06]'
-                      }`}
-                    >
-                      <StyleAssetImage
-                        rel={item.cover}
-                        assetBase={assetBase}
-                        alt={item.label}
-                        loading="lazy"
-                        className="aspect-video w-full object-cover"
-                      />
-                      <div className="px-2.5 py-2 text-xs font-medium text-text-dark/86">
-                        {item.label}
-                      </div>
-                      {isActive && (
-                        <Check className="absolute right-2 top-2 size-4 text-[rgb(var(--accent-rgb))]" />
-                      )}
-                      <button
-                        type="button"
-                        aria-label={`查看${item.label}详情`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setDetailId(item.id);
+            ) : (
+              <div className="ui-scrollbar flex-1 overflow-y-auto p-4">
+                <div className="grid grid-cols-4 gap-3">
+                  {visible.map((item) => {
+                    const isActive = item.id === selectedId;
+                    return (
+                      <div
+                        key={item.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={item.label}
+                        onClick={() => onSelect(item.id)}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' && event.key !== ' ') return;
+                          event.preventDefault();
+                          onSelect(item.id);
                         }}
-                        className="absolute bottom-10 right-2 flex size-7 items-center justify-center rounded-md bg-black/55 text-text-dark opacity-0 transition-opacity hover:bg-black/75 group-hover:opacity-100"
+                        className={`group relative cursor-pointer overflow-hidden rounded-[12px] border bg-white/[0.04] transition-colors ${
+                          isActive
+                            ? 'border-white/[0.30] ring-1 ring-white/24'
+                            : 'border-white/[0.10] hover:border-white/[0.18] hover:bg-white/[0.06]'
+                        }`}
                       >
-                        <Maximize2 className="size-3.5" />
-                      </button>
-                    </div>
-                  );
-                })}
+                        <StyleAssetImage
+                          rel={item.cover}
+                          assetBase={assetBase}
+                          alt={item.label}
+                          loading="lazy"
+                          className="aspect-video w-full object-cover"
+                        />
+                        <div className="px-2.5 py-2 text-xs font-medium text-text-dark/86">
+                          {item.label}
+                        </div>
+                        {isActive && (
+                          <Check className="absolute right-2 top-2 size-4 text-[rgb(var(--accent-rgb))]" />
+                        )}
+                        <button
+                          type="button"
+                          aria-label={`查看${item.label}详情`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setDetailId(item.id);
+                          }}
+                          className="absolute bottom-10 right-2 flex size-7 items-center justify-center rounded-md bg-black/55 text-text-dark opacity-0 transition-opacity hover:bg-black/75 group-hover:opacity-100"
+                        >
+                          <Maximize2 className="size-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
       </div>
@@ -256,4 +262,28 @@ export function describeStyleSelection(
 ): FreezoneStyleTemplate | null {
   if (!selectedId) return null;
   return templates.find((item) => item.id === selectedId) ?? null;
+}
+
+/**
+ * 「选了风格」和「查得到这个风格」是两件事：清单还在路上、拉取失败、id 是旧画布
+ * 留下的失效值，三种情况下 describeStyleSelection 都返回 null。UI 不能把它们一律
+ * 当成「没选」—— 那个 id 照样会跟着生成请求发给后端。
+ */
+export type StyleSelectionState =
+  | 'none'
+  | 'ready'
+  | 'loading'
+  | 'failed'
+  | 'missing';
+
+export function resolveStyleSelectionState(
+  selectedId: string | null,
+  template: FreezoneStyleTemplate | null,
+  source: { isLoading: boolean; hasError: boolean },
+): StyleSelectionState {
+  if (!selectedId) return 'none';
+  if (template) return 'ready';
+  if (source.isLoading) return 'loading';
+  if (source.hasError) return 'failed';
+  return 'missing';
 }

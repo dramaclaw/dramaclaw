@@ -127,7 +127,9 @@ def reset_style_template_cache() -> None:
 
 
 def load_style_templates() -> list[dict]:
-    return list(_load()[1])
+    # 每条都复制一份再给出去。只 list() 外层挡不住 `item["label"] = ...` 这类
+    # 改动 —— 那会顺着缓存污染后面每一次请求。清单就 45 条,复制不值一提。
+    return [{**item, "samples": list(item["samples"])} for item in _load()[1]]
 
 
 def get_style_manifest_version() -> str:

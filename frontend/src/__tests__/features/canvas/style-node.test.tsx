@@ -54,6 +54,7 @@ vi.mock("@/features/canvas/hooks/useFreezoneStyleTemplates", () => ({
     assetBase: "",
     isLoading: false,
     error: null,
+    retry: () => {},
   }),
 }));
 

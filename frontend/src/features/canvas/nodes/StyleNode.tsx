@@ -21,6 +21,8 @@ import { StyleAssetImage } from '@/features/canvas/ui/StyleAssetImage';
 import {
   StyleGalleryModal,
   describeStyleSelection,
+  resolveStyleSelectionState,
+  type StyleSelectionState,
 } from '@/features/canvas/ui/StyleGalleryModal';
 import {
   CANVAS_NODE_INPUT_SURFACE_CLASS,
@@ -41,6 +43,16 @@ type StyleNodeProps = NodeProps & {
 export const STYLE_NODE_WIDTH = 220;
 export const STYLE_NODE_HEIGHT = 124;
 
+// 「查不到封面」有四种成因，卡片得说清是哪一种：说成「未选择风格」会让用户以为
+// 这个节点是空的，而那个 id 其实还在跟着生成请求走（ready 态不会走到这里）。
+const STYLE_NODE_PLACEHOLDER_TEXT: Record<StyleSelectionState, string> = {
+  none: '未选择风格',
+  ready: '',
+  loading: '加载中…',
+  failed: '风格清单加载失败，点一下重试',
+  missing: '风格已失效，点一下重选',
+};
+
 export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
@@ -50,12 +62,23 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
     templates,
     assetBase,
     isLoading: templatesLoading,
+    error: templatesError,
+    retry: retryTemplates,
   } = useFreezoneStyleTemplates();
   const templateId =
     typeof data.styleTemplateId === 'string' && data.styleTemplateId.length > 0
       ? data.styleTemplateId
       : null;
   const template = describeStyleSelection(templateId, templates);
+  const selectionState = resolveStyleSelectionState(templateId, template, {
+    isLoading: templatesLoading,
+    hasError: templatesError != null,
+  });
+  // 打开图墙是明确的用户动作，顺手把上次失败的清单重拉一遍（成功态是空操作）。
+  const openGallery = useCallback(() => {
+    retryTemplates();
+    setGalleryOpen(true);
+  }, [retryTemplates]);
 
   // 真源是下游图片节点的 styleTemplateId —— 本节点只是它的投影，所以换风格先写
   // 下游，再由那边的对账把本节点的数据拉齐（见 styleNodeSync 的模块注释）。
@@ -127,13 +150,13 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
         onClick={(event) => {
           event.stopPropagation();
           if (isOrphan) return;
-          setGalleryOpen(true);
+          openGallery();
         }}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
           if (isOrphan) return;
-          setGalleryOpen(true);
+          openGallery();
         }}
         className={`relative flex h-full w-full flex-col overflow-hidden rounded-[var(--node-radius)] border ${CANVAS_NODE_INPUT_SURFACE_CLASS} transition-colors ${cardToneClass} ${
           isOrphan ? 'cursor-default' : 'cursor-pointer'
@@ -149,8 +172,14 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
               className="h-full w-full object-cover"
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-[12px] text-text-muted/90">
-              {templatesLoading ? '加载中…' : '未选择风格'}
+            <div
+              className={`flex h-full w-full items-center justify-center text-[12px] ${
+                selectionState === 'failed' || selectionState === 'missing'
+                  ? 'text-amber-300/90'
+                  : 'text-text-muted/90'
+              }`}
+            >
+              {STYLE_NODE_PLACEHOLDER_TEXT[selectionState]}
             </div>
           )}
         </div>
@@ -173,7 +202,7 @@ export const StyleNode = memo(({ id, data, selected }: StyleNodeProps) => {
           title="更换风格"
           onClick={(event) => {
             event.stopPropagation();
-            setGalleryOpen(true);
+            openGallery();
           }}
           className="absolute right-2 top-2 z-10 flex size-7 items-center justify-center rounded-md bg-black/55 text-text-dark opacity-0 transition-opacity hover:bg-black/75 focus-visible:opacity-100 group-hover:opacity-100"
         >

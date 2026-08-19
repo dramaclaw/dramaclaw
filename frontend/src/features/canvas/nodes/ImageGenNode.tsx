@@ -148,6 +148,7 @@ import { useFreezoneCameraOptions } from '@/features/canvas/hooks/useFreezoneCam
 import {
   StyleGalleryModal,
   describeStyleSelection,
+  resolveStyleSelectionState,
 } from '@/features/canvas/ui/StyleGalleryModal';
 import {
   StyleThumbnail,
@@ -160,8 +161,10 @@ import {
 } from '@/features/canvas/nodes/StyleNode';
 import {
   advanceStyleNodeSync,
+  isStyleSyncReady,
   resolveStyleNodePlacement,
-  INITIAL_STYLE_NODE_SYNC_STATE,
+  readStyleNodeSyncState,
+  writeStyleNodeSyncState,
 } from '@/features/canvas/application/styleNodeSync';
 import { joinUpstreamText } from '@/features/canvas/application/graphContentResolver';
 import {
@@ -501,8 +504,15 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     templates: styleTemplates,
     assetBase: styleAssetBase,
     isLoading: styleTemplatesLoading,
+    error: styleTemplatesError,
+    retry: retryStyleTemplates,
   } = useFreezoneStyleTemplates();
   const selectedStyle = describeStyleSelection(styleTemplateId, styleTemplates);
+  const styleSelectionState = resolveStyleSelectionState(
+    styleTemplateId,
+    selectedStyle,
+    { isLoading: styleTemplatesLoading, hasError: styleTemplatesError !== null },
+  );
 
   const upstreamContents = useUpstreamContents(id);
   // ImageGen 上游只消费「文本 + 图片」，视频/音频内容被丢弃 ——
@@ -579,10 +589,28 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     [upstreamNodes],
   );
 
+  // 主线只读判定：风格对账（下面）和工具条都要用，所以提到这里统一算一次。
+  const mainlineFlags = useMemo(
+    () => nodeMainlineFlags({ data, id, type: 'imageGenNode', position: { x: 0, y: 0 } } as never),
+    [data, id],
+  );
+  const mainlineCanvasReadonly = mainlineFlags.isPresetManaged && !canAutoCommitOnGenerate;
+
   // ===== 选中的风格 ⇄ 画布上的风格节点 =====
   // 真源始终是本节点的 styleTemplateId（提交读的就是它），风格节点只是它在画布上
   // 的投影。判定规则（含「刚建完还没回流」「存量画布补建」两个时序坑）抽在
   // styleNodeSync 里，这里只负责把动作落到 store。
+  const upstreamStyleNodeId = useMemo(
+    () => upstreamNodes.find((item) => isStyleNode(item))?.id ?? null,
+    [upstreamNodes],
+  );
+  // 「这个风格节点还连着别人吗」只能看它自己的出边，本节点的 connectedEdges 看不到。
+  // 取成布尔值订阅，别的边怎么动都不会让这里重渲染。
+  const styleNodeIsShared = useCanvasStore((state) =>
+    upstreamStyleNodeId === null
+      ? false
+      : state.edges.filter((edge) => edge.source === upstreamStyleNodeId).length > 1,
+  );
   const upstreamStyleNode = useMemo(() => {
     const node = upstreamNodes.find((item) => isStyleNode(item));
     if (!node) return null;
@@ -590,15 +618,20 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     return {
       id: node.id,
       templateId: typeof raw === 'string' && raw.length > 0 ? raw : null,
+      sharedWithOtherTargets: styleNodeIsShared,
     };
-  }, [upstreamNodes]);
-  const styleSyncStateRef = useRef(INITIAL_STYLE_NODE_SYNC_STATE);
+  }, [styleNodeIsShared, upstreamNodes]);
+  // 对账要等风格清单到手才能开工，理由是补建那一支：清单换代后旧画布里存的
+  // 清单没到、或者选中的是清单里查不到的旧 id，都不许动手（判据见 isStyleSyncReady）。
+  const styleSyncReady = isStyleSyncReady(styleTemplateId, styleTemplates);
   useEffect(() => {
-    const { action, state } = advanceStyleNodeSync(styleSyncStateRef.current, {
+    // 只读的主线画布一律不碰：那上面的节点不归用户管，补建/删除都是越权写入。
+    if (!styleSyncReady || mainlineCanvasReadonly) return;
+    const { action, state } = advanceStyleNodeSync(readStyleNodeSyncState(id), {
       selectedTemplateId: styleTemplateId,
       styleNode: upstreamStyleNode,
     });
-    styleSyncStateRef.current = state;
+    writeStyleNodeSyncState(id, state);
     switch (action.kind) {
       case 'create': {
         const self = useCanvasStore.getState().nodes.find((node) => node.id === id);
@@ -636,6 +669,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     addNodeAction,
     deleteNodeAction,
     id,
+    mainlineCanvasReadonly,
+    styleSyncReady,
     styleTemplateId,
     updateNodeData,
     upstreamStyleNode,
@@ -765,6 +800,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   // 收起态浮动面板固定基础尺寸；放大用居中弹窗（见下方 OperationPanelShell）。
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [stylePickerOpen, setStylePickerOpen] = useState(false);
+  // 打开图墙是个明确的用户动作，顺手把上次失败的清单重拉一遍（成功态是空操作）。
+  const openStylePicker = useCallback(() => {
+    retryStyleTemplates();
+    setStylePickerOpen(true);
+  }, [retryStyleTemplates]);
   const panelHeight = OPERATIONS_PANEL_HEIGHT;
   const panelWidth = Math.max(resolvedWidth, OPERATIONS_PANEL_MIN_WIDTH);
 
@@ -1355,12 +1395,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   //   context_only       — 有 mainline_context 但无 slot_target:cyan 细线 + context chip
   //   ordinary           — 都没有:默认白色 border
   //
-  const mainlineFlags = useMemo(
-    () => nodeMainlineFlags({ data, id, type: 'imageGenNode', position: { x: 0, y: 0 } } as never),
-    [data, id],
-  );
   const visualState = mainlineNodeVisualState(mainlineFlags);
-  const mainlineCanvasReadonly = mainlineFlags.isPresetManaged && !canAutoCommitOnGenerate;
   const cardToneClass = (() => {
     switch (visualState) {
       case 'preset_locked':
@@ -1896,8 +1931,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             className="absolute right-2 top-2 z-20"
           />
           <div className="flex shrink-0 items-center gap-2 pl-3 pr-10 pt-3">
-            {!selectedStyle && (
-              <StyleTriggerChip onOpen={() => setStylePickerOpen(true)} />
+            {styleSelectionState !== 'ready' && (
+              <StyleTriggerChip
+                state={styleSelectionState}
+                onOpen={openStylePicker}
+              />
             )}
             <NodeContextPromptPaletteButton
               nodeId={id}
@@ -1975,7 +2013,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               <StyleThumbnail
                 template={selectedStyle}
                 assetBase={styleAssetBase}
-                onOpen={() => setStylePickerOpen(true)}
+                onOpen={openStylePicker}
                 onClear={() => updateNodeData(id, { styleTemplateId: null })}
               />
             </div>
