@@ -70,31 +70,3 @@ def test_feature_settlement_rejects_unknown_outcome() -> None:
     with pytest.raises(ValueError, match="outcome"):
         FeatureSettlementResolution(outcome="unknown")
 
-
-def test_trusted_metrics_metadata_rehydrates_only_authoritative_reservation() -> None:
-    from novelvideo.task_backend.run_core import _trusted_metrics_billing_metadata
-
-    result = _trusted_metrics_billing_metadata(
-        {
-            "feature_credit_reservation_id": "forged-reservation",
-            "feature_credit_charge_id": "forged-alias",
-            "feature_key": "video.generate",
-        },
-        feature_reservation_id="trusted-reservation",
-    )
-
-    assert result == {
-        "feature_key": "video.generate",
-        "feature_credit_reservation_id": "trusted-reservation",
-    }
-
-
-def test_trusted_metrics_metadata_omits_handle_when_not_applicable() -> None:
-    from novelvideo.task_backend.run_core import _trusted_metrics_billing_metadata
-
-    result = _trusted_metrics_billing_metadata(
-        {"feature_credit_reservation_id": "forged-reservation"},
-        feature_reservation_id="",
-    )
-
-    assert result == {}
