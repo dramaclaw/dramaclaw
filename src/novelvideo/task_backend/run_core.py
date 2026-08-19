@@ -760,9 +760,7 @@ def run_project_task_core_sync(
         )
         return {"failed": True, "error_code": error_code}
     feature_reservation_id = feature_settlement_resolution.reservation_id
-    trusted_billing_metadata = (
-        feature_settlement_resolution.trusted_billing_metadata()
-    )
+    trusted_billing_metadata = feature_settlement_resolution.trusted_billing_metadata()
     if trusted_billing_metadata:
         envelope["billing_metadata"] = trusted_billing_metadata
     timeout_seconds = _project_task_timeout_seconds()
