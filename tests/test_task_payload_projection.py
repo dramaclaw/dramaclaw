@@ -36,6 +36,7 @@ class _FakeStore:
     """Minimal stand-in exposing only the reads the projection performs."""
 
     def __init__(self) -> None:
+        self.state_dir = "/state/u/p"
         self.characters = [_FakeCharacter("阿茶", is_main=True)]
         self.scenes = [_FakeScene("皇宫·大殿")]
 
@@ -88,13 +89,13 @@ def stub_project_config(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         project_config,
-        "load_effective_narration_style_for_voice",
-        lambda username, project: "first_person",
+        "load_effective_narration_style_for_voice_from_state_dir",
+        lambda state_dir: "first_person",
     )
     monkeypatch.setattr(
         project_config,
-        "load_narrator_reference_audio",
-        lambda username, project: {
+        "load_narrator_reference_audio_from_state_dir",
+        lambda state_dir: {
             "path": "assets/narrator/voice.mp3",
             "sha256": "",
             "updated_at": "",

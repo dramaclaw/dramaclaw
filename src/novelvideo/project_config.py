@@ -444,17 +444,38 @@ def update_regen_file_map(
     return dict(updated.get("regen_file_map") or {})
 
 
-def load_narration_style(username: str, project: str) -> str:
-    """Return the project-level narration style ("first_person" / "third_person")."""
-    config = load_project_config_file(username, project)
+def _load_narration_style_from_config(config: dict) -> str:
     style = str(config.get(NARRATION_STYLE_KEY) or "").strip()
     return style if style in _VALID_NARRATION_STYLES else DEFAULT_NARRATION_STYLE
 
 
+def _is_narrated_project_from_config(config: dict) -> bool:
+    return str(config.get("spine_template") or "drama").strip() == "narrated"
+
+
+def _load_effective_narration_style_for_voice_from_config(config: dict) -> str:
+    style = _load_narration_style_from_config(config)
+    return style if _is_narrated_project_from_config(config) else DEFAULT_NARRATION_STYLE
+
+
+def load_narration_style(username: str, project: str) -> str:
+    """Return the project-level narration style ("first_person" / "third_person")."""
+    return _load_narration_style_from_config(load_project_config_file(username, project))
+
+
+def load_narration_style_from_state_dir(state_dir: str | Path) -> str:
+    """Return the narration style stored in an explicitly resolved state directory."""
+    return _load_narration_style_from_config(load_project_config_file_from_state_dir(state_dir))
+
+
 def is_narrated_project(username: str, project: str) -> bool:
     """Return whether the project uses the narrated screenplay spine."""
-    config = load_project_config_file(username, project)
-    return str(config.get("spine_template") or "drama").strip() == "narrated"
+    return _is_narrated_project_from_config(load_project_config_file(username, project))
+
+
+def is_narrated_project_from_state_dir(state_dir: str | Path) -> bool:
+    """Return whether the project at an explicitly resolved state directory is narrated."""
+    return _is_narrated_project_from_config(load_project_config_file_from_state_dir(state_dir))
 
 
 def load_effective_narration_style_for_voice(username: str, project: str) -> str:
@@ -463,8 +484,24 @@ def load_effective_narration_style_for_voice(username: str, project: str) -> str
     Drama projects may carry legacy ``first_person`` values, but narration voice
     resolution for drama must use the project narrator instead of protagonist voice.
     """
-    style = load_narration_style(username, project)
-    return style if is_narrated_project(username, project) else DEFAULT_NARRATION_STYLE
+    return _load_effective_narration_style_for_voice_from_config(
+        load_project_config_file(username, project)
+    )
+
+
+def load_effective_narration_style_for_voice_from_state_dir(state_dir: str | Path) -> str:
+    """Return the effective voice style from an explicitly resolved state directory."""
+    return _load_effective_narration_style_for_voice_from_config(
+        load_project_config_file_from_state_dir(state_dir)
+    )
+
+
+def _load_narrator_reference_audio_from_config(config: dict) -> dict[str, str]:
+    return {
+        "path": str(config.get(NARRATOR_AUDIO_PATH_KEY) or "").strip(),
+        "sha256": str(config.get(NARRATOR_AUDIO_SHA256_KEY) or "").strip(),
+        "updated_at": str(config.get(NARRATOR_AUDIO_UPDATED_AT_KEY) or "").strip(),
+    }
 
 
 def load_narrator_reference_audio(username: str, project: str) -> dict[str, str]:
@@ -474,12 +511,16 @@ def load_narrator_reference_audio(username: str, project: str) -> dict[str, str]
     ``narrator_reference_audio_path``, ``..._sha256``, ``..._updated_at``.
     Missing fields come back as empty strings.
     """
-    config = load_project_config_file(username, project)
-    return {
-        "path": str(config.get(NARRATOR_AUDIO_PATH_KEY) or "").strip(),
-        "sha256": str(config.get(NARRATOR_AUDIO_SHA256_KEY) or "").strip(),
-        "updated_at": str(config.get(NARRATOR_AUDIO_UPDATED_AT_KEY) or "").strip(),
-    }
+    return _load_narrator_reference_audio_from_config(
+        load_project_config_file(username, project)
+    )
+
+
+def load_narrator_reference_audio_from_state_dir(state_dir: str | Path) -> dict[str, str]:
+    """Return narrator reference audio from an explicitly resolved state directory."""
+    return _load_narrator_reference_audio_from_config(
+        load_project_config_file_from_state_dir(state_dir)
+    )
 
 
 def set_narrator_reference_audio(
@@ -503,6 +544,29 @@ def set_narrator_reference_audio(
         config[NARRATOR_AUDIO_UPDATED_AT_KEY] = str(stamp or "").strip()
 
     updated = update_project_config_file(username, project, _apply)
+    return {
+        "path": str(updated.get(NARRATOR_AUDIO_PATH_KEY) or ""),
+        "sha256": str(updated.get(NARRATOR_AUDIO_SHA256_KEY) or ""),
+        "updated_at": str(updated.get(NARRATOR_AUDIO_UPDATED_AT_KEY) or ""),
+    }
+
+
+def set_narrator_reference_audio_in_state_dir(
+    state_dir: str | Path,
+    *,
+    relative_path: str,
+    sha256: str,
+    updated_at: str | None = None,
+) -> dict[str, str]:
+    """Persist narrator reference metadata in an explicitly resolved state directory."""
+    stamp = updated_at if updated_at is not None else datetime.now(timezone.utc).isoformat()
+
+    def _apply(config: dict) -> None:
+        config[NARRATOR_AUDIO_PATH_KEY] = str(relative_path or "").strip()
+        config[NARRATOR_AUDIO_SHA256_KEY] = str(sha256 or "").strip()
+        config[NARRATOR_AUDIO_UPDATED_AT_KEY] = str(stamp or "").strip()
+
+    updated = update_project_config_file_in_state_dir(state_dir, _apply)
     return {
         "path": str(updated.get(NARRATOR_AUDIO_PATH_KEY) or ""),
         "sha256": str(updated.get(NARRATOR_AUDIO_SHA256_KEY) or ""),

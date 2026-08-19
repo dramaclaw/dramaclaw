@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import fields, is_dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -430,3 +431,236 @@ def test_existing_limit_exceptions_are_not_downgraded_to_503_on_real_route(
     assert response.status_code != 503
     assert response.status_code == 429
     assert response.json()["data"]["limit_scope"] == expected_scope
+
+
+# ---------------------------------------------------------------------------
+# 4. 文案按作用域分叉
+#    共享池（``scope_kind == "platform"``）拦下的是不归属任何渠道的请求，
+#    对他们说"渠道"没有对应概念，配套的等待指引也无从执行。
+# ---------------------------------------------------------------------------
+
+
+def test_platform_scope_message_avoids_channel_wording() -> None:
+    response = _client_raising(
+        ChannelTaskLimitExceeded(
+            scope_kind="platform",
+            org_id=None,
+            queue_kind="default",
+            limit=32,
+            active=32,
+        )
+    ).get("/_test/task-limit")
+
+    message = response.json()["error"]
+    assert "渠道" not in message
+    assert "组织" not in message
+    assert "平台" in message
+    assert "default" in message
+    # 共享池是全平台共用的，撞闸的人自己可能一个任务都没在跑 ——
+    # 让他"等待已有任务完成"是条不可行动的指引。
+    assert "等待已有任务完成" not in message
+
+
+def test_organization_scope_message_keeps_channel_wording() -> None:
+    response = _client_raising(
+        ChannelTaskLimitExceeded(
+            scope_kind="organization",
+            org_id="org_9",
+            queue_kind="video",
+            limit=2,
+            active=2,
+        )
+    ).get("/_test/task-limit")
+
+    assert response.json()["error"] == (
+        "当前渠道 video 队列任务已满，请等待已有任务完成后再提交"
+    )
+
+
+def test_message_split_leaves_channel_handler_data_untouched() -> None:
+    """分叉只动 error 文案，data 两个作用域都逐字未变。"""
+    platform = _client_raising(
+        ChannelTaskLimitExceeded(
+            scope_kind="platform",
+            org_id=None,
+            queue_kind="world",
+            limit=8,
+            active=8,
+        )
+    ).get("/_test/task-limit")
+    assert platform.json()["data"] == {
+        "scope_kind": "platform",
+        "org_id": None,
+        "queue_kind": "world",
+        "limit": 8,
+        "active": 8,
+        "limit_scope": "platform",
+    }
+
+    organization = _client_raising(
+        ChannelTaskLimitExceeded(
+            scope_kind="organization",
+            org_id="org_9",
+            queue_kind="world",
+            limit=8,
+            active=8,
+        )
+    ).get("/_test/task-limit")
+    assert organization.json()["data"] == {
+        "scope_kind": "organization",
+        "org_id": "org_9",
+        "queue_kind": "world",
+        "limit": 8,
+        "active": 8,
+        "limit_scope": "channel",
+    }
+
+
+_LIMIT_LOGGER = "novelvideo.task_backend.limit_logging"
+
+# ---------------------------------------------------------------------------
+# 5. 限流日志
+#    429 的 limit_scope 此前只活在返回体里，日志一个字不记 —— 生产上撞闸后
+#    无法归因是五道闸里的哪一道。这五个 handler 覆盖「异常逃到 HTTP 层」这条出口；
+#    扇出循环吞掉异常的那条出口另见 tests/test_fanout_partial_dispatch.py。
+# ---------------------------------------------------------------------------
+
+_LIMIT_LOG_CASES = (
+    (
+        ProjectTaskLimitExceeded(
+            project_id="proj_1", queue_kind="video", limit=4, active=4
+        ),
+        (
+            "limit_scope=project",
+            "queue_kind=video",
+            "limit=4",
+            "active=4",
+            "project_id=proj_1",
+        ),
+    ),
+    (
+        ProjectUserTaskLimitExceeded(
+            project_id="proj_1",
+            requester_user_id="user_1",
+            queue_kind="video",
+            limit=1,
+            active=1,
+        ),
+        (
+            "limit_scope=user",
+            "requester_user_id=user_1",
+            "project_id=proj_1",
+        ),
+    ),
+    (
+        GlobalLaneQueueLimitExceeded(
+            project_id="proj_1", queue_kind="world", limit=2, queued=2
+        ),
+        (
+            "limit_scope=global_lane_queue",
+            "queued=2",
+            "project_id=proj_1",
+        ),
+    ),
+    (
+        ChannelTaskLimitExceeded(
+            scope_kind="platform",
+            org_id=None,
+            queue_kind="default",
+            limit=32,
+            active=32,
+        ),
+        (
+            "limit_scope=platform",
+            "scope_kind=platform",
+            "org_id=-",
+            "queue_kind=default",
+            "limit=32",
+            "active=32",
+        ),
+    ),
+    (
+        ChannelTaskLimitExceeded(
+            scope_kind="organization",
+            org_id="org_9",
+            queue_kind="video",
+            limit=2,
+            active=2,
+        ),
+        (
+            "limit_scope=channel",
+            "scope_kind=organization",
+            "org_id=org_9",
+        ),
+    ),
+    (
+        UserTaskLimitExceeded(
+            requester_user_id="user_7", queue_kind="default", limit=1, active=1
+        ),
+        (
+            "limit_scope=user",
+            "requester_user_id=user_7",
+            "queue_kind=default",
+        ),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected_fragments"),
+    _LIMIT_LOG_CASES,
+    ids=[
+        "project",
+        "project_user",
+        "global_lane_queue",
+        "channel_platform",
+        "channel_organization",
+        "user",
+    ],
+)
+def test_every_limit_handler_emits_one_attributable_warning(
+    caplog: pytest.LogCaptureFixture,
+    exc: RuntimeError,
+    expected_fragments: tuple[str, ...],
+) -> None:
+    caplog.set_level(logging.WARNING, logger=_LIMIT_LOGGER)
+
+    _client_raising(exc).get("/_test/task-limit")
+
+    records = [
+        record
+        for record in caplog.records
+        if record.name == _LIMIT_LOGGER
+        and "task lane limit rejected" in record.getMessage()
+    ]
+    assert len(records) == 1, "每次拒绝恰好一条，不多不少"
+
+    message = records[0].getMessage()
+    assert records[0].levelno == logging.WARNING
+    for fragment in expected_fragments:
+        assert fragment in message, f"{fragment!r} 不在 {message!r} 里"
+
+
+def test_limit_log_never_carries_names_only_ids(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """可记业务 ID，不记用户名/项目名。"""
+    caplog.set_level(logging.WARNING, logger=_LIMIT_LOGGER)
+
+    _client_raising(
+        ChannelTaskLimitExceeded(
+            scope_kind="organization",
+            org_id="org_9",
+            queue_kind="video",
+            limit=2,
+            active=2,
+        )
+    ).get("/_test/task-limit")
+
+    message = next(
+        record.getMessage()
+        for record in caplog.records
+        if "task lane limit rejected" in record.getMessage()
+    )
+    assert "username" not in message
+    assert "project_name" not in message

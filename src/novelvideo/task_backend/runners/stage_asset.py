@@ -20,6 +20,18 @@ from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
 
+SUPPORTED_STAGE_ASSET_STEPS = frozenset(
+    {
+        "single_face_sharp",
+        "pano_sharp",
+        "splat_collision",
+        "voxel_world_from_360",
+        "upload_scene_package",
+        "pano_from_master",
+        "pano_from_text",
+    }
+)
+
 
 def _extract_trusted_egress_context(
     envelope: dict[str, Any],
@@ -79,6 +91,8 @@ def run_stage_asset(
     payload = envelope.get("payload") or {}
     scene_name = str(payload["scene_name"])
     step = str(payload["step"])
+    if step not in SUPPORTED_STAGE_ASSET_STEPS:
+        raise ValueError(f"unknown stage_asset step: {step}")
     params = dict(payload.get("params") or {})
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     scope = envelope.get("scope")

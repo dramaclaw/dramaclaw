@@ -59,14 +59,13 @@ def _client(monkeypatch, tmp_path):
     app = FastAPI()
     app.include_router(projects.router)
     app.dependency_overrides[projects.get_api_user] = lambda: {"username": "admin"}
-    return TestClient(app), project_config, project_dir
+    return TestClient(app), project_config, project_dir, fake_ctx.state_dir
 
 
 def test_narrator_voice_upload_persists_project_reference(monkeypatch, tmp_path):
-    client, project_config, project_dir = _client(monkeypatch, tmp_path)
-    project_config.set_narrator_reference_audio(
-        "admin",
-        "demo",
+    client, project_config, project_dir, state_dir = _client(monkeypatch, tmp_path)
+    project_config.set_narrator_reference_audio_in_state_dir(
+        state_dir,
         relative_path="",
         sha256="",
     )
@@ -83,14 +82,14 @@ def test_narrator_voice_upload_persists_project_reference(monkeypatch, tmp_path)
     assert payload["data"]["reference_url"].startswith(
         "/static/admin/demo/assets/narrator/voice.wav"
     )
-    saved = project_config.load_narrator_reference_audio("admin", "demo")
+    saved = project_config.load_narrator_reference_audio_from_state_dir(state_dir)
     assert saved["path"] == "assets/narrator/voice.wav"
     assert saved["sha256"]
     assert (project_dir / "assets/narrator/voice.wav").read_bytes() == b"voice-bytes"
 
 
 def test_narrator_voice_record_accepts_data_url(monkeypatch, tmp_path):
-    client, project_config, project_dir = _client(monkeypatch, tmp_path)
+    client, project_config, project_dir, state_dir = _client(monkeypatch, tmp_path)
     encoded = base64.b64encode(b"recorded-voice").decode("ascii")
 
     response = client.post(
@@ -102,14 +101,14 @@ def test_narrator_voice_record_accepts_data_url(monkeypatch, tmp_path):
     payload = response.json()
     assert payload["ok"] is True
     assert payload["data"]["reference_path"] == "assets/narrator/voice.wav"
-    assert project_config.load_narrator_reference_audio("admin", "demo")["path"] == (
+    assert project_config.load_narrator_reference_audio_from_state_dir(state_dir)["path"] == (
         "assets/narrator/voice.wav"
     )
     assert (project_dir / "assets/narrator/voice.wav").read_bytes() == b"recorded-voice"
 
 
 def test_narrator_voice_sources_and_copy(monkeypatch, tmp_path):
-    client, project_config, project_dir = _client(monkeypatch, tmp_path)
+    client, project_config, project_dir, state_dir = _client(monkeypatch, tmp_path)
     source = project_dir / "audio/ep001/beat_01.mp3"
     source.parent.mkdir(parents=True)
     source.write_bytes(b"source-voice")
@@ -131,20 +130,19 @@ def test_narrator_voice_sources_and_copy(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert project_config.load_narrator_reference_audio("admin", "demo")["path"] == (
+    assert project_config.load_narrator_reference_audio_from_state_dir(state_dir)["path"] == (
         "assets/narrator/voice.mp3"
     )
     assert (project_dir / "assets/narrator/voice.mp3").read_bytes() == b"source-voice"
 
 
 def test_narrator_voice_delete_renames_file_and_clears_metadata(monkeypatch, tmp_path):
-    client, project_config, project_dir = _client(monkeypatch, tmp_path)
+    client, project_config, project_dir, state_dir = _client(monkeypatch, tmp_path)
     target = project_dir / "assets/narrator/voice.wav"
     target.parent.mkdir(parents=True)
     target.write_bytes(b"voice")
-    project_config.set_narrator_reference_audio(
-        "admin",
-        "demo",
+    project_config.set_narrator_reference_audio_in_state_dir(
+        state_dir,
         relative_path="assets/narrator/voice.wav",
         sha256="sha",
     )
@@ -153,6 +151,6 @@ def test_narrator_voice_delete_renames_file_and_clears_metadata(monkeypatch, tmp
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert project_config.load_narrator_reference_audio("admin", "demo")["path"] == ""
+    assert project_config.load_narrator_reference_audio_from_state_dir(state_dir)["path"] == ""
     assert not target.exists()
     assert list((project_dir / "assets/narrator").glob("voice_*.wav"))

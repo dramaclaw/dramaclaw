@@ -42,6 +42,15 @@ class NoOpUsageMeter:
     ) -> None:
         return None
 
+    async def update_current_model_call_log(
+        self,
+        *,
+        request_payload: Optional[dict[str, Any]] = None,
+        response_payload: Optional[dict[str, Any]] = None,
+        error_message: str = "",
+    ) -> None:
+        return None
+
     async def reserve_feature_start_credits(
         self,
         *,

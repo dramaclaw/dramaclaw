@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 
 from novelvideo.config import INDEXTTS2_RECORD_MODEL, INDEXTTS2_RECORD_PROVIDER
 from novelvideo.project_config import (
-    load_effective_narration_style_for_voice,
-    load_narrator_reference_audio,
+    load_effective_narration_style_for_voice_from_state_dir,
+    load_narrator_reference_audio_from_state_dir,
 )
 from novelvideo.seedance2_i2v.voice_audio_records import (
     upsert_seedance2_voice_audio_record,
@@ -48,8 +48,8 @@ class Seedance2NarrationAudioTaskResult:
 
 
 async def _resolve_for_run(store, username: str, project: str) -> NarratorResolution:
-    style = load_effective_narration_style_for_voice(username, project)
-    descriptor = load_narrator_reference_audio(username, project)
+    style = load_effective_narration_style_for_voice_from_state_dir(store.state_dir)
+    descriptor = load_narrator_reference_audio_from_state_dir(store.state_dir)
     characters = await store.list_characters() if style == "first_person" else None
     return resolve_narrator_source(
         store=store,

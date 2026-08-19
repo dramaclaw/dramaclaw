@@ -44,6 +44,7 @@ def test_multimodal_assets_use_scene_ref_identity_and_audio(tmp_path, monkeypatc
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -80,6 +81,7 @@ def test_multimodal_assets_resolve_scene_variant_to_derived_scene_master(tmp_pat
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -112,6 +114,7 @@ def test_multimodal_assets_resolve_time_of_day_to_time_plate(tmp_path):
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -147,6 +150,7 @@ def test_multimodal_assets_resolve_variant_time_to_variant_time_plate(tmp_path):
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -183,6 +187,7 @@ def test_multimodal_assets_fall_back_to_base_scene_master_when_variant_image_mis
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -211,6 +216,7 @@ async def test_prepare_seedance2_generation_inputs_preserves_config_duration(tmp
 
     prepared = await prepare_seedance2_generation_inputs(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -239,6 +245,7 @@ def test_multimodal_assets_merge_detected_identities_with_visual_markers(tmp_pat
     project_dir = tmp_path / "project"
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 29,
@@ -289,6 +296,7 @@ def test_multimodal_dialogue_assets_use_character_voice_reference_not_beat_audio
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -338,6 +346,7 @@ def test_multimodal_dialogue_assets_follow_multi_speaker_text_order(tmp_path):
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -386,6 +395,7 @@ def test_multimodal_narration_assets_use_project_narrator_voice_not_beat_audio(
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -430,6 +440,7 @@ def test_multimodal_narration_keeps_project_narrator_mentionable_when_duration_n
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -465,6 +476,7 @@ def test_prompt_audio_selection_sends_only_referenced_audio(tmp_path):
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -535,6 +547,7 @@ def test_drama_narration_assets_ignore_first_person_protagonist_voice(tmp_path, 
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -570,6 +583,7 @@ def test_multimodal_assets_skip_auto_audio_for_silence_beat(tmp_path):
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -601,6 +615,7 @@ def test_multimodal_assets_skip_auto_audio_for_legacy_action_beat(tmp_path):
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={"beat_number": 1, "audio_type": "action"},
         mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
@@ -621,6 +636,7 @@ def test_first_frame_mode_only_sends_current_frame(tmp_path):
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={"beat_number": 2, "detected_identities": ["秦_青年"]},
         mode=Seedance2I2VMode.FIRST_FRAME,
@@ -665,6 +681,7 @@ def test_first_frame_mode_uses_matching_video_input_override(tmp_path):
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={"beat_number": 2},
         mode=Seedance2I2VMode.FIRST_FRAME,
@@ -689,6 +706,7 @@ def test_first_last_frame_mode_sends_both_frame_slots(tmp_path):
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={"beat_number": 2},
         next_beat={"beat_number": 3},
@@ -721,6 +739,7 @@ def test_first_last_frame_mode_uses_matching_video_input_overrides(tmp_path):
 
     assets = build_seedance2_project_assets(
         project_output=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={"beat_number": 2},
         next_beat={"beat_number": 3},

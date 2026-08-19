@@ -50,6 +50,7 @@ def test_drama_narration_panel_sends_audio_only_when_prompt_references_it(
 
     state = build_seedance2_video_panel_state(
         project_dir=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,
@@ -74,6 +75,7 @@ def test_drama_narration_panel_sends_audio_only_when_prompt_references_it(
 
     state = build_seedance2_video_panel_state(
         project_dir=project_dir,
+        state_dir=tmp_path / "state" / "alice" / "project",
         episode=1,
         beat={
             "beat_number": 1,

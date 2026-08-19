@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import shutil
 import tempfile
 import time
@@ -24,6 +25,7 @@ from novelvideo.api.schemas import (
     SceneReferenceGenerateRequest,
     SceneUpdate,
 )
+from novelvideo.api.task_start_errors import handle_task_start_runtime_error
 from novelvideo.api.viewer_manifests import (
     build_director_stage_manifest,
     build_pano_viewer_manifest,
@@ -51,6 +53,7 @@ from novelvideo.utils.path_resolver import (
 )
 
 router = APIRouter()
+logger = logging.getLogger("novelvideo.api.scenes")
 
 _SCENE_TIME_TOKENS = {
     "清晨",
@@ -1404,6 +1407,11 @@ async def _start_3gs_single_face_task(
             params=params,
         )
     except RuntimeError as exc:
+        handle_task_start_runtime_error(
+            logger,
+            "failed to start single-face stage asset task",
+            exc,
+        )
         return {"ok": False, "error": str(exc)}
 
     return {
@@ -1489,6 +1497,11 @@ async def generate_scene_3gs_pano_ply(
             params=params,
         )
     except RuntimeError as exc:
+        handle_task_start_runtime_error(
+            logger,
+            "failed to start pano stage asset task",
+            exc,
+        )
         return {"ok": False, "error": str(exc)}
 
     return {
@@ -1539,6 +1552,11 @@ async def generate_scene_pano(
             params=params,
         )
     except RuntimeError as exc:
+        handle_task_start_runtime_error(
+            logger,
+            "failed to start scene pano generation task",
+            exc,
+        )
         return {"ok": False, "error": str(exc)}
 
     return {

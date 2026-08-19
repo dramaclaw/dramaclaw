@@ -15,7 +15,7 @@ def test_indextts2_resolves_project_config_from_current_module(monkeypatch):
     from novelvideo.audio import indextts2_beat_audio_task as task
 
     current_project_config = SimpleNamespace(
-        is_narrated_project=lambda _username, _project: True,
+        is_narrated_project_from_state_dir=lambda _state_dir: True,
     )
     monkeypatch.setitem(
         sys.modules,
@@ -23,7 +23,9 @@ def test_indextts2_resolves_project_config_from_current_module(monkeypatch):
         current_project_config,
     )
 
-    assert task._is_narrated_project("alice", "demo") is True
+    assert task._is_narrated_project(
+        SimpleNamespace(state_dir="/state/alice/demo"), "alice", "demo"
+    ) is True
 
 
 class _ForeignBillingError(BillingError):
@@ -119,6 +121,7 @@ class FakeStore:
     def __init__(self, project_dir, db_path, beats, *, include_dialogue_voice=True):
         self.project_dir = str(project_dir)
         self.db_path = str(db_path)
+        self.state_dir = str(Path(db_path).parent)
         self._beats = list(beats)
         self.include_dialogue_voice = include_dialogue_voice
 

@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -886,3 +887,117 @@ def test_rejected_reason_matches_the_handler_limit_scope_verbatim(
     from_handler = refused.json()["data"]["limit_scope"]
 
     assert from_loop == from_handler == reason
+
+
+# ---------------------------------------------------------------------------
+# 部分投递撞闸也要留下可归因日志
+#   k > 0 时异常被本地吞掉、响应是 200 ＋ ``rejected``，永远走不到 ``api/app.py``
+#   的 handler。日志若只挂在 handler 上，漏掉的恰是「投了一半撞闸」这类线上事件 ——
+#   用户拿到 200、面板上一条记录都没有。
+# ---------------------------------------------------------------------------
+
+_LIMIT_LOGGER = "novelvideo.task_backend.limit_logging"
+
+
+def _limit_log_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if record.name == _LIMIT_LOGGER
+        and "task lane limit rejected" in record.getMessage()
+    ]
+
+
+def _assert_single_rejection_log(
+    caplog: pytest.LogCaptureFixture, exc, reason: str
+) -> None:
+    records = _limit_log_records(caplog)
+    assert len(records) == 1, "按捕获到的那一个异常记一次，不按 rejected 逐条刷屏"
+    message = records[0].getMessage()
+    assert records[0].levelno == logging.WARNING
+    assert f"limit_scope={reason}" in message
+    assert f"queue_kind={exc.queue_kind}" in message
+    assert f"limit={exc.limit}" in message
+
+
+@pytest.mark.parametrize(("exc", "reason", "_scope"), _GATE_CASES, ids=_GATE_IDS)
+def test_loop1_partial_dispatch_logs_one_attributable_rejection(
+    caplog, monkeypatch, tmp_path, exc, reason, _scope
+) -> None:
+    caplog.set_level(logging.WARNING, logger=_LIMIT_LOGGER)
+    backend = _GateBackend(exc, fail_from=4)
+
+    response = _post_sketches(_sketch_client(monkeypatch, tmp_path, backend, grids=6))
+
+    assert response.status_code == 200
+    assert len(response.json()["data"]["rejected"]) == 3
+    _assert_single_rejection_log(caplog, exc, reason)
+
+
+@pytest.mark.parametrize(("exc", "reason", "_scope"), _GATE_CASES, ids=_GATE_IDS)
+def test_loop2_partial_dispatch_logs_one_attributable_rejection(
+    caplog, monkeypatch, tmp_path, exc, reason, _scope
+) -> None:
+    caplog.set_level(logging.WARNING, logger=_LIMIT_LOGGER)
+    backend = _GateBackend(exc, fail_from=4)
+
+    _plan, response = _render_execute(
+        _render_client(monkeypatch, tmp_path, backend), [1, 2, 3, 4, 5, 6]
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["data"]["rejected"]) == 3
+    _assert_single_rejection_log(caplog, exc, reason)
+
+
+@pytest.mark.parametrize(("exc", "reason", "_scope"), _GATE_CASES, ids=_GATE_IDS)
+def test_loop3_partial_dispatch_logs_one_attributable_rejection(
+    caplog, monkeypatch, tmp_path, exc, reason, _scope
+) -> None:
+    caplog.set_level(logging.WARNING, logger=_LIMIT_LOGGER)
+    backend = _GateBackend(exc, fail_from=4)
+    segments = [[1], [2], [3], [4], [5], [6]]
+
+    response = _post_missing_manual(
+        _manual_client(monkeypatch, tmp_path, backend, segments)
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["data"]["rejected"]) == 3
+    _assert_single_rejection_log(caplog, exc, reason)
+
+
+def test_partial_dispatch_log_carries_the_gate_identity_not_the_tail_length(
+    caplog, monkeypatch, tmp_path
+) -> None:
+    """一次撞闸一行，字段来自异常本身（org_id / active），与 ``rejected`` 条数无关。"""
+    caplog.set_level(logging.WARNING, logger=_LIMIT_LOGGER)
+    backend = _GateBackend(_CHANNEL_GATE, fail_from=2)
+
+    response = _post_sketches(_sketch_client(monkeypatch, tmp_path, backend, grids=6))
+
+    assert response.status_code == 200
+    assert len(response.json()["data"]["rejected"]) == 5
+    records = _limit_log_records(caplog)
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert "limit_scope=channel" in message
+    assert "scope_kind=organization" in message
+    assert f"org_id={_CHANNEL_GATE.org_id}" in message
+    assert f"active={_CHANNEL_GATE.active}" in message
+
+
+@pytest.mark.parametrize(("exc", "_reason", "scope"), _GATE_CASES, ids=_GATE_IDS)
+def test_k_zero_still_logs_exactly_once_through_the_handler(
+    caplog, monkeypatch, tmp_path, exc, _reason, scope
+) -> None:
+    """k == 0 走裸抛：只有 handler 记那一次，扇出侧不得抢在 ``raise`` 前重复记。"""
+    caplog.set_level(logging.WARNING, logger=_LIMIT_LOGGER)
+    backend = _GateBackend(exc, fail_from=1)
+
+    response = _post_sketches(_sketch_client(monkeypatch, tmp_path, backend, grids=4))
+
+    assert response.status_code == 429
+    records = _limit_log_records(caplog)
+    assert len(records) == 1, "裸抛路径只该由 handler 记一次"
+    assert f"limit_scope={scope}" in records[0].getMessage()
