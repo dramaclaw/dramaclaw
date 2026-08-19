@@ -33,7 +33,6 @@ import {
   Grid2x2,
   Grid3x3,
   ImageUpscale,
-  Layers,
   LayoutDashboard,
   LayoutGrid,
   Link2,
@@ -44,18 +43,15 @@ import {
   Palette,
   PenLine,
   RefreshCw,
-  Replace,
   Rewind,
   RotateCw,
   ScanSearch,
   Scissors,
   Send,
   Sparkles,
-  SquarePen,
   Trash2,
   Unlink2,
   User,
-  UserRoundCog,
   Users,
   Video as VideoIcon,
   Wand2,
@@ -1612,13 +1608,6 @@ export const NodeActionToolbar = memo(
                   );
                 };
 
-                // 片段重拍 / 智能续写 / 画面编辑：菜单先落地，功能后续逐个接入。
-                // 在接上之前明确告诉用户「暂未上线」，而不是静默无反应。
-                const handleVideoComingSoon = (label: string) => {
-                  handleVideoStub(label);
-                  toast.info(t("nodeToolbar.video.notImplementedYet"));
-                };
-
                 // 逐帧拉片：在下游落一个空的拉片节点并连边就完事 —— 节点自己会顺着
                 // 这根上游边认素材（VideoBreakdownNode 里 upstreamVideo 优先于
                 // data.sourceVideoUrl），所以这里不必再把 URL 抄一份进去，抄了反而
@@ -2339,66 +2328,6 @@ export const NodeActionToolbar = memo(
                       )}
                       {t("nodeToolbar.video.separateAudioVideo")}
                     </UiChipButton>
-                    <DropdownMenu
-                      onOpenChange={(open) => {
-                        if (open) closeDownloadMenu();
-                      }}
-                    >
-                      <DropdownMenuTrigger asChild>
-                        <UiChipButton
-                          key="video-frame-edit"
-                          className={stubButtonClass}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          <SquarePen className="h-3.5 w-3.5" />
-                          {t("nodeToolbar.video.frameEdit")}
-                          <ChevronDown className="h-3 w-3" />
-                        </UiChipButton>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="start"
-                        sideOffset={6}
-                        className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[180px]`}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <DropdownMenuItem
-                          className={TOOLBAR_MENU_ITEM_CLASS}
-                          onSelect={() =>
-                            handleVideoComingSoon("frame-edit-subject-remove")
-                          }
-                        >
-                          <Eraser className="h-4 w-4" />
-                          {t("nodeToolbar.video.frameEditSubjectRemove")}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className={TOOLBAR_MENU_ITEM_CLASS}
-                          onSelect={() =>
-                            handleVideoComingSoon("frame-edit-subject-modify")
-                          }
-                        >
-                          <UserRoundCog className="h-4 w-4" />
-                          {t("nodeToolbar.video.frameEditSubjectModify")}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className={TOOLBAR_MENU_ITEM_CLASS}
-                          onSelect={() =>
-                            handleVideoComingSoon("frame-edit-subject-replace")
-                          }
-                        >
-                          <Replace className="h-4 w-4" />
-                          {t("nodeToolbar.video.frameEditSubjectReplace")}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className={TOOLBAR_MENU_ITEM_CLASS}
-                          onSelect={() =>
-                            handleVideoComingSoon("frame-edit-matte")
-                          }
-                        >
-                          <Layers className="h-4 w-4" />
-                          {t("nodeToolbar.video.frameEditMatte")}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
                     <UiChipButton
                       key="video-download"
                       className={`${stubButtonClass} !px-2 ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
