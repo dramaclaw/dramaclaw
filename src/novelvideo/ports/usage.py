@@ -151,6 +151,15 @@ class UsageMeter(Protocol):
         """Keep a post-start reservation in review without refund or confirm."""
         ...
 
+    async def mark_model_call_credit_settlement_for_review(
+        self,
+        reservation_id: str,
+        *,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Keep an accepted provider model reservation for reconciliation."""
+        ...
+
     async def mark_current_paid_execution_attempt(
         self,
         *,

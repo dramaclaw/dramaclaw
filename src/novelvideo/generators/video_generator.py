@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import logging
 import math
 import os
 import random
@@ -45,6 +46,8 @@ from novelvideo.storage.media_relay import (
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
 from novelvideo.task_backend.envelope import RunningTaskAuthorityIndeterminate
 from novelvideo.task_backend.subprocesses import run_project_subprocess
+
+logger = logging.getLogger(__name__)
 
 # 确保加载 .env 环境变量
 load_dotenv()
@@ -3618,10 +3621,28 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 error="Timeout waiting for DramaClawAPI video task",
                 task_id=task_id,
             )
-        except RunningTaskAuthorityIndeterminate:
+        except RunningTaskAuthorityIndeterminate as exc:
             # Provider acceptance is already durable.  This branch must not
-            # resubmit the provider request or decide refund/confirm locally;
-            # run_core moves the feature settlement to review.
+            # resubmit the provider request or decide refund/confirm locally.
+            if reservation_id:
+                try:
+                    await get_usage_meter().mark_model_call_credit_settlement_for_review(
+                        reservation_id,
+                        metadata={
+                            "source": "video_post_accept_authz_indeterminate",
+                            "failure_kind": exc.failure_kind,
+                            "provider_request_id": provider_request_id,
+                            "provider_task_id": task_id or "",
+                        },
+                    )
+                except Exception as review_exc:  # noqa: BLE001
+                    logger.error(
+                        "model_call_settlement_review_enqueue_failed",
+                        extra={
+                            "safe_error_type": type(review_exc).__name__,
+                            "error_id": uuid.uuid4().hex,
+                        },
+                    )
             raise
         except VideoEgressError:
             raise

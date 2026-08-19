@@ -343,10 +343,23 @@ async def _confirm_feature_credit_reservation(
             action="confirm",
             metadata=metadata,
         )
+    except FeatureCreditSettlementConflict as exc:
+        logger.warning(
+            "feature_credit_settlement_conflict",
+            extra={
+                "settlement_action": "confirm",
+                "safe_error_type": type(exc).__name__,
+                "error_id": uuid.uuid4().hex,
+            },
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "feature credit confirmation intent remains awaiting retry: %s",
-            exc,
+            "feature_credit_settlement_adapter_failure",
+            extra={
+                "settlement_action": "confirm",
+                "safe_error_type": type(exc).__name__,
+                "error_id": uuid.uuid4().hex,
+            },
         )
 
 
@@ -363,10 +376,23 @@ async def _refund_feature_credit_reservation(
             action="refund",
             metadata=metadata,
         )
+    except FeatureCreditSettlementConflict as exc:
+        logger.warning(
+            "feature_credit_settlement_conflict",
+            extra={
+                "settlement_action": "refund",
+                "safe_error_type": type(exc).__name__,
+                "error_id": uuid.uuid4().hex,
+            },
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error(
-            "feature credit refund intent remains awaiting retry: %s",
-            exc,
+            "feature_credit_settlement_adapter_failure",
+            extra={
+                "settlement_action": "refund",
+                "safe_error_type": type(exc).__name__,
+                "error_id": uuid.uuid4().hex,
+            },
         )
 
 
@@ -392,10 +418,14 @@ async def refund_undelivered_feature_credit_reservation(
             reservation_id,
             metadata=metadata,
         )
-    except FeatureCreditSettlementConflict:
+    except FeatureCreditSettlementConflict as exc:
         logger.warning(
-            "undelivered feature credit refund conflicts with durable settlement",
-            extra={"failure_kind": "settlement_action_conflict"},
+            "feature_credit_settlement_conflict",
+            extra={
+                "settlement_action": "refund_cancelled",
+                "safe_error_type": type(exc).__name__,
+                "error_id": uuid.uuid4().hex,
+            },
         )
         return SettlementIntentResult(accepted=False, retryable=False)
     except Exception as exc:  # noqa: BLE001
