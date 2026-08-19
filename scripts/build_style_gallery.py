@@ -75,7 +75,7 @@ STYLE_META: list[dict[str, str]] = [
     {"src": "新兴中式", "id": "neo_chinese", "category": "写意"},
     {"src": "高调荒诞", "id": "high_key_absurd", "category": "写意"},
     # 第二批(~/Downloads/风格2):以画法/媒介立类,插进已有类目的接着原类目排,
-    # 三个新类目(动画/绘画/神话)排在最后。像素风格那套素材缺 提示词.txt,未收录。
+    # 三个新类目(动画/绘画/神话)排在最后。
     {"src": "上美动漫", "id": "shanghai_animation", "category": "动画"},
     {"src": "大友克洋", "id": "otomo_akira", "category": "动画"},
     {"src": "定格动画", "id": "stop_motion", "category": "动画"},
