@@ -71,6 +71,7 @@ from novelvideo.seedance2_i2v.voice_clone import normalize_seedance2_audio_type
 from novelvideo.project_config import load_project_config, save_project_config
 from novelvideo.project_context import ProjectContext
 from novelvideo.ports import get_credit_quote, get_task_backend, get_usage_meter
+from novelvideo.task_backend.limit_logging import log_task_limit_rejection
 from novelvideo.task_backend.limits import (
     ChannelTaskLimitExceeded,
     ProjectTaskLimitExceeded,
@@ -447,34 +448,45 @@ _FANOUT_ACTIVE_LIMIT_ERRORS = (
 )
 
 
-def _task_limit_rejection(
-    scope: str,
-    exc: (
-        ChannelTaskLimitExceeded
-        | UserTaskLimitExceeded
-        | ProjectTaskLimitExceeded
-        | ProjectUserTaskLimitExceeded
-    ),
-) -> dict[str, Any]:
-    """把撞闸异常翻成扇出响应里的一条 ``rejected``（M8 §8.2 冻结形状）。
+_FanoutLimitError = (
+    ChannelTaskLimitExceeded
+    | UserTaskLimitExceeded
+    | ProjectTaskLimitExceeded
+    | ProjectUserTaskLimitExceeded
+)
 
-    ``reason`` 的分支必须与 ``api/app.py`` 的 ``limit_scope`` 逐字同源
-    （``:183-185`` 渠道闸 / ``:209`` 人闸）—— 两侧同算法是跨 EU 的漂移探测器，
-    故三处扇出循环共用这一个 helper，而不是各自内联一份。
+
+def _task_limit_reason(exc: _FanoutLimitError) -> str:
+    """撞闸异常 → 作用域词。
+
+    分支必须与 ``api/app.py`` 的 ``limit_scope`` 逐字同源（``:226`` 渠道闸 /
+    ``:206`` 与 ``:271`` 人闸）—— 两侧同算法是跨 EU 的漂移探测器，故三处扇出
+    循环共用这一个 helper，而不是各自内联一份。
     """
     if isinstance(exc, ProjectTaskLimitExceeded):
-        reason = "project"
-    elif isinstance(exc, ChannelTaskLimitExceeded):
-        reason = "platform" if exc.scope_kind == "platform" else "channel"
-    elif isinstance(exc, (ProjectUserTaskLimitExceeded, UserTaskLimitExceeded)):
-        reason = "user"
-    else:  # pragma: no cover - the precise catch tuple keeps this unreachable
-        raise TypeError(
-            f"unsupported fanout task-limit exception: {type(exc).__name__}"
-        )
+        return "project"
+    if isinstance(exc, ChannelTaskLimitExceeded):
+        return "platform" if exc.scope_kind == "platform" else "channel"
+    if isinstance(exc, (ProjectUserTaskLimitExceeded, UserTaskLimitExceeded)):
+        return "user"
+    # pragma: no cover - the precise catch tuple keeps this unreachable
+    raise TypeError(f"unsupported fanout task-limit exception: {type(exc).__name__}")
+
+
+def _log_partial_dispatch_rejection(exc: _FanoutLimitError) -> None:
+    """已投出 k > 0 个后撞闸：异常就地被吞、响应是 200，走不到 ``api/app.py``
+    的 handler，日志得在这里补 —— 否则「投了一半撞闸」在面板上不存在。
+
+    一次撞闸记一行（按捕获到的那个异常），不按后面合成的每条 ``rejected`` 记。
+    """
+    log_task_limit_rejection(exc, limit_scope=_task_limit_reason(exc))
+
+
+def _task_limit_rejection(scope: str, exc: _FanoutLimitError) -> dict[str, Any]:
+    """把撞闸异常翻成扇出响应里的一条 ``rejected``（M8 §8.2 冻结形状）。"""
     return {
         "scope": scope,
-        "reason": reason,
+        "reason": _task_limit_reason(exc),
         "limit": exc.limit,
         "active": exc.active,
     }
@@ -934,6 +946,7 @@ async def _prepare_seedance2_api_beat(
     )
     prepared = await prepare_seedance2_generation_inputs(
         project_output=output_dir,
+        state_dir=Path(store.state_dir),
         episode=episode,
         beat=beat,
         next_beat=all_beats[index + 1] if index + 1 < len(all_beats) else None,
@@ -966,6 +979,7 @@ async def _prepare_seedance2_api_beat(
 async def _prepare_happyhorse_api_beat(
     *,
     output_dir: str | Path,
+    state_dir: str | Path,
     episode: int,
     beat: dict[str, Any],
     next_beat: dict[str, Any] | None,
@@ -1016,6 +1030,7 @@ async def _prepare_happyhorse_api_beat(
             episode=episode,
             beat=beat,
             mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+            state_dir=state_dir,
             next_beat=next_beat,
             prop_menu=prop_menu,
         )
@@ -1046,6 +1061,7 @@ async def _prepare_happyhorse_api_beat(
 async def _prepare_grok_video_api_beat(
     *,
     output_dir: str | Path,
+    state_dir: str | Path,
     episode: int,
     beat: dict[str, Any],
     next_beat: dict[str, Any] | None,
@@ -1096,6 +1112,7 @@ async def _prepare_grok_video_api_beat(
             episode=episode,
             beat=beat,
             mode=Seedance2I2VMode.MULTIMODAL_REFERENCE,
+            state_dir=state_dir,
             next_beat=next_beat,
             prop_menu=prop_menu,
         )
@@ -1355,6 +1372,7 @@ def _seedance2_status_response(
         next_beat=ctx["next_beat"],
         characters=ctx["characters"],
         prop_menu=ctx["prop_menu"],
+        state_dir=Path(ctx["store"].state_dir),
     )
     assets = state.assets
     selected_assets = [asset for asset in assets if asset.selected]
@@ -2195,6 +2213,7 @@ async def generate_sketches(
                     # 一个都没投出去＝纯粹超限：裸抛，交 api/app.py 的 handler
                     # 渲染 429 ＋ 正确的 limit_scope（M8 不变量 7）。
                     raise
+                _log_partial_dispatch_rejection(exc)
                 # 闸是全局的，后面每一个都必然被拒 —— 所以**只投这一次**（break），
                 # 但要把「当前这条 ＋ 后面还没尝试的」全部如实记进 rejected：
                 # 契约要 N−k 条（M8 :722 / :755），下游按尾段长度对齐
@@ -3172,6 +3191,7 @@ async def render_execute(
                 if not dispatched_task_ids:
                     # k == 0：裸抛交 handler 渲染 429（M8 不变量 7）。
                     raise
+                _log_partial_dispatch_rejection(exc)
                 # 只投这一次，但把未投的尾段逐条如实上报（N−k 条，M8 :722 / :755）。
                 for pending in execution_plan[position:]:
                     pending_beats = [int(beat) for beat in pending.beat_numbers]
@@ -4561,6 +4581,7 @@ async def generate_missing_manual_sketches(
                 if not dispatched_scopes:
                     # k == 0：裸抛交 handler 渲染 429（M8 不变量 7）。
                     raise
+                _log_partial_dispatch_rejection(exc)
                 # 只投这一次，但把未投的尾段逐条如实上报（N−k 条，M8 :722 / :755）。
                 for pending in segments[position:]:
                     pending_beats = [int(n) for n in pending]
@@ -4729,6 +4750,7 @@ async def generate_single_video(
             prop_menu = await _runtime_prop_menu_with_global_props(store, episode_obj, beats)
             prepared = await _prepare_happyhorse_api_beat(
                 output_dir=output_dir,
+                state_dir=Path(store.state_dir),
                 episode=episode_num,
                 beat=beat,
                 next_beat=beats[beat_index + 1] if beat_index + 1 < len(beats) else None,
@@ -4775,6 +4797,7 @@ async def generate_single_video(
             prop_menu = await _runtime_prop_menu_with_global_props(store, episode_obj, beats)
             prepared = await _prepare_grok_video_api_beat(
                 output_dir=output_dir,
+                state_dir=Path(store.state_dir),
                 episode=episode_num,
                 beat=beat,
                 next_beat=beats[beat_index + 1] if beat_index + 1 < len(beats) else None,

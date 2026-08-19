@@ -29,6 +29,7 @@ from novelvideo.shared.billing_errors import (
     insufficient_credits_payload,
 )
 from novelvideo.shared.api_coverage import mount_api_coverage_middleware
+from novelvideo.task_backend.limit_logging import log_task_limit_rejection
 from novelvideo.task_backend.limits import (
     ChannelTaskLimitExceeded,
     GlobalLaneQueueLimitExceeded,
@@ -102,6 +103,7 @@ def create_app() -> FastAPI:
         exc: ProjectTaskLimitExceeded,
     ) -> JSONResponse:
         _ = request
+        log_task_limit_rejection(exc, limit_scope="project")
         return JSONResponse(
             status_code=429,
             content={
@@ -123,6 +125,7 @@ def create_app() -> FastAPI:
         exc: ProjectUserTaskLimitExceeded,
     ) -> JSONResponse:
         _ = request
+        log_task_limit_rejection(exc, limit_scope="user")
         return JSONResponse(
             status_code=429,
             content={
@@ -148,6 +151,7 @@ def create_app() -> FastAPI:
         exc: GlobalLaneQueueLimitExceeded,
     ) -> JSONResponse:
         _ = request
+        log_task_limit_rejection(exc, limit_scope="global_lane_queue")
         return JSONResponse(
             status_code=429,
             content={
@@ -169,20 +173,29 @@ def create_app() -> FastAPI:
         exc: ChannelTaskLimitExceeded,
     ) -> JSONResponse:
         _ = request
+        limit_scope = "platform" if exc.scope_kind == "platform" else "channel"
+        log_task_limit_rejection(exc, limit_scope=limit_scope)
+        if exc.scope_kind == "platform":
+            # 共享池(``org_id is None``)拦下的是不归属任何渠道的请求,对他们
+            # 说"渠道"没有对应概念;而池子是全平台共享的,"等待已有任务完成"
+            # 也无从等起 —— 撞闸的人自己可能一个任务都没在跑。
+            message = f"当前平台 {exc.queue_kind} 队列任务已满，请稍后再试"
+        else:
+            message = (
+                f"当前渠道 {exc.queue_kind} 队列任务已满，请等待已有任务完成后再提交"
+            )
         return JSONResponse(
             status_code=429,
             content={
                 "ok": False,
-                "error": f"当前渠道 {exc.queue_kind} 队列任务已满，请等待已有任务完成后再提交",
+                "error": message,
                 "data": {
                     "scope_kind": exc.scope_kind,
                     "org_id": exc.org_id,
                     "queue_kind": exc.queue_kind,
                     "limit": exc.limit,
                     "active": exc.active,
-                    "limit_scope": (
-                        "platform" if exc.scope_kind == "platform" else "channel"
-                    ),
+                    "limit_scope": limit_scope,
                 },
             },
         )
@@ -193,6 +206,7 @@ def create_app() -> FastAPI:
         exc: UserTaskLimitExceeded,
     ) -> JSONResponse:
         _ = request
+        log_task_limit_rejection(exc, limit_scope="user")
         return JSONResponse(
             status_code=429,
             content={

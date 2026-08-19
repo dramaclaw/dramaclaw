@@ -169,9 +169,9 @@ def _audio_usage_request_id(
     return f"indextts2:{uuid.uuid5(uuid.NAMESPACE_URL, stable).hex}"
 
 
-def _is_narrated_project(username: str, project: str) -> bool:
+def _is_narrated_project(store, username: str, project: str) -> bool:
     project_config = importlib.import_module("novelvideo.project_config")
-    return project_config.is_narrated_project(username, project)
+    return project_config.is_narrated_project_from_state_dir(store.state_dir)
 
 
 def _resolve_beat_uploaded_narration_voice(
@@ -247,10 +247,11 @@ async def _resolve_narrator_voice(
     project: str,
 ) -> tuple[Path | None, str, str, str]:
     project_config = importlib.import_module("novelvideo.project_config")
-    narration_style = project_config.load_effective_narration_style_for_voice(
-        username, project
+    state_dir = store.state_dir
+    narration_style = project_config.load_effective_narration_style_for_voice_from_state_dir(
+        state_dir
     )
-    narrator_reference = project_config.load_narrator_reference_audio(username, project)
+    narrator_reference = project_config.load_narrator_reference_audio_from_state_dir(state_dir)
     characters = await store.list_characters()
     resolution = resolve_narrator_source(
         store=store,
@@ -275,12 +276,14 @@ async def _resolve_narration_voice_for_beat(
     username: str,
     project: str,
 ) -> tuple[Path | None, str, str, str]:
-    if not _is_narrated_project(username, project):
+    if not _is_narrated_project(store, username, project):
         beat_voice = _resolve_beat_uploaded_narration_voice(beat, store.project_dir)
         if beat_voice is not None:
             project_config = importlib.import_module("novelvideo.project_config")
-            narration_style = project_config.load_effective_narration_style_for_voice(
-                username, project
+            narration_style = (
+                project_config.load_effective_narration_style_for_voice_from_state_dir(
+                    store.state_dir
+                )
             )
             return beat_voice, file_sha256(beat_voice), narration_style, ""
     return await _resolve_narrator_voice(
@@ -332,7 +335,7 @@ async def build_indextts2_audio_generation_plan(
 
         if is_narration:
             beat_voice = None
-            if not _is_narrated_project(username, project):
+            if not _is_narrated_project(store, username, project):
                 beat_voice = _resolve_beat_uploaded_narration_voice(
                     beat, store.project_dir
                 )

@@ -31,8 +31,8 @@ from novelvideo.embedding_models import (
     require_current_embedding_model_spec,
 )
 from novelvideo.llm_instrumentation import (
-    reset_model_call_reservation_active,
-    set_model_call_reservation_active,
+    reset_model_call_instrumentation_active,
+    set_model_call_instrumentation_active,
 )
 from novelvideo.cognee.ladybug_access import install_cognee_ladybug_access_patch
 from novelvideo.official_defaults import (
@@ -929,29 +929,28 @@ async def _run_project_embedding_with_billing(
                     balance=insufficient.balance,
                 ) from None
             raise
-        active_token = set_model_call_reservation_active(bool(reservation_id))
+        active_token = set_model_call_instrumentation_active()
         result = _validate_embedding_vectors(
             await operation(),
             expected_dimensions=spec.dimensions,
             expected_count=expected_count,
         )
     except BaseException:
-        if reservation_id:
-            try:
-                await get_usage_meter().refund_model_call_credit_reservation(
-                    reservation_id,
-                    metadata={
-                        "source": "cognee_embedding_gateway_exception",
-                        "embedding_gateway": spec.gateway,
-                    },
-                )
-            except Exception:
-                pass
+        try:
+            await get_usage_meter().refund_model_call_credit_reservation(
+                reservation_id,
+                metadata={
+                    "source": "cognee_embedding_gateway_exception",
+                    "embedding_gateway": spec.gateway,
+                },
+            )
+        except Exception:
+            pass
         raise
     finally:
         if active_token is not None:
             try:
-                reset_model_call_reservation_active(active_token)
+                reset_model_call_instrumentation_active(active_token)
             except Exception:
                 pass
         _embedding_headers_capture.reset(token)

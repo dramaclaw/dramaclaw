@@ -37,6 +37,26 @@ def get_usage_meter():
     return meter
 
 
+async def update_current_model_call_log(
+    *,
+    request_payload: dict | None = None,
+    response_payload: dict | None = None,
+    error_message: str = "",
+) -> None:
+    """Best-effort observability that can never gate model execution."""
+    updater = getattr(get_usage_meter(), "update_current_model_call_log", None)
+    if not callable(updater):
+        return
+    try:
+        await updater(
+            request_payload=request_payload,
+            response_payload=response_payload,
+            error_message=error_message,
+        )
+    except Exception:
+        return
+
+
 def get_provider_instrumentation():
     return get_port("provider_instrumentation")
 

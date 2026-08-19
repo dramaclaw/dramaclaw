@@ -156,7 +156,11 @@ def _call_freezone_leaf(
         if rule.egress is LeafEgress.LOCAL:
             return leaf(**kwargs)
         if rule.egress is LeafEgress.NETWORK:
-            return leaf(egress_context=context, **kwargs)
+            # 组织任务必须携带受信任的组织身份以走网关；平台与个人任务
+            # 保持无组织上下文的既有直连语义，不能误触发组织出网闸门。
+            if context is not None and context.is_organization:
+                return leaf(egress_context=context, **kwargs)
+            return leaf(**kwargs)
     # 未分类与 DENIED 同待遇：默认 fail-closed。
     if context is not None and context.is_organization:
         raise InvalidTaskEnvelope() from None

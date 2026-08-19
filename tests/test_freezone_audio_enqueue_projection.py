@@ -39,6 +39,7 @@ class _FakeCharacterStore:
     """Stands in for the project SQLite store on the enqueue side."""
 
     def __init__(self, characters) -> None:
+        self.state_dir = "/state/alice/demo"
         self._characters = list(characters)
         self.list_characters_calls = 0
 
@@ -102,12 +103,12 @@ def speech_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(freezone, "make_sqlite_store_for_context", fake_store_for_context)
     monkeypatch.setattr(freezone, "_project_job_response", lambda **kwargs: {"ok": True})
     monkeypatch.setattr(
-        "novelvideo.project_config.load_effective_narration_style_for_voice",
-        lambda username, project: "first_person",
+        "novelvideo.project_config.load_effective_narration_style_for_voice_from_state_dir",
+        lambda state_dir: "first_person",
     )
     monkeypatch.setattr(
-        "novelvideo.project_config.load_narrator_reference_audio",
-        lambda username, project: {
+        "novelvideo.project_config.load_narrator_reference_audio_from_state_dir",
+        lambda state_dir: {
             "path": "assets/voices/narrator.wav",
             "sha256": "sha-narrator",
             "updated_at": "2026-08-13T00:00:00+00:00",

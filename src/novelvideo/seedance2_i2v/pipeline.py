@@ -180,6 +180,7 @@ def _validate_dialogue_final_prompt(
 def collect_seedance2_video_prereq_errors(
     *,
     project_output: str | Path,
+    state_dir: str | Path,
     episode: int,
     beats: list[dict[str, Any]],
     characters: list[Any] | None = None,
@@ -197,6 +198,7 @@ def collect_seedance2_video_prereq_errors(
             episode=episode,
             beat=beat,
             mode=config.mode,
+            state_dir=state_dir,
             next_beat=next_beat,
             characters=characters,
             prop_menu=prop_menu,
@@ -242,6 +244,7 @@ def collect_seedance2_video_prereq_errors(
 async def prepare_seedance2_generation_inputs(
     *,
     project_output: str | Path,
+    state_dir: str | Path,
     episode: int,
     beat: dict[str, Any],
     video_mode: str,
@@ -266,6 +269,7 @@ async def prepare_seedance2_generation_inputs(
         episode=episode,
         beat=beat,
         mode=config.mode,
+        state_dir=state_dir,
         next_beat=next_beat,
         characters=characters,
         prop_menu=prop_menu,

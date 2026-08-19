@@ -154,9 +154,6 @@ def _refund_scene_360_model_call(
     provider: str,
     error: str,
 ) -> None:
-    if not reservation_id:
-        return
-
     async def _refund() -> None:
         await get_usage_meter().refund_model_call_credit_reservation(
             reservation_id,

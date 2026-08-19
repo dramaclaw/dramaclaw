@@ -29,6 +29,7 @@ class _FakeSeedance2Store:
     def __init__(self, beats):
         self.beats = beats
         self.updated = []
+        self.state_dir = "/state/alice/demo"
 
     async def get_beats_as_dicts(self, episode: int):
         assert episode == 3
