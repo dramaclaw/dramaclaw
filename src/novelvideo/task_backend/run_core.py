@@ -230,6 +230,19 @@ def _without_settlement_handles(metadata: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _trusted_metrics_billing_metadata(
+    metadata: Mapping[str, Any],
+    *,
+    feature_reservation_id: str,
+) -> dict[str, Any]:
+    """Rehydrate private billing context from authoritative settlement state."""
+    trusted = _without_settlement_handles(metadata)
+    clean_reservation_id = str(feature_reservation_id or "").strip()
+    if clean_reservation_id:
+        trusted["feature_credit_reservation_id"] = clean_reservation_id
+    return trusted
+
+
 async def _resolve_feature_reservation_id(
     delivery: VerifiedTaskDelivery,
     *,
@@ -699,8 +712,6 @@ def run_project_task_core_sync(
             TRUSTED_EGRESS_CONTEXT_KEY: trusted_egress_context,
         }
     )
-    if billing_metadata:
-        envelope["billing_metadata"] = billing_metadata
     run_metadata = _without_settlement_handles(
         {**dict(metadata or {}), **billing_metadata}
     )
@@ -726,6 +737,42 @@ def run_project_task_core_sync(
             expected_task_id=run_task_id,
         )
         return {"failed": True, "error_code": exc.code}
+    except Exception as exc:  # noqa: BLE001
+        error_code = "FEATURE_SETTLEMENT_RESOLUTION_FAILED"
+        logger.error(
+            "feature_settlement_resolution_failed",
+            extra={
+                "safe_error_type": type(exc).__name__,
+                "error_id": uuid.uuid4().hex,
+            },
+        )
+        manager.fail_task_for_project(
+            ctx,
+            task_type,
+            episode,
+            beat_num=beat_num,
+            scope=scope,
+            error="feature settlement resolution failed",
+            metadata={**run_metadata, "error_code": error_code},
+            expected_task_id=run_task_id,
+        )
+        asyncio.run(
+            _emit_project_task_metrics(
+                ctx,
+                task_type,
+                episode=episode,
+                beat_num=beat_num,
+                scope=scope,
+                outcome="failed",
+            )
+        )
+        return {"failed": True, "error_code": error_code}
+    trusted_billing_metadata = _trusted_metrics_billing_metadata(
+        billing_metadata,
+        feature_reservation_id=feature_reservation_id,
+    )
+    if trusted_billing_metadata:
+        envelope["billing_metadata"] = trusted_billing_metadata
     timeout_seconds = _project_task_timeout_seconds()
     deadline_monotonic = (
         time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
@@ -780,7 +827,7 @@ def run_project_task_core_sync(
             _set_project_task_metrics_context(
                 ctx,
                 task_type,
-                billing_metadata=billing_metadata,
+                billing_metadata=trusted_billing_metadata,
             )
             execution_started = manager.begin_task_execution_for_project(
                 ctx,
