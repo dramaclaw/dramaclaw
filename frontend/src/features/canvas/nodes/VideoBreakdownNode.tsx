@@ -23,6 +23,9 @@ import { useCanvasStore } from "@/stores/canvasStore";
 import { useCanvasPickStore } from "@/stores/canvasPickStore";
 import { useUpstreamNodes } from "@/features/canvas/application/useUpstreamGraph";
 import { landVideoBreakdownResult } from "@/features/canvas/application/videoBreakdownLanding";
+import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
+import { CreditCostPill } from "@/components/credits/credit-visual";
+import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
 import {
   CANVAS_NODE_TYPES,
   VIDEO_BREAKDOWN_DIMENSIONS,
@@ -73,6 +76,23 @@ export const VideoBreakdownNode = memo(
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const startPick = useCanvasPickStore((state) => state.startPick);
     const upstreamNodes = useUpstreamNodes(id);
+
+    // 拉片与视频解读、视频转故事共用 freezone.video_analyze 这条价格规则，
+    // operation 只是台账口径，不参与定价 —— 传 video_breakdown 是为了让预估
+    // 与真正扣费时记的那笔对得上。CE 运行时整块画布被 CreditDisplayHiddenProvider
+    // 关掉，这里不用再判。
+    const breakdownCreditCost = useGenerationCreditCost(
+      "feature",
+      "freezone.video_analyze",
+      { surface: "canvas", params: { operation: "video_breakdown" } },
+    );
+    const breakdownBillingRuleMissing =
+      breakdownCreditCost.error instanceof BillingRuleNotConfiguredError;
+    const breakdownCreditCostDisplay =
+      breakdownCreditCost.data?.data.display ??
+      (breakdownBillingRuleMissing
+        ? t("common.billingRuleNotConfiguredShort")
+        : null);
 
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const [isSourceMenuOpen, setSourceMenuOpen] = useState(false);
@@ -426,9 +446,17 @@ export const VideoBreakdownNode = memo(
 
           <button
             type="button"
-            disabled={!videoSource || isBreakingDown}
+            disabled={
+              !videoSource || isBreakingDown || breakdownBillingRuleMissing
+            }
+            title={
+              breakdownBillingRuleMissing
+                ? t("common.billingRuleNotConfiguredShort")
+                : undefined
+            }
             onClick={(event) => {
               event.stopPropagation();
+              if (breakdownBillingRuleMissing) return;
               void handleStartBreakdown();
             }}
             className="nodrag mt-auto flex h-9 w-full items-center justify-center gap-2 rounded-[10px] border border-white/15 bg-white/[0.06] text-[13px] text-text-dark transition-colors hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-45"
@@ -437,6 +465,13 @@ export const VideoBreakdownNode = memo(
             {isBreakingDown
               ? t("videoBreakdown.running")
               : t("videoBreakdown.start")}
+            <CreditCostPill
+              display={breakdownCreditCostDisplay}
+              promotion={breakdownCreditCost.data?.data.promotion}
+              disabled={
+                !videoSource || isBreakingDown || breakdownBillingRuleMissing
+              }
+            />
           </button>
         </div>
 
