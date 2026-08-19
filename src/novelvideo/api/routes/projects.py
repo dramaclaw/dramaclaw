@@ -37,12 +37,12 @@ from novelvideo.ports import get_project_access, get_project_registry
 from novelvideo.ports.project import ProjectRecord
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
-    load_effective_narration_style_for_voice,
-    load_narrator_reference_audio,
+    load_effective_narration_style_for_voice_from_state_dir,
+    load_narrator_reference_audio_from_state_dir,
     load_project_config_file_from_state_dir,
     load_project_config_from_state_dir,
     save_project_config_in_state_dir,
-    set_narrator_reference_audio,
+    set_narrator_reference_audio_in_state_dir,
 )
 from novelvideo.project_context import (
     ProjectContext,
@@ -212,13 +212,16 @@ def _narrator_voice_display_lines(
     }
 
 
-def _effective_narrator_voice_style(username: str, project: str) -> str:
-    return load_effective_narration_style_for_voice(username, project) or DEFAULT_NARRATION_STYLE
+def _effective_narrator_voice_style(ctx: ProjectContext) -> str:
+    return (
+        load_effective_narration_style_for_voice_from_state_dir(ctx.state_dir)
+        or DEFAULT_NARRATION_STYLE
+    )
 
 
 def _narrator_voice_payload(ctx: ProjectContext, store) -> dict:
-    style = _effective_narrator_voice_style(ctx.owner_username, ctx.project_name)
-    stored = load_narrator_reference_audio(ctx.owner_username, ctx.project_name)
+    style = _effective_narrator_voice_style(ctx)
+    stored = load_narrator_reference_audio_from_state_dir(ctx.state_dir)
     resolution = resolve_narrator_source(
         store=store,
         narration_style=style,
@@ -257,16 +260,15 @@ def _narrator_voice_payload(ctx: ProjectContext, store) -> dict:
     }
 
 
-def _ensure_third_person_narrator(username: str, project: str) -> None:
-    style = _effective_narrator_voice_style(username, project)
+def _ensure_third_person_narrator(ctx: ProjectContext) -> None:
+    style = _effective_narrator_voice_style(ctx)
     if style == "first_person":
         raise ValueError(NARRATOR_VOICE_MODE_EXPLANATION)
 
 
 def _persist_narrator_voice_content(
     *,
-    username: str,
-    project: str,
+    state_dir: str | Path,
     project_dir: Path,
     filename: str,
     content: bytes,
@@ -285,9 +287,8 @@ def _persist_narrator_voice_content(
                 existing.with_name(f"{existing.stem}_{int(time.time())}{existing.suffix}")
             )
     target.write_bytes(content)
-    set_narrator_reference_audio(
-        username,
-        project,
+    set_narrator_reference_audio_in_state_dir(
+        state_dir,
         relative_path=_project_relative_path(project_dir, target),
         sha256=voice_content_sha256(content),
     )
@@ -296,13 +297,12 @@ def _persist_narrator_voice_content(
 
 def _trim_narrator_voice_content(
     *,
-    username: str,
-    project: str,
+    state_dir: str | Path,
     project_dir: Path,
     start_seconds: float,
     duration_seconds: float,
 ) -> Path:
-    stored = load_narrator_reference_audio(username, project)
+    stored = load_narrator_reference_audio_from_state_dir(state_dir)
     source = Path(stored.get("path", ""))
     if not str(source):
         raise ValueError("请先上传解说声线")
@@ -333,9 +333,8 @@ def _trim_narrator_voice_content(
         if sibling.exists():
             sibling.replace(sibling.with_name(f"{sibling.stem}_{int(time.time())}{sibling.suffix}"))
     target.write_bytes(content)
-    set_narrator_reference_audio(
-        username,
-        project,
+    set_narrator_reference_audio_in_state_dir(
+        state_dir,
         relative_path=_project_relative_path(project_dir, target),
         sha256=voice_content_sha256(content),
     )
@@ -617,11 +616,10 @@ async def upload_narrator_voice(
     ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
     store = await make_sqlite_store_for_context(ctx)
     try:
-        _ensure_third_person_narrator(ctx.owner_username, ctx.project_name)
+        _ensure_third_person_narrator(ctx)
         content = await file.read()
         _persist_narrator_voice_content(
-            username=ctx.owner_username,
-            project=ctx.project_name,
+            state_dir=ctx.state_dir,
             project_dir=ctx.output_dir,
             filename=file.filename or "",
             content=content,
@@ -644,11 +642,10 @@ async def record_narrator_voice(
     ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
     store = await make_sqlite_store_for_context(ctx)
     try:
-        _ensure_third_person_narrator(ctx.owner_username, ctx.project_name)
+        _ensure_third_person_narrator(ctx)
         content, extension = decode_recorded_audio_data_url(body.data_url)
         _persist_narrator_voice_content(
-            username=ctx.owner_username,
-            project=ctx.project_name,
+            state_dir=ctx.state_dir,
             project_dir=ctx.output_dir,
             filename=f"recorded{extension}",
             content=content,
@@ -671,7 +668,7 @@ async def copy_project_audio_as_narrator_voice(
     ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
     store = await make_sqlite_store_for_context(ctx)
     try:
-        _ensure_third_person_narrator(ctx.owner_username, ctx.project_name)
+        _ensure_third_person_narrator(ctx)
         raw_path = Path(body.source_path)
         source_path = raw_path if raw_path.is_absolute() else ctx.output_dir / raw_path
         source_path = source_path.resolve()
@@ -679,8 +676,7 @@ async def copy_project_audio_as_narrator_voice(
         if not source_path.exists() or source_path.suffix.lower() not in VOICE_SAMPLE_EXTENSIONS:
             return {"ok": False, "error": "请选择项目内有效的音频文件"}
         _persist_narrator_voice_content(
-            username=ctx.owner_username,
-            project=ctx.project_name,
+            state_dir=ctx.state_dir,
             project_dir=ctx.output_dir,
             filename=source_path.name,
             content=source_path.read_bytes(),
@@ -703,10 +699,9 @@ async def trim_narrator_voice(
     ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
     store = await make_sqlite_store_for_context(ctx)
     try:
-        _ensure_third_person_narrator(ctx.owner_username, ctx.project_name)
+        _ensure_third_person_narrator(ctx)
         _trim_narrator_voice_content(
-            username=ctx.owner_username,
-            project=ctx.project_name,
+            state_dir=ctx.state_dir,
             project_dir=ctx.output_dir,
             start_seconds=body.start_seconds,
             duration_seconds=body.duration_seconds,
@@ -727,14 +722,14 @@ async def delete_narrator_voice(
     """移除第三人称项目解说声线。"""
     ctx = await resolve_project_context(user=user, project_id=project, required_role="editor")
     store = await make_sqlite_store_for_context(ctx)
-    stored = load_narrator_reference_audio(ctx.owner_username, ctx.project_name)
+    stored = load_narrator_reference_audio_from_state_dir(ctx.state_dir)
     target = Path(stored.get("path", ""))
     if str(target):
         if not target.is_absolute():
             target = ctx.output_dir / target
         if target.exists():
             target.replace(target.with_name(f"{target.stem}_{int(time.time())}{target.suffix}"))
-    set_narrator_reference_audio(ctx.owner_username, ctx.project_name, relative_path="", sha256="")
+    set_narrator_reference_audio_in_state_dir(ctx.state_dir, relative_path="", sha256="")
     return {
         "ok": True,
         "data": _narrator_voice_payload(ctx, store),

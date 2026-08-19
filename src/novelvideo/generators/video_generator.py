@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 
 from novelvideo.egress_context import ambient_egress_context
 from novelvideo.authz_retry import retry_authz_read
-from novelvideo.ports import get_usage_meter
+from novelvideo.ports import get_usage_meter, update_current_model_call_log
 from novelvideo.ports.authz import AuthzError, detach_authz_error
 from novelvideo.video_request_usage import (
     record_video_request,
@@ -150,8 +150,6 @@ async def _refund_video_model_call(
     provider_request_id: str = "",
     provider_task_id: str = "",
 ) -> None:
-    if not reservation_id:
-        return
     try:
         metadata: dict[str, object] = {"source": source, "error": error[:200]}
         if provider_request_id:
@@ -3310,6 +3308,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 resolution=request_resolution,
                 duration_seconds=duration,
             )
+            await update_current_model_call_log(
+                request_payload=payload,
+            )
             submit_attempted = True
             if organization_request:
                 submitted = await self._post_json(
@@ -3321,6 +3322,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 submitted = await self._post_json(
                     f"{request_base_url}/video/generations", payload
                 )
+            await update_current_model_call_log(
+                response_payload=submitted,
+            )
             task_id = self._task_id_from_submit_response(submitted)
             provider_request_id = str(submitted.get("_newapi_request_id") or "").strip()
             if not task_id:
@@ -3406,6 +3410,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 progress(0.2 + (poll_count / max(max_polls, 1)) * 0.7)
 
                 if status in {"completed", "succeeded", "success", "done"}:
+                    await update_current_model_call_log(
+                        response_payload=polled,
+                    )
                     progress(0.9)
                     video_url = self._resolve_result_url(self._extract_video_url(task))
                     if not video_url:
@@ -3558,6 +3565,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                     "cancelled",
                     "expired",
                 }:
+                    await update_current_model_call_log(
+                        response_payload=polled,
+                    )
                     error = (
                         task.get("error")
                         or task.get("fail_reason")
@@ -3599,6 +3609,10 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             update_request_status(
                 task_id, "failed", "Timeout waiting for DramaClawAPI video task"
             )
+            await update_current_model_call_log(
+                response_payload={"status": "timeout", "task_id": task_id},
+                error_message="video task polling timeout",
+            )
             if organization_request:
                 await self._mark_operation_unknown(
                     operation_port,
@@ -3626,6 +3640,14 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         except VideoEgressError:
             raise
         except NewApiVideoError as exc:
+            await update_current_model_call_log(
+                response_payload={
+                    "status_code": exc.status_code,
+                    "request_id": exc.request_id,
+                    "error_type": type(exc).__name__,
+                },
+                error_message=type(exc).__name__,
+            )
             safe_exception_error = (
                 _safe_video_error_code(exc, "EGRESS_OPERATION_UNKNOWN")
                 if organization_request
@@ -3680,6 +3702,9 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 task_id=task_id,
             )
         except Exception as exc:
+            await update_current_model_call_log(
+                error_message=type(exc).__name__,
+            )
             safe_exception_error = (
                 _safe_video_error_code(exc, "EGRESS_OPERATION_UNKNOWN")
                 if organization_request

@@ -157,6 +157,7 @@ class FakeNarrationStore:
     def __init__(self, project_dir, db_path):
         self.project_dir = str(project_dir)
         self.db_path = str(db_path)
+        self.state_dir = str(Path(db_path).parent)
 
     async def get_beats_as_dicts(self, episode):
         assert episode == 1

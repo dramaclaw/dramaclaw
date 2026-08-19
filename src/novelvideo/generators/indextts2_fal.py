@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from novelvideo.ports import get_usage_meter
+from novelvideo.ports import get_usage_meter, update_current_model_call_log
 from novelvideo.shared.billing_errors import is_fatal_billing_error
 from novelvideo.egress_context import (
     TrustedEgressContext,
@@ -42,8 +42,6 @@ async def _refund_tts_model_call(
     error: str,
     provider_request_id: str = "",
 ) -> None:
-    if not reservation_id:
-        return
     try:
         metadata: dict[str, Any] = {"source": source, "error": error[:200]}
         if provider_request_id:
@@ -228,10 +226,26 @@ class IndexTTS2FalClient:
                 return TTSResult(success=False, error=exc.code)
         self._last_provider_request_id = ""
         self._last_provider_response_id = ""
+        self._last_provider_response_payload: dict[str, Any] = {}
         source = "indextts2_newapi" if self.provider == "newapi" else "indextts2_fal"
         reservation_id = ""
         try:
             reservation_id = await _reserve_tts_model_call(self.model, source=source)
+            await update_current_model_call_log(
+                request_payload={
+                    "model": self.model,
+                    "input": prompt,
+                    "metadata": {
+                        "audio_url": audio_url,
+                        "should_use_prompt_for_emotion": True,
+                        **(
+                            {"emotion_prompt": str(emotion_prompt).strip()}
+                            if str(emotion_prompt or "").strip()
+                            else {}
+                        ),
+                    },
+                },
+            )
         except Exception as exc:
             if lease is not None:
                 await reject_audio_operation(lease)
@@ -268,6 +282,9 @@ class IndexTTS2FalClient:
                 await mark_audio_operation_unknown(lease)
             raise
         if result.success:
+            await update_current_model_call_log(
+                response_payload=self._last_provider_response_payload,
+            )
             if lease is not None:
                 digest = hashlib.sha256(target.read_bytes()).hexdigest()
                 await complete_audio_operation(
@@ -281,6 +298,10 @@ class IndexTTS2FalClient:
                 response_id=self._last_provider_response_id,
             )
         else:
+            await update_current_model_call_log(
+                response_payload=self._last_provider_response_payload,
+                error_message="tts_generation_failed",
+            )
             if lease is not None:
                 await mark_audio_operation_unknown(lease)
             await _refund_tts_model_call(
@@ -394,6 +415,7 @@ class IndexTTS2FalClient:
                 content_type = response.headers.get("content-type", "")
                 if "application/json" in content_type.lower():
                     payload = response.json()
+                    self._last_provider_response_payload = payload
                     self._last_provider_request_id = (
                         self._last_provider_request_id
                         or str(
@@ -413,6 +435,10 @@ class IndexTTS2FalClient:
                     audio_response.raise_for_status()
                     output_path.write_bytes(audio_response.content)
                 else:
+                    self._last_provider_response_payload = {
+                        "content_type": content_type,
+                        "content_length": len(response.content),
+                    }
                     output_path.write_bytes(response.content)
 
             if not output_path.exists() or output_path.stat().st_size <= 0:

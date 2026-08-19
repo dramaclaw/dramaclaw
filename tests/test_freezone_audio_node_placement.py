@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -58,7 +59,8 @@ class FakeTTSGenerator:
 class FakeCharacterStore:
     """只提供 `list_characters` 的项目 store 替身（对应真实的项目 SQLite）。"""
 
-    def __init__(self, characters) -> None:
+    def __init__(self, characters, state_dir: Path | str = "/state/alice/demo") -> None:
+        self.state_dir = str(state_dir)
         self._characters = list(characters)
         self.list_characters_calls = 0
 
@@ -112,7 +114,9 @@ def _character(name: str, *, is_main: bool = False) -> NovelCharacter:
 def _character_project(tmp_path: Path) -> tuple[Path, FakeCharacterStore]:
     project_dir = tmp_path / "output" / "alice" / "demo"
     _voice_file(project_dir, "小明")
-    return project_dir, FakeCharacterStore([_character("小明")])
+    return project_dir, FakeCharacterStore(
+        [_character("小明")], tmp_path / "state" / "alice" / "demo"
+    )
 
 
 def _projection_fields(
@@ -169,8 +173,10 @@ async def test_generate_speech_consumes_projection_without_project_state(
     def _explode(*_a, **_k):  # pragma: no cover - 触发即失败
         raise AssertionError("project-local state must not be read")
 
-    monkeypatch.setattr(audio_node, "load_effective_narration_style_for_voice", _explode)
-    monkeypatch.setattr(audio_node, "load_narrator_reference_audio", _explode)
+    monkeypatch.setattr(
+        audio_node, "load_effective_narration_style_for_voice_from_state_dir", _explode
+    )
+    monkeypatch.setattr(audio_node, "load_narrator_reference_audio_from_state_dir", _explode)
     _stub_tts(monkeypatch)
 
     payload = _projection_payload(_projection_fields(voice_character=_character("小明")))
@@ -202,8 +208,10 @@ async def test_generate_speech_resolves_the_narrator_main_from_the_projection(
     def _explode(*_a, **_k):  # pragma: no cover - 触发即失败
         raise AssertionError("project-local state must not be read")
 
-    monkeypatch.setattr(audio_node, "load_effective_narration_style_for_voice", _explode)
-    monkeypatch.setattr(audio_node, "load_narrator_reference_audio", _explode)
+    monkeypatch.setattr(
+        audio_node, "load_effective_narration_style_for_voice_from_state_dir", _explode
+    )
+    monkeypatch.setattr(audio_node, "load_narrator_reference_audio_from_state_dir", _explode)
     _stub_tts(monkeypatch)
 
     payload = _projection_payload(
@@ -251,7 +259,7 @@ async def test_generate_speech_without_projection_still_reads_project_store(
     project_dir, store = _character_project(tmp_path)
     monkeypatch.setattr(
         audio_node,
-        "load_effective_narration_style_for_voice",
+        "load_effective_narration_style_for_voice_from_state_dir",
         lambda *_a, **_k: "third_person",
     )
     _stub_tts(monkeypatch)
@@ -280,7 +288,7 @@ async def test_account_level_voice_never_touches_the_project_store(
     voice_path.write_bytes(b"account-voice")
     monkeypatch.setattr(
         audio_node,
-        "load_effective_narration_style_for_voice",
+        "load_effective_narration_style_for_voice_from_state_dir",
         lambda *_a, **_k: "third_person",
     )
     monkeypatch.setattr(
@@ -293,7 +301,7 @@ async def test_account_level_voice_never_touches_the_project_store(
     _stub_tts(monkeypatch)
 
     result = await audio_node.generate_freezone_audio_speech(
-        store=ExplodingStore(),
+        store=SimpleNamespace(state_dir=tmp_path / "state" / "alice" / "demo"),
         username="alice",
         project="demo",
         account_voice_username="bob",

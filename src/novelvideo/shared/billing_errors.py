@@ -8,6 +8,9 @@ INSUFFICIENT_CREDITS_CODE = "INSUFFICIENT_CREDITS"
 INSUFFICIENT_CREDITS_MESSAGE = "积分不足，请联系管理员充值"
 BILLING_RULE_NOT_CONFIGURED_CODE = "BILLING_RULE_NOT_CONFIGURED"
 BILLING_RULE_NOT_CONFIGURED_MESSAGE = "计费规则未配置，请联系管理员设置积分规则"
+FEATURE_BILLING_IDENTITY_INVALID_CODE = "FEATURE_BILLING_IDENTITY_INVALID"
+FEATURE_BILLING_IDENTITY_INVALID_MESSAGE = "计费身份无效或无法确定，请联系管理员"
+FEATURE_BILLING_IDENTITY_REASON_MAX_LENGTH = 512
 GENERATION_BILLING_UNITS = {
     "call",
     "item",
@@ -74,6 +77,22 @@ class BillingRuleNotConfiguredError(BillingError):
 
     def details(self) -> dict[str, Any]:
         return {"billing_kind": self.kind, "billing_key": self.key}
+
+
+class FeatureBillingIdentityError(BillingError):
+    """Raised when the billing identity for a feature cannot be trusted."""
+
+    error_code = FEATURE_BILLING_IDENTITY_INVALID_CODE
+    http_status = 409
+    user_message = FEATURE_BILLING_IDENTITY_INVALID_MESSAGE
+
+    def __init__(self, *, internal_reason: str = "") -> None:
+        safe_reason = internal_reason if type(internal_reason) is str else ""
+        if len(safe_reason) > FEATURE_BILLING_IDENTITY_REASON_MAX_LENGTH:
+            safe_reason = (
+                safe_reason[: FEATURE_BILLING_IDENTITY_REASON_MAX_LENGTH - 3] + "..."
+            )
+        super().__init__(safe_reason or "feature billing identity is invalid")
 
 
 def iter_exception_chain(exc: BaseException | None):
@@ -150,9 +169,7 @@ def is_insufficient_credits_error(
     )
 
 
-def is_fatal_billing_error(
-    exc: BaseException | None = None, message: str = ""
-) -> bool:
+def is_fatal_billing_error(exc: BaseException | None = None, message: str = "") -> bool:
     return find_billing_error(exc) is not None or is_insufficient_credits_error(
         exc, message
     )
@@ -195,6 +212,10 @@ __all__ = [
     "BILLING_RULE_NOT_CONFIGURED_MESSAGE",
     "BillingError",
     "BillingRuleNotConfiguredError",
+    "FEATURE_BILLING_IDENTITY_INVALID_CODE",
+    "FEATURE_BILLING_IDENTITY_INVALID_MESSAGE",
+    "FEATURE_BILLING_IDENTITY_REASON_MAX_LENGTH",
+    "FeatureBillingIdentityError",
     "GENERATION_BILLING_UNITS",
     "INSUFFICIENT_CREDITS_CODE",
     "INSUFFICIENT_CREDITS_MESSAGE",
