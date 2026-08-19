@@ -1355,6 +1355,7 @@ def _seedance2_status_response(
         next_beat=ctx["next_beat"],
         characters=ctx["characters"],
         prop_menu=ctx["prop_menu"],
+        state_dir=str(getattr(ctx["store"], "state_dir", "") or "") or None,
     )
     assets = state.assets
     selected_assets = [asset for asset in assets if asset.selected]

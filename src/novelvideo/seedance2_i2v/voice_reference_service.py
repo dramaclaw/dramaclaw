@@ -10,7 +10,9 @@ from typing import Any
 from novelvideo.models import real_detected_identities
 from novelvideo.project_config import (
     load_effective_narration_style_for_voice,
+    load_effective_narration_style_for_voice_from_state_dir,
     load_narrator_reference_audio,
+    load_narrator_reference_audio_from_state_dir,
 )
 from novelvideo.seedance2_i2v.spoken_dialogue import (
     speaker_display_name,
@@ -86,8 +88,19 @@ def resolve_narrator_reference_status(
     username: str,
     project: str,
 ) -> NarratorReferenceStatus:
-    style = load_effective_narration_style_for_voice(username, project) or DEFAULT_NARRATION_STYLE
-    stored = load_narrator_reference_audio(username, project)
+    state_dir = str(getattr(store, "state_dir", "") or "")
+    if state_dir:
+        style = (
+            load_effective_narration_style_for_voice_from_state_dir(state_dir)
+            or DEFAULT_NARRATION_STYLE
+        )
+        stored = load_narrator_reference_audio_from_state_dir(state_dir)
+    else:
+        style = (
+            load_effective_narration_style_for_voice(username, project)
+            or DEFAULT_NARRATION_STYLE
+        )
+        stored = load_narrator_reference_audio(username, project)
     resolution = resolve_narrator_source(
         store=store,
         narration_style=style,

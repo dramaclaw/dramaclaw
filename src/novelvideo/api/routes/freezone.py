@@ -275,8 +275,8 @@ from novelvideo.freezone.video_node import (
 )
 from novelvideo.models import CharacterIdentity, beat_scene_id
 from novelvideo.project_config import (
-    load_effective_narration_style_for_voice,
-    load_narrator_reference_audio,
+    load_effective_narration_style_for_voice_from_state_dir,
+    load_narrator_reference_audio_from_state_dir,
 )
 from novelvideo.project_context import (
     ProjectContext,
@@ -6799,8 +6799,8 @@ async def freezone_audio_references(
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user, required_role="viewer"
     )
-    narrator_descriptor = load_narrator_reference_audio(username, project_name)
-    narration_style = load_effective_narration_style_for_voice(username, project_name)
+    narrator_descriptor = load_narrator_reference_audio_from_state_dir(ctx.state_dir)
+    narration_style = load_effective_narration_style_for_voice_from_state_dir(ctx.state_dir)
     requester_username = ctx.requester_username or username
     user_voices = _attach_user_voice_media_urls(
         project,

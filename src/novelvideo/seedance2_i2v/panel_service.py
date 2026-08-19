@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.manual_shots import resolve_target_video_duration
-from novelvideo.project_config import load_project_config_file, set_narrator_reference_audio
+from novelvideo.project_config import (
+    load_project_config_file,
+    set_narrator_reference_audio_in_state_dir,
+)
 from novelvideo.seedance2_i2v.assets import (
     Seedance2ResolvedAsset,
     apply_prompt_audio_selection,
@@ -385,10 +388,11 @@ async def trim_seedance2_audio_to_reference(
         target.parent.mkdir(parents=True, exist_ok=True)
         _archive_narrator_voice_siblings(target)
         target.write_bytes(content)
-        username, project = _project_owner_from_output(Path(project_dir))
-        set_narrator_reference_audio(
-            username,
-            project,
+        state_dir = str(getattr(store, "state_dir", "") or "")
+        if not state_dir:
+            raise ValueError("项目 state_dir 未解析，无法保存解说声线")
+        set_narrator_reference_audio_in_state_dir(
+            state_dir,
             relative_path=_project_relative_path(Path(project_dir), target),
             sha256=voice_content_sha256(content),
         )
@@ -453,6 +457,7 @@ def build_seedance2_video_panel_state(
     next_beat: dict[str, Any] | None = None,
     characters: list[Any] | None = None,
     prop_menu: list[Any] | None = None,
+    state_dir: str | Path | None = None,
 ) -> Seedance2VideoPanelState:
     config = parse_seedance2_config(beat.get("seedance2_config_json"))
     duration_floor = _seedance2_duration_floor(
@@ -469,6 +474,7 @@ def build_seedance2_video_panel_state(
         next_beat=next_beat,
         characters=characters,
         prop_menu=prop_menu,
+        state_dir=state_dir,
     )
     _append_seedance2_user_reference_assets(assets, config)
     prompt_source = config.prompt_source or "saved"

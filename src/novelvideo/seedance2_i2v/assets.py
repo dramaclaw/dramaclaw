@@ -22,7 +22,9 @@ from novelvideo.models import (
 )
 from novelvideo.project_config import (
     load_effective_narration_style_for_voice,
+    load_effective_narration_style_for_voice_from_state_dir,
     load_narrator_reference_audio,
+    load_narrator_reference_audio_from_state_dir,
 )
 from novelvideo.seedance2_i2v.character_voice_storage import probe_voice_sample_duration_seconds
 from novelvideo.seedance2_i2v.models import Seedance2I2VMode
@@ -800,10 +802,15 @@ def _narration_voice_asset(
     *,
     project_output: Path,
     characters: list[Any],
+    state_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     username, project = _project_owner_from_output(project_output)
     try:
-        style = load_effective_narration_style_for_voice(username, project)
+        style = (
+            load_effective_narration_style_for_voice_from_state_dir(state_dir)
+            if state_dir
+            else load_effective_narration_style_for_voice(username, project)
+        )
     except Exception:
         style = DEFAULT_NARRATION_STYLE
 
@@ -820,7 +827,11 @@ def _narration_voice_asset(
             }
 
     try:
-        descriptor = load_narrator_reference_audio(username, project)
+        descriptor = (
+            load_narrator_reference_audio_from_state_dir(state_dir)
+            if state_dir
+            else load_narrator_reference_audio(username, project)
+        )
     except Exception:
         descriptor = {}
     stored_path = _text(descriptor.get("path")) if isinstance(descriptor, dict) else ""
@@ -846,6 +857,7 @@ def build_seedance2_project_assets(
     next_beat: dict[str, Any] | None = None,
     characters: list[Any] | None = None,
     prop_menu: list[Any] | None = None,
+    state_dir: str | Path | None = None,
 ) -> list[Seedance2ResolvedAsset]:
     """Resolve project assets in the order used for Seedance 2.0 requests."""
 
@@ -1106,6 +1118,7 @@ def build_seedance2_project_assets(
         voice_asset = _narration_voice_asset(
             project_output=project_output,
             characters=resolved_characters,
+            state_dir=state_dir,
         )
         add_audio(
             key=voice_asset["key"],
