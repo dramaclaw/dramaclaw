@@ -23,7 +23,7 @@ def test_indextts2_resolves_project_config_from_current_module(monkeypatch):
         current_project_config,
     )
 
-    assert task._is_narrated_project("alice", "demo") is True
+    assert task._is_narrated_project(SimpleNamespace(), "alice", "demo") is True
 
 
 class _ForeignBillingError(BillingError):
@@ -119,6 +119,7 @@ class FakeStore:
     def __init__(self, project_dir, db_path, beats, *, include_dialogue_voice=True):
         self.project_dir = str(project_dir)
         self.db_path = str(db_path)
+        self.state_dir = str(Path(db_path).parent)
         self._beats = list(beats)
         self.include_dialogue_voice = include_dialogue_voice
 
