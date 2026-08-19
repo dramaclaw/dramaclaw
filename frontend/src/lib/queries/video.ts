@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, uploadApi } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
@@ -108,7 +108,7 @@ export function useUploadNarratorVoice(project: string) {
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append("file", file, file.name);
-      return api
+      return uploadApi
         .post(p`api/v1/projects/${project}/narrator-voice/upload`, {
           body: formData,
         })
@@ -492,7 +492,7 @@ export function useUploadSeedance2Asset(project: string, episode: number) {
     mutationFn: async ({ beatNum, file }: { beatNum: number; file: File }) => {
       const formData = new FormData();
       formData.append("file", file, file.name);
-      return api
+      return uploadApi
         .post(
           p`api/v1/projects/${project}/episodes/${episode}/beats/${beatNum}/seedance2/assets/upload`,
           { body: formData },

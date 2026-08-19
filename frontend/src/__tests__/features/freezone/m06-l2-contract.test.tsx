@@ -24,6 +24,7 @@ import { useAuthStore } from "@/stores/auth-store";
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost/" }),
 }));
 
 vi.mock("@/api/client", async (importOriginal) => {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, uploadApi } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
@@ -82,7 +82,7 @@ export function useUploadNovel(project: string) {
       formData.append("file", file);
       formData.append("spine_template", spineTemplate);
       const response = await jsonWithBackendError<OkResponse<UploadResult> | ErrorResponse>(
-        api.post(p`api/v1/projects/${project}/ingest/upload`, { body: formData }),
+        uploadApi.post(p`api/v1/projects/${project}/ingest/upload`, { body: formData }),
       );
       if (!response.ok) {
         throw new Error(response.error);

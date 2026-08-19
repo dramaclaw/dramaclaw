@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, uploadApi } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
@@ -61,7 +61,7 @@ export function useAnalyzeStyle(project: string) {
       const formData = new FormData();
       formData.append("file", file);
       return jsonWithBackendError<ApiResponse<Record<string, unknown>>>(
-        api.post(p`api/v1/projects/${project}/styles/analyze`, {
+        uploadApi.post(p`api/v1/projects/${project}/styles/analyze`, {
           body: formData,
           throwHttpErrors: false,
         }),
@@ -76,7 +76,7 @@ export function useUploadStylePreview(project: string) {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("style_id", styleId);
-      return api
+      return uploadApi
         .post(p`api/v1/projects/${project}/styles/preview-upload`, {
           body: formData,
           throwHttpErrors: false,

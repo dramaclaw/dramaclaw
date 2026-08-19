@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
 vi.mock("react-i18next", () => ({

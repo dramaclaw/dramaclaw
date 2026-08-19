@@ -12,6 +12,7 @@ const runtimeState = vi.hoisted(() => ({ isCeRuntime: true }));
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
 vi.mock("@/lib/runtime-config", () => ({

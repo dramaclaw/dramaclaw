@@ -2397,9 +2397,10 @@ export interface FreezoneUploadResult {
 
 export interface FreezoneUploadOptions {
   /**
-   * Override the default ky timeout (30s). Pass `false` to disable —
-   * required for multi-MB video uploads on slow links, otherwise ky aborts
-   * the in-flight request and DevTools shows the row as `canceled`.
+   * Override the upload timeout. Defaults to `false` (no timeout) — a clock on
+   * an upload races the user's uplink rather than the server, and aborting
+   * mid-body shows up as HTTP 499 at the edge with the file never delivered
+   * (see uploadApi in lib/api.ts). Pass a number only to bound a specific call.
    */
   timeoutMs?: number | false;
 }
@@ -2418,7 +2419,7 @@ export async function uploadFreezoneImage(
     {
       method: "POST",
       body: fd,
-      timeout: options?.timeoutMs ?? undefined,
+      timeout: options?.timeoutMs ?? false,
     },
   ).json<{ ok: boolean; data?: FreezoneUploadResult; error?: string }>();
   if (!resp.ok || !resp.data) {
@@ -2433,10 +2434,10 @@ export async function uploadFreezoneVideo(
   file: File | Blob,
   filename?: string,
 ): Promise<FreezoneUploadResult> {
-  // Disable the 30s default timeout: video files routinely run into the tens
-  // of MB and the upload streams the body, so a short timeout cancels the
-  // request before the server ever sees the end of the body.
-  return await uploadFreezoneImage(project, file, filename, { timeoutMs: false });
+  // Timeouts are off by default for uploads (see FreezoneUploadOptions):
+  // video files routinely run into the tens of MB and the body is streamed, so
+  // any clock cancels the request before the server sees the end of it.
+  return await uploadFreezoneImage(project, file, filename);
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
