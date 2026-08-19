@@ -12,9 +12,9 @@ identity_id 就同时失效。引用的完整清单在
 * ``episodes.prop_menu_json``          —— 每项的 ``owner_identity_id``
 * ``beats.detected_identities_json``   —— 本 beat 检出的身份
 * ``beats.visual_description``         —— ``{{角色名_身份名}}`` 文本 marker
-* ``beats.speaker``                    —— 角色名
+* ``beats.speaker``                    —— identity_id（裸角色名是存量兼容）
 * ``props.owner``                      —— 角色名**或** identity_id，两种格式都在用
-* ``seedance2_voice_audio_records.speaker`` —— 角色名，且是主键的一部分
+* ``seedance2_voice_audio_records.speaker`` —— identity_id，且是主键的一部分
 
 漏掉任何一处，身份图和颜色分配就断链：``rename_character`` 是手动触发的低频操作，
 存量名字自愈却是用户一打开角色列表就自动跑的，断链会一次性铺开。

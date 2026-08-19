@@ -6,18 +6,41 @@
 
 引用散得比想象中广。下面这份清单是把建表 SQL 里每一列都过了一遍数出来的——上一轮
 只补了 review 点名的几列，结果 ``prop_menu_json`` 整个漏掉，又被打回来一次。改这块
-之前请先回去核对 ``SQLITE_SCHEMA_SQL``，别再照着直觉补：
+之前请先回去核对 ``SQLITE_SCHEMA_SQL``，别再照着直觉补。
 
-- ``episodes.character_names`` —— 角色名数组
-- ``episodes.identity_ids`` —— identity_id 数组
+**每条后面的括号是这个语义的出处，补新列时请一并带上。** ``_cascade_character_rename``
+明说要拿这份清单当权威依据，所以一条没核过就写下的语义，下一轮会变成别人信任的前提：
+``beats.speaker`` 曾被想当然地记成「角色名」，级联就照着写了 ``== old_name``，实际值
+``林/小满_casual`` 整个迁不到——错的是这行注释，不是那次实现。
+
+- ``episodes.character_names`` —— 角色名数组（``Episode.character_names``「出场角色名称」）
+- ``episodes.identity_ids`` —— identity_id 数组（``Episode.identity_ids``，
+  例 ``['苏清晏_嫡女日常']``）
 - ``episodes.identity_default_map_json`` —— ``{角色名: identity_id}``，键和值都嵌
+  （例 ``{"杜晨": "杜晨_中年时期"}``；``literal_script_writing`` 拿角色名取键）
 - ``episodes.sketch_colors_json`` —— ``{identity_id: 颜色}``，只有键嵌
+  （例 ``{"苏清晏_嫡女日常": "red"}``）
 - ``episodes.prop_menu_json`` —— 数组里每项的 ``owner_identity_id``
+  （``PropMenuItem.owner_identity_id``「所属角色身份 ID」）
 - ``beats.detected_identities_json`` —— identity_id 数组
-- ``beats.visual_description`` —— ``{{角色名_身份名}}`` 文本 marker
-- ``beats.speaker`` —— 角色名，仅当 ``speaker_kind`` 为 ``character``
-- ``props.owner`` —— 角色名**或** identity_id，两种都有，见下
-- ``seedance2_voice_audio_records.speaker`` —— 角色名，还是主键的一部分
+  （``models.real_detected_identities``「concrete identity IDs」）
+- ``beats.visual_description`` —— ``{{角色名_身份名}}`` 文本 marker。花括号里通常是
+  identity_id（``models.extract_char_identities_from_markers`` 只把落在
+  ``identity.identity_id`` 集合里的 marker 算作检出身份），但裸 ``{{角色名}}`` 也确实
+  存在（``freezone.slots`` 两种都匹配），所以 ``remap_identity_markers`` 的正则把
+  ``_身份名`` 后缀设成可选
+- ``beats.speaker`` —— **identity_id**，仅当 ``speaker_kind`` 为 ``character``。
+  ``BeatUpdate.speaker`` 标的是「说话人身份ID」，``resolve_dialogue_reference_audio``
+  和 ``indextts2_beat_audio_task`` 都是 ``speaker.startswith(角色名)`` 之后再
+  ``identity.identity_id == speaker`` 精确配。裸角色名、以及群众/路人的普通标签属于
+  存量兼容（``Beat.speaker``「主角色可用 identity_id，群众/路人可用普通标签」），
+  ``remap_identity_id`` 两种都照顾得到，所以走它、别拿 ``== old_name`` 比
+- ``props.owner`` —— 角色名**或** identity_id，两种都有：字段声明写的是「所属角色名」，
+  而 ``prop_promotion_service`` 把菜单项提升成全局道具时是把 ``owner_identity_id``
+  原样抄进来的
+- ``seedance2_voice_audio_records.speaker`` —— **identity_id**，和 ``beats.speaker``
+  同一个契约（``voice_audio_task`` 拿 beat 的 speaker 一路传下来写进这张表），
+  还是主键的一部分
 
 明确**不**在清单里的：``episodes.scene_menu_json``（只有场景 ID）、
 ``beats.detected_props_json``（只有道具 ID）、``director_world`` 那张跨项目共享的全局
