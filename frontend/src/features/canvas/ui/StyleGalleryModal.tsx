@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Check, Maximize2, X } from 'lucide-react';
+import { ArrowLeft, Check, X } from 'lucide-react';
 
 import type { FreezoneStyleTemplate } from '@/api/ops';
 import { StyleAssetImage } from '@/features/canvas/ui/StyleAssetImage';
@@ -203,44 +203,45 @@ export function StyleGalleryModal({
                     return (
                       <div
                         key={item.id}
-                        role="button"
-                        tabIndex={0}
-                        aria-label={item.label}
-                        onClick={() => onSelect(item.id)}
-                        onKeyDown={(event) => {
-                          if (event.key !== 'Enter' && event.key !== ' ') return;
-                          event.preventDefault();
-                          onSelect(item.id);
-                        }}
-                        className={`group relative cursor-pointer overflow-hidden rounded-[12px] border bg-white/[0.04] transition-colors ${
+                        className={`relative overflow-hidden rounded-[12px] border bg-white/[0.04] transition-colors ${
                           isActive
                             ? 'border-white/[0.30] ring-1 ring-white/24'
                             : 'border-white/[0.10] hover:border-white/[0.18] hover:bg-white/[0.06]'
                         }`}
                       >
-                        <StyleAssetImage
-                          rel={item.cover}
-                          assetBase={assetBase}
-                          alt={item.label}
-                          loading="lazy"
-                          className="aspect-video w-full object-cover"
-                        />
-                        <div className="px-2.5 py-2 text-xs font-medium text-text-dark/86">
-                          {item.label}
-                        </div>
-                        {isActive && (
-                          <Check className="absolute right-2 top-2 size-4 text-[rgb(var(--accent-rgb))]" />
-                        )}
+                        {/* 卡片主体进详情：一张封面看不出这套风格怎么处理不同年龄性别的
+                            人物，那四张示例图才看得出来，所以详情是主路径不是彩蛋。 */}
                         <button
                           type="button"
+                          onClick={() => setDetailId(item.id)}
                           aria-label={`查看${item.label}详情`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setDetailId(item.id);
-                          }}
-                          className="absolute bottom-10 right-2 flex size-7 items-center justify-center rounded-md bg-black/55 text-text-dark opacity-0 transition-opacity hover:bg-black/75 group-hover:opacity-100"
+                          className="block w-full cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[rgb(var(--accent-rgb))]"
                         >
-                          <Maximize2 className="size-3.5" />
+                          <StyleAssetImage
+                            rel={item.cover}
+                            assetBase={assetBase}
+                            alt={item.label}
+                            loading="lazy"
+                            className="aspect-video w-full object-cover"
+                          />
+                          <div className="truncate px-2.5 py-2 pr-16 text-xs font-medium text-text-dark/86">
+                            {item.label}
+                          </div>
+                        </button>
+                        {isActive && (
+                          <Check className="pointer-events-none absolute right-2 top-2 size-4 text-[rgb(var(--accent-rgb))]" />
+                        )}
+                        {/* 快路径：已经知道要哪套的人不该被逼着走一趟详情。常驻可见而不是
+                            hover 才出 —— opacity-0 没有 focus 变体时，键盘 Tab 聚焦上去
+                            按钮照样透明，这个入口对键盘用户等于不存在。绝对定位盖在标题行
+                            上，没嵌进上面那颗 button：button 里套 button 是非法结构。 */}
+                        <button
+                          type="button"
+                          onClick={() => onSelect(item.id)}
+                          aria-label={`使用${item.label}`}
+                          className="absolute bottom-1.5 right-2 h-6 rounded-md bg-white/[0.12] px-2 text-[11px] font-medium text-text-dark transition-colors hover:bg-white/[0.24] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent-rgb))]"
+                        >
+                          使用
                         </button>
                       </div>
                     );

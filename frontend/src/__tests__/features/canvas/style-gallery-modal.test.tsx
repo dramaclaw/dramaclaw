@@ -72,7 +72,7 @@ describe("StyleGalleryModal", () => {
     );
   });
 
-  it("selects a style when its card is clicked", async () => {
+  it("card body opens the detail view instead of selecting outright", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
 
@@ -86,8 +86,32 @@ describe("StyleGalleryModal", () => {
       />,
     );
 
-    // 精确名匹配,避免命中同卡片上的「查看黄金时代详情」按钮
-    await user.click(screen.getByRole("button", { name: "黄金时代" }));
+    await user.click(screen.getByRole("button", { name: "查看黄金时代详情" }));
+
+    // 一张封面判断不了这套风格怎么处理不同人物,所以点卡片是「先看看」而不是「就它了」。
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByAltText("黄金时代 示例 1")).toBeInTheDocument();
+  });
+
+  it("the always-visible 使用 button selects without a detour", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+
+    render(
+      <StyleGalleryModal
+        templates={TEMPLATES}
+        assetBase=""
+        selectedId={null}
+        onSelect={onSelect}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // 快路径不能藏在 hover 后面 —— 键盘用户 Tab 得到它,才算这个入口存在。
+    const quickUse = screen.getByRole("button", { name: "使用黄金时代" });
+    expect(quickUse.className).not.toContain("opacity-0");
+
+    await user.click(quickUse);
 
     expect(onSelect).toHaveBeenCalledWith("golden_age");
   });
@@ -186,12 +210,16 @@ describe("StyleGalleryModal", () => {
 
     await user.click(screen.getByRole("button", { name: "古装" }));
 
-    expect(screen.getByRole("button", { name: "武侠江湖" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "黄金时代" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "查看武侠江湖详情" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看黄金时代详情" })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "全部" }));
 
-    expect(screen.getByRole("button", { name: "黄金时代" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "查看黄金时代详情" }),
+    ).toBeInTheDocument();
   });
 
   it("shows a placeholder instead of an empty grid", () => {
@@ -235,11 +263,13 @@ describe("StyleGalleryModal", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "查看黄金时代详情" }));
-    expect(screen.queryByRole("button", { name: "武侠江湖" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "查看武侠江湖详情" })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "返回" }));
 
-    expect(screen.getByRole("button", { name: "武侠江湖" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "查看武侠江湖详情" }),
+    ).toBeInTheDocument();
   });
 });
 

@@ -134,7 +134,7 @@ describe("StyleNode", () => {
     renderStyleNode("golden_age");
 
     await user.click(screen.getByRole("button", { name: "风格 黄金时代" }));
-    await user.click(screen.getByRole("button", { name: "赛博朋克" }));
+    await user.click(screen.getByRole("button", { name: "使用赛博朋克" }));
 
     const nodes = useCanvasStore.getState().nodes;
     // 真源是图片节点；风格节点自己的数据由图片节点那边的对账拉齐，这里不自写。
@@ -174,7 +174,9 @@ describe("StyleNode", () => {
 
     await user.click(screen.getByRole("button", { name: "更换风格" }));
 
-    expect(screen.getByRole("button", { name: "赛博朋克" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "查看赛博朋克详情" }),
+    ).toBeInTheDocument();
   });
 
   it("stays inert when no image node consumes it", async () => {
@@ -188,6 +190,8 @@ describe("StyleNode", () => {
 
     await user.click(screen.getByRole("button", { name: "风格 黄金时代" }));
     // 图墙不该打开 —— 没有下游图片节点时改风格写不到任何地方。
-    expect(screen.queryByRole("button", { name: "赛博朋克" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "查看赛博朋克详情" }),
+    ).not.toBeInTheDocument();
   });
 });
