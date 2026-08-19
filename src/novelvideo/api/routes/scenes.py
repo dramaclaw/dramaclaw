@@ -1535,13 +1535,9 @@ async def generate_scene_pano(
 
     params: dict[str, Any] = {
         "description": _scene_360_description(scene),
-        "style": body.style or _project_style(username, project_name),
-        "timeout_seconds": body.timeout_seconds,
+        "style": _project_style(username, project_name),
+        "timeout_seconds": 1800,
     }
-    for key in ("provider", "model", "image_size", "quality"):
-        value = getattr(body, key)
-        if value:
-            params[key] = value
 
     try:
         scope, queued = await _start_or_enqueue_scene_pano(

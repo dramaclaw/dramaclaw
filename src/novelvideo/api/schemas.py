@@ -1979,13 +1979,9 @@ class SceneUpdate(BaseModel):
 
 
 class ScenePanoGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     source: Literal["master", "text"] = "master"
-    style: Optional[str] = None
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    image_size: Optional[str] = None
-    quality: Optional[str] = None
-    timeout_seconds: int = 1800
 
 
 class SceneReferenceGenerateRequest(BaseModel):

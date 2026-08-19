@@ -46,6 +46,7 @@ from novelvideo.shared.billing_errors import (
     BillingRuleNotConfiguredError,
     InsufficientCreditsError,
 )
+from novelvideo.stage_asset_tasks import resolve_scene_360_image_model
 from novelvideo.task_backend.limits import ProjectUserTaskLimitExceeded
 from novelvideo.task_state import get_task_manager
 
@@ -6775,6 +6776,10 @@ async def test_skill_run_scene_360_uses_reverse_master_and_scene_slot_target(
     assert captured["payload"]["step"] == "pano_from_master"
     assert captured["payload"]["params"]["provider"] == "newapi"
     assert captured["payload"]["params"]["model"] == NEWAPI_IMAGE_MODEL
+    assert resolve_scene_360_image_model(
+        provider=captured["payload"]["params"]["provider"],
+        model=captured["payload"]["params"]["model"],
+    ) == NEWAPI_IMAGE_MODEL
     assert captured["payload"]["params"]["image_size"] == "2K"
     assert captured["payload"]["params"]["update_manifest"] is False
     assert captured["payload"]["params"]["master_path"].endswith("/assets/scenes/小区/master.png")
