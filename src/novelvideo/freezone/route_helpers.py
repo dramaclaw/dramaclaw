@@ -124,8 +124,9 @@ def get_freezone_image_style_manifest_version() -> str:
 def get_freezone_image_style_asset_base() -> str:
     """风格图片的地址前缀。
 
-    默认空字符串,前端回落到打包在 frontend/public/style-gallery 下的静态资源;
-    迁 OSS 时只配这个环境变量,前端无需重新发版。
+    图片不随仓库发布,必须由这个环境变量指向 OSS/CDN 前缀,前端按
+    `<前缀>/<清单里的相对路径>` 拼绝对地址。留空则前端回落到同源
+    `/style-gallery/`,而那个目录默认是空的 —— 图墙会显示占位块。
     """
     return os.environ.get("STYLE_GALLERY_ASSET_BASE", "").strip()
 
