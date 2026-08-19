@@ -203,6 +203,7 @@ import { useFreezoneVideoCameraTemplates } from "@/features/canvas/hooks/useFree
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { useCanvasStore, useIsBoxSelecting } from "@/stores/canvasStore";
 import { useCanvasPickStore } from "@/stores/canvasPickStore";
+import { commitVideoPickToNode } from "@/features/canvas/application/videoBreakdownLanding";
 import {
   fetchFreezoneJobResult,
   submitFreezoneVideoCompose,
@@ -1267,20 +1268,19 @@ export const VideoNode = memo(
     const handlePickSelect = useCallback(() => {
       const requesterId = pickRequest?.requesterNodeId;
       if (!requesterId || !data.videoUrl) return;
-      const store = useCanvasStore.getState();
-      store.updateNodeData(requesterId, {
-        sourceVideoUrl: data.videoUrl,
-        previewImageUrl: data.previewImageUrl ?? null,
-        sourceFileName: resolvedTitle,
+      // 连边即事实来源，不再往对方节点抄一份 URL —— 抄了「断开边退回空态」就失效。
+      commitVideoPickToNode({
         sourceNodeId: id,
+        requesterNodeId: requesterId,
+        videoUrl: data.videoUrl,
+        label: resolvedTitle,
       });
-      store.addEdge(id, requesterId);
+      const store = useCanvasStore.getState();
       store.setSelectedNode(requesterId);
       store.requestFocusNode(requesterId);
       cancelPick();
     }, [
       cancelPick,
-      data.previewImageUrl,
       data.videoUrl,
       id,
       pickRequest?.requesterNodeId,

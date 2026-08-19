@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { useCanvasPickStore } from "@/stores/canvasPickStore";
 import { useUpstreamNodes } from "@/features/canvas/application/useUpstreamGraph";
+import { landVideoBreakdownResult } from "@/features/canvas/application/videoBreakdownLanding";
 import {
   CANVAS_NODE_TYPES,
   VIDEO_BREAKDOWN_DIMENSIONS,
@@ -70,9 +71,6 @@ export const VideoBreakdownNode = memo(
     const updateNodeInternals = useUpdateNodeInternals();
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
-    const addVideoBreakdownGroups = useCanvasStore(
-      (state) => state.addVideoBreakdownGroups,
-    );
     const startPick = useCanvasPickStore((state) => state.startPick);
     const upstreamNodes = useUpstreamNodes(id);
 
@@ -214,16 +212,26 @@ export const VideoBreakdownNode = memo(
             ).result ?? {}) as unknown) as FreezoneVideoBreakdownResult)
           : (ref as unknown as FreezoneVideoBreakdownResult);
 
-        const groupIds = addVideoBreakdownGroups(id, result, {
-          storyboardFallbackLabel: (index) =>
-            t("videoBreakdown.groups.storyboard", {
-              index: String(index).padStart(2, "0"),
-            }),
-          motionFallbackLabel: t("videoBreakdown.groups.motion"),
-          musicFallbackLabel: t("videoBreakdown.groups.music"),
+        const outcome = landVideoBreakdownResult({
+          nodeId: id,
+          result,
+          labels: {
+            storyboardFallbackLabel: (index) =>
+              t("videoBreakdown.groups.storyboard", {
+                index: String(index).padStart(2, "0"),
+              }),
+            motionFallbackLabel: t("videoBreakdown.groups.motion"),
+            musicFallbackLabel: t("videoBreakdown.groups.music"),
+          },
         });
 
-        if (!groupIds || groupIds.length === 0) {
+        if (outcome === "node-gone") {
+          // 拉片要跑几分钟，等结果期间用户把节点删掉很正常。静默收工 —— 既没有
+          // 节点可写，也不该把用户自己的删除说成「零产出」。
+          return;
+        }
+
+        if (outcome === "empty") {
           // 任务成功但三个维度一个产出都没有（例如全维度关掉、或源视频无音轨且
           // 抽帧全失败）——不能静默，否则用户看不到任何反馈。
           updateNodeData(id, {
@@ -242,7 +250,6 @@ export const VideoBreakdownNode = memo(
         toast.error(t("videoBreakdown.failed"));
       }
     }, [
-      addVideoBreakdownGroups,
       dimensions,
       id,
       isBreakingDown,

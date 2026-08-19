@@ -727,6 +727,16 @@ function normalizeNodes(rawNodes: CanvasNode[]): CanvasNode[] {
         }
       }
 
+      // 拉片没有对应的续跑机制（提交时不落 task_key），所以进行态一律复位 ——
+      // 「开始拉片」按钮以 isBreakingDown 判禁用，存下来的 true 没有任何东西会
+      // 把它翻回 false，节点就只能删掉重建。
+      if ('isBreakingDown' in mergedData && mergedData.isBreakingDown) {
+        mergedData.isBreakingDown = false;
+        if ('breakdownStartedAt' in mergedData) {
+          mergedData.breakdownStartedAt = null;
+        }
+      }
+
       const normalizedNode = {
         ...node,
         type: node.type as CanvasNodeType,
