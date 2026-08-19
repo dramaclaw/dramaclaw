@@ -31,6 +31,8 @@ deploy/compose/windows/novelvideo.env
 deploy/compose/windows/users.json
 
 # Claude Code
+# settings.json 是本机的 worktree 开关，不是团队约定，和 local 一样不进仓。
+.claude/settings.json
 .claude/settings.local.json
 .claude/skills/**/*-workspace/
 *.skill
