@@ -43,7 +43,7 @@ def _delivery() -> VerifiedTaskDelivery:
         scope=None,
         queue_kind="default",
         payload={},
-        billing_metadata={"feature_credit_reservation_id": "reservation-1"},
+        billing_metadata={"feature_credit_reservation_id": "foreign-reservation"},
     )
 
 
@@ -54,6 +54,16 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
     reviews: list[tuple[str, dict]] = []
 
     class Usage:
+        async def resolve_feature_credit_reservation(self, identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            assert identity.root_task_id == "task-1"
+            assert identity.project_id == "project-1"
+            assert identity.requester_user_id == "user-1"
+            return FeatureSettlementResolution(
+                outcome="resolved", reservation_id="reservation-1"
+            )
+
         async def mark_feature_credit_settlement_for_review(
             self, reservation_id, *, metadata=None
         ):
@@ -112,4 +122,43 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
     ]
     assert manager.failures[0]["metadata"]["error_code"] == (
         "TASK_AUTHZ_REVALIDATION_INDETERMINATE"
+    )
+
+
+def test_ambiguous_settlement_resolution_fails_before_runner(monkeypatch) -> None:
+    from novelvideo.ports.usage import FeatureSettlementResolution
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    invoked = False
+
+    class Usage:
+        async def resolve_feature_credit_reservation(self, _identity):
+            return FeatureSettlementResolution(outcome="ambiguous")
+
+    def runner(_envelope, _ctx):
+        nonlocal invoked
+        invoked = True
+
+    register_project_task_runner("running_authz_probe", runner)
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: Usage())
+
+    manager = Manager()
+    result = run_core.run_project_task_core_sync(
+        _delivery(),
+        SimpleNamespace(
+            project_id="project-1", requester_user_id="user-1", is_home_node=True
+        ),
+        manager,
+        run_task_id="task-1",
+    )
+
+    assert result == {
+        "failed": True,
+        "error_code": "FEATURE_SETTLEMENT_RESOLUTION_AMBIGUOUS",
+    }
+    assert invoked is False
+    assert manager.failures[0]["metadata"]["error_code"] == (
+        "FEATURE_SETTLEMENT_RESOLUTION_AMBIGUOUS"
     )

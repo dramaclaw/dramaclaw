@@ -212,6 +212,13 @@ def test_run_project_task_core_persists_result_before_confirming_credit(monkeypa
             return True
 
     class UsageMeter:
+        async def resolve_feature_credit_reservation(self, _identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            return FeatureSettlementResolution(
+                outcome="resolved", reservation_id="reservation_1"
+            )
+
         async def settle_feature_credit_reservation(
             self, _reservation_id, *, action, metadata=None
         ):
@@ -230,7 +237,9 @@ def test_run_project_task_core_persists_result_before_confirming_credit(monkeypa
     monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
     monkeypatch.setattr(run_core, "is_cancel_requested", fake_is_cancel_requested)
     monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
-    monkeypatch.setattr(run_core, "_emit_project_task_metrics", fake_emit_project_task_metrics)
+    monkeypatch.setattr(
+        run_core, "_emit_project_task_metrics", fake_emit_project_task_metrics
+    )
     monkeypatch.setattr(
         run_core,
         "_set_project_task_metrics_context",
@@ -257,7 +266,9 @@ def test_run_project_task_core_persists_result_before_confirming_credit(monkeypa
     assert events == ["persisted", "confirm", "metrics"]
 
 
-def test_run_project_task_core_confirms_delivered_result_when_task_state_write_fails(monkeypatch):
+def test_run_project_task_core_confirms_delivered_result_when_task_state_write_fails(
+    monkeypatch,
+):
     from novelvideo.task_backend import run_core
     from novelvideo.task_backend.registry import register_project_task_runner
 
@@ -268,6 +279,13 @@ def test_run_project_task_core_confirms_delivered_result_when_task_state_write_f
             raise OSError("task state write failed")
 
     class UsageMeter:
+        async def resolve_feature_credit_reservation(self, _identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            return FeatureSettlementResolution(
+                outcome="resolved", reservation_id="reservation_1"
+            )
+
         async def settle_feature_credit_reservation(
             self, _reservation_id, *, action, metadata=None
         ):
@@ -329,6 +347,13 @@ def test_run_project_task_core_confirms_runner_result_even_when_read_model_ignor
             return False
 
     class UsageMeter:
+        async def resolve_feature_credit_reservation(self, _identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            return FeatureSettlementResolution(
+                outcome="resolved", reservation_id="reservation_1"
+            )
+
         async def settle_feature_credit_reservation(
             self, _reservation_id, *, action, metadata=None
         ):
