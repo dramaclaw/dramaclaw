@@ -632,3 +632,153 @@ def test_a_broken_prewarm_never_breaks_the_history_write(tmp_path, monkeypatch):
         project_dir=tmp_path, canvas_id="repro", node_id="node-1"
     )
     assert len(stored) == 1
+
+
+# --- offline backfill (scripts/backfill_thumbnails.py) ---------------------
+
+
+@pytest.fixture
+def backfill(monkeypatch):
+    """Import the script and undo its global decode-budget resize afterwards."""
+
+    import importlib.util
+    import sys
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "backfill_thumbnails.py"
+    spec = importlib.util.spec_from_file_location("backfill_thumbnails", path)
+    module = importlib.util.module_from_spec(spec)
+    # @dataclass resolves its own module out of sys.modules; without this the
+    # import fails before the script ever runs.
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+
+    original = thumbnails._render_slots
+    yield module
+    # main() resizes the shared decode budget for the batch; put it back so a
+    # later test does not inherit a backfill-sized semaphore.
+    thumbnails._render_slots = original
+
+
+def _variants_under(project_dir: Path) -> list[Path]:
+    return sorted((project_dir / thumbnails.THUMB_ROOT).rglob("*.webp"))
+
+
+# The script's counters count variants, not sources, so every expectation below
+# scales with VARIANTS — adding a third variant must not need a test edit.
+def _per_source() -> int:
+    return len(thumbnails.VARIANTS)
+
+
+def _write_backfillable_png(path: Path) -> Path:
+    """A source every variant actually downscales.
+
+    `_render` declines to build a variant that would not shrink anything, so a
+    source smaller than the largest budget yields fewer files than there are
+    variants and the counts below stop lining up with VARIANTS.
+    """
+
+    edge = max(thumbnails.VARIANTS.values()) + 1
+    return _write_png(path, (edge, edge))
+
+
+def test_backfill_builds_every_missing_variant(backfill, tmp_path, capsys):
+    project = tmp_path / "alice" / "proj"
+    for name in ("a.png", "sub/b.png", "sub/deep/c.png"):
+        _write_backfillable_png(project / name)
+
+    assert backfill.main([str(project)]) == 0
+
+    assert len(_variants_under(project)) == 3 * _per_source()
+    assert f"built {3 * _per_source()}" in capsys.readouterr().out
+
+
+def test_backfill_is_idempotent(backfill, tmp_path, capsys):
+    project = tmp_path / "alice" / "proj"
+    _write_backfillable_png(project / "a.png")
+    backfill.main([str(project)])
+    capsys.readouterr()
+
+    assert backfill.main([str(project)]) == 0
+
+    out = capsys.readouterr().out
+    assert "built 0" in out
+    assert f"{_per_source()} already current" in out
+
+
+def test_backfill_dry_run_writes_nothing(backfill, tmp_path, capsys):
+    project = tmp_path / "alice" / "proj"
+    _write_backfillable_png(project / "a.png")
+
+    assert backfill.main([str(project), "--dry-run"]) == 0
+
+    assert not (project / thumbnails.THUMB_ROOT).exists()
+    # An upper bound: the dry run deliberately does not open the images, so it
+    # cannot know which sources are already inside a variant's budget.
+    assert f"would build up to {_per_source()}" in capsys.readouterr().out
+
+
+def test_backfill_never_recurses_into_its_own_output(backfill, tmp_path, capsys):
+    project = tmp_path / "alice" / "proj"
+    _write_backfillable_png(project / "a.png")
+    backfill.main([str(project)])
+    capsys.readouterr()
+
+    # A second pass must still see exactly one source, not the variant it wrote.
+    backfill.main([str(project)])
+    assert "1 image(s) scanned" in capsys.readouterr().out
+
+
+def test_backfill_root_walks_user_and_project_levels(backfill, tmp_path, capsys):
+    root = tmp_path / "output"
+    for user, name in (("alice", "one"), ("alice", "two"), ("bob", "three")):
+        _write_backfillable_png(root / user / name / "a.png")
+
+    assert backfill.main(["--root", str(root)]) == 0
+
+    out = capsys.readouterr().out
+    assert "3 project(s)" in out
+    assert f"built {3 * _per_source()}" in out
+
+
+def test_backfill_counts_each_source_once_towards_the_savings_line(backfill, tmp_path):
+    """The savings line is the script's whole justification; it must be true.
+
+    Every source produces one variant per name, so accumulating source bytes
+    per built variant reports len(VARIANTS)x the real volume — and the same
+    multiple on the compression ratio the operator reads off the last line.
+    """
+
+    project = tmp_path / "alice" / "proj"
+    sources = [
+        _write_backfillable_png(project / "a.png"),
+        _write_backfillable_png(project / "sub" / "b.png"),
+    ]
+
+    totals = backfill.backfill_project(project, sorted(thumbnails.VARIANTS), 2, False)
+
+    assert totals.built == len(sources) * _per_source()
+    assert totals.source_bytes == sum(s.stat().st_size for s in sources)
+    assert 0 < totals.variant_bytes < totals.source_bytes
+
+
+def test_backfill_ignores_non_images(backfill, tmp_path, capsys):
+    project = tmp_path / "alice" / "proj"
+    project.mkdir(parents=True)
+    (project / "clip.mp4").write_bytes(b"\x00\x01")
+    (project / "notes.txt").write_text("hi")
+    (project / "world.sog").write_bytes(b"\x00")
+
+    assert backfill.main([str(project)]) == 0
+
+    assert "0 image(s) scanned" in capsys.readouterr().out
+    assert not (project / thumbnails.THUMB_ROOT).exists()
+
+
+def test_backfill_requires_a_target(backfill):
+    with pytest.raises(SystemExit):
+        backfill.main([])
+
+
+def test_backfill_rejects_a_missing_directory(backfill, tmp_path):
+    with pytest.raises(SystemExit):
+        backfill.main([str(tmp_path / "nope")])

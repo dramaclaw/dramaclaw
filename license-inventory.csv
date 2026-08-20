@@ -1336,6 +1336,7 @@ scripts/acceptance/api_coverage_report.py,Elastic-2.0,2026 SuperTale contributor
 scripts/acceptance/checks/m05.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/acceptance/foss_only_e2e.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/acceptance/run.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/backfill_thumbnails.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/build_style_gallery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/ce_allowlist.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/check_ce_port_closure.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
