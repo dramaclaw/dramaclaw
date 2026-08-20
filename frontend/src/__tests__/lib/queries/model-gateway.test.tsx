@@ -6,7 +6,15 @@ import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import ky from "ky";
 import type { ReactNode } from "react";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
@@ -17,6 +25,7 @@ import {
   type OfficialMediaCatalogStatus,
   useCheckOfficialMediaCatalog,
   useOfficialMediaCatalogWatcher,
+  useSaveProviderChannels,
 } from "@/lib/queries/model-gateway";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -179,5 +188,38 @@ describe("official media catalog watcher", () => {
         onCatalogUpdated,
       );
     }
+  });
+});
+
+describe("provider channel persistence", () => {
+  it("sends an empty replacement list when the final channel is removed", async () => {
+    let requestBody: unknown;
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/model-gateway/custom/newapi/provider-channels",
+        async ({ request }) => {
+          requestBody = await request.json();
+          return HttpResponse.json({ ok: true, data: { channels: [] } });
+        },
+      ),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(() => useSaveProviderChannels(), {
+      wrapper: wrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        preserveUnmentioned: false,
+        channels: [],
+      });
+    });
+
+    expect(requestBody).toEqual({
+      preserveUnmentioned: false,
+      channels: [],
+    });
   });
 });

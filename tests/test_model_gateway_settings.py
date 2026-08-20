@@ -2193,6 +2193,42 @@ def test_custom_newapi_provider_channels_route_persists_and_masks_keys(
     assert "sk-deepseek-upstream-secret" not in config_response.text
 
 
+def test_custom_newapi_provider_channels_route_removes_final_channel(
+    monkeypatch,
+    tmp_path,
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("NEWAPI_PROVISIONER_ENABLED", "true")
+
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/model-gateway/custom/newapi/provider-channels",
+        json={
+            "channels": [
+                {
+                    "provider": "openrouter",
+                    "upstreamKey": "sk-openrouter-secret",
+                }
+            ]
+        },
+    )
+    assert create_response.status_code == 200
+
+    delete_response = client.post(
+        "/model-gateway/custom/newapi/provider-channels",
+        json={"channels": [], "preserveUnmentioned": False},
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.json()["data"]["channels"] == []
+
+    config_response = client.get("/model-gateway/config")
+    assert config_response.status_code == 200
+    assert config_response.json()["data"]["provisioner"]["providerChannels"] == []
+
+
 def test_comfyui_provider_channel_writes_workflows_to_newapi(
     monkeypatch,
     tmp_path,

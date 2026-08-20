@@ -4584,6 +4584,31 @@ function ProviderChannelsBlock({
     setLatestAddedProvider(provider);
   };
 
+  const providerChannelsForSave = (
+    providers: readonly FeatureModelProvider[],
+  ) =>
+    providers
+      .filter((provider) => {
+        if (provider === "comfyui") return true;
+        if ((providerChannels[provider]?.upstreamKey ?? "").trim()) return true;
+        return Boolean(savedChannelByProvider.get(provider)?.configured);
+      })
+      .map((provider) => ({
+        provider,
+        type:
+          channelTypeByProvider.get(provider)?.type ||
+          savedChannelByProvider.get(provider)?.type ||
+          customProviderChannelType(provider),
+        upstreamKey:
+          (providerChannels[provider]?.upstreamKey ?? "").trim() || undefined,
+        baseUrl: (providerChannels[provider]?.baseUrl ?? "").trim(),
+        priority: providerChannels[provider]?.priority ?? 0,
+        settings: normalizeProviderChannelSettings(
+          provider,
+          providerChannels[provider]?.settings ?? {},
+        ),
+      }));
+
   const removeProvider = async (provider: FeatureModelProvider) => {
     if (!providerChannels[provider]) return;
     const hasSavedComfyUIConfig =
@@ -4615,10 +4640,46 @@ function ProviderChannelsBlock({
       });
       if (!confirmed) return;
 
-      removeFeatureProviderChannel(provider);
-      setLatestAddedProvider((current) =>
-        current === provider ? null : current,
-      );
+      const removeLocally = () => {
+        removeFeatureProviderChannel(provider);
+        setLatestAddedProvider((current) =>
+          current === provider ? null : current,
+        );
+      };
+      if (!savedChannelByProvider.has(provider)) {
+        removeLocally();
+        return;
+      }
+
+      setRemovingProvider(provider);
+      try {
+        const response = await saveProviderChannels.mutateAsync({
+          preserveUnmentioned: Boolean(allowedProviderSet),
+          channels: providerChannelsForSave(
+            configuredProviders.filter((item) => item !== provider),
+          ),
+        });
+        if (response.ok !== true) {
+          toast.error(
+            getResponseErrorMessage(
+              response,
+              t("settings.modelConfig.requestFailed"),
+            ),
+          );
+          return;
+        }
+        removeLocally();
+        toast.success(t("settings.modelConfig.featureModels.channelsSaved"));
+      } catch (error) {
+        toast.error(
+          await getRequestErrorMessage(
+            error,
+            t("settings.modelConfig.requestFailed"),
+          ),
+        );
+      } finally {
+        setRemovingProvider(null);
+      }
       return;
     }
 
@@ -4675,27 +4736,7 @@ function ProviderChannelsBlock({
       toast.error(t("settings.modelConfig.featureModels.noChannels"));
       return;
     }
-    const channelsToSave = configuredProviders
-      .filter((provider) => {
-        if (provider === "comfyui") return true;
-        if ((providerChannels[provider]?.upstreamKey ?? "").trim()) return true;
-        return Boolean(savedChannelByProvider.get(provider)?.configured);
-      })
-      .map((provider) => ({
-        provider,
-        type:
-          channelTypeByProvider.get(provider)?.type ||
-          savedChannelByProvider.get(provider)?.type ||
-          customProviderChannelType(provider),
-        upstreamKey:
-          (providerChannels[provider]?.upstreamKey ?? "").trim() || undefined,
-        baseUrl: (providerChannels[provider]?.baseUrl ?? "").trim(),
-        priority: providerChannels[provider]?.priority ?? 0,
-        settings: normalizeProviderChannelSettings(
-          provider,
-          providerChannels[provider]?.settings ?? {},
-        ),
-      }));
+    const channelsToSave = providerChannelsForSave(configuredProviders);
     if (channelsToSave.length === 0) {
       toast.error(
         t("settings.modelConfig.featureModels.missingKeys", {
