@@ -3,15 +3,114 @@
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response
 
 logger = logging.getLogger("novelvideo.api.files")
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import ProjectResolution, resolve_project_scope
+from novelvideo.utils.thumbnails import ensure_thumbnail_async
 
 router = APIRouter()
+
+
+# Cache-bust tokens the canvas appends when it knows an image's version
+# (``withImageCacheBust`` in the frontend). Their presence is what makes a URL
+# safe to cache for a long time.
+_VERSION_PARAMS = ("st_v", "v")
+
+
+def _variant_cache_control(request: Request | None) -> str:
+    """Cache policy for a variant, decided by whether the URL is versioned.
+
+    A variant is served from our own bytes rather than redirected to OSS, so we
+    own its freshness. The source URL carries no content hash by itself: if the
+    caller regenerates an image in place, a plain ``max-age`` would keep showing
+    the old thumbnail for the whole window with no way to invalidate it. The LOD
+    shell in particular requests variants with no version token at all.
+
+    So: versioned URL -> cache hard, the URL changes when the bytes do.
+    Bare URL -> revalidate, and let ``FileResponse``'s ETag/Last-Modified turn
+    that into a cheap 304. Variants are stamped with their source's mtime, so
+    the validator moves exactly when the source does.
+    """
+
+    params = request.query_params if request is not None else {}
+    if any(params.get(name) for name in _VERSION_PARAMS):
+        return "private, max-age=31536000, immutable"
+    return "private, no-cache"
+
+
+def _etag_matches(request: Request | None, etag: str | None) -> bool:
+    """Whether the caller already holds this exact variant."""
+
+    if request is None or not etag:
+        return False
+    header = request.headers.get("if-none-match")
+    if not header:
+        return False
+    for candidate in header.split(","):
+        value = candidate.strip()
+        if value == "*":
+            return True
+        # A proxy may weaken the validator on the way back to us.
+        if value.startswith("W/"):
+            value = value[2:]
+        if value == etag:
+            return True
+    return False
+
+
+async def _maybe_thumbnail_response(
+    project_dir: Path,
+    requested: Path,
+    variant: str | None,
+    request: Request | None = None,
+):
+    """Serve a downscaled variant of ``requested``, or ``None`` to fall back.
+
+    The canvas asks for a variant on every img that paints into a small box
+    (see ``novelvideo.utils.thumbnails``). Variants are served as local bytes
+    rather than an OSS 302: at ~13KB the redirect round-trip plus the
+    write-back readiness probe cost more than the transfer, and a freshly
+    written variant is not in OSS yet anyway.
+
+    Thumbnail generation is CPU-bound Pillow work — it runs on the thumbnailer's
+    own executor, never on the shared request threadpool.
+    """
+    if not variant:
+        return None
+    thumb = await ensure_thumbnail_async(project_dir, requested, variant)
+    if thumb is None:
+        return None
+    cache_control = _variant_cache_control(request)
+    try:
+        stat_result = thumb.stat()
+    except OSError:  # raced with a rewrite; fall back to the original
+        return None
+    # Passing the stat makes FileResponse compute etag/last-modified now rather
+    # than mid-send, so the value is available to answer a conditional request.
+    response = FileResponse(
+        path=str(thumb),
+        media_type="image/webp",
+        stat_result=stat_result,
+        headers={"Cache-Control": cache_control},
+    )
+    if _etag_matches(request, response.headers.get("etag")):
+        # FileResponse itself never answers a conditional request — that lives in
+        # StaticFiles, which does not serve this route. Without this, `no-cache`
+        # would mean a full re-download of every variant on every paint, which
+        # is worse than the stale window it was chosen to avoid.
+        return Response(
+            status_code=304,
+            headers={
+                "Cache-Control": cache_control,
+                "ETag": response.headers["etag"],
+                "Last-Modified": response.headers["last-modified"],
+            },
+        )
+    return response
 
 
 def _resolve_project_file(resolved: ProjectResolution, file_path: str) -> Path:
@@ -90,20 +189,41 @@ async def download_file(
 async def preview_file(
     project: str,
     file_path: str,
+    request: Request,
+    st_thumb: str | None = None,
     user: dict = Depends(get_api_user),
 ):
     """预览项目内媒体文件。
 
     与 /files 使用同样的鉴权和路径防护，但返回 inline 响应，供 React 的
     <img>/<video>/<audio> 直接使用，避免裸 /static 依赖 NiceGUI session。
+
+    ``st_thumb`` 请求一个降采样变体（见 ``novelvideo.utils.thumbnails``）；
+    未知值等同于没传，回落原图。
     """
     resolved = await resolve_project_scope(project, user, required_role="viewer")
     requested = _resolve_project_file(resolved, file_path)
+    thumbnail = await _maybe_thumbnail_response(
+        resolved.project_dir, requested, st_thumb, request
+    )
+    if thumbnail is not None:
+        return thumbnail
     return _serve_or_redirect_to_oss(requested, as_download=False)
 
 
-async def preview_project_media_file(project: str, file_path: str, user: dict):
+async def preview_project_media_file(
+    project: str,
+    file_path: str,
+    user: dict,
+    st_thumb: str | None = None,
+    request: Request | None = None,
+):
     """Serve a project media file for non-/api routes such as /static/projects."""
     resolved = await resolve_project_scope(project, user, required_role="viewer")
     requested = _resolve_project_file(resolved, file_path)
+    thumbnail = await _maybe_thumbnail_response(
+        resolved.project_dir, requested, st_thumb, request
+    )
+    if thumbnail is not None:
+        return thumbnail
     return _serve_or_redirect_to_oss(requested, as_download=False)

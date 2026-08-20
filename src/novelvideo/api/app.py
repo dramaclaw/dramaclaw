@@ -319,9 +319,13 @@ def create_app() -> FastAPI:
     async def static_project_media(
         project: str,
         file_path: str,
+        request: Request,
+        st_thumb: str | None = None,
         user: dict = Depends(get_api_user),
     ):
-        return await preview_project_media_file(project, file_path, user)
+        return await preview_project_media_file(
+            project, file_path, user, st_thumb=st_thumb, request=request
+        )
 
     @application.get("/static/{legacy_path:path}", include_in_schema=False)
     async def legacy_static_media(legacy_path: str):
