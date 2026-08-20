@@ -422,8 +422,11 @@ async def refund_undelivered_feature_credit_reservation(
         )
     except FeatureCreditSettlementConflict:
         logger.warning(
-            "undelivered feature credit refund conflicts with durable settlement",
-            extra={"failure_kind": "settlement_action_conflict"},
+            "feature_credit_settlement_conflict",
+            extra={
+                "settlement_action": "refund",
+                "failure_kind": "settlement_action_conflict",
+            },
         )
         return SettlementIntentResult(accepted=False, retryable=False)
     except Exception as exc:  # noqa: BLE001
