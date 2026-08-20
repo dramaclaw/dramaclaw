@@ -256,8 +256,8 @@ def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
         and _opts_out_of_the_guard(call)
     }
 
-    # 取证口径（`TCP-P60`）：freezone 76 条路由全过同一个解析器，画布只占 13 条。
-    assert router_decorators == 76
+    # 取证口径（`TCP-P60`）：freezone 77 条路由全过同一个解析器，画布只占 13 条。
+    assert router_decorators == 77
     assert len(canvas_routes) == 13
 
     # 正向：13 条画布路由必须全部、且每一处调用都 opt-out。
