@@ -630,6 +630,140 @@ def test_stage_asset_runner_passes_envelope_context_through(
     assert seen == [context]
 
 
+def test_stage_asset_runner_passes_signed_catalog_model_authority(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from novelvideo import stage_asset_tasks
+
+    runner_module = _quiet_runner(monkeypatch)
+    context = _egress_context(kind="organization")
+    seen: list[object] = []
+
+    def spy(*_args, **kwargs):
+        seen.append(kwargs.get("model_authority"))
+        return {"ok": True, "scene_id": "scene-360"}
+
+    monkeypatch.setattr(stage_asset_tasks, "run_scene_360", spy)
+
+    runner_module.run_stage_asset(
+        _envelope(
+            {
+                "scene_name": "scene-360",
+                "step": "pano_from_text",
+                "params": {
+                    "provider": "newapi",
+                    "model": "organization-authorized-pano-model",
+                },
+                "scene_360_model_authority": {
+                    "kind": "catalog",
+                    "catalog_id": "catalog-pano",
+                    "provider": "newapi",
+                    "model": "organization-authorized-pano-model",
+                },
+                "project_dir": str(tmp_path),
+            },
+            context,
+        ),
+        _ctx(tmp_path),
+    )
+
+    assert len(seen) == 1
+    authority = seen[0]
+    assert authority is not None
+    assert (
+        authority.catalog_id,
+        authority.provider,
+        authority.model,
+    ) == (
+        "catalog-pano",
+        "newapi",
+        "organization-authorized-pano-model",
+    )
+
+
+def test_stage_asset_runner_rejects_catalog_authority_from_plain_envelope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from novelvideo import stage_asset_tasks
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    runner_module = _quiet_runner(monkeypatch)
+    monkeypatch.setattr(
+        stage_asset_tasks,
+        "run_scene_360",
+        lambda *_args, **_kwargs: {"ok": True, "scene_id": "scene-360"},
+    )
+    payload = {
+        "scene_name": "scene-360",
+        "step": "pano_from_text",
+        "params": {
+            "provider": "newapi",
+            "model": "attacker-controlled-model",
+        },
+        "scene_360_model_authority": {
+            "kind": "catalog",
+            "catalog_id": "forged-catalog",
+            "provider": "newapi",
+            "model": "attacker-controlled-model",
+        },
+        "project_dir": str(tmp_path),
+    }
+
+    with pytest.raises(InvalidTaskEnvelope):
+        runner_module.run_stage_asset(
+            {"scope": "scene-360", "payload": payload},
+            _ctx(tmp_path),
+        )
+
+
+@pytest.mark.parametrize(
+    ("authority_provider", "authority_model"),
+    [
+        ("openai", "organization-authorized-pano-model"),
+        ("newapi", "different-authorized-pano-model"),
+    ],
+)
+def test_stage_asset_runner_rejects_catalog_authority_execution_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    authority_provider: str,
+    authority_model: str,
+) -> None:
+    from novelvideo import stage_asset_tasks
+    from novelvideo.task_backend.envelope import InvalidTaskEnvelope
+
+    runner_module = _quiet_runner(monkeypatch)
+    context = _egress_context(kind="organization")
+    monkeypatch.setattr(
+        stage_asset_tasks,
+        "run_scene_360",
+        lambda *_args, **_kwargs: {"ok": True, "scene_id": "scene-360"},
+    )
+
+    with pytest.raises(InvalidTaskEnvelope):
+        runner_module.run_stage_asset(
+            _envelope(
+                {
+                    "scene_name": "scene-360",
+                    "step": "pano_from_text",
+                    "params": {
+                        "provider": "newapi",
+                        "model": "organization-authorized-pano-model",
+                    },
+                    "scene_360_model_authority": {
+                        "kind": "catalog",
+                        "catalog_id": "catalog-pano",
+                        "provider": authority_provider,
+                        "model": authority_model,
+                    },
+                    "project_dir": str(tmp_path),
+                },
+                context,
+            ),
+            _ctx(tmp_path),
+        )
+
+
 def test_scene_pano_generation_runner_passes_envelope_context_through(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

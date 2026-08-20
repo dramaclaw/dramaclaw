@@ -190,6 +190,37 @@ def run_stage_asset(
     elif step in {"pano_from_master", "pano_from_text"}:
         source = "master" if step == "pano_from_master" else "text"
         artifact_dir = params.get("artifact_dir")
+        authority_payload = payload.get("scene_360_model_authority")
+        model_authority = None
+        if authority_payload is not None:
+            if (
+                type(envelope) is not TrustedRunnerEnvelope
+                or type(authority_payload) is not dict
+                or set(authority_payload)
+                != {"kind", "catalog_id", "provider", "model"}
+                or authority_payload.get("kind") != "catalog"
+            ):
+                raise InvalidTaskEnvelope() from None
+            catalog_id = authority_payload.get("catalog_id")
+            authority_provider = authority_payload.get("provider")
+            authority_model = authority_payload.get("model")
+            if any(
+                type(value) is not str or not value.strip()
+                for value in (catalog_id, authority_provider, authority_model)
+            ):
+                raise InvalidTaskEnvelope() from None
+            if (
+                authority_provider.strip().lower()
+                != str(params.get("provider") or "").strip().lower()
+                or authority_model.strip()
+                != str(params.get("model") or "").strip()
+            ):
+                raise InvalidTaskEnvelope() from None
+            model_authority = stage_asset_tasks.Scene360CatalogModelAuthority(
+                catalog_id=catalog_id.strip(),
+                provider=authority_provider.strip().lower(),
+                model=authority_model.strip(),
+            )
         result = stage_asset_tasks.run_scene_360(
             project_dir,
             scene_name,
@@ -214,6 +245,7 @@ def run_stage_asset(
                 int(params.get("timeout_seconds", 1800))
             ),
             progress_callback=update,
+            model_authority=model_authority,
             egress_context=_extract_trusted_egress_context(envelope),
         )
     else:

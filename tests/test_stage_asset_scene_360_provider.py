@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -48,3 +50,45 @@ def test_scene_360_model_rejects_provider_mismatch_instead_of_raw_passthrough():
             provider="openai",
             model="newapi_gpt_image2",
         )
+
+
+def test_scene_360_runs_catalog_model_with_verified_authority(monkeypatch, tmp_path):
+    from novelvideo import stage_asset_tasks
+
+    model = "organization-authorized-pano-model"
+    monkeypatch.setattr(
+        stage_asset_tasks,
+        "_reserve_scene_360_model_call",
+        lambda *_args, **_kwargs: "",
+    )
+    monkeypatch.setattr(
+        stage_asset_tasks,
+        "_confirm_scene_360_model_call",
+        lambda **_kwargs: None,
+    )
+
+    def fake_run(cmd, **_kwargs):
+        output_dir = stage_asset_tasks.Path(cmd[cmd.index("--output-dir") + 1])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "scene_panorama_2to1.png").write_bytes(b"png")
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(stage_asset_tasks, "run_project_subprocess", fake_run)
+
+    result = stage_asset_tasks.run_scene_360(
+        tmp_path / "project",
+        "Hall",
+        source="text",
+        provider="newapi",
+        model=model,
+        artifact_dir=tmp_path / "candidate",
+        update_manifest=False,
+        model_authority=stage_asset_tasks.Scene360CatalogModelAuthority(
+            catalog_id="catalog-pano",
+            provider="newapi",
+            model=model,
+        ),
+    )
+
+    assert result["ok"] is True
+    assert result["model"] == model

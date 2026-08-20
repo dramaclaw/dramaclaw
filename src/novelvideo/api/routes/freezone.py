@@ -2018,6 +2018,7 @@ async def _start_or_enqueue_mainline_scene_360_candidate_job(
     canvas_id: str | None,
     node_id: str | None,
     catalog_id: str | None = None,
+    execution_catalog_id: str | None = None,
     task_display: dict[str, str] | None = None,
 ) -> dict:
     return await _start_or_enqueue_mainline_scene_360_task(
@@ -2033,6 +2034,7 @@ async def _start_or_enqueue_mainline_scene_360_candidate_job(
         canvas_id=canvas_id,
         node_id=node_id,
         catalog_id=catalog_id,
+        execution_catalog_id=execution_catalog_id,
         auto_commit=False,
         task_display=task_display,
     )
@@ -2052,6 +2054,7 @@ async def _start_or_enqueue_mainline_scene_360_task(
     canvas_id: str | None,
     node_id: str | None,
     catalog_id: str | None = None,
+    execution_catalog_id: str | None = None,
     auto_commit: bool = True,
     task_display: dict[str, str] | None = None,
 ) -> dict:
@@ -2125,6 +2128,20 @@ async def _start_or_enqueue_mainline_scene_360_task(
             "canvas_id": canvas_id or "",
             "node_id": node_id or "",
             "billing": billing,
+            **(
+                {
+                    "scene_360_model_authority": {
+                        "kind": "catalog",
+                        "catalog_id": execution_catalog_id,
+                        "provider": resolved_provider or "newapi",
+                        "model": resolved_model
+                        or model
+                        or FREEZONE_DEFAULT_IMAGE_MODEL,
+                    }
+                }
+                if execution_catalog_id
+                else {}
+            ),
             "task_family": "mainline_skill",
             "task_label": "生成 360 全景",
             "display_name": f"生成 360 全景 · {scene_id}",
@@ -4685,6 +4702,10 @@ async def freezone_scene_360(
         "quality": body.quality,
         # 计费身份以目录条目为准，不采信 body —— 它直接决定按哪条目录规则扣费。
         "catalog_id": _catalog_entry_id(catalog_entry) or body.catalog_id or None,
+        # Only an entry resolved by the server catalog may authorize a dynamic
+        # execution model. A client-supplied legacy catalog_id is billing data,
+        # not model authority.
+        "execution_catalog_id": _catalog_entry_id(catalog_entry) or None,
         "canvas_id": body.canvas_id or None,
         "node_id": body.node_id or None,
         "task_display": {

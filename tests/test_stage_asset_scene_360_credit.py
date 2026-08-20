@@ -122,6 +122,7 @@ def test_scene_360_refunds_reserved_credit_on_subprocess_failure(monkeypatch, tm
 
 def test_scene_360_candidate_artifact_does_not_update_manifest(monkeypatch, tmp_path):
     from novelvideo import stage_asset_tasks
+    from novelvideo.config import NEWAPI_IMAGE_MODEL
 
     project_dir = tmp_path / "project"
     master = project_dir / "assets" / "scenes" / "Hall" / "master.png"
@@ -166,7 +167,7 @@ def test_scene_360_candidate_artifact_does_not_update_manifest(monkeypatch, tmp_
         "Hall",
         source="master",
         provider="newapi",
-        model="gpt-image-2",
+        model=NEWAPI_IMAGE_MODEL,
         master_path_override=master,
         reverse_master_path_override=reverse,
         artifact_dir=artifact_dir,

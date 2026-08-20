@@ -4260,8 +4260,42 @@ async def test_scene_360_takes_model_and_billing_identity_from_the_catalog(
     )
 
     assert captured["payload"]["params"]["model"] == "real-pano-model"
+    assert captured["payload"]["scene_360_model_authority"] == {
+        "kind": "catalog",
+        "catalog_id": "cat-real",
+        "provider": "newapi",
+        "model": "real-pano-model",
+    }
     assert captured["payload"]["billing"]["catalog_id"] == "cat-real"
     assert captured["payload"]["billing"]["pricing_model"] == "real-pano-model"
+
+
+@pytest.mark.asyncio
+async def test_scene_360_does_not_trust_client_catalog_id_as_model_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+    _patch_scene_360_enqueue(monkeypatch, tmp_path, captured)
+
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return {}, {}, None
+
+    monkeypatch.setattr(
+        freezone_routes, "_resolve_catalog_request", fake_resolve_catalog_request
+    )
+
+    await freezone_routes.freezone_scene_360(
+        project="proj_freezone",
+        body=freezone_routes.FreezoneScene360Request(
+            reference_url="/api/v1/projects/proj_freezone/media/assets/scenes/小区/master.png",
+            model="attacker-controlled-model",
+            catalog_id="forged-catalog",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert "scene_360_model_authority" not in captured["payload"]
 
 
 @pytest.mark.asyncio
