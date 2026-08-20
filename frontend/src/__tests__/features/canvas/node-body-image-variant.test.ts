@@ -133,6 +133,16 @@ describe("nodeBodyImageMeasurement 对不上记录时不能信记录", () => {
     ).toEqual({ width: 1280, height: 1280 });
   });
 
+  // 盲区,记在这里以免下次有人以为它管得住换图:副本的长边被钉死在预算上,原图
+  // 有多大这个信息在降采样时就丢了,所以同比例的另一张图看起来完全合规。真正堵
+  // 住这一幕的是换图当下就不信任记录(useNaturalSizeRecordTrust),这里只兜底管
+  // 挂载时就已经存歪了的旧数据。
+  it("同比例换图看不出来:2752x1536 的副本与 5504x3072 的逐像素相同", () => {
+    expect(
+      nodeBodyImageMeasurement({ naturalWidth: 1280, naturalHeight: 714 }, downscaled, RECORD),
+    ).toEqual(RECORD);
+  });
+
   it("横竖颠倒:方向就对不上", () => {
     expect(
       nodeBodyImageMeasurement({ naturalWidth: 714, naturalHeight: 1280 }, downscaled, RECORD),

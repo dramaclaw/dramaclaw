@@ -311,6 +311,12 @@ export function nodeBodyImageSrc(
  * 对法是把记录按变体的规则算一遍，看元素报的是不是那个结果：后端 thumbnail 把
  * 长边正好压到预算上，短边按比例四舍五入（Pillow 的取整，±1px）。对不上就说明
  * 记录描述的是另一张图。
+ *
+ * 反过来不成立，这一点必须说清楚：对得上只说明比例对得上。副本的长边被钉死在预
+ * 算上，原图有多大这个信息在降采样时就丢了，所以 5504x3072 和 2752x1536 的 card
+ * 副本都是 1280x714，拿旧记录去比一样能过。换图时的那条线因此不能只靠这里——各
+ * 节点在主图地址变了的当下就直接不信任记录（见 distrustRecord），这里只当兜底：
+ * 管挂载时就已经存歪了的旧数据，那种情况没有「上一张」可比。
  */
 export function nodeBodyRecordDescribesImage(
   image: { naturalWidth: number; naturalHeight: number },

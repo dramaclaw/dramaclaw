@@ -54,6 +54,7 @@ import {
   regenerateExportImageNode,
 } from '@/features/canvas/application/regenerateExportNode';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
+import { useNaturalSizeRecordTrust } from '@/features/canvas/hooks/useNaturalSizeRecordTrust';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -169,10 +170,16 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
   // 跟着 data 的引用走（与下面的 imageSource 同一节奏），避免每次渲染都换新对象。
   const recordedNaturalSize = useMemo(() => readNodeNaturalSize(data), [data]);
 
-  // 记录里的尺寸没有和 URL 绑定，而主图是会被换掉的（从历史恢复、生成完成回填、
-  // 画册选主图）。真发现记录对不上眼下这张图时，把这个地址记下来：它这一轮改喂
-  // 原图，onLoad 就能量到真尺寸并落库，而不是把一组属于别的图的数字写进去。
-  const [distrustedRecordUrl, setDistrustedRecordUrl] = useState<string | null>(null);
+  // 记录归属的是哪张图。只认「换图」，不认缩放：preferOriginalImage 翻转时下面
+  // 那一支会挑到另一个字段，但那是同一个节点的两种画法，不该当成换了图。
+  const recordSubject = useMemo(() => {
+    const picked = data.previewImageUrl || data.imageUrl;
+    if (!picked) return null;
+    const committedAt = (data as { committed_at?: unknown }).committed_at;
+    return `${picked}\u0000${typeof committedAt === 'string' ? committedAt : ''}`;
+  }, [data]);
+
+  const { distrusted, distrustRecord, trustAgain } = useNaturalSizeRecordTrust(recordSubject);
 
   const bodyImage = useMemo(() => {
     const picked = preferOriginalImage
@@ -185,13 +192,13 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
     // 节点主体把整幅原图解码进几百 CSS px 的盒子里；变体只在真实尺寸已知、
     // 且没放大到细看那一档时启用，详见 nodeBodyImageSrc 的注释。
     return nodeBodyImageSrc(resolved, recordedNaturalSize, {
-      preferOriginal: preferOriginalImage || distrustedRecordUrl === resolved,
+      preferOriginal: preferOriginalImage || distrusted,
     });
   }, [
     data,
     data.imageUrl,
     data.previewImageUrl,
-    distrustedRecordUrl,
+    distrusted,
     preferOriginalImage,
     recordedNaturalSize,
   ]);
@@ -256,14 +263,25 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             alt={isExportResultNode ? t('node.imageNode.resultAlt') : t('node.imageNode.generatedAlt')}
             viewerSourceUrl={originalImageUrl}
             onLoad={(event) => {
-              // 记录描述的不是这张图：降采样副本上量不出源图真尺寸，退回原图重
-              // 测一次。preferOriginal 会让下一轮 downscaled 为 false，不会来回抖。
+              // 记录描述的不是这张图：降采样副本上量不出源图真尺寸。第一次退回
+              // 原图重测（preferOriginal 会让下一轮 downscaled 为 false，不会来回
+              // 抖）；已经退过一次还是对不上，就什么都不写——记录和副本都不是真
+              // 相，保留旧值好过写一个确定错误的尺寸。
               if (
                 bodyImage?.downscaled &&
                 !nodeBodyRecordDescribesImage(event.currentTarget, recordedNaturalSize)
               ) {
-                setDistrustedRecordUrl(bodyImage.original);
+                distrustRecord();
                 return;
+              }
+              // 眼下加载的是不是记录归属的那张图。放大档挑的是 imageUrl，那可能
+              // 是完全另一张图——旋转、补光、多视角都把结果写进 previewImageUrl，
+              // 两者尺寸不必相同。拿它去纠正记录就是把错的换成另一个错的。
+              const measuringRecordSubject = !preferOriginalImage;
+              // 为纠正记录才退回来的那一轮，真尺寸这就量到了：解除不信任，下一轮
+              // 回到副本。这张图已经纠正过，钩子记着，不会再退第二次。
+              if (measuringRecordSubject) {
+                trustAgain();
               }
               // 喂的是降采样副本时元素上的 naturalWidth 是变体的尺寸，改用记录里的
               // 真实尺寸——下面的角标、比例、自动尺寸因此与喂原图时完全一致。
@@ -295,7 +313,19 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
               const displaySizeMismatch =
                 Math.abs(resolvedWidth - nextSize.width) > 1 ||
                 Math.abs(resolvedHeight - nextSize.height) > 1;
-              if (nextAspectRatio !== data.aspectRatio || displaySizeMismatch) {
+              // 记录和刚量到的真相不一致时也必须写回去。换成同比例的另一张图
+              // （5504x3072 -> 2752x1536）比例和显示尺寸都不变，只靠上面两个条件
+              // 的话修正永远落不了地，下次挂载又会信着旧记录去喂副本。
+              //
+              // 只在纠正那一轮写。否则每次缩放跨线都会把 imageUrl 的尺寸盖到记录
+              // 上（见上面 measuringRecordSubject），白白多出一串撤销栈条目。
+              const recordIsStale =
+                distrusted
+                && measuringRecordSubject
+                && recordedNaturalSize !== null
+                && (recordedNaturalSize.width !== measured.width
+                  || recordedNaturalSize.height !== measured.height);
+              if (nextAspectRatio !== data.aspectRatio || displaySizeMismatch || recordIsStale) {
                 updateNodeSize(id, nextSize, {
                   lockManualSize: forceNaturalSize ? false : undefined,
                   data: {

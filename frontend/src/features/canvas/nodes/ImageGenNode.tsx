@@ -91,6 +91,7 @@ import {
   CANVAS_NODE_PANEL_SURFACE_CLASS,
   canvasNodeFrameClass,
 } from '@/features/canvas/ui/nodeFrameStyles';
+import { useNaturalSizeRecordTrust } from '@/features/canvas/hooks/useNaturalSizeRecordTrust';
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import { useShallow } from 'zustand/react/shallow';
 import { getFreezoneCanvasMetadata } from '@/features/freezone/canvasMetadataContext';
@@ -827,21 +828,19 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   // 已记录的原图像素尺寸；决定主体图能不能喂降采样副本，也是角标的初值。
   const recordedNaturalSize = useMemo(() => readNodeNaturalSize(data), [data]);
   // 记录里的尺寸没有和 URL 绑定，而主图是会被换掉的（画册选主图、从历史恢复、
-  // 生成完成回填，三条路都只改 imageUrl/previewImageUrl）。真发现记录对不上眼下
-  // 这张图时，把这个地址记下来：它这一轮改喂原图，onLoad 就能量到真尺寸并落库，
-  // 而不是把一组属于别的图的数字写进去。
-  const [distrustedRecordUrl, setDistrustedRecordUrl] = useState<string | null>(null);
+  // 生成完成回填，三条路都只改 imageUrl/previewImageUrl）。不信任记录的这一轮改
+  // 喂原图，onLoad 就能量到真尺寸并落库，而不是把一组属于别的图的数字写进去。
+  const { distrusted, distrustRecord, trustAgain } = useNaturalSizeRecordTrust(visiblePreviewUrl);
   // 主体图把整幅原图解码进几百 CSS px 的盒子里；变体只在真实尺寸已知、且没放大
   // 到细看那一档时启用，详见 nodeBodyImageSrc 的注释。查看器仍拿 visiblePreviewUrl。
   const bodyImage = useMemo(
     () =>
       visiblePreviewUrl
         ? nodeBodyImageSrc(visiblePreviewUrl, recordedNaturalSize, {
-            preferOriginal:
-              preferOriginalImage || distrustedRecordUrl === visiblePreviewUrl,
+            preferOriginal: preferOriginalImage || distrusted,
           })
         : null,
-    [distrustedRecordUrl, preferOriginalImage, recordedNaturalSize, visiblePreviewUrl],
+    [distrusted, preferOriginalImage, recordedNaturalSize, visiblePreviewUrl],
   );
 
   const hasGeneratedResult = Boolean(data.imageUrl);
@@ -1566,15 +1565,20 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               // 双击进查看器的必须是原图，不能跟着 src 走降采样副本。
               viewerSourceUrl={visiblePreviewUrl}
               onLoad={(event) => {
-                // 记录描述的不是这张图：降采样副本上量不出源图真尺寸，退回原图重
-                // 测一次。preferOriginal 会让下一轮 downscaled 为 false，不会来回抖。
+                // 记录描述的不是这张图：降采样副本上量不出源图真尺寸。第一次退回
+                // 原图重测（preferOriginal 会让下一轮 downscaled 为 false，不会来
+                // 回抖）；已经退过一次还是对不上，就什么都不写——记录和副本都不是
+                // 真相，保留旧值好过写一个确定错误的尺寸。
                 if (
                   bodyImage?.downscaled &&
                   !nodeBodyRecordDescribesImage(event.currentTarget, recordedNaturalSize)
                 ) {
-                  setDistrustedRecordUrl(bodyImage.original);
+                  distrustRecord();
                   return;
                 }
+                // 为纠正记录才退回来的那一轮，真尺寸这就量到了：解除不信任，下一
+                // 轮回到副本。这张图已经纠正过，钩子记着，不会再退第二次。
+                trustAgain();
                 // 喂的是降采样副本时元素上的 naturalWidth 是变体的尺寸，改用记录里的
                 // 真实尺寸——下面的角标、比例、自动尺寸因此与喂原图时完全一致。
                 const measured = bodyImage
@@ -1605,7 +1609,18 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                 const displaySizeMismatch =
                   Math.abs(resolvedWidth - nextSize.width) > 1 ||
                   Math.abs(resolvedHeight - nextSize.height) > 1;
-                if (nextAspectRatio !== data.aspectRatio || displaySizeMismatch) {
+                // 记录和刚量到的真相不一致时也必须写回去。换成同比例的另一张图
+                // （5504x3072 -> 2752x1536）比例和显示尺寸都不变，只靠上面两个条
+                // 件的话修正永远落不了地，下次挂载又会信着旧记录去喂副本。
+                // 只在纠正那一轮写，别把普通加载也变成一次节点数据更新（那会往
+                // 撤销栈里堆条目）。这里没有 ImageNode 那种放大档换 URL 的问题：
+                // 主体图始终是 visiblePreviewUrl 这一张。
+                const recordIsStale =
+                  distrusted
+                  && recordedNaturalSize !== null
+                  && (recordedNaturalSize.width !== measured.width
+                    || recordedNaturalSize.height !== measured.height);
+                if (nextAspectRatio !== data.aspectRatio || displaySizeMismatch || recordIsStale) {
                   updateNodeSize(id, nextSize, {
                     lockManualSize: forceNaturalSize ? false : undefined,
                     data: {
