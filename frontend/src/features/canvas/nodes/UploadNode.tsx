@@ -51,11 +51,18 @@ import {
   canvasNodeFrameClass,
 } from '@/features/canvas/ui/nodeFrameStyles';
 import {
+  nodeBodyImageMeasurement,
+  nodeBodyImageSrc,
+  nodeBodyRecordDescribesImage,
+  planNaturalSizeRecordWrite,
   prepareNodeImageFromFile,
+  readNodeNaturalSize,
   resolveImageDisplayUrl,
   shouldUseOriginalImageByZoom,
   withImageCacheBust,
 } from '@/features/canvas/application/imageData';
+import { useNaturalSizeRecordTrust } from '@/features/canvas/hooks/useNaturalSizeRecordTrust';
+import { useNodeBodyVariantBudget } from '@/features/canvas/hooks/useNodeBodyVariantBudget';
 import { uploadLocalImageToBackend } from '@/features/canvas/application/uploadToolOutput';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { DirectorControlBundleBadge } from '@/features/canvas/ui/DirectorControlBundleBadge';
@@ -773,17 +780,97 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
     clearTransientPreview();
   }, [clearTransientPreview]);
 
-  const imageSource = useMemo(() => {
-    if (transientPreviewUrl) {
-      return transientPreviewUrl;
-    }
+  // 已记录的原图像素尺寸；决定主体图能不能喂降采样副本（见 nodeBodyImageSrc）。
+  const recordedNaturalSize = useMemo(() => readNodeNaturalSize(data), [data]);
+
+  // 记录归属的是哪张图。上传节点的图会被换掉——重新上传、全景抓拍回填、导演控件
+  // 覆盖，这几条路都只改 imageUrl/previewImageUrl，不动记录。所以换图当下就先不
+  // 信任记录，这一轮退回原图重测。只认换图，不认缩放：preferOriginalImage 翻转时
+  // 下面那一支会挑到另一个字段，但那是同一个节点的两种画法。
+  const recordSubject = useMemo(() => {
+    const picked = data.previewImageUrl || data.imageUrl;
+    if (!picked) return null;
+    const committedAt = (data as { committed_at?: unknown }).committed_at;
+    return `${picked}\u0000${typeof committedAt === 'string' ? committedAt : ''}`;
+  }, [data]);
+
+  const { distrusted, distrustRecord, trustAgain } = useNaturalSizeRecordTrust(recordSubject);
+  const bodyVariantBudget = useNodeBodyVariantBudget({
+    width: resolvedWidth,
+    height: resolvedHeight,
+  });
+
+  // 本地刚选的文件用 blob: 直出，不走变体：那是本机内存里的东西，后端没有它的
+  // 副本，也马上会被上传完成的稳定图换掉（clearTransientPreview）。
+  const bodyImage = useMemo(() => {
+    if (transientPreviewUrl) return null;
     const picked = preferOriginalImage
       ? data.imageUrl || data.previewImageUrl
       : data.previewImageUrl || data.imageUrl;
-    return picked
-      ? resolveImageDisplayUrl(withImageCacheBust(picked, data.committed_at))
-      : null;
-  }, [data.committed_at, data.imageUrl, data.previewImageUrl, transientPreviewUrl, preferOriginalImage]);
+    if (!picked) return null;
+    const resolved = resolveImageDisplayUrl(withImageCacheBust(picked, data.committed_at));
+    // 节点主体把整幅原图解码进几百 CSS px 的盒子里；变体只在真实尺寸已知、且没
+    // 放大到细看那一档时启用，详见 nodeBodyImageSrc 的注释。
+    return nodeBodyImageSrc(resolved, recordedNaturalSize, {
+      preferOriginal: preferOriginalImage || distrusted,
+      requiredEdge: bodyVariantBudget,
+    });
+  }, [
+    bodyVariantBudget,
+    data.committed_at,
+    data.imageUrl,
+    data.previewImageUrl,
+    distrusted,
+    preferOriginalImage,
+    recordedNaturalSize,
+    transientPreviewUrl,
+  ]);
+
+  const imageSource = transientPreviewUrl ?? bodyImage?.src ?? null;
+
+  /**
+   * 把这张图的真实像素尺寸记进节点数据。
+   *
+   * 记录空着，主体图就只能一直喂原图（nodeBodyImageSrc 在 natural 为 null 时直接
+   * 交回原图）。上传节点此前从来没有写过这组数，于是变体对它整个是关着的——用户
+   * 拖进来的原图往往是这张画布上最大的一张。这里补上：加载完成即量、即写。
+   *
+   * 上传节点不跟着图的比例自动改尺寸（用户拖多大就是多大），所以没有「比例变了」
+   * 「显示尺寸对不上」这两个触发点，这次写回纯粹是补记事实，不该进撤销栈。
+   */
+  const recordNaturalSize = useCallback((image: HTMLImageElement) => {
+    // 瞬时 blob: 预览：稳定图随后会把它换掉，那一轮才有变体上下文可判。
+    if (!bodyImage) return;
+    // 记录描述的不是这张图：降采样副本上量不出源图真尺寸。先退回原图重测。
+    if (
+      bodyImage.downscaled
+      && !nodeBodyRecordDescribesImage(image, recordedNaturalSize, bodyImage.maxEdge ?? 0)
+    ) {
+      distrustRecord();
+      return;
+    }
+    // 放大档挑的是 imageUrl，那可能是与记录归属的 previewImageUrl 完全不同的另一
+    // 张图；拿它去纠正记录，是把错的换成另一个错的。
+    const measuringRecordSubject = !preferOriginalImage;
+    if (measuringRecordSubject) {
+      trustAgain();
+    }
+    const measured = nodeBodyImageMeasurement(image, bodyImage, recordedNaturalSize);
+    if (!(measured.width > 0 && measured.height > 0)) return;
+    const recordWrite = planNaturalSizeRecordWrite({
+      aspectRatioChanged: false,
+      displaySizeMismatch: false,
+      record: recordedNaturalSize,
+      measured,
+      measuringRecordSubject,
+    });
+    if (!recordWrite.persist) return;
+    updateNodeData(
+      id,
+      { imageNaturalWidth: measured.width, imageNaturalHeight: measured.height },
+      { recordHistory: recordWrite.recordHistory },
+    );
+  }, [bodyImage, distrustRecord, id, preferOriginalImage, recordedNaturalSize, trustAgain, updateNodeData]);
 
   useEffect(() => {
     updateNodeInternals(id);
@@ -854,7 +941,10 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
             viewerSourceUrl={data.imageUrl ? resolveImageDisplayUrl(data.imageUrl) : null}
             alt={t('node.upload.uploadedAlt')}
             className="h-full w-full object-contain"
-            onLoad={handleImageLoad}
+            onLoad={(event) => {
+              recordNaturalSize(event.currentTarget);
+              handleImageLoad(event);
+            }}
           />
         </div>
       ) : (
