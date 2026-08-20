@@ -44,15 +44,13 @@ def test_resolved_feature_settlement_requires_complete_billing_snapshot(
 ) -> None:
     from novelvideo.ports.usage import FeatureSettlementResolution
 
-    resolution = FeatureSettlementResolution(
-        outcome="resolved",
-        reservation_id="feature-res-1",
-        feature_key=feature_key,
-        model_call_credit_policy=model_call_credit_policy,
-    )
-
     with pytest.raises(ValueError, match="billing snapshot"):
-        resolution.trusted_billing_metadata()
+        FeatureSettlementResolution(
+            outcome="resolved",
+            reservation_id="feature-res-1",
+            feature_key=feature_key,
+            model_call_credit_policy=model_call_credit_policy,
+        )
 
 
 def test_resolved_feature_settlement_builds_authoritative_billing_snapshot() -> None:
@@ -88,14 +86,43 @@ def test_rejected_resolution_error_matches_terminalization_marker(
     assert str(FeatureSettlementResolutionRejected(outcome)) == message
 
 
+def test_not_applicable_feature_settlement_keeps_authoritative_policy_without_reservation() -> (
+    None
+):
+    from novelvideo.ports.usage import FeatureSettlementResolution
+
+    resolution = FeatureSettlementResolution(
+        outcome="not_applicable",
+        feature_key="freezone.text_translate",
+        model_call_credit_policy="feature_included",
+    )
+
+    assert resolution.trusted_billing_metadata() == {
+        "feature_key": "freezone.text_translate",
+        "model_call_credit_policy": "feature_included",
+    }
+
+
 @pytest.mark.parametrize("field", ["feature_key", "model_call_credit_policy"])
-def test_non_resolved_feature_settlement_rejects_authoritative_fields(
+def test_not_applicable_feature_settlement_rejects_partial_policy_snapshot(
     field: str,
 ) -> None:
     from novelvideo.ports.usage import FeatureSettlementResolution
 
-    with pytest.raises(ValueError, match="non-resolved"):
+    with pytest.raises(ValueError):
         FeatureSettlementResolution(outcome="not_applicable", **{field: "forged"})
+
+
+@pytest.mark.parametrize("outcome", ["ambiguous", "conflict"])
+@pytest.mark.parametrize("field", ["feature_key", "model_call_credit_policy"])
+def test_rejected_feature_settlement_rejects_authoritative_fields(
+    outcome: str,
+    field: str,
+) -> None:
+    from novelvideo.ports.usage import FeatureSettlementResolution
+
+    with pytest.raises(ValueError):
+        FeatureSettlementResolution(outcome=outcome, **{field: "forged"})
 
 
 @pytest.mark.parametrize("outcome", ["not_applicable", "ambiguous", "conflict"])

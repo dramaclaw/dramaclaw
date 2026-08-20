@@ -37,18 +37,22 @@ class FeatureSettlementResolution:
         clean_model_call_credit_policy = str(
             self.model_call_credit_policy or ""
         ).strip()
-        if self.outcome == "resolved" and not clean_reservation_id:
-            raise ValueError("resolved settlement requires reservation_id")
-        if self.outcome != "resolved" and any(
-            (
-                clean_reservation_id,
-                clean_feature_key,
-                clean_model_call_credit_policy,
-            )
-        ):
-            raise ValueError(
-                "non-resolved settlement forbids reservation_id or authoritative fields"
-            )
+        if self.outcome == "resolved":
+            if not clean_reservation_id:
+                raise ValueError("resolved settlement requires reservation_id")
+            if not clean_feature_key or not clean_model_call_credit_policy:
+                raise ValueError(
+                    "resolved settlement requires a complete billing snapshot"
+                )
+        elif clean_reservation_id:
+            raise ValueError("non-resolved settlement forbids reservation_id")
+        elif self.outcome == "not_applicable":
+            if bool(clean_feature_key) != bool(clean_model_call_credit_policy):
+                raise ValueError(
+                    "not-applicable settlement requires a complete billing snapshot"
+                )
+        elif clean_feature_key or clean_model_call_credit_policy:
+            raise ValueError("rejected settlement forbids authoritative billing fields")
         object.__setattr__(self, "reservation_id", clean_reservation_id)
         object.__setattr__(self, "feature_key", clean_feature_key)
         object.__setattr__(
@@ -58,10 +62,10 @@ class FeatureSettlementResolution:
         )
 
     def trusted_billing_metadata(self) -> dict[str, str]:
-        if self.outcome != "resolved":
+        if self.outcome not in {"resolved", "not_applicable"}:
             return {}
-        if not self.feature_key or not self.model_call_credit_policy:
-            raise ValueError("resolved settlement requires a complete billing snapshot")
+        if not self.feature_key:
+            return {}
         return {
             key: value
             for key, value in {
