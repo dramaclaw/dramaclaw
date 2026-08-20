@@ -452,6 +452,16 @@ async def _start_or_enqueue_freezone_video_gen(
     else:
         raise HTTPException(400, "duration_seconds is required for this video mode")
 
+    # Duration probing above may await external media inspection. Recheck the
+    # authoritative organization scope after that asynchronous boundary so a
+    # model revoked in the meantime cannot be billed or enqueued.
+    if ctx is not None:
+        await _require_scoped_media_model(
+            "video",
+            catalog_id or model_id or backend,
+            requester_user_id=ctx.requester_user_id,
+        )
+
     billing = freezone_video_generate_task_billing(
         {
             "video_backend": backend,

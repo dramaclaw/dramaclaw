@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from novelvideo.api.routes import freezone
+from novelvideo.api.routes import model_credits
 from novelvideo.ports import registry
 from novelvideo.project_context import ProjectContext
 
@@ -112,6 +113,80 @@ async def test_task_submission_rechecks_visibility_before_enqueue(
 
 
 @pytest.mark.asyncio
+async def test_video_rechecks_visibility_after_async_media_probe_before_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RevocableCatalog(ScopedCatalog):
+        def __init__(self) -> None:
+            super().__init__()
+            self.enabled = True
+
+        async def list_models_for_user(
+            self,
+            media_type: str,
+            *,
+            user_id: str,
+        ) -> list[dict[str, object]]:
+            self.calls.append((media_type, user_id))
+            return [_catalog_entry("model-a")] if self.enabled else []
+
+    catalog = RevocableCatalog()
+
+    async def revoke_during_probe(paths: list[str]) -> float:
+        assert paths == ["/tmp/reference.mp4"]
+        catalog.enabled = False
+        return 5.0
+
+    async def unexpected_enqueue(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("task was enqueued after model access was revoked")
+
+    monkeypatch.setitem(registry._PORTS, "media_model_catalog", catalog)
+    monkeypatch.setattr(
+        freezone,
+        "probe_total_video_duration_seconds",
+        revoke_during_probe,
+    )
+    monkeypatch.setattr(
+        freezone,
+        "get_task_backend",
+        lambda: type(
+            "UnexpectedBackend",
+            (),
+            {"enqueue_project_task": unexpected_enqueue},
+        )(),
+    )
+    monkeypatch.setattr(
+        model_credits,
+        "freezone_video_generate_task_billing",
+        lambda _payload: {"feature_key": "freezone.video_generate"},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone._start_or_enqueue_freezone_video_gen(
+            ctx=_project_context("user-a"),
+            username="owner",
+            project="demo",
+            project_dir=Path("/tmp/project-1"),
+            output_dir="/tmp/project-1",
+            job_id="job-video",
+            prompt="prompt",
+            reference_items=[{"type": "video", "path": "/tmp/reference.mp4"}],
+            aspect_ratio="16:9",
+            resolution="720p",
+            duration_seconds=5,
+            generate_audio=False,
+            human_review=False,
+            scene_optimize=None,
+            backend="model-a",
+            catalog_id="model-a",
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "当前没有可用的视频模型" in str(exc_info.value.detail)
+    assert catalog.calls == [("video", "user-a"), ("video", "user-a")]
+
+
+@pytest.mark.asyncio
 async def test_platform_or_organization_scope_failure_is_not_bypassed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -135,4 +210,3 @@ async def test_platform_or_organization_scope_failure_is_not_bypassed(
         )
 
     assert exc_info.value.status_code == 403
-
