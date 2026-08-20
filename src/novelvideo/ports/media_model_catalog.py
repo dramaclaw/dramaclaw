@@ -14,3 +14,4 @@ class MediaModelCatalogPort(Protocol):
         *,
         user_id: str,
     ) -> list[dict[str, Any]]: ...
+

@@ -728,6 +728,16 @@ def run_project_task_core_sync(
                     "error_id": uuid.uuid4().hex,
                 },
             )
+        asyncio.run(
+            _emit_project_task_metrics(
+                ctx,
+                task_type,
+                episode=episode,
+                beat_num=beat_num,
+                scope=scope,
+                outcome="failed",
+            )
+        )
         return {"failed": True, "error_code": exc.code}
     except Exception as exc:  # noqa: BLE001
         error_code = "FEATURE_SETTLEMENT_RESOLUTION_FAILED"

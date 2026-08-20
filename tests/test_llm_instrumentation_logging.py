@@ -26,6 +26,19 @@ def test_json_log_value_keeps_diagnostic_fields_json_safe() -> None:
     }
 
 
+def test_failure_log_metadata_keeps_only_normalized_provider_http_status() -> None:
+    class ProviderRejection(RuntimeError):
+        status_code = 429
+
+    rejected = llm_instrumentation._failure_log_metadata(
+        ProviderRejection("rate limited")
+    )
+    unknown = llm_instrumentation._failure_log_metadata(RuntimeError("timeout"))
+
+    assert rejected["provider_http_status"] == 429
+    assert "provider_http_status" not in unknown
+
+
 @pytest.mark.asyncio
 async def test_meter_refund_forwards_log_metadata_without_changing_reservation_id(
     monkeypatch: pytest.MonkeyPatch,

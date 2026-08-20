@@ -392,9 +392,32 @@ def _json_log_value(value: object, *, depth: int = 0) -> object:
     return str(value)
 
 
-def _failure_log_metadata(exc: BaseException, response: object = None) -> dict[str, object]:
+def _provider_http_status(exc: BaseException) -> int | None:
+    """Extract only a normalized HTTP status from a provider exception."""
+    candidates = (
+        exc,
+        getattr(exc, "response", None),
+        getattr(exc, "http_response", None),
+    )
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        for attribute in ("status_code", "status"):
+            value = getattr(candidate, attribute, None)
+            try:
+                status = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 100 <= status <= 599:
+                return status
+    return None
+
+
+def _failure_log_metadata(
+    exc: BaseException, response: object = None
+) -> dict[str, object]:
     message = str(exc)
-    return {
+    metadata: dict[str, object] = {
         "error_message": message,
         "response_payload": {
             "status": "failed",
@@ -403,6 +426,10 @@ def _failure_log_metadata(exc: BaseException, response: object = None) -> dict[s
             "response": _json_log_value(response),
         },
     }
+    provider_http_status = _provider_http_status(exc)
+    if provider_http_status is not None:
+        metadata["provider_http_status"] = provider_http_status
+    return metadata
 
 
 async def _meter_reserve(**kwargs) -> str:

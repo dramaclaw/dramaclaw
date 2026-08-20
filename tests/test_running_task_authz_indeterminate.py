@@ -154,24 +154,32 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
     assert "feature_credit_cost" not in repr(metric_contexts)
 
 
-def test_ambiguous_settlement_resolution_fails_before_runner(monkeypatch) -> None:
+@pytest.mark.parametrize("outcome", ["ambiguous", "conflict"])
+def test_rejected_settlement_resolution_fails_before_runner_and_emits_metrics(
+    monkeypatch, outcome: str
+) -> None:
     from novelvideo.ports.usage import FeatureSettlementResolution
     from novelvideo.task_backend import run_core
     from novelvideo.task_backend.registry import register_project_task_runner
 
     invoked = False
+    metric_outcomes: list[str] = []
 
     class Usage:
         async def resolve_feature_credit_reservation(self, _identity):
-            return FeatureSettlementResolution(outcome="ambiguous")
+            return FeatureSettlementResolution(outcome=outcome)
 
     def runner(_envelope, _ctx):
         nonlocal invoked
         invoked = True
 
+    async def capture_metrics(*_args, **kwargs):
+        metric_outcomes.append(str(kwargs.get("outcome") or ""))
+
     register_project_task_runner("running_authz_probe", runner)
     monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
     monkeypatch.setattr(run_core, "get_usage_meter", lambda: Usage())
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", capture_metrics)
 
     manager = Manager()
     result = run_core.run_project_task_core_sync(
@@ -185,12 +193,11 @@ def test_ambiguous_settlement_resolution_fails_before_runner(monkeypatch) -> Non
 
     assert result == {
         "failed": True,
-        "error_code": "FEATURE_SETTLEMENT_RESOLUTION_AMBIGUOUS",
+        "error_code": f"FEATURE_SETTLEMENT_RESOLUTION_{outcome.upper()}",
     }
     assert invoked is False
-    assert manager.failures[0]["metadata"]["error_code"] == (
-        "FEATURE_SETTLEMENT_RESOLUTION_AMBIGUOUS"
-    )
+    assert metric_outcomes == ["failed"]
+    assert manager.failures[0]["metadata"]["error_code"] == result["error_code"]
 
 
 @pytest.mark.parametrize("outcome", ["ambiguous", "conflict"])
