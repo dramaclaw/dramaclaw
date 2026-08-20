@@ -1,53 +1,81 @@
 #!/usr/bin/env bash
-# Install or verify the DramaClaw-supported Hermes CLI version.
+# Install or verify the Hermes fork DramaClaw requires.
+#
+# Not from PyPI. A release keeps the same version string as the fork and then
+# drops the `_meta` extension the per-turn credential travels in, so every turn
+# fails closed and reports it as a connection error — with the gateway seeing
+# no request at all. `hermes --version` cannot tell the two apart, which is why
+# this checks behaviour instead.
+#
+# Not `uv tool install` either: upstream refuses to build a wheel or sdist on
+# purpose ("distributed via the shell installer, Docker image, or Nix"), so an
+# editable install from a clone is the supported path a pinned ref can use.
+# This mirrors what the Dockerfile does, so a developer's environment and the
+# image agree.
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "$0")/.." && pwd)"
-version_file="$root_dir/.hermes-version"
 mode="${1:-install}"
 
-if [ ! -f "$version_file" ]; then
-  echo "Missing $version_file" >&2
-  exit 2
-fi
+HERMES_REPO="${HERMES_REPO:-https://github.com/dramaclaw/hermes-agent.git}"
+HERMES_REF="${HERMES_REF:-brainclaw/evidence-plane}"
+HERMES_SOURCE_DIR="${HERMES_SOURCE_DIR:-$root_dir/.cache/hermes-agent}"
 
-required_version="$(tr -d '[:space:]' < "$version_file")"
-install_spec="${HERMES_INSTALL_SPEC:-hermes-agent[acp]==${required_version}}"
-
-current_version() {
-  if ! command -v hermes >/dev/null 2>&1; then
-    return 1
-  fi
-  hermes --version 2>/dev/null | sed -n 's/^Hermes Agent v\([0-9][0-9.]*\).*/\1/p' | head -n 1
+# The property this deployment actually depends on: does `_meta` survive the
+# ACP router? Probed in the interpreter that will run the worker.
+fork_is_installed() {
+  python3 - <<'PY' 2>/dev/null
+import sys
+try:
+    from acp_adapter.server import _recover_turn_meta
+    if _recover_turn_meta({"session_id": "s", "dramaclaw.probe": "v"}).get(
+            "dramaclaw.probe") != "v":
+        sys.exit(1)
+    from agent.gateway_credential import apply_to_headers, refuse_foreign_endpoint  # noqa: F401
+except Exception:
+    sys.exit(1)
+PY
 }
 
-current="$(current_version || true)"
-if [ "$current" = "$required_version" ]; then
-  echo "Hermes $current is installed."
+if fork_is_installed; then
+  echo "Hermes fork is installed ($(hermes --version 2>/dev/null | head -n 1))."
   exit 0
 fi
 
 if [ "$mode" = "--check" ] || [ "$mode" = "check" ]; then
-  if [ -z "$current" ]; then
-    echo "Hermes is not installed. Run: scripts/setup-hermes.sh" >&2
+  if command -v hermes >/dev/null 2>&1; then
+    echo "A Hermes is installed, but it is not the fork: it drops the _meta" >&2
+    echo "extension the per-turn credential travels in, so every turn would" >&2
+    echo "fail closed. Run: scripts/setup-hermes.sh" >&2
   else
-    echo "Hermes $current is installed, but DramaClaw requires $required_version. Run: scripts/setup-hermes.sh" >&2
+    echo "Hermes is not installed. Run: scripts/setup-hermes.sh" >&2
   fi
   exit 1
 fi
 
-if ! command -v uv >/dev/null 2>&1; then
-  echo "uv is required to install Hermes. Install uv first: https://docs.astral.sh/uv/" >&2
-  exit 2
+command -v git >/dev/null 2>&1 || { echo "git is required." >&2; exit 2; }
+command -v uv  >/dev/null 2>&1 || {
+  echo "uv is required: https://docs.astral.sh/uv/" >&2; exit 2; }
+
+if [ -d "$HERMES_SOURCE_DIR/.git" ]; then
+  echo "Updating $HERMES_SOURCE_DIR to $HERMES_REF ..."
+  git -C "$HERMES_SOURCE_DIR" fetch --quiet origin "$HERMES_REF"
+  git -C "$HERMES_SOURCE_DIR" checkout --quiet FETCH_HEAD
+else
+  echo "Cloning $HERMES_REPO@$HERMES_REF ..."
+  git clone --quiet --branch "$HERMES_REF" "$HERMES_REPO" "$HERMES_SOURCE_DIR" \
+    || { git clone --quiet "$HERMES_REPO" "$HERMES_SOURCE_DIR"
+         git -C "$HERMES_SOURCE_DIR" checkout --quiet "$HERMES_REF"; }
 fi
 
-echo "Installing Hermes ${required_version} from ${install_spec} ..."
-uv tool install "$install_spec" --force
+installed_sha="$(git -C "$HERMES_SOURCE_DIR" rev-parse HEAD)"
+uv pip install --system -e "$HERMES_SOURCE_DIR[acp]"
+HERMES_SOURCE_DIR="$HERMES_SOURCE_DIR" python3 "$root_dir/deploy/patch_hermes_acp_toolsets.py"
 
-updated="$(current_version || true)"
-if [ "$updated" != "$required_version" ]; then
-  echo "Hermes install finished, but found version '${updated:-unknown}' instead of '$required_version'." >&2
+if ! fork_is_installed; then
+  echo "Install finished, but the result is not the fork — _meta does not" >&2
+  echo "survive the ACP router. Check $HERMES_SOURCE_DIR@$installed_sha." >&2
   exit 1
 fi
 
-echo "Hermes $updated is ready."
+echo "Hermes fork ready: ${installed_sha:0:12} ($(hermes --version 2>/dev/null | head -n 1))"

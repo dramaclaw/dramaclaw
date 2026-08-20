@@ -5,7 +5,7 @@ Some hermes-agent ACP adapter versions create the ACP agent with
 ``enabled_toolsets=["hermes-acp"]``. That ignores the per-user ``config.yaml``
 managed by DramaClaw, so repo plugin tools can be discovered but still not
 exposed to the model. The Dockerfile installs the version pinned in
-``.hermes-version``; this patch is intentionally self-verifying so a Hermes
+the fork branch; this patch is intentionally self-verifying so a Hermes
 source change fails the image build instead of silently regressing tool
 injection.
 """
@@ -58,7 +58,7 @@ if count != 1:
     sys.exit(
         "PATCH FAIL: expected exactly 1 occurrence of the ACP enabled_toolsets "
         f"factory block, found {count} in {path}. hermes-agent likely changed; "
-        "re-verify the .hermes-version pin and this patch."
+        "re-verify the fork branch and this patch."
     )
 
 with open(path, "w", encoding="utf-8") as handle:

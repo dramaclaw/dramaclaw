@@ -13,7 +13,7 @@ services:
       # 注:权重运行时下载不入镜像;slim base 为 CPU,GPU 加速需 CUDA base;Mac Docker 无 GPU。
       args:
         INSTALL_WORLD: "${INSTALL_WORLD:-0}"
-        # 默认从 .hermes-version 固定 Hermes 版本；需要测试私有 tag/commit 时可临时覆盖。
+        # 默认装 fork 的 brainclaw/evidence-plane 分支；要固定到某个提交时传 SHA。
         HERMES_INSTALL_SPEC: "${HERMES_INSTALL_SPEC:-}"
     # 运行时从宿主 .env 注入 model/LLM key（.env 不进镜像，由 .dockerignore 排除）。
     # environment: 块仍覆盖此处同名变量，保持 CE inline 模式强制不变。
