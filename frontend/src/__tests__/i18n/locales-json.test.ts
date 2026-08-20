@@ -54,6 +54,15 @@ describe("locale translation files", () => {
     );
   });
 
+  it("defines organization, platform, and node queue limit toasts in Chinese", () => {
+    const content = readFileSync("public/locales/zh/translation.json", "utf8");
+    const translations = JSON.parse(content);
+
+    expect(translations.common.organizationDefaultQueueFull).toBe("当前组织默认队列已满");
+    expect(translations.common.platformDefaultQueueFull).toBe("平台默认队列已满");
+    expect(translations.common.nodeDefaultQueueFull).toBe("当前节点默认队列已满");
+  });
+
   it("defines project queue kind labels in Chinese", () => {
     const content = readFileSync("public/locales/zh/translation.json", "utf8");
     const translations = JSON.parse(content);

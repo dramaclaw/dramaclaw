@@ -27,14 +27,21 @@ export function backendErrorResponseToastMessage(
   );
 }
 
+type TaskLaneLimitScope =
+  | "project"
+  | "user"
+  | "channel"
+  | "platform"
+  | "global_lane_queue";
+
 export class ProjectQueueLimitError extends Error {
   queueKind: string;
-  limitScope: "project" | "user";
+  limitScope: TaskLaneLimitScope;
 
   constructor(
     queueKind: string,
     message: string,
-    limitScope: "project" | "user" = "project",
+    limitScope: TaskLaneLimitScope = "project",
   ) {
     super(message);
     this.name = "ProjectQueueLimitError";
@@ -84,15 +91,36 @@ function queueLabelForPlainMessage(queueKind: string): string {
   return queueKind;
 }
 
-function projectQueueLimitPlainMessage(
+function taskQueueLimitPlainMessage(
   queueKind: string,
-  limitScope: "project" | "user",
+  limitScope: TaskLaneLimitScope,
 ): string {
   const queueLabel = queueLabelForPlainMessage(queueKind);
-  if (limitScope === "user") {
-    return `你在当前项目${queueLabel}队列的任务已达个人上限`;
+  switch (limitScope) {
+    case "user":
+      return `你在当前${queueLabel}队列的任务已达个人上限`;
+    case "channel":
+      return `当前组织${queueLabel}队列已满`;
+    case "platform":
+      return `平台${queueLabel}队列已满`;
+    case "global_lane_queue":
+      return `当前节点${queueLabel}队列已满`;
+    default:
+      return `当前项目${queueLabel}队列已满`;
   }
-  return `当前项目${queueLabel}队列已达团队上限`;
+}
+
+function taskLaneLimitScope(value: unknown): TaskLaneLimitScope | null {
+  if (
+    value === "project" ||
+    value === "user" ||
+    value === "channel" ||
+    value === "platform" ||
+    value === "global_lane_queue"
+  ) {
+    return value;
+  }
+  return null;
 }
 
 export function errorFromBackendBody(status: number, body: unknown, fallback: string): Error | null {
@@ -166,10 +194,16 @@ export function errorFromBackendBody(status: number, body: unknown, fallback: st
   }
 
   if (status === 429 && typeof queueKind === "string" && queueKind.trim()) {
-    const normalizedScope = limitScope === "user" ? "user" : "project";
+    // Legacy CE responses did not include limit_scope and are project-scoped.
+    // A supplied but unknown scope must keep the backend's generic message.
+    const normalizedScope =
+      limitScope === undefined ? "project" : taskLaneLimitScope(limitScope);
+    if (!normalizedScope) {
+      return new BackendStatusError(message, status, body);
+    }
     return new ProjectQueueLimitError(
       queueKind,
-      projectQueueLimitPlainMessage(queueKind, normalizedScope) || message,
+      taskQueueLimitPlainMessage(queueKind, normalizedScope) || message,
       normalizedScope,
     );
   }
@@ -424,18 +458,23 @@ export function backendErrorToastMessage(error: unknown, t: TFunction): string {
     });
   }
   if (error instanceof ProjectQueueLimitError) {
-    const scopeSuffix = error.limitScope === "user" ? "UserFull" : "ProjectFull";
+    const translationScope =
+      error.limitScope === "channel"
+        ? "organization"
+        : error.limitScope === "global_lane_queue"
+          ? "node"
+          : error.limitScope;
     if (error.queueKind === "default") {
-      return t(`common.projectDefaultQueue${scopeSuffix}`, {
-        defaultValue: t("common.projectDefaultQueueFull"),
+      return t(`common.${translationScope}DefaultQueueFull`, {
+        defaultValue: error.message,
       });
     }
     const queueLabel = t(`common.projectQueueKinds.${error.queueKind}`, {
       defaultValue: error.queueKind,
     });
-    return t(`common.projectQueue${scopeSuffix}`, {
+    return t(`common.${translationScope}QueueFull`, {
       queue: queueLabel,
-      defaultValue: t("common.projectQueueFull", { queue: queueLabel }),
+      defaultValue: error.message,
     });
   }
   if (error instanceof Error && error.message) {

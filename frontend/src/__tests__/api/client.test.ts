@@ -97,6 +97,7 @@ describe("apiCall backend errors", () => {
       name: "ProjectQueueLimitError",
       queueKind: "default",
       limitScope: "project",
+      message: "当前项目默认队列已满",
     });
     await expect(promise).rejects.toBeInstanceOf(ProjectQueueLimitError);
   });
@@ -138,17 +139,64 @@ describe("apiCall backend errors", () => {
       name: "ProjectQueueLimitError",
       queueKind: "default",
       limitScope: "user",
-      message: "你在当前项目默认队列的任务已达个人上限",
+      message: "你在当前默认队列的任务已达个人上限",
     });
     await expect(promise).rejects.toBeInstanceOf(ProjectQueueLimitError);
+  });
+
+  it.each([
+    ["channel", "organization", "当前组织视频队列已满"],
+    ["platform", "platform", "平台视频队列已满"],
+    ["global_lane_queue", "node", "当前节点视频队列已满"],
+  ] as const)("preserves the %s lane scope from EE", (limitScope, scopeKind, message) => {
+    const error = errorFromBackendBody(
+      429,
+      {
+        ok: false,
+        error: "Task lane limit exceeded",
+        data: {
+          queue_kind: "video",
+          limit_scope: limitScope,
+          scope_kind: scopeKind,
+          limit: 3,
+          active: 3,
+        },
+      },
+      "Too Many Requests",
+    );
+
+    expect(error).toMatchObject({
+      name: "ProjectQueueLimitError",
+      queueKind: "video",
+      limitScope,
+      message,
+    });
+  });
+
+  it("keeps an unknown lane scope on the generic backend error path", () => {
+    const error = errorFromBackendBody(
+      429,
+      {
+        ok: false,
+        error: "Task lane limit exceeded",
+        data: {
+          queue_kind: "video",
+          limit_scope: "unknown_scope",
+        },
+      },
+      "Too Many Requests",
+    );
+
+    expect(error).toMatchObject({
+      name: "BackendStatusError",
+      message: "Task lane limit exceeded",
+      status: 429,
+    });
   });
 
   it("uses i18n for project queue limit display text", () => {
     const tMock = vi.fn((key: string, options?: { queue?: string; defaultValue?: string }) => {
       if (key === "common.projectQueueKinds.video") return "视频";
-      if (key === "common.projectQueueProjectFull") {
-        return `当前项目${options?.queue}队列已达团队上限`;
-      }
       if (key === "common.projectQueueFull") return `当前项目${options?.queue}队列已满`;
       return options?.defaultValue ?? key;
     });
@@ -159,20 +207,20 @@ describe("apiCall backend errors", () => {
       t,
     );
 
-    expect(message).toBe("当前项目视频队列已达团队上限");
+    expect(message).toBe("当前项目视频队列已满");
     expect(tMock).toHaveBeenCalledWith("common.projectQueueKinds.video", {
       defaultValue: "video",
     });
-    expect(tMock).toHaveBeenCalledWith("common.projectQueueProjectFull", {
+    expect(tMock).toHaveBeenCalledWith("common.projectQueueFull", {
       queue: "视频",
-      defaultValue: "当前项目视频队列已满",
+      defaultValue: "backend message",
     });
   });
 
   it("uses i18n for personal queue limit display text", () => {
     const tMock = vi.fn((key: string, options?: { queue?: string; defaultValue?: string }) => {
-      if (key === "common.projectDefaultQueueUserFull") {
-        return "你在当前项目默认队列的任务已达个人上限";
+      if (key === "common.userDefaultQueueFull") {
+        return "你在当前默认队列的任务已达个人上限";
       }
       return options?.defaultValue ?? key;
     });
@@ -183,9 +231,33 @@ describe("apiCall backend errors", () => {
       t,
     );
 
-    expect(message).toBe("你在当前项目默认队列的任务已达个人上限");
-    expect(tMock).toHaveBeenCalledWith("common.projectDefaultQueueUserFull", {
-      defaultValue: "common.projectDefaultQueueFull",
+    expect(message).toBe("你在当前默认队列的任务已达个人上限");
+    expect(tMock).toHaveBeenCalledWith("common.userDefaultQueueFull", {
+      defaultValue: "backend message",
+    });
+  });
+
+  it.each([
+    ["channel", "common.organizationQueueFull", "当前组织视频队列已满"],
+    ["platform", "common.platformQueueFull", "平台视频队列已满"],
+    ["global_lane_queue", "common.nodeQueueFull", "当前节点视频队列已满"],
+  ] as const)("uses i18n for the %s queue pool", (limitScope, messageKey, expectedMessage) => {
+    const tMock = vi.fn((key: string, options?: { queue?: string; defaultValue?: string }) => {
+      if (key === "common.projectQueueKinds.video") return "视频";
+      if (key === messageKey) return expectedMessage;
+      return options?.defaultValue ?? key;
+    });
+    const t = tMock as unknown as TFunction;
+
+    const message = backendErrorToastMessage(
+      new ProjectQueueLimitError("video", "backend message", limitScope),
+      t,
+    );
+
+    expect(message).toBe(expectedMessage);
+    expect(tMock).toHaveBeenCalledWith(messageKey, {
+      queue: "视频",
+      defaultValue: "backend message",
     });
   });
 
