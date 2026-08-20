@@ -91,10 +91,10 @@ async def test_retry_authz_read_logs_exhaustion_without_exception_details(
     from novelvideo.authz_retry import retry_authz_read
 
     async def operation() -> None:
-        raise AuthzServiceFault()
+        raise AuthzServiceUnavailable()
 
     with caplog.at_level(logging.WARNING, logger="novelvideo.authz_retry"):
-        with pytest.raises(AuthzServiceFault):
+        with pytest.raises(AuthzServiceUnavailable):
             await retry_authz_read(
                 operation,
                 max_retries=0,
@@ -108,9 +108,35 @@ async def test_retry_authz_read_logs_exhaustion_without_exception_details(
     ]
     record = caplog.records[0]
     assert record.call_site == "video_post_accept_revalidation"
-    assert record.failure_kind == "fault"
+    assert record.failure_kind == "unavailable"
     assert record.attempts == 1
     assert "exception" not in record.__dict__
+
+
+@pytest.mark.asyncio
+async def test_retry_authz_read_does_not_retry_service_fault(caplog) -> None:
+    from novelvideo.authz_retry import retry_authz_read
+
+    attempts = 0
+
+    async def operation() -> None:
+        nonlocal attempts
+        attempts += 1
+        raise AuthzServiceFault()
+
+    with caplog.at_level(logging.WARNING, logger="novelvideo.authz_retry"):
+        with pytest.raises(AuthzServiceFault):
+            await retry_authz_read(
+                operation,
+                max_retries=3,
+                base_delay=1.0,
+                cap_delay=1.0,
+            )
+
+    assert attempts == 1
+    assert not any(
+        record.message.startswith("authz_local_retry_") for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -127,7 +153,7 @@ async def test_retry_authz_read_recovers_with_full_jitter() -> None:
         if attempts == 1:
             raise AuthzServiceUnavailable()
         if attempts == 2:
-            raise AuthzServiceFault()
+            raise AuthzServiceUnavailable()
         return "admitted"
 
     async def sleep(delay: float) -> None:
@@ -148,7 +174,7 @@ async def test_retry_authz_read_recovers_with_full_jitter() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_type", [AuthzServiceUnavailable, AuthzServiceFault])
+@pytest.mark.parametrize("failure_type", [AuthzServiceUnavailable])
 async def test_retry_authz_read_uses_max_retries_after_the_initial_call(
     failure_type,
 ) -> None:

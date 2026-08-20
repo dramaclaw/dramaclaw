@@ -80,10 +80,15 @@ def test_authz_service_failures_have_safe_fixed_public_contract(
     assert "postgres" not in repr(exc).lower()
 
 
-def test_authz_service_fault_is_a_specialized_unavailable_failure() -> None:
-    from novelvideo.ports.authz import AuthzServiceFault, AuthzServiceUnavailable
+def test_authz_service_fault_is_not_a_retryable_unavailable_failure() -> None:
+    from novelvideo.ports.authz import (
+        AuthzError,
+        AuthzServiceFault,
+        AuthzServiceUnavailable,
+    )
 
-    assert issubclass(AuthzServiceFault, AuthzServiceUnavailable)
+    assert not issubclass(AuthzServiceFault, AuthzServiceUnavailable)
+    assert issubclass(AuthzServiceFault, AuthzError)
 
 
 def test_authz_error_base_constructor_remains_code_only() -> None:
