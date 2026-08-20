@@ -22,6 +22,25 @@ def _write_png(path: Path, size=(1200, 800), mode="RGB", color=(200, 30, 30)) ->
     return path
 
 
+def _drain_prewarm() -> None:
+    """Block until the background workers have finished everything queued."""
+
+    thumbnails._prewarm_channel().join()
+
+
+def _warm(project_dir: Path, source: Path, variant: str) -> None:
+    """Build a variant the way the read path does: queue it, then wait.
+
+    The request path never builds one itself, so every test below that is about
+    *serving* a variant has to warm it first. Going through prewarm rather than
+    calling ensure_thumbnail keeps the test honest about how a variant comes to
+    exist in production.
+    """
+
+    assert thumbnails.prewarm(project_dir, source, [variant]) == 1
+    _drain_prewarm()
+
+
 # Every known variant must round-trip; the frontend picks one by name and an
 # unknown name silently serves the original, so a typo here is invisible online.
 @pytest.mark.parametrize("variant", sorted(thumbnails.VARIANTS))
@@ -234,6 +253,46 @@ def test_failed_render_leaves_no_temp_file_behind(tmp_path, monkeypatch):
     assert leftovers == []
 
 
+# --- lookup-only entry point ------------------------------------------------
+
+
+def test_fresh_thumbnail_never_builds_what_is_missing(tmp_path):
+    source = _write_png(tmp_path / "a.png", (2000, 1200))
+
+    assert thumbnails.fresh_thumbnail(tmp_path, source, "thumb") is None
+    assert not (tmp_path / thumbnails.THUMB_ROOT).exists()
+
+
+def test_fresh_thumbnail_returns_a_variant_that_is_already_current(tmp_path):
+    source = _write_png(tmp_path / "a.png", (2000, 1200))
+    built = thumbnails.ensure_thumbnail(tmp_path, source, "thumb")
+
+    assert thumbnails.fresh_thumbnail(tmp_path, source, "thumb") == built
+
+
+def test_fresh_thumbnail_declines_a_variant_left_behind_by_an_older_source(tmp_path):
+    """Same freshness rule as the builder, or the read path serves stale bytes."""
+
+    source = _write_png(tmp_path / "a.png", (2000, 1200))
+    thumbnails.ensure_thumbnail(tmp_path, source, "thumb")
+    _write_png(source, (2000, 1200), color=(10, 200, 40))
+    os.utime(source, ns=(_MTIME_AFTER, _MTIME_AFTER))
+
+    assert thumbnails.fresh_thumbnail(tmp_path, source, "thumb") is None
+
+
+def test_fresh_thumbnail_declines_anything_out_of_scope(tmp_path):
+    source = _write_png(tmp_path / "a.png", (2000, 1200))
+    thumbnails.ensure_thumbnail(tmp_path, source, "thumb")
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"not an image")
+
+    for variant in (None, "", "enormous"):
+        assert thumbnails.fresh_thumbnail(tmp_path, source, variant) is None
+    assert thumbnails.fresh_thumbnail(tmp_path, video, "thumb") is None
+    assert thumbnails.fresh_thumbnail(tmp_path, tmp_path / "gone.png", "thumb") is None
+
+
 # --- route wiring -----------------------------------------------------------
 
 
@@ -262,6 +321,7 @@ def _client(monkeypatch, project_dir: Path) -> TestClient:
 
 def test_media_route_serves_the_variant_when_asked(monkeypatch, tmp_path):
     source = _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    _warm(tmp_path, source, "thumb")
     client = _client(monkeypatch, tmp_path)
 
     full = client.get("/projects/demo/media/freezone/_outputs/big.png")
@@ -306,7 +366,8 @@ def test_bare_variant_url_is_revalidated_rather_than_held_stale(monkeypatch, tmp
     window with nothing able to invalidate it.
     """
 
-    _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    source = _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    _warm(tmp_path, source, "thumb")
     client = _client(monkeypatch, tmp_path)
 
     response = client.get(
@@ -314,6 +375,9 @@ def test_bare_variant_url_is_revalidated_rather_than_held_stale(monkeypatch, tmp
     )
 
     assert response.status_code == 200
+    # Assert the variant explicitly: a cold miss is also a 200, and a cache
+    # assertion that passes while the original is being served tests nothing.
+    assert response.headers["content-type"] == "image/webp"
     assert response.headers["cache-control"] == "private, no-cache"
 
     # Cheap revalidation is the whole point of no-cache. FileResponse sets an
@@ -337,7 +401,8 @@ def test_bare_variant_url_is_revalidated_rather_than_held_stale(monkeypatch, tmp
 def test_versioned_variant_url_is_cached_hard(monkeypatch, tmp_path, token):
     """A versioned URL changes when the bytes change, so it is safe to pin."""
 
-    _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    source = _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    _warm(tmp_path, source, "thumb")
     client = _client(monkeypatch, tmp_path)
 
     response = client.get(
@@ -346,11 +411,13 @@ def test_versioned_variant_url_is_cached_hard(monkeypatch, tmp_path, token):
     )
 
     assert response.status_code == 200
+    assert response.headers["content-type"] == "image/webp"
     assert "immutable" in response.headers["cache-control"]
 
 
 def test_a_regenerated_source_is_revalidated_to_the_new_variant(monkeypatch, tmp_path):
     source = _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    _warm(tmp_path, source, "thumb")
     client = _client(monkeypatch, tmp_path)
     url = "/projects/demo/media/freezone/_outputs/big.png"
 
@@ -358,9 +425,14 @@ def test_a_regenerated_source_is_revalidated_to_the_new_variant(monkeypatch, tmp
     # Same URL, different bytes — the in-place regeneration the shell cannot bust.
     _write_png(source, (2000, 1200), color=(10, 200, 40))
     os.utime(source, ns=(_MTIME_AFTER, _MTIME_AFTER))
+    _warm(tmp_path, source, "thumb")
     second = client.get(url, params={"st_thumb": "thumb"})
 
     assert first.status_code == second.status_code == 200
+    # Both are variants; without this the test would still pass with the route
+    # serving the original twice, which is what a cold cache does.
+    assert first.headers["content-type"] == "image/webp"
+    assert second.headers["content-type"] == "image/webp"
     assert second.content != first.content
     # The validator moved with the source, so the browser's cached copy is not
     # revalidated into a 304 — it gets the new bytes.
@@ -372,32 +444,81 @@ def test_a_regenerated_source_is_revalidated_to_the_new_variant(monkeypatch, tmp
     assert stale.content == second.content
 
 
-def test_renders_do_not_run_on_the_shared_request_threadpool(monkeypatch, tmp_path):
-    """Renders belong on the thumbnailer's own executor.
+def test_a_cold_variant_request_serves_the_original_and_warms_up_behind_it(
+    monkeypatch, tmp_path
+):
+    """The request path must never decode an original.
 
-    Starlette's threadpool is ~40 threads for the whole app and ensure_thumbnail
-    blocks on the decode semaphore: rendering there means a burst of cold
-    thumbnails parks threads every other blocking call in the process needs.
+    Serving a request *without* a variant is a 302 to presigned OSS: the
+    original never travels through this process. Building on demand trades that
+    away for reading and decoding it locally, so the first visit to a cold
+    project would pull every full-resolution source over the ossfs mount just to
+    hand back a smaller copy — a worse first visit than the one variants exist
+    to fix. The miss is queued instead, and the response is byte-for-byte what
+    it would have been before variants existed.
     """
 
-    _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    source = _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
     client = _client(monkeypatch, tmp_path)
-    seen: list[str] = []
+    url = "/projects/demo/media/freezone/_outputs/big.png"
 
-    original = thumbnails._render
+    rendered_on: list[str] = []
+    original_render = thumbnails._render
 
     def record(*args, **kwargs):
-        seen.append(threading.current_thread().name)
-        return original(*args, **kwargs)
+        rendered_on.append(threading.current_thread().name)
+        return original_render(*args, **kwargs)
 
     monkeypatch.setattr(thumbnails, "_render", record)
 
-    response = client.get(
-        "/projects/demo/media/freezone/_outputs/big.png", params={"st_thumb": "thumb"}
-    )
+    cold = client.get(url, params={"st_thumb": "thumb"})
 
-    assert response.status_code == 200
-    assert seen and all(name.startswith("thumb-render") for name in seen), seen
+    assert cold.status_code == 200
+    assert cold.content == source.read_bytes()
+
+    _drain_prewarm()
+    warm = client.get(url, params={"st_thumb": "thumb"})
+
+    assert warm.headers["content-type"] == "image/webp"
+    assert len(warm.content) < len(cold.content)
+    # Asserted by thread rather than by "nothing rendered during the request":
+    # a worker can pick the job up while the response is still being written, so
+    # the timing is racy but the thread it runs on never is.
+    assert rendered_on and all(n.startswith("thumb-prewarm") for n in rendered_on)
+
+
+def test_an_identical_prewarm_job_is_not_queued_twice(tmp_path, monkeypatch):
+    """One paint of a cold canvas offers the same job once per visible node.
+
+    And again on the next paint, since nothing is current yet. Without dedup a
+    single canvas load packs the 512-slot queue with copies of a handful of jobs
+    and drops the genuinely distinct ones.
+    """
+
+    source = _write_png(tmp_path / "a.png", (2000, 1200))
+    started = threading.Event()
+    release = threading.Event()
+    original_render = thumbnails._render
+
+    def block(*args, **kwargs):
+        started.set()
+        release.wait(5)
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(thumbnails, "_render", block)
+    try:
+        assert thumbnails.prewarm(tmp_path, source, ["thumb"]) == 1
+        assert started.wait(5)
+        assert thumbnails.prewarm(tmp_path, source, ["thumb"]) == 0
+    finally:
+        release.set()
+    _drain_prewarm()
+
+    assert thumbnails.thumbnail_path(tmp_path, source, "thumb").is_file()
+    # The key is released once the job is done, or a source that was prewarmed
+    # early in a process could never be prewarmed again after being rewritten.
+    assert thumbnails.prewarm(tmp_path, source, ["thumb"]) == 1
+    _drain_prewarm()
 
 
 def test_variant_param_does_not_weaken_path_traversal_defence(monkeypatch, tmp_path):
@@ -420,12 +541,6 @@ def test_variant_param_does_not_weaken_path_traversal_defence(monkeypatch, tmp_p
 
 
 # --- write-time prewarm ---------------------------------------------------
-
-
-def _drain_prewarm() -> None:
-    """Block until the background workers have finished everything queued."""
-
-    thumbnails._prewarm_channel().join()
 
 
 def test_prewarm_builds_the_variant_in_the_background(tmp_path):

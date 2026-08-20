@@ -10,7 +10,7 @@ logger = logging.getLogger("novelvideo.api.files")
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import ProjectResolution, resolve_project_scope
-from novelvideo.utils.thumbnails import ensure_thumbnail_async
+from novelvideo.utils.thumbnails import fresh_thumbnail, prewarm
 
 router = APIRouter()
 
@@ -62,27 +62,33 @@ def _etag_matches(request: Request | None, etag: str | None) -> bool:
     return False
 
 
-async def _maybe_thumbnail_response(
+def _maybe_thumbnail_response(
     project_dir: Path,
     requested: Path,
     variant: str | None,
     request: Request | None = None,
 ):
-    """Serve a downscaled variant of ``requested``, or ``None`` to fall back.
+    """Serve an already-built variant of ``requested``, or ``None`` to fall back.
 
     The canvas asks for a variant on every img that paints into a small box
-    (see ``novelvideo.utils.thumbnails``). Variants are served as local bytes
-    rather than an OSS 302: at ~13KB the redirect round-trip plus the
+    (see ``novelvideo.utils.thumbnails``). A *built* variant is served as local
+    bytes rather than an OSS 302: at ~13KB the redirect round-trip plus the
     write-back readiness probe cost more than the transfer, and a freshly
     written variant is not in OSS yet anyway.
 
-    Thumbnail generation is CPU-bound Pillow work — it runs on the thumbnailer's
-    own executor, never on the shared request threadpool.
+    A cold one is a different trade entirely, so it is never built here — the
+    miss is queued and this returns ``None``, leaving the caller to hand back
+    the same OSS redirect it would have without variants at all. See
+    ``fresh_thumbnail`` for why building on the request path is the wrong side
+    of that trade.
     """
     if not variant:
         return None
-    thumb = await ensure_thumbnail_async(project_dir, requested, variant)
+    thumb = fresh_thumbnail(project_dir, requested, variant)
     if thumb is None:
+        # Only the variant that was actually asked for: whoever asked will ask
+        # again, and a node that never requests `thumb` should not pay for one.
+        prewarm(project_dir, requested, [variant])
         return None
     cache_control = _variant_cache_control(request)
     try:
@@ -203,7 +209,7 @@ async def preview_file(
     """
     resolved = await resolve_project_scope(project, user, required_role="viewer")
     requested = _resolve_project_file(resolved, file_path)
-    thumbnail = await _maybe_thumbnail_response(
+    thumbnail = _maybe_thumbnail_response(
         resolved.project_dir, requested, st_thumb, request
     )
     if thumbnail is not None:
@@ -221,7 +227,7 @@ async def preview_project_media_file(
     """Serve a project media file for non-/api routes such as /static/projects."""
     resolved = await resolve_project_scope(project, user, required_role="viewer")
     requested = _resolve_project_file(resolved, file_path)
-    thumbnail = await _maybe_thumbnail_response(
+    thumbnail = _maybe_thumbnail_response(
         resolved.project_dir, requested, st_thumb, request
     )
     if thumbnail is not None:

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Pre-build downscaled image variants for projects that predate them.
 
-Variants are built lazily on first request (see
-``novelvideo.utils.thumbnails``), so nothing here is required for
-correctness — it only moves the one-time cost off the first visitor. On the
-canvas that motivated this, a cold history strip pays ~460ms of server-side
-render before the thumbnails appear; running this beforehand makes that
-first click as fast as every later one.
+A request never builds a variant it is missing: it queues the work and serves
+the original instead (see ``novelvideo.utils.thumbnails.fresh_thumbnail``), so
+a project warms itself up as people use it and nothing here is required for
+correctness. What this buys is the *first* visit — without it the opening paint
+of an untouched project is all originals, which is exactly the slow paint
+variants exist to remove. Worth running ahead of time for a project you know is
+about to be opened; unnecessary for one already in use.
 
 Safe to re-run: a variant whose mtime already matches its source is left
 alone, so a second pass over an unchanged project does nothing but stat

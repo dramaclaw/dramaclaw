@@ -13,11 +13,17 @@ The cache is addressed purely by source path::
 
 so nothing about it leaks into a data schema. History records and canvas
 JSON keep storing the original URL; callers opt in per render by asking for
-a variant, and old data benefits on first request without any backfill.
+a variant, and old data benefits without any backfill.
 Freshness is exact rather than heuristic: a generated variant is stamped
 with its source's mtime, so ``thumb.mtime == source.mtime`` means current
 and a regenerated source invalidates automatically without leaving stale
 files behind.
+
+Building and serving are deliberately separate. ``fresh_thumbnail`` is what a
+request calls and it never builds; ``ensure_thumbnail`` builds and only ever
+runs in the background. A variant a request wants but does not have is queued
+and the original goes out instead, so a cold project costs exactly what it did
+before variants existed and warms itself up as it is used.
 
 Every failure path returns ``None`` so the caller falls back to the
 original. A slow node beats a broken one.
@@ -25,12 +31,10 @@ original. A slow node beats a broken one.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Optional
@@ -88,53 +92,6 @@ def set_render_concurrency(slots: int) -> None:
 
     global _render_slots
     _render_slots = threading.Semaphore(max(1, int(slots)))
-
-# --- where an HTTP render runs --------------------------------------------
-#
-# A render must not run on Starlette's shared threadpool. That pool is ~40
-# threads for the whole app, and ``ensure_thumbnail`` blocks on the semaphore
-# above: 40 concurrent cold thumbnails would take 40 of those threads, run four
-# of them, and leave 36 parked on the semaphore while every other blocking call
-# in the process waits behind them. That is precisely the starvation the
-# semaphore exists to prevent, just moved one layer out.
-#
-# A dedicated executor makes the bound structural. Excess work waits in this
-# executor's own queue instead of holding a thread that something else needs.
-
-_render_pool: Optional["ThreadPoolExecutor"] = None
-_render_pool_pid: Optional[int] = None
-_render_pool_lock = threading.Lock()
-
-
-def _render_pool_for_requests() -> "ThreadPoolExecutor":
-    """Lazily create the HTTP render pool, once per process (see prewarm)."""
-
-    global _render_pool, _render_pool_pid
-    pid = os.getpid()
-    with _render_pool_lock:
-        if _render_pool is not None and _render_pool_pid == pid:
-            return _render_pool
-        _render_pool = ThreadPoolExecutor(
-            max_workers=DEFAULT_RENDER_CONCURRENCY,
-            thread_name_prefix="thumb-render",
-        )
-        _render_pool_pid = pid
-        return _render_pool
-
-
-async def ensure_thumbnail_async(
-    project_dir: Path, source: Path, variant: str | None
-) -> Optional[Path]:
-    """``ensure_thumbnail`` off the event loop, on the render pool.
-
-    The entry point for request handlers. Same contract as the sync version,
-    including ``None`` meaning "serve the original".
-    """
-
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        _render_pool_for_requests(), ensure_thumbnail, project_dir, source, variant
-    )
 
 
 # Striped locks collapse the thundering herd when several requests race for
@@ -217,6 +174,40 @@ def ensure_thumbnail(
         return None
 
 
+def fresh_thumbnail(
+    project_dir: Path, source: Path, variant: str | None
+) -> Optional[Path]:
+    """Return an already-current variant for ``source``. Never builds one.
+
+    This is the request path's entry point, and the reason it does not build is
+    where the bytes live. Serving a request *without* a variant is a 302 to a
+    presigned OSS URL — the original never travels through this process. The
+    moment we build on demand we have to read and decode that original locally
+    instead, so a cold canvas of 200 nodes would pull every full-resolution
+    source over the ossfs mount just to hand back a smaller copy of it. That is
+    a worse first visit than the one variants were introduced to fix.
+
+    So a miss falls back to the redirect and queues the build for next time: a
+    cold project behaves exactly as it did before variants existed, and warms
+    itself up as it is used. Variants can only ever be an improvement, which is
+    also what makes the offline backfill purely optional.
+
+    Cheap enough to call on the event loop — two stats, fewer than the path
+    resolution the caller already did to get here.
+    """
+
+    name = normalize_variant(variant)
+    if name is None:
+        return None
+    try:
+        dest = thumbnail_path(project_dir, source, name)
+        if dest is None:
+            return None
+        return dest if _is_current(dest, source.stat().st_mtime_ns) else None
+    except OSError:
+        return None
+
+
 def _is_current(dest: Path, source_mtime_ns: int) -> bool:
     try:
         return dest.stat().st_mtime_ns == source_mtime_ns
@@ -281,18 +272,33 @@ def _render(
 
 # --- background prewarm ---------------------------------------------------
 #
-# A generation runner knows a file's final bytes the moment it writes them,
-# and that is the cheapest moment to build its variants: the source is still
-# in the page cache and nobody is waiting on the result. Prewarming is
-# strictly an optimization over the read path -- every miss still falls back
-# to ``ensure_thumbnail`` on first request -- so it is fire-and-forget. No
-# caller may pay for it, least of all an async request handler, hence a
-# bounded queue that drops rather than blocks when saturated.
+# Two feeders. A generation runner knows a file's final bytes the moment it
+# writes them, and that is the cheapest moment to build its variants: the source
+# is still in the page cache and nobody is waiting on the result. The read path
+# feeds it too, because ``fresh_thumbnail`` deliberately refuses to build on a
+# miss -- the request is served from OSS and the build happens here instead.
+#
+# Nothing may ever pay for this, least of all a request handler, hence a bounded
+# queue that drops rather than blocks when saturated. A drop only means the next
+# visit is cold again.
 
-_PREWARM_WORKERS = 2
+# These are the only renderers in a serving process now that the read path never
+# builds, and they share the process-wide decode budget regardless, so matching
+# it exactly is what keeps that budget reachable.
+_PREWARM_WORKERS = DEFAULT_RENDER_CONCURRENCY
 _PREWARM_QUEUE_SIZE = 512
 
 _PrewarmJob = tuple[Path, Path, str]
+
+# The read path queues on every miss, so one paint of a cold canvas offers the
+# same job once per visible node -- and again on the next paint, since nothing
+# is current yet. Without this, a single canvas load would pack the queue with
+# copies of a handful of jobs and drop the genuinely distinct ones. Keyed on the
+# strings rather than resolved paths so queueing stays syscall-free; a dedup
+# missed that way only costs one redundant job.
+_PrewarmKey = tuple[str, str, str]
+_prewarm_inflight: set[_PrewarmKey] = set()
+_prewarm_inflight_lock = threading.Lock()
 
 _prewarm_lock = threading.Lock()
 _prewarm_queue: Optional["queue.Queue[_PrewarmJob]"] = None
@@ -307,6 +313,8 @@ def _prewarm_worker(work: "queue.Queue[_PrewarmJob]") -> None:
         except Exception:  # ensure_thumbnail swallows its own; belt and braces
             logger.debug("prewarm failed for %s (%s)", source, variant, exc_info=True)
         finally:
+            with _prewarm_inflight_lock:
+                _prewarm_inflight.discard((str(project_dir), str(source), variant))
             work.task_done()
 
 
@@ -323,6 +331,8 @@ def _prewarm_channel() -> "queue.Queue[_PrewarmJob]":
     with _prewarm_lock:
         if _prewarm_queue is not None and _prewarm_pid == pid:
             return _prewarm_queue
+        with _prewarm_inflight_lock:
+            _prewarm_inflight.clear()
         work: "queue.Queue[_PrewarmJob]" = queue.Queue(_PREWARM_QUEUE_SIZE)
         for index in range(_PREWARM_WORKERS):
             threading.Thread(
@@ -341,10 +351,12 @@ def prewarm(
 ) -> int:
     """Queue variant generation for ``source``. Never blocks, never raises.
 
-    Returns how many jobs were accepted: 0 when the source is not an image or
-    the queue is saturated, in which case the read path builds the variant on
-    first request instead. Defaults to every known variant so a newly added
-    one is prewarmed without revisiting the call sites.
+    Returns how many jobs were accepted, which is 0 when the source is not an
+    image, when the queue is saturated, or when an identical job is already in
+    flight. A rejected job is not an error: the variant simply stays cold and
+    the next request serves the original, exactly as it does today. Defaults to
+    every known variant so a newly added one is prewarmed without revisiting
+    the call sites.
     """
 
     try:
@@ -356,9 +368,16 @@ def prewarm(
             name = normalize_variant(variant)
             if name is None:
                 continue
+            key = (str(project_dir), str(source), name)
+            with _prewarm_inflight_lock:
+                if key in _prewarm_inflight:
+                    continue
+                _prewarm_inflight.add(key)
             try:
                 work.put_nowait((project_dir, source, name))
             except queue.Full:
+                with _prewarm_inflight_lock:
+                    _prewarm_inflight.discard(key)
                 logger.debug("prewarm queue full, dropping %s (%s)", source, name)
                 continue
             queued += 1
