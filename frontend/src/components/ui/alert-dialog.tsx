@@ -22,6 +22,13 @@ function AlertDialogPortal({ ...props }: AlertDialogPrimitive.Portal.Props) {
   )
 }
 
+/**
+ * 这一层是全局最后一道拦截：`confirmDialog()` 弹的删除确认要能压住任何东西。
+ * shadcn 原版给的 z-50 在这个项目里不够用——画布的浮层栈已经排到 z-[10010]
+ * （素材库弹窗 z-[300]、模型选择器 z-[10001]、书签菜单 z-[10010]），确认框停在
+ * z-50 就会被盖在下面：用户点了「删除」，对话框在弹窗背后，删不掉也退不出。
+ * 背板和弹层必须一起抬，只抬弹层的话遮罩会漏在下面，弹窗照样是亮的。
+ */
 function AlertDialogOverlay({
   className,
   ...props
@@ -30,7 +37,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/18 duration-100 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-[10050] bg-black/18 duration-100 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -52,7 +59,7 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-[min(calc(100vw-2rem),500px)] max-w-none -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden rounded-2xl border border-white/10 bg-background/72 p-7 text-popover-foreground shadow-none duration-100 outline-none backdrop-blur-2xl data-[size=sm]:w-[min(calc(100vw-2rem),440px)] data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "group/alert-dialog-content fixed top-1/2 left-1/2 z-[10050] grid w-[min(calc(100vw-2rem),500px)] max-w-none -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden rounded-2xl border border-white/10 bg-background/72 p-7 text-popover-foreground shadow-none duration-100 outline-none backdrop-blur-2xl data-[size=sm]:w-[min(calc(100vw-2rem),440px)] data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}

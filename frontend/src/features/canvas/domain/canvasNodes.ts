@@ -58,6 +58,16 @@ export type ImageQuality = string;
 
 export interface NodeDisplayData {
   displayName?: string;
+  /**
+   * 节点被创建出来的时刻（epoch ms），由 nodeFactory 落，之后没人改。
+   *
+   * 和 `generationStartedAt` 的区别是这个字段**持久**：后者每条生成链路跑完都会写回
+   * null，只在转圈那几十秒里存在，事后回头看什么都不剩。侧栏大纲靠这个字段区分
+   * 「同一条提示词生成三次」的重名节点，所以它绝对不能被生成流程碰。
+   *
+   * 老画布里的节点没有这个字段（加字段之前存的），读的时候要当 undefined 处理。
+   */
+  createdAt?: number | null;
   [key: string]: unknown;
 }
 

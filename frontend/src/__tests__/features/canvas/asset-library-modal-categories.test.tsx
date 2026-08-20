@@ -33,6 +33,7 @@ vi.mock("@/api/ops", async (importOriginal) => ({
 }));
 
 import { AssetLibraryModal } from "@/features/canvas/ui/AssetLibraryModal";
+import { ConfirmDialogHost } from "@/components/confirm-dialog-host";
 
 const LIBRARY = [
   {
@@ -69,8 +70,26 @@ const LIBRARY = [
 
 function renderModal(props: Partial<React.ComponentProps<typeof AssetLibraryModal>> = {}) {
   return render(
-    <AssetLibraryModal open project="demo" onClose={() => {}} {...props} />,
+    <>
+      <ConfirmDialogHost />
+      <AssetLibraryModal open project="demo" onClose={() => {}} {...props} />
+    </>,
   );
+}
+
+/** 删除确认走 AlertDialog（不是 window.confirm），点掉它的「删除」放行。 */
+async function acceptDeleteConfirm() {
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "删除" }));
+}
+
+/** 取消：按「不是删除的那个」找，取消文案走 i18n，测试里没初始化语言包。 */
+async function dismissConfirm(dialog: HTMLElement) {
+  const cancel = within(dialog)
+    .getAllByRole("button")
+    .find((button) => button.textContent !== "删除");
+  fireEvent.click(cancel as HTMLElement);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
 }
 
 describe("AssetLibraryModal 类目与文件夹", () => {
@@ -365,7 +384,7 @@ describe("AssetLibraryModal 文件夹操作", () => {
   });
 
   it("删除文件夹要二次确认，确认后整柜删掉", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderModal();
 
     fireEvent.click(
@@ -374,7 +393,11 @@ describe("AssetLibraryModal 文件夹操作", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
 
     // 确认文案要写明里面的素材也会没。
-    expect(confirmSpy.mock.calls[0][0]).toContain("1 项素材会一起删掉");
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("1 项素材会一起删掉");
+    // 走原生 confirm 的话这个对话框根本不会出现。
+    expect(nativeConfirm).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "删除" }));
     await waitFor(() =>
       expect(deleteFreezoneAssetLibraryFolder).toHaveBeenCalledWith(
         "demo",
@@ -400,7 +423,6 @@ describe("AssetLibraryModal 文件夹操作", () => {
     ];
     fetchFreezoneVideoCharacterLibrary.mockResolvedValue({ items: withVideo });
     syncFreezoneAssetLibraryFromMainline.mockResolvedValue({ items: withVideo });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderModal({ allowedMedia: ["image"] });
 
     fireEvent.click(
@@ -408,7 +430,11 @@ describe("AssetLibraryModal 文件夹操作", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
 
-    expect(confirmSpy.mock.calls[0][0]).toContain("2 项素材会一起删掉");
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("2 项素材会一起删掉");
+    // 一定要答完：confirmDialog 的 pending 挂在模块级 store 上，卸载组件也清不掉，
+    // 漏一个没关的确认框，下一个用例一渲染就被它罩住整页。
+    await dismissConfirm(dialog);
   });
 });
 
@@ -422,7 +448,6 @@ describe("AssetLibraryModal 批量操作", () => {
   });
 
   it("批量态下能删掉本地上传的素材，主线素材不可选", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderModal();
     await screen.findByRole("button", { name: "文件夹 主线" });
 
@@ -433,6 +458,7 @@ describe("AssetLibraryModal 批量操作", () => {
     expect(screen.getByText("1")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "删除所选" }));
+    await acceptDeleteConfirm();
     await waitFor(() =>
       expect(deleteFreezoneVideoCharacterLibraryItem).toHaveBeenCalledWith(
         "demo",
@@ -467,7 +493,6 @@ describe("AssetLibraryModal 批量操作", () => {
           ? Promise.reject(new Error("item not found"))
           : Promise.resolve({ ok: true }),
     );
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderModal();
     await screen.findByRole("button", { name: "文件夹 主线" });
 
@@ -479,6 +504,7 @@ describe("AssetLibraryModal 批量操作", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "选中待删除" }));
     fireEvent.click(screen.getByRole("button", { name: "删除所选" }));
+    await acceptDeleteConfirm();
 
     await waitFor(() =>
       expect(deleteFreezoneVideoCharacterLibraryItem).toHaveBeenCalledWith(

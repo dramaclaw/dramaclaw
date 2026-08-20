@@ -1,16 +1,42 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 //
-// 左侧面板「资产库」tab 的内容：项目级资产库的只读浏览，两级——先文件夹，点进去
+// 左侧面板「资产库」tab 的内容：项目级资产库的浏览，两级——先文件夹，点进去
 // 看条目，顶上有面包屑退回。
 //
 // 与 AssetLibraryModal 的关系：条目归一化和文件夹分法共用
-// `@/features/canvas/ui/assetLibraryItems`，所以两边看到的目录结构始终一致；
-// 但这里只读——上传、删除、从主线同步仍然只在弹窗里做（侧栏 300px 放不下，
-// 而且写操作有确认/进度态，不适合塞进抽屉）。条目暂时没有点击/拖拽交互。
-import { useMemo, useState } from "react";
-import { ChevronLeft, Folder, Music, Video as VideoIcon } from "lucide-react";
+// `@/features/canvas/ui/assetLibraryItems`，所以两边看到的目录结构始终一致。
+// 条目右侧的「…」给出发送到画布 / 下载 / 重命名 / 删除四件事——这些都是单条素材
+// 的即时操作，一个菜单就够。上传、建文件夹、从主线同步仍然只在弹窗里做：它们要
+// 选文件、挑保存位置、看进度条，300px 的侧栏放不下。
+import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  ChevronLeft,
+  Download,
+  Folder,
+  MoreHorizontal,
+  Music,
+  Pencil,
+  SendHorizontal,
+  Trash2,
+  Video as VideoIcon,
+} from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
+import {
+  deleteFreezoneVideoCharacterLibraryItem,
+  renameFreezoneVideoCharacterLibraryItem,
+} from "@/api/ops";
+import { confirmDialog } from "@/components/confirm-dialog-host";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { downloadUrlAsFile } from "@/lib/browserDownload";
+import { queryKeys } from "@/lib/query-keys";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
 import {
   useFreezoneAssetLibrary,
@@ -18,15 +44,36 @@ import {
 } from "@/lib/queries/freezone";
 import {
   buildAssetFolders,
+  folderCoverUrl,
+  libraryItemDownloadFilename,
+  LIBRARY_ITEM_NAME_MAX_LEN,
   type AssetFolderKey,
+  type LibraryItem,
 } from "@/features/canvas/ui/assetLibraryItems";
+import { AssetLibraryNewFolderDialog } from "@/features/canvas/ui/AssetLibraryNewFolderDialog";
 
 interface AssetLibraryBrowserProps {
   project: string;
+  /** 不传表示当前场景没有画布可发，菜单里就不出现「发送到画布」。 */
+  onSendToCanvas?: (entry: LibraryItem) => void;
 }
 
-export function AssetLibraryBrowser({ project }: AssetLibraryBrowserProps) {
+// 和大纲面板的行内菜单同款——同一个侧栏里的两个「…」不该长得不一样。
+const MENU_CONTENT_CLASS =
+  "z-[120] min-w-[132px] border-[var(--ui-border-soft)] bg-[rgba(var(--surface-rgb)/0.95)] text-text-dark shadow-none backdrop-blur-3xl";
+const MENU_ITEM_CLASS =
+  "gap-2 rounded-[var(--ui-radius-lg)] text-xs text-text-dark focus:bg-[rgb(var(--text-rgb)/0.075)] focus:text-text-dark";
+/** 删除项的红色由 DropdownMenuItem 的 destructive variant 给，这里不能再压文字色。 */
+const MENU_ITEM_DANGER_CLASS = "gap-2 rounded-[var(--ui-radius-lg)] text-xs";
+
+export function AssetLibraryBrowser({
+  project,
+  onSendToCanvas,
+}: AssetLibraryBrowserProps) {
+  const queryClient = useQueryClient();
   const [openKey, setOpenKey] = useState<AssetFolderKey | null>(null);
+  const [renameEntry, setRenameEntry] = useState<LibraryItem | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const libraryQuery = useFreezoneAssetLibrary(project);
   const foldersQuery = useFreezoneAssetLibraryFolders(project);
   const items = useMemo(() => libraryQuery.data ?? [], [libraryQuery.data]);
@@ -37,6 +84,61 @@ export function AssetLibraryBrowser({ project }: AssetLibraryBrowserProps) {
   const openFolder = openKey
     ? (folders.find((folder) => folder.key === openKey) ?? null)
     : null;
+
+  const refreshLibrary = useCallback(() => {
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.freezoneAssetLibrary(project),
+    });
+  }, [queryClient, project]);
+
+  const handleDownload = useCallback(async (entry: LibraryItem) => {
+    try {
+      await downloadUrlAsFile(
+        resolveImageDisplayUrl(entry.url),
+        libraryItemDownloadFilename(entry),
+      );
+    } catch (err) {
+      toast.error(
+        `下载失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, []);
+
+  const handleDelete = useCallback(
+    async (entry: LibraryItem) => {
+      if (!entry.id) return;
+      const confirmed = await confirmDialog({
+        title: "删除素材",
+        description: `确定要删除「${entry.name || entry.id}」？删了找不回来。`,
+        confirmText: "删除",
+        confirmVariant: "destructive",
+      });
+      if (!confirmed) return;
+      setBusyId(entry.id);
+      try {
+        await deleteFreezoneVideoCharacterLibraryItem(project, entry.id);
+        refreshLibrary();
+        toast.success(`已删除：${entry.name || "素材"}`);
+      } catch (err) {
+        toast.error(
+          `删除失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [project, refreshLibrary],
+  );
+
+  const handleRename = useCallback(
+    async (name: string) => {
+      if (!renameEntry?.id) return;
+      await renameFreezoneVideoCharacterLibraryItem(project, renameEntry.id, name);
+      setRenameEntry(null);
+      refreshLibrary();
+    },
+    [project, renameEntry, refreshLibrary],
+  );
 
   if (libraryQuery.isError) {
     return (
@@ -92,25 +194,40 @@ export function AssetLibraryBrowser({ project }: AssetLibraryBrowserProps) {
       <div className="ui-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-3 pt-1.5">
         {/* ── 根目录：文件夹列表 ── */}
         {!openFolder
-          ? folders.map((folder) => (
-              <button
-                key={folder.key}
-                type="button"
-                onClick={() => setOpenKey(folder.key)}
-                aria-label={`文件夹 ${folder.label}`}
-                className="flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-white/[0.06]"
-              >
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white/[0.06]">
-                  <Folder className="h-4.5 w-4.5 text-white/40" />
-                </span>
-                <span className="min-w-0 flex-1 truncate text-xs text-white/85">
-                  {folder.label}
-                </span>
-                <span className="shrink-0 pr-1 text-[11px] text-white/25">
-                  {folder.items.length}
-                </span>
-              </button>
-            ))
+          ? folders.map((folder) => {
+              // 封面口径和弹窗一致（folderCoverUrl：自定义封面优先，否则取第一张图），
+              // 两处别各算各的——同一个文件夹在两个视图里长得不一样最费解。
+              const cover = folderCoverUrl(folder);
+              return (
+                <button
+                  key={folder.key}
+                  type="button"
+                  onClick={() => setOpenKey(folder.key)}
+                  aria-label={`文件夹 ${folder.label}`}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-white/[0.06]"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[4px] bg-white/[0.06]">
+                    {cover ? (
+                      <img
+                        src={resolveImageDisplayUrl(cover)}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        draggable={false}
+                        loading="lazy"
+                      />
+                    ) : (
+                      <Folder className="h-4.5 w-4.5 text-white/40" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-white/85">
+                    {folder.label}
+                  </span>
+                  <span className="shrink-0 pr-1 text-[11px] text-white/25">
+                    {folder.items.length}
+                  </span>
+                </button>
+              );
+            })
           : null}
 
         {/* ── 文件夹内：条目列表 ── */}
@@ -123,10 +240,12 @@ export function AssetLibraryBrowser({ project }: AssetLibraryBrowserProps) {
         {openFolder?.items.map((entry, idx) => (
           <div
             key={entry.id ?? `idx-${idx}`}
-            className="flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-white/[0.06]"
+            className={`group flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-white/[0.06] ${
+              busyId && entry.id === busyId ? "opacity-40" : ""
+            }`}
             title={entry.name || "(未命名)"}
           >
-            <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md bg-white/[0.06]">
+            <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-[4px] bg-white/[0.06]">
               {entry.media === "image" ? (
                 <img
                   src={resolveImageDisplayUrl(entry.url)}
@@ -158,9 +277,121 @@ export function AssetLibraryBrowser({ project }: AssetLibraryBrowserProps) {
             <span className="min-w-0 flex-1 truncate text-xs text-white/85">
               {entry.name || "(未命名)"}
             </span>
+            <AssetItemMenu
+              entry={entry}
+              onSendToCanvas={
+                onSendToCanvas ? () => onSendToCanvas(entry) : undefined
+              }
+              onDownload={() => void handleDownload(entry)}
+              onRename={() => setRenameEntry(entry)}
+              onDelete={() => void handleDelete(entry)}
+            />
           </div>
         ))}
       </div>
+
+      <AssetLibraryNewFolderDialog
+        open={Boolean(renameEntry)}
+        title="重命名"
+        fieldLabel="资产名称"
+        placeholder="请输入资产名称"
+        maxLength={LIBRARY_ITEM_NAME_MAX_LEN}
+        initialName={renameEntry?.name ?? ""}
+        onClose={() => setRenameEntry(null)}
+        onSubmit={handleRename}
+      />
     </>
+  );
+}
+
+/**
+ * 条目的「…」菜单。
+ *
+ * 主线同步来的素材不给改名/删除——改了名下次「从主线同步」会按主线名字覆盖回去，
+ * 删了也会在下次同步时原样长回来，摆上去只会让人以为坏了。
+ */
+function AssetItemMenu({
+  entry,
+  onSendToCanvas,
+  onDownload,
+  onRename,
+  onDelete,
+}: {
+  entry: LibraryItem;
+  onSendToCanvas?: () => void;
+  onDownload: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const queuedRef = useRef<(() => void) | null>(null);
+  const writable = entry.source === "upload" && Boolean(entry.id);
+
+  return (
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      // 重命名弹窗和删除确认都要抢焦点，跟菜单关闭时把焦点还给触发按钮撞在一起会闪，
+      // 所以这两项排队到菜单彻底收完再执行（下载/发送到画布不开弹窗，可以立即走）。
+      onOpenChangeComplete={(next) => {
+        if (next) return;
+        const queued = queuedRef.current;
+        queuedRef.current = null;
+        queued?.();
+      }}
+    >
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`${entry.name || "素材"} 更多操作`}
+            // 平时藏起来，hover 或键盘聚焦才出现；自己的菜单开着时常驻，
+            // 否则鼠标一移到菜单上按钮就消失了。
+            className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-white/45 transition-colors hover:bg-white/[0.10] hover:text-white focus-visible:opacity-100 ${
+              open
+                ? "bg-white/[0.10] text-white opacity-100"
+                : "opacity-0 group-hover:opacity-100"
+            }`}
+          />
+        }
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className={MENU_CONTENT_CLASS} align="end">
+        {onSendToCanvas ? (
+          <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={onSendToCanvas}>
+            <SendHorizontal className="h-3.5 w-3.5" />
+            <span>发送到画布</span>
+          </DropdownMenuItem>
+        ) : null}
+        <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={onDownload}>
+          <Download className="h-3.5 w-3.5" />
+          <span>下载</span>
+        </DropdownMenuItem>
+        {writable ? (
+          <>
+            <DropdownMenuItem
+              className={MENU_ITEM_CLASS}
+              onClick={() => {
+                queuedRef.current = onRename;
+              }}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              <span>重命名</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              className={MENU_ITEM_DANGER_CLASS}
+              onClick={() => {
+                queuedRef.current = onDelete;
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>删除</span>
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

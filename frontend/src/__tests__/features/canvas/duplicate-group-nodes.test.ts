@@ -119,3 +119,28 @@ describe("duplicateNodesAsSiblings", () => {
     expect((clone?.data as { displayName?: string }).displayName).toBe("封面 - 副本");
   });
 });
+
+describe("createdAt on duplication", () => {
+  beforeEach(() => {
+    useCanvasStore.setState({ nodes: [], edges: [] });
+  });
+
+  // 工厂里 createdAt 压在 ...data 之后，就是为了这条：duplicateNodeAsSibling 会把
+  // 源节点的整份 data 摊进去，放前面的话复制出来的节点会继承源节点的创建时刻，
+  // 而侧栏大纲正是靠这个时刻区分「同一条提示词复制三份」的重名行。
+  it("gives each clone its own creation moment instead of inheriting the source's", () => {
+    const createdAt = new Date(2020, 0, 1).getTime();
+    useCanvasStore.setState({
+      nodes: [node("src", CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, { displayName: "海边的黄昏", createdAt })],
+      edges: [],
+    });
+
+    const cloneId = useCanvasStore.getState().duplicateNodeAsSibling("src", 1);
+    const clone = useCanvasStore.getState().nodes.find((n) => n.id === cloneId);
+
+    expect(clone).toBeDefined();
+    expect((clone!.data as { displayName?: string }).displayName).toBe("海边的黄昏");
+    expect((clone!.data as { createdAt?: number }).createdAt).not.toBe(createdAt);
+    expect((clone!.data as { createdAt?: number }).createdAt).toBeGreaterThan(createdAt);
+  });
+});

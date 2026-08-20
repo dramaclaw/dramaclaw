@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AudioLines,
   Box,
@@ -41,7 +42,10 @@ import {
   type CanvasNodeType,
 } from "@/features/canvas/domain/canvasNodes";
 import { resolveNodePrimaryAsset } from "@/features/canvas/domain/canvasAssets";
-import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
+import {
+  getDefaultNodeDisplayName,
+  resolveNodeDisplayName,
+} from "@/features/canvas/domain/nodeDisplay";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,6 +72,8 @@ export type CanvasOutlineItem = {
   thumbUrl: string | null;
   /** 下载用的原始资源地址；没有可下载内容时为 null。 */
   mediaUrl: string | null;
+  /** 名字之外的一行副信息（类型 · 生成时间）；没什么可说的时候是 null。 */
+  meta: string | null;
   children: CanvasOutlineItem[];
 };
 
@@ -117,16 +123,51 @@ function outlineMediaUrl(node: CanvasNode): string | null {
   return resolveNodePrimaryAsset(node)?.url ?? outlineThumbUrl(node);
 }
 
+/**
+ * 副信息只补名字没说的那部分：
+ * 名字被用户改过（或本来就是提示词）时补类型，名字本身就是默认类型名时不重复一遍；
+ * 再补一个创建时刻，用来区分「同一条提示词生成三次」这种连名字带类型都一样的行。
+ *
+ * 时刻读的是 `createdAt` 而**不是** `generationStartedAt`：后者是临时字段，每条生成
+ * 链路在成功和失败时都会把它写回 null（见 VideoNode / ImageGenNode / 各 Overlay），
+ * 只在转圈那几十秒里看得见，跑完就蒸发——恰恰在事后回头找「谁是谁」的那一刻什么
+ * 都不剩。`createdAt` 由 nodeFactory 在建节点时落一次，之后没人改。
+ *
+ * 用绝对时刻而不是「3 分钟前」：相对时间要么算 Date.now() 污染纯函数，要么显示的是
+ * 上次渲染那一刻的旧值。加字段之前存的老画布没有 createdAt，那些行退回只显示类型。
+ */
+function outlineMeta(node: CanvasNode, type: CanvasNodeType, name: string): string | null {
+  const parts: string[] = [];
+  const typeLabel = getDefaultNodeDisplayName(type, node.data);
+  if (typeLabel && typeLabel !== name) {
+    parts.push(typeLabel);
+  }
+  const createdAt = (node.data as { createdAt?: unknown }).createdAt;
+  if (typeof createdAt === "number" && Number.isFinite(createdAt) && createdAt > 0) {
+    parts.push(formatOutlineStamp(createdAt));
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function formatOutlineStamp(epochMs: number): string {
+  const date = new Date(epochMs);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function toOutlineItem(node: CanvasNode): CanvasOutlineItem {
   const type = node.type as CanvasNodeType;
   const group = isGroupNode(node);
+  const name = resolveNodeDisplayName(type, node.data);
   return {
     id: node.id,
     kind: group ? "group" : "node",
-    name: resolveNodeDisplayName(type, node.data),
+    name,
     type,
     thumbUrl: group ? null : outlineThumbUrl(node),
     mediaUrl: group ? null : outlineMediaUrl(node),
+    meta: group ? null : outlineMeta(node, type, name),
     children: [],
   };
 }
@@ -175,6 +216,27 @@ export function collectOutlineIds(item: CanvasOutlineItem): string[] {
 export function collectOutlineDownloads(item: CanvasOutlineItem): CanvasOutlineItem[] {
   const self = item.kind === "node" && item.mediaUrl ? [item] : [];
   return [...self, ...item.children.flatMap(collectOutlineDownloads)];
+}
+
+export type CanvasOutlineRowEntry = { item: CanvasOutlineItem; depth: number };
+
+/**
+ * 按当前折叠状态把树压成「屏幕上从上到下的行」。
+ * 虚拟化只能按下标取行，递归渲染的结构在这里走不通。
+ */
+export function flattenCanvasOutline(
+  items: CanvasOutlineItem[],
+  collapsedGroupIds: ReadonlySet<string>,
+  depth = 0,
+  out: CanvasOutlineRowEntry[] = [],
+): CanvasOutlineRowEntry[] {
+  for (const item of items) {
+    out.push({ item, depth });
+    if (item.kind === "group" && !collapsedGroupIds.has(item.id)) {
+      flattenCanvasOutline(item.children, collapsedGroupIds, depth + 1, out);
+    }
+  }
+  return out;
 }
 
 /** 展开/收起全部要知道树里有哪些组，含嵌套组。 */
@@ -320,6 +382,9 @@ export function canvasOutlineSignature(nodes: CanvasNode[]): string {
         resolveNodeDisplayName(type, node.data),
         (isGroupNode(node) ? null : outlineThumbUrl(node)) ?? "",
         (isGroupNode(node) ? null : outlineMediaUrl(node)) ?? "",
+        (isGroupNode(node)
+          ? null
+          : outlineMeta(node, type, resolveNodeDisplayName(type, node.data))) ?? "",
       ].join("\u0001");
     })
     .join("\u0002");
@@ -339,7 +404,14 @@ function outlineDownloadFilename(item: CanvasOutlineItem, url: string): string {
   return `${item.name}.${extension}`;
 }
 
-export function CanvasOutlineList({ collapsed = false }: { collapsed?: boolean } = {}) {
+export function CanvasOutlineList({
+  collapsed = false,
+  leading,
+}: {
+  collapsed?: boolean;
+  /** 塞在工具栏最左边的东西（画布选择器）。给了就顶掉「画布元素」那个标签。 */
+  leading?: ReactNode;
+} = {}) {
   const { t } = useTranslation();
   // 抽屉收起是纯 CSS 位移，组件不卸载 —— 不短路的话，用户收起抽屉拖画布时，这条
   // 签名照样每帧把几百个节点(含可能几百字符的提示词名)拼成大字符串然后丢掉。
@@ -367,6 +439,24 @@ export function CanvasOutlineList({ collapsed = false }: { collapsed?: boolean }
     [outline, query, filterKey],
   );
   const total = useMemo(() => countOutlineNodes(visible), [visible]);
+
+  // 筛选/搜索时无视折叠状态，否则命中的东西可能藏在收起的组里。
+  const effectiveCollapsed = filtering ? NO_COLLAPSED_GROUPS : collapsedGroupIds;
+  const rows = useMemo(
+    () => flattenCanvasOutline(visible, effectiveCollapsed),
+    [visible, effectiveCollapsed],
+  );
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // 小画布照常整棵渲染：jsdom 里滚动容器高度恒为 0，虚拟化会一行都不渲染，
+  // 门槛之下走原路才不会把渲染测试和「打开就能截到内容」一起废掉。
+  const virtualized = rows.length > OUTLINE_VIRTUALIZE_THRESHOLD;
+  const virtualizer = useVirtualizer({
+    count: virtualized ? rows.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => OUTLINE_ROW_STRIDE_PX,
+    overscan: 8,
+  });
 
   const groupIds = useMemo(() => collectOutlineGroupIds(outline), [outline]);
   const allCollapsed =
@@ -440,24 +530,32 @@ export function CanvasOutlineList({ collapsed = false }: { collapsed?: boolean }
     }
   }, []);
 
-  if (outline.length === 0) {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-3 py-6 text-xs text-text-muted/70">
-        {t("freezone.canvasOutline.empty")}
-      </div>
-    );
-  }
+  // 两条渲染路径（整棵 / 开窗）共用同一组回调，别在两处各写一遍。
+  const rowProps = {
+    collapsedGroupIds: effectiveCollapsed,
+    selectedNodeId,
+    renamingId,
+    onToggleGroup: toggleGroup,
+    onFocusNode: focusNode,
+    onDuplicate: duplicateItem,
+    onStartRename: setRenamingId,
+    onCommitRename: commitRename,
+    onDownload: downloadItem,
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-1.5 pt-2.5">
+      <div className="flex shrink-0 items-center gap-1.5 pb-1.5 pl-2 pr-3 pt-2.5">
         {searchOpen ? (
           <OutlineSearchInput value={query} onChange={setQuery} onClose={closeSearch} />
         ) : (
           <>
-            <span className="shrink-0 text-[11px] font-medium text-text-muted">
-              {t("freezone.canvasOutline.title")}
-            </span>
+            {/* 有画布选择器时它就是这行的身份，再挂一个「画布元素」是同义反复 */}
+            {leading ?? (
+              <span className="shrink-0 text-[10px] font-semibold tracking-[0.09em] text-text-muted/85">
+                {t("freezone.canvasOutline.title")}
+              </span>
+            )}
             {groupIds.length > 0 && (
               <OutlineIconButton
                 label={t(
@@ -500,27 +598,42 @@ export function CanvasOutlineList({ collapsed = false }: { collapsed?: boolean }
           </OutlineIconButton>
         )}
       </div>
-      <div className="ui-scrollbar-vertical min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {visible.length === 0 ? (
+      {/* 横向留白挪到行上（见 ROW_INSET_PX），行才能铺满容器宽度——
+          hover 的底色是画在行上的，容器留白会把它从左边削掉一块。 */}
+      <div
+        ref={scrollRef}
+        className="ui-scrollbar-vertical min-h-0 flex-1 overflow-y-auto pb-2 pl-1 pr-2"
+      >
+        {outline.length === 0 ? (
+          <div className="px-1 py-6 text-center text-xs text-text-muted/70">
+            {t("freezone.canvasOutline.empty")}
+          </div>
+        ) : rows.length === 0 ? (
           <div className="px-1 py-6 text-center text-xs text-text-muted/70">
             {t("freezone.canvasOutline.noMatch")}
           </div>
+        ) : virtualized ? (
+          <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const entry = rows[virtualRow.index];
+              return (
+                <div
+                  key={entry.item.id}
+                  className="absolute inset-x-0 top-0"
+                  style={{ height: OUTLINE_ROW_STRIDE_PX, transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  <CanvasOutlineRow {...rowProps} item={entry.item} depth={entry.depth} />
+                </div>
+              );
+            })}
+          </div>
         ) : (
-          visible.map((item) => (
+          rows.map((entry) => (
             <CanvasOutlineRow
-              key={item.id}
-              item={item}
-              depth={0}
-              // 筛选/搜索时无视折叠状态，否则命中的东西可能藏在收起的组里。
-              collapsedGroupIds={filtering ? NO_COLLAPSED_GROUPS : collapsedGroupIds}
-              selectedNodeId={selectedNodeId}
-              renamingId={renamingId}
-              onToggleGroup={toggleGroup}
-              onFocusNode={focusNode}
-              onDuplicate={duplicateItem}
-              onStartRename={setRenamingId}
-              onCommitRename={commitRename}
-              onDownload={downloadItem}
+              {...rowProps}
+              key={entry.item.id}
+              item={entry.item}
+              depth={entry.depth}
             />
           ))
         )}
@@ -530,6 +643,15 @@ export function CanvasOutlineList({ collapsed = false }: { collapsed?: boolean }
 }
 
 const NO_COLLAPSED_GROUPS: ReadonlySet<string> = new Set();
+
+/**
+ * 行高写死，虚拟化才能不量高度直接按下标定位。
+ * stride 比行高多 1px，那 1px 就是行与行之间的缝——hover 底色不会和上下黏成一片。
+ */
+/** 对应行上的 `h-11`（44px）+ `mb-px`（1px）。改一处就要同步另一处。 */
+const OUTLINE_ROW_STRIDE_PX = 45;
+/** 这个数量以下整棵渲染：开窗的收益抵不过它在 jsdom / 首帧上的那点别扭。 */
+const OUTLINE_VIRTUALIZE_THRESHOLD = 60;
 
 const HEADER_ICON_BUTTON_CLASS =
   "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-[rgb(var(--text-rgb)/0.1)] hover:text-text-dark";
@@ -684,22 +806,49 @@ type OutlineRowProps = {
   onDownload: (item: CanvasOutlineItem) => void;
 };
 
+/** 行内左侧留白：缩略图照旧离面板 8px，hover 底色能多往左铺 4px 包住它。 */
+const ROW_INSET_PX = 4;
+
 const THUMB_CLASS =
-  "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[var(--ui-border-soft)] bg-[rgb(var(--text-rgb)/0.03)]";
+  // ring 而不是 border：border 会把 36px 撑成 38px，和空缩略图的图标框对不齐。
+  "relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[rgb(var(--text-rgb)/0.05)] ring-1 ring-inset ring-[rgb(var(--text-rgb)/0.09)]";
+
+/** 缩略图本身就是内容的类型，再叠一个「图片」角标纯属噪音。 */
+const PLAIN_IMAGE_TYPES: ReadonlySet<CanvasNodeType> = new Set([
+  CANVAS_NODE_TYPES.upload,
+  CANVAS_NODE_TYPES.imageEdit,
+  CANVAS_NODE_TYPES.imageGen,
+  CANVAS_NODE_TYPES.exportImage,
+]);
+
+
 
 const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) {
-  const { item, depth, collapsedGroupIds, selectedNodeId, renamingId, onToggleGroup, onFocusNode } =
-    props;
+  const {
+    item,
+    depth,
+    collapsedGroupIds,
+    selectedNodeId,
+    renamingId,
+    onToggleGroup,
+    onFocusNode,
+  } = props;
   const { t } = useTranslation();
-  const indent = { paddingLeft: `${depth * 14}px` };
+  const indent = { paddingLeft: `${ROW_INSET_PX + depth * 14}px` };
   const selected = selectedNodeId === item.id;
   const renaming = renamingId === item.id;
   const collapsed = collapsedGroupIds.has(item.id);
 
   const rowClass =
-    "group/row relative flex w-full items-center gap-2 rounded-lg pr-1.5 transition " +
-    (selected ? "bg-[rgb(var(--text-rgb)/0.08)]" : "hover:bg-[rgb(var(--text-rgb)/0.05)]");
-  const leadClass = "flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left";
+    // h-11 / mb-px 必须和 OUTLINE_ROW_STRIDE_PX 对上：虚拟化不量高度，直接按 stride 定位。
+    // 这里不能写 `h-[${...}px]` 之类的模板串——Tailwind 扫的是源码里的字面量，
+    // 运行时拼出来的类名不会进产物（和 mask-image 那次同一个坑）。
+    "ui-outline-row group/row relative mb-px flex h-11 w-full items-center gap-2 rounded-lg pr-1.5 transition-colors duration-150 " +
+    // 选中走 accent、hover 走中性灰：原来两者只差 3% 的白，鼠标一挪开就找不到自己点的是哪行。
+    (selected
+      ? "bg-[rgb(var(--accent-rgb)/0.16)]"
+      : "hover:bg-[rgb(var(--text-rgb)/0.05)]");
+  const leadClass = "flex h-full min-w-0 flex-1 items-center gap-2 text-left";
 
   const lead =
     item.kind === "group" ? (
@@ -711,22 +860,25 @@ const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) 
         )}
         <span className={THUMB_CLASS}>
           {collapsed ? (
-            <Folder className="h-4 w-4 text-text-muted" />
+            <Folder className="h-3.5 w-3.5 text-text-muted" />
           ) : (
-            <FolderOpen className="h-4 w-4 text-text-muted" />
+            <FolderOpen className="h-3.5 w-3.5 text-text-muted" />
           )}
         </span>
       </>
     ) : (
       <>
-        {/* 让缩略图和文件夹图标对齐：这里补上箭头占的那一格 */}
-        <span aria-hidden className="w-3.5 shrink-0" />
         <span className={THUMB_CLASS}>
           {item.thumbUrl ? (
             <img src={item.thumbUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
           ) : (
             <OutlineNodeIcon type={item.type} />
           )}
+          {/* 有画面的节点光看缩略图分不出是视频还是 3D——而兜底图标只在没画面时才露脸，
+              恰好是最不需要提示的那一档。 */}
+          {item.thumbUrl && !PLAIN_IMAGE_TYPES.has(item.type) ? (
+            <OutlineTypeBadge type={item.type} />
+          ) : null}
         </span>
       </>
     );
@@ -750,46 +902,60 @@ const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) 
       className={leadClass}
     >
       {lead}
-      <span
-        className={
-          "min-w-0 flex-1 truncate text-xs " + (selected ? "text-text-dark" : "text-text-dark/80")
-        }
-      >
-        {item.name}
+      <span className="ui-outline-row-name flex min-w-0 flex-1 flex-col justify-center gap-px">
+        <span
+          className={
+            "truncate text-xs leading-4 transition-colors" +
+            (item.kind === "group" ? " pr-7 font-medium" : "") +
+            (selected ? " font-medium text-text-dark" : " text-text-dark/85")
+          }
+        >
+          {item.name}
+        </span>
+        {/* 名字撞车时（同一条提示词生成三次）靠这行分辨谁是谁——见 outlineMeta，
+            时刻来自持久的 createdAt，别改回跑完就被清空的 generationStartedAt */}
+        {item.meta && (
+          <span className="truncate text-xs leading-4 text-text-muted/75">{item.meta}</span>
+        )}
       </span>
     </button>
   );
 
   const row = (
     <div style={indent} className={rowClass}>
+      {/* 选中的竖条画在最左，缩进多深都对齐面板边——整行被选中是行的属性，不是层级的属性 */}
+      {selected && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-1 left-0 w-[2px] rounded-full bg-[rgb(var(--accent-rgb))]"
+        />
+      )}
       {body}
       {item.kind === "group" && !renaming && (
-        <span className="shrink-0 text-[10px] tabular-nums text-text-muted/70 group-hover/row:hidden">
+        <span className="pointer-events-none absolute right-2 text-[10px] tabular-nums text-text-muted/70 transition-opacity group-hover/row:opacity-0">
           {t("freezone.canvasOutline.groupMembers", { count: countOutlineNodes(item.children) })}
         </span>
       )}
-      <OutlineRowActions {...props} />
+      {!renaming && <OutlineRowActions {...props} />}
     </div>
   );
 
-  if (item.kind !== "group") {
-    return row;
-  }
-
-  return (
-    <>
-      {row}
-      {!collapsed &&
-        item.children.map((child) => (
-          <CanvasOutlineRow {...props} key={child.id} item={child} depth={depth + 1} />
-        ))}
-    </>
-  );
+  return row;
 });
 
 function OutlineNodeIcon({ type }: { type: CanvasNodeType }) {
   const Icon = NODE_TYPE_ICON[type] ?? ImageIcon;
-  return <Icon className="h-4 w-4 text-text-muted" />;
+  return <Icon className="h-3.5 w-3.5 text-text-muted" />;
+}
+
+/** 缩略图右下角的类型角标，压在画面上所以要自带一层底。 */
+function OutlineTypeBadge({ type }: { type: CanvasNodeType }) {
+  const Icon = NODE_TYPE_ICON[type] ?? ImageIcon;
+  return (
+    <span className="pointer-events-none absolute bottom-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded-tl-[5px] bg-[rgb(var(--surface-rgb)/0.85)] backdrop-blur-[2px]">
+      <Icon className="h-2.5 w-2.5 text-text-dark/75" />
+    </span>
+  );
 }
 
 /** hover 才露出来的那组操作：更多菜单 + 定位，参照 libtv 的行尾布局。 */
@@ -805,8 +971,9 @@ function OutlineRowActions({ item, onFocusNode, onDuplicate, onStartRename, onDo
   return (
     <div
       className={
-        "flex shrink-0 items-center gap-0.5 transition group-hover/row:opacity-100 " +
-        (menuOpen ? "opacity-100" : "opacity-0")
+        // 浮在名字上而不是挤开它，配合 NAME_FADE_CLASS 的淡出，hover 时行内一格都不动。
+        "absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition-opacity duration-150 group-hover/row:opacity-100 " +
+        (menuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover/row:pointer-events-auto")
       }
     >
       <DropdownMenu
