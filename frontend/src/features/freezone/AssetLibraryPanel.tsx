@@ -794,8 +794,12 @@ export function AssetLibraryPanel({
                   <TabsTrigger
                     key={item.id}
                     value={item.id}
-                    // after:bottom-0 让下划线落在整行的基线上，而不是浮在下面 5px
-                    className="h-full flex-none rounded-none px-2.5 text-xs group-data-horizontal/tabs:after:bottom-0"
+                    // after:bottom-0 让下划线落在整行的基线上，而不是浮在下面 5px。
+                    // 文字一律纯白（组件默认给未选中 tab 压了透明度），选中与否只靠
+                    // 下划线区分——300px 的侧栏里三个 tab 挨着，灰字读起来太吃力。
+                    // 下划线用 accent 而不是白：全白标签 + 白下划线，选中态几乎不成立；
+                    // 顺便这也是整块侧栏里唯一的品牌色落点。
+                    className="h-full flex-none rounded-none px-2.5 text-xs text-white after:bg-[rgb(var(--accent-rgb))] hover:text-white data-active:text-white dark:text-white dark:hover:text-white dark:data-active:text-white group-data-horizontal/tabs:after:bottom-0"
                   >
                     {item.label}
                   </TabsTrigger>
