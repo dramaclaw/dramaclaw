@@ -94,6 +94,8 @@ After initialization, start with **Recommended**. One profile configures:
 
 Enter each provider key separately, then click **Save & Apply All**. Keys are stored separately and never written into profile JSON. Leave an already saved key blank; entering a new value replaces it.
 
+The current recommended template includes OpenRouter, VolcEngine, fal.ai, and DoubaoAudio. The recommended speech mapping keeps `index-tts-2` as DramaClaw's model ID while routing it through the DoubaoAudio channel to the upstream `seed-audio-1.0` model.
+
 The built-in recommended profile is read-only. Switch to **My Config** to edit and persist your own JSON. The main shape is:
 
 ```json
@@ -134,7 +136,9 @@ The built-in recommended profile is read-only. Switch to **My Config** to edit a
 }
 ```
 
-Each `channel` references a `channels[].id`. A profile currently supports only one entry per `provider`. Changes in Recommended or My Config are reflected in Advanced Settings. Saving Advanced Settings updates My Config, so there are not two competing configurations. The recommended profile does not create a ComfyUI channel by default. To use local MiniMax H3, first add a ComfyUI channel in Advanced Settings, then load the template from that channel's **ComfyUI Workflows** area. The template adds the workflows and creates a corresponding `MiniMax-H3-local` media-model draft.
+Each `channel` references a `channels[].id`. A profile currently supports only one entry per `provider`. Switching profiles or viewing JSON only changes the pending template; it does not overwrite the active Advanced Settings. Click **Save & Apply All** to write provider channels, feature models, embedding, and media models to the backend and update the lists below. Saving Advanced Settings synchronizes them into My Config so there are not two competing configurations. After the built-in recommended profile changes, reapply it when Advanced Settings still show an older channel or model. Clearing browser data is not required.
+
+The recommended profile does not create a ComfyUI channel by default. To use local MiniMax H3, open **Manage Channels** in Advanced Settings, add ComfyUI, then load the template from that channel's **ComfyUI Workflows** area. The template adds the workflows and creates a corresponding `MiniMax-H3-local` media-model draft.
 
 ### 4. Advanced Settings
 
@@ -142,11 +146,15 @@ Use Advanced Settings to adjust individual results after applying a profile.
 
 #### Provider channels
 
-Provider types are loaded dynamically from the current NewAPI `/api/channel/types` endpoint. Each provider can be added once.
+Click **Manage Channels** to open the provider catalog supported by the current NewAPI instance. Provider types and capabilities are loaded dynamically from `/api/channel/types`, and each provider can be added once. Search by provider name or filter by text, vision, embedding, image, video, and audio capabilities. A newly added provider appears first in the configured-channel list. If the catalog fails to load, verify RelayClaw CE is running and click **Reload**.
+
+Provider selectors for feature, embedding, and media models are filtered by their purpose. For example, video models list video-capable providers, while text features list text-capable providers. Existing selections and providers with temporarily unavailable capability metadata remain visible for inspection and correction instead of disappearing after an upgrade.
 
 - **Save Channels** stores CE’s local channel presets.
 - **Update NewAPI Channel** immediately replaces the matching NewAPI channel key and Base URL.
 - **Base URL Override** is normally empty. Set it only for a custom proxy or when required by the provider.
+
+Before removing a regular provider, the confirmation shows how many feature-model, media-model, and embedding mappings are affected. Removing a saved provider immediately persists the remaining provider list. If that request fails, the local configuration is retained. Removing the final regular provider persists an empty list, so it does not return after refresh. ComfyUI keeps its dedicated cleanup confirmation described below.
 
 After a profile is saved, a channel key should show “Saved” and a masked preview. Password dots without a “Saved” badge indicate an uncommitted browser draft.
 
@@ -192,7 +200,7 @@ The **Model ID** is DramaClaw’s stable identifier. **Upstream Model** is the a
 
 In **Custom** mode, add ComfyUI through **Advanced Settings → Provider Channels**. In **Local + Official Hybrid**, add it through the separate **ComfyUI Configuration** section. Both modes use the same Local NewAPI and SQLite data and the same channel editor.
 
-Click **Add Channel** and select ComfyUI to reveal the **ComfyUI Workflows** area beneath that channel. **Load MiniMax H3 Template** appears only there, so users who do not add ComfyUI never see the shortcut. Loading the template adds three starter workflows and fills `http://127.0.0.1:8188` when Base URL is empty. It does not replace a non-empty URL or an existing workflow with the same ID. Save the channel and video-model configuration afterward to persist the result to Local NewAPI.
+Click **Manage Channels** and add ComfyUI from the provider catalog to reveal the **ComfyUI Workflows** area beneath that channel. **Load MiniMax H3 Template** appears only there, so users who do not add ComfyUI never see the shortcut. Loading the template adds three starter workflows and fills `http://127.0.0.1:8188` when Base URL is empty. It does not replace a non-empty URL or an existing workflow with the same ID. Save the channel and video-model configuration afterward to persist the result to Local NewAPI.
 
 Each ComfyUI channel configuration needs:
 
@@ -216,7 +224,7 @@ Hybrid mode keeps RelayClaw while generating selected video models through Local
 1. Save the DC Key under **Official**.
 2. Initialize NewAPI once under **Custom**; the same SQLite database is reused.
 3. Open **Local + Official Hybrid**.
-4. Open the separate **ComfyUI Configuration** section, click **Add Channel**, and select ComfyUI.
+4. Open the separate **ComfyUI Configuration** section, click **Manage Channels**, and add ComfyUI from the catalog.
 5. Load the MiniMax H3 template from that channel's **ComfyUI Workflows** area. Alternatively, enter a local video model name and add one or more Workflow IDs with **API Format Workflow JSON**. The local default URL is `http://127.0.0.1:8188`.
 6. Save video configuration and enable Hybrid mode.
 
