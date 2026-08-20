@@ -124,29 +124,19 @@ function outlineMediaUrl(node: CanvasNode): string | null {
 }
 
 /**
- * 副信息只补名字没说的那部分：
- * 名字被用户改过（或本来就是提示词）时补类型，名字本身就是默认类型名时不重复一遍；
- * 生成时间用绝对时刻而不是「3 分钟前」——相对时间要么算 Date.now() 污染纯函数，
- * 要么显示的是上次渲染那一刻的旧值，而这里真正要解决的是「三行同名的视频谁是谁」。
+ * 副信息只补名字没说的那部分：名字被用户改过（或本来就是提示词）时补类型，
+ * 名字本身就是默认类型名时不重复一遍。
+ *
+ * 这里曾经还挂过一个生成时刻，已经拿掉：节点身上唯一的时间字段
+ * `generationStartedAt` 是**临时**的——每条生成链路在成功和失败时都会把它写回
+ * null（见 VideoNode / ImageGenNode / 各 Overlay），所以时刻只在「正在转圈」那几
+ * 十秒里看得见，跑完就消失。一个跑完就蒸发的时间戳，恰恰在最需要它的那一刻
+ * （事后回头找「三行同名的视频谁是谁」）什么都不是，留着只会误导。节点上目前没有
+ * 任何持久化的创建时刻，真要做得先在 nodeFactory 落一个 createdAt。
  */
 function outlineMeta(node: CanvasNode, type: CanvasNodeType, name: string): string | null {
-  const parts: string[] = [];
   const typeLabel = getDefaultNodeDisplayName(type, node.data);
-  if (typeLabel && typeLabel !== name) {
-    parts.push(typeLabel);
-  }
-  const startedAt = (node.data as { generationStartedAt?: unknown }).generationStartedAt;
-  if (typeof startedAt === "number" && Number.isFinite(startedAt) && startedAt > 0) {
-    parts.push(formatOutlineStamp(startedAt));
-  }
-  return parts.length > 0 ? parts.join(" · ") : null;
-}
-
-function formatOutlineStamp(epochMs: number): string {
-  const date = new Date(epochMs);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return typeLabel && typeLabel !== name ? typeLabel : null;
 }
 
 function toOutlineItem(node: CanvasNode): CanvasOutlineItem {
@@ -907,7 +897,7 @@ const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) 
         </span>
         {/* 名字撞车时（同一条提示词生成三次）靠这行分辨谁是谁 */}
         {item.meta && (
-          <span className="truncate text-[10px] leading-3.5 text-text-muted/75">{item.meta}</span>
+          <span className="truncate text-xs leading-4 text-text-muted/75">{item.meta}</span>
         )}
       </span>
     </button>

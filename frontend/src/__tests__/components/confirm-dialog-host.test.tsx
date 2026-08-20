@@ -56,4 +56,25 @@ describe("ConfirmDialogHost", () => {
     await user.click(screen.getByRole("button", { name: "common.confirm" }));
     await expect(second).resolves.toBe(true);
   });
+
+  // 回归位：确认框曾经停在 shadcn 原版的 z-50，而素材库弹窗是 z-[300]、画布书签菜单
+  // 是 z-[10010]。结果是从素材库里点「删除」，确认框弹在弹窗背后——删不掉也退不出。
+  // jsdom 量不了层叠顺序（Tailwind 的类没编译成 CSS），所以这里直接把类名里的 z 值
+  // 抠出来跟已知最高层比大小；换算法可以，压不住整个浮层栈不行。
+  it("renders above the canvas overlay stack so in-modal confirms stay reachable", async () => {
+    const HIGHEST_OVERLAY_Z = 10010; // CanvasBookmarkContextMenu，全仓最高的一层
+
+    render(<ConfirmDialogHost />);
+    void confirmDialog({ description: "确定要删除「封面」？" });
+
+    await screen.findByText("确定要删除「封面」？");
+
+    for (const slot of ["alert-dialog-overlay", "alert-dialog-content"]) {
+      const el = document.querySelector(`[data-slot="${slot}"]`);
+      expect(el, `${slot} 没渲染出来`).not.toBeNull();
+      const match = /z-\[(\d+)\]/.exec(el!.className);
+      expect(match, `${slot} 身上没有 z-[N]，很可能被改回了 z-50`).not.toBeNull();
+      expect(Number(match![1])).toBeGreaterThan(HIGHEST_OVERLAY_Z);
+    }
+  });
 });

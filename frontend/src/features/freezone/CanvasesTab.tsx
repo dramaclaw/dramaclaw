@@ -368,7 +368,7 @@ function CanvasSelect({
               <span className="min-w-0 truncate">{canvasSelectLabel(item, t)}</span>
               {/* 同名画布不少（同一条主线的副本），靠这个时间戳分辨哪张是刚动过的 */}
               {item.modified_at && (
-                <span className="ml-auto shrink-0 pl-2 text-[10px] tabular-nums text-text-muted/70">
+                <span className="ml-auto shrink-0 pl-2 text-xs tabular-nums text-text-muted/70">
                   {formatRelative(item.modified_at, t)}
                 </span>
               )}
