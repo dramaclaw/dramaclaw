@@ -40,6 +40,7 @@ from novelvideo.api.schemas import (
     FreezoneAnalyzeVideoStoryRequest,
     FreezoneAssetLibraryFolderPatchRequest,
     FreezoneAssetLibraryFolderRequest,
+    FreezoneAssetLibraryItemPatchRequest,
     FreezoneAudioMusicRequest,
     FreezoneAudioSeparateRequest,
     FreezoneAudioSpeechRequest,
@@ -277,6 +278,7 @@ from novelvideo.freezone.video_node import (
     normalize_video_aspect_ratio,
     normalize_video_duration_for_backend,
     normalize_video_resolution_for_backend,
+    rename_video_character_library_item,
     resolve_freezone_video_backend,
     summarize_omni_reference_counts,
     update_video_character_folder,
@@ -8057,6 +8059,33 @@ async def freezone_sync_asset_library_from_mainline(
 
     library = sync_mainline_assets_into_library(project_dir, assets=assets)
     return {"ok": True, "data": library, "synced": len(assets)}
+
+
+@router.patch(
+    "/projects/{project}/freezone/video/character-library/{item_id}", tags=[TAG_FREEZONE_VIDEO]
+)
+async def freezone_rename_video_character_library_item(
+    project: str,
+    item_id: str,
+    body: FreezoneAssetLibraryItemPatchRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：给资产库条目改名。
+
+    只改展示名，素材地址不动——画布上已经引用该素材的节点照旧可用。主线同步来的
+    条目也能改，但下次「从主线同步」会按主线名字覆盖回去，前端据此只对本地上传的
+    条目开放这个入口。
+    """
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    try:
+        item = rename_video_character_library_item(project_dir, item_id, name=body.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if item is None:
+        raise HTTPException(404, f"video character library item not found: {item_id}")
+    return {"ok": True, "data": item}
 
 
 @router.delete(

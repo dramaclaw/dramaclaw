@@ -2778,6 +2778,23 @@ export async function syncFreezoneAssetLibraryFromMainline(
   );
 }
 
+/**
+ * 给资产库条目改名。只动展示名，素材地址不变——画布上已经引用它的节点不受影响。
+ *
+ * 主线同步来的条目改了名会在下次「从主线同步」时被覆盖回去，所以调用侧只对本地
+ * 上传的条目开放这个入口。
+ */
+export async function renameFreezoneVideoCharacterLibraryItem(
+  project: string,
+  itemId: string,
+  name: string,
+): Promise<FreezoneVideoCharacterLibraryItem> {
+  return await apiCall<FreezoneVideoCharacterLibraryItem>(
+    `projects/${encodeURIComponent(project)}/freezone/video/character-library/${encodeURIComponent(itemId)}`,
+    { method: "PATCH", json: { name } },
+  );
+}
+
 export async function deleteFreezoneVideoCharacterLibraryItem(
   project: string,
   itemId: string,

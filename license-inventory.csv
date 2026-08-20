@@ -431,6 +431,7 @@ frontend/src/__tests__/features/canvas/video-node-credit-contract.test.ts,Elasti
 frontend/src/__tests__/features/canvas/video-reference-limits.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/viewport-bookmarks-domain.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/companion/petdex-pets.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/freezone/asset-library-browser-item-actions.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/asset-library-panel-beat-context.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/beat-context-projection.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/canvas-draft-storage.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1762,6 +1763,7 @@ tests/test_api_config_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.t
 tests/test_api_coverage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_episode_detail.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_freezone_asset_library_folders.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_freezone_asset_library_items.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_freezone_canvas_from_preset.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_freezone_projection.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_generation_sketches.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -112,8 +112,8 @@ export function useFreezoneProjectAssets(
 }
 
 /**
- * 资产库（项目级素材库）的只读列表。写操作（上传/删除/从主线同步）仍在
- * AssetLibraryModal 里走裸调用，这里只负责浏览侧的读取与缓存。
+ * 资产库（项目级素材库）的列表。写操作都走裸调用，改完各自 invalidate 这个 key
+ * 把列表刷新（AssetLibraryModal 的上传/同步、侧栏条目菜单的改名/删除）。
  */
 export function useFreezoneAssetLibrary(
   project: string | null | undefined,

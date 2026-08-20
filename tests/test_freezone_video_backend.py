@@ -35,6 +35,7 @@ from novelvideo.freezone.video_node import (
     normalize_video_duration_for_backend,
     normalize_video_resolution,
     normalize_video_resolution_for_backend,
+    rename_video_character_library_item,
     resolve_freezone_video_backend,
     summarize_omni_reference_counts,
     sync_mainline_assets_into_library,
@@ -81,6 +82,42 @@ def test_video_character_library_roundtrip(tmp_path: Path) -> None:
     deleted = delete_video_character_library_item(project_dir, item["id"])
     assert deleted is True
     assert load_video_character_library(project_dir) == []
+
+
+def test_video_character_library_rename_keeps_everything_else(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    item = add_video_character_library_item(
+        project_dir,
+        name="未命名",
+        image_urls=["/static/admin/58/freezone/_uploads/char.png"],
+        category="character",
+        folder="character",
+    )
+
+    renamed = rename_video_character_library_item(project_dir, item["id"], name="  林小满  ")
+
+    assert renamed is not None
+    assert renamed["name"] == "林小满"
+    # 改名只动名字：地址/类目/保存位置都得原样留着，画布上引用它的节点才不会裂。
+    assert renamed["image_urls"] == item["image_urls"]
+    assert renamed["category"] == "character"
+    assert renamed["folder"] == "character"
+    assert [it["name"] for it in load_video_character_library(project_dir)] == ["林小满"]
+
+
+def test_video_character_library_rename_rejects_bad_names(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    item = add_video_character_library_item(
+        project_dir, name="原名", image_urls=["/static/a.png"]
+    )
+
+    assert rename_video_character_library_item(project_dir, "missing", name="新名") is None
+    with pytest.raises(ValueError):
+        rename_video_character_library_item(project_dir, item["id"], name="   ")
+    with pytest.raises(ValueError):
+        rename_video_character_library_item(project_dir, item["id"], name="长" * 61)
+    # 校验失败不能把库写脏。
+    assert [it["name"] for it in load_video_character_library(project_dir)] == ["原名"]
 
 
 def test_video_character_library_category(tmp_path: Path) -> None:

@@ -883,7 +883,10 @@ export function AssetLibraryPanel({
               )}
             </>
           ) : panelTab === "assets" ? (
-            <AssetLibraryBrowser project={project} />
+            <AssetLibraryBrowser
+              project={project}
+              onSendToCanvas={(entry) => void sendLibraryItemToCanvas(entry)}
+            />
           ) : (
             <CanvasesTab
               project={project}
@@ -2259,6 +2262,24 @@ async function sendAssetFolderToCanvas(folder: AssetFolder): Promise<void> {
     ids.length >= 2 ? store.groupNodes(ids, { label: folder.label }) : null;
   store.requestFocusNode(groupId ?? ids[0]);
   toast.success(`已发送到画布：${folder.label}`);
+}
+
+/**
+ * 把单条资产库素材发到画布：量一次真实比例，落在视口中心（带碰撞避让），然后聚焦。
+ *
+ * 不复用 sendAssetFolderToCanvas —— 那个是整柜铺网格再编组，单条走同一条路会得到
+ * 一个只有一个成员的组。
+ */
+async function sendLibraryItemToCanvas(entry: LibraryItem): Promise<void> {
+  const payload = libraryItemToDragPayload(entry);
+  if (!payload) return;
+  const ratio = await measureAspectRatio(payload);
+  const sized = ratio ? { ...payload, aspectRatio: ratio } : payload;
+  const { width, height } = spawnedNodeSize(sized);
+  const store = useCanvasStore.getState();
+  const newId = spawnAssetNode(store, sized, viewportCenteredPosition(store, 0, width, height));
+  store.requestFocusNode(newId);
+  toast.success(`已发送到画布：${entry.name || "素材"}`);
 }
 
 function addAssetToCanvas(asset: LibraryAsset, index: number): void {
