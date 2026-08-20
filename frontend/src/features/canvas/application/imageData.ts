@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { withMediaVariant, type MediaVariant } from '@/lib/media-url';
+
 export function parseAspectRatio(value: string): number {
   const [width, height] = value.split(':').map((item) => Number(item));
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
@@ -229,6 +231,126 @@ export function withImageCacheBust(imageUrl: string, token: string | number | nu
   params.set('st_v', String(token));
   const busted = `${path}?${params.toString()}`;
   return hash ? `${busted}#${hash}` : busted;
+}
+
+// ── 节点主体图：喂降采样副本 ────────────────────────────────────────────────
+//
+// 解码 + 光栅的成本只跟源图像素数有关，跟画进多大的盒子无关：一张 5504x3072
+// 的 PNG 画进 580px 的节点里，仍然要付 16.9MP 的代价。zoom 0.35（刚好在 LOD
+// shell 阈值之上）一屏能放下几十个这样的节点——和历史条那 9 张图是同一个问题，
+// 只是规模大一个量级。
+//
+// 麻烦在于节点主体的 onLoad 同时是画布对这张图的「测量」：它喂分辨率角标，并把
+// imageNaturalWidth/Height + aspectRatio 落到节点数据里。从降采样副本上读这些数
+// 会把错的尺寸写进图里。所以只有当真实尺寸已经记在节点数据上时才用变体——那时
+// 元素已经没有新东西可教我们，调用方改从记录里读（见 nodeBodyImageMeasurement）。
+// 尺寸未知的节点照旧加载原图、照旧测量、照旧落库，下次挂载自然就用上变体了。
+//
+// 放大到 shouldUseOriginalImageByZoom（1.45）以上时换回原图：那已经是在细看单张
+// 图，节点在屏幕上比变体还宽，而这一档屏幕上装不下几个节点，解码不再是瓶颈。
+// 这条线本来就是节点在 previewImageUrl / imageUrl 之间切换的那条线，沿用同一个。
+//
+// 全屏查看器 / 下载 / 导出 / 各类编辑器一律仍然拿原图，见各调用点的
+// viewerSourceUrl。
+export const NODE_BODY_VARIANT: MediaVariant = 'card';
+// 必须与后端 VARIANTS['card'] 一致：只用来判断「源图是不是本来就比变体小」，
+// 对不上顶多是多建/少建一个变体文件，不会画错。
+export const NODE_BODY_VARIANT_MAX_EDGE = 1280;
+
+export type ImagePixelSize = { width: number; height: number };
+
+export type NodeBodyImage = {
+  /** 喂给 <img src> 的地址。 */
+  src: string;
+  /** 未附变体的原图地址；判断「这张图已经不信记录了」时按它比对。 */
+  original: string;
+  /** true 表示 src 是降采样副本，元素上的 naturalWidth/Height 不可信。 */
+  downscaled: boolean;
+};
+
+/** 从节点数据里读已记录的原图像素尺寸；没有或不合法时返回 null。 */
+export function readNodeNaturalSize(data: unknown): ImagePixelSize | null {
+  if (!data || typeof data !== 'object') return null;
+  const { imageNaturalWidth: w, imageNaturalHeight: h } = data as {
+    imageNaturalWidth?: unknown;
+    imageNaturalHeight?: unknown;
+  };
+  return typeof w === 'number' && typeof h === 'number' && w > 0 && h > 0
+    ? { width: w, height: h }
+    : null;
+}
+
+export function nodeBodyImageSrc(
+  url: string,
+  natural: ImagePixelSize | null,
+  options?: { preferOriginal?: boolean },
+): NodeBodyImage {
+  // 放大到细看这一档：交回原图。
+  if (options?.preferOriginal) return { src: url, original: url, downscaled: false };
+  // 尺寸未知：这次加载还担着测量职责，必须是原图。
+  if (!natural) return { src: url, original: url, downscaled: false };
+  // 本来就不比变体大：换成变体只是重编码一遍，白白多一个文件。
+  if (Math.max(natural.width, natural.height) <= NODE_BODY_VARIANT_MAX_EDGE) {
+    return { src: url, original: url, downscaled: false };
+  }
+  // 变体只对受保护的项目静态图片生效；不适用时原样返回（blob:/data: 的上传预览、
+  // 遗留路径、非图片后缀都会走到这里），downscaled 随之为 false。
+  const src = withMediaVariant(url, NODE_BODY_VARIANT);
+  return { src, original: url, downscaled: src !== url };
+}
+
+/**
+ * 记录里的尺寸，描述的是不是眼下这张加载好的图。
+ *
+ * 记录没有和任何 URL 绑定，而节点的图是会被换掉的：画册选主图、从历史恢复、
+ * 生成完成回填，这几条路都只改 imageUrl/previewImageUrl，不动
+ * imageNaturalWidth/Height。真实尺寸手动调过尺寸的节点更是连修正的机会都没有
+ * （onLoad 里 isSizeManuallyAdjusted 那一支会提前 return）。所以「有记录」不等
+ * 于「记录说的是这张图」，必须当场对一下。
+ *
+ * 对法是把记录按变体的规则算一遍，看元素报的是不是那个结果：后端 thumbnail 把
+ * 长边正好压到预算上，短边按比例四舍五入（Pillow 的取整，±1px）。对不上就说明
+ * 记录描述的是另一张图。
+ */
+export function nodeBodyRecordDescribesImage(
+  image: { naturalWidth: number; naturalHeight: number },
+  natural: ImagePixelSize | null,
+): boolean {
+  if (!natural) return false;
+  const { naturalWidth: w, naturalHeight: h } = image;
+  if (!(w > 0) || !(h > 0)) return false;
+  // 横竖都不一样，不用再算了。
+  if (w >= h !== natural.width >= natural.height) return false;
+  const long = Math.max(w, h);
+  const short = Math.min(w, h);
+  const recLong = Math.max(natural.width, natural.height);
+  const recShort = Math.min(natural.width, natural.height);
+  // 后端拒绝了这次降采样（渲染失败、或源图本就在预算内）直接给了原图。
+  if (long === recLong && short === recShort) return true;
+  if (long !== NODE_BODY_VARIANT_MAX_EDGE) return false;
+  return Math.abs(short - Math.round((long * recShort) / recLong)) <= 1;
+}
+
+/**
+ * 这次 onLoad 该按哪组尺寸来测量。
+ *
+ * 喂的是降采样副本时元素在说谎，改用记录里的真实尺寸——于是后续的比例计算、
+ * 自动尺寸、角标全都和喂原图时逐字节一致，不是「跳过测量」。
+ *
+ * 但只在记录确实描述这张图时才这么做；对不上时元素虽然也不是原图，至少是从这
+ * 张图来的，比一个属于别的图的记录可信。调用方应当先用
+ * nodeBodyRecordDescribesImage 判一下，对不上就退回原图重测（见各节点的
+ * onLoad），那才拿得到真相。
+ */
+export function nodeBodyImageMeasurement(
+  image: { naturalWidth: number; naturalHeight: number },
+  body: NodeBodyImage,
+  natural: ImagePixelSize | null,
+): ImagePixelSize {
+  if (body.downscaled && natural && nodeBodyRecordDescribesImage(image, natural)) {
+    return natural;
+  }
+  return { width: image.naturalWidth, height: image.naturalHeight };
 }
 
 export async function persistImageLocally(source: string): Promise<string> {

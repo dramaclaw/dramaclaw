@@ -28,6 +28,10 @@ import {
   shouldForceNaturalImageSize,
 } from '@/features/canvas/application/imageNodeSizing';
 import {
+  nodeBodyImageMeasurement,
+  nodeBodyImageSrc,
+  nodeBodyRecordDescribesImage,
+  readNodeNaturalSize,
   resolveImageDisplayUrl,
   shouldUseOriginalImageByZoom,
   withImageCacheBust,
@@ -161,14 +165,37 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
     return t('node.imageNode.waitingResultDelayed', { minutes: waitedMinutes });
   }, [isExportResultNode, isGenerating, t, waitedMinutes]);
 
-  const imageSource = useMemo(() => {
+  // 已记录的原图像素尺寸；决定主体图能不能喂降采样副本，也是角标的初值。
+  // 跟着 data 的引用走（与下面的 imageSource 同一节奏），避免每次渲染都换新对象。
+  const recordedNaturalSize = useMemo(() => readNodeNaturalSize(data), [data]);
+
+  // 记录里的尺寸没有和 URL 绑定，而主图是会被换掉的（从历史恢复、生成完成回填、
+  // 画册选主图）。真发现记录对不上眼下这张图时，把这个地址记下来：它这一轮改喂
+  // 原图，onLoad 就能量到真尺寸并落库，而不是把一组属于别的图的数字写进去。
+  const [distrustedRecordUrl, setDistrustedRecordUrl] = useState<string | null>(null);
+
+  const bodyImage = useMemo(() => {
     const picked = preferOriginalImage
       ? data.imageUrl || data.previewImageUrl
       : data.previewImageUrl || data.imageUrl;
-    return picked
-      ? resolveImageDisplayUrl(withImageCacheBust(picked, (data as { committed_at?: unknown }).committed_at as string | undefined))
-      : null;
-  }, [data, data.imageUrl, data.previewImageUrl, preferOriginalImage]);
+    if (!picked) return null;
+    const resolved = resolveImageDisplayUrl(
+      withImageCacheBust(picked, (data as { committed_at?: unknown }).committed_at as string | undefined),
+    );
+    // 节点主体把整幅原图解码进几百 CSS px 的盒子里；变体只在真实尺寸已知、
+    // 且没放大到细看那一档时启用，详见 nodeBodyImageSrc 的注释。
+    return nodeBodyImageSrc(resolved, recordedNaturalSize, {
+      preferOriginal: preferOriginalImage || distrustedRecordUrl === resolved,
+    });
+  }, [
+    data,
+    data.imageUrl,
+    data.previewImageUrl,
+    distrustedRecordUrl,
+    preferOriginalImage,
+    recordedNaturalSize,
+  ]);
+  const imageSource = bodyImage?.src ?? null;
 
   // 获取原图 URL 用于查看器
   const originalImageUrl = useMemo(() => {
@@ -180,13 +207,9 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
   // (persisted by the onLoad handler below) and refreshed on every <img> load so
   // the resolution badge shows even for nodes whose size already matched (those
   // skip the persist branch). Drives a top-right resolution chip like the video node.
-  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(() => {
-    const w = (data as { imageNaturalWidth?: unknown }).imageNaturalWidth;
-    const h = (data as { imageNaturalHeight?: unknown }).imageNaturalHeight;
-    return typeof w === 'number' && typeof h === 'number' && w > 0 && h > 0
-      ? { width: w, height: h }
-      : null;
-  });
+  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(
+    () => readNodeNaturalSize(data),
+  );
 
   return (
     <div
@@ -233,13 +256,25 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             alt={isExportResultNode ? t('node.imageNode.resultAlt') : t('node.imageNode.generatedAlt')}
             viewerSourceUrl={originalImageUrl}
             onLoad={(event) => {
-              const naturalW = event.currentTarget.naturalWidth;
-              const naturalH = event.currentTarget.naturalHeight;
-              if (naturalW > 0 && naturalH > 0) {
+              // 记录描述的不是这张图：降采样副本上量不出源图真尺寸，退回原图重
+              // 测一次。preferOriginal 会让下一轮 downscaled 为 false，不会来回抖。
+              if (
+                bodyImage?.downscaled &&
+                !nodeBodyRecordDescribesImage(event.currentTarget, recordedNaturalSize)
+              ) {
+                setDistrustedRecordUrl(bodyImage.original);
+                return;
+              }
+              // 喂的是降采样副本时元素上的 naturalWidth 是变体的尺寸，改用记录里的
+              // 真实尺寸——下面的角标、比例、自动尺寸因此与喂原图时完全一致。
+              const measured = bodyImage
+                ? nodeBodyImageMeasurement(event.currentTarget, bodyImage, recordedNaturalSize)
+                : { width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight };
+              if (measured.width > 0 && measured.height > 0) {
                 setNaturalSize((prev) =>
-                  prev && prev.width === naturalW && prev.height === naturalH
+                  prev && prev.width === measured.width && prev.height === measured.height
                     ? prev
-                    : { width: naturalW, height: naturalH },
+                    : { width: measured.width, height: measured.height },
                 );
               }
               const forceNaturalSize = shouldForceNaturalImageSize(data as Record<string, unknown>);
@@ -247,8 +282,8 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
                 return;
               }
               const nextAspectRatio = aspectRatioFromImageDimensions(
-                event.currentTarget.naturalWidth,
-                event.currentTarget.naturalHeight,
+                measured.width,
+                measured.height,
               );
               if (!nextAspectRatio) {
                 return;
@@ -265,8 +300,8 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
                   lockManualSize: forceNaturalSize ? false : undefined,
                   data: {
                     aspectRatio: nextAspectRatio,
-                    imageNaturalWidth: event.currentTarget.naturalWidth,
-                    imageNaturalHeight: event.currentTarget.naturalHeight,
+                    imageNaturalWidth: measured.width,
+                    imageNaturalHeight: measured.height,
                     imageAspectRatioUpdatedAt: Date.now(),
                   },
                 });

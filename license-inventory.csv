@@ -386,6 +386,7 @@ frontend/src/__tests__/features/canvas/lod-audio-playback.test.tsx,Elastic-2.0,2
 frontend/src/__tests__/features/canvas/lod-shell-fallback-sizes.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/media-model-options.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/mention-display-label.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/node-body-image-variant.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/node-generation-history.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/node-generation-progress.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/node-registry.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

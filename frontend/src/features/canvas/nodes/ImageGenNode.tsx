@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import {
   Handle,
   Position,
+  useStore,
   useUpdateNodeInternals,
   type NodeProps,
 } from '@xyflow/react';
@@ -43,9 +44,14 @@ import {
   resolveModelSizeOptions,
 } from '@/features/canvas/domain/mediaModelOptions';
 import {
+  nodeBodyImageMeasurement,
+  nodeBodyImageSrc,
+  nodeBodyRecordDescribesImage,
   parseAspectRatio,
   pickClosestAspectRatio,
+  readNodeNaturalSize,
   resolveImageDisplayUrl,
+  shouldUseOriginalImageByZoom,
   snapToAllowedAspectRatio,
   withImageCacheBust,
 } from '@/features/canvas/application/imageData';
@@ -815,6 +821,28 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     return null;
   }, [data.imageUrl, data.previewImageUrl, referenceImageUrl]);
   const visiblePreviewUrl = isGenerating ? null : previewUrl;
+  // selector 返回 boolean，平移中每帧变的 transform[0]/[1] 不会触发重渲染，
+  // 只在缩放跨过 1.45 那一次翻转（与 ImageNode/UploadNode 同一条线）。
+  const preferOriginalImage = useStore((state) => shouldUseOriginalImageByZoom(state.transform[2]));
+  // 已记录的原图像素尺寸；决定主体图能不能喂降采样副本，也是角标的初值。
+  const recordedNaturalSize = useMemo(() => readNodeNaturalSize(data), [data]);
+  // 记录里的尺寸没有和 URL 绑定，而主图是会被换掉的（画册选主图、从历史恢复、
+  // 生成完成回填，三条路都只改 imageUrl/previewImageUrl）。真发现记录对不上眼下
+  // 这张图时，把这个地址记下来：它这一轮改喂原图，onLoad 就能量到真尺寸并落库，
+  // 而不是把一组属于别的图的数字写进去。
+  const [distrustedRecordUrl, setDistrustedRecordUrl] = useState<string | null>(null);
+  // 主体图把整幅原图解码进几百 CSS px 的盒子里；变体只在真实尺寸已知、且没放大
+  // 到细看那一档时启用，详见 nodeBodyImageSrc 的注释。查看器仍拿 visiblePreviewUrl。
+  const bodyImage = useMemo(
+    () =>
+      visiblePreviewUrl
+        ? nodeBodyImageSrc(visiblePreviewUrl, recordedNaturalSize, {
+            preferOriginal:
+              preferOriginalImage || distrustedRecordUrl === visiblePreviewUrl,
+          })
+        : null,
+    [distrustedRecordUrl, preferOriginalImage, recordedNaturalSize, visiblePreviewUrl],
+  );
 
   const hasGeneratedResult = Boolean(data.imageUrl);
   // Natural pixel size of the displayed image, mirrored from data when present
@@ -822,13 +850,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   // the resolution badge shows even for nodes whose size already matched (those
   // skip the persist branch). Lets us render a top-right resolution chip like the
   // video node.
-  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(() => {
-    const w = (data as { imageNaturalWidth?: unknown }).imageNaturalWidth;
-    const h = (data as { imageNaturalHeight?: unknown }).imageNaturalHeight;
-    return typeof w === 'number' && typeof h === 'number' && w > 0 && h > 0
-      ? { width: w, height: h }
-      : null;
-  });
+  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(
+    () => readNodeNaturalSize(data),
+  );
   // ── 叠卡画册（count > 1 的一组生成结果）──
   // 收拢时主图后探出 N-1 张卡片边缘；hover 出现右上角数量徽标，点开展开成
   // 宫格画册（同一节点内，天然不可解组）。展开态可对任意一张「设为主图」
@@ -1537,17 +1561,30 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         {visiblePreviewUrl ? (
           <>
             <CanvasNodeImage
-              src={visiblePreviewUrl}
+              src={bodyImage?.src ?? visiblePreviewUrl}
               alt={resolvedTitle}
+              // 双击进查看器的必须是原图，不能跟着 src 走降采样副本。
               viewerSourceUrl={visiblePreviewUrl}
               onLoad={(event) => {
-                const naturalW = event.currentTarget.naturalWidth;
-                const naturalH = event.currentTarget.naturalHeight;
-                if (naturalW > 0 && naturalH > 0) {
+                // 记录描述的不是这张图：降采样副本上量不出源图真尺寸，退回原图重
+                // 测一次。preferOriginal 会让下一轮 downscaled 为 false，不会来回抖。
+                if (
+                  bodyImage?.downscaled &&
+                  !nodeBodyRecordDescribesImage(event.currentTarget, recordedNaturalSize)
+                ) {
+                  setDistrustedRecordUrl(bodyImage.original);
+                  return;
+                }
+                // 喂的是降采样副本时元素上的 naturalWidth 是变体的尺寸，改用记录里的
+                // 真实尺寸——下面的角标、比例、自动尺寸因此与喂原图时完全一致。
+                const measured = bodyImage
+                  ? nodeBodyImageMeasurement(event.currentTarget, bodyImage, recordedNaturalSize)
+                  : { width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight };
+                if (measured.width > 0 && measured.height > 0) {
                   setNaturalSize((prev) =>
-                    prev && prev.width === naturalW && prev.height === naturalH
+                    prev && prev.width === measured.width && prev.height === measured.height
                       ? prev
-                      : { width: naturalW, height: naturalH },
+                      : { width: measured.width, height: measured.height },
                   );
                 }
                 const forceNaturalSize = shouldForceNaturalImageSize(data as Record<string, unknown>);
@@ -1555,8 +1592,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                   return;
                 }
                 const nextAspectRatio = aspectRatioFromImageDimensions(
-                  event.currentTarget.naturalWidth,
-                  event.currentTarget.naturalHeight,
+                  measured.width,
+                  measured.height,
                 );
                 if (!nextAspectRatio) {
                   return;
@@ -1573,8 +1610,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                     lockManualSize: forceNaturalSize ? false : undefined,
                     data: {
                       aspectRatio: nextAspectRatio,
-                      imageNaturalWidth: event.currentTarget.naturalWidth,
-                      imageNaturalHeight: event.currentTarget.naturalHeight,
+                      imageNaturalWidth: measured.width,
+                      imageNaturalHeight: measured.height,
                       imageAspectRatioUpdatedAt: Date.now(),
                     },
                   });

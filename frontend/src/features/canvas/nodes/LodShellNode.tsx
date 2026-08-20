@@ -42,6 +42,7 @@ import {
   subscribeLodStills,
 } from '@/features/canvas/application/videoFrameCapture';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
+import { withMediaVariant } from '@/lib/media-url';
 import {
   nodeHasSourceHandle,
   nodeHasTargetHandle,
@@ -84,10 +85,23 @@ type ShellData = {
   isUploading?: boolean;
 };
 
-/** 每种类型能当缩略图用的字段（回落顺序与各组件的展示逻辑一致）。 */
+/**
+ * shell 里的图一律喂 320px 变体。
+ *
+ * shell 只在 zoom < 0.35 出现，此时最宽的节点（900px）也只占屏幕 315 CSS px，
+ * 常见的 imageNode 更是 203 px；而这一档恰恰是节点最多的时候——一屏几十上百
+ * 个。解码成本只看源图像素数，所以原图在这里是纯浪费：一张 5504x3072 要付
+ * 16.9MP，换成变体是 0.06MP。
+ *
+ * 变体不适用时（blob: 预览、遗留路径、抓帧 data:）withMediaVariant 原样返回，
+ * 行为与改动前一致。shell 不接 onLoad、不测尺寸、不进查看器/导出，所以这里
+ * 没有节点主体那套「先知道真实尺寸才能换」的顾虑。
+ */
 function resolveShellImage(type: string, data: ShellData): string | null {
   const pick = (...candidates: Array<string | null | undefined>) => {
-    for (const c of candidates) if (c) return resolveImageDisplayUrl(c);
+    for (const c of candidates) {
+      if (c) return withMediaVariant(resolveImageDisplayUrl(c), 'thumb');
+    }
     return null;
   };
   switch (type) {
@@ -130,7 +144,10 @@ function LodShell({ type, id, data, selected, width, height }: {
 
   const imageSrc =
     type === 'videoNode'
-      ? (lodStill ?? (data.previewImageUrl ? resolveImageDisplayUrl(data.previewImageUrl) : null))
+      ? (lodStill
+          ?? (data.previewImageUrl
+            ? withMediaVariant(resolveImageDisplayUrl(data.previewImageUrl), 'thumb')
+            : null))
       : resolveShellImage(type, data);
 
   const busy = Boolean(data.isGenerating || data.isUploading);
