@@ -224,6 +224,7 @@ def require_scope(needed: str) -> Callable[[dict], dict]:
             )
         return user
 
+    _check._required_scope = needed  # introspection hook for route-wiring tests
     return _check
 
 

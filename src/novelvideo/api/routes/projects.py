@@ -36,6 +36,10 @@ from novelvideo.embedding_models import (
 )
 from novelvideo.ports import get_project_access, get_project_registry
 from novelvideo.ports.project import ProjectRecord
+from novelvideo.security import (
+    ProjectStorageOwnershipError,
+    assert_owned_project_storage,
+)
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
     load_effective_narration_style_for_voice,
@@ -173,23 +177,32 @@ def _narrator_voice_sample_path(project_dir: str | Path, filename: str) -> Path:
     return Path(project_dir) / "assets" / "narrator" / f"voice{ext}"
 
 
-def _cleanup_uncommitted_project_dirs(record: ProjectRecord) -> None:
-    for path in (Path(record.output_dir), Path(record.state_dir), Path(record.runtime_dir)):
-        if path.exists():
-            shutil.rmtree(path)
+def _validated_owned_dirs(record: ProjectRecord) -> list[Path]:
+    """校验三类目录确属 owner,返回去重后的真实路径;校验失败直接抛出。
 
-
-def _unique_project_storage_paths(paths) -> list[Path]:
+    这是所有对项目整树的移动/删除的唯一入口,任一目录不在
+    ``<root>/<owner>/`` 下即拒绝,禁止碰任何目录。
+    """
+    validated = assert_owned_project_storage(
+        owner_username=record.owner_username,
+        output_dir=record.output_dir,
+        state_dir=record.state_dir,
+        runtime_dir=record.runtime_dir,
+    )
     unique: list[Path] = []
     seen: set[Path] = set()
-    for raw_path in paths:
-        path = Path(raw_path)
-        resolved = path.resolve(strict=False)
-        if resolved in seen:
+    for path in validated.as_tuple():
+        if path in seen:
             continue
-        seen.add(resolved)
+        seen.add(path)
         unique.append(path)
     return unique
+
+
+def _cleanup_uncommitted_project_dirs(record: ProjectRecord) -> None:
+    for path in _validated_owned_dirs(record):
+        if path.exists():
+            shutil.rmtree(path)
 
 
 def _restore_quarantined_project_dirs(quarantined: list[tuple[Path, Path]]) -> None:
@@ -197,21 +210,33 @@ def _restore_quarantined_project_dirs(quarantined: list[tuple[Path, Path]]) -> N
         if not quarantine.exists():
             continue
         if original.exists():
-            shutil.rmtree(original)
+            # 恢复隔离目录时,若原位置已被并发创建/重建占用,绝不递归删除它 ——
+            # 那可能是另一个操作合法写入的新数据。保留双方并报警,交由人工处置。
+            logger.error(
+                "cannot restore isolated dir %s: original path already exists; "
+                "leaving quarantine %s in place for manual recovery",
+                original,
+                quarantine,
+            )
+            continue
         quarantine.replace(original)
 
 
 def _quarantine_project_dirs(
-    paths,
+    record: ProjectRecord,
     *,
     project_id: str,
     reason: str,
 ) -> list[tuple[Path, Path]]:
-    """Atomically detach project directories before releasing their registry name."""
+    """Atomically detach project directories before releasing their registry name.
+
+    仅在 ``record`` 的三类目录全部通过归属校验后才移动;任一目录不属于
+    ``record.owner_username`` 时抛出,不移动任何目录。
+    """
     quarantined: list[tuple[Path, Path]] = []
     token = uuid.uuid4().hex
     try:
-        for original in _unique_project_storage_paths(paths):
+        for original in _validated_owned_dirs(record):
             if not original.exists():
                 continue
             quarantine = original.with_name(
@@ -516,10 +541,9 @@ async def create_project(
                 detail=f"Project '{body.name}' already exists",
             ) from exc
         raise
-    project_dirs = (record.output_dir, record.state_dir, record.runtime_dir)
     try:
         orphaned_dirs = _quarantine_project_dirs(
-            project_dirs,
+            record,
             project_id=record.id,
             reason="orphaned",
         )
@@ -528,10 +552,12 @@ async def create_project(
             await registry.delete_uncommitted_project(record.id)
         except Exception:
             logger.warning("failed to compensate uncommitted project registry row", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="Existing project data could not be isolated. Project was not created.",
-        ) from exc
+        detail = (
+            "Existing project data failed ownership validation; nothing was touched."
+            if isinstance(exc, ProjectStorageOwnershipError)
+            else "Existing project data could not be isolated. Project was not created."
+        )
+        raise HTTPException(status_code=500, detail=detail) from exc
     try:
         ensure_project_dirs_at_paths(
             output_dir=record.output_dir,
@@ -860,7 +886,7 @@ async def _set_project_status(
 @router.post("/projects/{project}/archive")
 async def archive_project(
     project: str,
-    user: dict = Depends(require_scope("projects:write")),
+    user: dict = Depends(require_scope("projects:lifecycle")),
 ):
     ctx = await resolve_project_context(user=user, project_id=project, required_role="owner")
     return await _set_project_status(
@@ -875,7 +901,7 @@ async def archive_project(
 @router.post("/projects/{project}/unarchive")
 async def unarchive_project(
     project: str,
-    user: dict = Depends(require_scope("projects:write")),
+    user: dict = Depends(require_scope("projects:lifecycle")),
 ):
     ctx = await resolve_project_context(user=user, project_id=project, required_role="owner")
     return await _set_project_status(ctx, "active", audit_action="project.unarchive")
@@ -884,7 +910,7 @@ async def unarchive_project(
 @router.post("/projects/{project}/delete")
 async def soft_delete_project(
     project: str,
-    user: dict = Depends(require_scope("projects:write")),
+    user: dict = Depends(require_scope("projects:lifecycle")),
 ):
     ctx = await resolve_project_context(user=user, project_id=project, required_role="owner")
     return await _set_project_status(
@@ -899,7 +925,7 @@ async def soft_delete_project(
 @router.post("/projects/{project}/restore")
 async def restore_project(
     project: str,
-    user: dict = Depends(require_scope("projects:write")),
+    user: dict = Depends(require_scope("projects:lifecycle")),
 ):
     ctx = await resolve_project_context(user=user, project_id=project, required_role="owner")
     record = await get_project_registry().get_project(ctx.project_id)
@@ -911,14 +937,12 @@ async def restore_project(
 @router.post("/projects/{project}/purge")
 async def purge_project(
     project: str,
-    user: dict = Depends(require_scope("projects:write")),
+    user: dict = Depends(require_scope("projects:purge")),
 ):
     """永久删除项目目录；只允许对已进入回收站的项目执行。"""
     ctx = await resolve_project_context(user=user, project_id=project, required_role="owner")
     require_project_home_node(ctx, operation="purge project files")
-    from novelvideo.utils.project_paths import ProjectPaths
 
-    paths = ProjectPaths.from_context(ctx)
     registry = get_project_registry()
     record = await registry.get_project(ctx.project_id)
     if record is None or record.status != "deleted":
@@ -930,15 +954,17 @@ async def purge_project(
         raise HTTPException(status_code=400, detail="Project has already been purged.")
     try:
         quarantined_dirs = _quarantine_project_dirs(
-            (paths.output_dir, paths.state_dir, paths.runtime_dir),
+            record,
             project_id=ctx.project_id,
             reason="purging",
         )
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="Project files could not be isolated. Nothing was permanently deleted.",
-        ) from exc
+        detail = (
+            "Project files failed ownership validation; nothing was permanently deleted."
+            if isinstance(exc, ProjectStorageOwnershipError)
+            else "Project files could not be isolated. Nothing was permanently deleted."
+        )
+        raise HTTPException(status_code=500, detail=detail) from exc
     try:
         record = await registry.mark_project_purged(ctx.project_id)
     except Exception:

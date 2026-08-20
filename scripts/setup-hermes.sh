@@ -20,11 +20,15 @@ mode="${1:-install}"
 HERMES_REPO="${HERMES_REPO:-https://github.com/dramaclaw/hermes-agent.git}"
 HERMES_REF="${HERMES_REF:-brainclaw/evidence-plane}"
 HERMES_SOURCE_DIR="${HERMES_SOURCE_DIR:-$root_dir/.cache/hermes-agent}"
+HERMES_PYTHON="${HERMES_PYTHON:-$root_dir/.venv/bin/python}"
+if [ ! -x "$HERMES_PYTHON" ]; then
+  HERMES_PYTHON="$(command -v python3)"
+fi
 
 # The property this deployment actually depends on: does `_meta` survive the
 # ACP router? Probed in the interpreter that will run the worker.
 fork_is_installed() {
-  python3 - <<'PY' 2>/dev/null
+  "$HERMES_PYTHON" - <<'PY' 2>/dev/null
 import sys
 try:
     from acp_adapter.server import _recover_turn_meta
@@ -63,14 +67,14 @@ if [ -d "$HERMES_SOURCE_DIR/.git" ]; then
   git -C "$HERMES_SOURCE_DIR" checkout --quiet FETCH_HEAD
 else
   echo "Cloning $HERMES_REPO@$HERMES_REF ..."
-  git clone --quiet --branch "$HERMES_REF" "$HERMES_REPO" "$HERMES_SOURCE_DIR" \
-    || { git clone --quiet "$HERMES_REPO" "$HERMES_SOURCE_DIR"
+  git clone --progress --branch "$HERMES_REF" "$HERMES_REPO" "$HERMES_SOURCE_DIR" \
+    || { git clone --progress "$HERMES_REPO" "$HERMES_SOURCE_DIR"
          git -C "$HERMES_SOURCE_DIR" checkout --quiet "$HERMES_REF"; }
 fi
 
 installed_sha="$(git -C "$HERMES_SOURCE_DIR" rev-parse HEAD)"
-uv pip install --system -e "$HERMES_SOURCE_DIR[acp]"
-HERMES_SOURCE_DIR="$HERMES_SOURCE_DIR" python3 "$root_dir/deploy/patch_hermes_acp_toolsets.py"
+uv pip install --python "$HERMES_PYTHON" -e "$HERMES_SOURCE_DIR[acp]"
+HERMES_SOURCE_DIR="$HERMES_SOURCE_DIR" "$HERMES_PYTHON" "$root_dir/deploy/patch_hermes_acp_toolsets.py"
 
 if ! fork_is_installed; then
   echo "Install finished, but the result is not the fork — _meta does not" >&2

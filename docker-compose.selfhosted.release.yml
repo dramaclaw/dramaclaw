@@ -9,6 +9,15 @@
 #   INSTALL_WORLD=1 docker compose -f docker-compose.selfhosted.yml up --build。
 services:
   api:
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+      - /run:rw,noexec,nosuid,nodev,size=16m
     image: claymorelab/dramaclaw:${DRAMACLAW_VERSION:-latest}
     # 运行时从宿主 .env 注入 model/LLM key;镜像版允许没有 .env(首启后再补也行)。
     # environment: 块仍覆盖此处同名变量,保持 CE inline 模式强制不变。
@@ -26,7 +35,7 @@ services:
       NOVELVIDEO_STATE_DIR: /data/state
       NOVELVIDEO_RUNTIME_DIR: /data/runtime
       DRAMACLAW_CHAT_BACKEND: hermes
-      HERMES_CLI_PATH: /root/.local/bin/hermes
+      HERMES_CLI_PATH: /usr/local/bin/hermes
       # 内置 newapi 网关:后端服务端调用走容器内网,覆盖 .env 里的外部网关地址,
       # 让整套自包含、开箱即跑。要 BYO 自己的 OpenAI 兼容网关:删掉下面两行,
       # 改在 .env 里填 NEWAPI_BASE_URL / NEWAPI_API_KEY。
