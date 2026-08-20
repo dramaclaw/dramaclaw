@@ -124,19 +124,36 @@ function outlineMediaUrl(node: CanvasNode): string | null {
 }
 
 /**
- * 副信息只补名字没说的那部分：名字被用户改过（或本来就是提示词）时补类型，
- * 名字本身就是默认类型名时不重复一遍。
+ * 副信息只补名字没说的那部分：
+ * 名字被用户改过（或本来就是提示词）时补类型，名字本身就是默认类型名时不重复一遍；
+ * 再补一个创建时刻，用来区分「同一条提示词生成三次」这种连名字带类型都一样的行。
  *
- * 这里曾经还挂过一个生成时刻，已经拿掉：节点身上唯一的时间字段
- * `generationStartedAt` 是**临时**的——每条生成链路在成功和失败时都会把它写回
- * null（见 VideoNode / ImageGenNode / 各 Overlay），所以时刻只在「正在转圈」那几
- * 十秒里看得见，跑完就消失。一个跑完就蒸发的时间戳，恰恰在最需要它的那一刻
- * （事后回头找「三行同名的视频谁是谁」）什么都不是，留着只会误导。节点上目前没有
- * 任何持久化的创建时刻，真要做得先在 nodeFactory 落一个 createdAt。
+ * 时刻读的是 `createdAt` 而**不是** `generationStartedAt`：后者是临时字段，每条生成
+ * 链路在成功和失败时都会把它写回 null（见 VideoNode / ImageGenNode / 各 Overlay），
+ * 只在转圈那几十秒里看得见，跑完就蒸发——恰恰在事后回头找「谁是谁」的那一刻什么
+ * 都不剩。`createdAt` 由 nodeFactory 在建节点时落一次，之后没人改。
+ *
+ * 用绝对时刻而不是「3 分钟前」：相对时间要么算 Date.now() 污染纯函数，要么显示的是
+ * 上次渲染那一刻的旧值。加字段之前存的老画布没有 createdAt，那些行退回只显示类型。
  */
 function outlineMeta(node: CanvasNode, type: CanvasNodeType, name: string): string | null {
+  const parts: string[] = [];
   const typeLabel = getDefaultNodeDisplayName(type, node.data);
-  return typeLabel && typeLabel !== name ? typeLabel : null;
+  if (typeLabel && typeLabel !== name) {
+    parts.push(typeLabel);
+  }
+  const createdAt = (node.data as { createdAt?: unknown }).createdAt;
+  if (typeof createdAt === "number" && Number.isFinite(createdAt) && createdAt > 0) {
+    parts.push(formatOutlineStamp(createdAt));
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function formatOutlineStamp(epochMs: number): string {
+  const date = new Date(epochMs);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function toOutlineItem(node: CanvasNode): CanvasOutlineItem {
@@ -895,7 +912,8 @@ const CanvasOutlineRow = memo(function CanvasOutlineRow(props: OutlineRowProps) 
         >
           {item.name}
         </span>
-        {/* 名字撞车时（同一条提示词生成三次）靠这行分辨谁是谁 */}
+        {/* 名字撞车时（同一条提示词生成三次）靠这行分辨谁是谁——见 outlineMeta，
+            时刻来自持久的 createdAt，别改回跑完就被清空的 generationStartedAt */}
         {item.meta && (
           <span className="truncate text-xs leading-4 text-text-muted/75">{item.meta}</span>
         )}
