@@ -60,6 +60,8 @@ class FeatureSettlementResolution:
     def trusted_billing_metadata(self) -> dict[str, str]:
         if self.outcome != "resolved":
             return {}
+        if not self.feature_key or not self.model_call_credit_policy:
+            raise ValueError("resolved settlement requires a complete billing snapshot")
         return {
             key: value
             for key, value in {
@@ -79,7 +81,11 @@ class FeatureSettlementResolutionRejected(RuntimeError):
             raise ValueError("unsupported rejected settlement outcome")
         self.outcome = outcome
         self.code = f"FEATURE_SETTLEMENT_RESOLUTION_{outcome.upper()}"
-        super().__init__("feature settlement resolution is not safe to execute")
+        message = {
+            "ambiguous": "feature settlement resolution is ambiguous",
+            "conflict": "feature settlement resolution conflicts with durable state",
+        }[outcome]
+        super().__init__(message)
 
 
 class FeatureCreditSettlementConflict(RuntimeError):

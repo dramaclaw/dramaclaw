@@ -438,6 +438,20 @@ async def test_authz_service_failure_is_not_misclassified_as_stale(
 
 
 @pytest.mark.asyncio
+async def test_unclassified_authz_failure_is_retryable_unknown() -> None:
+    from novelvideo.task_backend.consumer import TaskEnvelopeConsumer
+    from novelvideo.task_backend.envelope import TaskAuthorityUnavailable
+
+    authz = RaisingAuthz(RuntimeError())
+    consumer = TaskEnvelopeConsumer(keyring=KEYRING, authz=authz, clock=lambda: NOW)
+
+    with pytest.raises(TaskAuthorityUnavailable) as captured:
+        await consumer.consume(_billed_delivery(), expected_root_task_id="task-root")
+
+    assert captured.value.failure_kind == "unknown"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["flat_mismatch", "tampered_signature", "expired"])
 async def test_unverified_rejection_withholds_settlement_identity(case):
     """签名没通过就没有可信身份，绝不能拿它驱动资金动作。"""

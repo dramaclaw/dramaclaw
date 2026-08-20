@@ -23,13 +23,33 @@ from novelvideo.task_backend import cancel as cancel_module
 from novelvideo.task_backend.consumer import TaskEnvelopeConsumer, VerifiedTaskDelivery
 from novelvideo.task_backend.envelope import (
     InvalidTaskEnvelope,
+    RejectedTaskSettlement,
     SignedTaskEnvelope,
+    TaskAuthorityUnavailable,
 )
 from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_state import get_task_manager
 
 SIGNING_KEY = b"t" * 32
 NOW = datetime(2026, 8, 3, 4, 5, 7, tzinfo=timezone.utc)
+
+
+def test_unknown_task_authority_failure_preserves_unavailable_public_contract():
+    settlement = RejectedTaskSettlement(
+        project_id="project-1",
+        requester_user_id="user-1",
+        root_task_id="task-1",
+        task_type="single_video",
+        episode=1,
+        beat_num=None,
+        scope=None,
+    )
+
+    exc = TaskAuthorityUnavailable(failure_kind="unknown", settlement=settlement)
+
+    assert exc.code == "TASK_AUTHZ_UNAVAILABLE"
+    assert str(exc) == "task authorization service is unavailable"
+    assert exc.failure_kind == "unknown"
 
 
 def _admission(*, user_id: str, root_task_id: str, key_version: int = 1):

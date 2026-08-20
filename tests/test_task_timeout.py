@@ -216,7 +216,10 @@ def test_run_project_task_core_persists_result_before_confirming_credit(monkeypa
             from novelvideo.ports.usage import FeatureSettlementResolution
 
             return FeatureSettlementResolution(
-                outcome="resolved", reservation_id="reservation_1"
+                outcome="resolved",
+                reservation_id="reservation_1",
+                feature_key="mainline.test_feature",
+                model_call_credit_policy="feature_included",
             )
 
         async def settle_feature_credit_reservation(
@@ -283,7 +286,10 @@ def test_run_project_task_core_confirms_delivered_result_when_task_state_write_f
             from novelvideo.ports.usage import FeatureSettlementResolution
 
             return FeatureSettlementResolution(
-                outcome="resolved", reservation_id="reservation_1"
+                outcome="resolved",
+                reservation_id="reservation_1",
+                feature_key="mainline.test_feature",
+                model_call_credit_policy="feature_included",
             )
 
         async def settle_feature_credit_reservation(
@@ -351,7 +357,10 @@ def test_run_project_task_core_confirms_runner_result_even_when_read_model_ignor
             from novelvideo.ports.usage import FeatureSettlementResolution
 
             return FeatureSettlementResolution(
-                outcome="resolved", reservation_id="reservation_1"
+                outcome="resolved",
+                reservation_id="reservation_1",
+                feature_key="mainline.test_feature",
+                model_call_credit_policy="feature_included",
             )
 
         async def settle_feature_credit_reservation(

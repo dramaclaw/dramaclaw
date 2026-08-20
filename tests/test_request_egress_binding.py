@@ -275,7 +275,7 @@ async def test_request_authz_read_recovers_within_short_retry_budget(monkeypatch
     port = _SequencedAuthz(
         [
             AuthzServiceUnavailable(),
-            AuthzServiceFault(),
+            AuthzServiceUnavailable(),
             object(),
         ]
     )
@@ -292,7 +292,7 @@ async def test_request_authz_read_recovers_within_short_retry_budget(monkeypatch
 async def test_request_authz_retry_exhaustion_preserves_service_subtype(monkeypatch):
     failures = [
         AuthzServiceUnavailable(),
-        AuthzServiceFault(),
+        AuthzServiceUnavailable(),
         AuthzServiceUnavailable(),
     ]
     port = _SequencedAuthz(failures)
@@ -306,6 +306,20 @@ async def test_request_authz_retry_exhaustion_preserves_service_subtype(monkeypa
     assert caught.value.http_status == 503
     assert len(port.calls) == 3
     assert len({root_task_id for _, root_task_id in port.calls}) == 1
+
+
+async def test_request_authz_service_fault_fails_fast_with_http_semantics(monkeypatch):
+    failure = AuthzServiceFault()
+    port = _SequencedAuthz([failure])
+    _use(monkeypatch, port)
+    _disable_retry_wait(monkeypatch)
+
+    with pytest.raises(AuthzServiceFault) as caught:
+        await _build()
+
+    assert caught.value is failure
+    assert caught.value.http_status == 503
+    assert len(port.calls) == 1
 
 
 # --- C1-9 ------------------------------------------------------------------

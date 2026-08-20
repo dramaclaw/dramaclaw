@@ -61,9 +61,11 @@ class TaskAuthorityUnavailable(RuntimeError):
 
     _CODE_BY_FAILURE_KIND = {
         "unavailable": "TASK_AUTHZ_UNAVAILABLE",
+        "unknown": "TASK_AUTHZ_UNAVAILABLE",
     }
     _MESSAGE_BY_FAILURE_KIND = {
         "unavailable": "task authorization service is unavailable",
+        "unknown": "task authorization service is unavailable",
     }
 
     def __init__(

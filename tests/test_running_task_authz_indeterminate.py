@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from novelvideo.ports.authz import AdmissionContext, BillingPrincipal
 from novelvideo.ports.model_credentials import CredentialReference
 from novelvideo.task_backend.consumer import VerifiedTaskDelivery
@@ -189,6 +191,93 @@ def test_ambiguous_settlement_resolution_fails_before_runner(monkeypatch) -> Non
     assert manager.failures[0]["metadata"]["error_code"] == (
         "FEATURE_SETTLEMENT_RESOLUTION_AMBIGUOUS"
     )
+
+
+@pytest.mark.parametrize("outcome", ["ambiguous", "conflict"])
+def test_rejected_resolution_remains_marker_owned_when_fast_path_write_fails(
+    monkeypatch,
+    outcome: str,
+) -> None:
+    from novelvideo.ports.usage import FeatureSettlementResolution
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    class Usage:
+        async def resolve_feature_credit_reservation(self, _identity):
+            return FeatureSettlementResolution(outcome=outcome)
+
+    class FailingManager(Manager):
+        def fail_task_for_project(self, *_args, **_kwargs) -> None:
+            raise ConnectionError("postgres://user:secret-canary@internal")
+
+    def runner(_envelope, _ctx):
+        raise AssertionError("rejected resolution must not start runner")
+
+    register_project_task_runner("running_authz_probe", runner)
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: Usage())
+
+    result = run_core.run_project_task_core_sync(
+        _delivery(),
+        SimpleNamespace(
+            project_id="project-1", requester_user_id="user-1", is_home_node=True
+        ),
+        FailingManager(),
+        run_task_id="task-1",
+    )
+
+    assert result == {
+        "failed": True,
+        "error_code": f"FEATURE_SETTLEMENT_RESOLUTION_{outcome.upper()}",
+    }
+
+
+def test_incomplete_resolved_snapshot_fails_before_runner(monkeypatch) -> None:
+    from novelvideo.ports.usage import FeatureSettlementResolution
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+
+    invoked = False
+
+    class Usage:
+        async def resolve_feature_credit_reservation(self, _identity):
+            return FeatureSettlementResolution(
+                outcome="resolved",
+                reservation_id="feature-reservation-1",
+            )
+
+    def runner(_envelope, _ctx):
+        nonlocal invoked
+        invoked = True
+        raise AssertionError("incomplete snapshot must not start runner")
+
+    async def not_cancelled(**_kwargs):
+        return False
+
+    register_project_task_runner("running_authz_probe", runner)
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "is_cancel_requested", not_cancelled)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: Usage())
+    monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
+    monkeypatch.setattr(
+        run_core, "_set_project_task_metrics_context", lambda *_a, **_k: None
+    )
+
+    manager = Manager()
+    result = run_core.run_project_task_core_sync(
+        _delivery(),
+        SimpleNamespace(
+            project_id="project-1", requester_user_id="user-1", is_home_node=True
+        ),
+        manager,
+        run_task_id="task-1",
+    )
+
+    assert result == {
+        "failed": True,
+        "error_code": "FEATURE_SETTLEMENT_RESOLUTION_FAILED",
+    }
+    assert invoked is False
 
 
 def test_settlement_resolution_fault_fails_task_before_runner(monkeypatch) -> None:

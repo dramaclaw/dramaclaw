@@ -382,6 +382,13 @@ async def _start_or_enqueue_freezone_video_gen(
         freezone_video_generate_task_billing,
     )
 
+    if ctx is not None:
+        await _require_scoped_media_model(
+            "video",
+            catalog_id or model_id or backend,
+            requester_user_id=ctx.requester_user_id,
+        )
+
     # Catalog fields are optional for backward compatibility. Missing means
     # the legacy behavior (native audio supported); an explicit false is an
     # authoritative capability boundary and cannot be bypassed by old clients.
@@ -444,6 +451,16 @@ async def _start_or_enqueue_freezone_video_gen(
         effective_duration_seconds = max(int(duration_seconds), 1)
     else:
         raise HTTPException(400, "duration_seconds is required for this video mode")
+
+    # Duration probing above may await external media inspection. Recheck the
+    # authoritative organization scope after that asynchronous boundary so a
+    # model revoked in the meantime cannot be billed or enqueued.
+    if ctx is not None:
+        await _require_scoped_media_model(
+            "video",
+            catalog_id or model_id or backend,
+            requester_user_id=ctx.requester_user_id,
+        )
 
     billing = freezone_video_generate_task_billing(
         {
@@ -584,6 +601,12 @@ async def _start_or_enqueue_freezone_gen_job(
     model_params: dict[str, Any] | None = None,
     request_schema: dict[str, Any] | None = None,
 ) -> dict:
+    if ctx is not None:
+        await _require_scoped_media_model(
+            "image",
+            catalog_id or model_id or model or FREEZONE_DEFAULT_IMAGE_MODEL,
+            requester_user_id=ctx.requester_user_id,
+        )
     reference_paths = _resolve_url_list(project_dir, reference_urls)
     for path_text in reference_paths:
         if not Path(path_text).exists():
@@ -2034,6 +2057,11 @@ async def _start_or_enqueue_mainline_scene_360_task(
 ) -> dict:
     task_type = "stage_asset"
     step = "pano_from_master"
+    await _require_scoped_media_model(
+        "image",
+        catalog_id or model or FREEZONE_DEFAULT_IMAGE_MODEL,
+        requester_user_id=ctx.requester_user_id,
+    )
     master_paths = _resolve_url_list(project_dir, [master_url])
     if not master_paths:
         raise HTTPException(400, "master_url is required")
@@ -2144,6 +2172,12 @@ async def _start_or_enqueue_freezone_edit_job(
     billing_feature_key: str = "",
     billing_operation: str = "",
 ) -> dict:
+    if ctx is not None:
+        await _require_scoped_media_model(
+            "image",
+            catalog_id or model_id or model or FREEZONE_DEFAULT_IMAGE_MODEL,
+            requester_user_id=ctx.requester_user_id,
+        )
     base_paths = _resolve_url_list(project_dir, [base_url])
     if not base_paths:
         raise HTTPException(400, "base_url is required")
@@ -2291,6 +2325,12 @@ async def _start_or_enqueue_freezone_edit_path(
     billing_operation: str,
 ) -> dict:
     task_type = "freezone_edit"
+    if ctx is not None:
+        await _require_scoped_media_model(
+            "image",
+            model or FREEZONE_DEFAULT_IMAGE_MODEL,
+            requester_user_id=ctx.requester_user_id,
+        )
     from novelvideo.api.routes.model_credits import freezone_image_task_billing
 
     billing = freezone_image_task_billing(
@@ -2359,6 +2399,12 @@ async def _start_or_enqueue_freezone_mask_edit_path(
     billing_operation: str,
 ) -> dict:
     task_type = "freezone_mask_edit"
+    if ctx is not None:
+        await _require_scoped_media_model(
+            "image",
+            model or FREEZONE_DEFAULT_IMAGE_MODEL,
+            requester_user_id=ctx.requester_user_id,
+        )
     from novelvideo.api.routes.model_credits import freezone_image_task_billing
 
     billing = freezone_image_task_billing(
@@ -4406,7 +4452,11 @@ async def freezone_gen(
         project, user
     )
     request_schema, model_params, catalog_entry = await _resolve_catalog_request(
-        "image", body.model_id or body.model, body.model_params, mode=body.gen_mode
+        "image",
+        body.model_id or body.model,
+        body.model_params,
+        mode=body.gen_mode,
+        requester_user_id=ctx.requester_user_id,
     )
     execution_provider, execution_model = _catalog_image_execution_selection(
         catalog_entry,
@@ -4610,6 +4660,7 @@ async def freezone_scene_360(
         body.catalog_id or body.model,
         None,
         mode="image_to_image",
+        requester_user_id=ctx.requester_user_id,
     )
     # 只取模型：这条老路由的 provider 是 scene_360_builder 那边按环境变量解析的
     # （`resolve_scene_360_image_provider`），不走网关那套 provider/model 组合，
@@ -5208,6 +5259,7 @@ async def freezone_template_edit(
         body.catalog_id or body.model,
         None,
         mode="image_to_image",
+        requester_user_id=ctx.requester_user_id,
     )
     # provider 也一并取目录条目的：这条路由和 /freezone/edit 共用
     # `_start_or_enqueue_freezone_edit_job`，它会按 provider/model 走网关，
@@ -7328,6 +7380,92 @@ async def _ee_media_model_catalog(media_type: str) -> list[dict[str, Any]] | Non
     return await catalog.list_models(media_type)
 
 
+async def _scoped_media_model_catalog(
+    media_type: str,
+    *,
+    requester_user_id: str,
+) -> list[dict[str, Any]] | None:
+    """Read the catalog for the authenticated user without accepting an org id.
+
+    CE supplies only the trusted user id resolved by ``ProjectContext``. EE owns
+    the user-to-organization decision and the effective visibility expression.
+    A registered control-plane catalog must support the scoped method; silently
+    falling back to the platform-wide list would turn an integration mismatch
+    into a tenant-isolation bypass.
+    """
+    from typing import cast
+
+    from novelvideo.ports.media_model_catalog import MediaModelCatalogPort
+    from novelvideo.ports.registry import PortNotRegistered, get_port
+
+    try:
+        catalog = cast(MediaModelCatalogPort, get_port("media_model_catalog"))
+    except PortNotRegistered:
+        return await _ee_media_model_catalog(media_type)
+
+    clean_user_id = str(requester_user_id or "").strip()
+    if not clean_user_id:
+        raise HTTPException(401, "无法确认当前用户身份")
+    try:
+        return await catalog.list_models_for_user(
+            media_type,
+            user_id=clean_user_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - cross-edition port boundary
+        code = str(getattr(exc, "code", "") or "")
+        if code == "MEDIA_MODEL_SCOPE_DENIED":
+            raise HTTPException(403, "当前账号无权使用媒体模型") from None
+        logger.exception("failed to resolve scoped media model catalog")
+        raise HTTPException(503, "媒体模型目录暂不可用，请稍后重试") from None
+
+
+def _media_model_unavailable(media_type: str, catalog: list[dict[str, Any]]) -> HTTPException:
+    media_label = "图片" if media_type == "image" else "视频"
+    detail = (
+        f"当前没有可用的{media_label}模型，请联系管理员或刷新后重试"
+        if not catalog
+        else "该媒体模型未对当前组织开放、已停用或不存在，请刷新后选择其他模型"
+    )
+    return HTTPException(409, detail)
+
+
+async def _require_scoped_media_model(
+    media_type: str,
+    requested: str | None,
+    *,
+    requester_user_id: str,
+) -> dict[str, Any] | None:
+    """Recheck model visibility immediately before billing and enqueueing."""
+    from novelvideo.ports.registry import PortNotRegistered, get_port
+
+    try:
+        get_port("media_model_catalog")
+    except PortNotRegistered:
+        # Community Edition owns its local model map and has no organization
+        # policy to enforce. Keep its existing submission behavior unchanged.
+        return None
+    catalog = await _scoped_media_model_catalog(
+        media_type,
+        requester_user_id=requester_user_id,
+    )
+    if catalog is None:
+        return None
+    clean_requested = str(requested or "").strip()
+    entry = next(
+        (
+            item
+            for item in catalog
+            if clean_requested in _catalog_entry_identifiers(item)
+        ),
+        None,
+    )
+    if entry is None:
+        raise _media_model_unavailable(media_type, catalog)
+    return entry
+
+
 def _static_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
     from novelvideo.model_gateway_settings import get_official_media_model_catalog
 
@@ -7427,9 +7565,17 @@ async def _resolve_catalog_request(
     model_params: dict[str, Any] | None,
     *,
     mode: str | None = None,
+    requester_user_id: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     requested = str(model or "").strip()
-    catalog = await _ee_media_model_catalog(media_type)
+    catalog = (
+        await _scoped_media_model_catalog(
+            media_type,
+            requester_user_id=requester_user_id,
+        )
+        if requester_user_id is not None
+        else await _ee_media_model_catalog(media_type)
+    )
     entry = next(
         (
             item
@@ -7442,13 +7588,7 @@ async def _resolve_catalog_request(
         # In EE the catalog is authoritative. Never fall back to CE's static
         # model map when no enabled model matches the submitted identifier.
         if catalog is not None and requested:
-            media_label = "图片" if media_type == "image" else "视频"
-            detail = (
-                f"当前没有可用的{media_label}模型，请联系管理员或刷新后重试"
-                if not catalog
-                else "该媒体模型已停用或不存在，请刷新页面后选择其他模型"
-            )
-            raise HTTPException(409, detail)
+            raise _media_model_unavailable(media_type, catalog)
         if model_params:
             raise HTTPException(
                 400, "model parameters require a configured media model"
@@ -7481,18 +7621,6 @@ async def _resolve_catalog_request(
     except MediaModelSchemaError as exc:
         raise HTTPException(400, str(exc)) from exc
     return schema, values, entry
-
-
-async def _catalog_video_capabilities(model: str | None) -> dict[str, Any] | None:
-    requested = str(model or "").strip()
-    return next(
-        (
-            item
-            for item in (await _ee_media_model_catalog("video")) or []
-            if requested in _catalog_entry_identifiers(item)
-        ),
-        None,
-    )
 
 
 def _catalog_mode_enabled(
@@ -7645,10 +7773,22 @@ def _catalog_duration_bounds(
     return _bound("minDuration"), _bound("maxDuration")
 
 
-async def _resolve_catalog_video_backend(model: str | None) -> str:
+async def _resolve_catalog_video_backend(
+    model: str | None,
+    *,
+    requester_user_id: str | None = None,
+) -> str:
     requested = str(model or "").strip()
     if requested:
-        for entry in (await _ee_media_model_catalog("video")) or []:
+        catalog = (
+            await _scoped_media_model_catalog(
+                "video",
+                requester_user_id=requester_user_id,
+            )
+            if requester_user_id is not None
+            else await _ee_media_model_catalog("video")
+        )
+        for entry in catalog or []:
             if requested in _catalog_entry_identifiers(entry):
                 return str(entry.get("apiModel") or requested)
     return resolve_freezone_video_backend(model)
@@ -7670,8 +7810,13 @@ async def freezone_video_models(
     user: dict = Depends(get_api_user),
 ):
     """视频处理：返回和 NovelVideo 视频模型下拉一致的可见模型。"""
-    await _resolve_freezone_project(project, user, required_role="viewer")
-    catalog = await _ee_media_model_catalog("video")
+    ctx, _username, _project_name, _project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
+    )
+    catalog = await _scoped_media_model_catalog(
+        "video",
+        requester_user_id=ctx.requester_user_id,
+    )
     return {
         "ok": True,
         "data": get_freezone_video_model_options() if catalog is None else catalog,
@@ -7684,8 +7829,13 @@ async def freezone_image_models(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：返回和 NovelVideo 图片模型下拉一致的可见模型。"""
-    await _resolve_freezone_project(project, user, required_role="viewer")
-    catalog = await _ee_media_model_catalog("image")
+    ctx, _username, _project_name, _project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
+    )
+    catalog = await _scoped_media_model_catalog(
+        "image",
+        requester_user_id=ctx.requester_user_id,
+    )
     if catalog is not None:
         return {"ok": True, "data": catalog}
     options = image_generation_selection_options()
@@ -8235,7 +8385,10 @@ async def freezone_video_gen(
     if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
         raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
     try:
-        backend = await _resolve_catalog_video_backend(body.model)
+        backend = await _resolve_catalog_video_backend(
+            body.model,
+            requester_user_id=ctx.requester_user_id,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -8244,6 +8397,7 @@ async def freezone_video_gen(
         body.model,
         body.model_params,
         mode=body.gen_mode,
+        requester_user_id=ctx.requester_user_id,
     )
     _require_catalog_video_mode(
         capabilities,
@@ -8330,7 +8484,10 @@ async def freezone_video_i2v(
     if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
         raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
     try:
-        backend = await _resolve_catalog_video_backend(body.model)
+        backend = await _resolve_catalog_video_backend(
+            body.model,
+            requester_user_id=ctx.requester_user_id,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -8341,6 +8498,7 @@ async def freezone_video_i2v(
         body.model,
         body.model_params,
         mode=requested_mode,
+        requester_user_id=ctx.requester_user_id,
     )
     _require_catalog_video_mode(capabilities, requested_mode)
 
@@ -8456,7 +8614,10 @@ async def freezone_video_keyframes(
     elif not (body.first_frame_url or body.last_frame_url):
         raise HTTPException(400, "firstLastFrame requires at least one keyframe")
     try:
-        backend = await _resolve_catalog_video_backend(body.model)
+        backend = await _resolve_catalog_video_backend(
+            body.model,
+            requester_user_id=ctx.requester_user_id,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -8470,6 +8631,7 @@ async def freezone_video_keyframes(
         body.model,
         body.model_params,
         mode=requested_mode,
+        requester_user_id=ctx.requester_user_id,
     )
     _require_catalog_video_mode(capabilities, requested_mode)
     reference_limits = _catalog_reference_limits(
@@ -8578,7 +8740,10 @@ async def freezone_video_omni_gen(
     if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
         raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
     try:
-        backend = await _resolve_catalog_video_backend(body.model)
+        backend = await _resolve_catalog_video_backend(
+            body.model,
+            requester_user_id=ctx.requester_user_id,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     request_schema, model_params, capabilities = await _resolve_catalog_request(
@@ -8586,6 +8751,7 @@ async def freezone_video_omni_gen(
         body.model,
         body.model_params,
         mode=body.gen_mode,
+        requester_user_id=ctx.requester_user_id,
     )
     mode_enabled = _catalog_mode_enabled(capabilities, "all_reference")
     if mode_enabled is False:
@@ -8727,7 +8893,10 @@ async def freezone_video_edit(
     if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
         raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
     try:
-        backend = await _resolve_catalog_video_backend(body.model)
+        backend = await _resolve_catalog_video_backend(
+            body.model,
+            requester_user_id=ctx.requester_user_id,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     request_schema, model_params, capabilities = await _resolve_catalog_request(
@@ -8735,6 +8904,7 @@ async def freezone_video_edit(
         body.model,
         body.model_params,
         mode=body.gen_mode,
+        requester_user_id=ctx.requester_user_id,
     )
     mode_enabled = _catalog_mode_enabled(capabilities, "video_edit")
     if mode_enabled is False or (
@@ -9317,6 +9487,7 @@ async def freezone_edit(
         body.model_id or body.model,
         body.model_params,
         mode=body.gen_mode,
+        requester_user_id=ctx.requester_user_id,
     )
     execution_provider, execution_model = _catalog_image_execution_selection(
         catalog_entry,

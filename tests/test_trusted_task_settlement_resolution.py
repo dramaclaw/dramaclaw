@@ -31,6 +31,30 @@ def test_resolved_feature_settlement_requires_reservation_id() -> None:
         FeatureSettlementResolution(outcome="resolved")
 
 
+@pytest.mark.parametrize(
+    ("feature_key", "model_call_credit_policy"),
+    [
+        ("", "feature_included"),
+        ("mainline.single_video", ""),
+    ],
+)
+def test_resolved_feature_settlement_requires_complete_billing_snapshot(
+    feature_key: str,
+    model_call_credit_policy: str,
+) -> None:
+    from novelvideo.ports.usage import FeatureSettlementResolution
+
+    resolution = FeatureSettlementResolution(
+        outcome="resolved",
+        reservation_id="feature-res-1",
+        feature_key=feature_key,
+        model_call_credit_policy=model_call_credit_policy,
+    )
+
+    with pytest.raises(ValueError, match="billing snapshot"):
+        resolution.trusted_billing_metadata()
+
+
 def test_resolved_feature_settlement_builds_authoritative_billing_snapshot() -> None:
     from novelvideo.ports.usage import FeatureSettlementResolution
 
@@ -46,6 +70,22 @@ def test_resolved_feature_settlement_builds_authoritative_billing_snapshot() -> 
         "feature_key": "mainline.single_video",
         "model_call_credit_policy": "feature_included",
     }
+
+
+@pytest.mark.parametrize(
+    ("outcome", "message"),
+    [
+        ("ambiguous", "feature settlement resolution is ambiguous"),
+        ("conflict", "feature settlement resolution conflicts with durable state"),
+    ],
+)
+def test_rejected_resolution_error_matches_terminalization_marker(
+    outcome: str,
+    message: str,
+) -> None:
+    from novelvideo.ports.usage import FeatureSettlementResolutionRejected
+
+    assert str(FeatureSettlementResolutionRejected(outcome)) == message
 
 
 @pytest.mark.parametrize("field", ["feature_key", "model_call_credit_policy"])

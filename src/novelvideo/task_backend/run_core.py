@@ -250,6 +250,7 @@ async def _resolve_feature_reservation_id(
     )
     resolution = await get_usage_meter().resolve_feature_credit_reservation(identity)
     if resolution.outcome == "resolved":
+        resolution.trusted_billing_metadata()
         return resolution
     if resolution.outcome == "not_applicable":
         return resolution
@@ -419,14 +420,10 @@ async def refund_undelivered_feature_credit_reservation(
             reservation_id,
             metadata=metadata,
         )
-    except FeatureCreditSettlementConflict as exc:
+    except FeatureCreditSettlementConflict:
         logger.warning(
-            "feature_credit_settlement_conflict",
-            extra={
-                "settlement_action": "refund_cancelled",
-                "safe_error_type": type(exc).__name__,
-                "error_id": uuid.uuid4().hex,
-            },
+            "undelivered feature credit refund conflicts with durable settlement",
+            extra={"failure_kind": "settlement_action_conflict"},
         )
         return SettlementIntentResult(accepted=False, retryable=False)
     except Exception as exc:  # noqa: BLE001
@@ -709,16 +706,25 @@ def run_project_task_core_sync(
             )
         )
     except FeatureSettlementResolutionRejected as exc:
-        manager.fail_task_for_project(
-            ctx,
-            task_type,
-            episode,
-            beat_num=beat_num,
-            scope=scope,
-            error=str(exc),
-            metadata={**run_metadata, "error_code": exc.code},
-            expected_task_id=run_task_id,
-        )
+        try:
+            manager.fail_task_for_project(
+                ctx,
+                task_type,
+                episode,
+                beat_num=beat_num,
+                scope=scope,
+                error=str(exc),
+                metadata={**run_metadata, "error_code": exc.code},
+                expected_task_id=run_task_id,
+            )
+        except Exception as terminalization_exc:  # noqa: BLE001
+            logger.error(
+                "feature_settlement_resolution_rejected_fast_path_failed",
+                extra={
+                    "safe_error_type": type(terminalization_exc).__name__,
+                    "error_id": uuid.uuid4().hex,
+                },
+            )
         return {"failed": True, "error_code": exc.code}
     except Exception as exc:  # noqa: BLE001
         error_code = "FEATURE_SETTLEMENT_RESOLUTION_FAILED"

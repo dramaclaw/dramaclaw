@@ -160,7 +160,6 @@ class NoOpUsageMeter:
             "action": "review",
             "status": "awaiting",
         }
-
     async def mark_current_paid_execution_attempt(
         self,
         *,
