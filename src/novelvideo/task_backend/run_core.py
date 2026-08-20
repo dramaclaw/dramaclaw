@@ -239,6 +239,13 @@ async def _resolve_feature_reservation_id(
     beat_num: Any,
     scope: Any,
 ) -> FeatureSettlementResolution:
+    payload = delivery.payload if type(delivery.payload) is dict else {}
+    billing = payload.get("billing")
+    signed_feature_key = (
+        str(billing.get("feature_key") or "").strip()
+        if type(billing) is dict and type(billing.get("feature_key")) is str
+        else ""
+    )
     identity = VerifiedTaskSettlementIdentity(
         root_task_id=delivery.admission.root_task_id,
         project_id=delivery.project_id,
@@ -247,6 +254,7 @@ async def _resolve_feature_reservation_id(
         episode=episode,
         beat_num=beat_num if type(beat_num) is int else None,
         scope=scope if type(scope) is str else None,
+        feature_key=signed_feature_key,
     )
     resolution = await get_usage_meter().resolve_feature_credit_reservation(identity)
     if resolution.outcome == "resolved":

@@ -17,6 +17,7 @@ class VerifiedTaskSettlementIdentity:
     episode: int
     beat_num: int | None
     scope: str | None
+    feature_key: str = ""
 
 
 @dataclass(frozen=True)

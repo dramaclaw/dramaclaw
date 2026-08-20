@@ -44,7 +44,7 @@ def _delivery() -> VerifiedTaskDelivery:
         beat_num=None,
         scope=None,
         queue_kind="default",
-        payload={},
+        payload={"billing": {"feature_key": "freezone.image_edit"}},
         billing_metadata={
             "feature_credit_reservation_id": "foreign-reservation",
             "feature_credit_charge_id": "foreign-charge",
@@ -69,6 +69,7 @@ def test_post_start_authz_indeterminate_is_review_only(monkeypatch) -> None:
             assert identity.root_task_id == "task-1"
             assert identity.project_id == "project-1"
             assert identity.requester_user_id == "user-1"
+            assert identity.feature_key == "freezone.image_edit"
             return FeatureSettlementResolution(
                 outcome="resolved",
                 reservation_id="reservation-1",
