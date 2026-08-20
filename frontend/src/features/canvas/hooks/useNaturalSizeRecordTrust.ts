@@ -41,6 +41,12 @@ export function useNaturalSizeRecordTrust(subject: string | null): {
   }, []);
 
   useEffect(() => {
+    // 「暂时没有图」不是换图。生成期间 ImageGenNode 明确把主体图置空
+    // （visiblePreviewUrl = null），于是典型序列是 旧图 A → 生成中 null → 新结果
+    // B。把 null 也记成「上一张」，B 到来时看到的 previous 就是 null，会被当成首
+    // 次挂载而白白信任旧记录——偏偏这一刻最需要失信。所以只记非空 subject，
+    // knownSubject 存的是「最后一张真的图」，中间藏起来多久都不影响。
+    if (subject === null) return;
     const previous = knownSubject.current;
     knownSubject.current = subject;
     // 首次挂载没有「上一张」可比：记录是持久化下来的，只能先信。真存歪了还有

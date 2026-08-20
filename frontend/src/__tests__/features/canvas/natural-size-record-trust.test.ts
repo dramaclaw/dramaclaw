@@ -77,4 +77,36 @@ describe("useNaturalSizeRecordTrust", () => {
     act(() => result.current.distrustRecord());
     expect(result.current.distrusted).toBe(false);
   });
+
+  // 生成流程真正走的是这条路：ImageGenNode 在 isGenerating 期间把主体图置空
+  // （visiblePreviewUrl = null），于是 subject 序列是 旧图 → null → 新结果。把
+  // null 也当成「上一张」的话，新结果到来时看到的 previous 就是 null，会被当成
+  // 首次挂载而白白信任旧记录——偏偏这一刻最需要失信：同一个节点重出图，新旧结果
+  // 通常同一目标宽高比，副本检查也认不出来。
+  it("生成中把图暂时藏起来，不影响回来时认出这是换了图", () => {
+    const { result, rerender } = renderHook(
+      ({ subject }: { subject: string | null }) => useNaturalSizeRecordTrust(subject),
+      { initialProps: { subject: A as string | null } },
+    );
+    expect(result.current.distrusted).toBe(false);
+
+    rerender({ subject: null });
+    rerender({ subject: B });
+
+    expect(result.current.distrusted).toBe(true);
+  });
+
+  // 反过来也要成立：生成失败/取消后原样把旧图放回来，什么都没换，不该退回原图
+  // 白跑一趟测量。
+  it("藏起来又原样放回同一张图，不算换图", () => {
+    const { result, rerender } = renderHook(
+      ({ subject }: { subject: string | null }) => useNaturalSizeRecordTrust(subject),
+      { initialProps: { subject: A as string | null } },
+    );
+
+    rerender({ subject: null });
+    rerender({ subject: A });
+
+    expect(result.current.distrusted).toBe(false);
+  });
 });
