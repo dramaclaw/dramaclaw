@@ -65,10 +65,18 @@ _SUPPORTED_SUFFIXES = frozenset(
     {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 )
 
-# Anything larger is served as-is. Pillow's own decompression-bomb guard
-# covers pixel counts; this covers the file-size side (a 200MB TIFF would
-# otherwise pin a worker thread and a few GB of RAM).
+# Two independent ceilings, because neither one implies the other. A 200MB TIFF
+# is mostly a read cost; a 300KB PNG of flat colour is 10000x10000 and costs
+# 441MB of RSS to decode. Pillow does not save us from the second: its
+# decompression-bomb *error* only fires above 2x MAX_IMAGE_PIXELS (~179MP) and
+# everything below that merely warns and decodes anyway.
+#
+# The pixel ceiling is set from what a worker may hold at once: 40MP at 4 bytes
+# is ~160MB decoded, and DEFAULT_RENDER_CONCURRENCY of those is the real bound.
+# It still clears 8K (7680x4320 = 33MP) with room to spare, and anything past it
+# is served as its original — the same fallback every other decline takes.
 _MAX_SOURCE_BYTES = 64 * 1024 * 1024
+_MAX_SOURCE_PIXELS = 40_000_000
 
 _WEBP_QUALITY = 80
 _WEBP_METHOD = 4
@@ -223,6 +231,28 @@ def _render(
     with Image.open(source) as opened:
         if getattr(opened, "is_animated", False):
             return None
+
+        # Everything from here to `thumbnail` is decided on the header alone.
+        # `Image.open` is lazy, so `.size` is known before a single pixel is
+        # read, and both of the decisions below are answers we can give without
+        # reading any — which matters because the very next call is the one that
+        # allocates the full bitmap.
+        width, height = opened.size
+        if width <= 0 or height <= 0:
+            return None
+        if width * height > _MAX_SOURCE_PIXELS:
+            return None
+        # Nothing to gain once the source already fits: `thumbnail` would be a
+        # no-op and we would spend a decode and a write to hand back a
+        # re-encoded copy that can come out *larger* than the original. The
+        # history strip and the LOD shell ask for `thumb` unconditionally, so
+        # small sources reach this constantly — which is exactly why the check
+        # belongs above the decode rather than below it. `None` means "serve the
+        # original", which is right here. Orientation cannot change the verdict:
+        # a transpose swaps the two numbers and `max` is blind to that.
+        if max(width, height) <= max_edge:
+            return None
+
         # No-op for everything but JPEG, where it lets libjpeg decode at a
         # reduced scale — most of the win on the formats that support it.
         opened.draft("RGB", (max_edge, max_edge))
@@ -235,14 +265,6 @@ def _render(
         # crop route.
         im = ImageOps.exif_transpose(opened) or opened
         try:
-            # Nothing to gain once the source already fits: `thumbnail` would be
-            # a no-op and we would spend a decode and a write to hand back a
-            # re-encoded copy that can come out *larger* than the original. The
-            # history strip and the LOD shell ask for `thumb` unconditionally,
-            # so small sources reach this constantly. `None` means "serve the
-            # original", which is exactly right here.
-            if max(im.size) <= max_edge:
-                return None
             im.thumbnail((max_edge, max_edge), Image.LANCZOS)
             has_alpha = im.mode in {"RGBA", "LA"} or (
                 im.mode == "P" and "transparency" in im.info

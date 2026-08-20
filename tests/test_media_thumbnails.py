@@ -162,7 +162,7 @@ def test_variant_follows_the_orientation_the_browser_shows(tmp_path):
         assert im.size == (640, 1280)
 
 
-def test_source_already_within_budget_is_served_as_is(tmp_path):
+def test_source_already_within_budget_is_served_as_is(tmp_path, monkeypatch):
     """No variant when downscaling would not actually downscale anything.
 
     The history strip and the LOD shell ask for `thumb` unconditionally, so
@@ -171,10 +171,13 @@ def test_source_already_within_budget_is_served_as_is(tmp_path):
     larger than the original it replaces.
     """
 
+    decodes = _watch_decodes(monkeypatch)
     source = _write_png(tmp_path / "images" / "small.png", (320, 200))
 
     assert thumbnails.ensure_thumbnail(tmp_path, source, "thumb") is None
-    # ...and nothing was written on the way to deciding that.
+    # ...and the source was never decoded to decide that, which is the whole
+    # point: this path is hit constantly and the answer is in the header.
+    assert decodes == []
     assert not (tmp_path / thumbnails.THUMB_ROOT).exists()
 
 
@@ -221,6 +224,59 @@ def test_oversized_sources_fall_back(tmp_path, monkeypatch):
     source = _write_png(tmp_path / "a.png")
     monkeypatch.setattr(thumbnails, "_MAX_SOURCE_BYTES", 1)
     assert thumbnails.ensure_thumbnail(tmp_path, source, "thumb") is None
+
+
+def _watch_decodes(monkeypatch) -> list:
+    """Record every call to the first thing in ``_render`` that touches pixels.
+
+    Up to ``exif_transpose`` the render is reading a header; from there on it is
+    holding the whole bitmap. So "was this called" is the same question as "did
+    we pay for this source", which is what the two tests below are really about.
+    """
+
+    from PIL import ImageOps
+
+    seen: list = []
+    real = ImageOps.exif_transpose
+    monkeypatch.setattr(
+        ImageOps, "exif_transpose", lambda im, **kw: seen.append(im) or real(im, **kw)
+    )
+    return seen
+
+
+def test_a_small_file_that_decodes_huge_is_declined_before_decoding(
+    tmp_path, monkeypatch
+):
+    """The file-size ceiling does not imply the pixel ceiling.
+
+    Flat colour compresses to almost nothing, so this source clears
+    ``_MAX_SOURCE_BYTES`` by three orders of magnitude while still holding 64
+    megapixels. Pillow does not cover the gap: its decompression-bomb *error*
+    only fires above ~179MP, and this sits quietly under even the warning
+    threshold. Decoding it would cost a quarter gigabyte, times however many
+    render slots are busy.
+    """
+
+    decodes = _watch_decodes(monkeypatch)
+    source = _write_png(tmp_path / "images" / "flat.png", (8000, 8000), color=(7, 7, 7))
+    assert source.stat().st_size < thumbnails._MAX_SOURCE_BYTES
+    assert 8000 * 8000 > thumbnails._MAX_SOURCE_PIXELS
+
+    assert thumbnails.ensure_thumbnail(tmp_path, source, "card") is None
+    assert decodes == []
+    assert not (tmp_path / thumbnails.THUMB_ROOT).exists()
+
+
+def test_the_pixel_ceiling_leaves_real_photography_alone(tmp_path):
+    """8K is 33MP. A ceiling that turns it away would be protecting nothing."""
+
+    source = _write_png(tmp_path / "images" / "8k.png", (7680, 4320))
+
+    dest = thumbnails.ensure_thumbnail(tmp_path, source, "card")
+
+    assert dest is not None
+    with Image.open(dest) as im:
+        assert max(im.size) == 1280
 
 
 def test_a_variant_is_never_itself_thumbnailed(tmp_path):
