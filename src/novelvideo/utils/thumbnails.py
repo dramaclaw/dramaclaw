@@ -48,11 +48,23 @@ VARIANTS: dict[str, int] = {
     # 56px box in the history strip / ~200px asset grids, with headroom for
     # 3x DPR. Measured ~13KB per 5504x3072 source.
     "thumb": 320,
+    # The same boxes on a 2x display. `thumb` is a 1x budget: at the LOD
+    # threshold the widest node still occupies 315 CSS px, which wants 630
+    # device px on Retina and gets half that from `thumb`. This tier is still
+    # 0.4MP against a 16.9MP original, so the LOD trade survives it — and it
+    # is what a small node body picks too, instead of jumping straight to
+    # `card`. Nothing requests it at 1x.
+    "thumb2x": 640,
     # Canvas node bodies. A default image node is 580 CSS px wide, so this
     # covers it at 2x DPR with room to spare, while still cutting a
     # 5504x3072 source from 16.9MP of decode to 1.4MP. Nodes are shown at
     # zoom <= 1 for all but close inspection, and close inspection goes
     # through the fullscreen viewer, which is always served the original.
+    #
+    # This is the top of the ladder: a node whose display box needs more than
+    # 1280 device px is served the original rather than an upscaled copy (see
+    # pickMediaVariant in the frontend). Such a node is deliberately enlarged,
+    # and there are only ever a few of those on screen at once.
     "card": 1280,
 }
 

@@ -9,8 +9,10 @@ import {
   NODE_BODY_VARIANT_MAX_EDGE,
   nodeBodyImageMeasurement,
   nodeBodyImageSrc,
+  nodeBodyRequiredEdge,
   readNodeNaturalSize,
 } from "@/features/canvas/application/imageData";
+import { pickMediaVariant } from "@/lib/media-url";
 
 const BIG = { width: 5504, height: 3072 };
 const URL = "/static/projects/proj/freezone/_outputs/a.png";
@@ -48,6 +50,7 @@ describe("nodeBodyImageSrc", () => {
       src: `${URL}?st_thumb=card`,
       original: URL,
       downscaled: true,
+      maxEdge: 1280,
     });
   });
 
@@ -58,6 +61,7 @@ describe("nodeBodyImageSrc", () => {
       src: URL,
       original: URL,
       downscaled: false,
+      maxEdge: null,
     });
   });
 
@@ -73,6 +77,7 @@ describe("nodeBodyImageSrc", () => {
         src: URL,
         original: URL,
         downscaled: false,
+        maxEdge: null,
       });
     }
     expect(nodeBodyImageSrc(URL, { width: edge + 1, height: 100 }).downscaled).toBe(true);
@@ -85,6 +90,7 @@ describe("nodeBodyImageSrc", () => {
       src: URL,
       original: URL,
       downscaled: false,
+      maxEdge: null,
     });
   });
 
@@ -100,7 +106,7 @@ describe("nodeBodyImageSrc", () => {
       "/static/projects/proj/videos/clip.mp4",
     ]) {
       const result = nodeBodyImageSrc(url, BIG);
-      expect(result).toEqual({ src: url, original: url, downscaled: false });
+      expect(result).toEqual({ src: url, original: url, downscaled: false, maxEdge: null });
     }
   });
 });
@@ -112,7 +118,7 @@ describe("nodeBodyImageSrc", () => {
 // 自愈。改动前元素自己就是真相来源,这一幕根本不存在。
 describe("nodeBodyImageMeasurement 对不上记录时不能信记录", () => {
   const RECORD = { width: 5504, height: 3072 };
-  const downscaled = { src: "x", original: "x", downscaled: true };
+  const downscaled = { src: "x", original: "x", downscaled: true, maxEdge: 1280 };
 
   it("忠实降采样的副本:长边正好卡在预算上,按记录测量", () => {
     // 5504x3072 -> card(1280) = 1280x714
@@ -164,20 +170,87 @@ describe("nodeBodyImageMeasurement", () => {
   // 时逐字节一致。
   it("measures from the record when the element holds a downscaled copy", () => {
     expect(
-      nodeBodyImageMeasurement(element, { src: "x", original: "x", downscaled: true }, BIG),
+      nodeBodyImageMeasurement(element, { src: "x", original: "x", downscaled: true, maxEdge: 1280 }, BIG),
     ).toEqual(BIG);
   });
 
   it("measures from the element when it holds the original", () => {
     expect(
-      nodeBodyImageMeasurement(element, { src: "x", original: "x", downscaled: false }, BIG),
+      nodeBodyImageMeasurement(element, { src: "x", original: "x", downscaled: false, maxEdge: null }, BIG),
     ).toEqual({ width: 1280, height: 714 });
   });
 
   // downscaled 只可能在有记录时为 true，但真到了这里也不能返回一个空尺寸。
   it("falls back to the element when there is no record to trust", () => {
     expect(
-      nodeBodyImageMeasurement(element, { src: "x", original: "x", downscaled: true }, null),
+      nodeBodyImageMeasurement(element, { src: "x", original: "x", downscaled: true, maxEdge: 1280 }, null),
     ).toEqual({ width: 1280, height: 714 });
+  });
+});
+
+// 固定档位挡不住这一幕：同一张 1280px 副本，画进 580 CSS px 的默认节点里绰绰有余，
+// 画进用户拉到 1600px 的节点里就是放大糊；Retina 上这两个数还要各乘 2。所以档位
+// 必须从「这一格要多少设备像素」倒推。
+describe("按显示尺寸 x zoom x DPR 挑档", () => {
+  it("nodeBodyRequiredEdge 三个因子都算进去，取长边", () => {
+    expect(nodeBodyRequiredEdge({ width: 580, height: 326 }, 1, 1)).toBe(580);
+    expect(nodeBodyRequiredEdge({ width: 580, height: 326 }, 1, 2)).toBe(1160);
+    expect(nodeBodyRequiredEdge({ width: 900, height: 900 }, 0.35, 2)).toBe(630);
+    expect(nodeBodyRequiredEdge({ width: 326, height: 580 }, 1, 1)).toBe(580);
+  });
+
+  it("坏值退回 1 倍，不至于挑出个荒唐档位", () => {
+    expect(nodeBodyRequiredEdge({ width: 580, height: 326 }, Number.NaN, 0)).toBe(580);
+  });
+
+  it("pickMediaVariant 取阶梯上最便宜的那一档", () => {
+    expect(pickMediaVariant(315)).toBe("thumb");
+    expect(pickMediaVariant(320)).toBe("thumb");
+    expect(pickMediaVariant(321)).toBe("thumb2x");
+    expect(pickMediaVariant(630)).toBe("thumb2x");
+    expect(pickMediaVariant(1160)).toBe("card");
+    expect(pickMediaVariant(1280)).toBe("card");
+  });
+
+  // 放大糊是唯一不能接受的结果：宁可付原图的解码，也不给一张要放大 2.5 倍的副本。
+  it("一档都盖不住时回原图", () => {
+    expect(pickMediaVariant(1281)).toBeNull();
+    expect(pickMediaVariant(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  // 评审给的那个例子：ImageNode 可以拉到 1600px，DPR=1 / zoom=1 也已经不够。
+  it("拉大的节点拿原图，而不是被放大的 1280 副本", () => {
+    const required = nodeBodyRequiredEdge({ width: 1600, height: 900 }, 1, 1);
+    expect(nodeBodyImageSrc(URL, BIG, { requiredEdge: required })).toEqual({
+      src: URL,
+      original: URL,
+      downscaled: false,
+      maxEdge: null,
+    });
+  });
+
+  it("默认尺寸的节点在 Retina 上仍然吃到 card", () => {
+    const required = nodeBodyRequiredEdge({ width: 580, height: 326 }, 1, 2);
+    expect(nodeBodyImageSrc(URL, BIG, { requiredEdge: required }).src).toBe(
+      `${URL}?st_thumb=card`,
+    );
+  });
+
+  // LOD 最宽的那一档：1x 屏落在 320，2x 屏落到 640——改前两者都是 320，Retina 上
+  // 只有需要的一半分辨率。
+  it("LOD 外壳按 DPR 分档", () => {
+    const shell = { width: 900, height: 900 };
+    expect(pickMediaVariant(nodeBodyRequiredEdge(shell, 0.35, 1))).toBe("thumb");
+    expect(pickMediaVariant(nodeBodyRequiredEdge(shell, 0.35, 2))).toBe("thumb2x");
+  });
+
+  it("挑到的那一档不比源图小时仍然回原图", () => {
+    expect(
+      nodeBodyImageSrc(URL, { width: 600, height: 400 }, { requiredEdge: 630 }).downscaled,
+    ).toBe(false);
+  });
+
+  it("不传 requiredEdge 时维持原来的 card 预算", () => {
+    expect(nodeBodyImageSrc(URL, BIG).maxEdge).toBe(NODE_BODY_VARIANT_MAX_EDGE);
   });
 });

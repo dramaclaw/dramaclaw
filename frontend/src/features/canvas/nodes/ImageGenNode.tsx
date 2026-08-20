@@ -47,6 +47,7 @@ import {
   nodeBodyImageMeasurement,
   nodeBodyImageSrc,
   nodeBodyRecordDescribesImage,
+  planNaturalSizeRecordWrite,
   parseAspectRatio,
   pickClosestAspectRatio,
   readNodeNaturalSize,
@@ -92,6 +93,7 @@ import {
   canvasNodeFrameClass,
 } from '@/features/canvas/ui/nodeFrameStyles';
 import { useNaturalSizeRecordTrust } from '@/features/canvas/hooks/useNaturalSizeRecordTrust';
+import { useNodeBodyVariantBudget } from '@/features/canvas/hooks/useNodeBodyVariantBudget';
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import { useShallow } from 'zustand/react/shallow';
 import { getFreezoneCanvasMetadata } from '@/features/freezone/canvasMetadataContext';
@@ -833,14 +835,26 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const { distrusted, distrustRecord, trustAgain } = useNaturalSizeRecordTrust(visiblePreviewUrl);
   // 主体图把整幅原图解码进几百 CSS px 的盒子里；变体只在真实尺寸已知、且没放大
   // 到细看那一档时启用，详见 nodeBodyImageSrc 的注释。查看器仍拿 visiblePreviewUrl。
+  // 这一格要多少设备像素，决定挑哪一档副本（拉大的节点会一路挑到原图）。
+  const bodyVariantBudget = useNodeBodyVariantBudget({
+    width: resolvedWidth,
+    height: resolvedHeight,
+  });
   const bodyImage = useMemo(
     () =>
       visiblePreviewUrl
         ? nodeBodyImageSrc(visiblePreviewUrl, recordedNaturalSize, {
             preferOriginal: preferOriginalImage || distrusted,
+            requiredEdge: bodyVariantBudget,
           })
         : null,
-    [distrusted, preferOriginalImage, recordedNaturalSize, visiblePreviewUrl],
+    [
+      bodyVariantBudget,
+      distrusted,
+      preferOriginalImage,
+      recordedNaturalSize,
+      visiblePreviewUrl,
+    ],
   );
 
   const hasGeneratedResult = Boolean(data.imageUrl);
@@ -1571,7 +1585,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                 // 真相，保留旧值好过写一个确定错误的尺寸。
                 if (
                   bodyImage?.downscaled &&
-                  !nodeBodyRecordDescribesImage(event.currentTarget, recordedNaturalSize)
+                  !nodeBodyRecordDescribesImage(
+                    event.currentTarget,
+                    recordedNaturalSize,
+                    bodyImage.maxEdge ?? 0,
+                  )
                 ) {
                   distrustRecord();
                   return;
@@ -1609,20 +1627,21 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                 const displaySizeMismatch =
                   Math.abs(resolvedWidth - nextSize.width) > 1 ||
                   Math.abs(resolvedHeight - nextSize.height) > 1;
-                // 记录和刚量到的真相不一致时也必须写回去。换成同比例的另一张图
-                // （5504x3072 -> 2752x1536）比例和显示尺寸都不变，只靠上面两个条
-                // 件的话修正永远落不了地，下次挂载又会信着旧记录去喂副本。
-                // 只在纠正那一轮写，别把普通加载也变成一次节点数据更新（那会往
-                // 撤销栈里堆条目）。这里没有 ImageNode 那种放大档换 URL 的问题：
-                // 主体图始终是 visiblePreviewUrl 这一张。
-                const recordIsStale =
-                  distrusted
-                  && recordedNaturalSize !== null
-                  && (recordedNaturalSize.width !== measured.width
-                    || recordedNaturalSize.height !== measured.height);
-                if (nextAspectRatio !== data.aspectRatio || displaySizeMismatch || recordIsStale) {
+                // 记录空着、或者和刚量到的真相对不上，都得写回去——比例和显示尺
+                // 寸这两个条件盖不住它们（同比例换图、老项目里早就贴合的节点）。
+                // 这里没有 ImageNode 那种放大档换 URL 的问题：主体图始终是
+                // visiblePreviewUrl 这一张，所以量到的一定是记录该描述的那张图。
+                const recordWrite = planNaturalSizeRecordWrite({
+                  aspectRatioChanged: nextAspectRatio !== data.aspectRatio,
+                  displaySizeMismatch,
+                  record: recordedNaturalSize,
+                  measured,
+                  measuringRecordSubject: true,
+                });
+                if (recordWrite.persist) {
                   updateNodeSize(id, nextSize, {
                     lockManualSize: forceNaturalSize ? false : undefined,
+                    recordHistory: recordWrite.recordHistory,
                     data: {
                       aspectRatio: nextAspectRatio,
                       imageNaturalWidth: measured.width,

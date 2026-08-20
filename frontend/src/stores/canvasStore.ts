@@ -276,11 +276,29 @@ interface CanvasState {
     options?: { cols?: number; groupName?: string }
   ) => string | null;
 
-  updateNodeData: (nodeId: string, data: Partial<CanvasNodeData>) => void;
+  updateNodeData: (
+    nodeId: string,
+    data: Partial<CanvasNodeData>,
+    /** 见 updateNodeSize 的同名参数。 */
+    options?: { recordHistory?: boolean },
+  ) => void;
   updateNodeSize: (
     nodeId: string,
     size: { width: number; height: number },
-    options?: { lockManualSize?: boolean; data?: Partial<CanvasNodeData> },
+    options?: {
+      lockManualSize?: boolean;
+      data?: Partial<CanvasNodeData>;
+      /**
+       * 默认 true：这是一次用户可撤销的改动。
+       *
+       * 传 false 用于「把画布刚测出来的事实补记下来」这类写入（节点主体图的
+       * imageNaturalWidth/Height，见 planNaturalSizeRecordWrite）：屏幕上不变一
+       * 个像素，撤销它没有任何意义，而打开一个老项目会一次触发几十笔——真进了
+       * 撤销栈，用户按下 Ctrl+Z 得到的是「忘掉一张图的尺寸」，重做栈还被清空。
+       * 仍然算一次编辑（trackEdit），因为这笔数据要存到服务端去。
+       */
+      recordHistory?: boolean;
+    },
   ) => void;
   /**
    * Swap a node's `type` in place while keeping its `id` and position. Used
@@ -2473,7 +2491,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     return true;
   },
 
-  updateNodeData: (nodeId, data) => {
+  updateNodeData: (nodeId, data, options) => {
     set((state) => {
       let changed = false;
       const nextNodes = state.nodes.map((node) => {
@@ -2507,6 +2525,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       if (!changed) {
         return {};
+      }
+
+      if (options?.recordHistory === false) {
+        return { nodes: nextNodes, ...trackEdit(state) };
       }
 
       return {
@@ -2574,6 +2596,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       if (!changed) {
         return {};
+      }
+
+      if (options?.recordHistory === false) {
+        // 历史与 dragHistorySnapshot 都不碰：这笔写入不是用户的改动，既不该能被
+        // 撤销，也不该把正在进行的拖拽的那份快照顶掉。
+        return { nodes: nextNodes, ...trackEdit(state) };
       }
 
       return {

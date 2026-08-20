@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { withMediaVariant, type MediaVariant } from '@/lib/media-url';
+import {
+  MEDIA_VARIANT_MAX_EDGE,
+  pickMediaVariant,
+  withMediaVariant,
+} from '@/lib/media-url';
 
 export function parseAspectRatio(value: string): number {
   const [width, height] = value.split(':').map((item) => Number(item));
@@ -246,16 +250,36 @@ export function withImageCacheBust(imageUrl: string, token: string | number | nu
 // 元素已经没有新东西可教我们，调用方改从记录里读（见 nodeBodyImageMeasurement）。
 // 尺寸未知的节点照旧加载原图、照旧测量、照旧落库，下次挂载自然就用上变体了。
 //
-// 放大到 shouldUseOriginalImageByZoom（1.45）以上时换回原图：那已经是在细看单张
-// 图，节点在屏幕上比变体还宽，而这一档屏幕上装不下几个节点，解码不再是瓶颈。
-// 这条线本来就是节点在 previewImageUrl / imageUrl 之间切换的那条线，沿用同一个。
+// 挑哪一档不能写死。同一个 1280px 副本，画进 580 CSS px 的默认节点里绰绰有余，
+// 画进用户拉到 1600px 的节点里就是 1.25 倍放大糊；Retina 上这两个数还要各乘 2。
+// 所以按「这一格到底要多少设备像素」来挑：displayEdge × zoom × devicePixelRatio，
+// 交给 pickMediaVariant 在阶梯上找最便宜的那一档，一档都盖不住就回原图——放大糊
+// 是唯一不能接受的结果，而需要那么多像素的节点本来就没几个能同屏。
+//
+// 用 zoom 但不怕抖：pickMediaVariant 的输出只有三个值加一个 null，节点订阅的是这
+// 个结果而不是 zoom 本身，缩放过程中最多换两次 src，且都命中缓存。
 //
 // 全屏查看器 / 下载 / 导出 / 各类编辑器一律仍然拿原图，见各调用点的
 // viewerSourceUrl。
-export const NODE_BODY_VARIANT: MediaVariant = 'card';
-// 必须与后端 VARIANTS['card'] 一致：只用来判断「源图是不是本来就比变体小」，
-// 对不上顶多是多建/少建一个变体文件，不会画错。
-export const NODE_BODY_VARIANT_MAX_EDGE = 1280;
+export const NODE_BODY_VARIANT_MAX_EDGE = MEDIA_VARIANT_MAX_EDGE.card;
+
+/**
+ * 节点主体图这一格需要多少设备像素（长边）。
+ *
+ * CSS 像素不是答案：一张 320px 的副本填进 315 CSS px 的框，1x 屏上锐利，2x 屏上
+ * 只有需要的一半分辨率。zoom 同理——同一个节点缩到 0.4 只占屏幕四成宽。
+ */
+export function nodeBodyRequiredEdge(
+  display: { width: number; height: number },
+  zoom: number,
+  devicePixelRatio: number,
+): number {
+  const edge = Math.max(display.width, display.height);
+  const scale = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  const dpr =
+    Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  return Math.ceil(edge * scale * dpr);
+}
 
 export type ImagePixelSize = { width: number; height: number };
 
@@ -266,6 +290,8 @@ export type NodeBodyImage = {
   original: string;
   /** true 表示 src 是降采样副本，元素上的 naturalWidth/Height 不可信。 */
   downscaled: boolean;
+  /** 副本的长边预算；喂的是原图时为 null。核对元素尺寸时按它算。 */
+  maxEdge: number | null;
 };
 
 /** 从节点数据里读已记录的原图像素尺寸；没有或不合法时返回 null。 */
@@ -283,20 +309,23 @@ export function readNodeNaturalSize(data: unknown): ImagePixelSize | null {
 export function nodeBodyImageSrc(
   url: string,
   natural: ImagePixelSize | null,
-  options?: { preferOriginal?: boolean },
+  options?: { preferOriginal?: boolean; requiredEdge?: number },
 ): NodeBodyImage {
+  const asOriginal: NodeBodyImage = { src: url, original: url, downscaled: false, maxEdge: null };
   // 放大到细看这一档：交回原图。
-  if (options?.preferOriginal) return { src: url, original: url, downscaled: false };
+  if (options?.preferOriginal) return asOriginal;
   // 尺寸未知：这次加载还担着测量职责，必须是原图。
-  if (!natural) return { src: url, original: url, downscaled: false };
+  if (!natural) return asOriginal;
+  // 这一格要的像素比阶梯顶还多：给副本就是放大糊，交回原图。
+  const variant = pickMediaVariant(options?.requiredEdge ?? NODE_BODY_VARIANT_MAX_EDGE);
+  if (variant === null) return asOriginal;
+  const maxEdge = MEDIA_VARIANT_MAX_EDGE[variant];
   // 本来就不比变体大：换成变体只是重编码一遍，白白多一个文件。
-  if (Math.max(natural.width, natural.height) <= NODE_BODY_VARIANT_MAX_EDGE) {
-    return { src: url, original: url, downscaled: false };
-  }
+  if (Math.max(natural.width, natural.height) <= maxEdge) return asOriginal;
   // 变体只对受保护的项目静态图片生效；不适用时原样返回（blob:/data: 的上传预览、
   // 遗留路径、非图片后缀都会走到这里），downscaled 随之为 false。
-  const src = withMediaVariant(url, NODE_BODY_VARIANT);
-  return { src, original: url, downscaled: src !== url };
+  const src = withMediaVariant(url, variant);
+  return src === url ? asOriginal : { src, original: url, downscaled: true, maxEdge };
 }
 
 /**
@@ -321,6 +350,7 @@ export function nodeBodyImageSrc(
 export function nodeBodyRecordDescribesImage(
   image: { naturalWidth: number; naturalHeight: number },
   natural: ImagePixelSize | null,
+  maxEdge: number,
 ): boolean {
   if (!natural) return false;
   const { naturalWidth: w, naturalHeight: h } = image;
@@ -333,7 +363,7 @@ export function nodeBodyRecordDescribesImage(
   const recShort = Math.min(natural.width, natural.height);
   // 后端拒绝了这次降采样（渲染失败、或源图本就在预算内）直接给了原图。
   if (long === recLong && short === recShort) return true;
-  if (long !== NODE_BODY_VARIANT_MAX_EDGE) return false;
+  if (long !== maxEdge) return false;
   return Math.abs(short - Math.round((long * recShort) / recLong)) <= 1;
 }
 
@@ -353,10 +383,65 @@ export function nodeBodyImageMeasurement(
   body: NodeBodyImage,
   natural: ImagePixelSize | null,
 ): ImagePixelSize {
-  if (body.downscaled && natural && nodeBodyRecordDescribesImage(image, natural)) {
+  if (
+    body.downscaled
+    && natural
+    && nodeBodyRecordDescribesImage(image, natural, body.maxEdge ?? 0)
+  ) {
     return natural;
   }
   return { width: image.naturalWidth, height: image.naturalHeight };
+}
+
+export type NaturalSizeRecordWrite = {
+  /** 要不要把这一轮量到的尺寸写回节点数据。 */
+  persist: boolean;
+  /** 这次写回该不该进撤销栈。 */
+  recordHistory: boolean;
+};
+
+/**
+ * onLoad 量完之后，这次要不要落库、算不算一次用户可撤销的改动。
+ *
+ * 三种要写的情形，性质完全不同：
+ *
+ * 1. 比例变了 / 显示尺寸对不上 —— 节点在屏幕上会跟着变形，是用户看得见的改动，
+ *    进撤销栈天经地义。
+ * 2. 记录本来就是空的 —— 老项目里的节点比例早就算对了、尺寸也早就贴合了，上面
+ *    两个条件永远是 false，于是 imageNaturalWidth/Height 一辈子写不进去；而
+ *    nodeBodyImageSrc 没有记录就只能喂原图，这个节点从此享受不到降采样副本。
+ *    补这一笔不改变屏幕上的任何一个像素。
+ * 3. 记录和真相对不上 —— 换成同比例的另一张图（5504x3072 -> 2752x1536）比例和
+ *    显示尺寸都不变，只靠第 1 条的话修正永远落不了地。同样不改变屏幕。
+ *
+ * 后两种只是把画布早就知道的事实补记下来，不是编辑。放进撤销栈的话，光是打开
+ * 一个老项目就会堆进几十条「忘掉图片尺寸」的条目，还会把重做栈清空——所以
+ * recordHistory 只在第 1 种情形为真。
+ *
+ * 第 2、3 种都自带收敛：写完记录就和真相一致，下次同一判断直接为假。
+ *
+ * measuringRecordSubject 是给 ImageNode 那种「放大档换喂另一个 URL」的节点用的：
+ * 那一轮元素上的尺寸属于另一张图（旋转/补光/多视角的结果都写在 previewImageUrl
+ * 里，和 imageUrl 不必同尺寸），拿它去纠正记录是把错的换成另一个错的。
+ */
+export function planNaturalSizeRecordWrite(input: {
+  aspectRatioChanged: boolean;
+  displaySizeMismatch: boolean;
+  record: ImagePixelSize | null;
+  measured: ImagePixelSize;
+  measuringRecordSubject: boolean;
+}): NaturalSizeRecordWrite {
+  if (input.aspectRatioChanged || input.displaySizeMismatch) {
+    return { persist: true, recordHistory: true };
+  }
+  if (!input.measuringRecordSubject) {
+    return { persist: false, recordHistory: false };
+  }
+  const recordIsWrong =
+    input.record === null
+    || input.record.width !== input.measured.width
+    || input.record.height !== input.measured.height;
+  return { persist: recordIsWrong, recordHistory: false };
 }
 
 export async function persistImageLocally(source: string): Promise<string> {
