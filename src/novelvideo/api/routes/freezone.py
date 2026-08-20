@@ -2085,6 +2085,19 @@ async def _start_or_enqueue_mainline_scene_360_task(
         "newapi",
         model or FREEZONE_DEFAULT_IMAGE_MODEL,
     )
+    if not execution_catalog_id:
+        from novelvideo.stage_asset_tasks import (
+            Scene360ImageModelSelectionError,
+            resolve_scene_360_image_model,
+        )
+
+        try:
+            resolve_scene_360_image_model(
+                resolved_provider or "newapi",
+                resolved_model or model or FREEZONE_DEFAULT_IMAGE_MODEL,
+            )
+        except Scene360ImageModelSelectionError as exc:
+            raise HTTPException(400, str(exc)) from exc
     from novelvideo.api.routes.model_credits import freezone_image_task_billing
 
     billing = freezone_image_task_billing(

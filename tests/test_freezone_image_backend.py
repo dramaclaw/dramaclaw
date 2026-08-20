@@ -4134,7 +4134,23 @@ async def test_scene_360_endpoint_keeps_image_size_below_the_cap(
             queue="node.node_a.world",
         )
 
+    async def fake_resolve_catalog_request(*_args, **_kwargs):
+        return (
+            {},
+            {},
+            {
+                "catalogId": "cat-77",
+                "providerId": "newapi",
+                "apiModel": "google/gemini-2.5-flash-image-preview",
+            },
+        )
+
     monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_resolve_freezone_project)
+    monkeypatch.setattr(
+        freezone_routes,
+        "_resolve_catalog_request",
+        fake_resolve_catalog_request,
+    )
     monkeypatch.setattr(
         freezone_routes,
         "get_task_backend",
@@ -4271,7 +4287,7 @@ async def test_scene_360_takes_model_and_billing_identity_from_the_catalog(
 
 
 @pytest.mark.asyncio
-async def test_scene_360_does_not_trust_client_catalog_id_as_model_authority(
+async def test_scene_360_rejects_client_model_without_catalog_authority_before_enqueue(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4285,17 +4301,22 @@ async def test_scene_360_does_not_trust_client_catalog_id_as_model_authority(
         freezone_routes, "_resolve_catalog_request", fake_resolve_catalog_request
     )
 
-    await freezone_routes.freezone_scene_360(
-        project="proj_freezone",
-        body=freezone_routes.FreezoneScene360Request(
-            reference_url="/api/v1/projects/proj_freezone/media/assets/scenes/小区/master.png",
-            model="attacker-controlled-model",
-            catalog_id="forged-catalog",
-        ),
-        user={"username": "admin"},
-    )
+    with pytest.raises(HTTPException) as exc_info:
+        await freezone_routes.freezone_scene_360(
+            project="proj_freezone",
+            body=freezone_routes.FreezoneScene360Request(
+                reference_url=(
+                    "/api/v1/projects/proj_freezone/media/assets/scenes/小区/master.png"
+                ),
+                model="attacker-controlled-model",
+                catalog_id="forged-catalog",
+            ),
+            user={"username": "admin"},
+        )
 
-    assert "scene_360_model_authority" not in captured["payload"]
+    assert exc_info.value.status_code == 400
+    assert "scene 360 image model" in str(exc_info.value.detail)
+    assert not captured
 
 
 @pytest.mark.asyncio
