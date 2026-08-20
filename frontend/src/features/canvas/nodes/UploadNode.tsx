@@ -863,6 +863,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
       record: recordedNaturalSize,
       measured,
       measuringRecordSubject,
+      sizeLockedByUser: false,
     });
     if (!recordWrite.persist) return;
     updateNodeData(

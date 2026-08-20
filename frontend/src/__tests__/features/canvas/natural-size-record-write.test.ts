@@ -20,6 +20,7 @@ const SETTLED = {
   displaySizeMismatch: false,
   measured: MEASURED,
   measuringRecordSubject: true,
+  sizeLockedByUser: false,
 };
 
 describe("planNaturalSizeRecordWrite", () => {
@@ -27,6 +28,7 @@ describe("planNaturalSizeRecordWrite", () => {
     expect(planNaturalSizeRecordWrite({ ...SETTLED, record: null })).toEqual({
       persist: true,
       recordHistory: false,
+      applySize: false,
     });
   });
 
@@ -34,7 +36,7 @@ describe("planNaturalSizeRecordWrite", () => {
   it("记录和刚量到的真相对不上也得写回去", () => {
     expect(
       planNaturalSizeRecordWrite({ ...SETTLED, record: { width: 2752, height: 1536 } }),
-    ).toEqual({ persist: true, recordHistory: false });
+    ).toEqual({ persist: true, recordHistory: false, applySize: false });
   });
 
   it("补记和纠正都不进撤销栈，它们不改变屏幕上的任何一个像素", () => {
@@ -47,10 +49,10 @@ describe("planNaturalSizeRecordWrite", () => {
   it("比例或显示尺寸变了是用户看得见的改动，进撤销栈", () => {
     expect(
       planNaturalSizeRecordWrite({ ...SETTLED, record: MEASURED, aspectRatioChanged: true }),
-    ).toEqual({ persist: true, recordHistory: true });
+    ).toEqual({ persist: true, recordHistory: true, applySize: true });
     expect(
       planNaturalSizeRecordWrite({ ...SETTLED, record: MEASURED, displaySizeMismatch: true }),
-    ).toEqual({ persist: true, recordHistory: true });
+    ).toEqual({ persist: true, recordHistory: true, applySize: true });
   });
 
   // 写完就收敛：同一份输入第二次算出来不再写，不会每次 onLoad 都更新一遍节点数据。
@@ -58,6 +60,7 @@ describe("planNaturalSizeRecordWrite", () => {
     expect(planNaturalSizeRecordWrite({ ...SETTLED, record: MEASURED })).toEqual({
       persist: false,
       recordHistory: false,
+      applySize: false,
     });
   });
 
@@ -66,7 +69,48 @@ describe("planNaturalSizeRecordWrite", () => {
   it("量的不是记录该描述的那张图时，连补记都不做", () => {
     expect(
       planNaturalSizeRecordWrite({ ...SETTLED, record: null, measuringRecordSubject: false }),
-    ).toEqual({ persist: false, recordHistory: false });
+    ).toEqual({ persist: false, recordHistory: false, applySize: false });
+  });
+
+  // 用户拖过尺寸的节点（isSizeManuallyAdjusted）。onLoad 原本在这里直接 return，于是
+  // 换图之后真实尺寸永远写不回去：角标当次靠组件局部 state 还是对的，重新挂载读到的
+  // 却是旧记录；同比例换图时降采样副本那层校验也认不出来，于是继续按旧尺寸挑变体。
+  // 保住用户拖出来的显示尺寸，和把真实像素尺寸记对，是两件互不相干的事。
+  describe("用户拖定过尺寸的节点", () => {
+    const LOCKED = { ...SETTLED, sizeLockedByUser: true };
+
+    it("不碰它的显示尺寸，但记录该补还是要补", () => {
+      expect(planNaturalSizeRecordWrite({ ...LOCKED, record: null })).toEqual({
+        persist: true,
+        recordHistory: false,
+        applySize: false,
+      });
+    });
+
+    it("比例变了也只纠正记录，尺寸不动，也不进撤销栈", () => {
+      expect(
+        planNaturalSizeRecordWrite({
+          ...LOCKED,
+          record: { width: 2752, height: 1536 },
+          aspectRatioChanged: true,
+          displaySizeMismatch: true,
+        }),
+      ).toEqual({ persist: true, recordHistory: false, applySize: false });
+    });
+
+    it("记录已经是真相时什么都不写", () => {
+      expect(planNaturalSizeRecordWrite({ ...LOCKED, record: MEASURED })).toEqual({
+        persist: false,
+        recordHistory: false,
+        applySize: false,
+      });
+    });
+
+    it("量的不是记录该描述的那张图时，连补记都不做", () => {
+      expect(
+        planNaturalSizeRecordWrite({ ...LOCKED, record: null, measuringRecordSubject: false }),
+      ).toEqual({ persist: false, recordHistory: false, applySize: false });
+    });
   });
 });
 

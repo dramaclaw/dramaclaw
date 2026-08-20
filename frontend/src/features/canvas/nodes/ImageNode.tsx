@@ -309,9 +309,10 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
                 );
               }
               const forceNaturalSize = shouldForceNaturalImageSize(data as Record<string, unknown>);
-              if (data.isSizeManuallyAdjusted === true && !forceNaturalSize) {
-                return;
-              }
+              // 用户拖定过尺寸：屏幕上的尺寸归他。但记录归事实——这里原本直接
+              // return，于是换图之后真实尺寸永远写不回去，重新挂载读到的还是
+              // 旧记录，同比例换图时副本校验那层也认不出来。
+              const sizeLockedByUser = data.isSizeManuallyAdjusted === true && !forceNaturalSize;
               const nextAspectRatio = aspectRatioFromImageDimensions(
                 measured.width,
                 measured.height,
@@ -335,19 +336,30 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
                 record: recordedNaturalSize,
                 measured,
                 measuringRecordSubject,
+                sizeLockedByUser,
               });
-              if (recordWrite.persist) {
-                updateNodeSize(id, nextSize, {
-                  lockManualSize: forceNaturalSize ? false : undefined,
-                  recordHistory: recordWrite.recordHistory,
-                  data: {
-                    aspectRatio: nextAspectRatio,
-                    imageNaturalWidth: measured.width,
-                    imageNaturalHeight: measured.height,
-                    imageAspectRatioUpdatedAt: Date.now(),
-                  },
-                });
+              if (!recordWrite.persist) {
+                return;
               }
+              // 只是补记事实那一类：不碰节点尺寸，也不碰比例。
+              if (!recordWrite.applySize) {
+                updateNodeData(
+                  id,
+                  { imageNaturalWidth: measured.width, imageNaturalHeight: measured.height },
+                  { recordHistory: false },
+                );
+                return;
+              }
+              updateNodeSize(id, nextSize, {
+                lockManualSize: forceNaturalSize ? false : undefined,
+                recordHistory: recordWrite.recordHistory,
+                data: {
+                  aspectRatio: nextAspectRatio,
+                  imageNaturalWidth: measured.width,
+                  imageNaturalHeight: measured.height,
+                  imageAspectRatioUpdatedAt: Date.now(),
+                },
+              });
             }}
             className="h-full w-full object-contain"
           />

@@ -398,6 +398,8 @@ export type NaturalSizeRecordWrite = {
   persist: boolean;
   /** 这次写回该不该进撤销栈。 */
   recordHistory: boolean;
+  /** 要不要顺带把节点尺寸改成贴合这张图的尺寸。 */
+  applySize: boolean;
 };
 
 /**
@@ -420,6 +422,9 @@ export type NaturalSizeRecordWrite = {
  *
  * 第 2、3 种都自带收敛：写完记录就和真相一致，下次同一判断直接为假。
  *
+ * sizeLockedByUser 是「用户手动拖过尺寸」。它只关掉 applySize，不关掉记录纠正：
+ * 保住用户拖出来的显示尺寸，和把真实像素尺寸记对，是两件互不相干的事。
+ *
  * measuringRecordSubject 是给 ImageNode 那种「放大档换喂另一个 URL」的节点用的：
  * 那一轮元素上的尺寸属于另一张图（旋转/补光/多视角的结果都写在 previewImageUrl
  * 里，和 imageUrl 不必同尺寸），拿它去纠正记录是把错的换成另一个错的。
@@ -430,18 +435,23 @@ export function planNaturalSizeRecordWrite(input: {
   record: ImagePixelSize | null;
   measured: ImagePixelSize;
   measuringRecordSubject: boolean;
+  sizeLockedByUser: boolean;
 }): NaturalSizeRecordWrite {
-  if (input.aspectRatioChanged || input.displaySizeMismatch) {
-    return { persist: true, recordHistory: true };
-  }
-  if (!input.measuringRecordSubject) {
-    return { persist: false, recordHistory: false };
-  }
   const recordIsWrong =
-    input.record === null
-    || input.record.width !== input.measured.width
-    || input.record.height !== input.measured.height;
-  return { persist: recordIsWrong, recordHistory: false };
+    input.measuringRecordSubject
+    && (input.record === null
+      || input.record.width !== input.measured.width
+      || input.record.height !== input.measured.height);
+  // 用户拖定过尺寸：屏幕上的尺寸归他，记录归事实。这两件事原本捆在一起，于是
+  // 「不许自动改尺寸」把「纠正记录」也一并跳过了——换图之后角标当次靠组件局部
+  // state 还是对的，重新挂载读到的却是旧记录，变体也按旧尺寸挑。
+  if (input.sizeLockedByUser) {
+    return { persist: recordIsWrong, recordHistory: false, applySize: false };
+  }
+  if (input.aspectRatioChanged || input.displaySizeMismatch) {
+    return { persist: true, recordHistory: true, applySize: true };
+  }
+  return { persist: recordIsWrong, recordHistory: false, applySize: false };
 }
 
 export async function persistImageLocally(source: string): Promise<string> {
