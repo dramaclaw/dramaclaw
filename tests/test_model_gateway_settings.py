@@ -26,6 +26,7 @@ from novelvideo.model_gateway_settings import (
     get_effective_cognee_embedding_config,
     get_effective_newapi_config,
     get_ce_media_model_catalog,
+    get_newapi_embedding_model_config,
     get_official_media_model_catalog,
     get_newapi_media_model_mappings,
     get_newapi_provider_channels,
@@ -2216,6 +2217,20 @@ def test_custom_newapi_provider_channels_route_removes_final_channel(
         },
     )
     assert create_response.status_code == 200
+    save_newapi_media_model_mappings(
+        {
+            "speech-preview": {
+                "provider": "openrouter",
+                "upstreamModel": "speech-upstream",
+                "mediaType": "audio",
+            }
+        }
+    )
+    save_newapi_embedding_model_config(
+        provider="openrouter",
+        upstream_model="embedding-upstream",
+        dimension=1024,
+    )
 
     delete_response = client.post(
         "/model-gateway/custom/newapi/provider-channels",
@@ -2223,10 +2238,64 @@ def test_custom_newapi_provider_channels_route_removes_final_channel(
     )
     assert delete_response.status_code == 200
     assert delete_response.json()["data"]["channels"] == []
+    assert delete_response.json()["data"]["mediaModels"] == {}
+    assert delete_response.json()["data"]["embeddingModel"] is None
 
     config_response = client.get("/model-gateway/config")
     assert config_response.status_code == 200
-    assert config_response.json()["data"]["provisioner"]["providerChannels"] == []
+    provisioner = config_response.json()["data"]["provisioner"]
+    assert provisioner["providerChannels"] == []
+    assert provisioner["mediaModels"] == {}
+    assert provisioner["embeddingModel"] == {}
+
+
+def test_provider_channel_replacement_only_cascades_removed_provider(
+    monkeypatch,
+    tmp_path,
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_provider_channels(
+        [
+            {"provider": "openrouter", "upstreamKey": "sk-openrouter"},
+            {"provider": "fal", "upstreamKey": "sk-fal"},
+        ]
+    )
+    save_newapi_media_model_mappings(
+        {
+            "openrouter-image": {
+                "provider": "openrouter",
+                "upstreamModel": "openrouter/image",
+                "mediaType": "image",
+            },
+            "fal-video": {
+                "provider": "fal",
+                "upstreamModel": "fal/video",
+                "mediaType": "video",
+            },
+        }
+    )
+    save_newapi_embedding_model_config(
+        provider="openrouter",
+        upstream_model="openrouter/embedding",
+        dimension=1024,
+    )
+
+    save_newapi_provider_channels(
+        [{"provider": "fal", "upstreamKey": ""}],
+        preserve_unmentioned=False,
+    )
+
+    channels = get_newapi_provider_channels()
+    assert [channel["provider"] for channel in channels] == ["fal"]
+    assert channels[0]["upstreamKey"] == "sk-fal"
+    assert get_newapi_media_model_mappings() == {
+        "fal-video": {
+            "provider": "fal",
+            "upstreamModel": "fal/video",
+            "mediaType": "video",
+        }
+    }
+    assert get_newapi_embedding_model_config() == {}
 
 
 def test_comfyui_provider_channel_writes_workflows_to_newapi(
