@@ -441,8 +441,12 @@ def save_newapi_provider_channels(
     *,
     preserve_unmentioned: bool = False,
 ) -> list[dict[str, Any]]:
+    current_settings = get_model_gateway_settings()
+    existing_channels = _decode_provider_channels(
+        current_settings.get("custom_newapi_provider_channels")
+    )
     existing_by_provider = {
-        channel["provider"]: channel for channel in get_newapi_provider_channels()
+        channel["provider"]: channel for channel in existing_channels
     }
     normalized: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -491,15 +495,36 @@ def save_newapi_provider_channels(
             for provider, channel in existing_by_provider.items()
             if provider not in seen
         )
-    _write_many(
-        {
-            "custom_newapi_provider_channels": json.dumps(
-                normalized,
+    values = {
+        "custom_newapi_provider_channels": json.dumps(
+            normalized,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    }
+    if not preserve_unmentioned:
+        remaining_providers = {channel["provider"] for channel in normalized}
+        removed_providers = set(existing_by_provider) - remaining_providers
+        if removed_providers:
+            media_mappings = _decode_media_model_mappings(
+                current_settings.get("custom_newapi_media_model_mappings")
+            )
+            media_mappings = {
+                model: mapping
+                for model, mapping in media_mappings.items()
+                if mapping.get("provider") not in removed_providers
+            }
+            values["custom_newapi_media_model_mappings"] = json.dumps(
+                media_mappings,
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
-        }
-    )
+            embedding_model = _decode_embedding_model_config(
+                current_settings.get("custom_newapi_embedding_model")
+            )
+            if embedding_model.get("provider") in removed_providers:
+                values["custom_newapi_embedding_model"] = "{}"
+    _write_many(values)
     return normalized
 
 

@@ -2,7 +2,11 @@
 // Copyright (c) 2026 ClaymoreLab
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { syncQuickProfileFromAdvancedSettings } from "@/components/settings/settings-dialog";
+import {
+  providersSupportingCapability,
+  syncQuickProfileFromAdvancedSettings,
+} from "@/components/settings/settings-dialog";
+import type { NewApiChannelType } from "@/lib/queries/model-gateway";
 import {
   DEFAULT_FEATURE_MODEL_SETTINGS,
   normalizeMediaModelEntries,
@@ -57,6 +61,63 @@ function quickProfileFixture(): QuickProfile {
     },
   };
 }
+
+function channelType(
+  provider: string,
+  capabilities: string[],
+): NewApiChannelType {
+  return {
+    type: 1,
+    provider,
+    name: provider,
+    description: "",
+    icon: "",
+    defaultBaseUrl: "",
+    status: 1,
+    capabilities,
+    requiresBaseUrl: false,
+    supportsBaseUrlOverride: true,
+  };
+}
+
+describe("provider capability filtering", () => {
+  const configuredProviders = ["openrouter", "volcengine", "fal_ai", "legacy"];
+  const channelTypes = new Map<string, NewApiChannelType>([
+    ["openrouter", channelType("openrouter", ["text", "vision"])],
+    ["volcengine", channelType("volcengine", ["video"])],
+    ["fal_ai", channelType("fal_ai", ["image", "video", "audio"])],
+  ]);
+
+  it("only returns providers supporting the requested capability", () => {
+    expect(
+      providersSupportingCapability(configuredProviders, channelTypes, "text"),
+    ).toEqual(["openrouter", "legacy"]);
+    expect(
+      providersSupportingCapability(configuredProviders, channelTypes, "video"),
+    ).toEqual(["volcengine", "fal_ai", "legacy"]);
+  });
+
+  it("keeps providers without channel metadata for backward compatibility", () => {
+    expect(
+      providersSupportingCapability(
+        configuredProviders,
+        channelTypes,
+        "embedding",
+      ),
+    ).toEqual(["legacy"]);
+  });
+
+  it("keeps an existing incompatible provider visible for correction", () => {
+    expect(
+      providersSupportingCapability(
+        configuredProviders,
+        channelTypes,
+        "video",
+        "openrouter",
+      ),
+    ).toEqual(["openrouter", "volcengine", "fal_ai", "legacy"]);
+  });
+});
 
 describe("settingsStore feature model configuration", () => {
   beforeEach(() => {
