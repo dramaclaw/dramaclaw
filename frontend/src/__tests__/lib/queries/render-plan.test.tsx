@@ -13,6 +13,7 @@ import ky from "ky";
 // test-only ky instance with an absolute `baseUrl` so requests reach MSW.
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
 import { useRenderPlan, useRenderExecute } from "@/lib/queries/render-plan";

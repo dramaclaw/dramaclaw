@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { apiCall, apiClient } from "./client";
+import { apiCall, apiCallEnvelope, apiClient } from "./client";
 
 // Per-node generation history -------------------------------------------- //
 
@@ -780,18 +780,81 @@ export async function submitFreezoneReversePrompt(
 export interface FreezoneStyleTemplate {
   id: string;
   label: string;
-  /** Free-text English style description forwarded as part of the prompt. */
+  /** 题材分类:古装 / 都市 / 年代 / 生活 / 科幻 / 类型 / 写意,图墙顶部按它分组。 */
+  category: string;
+  /** 封面图相对路径,需经 resolveStyleAssetUrl 解析。 */
+  cover: string;
+  /** 女 / 少 / 男 / 老 四张示例图的相对路径。 */
+  samples: string[];
+  /** 中文风格提示词全文,原样拼进生成 prompt。 */
   style_prompt: string;
-  author?: string;
-  category?: string;
+}
+
+export interface FreezoneStyleTemplateList {
+  assetBase: string;
+  /** 后端风格清单的版本号,图片和提示词对不上时用来定位是哪一份清单在生效。 */
+  version: string;
+  templates: FreezoneStyleTemplate[];
+}
+
+/**
+ * 把后端吐回来的东西掰成风格模板数组。
+ *
+ * 这个端点的形状在两个仓库之间反复横跳过：早期 `data` 是裸列表，后来被换成
+ * `{asset_base, version, templates}` 的对象（于是没跟进的前端 `templates.find(...)`
+ * 当场抛 `is not a function`，整页白屏），现在又改回裸列表、元信息挂到信封同级。
+ * 所以这里不信任何一种形状，四种常见包装都认，认不出就退空列表 —— 图墙空着是能
+ * 看懂的降级，白屏不是。同一族的 {@link coerceCameraTemplateList} 就是这么做的。
+ */
+function coerceStyleTemplateList(payload: unknown): FreezoneStyleTemplate[] {
+  let candidate: unknown = payload;
+  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+    const wrapper = candidate as Record<string, unknown>;
+    if (Array.isArray(wrapper.templates)) candidate = wrapper.templates;
+    else if (Array.isArray(wrapper.data)) candidate = wrapper.data;
+    else if (Array.isArray(wrapper.items)) candidate = wrapper.items;
+    else if (Array.isArray(wrapper.style_templates)) candidate = wrapper.style_templates;
+  }
+  if (!Array.isArray(candidate)) return [];
+  const result: FreezoneStyleTemplate[] = [];
+  for (const item of candidate) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    // 没 id 就没法回写到节点上，这条直接丢掉；其余字段缺了还能降级显示。
+    const id = pickString(entry, "id", "template_id", "templateId", "key");
+    if (!id) continue;
+    result.push({
+      id,
+      label: pickString(entry, "label", "display_name", "displayName", "title", "name") ?? id,
+      category: pickString(entry, "category", "group", "kind") ?? "",
+      cover: pickString(entry, "cover", "cover_url", "coverUrl", "thumbnail") ?? "",
+      samples: pickStringArray(entry, "samples", "sample_urls", "sampleUrls"),
+      style_prompt:
+        pickString(entry, "style_prompt", "stylePrompt", "prompt", "prompt_fragment") ?? "",
+    });
+  }
+  return result;
 }
 
 export async function listFreezoneStyleTemplates(
   project: string,
-): Promise<FreezoneStyleTemplate[]> {
-  return await apiCall<FreezoneStyleTemplate[]>(
+): Promise<FreezoneStyleTemplateList> {
+  // 走 apiCallEnvelope 而不是 apiCall：清单元信息挂在 `data` 同级（`data` 得留给
+  // 裸列表，见后端路由注释）。元信息在 data 里的旧形状也照样能认出来。
+  const envelope = await apiCallEnvelope<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/image/style-templates`,
   );
+  const nested =
+    envelope.data && typeof envelope.data === "object" && !Array.isArray(envelope.data)
+      ? (envelope.data as Record<string, unknown>)
+      : {};
+  const meta = (key: string) =>
+    pickString(envelope, key) ?? pickString(nested, key) ?? "";
+  return {
+    assetBase: meta("asset_base"),
+    version: meta("version"),
+    templates: coerceStyleTemplateList(envelope.data),
+  };
 }
 
 // /freezone/image/camera-options ----------------------------------------- //
@@ -2327,9 +2390,10 @@ export interface FreezoneUploadResult {
 
 export interface FreezoneUploadOptions {
   /**
-   * Override the default ky timeout (30s). Pass `false` to disable —
-   * required for multi-MB video uploads on slow links, otherwise ky aborts
-   * the in-flight request and DevTools shows the row as `canceled`.
+   * Override the upload timeout. Defaults to `false` (no timeout) — a clock on
+   * an upload races the user's uplink rather than the server, and aborting
+   * mid-body shows up as HTTP 499 at the edge with the file never delivered
+   * (see uploadApi in lib/api.ts). Pass a number only to bound a specific call.
    */
   timeoutMs?: number | false;
 }
@@ -2348,7 +2412,7 @@ export async function uploadFreezoneImage(
     {
       method: "POST",
       body: fd,
-      timeout: options?.timeoutMs ?? undefined,
+      timeout: options?.timeoutMs ?? false,
     },
   ).json<{ ok: boolean; data?: FreezoneUploadResult; error?: string }>();
   if (!resp.ok || !resp.data) {
@@ -2363,10 +2427,10 @@ export async function uploadFreezoneVideo(
   file: File | Blob,
   filename?: string,
 ): Promise<FreezoneUploadResult> {
-  // Disable the 30s default timeout: video files routinely run into the tens
-  // of MB and the upload streams the body, so a short timeout cancels the
-  // request before the server ever sees the end of the body.
-  return await uploadFreezoneImage(project, file, filename, { timeoutMs: false });
+  // Timeouts are off by default for uploads (see FreezoneUploadOptions):
+  // video files routinely run into the tens of MB and the body is streamed, so
+  // any clock cancels the request before the server sees the end of it.
+  return await uploadFreezoneImage(project, file, filename);
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -2641,6 +2705,23 @@ export async function syncFreezoneAssetLibraryFromMainline(
   return await apiCall<FreezoneVideoCharacterLibraryItem[]>(
     `projects/${encodeURIComponent(project)}/freezone/video/asset-library/sync-from-mainline`,
     { method: "POST" },
+  );
+}
+
+/**
+ * 给资产库条目改名。只动展示名，素材地址不变——画布上已经引用它的节点不受影响。
+ *
+ * 主线同步来的条目改了名会在下次「从主线同步」时被覆盖回去，所以调用侧只对本地
+ * 上传的条目开放这个入口。
+ */
+export async function renameFreezoneVideoCharacterLibraryItem(
+  project: string,
+  itemId: string,
+  name: string,
+): Promise<FreezoneVideoCharacterLibraryItem> {
+  return await apiCall<FreezoneVideoCharacterLibraryItem>(
+    `projects/${encodeURIComponent(project)}/freezone/video/character-library/${encodeURIComponent(itemId)}`,
+    { method: "PATCH", json: { name } },
   );
 }
 

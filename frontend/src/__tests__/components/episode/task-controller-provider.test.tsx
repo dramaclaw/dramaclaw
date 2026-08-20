@@ -210,6 +210,7 @@ describe("ownership transitions emit snapshot updates", () => {
       activeTaskType: "t",
       activeTaskId: null,
       activeScope: null,
+      activeBeatNumbers: null,
       streamState: {
         status: "idle",
         progress: 0,

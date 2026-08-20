@@ -35,6 +35,7 @@ import {
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { AssetLibraryItemMedia } from './AssetLibraryItemMedia';
 import { Button } from '@/components/ui/button';
+import { confirmDialog } from '@/components/confirm-dialog-host';
 import { AssetLibraryFolderCoverDialog } from './AssetLibraryFolderCoverDialog';
 import { AssetLibraryNewFolderDialog } from './AssetLibraryNewFolderDialog';
 import {
@@ -390,9 +391,12 @@ export function AssetLibraryModal({
   const handleDeleteEntry = useCallback(
     async (entry: LibraryItem) => {
       if (!project || !entry.id) return;
-      const confirmed = window.confirm(
-        `确定要删除「${entry.name || entry.id}」？`,
-      );
+      const confirmed = await confirmDialog({
+        title: '删除素材',
+        description: `确定要删除「${entry.name || entry.id}」？删了找不回来。`,
+        confirmText: '删除',
+        confirmVariant: 'destructive',
+      });
       if (!confirmed) return;
       setDeletingId(entry.id);
       try {
@@ -410,9 +414,12 @@ export function AssetLibraryModal({
 
   const handleBulkDelete = useCallback(async () => {
     if (!project || bulkIds.length === 0 || isBulkDeleting) return;
-    const confirmed = window.confirm(
-      `确定要删除选中的 ${bulkIds.length} 项素材？`,
-    );
+    const confirmed = await confirmDialog({
+      title: '批量删除',
+      description: `确定要删除选中的 ${bulkIds.length} 项素材？删了找不回来。`,
+      confirmText: '删除',
+      confirmVariant: 'destructive',
+    });
     if (!confirmed) return;
     setIsBulkDeleting(true);
     // 一条失败不能把剩下的也拦住——最常见的是这个 id 已经被别处删掉了，为它把
@@ -501,11 +508,15 @@ export function AssetLibraryModal({
       const doomed = library.filter(
         (entry) => entry.folder === folder.key,
       ).length;
-      const confirmed = window.confirm(
-        doomed > 0
-          ? `确定要删除文件夹「${folder.label}」？里面的 ${doomed} 项素材会一起删掉，删了找不回来。`
-          : `确定要删除文件夹「${folder.label}」？`,
-      );
+      const confirmed = await confirmDialog({
+        title: '删除文件夹',
+        description:
+          doomed > 0
+            ? `确定要删除文件夹「${folder.label}」？里面的 ${doomed} 项素材会一起删掉，删了找不回来。`
+            : `确定要删除文件夹「${folder.label}」？`,
+        confirmText: '删除',
+        confirmVariant: 'destructive',
+      });
       if (!confirmed) return;
       try {
         await deleteFreezoneAssetLibraryFolder(project, folder.key);

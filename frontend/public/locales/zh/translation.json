@@ -27,6 +27,147 @@
   "loginCinematic": {
     "moreInfo": "更多信息"
   },
+  "downloadPage": {
+    "nav": {
+      "capability": "能力",
+      "release": "版本",
+      "faq": "常见问题"
+    },
+    "hero": {
+      "subtitle": "从一本小说到成片：剧集规划、角色设定、场景分镜、首帧渲染、视频生成、成片合成。主线按流程一步步推，虾画在节点画布上自由编排，两边共用同一批资产。桌面客户端把本地素材、长任务渲染和自动更新一并接管。",
+      "note": "安装包直连 CDN，内置自动更新，装一次就不用再回来。",
+      "history": "全部平台的历史版本见"
+    },
+    "platform": {
+      "detected": "你的系统",
+      "format": "格式",
+      "arch": "架构",
+      "requirement": "要求",
+      "mac": {
+        "name": "macOS",
+        "format": ".dmg",
+        "arch": "Apple 芯片（arm64）",
+        "requirement": "macOS 12 或更高",
+        "cta": "下载 macOS 版"
+      },
+      "windows": {
+        "name": "Windows",
+        "format": ".exe",
+        "arch": "x64",
+        "requirement": "Windows 10 或更高",
+        "cta": "下载 Windows 版"
+      }
+    },
+    "preview": {
+      "eyebrow": "界面",
+      "title": "主线走流程，画布做编排",
+      "lede": "主线把一本小说拆成剧集、角色、分镜、首帧、视频和合成，一步一页推着走；虾画是一块节点画布，可以把主线的镜头投影进来自由改，改完再同步回主线。两条路共用同一批资产，不用来回搬素材。",
+      "windowTitle": "DramaClaw — 第 03 集 · 画布",
+      "alt": "DramaClaw 桌面端画布界面示意：顶部是剧集标签条，左侧分镜大纲，中间节点画布，右侧参数面板。",
+      "caption": "示意图（虾画画布视图）"
+    },
+    "capability": {
+      "eyebrow": "能力",
+      "title": "桌面端能多做的四件事",
+      "lede": "网页版能跑的流程，客户端全都有。下面这些是装了客户端才拿得到的。",
+      "items": {
+        "localFiles": {
+          "title": "本地文件直接拖进画布",
+          "description": "视频、图片、音频从访达或资源管理器一拖即用，走本地路径，不必先等一遍上传。"
+        },
+        "longTasks": {
+          "title": "长任务不受标签页拖累",
+          "description": "整集渲染、批量首帧这类跑几十分钟的任务放在客户端里，不会因为误关标签页而前功尽弃。"
+        },
+        "autoUpdate": {
+          "title": "装一次就一直是新版",
+          "description": "新版本发布后客户端自动拉取并在后台装好，下次启动即生效，不用回来重下安装包。"
+        },
+        "localExport": {
+          "title": "成片直接落到本地磁盘",
+          "description": "导出的分镜、首帧和成片按剧集归到本地文件夹，不用一个个从浏览器下载栏里捞。"
+        }
+      }
+    },
+    "release": {
+      "eyebrow": "版本",
+      "title": "当前版本与最近更新",
+      "spec": {
+        "version": "版本号",
+        "pending": "获取中",
+        "released": "发布日期",
+        "macValue": "12+ · Apple 芯片",
+        "windowsValue": "10+ · x64",
+        "autoUpdate": "自动更新",
+        "autoUpdateValue": "已启用",
+        "license": "授权"
+      },
+      "checksum": {
+        "label": "SHA-512",
+        "note": "base64 编码，每条各自对应上方同名平台的安装包",
+        "copy": "复制",
+        "copied": "已复制",
+        "pending": "获取中"
+      }
+    },
+    "changelog": {
+      "v132": {
+        "title": "本地 ComfyUI 配置简化，视频生成模式对齐",
+        "description": "MiniMax H3 以单一模型接入多个 Workflow，由虾驿按模式自动选流程；画布选定的首帧、首尾帧等模式在校验、计费与执行中保持一致。"
+      },
+      "v131": {
+        "title": "官方媒体模型目录可更新",
+        "description": "设置页可手动或自动检查官方媒体模型目录更新，新目录生效后画布的图片与视频模型选项立即刷新。"
+      },
+      "v130": {
+        "title": "模型渠道与能力统一后台下发",
+        "description": "图片和视频模型、参数与素材连线上限改由后台配置下发；官方配置内置 MiniMax-H3，也可接入本地 ComfyUI 走本机生成。"
+      },
+      "v121": {
+        "title": "媒体参数与导入进度更可靠",
+        "description": "视频比例、分辨率和模型专用参数完整传递并修正 2K/4K 换算；小说导入时持续显示当前阶段、完成比例和已用时间。"
+      },
+      "v120": {
+        "title": "功能积分透明化，外部智能体可接入",
+        "description": "统一展示功能价格、预计扣费与使用记录；Claude Code 等本地智能体可通过 MCP 直接调用 DramaClaw CE。"
+      }
+    },
+    "faq": {
+      "eyebrow": "常见问题",
+      "title": "安装前后可能会碰到的",
+      "items": {
+        "macGatekeeper": {
+          "question": "Mac 提示「无法打开，因为无法验证开发者」怎么办？",
+          "answer": "在「访达 — 应用程序」里找到 DramaClaw，按住 Control 点按图标选「打开」，在弹出的确认框里再点一次「打开」即可。这一步只需要做一次，之后正常双击启动。"
+        },
+        "winSmartScreen": {
+          "question": "Windows 提示「Windows 已保护你的电脑」怎么办？",
+          "answer": "在提示框里点「更多信息」，再点「仍要运行」。这是 SmartScreen 对下载量尚低的安装包的默认拦截，与安装包本身是否完好无关。"
+        },
+        "offline": {
+          "question": "客户端装好之后还要联网吗？",
+          "answer": "要。剧本生成、首帧渲染、视频合成都在云端算力上跑，客户端负责编排、素材管理和结果落盘。断网时已下载到本地的成片仍然能打开。"
+        },
+        "update": {
+          "question": "怎么升级到新版本？",
+          "answer": "不用管。客户端启动时会检查更新，新版本在后台下载完成后，下次启动自动生效。想手动装某个特定版本，见",
+          "linkLabel": "GitHub Releases"
+        },
+        "storage": {
+          "question": "项目文件和导出的成片存在哪里？",
+          "answer": "项目数据随账号存在云端，多台设备登录同一账号看到的是同一批剧集。导出的分镜图、首帧和成片会写到本地磁盘，路径可以在客户端设置里改。"
+        },
+        "openSource": {
+          "question": "是开源的吗？",
+          "answer": "采用 Elastic-2.0 授权：可以自由使用、修改和自行部署，不可作为托管服务对外转售。源码在",
+          "linkLabel": "github.com/dramaclaw/dramaclaw"
+        }
+      }
+    },
+    "footer": {
+      "meta": "© 2026 CLAYMORELAB · ELASTIC-2.0 · MACOS 12+ / WINDOWS 10+"
+    }
+  },
   "header": {
     "partyFounding105": "庆祝建党105周年",
     "settings": "设置",
@@ -437,6 +578,7 @@
       "collapseEpisode": "折叠 EP{{episode}}",
       "emptyRecent": "暂无最近画布",
       "loading": "加载中...",
+      "switcher": "切换画布",
       "create": "新建",
       "createTitle": "新建项目画布",
       "createBusy": "新建中",
@@ -449,12 +591,15 @@
       "restoreTitle": "按当前主流程事实重建这张主线画布的 preset 层",
       "restore": "同步",
       "restoreBusy": "同步中",
+      "restoreMenu": "同步主线视图",
       "sourceCanvas": "主线",
       "sourceCanvasTitle": "回到来源主线画布：{{canvasId}}",
+      "backToSource": "回到来源主线画布",
       "conflictCopy": "冲突副本",
       "conflictCopyDescription": "冲突保存副本",
       "delete": "删除",
       "deleteTitle": "删除画布",
+      "deleteCurrent": "删除当前画布",
       "deleteConfirm": "确定删除「{{name}}」吗？这会移除这张画布里的节点和连线，但不会删除主线资产。",
       "deleteBusy": "删除中...",
       "deleteFailed": "删除画布失败：{{message}}",
@@ -1291,6 +1436,7 @@
         "description": "系统正在从图谱中提取场景，完成后会显示在这里。"
       },
       "confirmDelete": "删除场景「{{name}}」？",
+      "deleteTitle": "删除场景",
       "deleted": "场景已删除",
       "master": "源图",
       "pano": "360 全景",
@@ -4182,7 +4328,34 @@
         "description": "为文本理解、内容生成和视觉理解功能指定上游模型；未设置则使用后端默认。",
         "channelsTitle": "供应商渠道",
         "channelsDescription": "先添加要使用的供应商渠道，并配置上游 Key 和可选 Base URL 覆盖；每个供应商只能添加一次。",
-        "addChannel": "新增渠道",
+        "addChannelShort": "添加",
+        "manageChannels": "渠道管理",
+        "removeChannelShort": "删除",
+        "channelCatalogTitle": "供应商渠道管理",
+        "channelCatalogDescription": "查看 RelayClaw CE 支持的渠道及其能力，根据模型用途添加或删除渠道。",
+        "channelCatalogSearch": "搜索渠道名称或标识",
+        "channelCapabilityFilter": "按渠道能力筛选",
+        "channelCapabilities": "支持能力",
+        "channelDescription": "说明",
+        "channelAction": "操作",
+        "channelUnavailable": "不可用",
+        "noCapabilityData": "暂无能力信息",
+        "noMatchingChannels": "没有符合条件的渠道。",
+        "channelTypesLoading": "正在加载渠道列表…",
+        "channelTypesLoadFailed": "渠道列表加载失败，请检查 RelayClaw CE 是否正常运行后重试。",
+        "retryChannelTypes": "重新加载",
+        "removeChannelTitle": "删除供应商渠道？",
+        "removeChannelConfirm": "删除渠道“{{provider}}”后，将同时移除 {{featureCount}} 条业务模型映射、{{mediaCount}} 条媒体模型映射和 {{embeddingCount}} 条 Embedding 配置。此操作会立即更新当前配置。",
+        "capabilities": {
+          "all": "全部能力",
+          "text": "文本",
+          "vision": "视觉理解",
+          "embedding": "向量",
+          "rerank": "重排序",
+          "image": "图片",
+          "video": "视频",
+          "audio": "音频"
+        },
         "saveChannels": "保存渠道配置",
         "channelsSaved": "渠道配置已保存到本地。",
         "comfyWorkflows": "ComfyUI Workflows",
@@ -4197,6 +4370,9 @@
         "comfyWorkflowIdPlaceholder": "Workflow ID，例如 minimax-h3-t2v",
         "comfyDuplicateWorkflow": "Workflow ID 不能重复。",
         "comfyInvalidWorkflow": "Workflow 必须是有效的 JSON 对象。",
+        "replaceComfyModelTitle": "切换为 MiniMax H3 模型？",
+        "replaceComfyModelConfirm": "当前 ComfyUI 渠道绑定的是 {{currentModel}}。载入模板会切换为 {{nextModel}}，并更新由 Workflow 自动管理的媒体模型配置。是否继续？",
+        "replaceComfyModel": "切换并载入",
         "clearComfy": "清除 ComfyUI 配置",
         "clearComfyTitle": "清除 ComfyUI 配置？",
         "clearComfyConfirm": "将删除本地及 NewAPI 中的 ComfyUI 渠道、Workflow 和对应媒体模型映射。已生成的项目和媒体不会被删除。",

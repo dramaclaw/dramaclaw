@@ -516,6 +516,72 @@ def migrate_scene_names_cmd(
         raise typer.Exit(1)
 
 
+@app.command("repair-asset-names")
+def repair_asset_names_cmd(
+    project_id: str = typer.Option("", "--project-id", help="control-plane 项目 ID"),
+    user: str = typer.Option("", "--user", help="项目所属用户，例如 admin"),
+    project: str = typer.Option("", "--project", "-p", help="项目名，例如 tayuta"),
+    state_dir: str = typer.Option("", "--state-dir", help="data.db 所在目录"),
+    output_dir: str = typer.Option("", "--output-dir", help="assets/ 所在项目目录"),
+):
+    """把库里名字带斜杠 / 纯点的存量角色、场景、道具改名归位。
+
+    这批名字的 ``{name}`` 接口全是 404（uvicorn 在路由匹配前就把 ``%2F`` 还原成真斜杠），
+    删不掉也生不出源图。资产列表接口会在有写权限的人打开时顺手治一次；这个命令是给运维
+    的显式入口，不用等谁去点页面。原名留作别名，已有的 beats / 分镜引用不会断。
+    """
+    from novelvideo.api.routes.characters import _heal_path_unsafe_character_names
+    from novelvideo.api.routes.props import _heal_path_unsafe_prop_names
+    from novelvideo.api.routes.scenes import _heal_path_unsafe_scene_names
+    from novelvideo.sqlite_store import SQLiteStore
+
+    async def do_repair():
+        db_dir, asset_dir, label = await _resolve_scene_migration_dirs(
+            project_id=project_id,
+            user=user,
+            project=project,
+            state_dir=state_dir,
+            output_dir=output_dir,
+        )
+        console.print(f"[bold blue]Asset name repair[/bold blue]: {label}")
+        console.print(f"  data.db dir: {db_dir}")
+        console.print(f"  asset dir:   {asset_dir}")
+
+        # 名字里不带 ``/``：带斜杠会让 store 走 ProjectPaths 那条分支去 bootstrap 一个
+        # 按 label 拼出来的目录，而这里的路径已经由 --state-dir / --output-dir 定死了。
+        store = SQLiteStore(
+            Path(asset_dir).name, output_dir=str(asset_dir), state_dir=str(db_dir)
+        )
+        await store.initialize()
+        await store.load_graph_state()
+        renamed_total = 0
+        try:
+            for kind, heal in (
+                ("character", _heal_path_unsafe_character_names),
+                ("scene", _heal_path_unsafe_scene_names),
+                ("prop", _heal_path_unsafe_prop_names),
+            ):
+                renamed = await heal(store, asset_dir) or {}
+                renamed_total += len(renamed)
+                console.print(f"  [green]✓[/green] {kind}: {len(renamed)} 条")
+                for old_name, new_name in renamed.items():
+                    console.print(f"      {old_name} → {new_name}")
+        finally:
+            await store.close()
+        if renamed_total:
+            console.print(
+                f"[green]✓ 改名 {renamed_total} 条。原名已留作别名，旧引用不会断。[/green]"
+            )
+        else:
+            console.print("[dim]没有需要修的名字。[/dim]")
+
+    try:
+        asyncio.run(do_repair())
+    except typer.BadParameter as exc:
+        console.print(f"[red]参数错误: {exc}[/red]")
+        raise typer.Exit(1)
+
+
 def main() -> None:
     app()
 

@@ -14,6 +14,7 @@ import { server } from "@/__mocks__/msw/server";
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
 const taskControllerMock = vi.hoisted(() => vi.fn());
@@ -50,6 +51,7 @@ vi.mock("@/features/viewer-kit/three-d/ThreeDDirectorDialog", () => ({
 }));
 
 import { PropsPanel } from "@/components/assets/props-panel";
+import { ConfirmDialogHost } from "@/components/confirm-dialog-host";
 import { ScenesPanel } from "@/components/assets/scenes-panel";
 import {
   AssetHeaderActionsSlotProvider,
@@ -67,6 +69,8 @@ beforeAll(async () => {
         translation: {
           common: {
             cancel: "Cancel",
+            confirm: "Confirm",
+            delete: "Delete",
             loading: "Loading",
             refresh: "Refresh",
             save: "Save",
@@ -90,6 +94,7 @@ beforeAll(async () => {
               emptyTitle: "No scenes yet",
               emptyDescription: "Create a scene or extract scenes from the project graph.",
               confirmDelete: "Delete scene \"{{name}}\"?",
+              deleteTitle: "Delete scene",
               deleted: "Scene deleted",
               master: "Master",
               pano: "360 panorama",
@@ -227,6 +232,43 @@ describe("asset panel rename behavior", () => {
 
     await waitFor(() => expect(patchBody).toBeDefined());
     expect(patchBody).toMatchObject({ name: "GrandHall" });
+  });
+
+  it("confirms scene deletion through the styled dialog instead of window.confirm", async () => {
+    const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let deleted = false;
+    server.use(
+      http.get("http://localhost:3000/api/v1/projects/demo/scenes", () =>
+        HttpResponse.json({
+          ok: true,
+          data: [{ name: "Hall", scene_type: "interior", environment_prompt: "wide hall" }],
+        }),
+      ),
+      http.post("http://localhost:3000/api/v1/projects/demo/scenes/Hall/delete", () => {
+        deleted = true;
+        return HttpResponse.json({ ok: true, data: { deleted: true } });
+      }),
+    );
+
+    renderWithProviders(
+      <>
+        <ConfirmDialogHost />
+        <ScenesPanel project="demo" />
+      </>,
+    );
+
+    expect(await screen.findAllByText("Hall")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText('Delete scene "Hall"?')).toBeInTheDocument();
+    // 走原生 confirm 的话对话框根本不会出现，删除也早就发出去了。
+    expect(nativeConfirm).not.toHaveBeenCalled();
+    expect(deleted).toBe(false);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleted).toBe(true));
+    nativeConfirm.mockRestore();
   });
 
   it("shows scene naming rules and submits the selected Chinese scene type as canonical value", async () => {

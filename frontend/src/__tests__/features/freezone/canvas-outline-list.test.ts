@@ -356,3 +356,54 @@ describe("canvasOutlineSignature", () => {
     );
   });
 });
+
+describe("outline meta", () => {
+  // 时刻只在「正在转圈」时看得见、跑完就消失，是这一行最容易退回去的坑：
+  // generationStartedAt 在每条生成链路的成功和失败分支上都会被写回 null，
+  // 所以下面这两条钉的是「读的必须是持久字段」，而不是「能显示出个时间」。
+  const CREATED_AT = new Date(2026, 7, 20, 14, 32).getTime(); // 08-20 14:32
+
+  function metaOf(data: Record<string, unknown>): string | null {
+    const [item] = buildCanvasOutline([node("a", CANVAS_NODE_TYPES.video, data)]);
+    return item.kind === "node" ? item.meta : null;
+  }
+
+  it("keeps the stamp after generation finishes", () => {
+    // 生成跑完的样子：isGenerating 落回 false，generationStartedAt 被清成 null。
+    expect(
+      metaOf({
+        displayName: "海边的黄昏",
+        createdAt: CREATED_AT,
+        isGenerating: false,
+        generationStartedAt: null,
+      }),
+    ).toContain("08-20 14:32");
+  });
+
+  it("does not fall back to the transient generationStartedAt", () => {
+    // 老画布里的节点没有 createdAt。宁可不显示，也不能显示一个待会儿要蒸发的值。
+    const meta = metaOf({
+      displayName: "海边的黄昏",
+      isGenerating: true,
+      generationStartedAt: CREATED_AT,
+    });
+
+    expect(meta).not.toContain("14:32");
+  });
+
+  it("separates same-named siblings by their own creation moment", () => {
+    // 同一条提示词生成三次：名字和类型都一样，只剩时刻能区分。
+    const outline = buildCanvasOutline([
+      node("a", CANVAS_NODE_TYPES.video, { displayName: "海边的黄昏", createdAt: CREATED_AT }),
+      node("b", CANVAS_NODE_TYPES.video, {
+        displayName: "海边的黄昏",
+        createdAt: CREATED_AT + 5 * 60_000,
+      }),
+    ]);
+    const metas = outline.map((item) => (item.kind === "node" ? item.meta : null));
+
+    expect(metas[0]).not.toBe(metas[1]);
+    expect(metas[0]).toContain("14:32");
+    expect(metas[1]).toContain("14:37");
+  });
+});

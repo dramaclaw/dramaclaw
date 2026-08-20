@@ -19,6 +19,7 @@ from novelvideo.project_context import (
     require_project_home_node,
     resolve_project_context,
 )
+from novelvideo.ports.project import PROJECT_ROLE_EDITOR, role_allows
 from novelvideo.utils.project_paths import ProjectPaths
 from novelvideo.utils.static_urls import project_static_url
 
@@ -118,6 +119,22 @@ async def resolve_project_scope(
         state_dir=str(ctx.state_dir),
         runtime_dir=str(ctx.runtime_dir),
     )
+
+
+def may_run_asset_repair(ctx: ProjectContext | None) -> bool:
+    """存量资产名自愈能不能在这个请求里跑。
+
+    自愈会 ``shutil.move`` 资产目录、改 SQLite 主键、刷 ``updated_at``——这是一次写操作，
+    却挂在 ``required_role="viewer"`` 的列表接口上：只读协作者打开一次资产页就会替整个
+    项目做迁移。把它收到 editor 及以上，只读的人看到的还是原样（他们本来也删不掉、生不
+    出图），第一个有写权限的人打开资产页时统一治好。
+
+    ``ctx`` 为 ``None`` 是单机 / CE 路径，没有协作者概念，按有写权限处理。
+    """
+
+    if ctx is None:
+        return True
+    return role_allows(getattr(ctx, "effective_role", "") or "", PROJECT_ROLE_EDITOR)
 
 
 def validate_project_name(name: str):

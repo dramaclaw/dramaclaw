@@ -29,6 +29,7 @@ from novelvideo.model_gateway_settings import (
     save_newapi_embedding_model_config,
     save_newapi_media_model_mappings,
     get_newapi_media_model_mappings,
+    get_newapi_embedding_model_config,
     save_newapi_provider_channels,
     get_newapi_provider_channel,
     get_newapi_provider_channels,
@@ -848,6 +849,8 @@ async def save_custom_newapi_provider_channels(
                         ),
                     }
             save_newapi_media_model_mappings(media_mappings)
+        media_models = get_newapi_media_model_mappings()
+        embedding_model = get_newapi_embedding_model_config()
     except PermissionError as exc:
         raise _permission_error(exc) from exc
     except ValueError as exc:
@@ -874,7 +877,9 @@ async def save_custom_newapi_provider_channels(
                     "settings": channel.get("settings", {}),
                 }
                 for channel in saved
-            ]
+            ],
+            "mediaModels": media_models,
+            "embeddingModel": embedding_model or None,
         },
     }
 

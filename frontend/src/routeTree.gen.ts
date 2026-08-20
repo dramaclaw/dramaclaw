@@ -23,6 +23,7 @@ import { Route as AppProjectsProjectIngestRouteImport } from './routes/_app/proj
 import { Route as AppProjectsProjectEpisodesRouteImport } from './routes/_app/projects.$project/episodes'
 import { Route as AppProjectsProjectAssistantRouteImport } from './routes/_app/projects.$project/assistant'
 
+const DownloadLazyRouteImport = createFileRoute('/download')()
 const AppProjectsProjectFreezoneLazyRouteImport = createFileRoute(
   '/_app/projects/$project/freezone',
 )()
@@ -52,6 +53,11 @@ const AppProjectsProjectEpisodesEpisodeAudioLazyRouteImport = createFileRoute(
   '/_app/projects/$project/episodes/$episode/audio',
 )()
 
+const DownloadLazyRoute = DownloadLazyRouteImport.update({
+  id: '/download',
+  path: '/download',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() => import('./routes/download.lazy').then((d) => d.Route))
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -214,6 +220,7 @@ const AppProjectsProjectEpisodesEpisodeAudioLazyRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
+  '/download': typeof DownloadLazyRoute
   '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
   '/watch/$work': typeof WatchWorkRoute
@@ -235,6 +242,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/download': typeof DownloadLazyRoute
   '/access-unavailable': typeof AppAccessUnavailableRoute
   '/credits': typeof AppCreditsRoute
   '/watch/$work': typeof WatchWorkRoute
@@ -259,6 +267,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/download': typeof DownloadLazyRoute
   '/_app/access-unavailable': typeof AppAccessUnavailableRoute
   '/_app/credits': typeof AppCreditsRoute
   '/watch/$work': typeof WatchWorkRoute
@@ -284,6 +293,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/download'
     | '/access-unavailable'
     | '/credits'
     | '/watch/$work'
@@ -305,6 +315,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/download'
     | '/access-unavailable'
     | '/credits'
     | '/watch/$work'
@@ -328,6 +339,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_app'
     | '/login'
+    | '/download'
     | '/_app/access-unavailable'
     | '/_app/credits'
     | '/watch/$work'
@@ -352,11 +364,19 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  DownloadLazyRoute: typeof DownloadLazyRoute
   WatchWorkRoute: typeof WatchWorkRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/download': {
+      id: '/download'
+      path: '/download'
+      fullPath: '/download'
+      preLoaderRoute: typeof DownloadLazyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -574,6 +594,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  DownloadLazyRoute: DownloadLazyRoute,
   WatchWorkRoute: WatchWorkRoute,
 }
 export const routeTree = rootRouteImport

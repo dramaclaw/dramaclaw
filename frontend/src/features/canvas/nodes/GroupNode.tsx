@@ -385,12 +385,17 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
       : null;
   const projectionStatus = useCanvasProjectionStatus(projectionKey);
   const projectionIsStale = projectionStatus?.stale === true;
+  // 黄色呼吸边框是「这个组来自主线」的常驻标识，不是只有待更新时才亮；有更新时
+  // 换成更亮更快的那一档。两个 class 都动 border-color，只能二选一。
+  const projectionFrameClass = projectionIsStale
+    ? 'projection-stale-frame'
+    : projectionKey
+      ? 'projection-frame'
+      : '';
 
   return (
     <div
-      className={`group relative h-full w-full overflow-visible rounded-[18px] border ${canvasNodeFrameClass({ selected })} ${
-        projectionIsStale ? 'projection-stale-frame' : ''
-      }`}
+      className={`group relative h-full w-full overflow-visible rounded-[18px] border ${canvasNodeFrameClass({ selected })} ${projectionFrameClass}`}
       style={{
         backgroundColor:
           (!isStoryboard && groupColorBackground(data.backgroundColor)) ||

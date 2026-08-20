@@ -198,7 +198,12 @@ export function SketchSection({
   // a regen run drives the overlay. Progress from the active task's SSE stream
   // (0–1) is surfaced as a percentage; it survives refresh because both
   // controllers reconcile against the persisted task row.
-  const sketchActive = directorTask.started || regenTask.started;
+  //
+  // `regenTask` is keyed episode-wide (the BE's `sketch_regen` row has
+  // beat_num=None and a hashed scope), so every beat's panel shares one entry.
+  // Gate on `covers` or beat 11 shows beat 9's progress bar.
+  const regenActive = regenTask.started && regenTask.covers(beat.beat_number);
+  const sketchActive = directorTask.started || regenActive;
   const sketchStream = directorTask.started ? directorTask.stream : regenTask.stream;
   const sketchPercent = Math.max(
     0,
@@ -342,7 +347,11 @@ export function SketchSection({
         toast.error(res.error || t("episode.workbench.sketch.regenFailed"));
         return;
       }
-      regenTask.start({ scope: res.scope });
+      regenTask.start({
+        scope: res.scope,
+        taskId: res.task_id,
+        beatNumbers: [beat.beat_number],
+      });
       toast.success(t("episode.workbench.sketch.regenStarted"));
     } catch (err) {
       toast.error(backendErrorToastMessage(err, t));
@@ -693,7 +702,7 @@ export function SketchSection({
       {/* Actions — full width row below both columns */}
       <div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-2 pt-1">
         <div className="flex items-center gap-1.5">
-          {regenTask.started ? (
+          {regenActive ? (
             <Button
               size="xs"
               variant="outline"
@@ -713,7 +722,11 @@ export function SketchSection({
               size="xs"
               variant="outline"
               onClick={() => setRegenConfirm(true)}
-              disabled={regenerate.isPending}
+              // Also blocked while a regen this beat is NOT part of is running:
+              // all beats share one `sketch_regen` registry entry, so starting a
+              // second run would repoint its scope/task id/beat coverage and the
+              // in-flight beat would lose its progress bar and Stop button.
+              disabled={regenerate.isPending || regenTask.started}
               className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
             >
               {regenerate.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}

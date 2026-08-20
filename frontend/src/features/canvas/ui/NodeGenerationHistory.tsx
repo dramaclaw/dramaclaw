@@ -408,6 +408,10 @@ export function NodeGenerationHistory({
         {sorted.map((record) => {
           const rawUrl = historyRecordOutputUrl(record);
           const url = resolveMediaUrl(rawUrl);
+          // 缩略图位只喂降采样变体：原图动辄 5504x3072，画进 56x56 的格子后
+          // 每张仍要整幅 decode + raster——九张实测 2.1s 主线程长任务、掉 7 帧。
+          // `url` 保持原图，onRestore 恢复回节点的必须是原始产物。
+          const thumbUrl = resolveMediaUrl(rawUrl, { variant: 'thumb' });
           const completed = isCompleted(record);
           const isImage =
             completed && Boolean(url) && record.media_type === 'image';
@@ -419,6 +423,7 @@ export function NodeGenerationHistory({
             completed && !isImage && !isVideo
               ? resolveMediaUrl(
                   historyRecordPreviewImageUrl(record) ?? fallbackThumbnailUrl ?? null,
+                  { variant: 'thumb' },
                 )
               : null;
           const restorable = completed && (url || historyRecordPrompt(record));
@@ -446,9 +451,10 @@ export function NodeGenerationHistory({
             >
               {isImage ? (
                 <img
-                  src={url ?? undefined}
+                  src={thumbUrl ?? undefined}
                   alt=""
                   loading="lazy"
+                  decoding="async"
                   className="h-full w-full object-cover"
                 />
               ) : isVideo ? (
@@ -464,6 +470,7 @@ export function NodeGenerationHistory({
                   src={previewImg}
                   alt=""
                   loading="lazy"
+                  decoding="async"
                   className="h-full w-full object-cover"
                 />
               ) : (

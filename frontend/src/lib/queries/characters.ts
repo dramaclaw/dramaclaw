@@ -9,7 +9,7 @@ import {
 } from "@tanstack/react-query";
 import type { QueryFunctionContext } from "@tanstack/react-query";
 import { jsonWithBackendError } from "@/lib/api-errors";
-import { api } from "@/lib/api";
+import { api, uploadApi } from "@/lib/api";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
@@ -153,7 +153,7 @@ export function useUploadPortrait(project: string, name: string) {
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append("file", file);
-      return api
+      return uploadApi
         .post(p`api/v1/projects/${project}/characters/${name}/portrait/upload`, { body: formData })
         .json<OkResponse<{ portrait_url: string }>>();
     },
@@ -297,7 +297,7 @@ export function useUploadCharacterVoiceSample(project: string, name: string) {
     mutationFn: async ({ slot, file }: { slot: string; file: File }) => {
       const formData = new FormData();
       formData.append("file", file, file.name);
-      return api
+      return uploadApi
         .post(
           p`api/v1/projects/${project}/characters/${name}/voice-samples/${slot}/upload`,
           { body: formData },
@@ -513,7 +513,7 @@ export function useUploadIdentityImage(project: string, name: string) {
     mutationFn: async ({ identityName, file }: { identityName: string; file: File }) => {
       const formData = new FormData();
       formData.append("file", file);
-      return api
+      return uploadApi
         .post(p`api/v1/projects/${project}/characters/${name}/identities/${identityName}/upload`, { body: formData })
         .json<OkResponse<{ image_url: string }>>();
     },
@@ -527,7 +527,7 @@ export function useUploadCostumeImage(project: string, name: string) {
     mutationFn: async ({ identityId, file }: { identityId: string; file: File }) => {
       const formData = new FormData();
       formData.append("file", file);
-      return api
+      return uploadApi
         .post(p`api/v1/projects/${project}/characters/${name}/identities/${identityId}/costume/upload`, { body: formData })
         .json<OkResponse<{ costume_image_url: string }>>();
     },
@@ -563,7 +563,7 @@ export function useUploadIdentityPortrait(project: string, name: string) {
     mutationFn: async ({ identityId, file }: { identityId: string; file: File }) => {
       const formData = new FormData();
       formData.append("file", file);
-      return api
+      return uploadApi
         .post(p`api/v1/projects/${project}/characters/${name}/identities/${identityId}/portrait/upload`, { body: formData })
         .json<OkResponse<{ portrait_image_url: string }>>();
     },

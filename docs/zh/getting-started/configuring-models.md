@@ -65,7 +65,7 @@ docker compose -f docker-compose.selfhosted.yml up -d --build
 
 它会启动 DramaClaw API、Web 和内置 NewAPI。默认情况下 DramaClaw 在容器网络中访问 NewAPI；浏览器访问的宿主机端口可以不同，不需要把内部地址改成浏览器地址。
 
-仓库编排已经启用设置页所需的初始化和渠道管理能力。CE 使用 `${NOVELVIDEO_STATE_DIR}/newapi/one-api.db`，通常不需要手动填写 SQLite 路径或数据库 DSN。
+仓库编排已经启用设置页所需的初始化和渠道管理能力。内置 NewAPI 的 SQLite 数据保存在 Compose 的 `newapi-data` 卷中；NewAPI 容器内路径是 `/data/one-api.db`，DramaClaw API 通过共享卷中的 `/newapi-data/one-api.db` 管理它。通常不需要手动填写 SQLite 路径或数据库 DSN。
 
 ### 2. 初始化本地 NewAPI
 
@@ -93,6 +93,8 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 - 图片、视频和音频模型映射。
 
 按渠道填写 API Key，然后点击 **保存并应用全部配置**。Key 独立保存，不会写入配置 JSON；已经保存的 Key 可以留空，重新输入会替换旧值。
+
+当前推荐模板包含 OpenRouter、VolcEngine、fal.ai 和 DoubaoAudio。推荐音频映射中的 DramaClaw 模型 ID 仍是 `index-tts-2`，实际通过 DoubaoAudio 渠道调用上游 `seed-audio-1.0`。
 
 内置推荐配置是只读模板。切换到 **我的配置** 后可以编辑 JSON，保存后的个人配置会在下次打开时恢复。JSON 的主要结构如下：
 
@@ -134,7 +136,9 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 }
 ```
 
-`channel` 引用 `channels[].id`。当前一个 profile 中同一 `provider` 只能配置一次。修改推荐配置或我的配置 JSON 会同步到下方高级配置；高级配置保存后也会成为当前个人配置，避免两套配置同时生效。推荐配置不包含 ComfyUI；需要在自定义模式使用 ComfyUI 时，请在高级配置中新增 ComfyUI 渠道、Workflow 和媒体模型。
+`channel` 引用 `channels[].id`。当前一个 profile 中同一 `provider` 只能配置一次。切换配置或查看 JSON 只会切换待应用模板，不会覆盖当前已经生效的高级配置；点击 **保存并应用全部配置** 后，供应商渠道、业务模型、Embedding 和媒体模型才会一起写入后端并更新下方列表。高级配置保存后会同步为当前个人配置，避免两套配置同时生效。推荐配置升级后，如果下方仍显示旧渠道或旧模型，重新应用推荐配置即可，不需要清理浏览器数据。
+
+推荐配置不默认创建 ComfyUI 渠道；需要使用本地 MiniMax H3 时，请在高级配置中先通过 **渠道管理** 添加 ComfyUI，再在该渠道的 **ComfyUI Workflows** 区域载入模板。模板会补入 Workflow，并生成对应的 `MiniMax-H3-local` 媒体模型草稿。
 
 ### 4. 高级配置
 
@@ -142,11 +146,15 @@ DramaClaw 不保存管理员密码。初始化完成后请自行保管该密码�
 
 #### 供应商渠道
 
-渠道类型从当前 NewAPI 的 `/api/channel/types` 动态读取。每个供应商只能添加一次。
+点击 **渠道管理** 打开当前 NewAPI 支持的供应商目录。渠道类型及能力从 `/api/channel/types` 动态读取，每个供应商只能添加一次。目录支持按名称搜索，以及按文本、视觉理解、Embedding、图片、视频和音频等能力筛选；刚添加的渠道会显示在已配置渠道列表顶部。渠道目录加载失败时，先确认 RelayClaw CE 正常运行，再点击 **重新加载**。
+
+业务模型、Embedding 和媒体模型的渠道选择框会按照用途筛选：例如视频模型只列出支持视频能力的渠道，文本模型只列出支持文本能力的渠道。已有配置或暂时缺少能力元数据的渠道仍会保留，便于检查和修正，不会在升级后直接消失。
 
 - **保存渠道配置**：保存 CE 本地渠道预设。
 - **更新 NewAPI 渠道**：立即更新 NewAPI 中对应渠道的 Key 和 Base URL。
 - **Base URL 覆盖**：通常留空，使用渠道默认地址；只有自建代理或供应商要求时填写。
+
+删除普通渠道前会显示受影响的业务模型、媒体模型和 Embedding 映射数量。删除已保存渠道会立即把剩余渠道列表写回后端；如果后端保存失败，当前本地配置会保留。删除最后一个普通渠道同样会持久化为空列表，刷新后不会恢复。ComfyUI 使用独立的清理确认，详见下文。
 
 保存推荐配置后，渠道 Key 应显示为“已保存”及脱敏预览。输入框中只有密码圆点且没有“已保存”标记时，它仍是尚未提交的草稿。
 
@@ -190,7 +198,9 @@ Embedding 模型和维度在项目创建时绑定。修改配置只自动影响�
 
 ### 5. ComfyUI 配置
 
-在 **自定义** 模式中，ComfyUI 通过 **高级配置 → 供应商渠道** 添加。在 **本地 + 官方混合** 模式中，使用独立的 **ComfyUI 配置**，并提供 MiniMax H3 Workflow 初始模板。两种模式读取同一个本地 NewAPI 和 SQLite 数据。
+在 **自定义** 模式中，ComfyUI 通过 **高级配置 → 供应商渠道** 添加。在 **本地 + 官方混合** 模式中，通过独立的 **ComfyUI 配置** 添加。两种模式读取同一个本地 NewAPI 和 SQLite 数据，也使用相同的渠道编辑器。
+
+点击 **渠道管理**，从渠道目录添加 ComfyUI 后，渠道下方会出现 **ComfyUI Workflows** 区域。只有这时才显示 **载入 MiniMax H3 模板**；没有添加 ComfyUI 的用户不会看到模板入口。载入模板会填入三条初始 Workflow，并在 Base URL 为空时填入 `http://127.0.0.1:8188`，但不会覆盖已有的非空地址或同 ID Workflow。载入后仍需保存渠道和视频模型配置，才会写入本地 NewAPI。
 
 每个 ComfyUI 渠道配置需要：
 
@@ -214,13 +224,13 @@ MiniMax H3 模板使用模型名 `MiniMax-H3-local`，内置文生、首帧和�
 1. 先在 **官方** 保存 DC Key。
 2. 在 **自定义** 中初始化一次 NewAPI；同一个 SQLite 不需要重复初始化。
 3. 打开 **本地 + 官方混合**。
-4. 打开独立的 **ComfyUI 配置**，确认或修改服务地址；本机默认是 `http://127.0.0.1:8188`。
-5. 使用混合模式提供的 MiniMax H3 Workflow 初始模板，或填写一个本地视频模型名称，再为它添加一条或多条 Workflow ID 和 **API Format Workflow JSON**。
+4. 打开独立的 **ComfyUI 配置**，点击 **渠道管理** 并从目录中添加 ComfyUI。
+5. 在该渠道的 **ComfyUI Workflows** 区域载入 MiniMax H3 模板；也可以填写自己的本地视频模型名称，再添加一条或多条 Workflow ID 和 **API Format Workflow JSON**。本机默认地址是 `http://127.0.0.1:8188`。
 6. 保存视频配置并启用混合模式。
 
 ComfyUI API Key 是可选项。Workflow 必须是 API Format，而不是浏览器工作流格式。自定义模式与混合模式共享 ComfyUI 渠道、Workflow 和媒体模型能力配置；任一模式保存后，另一模式会读取相同结果。
 
-MiniMax H3 模板按钮会一直保留，方便恢复缺少的模板。重复载入时会把模板合并到现有 Workflow 中，保留用户已经配置的同 ID Workflow；当 ComfyUI 地址为空时，会自动填入 `http://127.0.0.1:8188`，不会覆盖非空的自定义地址。
+ComfyUI 渠道存在时，MiniMax H3 模板按钮会保留在该渠道的 **ComfyUI Workflows** 区域，方便恢复缺少的模板。重复载入时会把模板合并到现有 Workflow 中，保留用户已经配置的同 ID Workflow；当 ComfyUI 地址为空时，会自动填入 `http://127.0.0.1:8188`，不会覆盖非空的自定义地址。
 
 混合模式按模型 ID 路由：本地 ComfyUI 模型可以作为新模型加入虾画；本地存在与官方同名的视频模型时，则使用本地模型覆盖该官方模型。其他模型继续使用官方 RelayClaw。保存视频配置时，DramaClaw 会先保存 ComfyUI 渠道，再保存对应媒体模型。DramaClaw 不会在本地生成失败后自动回退官方，是否重试或改选官方模型由用户决定。混合模式只管理本地视频模型，不要求再次配置 OpenRouter、火山等官方上游渠道。
 

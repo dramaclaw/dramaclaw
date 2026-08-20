@@ -486,6 +486,9 @@ export const NodeActionToolbar = memo(
     // renders, so reading `node.id` at the call site fails to type-check.
     const nodeId = node.id;
     const isUngroupableGroup = isGroupNode(node) && !isProtectedProjectionGroupNode(node);
+    // 主线投影组只锁拓扑（不能解组），几何类操作（背景色 / 排列）照常给：后端算出的
+    // 布局不合意时，用户得有补救手段——组框本身是只读的，没有这两项就真的动不了。
+    const isAdjustableGroup = isGroupNode(node);
     // 同 nodeId:在 node 仍是完整类型时捕获组背景色。下方过宽的类型守卫会把 node
     // 收窄成 never,到 ungroup 按钮渲染处再读 node.data 会编译失败(tsc -b)。
     const groupBackgroundColor = isGroupNode(node)
@@ -2334,7 +2337,7 @@ export const NodeActionToolbar = memo(
                   </DropdownMenu>
                 );
               })()}
-            {!isImageEdit && isUngroupableGroup && (() => {
+            {!isImageEdit && isAdjustableGroup && (() => {
               const groupColor = groupBackgroundColor;
               return (
                 <>
@@ -2433,18 +2436,20 @@ export const NodeActionToolbar = memo(
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
-                  <UiChipButton
-                    key="group-ungroup"
-                    className={`${TOOLBAR_TEXT_BUTTON_CLASS} hover:!border-amber-400/60 hover:!bg-amber-500/20 hover:!text-amber-200`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      closeDownloadMenu();
-                      ungroupNode(nodeId);
-                    }}
-                  >
-                    <Unlink2 className="h-3.5 w-3.5" />
-                    {t("nodeToolbar.ungroup")}
-                  </UiChipButton>
+                  {isUngroupableGroup && (
+                    <UiChipButton
+                      key="group-ungroup"
+                      className={`${TOOLBAR_TEXT_BUTTON_CLASS} hover:!border-amber-400/60 hover:!bg-amber-500/20 hover:!text-amber-200`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        closeDownloadMenu();
+                        ungroupNode(nodeId);
+                      }}
+                    >
+                      <Unlink2 className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.ungroup")}
+                    </UiChipButton>
+                  )}
                 </>
               );
             })()}

@@ -4,7 +4,10 @@
 // 「新建文件夹」弹窗。只收一个名字，重名/超长由后端判定并回显在输入框下方。
 // 它可能开在「上传资产」弹窗之上（保存位置那里也能现建文件夹），所以 z-index
 // 通过 layer 拉高，不写死。
-import { useEffect, useState } from 'react';
+//
+// 文件夹改名、素材改名也复用这一个：都是「弹个框收一个名字」，差别只在标题、
+// 字段名和长度上限，各自传进来即可。
+import { useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loader2, X } from 'lucide-react';
 
@@ -21,6 +24,11 @@ export interface AssetLibraryNewFolderDialogProps {
   /** 重命名复用同一个弹窗，只换标题与初始值。 */
   title?: string;
   initialName?: string;
+  /** 输入框上方的字段名。改素材名时传「资产名称」。 */
+  fieldLabel?: string;
+  placeholder?: string;
+  /** 字数上限，与后端校验保持一致。 */
+  maxLength?: number;
 }
 
 export function AssetLibraryNewFolderDialog({
@@ -30,7 +38,12 @@ export function AssetLibraryNewFolderDialog({
   z = 320,
   title = '新建文件夹',
   initialName = '',
+  fieldLabel = '文件夹名称',
+  placeholder = '请输入文件夹名称',
+  maxLength = FOLDER_NAME_MAX_LEN,
 }: AssetLibraryNewFolderDialogProps) {
+  // 素材改名弹窗和文件夹弹窗可能同时挂在树上，写死 id 会重复。
+  const inputId = useId();
   const [name, setName] = useState(initialName);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -87,20 +100,20 @@ export function AssetLibraryNewFolderDialog({
 
         <div className="px-5 py-4">
           <label
-            htmlFor="asset-folder-name"
+            htmlFor={inputId}
             className="mb-2 block text-xs text-text-muted/90"
           >
-            文件夹名称 <span className="text-red-400">*</span>
+            {fieldLabel} <span className="text-red-400">*</span>
           </label>
           {/* 全局 --radius 是 1rem，rounded-md 落在 36px 高的输入框上会圆成胶囊，
               所以这里按项目里输入类控件的惯例写死 6px。 */}
           <div className="flex items-center rounded-[6px] border border-white/[0.10] bg-white/[0.04] px-3 focus-within:border-white/[0.22]">
             <input
-              id="asset-folder-name"
+              id={inputId}
               value={name}
               autoFocus
-              maxLength={FOLDER_NAME_MAX_LEN}
-              placeholder="请输入文件夹名称"
+              maxLength={maxLength}
+              placeholder={placeholder}
               onChange={(event) => setName(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') void handleSubmit();
@@ -108,7 +121,7 @@ export function AssetLibraryNewFolderDialog({
               className="h-9 flex-1 bg-transparent text-sm text-text-dark outline-none placeholder:text-text-muted/50"
             />
             <span className="ml-2 shrink-0 text-[11px] text-text-muted/60">
-              {name.length}/{FOLDER_NAME_MAX_LEN}
+              {name.length}/{maxLength}
             </span>
           </div>
           {error && (

@@ -3185,11 +3185,177 @@ def test_camera_prompt_contains_camera_body_lens_focal_and_aperture() -> None:
     assert "f/4" in prompt
 
 
-def test_image_style_templates_builtin_count_is_30() -> None:
+def test_image_style_templates_are_short_drama_styles() -> None:
+    """端点吐出来的必须就是随包那份清单,一条不多一条不少、顺序也一致。
+
+    原来在这里抄了一份 24 个 id 的列表,每加一批风格就要照抄一遍,而它想验的其实是
+    「路由拿的是内置清单」。改成直接比对清单文件:既不随风格数漂移,又比数量更严。
+    数量另设下限,防止清单被截断成空壳还悄悄通过。
+    """
+    shipped = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "novelvideo"
+            / "freezone"
+            / "style_templates.json"
+        ).read_text(encoding="utf-8")
+    )
+    expected_ids = [item["id"] for item in shipped["templates"]]
+
     data = freezone_routes._get_freezone_image_style_templates()
 
-    assert len(data) == 30
-    assert any(item["id"] == "three_oclock_2300" for item in data)
+    assert [item["id"] for item in data] == expected_ids
+    assert len(expected_ids) >= 24
+
+
+def test_image_style_templates_have_assets_and_prompts() -> None:
+    # 图片已迁 OSS(STYLE_GALLERY_ASSET_BASE),不随仓库发布,所以 CI 里这个目录
+    # 不存在,只能校验路径形状。本地跑过 scripts/build_style_gallery.py 的人目录
+    # 才在,那时顺带校验清单与图片对得上 —— 加风格时漏转图片就在这里拦下。
+    gallery_root = Path(__file__).resolve().parents[1] / "frontend" / "public" / "style-gallery"
+    check_files_exist = gallery_root.is_dir()
+
+    for item in freezone_routes._get_freezone_image_style_templates():
+        assert item["label"], item["id"]
+        # 类目是受控词表,不是自由文本 —— 图墙的筛选 tab 直接按它铺,多一个错别字
+        # 就多一个只有一张卡的 tab。加风格时如果确实要新类目,在这里显式登记。
+        assert item["category"] in {
+            "古装",
+            "都市",
+            "年代",
+            "生活",
+            "科幻",
+            "类型",
+            "写意",
+            # 第二批素材:以画法/媒介立类。
+            "动画",
+            "绘画",
+            "神话",
+        }, item["id"]
+        # 下限只为拦住「提示词被截成空壳/占位符」——不是质量分。第二批里 大友克洋(97)
+        # 与 埃及壁画(102) 素材本身就短,原来的 120 会把两条合法风格判死。
+        assert len(item["style_prompt"]) >= 90, item["id"]
+        assert "author" not in item, item["id"]
+        assert len(item["samples"]) == 4, item["id"]
+        for rel in [item["cover"], *item["samples"]]:
+            assert not rel.startswith("/"), rel
+            if check_files_exist:
+                assert (gallery_root / rel).is_file(), rel
+
+
+@pytest.mark.asyncio
+async def test_image_style_templates_route_keeps_data_a_bare_list(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`data` 必须是裸列表 —— 这是跨仓库的前端契约，不是实现细节。
+
+    这个端点同时服务多个仓库的前端，它们的 `apiCall` 只拆一层 `{ok, data}`、不校验
+    `data` 的形状。把 `data` 换成 `{asset_base, version, templates}` 对象曾经让所有
+    没跟进的前端一句 `templates.find(...)` 抛 `is not a function`，冒泡到根错误边界
+    变成整页「页面加载失败」。清单元信息只能挂在信封同级。
+    """
+    _patch_freezone_project(monkeypatch, tmp_path)
+    monkeypatch.setenv("STYLE_GALLERY_ASSET_BASE", "https://cdn.example.com/style")
+
+    app = FastAPI()
+    app.include_router(freezone_routes.router, prefix="/api/v1")
+
+    async def fake_user():
+        return {"id": "owner_1", "username": "admin"}
+
+    app.dependency_overrides[freezone_routes.get_api_user] = fake_user
+
+    response = TestClient(app).get(
+        "/api/v1/projects/58/freezone/image/style-templates"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert isinstance(payload["data"], list), "data 必须是裸列表，元信息挂信封同级"
+    assert payload["data"] == freezone_routes._get_freezone_image_style_templates()
+    assert payload["asset_base"] == "https://cdn.example.com/style"
+    assert payload["version"]
+
+
+def test_nineties_style_prompt_keeps_second_line() -> None:
+    data = freezone_routes._get_freezone_image_style_templates()
+    nineties = next(item for item in data if item["id"] == "nineties")
+
+    assert "\n" in nineties["style_prompt"]
+    assert "构图平实自然" in nineties["style_prompt"]
+
+
+def test_build_style_prompt_uses_chinese_block_without_author() -> None:
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    block = freezone_routes._build_style_prompt(
+        FreezoneImageStyleConfig(template_id="golden_age")
+    )
+
+    assert block.startswith("风格模板:\n- 黄金时代\n- ")
+    assert "美式复古好莱坞黄金时代风格" in block
+    assert "builtin" not in block
+
+
+def test_unknown_style_template_is_ignored_instead_of_rejected() -> None:
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    config = FreezoneImageStyleConfig(template_id="three_oclock_2300")
+
+    assert freezone_routes._resolve_freezone_image_style_template(config) is None
+    assert freezone_routes._build_style_prompt(config) == ""
+
+
+def test_unknown_style_template_does_not_break_prompt_merge() -> None:
+    from novelvideo.api.schemas import FreezoneImageStyleConfig
+
+    merged = freezone_routes._merge_prompt_with_style_and_camera(
+        "一个女人站在窗前",
+        FreezoneImageStyleConfig(template_id="obsolete_style"),
+        None,
+    )
+
+    assert merged == "一个女人站在窗前"
+
+
+def test_style_asset_base_defaults_to_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STYLE_GALLERY_ASSET_BASE", raising=False)
+
+    assert freezone_routes._get_freezone_image_style_asset_base() == ""
+
+
+def test_style_manifest_version_is_exposed_for_troubleshooting() -> None:
+    """图片和提示词各自可换代,接口带上清单版本才好定位是哪份在生效。
+
+    版本号跟着清单文件走,别在这里写死 —— 否则每改一版清单都要顺手改测试。
+    """
+    manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "novelvideo"
+            / "freezone"
+            / "style_templates.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert (
+        freezone_routes._get_freezone_image_style_manifest_version()
+        == manifest["version"]
+    )
+    assert manifest["version"]
+
+
+def test_style_asset_base_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STYLE_GALLERY_ASSET_BASE", "  https://cdn.example.com/styles/  ")
+
+    assert (
+        freezone_routes._get_freezone_image_style_asset_base()
+        == "https://cdn.example.com/styles/"
+    )
 
 
 @pytest.mark.asyncio
@@ -7954,7 +8120,7 @@ async def test_freezone_upscale_resolves_original_ratio_before_model_call(
         image_size="2K",
         quality="low",
         model="HuiMeng GPT Image 2",
-        style=freezone_routes.FreezoneImageStyleConfig(template_id="three_oclock_2300"),
+        style=freezone_routes.FreezoneImageStyleConfig(template_id="golden_age"),
         camera=freezone_routes.FreezoneImageCameraConfig(
             camera_body="Panavision DXL2",
             lens="Arri Signature Prime",
@@ -7975,7 +8141,7 @@ async def test_freezone_upscale_resolves_original_ratio_before_model_call(
     assert captured["billing"]["feature_key"] == "freezone.image_edit"
     assert captured["billing"]["operation"] == "upscale"
     assert captured["billing"]["pricing_kind"] == "image"
-    assert "新古典插画" in captured["prompt"]
+    assert "黄金时代" in captured["prompt"]
     assert "Panavision DXL2" in captured["prompt"]
     assert "Arri Signature Prime" in captured["prompt"]
 

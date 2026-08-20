@@ -212,11 +212,15 @@ export function mergeProjectedCanvasWithLocalCanvas(
 }
 
 function preserveLocalProjectionNodeLayout(replacement: CanvasNode, local: CanvasNode): CanvasNode {
+  // 本地成员已经脱离组（组被顶掉 / 命名空间迁移后 detachMissingParents 摘了 parent）：
+  // 认后端刚重建的组，位置也一并跟过去——child 的 position 是相对父框的，散落时那份
+  // 已经是画布绝对坐标了，留着会被 extent:"parent" 夹到组边缘。
+  const readoptRemoteParent = !local.parentId && Boolean(replacement.parentId);
   return {
     ...replacement,
-    position: local.position,
-    parentId: local.parentId,
-    extent: local.extent,
+    position: readoptRemoteParent ? replacement.position : local.position,
+    parentId: readoptRemoteParent ? replacement.parentId : local.parentId,
+    extent: readoptRemoteParent ? replacement.extent : local.extent,
     expandParent: local.expandParent,
     origin: local.origin,
     width: local.width ?? replacement.width,

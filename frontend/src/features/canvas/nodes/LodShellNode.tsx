@@ -42,6 +42,8 @@ import {
   subscribeLodStills,
 } from '@/features/canvas/application/videoFrameCapture';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
+import { useNodeBodyVariant } from '@/features/canvas/hooks/useNodeBodyVariantBudget';
+import { withMediaVariant, type MediaVariant } from '@/lib/media-url';
 import {
   nodeHasSourceHandle,
   nodeHasTargetHandle,
@@ -53,7 +55,9 @@ import type { CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
  * 与各组件的 DEFAULT_WIDTH/HEIGHT 对齐；只影响首帧盒子大小，放大跨档后完整组件
  * 渲染会触发 ResizeObserver 重测自动纠正。
  */
-const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; height: number }>> = {
+// 导出只为让测试上棘轮：新增节点类型要么在这里登记尺寸，要么进 LOD 豁免名单，
+// 漏了就会拿 400×300 的通用兜底，首屏低缩放下盒子明显不对。
+export const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; height: number }>> = {
   uploadNode: { width: 320, height: 350 },
   imageNode: { width: 580, height: 360 },
   imageGenNode: { width: 580, height: 360 },
@@ -68,6 +72,7 @@ const SHELL_FALLBACK_SIZES: Partial<Record<string, { width: number; height: numb
   threeDWorldNode: { width: 340, height: 210 },
   storyboardNode: { width: 800, height: 600 },
   storyboardGenNode: { width: 800, height: 600 },
+  styleNode: { width: 220, height: 124 },
 };
 
 const DEFAULT_SHELL_SIZE = { width: 400, height: 300 };
@@ -81,10 +86,32 @@ type ShellData = {
   isUploading?: boolean;
 };
 
-/** 每种类型能当缩略图用的字段（回落顺序与各组件的展示逻辑一致）。 */
-function resolveShellImage(type: string, data: ShellData): string | null {
+/**
+ * shell 里的图喂哪一档变体，按这一格实际要多少设备像素来挑。
+ *
+ * shell 只在 zoom < 0.35 出现，此时最宽的节点（900px）也只占屏幕 315 CSS px，
+ * 常见的 imageNode 更是 203 px；而这一档恰恰是节点最多的时候——一屏几十上百
+ * 个。解码成本只看源图像素数，所以原图在这里是纯浪费：一张 5504x3072 要付
+ * 16.9MP，换成 320px 变体是 0.06MP。
+ *
+ * 但 320 是个 1x 预算：Retina 上那 315 CSS px 要的是 630 设备像素，喂 320 就只有
+ * 一半分辨率，糊得看得出来。所以这里不写死档位，交给 useNodeBodyVariant 按
+ * 显示尺寸 × zoom × DPR 去挑——1x 屏照旧落在 320，2x 屏落到 640（0.25MP，相对
+ * 16.9MP 的原图仍然可以忽略）。
+ *
+ * 变体不适用时（blob: 预览、遗留路径、抓帧 data:）withMediaVariant 原样返回，
+ * 行为与改动前一致。shell 不接 onLoad、不测尺寸、不进查看器/导出，所以这里
+ * 没有节点主体那套「先知道真实尺寸才能换」的顾虑。
+ */
+function resolveShellImage(
+  type: string,
+  data: ShellData,
+  variant: MediaVariant,
+): string | null {
   const pick = (...candidates: Array<string | null | undefined>) => {
-    for (const c of candidates) if (c) return resolveImageDisplayUrl(c);
+    for (const c of candidates) {
+      if (c) return withMediaVariant(resolveImageDisplayUrl(c), variant);
+    }
     return null;
   };
   switch (type) {
@@ -113,6 +140,9 @@ function LodShell({ type, id, data, selected, width, height }: {
   const fallback = SHELL_FALLBACK_SIZES[type] ?? DEFAULT_SHELL_SIZE;
   const w = width ?? fallback.width;
   const h = height ?? fallback.height;
+  // 一格都盖不住的巨型节点在这一档几乎不存在（zoom<0.35 下要 3600 CSS px 才够
+  // 得着），真出现也宁可喂顶档副本：shell 的整个前提就是节点太多、不能解原图。
+  const variant = useNodeBodyVariant({ width: w, height: h }) ?? 'card';
 
   // 视频缩略图：订阅模块级抓帧缓存；节点从未挂载过完整组件时（首屏即低缩放），
   // 这里负责把抓帧任务排进空闲队列，不依赖完整组件出现过。
@@ -127,8 +157,11 @@ function LodShell({ type, id, data, selected, width, height }: {
 
   const imageSrc =
     type === 'videoNode'
-      ? (lodStill ?? (data.previewImageUrl ? resolveImageDisplayUrl(data.previewImageUrl) : null))
-      : resolveShellImage(type, data);
+      ? (lodStill
+          ?? (data.previewImageUrl
+            ? withMediaVariant(resolveImageDisplayUrl(data.previewImageUrl), variant)
+            : null))
+      : resolveShellImage(type, data, variant);
 
   const busy = Boolean(data.isGenerating || data.isUploading);
 

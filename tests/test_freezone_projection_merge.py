@@ -1,5 +1,6 @@
 from novelvideo.api.routes.freezone import (
     _merge_projected_preset_canvas,
+    _projection_group_id,
     _remove_projected_preset_canvas,
     _wrap_projection_payload_in_group,
 )
@@ -57,7 +58,7 @@ def test_projection_payload_is_wrapped_in_draggable_group():
     )
 
     group = next(node for node in wrapped["nodes"] if node["type"] == "groupNode")
-    assert group["id"] == "projection_group_beat_1_4"
+    assert group["id"] == _projection_group_id("beat:1:4")
     assert group["position"] == {"x": 100, "y": 46}
     assert group["style"]["width"] == 700
     assert group["style"]["height"] == 294

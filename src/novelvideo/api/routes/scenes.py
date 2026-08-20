@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from novelvideo.api.asset_metadata import newest_updated_at, tree_updated_at
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import (
+    may_run_asset_repair,
     make_sqlite_store_for_context,
     make_static_url_for_context,
 )
@@ -43,6 +44,7 @@ from novelvideo.project_context import ProjectContext, resolve_project_context
 from novelvideo.sqlite_store import SQLiteStore
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_scopes import scene_reference_asset_scope, stage_asset_scope
+from novelvideo.utils.asset_names import move_asset_dir, path_safe_asset_name
 from novelvideo.utils.derived_scenes import (
     compose_derived_scene_name,
 )
@@ -411,11 +413,11 @@ def _move_dir_if_exists(old_dir: Path, new_dir: Path) -> None:
 
 
 def _rename_scene_asset_dirs(project_dir: Path, old_name: str, new_name: str) -> None:
-    _move_dir_if_exists(
-        project_dir / "assets" / "scenes" / old_name,
-        project_dir / "assets" / "scenes" / new_name,
-    )
+    # 走 move_asset_dir 而不是直接拼路径：存量自愈传进来的 old_name 是没消毒过的库里
+    # 旧值，``../../config.json`` 拼出来的源路径在资产根之外。
+    move_asset_dir(project_dir / "assets" / "scenes", old_name, new_name)
 
+    # stage_dir 自己过 safe_name（会把点全剥掉），拼不出爬到 director_worlds 之外的路径。
     old_stage_root = stage_manifest.stage_dir(project_dir, old_name).parent
     new_stage_root = stage_manifest.stage_dir(project_dir, new_name).parent
     _move_dir_if_exists(old_stage_root, new_stage_root)
@@ -614,6 +616,22 @@ def _compose_scene_asset_name(
     return scene_name
 
 
+async def _heal_path_unsafe_scene_names(store: SQLiteStore, project_dir: Path) -> dict[str, str]:
+    """修好库里名字带斜杠的存量场景。
+
+    模型层的 ``NovelScene.sanitize_name`` 只管新数据；那道闸加上之前落库的
+    ``家中客厅/哥哥卧室`` 还躺在表里，它的 ``{name}`` 接口全是 404，删不掉也生不出源图。
+
+    调用方要先过 ``may_run_asset_repair``：这是一次写操作（搬目录 + 改主键），不该由
+    只读协作者的一次页面加载触发。
+    """
+
+    def move_assets(old_name: str, new_name: str) -> None:
+        _rename_scene_asset_dirs(project_dir, old_name, new_name)
+
+    return await store.repair_path_unsafe_asset_names("scene", move_assets)
+
+
 @router.get("/projects/{project}/scenes")
 async def list_scenes(
     project: str,
@@ -622,6 +640,8 @@ async def list_scenes(
     ctx, _username, _project_name, project_dir, _output_dir, store = (
         await _resolve_scene_project(project, user, required_role="viewer")
     )
+    if may_run_asset_repair(ctx):
+        await _heal_path_unsafe_scene_names(store, project_dir)
     scenes = await store.list_scenes()
     scenes_by_name = {
         scene.name: scene for scene in scenes if str(scene.name or "").strip()
@@ -889,11 +909,15 @@ async def create_scene(
     ctx, username, project_name, project_dir, _output_dir, store = (
         await _resolve_scene_project(project, user)
     )
-    name = _compose_scene_asset_name(
-        body.name,
-        body.base_scene_id,
-        body.variant_id,
-        body.time_of_day,
+    # 在查重之前消毒：留到 add_scene 再改名的话，两个只差斜杠的名字会双双通过查重，
+    # 后写的那个把先写的静默覆盖掉。
+    name = path_safe_asset_name(
+        _compose_scene_asset_name(
+            body.name,
+            body.base_scene_id,
+            body.variant_id,
+            body.time_of_day,
+        )
     )
     if not name:
         return {"ok": False, "error": "Scene name is required"}
@@ -955,6 +979,9 @@ async def update_scene(
     )
     if next_base:
         requested_name = structured_name
+    # 在挪目录之前消毒：store.rename_scene 里也会消毒，但目录迁移先于它执行，
+    # 不在这里统一就会出现「库里 a_b、盘上 a/b」的错位。
+    requested_name = path_safe_asset_name(str(requested_name or "").strip())
     if requested_name and requested_name != scene.name:
         guard_error = await _derived_scene_guard_error(store, scene.name)
         if guard_error:

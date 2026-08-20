@@ -18,6 +18,7 @@ import {
   type SkillNodeData,
   type StoryboardSplitNodeData,
   type StoryboardGenNodeData,
+  type StyleNodeData,
   type TextAnnotationNodeData,
   type ThreeDWorldNodeData,
   type UploadImageNodeData,
@@ -614,6 +615,32 @@ const skillNodeDefinition: CanvasNodeDefinition<SkillNodeData> = {
   }),
 };
 
+// 风格节点由图片节点的对账逻辑建/删（见 styleNodeSync），不进创建菜单、也不进
+// 连线菜单 —— 用户手工拖出来的一个空风格节点没有归属的图片节点，谁也不消费。
+const styleNodeDefinition: CanvasNodeDefinition<StyleNodeData> = {
+  type: CANVAS_NODE_TYPES.style,
+  menuLabelKey: 'node.menu.style',
+  menuIcon: 'sparkles',
+  visibleInMenu: false,
+  capabilities: {
+    toolbar: false,
+    promptInput: false,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: false,
+    connectMenu: {
+      fromSource: false,
+      fromTarget: false,
+    },
+  },
+  // 不落 displayName：标题默认由节点自己按「风格 · 分类 · 风格名」算，写死了就再也
+  // 跟不上换风格。用户手工改名后才会有 displayName，那时以用户的为准。
+  createDefaultData: () => ({
+    styleTemplateId: null,
+  }),
+};
+
 export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition> = {
   [CANVAS_NODE_TYPES.upload]: uploadNodeDefinition,
   [CANVAS_NODE_TYPES.imageEdit]: imageEditNodeDefinition,
@@ -632,6 +659,7 @@ export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition>
   [CANVAS_NODE_TYPES.pano360Viewer]: pano360ViewerNodeDefinition,
   [CANVAS_NODE_TYPES.threeDWorld]: threeDWorldNodeDefinition,
   [CANVAS_NODE_TYPES.skill]: skillNodeDefinition,
+  [CANVAS_NODE_TYPES.style]: styleNodeDefinition,
 };
 
 export function getNodeDefinition(type: CanvasNodeType): CanvasNodeDefinition {
@@ -676,6 +704,8 @@ const UPSTREAM_SOURCE_WHITELIST: Partial<Record<CanvasNodeType, readonly CanvasN
 // 谁都没拦。放进这里才真正收口。
 const DOWNSTREAM_TARGET_WHITELIST: Partial<Record<CanvasNodeType, readonly CanvasNodeType[]>> = {
   [CANVAS_NODE_TYPES.audio]: [CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.videoCompose],
+  // 风格节点只是图片节点 styleTemplateId 的投影，连到别处不产生任何效果。
+  [CANVAS_NODE_TYPES.style]: [CANVAS_NODE_TYPES.imageGen],
 };
 
 // 返回某目标类型允许的上游源类型；返回 null 表示该类型不施加额外类型限制。
@@ -716,6 +746,10 @@ const SYSTEM_ONLY_CONNECTIONS: readonly (readonly [CanvasNodeType, CanvasNodeTyp
   // 自己只读文本上游（AudioOperationsPanel 只取 text），手工连一根视频进来什么都
   // 不会发生。
   [CANVAS_NODE_TYPES.video, CANVAS_NODE_TYPES.audio],
+  // 风格节点与图片节点是一对一的：那根边由对账逻辑跟着 styleTemplateId 建。
+  // 放开手工拖线的话，一个风格节点能挂到第二个图片节点上，两边的对账各自认为
+  // 「节点承载的风格和我不一致」，会把它来回改写成对方的风格，永远收敛不了。
+  [CANVAS_NODE_TYPES.style, CANVAS_NODE_TYPES.imageGen],
 ];
 
 // 判断用户能不能**手工**建立这条边：建边规则放行，且不是系统专用边。菜单候选与

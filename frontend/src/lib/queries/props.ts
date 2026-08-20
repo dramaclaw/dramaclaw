@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
+import { api, uploadApi } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
 import { queryKeys } from "@/lib/query-keys";
@@ -91,7 +91,7 @@ export function useUploadPropReference(project: string, name: string) {
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append("file", file);
-      const uploaded = await api
+      const uploaded = await uploadApi
         .post(p`api/v1/projects/${project}/freezone/upload`, { body: formData })
         .json<OkResponse<{ url: string; filename: string; size: number }>>();
 

@@ -4,6 +4,7 @@ import { MessageCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CommunityShowcase } from "./community-showcase";
 import LightRays from "./light-rays";
+import { GithubMark } from "@/components/platform-marks";
 import SplitText from "@/components/react-bits/split-text";
 import { useGithubStars } from "@/hooks/use-github-stars";
 import { PRODUCT_MANUAL_URL } from "@/lib/product-manual";
@@ -18,15 +19,6 @@ function formatStars(count: number): string {
   if (count < 1000) return String(count);
   // 146.5k 形式：保留一位小数，整千去掉 .0。
   return `${(count / 1000).toFixed(1).replace(/\.0$/, "")}k`;
-}
-
-// lucide-react 当前版本已移除品牌图标（无 Github 导出），用官方 GitHub mark 内联 SVG。
-function GithubMark() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 2.9-.39c.98 0 1.97.13 2.9.39 2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.06.78 2.14 0 1.55-.01 2.8-.01 3.18 0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5z" />
-    </svg>
-  );
 }
 
 export function Brand({ className }: { className?: string }) {

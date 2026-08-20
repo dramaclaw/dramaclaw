@@ -15,6 +15,7 @@ import { http, HttpResponse } from "msw";
 // same pattern as provider.test.tsx and render-plan.test.tsx.
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
 import { server } from "@/__mocks__/msw/server";

@@ -131,7 +131,7 @@ def test_build_projection_from_preset_does_not_write_canvas(
     assert data["projection_key"] == "beat:1:4"
     assert data["facts_signature"]
     group = next(node for node in data["nodes"] if node["type"] == "groupNode")
-    assert group["id"] == "projection_group_beat_1_4"
+    assert group["id"] == freezone._projection_group_id("beat:1:4")
     assert data["metadata"]["projections"]["beat:1:4"]["facts_signature"]
     projection = data["metadata"]["projections"]["beat:1:4"]
     assert projection["request"] == {
@@ -212,6 +212,86 @@ def test_projection_scene_asset_includes_derived_base_master_input(
     assert (base_nodes[0]["id"], "ref_scene_master_1") in edges
 
 
+def test_projection_group_id_is_unique_per_non_ascii_asset() -> None:
+    """一个人物一个主线投影组。
+
+    组 id 由 projection_key 清洗而来，中文角色名被 ``[^A-Za-z0-9]`` 全部换成 ``_``、
+    再 strip 掉，两个角色都塌成 ``projection_group_asset_character``——第二个角色
+    进虾画时组名被换、两个角色的节点挤进同一个组。
+    """
+    from novelvideo.api.routes import freezone
+
+    lin = freezone._projection_group_id("asset:character:林小满")
+    gu = freezone._projection_group_id("asset:character:顾南城")
+    assert lin != gu
+    # 组 id 就是节点 id，跨请求必须稳定，否则每次投影都长出一个新组。
+    assert lin == freezone._projection_group_id("asset:character:林小满")
+    # ASCII / beat / episode 这些原本就不会撞的 key 仍要各自唯一。
+    assert freezone._projection_group_id("beat:1:4") != freezone._projection_group_id(
+        "beat:1:6"
+    )
+
+
+def test_projection_group_encloses_nodes_without_explicit_size() -> None:
+    """组框必须包住成员的**真实**渲染尺寸。
+
+    preset 产出的节点大多不带显式 width/height（`_text_node` / `_upload_node`），
+    带尺寸的（`_skill_node` / `_beat_context_node`）也只写在 `measured` 里。按统一
+    的 320x180 估算会严重低估这些节点，算出的组框包不住成员——成员带
+    `extent: "parent"`，React Flow 会把它们夹回小框内叠成一堆（用户可见症状）。
+    """
+    from novelvideo.api.routes import freezone
+
+    projection_key = "asset:character:林小满"
+    nodes = [
+        # _text_node：无 width/height/style，前端实际渲染 440x320
+        {
+            "id": "character_profile",
+            "type": "textAnnotationNode",
+            "position": {"x": -1040, "y": -560},
+            "data": {"preset_managed": True, "projection_key": projection_key},
+        },
+        # _upload_node：无尺寸，前端实际渲染 320x350
+        {
+            "id": "portrait_ref",
+            "type": "uploadNode",
+            "position": {"x": -560, "y": -220},
+            "data": {"preset_managed": True, "projection_key": projection_key},
+        },
+        # _skill_node：尺寸只写在 measured 里
+        {
+            "id": "skill_portrait",
+            "type": "skillNode",
+            "position": {"x": -100, "y": -220},
+            "measured": {"width": 380, "height": 520},
+            "data": {"preset_managed": True, "projection_key": projection_key},
+        },
+    ]
+    expected_sizes = {
+        "character_profile": (440, 320),
+        "portrait_ref": (320, 350),
+        "skill_portrait": (380, 520),
+    }
+
+    payload = freezone._wrap_projection_payload_in_group(
+        {"nodes": [dict(node) for node in nodes], "edges": []},
+        projection_key=projection_key,
+        label="林小满",
+    )
+    group = next(node for node in payload["nodes"] if node["type"] == "groupNode")
+    group_width = group["style"]["width"]
+    group_height = group["style"]["height"]
+
+    for child in payload["nodes"]:
+        if child["type"] == "groupNode":
+            continue
+        width, height = expected_sizes[child["id"]]
+        assert child["position"]["x"] >= 0, child["id"]
+        assert child["position"]["y"] >= 0, child["id"]
+        assert child["position"]["x"] + width <= group_width, child["id"]
+        assert child["position"]["y"] + height <= group_height, child["id"]
+
+
 def test_projection_wraps_preset_nodes_in_group(projection_client, monkeypatch) -> None:
     from novelvideo.api.routes import freezone
 
@@ -258,7 +338,7 @@ def test_projection_wraps_preset_nodes_in_group(projection_client, monkeypatch) 
     canvas_file = project_dir / "freezone" / "canvases" / "user_alice_abc123.json"
     payload = json.loads(canvas_file.read_text(encoding="utf-8"))
     group = next(node for node in payload["nodes"] if node["type"] == "groupNode")
-    assert group["id"] == "projection_group_beat_1_4"
+    assert group["id"] == freezone._projection_group_id("beat:1:4")
     assert group["data"]["displayName"] == "EP1/B4"
     children = [node for node in payload["nodes"] if node.get("parentId") == group["id"]]
     assert {node["id"] for node in children} == {"beat_ctx", "skill_node"}
@@ -702,3 +782,165 @@ def test_projection_remove_missing_canvas_returns_404(projection_client) -> None
 
     assert response.status_code == 404
     assert response.json()["detail"] == "canvas not found"
+
+
+def _projection_payload_with_group() -> dict:
+    """一个投影：一个组节点 + 两个归位的成员。"""
+    return {
+        "nodes": [
+            {
+                "id": "scoped__projection_group_asset_character_abc",
+                "type": "groupNode",
+                "data": {
+                    "preset_managed": True,
+                    "projection_key": "asset:character:林小满",
+                    "label": "林小满",
+                },
+            },
+            {
+                "id": "scoped__ref_identity_costume_1",
+                "type": "imageGenNode",
+                "parentId": "scoped__projection_group_asset_character_abc",
+                "data": {
+                    "preset_managed": True,
+                    "projection_key": "asset:character:林小满",
+                },
+            },
+            {
+                "id": "scoped__character_profile",
+                "type": "textAnnotationNode",
+                "parentId": "scoped__projection_group_asset_character_abc",
+                "data": {
+                    "preset_managed": True,
+                    "projection_key": "asset:character:林小满",
+                },
+            },
+        ]
+    }
+
+
+def test_projection_is_intact_when_every_member_sits_in_its_own_group() -> None:
+    from novelvideo.api.routes import freezone
+
+    assert (
+        freezone._projection_is_intact_in_payload(
+            _projection_payload_with_group(), "asset:character:林小满"
+        )
+        is True
+    )
+
+
+def test_projection_is_broken_when_members_lost_their_group() -> None:
+    """组没了、成员散落在画布上——facts 没变也必须重建，否则永远修不回来。"""
+    from novelvideo.api.routes import freezone
+
+    payload = _projection_payload_with_group()
+    payload["nodes"] = [
+        node for node in payload["nodes"] if node.get("type") != "groupNode"
+    ]
+    for node in payload["nodes"]:
+        node.pop("parentId", None)
+
+    assert (
+        freezone._projection_is_intact_in_payload(payload, "asset:character:林小满")
+        is False
+    )
+
+
+def test_projection_is_broken_when_members_hang_under_another_characters_group() -> None:
+    """id 撞车的历史遗留：成员的 parent 是别人的组。"""
+    from novelvideo.api.routes import freezone
+
+    payload = _projection_payload_with_group()
+    payload["nodes"][0]["data"]["projection_key"] = "asset:character:顾南城"
+
+    assert (
+        freezone._projection_is_intact_in_payload(payload, "asset:character:林小满")
+        is False
+    )
+
+
+def test_projection_with_no_members_is_not_reported_broken() -> None:
+    from novelvideo.api.routes import freezone
+
+    assert freezone._projection_is_intact_in_payload({"nodes": []}, "blank:user") is True
+    assert freezone._projection_is_intact_in_payload(None, "blank:user") is True
+
+
+def test_projection_refresh_rebuilds_group_when_facts_unchanged(
+    projection_client,
+    monkeypatch,
+) -> None:
+    """facts 没变但组丢了：不能 noop,得把成员重新收回组里。
+
+    组丢失是历史 id 撞车 / 命名空间迁移的残局。上游事实没变,只看 facts_signature
+    的话 refresh 会一路 noop,散落的成员永远回不到组里。
+    """
+    from novelvideo.api.routes import freezone
+
+    client, project_dir = projection_client
+
+    async def fake_build_canvas_payload_for_preset_request(**_kwargs):
+        return {
+            "nodes": [
+                {
+                    "id": "ref_identity_costume_1",
+                    "type": "imageGenNode",
+                    "position": {"x": 100, "y": 100},
+                    "style": {"width": 260, "height": 160},
+                    "data": {"preset_managed": True},
+                },
+                {
+                    "id": "character_profile",
+                    "type": "textAnnotationNode",
+                    "position": {"x": 420, "y": 100},
+                    "style": {"width": 260, "height": 160},
+                    "data": {"preset_managed": True},
+                },
+            ],
+            "edges": [],
+            "metadata": {},
+        }
+
+    monkeypatch.setattr(
+        freezone,
+        "_build_canvas_payload_for_preset_request",
+        fake_build_canvas_payload_for_preset_request,
+    )
+
+    status, body = _project(client, "user_alice_abc123")
+    assert status == 200, body
+
+    canvas_file = project_dir / "freezone" / "canvases" / "user_alice_abc123.json"
+    payload = json.loads(canvas_file.read_text(encoding="utf-8"))
+    assert any(node.get("type") == "groupNode" for node in payload["nodes"])
+    revision = payload["revision"]
+
+    # 模拟命名空间迁移后的残局：组没了,成员变成散落节点。
+    payload["nodes"] = [
+        {key: value for key, value in node.items() if key not in {"parentId", "extent"}}
+        for node in payload["nodes"]
+        if node.get("type") != "groupNode"
+    ]
+    canvas_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    status, body = _project(client, "user_alice_abc123", base_revision=revision)
+    assert status == 200, body
+    assert body["data"].get("noop_reason") != "projection_facts_unchanged"
+
+    payload = json.loads(canvas_file.read_text(encoding="utf-8"))
+    groups = [
+        node
+        for node in payload["nodes"]
+        if node.get("type") == "groupNode"
+        and (node.get("data") or {}).get("projection_key") == "blank:user"
+    ]
+    assert len(groups) == 1
+    members = [
+        node
+        for node in payload["nodes"]
+        if node.get("type") != "groupNode"
+        and (node.get("data") or {}).get("projection_key") == "blank:user"
+    ]
+    assert members
+    assert all(node.get("parentId") == groups[0]["id"] for node in members)

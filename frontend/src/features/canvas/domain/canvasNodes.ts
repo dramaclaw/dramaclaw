@@ -25,6 +25,7 @@ export const CANVAS_NODE_TYPES = {
   pano360Viewer: 'pano360ViewerNode',
   threeDWorld: 'threeDWorldNode',
   skill: 'skillNode',
+  style: 'styleNode',
 } as const;
 
 export type CanvasNodeType = (typeof CANVAS_NODE_TYPES)[keyof typeof CANVAS_NODE_TYPES];
@@ -57,6 +58,16 @@ export type ImageQuality = string;
 
 export interface NodeDisplayData {
   displayName?: string;
+  /**
+   * 节点被创建出来的时刻（epoch ms），由 nodeFactory 落，之后没人改。
+   *
+   * 和 `generationStartedAt` 的区别是这个字段**持久**：后者每条生成链路跑完都会写回
+   * null，只在转圈那几十秒里存在，事后回头看什么都不剩。侧栏大纲靠这个字段区分
+   * 「同一条提示词生成三次」的重名节点，所以它绝对不能被生成流程碰。
+   *
+   * 老画布里的节点没有这个字段（加字段之前存的），读的时候要当 undefined 处理。
+   */
+  createdAt?: number | null;
   [key: string]: unknown;
 }
 
@@ -664,6 +675,15 @@ export interface SkillNodeData extends NodeDisplayData {
   [key: string]: unknown;
 }
 
+/**
+ * 画布上的「风格节点」：图片节点 `styleTemplateId` 在画布上的投影，本身不参与
+ * 生成请求（提交时读的仍是下游图片节点的 `styleTemplateId`）。建/改/删由
+ * [[styleNodeSync]] 的对账规则驱动，用户不能从菜单单独创建一个。
+ */
+export interface StyleNodeData extends NodeDisplayData {
+  styleTemplateId: string | null;
+}
+
 export type CanvasNodeData =
   | UploadImageNodeData
   | ExportImageNodeData
@@ -681,7 +701,8 @@ export type CanvasNodeData =
   | ScriptNodeData
   | Pano360ViewerNodeData
   | ThreeDWorldNodeData
-  | SkillNodeData;
+  | SkillNodeData
+  | StyleNodeData;
 
 export type CanvasNode = Node<CanvasNodeData, CanvasNodeType>;
 export type VideoKeyframeSlot = 'first' | 'last';
@@ -741,6 +762,12 @@ export function isExportImageNode(
   node: CanvasNode | null | undefined
 ): node is Node<ExportImageNodeData, typeof CANVAS_NODE_TYPES.exportImage> {
   return node?.type === CANVAS_NODE_TYPES.exportImage;
+}
+
+export function isStyleNode(
+  node: CanvasNode | null | undefined
+): node is Node<StyleNodeData, typeof CANVAS_NODE_TYPES.style> {
+  return node?.type === CANVAS_NODE_TYPES.style;
 }
 
 export function isBeatContextNode(

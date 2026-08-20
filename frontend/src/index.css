@@ -368,6 +368,21 @@
   background: rgba(148, 163, 184, 0.5);
 }
 
+/* 大纲行：行尾操作浮在名字上面（不挤开它），hover 时把名字右端淡出。
+   换成「hover 才占位」会让文字宽度突变、截断位置跟着跳一下，一列几十行同时抖很廉价。
+   写在这里而不是 Tailwind 任意值里：`[-webkit-mask-image:...]` 这种带前导连字符的
+   任意属性 Tailwind 的类名扫描器提不出来，构建产物里根本不会有这条规则。 */
+.ui-outline-row-name {
+  transition:
+    -webkit-mask-image 150ms linear,
+    mask-image 150ms linear;
+}
+.ui-outline-row:hover .ui-outline-row-name,
+.ui-outline-row:focus-within .ui-outline-row-name {
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 3.5rem), transparent);
+  mask-image: linear-gradient(to right, black calc(100% - 3.5rem), transparent);
+}
+
 .ui-scrollbar-hidden {
   scrollbar-width: none;
 }
@@ -873,6 +888,30 @@
   animation: projection-stale-frame-pulse 1.8s ease-in-out infinite;
 }
 
+/* 主线投影组的常驻身份标识：黄色呼吸边框。有更新时换成上面那档更亮更快的
+   projection-stale-frame（外加「有新更新」角标），两者互斥——同时挂会抢
+   border-color。 */
+@keyframes projection-frame-pulse {
+  0%,
+  100% {
+    border-color: rgba(251, 191, 36, 0.3);
+    box-shadow:
+      0 0 0 1px rgba(251, 191, 36, 0.08),
+      0 0 12px rgba(251, 191, 36, 0.08);
+  }
+
+  50% {
+    border-color: rgba(251, 191, 36, 0.58);
+    box-shadow:
+      0 0 0 1px rgba(251, 191, 36, 0.16),
+      0 0 20px rgba(251, 191, 36, 0.16);
+  }
+}
+
+.projection-frame {
+  animation: projection-frame-pulse 2.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .canvas-data-edge__packet {
     display: none;
@@ -882,6 +921,12 @@
     animation: none;
     border-color: rgba(251, 191, 36, 0.76);
     box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2);
+  }
+
+  .projection-frame {
+    animation: none;
+    border-color: rgba(251, 191, 36, 0.46);
+    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.12);
   }
 }
 

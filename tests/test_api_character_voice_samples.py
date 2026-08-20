@@ -30,6 +30,10 @@ class _CharacterStore:
             setattr(character, key, value)
         return True
 
+    async def repair_path_unsafe_asset_names(self, kind: str, move_assets=None):
+        # 这里的名字都是干净的，list 接口上那道存量自愈是空跑。
+        return {}
+
 
 def _patch_project(
     monkeypatch: pytest.MonkeyPatch,

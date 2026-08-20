@@ -14,6 +14,7 @@ import { ScriptNode } from './ScriptNode';
 import { SkillNode } from './SkillNode';
 import { StoryboardGenNode } from './StoryboardGenNode';
 import { StoryboardNode } from './StoryboardNode';
+import { StyleNode } from './StyleNode';
 import { TextAnnotationNode } from './TextAnnotationNode';
 import { ThreeDWorldNode } from './ThreeDWorldNode';
 import { UploadNode } from './UploadNode';
@@ -35,6 +36,7 @@ export const nodeTypes: NodeTypes = {
   skillNode: withLodShell('skillNode', SkillNode),
   storyboardGenNode: withLodShell('storyboardGenNode', StoryboardGenNode),
   storyboardNode: withLodShell('storyboardNode', StoryboardNode),
+  styleNode: withLodShell('styleNode', StyleNode),
   textAnnotationNode: withLodShell('textAnnotationNode', TextAnnotationNode),
   threeDWorldNode: withLodShell('threeDWorldNode', ThreeDWorldNode),
   uploadNode: withLodShell('uploadNode', UploadNode),
@@ -43,4 +45,4 @@ export const nodeTypes: NodeTypes = {
   videoStoryNode: withLodShell('videoStoryNode', VideoStoryNode),
 };
 
-export { AudioNode, BeatContextNode, GroupNode, ImageEditNode, ImageGenNode, ImageNode, Pano360ViewerNode, ScriptNode, SkillNode, StoryboardGenNode, StoryboardNode, TextAnnotationNode, ThreeDWorldNode, UploadNode, VideoComposeNode, VideoNode, VideoStoryNode };
+export { AudioNode, BeatContextNode, GroupNode, ImageEditNode, ImageGenNode, ImageNode, Pano360ViewerNode, ScriptNode, SkillNode, StoryboardGenNode, StoryboardNode, StyleNode, TextAnnotationNode, ThreeDWorldNode, UploadNode, VideoComposeNode, VideoNode, VideoStoryNode };

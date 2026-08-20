@@ -31,6 +31,8 @@ deploy/compose/windows/novelvideo.env
 deploy/compose/windows/users.json
 
 # Claude Code
+# settings.json 是本机的 worktree 开关，不是团队约定，和 local 一样不进仓。
+.claude/settings.json
 .claude/settings.local.json
 .claude/skills/**/*-workspace/
 *.skill
@@ -54,3 +56,7 @@ docs/superpowers/
 # git worktree 统一目录(主目录永远 main)
 /.worktrees/
 /frontend/bun.lock
+
+# 风格图墙的图片改由 OSS 提供(后端配 STYLE_GALLERY_ASSET_BASE),不再随仓库
+# 发布。scripts/build_style_gallery.py 仍会把产物写到这里，属本地中间物。
+/frontend/public/style-gallery/

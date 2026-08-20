@@ -794,8 +794,12 @@ export function AssetLibraryPanel({
                   <TabsTrigger
                     key={item.id}
                     value={item.id}
-                    // after:bottom-0 让下划线落在整行的基线上，而不是浮在下面 5px
-                    className="h-full flex-none rounded-none px-2.5 text-xs group-data-horizontal/tabs:after:bottom-0"
+                    // after:bottom-0 让下划线落在整行的基线上，而不是浮在下面 5px。
+                    // 文字一律纯白（组件默认给未选中 tab 压了透明度），选中与否只靠
+                    // 下划线区分——300px 的侧栏里三个 tab 挨着，灰字读起来太吃力。
+                    // 下划线用 accent 而不是白：全白标签 + 白下划线，选中态几乎不成立；
+                    // 顺便这也是整块侧栏里唯一的品牌色落点。
+                    className="h-full flex-none rounded-none px-2.5 text-xs text-white after:bg-[rgb(var(--accent-rgb))] hover:text-white data-active:text-white dark:text-white dark:hover:text-white dark:data-active:text-white group-data-horizontal/tabs:after:bottom-0"
                   >
                     {item.label}
                   </TabsTrigger>
@@ -883,7 +887,10 @@ export function AssetLibraryPanel({
               )}
             </>
           ) : panelTab === "assets" ? (
-            <AssetLibraryBrowser project={project} />
+            <AssetLibraryBrowser
+              project={project}
+              onSendToCanvas={(entry) => void sendLibraryItemToCanvas(entry)}
+            />
           ) : (
             <CanvasesTab
               project={project}
@@ -2259,6 +2266,24 @@ async function sendAssetFolderToCanvas(folder: AssetFolder): Promise<void> {
     ids.length >= 2 ? store.groupNodes(ids, { label: folder.label }) : null;
   store.requestFocusNode(groupId ?? ids[0]);
   toast.success(`已发送到画布：${folder.label}`);
+}
+
+/**
+ * 把单条资产库素材发到画布：量一次真实比例，落在视口中心（带碰撞避让），然后聚焦。
+ *
+ * 不复用 sendAssetFolderToCanvas —— 那个是整柜铺网格再编组，单条走同一条路会得到
+ * 一个只有一个成员的组。
+ */
+async function sendLibraryItemToCanvas(entry: LibraryItem): Promise<void> {
+  const payload = libraryItemToDragPayload(entry);
+  if (!payload) return;
+  const ratio = await measureAspectRatio(payload);
+  const sized = ratio ? { ...payload, aspectRatio: ratio } : payload;
+  const { width, height } = spawnedNodeSize(sized);
+  const store = useCanvasStore.getState();
+  const newId = spawnAssetNode(store, sized, viewportCenteredPosition(store, 0, width, height));
+  store.requestFocusNode(newId);
+  toast.success(`已发送到画布：${entry.name || "素材"}`);
 }
 
 function addAssetToCanvas(asset: LibraryAsset, index: number): void {

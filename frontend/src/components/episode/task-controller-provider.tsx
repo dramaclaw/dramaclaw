@@ -109,6 +109,17 @@ export interface TaskControllerSnapshot {
    * found" and completion events never reach the FE.
    */
   activeScope: string | null;
+  /**
+   * Beats the currently-tracked run covers, or `null` when unknown.
+   *
+   * Per-beat panels (草图 / 渲染图) all subscribe to one episode-wide entry
+   * because selection-scoped runs carry `beat_num = null` and an opaque scope
+   * hash — without this field every panel would render the same spinner and a
+   * single regen would look like the whole episode was generating.
+   * `null` means "no attribution available", which callers read as
+   * "covers everything" rather than hiding a genuinely running beat.
+   */
+  activeBeatNumbers: number[] | null;
   streamState: TaskStreamState;
   /**
    * Mirrors `entry.ownerInstanceId !== null`. Exposed through the snapshot so
@@ -181,6 +192,7 @@ function createEntry(key: TaskKey): TaskRegistryEntry {
     activeTaskType: key.taskType,
     activeTaskId: null,
     activeScope: key.scope ?? null,
+    activeBeatNumbers: key.beatNum === undefined ? null : [key.beatNum],
     streamState: INITIAL_STREAM_STATE,
     hasOwner: false,
   };

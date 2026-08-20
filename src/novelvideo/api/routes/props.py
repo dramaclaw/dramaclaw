@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -11,6 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from novelvideo.api.asset_metadata import newest_updated_at, tree_updated_at, utc_iso
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import (
+    may_run_asset_repair,
     make_sqlite_store,
     make_sqlite_store_for_context,
     make_static_url_for_context,
@@ -23,6 +23,7 @@ from novelvideo.sqlite_store import SQLiteStore
 from novelvideo.ports import get_task_backend
 from novelvideo.task_scopes import prop_reference_asset_scope
 from novelvideo.task_identity import project_task_state_key
+from novelvideo.utils.asset_names import move_asset_dir, path_safe_asset_name
 from novelvideo.utils.path_resolver import compute_prop_reference_path
 
 router = APIRouter()
@@ -121,18 +122,27 @@ async def _local_episode_prop_payloads(
 
 
 def _rename_prop_asset_dir(project_dir: Path, old_name: str, new_name: str) -> None:
-    old_dir = project_dir / "assets" / "props" / old_name
-    new_dir = project_dir / "assets" / "props" / new_name
-    if not old_dir.exists():
-        return
-    if new_dir.exists():
-        raise ValueError(f"Target asset directory already exists: {new_dir}")
-    new_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(old_dir), str(new_dir))
+    # 见 ``move_asset_dir``：old_name 可能是库里没消毒过的脏值，直接拼路径会爬出资产根。
+    move_asset_dir(project_dir / "assets" / "props", old_name, new_name)
 
 
 async def _require_prop(store: SQLiteStore, name: str) -> NovelProp | None:
     return await store.get_prop(name)
+
+
+async def _heal_path_unsafe_prop_names(store: SQLiteStore, project_dir: Path) -> dict[str, str]:
+    """修好库里名字带斜杠的存量道具，原名转成别名。
+
+    和场景同一个毛病：``{name}`` 路由匹配不到带斜杠的名字，那一排接口全 404。
+    详见 :mod:`novelvideo.utils.asset_names`。
+
+    调用方要先过 ``may_run_asset_repair``：这是一次写操作，不该由只读协作者触发。
+    """
+
+    def move_assets(old_name: str, new_name: str) -> None:
+        _rename_prop_asset_dir(project_dir, old_name, new_name)
+
+    return await store.repair_path_unsafe_asset_names("prop", move_assets)
 
 
 @router.get("/projects/{project}/props")
@@ -148,6 +158,8 @@ async def list_props(
         else await make_sqlite_store(resolved.username, resolved.project_name)
     )
     project_dir = resolved.project_dir
+    if may_run_asset_repair(resolved.ctx):
+        await _heal_path_unsafe_prop_names(store, project_dir)
     props = await store.list_props()
     global_names = {prop.name for prop in props}
     data: list[dict[str, Any]] = []
@@ -177,7 +189,8 @@ async def create_prop(
         else await make_sqlite_store(resolved.username, resolved.project_name)
     )
     project_dir = resolved.project_dir
-    name = body.name.strip()
+    # 在查重之前消毒，否则两个只差斜杠的名字会双双通过查重、后写的静默覆盖先写的。
+    name = path_safe_asset_name(str(body.name or "").strip())
     if not name:
         return {"ok": False, "error": "Prop name is required"}
     existing = await store.get_prop(name)
@@ -219,7 +232,9 @@ async def update_prop(
         return {"ok": False, "error": f"Prop '{name}' not found"}
 
     updates = body.model_dump(exclude_unset=True, exclude_none=True)
-    requested_name = str(updates.pop("name", "") or "").strip()
+    # 在挪目录之前消毒：store.rename_prop 里也会消毒，但目录迁移先于它执行，
+    # 不在这里统一就会出现「库里 a_b、盘上 a/b」的错位。
+    requested_name = path_safe_asset_name(str(updates.pop("name", "") or "").strip())
     if requested_name and requested_name != prop.name:
         if await store.get_prop(requested_name) is not None:
             return {"ok": False, "error": f"Prop '{requested_name}' already exists"}

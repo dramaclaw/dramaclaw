@@ -2,8 +2,8 @@
 // Copyright (c) 2026 ClaymoreLab
 //
 // 资产库的条目模型与类目定义。弹窗(AssetLibraryModal，选参考图用)和 Freezone 左侧
-// 面板的「资产库」tab(只浏览)共用这里，类目和归一化逻辑只有一份，避免两边漂移。
-// 上传/删除/同步等写操作仍只在弹窗里，不放进来。
+// 面板的「资产库」tab 共用这里，类目和归一化逻辑只有一份，避免两边漂移。
+// 这里只放纯数据推导，调接口的写操作(上传/改名/删除/同步)一律留在各自组件里。
 import type {
   FreezoneAssetLibraryCategory,
   FreezoneAssetLibraryFolder,
@@ -30,6 +30,35 @@ export interface LibraryItem {
   /** 该条目在其 media 类型下的主展示 / 引用地址。 */
   url: string;
   raw: Record<string, unknown>;
+}
+
+/** 资产名长度上限，与后端 LIBRARY_ITEM_NAME_MAX_LEN 一致。 */
+export const LIBRARY_ITEM_NAME_MAX_LEN = 60;
+
+const FILE_EXTENSION_PATTERN = /\.([a-z0-9]{2,5})$/i;
+const MEDIA_FALLBACK_EXTENSION: Record<AssetLibraryMedia, string> = {
+  image: 'png',
+  video: 'mp4',
+  audio: 'mp3',
+};
+
+/**
+ * 下载时给素材起的文件名：资产名 + 从 URL 推出来的后缀。
+ *
+ * 资产名是用户随手填的，可能带 `/`、`\`、`:` 之类会被系统当路径分隔符的字符，
+ * 一律换成 `_`；名字整个被洗空时退回媒介名，总之不能生成一个空文件名。
+ */
+export function libraryItemDownloadFilename(entry: LibraryItem): string {
+  const path = entry.url.split(/[?#]/, 1)[0] ?? '';
+  const extension =
+    FILE_EXTENSION_PATTERN.exec(path)?.[1]?.toLowerCase() ??
+    MEDIA_FALLBACK_EXTENSION[entry.media];
+  const base =
+    entry.name.replace(/[\\/:*?"<>|]+/g, '_').trim() || entry.media;
+  // 名字自己就带对后缀时不再叠一层（「封面.png」不该下成「封面.png.png」）。
+  return base.toLowerCase().endsWith(`.${extension}`)
+    ? base
+    : `${base}.${extension}`;
 }
 
 /**

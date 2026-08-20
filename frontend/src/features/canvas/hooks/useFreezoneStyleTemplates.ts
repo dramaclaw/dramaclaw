@@ -10,14 +10,26 @@ import { readUrl } from "@/lib/url-params";
 
 export interface UseFreezoneStyleTemplatesResult {
   templates: FreezoneStyleTemplate[];
+  assetBase: string;
   isLoading: boolean;
   error: Error | null;
+  /**
+   * 失败后重来一次。风格直接决定出图效果，不像相机参数那样可有可无，所以这里
+   * 比同族 hook 多给一个出口。只在 error 态生效，其余状态调用是空操作 —— 不做
+   * 自动重试是因为 ensureLoaded 在 render 里调用，自动重试会变成失败→重渲染→
+   * 再失败的死循环。
+   */
+  retry: () => void;
 }
+
+const NOOP_RETRY = () => {};
 
 const EMPTY: UseFreezoneStyleTemplatesResult = {
   templates: [],
+  assetBase: "",
   isLoading: false,
   error: null,
+  retry: NOOP_RETRY,
 };
 
 // Per-project shared store — mirrors useFreezoneImageModels /
@@ -34,12 +46,25 @@ function writeState(project: string, next: UseFreezoneStyleTemplatesResult) {
   emit(project);
 }
 
-function ensureLoaded(project: string) {
-  if (states.has(project)) return;
-  states.set(project, { templates: [], isLoading: true, error: null });
+// 起飞时故意只 states.set 不 emit：ensureLoaded 会在 render 阶段被调用，那时
+// 通知订阅者等于在渲染别的组件时改它的 state。手工重试不在 render 里，可以 emit。
+function startFetch(project: string) {
+  states.set(project, {
+    templates: [],
+    assetBase: "",
+    isLoading: true,
+    error: null,
+    retry: NOOP_RETRY,
+  });
   listFreezoneStyleTemplates(project)
-    .then((templates) => {
-      writeState(project, { templates, isLoading: false, error: null });
+    .then(({ templates, assetBase }) => {
+      writeState(project, {
+        templates,
+        assetBase,
+        isLoading: false,
+        error: null,
+        retry: NOOP_RETRY,
+      });
     })
     .catch((error: unknown) => {
       const normalized =
@@ -48,8 +73,26 @@ function ensureLoaded(project: string) {
         "[freezone] style-templates fetch failed:",
         normalized.message,
       );
-      writeState(project, { templates: [], isLoading: false, error: normalized });
+      writeState(project, {
+        templates: [],
+        assetBase: "",
+        isLoading: false,
+        error: normalized,
+        retry: () => retryLoad(project),
+      });
     });
+}
+
+function retryLoad(project: string) {
+  const current = states.get(project);
+  if (!current || current.isLoading || !current.error) return;
+  startFetch(project);
+  emit(project);
+}
+
+function ensureLoaded(project: string) {
+  if (states.has(project)) return;
+  startFetch(project);
 }
 
 export function prefetchFreezoneStyleTemplates(project: string): void {

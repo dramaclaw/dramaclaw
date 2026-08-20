@@ -14,10 +14,38 @@ class QueuedTask:
     celery_id: str | None = None
 
 
-def display_metadata_for_task(task_type: str, payload: dict[str, Any] | None) -> dict[str, str]:
+def _selected_beat_numbers(payload: dict[str, Any]) -> list[int]:
+    """把入队 payload 里的选中 beat 号挖出来，去重保序。
+
+    选中 Beats 再生（``sketch_regen`` / ``selected_regen``）把 beat 列表放在
+    ``payload["config"]["selected_beat_numbers"]``，个别调用方放在顶层，两处都认。
+    """
+    for container in (payload, payload.get("config")):
+        if not isinstance(container, dict):
+            continue
+        raw = container.get("selected_beat_numbers")
+        if not isinstance(raw, (list, tuple)):
+            continue
+        seen: set[int] = set()
+        beats: list[int] = []
+        for value in raw:
+            try:
+                beat = int(value)
+            except (TypeError, ValueError):
+                continue
+            if beat in seen:
+                continue
+            seen.add(beat)
+            beats.append(beat)
+        if beats:
+            return beats
+    return []
+
+
+def display_metadata_for_task(task_type: str, payload: dict[str, Any] | None) -> dict[str, Any]:
     if not payload:
         return {}
-    metadata: dict[str, str] = {}
+    metadata: dict[str, Any] = {}
 
     for key in (
         "display_name",
@@ -38,6 +66,13 @@ def display_metadata_for_task(task_type: str, payload: dict[str, Any] | None) ->
             value = str(payload.get(key) or "").strip()
             if value:
                 metadata[key] = value
+
+    # 选中 Beats 再生的任务行 beat_num 是 None，scope 又是 mode_key + beats 的
+    # sha1，前端反推不出来。不留下这份名单的话，每个 beat 的草图 / 渲染图面板都会
+    # 认领同一条任务，一个 beat 在跑、整集都在转圈。
+    beat_numbers = _selected_beat_numbers(payload)
+    if beat_numbers:
+        metadata["beat_numbers"] = beat_numbers
     return metadata
 
 

@@ -1048,6 +1048,34 @@ def add_video_character_library_item(
     return item
 
 
+# 资产名只用于展示，给个宽松上限防止有人贴一整段文案进来把列表撑爆。
+LIBRARY_ITEM_NAME_MAX_LEN = 60
+
+
+def rename_video_character_library_item(
+    project_dir: Path, item_id: str, *, name: str
+) -> dict[str, Any] | None:
+    """给资产库条目改名。条目不存在返回 ``None``，名字非法抛 ``ValueError``。
+
+    只动 ``name`` 和 ``updated_at``：URL / 类目 / 保存位置一概不碰，画布上已经引用
+    该素材的节点不受影响。和文件夹改名不同，素材名不要求唯一——同名素材在库里是
+    常态（同一角色的多张参考图）。
+    """
+    clean = name.strip()
+    if not clean:
+        raise ValueError("item name is required")
+    if len(clean) > LIBRARY_ITEM_NAME_MAX_LEN:
+        raise ValueError(f"item name must be <= {LIBRARY_ITEM_NAME_MAX_LEN} characters")
+    items = load_video_character_library(project_dir)
+    target = next((item for item in items if str(item.get("id")) == item_id), None)
+    if target is None:
+        return None
+    target["name"] = clean
+    target["updated_at"] = datetime.now().isoformat()
+    save_video_character_library(project_dir, items)
+    return target
+
+
 def delete_video_character_library_item(project_dir: Path, item_id: str) -> bool:
     items = load_video_character_library(project_dir)
     kept = [item for item in items if item.get("id") != item_id]

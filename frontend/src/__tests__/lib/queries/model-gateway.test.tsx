@@ -6,16 +6,26 @@ import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import ky from "ky";
 import type { ReactNode } from "react";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 vi.mock("@/lib/api", () => ({
   api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
 import {
   type OfficialMediaCatalogStatus,
   useCheckOfficialMediaCatalog,
   useOfficialMediaCatalogWatcher,
+  useSaveProviderChannels,
 } from "@/lib/queries/model-gateway";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -178,5 +188,119 @@ describe("official media catalog watcher", () => {
         onCatalogUpdated,
       );
     }
+  });
+});
+
+describe("provider channel persistence", () => {
+  it("sends an empty replacement list when the final channel is removed", async () => {
+    let requestBody: unknown;
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/model-gateway/custom/newapi/provider-channels",
+        async ({ request }) => {
+          requestBody = await request.json();
+          return HttpResponse.json({
+            ok: true,
+            data: {
+              channels: [],
+              mediaModels: {},
+              embeddingModel: null,
+            },
+          });
+        },
+      ),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(queryKeys.modelGateway(), {
+      ok: true,
+      data: {
+        mode: "custom",
+        effective: {
+          source: "custom",
+          baseUrl: "http://localhost:3000/v1",
+          apiKeyPreview: "sk-...",
+          configured: true,
+        },
+        official: {
+          source: "environment",
+          baseUrl: "",
+          apiKeyPreview: "",
+          configured: false,
+          environment: {
+            baseUrl: "",
+            apiKeyPreview: "",
+            configured: false,
+          },
+        },
+        custom: {
+          baseUrl: "http://localhost:3000/v1",
+          apiKeyPreview: "sk-...",
+          configured: true,
+          adminBaseUrl: "http://localhost:3000",
+          tokenName: "dramaclaw",
+          tokenId: "1",
+        },
+        provisioner: {
+          enabled: true,
+          adminBaseUrl: "http://localhost:3000",
+          dbConfigured: true,
+          adminUsername: "root",
+          relayTokenName: "dramaclaw",
+          relayBaseUrl: "http://localhost:3000/v1",
+          providers: {},
+          providerChannels: [
+            {
+              provider: "openrouter",
+              configured: true,
+              upstreamKeyPreview: "sk-...",
+              baseUrl: "",
+            },
+          ],
+          mediaModels: {
+            preview: {
+              provider: "openrouter",
+              upstreamModel: "preview-upstream",
+            },
+          },
+          embeddingModel: {
+            provider: "openrouter",
+            upstreamModel: "embedding-upstream",
+            dimension: 1024,
+          },
+        },
+      },
+    });
+    const { result } = renderHook(() => useSaveProviderChannels(), {
+      wrapper: wrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        preserveUnmentioned: false,
+        channels: [],
+      });
+    });
+
+    expect(requestBody).toEqual({
+      preserveUnmentioned: false,
+      channels: [],
+    });
+    expect(
+      queryClient.getQueryData<{
+        data: {
+          provisioner: {
+            providerChannels: unknown[];
+            mediaModels: Record<string, unknown>;
+            embeddingModel?: unknown;
+          };
+        };
+      }>(queryKeys.modelGateway())?.data.provisioner,
+    ).toMatchObject({
+      providerChannels: [],
+      mediaModels: {},
+      embeddingModel: undefined,
+    });
   });
 });
