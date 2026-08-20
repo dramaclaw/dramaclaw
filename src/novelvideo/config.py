@@ -45,6 +45,12 @@ PROVIDER_PRESETS = {
         "timeout": 300,
         "api_key_env": "OPENROUTER_API_KEY",
     },
+    "orcarouter": {
+        "base_url": "https://api.orcarouter.ai/v1",
+        "default_model": "openai/gpt-5.5",
+        "timeout": 300,
+        "api_key_env": "ORCAROUTER_API_KEY",
+    },
     "volcengine": {
         "base_url": "https://ark.cn-beijing.volces.com/api/v3",
         "default_model": "doubao-seed-1-6-251015",
@@ -60,6 +66,7 @@ PROVIDER_ALIASES = {
     "gpt": "openai",
     "google": "gemini",
     "or": "openrouter",
+    "orca": "orcarouter",
 }
 
 

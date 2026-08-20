@@ -12,7 +12,7 @@ const providerModules = import.meta.glob<{ provider: ModelProviderDefinition }>(
   { eager: true }
 );
 
-const SUPERTALE_PROVIDER_IDS = new Set(['huimeng', 'openai', 'openrouter']);
+const SUPERTALE_PROVIDER_IDS = new Set(['huimeng', 'openai', 'openrouter', 'orcarouter']);
 
 const providers: ModelProviderDefinition[] = Object.values(providerModules)
   .map((module) => module.provider)

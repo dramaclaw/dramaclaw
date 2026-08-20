@@ -94,6 +94,8 @@ After initialization, start with **Recommended**. One profile configures:
 
 Enter each provider key separately, then click **Save & Apply All**. Keys are stored separately and never written into profile JSON. Leave an already saved key blank; entering a new value replaces it.
 
+OrcaRouter is a built-in OpenAI-compatible provider channel. In **My Config**, reference it as `"provider": "orcarouter"` with a matching `channels[].id` of `"orcarouter"` and an `ORCAROUTER_API_KEY` upstream key; model names are namespaced (for example `openai/gpt-5.5`).
+
 The built-in recommended profile is read-only. Switch to **My Config** to edit and persist your own JSON. The main shape is:
 
 ```json
