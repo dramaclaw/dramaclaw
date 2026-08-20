@@ -17,6 +17,8 @@ DramaClaw CE 通过 NewAPI 兼容网关调用文本、视觉理解、Embedding�
 
 配置完成后点击对应模式的启用按钮。更换模式、Key 或模型后，新任务会读取新配置；正在运行的任务不会中途切换。
 
+本地 Ollama / 混合方案的端到端步骤（Docker 宿主机地址、示例映射、冒烟检查）见[使用本地 LLM 跑 DramaClaw](../guides/local-llms.md)。
+
 ## 官方模式
 
 官方模式是最简单的接入方式：

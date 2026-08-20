@@ -6,6 +6,7 @@ export type ClientFrame =
       scope?: ChatScope;
       text: string;
       turn_id?: string;
+      language?: "en" | "zh";
       attachments?: ChatAttachment[];
     }
   | { type: "scope.set"; scope: ChatScope };

@@ -16,6 +16,7 @@
 | 文档 | 内容 |
 |---|---|
 | [产品使用手册](https://neo-flying.feishu.cn/docx/JGNTdsjJuo748TxJkxecoYs2nth) | 全功能 UI 操作手册（飞书） |
+| [本地 LLM（Ollama / BYO）](guides/local-llms.md) | 混合本机文本 + embedding，经 Local NewAPI 接入 |
 | [自托管手册](guides/self-hosting.md) | 部署 / 升级 / 备份 |
 | [ffmpeg 指南](guides/ffmpeg.md) | 安装 / 定位 / 许可义务 |
 | [遥测说明](guides/telemetry.md) | 默认不收集数据 / 可选追踪 |

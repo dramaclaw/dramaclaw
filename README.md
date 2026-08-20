@@ -237,9 +237,10 @@ uv run novelvideo api --port 8780   # start the REST API (CE defaults to inline 
 DramaClaw stays model-neutral — all text/image/video/audio models connect through a single **OpenAI-compatible gateway**, in two ways:
 
 - **DramaClaw official key (recommended)**: `docker compose up`, open <http://localhost:8080> → Settings → Model Config → Official, paste your DC key, save. Works instantly — no model mapping needed. Get a key at <https://relayclaw.cdnfg.com>.
-- **Bring your own gateway (BYO)**: point `NEWAPI_BASE_URL` at your own OpenAI-compatible endpoint and map model names (see [Configuring Models](docs/en/getting-started/configuring-models.md)).
+- **Bring your own gateway (BYO)**: use Local NewAPI (`docker-compose.selfhosted.yml`) and map model names in the UI (see [Configuring Models](docs/en/getting-started/configuring-models.md)).
+- **Local LLMs (Ollama / hybrid)**: run text + embeddings on your machine behind Local NewAPI; keep image / video / TTS on a cloud-capable upstream unless you supply compatible media APIs. Step-by-step: [Using DramaClaw with Local LLMs](docs/en/guides/local-llms.md).
 
-> Prefer fully local? Run `docker compose -f docker-compose.selfhosted.yml up` for a bundled `newapi` gateway you configure yourself (prebuilt-image variant: `docker-compose.selfhosted.release.yml`).
+> Prefer a bundled local gateway? Run `docker compose -f docker-compose.selfhosted.yml up` for `newapi` you configure yourself (prebuilt-image variant: `docker-compose.selfhosted.release.yml`).
 
 | Stage                | Connected via gateway                                               |
 |----------------------|---------------------------------------------------------------------|
@@ -293,6 +294,7 @@ The edge isn't "more generation" — it's organizing the whole short-drama produ
 - [Quick Start](./docs/en/getting-started/quickstart.md)
 - [Self-hosting guide](./docs/en/guides/self-hosting.md)
 - [Configuring model providers](./docs/en/getting-started/configuring-models.md)
+- [Local LLMs (Ollama / BYO)](./docs/en/guides/local-llms.md)
 - [More docs &rarr;](./docs/en/README.md)
 
 <br/>

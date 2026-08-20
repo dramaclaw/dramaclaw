@@ -16,6 +16,7 @@
 | Doc | Contents |
 |---|---|
 | [Product User Manual](https://neo-flying.feishu.cn/docx/JGNTdsjJuo748TxJkxecoYs2nth) | Full-featured UI operation manual (Feishu) |
+| [Local LLMs (Ollama / BYO)](guides/local-llms.md) | Hybrid local text + embeddings behind Local NewAPI |
 | [Self-Hosting Guide](guides/self-hosting.md) | Deploy / upgrade / back up |
 | [ffmpeg Guide](guides/ffmpeg.md) | Install / locate / licensing obligations |
 | [Telemetry Notes](guides/telemetry.md) | No data collected by default / optional tracing |

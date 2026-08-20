@@ -110,9 +110,11 @@ def test_fresh_create_layout(isolated_workspace, repo_skills, repo_plugins):
     config = (home / "config.yaml").read_text()
     assert _enabled_toolsets(config) == ["hermes-acp", "memory"]
     assert "    - dramaclaw" in config
-    assert "你是虾导" in (home / "SOUL.md").read_text()
+    assert "You are 虾导" in (home / "SOUL.md").read_text()
+    assert "default to english" in (home / "SOUL.md").read_text().lower()
     memory = (home / "memories" / "MEMORY.md").read_text()
-    assert "虾导在 DramaClaw 会话中面向用户自称“虾导”" in memory
+    assert "introduce yourself only as 虾导" in memory
+    assert "default to english" in memory.lower()
     assert "我是虾导，DramaClaw 的小说转视频创作助手。" not in memory
 
 
@@ -452,10 +454,10 @@ def test_legacy_identity_context_is_migrated(isolated_workspace, repo_skills, re
 
     soul = (home / "SOUL.md").read_text(encoding="utf-8")
     memory = (memories / "MEMORY.md").read_text(encoding="utf-8")
-    assert "你是虾导" in soul
+    assert "You are 虾导" in soul
     assert "You are Hermes Agent" not in soul
     assert "我是虾导，DramaClaw 的小说转视频创作助手。" not in memory
-    assert "DramaClaw 管理的虾导会话" in memory
+    assert "hermes-acp" in memory
     assert "DramaClaw 管理的 Hermes 会话" not in memory
 
 

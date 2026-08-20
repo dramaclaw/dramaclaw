@@ -74,7 +74,7 @@ describe("release notification query", () => {
     expect(seenLocale).toBe("zh");
   });
 
-  it("defaults missing and unknown locales to zh", async () => {
+  it("defaults missing and unknown locales to en", async () => {
     const seenLocales: string[] = [];
     server.use(
       http.get("http://localhost:3000/api/v1/release-notifications", ({ request }) => {
@@ -87,6 +87,6 @@ describe("release notification query", () => {
     await fetchReleaseNotifications("fr-FR");
 
     expect(seenLocales.length).toBeGreaterThanOrEqual(2);
-    expect(seenLocales.every((locale) => locale === "zh")).toBe(true);
+    expect(seenLocales.every((locale) => locale === "en")).toBe(true);
   });
 });

@@ -41,9 +41,10 @@ docker compose ps   # api、web 均应 running
 
 ## 想使用自己的模型渠道？
 
-使用 `docker-compose.selfhosted.yml` 启动 CE 随附的本地 NewAPI，然后在「设置 → 模型配置 → 本地 NewAPI」中初始化渠道、填写上游 key 并保存模型映射。地址和 runtime token 会写入本机 `settings.db`，不写入 `.env`。详见[配置模型供应商](configuring-models.md)。
+使用 `docker-compose.selfhosted.yml` 启动 CE 随附的本地 NewAPI，然后在「设置 → 模型配置 → 本地 NewAPI」中初始化渠道、填写上游 key 并保存模型映射。地址和 runtime token 会写入本机 `settings.db`，不写入 `.env`。详见[配置模型供应商](configuring-models.md)。Ollama / 混合本机文本见[使用本地 LLM 跑 DramaClaw](../guides/local-llms.md)。
 
 ## 下一步
 
 - 完整部署/升级/备份:[自托管手册](../guides/self-hosting.md)
 - 接入自己的模型:[配置模型供应商](configuring-models.md)
+- 本地 LLM（Ollama / BYO）:[使用本地 LLM 跑 DramaClaw](../guides/local-llms.md)

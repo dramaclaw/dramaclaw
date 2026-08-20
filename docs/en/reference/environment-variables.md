@@ -81,4 +81,4 @@ See the [telemetry notes](../guides/telemetry.md) for details. By default none o
 ## Related
 
 - Full list with comments: `.env.example` in the repo root
-- [Quickstart](../getting-started/quickstart.md) ｜ [Configuring Model Providers](../getting-started/configuring-models.md) ｜ [Self-Hosting Manual](../guides/self-hosting.md)
+- [Quickstart](../getting-started/quickstart.md) ｜ [Configuring Model Providers](../getting-started/configuring-models.md) ｜ [Self-Hosting Manual](../guides/self-hosting.md) ｜ [Local LLMs](../guides/local-llms.md)

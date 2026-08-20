@@ -15,9 +15,9 @@ router = APIRouter()
 
 def normalize_locale(value: str | None) -> str:
     if not value:
-        return "zh"
+        return "en"
     primary = value.split(",", 1)[0].split(";", 1)[0].split("-", 1)[0].strip().lower()
-    return primary if primary in {"zh", "en"} else "zh"
+    return primary if primary in {"zh", "en"} else "en"
 
 
 @router.get("/release-notifications", response_model=OkResponse)

@@ -47,13 +47,66 @@ CONTENT_FILTER_MESSAGE = (
     "请把需求拆得更具体，避免一次性要求完成整集或包含敏感/违规描述；"
     "也可以先让我只列当前制作进度和下一步。"
 )
+CONTENT_FILTER_MESSAGE_EN = (
+    "This reply was blocked by the model gateway content filter, so the assistant "
+    "could not return usable output. Please narrow the request, avoid asking for an "
+    "entire episode at once or sensitive/prohibited content, or ask me to list "
+    "current progress and the next step first."
+)
 DRAMACLAW_ONE_STEP_STOP_MESSAGE = (
     "当前任务已开始处理。请稍后让我查看当前任务进度，或在任务完成后再继续下一步。"
+)
+DRAMACLAW_ONE_STEP_STOP_MESSAGE_EN = (
+    "The current task has started. Ask me to check task progress later, or continue "
+    "after it finishes."
 )
 DRAMACLAW_WRITE_FAILED_STOP_MESSAGE = (
     "刚才这一步没有成功启动任务。请先根据返回的错误补齐前置条件；"
     "如果是配音缺少声线，可以到「虾塘」上传或录制缺失声线后再继续。"
 )
+DRAMACLAW_WRITE_FAILED_STOP_MESSAGE_EN = (
+    "That step failed to start a task. Fix the prerequisites from the error first; "
+    "if voice-over is missing a voice line, upload or record it in Freezone (虾塘), "
+    "then continue."
+)
+DRAMACLAW_TOOL_LIMIT_STOP_MESSAGE = (
+    "本轮操作已停止：虾导连续调用工具过多，可能在自动推进过大范围。"
+    "请缩小指令范围，例如只检查前置条件，或只启动一个具体 beat 的视频任务。"
+)
+DRAMACLAW_TOOL_LIMIT_STOP_MESSAGE_EN = (
+    "This turn stopped because too many tools were called in a row — the assistant "
+    "may have been advancing too much at once. Narrow the request, for example only "
+    "check prerequisites, or start a single beat video task."
+)
+
+
+def _normalize_reply_language(value: str | None) -> str:
+    two = str(value or "").strip().lower()[:2]
+    return "zh" if two == "zh" else "en"
+
+
+def _localized_stop_message(kind: str, language: str | None) -> str:
+    lang = _normalize_reply_language(language)
+    messages = {
+        "content_filter": {
+            "zh": CONTENT_FILTER_MESSAGE,
+            "en": CONTENT_FILTER_MESSAGE_EN,
+        },
+        "one_step": {
+            "zh": DRAMACLAW_ONE_STEP_STOP_MESSAGE,
+            "en": DRAMACLAW_ONE_STEP_STOP_MESSAGE_EN,
+        },
+        "write_failed": {
+            "zh": DRAMACLAW_WRITE_FAILED_STOP_MESSAGE,
+            "en": DRAMACLAW_WRITE_FAILED_STOP_MESSAGE_EN,
+        },
+        "tool_limit": {
+            "zh": DRAMACLAW_TOOL_LIMIT_STOP_MESSAGE,
+            "en": DRAMACLAW_TOOL_LIMIT_STOP_MESSAGE_EN,
+        },
+    }
+    entry = messages.get(kind) or {}
+    return str(entry.get(lang) or entry.get("en") or "")
 
 _DRAMACLAW_WRITE_TOOLS = {
     "dramaclaw_post",
@@ -429,8 +482,13 @@ class HermesSdkThread:
             text="(hermes timed out)",
         )
 
-    async def stream(self, prompt: str, *, current_project: str | None = None) \
-            -> AsyncIterator[ChatBackendEvent]:
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        current_project: str | None = None,
+        language: str | None = None,
+    ) -> AsyncIterator[ChatBackendEvent]:
         """Send a prompt and yield ChatBackendEvent items as hermes streams them.
 
         ``current_project`` is included as a prompt prefix so per-user hermes
@@ -439,6 +497,7 @@ class HermesSdkThread:
         if self._closed:
             raise RuntimeError("HermesSdkThread is closed")
 
+        reply_language = _normalize_reply_language(language)
         await self._prepare()
         try:
             assert self._proc is not None and self._proc.stdout is not None
@@ -504,7 +563,9 @@ class HermesSdkThread:
                             type="complete",
                             thread_id=self.id,
                             turn_id=turn_id,
-                            text=CONTENT_FILTER_MESSAGE,
+                            text=_localized_stop_message(
+                                "content_filter", reply_language
+                            ),
                         )
                         return
                     result = msg.get("result") or {}
@@ -514,7 +575,9 @@ class HermesSdkThread:
                         yield ChatBackendEvent(
                             type="complete", thread_id=self.id, turn_id=turn_id,
                             text=(
-                                CONTENT_FILTER_MESSAGE
+                                _localized_stop_message(
+                                    "content_filter", reply_language
+                                )
                                 if _has_content_filter_signal(err)
                                 else f"error: {err.get('message', err)}"
                             ),
@@ -536,9 +599,13 @@ class HermesSdkThread:
                         active_tool_name = tool_name
                         if _should_stop_after_write_tool(first_write_tool, tool_name):
                             stop_text = (
-                                DRAMACLAW_WRITE_FAILED_STOP_MESSAGE
+                                _localized_stop_message(
+                                    "write_failed", reply_language
+                                )
                                 if first_write_failed
-                                else DRAMACLAW_ONE_STEP_STOP_MESSAGE
+                                else _localized_stop_message(
+                                    "one_step", reply_language
+                                )
                             )
                             _log.warning(
                                 "Hermes turn attempted tool after write task: thread=%s turn=%s "
@@ -572,9 +639,8 @@ class HermesSdkThread:
                                 type="complete",
                                 thread_id=self.id,
                                 turn_id=turn_id,
-                                text=(
-                                    "本轮操作已停止：虾导连续调用工具过多，可能在自动推进过大范围。"
-                                    "请缩小指令范围，例如只检查前置条件，或只启动一个具体 beat 的视频任务。"
+                                text=_localized_stop_message(
+                                    "tool_limit", reply_language
                                 ),
                             )
                             return

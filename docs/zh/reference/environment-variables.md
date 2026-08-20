@@ -80,4 +80,4 @@ CE 的渠道选择、网关地址和 token 由网页「设置 → 模型配置�
 ## 相关
 
 - 完整列表与注释:仓库根 `.env.example`
-- [快速开始](../getting-started/quickstart.md) ｜ [配置模型供应商](../getting-started/configuring-models.md) ｜ [自托管手册](../guides/self-hosting.md)
+- [快速开始](../getting-started/quickstart.md) ｜ [配置模型供应商](../getting-started/configuring-models.md) ｜ [自托管手册](../guides/self-hosting.md) ｜ [本地 LLM](../guides/local-llms.md)
