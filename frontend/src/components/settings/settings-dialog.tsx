@@ -1505,8 +1505,8 @@ const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
     mediaType: "video",
   },
   "index-tts-2": {
-    channel: "fal_ai",
-    model: "fal-ai/index-tts-2/text-to-speech",
+    channel: "doubao_audio",
+    model: "seed-audio-1.0",
     mediaType: "audio",
   },
   "LingShan-MU-11": {
@@ -1518,7 +1518,7 @@ const RECOMMENDED_MEDIA_MODELS: Readonly<Record<string, QuickProfileModel>> = {
 
 const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
   version: 2,
-  name: "OpenRouter + VolcEngine + fal.ai",
+  name: "OpenRouter + VolcEngine + fal.ai + DoubaoAudio",
   channels: [
     {
       id: "openrouter",
@@ -1538,6 +1538,14 @@ const RECOMMENDED_LOCAL_NEWAPI_PROFILE: QuickModelProfile = {
       id: "fal_ai",
       provider: "fal_ai",
       type: 61,
+      baseUrl: "",
+      priority: 0,
+      settings: {},
+    },
+    {
+      id: "doubao_audio",
+      provider: "doubao_audio",
+      type: 62,
       baseUrl: "",
       priority: 0,
       settings: {},
@@ -2524,6 +2532,7 @@ const FEATURE_PROVIDER_LABELS: Record<string, string> = {
   vidu: "Vidu",
   submodel: "Submodel",
   doubaovideo: "DoubaoVideo",
+  doubao_audio: "DoubaoAudio",
   sora: "Sora",
   replicate: "Replicate",
   codex: "Codex",
