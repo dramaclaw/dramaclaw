@@ -1,7 +1,7 @@
 """Issue the short-lived capability Hermes carries to the DramaClaw Gateway.
 
-This is a *different* credential from the BrainClaw Control Context, on a
-different trust leg, with a different key:
+This is a *different* envelope from the BrainClaw Control Context, on a
+different hop:
 
     DramaClaw --capability--> Gateway --control context--> BrainClaw
 
@@ -18,9 +18,10 @@ replay it until it expires. Everything below follows from that:
 * it is never logged, never persisted, and stripped at the Gateway before the
   request continues to a provider.
 
-The grouping key never appears here. DramaClaw derives the opaque ids with it
-and this envelope only carries the results, so a Gateway that verifies
-capabilities still cannot derive or reverse a group id.
+Trusted mode uses no shared signing key. Verified mode retains the original
+two-signature protocol for deployments that need cryptographic caller
+authentication. In both modes the local grouping key never appears here:
+DramaClaw derives opaque ids and the envelope carries only those results.
 """
 
 from __future__ import annotations
@@ -43,6 +44,8 @@ from novelvideo.brainclaw_control_context import group_id
 
 HEADER = "X-DramaClaw-Control-Capability"
 ENVELOPE_VERSION = "v1"
+TRUSTED_ENVELOPE_VERSION = "t1"
+TRUSTED_KEY_ID = "trusted-local"
 PAYLOAD_SCHEMA = "dramaclaw.control-capability/v1"
 ISSUER = "dramaclaw"
 AUDIENCE = "dramaclaw-gateway"
@@ -136,6 +139,22 @@ def sign_control_capability(capability: ControlCapability, *, signing_key: bytes
     return header
 
 
+def encode_trusted_capability(capability: ControlCapability) -> str:
+    """Encode identity for a Gateway explicitly configured to trust callers.
+
+    This carries no signature and makes no authentication claim. Structural,
+    privacy and TTL checks still run at Claymore; the mode is appropriate when
+    the deployment controls which callers can reach that gateway.
+    """
+    payload_b64 = _b64u(
+        json.dumps(capability.payload(), sort_keys=True, separators=(",", ":")).encode()
+    )
+    header = f"{TRUSTED_ENVELOPE_VERSION}.{payload_b64}"
+    if len(header.encode()) > MAX_HEADER_BYTES:
+        raise ValueError("trusted control capability header exceeds the size limit")
+    return header
+
+
 def _sign(signing_key: bytes, version: str, key_id: str, payload_b64: str) -> str:
     # The signature covers the payload's exact base64 string, never a
     # re-serialised JSON object, so canonicalisation can never diverge between
@@ -183,33 +202,64 @@ def _binary_key_bytes(raw: bytes) -> bytes:
     """
     return raw
 
+
+def _default_grouping_key_path() -> Path:
+    from novelvideo.config import STATE_DIR
+
+    return Path(STATE_DIR) / "brainclaw" / "grouping.key"
+
+
+def _ensure_local_grouping_key(path: Path) -> Path:
+    """Create the one local-only identity key once, safe under worker races."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return path
+    try:
+        with os.fdopen(descriptor, "wb") as target:
+            target.write(secrets.token_bytes(32))
+            target.flush()
+            os.fsync(target.fileno())
+    except BaseException:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+    return path
+
 class ControlCapabilityIssuer:
     """Mints one capability per agent turn.
 
-    This is the only place that holds both keys, and the only place that ever
-    sees a raw trajectory or project id. The grouping key derives the opaque ids
-    here; the capability signing key attests them to the Gateway. Nothing
-    downstream — not Hermes, not the Gateway — can derive or reverse a group id.
+    This is the only place that sees raw trajectory/project ids. The local
+    grouping key derives opaque ids here. A signing key is optional and is used
+    only by verified mode; trusted mode sends the same strictly validated
+    claims without claiming cryptographic authentication.
     """
 
     def __init__(
         self,
         *,
-        keyring_path: Path,
-        signing_key_id: str,
+        keyring_path: Path | None,
+        signing_key_id: str | None,
         grouping_key_path: Path,
         grouping_key_epoch: int,
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
     ) -> None:
-        from novelvideo.brainclaw_control_context_transport import _load_keyring_secret
+        self.signing_key_id = signing_key_id or TRUSTED_KEY_ID
+        self.signing_key: bytes | None = None
+        if keyring_path is not None:
+            if not signing_key_id:
+                raise ValueError("a capability keyring requires a signing key id")
+            from novelvideo.brainclaw_control_context_transport import _load_keyring_secret
 
-        self.signing_key_id = signing_key_id
-        self.signing_key = _load_keyring_secret(keyring_path, signing_key_id)
+            self.signing_key = _load_keyring_secret(keyring_path, signing_key_id)
         self.grouping_key = _binary_key_bytes(_read_owner_only(grouping_key_path))
         if len(self.grouping_key) < 32:
             raise ValueError("grouping key is too short")
-        if self.grouping_key == self.signing_key:
-            # One secret for both would tie an trajectory's identity lifetime to
+        if self.signing_key is not None and self.grouping_key == self.signing_key:
+            # One secret for both would tie a trajectory's identity lifetime to
             # signing-key rotation, which is the split the epoch exists to show.
             raise ValueError("grouping key must not equal the capability signing key")
         if grouping_key_epoch < 0:
@@ -250,30 +300,33 @@ class ControlCapabilityIssuer:
             turn_kind=turn_kind,
             replay_scope_limit=replay_scope_limit,
         )
+        if self.signing_key is None:
+            return encode_trusted_capability(capability)
         return sign_control_capability(capability, signing_key=self.signing_key)
 
 
 def control_capability_issuer() -> "ControlCapabilityIssuer | None":
-    """Build the issuer once, or return None when issuing is not configured.
+    """Build the issuer once.
 
-    An unconfigured deployment issues nothing, Hermes carries nothing, and the
-    Gateway mints no Control Context. That is a first-class state: the traffic
-    is served normally and recorded as diagnostic rather than formal evidence.
+    With no shared signing-key configuration this defaults to trusted mode and
+    creates one persistent local grouping key. Supplying both signing settings
+    opts into the original verified protocol; half-configuration is rejected.
     """
     global _issuer, _issuer_loaded
     with _issuer_lock:
         if _issuer_loaded:
             return _issuer
-        _issuer_loaded = True
         keyring = os.environ.get("BRAINCLAW_CAPABILITY_KEYRING_FILE", "").strip()
         key_id = os.environ.get("BRAINCLAW_CAPABILITY_SIGNING_KEY_ID", "").strip()
         grouping = os.environ.get("BRAINCLAW_CONTROL_CONTEXT_GROUPING_KEY_FILE", "").strip()
-        if not (keyring and key_id and grouping):
-            return None
-        _issuer = ControlCapabilityIssuer(
-            keyring_path=Path(keyring),
-            signing_key_id=key_id,
-            grouping_key_path=Path(grouping),
+        if bool(keyring) != bool(key_id):
+            raise ValueError("capability keyring and signing key id must be configured together")
+        grouping_path = Path(grouping) if grouping else _default_grouping_key_path()
+        _ensure_local_grouping_key(grouping_path)
+        issuer = ControlCapabilityIssuer(
+            keyring_path=Path(keyring) if keyring else None,
+            signing_key_id=key_id or None,
+            grouping_key_path=grouping_path,
             grouping_key_epoch=int(
                 os.environ.get("BRAINCLAW_CONTROL_CONTEXT_GROUPING_KEY_EPOCH", "1") or "1"
             ),
@@ -282,6 +335,8 @@ def control_capability_issuer() -> "ControlCapabilityIssuer | None":
                 or DEFAULT_TTL_SECONDS
             ),
         )
+        _issuer = issuer
+        _issuer_loaded = True
         return _issuer
 
 

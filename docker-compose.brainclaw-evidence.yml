@@ -1,13 +1,8 @@
 # DramaClaw with the BrainClaw evidence plane wired.
 #
-# This side holds two of the three keys and must never hold the third:
-#   K1 capability      signed here, verified by the Gateway
-#   K3 grouping        here only. It derives every opaque trajectory and project
-#                      identifier, so a copy anywhere else would let that side
-#                      mint identities rather than pass them through — which is
-#                      the whole separation.
-#   K2 control context NOT here. The Gateway signs it, BrainClaw verifies it;
-#                      DramaClaw is not a party to that hop.
+# Trusted collection needs no shared signing keys. DramaClaw creates one local,
+# persistent grouping key under its state directory to keep raw project and
+# trajectory ids private; it never leaves this container.
 #
 # The image must carry the Hermes fork. The default install spec in the
 # Dockerfile pulls hermes-agent from PyPI, which keeps the same version string
@@ -26,15 +21,9 @@ services:
     ports:
       - "${DRAMACLAW_BIND_ADDRESS:-127.0.0.1}:${DRAMACLAW_PORT:-8000}:8000"
     volumes:
-      - ${DRAMACLAW_STATE_DIR:?set DRAMACLAW_STATE_DIR}/capability-keyring.json:/run/secrets/brainclaw_capability_keyring:ro
-      - ${DRAMACLAW_STATE_DIR}/grouping.key:/run/secrets/brainclaw_grouping_key:ro
       - ${DRAMACLAW_DATA_DIR:-./data}:/data
     environment:
-      # K1: the capability this side signs for each turn.
-      - BRAINCLAW_CAPABILITY_KEYRING_FILE=/run/secrets/brainclaw_capability_keyring
-      - BRAINCLAW_CAPABILITY_SIGNING_KEY_ID=${BRAINCLAW_CAPABILITY_SIGNING_KEY_ID:?set the key id the keyring names}
-      # K3: never leaves this container.
-      - BRAINCLAW_CONTROL_CONTEXT_GROUPING_KEY_FILE=/run/secrets/brainclaw_grouping_key
+      # Optional override. By default the key is generated once under /data/state.
       - BRAINCLAW_CONTROL_CONTEXT_GROUPING_KEY_EPOCH=${BRAINCLAW_CONTROL_CONTEXT_GROUPING_KEY_EPOCH:-1}
       # Where the workers send model traffic. Also the only host they may reach:
       # under the per-turn latch a request to anything else is refused before it

@@ -38,7 +38,8 @@ def issuer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> cap.ControlCapabi
 
 
 def _claims(header: str) -> dict:
-    payload = header.split(".")[2]
+    parts = header.split(".")
+    payload = parts[1] if parts[0] == cap.TRUSTED_ENVELOPE_VERSION else parts[2]
     return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
 
 
@@ -100,12 +101,104 @@ def test_one_secret_may_not_serve_both_roles(tmp_path: Path) -> None:
         )
 
 
-def test_an_unconfigured_deployment_issues_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unconfigured_deployment_issues_trusted_identity_without_shared_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     for name in ("BRAINCLAW_CAPABILITY_KEYRING_FILE", "BRAINCLAW_CAPABILITY_SIGNING_KEY_ID",
                  "BRAINCLAW_CONTROL_CONTEXT_GROUPING_KEY_FILE"):
         monkeypatch.delenv(name, raising=False)
     cap.reset_control_capability_issuer()
-    assert cap.control_capability_issuer() is None
+
+    grouping = tmp_path / "state" / "brainclaw" / "grouping.key"
+    monkeypatch.setattr(cap, "_default_grouping_key_path", lambda: grouping)
+    built = cap.control_capability_issuer()
+    assert built is not None
+    header = built.issue(trajectory_id="tr-1", project_id="proj-1", turn_id="turn-1")
+    assert header.startswith("t1.")
+    assert len(header.split(".")) == 2
+    assert grouping.stat().st_mode & 0o777 == 0o600
+    assert len(grouping.read_bytes()) == 32
+    claims = _claims(header)
+    assert claims["key_id"] == cap.TRUSTED_KEY_ID
+    assert "tr-1" not in header and "proj-1" not in header
+    cap.reset_control_capability_issuer()
+
+
+def test_trusted_capability_matches_the_claymore_contract_exactly() -> None:
+    capability = cap.ControlCapability(
+        key_id=cap.TRUSTED_KEY_ID,
+        turn_id="turn-vector",
+        trajectory_group_id="hmac-sha256:9f2b7c1e4a6d8035",
+        project_group_id="hmac-sha256:03e5a1d9b7c20468",
+        grouping_key_epoch=1,
+        issued_at=2_000_000_000,
+        expires_at=2_000_000_300,
+        nonce="AAAAAAAAAAAAAAAAAAAAAA",
+    )
+    assert cap.encode_trusted_capability(capability) == (
+        "t1.eyJhdWRpZW5jZSI6ImRyYW1hY2xhdy1nYXRld2F5IiwiZXhwaXJlc19hdCI6"
+        "MjAwMDAwMDMwMCwiZ3JvdXBpbmdfa2V5X2Vwb2NoIjoxLCJpc3N1ZWRfYXQiOjIw"
+        "MDAwMDAwMDAsImlzc3VlciI6ImRyYW1hY2xhdyIsImtleV9pZCI6InRydXN0ZWQt"
+        "bG9jYWwiLCJub25jZSI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJwcm9qZWN0"
+        "X2dyb3VwX2lkIjoiaG1hYy1zaGEyNTY6MDNlNWExZDliN2MyMDQ2OCIsInJlcGxh"
+        "eV9zY29wZV9saW1pdCI6Im1vZGVsX291dHB1dF9vbmx5Iiwic2NoZW1hX3ZlcnNp"
+        "b24iOiJkcmFtYWNsYXcuY29udHJvbC1jYXBhYmlsaXR5L3YxIiwidHJhamVjdG9y"
+        "eV9ncm91cF9pZCI6ImhtYWMtc2hhMjU2OjlmMmI3YzFlNGE2ZDgwMzUiLCJ0dXJu"
+        "X2lkIjoidHVybi12ZWN0b3IiLCJ0dXJuX2tpbmQiOiJmb3JlZ3JvdW5kX3VzZXIifQ"
+    )
+
+
+def test_local_grouping_key_is_reused_across_process_restarts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("BRAINCLAW_CAPABILITY_KEYRING_FILE", "BRAINCLAW_CAPABILITY_SIGNING_KEY_ID",
+                 "BRAINCLAW_CONTROL_CONTEXT_GROUPING_KEY_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    grouping = tmp_path / "state" / "brainclaw" / "grouping.key"
+    monkeypatch.setattr(cap, "_default_grouping_key_path", lambda: grouping)
+    cap.reset_control_capability_issuer()
+    first = cap.control_capability_issuer()
+    assert first is not None
+    first_id = _claims(first.issue(
+        trajectory_id="tr-1", project_id="proj-1", turn_id="turn-1"
+    ))["trajectory_group_id"]
+    original_key = grouping.read_bytes()
+
+    cap.reset_control_capability_issuer()
+    second = cap.control_capability_issuer()
+    assert second is not None
+    second_id = _claims(second.issue(
+        trajectory_id="tr-1", project_id="proj-1", turn_id="turn-2"
+    ))["trajectory_group_id"]
+    assert grouping.read_bytes() == original_key
+    assert second_id == first_id
+    cap.reset_control_capability_issuer()
+
+
+def test_a_transient_initialisation_failure_is_not_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("BRAINCLAW_CAPABILITY_KEYRING_FILE", "BRAINCLAW_CAPABILITY_SIGNING_KEY_ID",
+                 "BRAINCLAW_CONTROL_CONTEXT_GROUPING_KEY_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    grouping = tmp_path / "brainclaw" / "grouping.key"
+    monkeypatch.setattr(cap, "_default_grouping_key_path", lambda: grouping)
+    original = cap._ensure_local_grouping_key
+    attempts = 0
+
+    def fail_once(path: Path) -> Path:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("transient filesystem failure")
+        return original(path)
+
+    monkeypatch.setattr(cap, "_ensure_local_grouping_key", fail_once)
+    cap.reset_control_capability_issuer()
+    with pytest.raises(OSError, match="transient filesystem failure"):
+        cap.control_capability_issuer()
+    assert cap.control_capability_issuer() is not None
+    assert attempts == 2
     cap.reset_control_capability_issuer()
 
 
