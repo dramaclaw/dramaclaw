@@ -920,4 +920,6 @@ def run_freezone_video_gen(
     )
 
 
-register_project_task_runner("freezone_video_gen", run_freezone_video_gen)
+register_project_task_runner(
+    "freezone_video_gen", run_freezone_video_gen, requires_home_node=False
+)

@@ -46,6 +46,7 @@ from novelvideo.task_backend.registry import (
     get_project_task_runner,
     project_task_requires_home_node,
 )
+from novelvideo.task_backend.projection import PROJECTION_REQUIREMENTS, read_projection
 from novelvideo.task_backend.subprocesses import project_task_subprocess_context
 from novelvideo.task_state import project_task_run_context
 
@@ -687,8 +688,15 @@ def run_project_task_core_sync(
     # The registry is populated lazily, so make sure it is loaded before asking
     # it — an empty registry would read as "unregistered", not as "free".
     _ensure_builtin_runners_registered()
-    if project_task_requires_home_node(task_type):
+    requires_home_node = project_task_requires_home_node(task_type)
+    if requires_home_node:
         require_project_home_node(ctx, operation="run project task")
+    elif not ctx.is_home_node and task_type in PROJECTION_REQUIREMENTS:
+        projection = read_projection(delivery.payload)
+        if projection is None or projection.task_type != task_type:
+            # Projection is optional for the inline/home-node rollback path,
+            # but a foreign worker must never fall back to project-local state.
+            require_project_home_node(ctx, operation="run unprojected project task")
     episode = int(delivery.episode or 0)
     beat_num = delivery.beat_num
     scope = delivery.scope

@@ -1407,34 +1407,68 @@ def run_freezone_audio_eleven_music(
     )
 
 
-register_project_task_runner("freezone_gen", run_freezone_gen)
-register_project_task_runner("freezone_edit", run_freezone_edit)
+register_project_task_runner("freezone_gen", run_freezone_gen, requires_home_node=False)
+register_project_task_runner("freezone_edit", run_freezone_edit, requires_home_node=False)
 register_project_task_runner(
-    "mainline_sketch_from_context", run_mainline_sketch_from_context
+    "mainline_sketch_from_context",
+    run_mainline_sketch_from_context,
+    requires_home_node=False,
 )
 register_project_task_runner(
-    "mainline_frame_from_context", run_mainline_frame_from_context
+    "mainline_frame_from_context",
+    run_mainline_frame_from_context,
+    requires_home_node=False,
 )
 register_project_task_runner(
     "mainline_director_control_sketch",
     run_mainline_director_control_sketch,
+    requires_home_node=False,
 )
-register_project_task_runner("freezone_mask_edit", run_freezone_mask_edit)
-register_project_task_runner("freezone_extract", run_freezone_extract)
-register_project_task_runner("freezone_analyze", run_freezone_analyze)
-register_project_task_runner("freezone_video_story", run_freezone_video_story)
-register_project_task_runner("freezone_video_erase", run_freezone_video_erase)
-register_project_task_runner("freezone_video_upscale", run_freezone_video_upscale)
-register_project_task_runner("freezone_audio_separate", run_freezone_audio_separate)
-register_project_task_runner("freezone_video_compose", run_freezone_video_compose)
-register_project_task_runner("freezone_text_translate", run_freezone_text_translate)
-register_project_task_runner("freezone_text_generate", run_freezone_text_generate)
-register_project_task_runner("freezone_story_script", run_freezone_story_script)
+register_project_task_runner(
+    "freezone_mask_edit", run_freezone_mask_edit, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_extract", run_freezone_extract, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_analyze", run_freezone_analyze, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_video_story", run_freezone_video_story, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_video_erase", run_freezone_video_erase, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_video_upscale", run_freezone_video_upscale, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_audio_separate", run_freezone_audio_separate, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_video_compose", run_freezone_video_compose, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_text_translate", run_freezone_text_translate, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_text_generate", run_freezone_text_generate, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_story_script", run_freezone_story_script, requires_home_node=False
+)
 register_project_task_runner(
     "freezone_image_reverse_prompt",
     run_freezone_image_reverse_prompt,
+    requires_home_node=False,
 )
-register_project_task_runner("freezone_audio_speech", run_freezone_audio_speech)
 register_project_task_runner(
-    "freezone_audio_eleven_music", run_freezone_audio_eleven_music
+    "freezone_audio_speech",
+    run_freezone_audio_speech,
+    requires_home_node=False,
+)
+register_project_task_runner(
+    "freezone_audio_eleven_music",
+    run_freezone_audio_eleven_music,
+    requires_home_node=False,
 )

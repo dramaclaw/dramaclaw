@@ -1,16 +1,4 @@
-"""Runner placement declared once in the registry, checked once at run_core entry.
-
-B2 §6.4 step 9/10, narrowed by TCP-P54: this only builds the *mechanism*.
-Not a single ``requires_home_node`` is flipped to ``False`` here, and no
-existing guard is removed — the two task-state write guards (CE
-``task_state.py:396-398`` and EE ``task_state_store.py``) stay unconditional
-and cannot see ``task_type``, so flipping a flag would only move the failure
-from "rejected before starting" to "died halfway through, still holding the
-dedup lock".
-
-What the mechanism buys today: the check moves from the first progress write
-to the task entry, so a misrouted task fails earlier and louder.
-"""
+"""Runner placement declared once in the registry, checked once at run_core entry."""
 
 from __future__ import annotations
 
@@ -32,6 +20,32 @@ from novelvideo.task_backend.registry import (
     register_project_task_runner,
     registered_project_task_types,
 )
+from novelvideo.task_backend.projection import PROJECTION_REQUIREMENTS
+
+
+PLACEMENT_FREE_TASKS = {
+    "freezone_analyze",
+    "freezone_audio_eleven_music",
+    "freezone_audio_separate",
+    "freezone_audio_speech",
+    "freezone_edit",
+    "freezone_extract",
+    "freezone_gen",
+    "freezone_image_reverse_prompt",
+    "freezone_image_to_3gs",
+    "freezone_mask_edit",
+    "freezone_story_script",
+    "freezone_text_generate",
+    "freezone_text_translate",
+    "freezone_video_compose",
+    "freezone_video_erase",
+    "freezone_video_gen",
+    "freezone_video_story",
+    "freezone_video_upscale",
+    "mainline_director_control_sketch",
+    "mainline_frame_from_context",
+    "mainline_sketch_from_context",
+}
 
 
 @pytest.fixture
@@ -67,21 +81,18 @@ def test_registering_without_placement_keeps_the_task_home_node_bound(isolated_r
     assert "tcp_d2_probe" in registered_project_task_types()
 
 
-def test_every_builtin_runner_stays_home_node_bound_with_no_lane():
-    """The 48 existing registration sites are not touched, so nothing may drift.
-
-    This is the "22 个既有注册点行为逐字不变" assertion: both new parameters
-    default in a way that reproduces today's behaviour exactly.
-    """
+def test_only_audited_self_contained_builtin_runners_are_placement_free():
+    """Audited payload/shared-output runners may float; every other runner stays bound."""
     import novelvideo.task_backend.runners  # noqa: F401
 
     task_types = registered_project_task_types()
     assert len(task_types) >= 25
 
-    flipped = [t for t in task_types if project_task_requires_home_node(t) is not True]
+    flipped = {t for t in task_types if project_task_requires_home_node(t) is not True}
     laned = [t for t in task_types if project_task_lane(t) is not None]
 
-    assert flipped == []
+    assert flipped == PLACEMENT_FREE_TASKS
+    assert set(PROJECTION_REQUIREMENTS) <= PLACEMENT_FREE_TASKS
     assert laned == []
 
 
@@ -145,7 +156,9 @@ class _FakeTaskManager:
         self.failed.append(kwargs)
 
 
-def _verified_delivery(*, task_type: str) -> VerifiedTaskDelivery:
+def _verified_delivery(
+    *, task_type: str, payload: dict | None = None
+) -> VerifiedTaskDelivery:
     admission = AdmissionContext(
         requester_user_id="usr_1",
         billing_principal=BillingPrincipal(kind="local", id="usr_1"),
@@ -165,7 +178,7 @@ def _verified_delivery(*, task_type: str) -> VerifiedTaskDelivery:
         beat_num=None,
         scope=None,
         queue_kind="default",
-        payload={},
+        payload=payload or {},
     )
 
 
@@ -266,13 +279,7 @@ def test_home_node_bound_task_still_runs_on_its_home_node(
 def test_placement_free_task_is_not_stopped_by_the_entry_check(
     tmp_path, quiet_run_core, isolated_registry
 ):
-    """Only the entry layer is asserted here.
-
-    Deliberately *not* asserted: that such a task can run to completion. The
-    task-state write guards are untouched by this EU (TCP-P54), so a real
-    ``requires_home_node=False`` task would still die at its first progress
-    write. That is exactly why no flag is flipped in production code.
-    """
+    """The entry layer lets an explicitly placement-free runner execute remotely."""
     ran: list[dict] = []
 
     def tracking_runner(envelope, _ctx):
@@ -285,6 +292,69 @@ def test_placement_free_task_is_not_stopped_by_the_entry_check(
 
     result = quiet_run_core.run_project_task_core_sync(
         _verified_delivery(task_type="tcp_d2_free"),
+        _ctx(tmp_path, is_home_node=False),
+        _FakeTaskManager(),
+        run_task_id="task_1",
+    )
+
+    assert result == {"ok": True}
+    assert len(ran) == 1
+
+
+def test_projected_placement_free_task_requires_projection_off_home_node(
+    tmp_path, quiet_run_core, isolated_registry
+):
+    ran: list[dict] = []
+
+    def tracking_runner(envelope, _ctx):
+        ran.append(dict(envelope))
+        return {"ok": True}
+
+    register_project_task_runner(
+        "mainline_frame_from_context",
+        tracking_runner,
+        requires_home_node=False,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        quiet_run_core.run_project_task_core_sync(
+            _verified_delivery(task_type="mainline_frame_from_context"),
+            _ctx(tmp_path, is_home_node=False),
+            _FakeTaskManager(),
+            run_task_id="task_1",
+        )
+
+    assert exc_info.value.status_code == 409
+    assert ran == []
+
+
+def test_projected_placement_free_task_runs_with_projection_off_home_node(
+    tmp_path, quiet_run_core, isolated_registry
+):
+    ran: list[dict] = []
+
+    def tracking_runner(envelope, _ctx):
+        ran.append(dict(envelope))
+        return {"ok": True}
+
+    register_project_task_runner(
+        "mainline_frame_from_context",
+        tracking_runner,
+        requires_home_node=False,
+    )
+    payload = {
+        "projection": {
+            "projection_version": 1,
+            "task_type": "mainline_frame_from_context",
+            "fields": {},
+        }
+    }
+
+    result = quiet_run_core.run_project_task_core_sync(
+        _verified_delivery(
+            task_type="mainline_frame_from_context",
+            payload=payload,
+        ),
         _ctx(tmp_path, is_home_node=False),
         _FakeTaskManager(),
         run_task_id="task_1",

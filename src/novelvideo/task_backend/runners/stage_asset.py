@@ -510,4 +510,6 @@ def run_freezone_image_to_3gs(
     return result
 
 
-register_project_task_runner("freezone_image_to_3gs", run_freezone_image_to_3gs)
+register_project_task_runner(
+    "freezone_image_to_3gs", run_freezone_image_to_3gs, requires_home_node=False
+)
