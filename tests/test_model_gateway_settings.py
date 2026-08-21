@@ -594,6 +594,22 @@ def test_ee_platform_video_paths_do_not_call_ce_media_model_accessor(
     assert "newapi_seedance-2.0" in options
 
 
+def test_ee_model_gateway_settings_reader_does_not_open_sqlite(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("ST_EDITION", "ee")
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://control-plane")
+    monkeypatch.setattr(
+        model_gateway_settings,
+        "_connect",
+        lambda: pytest.fail("EE must not open CE settings.db"),
+    )
+
+    assert model_gateway_settings.get_model_gateway_settings() == {
+        "model_gateway_mode": MODE_OFFICIAL
+    }
+    assert not (tmp_path / "state").exists()
+
+
 def test_cognee_newapi_resolution_prefers_saved_gateway(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
     monkeypatch.delenv("COGNEE_LLM_PROVIDER", raising=False)
@@ -1581,6 +1597,79 @@ def test_model_gateway_config_route_masks_effective_key(monkeypatch, tmp_path):
     assert data["mode"] == MODE_OFFICIAL
     assert data["effective"]["apiKeyPreview"] == "sk-o...cret"
     assert "sk-official-secret" not in response.text
+
+
+def test_ee_model_gateway_config_skips_ce_provisioner_and_settings(
+    monkeypatch,
+    tmp_path,
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    monkeypatch.setenv("ST_EDITION", "ee")
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgresql://control-plane")
+    monkeypatch.setenv("NEWAPI_BASE_URL", "https://ee-gateway.example/v1")
+    monkeypatch.setenv("NEWAPI_API_KEY", "sk-ee-secret")
+    monkeypatch.setattr(model_gateway.app_config, "NEWAPI_API_KEY", "sk-ee-secret")
+    monkeypatch.setattr(
+        model_gateway,
+        "build_provisioner_status",
+        lambda: pytest.fail("EE must not build CE provisioner status"),
+    )
+    monkeypatch.setattr(
+        model_gateway_settings,
+        "_connect",
+        lambda: pytest.fail("EE must not open CE settings.db"),
+    )
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+
+    response = TestClient(app).get("/model-gateway/config")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["effective"]["baseUrl"] == "https://ee-gateway.example/v1"
+    assert data["provisioner"] == {
+        "enabled": False,
+        "adminBaseUrl": "",
+        "dbConfigured": False,
+        "database": {
+            "configured": False,
+            "available": False,
+            "source": "unavailable",
+        },
+        "adminUsername": "",
+        "relayTokenName": "",
+        "providers": {},
+        "providerChannels": [],
+        "mediaModels": {},
+        "embeddingModel": {},
+        "relayBaseUrl": "",
+    }
+    assert not (tmp_path / "state").exists()
+
+
+def test_ce_model_gateway_config_uses_provisioner_builder(monkeypatch, tmp_path):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    expected = {
+        "enabled": True,
+        "adminBaseUrl": "http://new-api:3000",
+        "dbConfigured": True,
+        "database": {"configured": True},
+        "adminUsername": "root",
+        "relayTokenName": "ce-runtime",
+        "providers": {"openrouter": {}},
+        "providerChannels": [],
+        "mediaModels": {},
+        "embeddingModel": {},
+        "relayBaseUrl": "http://new-api:3000/v1",
+    }
+    monkeypatch.setattr(model_gateway, "build_provisioner_status", lambda: expected)
+    app = FastAPI()
+    app.include_router(model_gateway.router)
+
+    response = TestClient(app).get("/model-gateway/config")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["provisioner"] == expected
 
 
 def test_model_gateway_config_excludes_closed_source_provider_presets(

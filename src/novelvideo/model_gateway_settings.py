@@ -938,7 +938,7 @@ def save_media_relay_config(
 
 
 def get_model_gateway_settings() -> dict[str, str]:
-    data = _read_all()
+    data = _read_all() if _uses_ce_gateway_settings() else {}
     data.setdefault("model_gateway_mode", MODE_OFFICIAL)
     return data
 

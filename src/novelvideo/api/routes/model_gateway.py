@@ -473,6 +473,28 @@ def _media_relay_status() -> dict[str, Any]:
     )
 
 
+def _provisioner_status() -> dict[str, Any]:
+    if is_ce_effective():
+        return build_provisioner_status()
+    return {
+        "enabled": False,
+        "adminBaseUrl": "",
+        "dbConfigured": False,
+        "database": {
+            "configured": False,
+            "available": False,
+            "source": "unavailable",
+        },
+        "adminUsername": "",
+        "relayTokenName": "",
+        "providers": {},
+        "providerChannels": [],
+        "mediaModels": {},
+        "embeddingModel": {},
+        "relayBaseUrl": "",
+    }
+
+
 @router.get("/config")
 async def get_model_gateway_config() -> dict[str, Any]:
     return {
@@ -482,7 +504,7 @@ async def get_model_gateway_config() -> dict[str, Any]:
                 official_base_url=app_config.OFFICIAL_NEWAPI_BASE_URL,
                 official_api_key=app_config.NEWAPI_API_KEY,
             ),
-            "provisioner": build_provisioner_status(),
+            "provisioner": _provisioner_status(),
             "mediaRelay": _media_relay_status(),
         },
     }
