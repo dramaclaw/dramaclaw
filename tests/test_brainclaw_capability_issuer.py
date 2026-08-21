@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -122,6 +123,69 @@ def test_an_unconfigured_deployment_issues_trusted_identity_without_shared_keys(
     assert claims["key_id"] == cap.TRUSTED_KEY_ID
     assert "tr-1" not in header and "proj-1" not in header
     cap.reset_control_capability_issuer()
+
+
+def test_grouping_key_is_not_visible_until_all_bytes_are_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    grouping = tmp_path / "brainclaw" / "grouping.key"
+    first_started = threading.Event()
+    release_first = threading.Event()
+    call_lock = threading.Lock()
+    calls = 0
+    errors: list[BaseException] = []
+
+    def controlled_key(length: int) -> bytes:
+        nonlocal calls
+        with call_lock:
+            calls += 1
+            call = calls
+        if call == 1:
+            first_started.set()
+            if not release_first.wait(timeout=5):
+                raise TimeoutError("test did not release the first writer")
+        return bytes([call]) * length
+
+    monkeypatch.setattr(cap.secrets, "token_bytes", controlled_key)
+
+    def first_writer() -> None:
+        try:
+            cap._ensure_local_grouping_key(grouping)
+        except BaseException as exc:  # surfaced in the test thread below
+            errors.append(exc)
+
+    thread = threading.Thread(target=first_writer)
+    thread.start()
+    assert first_started.wait(timeout=5)
+    try:
+        # The first writer has generated no bytes yet. A competing process must
+        # still publish a complete key rather than observe an empty final file.
+        cap._ensure_local_grouping_key(grouping)
+        assert grouping.read_bytes() == bytes([2]) * 32
+    finally:
+        release_first.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert errors == []
+    assert grouping.read_bytes() == bytes([2]) * 32
+    assert list(grouping.parent.glob(f".{grouping.name}.*.tmp")) == []
+
+
+def test_trusted_constructor_rejects_a_custom_key_id_without_a_keyring(
+    tmp_path: Path,
+) -> None:
+    grouping = tmp_path / "grouping.key"
+    grouping.write_bytes(GROUPING_KEY)
+    grouping.chmod(0o600)
+
+    with pytest.raises(ValueError, match="configured together"):
+        cap.ControlCapabilityIssuer(
+            keyring_path=None,
+            signing_key_id="looks-verified-but-is-not",
+            grouping_key_path=grouping,
+            grouping_key_epoch=1,
+        )
 
 
 def test_trusted_capability_matches_the_claymore_contract_exactly() -> None:

@@ -22,6 +22,14 @@ Trusted mode uses no shared signing key. Verified mode retains the original
 two-signature protocol for deployments that need cryptographic caller
 authentication. In both modes the local grouping key never appears here:
 DramaClaw derives opaque ids and the envelope carries only those results.
+
+The trust decision is made by the paired Claymore channel, never by this
+header alone. Claymore channels default to ``off``; only an administrator may
+select ``trusted`` and accept ``t1``. A ``verified`` channel rejects ``t1`` and
+requires the signed ``v1`` envelope. BrainClaw independently refuses ``t1``
+when its verified-mode keyring is configured. The paired implementation and
+cross-language vectors are reviewed in:
+https://github.com/claymorelab/claymore-llm-gateway/pull/50
 """
 
 from __future__ import annotations
@@ -34,6 +42,7 @@ import os
 import re
 import secrets
 import stat
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -210,24 +219,33 @@ def _default_grouping_key_path() -> Path:
 
 
 def _ensure_local_grouping_key(path: Path) -> Path:
-    """Create the one local-only identity key once, safe under worker races."""
+    """Atomically publish one complete local-only identity key.
+
+    The final path must not exist until all 32 bytes have been written and
+    synced. Creating the final inode first leaves a window where another
+    process observes an empty file and rejects the first turn.
+    """
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        return path
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary_path = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "wb") as target:
             target.write(secrets.token_bytes(32))
             target.flush()
             os.fsync(target.fileno())
-    except BaseException:
         try:
-            path.unlink()
-        except OSError:
+            # link() is the publication point: it never overwrites a winner,
+            # and the target inode is already complete before it becomes
+            # visible under the stable name.
+            os.link(temporary_path, path)
+        except FileExistsError:
             pass
-        raise
+    finally:
+        temporary_path.unlink(missing_ok=True)
     return path
+
 
 class ControlCapabilityIssuer:
     """Mints one capability per agent turn.
@@ -247,6 +265,8 @@ class ControlCapabilityIssuer:
         grouping_key_epoch: int,
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
     ) -> None:
+        if (keyring_path is None) != (signing_key_id is None):
+            raise ValueError("capability keyring and signing key id must be configured together")
         self.signing_key_id = signing_key_id or TRUSTED_KEY_ID
         self.signing_key: bytes | None = None
         if keyring_path is not None:

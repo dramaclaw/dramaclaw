@@ -1,8 +1,10 @@
 # DramaClaw with the BrainClaw evidence plane wired.
 #
-# Trusted collection needs no shared signing keys. DramaClaw creates one local,
-# persistent grouping key under its state directory to keep raw project and
-# trajectory ids private; it never leaves this container.
+# Trusted collection needs no shared signing keys. It is accepted only when an
+# administrator explicitly selects trusted mode on the paired Claymore channel;
+# channels default to off and verified channels reject the unsigned t1 envelope.
+# DramaClaw creates one local, persistent grouping key under its state directory
+# to keep raw project and trajectory ids private; it never leaves this container.
 #
 # The image must carry the Hermes fork. The default install spec in the
 # Dockerfile pulls hermes-agent from PyPI, which keeps the same version string
