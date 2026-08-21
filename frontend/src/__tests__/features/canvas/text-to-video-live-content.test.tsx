@@ -53,6 +53,10 @@ vi.mock("@/lib/queries/generation-credit-cost", () => ({
   useGenerationCreditCost: () => ({ data: null, error: null }),
 }));
 
+vi.mock("@/lib/model-task-access", () => ({
+  useModelTaskAccess: () => ({ blocked: false, denialReason: null, message: null }),
+}));
+
 vi.mock("@/features/canvas/application/useNodeGenerationTaskState", () => ({
   useNodeGenerationTaskState: () => ({ isGenerating: false }),
 }));

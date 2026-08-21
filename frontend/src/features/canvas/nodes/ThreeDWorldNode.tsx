@@ -104,6 +104,7 @@ import { useDetachUpstream } from '@/features/canvas/hooks/useDetachUpstream';
 import { readUrl } from '@/lib/url-params';
 import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { useModelTaskAccess } from '@/lib/model-task-access';
 import {
   CreditCostPill,
   type CreditPromotionDisplay,
@@ -615,6 +616,8 @@ interface OpsPanelProps {
   isGenerating: boolean;
   hasUpstream: boolean;
   billingRuleMissing: boolean;
+  modelTaskBlocked: boolean;
+  modelTaskMessage: string | null;
   creditCostDisplay: string | null;
   creditPromotion?: CreditPromotionDisplay | null;
   errorMessage?: string | null;
@@ -637,6 +640,8 @@ function OpsPanel({
   isGenerating,
   hasUpstream,
   billingRuleMissing,
+  modelTaskBlocked,
+  modelTaskMessage,
   creditCostDisplay,
   creditPromotion,
   errorMessage,
@@ -731,19 +736,21 @@ function OpsPanel({
         <CreditCostPill
           display={creditCostDisplay}
           promotion={creditPromotion}
-          disabled={isGenerating || !hasUpstream || billingRuleMissing}
+          disabled={isGenerating || !hasUpstream || billingRuleMissing || modelTaskBlocked}
           className={NODE_CREDIT_PILL_FLAT_CLASS}
         />
         <button
           type="button"
-          disabled={isGenerating || !hasUpstream || billingRuleMissing}
+          disabled={isGenerating || !hasUpstream || billingRuleMissing || modelTaskBlocked}
           onClick={(event) => {
             event.stopPropagation();
             onSubmit();
           }}
           onPointerDown={(event) => event.stopPropagation()}
           title={
-            billingRuleMissing
+            modelTaskBlocked
+              ? modelTaskMessage ?? t('modelTaskAccess.blocked.generic')
+              : billingRuleMissing
               ? t('common.billingRuleNotConfiguredShort')
               : hasUpstream
                 ? t('nodeToolbar.generateDirectorWorld')
@@ -751,7 +758,7 @@ function OpsPanel({
           }
           aria-label={t('nodeToolbar.generateDirectorWorld')}
           className={`${NODE_GENERATE_BUTTON_BASE_CLASS} ${
-            isGenerating || !hasUpstream || billingRuleMissing
+            isGenerating || !hasUpstream || billingRuleMissing || modelTaskBlocked
               ? NODE_GENERATE_BUTTON_DISABLED_CLASS
               : NODE_GENERATE_BUTTON_ENABLED_CLASS
           }`}
@@ -809,6 +816,7 @@ function HistoryPanel({
 
 export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: ThreeDWorldNodeProps) => {
   const { t } = useTranslation();
+  const modelTaskAccess = useModelTaskAccess();
   const worldCreditCost = useGenerationCreditCost(
     'feature',
     'freezone.image_to_3gs',
@@ -1018,6 +1026,7 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
       : inferredImageSourceKind;
 
   const handleSubmit = useCallback(async () => {
+    if (modelTaskAccess.blocked) return;
     const projectId = readUrl().project;
     const sourceNode = sourceNodeForGeneration;
     if (!projectId) {
@@ -1118,6 +1127,7 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
     data.sources,
     id,
     isGenerating,
+    modelTaskAccess.blocked,
     refreshHistory,
     selectedImageSourceKind,
     sourceNodeForGeneration,
@@ -1460,6 +1470,8 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
             isGenerating={isGenerating}
             hasUpstream={hasUpstream}
             billingRuleMissing={worldBillingRuleMissing}
+            modelTaskBlocked={modelTaskAccess.blocked}
+            modelTaskMessage={modelTaskAccess.message}
             creditCostDisplay={worldCreditCostDisplay}
             creditPromotion={worldCreditCost.data?.data.promotion}
             errorMessage={data.errorMessage}

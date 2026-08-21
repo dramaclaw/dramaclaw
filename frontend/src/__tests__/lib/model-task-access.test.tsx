@@ -191,7 +191,7 @@ describe("model task access wiring", () => {
   const read = (path: string) => readFileSync(join(root, path), "utf8");
 
   // Gating one node is not a fix: a blocked member simply switches to another
-  // node and hits the same denial. All six entries share the gate.
+  // node and hits the same denial. Every model-backed entry shares the gate.
   it.each([
     "src/features/canvas/nodes/ImageGenNode.tsx",
     "src/features/canvas/nodes/ImageEditNode.tsx",
@@ -199,6 +199,8 @@ describe("model task access wiring", () => {
     "src/features/canvas/nodes/StoryboardGenNode.tsx",
     "src/features/canvas/nodes/ScriptNode.tsx",
     "src/features/canvas/nodes/useAudioGeneration.ts",
+    "src/features/canvas/nodes/TextAnnotationNode.tsx",
+    "src/features/canvas/nodes/ThreeDWorldNode.tsx",
   ])("%s consumes the shared gate", (path) => {
     expect(read(path)).toContain("useModelTaskAccess");
   });
