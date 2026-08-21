@@ -77,11 +77,13 @@ import {
   resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
   videoModeForcesAutomaticAspectRatio,
+  videoModeRequiresMedia,
   videoModeRequiresPrompt,
   videoModelDefaultGenerateAudio,
   videoModelReferenceDisabledReason,
   videoModelSupportsGenerateAudio,
   videoMultiImageAutoSwitchMode,
+  videoNoUpstreamResetMode,
   videoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
   videoUpstreamImageDefaultMode,
@@ -1672,6 +1674,34 @@ export const VideoNode = memo(
       updateNodeData,
     ]);
 
+    // 上面几条模式推导都是**单向**的：素材接进来就把模式推到能消费它的那一个，却没有
+    // 任何一条负责在素材撤空后把模式推回去。于是「连一张图 → 又把图撤掉」之后节点卡在
+    // 全能参考上：界面看不出异常，提交却会被 handleSubmit 的 references.length === 0
+    // 静默拦下，用户看到的就是「打了字、点发送没反应」。这里补上反向的那一档 ——
+    // 没有任何上游素材 = 文生视频，与 HappyHorse 统一状态机的「无上游 → 文生视频」同规则。
+    //
+    // 用 upstreamTypeCounts（按节点类型）而非 upstreamCounts（已解析 URL）：空态 CTA
+    // 先铺一个还没出图的图片/上传节点、再切模式，按 URL 口径那一瞬间是 0 张，会被这条
+    // 当场顶回文生视频。理由同 videoNoUpstreamResetMode 的注释。
+    //
+    // recordHistory: false —— 这是用户「删掉素材」那一步的**衍生结果**，不是一次独立的
+    // 用户改动。若照常压 past，⌘Z 只会撤掉模式回到「无素材 + 全能参考」，本 effect 立刻
+    // 又把它改回来并清空 redo 栈，撤销看着毫无反应、也再回不到连线之前（成因见上面
+    // 模型自动救场那条 effect 的注释）。不记历史则 ⌘Z 直接回到「有图 + 全能参考」，正向 effect
+    // 看到素材还在便不再改写。
+    useEffect(() => {
+      if (isHappyHorseModel) return;
+      const target = videoNoUpstreamResetMode(genMode, upstreamTypeCounts);
+      if (!target) return;
+      updateNodeData(id, { genMode: target }, { recordHistory: false });
+    }, [
+      genMode,
+      isHappyHorseModel,
+      upstreamTypeCounts,
+      id,
+      updateNodeData,
+    ]);
+
     useEffect(
       () => () => {
         clearTransientPreview();
@@ -1894,11 +1924,13 @@ export const VideoNode = memo(
       updateNodeData,
     ]);
 
-    // 提交可用性按模式区分（对齐后端各端点校验）：
-    // - 文生 / 全能参考：后端强校验 prompt，必须有提示词（自写或上游 text）；
-    // - 首帧 / 图生视频 / 图片参考 / 首尾帧 / 视频编辑：后端不校验 prompt，允许空提示词，
-    //   只要素材齐备即可提交（图片类要 ≥1 张上游图；视频编辑要 ≥1 个上游视频）。
-    //   这修掉「删掉默认提示词后传了首帧仍无法直接生成」的问题。
+    // 提交可用性按模式区分（对齐后端各端点校验），提示词与素材两条**分别**判定：
+    // - 提示词：文生 / 全能参考 后端强校验 prompt，必须有（自写或上游 text）；首帧 /
+    //   图生视频 / 图片参考 / 首尾帧 / 视频编辑允许空提示词 —— 这修掉「删掉默认提示词后
+    //   传了首帧仍无法直接生成」的问题。
+    // - 素材：除文生视频外都要有（图片类要 ≥1 张上游图；视频编辑要 ≥1 个上游视频；
+    //   全能参考图/视频/音频任意一类 ≥1）—— 对齐 handleSubmit 各分支的空素材早退。
+    // 全能参考是唯一两条都要的模式，所以这里不能写成「要提示词的就只看提示词」。
     const hasPromptText =
       prompt.trim().length > 0 || upstreamTextJoined.length > 0;
     const hasRequiredMediaForMode =
@@ -1958,9 +1990,11 @@ export const VideoNode = memo(
       !selectedVideoModel ||
       selectedModelReferenceError !== null ||
       mediaRejectionReason != null ||
-      (videoModeRequiresPrompt(genMode)
-        ? !hasPromptText
-        : !hasRequiredMediaForMode);
+      // 提示词与素材是**两条并列**的要求，不是二选一：全能参考两条都要（后端强校验
+      // prompt，omni 端点又没素材可发）。写成三元的时候，全能参考只看提示词，素材撤空后
+      // 按钮仍是可点态，点下去被 handleSubmit 的 references.length === 0 静默拦掉。
+      (videoModeRequiresPrompt(genMode) && !hasPromptText) ||
+      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode);
 
     const handleSubmit = useCallback(async () => {
       if (submitDisabled) return;

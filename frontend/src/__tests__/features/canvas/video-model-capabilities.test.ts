@@ -20,11 +20,13 @@ import {
   resolveVideoKeyframeUrls,
   videoEmptyStateCtaModes,
   videoModeForcesAutomaticAspectRatio,
+  videoModeRequiresMedia,
   videoModeRequiresPrompt,
   videoModelDefaultGenerateAudio,
   videoModelSupportsGenerateAudio,
   videoModelReferenceDisabledReason,
   videoMultiImageAutoSwitchMode,
+  videoNoUpstreamResetMode,
   videoReferenceAutoSwitchAction,
   type VideoReferenceAutoSwitchAction,
   videoSubmitMediaRejectionReason,
@@ -1182,5 +1184,90 @@ describe("videoModeRequiresPrompt — submit validation by mode", () => {
     ] as VideoGenMode[]) {
       expect(videoModeRequiresPrompt(mode)).toBe(false);
     }
+  });
+});
+
+describe("videoModeRequiresMedia — 该模式是否必须有上游素材", () => {
+  it("文生视频是唯一不需要素材的模式", () => {
+    expect(videoModeRequiresMedia("textToVideo")).toBe(false);
+  });
+
+  it("全能参考同样需要素材（omni 端点没素材就发不出去）", () => {
+    // 与 videoModeRequiresPrompt 是**并列**关系而非二选一：全能参考两条都要。
+    // 只看提示词的话，素材撤空后按钮仍然可点，点了却被 handleSubmit 的
+    // references.length === 0 静默拦下 —— 用户看到的就是「点了没反应」。
+    expect(videoModeRequiresMedia("allReference")).toBe(true);
+    expect(videoModeRequiresPrompt("allReference")).toBe(true);
+  });
+
+  it("其余生成模式都要素材", () => {
+    for (const mode of [
+      "firstFrame",
+      "imageToVideo",
+      "imageReference",
+      "firstLastFrame",
+      "videoEdit",
+    ] as VideoGenMode[]) {
+      expect(videoModeRequiresMedia(mode)).toBe(true);
+    }
+  });
+});
+
+describe("videoNoUpstreamResetMode — 素材撤空后退回文生视频", () => {
+  const EMPTY = { images: 0, videos: 0, audios: 0 };
+
+  it("上游清空后，任何素材模式都退回文生视频", () => {
+    for (const mode of [
+      "allReference",
+      "imageReference",
+      "firstFrame",
+      "imageToVideo",
+      "firstLastFrame",
+      "videoEdit",
+    ] as VideoGenMode[]) {
+      expect(videoNoUpstreamResetMode(mode, EMPTY)).toBe("textToVideo");
+    }
+  });
+
+  it("已经是文生视频就不动（避免每帧都发一次 patch）", () => {
+    expect(videoNoUpstreamResetMode("textToVideo", EMPTY)).toBeNull();
+  });
+
+  it.each([
+    ["图片", { images: 1, videos: 0, audios: 0 }],
+    ["视频", { images: 0, videos: 1, audios: 0 }],
+    ["音频", { images: 0, videos: 0, audios: 1 }],
+  ] as const)("上游还有%s素材时不动", (_label, counts) => {
+    expect(videoNoUpstreamResetMode("allReference", counts)).toBeNull();
+  });
+});
+
+describe("VideoNode 接线：素材撤空 → 文生视频", () => {
+  const source = readFileSync("src/features/canvas/nodes/VideoNode.tsx", "utf8");
+
+  it("反向复位 effect 按节点类型口径判定，不用已解析 URL 口径", () => {
+    // upstreamCounts（已解析 URL）会把空态 CTA 刚铺好、还没出图的图片节点算成 0 张，
+    // 用它当场就会把三个 CTA 顶回文生视频。
+    expect(source).toContain(
+      "videoNoUpstreamResetMode(genMode, upstreamTypeCounts)",
+    );
+  });
+
+  it("复位不进撤销栈", () => {
+    // 这是「用户删素材」的衍生结果而非独立改动；记进 past 会让 ⌘Z 被本 effect 立刻
+    // 撤销回去、redo 栈还被清空，等于把「回到连线之前」这条路堵死。
+    expect(source).toContain(
+      "updateNodeData(id, { genMode: target }, { recordHistory: false });",
+    );
+  });
+
+  it("提交闸门把提示词与素材拆成两条并列判定", () => {
+    expect(source).toContain(
+      "(videoModeRequiresPrompt(genMode) && !hasPromptText) ||\n      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode);",
+    );
+    // 旧的三元写法：要提示词的模式就不再看素材 —— 全能参考因此漏网。
+    expect(source).not.toContain(
+      "videoModeRequiresPrompt(genMode)\n        ? !hasPromptText\n        : !hasRequiredMediaForMode",
+    );
   });
 });
