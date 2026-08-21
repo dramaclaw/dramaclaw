@@ -782,9 +782,21 @@ def _issue_turn_capability(
             trajectory_id=trajectory_id, project_id=project_id, turn_id=turn_id
         )
         evidence_metrics.observe("capability_issued")
+        # One greppable success line per minted turn. Names only — no key,
+        # capability or prompt — so it is safe in api.log. Lets an operator
+        # confirm the K1/K3 keys are live without a debugger or an endpoint.
+        _log.info(
+            "capability_issued turn=%s (evidence plane active)", turn_id
+        )
         return capability
     except Exception:
-        _log.debug("could not issue an egress capability for this turn", exc_info=True)
+        # Elevated from debug: a mint failure is a HALTING evidence outcome —
+        # it must be visible in the normal log, not only under debug.
+        _log.warning(
+            "capability_issue_failure turn=%s — evidence plane HALT",
+            turn_id,
+            exc_info=True,
+        )
         evidence_metrics.observe("capability_issue_failure")
         return None
 
