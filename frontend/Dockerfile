@@ -34,7 +34,6 @@ RUN apk add --no-cache nodejs
 # Defaults overridable per environment via Helm values -> Deployment env.
 ENV BACKEND_HOST=novelvideo-ui-staging \
     BACKEND_PORT=8780 \
-    ORG_BRAND_ASSET_ORIGIN=https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com \
     NGINX_ENVSUBST_FILTER="^(BACKEND_HOST|BACKEND_PORT)$"
 
 COPY --from=builder /app/dist /usr/share/nginx/html

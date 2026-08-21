@@ -1,7 +1,7 @@
 const ORG_BRAND_ROOT = "/assets/org-brand";
 const ORG_BRAND_PREFIX = `${ORG_BRAND_ROOT}/`;
 const ORG_BRAND_PATH =
-  /^\/assets\/org-brand\/sha256\/([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})\.(png|webp)$/;
+  /^\/assets\/org-brand\/([A-Za-z0-9_-]+)\/sha256\/([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})\.(png|webp)$/;
 const SUCCESS_HEADERS: Record<string, string> = {
   "Cache-Control": "public, max-age=31536000, immutable",
   "X-Content-Type-Options": "nosniff",
@@ -32,16 +32,16 @@ function assetPath(
   pathname: string,
 ): { path: string; contentType: "image/png" | "image/webp" } | null {
   const match = ORG_BRAND_PATH.exec(pathname);
-  if (!match || match[1] !== match[3].slice(0, 2) || match[2] !== match[3].slice(2, 4)) {
+  if (!match || match[2] !== match[4].slice(0, 2) || match[3] !== match[4].slice(2, 4)) {
     return null;
   }
   return {
-    path: pathname,
-    contentType: match[4] === "png" ? "image/png" : "image/webp",
+    path: `/api/v1${pathname.slice("/assets".length)}`,
+    contentType: match[5] === "png" ? "image/png" : "image/webp",
   };
 }
 
-function errorResponse(status: number, extraHeaders?: HeadersInit): Response {
+function errorResponse(status: number, extraHeaders?: Record<string, string>): Response {
   const headers = new Headers(ERROR_HEADERS);
   new Headers(extraHeaders).forEach((value, name) => headers.set(name, value));
   return new Response(null, {
@@ -170,9 +170,8 @@ export async function handleOrgBrandAsset(
     }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   });
   try {
-    const storagePath = asset.path.slice("/assets".length);
     const upstream = await Promise.race([
-      (options.fetcher ?? fetch)(new URL(storagePath, origin).toString(), {
+      (options.fetcher ?? fetch)(new URL(asset.path, origin).toString(), {
         method: request.method,
         redirect: "manual",
         signal: abort.signal,

@@ -67,7 +67,7 @@ server {
     # Exact immutable organization-logo paths only. The loopback companion
     # validates upstream status, Content-Type and response headers before any
     # bytes reach the browser; malformed paths fall through to /assets/ =404.
-    location ~ ^/assets/org-brand/sha256/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}\.(png|webp)$ {
+    location ~ ^/assets/org-brand/[A-Za-z0-9_-]+/sha256/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}\.(png|webp)$ {
         if ($args != "") { return 404; }
         limit_except GET HEAD { deny all; }
         proxy_pass http://127.0.0.1:3001;

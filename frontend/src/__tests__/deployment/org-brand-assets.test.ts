@@ -8,6 +8,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 
 describe("organization brand asset deployment contract", () => {
+  it("wires the local Vite server through the same fail-closed asset handler", () => {
+    const config = readFileSync("vite.config.ts", "utf8");
+
+    expect(config).toContain('import { createOrgBrandAssetDevPlugin } from "./docker/vite-org-brand-proxy"');
+    expect(config).toContain("createOrgBrandAssetDevPlugin(");
+    expect(config).toContain("env.ORG_BRAND_ASSET_ORIGIN || apiTarget");
+  });
+
   it("routes only exact immutable asset paths to a fail-closed companion", () => {
     const config = readFileSync("docker/nginx.conf.template", "utf8");
     const block = config.match(
@@ -26,14 +34,15 @@ describe("organization brand asset deployment contract", () => {
 
   it("runs the validator companion with the public asset origin", () => {
     const dockerfile = readFileSync("Dockerfile", "utf8");
+    const proxyMain = readFileSync("docker/org-brand-proxy-main.ts", "utf8");
     const proxyBuild = readFileSync("docker/vite.proxy.config.ts", "utf8");
 
     expect(dockerfile).toContain(
       'NGINX_ENVSUBST_FILTER="^(BACKEND_HOST|BACKEND_PORT)$"',
     );
-    expect(dockerfile).toContain(
-      "ORG_BRAND_ASSET_ORIGIN=https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com",
-    );
+    expect(dockerfile).not.toContain("ORG_BRAND_ASSET_ORIGIN=https://novelvideo-assets-chengdu");
+    expect(proxyMain).toContain("process.env.BACKEND_HOST");
+    expect(proxyMain).toContain("process.env.BACKEND_PORT");
     expect(dockerfile).toContain("apk add --no-cache nodejs");
     expect(dockerfile).toContain("org-brand-proxy-server.mjs");
     expect(dockerfile).toContain('CMD ["/opt/dramaclaw/start.sh"]');

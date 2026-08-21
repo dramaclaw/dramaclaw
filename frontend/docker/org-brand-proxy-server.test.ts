@@ -7,7 +7,7 @@ import { createOrgBrandProxyServer, sendWebResponse } from "./org-brand-proxy-se
 import { handleOrgBrandAsset } from "./org-brand-assets";
 
 const logoPath =
-  "/assets/org-brand/sha256/ab/cd/" + "abcd" + "0".repeat(60) + ".png";
+  "/assets/org-brand/org_a/sha256/ab/cd/" + "abcd" + "0".repeat(60) + ".png";
 const servers: ReturnType<typeof createOrgBrandProxyServer>[] = [];
 
 afterEach(async () => {
@@ -183,7 +183,7 @@ describe("organization brand asset companion", () => {
 
     expect(response.status).toBe(200);
     expect(upstream).toHaveBeenCalledWith(
-      `https://assets.example${logoPath.replace("/assets", "")}`,
+      `https://assets.example/api/v1${logoPath.replace("/assets", "")}`,
       expect.objectContaining({ method: "GET", redirect: "manual" }),
     );
     expect(response.headers.get("content-type")).toBe("image/png");

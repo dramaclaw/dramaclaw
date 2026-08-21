@@ -6,6 +6,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import { execSync } from "node:child_process";
 import path from "path";
+import { createOrgBrandAssetDevPlugin } from "./docker/vite-org-brand-proxy";
 
 // YYMMDD build-date prefix (UTC), e.g. "260420-". Prepended to every
 // version string so "what shipped when" is readable at a glance without
@@ -71,6 +72,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [
+      createOrgBrandAssetDevPlugin(
+        env.ORG_BRAND_ASSET_ORIGIN || apiTarget,
+      ),
       TanStackRouterVite(),
       react(),
       tailwindcss(),

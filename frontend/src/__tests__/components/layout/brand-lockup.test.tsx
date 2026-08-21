@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { BrandLockup } from "@/components/layout/brand-lockup";
 
-const urlA = "/assets/org-brand/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png";
-const urlB = "/assets/org-brand/sha256/12/34/" + "1234" + "b".repeat(60) + ".webp";
+const urlA = "/assets/org-brand/org_a/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png";
+const urlB = "/assets/org-brand/org_a/sha256/12/34/" + "1234" + "b".repeat(60) + ".webp";
 
 function branding(url: string) {
   return {

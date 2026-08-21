@@ -1,4 +1,9 @@
-import { createServer, type Server } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
 
 import { handleOrgBrandAsset, type OrgBrandAssetOptions } from "./org-brand-assets";
 
@@ -70,8 +75,8 @@ export async function sendWebResponse(
   }
 }
 
-export function createOrgBrandProxyServer(options: OrgBrandAssetOptions): Server {
-  return createServer((request, response) => {
+export function createOrgBrandProxyHandler(options: OrgBrandAssetOptions) {
+  return (request: IncomingMessage, response: ServerResponse): void => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const assetRequest = new Request(url, { method: request.method ?? "GET" });
     void (async () => {
@@ -88,5 +93,9 @@ export function createOrgBrandProxyServer(options: OrgBrandAssetOptions): Server
         );
       }
     })();
-  });
+  };
+}
+
+export function createOrgBrandProxyServer(options: OrgBrandAssetOptions): Server {
+  return createServer(createOrgBrandProxyHandler(options));
 }

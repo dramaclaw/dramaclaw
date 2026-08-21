@@ -146,7 +146,7 @@ describe("Header runtime gating", () => {
       schema_version: 1,
       organization: { org_id: "org-1", name: "Claymore" },
       branding: {
-        logo_url: "/assets/org-brand/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png",
+        logo_url: "/assets/org-brand/org_a/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png",
         updated_at: "2026-08-21T10:00:00Z",
       },
     };
@@ -167,7 +167,7 @@ describe("Header runtime gating", () => {
       schema_version: 1 as const,
       organization: { org_id: "org-1", name: "Claymore" },
       branding: {
-        logo_url: "/assets/org-brand/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png",
+        logo_url: "/assets/org-brand/org_a/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png",
         updated_at: "2026-08-21T10:00:00Z",
       },
     };

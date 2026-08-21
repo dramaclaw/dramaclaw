@@ -10,7 +10,8 @@ import { server } from "@/__mocks__/msw/server";
 import { getOrgBranding, useOrgBranding } from "@/lib/queries/org-branding";
 import { queryKeys } from "@/lib/query-keys";
 
-const logoUrl = "/assets/org-brand/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png";
+const logoUrl =
+  "/assets/org-brand/org_a/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png";
 const response = {
   schema_version: 1,
   organization: { org_id: "org-1", name: "Claymore", future: true },

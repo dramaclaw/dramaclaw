@@ -7,7 +7,7 @@ import { queryKeys } from "@/lib/query-keys";
 import type { OrgBrandingResponse } from "@/types/org-branding";
 
 const LOGO_PATH =
-  /^\/assets\/org-brand\/sha256\/([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})\.(png|webp)$/;
+  /^\/assets\/org-brand\/[A-Za-z0-9_-]+\/sha256\/([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})\.(png|webp)$/;
 const ZONED_TIME =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 
