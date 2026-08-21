@@ -120,7 +120,7 @@ def _linux_sandbox_argv(binary: str, hermes_home: Path, cmd: list[str]) -> list[
     """Build the codex-linux-sandbox argv wrapping ``cmd`` (no capability check).
 
     Shared by the real wrap path and the functional probe so both exercise the
-    identical invocation shape (restricted fs + network).
+    identical invocation shape (restricted fs + outbound network).
     """
     permission_profile = {
         "type": "managed",
@@ -137,7 +137,14 @@ def _linux_sandbox_argv(binary: str, hermes_home: Path, cmd: list[str]) -> list[
                 },
             ],
         },
-        "network": "restricted",
+        # Outbound network is allowed, matching the macOS Seatbelt profile
+        # (`(allow network-outbound)`). codex's "restricted" network mode
+        # `--unshare-net`s the sandbox — no egress at all — which would strangle
+        # Hermes's required calls to the project API (DRAMACLAW_API_URL) and the
+        # model gateway; the `/bin/true` probe cannot see that break. The two
+        # platforms stay consistent here; tightening egress to an allowlist
+        # (project API + model gateway only) on BOTH platforms is #346 P1②.
+        "network": "enabled",
     }
     args = [
         binary,

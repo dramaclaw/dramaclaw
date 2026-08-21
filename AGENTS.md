@@ -47,6 +47,12 @@ How the Linux sandbox ships (the P1① half of **#346**, now done):
   installs the `bubblewrap` package. A build-time `--help` smoke proves the ELF loads.
 - `codex-linux-sandbox` still needs a **host kernel with unprivileged user namespaces** at
   runtime for `bwrap`; installing the binary does not create that capability.
+- **Network:** the Linux profile allows **outbound** (`"network": "enabled"`), matching the macOS
+  Seatbelt profile's `(allow network-outbound)`. codex's `"restricted"` mode `--unshare-net`s the
+  sandbox — *no* egress — which strangles Hermes's required calls to the project API
+  (`DRAMACLAW_API_URL`) and the model gateway, and the `/bin/true` probe cannot see that break.
+  The isolation that matters for multi-tenancy is the **filesystem** boundary (a user cannot read or
+  write peers' data), which is fully enforced; tightening egress to an allowlist is P1② below.
 
 Two enforcement layers, both driven by the same `_fallback_or_raise` decision:
 
@@ -72,5 +78,7 @@ The decision in both places:
 compose contract and the runtime/boot behavior. Do not remove the compose opt-in unless you accept
 that CE will fail closed on kernels without unprivileged user namespaces.
 
-Still open in **#346** (P1②): the Linux `network: restricted` profile vs. Hermes's required
-egress (project API + model gateway) — the macOS and Linux profiles are not yet consistent.
+Still open in **#346** (P1②): both platforms currently allow **all** outbound. Tighten egress to a
+controlled allowlist (project API + model gateway only) — e.g. codex's `--allow-network-for-proxy`
++ a proxy route spec on Linux, and the matching Seatbelt narrowing on macOS — plus a test that a
+minimal Hermes API/model call actually completes from inside a real Linux sandbox.

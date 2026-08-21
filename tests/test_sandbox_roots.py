@@ -135,7 +135,11 @@ def test_linux_wrapper_uses_current_codex_sandbox_cli(monkeypatch, tmp_path):
     assert wrapped[3:5] == ["--command-cwd", str(hermes_home)]
     profile = json.loads(wrapped[wrapped.index("--permission-profile") + 1])
     assert profile["type"] == "managed"
-    assert profile["network"] == "restricted"
+    # Outbound network is allowed on Linux to match the macOS profile — codex's
+    # "restricted" mode isolates the netns entirely (no egress), which would
+    # break Hermes's required project-API/model-gateway calls. Egress-allowlist
+    # tightening on both platforms is tracked in #346 P1②.
+    assert profile["network"] == "enabled"
     assert {
         "path": {"type": "path", "path": str(hermes_home)},
         "access": "write",
