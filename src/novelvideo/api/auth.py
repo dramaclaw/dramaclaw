@@ -27,7 +27,19 @@ logger = logging.getLogger("novelvideo.api.auth")
 AUTH_COOKIE_NAME = "st_session"
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-AGENT_WRITE_SCOPES = {"projects:write", "tasks:submit"}
+# Scopes that satisfy the central agent write-boundary backstop. This set must
+# include every precise write scope a route may require, otherwise a token that
+# legitimately holds only that precise scope (e.g. [projects:read,
+# projects:purge]) is rejected here — before its route's own require_scope check
+# ever runs — for lacking the generic write scope. The route-level require_scope
+# still enforces the exact scope, so listing these here only lifts the redundant
+# backstop, it does not widen what any single route accepts.
+AGENT_WRITE_SCOPES = {
+    "projects:write",
+    "tasks:submit",
+    "projects:lifecycle",
+    "projects:purge",
+}
 PROJECT_PATH_RE = re.compile(r"/projects/([^/]+)")
 LOCAL_TRUST_HOSTS = {"127.0.0.1", "::1", "localhost"}
 UNSUPPORTED_QUERY_CREDENTIALS = {"token", "access_token", "api_key"}
@@ -224,6 +236,7 @@ def require_scope(needed: str) -> Callable[[dict], dict]:
             )
         return user
 
+    _check._required_scope = needed  # introspection hook for route-wiring tests
     return _check
 
 

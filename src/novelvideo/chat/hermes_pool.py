@@ -949,7 +949,9 @@ class HermesPool:
             "NOVELVIDEO_RUNTIME_DIR": str(config.RUNTIME_DIR),
             "ST_EDITION": os.environ.get("ST_EDITION", "ce"),
             "DRAMACLAW_FREEZONE_TOOL_RESULT_DIR": str(home / "tmp" / "freezone-tool-results"),
-            "ST_CONTROL_PLANE_DSN": os.environ.get("ST_CONTROL_PLANE_DSN", ""),
+            # 绝不把控制面数据库凭据传进 Hermes 子进程:worker 只经短期 agent token
+            # 走 HTTP API,拿到 DSN 会让插件/依赖的任意代码执行缺陷绕开业务鉴权直连库。
+            # (凭据化启动路径 build_hermes_child_env 本就不带 DSN,这里对齐旧分支。)
             "DRAMACLAW_USER": username,
             "DRAMACLAW_AGENT_TOKEN": token.value,
             "DRAMACLAW_AGENT_TOKEN_TYPE": "Bearer",

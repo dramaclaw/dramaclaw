@@ -3097,9 +3097,11 @@ async def _stream_home_turn(
 @router.websocket("/chat/ws")
 async def chat_ws(websocket: WebSocket) -> None:
     await websocket.accept()
+    logger.info("chat websocket accepted client=%s", websocket.client)
     try:
         user = await _authenticate_ws(websocket)
     except Exception:
+        logger.warning("chat websocket authentication failed client=%s", websocket.client)
         await _close_ws_unauthorized(websocket)
         return
 
@@ -3115,6 +3117,12 @@ async def chat_ws(websocket: WebSocket) -> None:
         return
     if current_scope is None:
         return
+    logger.info(
+        "chat websocket ready username=%s scope=%s:%s",
+        username,
+        current_scope.kind,
+        current_scope.id or "",
+    )
     await register_chat_websocket(websocket, username=username, scope=current_scope)
     # Do not pre-warm the default home scope on connect. The React client often
     # immediately sends scope.set for the active project; warming home first
@@ -3137,6 +3145,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                     return
                 raise
             event_type = str(raw.get("type") or "")
+            logger.info("chat websocket received type=%s username=%s", event_type, username)
             if event_type == "scope.set":
                 msg = ScopeSetIn.model_validate(raw)
                 requested_scope = _scope_from_model(msg.scope)
@@ -3239,6 +3248,14 @@ async def chat_ws(websocket: WebSocket) -> None:
             turn_id = (msg.turn_id or "").strip() or uuid.uuid4().hex
             text = msg.text.strip()
             user_text = (msg.user_text or "").strip() or text
+            logger.info(
+                "chat message accepted username=%s turn_id=%s scope=%s:%s text_len=%d",
+                username,
+                turn_id,
+                scope.kind,
+                scope.id or "",
+                len(text),
+            )
             if not text:
                 await _send_json_best_effort(
                     websocket,
@@ -3294,6 +3311,12 @@ async def chat_ws(websocket: WebSocket) -> None:
                     )
             except Exception as exc:  # noqa: BLE001
                 message = str(exc)
+                logger.exception(
+                    "chat turn failed username=%s turn_id=%s error_type=%s",
+                    username,
+                    turn_id,
+                    type(exc).__name__,
+                )
                 if "当前用户已有 AI 对话正在处理中" in message:
                     await _send_json_best_effort(
                         websocket,
@@ -3347,6 +3370,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                     websocket, {"type": "error", "turn_id": turn_id, "message": message}
                 )
     except WebSocketDisconnect:
+        logger.info("chat websocket disconnected username=%s", username)
         pass
     finally:
         await unregister_chat_websocket(websocket)

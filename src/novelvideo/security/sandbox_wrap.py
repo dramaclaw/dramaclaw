@@ -35,7 +35,13 @@ SEATBELT_NETWORK_POLICY = SANDBOX_PROFILES_DIR / "seatbelt_network_policy.sbpl"
 def _data_dir(kind: str) -> Path:
     env = os.environ.get(f"NOVELVIDEO_{kind.upper()}_DIR", "").strip()
     if env:
-        return Path(env).expanduser()
+        p = Path(env).expanduser()
+        # A relative override (e.g. NOVELVIDEO_OUTPUT_DIR=output) MUST be
+        # anchored to SUPERTALE_ROOT — mirroring the no-override default below.
+        # A relative path here would reach the Seatbelt profile as
+        # `(subpath "output")`, which Seatbelt silently never matches, leaving
+        # the wholesale peer-read deny disabled for that tree. Always absolute.
+        return p if p.is_absolute() else (SUPERTALE_ROOT / p)
     return SUPERTALE_ROOT / kind
 
 
@@ -74,20 +80,14 @@ class SandboxSpec:
         ]
         return paths
 
-    def other_user_paths(self) -> list[Path]:
-        """All other users' state/output/runtime trees — must be denied."""
-        result: list[Path] = []
-        for top in ("state", "output", "runtime"):
-            top_dir = _data_dir(top)
-            if not top_dir.is_dir():
-                continue
-            for child in top_dir.iterdir():
-                if not child.is_dir():
-                    continue
-                if child.name in (self.user, "_shared"):
-                    continue
-                result.append(child)
-        return result
+    def data_roots(self) -> list[Path]:
+        """The per-user data roots (state/output/runtime tops).
+
+        The macOS profile denies reads on these wholesale and then allows back
+        only this user's own slice + ``_shared`` — so every peer (existing or
+        created mid-session) is denied without enumeration.
+        """
+        return [_data_dir("state"), _data_dir("output"), _data_dir("runtime")]
 
 
 def wrap_command(cmd: list[str], spec: SandboxSpec) -> list[str]:
@@ -171,6 +171,14 @@ def _expand_aliases(paths: Iterable[Path]) -> list[Path]:
     out: list[Path] = []
     seen: set[str] = set()
     for p in paths:
+        # Fail loud, never silent: Seatbelt `(subpath "…")` only matches
+        # absolute paths. A relative one never matches, so a relative deny would
+        # silently leave a tree open (see _data_dir). Refuse to emit one.
+        if not p.is_absolute():
+            raise ValueError(
+                f"sandbox profile path must be absolute, got relative {p!r}; "
+                f"a relative subpath silently disables the Seatbelt rule"
+            )
         for alt in _aliases(p):
             s = str(alt)
             if s not in seen:
@@ -211,13 +219,38 @@ def build_macos_profile(spec: SandboxSpec) -> str:
 
     # --- READ allow: broad ((subpath "/") — same as codex workspace-write mode) ---
     # Rationale: macOS dyld needs many paths to launch even `cat`; strict
-    # subpath whitelist is unmaintainable. Defense relies on explicit DENY
-    # of host secrets + other-user dirs below, which override this broad allow.
+    # subpath whitelist is unmaintainable. Defense relies on the specific DENY
+    # rules below (per-user data roots + host secrets), which override this
+    # broad allow via Seatbelt last-match-wins.
     parts.append(";; READ: broad allow; specific denies below override\n")
     parts.append("(allow file-read* (subpath \"/\"))\n")
 
-    # --- READ deny: host secrets (specific denies override broad allow) ---
-    parts.append("\n;; READ deny: host secrets — overrides broad allow\n")
+    # --- READ deny: per-user data roots, WHOLESALE ---
+    # Deny reads on the entire state/output/runtime roots rather than
+    # enumerating sibling users at session start. Enumeration (iterdir) only
+    # captured users that existed when the profile was built, so a peer dir
+    # created mid-session stayed readable (TOCTOU). Denying the roots then
+    # allowing back only this user's own slice + _shared closes that gap and
+    # covers all future peers with no enumeration.
+    parts.append(
+        "\n;; READ deny: per-user data roots wholesale "
+        "(blocks all peers incl. future — no enumeration)\n"
+    )
+    parts.append(_deny_read_block(_expand_aliases(spec.data_roots())))
+
+    # --- READ allow-back: this user's own trees + shared read-only resources ---
+    # Comes AFTER the data-root deny so last-match-wins re-opens only the
+    # current user's slice and the shared resources.
+    allow_back = _expand_aliases(
+        [*spec.self_business_paths(), *spec.shared_read_paths()]
+    )
+    parts.append(
+        "\n;; READ allow-back: own dirs + shared resources override root deny\n"
+    )
+    parts.append(_allow_read_block(allow_back))
+
+    # --- READ deny: host secrets (LAST so nothing above can re-open them) ---
+    parts.append("\n;; READ deny: host secrets — overrides every allow above\n")
     parts.append(_deny_read_block(_expand_aliases([
         Path.home() / ".ssh",
         Path.home() / ".gnupg",
@@ -229,17 +262,9 @@ def build_macos_profile(spec: SandboxSpec) -> str:
         Path("/etc/sudoers.d"),
     ])))
 
-    # --- READ deny: other users ---
-    other = list(spec.other_user_paths())
-    if other:
-        parts.append("\n;; READ deny: other users' state/output/runtime\n")
-        parts.append(_deny_read_block(other))
-
-    # --- WRITE deny: explicit host /tmp + other users (must come BEFORE allow HERMES_HOME) ---
-    #     (base profile already `deny default`, but be explicit about /tmp and other users)
-    if other:
-        parts.append("\n;; WRITE deny: other users' state/output/runtime\n")
-        parts.append(_deny_write_block(other))
+    # --- WRITE: base profile is `deny default`, so peer/other-user writes
+    #     (existing AND future) are already denied without enumeration. Only
+    #     HERMES_HOME is allowed, last, so it wins over the /tmp deny. ---
     parts.append("\n;; WRITE deny: host /tmp (must use $TMPDIR=$HERMES_HOME/tmp)\n")
     parts.append(_deny_write_block(_expand_aliases([Path("/tmp")])))
 
@@ -283,10 +308,51 @@ def _deny_write_block(paths: Iterable[Path]) -> str:
     return "\n".join(lines)
 
 
+def _sandbox_required() -> bool:
+    """多租户/生产必须强制沙箱,不允许裸跑。
+
+    两个独立触发条件,满足其一即视为"必须沙箱":
+    - ``SUPERTALE_ENV=production`` —— 显式生产标记;
+    - ``ST_CONTROL_PLANE_DSN`` 非空 —— EE 控制面已接入,即多用户模式。
+
+    刻意不只依赖容易漏配的 ``SUPERTALE_ENV``:只要连了控制面(EE),哪怕忘了设
+    生产标记,也必须 fail-close。
+    """
+    if os.environ.get("SUPERTALE_ENV", "").strip().lower() == "production":
+        return True
+    if os.environ.get("ST_CONTROL_PLANE_DSN", "").strip():
+        return True
+    return False
+
+
+def _dev_unsandboxed_opt_in() -> bool:
+    """本地无沙箱开发必须走醒目的显式开关,而不是静默降级。"""
+    return os.environ.get("SUPERTALE_ALLOW_UNSANDBOXED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _fallback_or_raise(cmd: list[str], reason: str) -> list[str]:
-    if os.environ.get("SUPERTALE_ENV", "").lower() == "production":
-        raise RuntimeError(f"sandbox required in production but {reason}")
-    msg = f"sandbox unavailable ({reason}); running unsandboxed — dev only"
+    if _sandbox_required():
+        raise RuntimeError(
+            f"sandbox required (production or EE control-plane) but {reason}; "
+            f"refusing to run Hermes worker unsandboxed"
+        )
+    if not _dev_unsandboxed_opt_in():
+        # CE 本地开发也默认 fail-close:必须显式开 SUPERTALE_ALLOW_UNSANDBOXED=1
+        # 才允许裸跑,杜绝"漏配就静默无沙箱"。
+        raise RuntimeError(
+            f"sandbox unavailable ({reason}) and SUPERTALE_ALLOW_UNSANDBOXED is not "
+            f"set; refusing to run unsandboxed. Set SUPERTALE_ALLOW_UNSANDBOXED=1 to "
+            f"explicitly allow unsandboxed workers in local development only"
+        )
+    msg = (
+        f"sandbox unavailable ({reason}); running UNSANDBOXED because "
+        f"SUPERTALE_ALLOW_UNSANDBOXED is set — dev only, never in multi-user"
+    )
     _log.warning(msg)
     warnings.warn(msg, RuntimeWarning, stacklevel=3)
     return cmd

@@ -30,3 +30,26 @@ Recent history uses short conventional prefixes such as `fix:`, `feat(scope):`, 
 ## Security & Configuration Tips
 
 Do not commit provider keys, signed URLs, credentials, or generated secrets. Configure model access through environment variables such as `MODEL_PROVIDER` and `MODEL_API_KEY`. Run the gitleaks pre-commit hook before sharing changes that touch configuration, provisioning, backup, or gateway code.
+
+## Hermes Sandbox & the CE Unsandboxed Fallback
+
+Hermes workers run inside an OS sandbox (`sandbox_wrap.py`): macOS uses the system
+`sandbox-exec`; Linux uses `codex-linux-sandbox` (bubblewrap-based). When no sandbox
+binary is available the wrapper **fails closed** — it refuses to run rather than drop
+isolation silently.
+
+CE deployment posture (interim, tracked in **#346**):
+
+- The vendored Linux binaries ship in the image (`Dockerfile` does `COPY deploy ./deploy`,
+  so they land under `deploy/sandbox/linux-{amd64,arm64}/codex-linux-sandbox`) but are **not
+  yet installed onto `PATH`**, and bubblewrap is not installed. Until #346 wires the per-arch
+  install + a controlled model/API egress, the Linux sandbox cannot actually run.
+- Because CE is **single-tenant self-hosted**, the four CE compose files therefore set
+  `SUPERTALE_ALLOW_UNSANDBOXED=1` explicitly. This restores the pre-hardening default
+  (run Hermes unsandboxed on Linux) instead of crashing the first worker on `docker compose up`.
+- This opt-in is **local/CE only**. When `SUPERTALE_ENV=production` or `ST_CONTROL_PLANE_DSN`
+  is non-empty (EE / multi-tenant), `_fallback_or_raise` still refuses to run unsandboxed —
+  the flag cannot override it. `tests/test_compose_ce_unsandboxed_gate.py` pins both halves.
+
+Do not remove the compose opt-in without either installing a working Linux sandbox (#346) or
+accepting that the default CE image will fail closed on Linux.

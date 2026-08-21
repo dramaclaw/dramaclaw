@@ -20,6 +20,10 @@ HOME_DIR="${HERMES_HOME:-/tmp/hermes-poc}"
 mkdir -p "$HOME_DIR/tmp"
 chmod 700 "$HOME_DIR"
 
+# Resolve the hermes CLI from PATH / HERMES_CLI_PATH rather than a hardcoded
+# per-machine home (T13). Falls back to the image default.
+HERMES_BIN="${HERMES_CLI_PATH:-$(command -v hermes 2>/dev/null || echo /root/.local/bin/hermes)}"
+
 # Build profile via Python (writes to a temp file, then exports as $PROFILE)
 PROFILE=$(.venv/bin/python3 - <<PY
 from novelvideo.security import SandboxSpec, build_macos_profile
@@ -142,7 +146,7 @@ expect_pass "T12  import ssl + sqlite3 + json" \
 # T13: import hermes_agent — hermes is in uv tool's own venv, not SuperTale .venv;
 # this verifies sandbox lets us at least *run* /usr/local/bin/hermes which is what matters.
 expect_pass "T13  exec hermes --version" \
-    /usr/bin/sandbox-exec -p "$PROFILE" -- /Users/eric/.local/bin/hermes --version
+    /usr/bin/sandbox-exec -p "$PROFILE" -- "$HERMES_BIN" --version
 
 # T14: tempfile uses TMPDIR=$HERMES_HOME/tmp
 expect_pass "T14  tempfile honors TMPDIR" \

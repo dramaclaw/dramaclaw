@@ -103,9 +103,10 @@ def _patch_fake_hermes_pool(
     )
     monkeypatch.setattr(
         hermes_pool,
-        "effective_gateway_fingerprint",
+        "gateway_origin_fingerprint",
         lambda: gateway["fingerprint"],
     )
+    monkeypatch.setattr(hermes_pool, "require_hermes_fork", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(hermes_pool, "HermesSdkClient", FakeHermesSdkClient)
 
     pool = hermes_pool.HermesPool(max_workers=5)
@@ -148,8 +149,10 @@ def test_hermes_worker_receives_effective_newapi_key_without_mutating_host_env(
         project_id=None,
     )
 
-    assert env["NEWAPI_API_KEY"] == "worker-only-key"
-    assert env["OPENAI_API_KEY"] == "worker-only-key"
+    # The real gateway key is delivered per turn through ACP metadata; the
+    # long-lived worker only receives a non-secret placeholder.
+    assert env["NEWAPI_API_KEY"] == "dramaclaw-per-turn-placeholder"
+    assert env["OPENAI_API_KEY"] == "dramaclaw-per-turn-placeholder"
     assert "NEWAPI_API_KEY" not in os.environ
     assert "OPENAI_API_KEY" not in os.environ
 
@@ -158,6 +161,8 @@ def test_hermes_worker_defaults_to_ce_edition(tmp_path: Path, monkeypatch: pytes
     from novelvideo.chat import hermes_pool
 
     monkeypatch.delenv("ST_EDITION", raising=False)
+    # 即便宿主进程有控制面 DSN,也绝不能泄漏进 worker 子进程环境。
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "postgres://cp/db")
     monkeypatch.setattr(hermes_pool, "effective_gateway_credentials", lambda: ("", ""))
     token = AgentSessionToken(
         value="agent-token",
@@ -178,6 +183,7 @@ def test_hermes_worker_defaults_to_ce_edition(tmp_path: Path, monkeypatch: pytes
     )
 
     assert env["ST_EDITION"] == "ce"
+    assert "ST_CONTROL_PLANE_DSN" not in env
 
 
 def test_hermes_worker_receives_novelvideo_data_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -341,6 +347,7 @@ async def test_hermes_pool_freezone_profile_uses_isolated_home_and_canvas_env(
     monkeypatch.setattr(registry, "_PORTS", dict(registry._PORTS))
     registry.register_port("auth_session", fake_auth)
     monkeypatch.setattr(hermes_pool, "_hermes_cli_path", lambda: fake_cli)
+    monkeypatch.setattr(hermes_pool, "require_hermes_fork", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(hermes_pool, "ensure_user_hermes_workspace", fake_workspace)
     monkeypatch.setattr(hermes_pool, "HermesSdkClient", FakeHermesSdkClient)
 
@@ -437,9 +444,10 @@ async def test_hermes_pool_starts_fresh_session_when_resume_fails(
     )
     monkeypatch.setattr(
         hermes_pool,
-        "effective_gateway_fingerprint",
+        "gateway_origin_fingerprint",
         lambda: "gateway-1",
     )
+    monkeypatch.setattr(hermes_pool, "require_hermes_fork", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(hermes_pool, "HermesSdkClient", FakeHermesSdkClient)
 
     pool = hermes_pool.HermesPool(max_workers=5)
@@ -500,9 +508,10 @@ async def test_hermes_pool_surfaces_error_when_resume_and_fresh_start_fail(
     )
     monkeypatch.setattr(
         hermes_pool,
-        "effective_gateway_fingerprint",
+        "gateway_origin_fingerprint",
         lambda: "gateway-1",
     )
+    monkeypatch.setattr(hermes_pool, "require_hermes_fork", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(hermes_pool, "HermesSdkClient", FakeHermesSdkClient)
 
     pool = hermes_pool.HermesPool(max_workers=5)
@@ -563,9 +572,10 @@ async def test_hermes_pool_does_not_restore_stale_session_after_rotation_fallbac
     )
     monkeypatch.setattr(
         hermes_pool,
-        "effective_gateway_fingerprint",
+        "gateway_origin_fingerprint",
         lambda: "gateway-1",
     )
+    monkeypatch.setattr(hermes_pool, "require_hermes_fork", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(hermes_pool, "HermesSdkClient", FakeHermesSdkClient)
 
     pool = hermes_pool.HermesPool(max_workers=5)

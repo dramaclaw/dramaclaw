@@ -7,6 +7,15 @@
 #   docker compose -f docker-compose.selfhosted.yml up
 services:
   api:
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+      - /run:rw,noexec,nosuid,nodev,size=16m
     build:
       context: .
       dockerfile: Dockerfile
@@ -16,7 +25,8 @@ services:
       args:
         INSTALL_WORLD: "${INSTALL_WORLD:-0}"
         # 默认装 fork 的 brainclaw/evidence-plane 分支；要固定到某个提交时传 SHA。
-        HERMES_INSTALL_SPEC: "${HERMES_INSTALL_SPEC:-}"
+        HERMES_REPO: "${HERMES_REPO:-https://github.com/dramaclaw/hermes-agent.git}"
+        HERMES_REF: "${HERMES_REF:-brainclaw/evidence-plane}"
     # 运行时从宿主 .env 注入 model/LLM key（.env 不进镜像，由 .dockerignore 排除）。
     # environment: 块仍覆盖此处同名变量，保持 CE inline 模式强制不变。
     env_file:
@@ -31,8 +41,20 @@ services:
       NOVELVIDEO_OUTPUT_DIR: /data/output
       NOVELVIDEO_STATE_DIR: /data/state
       NOVELVIDEO_RUNTIME_DIR: /data/runtime
+      # read_only root fs + non-root user: ML libs (HF/torch) otherwise try to
+      # write $HOME/.cache and crash. Redirect their caches into the writable
+      # ce-data volume so weights persist across restarts instead of re-download.
+      HF_HOME: /data/cache/huggingface
+      TORCH_HOME: /data/cache/torch
+      XDG_CACHE_HOME: /data/cache
       DRAMACLAW_CHAT_BACKEND: hermes
-      HERMES_CLI_PATH: /root/.local/bin/hermes
+      HERMES_CLI_PATH: /usr/local/bin/hermes
+      # CE 单租户自托管:Linux 镜像暂未把 deploy/sandbox 下的 codex-linux-sandbox
+      # 装到 PATH(留待 #346),此处显式声明 CE 沿用无沙箱运行——保留本 PR 之前的
+      # 默认行为,避免 fail-close 让默认 compose 首次起 Hermes worker 即崩。
+      # 仅对本地/CE 生效:production 或 ST_CONTROL_PLANE_DSN 非空时,
+      # sandbox_wrap._fallback_or_raise 仍严格拒绝裸跑,兜底不会扩散到多租户。
+      SUPERTALE_ALLOW_UNSANDBOXED: "1"
       # 默认「官方 DC key」路径:模型网关地址/密钥来自 .env(NEWAPI_BASE_URL / NEWAPI_API_KEY),
       # 或启动后到网页「设置 → 模型配置 → 官方渠道」粘贴 DC key 保存即用。
       # 不在此处硬写 NEWAPI_BASE_URL —— 留给 .env / 网页设置驱动,避免覆盖用户配置。

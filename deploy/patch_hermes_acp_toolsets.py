@@ -27,10 +27,17 @@ CANDIDATE_PATTERNS = [
     # the source stays where it was cloned rather than landing in site-packages.
     "/opt/hermes-agent/acp_adapter/session.py",
     str(Path(os.environ.get("HERMES_SOURCE_DIR", "/nonexistent")) / "acp_adapter/session.py"),
+    "/home/dramaclaw/.local/share/uv/tools/hermes-agent/lib/python*/site-packages/acp_adapter/session.py",
 ]
 if override := os.environ.get("HERMES_AGENT_SESSION_PY"):
     CANDIDATE_PATTERNS.insert(0, override)
-CANDIDATES = sorted({candidate for pattern in CANDIDATE_PATTERNS for candidate in glob.glob(pattern)})
+source_candidate = Path(os.environ.get("HERMES_SOURCE_DIR", "/nonexistent")) / "acp_adapter/session.py"
+if source_candidate.is_file():
+    # Editable installs import the fork directly from its clone. Prefer that
+    # source over any unrelated stock Hermes left in a uv tool environment.
+    CANDIDATES = [str(source_candidate)]
+else:
+    CANDIDATES = sorted({candidate for pattern in CANDIDATE_PATTERNS for candidate in glob.glob(pattern)})
 if len(CANDIDATES) != 1:
     sys.exit(f"PATCH FAIL: expected 1 acp_adapter/session.py, found {CANDIDATES}")
 path = CANDIDATES[0]

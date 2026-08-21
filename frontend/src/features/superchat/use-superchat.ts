@@ -135,6 +135,14 @@ function resolveChatWsUrl(): string {
   return url.toString();
 }
 
+// Development-only transport diagnostics. Never log prompt text, attachments,
+// cookies, or gateway credentials; these events are enough to locate a stalled
+// turn between the browser, WebSocket, API, and Hermes.
+const SUPERCHAT_DEBUG = import.meta.env.DEV;
+function superchatDebug(event: string, details?: Record<string, unknown>) {
+  if (SUPERCHAT_DEBUG) console.info(`[superchat] ${event}`, details ?? "");
+}
+
 function scopeForProject(
   project?: string,
   surface: ProjectChatSurface = "director",
@@ -1896,8 +1904,16 @@ export function useSuperChat({
     const ws = wsRef.current;
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(frame));
+      superchatDebug("send", {
+        type: frame.type,
+        turn_id: "turn_id" in frame ? frame.turn_id : undefined,
+      });
       return true;
     }
+    superchatDebug("send_skipped_socket_not_open", {
+      type: frame.type,
+      readyState: ws?.readyState ?? null,
+    });
     return false;
   }, []);
 
@@ -2757,25 +2773,39 @@ export function useSuperChat({
 
     const ws = new WebSocket(resolveChatWsUrl());
     wsRef.current = ws;
+    superchatDebug("connecting", { url: resolveChatWsUrl() });
     ws.onopen = () => {
       if (connectionIdRef.current !== connectionId || wsRef.current !== ws) return;
+      superchatDebug("open");
       sendFrame({ type: "scope.set", scope: desiredScopeRef.current });
     };
     ws.onmessage = (event) => {
       if (connectionIdRef.current !== connectionId || wsRef.current !== ws) return;
       try {
-        handleFrameRef.current(JSON.parse(String(event.data)) as ServerFrame);
+        const frame = JSON.parse(String(event.data)) as ServerFrame;
+        superchatDebug("receive", {
+          type: typeof frame === "object" && frame !== null && "type" in frame
+            ? frame.type
+            : "unknown",
+          turn_id: typeof frame === "object" && frame !== null && "turn_id" in frame
+            ? frame.turn_id
+            : undefined,
+        });
+        handleFrameRef.current(frame);
       } catch {
+        superchatDebug("receive_invalid_json");
         // Ignore malformed frames from development proxies.
       }
     };
     ws.onerror = () => {
       if (connectionIdRef.current !== connectionId || wsRef.current !== ws) return;
+      superchatDebug("error");
       setError("WebSocket connection failed");
       setConnecting(false);
     };
     ws.onclose = (event) => {
       if (connectionIdRef.current !== connectionId || wsRef.current !== ws) return;
+      superchatDebug("close", { code: event.code, reason: event.reason });
       wsRef.current = null;
       setConnected(false);
       const hasActiveTurn = Boolean(activeTurnIdRef.current ?? pendingClientTurnIdRef.current);

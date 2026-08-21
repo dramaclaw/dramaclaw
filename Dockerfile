@@ -15,13 +15,16 @@ ENV ST_EDITION=ce \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
-    HERMES_CLI_PATH=/root/.local/bin/hermes
+    HERMES_CLI_PATH=/usr/local/bin/hermes \
+    HOME=/home/dramaclaw
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+RUN groupadd --system --gid 10001 dramaclaw \
+    && useradd --system --uid 10001 --gid 10001 --create-home --home-dir /home/dramaclaw dramaclaw
 COPY pyproject.toml uv.lock README.md ./
 # license 正文按 REUSE 惯例只存于 LICENSES/(pyproject license-files 指向它),
 # hatchling 构建 wheel 时需要这份文件在上下文中。
@@ -86,9 +89,14 @@ RUN set -eux; \
     python3 deploy/patch_hermes_acp_toolsets.py; \
     hermes --version; \
     python3 deploy/verify_hermes_fork.py; \
+    chown -R dramaclaw:dramaclaw /data /home/dramaclaw; \
     apt-get purge -y git; apt-get autoremove -y
 
-ENV PATH="/app/.venv/bin:/root/.local/bin:$PATH"
+ENV PATH="/app/.venv/bin:/usr/local/bin:$PATH"
+
+# Hermes and the API never need root at runtime. Compose may still override
+# the user explicitly, but the image itself is safe-by-default.
+USER dramaclaw:dramaclaw
 
 EXPOSE 8780
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8780/api/v1/config', timeout=2).status == 200 else 1)"
