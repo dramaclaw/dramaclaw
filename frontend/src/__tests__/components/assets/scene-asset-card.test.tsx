@@ -17,6 +17,9 @@ beforeAll(async () => {
     resources: {
       zh: {
         translation: {
+          common: {
+            cancel: "取消",
+          },
           assets: {
             common: {
               edit: "编辑",
@@ -54,6 +57,12 @@ beforeAll(async () => {
                 masterToPly: "master→导演世界",
                 reverseToPly: "reverse→导演世界",
                 panoToPly: "360→导演世界",
+                singleFaceFeature: "场景单面转 SOG",
+                panoFeature: "场景全景转 SOG",
+                confirmTitle: "确认启动转换",
+                confirmDescription:
+                  "{{feature}}，本次预计消耗 {{cost}} 积分。确认后将立即启动任务。",
+                confirmAction: "确认并启动",
                 openWorld: "打开导演世界",
                 worldNotReady: "导演世界（片场未就绪）",
               },
@@ -83,6 +92,8 @@ function renderCard(scene: SceneAsset, overrides = {}) {
     onUploadCustomPackage: vi.fn(),
     onDeleteCustomPackage: vi.fn(),
     onGenerateStagePly: vi.fn(),
+    singleFaceStageCost: "6",
+    panoStageCost: "8",
     ...overrides,
   };
   render(
@@ -190,10 +201,45 @@ describe("SceneAssetCard", () => {
     expect(handlers.onOpenStageViewer).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: "master→导演世界" }));
+    expect(handlers.onGenerateStagePly).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "场景单面转 SOG，本次预计消耗 6 积分",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "确认并启动" }));
     expect(handlers.onGenerateStagePly).toHaveBeenCalledWith("master");
 
     fireEvent.click(screen.getByRole("button", { name: "360→导演世界" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "场景全景转 SOG，本次预计消耗 8 积分",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "确认并启动" }));
     expect(handlers.onGenerateStagePly).toHaveBeenCalledWith("pano");
+  });
+
+  it("disables Director World conversion when the organization price is unavailable", () => {
+    renderCard(
+      {
+        name: "皇宫大殿",
+        scene_type: "interior",
+        environment_prompt: "",
+        description: "",
+        aliases: [],
+        notes: "",
+        master_url: "/static/master.png",
+        reverse_master_url: "/static/reverse.png",
+        pano_url: "/static/pano.png",
+      },
+      {
+        singleFaceStageCost: "需配置",
+        singleFaceStageDisabledReason: "计费规则未配置，请联系管理员设置积分规则",
+        panoStageCost: "需配置",
+        panoStageDisabledReason: "计费规则未配置，请联系管理员设置积分规则",
+      },
+    );
+
+    expect(screen.getByRole("button", { name: "master→导演世界" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "reverse→导演世界" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "360→导演世界" })).toBeDisabled();
   });
 
   it("falls back to text-to-360 when master is missing", () => {

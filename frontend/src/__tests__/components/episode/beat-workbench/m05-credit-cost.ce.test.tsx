@@ -87,6 +87,8 @@ function renderSceneAssetCard(scene: SceneAsset) {
         masterCost="12 credits"
         reverseCost="12 credits"
         panoCost="12 credits"
+        singleFaceStageCost="6 credits"
+        panoStageCost="8 credits"
         onEdit={vi.fn()}
         onDelete={vi.fn()}
         onUploadMaster={vi.fn()}
@@ -112,7 +114,7 @@ describe("M05 CE generation credit cost gating", () => {
     runtimeState.isCeRuntime = true;
   });
 
-  it("hides scene master, reverse, and pano costs in CE runtime", () => {
+  it("hides scene image and Director World conversion costs in CE runtime", () => {
     renderSceneAssetCard({
       name: "皇宫大殿",
       scene_type: "interior",
@@ -126,6 +128,8 @@ describe("M05 CE generation credit cost gating", () => {
     });
 
     expect(screen.queryByText("12 credits")).not.toBeInTheDocument();
+    expect(screen.queryByText("6 credits")).not.toBeInTheDocument();
+    expect(screen.queryByText("8 credits")).not.toBeInTheDocument();
   });
 
   it("routes every named M05 cost display through CreditCostInline", () => {
@@ -138,6 +142,12 @@ describe("M05 CE generation credit cost gating", () => {
     expect(source("src/components/assets/scene-asset-card.tsx")).toEqual(
       expect.stringMatching(/<CreditCostInline\s+display=\{panoCost\}/),
     );
+    expect(source("src/components/assets/scene-asset-card.tsx")).toEqual(
+      expect.stringMatching(/<CreditCostInline\s+display=\{singleFaceStageCost\}/),
+    );
+    expect(source("src/components/assets/scene-asset-card.tsx")).toEqual(
+      expect.stringMatching(/<CreditCostInline\s+display=\{panoStageCost\}/),
+    );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
       expect.stringContaining("masterCost={sceneReferenceCostDisplay}"),
     );
@@ -146,6 +156,20 @@ describe("M05 CE generation credit cost gating", () => {
     );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
       expect.stringContaining("panoCost={panoCostDisplay}"),
+    );
+    expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
+      expect.stringContaining(
+        '"mainline.scene_single_face_to_sog"',
+      ),
+    );
+    expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
+      expect.stringContaining('"mainline.scene_pano_to_sog"'),
+    );
+    expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
+      expect.stringContaining("singleFaceStageDisabledReason="),
+    );
+    expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
+      expect.stringContaining("panoStageDisabledReason="),
     );
     expect(source("src/components/assets/scenes-panel.tsx")).toEqual(
       expect.stringContaining('useGenerationCreditCost("feature", "mainline.build_scenes")'),

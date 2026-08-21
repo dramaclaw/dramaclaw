@@ -1474,6 +1474,13 @@
         "masterToPly": "master→Director World",
         "reverseToPly": "reverse→Director World",
         "panoToPly": "360→Director World",
+        "singleFaceFeature": "Scene single-face to SOG",
+        "panoFeature": "Scene panorama to SOG",
+        "confirmTitle": "Confirm conversion",
+        "confirmDescription": "{{feature}} is estimated to use {{cost}} credits. Confirm to start the task.",
+        "confirmAction": "Confirm and start",
+        "costLoading": "Loading the current organization price",
+        "costUnavailable": "Price is temporarily unavailable. Try again later.",
         "openWorld": "Open Director World",
         "worldNotReady": "Director World not ready"
       },

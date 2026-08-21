@@ -634,6 +634,16 @@ function SceneAssetCardController({
     "mainline.scene_pano_generation",
     { surface: "supertale" },
   );
+  const singleFaceStageCost = useGenerationCreditCost(
+    "feature",
+    "mainline.scene_single_face_to_sog",
+    { surface: "supertale" },
+  );
+  const panoStageCost = useGenerationCreditCost(
+    "feature",
+    "mainline.scene_pano_to_sog",
+    { surface: "supertale" },
+  );
   const sceneReferenceCostDisplay =
     sceneReferenceCost.data?.data.display ??
     (sceneReferenceCost.error instanceof BillingRuleNotConfiguredError
@@ -644,6 +654,34 @@ function SceneAssetCardController({
     (panoCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : undefined);
+  const singleFaceStageRuleMissing =
+    singleFaceStageCost.error instanceof BillingRuleNotConfiguredError;
+  const panoStageRuleMissing =
+    panoStageCost.error instanceof BillingRuleNotConfiguredError;
+  const singleFaceStageCostDisplay =
+    singleFaceStageCost.data?.data.display ??
+    (singleFaceStageRuleMissing
+      ? t("common.billingRuleNotConfiguredShort")
+      : undefined);
+  const panoStageCostDisplay =
+    panoStageCost.data?.data.display ??
+    (panoStageRuleMissing
+      ? t("common.billingRuleNotConfiguredShort")
+      : undefined);
+  const singleFaceStageDisabledReason = singleFaceStageCost.data?.data.display
+    ? undefined
+    : singleFaceStageRuleMissing
+      ? t("common.billingRuleNotConfigured")
+      : singleFaceStageCost.isPending
+        ? t("assets.scenes.stage.costLoading")
+        : t("assets.scenes.stage.costUnavailable");
+  const panoStageDisabledReason = panoStageCost.data?.data.display
+    ? undefined
+    : panoStageRuleMissing
+      ? t("common.billingRuleNotConfigured")
+      : panoStageCost.isPending
+        ? t("assets.scenes.stage.costLoading")
+        : t("assets.scenes.stage.costUnavailable");
   const generateStagePly = useGenerateScene3gsPlyAsync(project, scene.name);
   const saveDirectorWorld = useSaveSceneDirectorWorld(project, scene.name);
   const clearDirectorWorld = useClearSceneDirectorWorld(project, scene.name);
@@ -966,6 +1004,12 @@ function SceneAssetCardController({
         reversePromotion={sceneReferenceCost.data?.data.promotion}
         panoCost={panoCostDisplay}
         panoPromotion={panoCost.data?.data.promotion}
+        singleFaceStageCost={singleFaceStageCostDisplay}
+        singleFaceStagePromotion={singleFaceStageCost.data?.data.promotion}
+        singleFaceStageDisabledReason={singleFaceStageDisabledReason}
+        panoStageCost={panoStageCostDisplay}
+        panoStagePromotion={panoStageCost.data?.data.promotion}
+        panoStageDisabledReason={panoStageDisabledReason}
         onEdit={onEdit}
         onDelete={onDelete}
         onUploadMaster={() => masterInputRef.current?.click()}

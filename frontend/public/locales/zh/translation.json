@@ -1474,6 +1474,13 @@
         "masterToPly": "正面→导演世界",
         "reverseToPly": "背面→导演世界",
         "panoToPly": "360→导演世界",
+        "singleFaceFeature": "场景单面转 SOG",
+        "panoFeature": "场景全景转 SOG",
+        "confirmTitle": "确认启动转换",
+        "confirmDescription": "{{feature}}，本次预计消耗 {{cost}} 积分。确认后将立即启动任务。",
+        "confirmAction": "确认并启动",
+        "costLoading": "正在获取当前组织价格",
+        "costUnavailable": "暂时无法获取价格，请稍后重试",
         "openWorld": "打开导演世界",
         "worldNotReady": "导演世界（片场未就绪）"
       },
