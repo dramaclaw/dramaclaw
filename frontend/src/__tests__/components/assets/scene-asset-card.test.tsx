@@ -60,8 +60,7 @@ beforeAll(async () => {
                 singleFaceFeature: "场景单面转 SOG",
                 panoFeature: "场景全景转 SOG",
                 confirmTitle: "确认启动转换",
-                confirmDescription:
-                  "{{feature}}，本次预计消耗 {{cost}} 积分。确认后将立即启动任务。",
+                confirmDescription: "{{feature}}，确认后将立即启动任务。",
                 confirmAction: "确认并启动",
                 openWorld: "打开导演世界",
                 worldNotReady: "导演世界（片场未就绪）",
@@ -203,15 +202,17 @@ describe("SceneAssetCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "master→导演世界" }));
     expect(handlers.onGenerateStagePly).not.toHaveBeenCalled();
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
-      "场景单面转 SOG，本次预计消耗 6 积分",
+      "场景单面转 SOG，确认后将立即启动任务。",
     );
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("6");
     fireEvent.click(screen.getByRole("button", { name: "确认并启动" }));
     expect(handlers.onGenerateStagePly).toHaveBeenCalledWith("master");
 
     fireEvent.click(screen.getByRole("button", { name: "360→导演世界" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
-      "场景全景转 SOG，本次预计消耗 8 积分",
+      "场景全景转 SOG，确认后将立即启动任务。",
     );
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("8");
     fireEvent.click(screen.getByRole("button", { name: "确认并启动" }));
     expect(handlers.onGenerateStagePly).toHaveBeenCalledWith("pano");
   });

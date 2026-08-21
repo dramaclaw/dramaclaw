@@ -1477,7 +1477,7 @@
         "singleFaceFeature": "Scene single-face to SOG",
         "panoFeature": "Scene panorama to SOG",
         "confirmTitle": "Confirm conversion",
-        "confirmDescription": "{{feature}} is estimated to use {{cost}} credits. Confirm to start the task.",
+        "confirmDescription": "{{feature}} will start immediately after confirmation.",
         "confirmAction": "Confirm and start",
         "costLoading": "Loading the current organization price",
         "costUnavailable": "Price is temporarily unavailable. Try again later.",

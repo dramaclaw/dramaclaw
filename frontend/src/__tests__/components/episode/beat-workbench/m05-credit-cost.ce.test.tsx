@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import i18next from "i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,6 +63,11 @@ beforeAll(async () => {
                 masterToPly: "master→导演世界",
                 reverseToPly: "reverse→导演世界",
                 panoToPly: "360→导演世界",
+                singleFaceFeature: "场景单面转 SOG",
+                panoFeature: "场景全景转 SOG",
+                confirmTitle: "确认启动转换",
+                confirmDescription: "{{feature}}，确认后将立即启动任务。",
+                confirmAction: "确认并启动",
                 openWorld: "打开导演世界",
                 worldNotReady: "导演世界（片场未就绪）",
               },
@@ -130,6 +135,25 @@ describe("M05 CE generation credit cost gating", () => {
     expect(screen.queryByText("12 credits")).not.toBeInTheDocument();
     expect(screen.queryByText("6 credits")).not.toBeInTheDocument();
     expect(screen.queryByText("8 credits")).not.toBeInTheDocument();
+  });
+
+  it("keeps Director World confirmation copy free of credit prices in CE runtime", () => {
+    renderSceneAssetCard({
+      name: "皇宫大殿",
+      scene_type: "interior",
+      environment_prompt: "金色宫灯、朱红立柱、纵深空间",
+      description: "",
+      aliases: [],
+      notes: "",
+      master_url: "/static/u/p/assets/scenes/hall/master.png",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "master→导演世界" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveTextContent("场景单面转 SOG，确认后将立即启动任务。");
+    expect(dialog).not.toHaveTextContent("6 credits");
+    expect(dialog).not.toHaveTextContent("积分");
   });
 
   it("routes every named M05 cost display through CreditCostInline", () => {

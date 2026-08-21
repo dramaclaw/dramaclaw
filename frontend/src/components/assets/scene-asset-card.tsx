@@ -646,7 +646,6 @@ export function SceneAssetCard({
             <AlertDialogDescription>
               {t("assets.scenes.stage.confirmDescription", {
                 feature: pendingStageFeature,
-                cost: pendingStageCost,
               })}
             </AlertDialogDescription>
           </AlertDialogHeader>
