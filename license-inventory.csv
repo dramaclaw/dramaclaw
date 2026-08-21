@@ -86,6 +86,8 @@ docs/en/guides/troubleshooting.md,Elastic-2.0,2026 SuperTale contributors,REUSE.
 docs/en/license.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/en/reference/environment-variables.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/releasing.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/superpowers/plans/2026-08-21-ee-config-ce-provisioner-isolation.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/superpowers/specs/2026-08-21-ee-config-ce-provisioner-isolation-design.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/test-governance/ee-split-migrated-tests.tsv,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/zh/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/zh/concepts/architecture.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
