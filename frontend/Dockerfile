@@ -24,17 +24,26 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN pnpm build
+RUN pnpm build && pnpm build:org-brand-proxy
 
 # Stage 2: serve via nginx + reverse-proxy /api /static to the backend Service.
 FROM nginx:1.27-alpine AS runtime
 
+RUN apk add --no-cache nodejs
+
 # Defaults overridable per environment via Helm values -> Deployment env.
 ENV BACKEND_HOST=novelvideo-ui-staging \
     BACKEND_PORT=8780 \
+    ORG_BRAND_ASSET_ORIGIN=https://novelvideo-assets-chengdu.oss-cn-chengdu.aliyuncs.com \
     NGINX_ENVSUBST_FILTER="^(BACKEND_HOST|BACKEND_PORT)$"
 
 COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/docker-dist/org-brand-proxy-server.mjs /opt/dramaclaw/org-brand-proxy-server.mjs
 COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY docker/start.sh /opt/dramaclaw/start.sh
+
+RUN chmod 755 /opt/dramaclaw/start.sh
 
 EXPOSE 80
+
+CMD ["/opt/dramaclaw/start.sh"]

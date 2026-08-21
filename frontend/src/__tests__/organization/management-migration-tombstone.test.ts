@@ -69,8 +69,10 @@ const retainedBoundaryFiles = [
 const managementSymbol =
   /\b(?:Organization(?:Overview|Members|Invites|GatewayKey)|InviteAcceptance|MemberInput|MemberSearch|InviteSearch|OrgMember|OrgInvite|GatewayKeyStatus|PutGatewayKeyRequest|DeleteGatewayKeyRequest|(?:list|add|patch|create|revoke|accept)Org(?:Member|Members|Invite)|(?:get|put|delete)OrgGatewayKey|useOrg(?:Members|Invites|GatewayKeyStatus|AddOrg|PatchOrg|CreateOrg|RevokeOrg|AcceptOrg)|org(?:Members|Invites|GatewayKey))\b/;
 
-// Any `/api/v1/org…` reference that is not the retained `/org/me` client.
-const forbiddenOrgEndpoint = /\/api\/v1\/org\/(?!me\b|\$\{path\}`)/;
+// Any `/api/v1/org…` reference that is not one of the two retained exact reads.
+// The delimiter after the name matters: `/branding/logo` must remain forbidden.
+const forbiddenOrgEndpoint =
+  /\/api\/v1\/org\/(?!(?:me|branding)(?:["'`?#)]|$)|\$\{path\}`)/;
 
 describe("organization administration migration tombstone", () => {
   it("removes organization management and invitation files", () => {
@@ -91,10 +93,13 @@ describe("organization administration migration tombstone", () => {
     expect(findings, findings.join("\n")).toEqual([]);
   });
 
-  it("exposes only the strict cookie-backed /org/me client", () => {
+  it("exposes only the strict cookie-backed organization reads", () => {
     const forbidden = scanProduction(forbiddenOrgEndpoint, "forbidden organization endpoint");
     const orgQueries = source("src/lib/queries/org.ts");
+    const brandingQueries = source("src/lib/queries/org-branding.ts");
     const apiCalls = orgQueries.match(/\bapi\.(?:get|post|put|patch|delete)\(/g) ?? [];
+    const brandingApiCalls =
+      brandingQueries.match(/\bapi\.(?:get|post|put|patch|delete)\(/g) ?? [];
     const exportedNames = [...orgQueries.matchAll(
       /^export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_$]+)/gm,
     )].map((match) => match[1]).sort();
@@ -106,6 +111,12 @@ describe("organization administration migration tombstone", () => {
     expect(orgQueries).toContain('api.get(orgUrl("me"))');
     expect(orgQueries).toContain('function orgUrl(path: "me")');
     expect(exportedNames).toEqual(["OrgApiError", "getOrgMe", "useOrgMe"]);
+    // Branding is decorative and read-only. Pin both retry layers here so this
+    // narrow exception cannot grow into a management client or noisy fallback.
+    expect(brandingApiCalls).toEqual(["api.get("]);
+    expect(brandingQueries).toContain('new URL("/api/v1/org/branding"');
+    expect(brandingQueries).toContain("api.get(url, { retry: 0 })");
+    expect(brandingQueries).toContain("retry: false");
   });
 
   it("keeps manage_invites as a wire-only field, never UI authority", () => {
@@ -186,10 +197,19 @@ describe("organization administration migration tombstone", () => {
     const allowedCeBoundary = new Set(["src/routes/_app/access-unavailable.tsx"]);
     const findings = sourceFiles().flatMap((path) => {
       if (!source(path).includes("isCeRuntime") || allowedCeBoundary.has(path)) return [];
-      return matchingLines(
+      const matches = matchingLines(
         path,
         /(?:organization|invite|OrgMember|OrgInvite|GatewayKey)/,
         "CE-gated organization management",
+      );
+      // The Header may read the active organization's name only to label the
+      // decorative co-brand link; keep every other management-shaped match.
+      return matches.filter(
+        (line) => !(
+          path === "src/components/layout/header.tsx" &&
+          line.includes("orgBranding.data") &&
+          line.includes("organization?.name")
+        ),
       );
     });
 

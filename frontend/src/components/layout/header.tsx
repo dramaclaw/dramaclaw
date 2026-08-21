@@ -25,6 +25,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { CreditBalanceBadge } from "@/components/layout/credit-balance-badge";
+import { BrandLockup } from "@/components/layout/brand-lockup";
 import { NotificationDrawer } from "@/components/notifications/notification-drawer";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import {
@@ -37,6 +38,7 @@ import { useAppStore } from "@/stores/app-store";
 import { authRequired, isCeRuntime } from "@/lib/runtime-config";
 import { resetUserSessionState } from "@/lib/reset-region-state";
 import { useModelGatewayConfig } from "@/lib/queries/model-gateway";
+import { useOrgBranding } from "@/lib/queries/org-branding";
 import { useReleaseNotifications } from "@/lib/queries/release-notifications";
 import {
   markUpgradeSeen,
@@ -60,6 +62,7 @@ export function Header() {
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [accountPanelVisible, setAccountPanelVisible] = useState(false);
   const [settingsWarningBubbleDismissed, setSettingsWarningBubbleDismissed] = useState(false);
+  const [failedBrandLogoUrl, setFailedBrandLogoUrl] = useState<string | null>(null);
   const [accountPanelPosition, setAccountPanelPosition] = useState<{ top: number; right: number }>({
     top: 56,
     right: 16,
@@ -87,6 +90,14 @@ export function Header() {
   const setLanguage = useAppStore((s) => s.setLanguage);
   const showLogout = authRequired();
   const ceRuntime = isCeRuntime();
+  const orgBranding = useOrgBranding(!ceRuntime && Boolean(username));
+  const brandLogoUrl = orgBranding.data?.branding?.logo_url ?? null;
+  const brandName = brandLogoUrl && failedBrandLogoUrl !== brandLogoUrl
+    ? orgBranding.data?.organization?.name ?? null
+    : null;
+  const homeLinkLabel = brandName
+    ? `${t("app.logoHomeTooltip")} — ${brandName}`
+    : t("app.logoHomeTooltip");
   const displayName = username ?? "User";
   const avatarInitial = displayName.slice(0, 1).toUpperCase();
   const activeLanguage = (i18n.resolvedLanguage ?? i18n.language).startsWith("zh")
@@ -222,16 +233,17 @@ export function Header() {
                 render={
                   <Link
                     to="/"
-                    aria-label={t("app.logoHomeTooltip")}
+                    aria-label={homeLinkLabel}
                     className="flex min-w-0 shrink-0 items-center"
                   />
                 }
               >
-                <img
-                  src="/brand/dramaclaw-wordmark.png"
-                  alt=""
-                  aria-hidden="true"
-                  className="h-[22.7px] w-auto max-w-[113px] object-contain"
+                <BrandLockup
+                  value={orgBranding.data}
+                  onOrganizationBrandError={setFailedBrandLogoUrl}
+                  onOrganizationBrandLoad={(logoUrl) => {
+                    setFailedBrandLogoUrl((failedUrl) => failedUrl === logoUrl ? null : failedUrl);
+                  }}
                 />
               </TooltipTrigger>
               <TooltipContent

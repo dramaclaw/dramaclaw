@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cloneElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Header } from "@/components/layout/header";
@@ -9,6 +10,14 @@ import { Header } from "@/components/layout/header";
 const runtimeState = vi.hoisted(() => ({ authRequired: true, isCe: false }));
 const authState = vi.hoisted(() => ({ username: "local", logout: vi.fn() }));
 const resetUserSessionStateMock = vi.hoisted(() => vi.fn());
+const brandingState = vi.hoisted(() => ({
+  enabled: null as boolean | null,
+  data: undefined as undefined | {
+    schema_version: 1;
+    organization: { org_id: string; name: string };
+    branding: { logo_url: string; updated_at: string };
+  },
+}));
 
 vi.mock("@/lib/reset-region-state", () => ({
   resetUserSessionState: resetUserSessionStateMock,
@@ -21,6 +30,13 @@ vi.mock("@/lib/runtime-config", () => ({
 
 vi.mock("@/lib/queries/model-gateway", () => ({
   useModelGatewayConfig: () => ({ data: undefined }),
+}));
+
+vi.mock("@/lib/queries/org-branding", () => ({
+  useOrgBranding: (enabled: boolean) => {
+    brandingState.enabled = enabled;
+    return { data: brandingState.data };
+  },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -84,7 +100,11 @@ vi.mock("@/components/ui/button", () => ({
 vi.mock("@/components/ui/tooltip", () => ({
   TooltipProvider: ({ children }: React.PropsWithChildren) => <>{children}</>,
   Tooltip: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  TooltipTrigger: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  TooltipTrigger: ({
+    children,
+    render,
+  }: React.PropsWithChildren<{ render?: React.ReactElement }>) =>
+    render ? cloneElement(render, {}, children) : <>{children}</>,
   TooltipContent: ({ children }: React.PropsWithChildren) => <>{children}</>,
 }));
 
@@ -113,9 +133,66 @@ function renderHeader() {
 describe("Header runtime gating", () => {
   beforeEach(() => {
     runtimeState.authRequired = true;
+    runtimeState.isCe = false;
     authState.username = "local";
     authState.logout.mockReset();
     resetUserSessionStateMock.mockReset();
+    brandingState.enabled = null;
+    brandingState.data = undefined;
+  });
+
+  it("reads branding only for an authenticated EE session and renders it in the home link", () => {
+    brandingState.data = {
+      schema_version: 1,
+      organization: { org_id: "org-1", name: "Claymore" },
+      branding: {
+        logo_url: "/assets/org-brand/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png",
+        updated_at: "2026-08-21T10:00:00Z",
+      },
+    };
+
+    renderHeader();
+
+    expect(brandingState.enabled).toBe(true);
+    expect(screen.getByRole("link", { name: "Home — Claymore" })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Claymore" })).not.toBeInTheDocument();
+
+    fireEvent.error(screen.getByTestId("organization-brand").querySelector("img")!);
+    expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Home — Claymore" })).not.toBeInTheDocument();
+  });
+
+  it("restores the organization name when the same Logo URL is removed and loads again", () => {
+    const value = {
+      schema_version: 1 as const,
+      organization: { org_id: "org-1", name: "Claymore" },
+      branding: {
+        logo_url: "/assets/org-brand/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png",
+        updated_at: "2026-08-21T10:00:00Z",
+      },
+    };
+    brandingState.data = value;
+    const view = renderHeader();
+    fireEvent.error(screen.getByTestId("organization-brand").querySelector("img")!);
+    expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
+
+    brandingState.data = undefined;
+    view.rerender(
+      <QueryClientProvider client={new QueryClient()}><Header /></QueryClientProvider>,
+    );
+    brandingState.data = value;
+    view.rerender(
+      <QueryClientProvider client={new QueryClient()}><Header /></QueryClientProvider>,
+    );
+    fireEvent.load(screen.getByTestId("organization-brand").querySelector("img")!);
+
+    expect(screen.getByRole("link", { name: "Home — Claymore" })).toBeInTheDocument();
+  });
+
+  it("disables branding in CE", () => {
+    runtimeState.isCe = true;
+    renderHeader();
+    expect(brandingState.enabled).toBe(false);
   });
 
   it("renders logout in the account panel when runtime requires auth", async () => {
