@@ -176,11 +176,11 @@ import {
   readStyleNodeSyncState,
   writeStyleNodeSyncState,
 } from '@/features/canvas/application/styleNodeSync';
-import { joinUpstreamText } from '@/features/canvas/application/graphContentResolver';
 import {
-  useUpstreamContents,
-  useUpstreamNodes,
-} from '@/features/canvas/application/useUpstreamGraph';
+  extractUpstreamContent,
+  joinUpstreamText,
+} from '@/features/canvas/application/graphContentResolver';
+import { useUpstreamNodes } from '@/features/canvas/application/useUpstreamGraph';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import {
   PromptMentionEditor,
@@ -524,7 +524,14 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     { isLoading: styleTemplatesLoading, hasError: styleTemplatesError !== null },
   );
 
-  const upstreamContents = useUpstreamContents(id);
+  // Subscribe to the upstream graph once. Calling useUpstreamContents here and
+  // useUpstreamNodes below created two independent Zustand selectors, so every
+  // canvas-store update walked the full nodes/edges arrays twice per image node.
+  const upstreamNodes = useUpstreamNodes(id);
+  const upstreamContents = useMemo(
+    () => upstreamNodes.map(extractUpstreamContent),
+    [upstreamNodes],
+  );
   // ImageGen 上游只消费「文本 + 图片」，视频/音频内容被丢弃 ——
   // 即便 upload 节点带了视频 URL，也不进 OpsPanel 也不进 reference_urls。
   const upstreamImageContents = useMemo(() => {
@@ -590,7 +597,6 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     () => collectCandidateBindingsForNode(connectedEdges, id).map((binding) => binding.role),
     [connectedEdges, id],
   );
-  const upstreamNodes = useUpstreamNodes(id);
   // 节点被连线（存在入边）后：隐藏「试试」CTA，只在节点中间显示一个图标（对齐 libtv）。
   // 风格节点不算 —— 它是本节点自己的选择在画布上的投影，不是「用户接了个上游」，
   // 选个风格就把空节点的 CTA 收掉会很莫名。

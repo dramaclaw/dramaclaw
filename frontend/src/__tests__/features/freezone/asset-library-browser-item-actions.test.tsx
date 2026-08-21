@@ -62,6 +62,16 @@ const VOICE_ONLY = {
   audio_url: "/static/admin/58/freezone/_uploads/voice.mp3",
 };
 
+const VIDEO_ONLY = {
+  id: "item-3",
+  name: "分镜预览",
+  media: "video",
+  source: "upload",
+  category: "other",
+  folder: "other",
+  video_url: "/static/admin/58/freezone/_uploads/preview.mp4",
+};
+
 function renderBrowser(onSendToCanvas?: (entry: unknown) => void) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -112,6 +122,16 @@ describe("AssetLibraryBrowser item actions", () => {
     const folder = await screen.findByLabelText("文件夹 音效");
 
     expect(folder.querySelector("img")).toBeNull();
+  });
+
+  it("does not preload metadata for every video in an opened folder", async () => {
+    fetchFreezoneVideoCharacterLibrary.mockResolvedValue([VIDEO_ONLY]);
+    renderBrowser(() => {});
+    await openFolder("待分类资产");
+
+    const video = document.querySelector("video");
+    expect(video).toBeTruthy();
+    expect(video?.getAttribute("preload")).toBe("none");
   });
 
   it("offers the four actions on a locally uploaded asset", async () => {

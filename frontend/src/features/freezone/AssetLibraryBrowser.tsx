@@ -261,7 +261,7 @@ export function AssetLibraryBrowser({
                     className="h-full w-full object-cover"
                     muted
                     playsInline
-                    preload="metadata"
+                    preload="none"
                   />
                   {/* 视频没有 poster 时是一片黑，补个角标让它和图片区分开 */}
                   <span className="pointer-events-none absolute left-0.5 top-0.5 rounded bg-black/55 p-0.5 text-white/90">
