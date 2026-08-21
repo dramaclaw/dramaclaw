@@ -114,6 +114,13 @@ def test_linux_wrapper_uses_current_codex_sandbox_cli(monkeypatch, tmp_path):
         "novelvideo.security.sandbox_wrap.shutil.which",
         lambda _name: str(sandbox_binary),
     )
+    # This test pins the wrapped argv shape, not the host's sandbox capability;
+    # treat the sandbox as usable so the functional probe doesn't route to the
+    # fallback (the probe itself is covered by test_sandbox_linux_probe.py).
+    monkeypatch.setattr(
+        "novelvideo.security.sandbox_wrap._sandbox_can_run",
+        lambda _binary: True,
+    )
 
     wrapped = _wrap_linux(
         ["hermes", "run"],

@@ -18,6 +18,8 @@ import logging
 import os
 import platform
 import shutil
+import subprocess
+import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -109,12 +111,17 @@ def wrap_command(cmd: list[str], spec: SandboxSpec) -> list[str]:
     return _fallback_or_raise(cmd, f"no sandbox backend on {system}")
 
 
-def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
-    binary = shutil.which("codex-linux-sandbox") or "/usr/local/bin/codex-linux-sandbox"
-    if not Path(binary).exists():
-        return _fallback_or_raise(cmd, "codex-linux-sandbox not found on PATH")
+# One-time result of the "can this host actually create a sandbox?" probe,
+# keyed by binary path. Populated lazily by _sandbox_can_run; tests clear it.
+_SANDBOX_PROBE_CACHE: dict[str, bool] = {}
 
-    hermes_home = spec.resolved_hermes_home()
+
+def _linux_sandbox_argv(binary: str, hermes_home: Path, cmd: list[str]) -> list[str]:
+    """Build the codex-linux-sandbox argv wrapping ``cmd`` (no capability check).
+
+    Shared by the real wrap path and the functional probe so both exercise the
+    identical invocation shape (restricted fs + network).
+    """
     permission_profile = {
         "type": "managed",
         "file_system": {
@@ -140,9 +147,53 @@ def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
         str(hermes_home),
         "--permission-profile",
         json.dumps(permission_profile, separators=(",", ":")),
+        "--",
     ]
-    args.append("--")
     return args + cmd
+
+
+def _sandbox_can_run(binary: str) -> bool:
+    """Functional probe: can ``binary`` actually create a sandbox on this host?
+
+    A present binary is not sufficient — codex-linux-sandbox's default pipeline
+    execs bubblewrap, which needs unprivileged user namespaces; on a kernel that
+    lacks them the binary exists but every sandboxed exec fails at runtime, which
+    the missing-binary check never catches. Runs ``/bin/true`` inside a throwaway
+    sandbox once and caches the verdict (keyed by binary path)."""
+    cached = _SANDBOX_PROBE_CACHE.get(binary)
+    if cached is not None:
+        return cached
+    ok = False
+    try:
+        with tempfile.TemporaryDirectory(prefix="hermes-sbx-probe-") as tmp:
+            home = Path(tmp) / ".hermes"
+            home.mkdir(parents=True)
+            probe = _linux_sandbox_argv(binary, home, ["/bin/true"])
+            proc = subprocess.run(probe, capture_output=True, timeout=30)
+            ok = proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    _SANDBOX_PROBE_CACHE[binary] = ok
+    return ok
+
+
+def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
+    binary = shutil.which("codex-linux-sandbox") or "/usr/local/bin/codex-linux-sandbox"
+    if not Path(binary).exists():
+        return _fallback_or_raise(cmd, "codex-linux-sandbox not found on PATH")
+    if not _sandbox_can_run(binary):
+        # Binary present but the sandbox cannot be created (host kernel most
+        # likely lacks unprivileged user namespaces for bubblewrap). Route
+        # through the same fail-close/degrade decision as a missing binary:
+        # EE/production raises, CE single-tenant with the opt-in runs raw.
+        return _fallback_or_raise(
+            cmd,
+            "codex-linux-sandbox present but sandbox creation failed "
+            "(host kernel likely lacks unprivileged user namespaces)",
+        )
+
+    hermes_home = spec.resolved_hermes_home()
+    return _linux_sandbox_argv(binary, hermes_home, cmd)
 
 
 def _wrap_macos(cmd: list[str], spec: SandboxSpec) -> list[str]:

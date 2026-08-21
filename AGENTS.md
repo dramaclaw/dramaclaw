@@ -34,22 +34,43 @@ Do not commit provider keys, signed URLs, credentials, or generated secrets. Con
 ## Hermes Sandbox & the CE Unsandboxed Fallback
 
 Hermes workers run inside an OS sandbox (`sandbox_wrap.py`): macOS uses the system
-`sandbox-exec`; Linux uses `codex-linux-sandbox` (bubblewrap-based). When no sandbox
-binary is available the wrapper **fails closed** — it refuses to run rather than drop
-isolation silently.
+`sandbox-exec`; Linux uses `codex-linux-sandbox`, whose default pipeline execs
+**bubblewrap** (`bwrap`) — Landlock is only its `--use-legacy-landlock` fallback, which
+we do not use. When the sandbox cannot be used the wrapper **fails closed** on
+EE/production and **degrades with a loud warning** on single-tenant CE (see below).
 
-CE deployment posture (interim, tracked in **#346**):
+How the Linux sandbox ships (the P1① half of **#346**, now done):
 
-- The vendored Linux binaries ship in the image (`Dockerfile` does `COPY deploy ./deploy`,
-  so they land under `deploy/sandbox/linux-{amd64,arm64}/codex-linux-sandbox`) but are **not
-  yet installed onto `PATH`**, and bubblewrap is not installed. Until #346 wires the per-arch
-  install + a controlled model/API egress, the Linux sandbox cannot actually run.
-- Because CE is **single-tenant self-hosted**, the four CE compose files therefore set
-  `SUPERTALE_ALLOW_UNSANDBOXED=1` explicitly. This restores the pre-hardening default
-  (run Hermes unsandboxed on Linux) instead of crashing the first worker on `docker compose up`.
-- This opt-in is **local/CE only**. When `SUPERTALE_ENV=production` or `ST_CONTROL_PLANE_DSN`
-  is non-empty (EE / multi-tenant), `_fallback_or_raise` still refuses to run unsandboxed —
-  the flag cannot override it. `tests/test_compose_ce_unsandboxed_gate.py` pins both halves.
+- The vendored binaries live at `deploy/sandbox/linux-{amd64,arm64}/codex-linux-sandbox`
+  and reach the image via `COPY deploy ./deploy`. The `Dockerfile` then **installs the one
+  matching `TARGETARCH` onto `/usr/local/bin`** (where `_wrap_linux` looks it up) and
+  installs the `bubblewrap` package. A build-time `--help` smoke proves the ELF loads.
+- `codex-linux-sandbox` still needs a **host kernel with unprivileged user namespaces** at
+  runtime for `bwrap`; installing the binary does not create that capability.
 
-Do not remove the compose opt-in without either installing a working Linux sandbox (#346) or
-accepting that the default CE image will fail closed on Linux.
+Two enforcement layers, both driven by the same `_fallback_or_raise` decision:
+
+- **Runtime, per worker** — `_wrap_linux` runs a one-time cached probe (`_sandbox_can_run`:
+  `/bin/true` inside a throwaway sandbox). A *missing binary* **or** a *present-but-unusable*
+  sandbox (kernel lacks user namespaces) both route through `_fallback_or_raise`.
+- **Boot, per container** — `deploy/docker-entrypoint.sh` runs the startup gate
+  `deploy/hermes_sandbox_selfcheck.py` before exec-ing the API. Its exit code decides whether
+  the container boots at all.
+
+The decision in both places:
+
+- **EE / production** (`SUPERTALE_ENV=production` or `ST_CONTROL_PLANE_DSN` non-empty) — sandbox
+  unusable ⇒ **refuse** (raise at runtime; entrypoint refuses to boot). The `SUPERTALE_ALLOW_UNSANDBOXED`
+  flag cannot override this.
+- **Single-tenant CE** (DSN empty) with `SUPERTALE_ALLOW_UNSANDBOXED=1` — sandbox unusable ⇒
+  **degrade**: loud warning, run Hermes unsandboxed rather than lock a self-hoster out on an old
+  kernel. Single-tenant has no cross-user data-isolation risk. The four CE compose files set this
+  flag as that **degrade valve** (not a blanket "always unsandboxed" — when the sandbox works, it
+  is used). CE without the flag still refuses.
+
+`tests/test_compose_ce_unsandboxed_gate.py` and `tests/test_sandbox_linux_probe.py` pin both the
+compose contract and the runtime/boot behavior. Do not remove the compose opt-in unless you accept
+that CE will fail closed on kernels without unprivileged user namespaces.
+
+Still open in **#346** (P1②): the Linux `network: restricted` profile vs. Hermes's required
+egress (project API + model gateway) — the macOS and Linux profiles are not yet consistent.
