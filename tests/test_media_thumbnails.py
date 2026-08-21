@@ -29,12 +29,10 @@ def _drain_prewarm() -> None:
 
 
 def _warm(project_dir: Path, source: Path, variant: str) -> None:
-    """Build a variant the way the read path does: queue it, then wait.
+    """Build a variant through the same background queue production uses.
 
     The request path never builds one itself, so every test below that is about
-    *serving* a variant has to warm it first. Going through prewarm rather than
-    calling ensure_thumbnail keeps the test honest about how a variant comes to
-    exist in production.
+    *serving* a variant has to warm it first.
     """
 
     assert thumbnails.prewarm(project_dir, source, [variant]) == 1
@@ -92,7 +90,10 @@ def test_builds_webp_within_the_variant_budget(tmp_path):
     dest = thumbnails.ensure_thumbnail(tmp_path, source, "thumb")
 
     assert dest is not None
-    assert dest == tmp_path / "_thumbs" / "thumb" / "freezone" / "_outputs" / "big.png.webp"
+    assert (
+        dest
+        == tmp_path / "_thumbs" / "thumb" / "freezone" / "_outputs" / "big.png.webp"
+    )
     with Image.open(dest) as im:
         assert im.format == "WEBP"
         assert max(im.size) <= thumbnails.VARIANTS["thumb"]
@@ -107,6 +108,19 @@ def test_variant_is_stamped_with_the_source_mtime(tmp_path):
 
     assert dest is not None
     assert dest.stat().st_mtime_ns == source.stat().st_mtime_ns
+
+
+def test_variant_stays_current_when_fuse_replaces_the_requested_mtime(tmp_path):
+    source = _write_png(tmp_path / "a.png")
+    dest = thumbnails.ensure_thumbnail(tmp_path, source, "thumb")
+    assert dest is not None
+
+    # ossfs/geesefs may report success for os.utime but keep the later object
+    # upload time after rename/copy instead of the timestamp requested above.
+    later = source.stat().st_mtime_ns + 10**9
+    os.utime(dest, ns=(later, later))
+
+    assert thumbnails.fresh_thumbnail(tmp_path, source, "thumb") == dest
 
 
 def test_second_call_reuses_the_cached_variant(tmp_path, monkeypatch):
@@ -301,7 +315,9 @@ def test_undecodable_source_falls_back_instead_of_raising(tmp_path):
 def test_failed_render_leaves_no_temp_file_behind(tmp_path, monkeypatch):
     source = _write_png(tmp_path / "a.png")
     monkeypatch.setattr(
-        thumbnails.os, "replace", lambda *_a, **_k: (_ for _ in ()).throw(OSError("nope"))
+        thumbnails.os,
+        "replace",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("nope")),
     )
 
     assert thumbnails.ensure_thumbnail(tmp_path, source, "thumb") is None
@@ -390,6 +406,34 @@ def test_media_route_serves_the_variant_when_asked(monkeypatch, tmp_path):
     assert thumb.headers["content-type"] == "image/webp"
     assert len(thumb.content) < len(full.content)
     assert len(full.content) == source.stat().st_size
+
+
+def test_media_route_serves_a_variant_when_fuse_discards_its_stamp(
+    monkeypatch, tmp_path
+):
+    """Exercise the production ossfs/geesefs timestamp behavior end to end."""
+
+    real_replace = os.replace
+
+    def replace_and_use_upload_time(src, dest):
+        real_replace(src, dest)
+        if thumbnails.THUMB_ROOT in Path(dest).parts:
+            os.utime(dest, ns=(_MTIME_AFTER, _MTIME_AFTER))
+
+    monkeypatch.setattr(thumbnails.os, "replace", replace_and_use_upload_time)
+
+    source = _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    _warm(tmp_path, source, "thumb")
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.get(
+        "/projects/demo/media/freezone/_outputs/big.png",
+        params={"st_thumb": "thumb"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/webp"
+    assert len(response.content) < source.stat().st_size
 
 
 def test_media_route_ignores_an_unknown_variant(monkeypatch, tmp_path):
@@ -494,53 +538,44 @@ def test_a_regenerated_source_is_revalidated_to_the_new_variant(monkeypatch, tmp
     # revalidated into a 304 — it gets the new bytes.
     assert second.headers["etag"] != first.headers["etag"]
     stale = client.get(
-        url, params={"st_thumb": "thumb"}, headers={"If-None-Match": first.headers["etag"]}
+        url,
+        params={"st_thumb": "thumb"},
+        headers={"If-None-Match": first.headers["etag"]},
     )
     assert stale.status_code == 200
     assert stale.content == second.content
 
 
-def test_a_cold_variant_request_serves_the_original_and_warms_up_behind_it(
+def test_a_cold_variant_request_serves_the_original_without_queuing_work(
     monkeypatch, tmp_path
 ):
-    """The request path must never decode an original.
+    """Reading old history must never schedule CPU-bound thumbnail work.
 
     Serving a request *without* a variant is a 302 to presigned OSS: the
     original never travels through this process. Building on demand trades that
     away for reading and decoding it locally, so the first visit to a cold
     project would pull every full-resolution source over the ossfs mount just to
-    hand back a smaller copy — a worse first visit than the one variants exist
-    to fix. The miss is queued instead, and the response is byte-for-byte what
-    it would have been before variants existed.
+    hand back a smaller copy. The response stays byte-for-byte what it would
+    have been before variants existed and no future render is scheduled.
     """
 
     source = _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
     client = _client(monkeypatch, tmp_path)
     url = "/projects/demo/media/freezone/_outputs/big.png"
 
-    rendered_on: list[str] = []
-    original_render = thumbnails._render
-
-    def record(*args, **kwargs):
-        rendered_on.append(threading.current_thread().name)
-        return original_render(*args, **kwargs)
-
-    monkeypatch.setattr(thumbnails, "_render", record)
+    prewarm_calls: list[Path] = []
+    monkeypatch.setattr(
+        thumbnails,
+        "prewarm",
+        lambda _project_dir, requested, *_args: prewarm_calls.append(requested),
+    )
 
     cold = client.get(url, params={"st_thumb": "thumb"})
 
     assert cold.status_code == 200
     assert cold.content == source.read_bytes()
-
-    _drain_prewarm()
-    warm = client.get(url, params={"st_thumb": "thumb"})
-
-    assert warm.headers["content-type"] == "image/webp"
-    assert len(warm.content) < len(cold.content)
-    # Asserted by thread rather than by "nothing rendered during the request":
-    # a worker can pick the job up while the response is still being written, so
-    # the timing is racy but the thread it runs on never is.
-    assert rendered_on and all(n.startswith("thumb-prewarm") for n in rendered_on)
+    assert prewarm_calls == []
+    assert not (tmp_path / thumbnails.THUMB_ROOT).exists()
 
 
 def test_an_identical_prewarm_job_is_not_queued_twice(tmp_path, monkeypatch):
@@ -653,14 +688,22 @@ def test_prewarm_never_raises_into_its_caller(tmp_path, monkeypatch):
 
 
 def _record(result):
-    return {"id": "freezone_gen:abc", "media_type": "image", "result": result}
+    return {
+        "id": "freezone_gen:abc",
+        "status": "completed",
+        "media_type": "image",
+        "result": result,
+    }
 
 
 def _prewarm_spy(monkeypatch):
-    calls: list[Path] = []
-    monkeypatch.setattr(
-        thumbnails, "prewarm", lambda project_dir, source, *a, **k: (calls.append(source), 1)[1]
-    )
+    calls: list[tuple[Path, tuple[str, ...]]] = []
+
+    def record(_project_dir, source, variants=None):
+        calls.append((source, tuple(variants or ())))
+        return 1
+
+    monkeypatch.setattr(thumbnails, "prewarm", record)
     return calls
 
 
@@ -670,7 +713,7 @@ def test_history_record_prewarms_its_output_image(tmp_path, monkeypatch):
     source = _write_png(tmp_path / "freezone" / "_outputs" / "gen" / "job.png")
     calls = _prewarm_spy(monkeypatch)
 
-    queued = history.prewarm_record_variants(
+    queued = history.prewarm_history_thumbnail(
         tmp_path,
         _record(
             {
@@ -680,30 +723,29 @@ def test_history_record_prewarms_its_output_image(tmp_path, monkeypatch):
         ),
     )
 
-    assert queued == 1  # same URL twice is one job
-    assert calls == [source]
+    assert queued == 1
+    assert calls == [(source, ("thumb",))]
 
 
-def test_history_record_prewarms_images_nested_in_lists(tmp_path, monkeypatch):
+def test_history_record_only_prewarms_the_displayed_output(tmp_path, monkeypatch):
     from novelvideo.freezone import history
 
     for index in range(3):
         _write_png(tmp_path / "freezone" / "_outputs" / f"{index}.png")
     calls = _prewarm_spy(monkeypatch)
 
-    history.prewarm_record_variants(
+    history.prewarm_history_thumbnail(
         tmp_path,
         _record(
             {
-                "images": [
-                    {"url": f"/static/projects/p/freezone/_outputs/{i}.png"}
-                    for i in range(3)
-                ]
+                "output_url": "/static/projects/p/freezone/_outputs/0.png",
+                "image_url": "/static/projects/p/freezone/_outputs/1.png",
+                "images": [{"url": "/static/projects/p/freezone/_outputs/2.png"}],
             }
         ),
     )
 
-    assert sorted(path.name for path in calls) == ["0.png", "1.png", "2.png"]
+    assert calls == [(tmp_path / "freezone" / "_outputs" / "0.png", ("thumb",))]
 
 
 def test_history_record_ignores_non_image_payload_strings(tmp_path, monkeypatch):
@@ -711,7 +753,7 @@ def test_history_record_ignores_non_image_payload_strings(tmp_path, monkeypatch)
 
     calls = _prewarm_spy(monkeypatch)
 
-    history.prewarm_record_variants(
+    history.prewarm_history_thumbnail(
         tmp_path,
         _record(
             {
@@ -726,18 +768,34 @@ def test_history_record_ignores_non_image_payload_strings(tmp_path, monkeypatch)
     assert calls == []
 
 
+def test_unfinished_history_record_never_queues_a_thumbnail(tmp_path, monkeypatch):
+    from novelvideo.freezone import history
+
+    calls = _prewarm_spy(monkeypatch)
+
+    queued = history.prewarm_history_thumbnail(
+        tmp_path,
+        {
+            **_record({"output_url": "/static/projects/p/freezone/_outputs/a.png"}),
+            "status": "failed",
+        },
+    )
+
+    assert queued == 0
+    assert calls == []
+
+
 def test_history_record_ignores_urls_escaping_the_project(tmp_path, monkeypatch):
     from novelvideo.freezone import history
 
     calls = _prewarm_spy(monkeypatch)
 
-    history.prewarm_record_variants(
+    history.prewarm_history_thumbnail(
         tmp_path,
         _record(
             {
-                "a": "https://evil.example.com/x.png",
-                "b": "/static/projects/p/../../../../etc/passwd.png",
-                "c": "//evil.example.com/y.png",
+                "output_url": "https://evil.example.com/x.png",
+                "image_url": "/static/projects/p/../../../../etc/passwd.png",
             }
         ),
     )
@@ -745,24 +803,53 @@ def test_history_record_ignores_urls_escaping_the_project(tmp_path, monkeypatch)
     assert calls == []
 
 
-def test_history_record_caps_how_many_images_it_queues(tmp_path, monkeypatch):
+def test_history_record_skips_an_invalid_candidate_url(tmp_path, monkeypatch):
+    from novelvideo.freezone import history
+
+    source = _write_png(tmp_path / "freezone" / "_outputs" / "valid.png")
+    calls = _prewarm_spy(monkeypatch)
+
+    queued = history.prewarm_history_thumbnail(
+        tmp_path,
+        _record(
+            {
+                "output_url": "https://provider.example/result.png",
+                "image_url": "/static/projects/p/freezone/_outputs/valid.png",
+            }
+        ),
+    )
+
+    assert queued == 1
+    assert calls == [(source, ("thumb",))]
+
+
+def test_non_image_history_never_prewarms_a_thumbnail(tmp_path, monkeypatch):
     from novelvideo.freezone import history
 
     calls = _prewarm_spy(monkeypatch)
 
-    history.prewarm_record_variants(
+    queued = history.prewarm_history_thumbnail(
         tmp_path,
-        _record({f"u{i}": f"/static/projects/p/img_{i}.png" for i in range(40)}),
+        {
+            **_record(
+                {
+                    "output_url": "/static/projects/p/freezone/_outputs/movie.mp4",
+                    "preview_image_url": "/static/projects/p/freezone/_outputs/poster.png",
+                }
+            ),
+            "media_type": "video",
+        },
     )
 
-    assert len(calls) <= history._PREWARM_MAX_URLS
+    assert queued == 0
+    assert calls == []
 
 
 @pytest.mark.parametrize("result", [None, "", [], "not-a-dict", 7])
 def test_history_record_without_a_result_dict_queues_nothing(tmp_path, result):
     from novelvideo.freezone import history
 
-    assert history.prewarm_record_variants(tmp_path, _record(result)) == 0
+    assert history.prewarm_history_thumbnail(tmp_path, _record(result)) == 0
 
 
 def test_appending_a_history_record_prewarms_its_media(tmp_path, monkeypatch):
@@ -775,10 +862,12 @@ def test_appending_a_history_record_prewarms_its_media(tmp_path, monkeypatch):
         project_dir=tmp_path,
         canvas_id="repro",
         node_id="node-1",
-        record=_record({"output_url": "/static/projects/p/freezone/_outputs/gen/job.png"}),
+        record=_record(
+            {"output_url": "/static/projects/p/freezone/_outputs/gen/job.png"}
+        ),
     )
 
-    assert calls == [source]
+    assert calls == [(source, ("thumb",))]
 
 
 def test_a_broken_prewarm_never_breaks_the_history_write(tmp_path, monkeypatch):
@@ -795,7 +884,9 @@ def test_a_broken_prewarm_never_breaks_the_history_write(tmp_path, monkeypatch):
         project_dir=tmp_path,
         canvas_id="repro",
         node_id="node-1",
-        record=_record({"output_url": "/static/projects/p/freezone/_outputs/gen/job.png"}),
+        record=_record(
+            {"output_url": "/static/projects/p/freezone/_outputs/gen/job.png"}
+        ),
     )
 
     assert written is not None

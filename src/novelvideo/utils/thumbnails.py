@@ -13,17 +13,18 @@ The cache is addressed purely by source path::
 
 so nothing about it leaks into a data schema. History records and canvas
 JSON keep storing the original URL; callers opt in per render by asking for
-a variant, and old data benefits without any backfill.
-Freshness is exact rather than heuristic: a generated variant is stamped
-with its source's mtime, so ``thumb.mtime == source.mtime`` means current
-and a regenerated source invalidates automatically without leaving stale
-files behind.
+a variant. Only newly appended history records proactively create one.
+Freshness uses write ordering: a generated variant is stamped with its source's
+mtime when the filesystem preserves ``os.utime``; object-store FUSE mounts may
+instead give it the later upload time. In both cases ``thumb.mtime >=
+source.mtime`` means current, while rewriting the source moves its mtime past
+the existing thumbnail and invalidates it.
 
 Building and serving are deliberately separate. ``fresh_thumbnail`` is what a
-request calls and it never builds; ``ensure_thumbnail`` builds and only ever
-runs in the background. A variant a request wants but does not have is queued
-and the original goes out instead, so a cold project costs exactly what it did
-before variants existed and warms itself up as it is used.
+request calls and it never builds or queues work; ``ensure_thumbnail`` builds
+and only ever runs in the background after a new history record is written (or
+from the explicit offline backfill tool). A missing variant falls back to the
+original without making an old project warm itself on read.
 
 Every failure path returns ``None`` so the caller falls back to the
 original. A slow node beats a broken one.
@@ -93,9 +94,8 @@ _MAX_SOURCE_PIXELS = 40_000_000
 _WEBP_QUALITY = 80
 _WEBP_METHOD = 4
 
-# Bound concurrent decodes so a burst of cold thumbnails (a history strip is
-# nine at once) cannot monopolise the machine. This is a process-wide ceiling
-# across every caller — HTTP, prewarm workers, offline backfill.
+# Bound concurrent decodes. This is a process-wide ceiling shared by the
+# serving process's single prewarm worker and the explicit offline backfill.
 DEFAULT_RENDER_CONCURRENCY = 4
 _render_slots = threading.Semaphore(DEFAULT_RENDER_CONCURRENCY)
 
@@ -207,10 +207,9 @@ def fresh_thumbnail(
     source over the ossfs mount just to hand back a smaller copy of it. That is
     a worse first visit than the one variants were introduced to fix.
 
-    So a miss falls back to the redirect and queues the build for next time: a
-    cold project behaves exactly as it did before variants existed, and warms
-    itself up as it is used. Variants can only ever be an improvement, which is
-    also what makes the offline backfill purely optional.
+    So a miss only falls back to the redirect. New history records prewarm their
+    single display thumbnail at write time; old data remains untouched unless
+    an operator deliberately runs the offline backfill tool.
 
     Cheap enough to call on the event loop — two stats, fewer than the path
     resolution the caller already did to get here.
@@ -230,7 +229,12 @@ def fresh_thumbnail(
 
 def _is_current(dest: Path, source_mtime_ns: int) -> bool:
     try:
-        return dest.stat().st_mtime_ns == source_mtime_ns
+        # ossfs/geesefs may silently discard the source timestamp requested by
+        # os.utime and keep the variant's later upload time instead. A variant
+        # is written only after its source exists, so either equality (local
+        # disk) or a later destination timestamp (FUSE) is current. Rewriting
+        # the source moves it past the existing variant and makes this false.
+        return dest.stat().st_mtime_ns >= source_mtime_ns
     except OSError:
         return False
 
@@ -293,9 +297,9 @@ def _render(
     tmp = dest.with_name(f"{dest.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         out.save(tmp, "WEBP", quality=_WEBP_QUALITY, method=_WEBP_METHOD)
-        # Stamp the source's mtime onto the variant; that equality *is* the
-        # freshness check, and it closes the race where the source is
-        # rewritten while we render.
+        # Preserve exact source freshness where supported. Object-store FUSE
+        # mounts may ignore this and retain their later upload timestamp;
+        # _is_current deliberately accepts either representation.
         os.utime(tmp, ns=(source_mtime_ns, source_mtime_ns))
         os.replace(tmp, dest)
     except Exception:
@@ -306,30 +310,24 @@ def _render(
 
 # --- background prewarm ---------------------------------------------------
 #
-# Two feeders. A generation runner knows a file's final bytes the moment it
-# writes them, and that is the cheapest moment to build its variants: the source
-# is still in the page cache and nobody is waiting on the result. The read path
-# feeds it too, because ``fresh_thumbnail`` deliberately refuses to build on a
-# miss -- the request is served from OSS and the build happens here instead.
+# A generation runner knows a file's final bytes when it writes the history
+# record, and that is the cheapest moment to build its thumbnail: the source is
+# still in the page cache and nobody is waiting on the result. Reads never feed
+# this queue.
 #
 # Nothing may ever pay for this, least of all a request handler, hence a bounded
 # queue that drops rather than blocks when saturated. A drop only means the next
 # visit is cold again.
 
-# These are the only renderers in a serving process now that the read path never
-# builds, and they share the process-wide decode budget regardless, so matching
-# it exactly is what keeps that budget reachable.
-_PREWARM_WORKERS = DEFAULT_RENDER_CONCURRENCY
+# One serving-process worker keeps thumbnail work from competing with normal
+# generation. Offline backfill controls its own concurrency separately.
+_PREWARM_WORKERS = 1
 _PREWARM_QUEUE_SIZE = 512
 
 _PrewarmJob = tuple[Path, Path, str]
 
-# The read path queues on every miss, so one paint of a cold canvas offers the
-# same job once per visible node -- and again on the next paint, since nothing
-# is current yet. Without this, a single canvas load would pack the queue with
-# copies of a handful of jobs and drop the genuinely distinct ones. Keyed on the
-# strings rather than resolved paths so queueing stays syscall-free; a dedup
-# missed that way only costs one redundant job.
+# Duplicate writes/retries can still offer the same job while it is in flight.
+# Keyed on strings rather than resolved paths so queueing stays syscall-free.
 _PrewarmKey = tuple[str, str, str]
 _prewarm_inflight: set[_PrewarmKey] = set()
 _prewarm_inflight_lock = threading.Lock()

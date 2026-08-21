@@ -10,7 +10,7 @@ logger = logging.getLogger("novelvideo.api.files")
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import ProjectResolution, resolve_project_scope
-from novelvideo.utils.thumbnails import fresh_thumbnail, prewarm
+from novelvideo.utils.thumbnails import fresh_thumbnail
 
 router = APIRouter()
 
@@ -76,19 +76,16 @@ def _maybe_thumbnail_response(
     write-back readiness probe cost more than the transfer, and a freshly
     written variant is not in OSS yet anyway.
 
-    A cold one is a different trade entirely, so it is never built here — the
-    miss is queued and this returns ``None``, leaving the caller to hand back
-    the same OSS redirect it would have without variants at all. See
-    ``fresh_thumbnail`` for why building on the request path is the wrong side
-    of that trade.
+    A cold one is a different trade entirely, so it is never built or queued
+    here. This returns ``None`` and leaves the caller to hand back the same OSS
+    redirect it would have without variants at all. Thumbnail creation belongs
+    to the generation-history write path; opening an old or cold canvas must
+    never start image decoding work in the API process.
     """
     if not variant:
         return None
     thumb = fresh_thumbnail(project_dir, requested, variant)
     if thumb is None:
-        # Only the variant that was actually asked for: whoever asked will ask
-        # again, and a node that never requests `thumb` should not pay for one.
-        prewarm(project_dir, requested, [variant])
         return None
     cache_control = _variant_cache_control(request)
     try:
