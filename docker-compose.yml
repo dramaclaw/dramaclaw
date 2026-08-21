@@ -49,6 +49,12 @@ services:
       XDG_CACHE_HOME: /data/cache
       DRAMACLAW_CHAT_BACKEND: hermes
       HERMES_CLI_PATH: /usr/local/bin/hermes
+      # CE 单租户自托管:Linux 镜像暂未把 deploy/sandbox 下的 codex-linux-sandbox
+      # 装到 PATH(留待 #346),此处显式声明 CE 沿用无沙箱运行——保留本 PR 之前的
+      # 默认行为,避免 fail-close 让默认 compose 首次起 Hermes worker 即崩。
+      # 仅对本地/CE 生效:production 或 ST_CONTROL_PLANE_DSN 非空时,
+      # sandbox_wrap._fallback_or_raise 仍严格拒绝裸跑,兜底不会扩散到多租户。
+      SUPERTALE_ALLOW_UNSANDBOXED: "1"
       # 默认「官方 DC key」路径:模型网关地址/密钥来自 .env(NEWAPI_BASE_URL / NEWAPI_API_KEY),
       # 或启动后到网页「设置 → 模型配置 → 官方渠道」粘贴 DC key 保存即用。
       # 不在此处硬写 NEWAPI_BASE_URL —— 留给 .env / 网页设置驱动,避免覆盖用户配置。

@@ -47,6 +47,12 @@ services:
       XDG_CACHE_HOME: /data/cache
       DRAMACLAW_CHAT_BACKEND: hermes
       HERMES_CLI_PATH: /usr/local/bin/hermes
+      # CE 单租户自托管:Linux 镜像暂未把 deploy/sandbox 下的 codex-linux-sandbox
+      # 装到 PATH(留待 #346),此处显式声明 CE 沿用无沙箱运行——保留本 PR 之前的
+      # 默认行为,避免 fail-close 让默认 compose 首次起 Hermes worker 即崩。
+      # 仅对本地/CE 生效:production 或 ST_CONTROL_PLANE_DSN 非空时,
+      # sandbox_wrap._fallback_or_raise 仍严格拒绝裸跑,兜底不会扩散到多租户。
+      SUPERTALE_ALLOW_UNSANDBOXED: "1"
       # 内置 newapi 网关：后端服务端调用走容器内网，覆盖 .env 里的外部网关地址，
       # 让整套自包含、开箱即跑。要 BYO 自己的 OpenAI 兼容网关：删掉下面两行，
       # 改在 .env 里填 NEWAPI_BASE_URL / NEWAPI_API_KEY。
