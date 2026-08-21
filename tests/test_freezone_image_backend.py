@@ -5825,6 +5825,15 @@ async def test_skill_run_standalone_frame_from_context_queues_candidate_without_
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from novelvideo.ports.registry import register_port
+    from novelvideo.task_backend.projection import build_projection
+
+    class InstalledProjector:
+        async def build(self, store, config, *, task_type):
+            assert store is None
+            return await build_projection(store, config, task_type=task_type)
+
+    register_port("task_projection", InstalledProjector())
     project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
     _write_canvas_with_node(
         tmp_path,
@@ -5898,6 +5907,11 @@ async def test_skill_run_standalone_frame_from_context_queues_candidate_without_
     assert captured["task_type"] == "mainline_frame_from_context"
     assert captured["episode"] == 0
     assert "beat_num" not in captured
+    assert captured["payload"]["projection"] == {
+        "projection_version": 1,
+        "task_type": "mainline_frame_from_context",
+        "fields": {},
+    }
     config = captured["payload"]["config"]
     assert config["standalone_beat_context"] is True
     assert config["selected_panel_indices"] == [0]

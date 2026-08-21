@@ -1289,7 +1289,16 @@ async def _task_projection_payload(
     projector = _installed_task_projector()
     if projector is None:
         return {}
-    store = await make_sqlite_store_for_context(ctx)
+    # A projected task with an explicitly empty requirement set still needs a
+    # projection envelope off the home node: it certifies that the enqueue
+    # path audited the task as independent of project state.  Do not open the
+    # beat SQLite store merely to produce that empty envelope; standalone
+    # canvas tasks intentionally have no database dependency.
+    from novelvideo.task_backend.projection import PROJECTION_REQUIREMENTS
+
+    store = None
+    if PROJECTION_REQUIREMENTS.get(task_type) != frozenset():
+        store = await make_sqlite_store_for_context(ctx)
     projection = await _build_task_projection(
         projector,
         store=store,
@@ -1804,6 +1813,13 @@ async def _start_or_enqueue_standalone_frame_from_context_job(
         **(task_display or {}),
     }
     if ctx is not None:
+        projection_payload = await _task_projection_payload(
+            ctx=ctx,
+            username=username,
+            project_name=project_name,
+            episode=0,
+            task_type=task_type,
+        )
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             product_surface="freezone",
@@ -1820,6 +1836,7 @@ async def _start_or_enqueue_standalone_frame_from_context_job(
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
                 **display_payload,
+                **projection_payload,
             },
         )
         return _project_job_response(
