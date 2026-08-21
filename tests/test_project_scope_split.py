@@ -10,7 +10,9 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from novelvideo.api.auth import require_scope
+from types import SimpleNamespace
+
+from novelvideo.api.auth import _enforce_agent_request_boundary, require_scope
 
 LIFECYCLE_SCOPE = "projects:lifecycle"
 PURGE_SCOPE = "projects:purge"
@@ -66,6 +68,74 @@ async def test_lifecycle_scope_does_not_imply_purge() -> None:
 async def test_explicitly_scoped_agent_is_allowed() -> None:
     user = _agent_user("projects:read", PURGE_SCOPE)
     assert await _run(PURGE_SCOPE, user) is user
+
+
+def _request(method: str, path: str) -> SimpleNamespace:
+    # _enforce_agent_request_boundary only touches request.method and
+    # request.url.path — a namespace is enough and keeps the test hermetic.
+    return SimpleNamespace(method=method, url=SimpleNamespace(path=path))
+
+
+def test_central_guard_admits_purge_only_agent_on_unsafe_write() -> None:
+    """Regression for the AGENT_WRITE_SCOPES gap.
+
+    ``_enforce_agent_request_boundary`` runs inside ``get_api_user`` *before* the
+    route's own ``require_scope`` check. It rejects any agent unsafe write whose
+    scopes are disjoint from ``AGENT_WRITE_SCOPES``. When that set only listed
+    ``projects:write``/``tasks:submit``, a token holding exactly the scope the
+    purge route requires — ``[projects:read, projects:purge]`` — was 403'd here
+    before its route ever ran. The per-route ``require_scope`` tests stayed green
+    and never saw this, which is why the bug shipped. This asserts the central
+    guard now lets the correctly-scoped token through.
+    """
+    user = {
+        "credential_kind": "agent_session",
+        "username": "alice",
+        "scopes": ["projects:read", PURGE_SCOPE],
+        "current_scope_kind": "project",
+        "current_project_id": "demo",
+    }
+    # Must not raise: the guard admits it, the route-level scope check enforces
+    # the exact scope afterwards.
+    _enforce_agent_request_boundary(_request("DELETE", "/api/v1/projects/demo/purge"), user)
+
+
+def test_central_guard_admits_lifecycle_only_agent_on_unsafe_write() -> None:
+    user = {
+        "credential_kind": "agent_session",
+        "username": "alice",
+        "scopes": ["projects:read", LIFECYCLE_SCOPE],
+        "current_scope_kind": "project",
+        "current_project_id": "demo",
+    }
+    _enforce_agent_request_boundary(
+        _request("POST", "/api/v1/projects/demo/archive"), user
+    )
+
+
+def test_central_guard_still_rejects_agent_without_any_write_scope() -> None:
+    # A read-only agent token must still be blocked by the backstop on writes.
+    user = {
+        "credential_kind": "agent_session",
+        "username": "alice",
+        "scopes": ["projects:read"],
+        "current_scope_kind": "project",
+        "current_project_id": "demo",
+    }
+    with pytest.raises(HTTPException) as excinfo:
+        _enforce_agent_request_boundary(
+            _request("DELETE", "/api/v1/projects/demo/purge"), user
+        )
+    assert excinfo.value.status_code == 403
+
+
+def test_agent_write_scopes_covers_every_split_route_scope() -> None:
+    # If a future split adds a new precise write scope to a route but forgets the
+    # central backstop, that route becomes unreachable for its own token. Pin the
+    # invariant: every scope the split routes require is admitted by the backstop.
+    from novelvideo.api.auth import AGENT_WRITE_SCOPES
+
+    assert {LIFECYCLE_SCOPE, PURGE_SCOPE} <= AGENT_WRITE_SCOPES
 
 
 def test_default_agent_scope_lists_exclude_lifecycle_and_purge() -> None:

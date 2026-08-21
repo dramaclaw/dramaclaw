@@ -39,6 +39,12 @@ services:
       NOVELVIDEO_OUTPUT_DIR: /data/output
       NOVELVIDEO_STATE_DIR: /data/state
       NOVELVIDEO_RUNTIME_DIR: /data/runtime
+      # read_only root fs + non-root user: ML libs (HF/torch) otherwise try to
+      # write $HOME/.cache and crash. Redirect their caches into the writable
+      # ce-data volume so weights persist across restarts instead of re-download.
+      HF_HOME: /data/cache/huggingface
+      TORCH_HOME: /data/cache/torch
+      XDG_CACHE_HOME: /data/cache
       DRAMACLAW_CHAT_BACKEND: hermes
       HERMES_CLI_PATH: /usr/local/bin/hermes
       # 内置 newapi 网关：后端服务端调用走容器内网，覆盖 .env 里的外部网关地址，
