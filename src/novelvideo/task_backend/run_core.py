@@ -553,8 +553,12 @@ def _project_task_failure_for_exception(
 ) -> tuple[str, dict[str, Any], bool]:
     from novelvideo.identity_prerequisites import IdentityPlanningPrerequisiteError
     from novelvideo.novel_source import NovelImportRequiredError
+    from novelvideo.scene_prerequisites import ScenePlanningPrerequisiteError
 
     if isinstance(exc, IdentityPlanningPrerequisiteError):
+        return str(exc), {"error_code": exc.error_code}, True
+
+    if isinstance(exc, ScenePlanningPrerequisiteError):
         return str(exc), {"error_code": exc.error_code}, True
 
     if isinstance(exc, NovelImportRequiredError):

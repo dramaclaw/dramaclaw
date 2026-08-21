@@ -96,6 +96,9 @@ function ScriptTabContent() {
   const characterBuildActivity = useTaskActivity(TASK_TYPES.BUILD_CHARACTERS, {
     episode: 0,
   });
+  const sceneBuildActivity = useTaskActivity(TASK_TYPES.BUILD_SCENES, {
+    episode: 0,
+  });
   const updateEpisode = useUpdateEpisode(project);
   const planIdentities = usePlanIdentities(project);
   const planIdentitiesCost = useGenerationCreditCost("feature", "mainline.identity_planner");
@@ -154,6 +157,11 @@ function ScriptTabContent() {
       : characters.length === 0
         ? t("episode.script.identityCharactersRequired")
         : null;
+  const sceneDisabledReason = sceneBuildActivity.isActive
+    ? t("episode.script.sceneCatalogBuilding")
+    : sceneBuildActivity.isRestoring
+      ? t("episode.script.sceneCatalogLoading")
+      : null;
   const identityIds = episodeData?.identity_ids ?? [];
   const identityDefaultMap = episodeData?.identity_default_map ?? {};
   const rawContent = episodeData?.raw_content ?? "";
@@ -718,6 +726,7 @@ function ScriptTabContent() {
                 identityPending={identityPlanning}
                 identityDisabledReason={identityDisabledReason}
                 scenePending={planScenes.isPending || sceneTask.started}
+                sceneDisabledReason={sceneDisabledReason}
                 propPending={planProps.isPending || propTask.started}
                 sceneCostDisplay={planScenesCostDisplay}
                 scenePromotion={planScenesCost.data?.data.promotion}

@@ -90,6 +90,7 @@ interface EpisodeAssetPlanningProps {
   identityPending?: boolean;
   identityDisabledReason?: string | null;
   scenePending?: boolean;
+  sceneDisabledReason?: string | null;
   propPending?: boolean;
   labels: EpisodeAssetPlanningLabels;
   onPlanIdentities: () => void;
@@ -153,6 +154,7 @@ export function EpisodeAssetPlanning({
   identityPending = false,
   identityDisabledReason,
   scenePending = false,
+  sceneDisabledReason,
   propPending = false,
   labels,
   onPlanIdentities,
@@ -236,6 +238,7 @@ export function EpisodeAssetPlanning({
           costDisplay={sceneCostDisplay}
           promotion={scenePromotion}
           pending={scenePending}
+          disabledReason={sceneDisabledReason}
           onPlan={onPlanScenes}
         />
       )}
@@ -291,6 +294,7 @@ function AssetPlanningRow({
   costDisplay,
   promotion,
   pending,
+  disabledReason,
   onPlan,
   renderItem,
   className,
@@ -303,6 +307,7 @@ function AssetPlanningRow({
   costDisplay?: string | null;
   promotion?: CreditPromotionDisplay | null;
   pending: boolean;
+  disabledReason?: string | null;
   onPlan: () => void;
   renderItem?: (item: string) => ReactNode;
   className?: string;
@@ -324,7 +329,8 @@ function AssetPlanningRow({
           variant="ghost"
           size="sm"
           onClick={onPlan}
-          disabled={pending}
+          disabled={pending || Boolean(disabledReason)}
+          title={disabledReason || actionLabel}
           className={ASSET_PLAN_ACTION_BUTTON_CLASS}
         >
           {pending && <Loader2 className="animate-spin" />}
@@ -349,7 +355,7 @@ function AssetPlanningRow({
           )
         ) : (
           <span className="text-xs italic text-muted-foreground/60">
-            {emptyLabel}
+            {disabledReason || emptyLabel}
           </span>
         )}
       </div>

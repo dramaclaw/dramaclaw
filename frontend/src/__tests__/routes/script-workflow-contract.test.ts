@@ -66,6 +66,8 @@ describe("script workflow canonical contract", () => {
     expect(route).toContain("useTaskActivity(TASK_TYPES.BUILD_CHARACTERS");
     expect(route).toContain("identityDisabledReason={identityDisabledReason}");
     expect(route).toContain("planDisabledReason={identityDisabledReason}");
+    expect(route).toContain("useTaskActivity(TASK_TYPES.BUILD_SCENES");
+    expect(route).toContain("sceneDisabledReason={sceneDisabledReason}");
     expect(route).toContain("getScriptReviewFeedback");
     expect(route).toContain("showCompleteToast: false");
     expect(route).toContain("generateScript");

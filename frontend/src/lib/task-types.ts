@@ -13,6 +13,7 @@
 export const TASK_TYPES = {
   // Project-level
   BUILD_CHARACTERS: "build_characters",
+  BUILD_SCENES: "build_scenes",
   INGEST_FAST: "ingest_fast",
   BUILD_EPISODES: "build_episodes",
   CHARACTER_PORTRAIT: "character_portrait",

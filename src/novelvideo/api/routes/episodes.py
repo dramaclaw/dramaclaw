@@ -33,6 +33,10 @@ from novelvideo.knowledge_pipeline import (
 )
 from novelvideo.ports import get_task_backend, get_usage_meter
 from novelvideo.project_config import load_project_config_file_from_state_dir
+from novelvideo.scene_prerequisites import (
+    SceneCatalogBuildingError,
+    scene_prerequisite_response,
+)
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
 
@@ -196,6 +200,12 @@ async def _enqueue_episode_asset_planner(
             asset_kind=asset_kind,
             user=user,
         )
+    if asset_kind == "scene":
+        build_task = get_task_manager().get_task_for_project(
+            resolved.ctx, "build_scenes", 0
+        )
+        if build_task is not None and build_task.status in ACTIVE_PROJECT_TASK_STATUSES:
+            return scene_prerequisite_response(SceneCatalogBuildingError())
     task_scope = _episode_asset_task_scope(asset_kind, episode_num)
     queued = await get_task_backend().enqueue_project_task(
         resolved.ctx,

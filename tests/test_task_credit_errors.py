@@ -13,6 +13,11 @@ from novelvideo.novel_source import (
     NOVEL_IMPORT_REQUIRED_MESSAGE,
     NovelImportRequiredError,
 )
+from novelvideo.scene_prerequisites import (
+    SCENE_CATALOG_BUILDING_CODE,
+    SCENE_CATALOG_BUILDING_MESSAGE,
+    SceneCatalogBuildingError,
+)
 from novelvideo.shared.billing_errors import (
     INSUFFICIENT_CREDITS_CODE,
     INSUFFICIENT_CREDITS_MESSAGE,
@@ -87,6 +92,18 @@ def test_task_failure_maps_identity_character_prerequisite(monkeypatch) -> None:
     assert handled is True
     assert error == IDENTITY_CHARACTERS_REQUIRED_MESSAGE
     assert metadata == {"error_code": IDENTITY_CHARACTERS_REQUIRED_CODE}
+
+
+def test_task_failure_maps_scene_catalog_prerequisite(monkeypatch) -> None:
+    celery_tasks = _import_celery_tasks(monkeypatch)
+
+    error, metadata, handled = celery_tasks._project_task_failure_for_exception(
+        SceneCatalogBuildingError()
+    )
+
+    assert handled is True
+    assert error == SCENE_CATALOG_BUILDING_MESSAGE
+    assert metadata == {"error_code": SCENE_CATALOG_BUILDING_CODE}
 
 
 def test_celery_task_failure_maps_output_moderation(monkeypatch) -> None:

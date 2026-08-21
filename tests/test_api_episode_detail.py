@@ -214,6 +214,11 @@ def _patch_celery_episode_asset_planner(
         raise AssertionError("episode asset planning must enqueue a Celery task")
     monkeypatch.setattr(module, "resolve_project_scope", resolve_project_scope)
     monkeypatch.setattr(module, "get_task_backend", lambda: SimpleNamespace(enqueue_project_task=enqueue_project_task))
+    monkeypatch.setattr(
+        module,
+        "get_task_manager",
+        lambda: SimpleNamespace(get_task_for_project=lambda *_args, **_kwargs: None),
+    )
     monkeypatch.setattr(module, "make_cognee_store_for_context", fail_if_sync_store_is_used)
     monkeypatch.setattr(
         module,
@@ -627,6 +632,41 @@ async def test_plan_episode_scenes_enqueues_celery_task(monkeypatch):
             "payload": {"episode": 4, "asset_kind": "scene"},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_plan_episode_scenes_rejects_active_scene_build_before_enqueue(
+    monkeypatch,
+):
+    from novelvideo.api.routes import episodes
+    from novelvideo.scene_prerequisites import (
+        SCENE_CATALOG_BUILDING_CODE,
+        SCENE_CATALOG_BUILDING_MESSAGE,
+    )
+
+    calls = _patch_celery_episode_asset_planner(monkeypatch, episodes)
+    monkeypatch.setattr(
+        episodes,
+        "get_task_manager",
+        lambda: SimpleNamespace(
+            get_task_for_project=lambda *_args, **_kwargs: SimpleNamespace(
+                status="running"
+            )
+        ),
+    )
+
+    response = await episodes.plan_episode_scenes(
+        project="proj_123",
+        episode_num=4,
+        user={"username": "admin"},
+    )
+
+    assert response == {
+        "ok": False,
+        "code": SCENE_CATALOG_BUILDING_CODE,
+        "error": SCENE_CATALOG_BUILDING_MESSAGE,
+    }
+    assert calls == []
 
 
 @pytest.mark.asyncio
