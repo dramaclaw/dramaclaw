@@ -3756,9 +3756,27 @@ def _codex_session_state_path(
     return _user_state_dir(username) / "codex_sessions.json"
 
 
-def _codex_scope_key(project: str) -> str:
+def _codex_scope_key(
+    project: str,
+    *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+) -> str:
     normalized_project = str(project or "").strip()
-    return f"project:{normalized_project}" if normalized_project else "home"
+    profile = str(agent_profile or "main").strip() or "main"
+    if profile == "main":
+        # Preserve the original key so existing Director threads keep resuming.
+        return f"project:{normalized_project}" if normalized_project else "home"
+    scoped_canvas = str(canvas_id or "").strip() or None
+    if not profile.startswith("freezone"):
+        scoped_canvas = None
+    scope = (
+        profile,
+        "project" if normalized_project else "home",
+        normalized_project or None,
+        scoped_canvas,
+    )
+    return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
 
 
 def _load_codex_session_state(
@@ -3804,11 +3822,19 @@ def _get_codex_thread_id(
     username: str,
     project: str,
     *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
 ) -> str | None:
     return _load_codex_session_state(
         username, project, project_state_dir=project_state_dir
-    ).get(_codex_scope_key(project))
+    ).get(
+        _codex_scope_key(
+            project,
+            agent_profile=agent_profile,
+            canvas_id=canvas_id,
+        )
+    )
 
 
 def _set_codex_thread_id(
@@ -3816,6 +3842,8 @@ def _set_codex_thread_id(
     project: str,
     thread_id: str,
     *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
 ) -> None:
     normalized = str(thread_id or "").strip()
@@ -3830,7 +3858,13 @@ def _set_codex_thread_id(
         payload = _load_codex_session_state(
             username, project, project_state_dir=project_state_dir
         )
-        payload[_codex_scope_key(project)] = normalized
+        payload[
+            _codex_scope_key(
+                project,
+                agent_profile=agent_profile,
+                canvas_id=canvas_id,
+            )
+        ] = normalized
         _save_codex_session_state(
             username,
             project,
@@ -4413,6 +4447,8 @@ def _build_codex_thread(
     egress_context=None,
     authorization=None,
     control_capability: str | None = None,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
 ):
     workspace, _codex_home = ensure_user_codex_workspace(
@@ -4449,7 +4485,11 @@ def _build_codex_thread(
         turn_metadata=turn_metadata,
     )
     thread_id = _get_codex_thread_id(
-        username, project, project_state_dir=project_state_dir
+        username,
+        project,
+        agent_profile=agent_profile,
+        canvas_id=canvas_id,
+        project_state_dir=project_state_dir,
     )
     return client.thread_resume(thread_id) if thread_id else client.thread_start()
 
@@ -5473,6 +5513,7 @@ async def _stream_assistant_reply_codex(
         if tool_mode == "freezone_canvas"
         else "main"
     )
+    canvas_id = str(getattr(store_scope, "canvas_id", "") or "").strip() or None
     business_turn_id = str(turn_id or "").strip() or uuid.uuid4().hex
     evidence_identity = _evidence_identity(project, store_scope, agent_profile)
     from novelvideo.chat.hermes_sdk import _issue_turn_capability
@@ -5482,7 +5523,12 @@ async def _stream_assistant_reply_codex(
         project_id=evidence_identity["project_id"],
         turn_id=business_turn_id,
     )
-    active_turn_key = (username, project)
+    codex_scope_key = _codex_scope_key(
+        project,
+        agent_profile=agent_profile,
+        canvas_id=canvas_id,
+    )
+    active_turn_key = (username, codex_scope_key)
     active_turn_value: tuple[str, str] | None = None
     try:
         agent_token = await _create_page_agent_session_token(
@@ -5497,6 +5543,8 @@ async def _stream_assistant_reply_codex(
             egress_context=egress_context,
             authorization=authorization,
             control_capability=control_capability,
+            agent_profile=agent_profile,
+            canvas_id=canvas_id,
             project_state_dir=project_state_dir,
         )
     except Exception:
@@ -5521,6 +5569,8 @@ async def _stream_assistant_reply_codex(
                         username,
                         project,
                         codex_thread_id,
+                        agent_profile=agent_profile,
+                        canvas_id=canvas_id,
                         project_state_dir=project_state_dir,
                     )
                 if codex_thread_id and codex_turn_id:
@@ -5556,6 +5606,8 @@ async def _stream_assistant_reply_codex(
                         username,
                         project,
                         codex_thread_id,
+                        agent_profile=agent_profile,
+                        canvas_id=canvas_id,
                         project_state_dir=project_state_dir,
                     )
                 assistant_text = _completion_text_or_existing(

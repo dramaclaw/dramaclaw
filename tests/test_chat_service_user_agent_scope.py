@@ -133,7 +133,14 @@ async def test_hermes_thread_serializes_concurrent_prompt_streams(tmp_path, monk
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
 
-    async def fake_stream_turn(prompt: str, *, current_project=None):  # noqa: ARG001
+    async def fake_stream_turn(
+        prompt: str,
+        *,
+        current_project=None,  # noqa: ARG001
+        trajectory_id=None,  # noqa: ARG001
+        project_id=None,  # noqa: ARG001
+        gateway_api_key=None,  # noqa: ARG001
+    ):
         entered.append(prompt)
         if prompt == "first":
             first_entered.set()
@@ -737,6 +744,166 @@ def test_codex_sessions_are_project_scoped_and_backend_independent(monkeypatch, 
         assert json.loads(project_state_file.read_text(encoding="utf-8")) == {
             f"project:{project}": thread_id,
         }
+
+
+def test_codex_freezone_threads_are_canvas_and_agent_scoped(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+
+    scope = {
+        "agent_profile": "freezone:agent-1",
+        "canvas_id": "canvas-a",
+    }
+    chat_service._set_codex_thread_id(
+        "admin", "project-a", "thread-canvas-a", **scope
+    )
+    chat_service._set_codex_thread_id(
+        "admin",
+        "project-a",
+        "thread-canvas-b",
+        agent_profile="freezone:agent-1",
+        canvas_id="canvas-b",
+    )
+    chat_service._set_codex_thread_id(
+        "admin",
+        "project-a",
+        "thread-agent-2",
+        agent_profile="freezone:agent-2",
+        canvas_id="canvas-a",
+    )
+
+    assert (
+        chat_service._get_codex_thread_id("admin", "project-a", **scope)
+        == "thread-canvas-a"
+    )
+    assert (
+        chat_service._get_codex_thread_id(
+            "admin",
+            "project-a",
+            agent_profile="freezone:agent-1",
+            canvas_id="canvas-b",
+        )
+        == "thread-canvas-b"
+    )
+    assert (
+        chat_service._get_codex_thread_id(
+            "admin",
+            "project-a",
+            agent_profile="freezone:agent-2",
+            canvas_id="canvas-a",
+        )
+        == "thread-agent-2"
+    )
+    assert chat_service._get_codex_thread_id("admin", "project-a") is None
+
+    state_file = (
+        tmp_path
+        / "state"
+        / "admin"
+        / "project-a"
+        / "agents"
+        / "codex"
+        / "sessions.json"
+    )
+    assert json.loads(state_file.read_text(encoding="utf-8")) == {
+        '["freezone:agent-1","project","project-a","canvas-a"]': (
+            "thread-canvas-a"
+        ),
+        '["freezone:agent-1","project","project-a","canvas-b"]': (
+            "thread-canvas-b"
+        ),
+        '["freezone:agent-2","project","project-a","canvas-a"]': (
+            "thread-agent-2"
+        ),
+    }
+
+
+def test_codex_main_thread_key_stays_backward_compatible():
+    assert chat_service._codex_scope_key("project-a") == "project:project-a"
+    assert (
+        chat_service._codex_scope_key("project-a", canvas_id="ignored-canvas")
+        == "project:project-a"
+    )
+    assert chat_service._codex_scope_key("") == "home"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool_mode", "store_scope", "expected_profile", "expected_canvas"),
+    [
+        ("default", None, "main", None),
+        (
+            "freezone_canvas",
+            ChatScope(
+                kind="project",
+                id="project-a",
+                surface="freezone",
+                canvas_id="canvas-a",
+                agent_id="agent-2",
+            ),
+            "freezone:agent-2",
+            "canvas-a",
+        ),
+    ],
+)
+async def test_codex_stream_passes_conversation_scope_to_thread_builder(
+    monkeypatch,
+    tmp_path,
+    tool_mode,
+    store_scope,
+    expected_profile,
+    expected_canvas,
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    captured: dict[str, object] = {}
+
+    async def fake_create_token(*args, **kwargs):  # noqa: ARG001
+        return "agent-token"
+
+    class FakeThread:
+        async def stream(self, prompt):
+            captured["prompt"] = prompt
+            yield SimpleNamespace(
+                type="thread_started",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+            )
+            yield SimpleNamespace(
+                type="complete",
+                thread_id="codex-thread",
+                text="done",
+            )
+
+    def fake_build_thread(*args, **kwargs):
+        captured.update(kwargs)
+        return FakeThread()
+
+    monkeypatch.setattr(
+        chat_service,
+        "_create_page_agent_session_token",
+        fake_create_token,
+    )
+    monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **kwargs: None)
+
+    events = []
+
+    async def collect_event(event):
+        events.append(event)
+
+    await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        "hello",
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode=tool_mode,
+        store_scope=store_scope,
+        turn_id="business-turn",
+    )
+
+    assert captured["agent_profile"] == expected_profile
+    assert captured["canvas_id"] == expected_canvas
+    assert events[-1]["type"] == "done"
 
 
 def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
@@ -2094,6 +2261,7 @@ def test_freezone_canvas_agent_summaries_tie_break_same_millisecond(monkeypatch,
 async def test_freezone_hermes_assistant_message_keeps_turn_id(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -2105,7 +2273,7 @@ async def test_freezone_hermes_assistant_message_keeps_turn_id(monkeypatch, tmp_
     events = []
 
     class FakeThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(type="thread_started", thread_id="thread-a", turn_id="turn-a")
             yield backend_sdk.ChatBackendEvent(type="assistant_delta", text="你好")
             yield backend_sdk.ChatBackendEvent(type="complete", text="")
@@ -2145,6 +2313,7 @@ async def test_freezone_hermes_retries_once_when_cached_session_is_unavailable(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -2156,12 +2325,12 @@ async def test_freezone_hermes_retries_once_when_cached_session_is_unavailable(
     events = []
 
     class StaleThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             raise hermes_sdk.HermesSessionUnavailableError("session stale not found")
             yield  # pragma: no cover
 
     class FreshThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="thread_started",
                 thread_id="fresh-thread",
@@ -2216,6 +2385,7 @@ async def test_freezone_hermes_retries_once_when_prompt_completion_reports_stale
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -2226,7 +2396,7 @@ async def test_freezone_hermes_retries_once_when_prompt_completion_reports_stale
     )
 
     class StaleThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="thread_started",
                 thread_id="stale-thread",
@@ -2238,7 +2408,7 @@ async def test_freezone_hermes_retries_once_when_prompt_completion_reports_stale
             )
 
     class FreshThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="thread_started",
                 thread_id="fresh-thread",
@@ -2286,6 +2456,7 @@ async def test_freezone_hermes_retries_once_when_stream_ends_before_completion(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -2296,7 +2467,7 @@ async def test_freezone_hermes_retries_once_when_stream_ends_before_completion(
     )
 
     class BrokenThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="thread_started",
                 thread_id="broken-thread",
@@ -2304,7 +2475,7 @@ async def test_freezone_hermes_retries_once_when_stream_ends_before_completion(
             )
 
     class FreshThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="thread_started",
                 thread_id="fresh-thread",
@@ -2354,6 +2525,7 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -2366,7 +2538,7 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
     events = []
 
     class GuardedThread:
-        async def stream(self, prompt, *, current_project=None):
+        async def stream(self, prompt, *, current_project=None, **_kwargs):
             prompts.append(prompt)
             yield backend_sdk.ChatBackendEvent(
                 type="complete",
@@ -2380,7 +2552,7 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
             )
 
     class RecoveredThread:
-        async def stream(self, prompt, *, current_project=None):
+        async def stream(self, prompt, *, current_project=None, **_kwargs):
             prompts.append(prompt)
             yield backend_sdk.ChatBackendEvent(type="assistant_delta", text="工作流草稿已创建")
             yield backend_sdk.ChatBackendEvent(type="complete", text="")
@@ -2433,6 +2605,7 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setenv("DRAMACLAW_CHAT_BACKEND", "hermes")
 
     scope = ChatScope(
         kind="project",
@@ -2443,7 +2616,7 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
     )
 
     class GuardedThread:
-        async def stream(self, prompt, *, current_project=None):
+        async def stream(self, prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(
                 type="complete",
                 text="本轮操作已停止：工作流草稿操作重复失败。",
@@ -2516,7 +2689,7 @@ async def test_freezone_hermes_drops_mainline_media_ui_specs(monkeypatch, tmp_pa
     }
 
     class FakeThread:
-        async def stream(self, _prompt, *, current_project=None):
+        async def stream(self, _prompt, *, current_project=None, **_kwargs):
             yield backend_sdk.ChatBackendEvent(type="thread_started", thread_id="thread-a", turn_id="turn-a")
             yield backend_sdk.ChatBackendEvent(
                 type="assistant_delta",
