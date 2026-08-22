@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 
 from novelvideo.api.schemas import IngestStart, ProjectUpdate
-from novelvideo.models import NovelEpisode
 
 pytestmark = pytest.mark.m03
 
@@ -229,10 +228,59 @@ async def test_update_project_rejects_spine_template_change_after_import(
         lambda state_dir, config=None, **kwargs: saved.update(config or {}),
     )
 
-    async def make_imported_store(ctx):
-        return _EpisodeStore([NovelEpisode(number=1, title="第一集")])
+    # Imported means the source text is on disk, not that episodes exist.
+    # Structured ingest writes novel.txt and records a chunk plan but creates
+    # no episodes, so an episode check left the template switchable in between —
+    # and the analysis run, which is keyed on the template, was silently
+    # orphaned by the switch.
+    monkeypatch.setattr(projects, "has_imported_novel", lambda _output_dir: True)
 
-    monkeypatch.setattr(projects, "make_sqlite_store_for_context", make_imported_store)
+    response = await projects.update_project(
+        "demo",
+        ProjectUpdate(spine_template="narrated"),
+        {"username": "alice"},
+    )
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 400
+    assert saved["spine_template"] == "drama"
+
+
+@pytest.mark.asyncio
+async def test_update_project_rejects_the_switch_before_any_episode_exists(
+    monkeypatch, tmp_path
+):
+    """The window the old check left open.
+
+    Structured ingest creates no episodes, so between import and episode
+    planning the type could still be changed. Afterwards the character build
+    finds no analysis run for the new template: it still runs, but with no chunk
+    persistence, no resume, no final artifact and no evidence rows.
+    """
+    from fastapi.responses import JSONResponse
+
+    from novelvideo.api.routes import projects
+
+    saved = {"spine_template": "drama"}
+
+    monkeypatch.setattr(projects, "resolve_project_context", _ctx_resolver(tmp_path))
+    monkeypatch.setattr(projects, "require_project_home_node", lambda *a, **k: None)
+    monkeypatch.setattr(
+        projects,
+        "load_project_config_from_state_dir",
+        lambda state_dir, **_kwargs: {"visual_style": "chinese_period_drama", **saved},
+    )
+    monkeypatch.setattr(
+        projects,
+        "save_project_config_in_state_dir",
+        lambda state_dir, config=None, **kwargs: saved.update(config or {}),
+    )
+
+    async def make_empty_store(ctx):
+        return _EpisodeStore([])
+
+    monkeypatch.setattr(projects, "make_sqlite_store_for_context", make_empty_store)
+    monkeypatch.setattr(projects, "has_imported_novel", lambda _output_dir: True)
 
     response = await projects.update_project(
         "demo",

@@ -29,6 +29,7 @@ from novelvideo.api.schemas import (
 )
 from novelvideo.config import ensure_project_dirs_at_paths
 from novelvideo.knowledge_pipeline import KNOWLEDGE_PIPELINE_KEY, KNOWLEDGE_PIPELINE_STRUCTURED
+from novelvideo.novel_source import has_imported_novel
 from novelvideo.ports import get_project_access, get_project_registry
 from novelvideo.ports.project import ProjectRecord
 from novelvideo.project_config import (
@@ -538,14 +539,15 @@ async def update_project(
     if body.spine_template is not None and body.spine_template != current_config.get(
         "spine_template", "drama"
     ):
-        store = await make_sqlite_store_for_context(ctx)
-        try:
-            imported = bool(store.get_all_episodes())
-        finally:
-            close = getattr(store, "close", None)
-            if close:
-                await close()
-        if imported:
+        # Locked by the imported text, not by episodes. Structured ingest
+        # records a chunk plan and writes novel.txt but creates no episodes, so
+        # an episode check leaves a window open between import and episode
+        # planning. Switching the template inside it silently invalidates the
+        # analysis run — it is keyed on the template, because the same novel
+        # chunked as a screenplay and as narrated prose are different plans —
+        # and the next character build finds none. It still runs, but with no
+        # chunk persistence, no resume, no final artifact and no evidence rows.
+        if has_imported_novel(ctx.output_dir):
             return JSONResponse(
                 status_code=400,
                 content={
