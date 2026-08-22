@@ -615,6 +615,49 @@ async def test_a_failed_chunk_leaves_the_run_partial(structured_store, monkeypat
     assert stored["status"] == "partial"
 
 
+async def test_a_partial_run_never_stores_its_cast_as_the_final_result(
+    structured_store, monkeypatch
+):
+    """The replay guard only checks that nothing is still pending.
+
+    So once the failed chunks succeed on a later attempt, an artifact written by
+    the partial run would be replayed instead of the freshly built cast — and it
+    is missing exactly the characters those chunks were carrying.
+    """
+    from novelvideo import structured_builders
+    from novelvideo.structured_extraction import extract_characters_from_chunks
+    from novelvideo.structured_ingest import ingest_source_text_structured
+
+    store, state_dir = structured_store
+    source = state_dir / "source.txt"
+    source.write_text(NARRATED_MULTI, encoding="utf-8")
+    run = await ingest_source_text_structured(
+        store, str(source), spine_template="narrated"
+    )
+
+    agent = FakeAgent(
+        {
+            "第一章": ChunkCharacterOutput(
+                characters=[_candidate("林默", quotes=["林默回到阔别十年的故乡。"])]
+            )
+        },
+        fail_labels=["第二章"],
+    )
+    real_extract = extract_characters_from_chunks
+
+    async def fake_extract(chunks, **kwargs):
+        kwargs.pop("agent", None)
+        kwargs.setdefault("adjudicate", False)
+        return await real_extract(chunks, agent=agent, **kwargs)
+
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction.extract_characters_from_chunks", fake_extract
+    )
+    await structured_builders.build_characters_structured(store)
+
+    assert await store.get_analysis_artifact(run["run_id"], "characters") == ""
+
+
 def test_an_oversized_chapter_is_split_further():
     """A chapter boundary says where to cut, not how big the piece may be."""
     text = "第一章 归来\n\n" + "林默回到故乡。" * 3000 + "\n\n第二章 旧友\n\n短章节。\n"

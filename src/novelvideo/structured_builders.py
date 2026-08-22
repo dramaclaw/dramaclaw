@@ -169,7 +169,12 @@ async def build_characters_structured(
         return []
     log(f"归一后得到 {len(merged)} 个角色候选")
 
-    if run_id:
+    # A partial run must never store its cast as the run's final result. The
+    # replay guard only checks that no chunk is still pending, so once the
+    # failed chunks succeed on a later attempt, a stale artifact written here
+    # would be replayed instead — publishing a cast that is missing exactly the
+    # characters those chunks were carrying.
+    if run_id and not failures:
         await store.save_analysis_artifact(
             run_id,
             "characters",
