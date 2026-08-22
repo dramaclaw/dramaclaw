@@ -1776,8 +1776,12 @@ class SQLiteStore:
             novel_text = require_imported_novel(self.project_dir)
             log(f"原文加载完成: {len(novel_text)} 字符")
 
-        # 清理剧集内容
-        await self.clear_episode_contents()
+        # Everything below computes; nothing is written until the publish at
+        # the end. This used to clear every episode's raw_content and commit
+        # before it had even detected a chapter, then commit again per delete,
+        # per upsert and per episode body — so a cancelled task or a killed
+        # worker could leave a project with every episode blank, or half its
+        # episodes mapped, or metadata that did not match the text under it.
 
         # P1: 检测章节
         report(0.1, "检测章节结构...")
@@ -1841,25 +1845,33 @@ class SQLiteStore:
                 ep.scene_menu = old.scene_menu
                 ep.prop_menu = old.prop_menu
                 ep.sketch_colors_json = old.sketch_colors_json
+            # The body travels on the row, so the text and the metadata
+            # describing it land in the same write and cannot disagree.
+            ep.raw_content = chapter_contents.get(ep.number, "")
 
-        # 删除不再存在的旧剧集
-        old_numbers = set(self._episodes.keys())
-        removed = old_numbers - new_numbers
-        if removed:
-            await self.delete_episodes_by_numbers(removed)
-            log(f"已删除 {len(removed)} 个旧剧集")
-        self._episodes.clear()
+        removed = set(self._episodes.keys()) - new_numbers
 
-        # P3: 保存新剧集
+        # P3: 单事务发布
         report(0.88, "保存到数据库...")
         log("保存剧集到数据库...")
-        await self.add_episodes(episodes)
+        db = await self._ensure_db()
+        try:
+            if removed:
+                placeholders = ",".join("?" for _ in removed)
+                await db.execute(
+                    f"DELETE FROM episodes WHERE number IN ({placeholders})",
+                    sorted(removed),
+                )
+            await self._upsert_episodes(db, episodes)
+            await db.commit()
+        except BaseException:
+            await asyncio.shield(db.rollback())
+            raise
+        if removed:
+            log(f"已删除 {len(removed)} 个旧剧集")
 
-        # P3.5: 保存章节原文内容
-        for ep_num, content in chapter_contents.items():
-            await self.save_episode_content(ep_num, content)
-
-        # P4: 更新内存缓存
+        # P4: 更新内存缓存，只在写入确实落盘之后
+        self._episodes.clear()
         for ep in episodes:
             self._episodes[ep.number] = ep
 
