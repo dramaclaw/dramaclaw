@@ -39,7 +39,6 @@ from novelvideo.knowledge_pipeline import (
     KnowledgePipelineUnsupported,
     is_structured_pipeline,
 )
-from novelvideo.official_defaults import DEFAULT_COGNEE_LLM_MODEL
 from novelvideo.novel_source import require_imported_novel
 from novelvideo.project_config import ensure_cognee_embedding_binding_in_state_dir
 from novelvideo.sqlite_store import SQLiteStore
@@ -1099,114 +1098,20 @@ class CogneeStore:
         on_progress: Optional[Callable[[float, str], None]] = None,
         on_log: Optional[Callable[[str], None]] = None,
     ) -> List[NovelEpisode]:
-        """从小说章节结构创建剧集（章节映射模式）。"""
-        from novelvideo.cognee.chapter_detector import ChapterDetector
+        """从小说章节结构创建剧集（章节映射模式）。
 
-        def report(progress: float, task: str):
-            if on_progress:
-                on_progress(progress, task)
-
-        def log(message: str):
-            if on_log:
-                on_log(message)
-            console.print(f"[dim]{message}[/dim]")
-
-        # 获取小说原文
-        if novel_text is None:
-            log("从文件加载原文...")
-            novel_text = require_imported_novel(self.project_dir)
-            log(f"原文加载完成: {len(novel_text)} 字符")
-
-        # 清理剧集内容
-        await self.clear_episode_contents()
-
-        # P1: 检测章节
-        report(0.1, "检测章节结构...")
-        log("检测章节结构...")
-        detector = ChapterDetector()
-        chapters = detector.detect(novel_text)
-
-        if not chapters:
-            raise ValueError("未检测到章节标记，请使用 AI 规划模式")
-
-        log(f"检测到 {len(chapters)} 个章节")
-
-        episodes = []
-        chapter_contents = {}  # 收集章节内容，最后统一写入
-        total = len(chapters)
-
-        for i, chapter in enumerate(chapters):
-            progress = 0.1 + (i / total) * 0.7
-            report(progress, f"处理第 {chapter.number} 章...")
-
-            # 收集章节内容（稍后写入，避免与 _delete_old_episodes 冲突）
-            chapter_contents[chapter.number] = chapter.content
-
-            if generate_metadata:
-                log(f"为第 {chapter.number} 章生成元数据...")
-                metadata = await self._generate_episode_metadata(chapter.number, chapter.content)
-            else:
-                summary = chapter.content[:200].strip()
-                if len(chapter.content) > 200:
-                    summary += "..."
-                metadata = {
-                    "title": f"第{chapter.number}集",
-                    "summary": summary,
-                    "conflict": "",
-                    "cliffhanger": "",
-                    "key_events": [],
-                    "characters": [],
-                }
-
-            episode = NovelEpisode(
-                number=chapter.number,
-                title=metadata.get("title", f"第{chapter.number}集"),
-                chapter_start=chapter.number,
-                chapter_end=chapter.number,
-                content_summary=metadata.get("summary", ""),
-                main_conflict=metadata.get("conflict", ""),
-                cliffhanger=metadata.get("cliffhanger", ""),
-                key_events=metadata.get("key_events", []),
-                character_names=metadata.get("characters", []),
-            )
-            episodes.append(episode)
-
-        # P2: 合并剧集（保留已有的已规划资产字段）
-        report(0.82, "合并剧集数据...")
-        log("合并剧集数据（保留身份、场景、道具和颜色）...")
-        new_numbers = {ep.number for ep in episodes}
-        for ep in episodes:
-            old = self._episodes.get(ep.number)
-            if old:
-                ep.identity_ids = old.identity_ids
-                ep.scene_menu = old.scene_menu
-                ep.prop_menu = old.prop_menu
-                ep.sketch_colors_json = old.sketch_colors_json
-
-        # 删除不再存在的旧剧集
-        old_numbers = set(self._episodes.keys())
-        removed = old_numbers - new_numbers
-        if removed:
-            await self.sqlite_store.delete_episodes_by_numbers(removed)
-            log(f"已删除 {len(removed)} 个旧剧集")
-        self._episodes.clear()
-
-        # P3: 保存新剧集
-        report(0.88, "保存到数据库...")
-        log("保存剧集到数据库...")
-        await self.add_episodes(episodes)
-
-        # P3.5: 保存章节原文内容
-        for ep_num, content in chapter_contents.items():
-            await self.save_episode_content(ep_num, content)
-
-        # P4: 更新内存缓存
-        for ep in episodes:
-            self._episodes[ep.number] = ep
-
-        report(1.0, "章节映射完成")
-        log(f"章节映射完成: {len(episodes)} 集")
-
+        Chapter mapping reads the source text and writes SQLite; it never
+        touches the graph, so the implementation lives on SQLiteStore where
+        both tracks can reach it. This stays as a delegate so legacy callers
+        and the in-memory episode cache behave exactly as before.
+        """
+        episodes = await self.sqlite_store.build_episodes_from_chapters(
+            novel_text=novel_text,
+            generate_metadata=generate_metadata,
+            on_progress=on_progress,
+            on_log=on_log,
+        )
+        self._sync_sqlite_caches()
         return episodes
 
     async def build_episodes_from_events(
@@ -1398,55 +1303,6 @@ class CogneeStore:
                     assignments[ep_num] = []
                 assignments[ep_num].append(event.event_id)
             return assignments
-
-    async def _generate_episode_metadata(self, episode_num: int, content: str) -> dict:
-        """使用 LLM 生成剧集元数据。"""
-        try:
-            import litellm
-
-            truncated = content[:8000] if len(content) > 8000 else content
-
-            prompt = f"""请分析以下章节内容，提取关键信息。
-
-章节内容：
-{truncated}
-
-请用 JSON 格式返回以下信息：
-{{
-    "title": "一个吸引人的标题（10字以内）",
-    "summary": "内容摘要（50-100字）",
-    "conflict": "主要冲突或矛盾",
-    "cliffhanger": "结尾悬念（如果有）",
-    "key_events": ["关键事件1", "关键事件2"],
-    "characters": ["出场角色1", "出场角色2"]
-}}
-
-只返回 JSON，不要有其他内容。"""
-
-            response = await litellm.acompletion(
-                model=os.environ.get("LLM_MODEL", "").strip()
-                or DEFAULT_COGNEE_LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                response_format={"type": "json_object"},
-                **get_newapi_structured_output_litellm_kwargs(),
-            )
-
-            import json
-
-            result = json.loads(response.choices[0].message.content)
-            return result
-
-        except Exception as e:
-            console.print(f"[yellow]元数据生成失败: {e}，使用默认值[/yellow]")
-            return {
-                "title": f"第{episode_num}集",
-                "summary": content[:200] + "..." if len(content) > 200 else content,
-                "conflict": "",
-                "cliffhanger": "",
-                "key_events": [],
-                "characters": [],
-            }
 
     async def add_episodes(self, episodes: List[NovelEpisode]) -> None:
         """批量添加剧集到 SQLite。"""

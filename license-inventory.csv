@@ -2060,6 +2060,7 @@ tests/test_stage_asset_step_contract.py,Elastic-2.0,2026 SuperTale contributors,
 tests/test_storyboard_prompt_visual_authority.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_structured_builders.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_structured_ingest.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_structured_plan_episodes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_style_template_manifest.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_superpower_model_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_backend_celery_metadata.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
