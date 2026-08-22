@@ -368,13 +368,28 @@ CREATE TABLE IF NOT EXISTS story_analysis_artifacts (
     created_at        TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (run_id, artifact_type)
 );
+
+-- Per-item results, keyed by a hash of the exact model input rather than by
+-- run. A scene build is dozens of independent model calls; when one fails or
+-- the worker is killed, everything already produced is still valid, and the
+-- next run must not pay for it again. Deliberately not scoped to a run: the
+-- point is for a *new* run to reuse what an abandoned one finished.
+CREATE TABLE IF NOT EXISTS story_analysis_item_cache (
+    cache_key         TEXT PRIMARY KEY,
+    artifact_type     TEXT NOT NULL,
+    result_json       TEXT NOT NULL DEFAULT '{}',
+    created_at        TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_cache_type
+    ON story_analysis_item_cache(artifact_type);
 """
 
 _PROJECT_STORE_SCHEMA_COMPONENT = "project_store"
 # MIGRATION CONTRACT: increment this whenever SQLITE_SCHEMA_SQL or any
 # _ensure_*_columns migration above changes. Existing databases skip the
 # initializer after this version has been recorded.
-_PROJECT_STORE_SCHEMA_VERSION = 3
+_PROJECT_STORE_SCHEMA_VERSION = 4
 
 
 def _table_columns(db: sqlite3.Connection, table: str) -> set[str]:
@@ -2727,6 +2742,57 @@ class SQLiteStore:
                  result_json = excluded.result_json,
                  created_at = excluded.created_at""",
             (run_id, artifact_type, result_json),
+        )
+        await db.commit()
+
+    async def get_analysis_item_cache(
+        self, artifact_type: str, cache_keys: list[str]
+    ) -> dict[str, str]:
+        """Return stored per-item results for the keys that have one.
+
+        Bulk, because a scene build asks about every candidate at once and one
+        round trip per scene would cost more than it saves.
+        """
+        keys = [str(key) for key in cache_keys if key]
+        if not keys:
+            return {}
+        db = await self._ensure_db()
+        found: dict[str, str] = {}
+        # SQLite caps host parameters per statement; chunk rather than risk it.
+        for start in range(0, len(keys), 400):
+            window = keys[start : start + 400]
+            placeholders = ",".join("?" for _ in window)
+            async with db.execute(
+                f"""SELECT cache_key, result_json FROM story_analysis_item_cache
+                    WHERE artifact_type = ? AND cache_key IN ({placeholders})""",
+                (artifact_type, *window),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            for row in rows:
+                found[str(row["cache_key"])] = str(row["result_json"])
+        return found
+
+    async def save_analysis_item_cache(
+        self, artifact_type: str, results: dict[str, str]
+    ) -> None:
+        """Store per-item results keyed by a hash of the input that produced them.
+
+        The key already carries every input and a contract version, so a hit is
+        only ever a result for identical input under the current contract; there
+        is nothing to invalidate and no run to scope it to.
+        """
+        rows = [(key, artifact_type, value) for key, value in results.items() if key]
+        if not rows:
+            return
+        db = await self._ensure_db()
+        await db.executemany(
+            """INSERT INTO story_analysis_item_cache
+               (cache_key, artifact_type, result_json, created_at)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT(cache_key) DO UPDATE SET
+                 result_json = excluded.result_json,
+                 created_at = excluded.created_at""",
+            rows,
         )
         await db.commit()
 

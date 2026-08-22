@@ -20,19 +20,15 @@ def test_normalize_time_of_day_maps_classical_terms_to_closed_choices():
 
 
 def test_time_of_day_agent_outputs_expose_closed_enum_schema():
-    from novelvideo.cognee import pipeline
 
     expected = ["无", "清晨", "上午", "正午", "午后", "白天", "黄昏", "夜晚"]
 
     block_schema = NormalizedSceneBlock.model_json_schema()["properties"]["time_of_day"]
-    scene_schema = pipeline.SceneNormalization.model_json_schema()["properties"]["time_of_day"]
 
     assert block_schema["enum"] == expected
-    assert scene_schema["enum"] == expected
 
 
 def test_time_of_day_agent_no_value_round_trips_to_internal_empty_string():
-    from novelvideo.cognee import pipeline
 
     block = NormalizedSceneBlock(
         episode_number=3,
@@ -47,22 +43,11 @@ def test_time_of_day_agent_no_value_round_trips_to_internal_empty_string():
         evidence_lines=[],
         content_lines=[],
     )
-    scene = pipeline.SceneNormalization(
-        name="凤鸣皇城·苏鸾寝殿",
-        aliases=[],
-        scene_type="interior",
-        time_of_day="无",
-        interior=True,
-        characters=[],
-    )
-
     assert block.time_of_day == ""
     assert block.interior_exterior == ""
-    assert scene.time_of_day == ""
 
 
 def test_time_of_day_agent_outputs_normalize_before_literal_validation():
-    from novelvideo.cognee import pipeline
 
     block = NormalizedSceneBlock(
         episode_number=3,
@@ -77,17 +62,7 @@ def test_time_of_day_agent_outputs_normalize_before_literal_validation():
         evidence_lines=[],
         content_lines=[],
     )
-    scene = pipeline.SceneNormalization(
-        name="凤鸣皇城·苏鸾寝殿",
-        aliases=[],
-        scene_type="interior",
-        time_of_day="凌晨",
-        interior=True,
-        characters=[],
-    )
-
     assert block.time_of_day == "夜晚"
-    assert scene.time_of_day == "夜晚"
 
 
 def test_clean_scene_name_and_time_removes_trailing_classical_time():
@@ -165,16 +140,35 @@ def test_normalized_scene_block_validator_cleans_location_time():
     assert block.time_of_day == "夜晚"
 
 
-def test_select_scene_primary_name_accepts_time_suffix_cleanup():
-    from novelvideo.cognee.pipeline import _select_scene_primary_name
+def test_scene_heading_suffix_strip_removes_time_markers():
+    """The name cleanup a per-block model call used to be needed for."""
+    from novelvideo.cognee.pipeline import strip_scene_heading_suffix
 
-    assert _select_scene_primary_name("演武场外墙·夜", "演武场外墙") == "演武场外墙"
-    assert _select_scene_primary_name("演武场外墙・夜", "演武场外墙") == "演武场外墙"
-    assert (
-        _select_scene_primary_name("凤鸣皇城·废弃粮仓夜", "凤鸣皇城·废弃粮仓")
-        == "凤鸣皇城·废弃粮仓"
-    )
-    assert _select_scene_primary_name("兰州拉面馆", "面馆") == "兰州拉面馆"
+    assert strip_scene_heading_suffix("演武场外墙·夜") == "演武场外墙"
+    assert strip_scene_heading_suffix("演武场外墙・夜") == "演武场外墙"
+    assert strip_scene_heading_suffix("凤鸣皇城·废弃粮仓夜") == "凤鸣皇城·废弃粮仓"
+
+
+def test_scene_heading_suffix_strip_never_generalizes_a_location():
+    """It removes heading markers, never part of the place itself."""
+    from novelvideo.cognee.pipeline import strip_scene_heading_suffix
+
+    assert strip_scene_heading_suffix("兰州拉面馆") == "兰州拉面馆"
+    assert strip_scene_heading_suffix("春熙路的3D大屏下") == "春熙路的3D大屏下"
+
+
+def test_an_attached_interior_marker_is_left_for_adjudication():
+    """"商务车内" is a place; "郑玉琴办公室内" is a marker. One rule cannot tell.
+
+    Deciding between them needs every candidate in view at once — whether a
+    sibling spelling exists, and which one the script uses more — which is what
+    adjudication has and a name-cleanup rule does not.
+    """
+    from novelvideo.cognee.pipeline import strip_scene_heading_suffix
+
+    assert strip_scene_heading_suffix("商务车内") == "商务车内"
+    assert strip_scene_heading_suffix("郑家别墅外") == "郑家别墅外"
+    assert strip_scene_heading_suffix("郑玉琴办公室内") == "郑玉琴办公室内"
 
 
 def test_scene_candidates_fill_missing_episode_from_raw_header():

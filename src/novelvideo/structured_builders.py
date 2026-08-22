@@ -257,6 +257,7 @@ async def build_scenes_structured(
     discovered per episode from that episode's own text instead.
     """
     from novelvideo.cognee.pipeline import (
+        StoreSceneBuildCache,
         extract_scenes_from_script,
         should_repair_scene_placeholder,
     )
@@ -284,10 +285,15 @@ async def build_scenes_structured(
         }
 
     report(0.1, "从场次头提取基础场景...")
+    # Every stage below is a model call, and a screenplay has dozens of scenes.
+    # Without a cache, a build that fails or is killed at scene 60 of 68 throws
+    # away all sixty and the retry pays for them again.
+    cache = StoreSceneBuildCache(store)
     scenes = await extract_scenes_from_script(
         novel_text,
         on_progress=lambda progress, task: report(0.1 + progress * 0.7, task),
         on_log=on_log,
+        cache=cache,
     )
     if not scenes:
         log("⚠️ 未从场次头提取到场景，保留现有场景数据")
@@ -296,7 +302,10 @@ async def build_scenes_structured(
 
     report(0.8, "归一同一地点的不同写法...")
     scenes = await adjudicate_scenes(
-        scenes, occurrences=_scene_heading_counts(novel_text), on_log=log
+        scenes,
+        occurrences=_scene_heading_counts(novel_text),
+        on_log=log,
+        cache=cache,
     )
 
     report(0.85, "保存新增场景...")

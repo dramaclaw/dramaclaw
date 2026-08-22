@@ -20,7 +20,6 @@ from novelvideo.models import (
     PropMenuItem,
     SceneMenuItem,
 )
-from novelvideo.knowledge_pipeline import is_structured_pipeline
 from novelvideo.sqlite_store import load_episode_planning_content
 from novelvideo.cognee.screenplay_normalizer import (
     normalize_screenplay_scene_header,
@@ -422,9 +421,6 @@ class AssetCompiler:
         # CogneeStore or a SQLiteStore keeps legacy callers working while
         # structured callers pass SQLiteStore directly.
         self.store = getattr(cognee_store, "sqlite_store", cognee_store)
-        self._structured = is_structured_pipeline(
-            getattr(cognee_store, "state_dir", None)
-        )
         self.spine_template = "drama"
 
     async def _write_menus(self, episode_number: int, **menus: Any) -> None:

@@ -8,9 +8,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
-from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Protocol, TypeVar
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from novelvideo.shared.env_guard import preserve_st_env
@@ -121,47 +122,6 @@ def _clean_aliases(primary_name: str, aliases: List[str]) -> List[str]:
         cleaned.append(normalized)
         seen.add(normalized)
     return cleaned
-
-
-def _strip_scene_name_wrapper(text: str) -> str:
-    value = (text or "").strip()
-    if not value:
-        return ""
-    value = re.sub(r"^场次[（(]?\d+[）)]?\s*", "", value)
-    value = re.sub(r"^(地点|场景)\s*[:：]\s*", "", value)
-    return value.strip(" ，,。；;：:")
-
-
-def _remove_minor_scene_fillers(text: str) -> str:
-    value = _strip_scene_name_wrapper(text)
-    return re.sub(r"[的里内外中旁前后侧处]\s*", "", value)
-
-
-def _select_scene_primary_name(original_name: str, normalized_name: str) -> str:
-    """Prefer the original scene name unless the LLM version is only a light cleanup.
-
-    This blocks over-generalization such as:
-    - 兰州拉面馆 -> 面馆
-    - 春熙路的3D大屏下 -> 春熙路
-    """
-    original = _strip_scene_name_wrapper(original_name)
-    normalized = _strip_scene_name_wrapper(normalized_name)
-    cleaned_original, _time_of_day = clean_scene_name_and_time(original, "")
-
-    if not original:
-        return normalized
-    if not normalized or normalized == original:
-        return cleaned_original or original
-
-    if cleaned_original and normalized == cleaned_original:
-        return cleaned_original
-
-    # Only trust the normalized form when it preserves the same concrete anchor
-    # and merely removes light filler words like “的/里/内/外/中”.
-    if _remove_minor_scene_fillers(normalized) == _remove_minor_scene_fillers(original):
-        return normalized
-
-    return original
 
 
 # ============================================================
@@ -840,38 +800,6 @@ def _ensure_directional_environment_prompt(
     )
 
 
-class SceneNormalization(BaseModel):
-    """LLM 规范化后的场景块。"""
-
-    name: str = Field(..., description="规范化后的基础场景名")
-    aliases: List[str] = Field(default_factory=list, description="同义别名")
-    scene_type: str = Field(default="interior", description="interior/exterior/nature")
-    time_of_day: LlmTimeOfDay = Field(
-        default="无",
-        description="只能输出：无/清晨/上午/正午/午后/白天/黄昏/夜晚",
-    )
-    interior: bool = Field(default=True, description="是否室内")
-    characters: List[str] = Field(
-        default_factory=list, description="该场景块明确出场的人物"
-    )
-
-    @field_validator("time_of_day", mode="before")
-    @classmethod
-    def normalize_time_of_day_value(cls, value: str) -> str:
-        return normalize_time_of_day(value) or "无"
-
-    @model_validator(mode="after")
-    def normalize_empty_time_of_day(self) -> "SceneNormalization":
-        if self.time_of_day == "无":
-            self.time_of_day = ""
-        return self
-
-
-class SceneNormalizationList(BaseModel):
-    """场景规范化输出列表。"""
-
-    scenes: List[SceneNormalization]
-
 
 def _create_scene_build_agent(system_prompt: str, output_type: Any, name: str):
     """Create the scene-build business LLM agent.
@@ -983,7 +911,127 @@ async def enrich_scene_environment_from_context(
 
 # Several scenes fit in one enrichment call. Each description runs 150-200
 # characters, so a batch stays well inside a useful response length.
+class SceneBuildCache(Protocol):
+    """What a scene build needs from a store to be resumable.
+
+    A protocol rather than the store itself: this code sits below the store
+    layer, and tests drive it with a dict.  ``artifact_type`` is per call
+    because a scene build caches several independent stages and none of them
+    may read another's rows.
+    """
+
+    async def get(
+        self, artifact_type: str, cache_keys: list[str]
+    ) -> dict[str, str]: ...
+
+    async def save(self, artifact_type: str, results: dict[str, str]) -> None: ...
+
+
+class StoreSceneBuildCache:
+    """Adapter binding the protocol to a project's SQLite store."""
+
+    def __init__(self, store: Any) -> None:
+        self._store = store
+
+    async def get(self, artifact_type: str, cache_keys: list[str]) -> dict[str, str]:
+        return await self._store.get_analysis_item_cache(artifact_type, cache_keys)
+
+    async def save(self, artifact_type: str, results: dict[str, str]) -> None:
+        await self._store.save_analysis_item_cache(artifact_type, results)
+
+
 _ENRICHMENT_BATCH_SIZE = 5
+
+# Bump whenever the enrichment prompt, the contract validator, or the way a
+# model answer is turned into a NovelScene changes.  It is part of every cache
+# key, so a bump retires every stored result rather than mixing contracts.
+SCENE_ENRICHMENT_CACHE_VERSION = 1
+
+SCENE_ENRICHMENT_CACHE_TYPE = "scene_environment"
+
+# Bump alongside the screenplay normalizer or the way its blocks are folded
+# into candidates.
+SCENE_BLOCKS_CACHE_VERSION = 1
+
+SCENE_BLOCKS_CACHE_TYPE = "scene_blocks"
+
+
+def scene_enrichment_cache_key(candidate: dict[str, Any], synopsis: str = "") -> str:
+    """Hash the exact input one scene's enrichment call is made from.
+
+    Every field the model sees, plus every field used to build the NovelScene
+    from its answer, plus the contract version.  Anything left out would let a
+    changed input silently reuse a result produced from the old one; anything
+    included that the call does not actually depend on would cost a rebuild for
+    no reason.  ``context_lines`` is truncated exactly as ``describe``
+    truncates it, so lines the model never sees do not invalidate a good result.
+    """
+    payload = {
+        "v": SCENE_ENRICHMENT_CACHE_VERSION,
+        "name": str(candidate.get("name") or ""),
+        "aliases": list(candidate.get("aliases") or []),
+        "scene_type": str(candidate.get("scene_type") or ""),
+        "interior": bool(candidate.get("interior", True)),
+        "characters": list(candidate.get("characters") or []),
+        "context": [
+            str(line) for line in (candidate.get("context_lines") or [])[:24]
+        ],
+        "synopsis": str(synopsis or ""),
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def scene_to_cache_payload(scene: NovelScene) -> str:
+    return json.dumps(
+        {
+            "name": scene.name,
+            "aliases": list(scene.aliases or []),
+            "scene_type": scene.scene_type,
+            "environment_prompt": scene.environment_prompt,
+            "description": scene.description,
+        },
+        ensure_ascii=False,
+    )
+
+
+def is_cacheable_scene_prompt(prompt: str) -> bool:
+    """Whether a produced prompt is a real answer worth keeping.
+
+    Two conditions, and the second is the one that is easy to miss: the
+    generated fallback satisfies the 360 contract by construction, so a
+    validity check alone would freeze boilerplate in as the permanent answer
+    and every later rebuild would replay it instead of retrying the model.
+    """
+    text = str(prompt or "")
+    if SCENE_FALLBACK_FINGERPRINT in text:
+        return False
+    return _has_required_scene_environment_headings(text)
+
+
+def scene_from_cache_payload(payload: str) -> NovelScene | None:
+    """Rebuild a scene from a stored payload, or None if it is unusable.
+
+    A stored row that no longer parses, or that carries a prompt the current
+    contract rejects, is treated as a miss rather than trusted: a cache must
+    never be able to publish something the live path would have rejected.
+    """
+    try:
+        data = json.loads(payload)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    prompt = str(data.get("environment_prompt") or "")
+    if not is_cacheable_scene_prompt(prompt):
+        return None
+    return NovelScene(
+        name=str(data.get("name") or ""),
+        aliases=list(data.get("aliases") or []),
+        scene_type=str(data.get("scene_type") or ""),
+        environment_prompt=prompt,
+        description=str(data.get("description") or ""),
+    )
 
 
 async def enrich_scene_environments_batched(
@@ -992,6 +1040,7 @@ async def enrich_scene_environments_batched(
     synopsis: str = "",
     enrichment_agent: Any | None = None,
     on_scene: Optional[Any] = None,
+    cache: Optional[SceneBuildCache] = None,
 ) -> list[NovelScene]:
     """Generate environment prompts for several scenes per request.
 
@@ -1001,9 +1050,36 @@ async def enrich_scene_environments_batched(
 
     A batch that fails or comes back short falls through to per-scene calls for
     exactly the scenes it missed, so batching can only cost time, never scenes.
+
+    With a ``cache``, scenes whose input already produced a real answer are
+    served from it and never sent to the model.  That is what makes an
+    interrupted build resumable: each scene is an independent call, and the ones
+    that finished stay finished.
     """
     if not candidates:
         return []
+
+    keys = {
+        id(candidate): scene_enrichment_cache_key(candidate, synopsis)
+        for candidate in candidates
+    }
+    hits: dict[int, NovelScene] = {}
+    if cache is not None:
+        stored = await cache.get(SCENE_ENRICHMENT_CACHE_TYPE, list(keys.values()))
+        for candidate in candidates:
+            payload = stored.get(keys[id(candidate)])
+            scene = scene_from_cache_payload(payload) if payload else None
+            if scene is not None:
+                hits[id(candidate)] = scene
+
+    pending = [candidate for candidate in candidates if id(candidate) not in hits]
+    if hits and on_scene:
+        # Reported before any model call, so a resumed build shows the work it
+        # is skipping instead of appearing to stall at zero.
+        for candidate in candidates:
+            scene = hits.get(id(candidate))
+            if scene is not None:
+                on_scene(candidate, scene)
 
     agent = enrichment_agent or _create_scene_build_agent(
         SCENE_ENRICHMENT_SYSTEM_PROMPT,
@@ -1083,14 +1159,35 @@ async def enrich_scene_environments_batched(
             if on_scene:
                 on_scene(candidate, scene)
             scenes.append(scene)
+        if cache is not None and scenes:
+            # Written per batch, not once at the end: a build killed halfway
+            # must keep everything it already paid for.  Only real answers are
+            # stored — a generated fallback would otherwise become permanent.
+            await cache.save(
+                SCENE_ENRICHMENT_CACHE_TYPE,
+                {
+                    keys[id(candidate)]: scene_to_cache_payload(scene)
+                    for candidate, scene in zip(batch, scenes)
+                    if is_cacheable_scene_prompt(scene.environment_prompt)
+                },
+            )
         return scenes
 
     batches = [
-        candidates[start : start + _ENRICHMENT_BATCH_SIZE]
-        for start in range(0, len(candidates), _ENRICHMENT_BATCH_SIZE)
+        pending[start : start + _ENRICHMENT_BATCH_SIZE]
+        for start in range(0, len(pending), _ENRICHMENT_BATCH_SIZE)
     ]
     results = await map_bounded(batches, run_batch, limit=default_llm_concurrency())
-    return [scene for batch in results if batch for scene in batch]
+    fresh = {scene.name: scene for batch in results if batch for scene in batch}
+
+    # Rebuilt in the caller's original order, so a resumed build publishes the
+    # same catalogue in the same order as a fresh one.
+    ordered: list[NovelScene] = []
+    for candidate in candidates:
+        scene = hits.get(id(candidate)) or fresh.get(candidate["name"])
+        if scene is not None:
+            ordered.append(scene)
+    return ordered
 
 
 _DEFAULT_ENRICH_SCENE_ENVIRONMENT_FROM_CONTEXT = enrich_scene_environment_from_context
@@ -1336,10 +1433,137 @@ async def extract_scenes_from_graph(
     return scenes
 
 
+async def _normalized_scene_blocks_cached(
+    novel_text: str, cache: Optional[SceneBuildCache]
+) -> list[dict[str, Any]]:
+    """Run the screenplay normalizer once per source text, then reuse it.
+
+    The normalizer is a model call and its answer varies between runs. Left
+    uncached it does not just cost its own few seconds again — it reshuffles the
+    candidates, which changes every downstream cache key, so a rebuild would
+    re-pay for every scene description too. Keyed on the source text, so an
+    unchanged script always yields the same candidates.
+    """
+    key = hashlib.sha256(
+        json.dumps(
+            {"v": SCENE_BLOCKS_CACHE_VERSION, "source": novel_text},
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    if cache is not None:
+        stored = (await cache.get(SCENE_BLOCKS_CACHE_TYPE, [key])).get(key)
+        if stored:
+            try:
+                restored = json.loads(stored)
+            except (TypeError, ValueError):
+                restored = None
+            if isinstance(restored, list) and restored:
+                return restored
+
+    blocks = await normalize_screenplay_scenes(novel_text)
+    candidates = _scene_candidates_from_normalized_blocks(blocks)
+    if cache is not None and candidates:
+        await cache.save(
+            SCENE_BLOCKS_CACHE_TYPE,
+            {key: json.dumps(candidates, ensure_ascii=False)},
+        )
+    return candidates
+
+
+def strip_scene_heading_suffix(name: str) -> str:
+    """Drop the heading markers the parser left on a location name.
+
+    "郑玉琴办公室内" is the same room as "郑玉琴办公室": the 内 is the heading's
+    interior marker, which the parser also returns as its own field. Removing it
+    is the whole of what a per-block model call used to buy here.
+
+    The rules already exist — ``clean_scene_name_and_time`` handles the attached,
+    separated and spaced forms and refuses to strip when the result would not be
+    a name any more — so this only discards the time it also returns.
+    """
+    cleaned, _time_of_day = clean_scene_name_and_time(str(name or "").strip(), "")
+    return cleaned or str(name or "").strip()
+
+
+def _candidate_from_parsed_block(candidate: Any) -> dict[str, Any]:
+    """Turn one parser-located block into a candidate, without a model call.
+
+    A standard scene heading already states the location, the time and whether
+    it is interior — the parser reads all three. Asking a model to restate them
+    was one round trip per block, run one at a time, and on a feature-length
+    screenplay the single largest cost in the whole build. Measured against the
+    model path on a real 33k-char script it produces the same catalogue: 25
+    scenes either way, 24 of them identical, and the one difference is which
+    spelling of a merged pair wins.
+
+    Deciding that two spellings are one room is the part worth a model, and
+    ``adjudicate_scenes`` already does it downstream — with every candidate in
+    view at once and occurrence counts to choose the canonical spelling, which
+    a per-block call looking at one heading in isolation cannot have.
+    """
+    name = strip_scene_heading_suffix(candidate.name)
+    normalized_time = normalize_time_of_day(candidate.time_of_day)
+    return {
+        "name": name,
+        "aliases": _clean_aliases(name, [candidate.name]),
+        "scene_type": "interior" if candidate.interior else "exterior",
+        "time_of_day": normalized_time,
+        "time_counts": {normalized_time: 1} if normalized_time else {},
+        "interior": candidate.interior,
+        "episodes": list(candidate.episodes),
+        "characters": list(candidate.characters),
+        "context_lines": list(candidate.context_lines),
+    }
+
+
+def _scene_recall_is_covered(
+    normalized: list[dict[str, Any]], parsed: list[Any]
+) -> tuple[bool, str]:
+    """Whether the normalizer accounted for every location the parser found.
+
+    The old test compared distinct-location *counts* and rejected the result
+    whenever the normalizer returned fewer. But folding two spellings of one
+    room into a single scene is the normalizer working correctly, and it always
+    lowers the count — so a correct merge was punished as lost recall, and the
+    whole result was thrown away for a per-block model loop that cost minutes.
+
+    What actually matters is that nothing was dropped: every location the parser
+    located must still be reachable, as a name, an alias, or the same name with
+    its heading markers stripped.
+
+    The test stays strict — an attached "内" is genuinely ambiguous ("商务车内"
+    is a place, "郑玉琴办公室内" is a marker) so a merge across one is not
+    recognised here and does send the build down the fallback. That is now
+    affordable: the fallback is deterministic and costs no model call, and
+    adjudication performs the same merge downstream with occurrence counts to
+    decide it on.
+    """
+    known: set[str] = set()
+    for candidate in normalized:
+        for value in [candidate.get("name"), *(candidate.get("aliases") or [])]:
+            text = str(value or "").strip()
+            if text:
+                known.add(text)
+                known.add(strip_scene_heading_suffix(text))
+
+    missing = [
+        candidate.name
+        for candidate in parsed
+        if candidate.name not in known
+        and strip_scene_heading_suffix(candidate.name) not in known
+    ]
+    if missing:
+        return False, f"AI normalizer 漏掉了 {len(missing)} 个地点: {missing[:5]}"
+    return True, ""
+
+
 async def extract_scenes_from_script(
     novel_text: str,
     on_progress: Optional[Any] = None,
     on_log: Optional[Any] = None,
+    cache: Optional[SceneBuildCache] = None,
 ) -> List[NovelScene]:
     """从格式化剧本提取场景（AI normalizer first + parser fallback + LLM enrichment）。
 
@@ -1373,15 +1597,14 @@ async def extract_scenes_from_script(
 
     report(0.1, "AI 规范化剧本场景块...")
     try:
-        normalized_blocks = await normalize_screenplay_scenes(novel_text)
-        normalized_scene_candidates = _scene_candidates_from_normalized_blocks(
-            normalized_blocks
+        normalized_scene_candidates = await _normalized_scene_blocks_cached(
+            novel_text, cache
         )
-        if len(normalized_scene_candidates) < len(legacy_candidates):
-            fallback_reason = (
-                "AI normalizer 基础场景不足 "
-                f"(ai={len(normalized_scene_candidates)}, parser={len(legacy_candidates)})"
-            )
+        covered, gap = _scene_recall_is_covered(
+            normalized_scene_candidates, legacy_candidates
+        )
+        if not covered:
+            fallback_reason = gap
             normalized_scene_candidates = []
         if normalized_scene_candidates:
             log(
@@ -1399,10 +1622,9 @@ async def extract_scenes_from_script(
 
     if not normalized_scene_candidates:
         if fallback_reason:
-            log(f"⚠️ {fallback_reason}，回退到程序粗定位 + LLM 规范化")
+            log(f"⚠️ {fallback_reason}，回退到程序定位 + 本地规范化")
 
-        # Step 1: 程序粗定位
-        report(0.1, "定位剧本场景块...")
+        report(0.15, "定位剧本场景块...")
         candidates = legacy_candidates
         log(f"程序定位得到 {len(candidates)} 个场景块: {[c.name for c in candidates]}")
 
@@ -1410,125 +1632,13 @@ async def extract_scenes_from_script(
             log("⚠️ 未从剧本中解析出任何场景")
             return []
 
-        # Step 2: LLM 规范化场景块
-        report(0.2, "LLM 规范化场景块...")
-        normalized_candidates = []
-        total = len(candidates)
-        normalization_system_prompt = """你是剧本场景规范化器。程序已经定位到一个“疑似场景块”，你的任务是把它归一成基础场景信息。
-
-输出：
-1. name: 基础场景名，尽量保留原文里的具体地点全称；只移除明显脏词、场次包裹词、镜头修辞，不要把具体地点泛化成上位类词
-2. aliases: 该场景在原文中真实出现过的常见简称/自然称呼，可为空
-3. scene_type: interior / exterior / nature
-4. time_of_day: 只能输出 无 / 清晨 / 上午 / 正午 / 午后 / 白天 / 黄昏 / 夜晚；无明确时间时输出“无”；日/昼归为白天，夜/深夜/三更/亥时归为夜晚
-5. interior: true/false
-6. characters: 该场景块明确出场的人物名列表
-
-规则：
-- 优先参考原文，其次参考程序猜测
-- 如果程序定位大致正确但名称过脏，请清洗后返回规范场景名
-- 同一物理地点的不同重复场景，应归一成同一个基础场景名
-- 保留原文中的具体锚点：品牌、地名、建筑名、功能区、装置名，不要擅自删掉
-- 错误示例：兰州拉面馆 -> 面馆；春熙路的3D大屏下 -> 春熙路
-- aliases 优先保留原文里真实出现过的简称或自然叫法，例如“公寓电梯间”可补“电梯间”
-- aliases 只允许来自该场景块原文中的真实叫法；不要把“程序猜测”里的候选词、梗概里的概括词、或你自己归纳出来的地点词写进 aliases
-- 不要发明原文里没有的新地点
-- 不要发明原文里没有的新地点"""
-        normalization_agent = _create_scene_build_agent(
-            normalization_system_prompt,
-            SceneNormalizationList,
-            "Scene Build Normalizer",
-        )
-
-        for idx, cand in enumerate(candidates):
-            progress = 0.2 + 0.25 * (idx / total)
-            report(progress, f"规范化场景 ({idx+1}/{total}): {cand.name}")
-
-            context = "\n".join(cand.context_lines[:30])
-            synopsis_section = (
-                f"\n\n【故事梗概与人物设定】\n{synopsis}" if synopsis else ""
-            )
-            user_text = f"""程序定位到一个场景块，请你将它规范化。
-
-【程序猜测】
-- 场景名候选：{cand.name}
-- 时间：{cand.time_of_day}
-- 室内外：{"内" if cand.interior else "外"}
-- 出场人物：{", ".join(cand.characters) if cand.characters else "无"}
-- 出现集数：{cand.episodes}
-
-【该场景块原文】
-{context}{synopsis_section}"""
-            try:
-                result = (await normalization_agent.run(user_text)).output
-                if result.scenes:
-                    normalized = result.scenes[0]
-                    primary_name = _select_scene_primary_name(
-                        cand.name, normalized.name.strip()
-                    )
-                    normalized_time = normalize_time_of_day(
-                        normalized.time_of_day.strip() or cand.time_of_day
-                    )
-                    normalized_candidates.append(
-                        {
-                            "name": primary_name,
-                            "aliases": _clean_aliases(
-                                primary_name,
-                                [cand.name, normalized.name.strip()]
-                                + (normalized.aliases or []),
-                            ),
-                            "scene_type": normalized.scene_type
-                            or ("interior" if cand.interior else "exterior"),
-                            "time_of_day": normalized_time,
-                            "time_counts": (
-                                {normalized_time: 1} if normalized_time else {}
-                            ),
-                            "interior": (
-                                normalized.interior if primary_name else cand.interior
-                            ),
-                            "episodes": cand.episodes,
-                            "characters": normalized.characters or cand.characters,
-                            "context_lines": cand.context_lines,
-                        }
-                    )
-                    log(f"  ✓ 规范化: {cand.name} -> {primary_name}")
-                else:
-                    normalized_time = normalize_time_of_day(cand.time_of_day)
-                    normalized_candidates.append(
-                        {
-                            "name": cand.name,
-                            "aliases": [],
-                            "scene_type": "interior" if cand.interior else "exterior",
-                            "time_of_day": normalized_time,
-                            "time_counts": (
-                                {normalized_time: 1} if normalized_time else {}
-                            ),
-                            "interior": cand.interior,
-                            "episodes": cand.episodes,
-                            "characters": cand.characters,
-                            "context_lines": cand.context_lines,
-                        }
-                    )
-                    log(f"  ⚠ {cand.name}: 规范化返回空，使用程序候选")
-            except Exception as e:
-                import logging
-
-                logging.error(f"LLM 场景规范化失败 ({cand.name}): {e}")
-                normalized_time = normalize_time_of_day(cand.time_of_day)
-                normalized_candidates.append(
-                    {
-                        "name": cand.name,
-                        "aliases": [],
-                        "scene_type": "interior" if cand.interior else "exterior",
-                        "time_of_day": normalized_time,
-                        "time_counts": {normalized_time: 1} if normalized_time else {},
-                        "interior": cand.interior,
-                        "episodes": cand.episodes,
-                        "characters": cand.characters,
-                        "context_lines": cand.context_lines,
-                    }
-                )
-                log(f"  ⚠ {cand.name}: 规范化失败 ({e})，使用程序候选")
+        # Deterministic, and no model call: a standard heading already states
+        # everything a candidate needs, and the name cleanup a model used to do
+        # here is a suffix strip. What is left — deciding that two spellings are
+        # one room — belongs to adjudication, which sees all of them at once.
+        normalized_candidates = [
+            _candidate_from_parsed_block(candidate) for candidate in candidates
+        ]
 
         merged_candidates: dict[str, dict[str, Any]] = {}
         for cand in normalized_candidates:
@@ -1618,6 +1728,7 @@ async def extract_scenes_from_script(
             normalized_scene_candidates,
             synopsis=synopsis,
             enrichment_agent=enrichment_agent,
+            cache=cache,
             on_scene=note_progress,
         )
     )

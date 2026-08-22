@@ -15,8 +15,11 @@ as separate candidates rather than guessed at.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field
@@ -845,12 +848,18 @@ def _create_scene_adjudication_agent(agent: Any = None):
     )
 
 
+SCENE_ADJUDICATION_CACHE_VERSION = 1
+
+SCENE_ADJUDICATION_CACHE_TYPE = "scene_adjudication"
+
+
 async def adjudicate_scenes(
     scenes: list,
     *,
     occurrences: Optional[dict] = None,
     agent: Any = None,
     on_log: Optional[Callable[[str], None]] = None,
+    cache: Any = None,
 ) -> list:
     """Fold differently-written spellings of one location into a single scene.
 
@@ -878,16 +887,64 @@ async def adjudicate_scenes(
         for scene in scenes
     )
 
-    try:
-        result = (await _create_scene_adjudication_agent(agent).run(
-            "以下是同一部剧本的地点候选：\n" + listing
-        )).output
-    except Exception as exc:  # noqa: BLE001 - degrade to the unmerged result
-        log(f"⚠️ 场景归一裁决失败，保留原始场景: {exc}")
-        return scenes
+    # Only the model's grouping is cached, never the merge that follows it. The
+    # occurrence ceiling and the canonical-name choice are code, so re-applying
+    # them to a cached grouping is free and always uses the current rules.
+    cache_key = hashlib.sha256(
+        json.dumps(
+            {"v": SCENE_ADJUDICATION_CACHE_VERSION, "listing": listing},
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    groups: list | None = None
+    if cache is not None:
+        payload = (
+            await cache.get(SCENE_ADJUDICATION_CACHE_TYPE, [cache_key])
+        ).get(cache_key)
+        if payload:
+            try:
+                groups = [
+                    SimpleNamespace(
+                        canonical_name=str(item.get("canonical_name") or ""),
+                        alias_names=list(item.get("alias_names") or []),
+                    )
+                    for item in json.loads(payload)
+                ]
+            except (TypeError, ValueError, AttributeError):
+                groups = None
+            if groups is not None:
+                log(f"复用上次场景裁决分组：{len(groups)} 组，未调用模型")
+
+    if groups is None:
+        try:
+            result = (await _create_scene_adjudication_agent(agent).run(
+                "以下是同一部剧本的地点候选：\n" + listing
+            )).output
+        except Exception as exc:  # noqa: BLE001 - degrade to the unmerged result
+            log(f"⚠️ 场景归一裁决失败，保留原始场景: {exc}")
+            return scenes
+        groups = list(result.groups)
+        if cache is not None:
+            await cache.save(
+                SCENE_ADJUDICATION_CACHE_TYPE,
+                {
+                    cache_key: json.dumps(
+                        [
+                            {
+                                "canonical_name": group.canonical_name,
+                                "alias_names": list(group.alias_names or []),
+                            }
+                            for group in groups
+                        ],
+                        ensure_ascii=False,
+                    )
+                },
+            )
 
     removed: set[str] = set()
-    for group in result.groups:
+    for group in groups:
         members = [
             by_name[name]
             for name in (
