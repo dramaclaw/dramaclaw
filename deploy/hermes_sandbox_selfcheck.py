@@ -31,33 +31,44 @@ _REFUSE_FAILCLOSE = 3  # 拒绝启动:沙箱必需但不可用(EE/production 或
 _REFUSE_LAUNCH = 4  # 拒绝启动:沙箱包裹好了却无法拉起(异常环境)
 
 
-def _sandbox_required() -> bool:
-    """与 sandbox_wrap 同源的判定:多租户/生产必须强制沙箱。导入失败时保守视为必需。"""
-    try:
-        from novelvideo.security.sandbox_wrap import _sandbox_required as impl
+def _may_degrade() -> bool:
+    """降级放行的**唯一**条件,与 sandbox_wrap._fallback_or_raise 完全同源:
+    非 EE/生产(`_sandbox_required()` 为假)**且**已显式 opt-in
+    (`SUPERTALE_ALLOW_UNSANDBOXED`)。任何判不了的情况(连 wrapper 都导不进来)
+    按最保守处理——不许降级,拒绝启动。
 
-        return impl()
-    except Exception:  # noqa: BLE001 - 判不了就按"必需"保守处理
-        return True
+    这修掉了原先只看 `_sandbox_required()` 的 gate bug:CE 单租户但**没** opt-in
+    时,旧逻辑会 `not required → 降级放行`,与 `_fallback_or_raise`(该场景 raise)
+    不一致,等于让 gate 比 wrapper 更宽松。现在两侧同源。
+    """
+    try:
+        from novelvideo.security.sandbox_wrap import (
+            _dev_unsandboxed_opt_in,
+            _sandbox_required as impl,
+        )
+
+        return (not impl()) and _dev_unsandboxed_opt_in()
+    except Exception:  # noqa: BLE001 - 判不了就绝不降级
+        return False
 
 
 def main() -> int:
     try:
         from novelvideo.security.sandbox_wrap import SandboxSpec, wrap_command
     except Exception as exc:  # noqa: BLE001 - 导入失败也算沙箱不可用
-        # 连 wrapper 都导不进来:EE 拒绝启动,CE 降级放行(告警)。
-        if _sandbox_required():
+        # 连 wrapper 都导不进来:仅当 CE 单租户 + 已 opt-in 才降级放行,否则拒绝启动。
+        if _may_degrade():
             print(
-                f"sandbox startup gate FAILED: cannot import sandbox wrapper: {exc}",
+                f"sandbox startup gate DEGRADED: cannot import sandbox wrapper ({exc}); "
+                "booting UNSANDBOXED (CE single-tenant, SUPERTALE_ALLOW_UNSANDBOXED set)",
                 file=sys.stderr,
             )
-            return _REFUSE_FAILCLOSE
+            return _BOOT
         print(
-            f"sandbox startup gate DEGRADED: cannot import sandbox wrapper ({exc}); "
-            "booting UNSANDBOXED (CE single-tenant)",
+            f"sandbox startup gate FAILED: cannot import sandbox wrapper: {exc}",
             file=sys.stderr,
         )
-        return _BOOT
+        return _REFUSE_FAILCLOSE
 
     probe = ["/bin/true"]
     with tempfile.TemporaryDirectory(prefix="hermes-sbx-selfcheck-") as tmp:
@@ -84,36 +95,38 @@ def main() -> int:
         try:
             proc = subprocess.run(wrapped, capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.SubprocessError) as exc:
-            # 包裹好了却拉不起来(极少见:二进制/内核异常)。EE 拒绝,CE 降级放行。
-            if _sandbox_required():
+            # 包裹好了却拉不起来(极少见:二进制/内核异常)。仅 CE + opt-in 降级,否则拒绝。
+            if _may_degrade():
                 print(
-                    f"sandbox startup gate FAILED (refuse to boot): could not launch sandbox: {exc}",
+                    f"sandbox startup gate DEGRADED: could not launch sandbox ({exc}); "
+                    "booting UNSANDBOXED (CE single-tenant, SUPERTALE_ALLOW_UNSANDBOXED set)",
                     file=sys.stderr,
                 )
-                return _REFUSE_LAUNCH
+                return _BOOT
             print(
-                f"sandbox startup gate DEGRADED: could not launch sandbox ({exc}); "
-                "booting UNSANDBOXED (CE single-tenant)",
+                f"sandbox startup gate FAILED (refuse to boot): could not launch sandbox: {exc}",
                 file=sys.stderr,
             )
-            return _BOOT
+            return _REFUSE_LAUNCH
 
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
         # 沙箱二进制在、也拉起了,但沙箱内 /bin/true 非 0:通常是内核缺 userns 让
-        # bwrap 失败。EE 拒绝启动;CE 单租户降级为无沙箱(告警),不把老内核用户拒之门外。
-        if _sandbox_required():
+        # bwrap 失败。仅 CE 单租户 + opt-in 降级为无沙箱(不把老内核用户拒之门外);
+        # EE/生产或 CE 未 opt-in 都拒绝启动。
+        if _may_degrade():
             print(
-                f"sandbox startup gate FAILED (refuse to boot, exit {proc.returncode}): {detail}",
+                f"sandbox startup gate DEGRADED (sandbox probe exit {proc.returncode}: {detail}); "
+                "booting UNSANDBOXED (CE single-tenant, SUPERTALE_ALLOW_UNSANDBOXED set — "
+                "host kernel likely lacks user namespaces)",
                 file=sys.stderr,
             )
-            return proc.returncode or _REFUSE_FAILCLOSE
+            return _BOOT
         print(
-            f"sandbox startup gate DEGRADED (sandbox probe exit {proc.returncode}: {detail}); "
-            "booting UNSANDBOXED (CE single-tenant — host kernel likely lacks user namespaces)",
+            f"sandbox startup gate FAILED (refuse to boot, exit {proc.returncode}): {detail}",
             file=sys.stderr,
         )
-        return _BOOT
+        return proc.returncode or _REFUSE_FAILCLOSE
 
     print("sandbox startup gate OK: Hermes sandbox can be created")
     return _BOOT

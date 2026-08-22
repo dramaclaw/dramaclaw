@@ -110,6 +110,10 @@ def test_linux_wrapper_uses_current_codex_sandbox_cli(monkeypatch, tmp_path):
     sandbox_binary.write_text("#!/bin/sh\n", encoding="utf-8")
     hermes_home = tmp_path / "state" / "alice" / ".hermes"
     hermes_home.mkdir(parents=True)
+    # Linux wrapping is a deliberate opt-in (peer-read isolation is a deployment
+    # concern, #346 P1②); without the flag _wrap_linux fails closed rather than
+    # wrap. This test pins the wrapped argv shape, so activate it explicitly.
+    monkeypatch.setenv("SUPERTALE_LINUX_SANDBOX", "1")
     monkeypatch.setattr(
         "novelvideo.security.sandbox_wrap.shutil.which",
         lambda _name: str(sandbox_binary),

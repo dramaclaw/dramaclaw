@@ -47,12 +47,22 @@ How the Linux sandbox ships (the P1① half of **#346**, now done):
   installs the `bubblewrap` package. A build-time `--help` smoke proves the ELF loads.
 - `codex-linux-sandbox` still needs a **host kernel with unprivileged user namespaces** at
   runtime for `bwrap`; installing the binary does not create that capability.
+- **Linux wrapping is off by default** (`SUPERTALE_LINUX_SANDBOX` unset ⇒ `_wrap_linux` routes
+  through `_fallback_or_raise` without wrapping). Reason: codex's managed `restricted` profile is
+  **allow-only** and its narrowest read grant is the broad `root` special — so a wrapped Hermes on
+  a shared host can **read peers' `state/output/runtime` data** (write is denied; read is not).
+  Narrowing the read scope in-profile empirically breaks the `bwrap` re-exec entirely, so peer-read
+  confidentiality is **not** closable at the profile layer — it must be closed at the **deployment
+  layer** by mounting only the current user's slice into the container. `SUPERTALE_LINUX_SANDBOX=1`
+  is the deployment's explicit assertion that it has done so; set it **only** there. Until then EE
+  fail-closes (won't run with false read-isolation) and single-tenant CE degrades/refuses per its
+  opt-in (single tenant ⇒ no cross-user read risk). Per-user mounts + a test asserting peer-read
+  *fails* are #346 P1②.
 - **Network:** the Linux profile allows **outbound** (`"network": "enabled"`), matching the macOS
   Seatbelt profile's `(allow network-outbound)`. codex's `"restricted"` mode `--unshare-net`s the
   sandbox — *no* egress — which strangles Hermes's required calls to the project API
   (`DRAMACLAW_API_URL`) and the model gateway, and the `/bin/true` probe cannot see that break.
-  The isolation that matters for multi-tenancy is the **filesystem** boundary (a user cannot read or
-  write peers' data), which is fully enforced; tightening egress to an allowlist is P1② below.
+  Tightening egress to an allowlist is P1② below.
 
 Two enforcement layers, both driven by the same `_fallback_or_raise` decision:
 
@@ -61,7 +71,11 @@ Two enforcement layers, both driven by the same `_fallback_or_raise` decision:
   sandbox (kernel lacks user namespaces) both route through `_fallback_or_raise`.
 - **Boot, per container** — `deploy/docker-entrypoint.sh` runs the startup gate
   `deploy/hermes_sandbox_selfcheck.py` before exec-ing the API. Its exit code decides whether
-  the container boots at all.
+  the container boots at all. Every degrade path in the gate is guarded by `_may_degrade()`
+  (`not _sandbox_required()` **and** `SUPERTALE_ALLOW_UNSANDBOXED` set; import-failure ⇒ never
+  degrade) — the exact CE-single-tenant-opt-in condition `_fallback_or_raise` uses, so the gate
+  can never boot a config the wrapper would have refused. CE without the opt-in **refuses** on
+  every unusable-sandbox path, not just on EE.
 
 The decision in both places:
 
@@ -78,7 +92,14 @@ The decision in both places:
 compose contract and the runtime/boot behavior. Do not remove the compose opt-in unless you accept
 that CE will fail closed on kernels without unprivileged user namespaces.
 
-Still open in **#346** (P1②): both platforms currently allow **all** outbound. Tighten egress to a
-controlled allowlist (project API + model gateway only) — e.g. codex's `--allow-network-for-proxy`
-+ a proxy route spec on Linux, and the matching Seatbelt narrowing on macOS — plus a test that a
-minimal Hermes API/model call actually completes from inside a real Linux sandbox.
+Still open in **#346** (P1②):
+
+1. **Linux peer-read isolation** — mount only the current user's `state/output/runtime` slice into
+   the Hermes container (the profile layer cannot close this; see above), then flip
+   `SUPERTALE_LINUX_SANDBOX=1` in that deployment and add a test asserting a wrapped process
+   **cannot** read a peer's data (today `tests/sandbox_linux_isolation.py` only *reports* peer reads;
+   it must assert they fail).
+2. **Egress allowlist** — both platforms currently allow **all** outbound. Tighten to a controlled
+   allowlist (project API + model gateway only) — e.g. codex's `--allow-network-for-proxy` + a proxy
+   route spec on Linux, and the matching Seatbelt narrowing on macOS — plus a test that a minimal
+   Hermes API/model call actually completes from inside a real Linux sandbox.
