@@ -126,7 +126,7 @@ agent:
 
 tools:
   tool_search:
-    enabled: off
+    enabled: auto
   skill_manage:
     enabled: "off"
 
@@ -471,10 +471,21 @@ _OLD_SOUL_IDENTITY_TEXT = (
 )
 
 
-def ensure_user_hermes_workspace(username: str, *, profile: str = "director") -> Path:
-    """Create / refresh per-user HERMES_HOME. Idempotent and cheap.
+def ensure_user_hermes_workspace(
+    username: str,
+    *,
+    profile: str = "director",
+    project_state_dir: str | Path | None = None,
+) -> Path:
+    """Create / refresh a managed HERMES_HOME. Idempotent and cheap.
 
-    Layout under ``state/{username}/.hermes/``:
+    Home-scoped agents keep the legacy per-user workspace. Project-scoped
+    agents live below the authoritative project state directory so Hermes'
+    native ``state.db`` and ``memories/`` follow the project across home-node
+    backup and restore operations.
+
+    Layout under ``state/{username}/.hermes/`` (home scope) or
+    ``{project_state_dir}/agents/hermes/{profile}/`` (project scope):
         config.yaml         L1 toolset whitelist (overwritten only if missing)
         .env                compatibility file (model credentials are not stored)
         tmp/                per-user TMPDIR (sandbox writable)
@@ -485,8 +496,11 @@ def ensure_user_hermes_workspace(username: str, *, profile: str = "director") ->
     Returns the HERMES_HOME path (caller passes as ``HERMES_HOME`` env var).
     """
     normalized_profile = "freezone" if profile == "freezone" else "director"
-    home_name = ".hermes-freezone" if normalized_profile == "freezone" else ".hermes"
-    home = _state_root() / username / home_name
+    if project_state_dir is not None:
+        home = Path(project_state_dir) / "agents" / "hermes" / normalized_profile
+    else:
+        home_name = ".hermes-freezone" if normalized_profile == "freezone" else ".hermes"
+        home = _state_root() / username / home_name
     home.mkdir(parents=True, exist_ok=True)
     try:
         home.chmod(0o700)
@@ -944,7 +958,7 @@ def _configured_max_turns(env_name: str, default: int) -> int:
 
 
 def _configured_tool_search_mode() -> str:
-    """Freezone Tool Search mode: "off" (default) | "auto" | "on".
+    """Freezone Tool Search mode: "auto" (default) | "on" | "off".
 
     "auto" lets Hermes defer the freezone plugin tool schemas behind its
     tool_search/tool_describe/tool_call bridge when they would exceed the
@@ -954,8 +968,8 @@ def _configured_tool_search_mode() -> str:
     if raw in {"auto", "on", "off"}:
         return raw
     if raw:
-        _log.warning("invalid HERMES_TOOL_SEARCH_MODE=%r, using default 'off'", raw)
-    return "off"
+        _log.warning("invalid HERMES_TOOL_SEARCH_MODE=%r, using default 'auto'", raw)
+    return "auto"
 
 
 def _ensure_director_config_policy(config_yaml: Path) -> None:
@@ -1028,10 +1042,11 @@ def _ensure_freezone_config_policy(config_yaml: Path) -> None:
     tool_search = tools.get("tool_search")
     if not isinstance(tool_search, dict):
         tool_search = {}
-    # Tool Search defaults to "off" to preserve the native runtime skill
-    # selection path; HERMES_TOOL_SEARCH_MODE=auto opts into progressive tool
-    # disclosure. skill_manage stays removed at registry level by
-    # sitecustomize so Hermes cannot self-create project skills.
+    # Tool Search defaults to progressive disclosure so the Freezone plugin's
+    # large schema catalog is not serialized on every model request. Operators
+    # can set HERMES_TOOL_SEARCH_MODE=off for an explicit compatibility
+    # rollback. skill_manage stays removed at registry level by sitecustomize
+    # so Hermes cannot self-create project skills.
     tool_search["enabled"] = _configured_tool_search_mode()
     tools["tool_search"] = tool_search
     skill_manage = tools.get("skill_manage")

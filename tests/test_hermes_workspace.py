@@ -160,6 +160,25 @@ def test_fresh_create_layout(isolated_workspace, repo_skills, repo_plugins):
     assert "我是虾导，DramaClaw 的小说转视频创作助手。" not in memory
 
 
+def test_project_workspace_keeps_hermes_native_state_under_project(
+    isolated_workspace, repo_skills, repo_plugins
+):
+    project_state = isolated_workspace / "state" / "admin" / "movie-a"
+
+    director_home = hw.ensure_user_hermes_workspace(
+        "admin", project_state_dir=project_state
+    )
+    freezone_home = hw.ensure_user_hermes_workspace(
+        "admin", profile="freezone", project_state_dir=project_state
+    )
+
+    assert director_home == project_state / "agents" / "hermes" / "director"
+    assert freezone_home == project_state / "agents" / "hermes" / "freezone"
+    assert (director_home / "config.yaml").is_file()
+    assert (director_home / "memories" / "MEMORY.md").is_file()
+    assert (freezone_home / "config.yaml").is_file()
+
+
 def test_freezone_profile_uses_isolated_workspace(
     isolated_workspace, repo_skills, repo_plugins
 ):
@@ -389,7 +408,42 @@ def test_freezone_profile_tool_search_mode_from_env(
     monkeypatch.setenv("HERMES_TOOL_SEARCH_MODE", "bogus")
     hw.ensure_user_hermes_workspace("admin", profile="freezone")
     parsed = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
-    assert parsed["tools"]["tool_search"]["enabled"] == "off"
+    assert parsed["tools"]["tool_search"]["enabled"] == "auto"
+
+
+def test_freezone_profile_tool_search_defaults_to_auto(
+    isolated_workspace,
+    repo_skills,
+    repo_plugins,
+    monkeypatch,
+):
+    monkeypatch.delenv("HERMES_TOOL_SEARCH_MODE", raising=False)
+
+    home = hw.ensure_user_hermes_workspace("admin", profile="freezone")
+    parsed = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+
+    assert parsed["tools"]["tool_search"]["enabled"] == "auto"
+
+
+def test_freezone_profile_migrates_existing_tool_search_to_auto(
+    isolated_workspace,
+    repo_skills,
+    repo_plugins,
+    monkeypatch,
+):
+    home = hw.ensure_user_hermes_workspace("admin", profile="freezone")
+    config_file = home / "config.yaml"
+    parsed = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+    parsed["tools"]["tool_search"]["enabled"] = "off"
+    config_file.write_text(
+        yaml.safe_dump(parsed, allow_unicode=True), encoding="utf-8"
+    )
+    monkeypatch.delenv("HERMES_TOOL_SEARCH_MODE", raising=False)
+
+    hw.ensure_user_hermes_workspace("admin", profile="freezone")
+    migrated = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+
+    assert migrated["tools"]["tool_search"]["enabled"] == "auto"
 
 
 def test_freezone_profile_refreshes_stale_repo_symlinks(

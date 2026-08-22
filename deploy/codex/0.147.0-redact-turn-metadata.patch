@@ -1,0 +1,76 @@
+diff --git a/codex-rs/protocol/src/turn_input.rs b/codex-rs/protocol/src/turn_input.rs
+index bc5adbe8b5..568b544ceb 100644
+--- a/codex-rs/protocol/src/turn_input.rs
++++ b/codex-rs/protocol/src/turn_input.rs
+@@ -12,6 +12,7 @@ use serde::Serialize;
+ use serde_json::Value;
+ use std::collections::BTreeMap;
+ use std::collections::HashMap;
++use std::fmt;
+
+ /// Input consumed by a regular turn.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+@@ -28,7 +29,7 @@ pub enum TurnInput {
+ ///
+ /// Callers choose start-or-steer, idle-start, or steer-only behavior through
+ /// the corresponding `CodexThread` method.
+-#[derive(Clone, Debug)]
++#[derive(Clone)]
+ pub struct TurnInputRequest {
+     pub input: TurnInput,
+     pub thread_settings: ThreadSettingsOverrides,
+@@ -38,6 +39,29 @@ pub struct TurnInputRequest {
+     pub trace: Option<W3cTraceContext>,
+ }
+
++impl fmt::Debug for TurnInputRequest {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct("TurnInputRequest")
++            .field("input", &self.input)
++            .field("thread_settings", &self.thread_settings)
++            .field("start", &self.start)
++            .field("additional_context", &self.additional_context)
++            // App-server clients can use this extension to carry short-lived
++            // authorization material to the Responses API. The request still
++            // receives the original values, but Debug output feeds local logs
++            // and must never persist bearer credentials.
++            .field(
++                "responsesapi_client_metadata",
++                &self
++                    .responsesapi_client_metadata
++                    .as_ref()
++                    .map(|_| "<redacted>"),
++            )
++            .field("trace", &self.trace)
++            .finish()
++    }
++}
++
+ /// Request to resume sampling for an interrupted regular turn.
+ ///
+ /// Sampling restarts under `turn_id`, which must be the ID already recorded
+@@ -112,6 +136,24 @@ impl TurnInputRequest {
+     }
+ }
+
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn debug_redacts_responses_api_client_metadata_values() {
++        let secret = "test-gateway-token";
++        let request = TurnInputRequest::user_input(Vec::new()).with_responses_metadata(Some(
++            HashMap::from([("dramaclaw_gateway_api_key".to_string(), secret.to_string())]),
++        ));
++
++        let rendered = format!("{request:?}");
++
++        assert!(!rendered.contains(secret));
++        assert!(rendered.contains("responsesapi_client_metadata: Some(\"<redacted>\")"));
++    }
++}
++
+ /// How Core should route submitted turn input.
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ pub enum TurnInputMode {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
@@ -843,6 +844,87 @@ class ClaudeCliThread:
         return ChatRunResult(thread_id=self.id, text=text or "已执行，但没有返回正文。")
 
 
+def _codex_thread_config(
+    config_overrides: tuple[str, ...], env: dict[str, str]
+) -> dict[str, Any]:
+    """Convert CLI overrides to thread-local config and bind MCP identity."""
+
+    config: dict[str, Any] = {}
+    for override in config_overrides:
+        key, separator, raw_value = override.partition("=")
+        if not separator or not key.strip():
+            continue
+        try:
+            value = tomllib.loads(f"value = {raw_value}")["value"]
+        except tomllib.TOMLDecodeError:
+            value = raw_value
+        config[key.strip()] = value
+
+    mcp_env_names = config.pop("mcp_servers.dramaclaw.env_vars", [])
+    if isinstance(mcp_env_names, list):
+        mcp_env = {
+            str(name): env[str(name)]
+            for name in mcp_env_names
+            if isinstance(name, str) and env.get(name)
+        }
+        if mcp_env:
+            config["mcp_servers.dramaclaw.env"] = mcp_env
+    return config
+
+
+def _start_or_resume_codex_thread(
+    codex: Any,
+    thread_id: str | None,
+    thread_options: dict[str, Any],
+) -> Any:
+    """Resume a persisted thread, replacing only a provably stale pointer."""
+
+    if not thread_id:
+        return codex.thread_start(**thread_options)
+
+    from openai_codex.errors import InvalidRequestError
+
+    try:
+        return codex.thread_resume(thread_id, **thread_options)
+    except InvalidRequestError as exc:
+        message = str(getattr(exc, "message", exc) or "").lower()
+        stale_pointer = "no rollout found for thread id" in message or (
+            "thread" in message and "not found" in message
+        )
+        if not stale_pointer:
+            raise
+        return codex.thread_start(**thread_options)
+
+
+def _start_codex_turn(
+    thread: Any,
+    prompt: str,
+    turn_metadata: dict[str, str],
+) -> Any:
+    """Start a turn with metadata omitted by the 0.147 generated facade.
+
+    App Server 0.147 already accepts ``responsesapiClientMetadata``; only the
+    generated Python convenience method lagged behind the protocol. Sending a
+    raw params mapping keeps the credential scoped to the turn context instead
+    of the long-lived thread configuration.
+    """
+
+    if not turn_metadata:
+        from openai_codex import TextInput
+
+        return thread.turn(TextInput(prompt))
+
+    from openai_codex._inputs import TextInput, _normalize_run_input, _to_wire_input
+    from openai_codex.api import TurnHandle
+
+    wire_input = _to_wire_input(_normalize_run_input(TextInput(prompt)))
+    started = thread._client.turn_start(
+        thread.id,
+        wire_input,
+        params={"responsesapiClientMetadata": dict(turn_metadata)},
+    )
+    return TurnHandle(thread._client, thread.id, started.turn.id)
+
 class CodexClient:
     def __init__(
         self,
@@ -851,13 +933,26 @@ class CodexClient:
         cwd: Path,
         env: dict[str, str],
         model: str,
+        model_provider: str,
+        developer_instructions: str,
         config_overrides: tuple[str, ...] = (),
+        thread_config_overrides: tuple[str, ...] | None = None,
+        turn_metadata: dict[str, str] | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
         self._env = env
         self._model = model
+        self._model_provider = model_provider
+        self._developer_instructions = developer_instructions
         self._config_overrides = tuple(config_overrides)
+        effective_thread_overrides = (
+            self._config_overrides
+            if thread_config_overrides is None
+            else tuple(thread_config_overrides)
+        )
+        self._thread_config = _codex_thread_config(effective_thread_overrides, env)
+        self._turn_metadata = dict(turn_metadata or {})
 
     def thread_start(self) -> "CodexThread":
         return CodexThread(
@@ -865,7 +960,11 @@ class CodexClient:
             cwd=self._cwd,
             env=self._env,
             model=self._model,
+            model_provider=self._model_provider,
+            developer_instructions=self._developer_instructions,
             config_overrides=self._config_overrides,
+            thread_config=self._thread_config,
+            turn_metadata=self._turn_metadata,
             thread_id=None,
         )
 
@@ -875,7 +974,11 @@ class CodexClient:
             cwd=self._cwd,
             env=self._env,
             model=self._model,
+            model_provider=self._model_provider,
+            developer_instructions=self._developer_instructions,
             config_overrides=self._config_overrides,
+            thread_config=self._thread_config,
+            turn_metadata=self._turn_metadata,
             thread_id=thread_id,
         )
 
@@ -888,14 +991,22 @@ class CodexThread:
         cwd: Path,
         env: dict[str, str],
         model: str,
+        model_provider: str,
+        developer_instructions: str,
         config_overrides: tuple[str, ...],
+        thread_config: dict[str, Any],
+        turn_metadata: dict[str, str],
         thread_id: str | None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
         self._env = env
         self._model = model
+        self._model_provider = model_provider
+        self._developer_instructions = developer_instructions
         self._config_overrides = tuple(config_overrides)
+        self._thread_config = dict(thread_config)
+        self._turn_metadata = dict(turn_metadata)
         self.id = thread_id
 
     async def stream(self, prompt: str) -> AsyncIterator[ChatBackendEvent]:
@@ -907,7 +1018,12 @@ class CodexThread:
             loop.call_soon_threadsafe(queue.put_nowait, (kind, payload))
 
         def worker() -> None:
-            from openai_codex import Codex, CodexConfig, TextInput
+            from openai_codex import (
+                ApprovalMode,
+                CodexConfig,
+                Sandbox,
+            )
+            from novelvideo.chat.codex_app_server import shared_codex
             from openai_codex.generated.v2_all import (
                 AgentMessageDeltaNotification,
                 ConfigWarningNotification,
@@ -943,20 +1059,42 @@ class CodexThread:
 
             items: list[Any] = []
             assistant_parts: list[str] = []
+            final_response: str | None = None
+            final_disposition: str | None = None
 
-            with Codex(config=config) as codex:
-                if self.id:
-                    thread = codex.thread_resume(self.id, cwd=str(self._cwd), model=self._model)
-                else:
-                    thread = codex.thread_start(model=self._model, cwd=str(self._cwd))
+            with shared_codex(config) as codex:
+                thread_options = {
+                    # The only pre-approved tools belong to DramaClaw's
+                    # project-scoped MCP server. Keep the global policy at
+                    # deny-all so shell/filesystem/network escalation cannot
+                    # trigger a second, credential-less Guardian model call.
+                    "approval_mode": ApprovalMode.deny_all,
+                    "config": self._thread_config,
+                    "cwd": str(self._cwd),
+                    "developer_instructions": self._developer_instructions,
+                    "model": self._model,
+                    "model_provider": self._model_provider,
+                    "sandbox": Sandbox.read_only,
+                }
+                thread = _start_or_resume_codex_thread(
+                    codex,
+                    self.id,
+                    thread_options,
+                )
                 self.id = thread.id
-                turn = thread.turn(TextInput(prompt))
+                turn = _start_codex_turn(thread, prompt, self._turn_metadata)
                 nonlocal current_turn_id
                 current_turn_id = turn.id
                 register_live_codex_turn(self.id, turn.id, turn)
                 emit(
                     "event",
                     ChatBackendEvent(type="thread_started", thread_id=self.id, turn_id=turn.id),
+                )
+                emit(
+                    "event",
+                    ChatBackendEvent(
+                        type="egress_submitted", thread_id=self.id, turn_id=turn.id
+                    ),
                 )
                 try:
                     for event in turn.stream():
@@ -1177,31 +1315,37 @@ class CodexThread:
                             raise RuntimeError(message or f"Codex turn failed with status {payload.turn.status.value}")
                         if payload.turn.status == TurnStatus.interrupted:
                             final_response = "".join(assistant_parts).strip() or "已中断。"
-                            emit(
-                                "event",
-                                ChatBackendEvent(
-                                    type="complete",
-                                    thread_id=self.id,
-                                    text=final_response,
-                                ),
+                            final_disposition = "cancelled"
+                        else:
+                            final_response = (
+                                _codex_final_response_from_items(items)
+                                or "".join(assistant_parts).strip()
+                                or "已执行，但没有返回正文。"
                             )
-                            return
-                        final_response = (
-                            _codex_final_response_from_items(items)
-                            or "".join(assistant_parts).strip()
-                            or "已执行，但没有返回正文。"
-                        )
-                        emit(
-                            "event",
-                            ChatBackendEvent(
-                                type="complete",
-                                thread_id=self.id,
-                                text=final_response,
-                            ),
-                        )
-                        return
+                            final_disposition = "completed"
                 finally:
                     unregister_live_codex_turn(self.id, turn.id)
+
+                if final_response is not None and final_disposition is not None:
+                    emit(
+                        "event",
+                        ChatBackendEvent(
+                            type="egress_disposition",
+                            thread_id=self.id,
+                            turn_id=turn.id,
+                            disposition=final_disposition,
+                        ),
+                    )
+                    emit(
+                        "event",
+                        ChatBackendEvent(
+                            type="complete",
+                            thread_id=self.id,
+                            turn_id=turn.id,
+                            text=final_response,
+                        ),
+                    )
+                    return
 
             raise RuntimeError("Codex turn completed event not received")
 

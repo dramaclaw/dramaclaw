@@ -47,7 +47,7 @@ services:
       HF_HOME: /data/cache/huggingface
       TORCH_HOME: /data/cache/torch
       XDG_CACHE_HOME: /data/cache
-      DRAMACLAW_CHAT_BACKEND: hermes
+      DRAMACLAW_CHAT_BACKEND: "${DRAMACLAW_CHAT_BACKEND:-hermes}"
       HERMES_CLI_PATH: /usr/local/bin/hermes
       # CE 单租户自托管:Linux 镜像暂未把 deploy/sandbox 下的 codex-linux-sandbox
       # 装到 PATH(留待 #346),此处显式声明 CE 沿用无沙箱运行——保留本 PR 之前的

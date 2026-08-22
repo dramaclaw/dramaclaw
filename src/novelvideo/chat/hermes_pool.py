@@ -1,9 +1,11 @@
 """Per-user Hermes worker pool.
 
-Each user gets at most one HermesSdkClient instance (and one persistent
-HermesSdkThread session that accumulates cross-project memory). Clients
-are lazily spawned on first chat message and reaped after idle timeout
-to control memory use.
+Each user gets at most one live HermesSdkClient per agent profile. Conversation
+sessions are separated by profile, home/project scope, project, and Freezone
+canvas where applicable. Project sessions place Hermes' native session and
+memory state in the project's authoritative state directory; home sessions keep
+the legacy per-user workspace. Clients are lazily spawned and reaped after idle
+timeout.
 
 Token lifecycle is managed here:
 - Issue a fresh control-plane agent session on spawn (~2h TTL, scoped).
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -145,6 +148,7 @@ class _WorkerSlot:
     client: HermesSdkClient
     thread: HermesSdkThread
     token: AgentSessionToken
+    home: Path | None = None
     model: str | None = None
     agent_profile: str = "main"
     tool_mode: str = "default"
@@ -532,6 +536,7 @@ class HermesPool:
                 project_id,
                 agent_profile,
                 normalized_canvas_id,
+                home=getattr(old_slot, "home", None),
             )
             await self._evict_lru_if_full()
             new_slot = await self._spawn_locked(
@@ -544,6 +549,7 @@ class HermesPool:
                 surface=normalized_surface,
                 canvas_id=normalized_canvas_id,
                 resume_session_id="",
+                resume_persisted_session=False,
             )
             self._slots[slot_key] = new_slot
             if self._cleanup_task is None or self._cleanup_task.done():
@@ -581,6 +587,7 @@ class HermesPool:
         egress_project_id: str | None = None,
         requester_user_id: str | None = None,
         resume_session_id: str | None = None,
+        resume_persisted_session: bool = True,
         authorization: HermesTurnAuthorization | None = None,
     ) -> _WorkerSlot:
         """Spawn a worker slot.
@@ -611,9 +618,16 @@ class HermesPool:
         # Checked before the subprocess exists, so a mismatched pair fails here
         # with a cause rather than at the first turn as a connection error.
         require_hermes_fork(cli_path)
+        project_env = await self._project_env(username, session_project_id)
+        project_state_dir = project_env.get("DRAMACLAW_PROJECT_STATE_DIR")
+        if session_project_id and not project_state_dir:
+            raise RuntimeError(
+                f"Hermes project state is unavailable for project {session_project_id}"
+            )
         home = ensure_user_hermes_workspace(
             username,
             profile=_workspace_profile_for_agent(agent_profile, tool_mode, surface),
+            project_state_dir=project_state_dir,
         )
         worker_id = f"hermes-{uuid.uuid4().hex}"
         token = await get_auth_session_port().create_agent_session(
@@ -625,7 +639,6 @@ class HermesPool:
             current_scope_kind=scope_kind,
             current_project_id=session_project_id,
         )
-        project_env = await self._project_env(username, session_project_id)
         env = self._build_env(
             home,
             username,
@@ -652,6 +665,17 @@ class HermesPool:
             or self._session_id_for(
                 username, scope_kind, session_project_id, agent_profile, canvas_id
             )
+            or (
+                self._persisted_session_id_for(
+                    home,
+                    scope_kind,
+                    session_project_id,
+                    agent_profile,
+                    canvas_id,
+                )
+                if resume_persisted_session
+                else None
+            )
             or ""
         ).strip()
         resumed_session = bool(session_id)
@@ -671,7 +695,12 @@ class HermesPool:
                     exc,
                 )
                 self._forget_session(
-                    username, scope_kind, session_project_id, agent_profile, canvas_id
+                    username,
+                    scope_kind,
+                    session_project_id,
+                    agent_profile,
+                    canvas_id,
+                    home=home,
                 )
                 thread = client.thread_start()
                 resumed_session = False
@@ -690,6 +719,7 @@ class HermesPool:
             client=client,
             thread=thread,
             token=token,
+            home=home,
             model=model,
             agent_profile=agent_profile,
             tool_mode=tool_mode,
@@ -738,6 +768,63 @@ class HermesPool:
             self._scope_key(scope_kind, project_id, agent_profile, canvas_id)
         )
 
+    @classmethod
+    def _persisted_session_id_for(
+        cls,
+        home: Path,
+        scope_kind: str,
+        project_id: str | None,
+        agent_profile: str = "main",
+        canvas_id: str | None = None,
+    ) -> str | None:
+        path = home / "dramaclaw_sessions.json"
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        key = json.dumps(
+            cls._scope_key(scope_kind, project_id, agent_profile, canvas_id),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return str(payload.get(key) or "").strip() or None
+
+    @classmethod
+    def _persist_session_id(
+        cls,
+        home: Path,
+        scope_kind: str,
+        project_id: str | None,
+        agent_profile: str,
+        canvas_id: str | None,
+        session_id: str | None,
+    ) -> None:
+        from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
+
+        path = home / "dramaclaw_sessions.json"
+        key = json.dumps(
+            cls._scope_key(scope_kind, project_id, agent_profile, canvas_id),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        with index_file_lock(path):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            except (OSError, json.JSONDecodeError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            normalized = str(session_id or "").strip()
+            if normalized:
+                payload[key] = normalized
+            else:
+                payload.pop(key, None)
+            write_json_atomic(path, payload)
+
     def _forget_session(
         self,
         username: str,
@@ -745,13 +832,25 @@ class HermesPool:
         project_id: str | None,
         agent_profile: str = "main",
         canvas_id: str | None = None,
+        home: Path | None = None,
     ) -> None:
         sessions = self._session_ids.get(username)
-        if not sessions:
-            return
-        sessions.pop(self._scope_key(scope_kind, project_id, agent_profile, canvas_id), None)
-        if not sessions:
-            self._session_ids.pop(username, None)
+        if sessions:
+            sessions.pop(
+                self._scope_key(scope_kind, project_id, agent_profile, canvas_id),
+                None,
+            )
+            if not sessions:
+                self._session_ids.pop(username, None)
+        if home is not None:
+            self._persist_session_id(
+                home,
+                scope_kind,
+                project_id,
+                agent_profile,
+                canvas_id,
+                None,
+            )
 
     def _remember_session(self, slot: _WorkerSlot) -> None:
         session_id = str(getattr(slot.thread, "id", "") or "").strip()
@@ -760,6 +859,15 @@ class HermesPool:
         self._session_ids.setdefault(slot.username, {})[
             self._scope_key(slot.scope_kind, slot.project_id, slot.agent_profile, slot.canvas_id)
         ] = session_id
+        if slot.home is not None:
+            self._persist_session_id(
+                slot.home,
+                slot.scope_kind,
+                slot.project_id,
+                slot.agent_profile,
+                slot.canvas_id,
+                session_id,
+            )
 
     async def _rotate_slot_locked(
         self,
@@ -803,6 +911,7 @@ class HermesPool:
                 slot.project_id,
                 slot.agent_profile,
                 slot.canvas_id,
+                home=slot.home,
             )
         same_scope = self._scope_key(
             slot.scope_kind,
@@ -823,6 +932,7 @@ class HermesPool:
             egress_project_id=slot.egress_project_id,
             requester_user_id=slot.requester_user_id,
             resume_session_id=resume_session_id,
+            resume_persisted_session=resume_existing_session,
         )
         _log.info(
             "rotating hermes worker for user=%s old_agent_session=%s new_agent_session=%s reason=%s",
@@ -852,38 +962,29 @@ class HermesPool:
     ) -> dict[str, str]:
         if not project_id:
             return {}
-        try:
-            from novelvideo.project_context import (
-                require_project_home_node,
-                resolve_project_context,
-            )
+        from novelvideo.project_context import (
+            require_project_home_node,
+            resolve_project_context,
+        )
 
-            ctx = await resolve_project_context(
-                user={"username": username},
-                project_id=project_id,
-                required_role="viewer",
-            )
-            require_project_home_node(ctx, operation="resolve hermes project files")
-            return {
-                "DRAMACLAW_PROJECT_NAME": ctx.project_name,
-                "DRAMACLAW_PROJECT_OWNER": ctx.owner_username,
-                "DRAMACLAW_PROJECT_OUTPUT_DIR": str(ctx.output_dir),
-                "DRAMACLAW_PROJECT_STATE_DIR": str(ctx.state_dir),
-                "DRAMACLAW_PROJECT_RUNTIME_DIR": str(ctx.runtime_dir),
-                "SUPERTALE_PROJECT_NAME": ctx.project_name,
-                "SUPERTALE_PROJECT_OWNER": ctx.owner_username,
-                "SUPERTALE_PROJECT_OUTPUT_DIR": str(ctx.output_dir),
-                "SUPERTALE_PROJECT_STATE_DIR": str(ctx.state_dir),
-                "SUPERTALE_PROJECT_RUNTIME_DIR": str(ctx.runtime_dir),
-            }
-        except Exception as exc:
-            _log.warning(
-                "failed to resolve hermes project env for project=%s user=%s: %s",
-                project_id,
-                username,
-                exc,
-            )
-            return {}
+        ctx = await resolve_project_context(
+            user={"username": username},
+            project_id=project_id,
+            required_role="viewer",
+        )
+        require_project_home_node(ctx, operation="resolve hermes project files")
+        return {
+            "DRAMACLAW_PROJECT_NAME": ctx.project_name,
+            "DRAMACLAW_PROJECT_OWNER": ctx.owner_username,
+            "DRAMACLAW_PROJECT_OUTPUT_DIR": str(ctx.output_dir),
+            "DRAMACLAW_PROJECT_STATE_DIR": str(ctx.state_dir),
+            "DRAMACLAW_PROJECT_RUNTIME_DIR": str(ctx.runtime_dir),
+            "SUPERTALE_PROJECT_NAME": ctx.project_name,
+            "SUPERTALE_PROJECT_OWNER": ctx.owner_username,
+            "SUPERTALE_PROJECT_OUTPUT_DIR": str(ctx.output_dir),
+            "SUPERTALE_PROJECT_STATE_DIR": str(ctx.state_dir),
+            "SUPERTALE_PROJECT_RUNTIME_DIR": str(ctx.runtime_dir),
+        }
 
     def _build_env(
         self,

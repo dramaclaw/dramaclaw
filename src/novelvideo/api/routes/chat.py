@@ -91,18 +91,21 @@ HERMES_TEXT_EGRESS_TASK_TYPE = "agent.hermes.text"
 
 @router.post("/chat/cancel")
 async def cancel_chat_turn(user: dict = Depends(get_api_user)) -> dict[str, Any]:
-    """Best-effort cancellation for the active Hermes chat worker.
+    """Best-effort cancellation for the active agent turn.
 
     The WebSocket receive loop is blocked while a Hermes prompt is streaming,
     so a separate HTTP endpoint gives the frontend an out-of-band stop signal.
-    Closing the worker is intentionally coarse, but it is the only reliable way
-    to interrupt long-running tool calls with the current Hermes ACP wrapper.
+    Hermes closes its user worker; Codex interrupts the active App Server turn
+    without stopping the shared home-node runtime.
     """
     username = str(user["username"])
     try:
-        from novelvideo.chat.hermes_pool import pool as hermes_pool
+        if chat_service.get_chat_backend_name() == "codex":
+            cancelled = await chat_service.interrupt_active_codex_turns(username)
+        else:
+            from novelvideo.chat.hermes_pool import pool as hermes_pool
 
-        cancelled = await hermes_pool.close_user(username)
+            cancelled = await hermes_pool.close_user(username)
     except Exception:
         cancelled = False
     try:
@@ -2732,6 +2735,191 @@ async def _stream_project_turn(
             )
 
 
+async def _stream_home_turn_codex(
+    *,
+    websocket: WebSocket,
+    user: dict[str, Any],
+    username: str,
+    scope: ChatScope,
+    text: str,
+    attachments: list[ChatAttachmentIn],
+    turn_id: str,
+) -> None:
+    """Run home chat through the same backend-neutral service as projects."""
+
+    from novelvideo.chat.hermes_egress import HOME_SCOPE_EGRESS_PROJECT_ID
+
+    before_projects = set(list_user_projects(username))
+    agent_text = _text_with_attachment_context(text, attachments)
+    chat_store.append_message(
+        username,
+        scope,
+        "user",
+        text,
+        media=_attachment_payloads(attachments),
+        turn_id=turn_id,
+    )
+    send_lock = asyncio.Lock()
+    heartbeat_task = asyncio.create_task(
+        _chat_heartbeat(websocket, scope=scope, turn_id=turn_id, send_lock=send_lock)
+    )
+    done_sent = False
+    assistant_sent_text = ""
+
+    async def on_event(event: dict[str, Any]) -> None:
+        nonlocal assistant_sent_text, done_sent
+        event_type = str(event.get("type") or "")
+        if event_type == "thread_started":
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "thread.started",
+                    "scope": scope.to_dict(),
+                    "thread_id": event.get("thread_id"),
+                    "turn_id": event.get("turn_id") or turn_id,
+                },
+                send_lock,
+            )
+        elif event_type == "assistant_delta":
+            assistant_sent_text = str(event.get("text") or "")
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "assistant.delta",
+                    "scope": scope.to_dict(),
+                    "text": assistant_sent_text,
+                    "turn_id": turn_id,
+                    "accumulated": True,
+                },
+                send_lock,
+            )
+        elif event_type in {"thought_delta", "plan_update", "usage_update"}:
+            payload = {
+                "thought_delta": {
+                    "type": "agent.thought.delta",
+                    "text": str(event.get("text") or ""),
+                },
+                "plan_update": {
+                    "type": "agent.plan.update",
+                    "entries": event.get("entries") or [],
+                },
+                "usage_update": {
+                    "type": "agent.usage.update",
+                    "usage": event.get("usage") or {},
+                },
+            }[event_type]
+            await _send_json_best_effort(
+                websocket,
+                {**payload, "scope": scope.to_dict(), "turn_id": turn_id},
+                send_lock,
+            )
+        elif event_type in {"tool_started", "tool_updated", "tool_update"}:
+            tool_name, tool_body = _tool_display_payload(
+                event.get("text"), event.get("name")
+            )
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": (
+                        "agent.tool.started"
+                        if event_type == "tool_started"
+                        else "agent.tool.updated"
+                    ),
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    "call_id": event.get("call_id"),
+                    "name": tool_name,
+                    "status": event.get("status") or "completed",
+                    "text": tool_body,
+                    "input": event.get("input"),
+                    "output": event.get("output"),
+                    "error": event.get("error"),
+                    "result_json": event.get("result_json"),
+                },
+                send_lock,
+            )
+        elif event_type == "done":
+            message = event.get("message")
+            final_text = _message_content(message)
+            if _should_emit_final_text(final_text, assistant_sent_text):
+                assistant_sent_text = final_text
+                await _send_json_best_effort(
+                    websocket,
+                    {
+                        "type": "assistant.delta",
+                        "scope": scope.to_dict(),
+                        "text": final_text,
+                        "turn_id": turn_id,
+                        "accumulated": True,
+                    },
+                    send_lock,
+                )
+            if isinstance(message, dict):
+                await _send_json_best_effort(
+                    websocket,
+                    {
+                        "type": "assistant.message",
+                        "scope": scope.to_dict(),
+                        "turn_id": turn_id,
+                        "message": message,
+                    },
+                    send_lock,
+                )
+            done_sent = await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "chat.done",
+                    "turn_id": turn_id,
+                    "scope": scope.to_dict(),
+                    "message": message if isinstance(message, dict) else None,
+                },
+                send_lock,
+            )
+
+    try:
+        requester_user_id = await _requester_user_id_for_chat(user, scope)
+        async with request_egress_scope(
+            requester_user_id=requester_user_id,
+            project_id=HOME_SCOPE_EGRESS_PROJECT_ID,
+            task_type=HERMES_TEXT_EGRESS_TASK_TYPE,
+        ) as egress_context:
+            await chat_service.stream_assistant_reply(
+                username,
+                "",
+                agent_text,
+                on_event,
+                egress_context=egress_context,
+                requester_user_id=requester_user_id,
+                egress_project_id=HOME_SCOPE_EGRESS_PROJECT_ID,
+                store_scope=scope,
+                turn_id=turn_id,
+            )
+        after_projects = set(list_user_projects(username))
+        for project in sorted(after_projects - before_projects):
+            project_scope = ChatScope(kind="project", id=project)
+            chat_store.append_message(
+                username,
+                project_scope,
+                "system",
+                f"Created from home conversation turn {turn_id}.",
+            )
+            await _send_json_best_effort(
+                websocket,
+                {"type": "project.created", "project": project},
+                send_lock,
+            )
+    finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
+        if not done_sent:
+            await _send_json_best_effort(
+                websocket,
+                {"type": "chat.done", "turn_id": turn_id, "scope": scope.to_dict()},
+                send_lock,
+            )
+
+
 async def _stream_home_turn(
     *,
     websocket: WebSocket,
@@ -2742,6 +2930,18 @@ async def _stream_home_turn(
     attachments: list[ChatAttachmentIn],
     turn_id: str,
 ) -> None:
+    if chat_service.get_chat_backend_name() == "codex":
+        await _stream_home_turn_codex(
+            websocket=websocket,
+            user=user,
+            username=username,
+            scope=scope,
+            text=text,
+            attachments=attachments,
+            turn_id=turn_id,
+        )
+        return
+
     from novelvideo.chat.hermes_egress import HOME_SCOPE_EGRESS_PROJECT_ID
     from novelvideo.chat.hermes_pool import pool as hermes_pool
 

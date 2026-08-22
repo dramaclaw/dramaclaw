@@ -34,3 +34,13 @@ def test_env_example_configures_data_root_instead_of_individual_directories() ->
 
     assert re.search(r"^NOVELVIDEO_OUTPUT_DIR=", env_example, re.MULTILINE) is None
     assert "# NOVELVIDEO_DATA_ROOT=" in env_example
+
+
+def test_container_builds_only_the_pinned_redacted_codex_runtime() -> None:
+    dockerfile = (REPOSITORY_ROOT / "Dockerfile").read_text()
+
+    assert 'ARG CODEX_REF="025a88adbd7ae4d448fc938b28d0446eb1753317"' in dockerfile
+    assert "0.147.0-redact-turn-metadata.patch" in dockerfile
+    assert "cargo test --locked -p codex-protocol" in dockerfile
+    assert "CODEX_BIN=/usr/local/bin/codex-dramaclaw" in dockerfile
+    assert "--no-install-package openai-codex-cli-bin" in dockerfile

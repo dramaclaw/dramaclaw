@@ -267,10 +267,15 @@ def harness(monkeypatch, tmp_path):
             return self._thread(session_id)
 
     monkeypatch.setattr(hermes_pool, "_hermes_cli_path", lambda: fake_cli)
-    monkeypatch.setattr(hermes_pool, "ensure_user_hermes_workspace", lambda _u: workspace)
+    monkeypatch.setattr(hermes_pool, "require_hermes_fork", lambda _path: None)
+    monkeypatch.setattr(
+        hermes_pool,
+        "ensure_user_hermes_workspace",
+        lambda _u, **_kwargs: workspace,
+    )
     monkeypatch.setattr(hermes_pool, "HermesSdkClient", FakeHermesSdkClient)
     monkeypatch.setattr(hermes_pool, "get_auth_session_port", lambda: auth_sessions)
-    monkeypatch.setattr(hermes_pool, "effective_gateway_fingerprint", lambda: "gateway-1")
+    monkeypatch.setattr(hermes_pool, "gateway_origin_fingerprint", lambda: "gateway-1")
     monkeypatch.setattr(
         hermes_pool,
         "effective_gateway_credentials",
@@ -280,7 +285,7 @@ def harness(monkeypatch, tmp_path):
     pool = hermes_pool.HermesPool(max_workers=5)
 
     async def fake_project_env(*_args, **_kwargs):
-        return {}
+        return {"DRAMACLAW_PROJECT_STATE_DIR": str(tmp_path / "project-state")}
 
     monkeypatch.setattr(pool, "_project_env", fake_project_env)
     monkeypatch.setattr(hermes_pool, "pool", pool)
