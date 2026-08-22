@@ -20,7 +20,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from pydantic import BaseModel, Field
 
@@ -208,17 +208,62 @@ def title_qualified_of(long_name: str, short_name: str) -> bool:
     return not remainder
 
 
-def find_explicit_aliases(text: str) -> set[tuple[str, str]]:
+def _resolve_side(capture: str, known: dict[str, str], *, suffix: bool) -> str:
+    """Trim one side of an alias match down to a name that was actually found.
+
+    The patterns take 2-6 characters either side of the marker, and in running
+    prose that window opens mid-sentence: "大家都知道林默又名小默" captured
+    "家都知道林默" as a name. Matching against the names extraction really
+    produced turns that back into "林默"; ``suffix`` says which end of the
+    capture the name sits at, since the left side runs up to the marker and the
+    right side away from it.
+    """
+    text = normalize_character_name(capture)
+    if not text:
+        return ""
+    if text in known:
+        return known[text]
+    best = ""
+    for candidate in known:
+        matches = text.endswith(candidate) if suffix else text.startswith(candidate)
+        if matches and len(candidate) > len(best):
+            best = candidate
+    return known.get(best, "")
+
+
+def find_explicit_aliases(
+    text: str, known_names: Iterable[str] = ()
+) -> set[tuple[str, str]]:
     """Return alias pairs the text states outright.
 
     Only an explicit statement licenses an alias link, because merging two names
     rewrites a primary key that assets and REST paths already point at.
+
+    Both sides must resolve to a name the extraction actually found. The
+    patterns cannot tell where a name begins in running prose, so an unresolved
+    capture is prose, not a name — and an alias built from prose is written to
+    the character table as though the text had stated it.
+
+    The cost is a real alias going unrecorded when only one of its two names was
+    ever extracted. That is the trade this module makes everywhere: a missing
+    alias leaves a visible duplicate someone can merge, a wrong one silently
+    renames a character.
     """
+    known = {
+        normalized: normalized
+        for normalized in (
+            normalize_character_name(name) for name in known_names
+        )
+        if normalized
+    }
+    if not known:
+        return set()
+
     pairs: set[tuple[str, str]] = set()
     for pattern in _ALIAS_PATTERNS:
         for match in pattern.finditer(text or ""):
-            first = normalize_character_name(match.group("a"))
-            second = normalize_character_name(match.group("b"))
+            first = _resolve_side(match.group("a"), known, suffix=True)
+            second = _resolve_side(match.group("b"), known, suffix=False)
             if first and second and first != second:
                 pairs.add((first, second))
     return pairs
@@ -329,6 +374,47 @@ async def extract_characters_from_chunks(
     return merged, failures
 
 
+def _attested_names(outcomes: list[tuple[SourceChunk, ChunkCharacterOutput]]) -> str:
+    """The text a name has to appear somewhere in, plus the cast lists.
+
+    Joined with a separator so a name cannot be formed by spanning the seam
+    between two chunks.
+    """
+    parts: list[str] = []
+    for chunk, _output in outcomes:
+        parts.append(chunk.text)
+        parts.extend(str(listed) for listed in (chunk.characters or []))
+    return "\n\x00\n".join(parts)
+
+
+def name_is_attested(name: str, corpus: str) -> bool:
+    """Whether the source itself writes this name.
+
+    Verifying the quote alone does not do it. A model can return a real
+    sentence from the text and attach a name that never appears anywhere:
+
+        text  : 林默回到了家
+        model : name=王五, evidence="林默回到了家"
+
+    The quote verifies, so the candidate used to be accepted, and 王五 became a
+    row in the character table — a primary key, a REST identifier and an asset
+    directory, invented out of nothing.
+
+    Checked against the whole imported text rather than the chunk the candidate
+    came from, deliberately. A character is introduced by name once and referred
+    to as 她 or 郑太 for pages afterwards, and attributing those appellations
+    back to her is a thing this module is built to do. Requiring the name in the
+    chunk that mentions her would drop exactly those candidates and take
+    cross-chunk appellation resolution with them. Requiring it in the source
+    still leaves an invented name with no route in, which is the guarantee that
+    was missing.
+    """
+    normalized = normalize_character_name(name)
+    if not normalized:
+        return False
+    return normalized in corpus or str(name or "").strip() in corpus
+
+
 def merge_character_candidates(
     outcomes: list[tuple[SourceChunk, ChunkCharacterOutput]],
 ) -> list[MergedCharacter]:
@@ -340,15 +426,29 @@ def merge_character_candidates(
     """
     merged: dict[str, MergedCharacter] = {}
     alias_pairs: set[tuple[str, str]] = set()
+    # Every name any chunk proposed, so an alias statement in one chunk can
+    # still resolve a name that was only extracted in another.
+    proposed_names = {
+        candidate.name
+        for _chunk, output in outcomes
+        for candidate in output.characters
+    }
+    corpus = _attested_names(outcomes)
     # appellation -> character -> the source positions attributing it there.
     appellation_claims: dict[str, dict[str, set[tuple[int, int]]]] = {}
 
     for chunk, output in outcomes:
-        alias_pairs |= find_explicit_aliases(chunk.text)
+        alias_pairs |= find_explicit_aliases(chunk.text, proposed_names)
 
         for candidate in output.characters:
             name = normalize_character_name(candidate.name)
             if not name or is_generic_address(name):
+                continue
+
+            # The name needs its own attestation, not just a verifiable quote.
+            # Otherwise a real sentence can carry an invented name into the
+            # table, which is the exact failure the quote check exists to stop.
+            if not name_is_attested(name, corpus):
                 continue
 
             verified: list[dict] = []

@@ -122,8 +122,115 @@ def test_empty_quote_is_rejected():
 
 
 def test_explicit_alias_statements_are_detected():
-    assert ("林默", "小默") in find_explicit_aliases("林默又名小默，村里人都这么叫他。")
-    assert ("萧玦", "陛下") in find_explicit_aliases("萧玦人称陛下。")
+    assert ("林默", "小默") in find_explicit_aliases(
+        "林默又名小默，村里人都这么叫他。", ["林默", "小默"]
+    )
+    assert ("萧玦", "陛下") in find_explicit_aliases("萧玦人称陛下。", ["萧玦", "陛下"])
+
+
+def test_an_alias_statement_mid_sentence_does_not_swallow_the_prose():
+    """The patterns take 2-6 characters either side and cannot see where a name
+    begins, so in running prose the window opens mid-sentence."""
+    assert find_explicit_aliases(
+        "大家都知道林默又名小默，昨天回家。", ["林默", "小默"]
+    ) == {("林默", "小默")}
+    assert find_explicit_aliases("据说林默也叫小默。", ["林默", "小默"]) == {
+        ("林默", "小默")
+    }
+    # And forwards, where nothing punctuates the end of the second name.
+    assert find_explicit_aliases("林默又名小默昨天回家", ["林默", "小默"]) == {
+        ("林默", "小默")
+    }
+
+
+def test_a_pair_neither_side_of_which_was_extracted_is_dropped():
+    """An unresolved capture is prose, not a name.
+
+    Left in, it reaches the character table as an alias the text never stated —
+    "家都知道林默" was being persisted as one.
+    """
+    assert find_explicit_aliases("大家都知道林默又名小默。") == set()
+    assert find_explicit_aliases("大家都知道林默又名小默。", ["小默"]) == set()
+
+
+def test_an_invented_name_cannot_ride_in_on_a_real_quote():
+    """The module promises a hallucinated name has no route into the table.
+
+    Verifying the quote alone did not deliver that: a real sentence with a name
+    attached that appears nowhere in the source was accepted.
+    """
+    chunk = _chunk("林默回到了家", chunk_id="c0", start=0)
+    invented = ChunkCharacterOutput(
+        characters=[
+            CharacterCandidate(
+                name="王五", evidence=[CharacterEvidence(quote="林默回到了家")]
+            )
+        ]
+    )
+    assert merge_character_candidates([(chunk, invented)]) == []
+
+
+def test_a_name_the_source_writes_elsewhere_is_still_accepted():
+    """Attestation is against the source, not the chunk.
+
+    A character is named once and called 她 or 郑太 for pages after; requiring
+    the name in the chunk that mentions her would drop exactly the candidates
+    cross-chunk appellation resolution depends on.
+    """
+    named = _chunk("郑玉琴走进客厅。", chunk_id="c0", start=0)
+    pronoun = _chunk("郑太点了点头。", chunk_id="c1", start=8)
+    outcomes = [
+        (
+            named,
+            ChunkCharacterOutput(
+                characters=[
+                    CharacterCandidate(
+                        name="郑玉琴",
+                        evidence=[CharacterEvidence(quote="郑玉琴走进客厅。")],
+                    )
+                ]
+            ),
+        ),
+        (
+            pronoun,
+            ChunkCharacterOutput(
+                characters=[
+                    CharacterCandidate(
+                        name="郑玉琴",
+                        evidence=[CharacterEvidence(quote="郑太点了点头。")],
+                    )
+                ]
+            ),
+        ),
+    ]
+    assert [item.name for item in merge_character_candidates(outcomes)] == ["郑玉琴"]
+
+
+def test_a_name_only_the_scene_heading_lists_is_accepted():
+    """A screenplay names its cast in the heading; the body may only say 他."""
+    chunk = SourceChunk(
+        chunk_id="c0",
+        chunk_index=0,
+        section_type="scene",
+        section_label="第1场",
+        source_start=0,
+        source_end=5,
+        text="他推开门。",
+        characters=["林默"],
+    )
+    outcomes = [
+        (
+            chunk,
+            ChunkCharacterOutput(
+                characters=[
+                    CharacterCandidate(
+                        name="林默", evidence=[CharacterEvidence(quote="他推开门。")]
+                    )
+                ]
+            ),
+        )
+    ]
+    assert [item.name for item in merge_character_candidates(outcomes)] == ["林默"]
 
 
 def test_two_names_merely_appearing_together_is_not_an_alias():
