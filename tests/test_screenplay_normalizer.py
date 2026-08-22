@@ -387,27 +387,6 @@ async def test_extract_scenes_from_script_falls_back_when_ai_returns_partial_blo
             )
         ]
 
-    class FakeLegacyNormalizerAgent:
-        async def run(self, prompt: str):
-            if "御花园" in prompt:
-                scene = pipeline.SceneNormalization(
-                    name="凤鸣皇城·御花园",
-                    aliases=["御花园"],
-                    scene_type="exterior",
-                    time_of_day="清晨",
-                    interior=False,
-                    characters=["苏糖", "沈晚"],
-                )
-            else:
-                scene = pipeline.SceneNormalization(
-                    name="凤鸣皇城·苏鸾寝殿",
-                    aliases=["苏鸾寝殿"],
-                    scene_type="interior",
-                    time_of_day="深夜",
-                    interior=True,
-                    characters=["苏糖"],
-                )
-            return _FakeRunResult(pipeline.SceneNormalizationList(scenes=[scene]))
 
     async def fake_enrich_scene_environment_from_context(**kwargs):
         return NovelScene(
@@ -419,11 +398,6 @@ async def test_extract_scenes_from_script_falls_back_when_ai_returns_partial_blo
         )
 
     monkeypatch.setattr(pipeline, "normalize_screenplay_scenes", fake_normalize)
-    monkeypatch.setattr(
-        pipeline,
-        "_create_scene_build_agent",
-        lambda *_args, **_kwargs: FakeLegacyNormalizerAgent(),
-    )
     monkeypatch.setattr(
         pipeline,
         "enrich_scene_environment_from_context",
@@ -453,17 +427,6 @@ async def test_extract_scenes_from_script_falls_back_when_ai_returns_empty(monke
     async def fake_normalize(_text: str):
         return []
 
-    class FakeLegacyNormalizerAgent:
-        async def run(self, prompt: str):
-            scene = pipeline.SceneNormalization(
-                name="凤鸣皇城·苏鸾寝殿",
-                aliases=["苏鸾寝殿"],
-                scene_type="interior",
-                time_of_day="亥时",
-                interior=True,
-                characters=["苏糖", "沈晚"],
-            )
-            return _FakeRunResult(pipeline.SceneNormalizationList(scenes=[scene]))
 
     async def fake_enrich_scene_environment_from_context(**kwargs):
         return NovelScene(
@@ -474,11 +437,6 @@ async def test_extract_scenes_from_script_falls_back_when_ai_returns_empty(monke
         )
 
     monkeypatch.setattr(pipeline, "normalize_screenplay_scenes", fake_normalize)
-    monkeypatch.setattr(
-        pipeline,
-        "_create_scene_build_agent",
-        lambda *_args, **_kwargs: FakeLegacyNormalizerAgent(),
-    )
     monkeypatch.setattr(
         pipeline,
         "enrich_scene_environment_from_context",
@@ -530,27 +488,6 @@ async def test_extract_scenes_from_script_falls_back_when_ai_merges_distinct_loc
             ),
         ]
 
-    class FakeLegacyNormalizerAgent:
-        async def run(self, prompt: str):
-            if "御花园" in prompt:
-                scene = pipeline.SceneNormalization(
-                    name="凤鸣皇城·御花园",
-                    aliases=["御花园"],
-                    scene_type="exterior",
-                    time_of_day="清晨",
-                    interior=False,
-                    characters=["苏糖", "沈晚"],
-                )
-            else:
-                scene = pipeline.SceneNormalization(
-                    name="凤鸣皇城·苏鸾寝殿",
-                    aliases=["苏鸾寝殿"],
-                    scene_type="interior",
-                    time_of_day="深夜",
-                    interior=True,
-                    characters=["苏糖"],
-                )
-            return _FakeRunResult(pipeline.SceneNormalizationList(scenes=[scene]))
 
     async def fake_enrich_scene_environment_from_context(**kwargs):
         return NovelScene(
@@ -562,11 +499,6 @@ async def test_extract_scenes_from_script_falls_back_when_ai_merges_distinct_loc
         )
 
     monkeypatch.setattr(pipeline, "normalize_screenplay_scenes", fake_normalize)
-    monkeypatch.setattr(
-        pipeline,
-        "_create_scene_build_agent",
-        lambda *_args, **_kwargs: FakeLegacyNormalizerAgent(),
-    )
     monkeypatch.setattr(
         pipeline,
         "enrich_scene_environment_from_context",

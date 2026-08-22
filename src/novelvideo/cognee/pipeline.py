@@ -961,10 +961,19 @@ def scene_enrichment_cache_key(candidate: dict[str, Any], synopsis: str = "") ->
 
     Every field the model sees, plus every field used to build the NovelScene
     from its answer, plus the contract version.  Anything left out would let a
-    changed input silently reuse a result produced from the old one; anything
-    included that the call does not actually depend on would cost a rebuild for
-    no reason.  ``context_lines`` is truncated exactly as ``describe``
-    truncates it, so lines the model never sees do not invalidate a good result.
+    changed input silently reuse a result produced from the old one.
+
+    A scene can be answered by either of two calls — the batch, or the
+    per-scene retry it falls through to — and they do not read the same fields.
+    The batch sends 24 context lines and no time or episode list; the per-scene
+    call sends 50 lines plus both. The key is the *union*, because the result
+    is stored under one key whichever call produced it, so a field either call
+    reads has to be able to invalidate it. Keying on the batch's inputs alone
+    meant a changed time of day, episode list, or context line 25 onwards left
+    the key identical and replayed a result built from the old input.
+
+    The cost of the union is an occasional needless rebuild. The cost of the
+    intersection is serving a wrong answer, which does not announce itself.
     """
     payload = {
         "v": SCENE_ENRICHMENT_CACHE_VERSION,
@@ -973,8 +982,11 @@ def scene_enrichment_cache_key(candidate: dict[str, Any], synopsis: str = "") ->
         "scene_type": str(candidate.get("scene_type") or ""),
         "interior": bool(candidate.get("interior", True)),
         "characters": list(candidate.get("characters") or []),
+        "time_of_day": str(candidate.get("time_of_day") or ""),
+        "episodes": list(candidate.get("episodes") or []),
+        # 50, the larger of the two truncations, for the same reason.
         "context": [
-            str(line) for line in (candidate.get("context_lines") or [])[:24]
+            str(line) for line in (candidate.get("context_lines") or [])[:50]
         ],
         "synopsis": str(synopsis or ""),
     }

@@ -139,6 +139,11 @@ def test_identical_input_produces_the_same_key():
         {"characters": ["林默", "张秉权"]},
         {"context_lines": ["▲另一段完全不同的原文。"]},
         {"aliases": ["主任办公室"]},
+        # Read only by the per-scene retry, never by the batch. A scene can be
+        # answered by either call and the result is stored under one key, so a
+        # field either reads has to be able to invalidate it.
+        {"time_of_day": "夜晚"},
+        {"episodes": [2, 3]},
     ],
 )
 def test_every_input_the_call_depends_on_changes_the_key(overrides):
@@ -161,13 +166,27 @@ def test_the_synopsis_is_part_of_the_key():
     )
 
 
-def test_context_beyond_what_the_model_sees_does_not_change_the_key():
-    """describe() truncates at 24 lines; lines past that must not invalidate."""
-    short = _candidate("办公室", context_lines=[f"第{i}行" for i in range(24)])
-    longer = _candidate(
-        "办公室", context_lines=[f"第{i}行" for i in range(24)] + ["多出来的一行"]
+def test_context_the_per_scene_retry_reads_still_changes_the_key():
+    """The batch truncates at 24 lines, the per-scene retry at 50.
+
+    The key follows the larger one. Keying on 24 meant a change at line 25
+    left the key identical and replayed a result built from the old context.
+    """
+    base = [f"第{i}行" for i in range(50)]
+    changed = base[:24] + ["改过的一行"] + base[25:]
+    assert scene_enrichment_cache_key(
+        _candidate("办公室", context_lines=base)
+    ) != scene_enrichment_cache_key(_candidate("办公室", context_lines=changed))
+
+
+def test_context_beyond_what_either_call_sees_does_not_change_the_key():
+    """Neither call reads past 50 lines, so those must not force a rebuild."""
+    base = [f"第{i}行" for i in range(50)]
+    assert scene_enrichment_cache_key(
+        _candidate("办公室", context_lines=base)
+    ) == scene_enrichment_cache_key(
+        _candidate("办公室", context_lines=base + ["第51行"])
     )
-    assert scene_enrichment_cache_key(short) == scene_enrichment_cache_key(longer)
 
 
 def test_the_contract_version_is_part_of_the_key(monkeypatch):

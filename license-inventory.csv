@@ -2028,6 +2028,7 @@ tests/test_request_egress_binding.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_running_task_authz_indeterminate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_runtime_env.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_sandbox_roots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_scene_build_resume.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_scene_environment_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_scene_gallery_backend_removed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_scene_name_migration.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
