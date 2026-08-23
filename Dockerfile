@@ -1,20 +1,19 @@
 FROM rust:1.95-bookworm AS codex-builder
 
-# The Python SDK's bundled Codex 0.147 runtime logs the full turn metadata map
+# The Codex 0.149 runtime logs the full turn metadata map
 # to logs_2.sqlite. DramaClaw carries per-turn gateway credentials and control
 # capabilities there, so the stock binary is not safe for a shared home-node
-# App Server. Build the protocol-compatible runtime from the exact SDK source
-# revision and redact only Debug/log output; the original values still reach
-# the Responses request.
+# App Server. Build the official 0.149.0 tagged runtime and redact only
+# Debug/log output; the original values still reach the Responses request.
 ARG CODEX_REPO="https://github.com/openai/codex.git"
-ARG CODEX_REF="025a88adbd7ae4d448fc938b28d0446eb1753317"
+ARG CODEX_REF="758ef40f50c1a458425c7cfbf1eb12cbc07af0b0"
 WORKDIR /opt/codex-src
 RUN git init \
     && git remote add origin "$CODEX_REPO" \
     && git fetch --depth 1 origin "$CODEX_REF" \
     && git checkout --detach FETCH_HEAD \
     && git rev-parse HEAD > /opt/codex-runtime.sha
-COPY deploy/codex/0.147.0-redact-turn-metadata.patch /tmp/codex-turn-metadata.patch
+COPY deploy/codex/0.149.0-redact-turn-metadata.patch /tmp/codex-turn-metadata.patch
 RUN git apply --check /tmp/codex-turn-metadata.patch \
     && git apply /tmp/codex-turn-metadata.patch \
     && cd codex-rs \

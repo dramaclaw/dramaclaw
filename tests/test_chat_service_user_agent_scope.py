@@ -868,6 +868,54 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
                 turn_id="codex-turn",
             )
             yield SimpleNamespace(
+                type="turn_started",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+                status="inProgress",
+                raw={"runtime": "codex", "method": "turn/started"},
+            )
+            yield SimpleNamespace(
+                type="plan_update",
+                text="Inspect the project",
+                entries=[{"step": "List projects", "status": "inProgress"}],
+                raw={"runtime": "codex", "method": "turn/plan/updated"},
+            )
+            yield SimpleNamespace(
+                type="thought_delta",
+                text="Checking projects",
+                name="reasoning_summary",
+                raw={
+                    "runtime": "codex",
+                    "method": "item/reasoning/summaryTextDelta",
+                },
+            )
+            yield SimpleNamespace(
+                type="tool_started",
+                text="",
+                name="dramaclaw.list_projects",
+                call_id="call-1",
+                status="running",
+                input={"limit": 1},
+                output=None,
+                error=None,
+                structured=None,
+                raw={"runtime": "codex", "method": "item/started"},
+            )
+            yield SimpleNamespace(
+                type="usage_update",
+                usage={"last": {"inputTokens": 10}},
+                raw={"runtime": "codex", "method": "thread/tokenUsage/updated"},
+            )
+            yield SimpleNamespace(
+                type="turn_completed",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+                status="completed",
+                disposition="completed",
+                error=None,
+                raw={"runtime": "codex", "method": "turn/completed"},
+            )
+            yield SimpleNamespace(
                 type="complete",
                 thread_id="codex-thread",
                 text="done",
@@ -903,6 +951,34 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
 
     assert captured["agent_profile"] == expected_profile
     assert captured["canvas_id"] == expected_canvas
+    assert [event["type"] for event in events] == [
+        "thread_started",
+        "turn_started",
+        "plan_update",
+        "thought_delta",
+        "tool_started",
+        "usage_update",
+        "turn_completed",
+        "done",
+    ]
+    assert events[2] == {
+        "type": "plan_update",
+        "text": "Inspect the project",
+        "entries": [{"step": "List projects", "status": "inProgress"}],
+    }
+    assert events[3] == {
+        "type": "thought_delta",
+        "text": "Checking projects",
+        "source": "reasoning_summary",
+    }
+    assert events[4]["name"] == "dramaclaw.list_projects"
+    assert events[4]["result_json"] is None
+    assert events[5] == {
+        "type": "usage_update",
+        "usage": {"last": {"inputTokens": 10}},
+    }
+    assert all("raw" not in event for event in events)
+    assert all("method" not in event for event in events)
     assert events[-1]["type"] == "done"
 
 

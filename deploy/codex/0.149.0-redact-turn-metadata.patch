@@ -1,5 +1,5 @@
 diff --git a/codex-rs/protocol/src/turn_input.rs b/codex-rs/protocol/src/turn_input.rs
-index bc5adbe8b5..568b544ceb 100644
+index bc5adbe8b504..568b544ceb 100644
 --- a/codex-rs/protocol/src/turn_input.rs
 +++ b/codex-rs/protocol/src/turn_input.rs
 @@ -12,6 +12,7 @@ use serde::Serialize;

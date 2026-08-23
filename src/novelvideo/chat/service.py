@@ -22,6 +22,7 @@ from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
 from novelvideo.chat.backend_sdk import (
+    AgentRuntimeThreadPort,
     ClaudeSdkClient,
     CodexClient,
     _codex_item_completed_trace,
@@ -4450,7 +4451,7 @@ def _build_codex_thread(
     agent_profile: str = "main",
     canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
-):
+) -> AgentRuntimeThreadPort:
     workspace, _codex_home = ensure_user_codex_workspace(
         username,
         project,
@@ -5146,6 +5147,31 @@ async def _stream_assistant_reply_hermes(
                     },
                 )
                 continue
+            if event.type == "turn_started":
+                await on_event(
+                    {
+                        "type": "turn_started",
+                        "thread_id": str(event.thread_id or "").strip() or None,
+                        "turn_id": str(event.turn_id or "").strip() or None,
+                        "status": event.status or "in_progress",
+                    }
+                )
+                continue
+            if event.type == "turn_completed":
+                turn_disposition = str(
+                    event.disposition or event.status or turn_disposition
+                )
+                await on_event(
+                    {
+                        "type": "turn_completed",
+                        "thread_id": str(event.thread_id or "").strip() or None,
+                        "turn_id": str(event.turn_id or "").strip() or None,
+                        "status": event.status or "completed",
+                        "error": event.error,
+                        "disposition": event.disposition,
+                    }
+                )
+                continue
             if event.type == "assistant_delta":
                 assistant_text = _merge_stream_text(assistant_text, event.text)
                 streamed_text = _strip_replayed_chat_response(
@@ -5435,6 +5461,47 @@ async def _stream_assistant_reply_claude(
                     }
                 )
                 continue
+            if event.type == "thought_delta":
+                await on_event(
+                    {
+                        "type": "thought_delta",
+                        "text": str(event.text or ""),
+                        "source": event.name,
+                    }
+                )
+                continue
+            if event.type == "plan_update":
+                await on_event(
+                    {
+                        "type": "plan_update",
+                        "text": str(event.text or ""),
+                        "entries": event.entries or [],
+                    }
+                )
+                continue
+            if event.type == "usage_update":
+                await on_event(
+                    {"type": "usage_update", "usage": event.usage or {}}
+                )
+                continue
+            if event.type in {"tool_started", "tool_updated"}:
+                event_tool_text = str(event.text or "")
+                if event_tool_text:
+                    tool_text += event_tool_text
+                await on_event(
+                    {
+                        "type": event.type,
+                        "text": event_tool_text.strip(),
+                        "name": event.name,
+                        "call_id": event.call_id,
+                        "status": event.status,
+                        "input": event.input,
+                        "output": event.output,
+                        "error": event.error,
+                        "result_json": event.structured,
+                    }
+                )
+                continue
             if event.type == "tool_update":
                 tool_text = str(event.text or "")
                 await on_event(
@@ -5585,6 +5652,31 @@ async def _stream_assistant_reply_codex(
                     }
                 )
                 continue
+            if event.type == "turn_started":
+                await on_event(
+                    {
+                        "type": "turn_started",
+                        "thread_id": str(event.thread_id or "").strip() or None,
+                        "turn_id": str(event.turn_id or "").strip() or None,
+                        "status": event.status or "in_progress",
+                    }
+                )
+                continue
+            if event.type == "turn_completed":
+                turn_disposition = str(
+                    event.disposition or event.status or turn_disposition
+                )
+                await on_event(
+                    {
+                        "type": "turn_completed",
+                        "thread_id": str(event.thread_id or "").strip() or None,
+                        "turn_id": str(event.turn_id or "").strip() or None,
+                        "status": event.status or "completed",
+                        "error": event.error,
+                        "disposition": event.disposition,
+                    }
+                )
+                continue
             if event.type == "assistant_delta":
                 assistant_text = _merge_stream_text(assistant_text, event.text)
                 streamed_text = _redact_local_filesystem_paths(assistant_text)
@@ -5592,6 +5684,47 @@ async def _stream_assistant_reply_codex(
                     {
                         "type": "assistant_delta",
                         "text": streamed_text,
+                    }
+                )
+                continue
+            if event.type == "thought_delta":
+                await on_event(
+                    {
+                        "type": "thought_delta",
+                        "text": str(event.text or ""),
+                        "source": event.name,
+                    }
+                )
+                continue
+            if event.type == "plan_update":
+                await on_event(
+                    {
+                        "type": "plan_update",
+                        "text": str(event.text or ""),
+                        "entries": event.entries or [],
+                    }
+                )
+                continue
+            if event.type == "usage_update":
+                await on_event(
+                    {"type": "usage_update", "usage": event.usage or {}}
+                )
+                continue
+            if event.type in {"tool_started", "tool_updated"}:
+                event_tool_text = str(event.text or "")
+                if event_tool_text:
+                    tool_text += event_tool_text
+                await on_event(
+                    {
+                        "type": event.type,
+                        "text": event_tool_text.strip(),
+                        "name": event.name,
+                        "call_id": event.call_id,
+                        "status": event.status,
+                        "input": event.input,
+                        "output": event.output,
+                        "error": event.error,
+                        "result_json": event.structured,
                     }
                 )
                 continue

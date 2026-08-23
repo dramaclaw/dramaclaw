@@ -2530,6 +2530,24 @@ async def _stream_project_turn(
                 },
                 send_lock,
             )
+        elif event_type in {"turn_started", "turn_completed"}:
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": (
+                        "agent.turn.started"
+                        if event_type == "turn_started"
+                        else "agent.turn.completed"
+                    ),
+                    "scope": scope.to_dict(),
+                    "thread_id": event.get("thread_id"),
+                    "turn_id": event.get("turn_id") or turn_id,
+                    "status": event.get("status"),
+                    "disposition": event.get("disposition"),
+                    "error": event.get("error"),
+                },
+                send_lock,
+            )
         elif event_type == "assistant_delta":
             assistant_sent_text = str(event.get("text") or "")
             await _send_json_best_effort(
@@ -2551,6 +2569,7 @@ async def _stream_project_turn(
                     "scope": scope.to_dict(),
                     "turn_id": turn_id,
                     "text": str(event.get("text") or ""),
+                    "source": event.get("source"),
                 },
                 send_lock,
             )
@@ -2561,6 +2580,7 @@ async def _stream_project_turn(
                     "type": "agent.plan.update",
                     "scope": scope.to_dict(),
                     "turn_id": turn_id,
+                    "text": str(event.get("text") or ""),
                     "entries": event.get("entries") or [],
                 },
                 send_lock,
@@ -2780,6 +2800,24 @@ async def _stream_home_turn_codex(
                 },
                 send_lock,
             )
+        elif event_type in {"turn_started", "turn_completed"}:
+            await _send_json_best_effort(
+                websocket,
+                {
+                    "type": (
+                        "agent.turn.started"
+                        if event_type == "turn_started"
+                        else "agent.turn.completed"
+                    ),
+                    "scope": scope.to_dict(),
+                    "thread_id": event.get("thread_id"),
+                    "turn_id": event.get("turn_id") or turn_id,
+                    "status": event.get("status"),
+                    "disposition": event.get("disposition"),
+                    "error": event.get("error"),
+                },
+                send_lock,
+            )
         elif event_type == "assistant_delta":
             assistant_sent_text = str(event.get("text") or "")
             await _send_json_best_effort(
@@ -2798,9 +2836,11 @@ async def _stream_home_turn_codex(
                 "thought_delta": {
                     "type": "agent.thought.delta",
                     "text": str(event.get("text") or ""),
+                    "source": event.get("source"),
                 },
                 "plan_update": {
                     "type": "agent.plan.update",
+                    "text": str(event.get("text") or ""),
                     "entries": event.get("entries") or [],
                 },
                 "usage_update": {
@@ -3113,6 +3153,24 @@ async def _stream_home_turn(
                     },
                     send_lock,
                 )
+            elif event.type in {"turn_started", "turn_completed"}:
+                await _send_json_best_effort(
+                    websocket,
+                    {
+                        "type": (
+                            "agent.turn.started"
+                            if event.type == "turn_started"
+                            else "agent.turn.completed"
+                        ),
+                        "scope": scope.to_dict(),
+                        "thread_id": str(event.thread_id or "").strip() or None,
+                        "turn_id": str(event.turn_id or "").strip() or turn_id,
+                        "status": event.status,
+                        "disposition": event.disposition,
+                        "error": event.error,
+                    },
+                    send_lock,
+                )
             elif event.type == "assistant_delta":
                 assistant_text = chat_service._merge_stream_text(
                     assistant_text, event.text
@@ -3147,6 +3205,7 @@ async def _stream_home_turn(
                         "scope": scope.to_dict(),
                         "turn_id": turn_id,
                         "text": str(event.text or ""),
+                        "source": event.name,
                     },
                     send_lock,
                 )
@@ -3157,6 +3216,7 @@ async def _stream_home_turn(
                         "type": "agent.plan.update",
                         "scope": scope.to_dict(),
                         "turn_id": turn_id,
+                        "text": str(event.text or ""),
                         "entries": event.entries or [],
                     },
                     send_lock,
