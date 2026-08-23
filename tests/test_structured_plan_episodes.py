@@ -252,3 +252,55 @@ def test_the_template_lock_follows_the_imported_text(tmp_path, monkeypatch):
     source = inspect.getsource(projects.update_project)
     assert "has_imported_novel(ctx.output_dir)" in source
     assert "get_all_episodes()" not in source
+
+
+async def test_legacy_gets_the_same_atomic_publish(tmp_path, monkeypatch):
+    """The seven-write mapping was legacy's bug first.
+
+    CogneeStore delegates now, so the fix reaches existing projects too — but
+    only if the delegate really is the same code path, which is what this pins.
+    """
+    from novelvideo.cognee.store import CogneeStore
+
+    state_dir = _project(tmp_path, structured=False)
+    sqlite = await _sqlite_store(state_dir)
+    store = CogneeStore.__new__(CogneeStore)
+    store.project_name = "user/legacy"
+    store.dataset_name = "novelvideo_user/legacy"
+    store._db = None
+    store._characters = {}
+    store._episodes = {}
+    store._alias_index = {}
+    store.project_dir = str(state_dir)
+    store.state_dir = str(state_dir)
+    store.db_path = str(state_dir / "data.db")
+    store.sqlite_store = sqlite
+
+    try:
+        store.save_novel_content(CHAPTERED)
+        await store.build_episodes_from_chapters()
+        await sqlite.patch_episode(2, identity_ids=["林默:default"])
+
+        real_upsert = sqlite._upsert_episodes
+
+        async def fail_midway(db, episodes):
+            await real_upsert(db, episodes[:1])
+            raise RuntimeError("worker killed")
+
+        monkeypatch.setattr(sqlite, "_upsert_episodes", fail_midway)
+        with pytest.raises(RuntimeError):
+            await store.build_episodes_from_chapters(
+                novel_text="第一章 别的\n\n完全不同的正文。\n"
+            )
+
+        # Same three episodes, same bodies, planning intact — a legacy project
+        # is no longer left blank or half-mapped by a cancelled task.
+        assert [
+            (await sqlite.get_episode_from_graph(n)).number for n in (1, 2, 3)
+        ] == [1, 2, 3]
+        assert (await sqlite.get_episode_from_graph(2)).identity_ids == [
+            "林默:default"
+        ]
+        assert "陈舟" in await sqlite.load_episode_content(2)
+    finally:
+        await sqlite.close()
