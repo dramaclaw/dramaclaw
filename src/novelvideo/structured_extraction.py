@@ -3,8 +3,15 @@
 The legacy path asks Cognee for graph context and lets a model name whoever it
 finds there.  Structured extraction inverts that: the model only reports what a
 specific span of text supports, and every candidate it returns must quote the
-span it came from.  Quotes that cannot be found in the source are dropped, so a
-hallucinated name has no route into the character table.
+span it came from.  A quote that is not in the chunk is dropped, and a name the
+imported source never writes is dropped, so a name invented outright has no
+route into the character table.
+
+What that does *not* establish is that the right quote was attached to the
+right name.  A model can pair a real name with a real sentence about someone
+else, and no check here can tell; the guards bound what may enter, not who a
+line is about.  Attribution is left to the conservative merging below and to
+whoever reads the result.
 
 Merging is deliberately conservative.  A character's name is simultaneously a
 SQLite primary key, a REST identifier and an asset directory name, so a wrong
@@ -274,8 +281,9 @@ def verify_evidence(
 ) -> tuple[int, int] | None:
     """Locate a quote inside the chunk and return its absolute source offsets.
 
-    A quote that is not present verbatim is rejected: this check is the only
-    thing standing between a model's imagination and the character table.
+    A quote that is not present verbatim is rejected. This establishes that the
+    line exists in this span, and nothing more — not that it is about the
+    character it was returned for.
     """
     needle = (quote or "").strip()
     if not needle:
@@ -399,6 +407,11 @@ def name_is_attested(name: str, corpus: str) -> bool:
     The quote verifies, so the candidate used to be accepted, and 王五 became a
     row in the character table — a primary key, a REST identifier and an asset
     directory, invented out of nothing.
+
+    This catches invention, not misattribution: a name the source does write,
+    returned against a line about somebody else, still passes. Ruling that out
+    would take Chinese NER and word-boundary analysis, would still be wrong
+    sometimes, and would cost the cross-chunk recall described below.
 
     Checked against the whole imported text rather than the chunk the candidate
     came from, deliberately. A character is introduced by name once and referred
