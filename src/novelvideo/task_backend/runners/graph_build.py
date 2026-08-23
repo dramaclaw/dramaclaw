@@ -112,8 +112,9 @@ async def _run_build_scenes(ctx: ProjectContext) -> dict[str, Any]:
     require_imported_novel(ctx.output_dir)
     # The API rejects at enqueue; this is the final defence against state races
     # and producers that never went through HTTP. Only a *running* planner
-    # blocks, so a build and a planner submitted together resolve one way
-    # instead of turning each other away.
+    # blocks, so a build arriving against a queued planner is not turned away
+    # for nothing. Two tasks that reach their gates together can still both
+    # refuse — narrow, writes nothing, and retrying clears it.
     from novelvideo.scene_prerequisites import (
         ScenePlanningRunningError,
         running_scene_planner,

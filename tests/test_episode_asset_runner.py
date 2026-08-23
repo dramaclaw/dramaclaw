@@ -80,12 +80,13 @@ def _planner_task(status: str, task_type: str = "episode_scene_planner"):
 
 
 def test_only_a_running_planner_blocks_a_build():
-    """The asymmetry is what keeps two simultaneous requests from deadlocking.
+    """A build arriving against a *queued* planner is not turned away.
 
-    Planning refuses whenever a build is active, queued included. A build
-    refuses only when planning is already past the starting line — so a build
-    and a planner submitted together resolve one way: the build proceeds and
-    the planner is turned away with something to do about it.
+    Planning refuses whenever a build is active, queued included; a build
+    refuses only when planning is past the starting line. That is a preference,
+    not a guarantee — each check runs inside its own task, after the backend has
+    marked it running, so two tasks reaching their gates together can both
+    refuse. Nothing is written either way, and retrying clears it.
     """
     from novelvideo.scene_prerequisites import running_scene_planner
 
@@ -177,3 +178,18 @@ def test_the_build_route_checks_before_enqueueing():
     assert source.index("running_scene_planner") < source.index(
         "enqueue_project_task"
     )
+
+
+def test_any_episodes_planner_blocks_the_build():
+    """The scenes table is project-wide, so the conflict is not per episode."""
+    from novelvideo.scene_prerequisites import (
+        SCENE_PLANNING_RUNNING_MESSAGE,
+        ScenePlanningRunningError,
+        running_scene_planner,
+    )
+
+    # The task carries no episode of its own here; what matters is that the
+    # predicate does not filter by one, and the message does not claim to.
+    assert running_scene_planner([_planner_task("running")])
+    assert "本集" not in SCENE_PLANNING_RUNNING_MESSAGE
+    assert str(ScenePlanningRunningError()) == SCENE_PLANNING_RUNNING_MESSAGE

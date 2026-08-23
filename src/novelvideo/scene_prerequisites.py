@@ -9,17 +9,23 @@ there first — the builder can see a row the planner just created and skip it a
 existing, or the planner can plan against a catalogue that is still half
 written.
 
-The exclusion is mutual, but not symmetric, and the asymmetry is the point.
-Deciding both directions by "is the other one active" would let two requests
-that arrive together reject each other, leaving the user with nothing running
-and no explanation. So the build wins:
+What is guaranteed is that the two never enter their business logic at the
+same time, in either scheduling order. Which one survives is a preference, not
+a guarantee:
 
 * planning refuses whenever a build is *active*, queued included;
 * a build refuses only when planning is actually *running*.
 
-Two simultaneous requests therefore resolve one way: the build proceeds, the
-planner is turned away with something to do about it. A planner already past
-the starting line keeps the build out until it finishes, which is short.
+So a build submitted against a queued planner usually proceeds and the planner
+is turned away with something actionable, rather than both being turned away —
+which is what deciding both directions on "is the other active" would do.
+
+It is a preference because the check runs inside each task, after the backend
+has already marked it running. Two tasks that reach that point together can
+each see the other running and both refuse. The window is narrow, nothing is
+written, and the fix is to retry. Making a winner certain would need an atomic
+project-level lock or unified admission, which is a lot of machinery for a
+case whose failure mode is already "try again".
 """
 
 from __future__ import annotations
@@ -30,7 +36,8 @@ SCENE_CATALOG_BUILDING_CODE = "SCENE_CATALOG_BUILDING"
 SCENE_CATALOG_BUILDING_MESSAGE = "场景正在构建，请完成后再规划场景"
 
 SCENE_PLANNING_RUNNING_CODE = "SCENE_PLANNING_RUNNING"
-SCENE_PLANNING_RUNNING_MESSAGE = "本集场景正在规划，请完成后再构建场景"
+# Project-wide: the planner holding the build back may be another episode's.
+SCENE_PLANNING_RUNNING_MESSAGE = "有分集场景正在规划，请完成后再构建场景"
 
 # The planner task type, named here rather than imported, so this module stays
 # free of the task backend and can be used from both the API and the runners.
@@ -72,8 +79,11 @@ def scene_prerequisite_response(
 def running_scene_planner(tasks: Any) -> bool:
     """Whether an episode scene planner is past the starting line.
 
-    Only ``running`` counts. A queued planner yields to the build instead, which
-    is what keeps two simultaneous requests from turning each other away.
+    Any episode's planner counts: they all write the one project-wide scenes
+    table, so the conflict is not per episode.
+
+    Only ``running`` counts. A queued planner yields to the build instead, so a
+    build arriving against a queued planner is not turned away for nothing.
     """
     for task in tasks or ():
         if (
