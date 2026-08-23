@@ -31,10 +31,13 @@ def _clear_probe_cache():
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    # 每个用例自定沙箱必需/opt-in,先清干净,避免宿主 .env 干扰。
+    # 每个用例自定沙箱必需/opt-in/Linux 激活,先清干净,避免宿主 .env / CI runner 干扰。
+    # 尤其 SUPERTALE_LINUX_SANDBOX:设过它的机器会让"默认未激活"用例失去默认语义,
+    # 需要激活的用例自己显式 setenv。
     monkeypatch.delenv("SUPERTALE_ENV", raising=False)
     monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
     monkeypatch.delenv("SUPERTALE_ALLOW_UNSANDBOXED", raising=False)
+    monkeypatch.delenv("SUPERTALE_LINUX_SANDBOX", raising=False)
 
 
 def _spec(tmp_path: Path) -> SandboxSpec:

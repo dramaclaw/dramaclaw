@@ -70,8 +70,13 @@ Two enforcement layers, both driven by the same `_fallback_or_raise` decision:
   `/bin/true` inside a throwaway sandbox). A *missing binary* **or** a *present-but-unusable*
   sandbox (kernel lacks user namespaces) both route through `_fallback_or_raise`.
 - **Boot, per container** — `deploy/docker-entrypoint.sh` runs the startup gate
-  `deploy/hermes_sandbox_selfcheck.py` before exec-ing the API. Its exit code decides whether
-  the container boots at all. Every degrade path in the gate is guarded by `_may_degrade()`
+  `deploy/hermes_sandbox_selfcheck.py` before exec-ing the API, **but only when the selected chat
+  backend is Hermes** (it resolves `DRAMACLAW_CHAT_BACKEND` → `SUPERTALE_CHAT_BACKEND` → default
+  `hermes`, mirroring `chat.service._chat_backend`). A codex/claude backend, migrations, diagnostics,
+  or any command overriding the CMD skip the gate — the sandbox is a Hermes-worker constraint, not a
+  whole-image startup condition, so it must not fail-close unrelated backends (`_wrap_linux` still
+  fail-closes the Hermes worker itself). When it does run, its exit code decides whether the container
+  boots at all. Every degrade path in the gate is guarded by `_may_degrade()`
   (`not _sandbox_required()` **and** `SUPERTALE_ALLOW_UNSANDBOXED` set; import-failure ⇒ never
   degrade) — the exact CE-single-tenant-opt-in condition `_fallback_or_raise` uses, so the gate
   can never boot a config the wrapper would have refused. CE without the opt-in **refuses** on

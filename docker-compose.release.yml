@@ -41,10 +41,14 @@ services:
       XDG_CACHE_HOME: /data/cache
       DRAMACLAW_CHAT_BACKEND: hermes
       HERMES_CLI_PATH: /usr/local/bin/hermes
-      # CE 单租户自托管的沙箱降级阀门。镜像现已按 TARGETARCH 装好 codex-linux-sandbox
-      # + bubblewrap,能建沙箱的宿主上 Hermes 照常隔离运行;此开关只在宿主内核不支持
-      # unprivileged user namespaces、沙箱建不起来时才起作用——让单租户 CE 大声告警后
-      # 无沙箱降级启动,而不是把老内核的自托管用户挡在门外(单租户无跨用户数据风险)。
+      # CE 单租户自托管的沙箱降级阀门。镜像已按 TARGETARCH 装好 codex-linux-sandbox
+      # + bubblewrap,但 Linux 沙箱**默认不激活**:codex 的 managed profile 无法在
+      # profile 层堵住同宿主 peer-read(见 AGENTS.md / #346 P1②),须靠部署层只挂当前
+      # 用户 slice 才能真隔离。在那之前 _wrap_linux 不包裹 → 默认 CE 即便宿主支持 user
+      # namespaces 也**无沙箱运行** Hermes(不自动探测启用)。本开关正是那种无沙箱运行的
+      # 降级放行阀:让单租户 CE 大声告警后启动,而不是 fail-close 把自托管用户挡在门外
+      # (单租户无跨用户数据风险)。部署方完成 per-user slice 挂载、确认只挂当前用户数据后,
+      # 再显式设 SUPERTALE_LINUX_SANDBOX=1 激活沙箱。
       # 仅对 CE 生效:production 或 ST_CONTROL_PLANE_DSN 非空(EE/多租户)时,启动门与
       # sandbox_wrap._fallback_or_raise 仍严格 fail-close,兜底不扩散到多租户。
       SUPERTALE_ALLOW_UNSANDBOXED: "1"
