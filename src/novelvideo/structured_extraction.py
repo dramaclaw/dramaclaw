@@ -382,11 +382,10 @@ async def extract_characters_from_chunks(
     return merged, failures
 
 
-def _attested_names(outcomes: list[tuple[SourceChunk, ChunkCharacterOutput]]) -> str:
-    """The text a name has to appear somewhere in, plus the cast lists.
+def _source_of(outcomes: list[tuple[SourceChunk, ChunkCharacterOutput]]) -> str:
+    """The text a name has to appear in, plus the cast lists the author wrote.
 
-    Joined with a separator so a name cannot be formed by spanning the seam
-    between two chunks.
+    Joined with a separator so a name cannot be formed across a chunk seam.
     """
     parts: list[str] = []
     for chunk, _output in outcomes:
@@ -395,37 +394,43 @@ def _attested_names(outcomes: list[tuple[SourceChunk, ChunkCharacterOutput]]) ->
     return "\n\x00\n".join(parts)
 
 
-def name_is_attested(name: str, corpus: str) -> bool:
-    """Whether the source itself writes this name.
+def name_is_attested(name: str, source: str) -> bool:
+    """Whether the imported source writes this name at all.
 
-    Verifying the quote alone does not do it. A model can return a real
-    sentence from the text and attach a name that never appears anywhere:
+    Verifying the quote does not establish this. A model can return a real
+    sentence and attach a name that appears nowhere:
 
         text  : 林默回到了家
         model : name=王五, evidence="林默回到了家"
 
-    The quote verifies, so the candidate used to be accepted, and 王五 became a
-    row in the character table — a primary key, a REST identifier and an asset
-    directory, invented out of nothing.
+    The quote verifies, so 王五 used to be accepted, and became a row in the
+    character table — a primary key, a REST identifier and an asset directory,
+    invented out of nothing.
 
-    This catches invention, not misattribution: a name the source does write,
-    returned against a line about somebody else, still passes. Ruling that out
-    would take Chinese NER and word-boundary analysis, would still be wrong
-    sometimes, and would cost the cross-chunk recall described below.
+    Checked against the whole source rather than the chunk that proposed the
+    name, and that is the deliberate half of it. The stricter rule was measured
+    against stored per-chunk outputs on both spines and dropped nothing at all,
+    because the extraction prompt already asks for a form used in this span and
+    the model obeys — so it buys little. What it changes is the direction of
+    failure: in-chunk fails closed, and a misjudgement there deletes a real
+    character that someone then has to re-enter. Source-wide fails open, and a
+    misjudgement there files one quote against the wrong name — a provenance
+    record, not a rename.
 
-    Checked against the whole imported text rather than the chunk the candidate
-    came from, deliberately. A character is introduced by name once and referred
-    to as 她 or 郑太 for pages afterwards, and attributing those appellations
-    back to her is a thing this module is built to do. Requiring the name in the
-    chunk that mentions her would drop exactly those candidates and take
-    cross-chunk appellation resolution with them. Requiring it in the source
-    still leaves an invented name with no route in, which is the guarantee that
-    was missing.
+    Misattribution is not free, and it is worth naming what it can still do: an
+    appellation offered by a single owner is taken at face value, so a name
+    bound to the wrong line can put an alias on the wrong character. Only a
+    contested appellation has to win a vote. That is a model-quality risk, and
+    the way to reduce it is a better prompt or an adjudicator, not a guard that
+    deletes characters when it is wrong.
+
+    So the line drawn here is: invention cannot get in, misattribution can.
+    Moving it further needs Chinese NER and would still be wrong sometimes.
     """
     normalized = normalize_character_name(name)
     if not normalized:
         return False
-    return normalized in corpus or str(name or "").strip() in corpus
+    return normalized in source or str(name or "").strip() in source
 
 
 def merge_character_candidates(
@@ -439,14 +444,21 @@ def merge_character_candidates(
     """
     merged: dict[str, MergedCharacter] = {}
     alias_pairs: set[tuple[str, str]] = set()
-    # Every name any chunk proposed, so an alias statement in one chunk can
-    # still resolve a name that was only extracted in another.
+    # Only names that survive attestation may anchor an alias statement, and
+    # they are pooled across chunks so a statement in one chunk can still
+    # resolve a name another chunk established. Pooling the raw model output
+    # instead would let a bad capture anchor itself: the model proposing
+    # "家都知道林默" would license exactly the pair the anchoring exists to stop.
+    source = _source_of(outcomes)
+    # Only names that survive attestation may anchor an alias statement. Pooling
+    # raw model output instead would let a bad capture anchor itself.
     proposed_names = {
         candidate.name
         for _chunk, output in outcomes
         for candidate in output.characters
+        if name_is_attested(candidate.name, source)
+        and not is_generic_address(normalize_character_name(candidate.name))
     }
-    corpus = _attested_names(outcomes)
     # appellation -> character -> the source positions attributing it there.
     appellation_claims: dict[str, dict[str, set[tuple[int, int]]]] = {}
 
@@ -461,7 +473,7 @@ def merge_character_candidates(
             # The name needs its own attestation, not just a verifiable quote.
             # Otherwise a real sentence can carry an invented name into the
             # table, which is the exact failure the quote check exists to stop.
-            if not name_is_attested(name, corpus):
+            if not name_is_attested(name, source):
                 continue
 
             verified: list[dict] = []
