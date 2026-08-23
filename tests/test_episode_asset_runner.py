@@ -234,19 +234,131 @@ def test_scene_build_applies_only_where_it_can_produce_something():
         assert scene_build_applies(str(legacy), "narrated")
 
 
-def test_the_build_route_answers_before_the_queue():
-    """A no-op is not free: enqueueing reserves a feature credit, and the
-    runner's successful no-op then confirms the charge — so a narrated project
-    could pay for a build that made no model call and produced no scene. The
-    check has to sit before enqueue, not inside the runner.
+@pytest.mark.asyncio
+async def test_a_narrated_build_never_reaches_the_queue(tmp_path, monkeypatch):
+    """The money path, driven rather than asserted about.
+
+    A no-op is not free: EE resolves the billing key from task_type when the
+    payload carries no explicit billing, reserves a feature credit at enqueue,
+    and the runner's successful no-op then confirms the charge. So what has to
+    be true is that enqueue is never called — not that a source file mentions
+    the check before the call.
     """
-    import inspect
+    import json
 
-    from novelvideo.api.routes import scenes
+    from novelvideo.api.routes import scenes as scenes_routes
+    from novelvideo.knowledge_pipeline import (
+        KNOWLEDGE_PIPELINE_KEY,
+        KNOWLEDGE_PIPELINE_STRUCTURED,
+    )
+    from novelvideo.scene_prerequisites import SCENE_BUILD_NOT_APPLICABLE_CODE
 
-    source = inspect.getsource(scenes.build_scenes)
-    assert "scene_build_applies" in source
-    assert source.index("scene_build_applies") < source.index("enqueue_project_task")
+    state_dir = tmp_path / "alice" / "demo"
+    state_dir.mkdir(parents=True)
+    (state_dir / "project_config.json").write_text(
+        json.dumps(
+            {
+                KNOWLEDGE_PIPELINE_KEY: KNOWLEDGE_PIPELINE_STRUCTURED,
+                "spine_template": "narrated",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "novel.txt").write_text("第一章 归来\n\n正文。\n", encoding="utf-8")
+
+    ctx = SimpleNamespace(
+        project_id="p1",
+        owner_username="alice",
+        project_name="demo",
+        output_dir=state_dir,
+        state_dir=state_dir,
+    )
+
+    enqueued: list = []
+
+    class RecordingBackend:
+        async def enqueue_project_task(self, *args, **kwargs):
+            enqueued.append(kwargs)
+            raise AssertionError("a narrated build must not reach the queue")
+
+    async def _resolve(project, user, **_kwargs):
+        return (ctx, "alice", "demo", state_dir, str(state_dir), object())
+
+    monkeypatch.setattr(scenes_routes, "_resolve_scene_project", _resolve)
+    monkeypatch.setattr(scenes_routes, "get_task_backend", lambda: RecordingBackend())
+    monkeypatch.setattr(
+        scenes_routes,
+        "get_task_manager",
+        lambda: SimpleNamespace(list_tasks_for_project=lambda _ctx: []),
+    )
+
+    response = await scenes_routes.build_scenes("demo", {"username": "alice"})
+
+    assert enqueued == []
+    assert response["ok"] is False
+    assert response["code"] == SCENE_BUILD_NOT_APPLICABLE_CODE
+
+
+@pytest.mark.asyncio
+async def test_a_drama_build_still_reaches_the_queue(tmp_path, monkeypatch):
+    """The guard must not turn away the projects a build does work for."""
+    import json
+
+    from novelvideo.api.routes import scenes as scenes_routes
+    from novelvideo.knowledge_pipeline import (
+        KNOWLEDGE_PIPELINE_KEY,
+        KNOWLEDGE_PIPELINE_STRUCTURED,
+    )
+
+    state_dir = tmp_path / "alice" / "demo"
+    state_dir.mkdir(parents=True)
+    (state_dir / "project_config.json").write_text(
+        json.dumps(
+            {
+                KNOWLEDGE_PIPELINE_KEY: KNOWLEDGE_PIPELINE_STRUCTURED,
+                "spine_template": "drama",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "novel.txt").write_text("第1场 客厅 日 内\n", encoding="utf-8")
+
+    ctx = SimpleNamespace(
+        project_id="p1",
+        owner_username="alice",
+        project_name="demo",
+        output_dir=state_dir,
+        state_dir=state_dir,
+    )
+    enqueued: list = []
+
+    class RecordingBackend:
+        async def enqueue_project_task(self, *args, **kwargs):
+            enqueued.append(kwargs)
+            return SimpleNamespace(
+                task_state=SimpleNamespace(task_id="t1"),
+                backend="inline",
+                queue="default",
+            )
+
+    async def _resolve(project, user, **_kwargs):
+        return (ctx, "alice", "demo", state_dir, str(state_dir), object())
+
+    monkeypatch.setattr(scenes_routes, "_resolve_scene_project", _resolve)
+    monkeypatch.setattr(scenes_routes, "get_task_backend", lambda: RecordingBackend())
+    monkeypatch.setattr(
+        scenes_routes,
+        "get_task_manager",
+        lambda: SimpleNamespace(list_tasks_for_project=lambda _ctx: []),
+    )
+
+    response = await scenes_routes.build_scenes("demo", {"username": "alice"})
+
+    assert len(enqueued) == 1
+    assert enqueued[0]["task_type"] == "build_scenes"
+    assert response["ok"] is True
 
 
 def test_the_runner_still_defers_for_narrated():

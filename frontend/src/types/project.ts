@@ -21,6 +21,11 @@ export interface ProjectConfig {
   sketch_image_selection?: string;
   render_image_selection?: string;
   sketch_aspect_padding?: boolean;
+  // Server-computed: whether a project-level scene build can produce anything.
+  // Narrated structured projects have no scene headings to build a catalogue
+  // from, so their scenes are created per episode during planning instead.
+  // Absent on older responses, which is why callers treat undefined as true.
+  readonly scene_build_supported?: boolean;
 }
 
 export type Project = string;
