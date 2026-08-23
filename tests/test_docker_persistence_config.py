@@ -29,6 +29,13 @@ def test_all_compose_variants_persist_generated_media_in_ce_data_volume() -> Non
         assert "ce-data:/data" in api["volumes"]
 
 
+def test_all_compose_variants_default_to_codex_chat_runtime() -> None:
+    for relative_path in COMPOSE_FILES:
+        raw = (REPOSITORY_ROOT / relative_path).read_text()
+
+        assert 'DRAMACLAW_CHAT_BACKEND: "${DRAMACLAW_CHAT_BACKEND:-codex}"' in raw
+
+
 def test_env_example_configures_data_root_instead_of_individual_directories() -> None:
     env_example = (REPOSITORY_ROOT / ".env.example").read_text()
 
