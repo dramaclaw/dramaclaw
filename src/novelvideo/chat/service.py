@@ -76,6 +76,7 @@ _CHAT_RUN_LOCK_MAX_SECONDS = 60 * 60
 _CHAT_RUN_LOCK_HEARTBEAT_SECONDS = 30.0
 _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS = 5.0
 _CODEX_MODEL_PROVIDER = "dramaclaw_gateway"
+_DEFAULT_CODEX_MODEL = "DC-codex-agent-LLM"
 _CODEX_GATEWAY_BASE_URL_ENV = "DRAMACLAW_CODEX_GATEWAY_BASE_URL"
 _CODEX_PER_TURN_CREDENTIAL_PLACEHOLDER = "dramaclaw-codex-per-turn-placeholder"
 _CODEX_GATEWAY_KEY_METADATA = "dramaclaw_gateway_api_key"
@@ -767,9 +768,23 @@ def _codex_bin_path() -> Path | None:
 
 
 def _codex_model() -> str:
+    from novelvideo.shared.runtime_env import is_ce_effective
+
+    if is_ce_effective():
+        from novelvideo.model_gateway_settings import get_effective_llm_config
+
+        # CE is configured interactively and SQLite is authoritative. The
+        # BrainClaw choice is a direct model route; Advanced mode keeps using
+        # DramaClaw's logical Codex alias on the user-selected NewAPI gateway.
+        gateway = get_effective_llm_config()
+        return "brainclaw" if gateway.is_brainclaw else _DEFAULT_CODEX_MODEL
+
+    # EE/SaaS is deployment-configured. The gateway address and logical model
+    # come from env, while an organization channel's key is authorized and
+    # injected separately for each turn.
     return (
-        os.environ.get("CODEX_MODEL", "DC-codex-agent-LLM").strip()
-        or "DC-codex-agent-LLM"
+        os.environ.get("CODEX_MODEL", _DEFAULT_CODEX_MODEL).strip()
+        or _DEFAULT_CODEX_MODEL
     )
 
 
@@ -4025,18 +4040,27 @@ def _build_claude_env(
 
 
 def _codex_turn_gateway_credentials(authorization=None) -> tuple[str, str]:
-    """Resolve one turn's NewAPI token without placing it in shared state."""
+    """Resolve one turn's NewAPI token without crossing CE/EE config boundaries."""
 
     from novelvideo.chat.hermes_workspace import effective_gateway_credentials
+    from novelvideo.shared.runtime_env import is_ce_effective
 
     configured_key, configured_base_url = effective_gateway_credentials()
     configured_base_url = str(configured_base_url or "").strip().rstrip("/")
     if not configured_base_url:
         raise RuntimeError("Codex requires a configured DramaClaw model gateway URL")
 
-    if authorization is None:
+    if is_ce_effective():
+        # CE owns a local SQLite settings database. UI changes to endpoint/key
+        # must take effect on the next turn and must never be shadowed by the
+        # EE request-authorization path.
+        api_key = str(configured_key or "").strip()
+    elif authorization is None:
+        # EE platform traffic uses its deployment credential.
         api_key = str(configured_key or "").strip()
     else:
+        # EE organization traffic uses the key belonging to that request's
+        # selected channel. Only the shared gateway origin comes from env.
         credential = authorization.credential
         credential_base_url = str(credential.base_url or "").strip().rstrip("/")
         configured_origin = urlparse(configured_base_url)

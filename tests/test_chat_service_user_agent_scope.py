@@ -1157,6 +1157,9 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
 
 def test_codex_turn_gateway_credentials_reject_foreign_origin(monkeypatch):
     monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
+    )
+    monkeypatch.setattr(
         "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
         lambda: ("node-key", "https://gateway.example/v1"),
     )
@@ -1175,6 +1178,9 @@ def test_codex_turn_gateway_credentials_reject_foreign_origin(monkeypatch):
 
 def test_codex_turn_gateway_credentials_use_authorized_key(monkeypatch):
     monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
+    )
+    monkeypatch.setattr(
         "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
         lambda: ("node-key", "https://gateway.example/v1"),
     )
@@ -1188,6 +1194,27 @@ def test_codex_turn_gateway_credentials_use_authorized_key(monkeypatch):
     assert chat_service._codex_turn_gateway_credentials(authorization) == (
         "turn-key",
         "https://gateway.example/v1",
+    )
+
+
+def test_ce_codex_turn_gateway_credentials_use_current_sqlite_config(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: True
+    )
+    monkeypatch.setattr(
+        "novelvideo.chat.hermes_workspace.effective_gateway_credentials",
+        lambda: ("sqlite-key", "https://ce-gateway.example/v1"),
+    )
+    stale_ee_authorization = SimpleNamespace(
+        credential=SimpleNamespace(
+            api_key="stale-channel-key",
+            base_url="https://foreign.example/v1",
+        )
+    )
+
+    assert chat_service._codex_turn_gateway_credentials(stale_ee_authorization) == (
+        "sqlite-key",
+        "https://ce-gateway.example/v1",
     )
 
 
@@ -1218,9 +1245,47 @@ def test_codex_node_runtime_does_not_inherit_project_authority():
 
 
 def test_codex_model_defaults_to_gateway_alias(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
+    )
     monkeypatch.delenv("CODEX_MODEL", raising=False)
 
     assert chat_service._codex_model() == "DC-codex-agent-LLM"
+
+
+def test_ce_codex_model_follows_sqlite_brainclaw_mode(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: True
+    )
+    monkeypatch.setattr(
+        "novelvideo.model_gateway_settings.get_effective_llm_config",
+        lambda: SimpleNamespace(is_brainclaw=True),
+    )
+    monkeypatch.setenv("CODEX_MODEL", "must-not-control-ce")
+
+    assert chat_service._codex_model() == "brainclaw"
+
+
+def test_ce_codex_model_keeps_dc_alias_in_sqlite_advanced_mode(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: True
+    )
+    monkeypatch.setattr(
+        "novelvideo.model_gateway_settings.get_effective_llm_config",
+        lambda: SimpleNamespace(is_brainclaw=False),
+    )
+    monkeypatch.setenv("CODEX_MODEL", "must-not-control-ce")
+
+    assert chat_service._codex_model() == "DC-codex-agent-LLM"
+
+
+def test_ee_codex_model_uses_environment(monkeypatch):
+    monkeypatch.setattr(
+        "novelvideo.shared.runtime_env.is_ce_effective", lambda: False
+    )
+    monkeypatch.setenv("CODEX_MODEL", "DC-ee-codex-LLM")
+
+    assert chat_service._codex_model() == "DC-ee-codex-LLM"
 
 
 def test_explicit_codex_does_not_fallback_when_unavailable(monkeypatch):
