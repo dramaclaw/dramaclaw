@@ -48,6 +48,8 @@ def test_container_builds_only_the_pinned_redacted_codex_runtime() -> None:
 
     assert 'ARG CODEX_REF="758ef40f50c1a458425c7cfbf1eb12cbc07af0b0"' in dockerfile
     assert "0.149.0-redact-turn-metadata.patch" in dockerfile
-    assert "cargo test --locked -p codex-protocol" in dockerfile
+    assert "cargo test -p codex-protocol" in dockerfile
+    assert "cargo build --release -p codex-cli --bin codex" in dockerfile
     assert "CODEX_BIN=/usr/local/bin/codex-dramaclaw" in dockerfile
     assert "--no-install-package openai-codex-cli-bin" in dockerfile
+    assert "apt-get install -y --no-install-recommends git" in dockerfile

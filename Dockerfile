@@ -14,11 +14,15 @@ RUN git init \
     && git checkout --detach FETCH_HEAD \
     && git rev-parse HEAD > /opt/codex-runtime.sha
 COPY deploy/codex/0.149.0-redact-turn-metadata.patch /tmp/codex-turn-metadata.patch
+# The official release tag changes workspace.package.version to 0.149.0
+# without rewriting Cargo.lock's local workspace package versions. Cargo must
+# perform that metadata-only lock refresh; external dependency pins remain
+# those committed in the release tag.
 RUN git apply --check /tmp/codex-turn-metadata.patch \
     && git apply /tmp/codex-turn-metadata.patch \
     && cd codex-rs \
-    && cargo test --locked -p codex-protocol debug_redacts_responses_api_client_metadata_values \
-    && cargo build --locked --release -p codex-cli --bin codex \
+    && cargo test -p codex-protocol debug_redacts_responses_api_client_metadata_values \
+    && cargo build --release -p codex-cli --bin codex \
     && strip target/release/codex \
     && target/release/codex --version
 
@@ -76,11 +80,13 @@ RUN test -f src/novelvideo/assets/login_bgm.mp3 \
 ARG INSTALL_WORLD=0
 # The SDK declares its stock runtime as a dependency. Remove that unused
 # binary so an operator cannot bypass CODEX_BIN and re-enable metadata logs.
+# uv.lock contains the pinned Codex Python SDK as a Git source. Keep git in
+# this build layer only; it is not needed by the running application.
 RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends git; \
     if [ "$INSTALL_WORLD" = "1" ]; then \
-        apt-get update; \
-        apt-get install -y --no-install-recommends git nodejs npm; \
-        rm -rf /var/lib/apt/lists/*; \
+        apt-get install -y --no-install-recommends nodejs npm; \
         npm install -g @playcanvas/splat-transform; \
         uv sync --frozen --no-dev --extra world \
           --no-install-package openai-codex-cli-bin; \
@@ -88,7 +94,10 @@ RUN set -eux; \
         uv sync --frozen --no-dev \
           --no-install-package openai-codex-cli-bin; \
     fi; \
-    mkdir -p /data
+    mkdir -p /data; \
+    apt-get purge -y git; \
+    apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*
 
 # Hermes comes from this project's own fork, always. A PyPI release cannot
 # serve this image: it keeps the same version string as the fork and then drops
