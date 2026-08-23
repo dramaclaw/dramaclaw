@@ -42,7 +42,13 @@ from novelvideo.ports import get_task_backend
 from novelvideo.project_config import load_project_config_file
 from novelvideo.project_context import ProjectContext, resolve_project_context
 from novelvideo.sqlite_store import SQLiteStore
+from novelvideo.scene_prerequisites import (
+    ScenePlanningRunningError,
+    running_scene_planner,
+    scene_prerequisite_response,
+)
 from novelvideo.task_identity import project_task_state_key
+from novelvideo.task_state import get_task_manager
 from novelvideo.task_scopes import scene_reference_asset_scope, stage_asset_scope
 from novelvideo.utils.asset_names import move_asset_dir, path_safe_asset_name
 from novelvideo.utils.derived_scenes import (
@@ -1041,6 +1047,11 @@ async def build_scenes(project: str, user: dict = Depends(get_api_user)):
     if ctx is not None:
         if not has_imported_novel(project_dir):
             return novel_import_required_response()
+        # The other half of the exclusion. Both write the scenes table, so a
+        # build landing on top of a running planner leaves a catalogue whose
+        # contents depend on which writer got there first.
+        if running_scene_planner(get_task_manager().list_tasks_for_project(ctx)):
+            return scene_prerequisite_response(ScenePlanningRunningError())
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             product_surface="mainline",
