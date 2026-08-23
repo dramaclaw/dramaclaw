@@ -3,8 +3,8 @@ FROM rust:1.95-bookworm AS codex-builder
 # The Codex 0.149 runtime logs the full turn metadata map
 # to logs_2.sqlite. DramaClaw carries per-turn gateway credentials and control
 # capabilities there, so the stock binary is not safe for a shared home-node
-# App Server. Build the official 0.149.0 tagged runtime and redact only
-# Debug/log output; the original values still reach the Responses request.
+# App Server. Build the official 0.149.0 tagged runtime, redact Debug/log
+# output, and consume the per-turn gateway key as Responses bearer auth.
 ARG CODEX_REPO="https://github.com/openai/codex.git"
 ARG CODEX_REF="758ef40f50c1a458425c7cfbf1eb12cbc07af0b0"
 WORKDIR /opt/codex-src
@@ -22,6 +22,8 @@ RUN git apply --check /tmp/codex-turn-metadata.patch \
     && git apply /tmp/codex-turn-metadata.patch \
     && cd codex-rs \
     && cargo test -p codex-protocol debug_redacts_responses_api_client_metadata_values \
+    && cargo test -p codex-core turn_metadata_extracts_dramaclaw_gateway_key_without_serializing_it \
+    && cargo test -p codex-core turn_scoped_responses_auth_replaces_the_provider_placeholder \
     && cargo build --release -p codex-cli --bin codex \
     && strip target/release/codex \
     && target/release/codex --version
