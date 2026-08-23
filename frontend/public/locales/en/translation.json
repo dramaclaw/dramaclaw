@@ -1430,6 +1430,7 @@
       "derivedFrom": "Derived from {{base}}",
       "emptyTitle": "No scenes yet",
       "emptyDescription": "Create a scene or extract scenes from the project graph.",
+      "emptyDescriptionPerEpisode": "Scenes for narrated projects are created automatically when you plan each episode, or you can add them by hand.",
       "building": "Building scenes...",
       "buildingEmpty": {
         "title": "Building scenes",

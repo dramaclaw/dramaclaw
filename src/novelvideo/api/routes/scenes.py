@@ -42,9 +42,12 @@ from novelvideo.ports import get_task_backend
 from novelvideo.project_config import load_project_config_file
 from novelvideo.project_context import ProjectContext, resolve_project_context
 from novelvideo.sqlite_store import SQLiteStore
+from novelvideo.project_config import load_project_config_file_from_state_dir
 from novelvideo.scene_prerequisites import (
+    SceneBuildNotApplicableError,
     ScenePlanningRunningError,
     running_scene_planner,
+    scene_build_applies,
     scene_prerequisite_response,
 )
 from novelvideo.task_identity import project_task_state_key
@@ -1047,6 +1050,15 @@ async def build_scenes(project: str, user: dict = Depends(get_api_user)):
     if ctx is not None:
         if not has_imported_novel(project_dir):
             return novel_import_required_response()
+        # Answered before the queue, not inside it. Enqueueing reserves a
+        # feature credit, and the runner's no-op result then confirms the
+        # charge — so a narrated project could pay for a build that made no
+        # model call and produced no scene.
+        config = load_project_config_file_from_state_dir(ctx.state_dir)
+        if not scene_build_applies(
+            str(ctx.state_dir), str(config.get("spine_template") or "drama")
+        ):
+            return scene_prerequisite_response(SceneBuildNotApplicableError())
         # The other half of the exclusion. Both write the scenes table, so a
         # build landing on top of a running planner leaves a catalogue whose
         # contents depend on which writer got there first.

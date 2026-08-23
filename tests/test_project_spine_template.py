@@ -467,3 +467,67 @@ async def test_start_ingest_accepts_repairable_premium_drama(monkeypatch, tmp_pa
 
     assert response["ok"] is False
     assert "project context" in response["error"]
+
+
+@pytest.mark.asyncio
+async def test_project_config_reports_whether_a_scene_build_applies(
+    monkeypatch, tmp_path
+):
+    """The UI asks one question; answer it here rather than on the client.
+
+    Rebuilding the rule from spine_template plus the knowledge pipeline in the
+    frontend would put it in two places and leak the track name into the API.
+    """
+    import json
+
+    from novelvideo.api.routes import projects
+    from novelvideo.knowledge_pipeline import (
+        KNOWLEDGE_PIPELINE_KEY,
+        KNOWLEDGE_PIPELINE_STRUCTURED,
+    )
+
+    state_dir = tmp_path / "alice" / "demo"
+    state_dir.mkdir(parents=True)
+
+    async def _read(config: dict) -> bool:
+        (state_dir / "project_config.json").write_text(
+            json.dumps(config, ensure_ascii=False), encoding="utf-8"
+        )
+        ctx = SimpleNamespace(
+            project_id="project_123",
+            owner_username="alice",
+            project_name="demo",
+            effective_role="owner",
+            home_node_id="node",
+            output_dir=tmp_path,
+            state_dir=state_dir,
+            runtime_dir=tmp_path / "runtime",
+        )
+
+        async def _resolve(**_kwargs):
+            return ctx
+
+        monkeypatch.setattr(projects, "resolve_project_context", _resolve)
+        monkeypatch.setattr(projects, "require_project_home_node", lambda *a, **k: None)
+        monkeypatch.setattr(
+            projects,
+            "load_project_config_from_state_dir",
+            lambda _state_dir, **_kwargs: dict(config),
+        )
+
+        async def _registry_get(_project_id):
+            return None
+
+        monkeypatch.setattr(
+            projects,
+            "get_project_registry",
+            lambda: SimpleNamespace(get_project=_registry_get),
+        )
+        response = await projects.get_project("demo", {"username": "alice"})
+        return response["data"]["scene_build_supported"]
+
+    structured = {KNOWLEDGE_PIPELINE_KEY: KNOWLEDGE_PIPELINE_STRUCTURED}
+    assert await _read({**structured, "spine_template": "drama"}) is True
+    assert await _read({**structured, "spine_template": "narrated"}) is False
+    # Legacy keeps its build whatever the template.
+    assert await _read({"spine_template": "narrated"}) is True

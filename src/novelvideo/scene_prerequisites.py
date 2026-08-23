@@ -35,6 +35,9 @@ from typing import Any
 SCENE_CATALOG_BUILDING_CODE = "SCENE_CATALOG_BUILDING"
 SCENE_CATALOG_BUILDING_MESSAGE = "场景正在构建，请完成后再规划场景"
 
+SCENE_BUILD_NOT_APPLICABLE_CODE = "SCENE_BUILD_NOT_APPLICABLE"
+SCENE_BUILD_NOT_APPLICABLE_MESSAGE = "解说剧场景将在分集规划时按需生成，无需提前构建"
+
 SCENE_PLANNING_RUNNING_CODE = "SCENE_PLANNING_RUNNING"
 # Project-wide: the planner holding the build back may be another episode's.
 SCENE_PLANNING_RUNNING_MESSAGE = "有分集场景正在规划，请完成后再构建场景"
@@ -55,6 +58,43 @@ class SceneCatalogBuildingError(ScenePlanningPrerequisiteError):
 
     def __init__(self) -> None:
         super().__init__(SCENE_CATALOG_BUILDING_MESSAGE)
+
+
+class SceneBuildNotApplicableError(ScenePlanningPrerequisiteError):
+    """Raised when a project's format has nothing to build a catalogue from.
+
+    A screenplay names every location in its scene headings, so a full-text pass
+    produces a reusable catalogue. Narrated prose has no equivalent marker — the
+    same room is "公司", "那家公司", "郑氏集团的办公室" — so a full-text sweep
+    would be guessing, and the build defers to per-episode planning, where the
+    question is scoped to one chapter.
+
+    The runner already returns that as a no-op result. This exists because a
+    no-op is not free: enqueueing reserves a feature credit before the runner is
+    ever reached, and a successful no-op confirms the charge. The user pays for
+    a build that made no model call and produced no scene. So the answer has to
+    come before the queue, not from inside it.
+    """
+
+    error_code = SCENE_BUILD_NOT_APPLICABLE_CODE
+
+    def __init__(self) -> None:
+        super().__init__(SCENE_BUILD_NOT_APPLICABLE_MESSAGE)
+
+
+def scene_build_applies(state_dir: str, spine_template: str) -> bool:
+    """Whether a project-level scene build can produce anything.
+
+    Only structured narrated projects are excluded. Legacy projects keep the
+    Cognee path whatever their template, because their build does reach a model
+    and does produce scenes — changing that would change what existing projects
+    do.
+    """
+    from novelvideo.knowledge_pipeline import is_structured_pipeline
+
+    if not is_structured_pipeline(state_dir):
+        return True
+    return str(spine_template or "").strip() != "narrated"
 
 
 class ScenePlanningRunningError(ScenePlanningPrerequisiteError):

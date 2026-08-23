@@ -31,6 +31,7 @@ from novelvideo.config import ensure_project_dirs_at_paths
 from novelvideo.knowledge_pipeline import KNOWLEDGE_PIPELINE_KEY, KNOWLEDGE_PIPELINE_STRUCTURED
 from novelvideo.novel_source import has_imported_novel
 from novelvideo.ports import get_project_access, get_project_registry
+from novelvideo.scene_prerequisites import scene_build_applies
 from novelvideo.ports.project import ProjectRecord
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
@@ -508,6 +509,13 @@ async def get_project(project: str, user: dict = Depends(get_api_user)):
             "home_node_id": ctx.home_node_id,
             "status": record.status if record is not None else "active",
             "purged_at": record.purged_at if record is not None else None,
+            # The question the UI actually asks, answered here rather than
+            # rebuilt from spine_template and the knowledge pipeline on the
+            # client — which would put the rule in two places and leak the
+            # track name into the API surface.
+            "scene_build_supported": scene_build_applies(
+                str(ctx.state_dir), str(config.get("spine_template") or "drama")
+            ),
         }
     )
     return {"ok": True, "data": data}

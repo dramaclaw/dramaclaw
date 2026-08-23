@@ -1430,6 +1430,7 @@
       "derivedFrom": "派生自 {{base}}",
       "emptyTitle": "暂无场景数据",
       "emptyDescription": "新建场景，或从图谱自动提取项目场景。",
+      "emptyDescriptionPerEpisode": "解说剧的场景会在规划各集场景时自动创建，也可以手动添加。",
       "building": "构建场景中...",
       "buildingEmpty": {
         "title": "正在构建场景",

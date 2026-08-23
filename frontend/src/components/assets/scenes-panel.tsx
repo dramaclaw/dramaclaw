@@ -104,6 +104,7 @@ import {
   useUploadScenePano,
   type ScenePayload,
 } from "@/lib/queries/scenes";
+import { useProject } from "@/lib/queries/projects";
 import { queryKeys } from "@/lib/query-keys";
 import type { ErrorResponse } from "@/types/api";
 import type {
@@ -1188,6 +1189,12 @@ export function ScenesPanel({
   focusId?: string | null;
 }) {
   const { t } = useTranslation();
+  // Narrated projects have no scene headings to build a catalogue from; their
+  // scenes are created per episode during planning. The page stays — those
+  // scenes are still global assets — only the project-level build is hidden.
+  const projectConfigRes = useProject(project);
+  const sceneBuildSupported =
+    projectConfigRes.data?.data?.scene_build_supported !== false;
   const scenes = useScenes(project);
   const createScene = useCreateScene(project);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -1405,25 +1412,27 @@ export function ScenesPanel({
           <Plus className="size-3.5" />
           {t("assets.scenes.newScene")}
         </Button>
-        <Button
-          size="sm"
-          onClick={handleBuildScenes}
-          disabled={buildDisabled}
-          className="h-8 gap-1.5 rounded-[8px] bg-primary px-3 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
-        >
-          {isBuildingScenes ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <Sparkles className="size-3.5" />
-          )}
-          {t("assets.scenes.build")}
-          <CreditCostInline
-            display={buildScenesCostDisplay}
-            promotion={buildScenesCost.data?.data.promotion}
-            className="text-black"
-            iconClassName="text-black drop-shadow-none [&_path]:fill-current"
-          />
-        </Button>
+        {sceneBuildSupported ? (
+          <Button
+            size="sm"
+            onClick={handleBuildScenes}
+            disabled={buildDisabled}
+            className="h-8 gap-1.5 rounded-[8px] bg-primary px-3 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
+          >
+            {isBuildingScenes ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="size-3.5" />
+            )}
+            {t("assets.scenes.build")}
+            <CreditCostInline
+              display={buildScenesCostDisplay}
+              promotion={buildScenesCost.data?.data.promotion}
+              className="text-black"
+              iconClassName="text-black drop-shadow-none [&_path]:fill-current"
+            />
+          </Button>
+        ) : null}
       </AssetHeaderActions>
       {scenes.isLoading ? (
         <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
@@ -1455,7 +1464,9 @@ export function ScenesPanel({
               {t("assets.scenes.emptyTitle")}
             </h3>
             <p className="max-w-[15rem] text-xs leading-5 text-muted-foreground">
-              {t("assets.scenes.emptyDescription")}
+              {sceneBuildSupported
+                ? t("assets.scenes.emptyDescription")
+                : t("assets.scenes.emptyDescriptionPerEpisode")}
             </p>
           </div>
           <Button

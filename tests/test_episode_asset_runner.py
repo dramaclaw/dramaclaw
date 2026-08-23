@@ -193,3 +193,67 @@ def test_any_episodes_planner_blocks_the_build():
     assert running_scene_planner([_planner_task("running")])
     assert "本集" not in SCENE_PLANNING_RUNNING_MESSAGE
     assert str(ScenePlanningRunningError()) == SCENE_PLANNING_RUNNING_MESSAGE
+
+
+# ── a build a narrated project cannot use must not reach the queue ──────────
+
+
+def test_scene_build_applies_only_where_it_can_produce_something():
+    """Narrated structured projects have nothing to build a catalogue from.
+
+    Legacy keeps the Cognee path whatever the template: its build does reach a
+    model and does produce scenes, so excluding it would change what existing
+    projects do.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    from novelvideo.knowledge_pipeline import (
+        KNOWLEDGE_PIPELINE_KEY,
+        KNOWLEDGE_PIPELINE_STRUCTURED,
+    )
+    from novelvideo.scene_prerequisites import scene_build_applies
+
+    with tempfile.TemporaryDirectory() as tmp:
+        structured = Path(tmp) / "structured"
+        structured.mkdir()
+        (structured / "project_config.json").write_text(
+            json.dumps({KNOWLEDGE_PIPELINE_KEY: KNOWLEDGE_PIPELINE_STRUCTURED}),
+            encoding="utf-8",
+        )
+        legacy = Path(tmp) / "legacy"
+        legacy.mkdir()
+        (legacy / "project_config.json").write_text(
+            json.dumps({"user": "eric"}), encoding="utf-8"
+        )
+
+        assert scene_build_applies(str(structured), "drama")
+        assert not scene_build_applies(str(structured), "narrated")
+        assert scene_build_applies(str(legacy), "drama")
+        assert scene_build_applies(str(legacy), "narrated")
+
+
+def test_the_build_route_answers_before_the_queue():
+    """A no-op is not free: enqueueing reserves a feature credit, and the
+    runner's successful no-op then confirms the charge — so a narrated project
+    could pay for a build that made no model call and produced no scene. The
+    check has to sit before enqueue, not inside the runner.
+    """
+    import inspect
+
+    from novelvideo.api.routes import scenes
+
+    source = inspect.getsource(scenes.build_scenes)
+    assert "scene_build_applies" in source
+    assert source.index("scene_build_applies") < source.index("enqueue_project_task")
+
+
+def test_the_runner_still_defers_for_narrated():
+    """Kept as the backstop for tasks queued before the route learned to say no."""
+    import inspect
+
+    from novelvideo import structured_builders
+
+    source = inspect.getsource(structured_builders.build_scenes_structured)
+    assert "episode_on_demand" in source
