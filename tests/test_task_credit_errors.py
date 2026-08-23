@@ -72,6 +72,22 @@ def test_task_failure_maps_novel_import_prerequisite(monkeypatch) -> None:
     assert metadata == {"error_code": NOVEL_IMPORT_REQUIRED_CODE}
 
 
+def test_task_failure_preserves_model_timeout_metadata(monkeypatch) -> None:
+    celery_tasks = _import_celery_tasks(monkeypatch)
+    from novelvideo.config import ModelTimeoutError
+
+    exc = ModelTimeoutError("DC-freezone-LLM", 123.5)
+    error, metadata, handled = celery_tasks._project_task_failure_for_exception(exc)
+
+    assert handled is True
+    assert error == str(exc)
+    assert metadata == {
+        "error_code": "MODEL_TIMEOUT",
+        "model": "DC-freezone-LLM",
+        "timeout_seconds": 123.5,
+    }
+
+
 def test_celery_task_failure_maps_output_moderation(monkeypatch) -> None:
     celery_tasks = _import_celery_tasks(monkeypatch)
 

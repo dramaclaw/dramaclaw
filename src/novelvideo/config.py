@@ -17,6 +17,141 @@ from novelvideo.official_defaults import (
 load_dotenv()
 
 # =============================================================================
+# 文本模型超时错误
+# =============================================================================
+
+MODEL_TIMEOUT_ERROR_CODE = "MODEL_TIMEOUT"
+
+
+class ModelTimeoutError(RuntimeError):
+    """Client-side timeout while waiting for a text model.
+
+    The local client gave up after ``timeout_seconds`` seconds while
+    contacting ``model_name``. The upstream may still complete
+    successfully — this error is distinguishable from real model
+    failures via ``error_code == "MODEL_TIMEOUT"``.
+    """
+
+    error_code = MODEL_TIMEOUT_ERROR_CODE
+    code = MODEL_TIMEOUT_ERROR_CODE
+
+    def __init__(
+        self,
+        model_name: str,
+        timeout_seconds: float,
+        message: str | None = None,
+    ) -> None:
+        self.model_name = str(model_name or "").strip() or "unknown"
+        self.model = self.model_name
+        self.timeout_seconds = float(timeout_seconds)
+        if message is None:
+            message = (
+                f"text model '{self.model_name}' timed out after "
+                f"{self.timeout_seconds:g}s (client timeout; "
+                f"upstream may still succeed) [{self.error_code}]"
+            )
+        super().__init__(message)
+
+
+def _is_text_model_timeout_error(exc: BaseException) -> bool:
+    """Return True when *exc* is a client-side timeout.
+
+    Recognised signals:
+    - ``asyncio.TimeoutError``
+    - ``httpx.TimeoutException`` (and subclasses)
+    - ``openai.APITimeoutError``
+    - ``openai.APIConnectionError`` whose message/cause indicates timeout
+    """
+
+    try:
+        import asyncio as _asyncio
+
+        if isinstance(exc, _asyncio.TimeoutError):
+            return True
+    except Exception:
+        pass
+
+    try:
+        import httpx as _httpx
+
+        if isinstance(exc, _httpx.TimeoutException):
+            return True
+    except Exception:
+        pass
+
+    try:
+        from openai import APIConnectionError as _APIConnectionError
+        from openai import APITimeoutError as _APITimeoutError
+
+        if isinstance(exc, _APITimeoutError):
+            return True
+        if isinstance(exc, _APIConnectionError):
+            msg = str(exc).lower()
+            if "timeout" in msg or "timed out" in msg:
+                return True
+            cause = getattr(exc, "__cause__", None)
+            if cause is not None:
+                try:
+                    import httpx as _httpx2
+
+                    if isinstance(cause, _httpx2.TimeoutException):
+                        return True
+                except Exception:
+                    pass
+                try:
+                    import asyncio as _asyncio2
+
+                    if isinstance(cause, _asyncio2.TimeoutError):
+                        return True
+                except Exception:
+                    pass
+                if "timeout" in str(cause).lower():
+                    return True
+            ctx = getattr(exc, "__context__", None)
+            if ctx is not None:
+                try:
+                    import httpx as _httpx3
+
+                    if isinstance(ctx, _httpx3.TimeoutException):
+                        return True
+                except Exception:
+                    pass
+                if "timeout" in str(ctx).lower():
+                    return True
+            return False
+    except Exception:
+        pass
+
+    return False
+
+
+def get_newapi_text_timeout_seconds(
+    model_env: str,
+    *,
+    timeout_seconds_override: float | None = None,
+    default_seconds: float = 300.0,
+) -> float:
+    """Resolve the effective text-model timeout for *model_env*.
+
+    Priority:
+    1. explicit ``timeout_seconds_override`` (per-task/per-call)
+    2. ``{model_env}_TIMEOUT_SECONDS`` env var
+    3. ``NEWAPI_TEXT_TIMEOUT_SECONDS`` env var
+    4. *default_seconds* (300s by default)
+    """
+
+    if timeout_seconds_override is not None:
+        return float(timeout_seconds_override)
+    return _env_float(
+        f"{model_env}_TIMEOUT_SECONDS",
+        _env_float("NEWAPI_TEXT_TIMEOUT_SECONDS", float(default_seconds)),
+    )
+
+
+# Alias kept for internal callers that expect ``resolve_*`` naming.
+resolve_newapi_text_timeout_seconds = get_newapi_text_timeout_seconds
+
+# =============================================================================
 # 模型提供商配置
 # =============================================================================
 
@@ -213,15 +348,40 @@ def _newapi_text_openai_model(
     from pydantic_ai.models.openai import OpenAIChatModel
 
     class _AutoClosingOpenAIChatModel(OpenAIChatModel):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._timeout_model_name = model_name
+            self._timeout_seconds = float(timeout_seconds)
+
         async def request(self, *args: Any, **kwargs: Any) -> Any:
-            async with self:
-                return await super().request(*args, **kwargs)
+            try:
+                async with self:
+                    return await super().request(*args, **kwargs)
+            except BaseException as exc:
+                if isinstance(exc, ModelTimeoutError):
+                    raise
+                if _is_text_model_timeout_error(exc):
+                    raise ModelTimeoutError(
+                        self._timeout_model_name,
+                        self._timeout_seconds,
+                    ) from exc
+                raise
 
         @asynccontextmanager
         async def request_stream(self, *args: Any, **kwargs: Any):
-            async with self:
-                async with super().request_stream(*args, **kwargs) as response:
-                    yield response
+            try:
+                async with self:
+                    async with super().request_stream(*args, **kwargs) as response:
+                        yield response
+            except BaseException as exc:
+                if isinstance(exc, ModelTimeoutError):
+                    raise
+                if _is_text_model_timeout_error(exc):
+                    raise ModelTimeoutError(
+                        self._timeout_model_name,
+                        self._timeout_seconds,
+                    ) from exc
+                raise
 
     return _AutoClosingOpenAIChatModel(
         model_name,
@@ -251,13 +411,10 @@ def get_newapi_text_pydantic_model(
     )
     if not api_key:
         raise ValueError("API key not set. Configure DramaClawAPI credentials.")
-    timeout_seconds = (
-        float(timeout_seconds_override)
-        if timeout_seconds_override is not None
-        else _env_float(
-            f"{model_env}_TIMEOUT_SECONDS",
-            _env_float("NEWAPI_TEXT_TIMEOUT_SECONDS", 300.0),
-        )
+    timeout_seconds = get_newapi_text_timeout_seconds(
+        model_env,
+        timeout_seconds_override=timeout_seconds_override,
+        default_seconds=300.0,
     )
     return _newapi_text_openai_model(
         model_name,
