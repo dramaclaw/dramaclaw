@@ -4103,6 +4103,7 @@ def ensure_user_codex_workspace(
     project: str,
     agent_token: str = "",
     *,
+    agent_profile: str = "main",
     project_state_dir: str | Path | None = None,
 ) -> tuple[Path, Path]:
     if project:
@@ -4112,7 +4113,11 @@ def ensure_user_codex_workspace(
             else _project_state_dir(username, project)
         )
         agent_root = state_dir / "agents" / "codex"
-        workspace = agent_root / "workspace"
+        profile = str(agent_profile or "main").strip() or "main"
+        profile_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", profile).strip("-._")
+        profile_digest = hashlib.sha256(profile.encode("utf-8")).hexdigest()[:12]
+        profile_dir = f"{(profile_slug or 'profile')[:40]}-{profile_digest}"
+        workspace = agent_root / "workspaces" / profile_dir
     else:
         workspace = _user_agent_workspace(username)
     codex_dir = _codex_node_home()
@@ -4202,6 +4207,7 @@ def _build_codex_env(
     *,
     egress_context=None,
     authorization=None,
+    agent_profile: str = "main",
     tool_mode: str = "default",
     canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
@@ -4213,6 +4219,8 @@ def _build_codex_env(
     env["DRAMACLAW_AGENT_SCOPE"] = agent_scope
     env["SUPERTALE_USERNAME"] = username
     env["SUPERTALE_AGENT_SCOPE"] = agent_scope
+    profile = str(agent_profile or "main").strip() or "main"
+    env["DRAMACLAW_AGENT_PROFILE"] = profile
     if project:
         env["DRAMACLAW_PROJECT_ID"] = project
         env["SUPERTALE_PROJECT_ID"] = project
@@ -4229,7 +4237,11 @@ def _build_codex_env(
     else:
         env.pop("DRAMACLAW_CANVAS_ID", None)
     _workspace, codex_home = ensure_user_codex_workspace(
-        username, project, agent_token, project_state_dir=project_state_dir
+        username,
+        project,
+        agent_token,
+        agent_profile=profile,
+        project_state_dir=project_state_dir,
     )
     env["CODEX_HOME"] = str(codex_home)
     from novelvideo.task_backend.subprocesses import build_model_child_env
@@ -4501,6 +4513,7 @@ def _dramaclaw_mcp_servers() -> dict[str, dict[str, Any]]:
                 "DRAMACLAW_API_URL",
                 "DRAMACLAW_AGENT_TOKEN_FILE",
                 "DRAMACLAW_CANVAS_ID",
+                "DRAMACLAW_AGENT_PROFILE",
                 "DRAMACLAW_PROJECT_ID",
                 "DRAMACLAW_TOOL_MODE",
                 "DRAMACLAW_USERNAME",
@@ -4603,6 +4616,7 @@ def _build_codex_thread(
         username,
         project,
         agent_token,
+        agent_profile=agent_profile,
         project_state_dir=project_state_dir,
     )
     env = _build_codex_env(
@@ -4611,6 +4625,7 @@ def _build_codex_thread(
         agent_token,
         egress_context=egress_context,
         authorization=authorization,
+        agent_profile=agent_profile,
         tool_mode=tool_mode,
         canvas_id=canvas_id,
         project_state_dir=project_state_dir,

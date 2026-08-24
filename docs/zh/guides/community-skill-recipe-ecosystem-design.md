@@ -200,6 +200,8 @@ Freezone Memory 覆盖问题已经修复：`_ensure_freezone_identity_context()`
 
 Codex 的 thread rollout 位于 Home Node 的共享 `CODEX_HOME`，不随项目目录一起自然删除。因此生命周期操作采用 fail-closed：删除画布前必须成功归档该画布的 Codex thread，永久清理项目前必须成功删除对应 rollout；App Server 不可用且确实存在待处理 thread 时，删除请求会失败并保留画布/项目，待运行时恢复后重试。没有 Codex thread 的项目不受影响。
 
+一个 Home Node 只运行一个共享 Codex App Server，不为 Director 与 Freezone 重复常驻运行时。两种 Profile 通过独立 workspace、独立 thread/session key、thread-local MCP 环境、短期 token 和带 `project + canvas + profile` 的 active-turn key 隔离；共享 `CODEX_HOME` 中的原生 Memory、Plugin 与 Multi-agent 均关闭，避免节点级状态跨 Profile 泄漏。
+
 ### 2.2 Skill Studio 已经能让用户创建 Skill
 
 当前 Skill Studio 与设置页合起来已支持：

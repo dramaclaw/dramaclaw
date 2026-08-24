@@ -837,8 +837,19 @@ async def test_codex_canvas_archive_removes_only_matching_scope(monkeypatch, tmp
     canvas_b = chat_service._codex_scope_key(
         "project-a", agent_profile="freezone:main", canvas_id="canvas-b"
     )
+    canvas_a_agent_2 = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:agent-2", canvas_id="canvas-a"
+    )
+    mainline = chat_service._codex_scope_key("project-a")
     sessions.write_text(
-        json.dumps({canvas_a: "thread-a", canvas_b: "thread-b"}),
+        json.dumps(
+            {
+                canvas_a: "thread-a",
+                canvas_a_agent_2: "thread-agent-2",
+                canvas_b: "thread-b",
+                mainline: "thread-mainline",
+            }
+        ),
         encoding="utf-8",
     )
     calls = []
@@ -855,10 +866,14 @@ async def test_codex_canvas_archive_removes_only_matching_scope(monkeypatch, tmp
         "admin", "project-a", "canvas-a", project_state_dir=project_state
     )
 
-    assert count == 1
-    assert calls == [("archive", "thread-a", None)]
+    assert count == 2
+    assert calls == [
+        ("archive", "thread-a", None),
+        ("archive", "thread-agent-2", None),
+    ]
     assert json.loads(sessions.read_text(encoding="utf-8")) == {
-        canvas_b: "thread-b"
+        canvas_b: "thread-b",
+        mainline: "thread-mainline",
     }
 
 
@@ -868,7 +883,21 @@ async def test_codex_project_delete_covers_unique_threads(monkeypatch, tmp_path)
     sessions = project_state / "agents" / "codex" / "sessions.json"
     sessions.parent.mkdir(parents=True)
     sessions.write_text(
-        json.dumps({"one": "thread-a", "two": "thread-a", "three": "thread-b"}),
+        json.dumps(
+            {
+                chat_service._codex_scope_key("project-a"): "thread-mainline",
+                chat_service._codex_scope_key(
+                    "project-a",
+                    agent_profile="freezone:main",
+                    canvas_id="canvas-a",
+                ): "thread-freezone",
+                chat_service._codex_scope_key(
+                    "project-a",
+                    agent_profile="freezone:agent-2",
+                    canvas_id="canvas-a",
+                ): "thread-freezone",
+            }
+        ),
         encoding="utf-8",
     )
     calls = []
@@ -887,8 +916,8 @@ async def test_codex_project_delete_covers_unique_threads(monkeypatch, tmp_path)
 
     assert count == 2
     assert calls == [
-        ("delete", "thread-a", None),
-        ("delete", "thread-b", None),
+        ("delete", "thread-freezone", None),
+        ("delete", "thread-mainline", None),
     ]
 
 
@@ -1076,15 +1105,26 @@ def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
     codex_workspace, codex_home = chat_service.ensure_user_codex_workspace(
         "admin", "project-a"
     )
+    freezone_workspace, freezone_home = chat_service.ensure_user_codex_workspace(
+        "admin",
+        "project-a",
+        agent_profile="freezone:main",
+    )
 
     workspace = chat_service._user_agent_workspace("admin")
     assert workspace == tmp_path / "state" / "admin" / ".chat_agents"
     assert (workspace / ".claude" / "settings.local.json").exists()
     assert (workspace / ".claude" / "skills").is_dir()
     project_agent_root = tmp_path / "state" / "admin" / "project-a" / "agents" / "codex"
-    assert codex_workspace == project_agent_root / "workspace"
+    assert codex_workspace.parent == project_agent_root / "workspaces"
+    assert codex_workspace.name.startswith("main-")
+    assert freezone_workspace.parent == project_agent_root / "workspaces"
+    assert freezone_workspace.name.startswith("freezone-main-")
+    assert freezone_workspace != codex_workspace
     assert codex_home == tmp_path / "state" / ".codex-app-server"
+    assert freezone_home == codex_home
     assert (codex_workspace / ".agents" / "skills").is_dir()
+    assert (freezone_workspace / ".agents" / "skills").is_dir()
     assert codex_home.is_dir()
 
     project_workspace = Path(tmp_path / "output" / "admin" / "project-a")
@@ -1101,6 +1141,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_API_URL",
         "DRAMACLAW_AGENT_TOKEN_FILE",
         "DRAMACLAW_CANVAS_ID",
+        "DRAMACLAW_AGENT_PROFILE",
         "DRAMACLAW_PROJECT_ID",
         "DRAMACLAW_TOOL_MODE",
         "DRAMACLAW_USERNAME",
@@ -1128,7 +1169,8 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     assert 'mcp_servers.dramaclaw.args=["-m","novelvideo.chat.dramaclaw_mcp"]' in overrides
     assert (
         'mcp_servers.dramaclaw.env_vars=["DRAMACLAW_API_URL",'
-        '"DRAMACLAW_AGENT_TOKEN_FILE","DRAMACLAW_CANVAS_ID","DRAMACLAW_PROJECT_ID",'
+        '"DRAMACLAW_AGENT_TOKEN_FILE","DRAMACLAW_CANVAS_ID",'
+        '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_TOOL_MODE","DRAMACLAW_USERNAME"]'
         in overrides
     )
@@ -1138,7 +1180,12 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
     client = backend_sdk.CodexClient(
         codex_bin=Path("/usr/local/bin/codex"),
         cwd=tmp_path,
-        env={"DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token"},
+        env={
+            "DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token",
+            "DRAMACLAW_AGENT_PROFILE": "freezone:agent-2",
+            "DRAMACLAW_CANVAS_ID": "canvas-a",
+            "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+        },
         model="DC-codex-agent-LLM",
         model_provider="dramaclaw_gateway",
         developer_instructions="Use DramaClaw MCP only.",
@@ -1149,7 +1196,10 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
 
     assert thread._config_overrides == overrides
     assert thread._thread_config["mcp_servers.dramaclaw.env"] == {
-        "DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token"
+        "DRAMACLAW_AGENT_TOKEN_FILE": "/tmp/turn.token",
+        "DRAMACLAW_AGENT_PROFILE": "freezone:agent-2",
+        "DRAMACLAW_CANVAS_ID": "canvas-a",
+        "DRAMACLAW_TOOL_MODE": "freezone_canvas",
     }
     assert "mcp_servers.dramaclaw.env_vars" not in thread._thread_config
     assert thread._model == "DC-codex-agent-LLM"
@@ -1264,6 +1314,7 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert env["CODEX_HOME"] == str(tmp_path / "state" / ".codex-app-server")
     assert env["DRAMACLAW_AGENT_SCOPE"] == "project"
     assert env["SUPERTALE_AGENT_SCOPE"] == "project"
+    assert env["DRAMACLAW_AGENT_PROFILE"] == "main"
     assert env["DRAMACLAW_TOOL_MODE"] == "default"
     assert "DRAMACLAW_AGENT_TOKEN" not in env
     assert env["DRAMACLAW_AGENT_TOKEN_FILE"] == str(project_state / "turn.token")
@@ -1279,12 +1330,14 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
         "admin",
         "project-a",
         "agent-token",
+        agent_profile="freezone:agent-2",
         tool_mode="freezone_canvas",
         canvas_id="canvas-a",
         project_state_dir=project_state,
     )
     assert freezone_env["DRAMACLAW_TOOL_MODE"] == "freezone_canvas"
     assert freezone_env["DRAMACLAW_CANVAS_ID"] == "canvas-a"
+    assert freezone_env["DRAMACLAW_AGENT_PROFILE"] == "freezone:agent-2"
 
 
 def test_codex_turn_gateway_credentials_reject_foreign_origin(monkeypatch):
@@ -1500,6 +1553,33 @@ async def test_cancel_reads_active_codex_turns_from_other_worker(monkeypatch, tm
 
     assert await chat_service.interrupt_active_codex_turns("alice") is True
     assert calls == [("interrupt", "thread-a", "turn-a")]
+
+
+def test_active_codex_turn_registry_keeps_mainline_and_freezone_scopes_separate(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    mainline = chat_service._codex_scope_key("project-a")
+    freezone = chat_service._codex_scope_key(
+        "project-a",
+        agent_profile="freezone:agent-2",
+        canvas_id="canvas-a",
+    )
+
+    chat_service._set_active_codex_turn(
+        "alice", mainline, ("thread-mainline", "turn-mainline")
+    )
+    chat_service._set_active_codex_turn(
+        "alice", freezone, ("thread-freezone", "turn-freezone")
+    )
+    chat_service._set_active_codex_turn("alice", freezone, None)
+
+    assert chat_service._load_active_codex_turns("alice") == {
+        mainline: {
+            "thread_id": "thread-mainline",
+            "turn_id": "turn-mainline",
+        }
+    }
 
 
 @pytest.mark.asyncio
