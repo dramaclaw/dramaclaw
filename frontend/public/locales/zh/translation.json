@@ -25,7 +25,25 @@
     "logoHomeTooltip": "点击返回项目管理中心"
   },
   "loginCinematic": {
-    "moreInfo": "更多信息"
+    "moreInfo": "更多信息",
+    "announcement": {
+      "open": "查看公告",
+      "title": "公告中心",
+      "close": "关闭公告",
+      "confirm": "确认",
+      "markAllRead": "全部已读",
+      "unread": "{{n}} 条未读",
+      "pinned": "置顶",
+      "expand": "展开这条公告",
+      "collapse": "收起这条公告",
+      "empty": "暂时没有公告",
+      "items": {
+        "channel-release-2026-08": {
+          "title": "渠道版本更新",
+          "body": "<hl>渠道版本</hl>即将上线，更新时间在 <time>18:00-19:00</time> 点，请避开这个时间段使用。敬请期待！"
+        }
+      }
+    }
   },
   "downloadPage": {
     "nav": {

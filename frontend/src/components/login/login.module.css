@@ -195,6 +195,429 @@
   opacity: 0.9;
 }
 
+/* 公告：顶栏里唯一的纯图标入口，尺寸对齐「商务联系」的文字视觉高度。 */
+.announcement {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.announcementTrigger {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(246, 248, 255, 0.72);
+  cursor: pointer;
+  line-height: 1;
+  transition: color 160ms ease;
+}
+
+/* 图标只有 17px（移动端 16px），命中区域靠这层透明伪元素撑到 24×24 的最小目标
+   尺寸。不直接给按钮设宽高，是因为它在 .stageActions 里跟文字项并排，撑大盒子
+   会把顶栏的间距推歪。 */
+.announcementTrigger::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+}
+
+.announcementTrigger svg {
+  width: 17px;
+  height: 17px;
+}
+
+.announcementTrigger:hover {
+  color: rgba(255, 255, 255, 0.94);
+}
+
+/* 红点常驻，不跟已读联动。外圈描边压在深色顶栏上，滚动到浅色画面时也不会糊掉。 */
+.announcementDot {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #ff4d4f;
+  box-shadow:
+    0 0 0 1.5px rgba(4, 6, 12, 0.72),
+    0 0 8px rgba(255, 77, 79, 0.62);
+}
+
+/* Base UI 的 Dialog 把 Backdrop 和 Popup 渲染成兄弟节点，所以居中得由 Popup 自己
+   负责，backdrop 只管铺满和压暗。 */
+.announcementOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(2, 3, 8, 0.64);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  transition: opacity 180ms ease;
+}
+
+.announcementOverlay[data-starting-style],
+.announcementOverlay[data-ending-style] {
+  opacity: 0;
+}
+
+.announcementDialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 46;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - 48px));
+  /* 撑一个下限高度：只有一两条公告时不至于缩成一张小卡片，看着像个提示条而不是
+     公告中心。列表区 flex:1，多出来的空间留在下面，条目照旧顶对齐。
+     下限用 dvh 兜住，保证任何视口下都低于上面那条 max-height。 */
+  min-height: min(440px, 68dvh);
+  max-height: min(76dvh, 620px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  background: rgba(9, 10, 16, 0.72);
+  backdrop-filter: blur(22px) saturate(128%);
+  -webkit-backdrop-filter: blur(22px) saturate(128%);
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  transition:
+    opacity 200ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* 进出场只改这两个状态，Base UI 开关时会自己把属性挂上再摘掉。走 CSS 过渡而不是
+   JS 动画，是为了让 prefers-reduced-motion 真的能关掉它。 */
+.announcementDialog[data-starting-style],
+.announcementDialog[data-ending-style] {
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 8px)) scale(0.98);
+}
+
+.announcementHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.announcementHeader svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  opacity: 0.86;
+}
+
+.announcementHeading {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 560;
+  line-height: 1.2;
+}
+
+.announcementCount {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 77, 79, 0.18);
+  color: rgba(255, 145, 147, 0.96);
+  font-size: 10px;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+}
+
+.announcementClose {
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.32);
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.announcementClose:hover {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.announcementClose svg {
+  width: 13px;
+  height: 13px;
+}
+
+.announcementBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  overscroll-behavior: contain;
+}
+
+.announcementEmpty {
+  margin: 0;
+  padding: 28px 8px;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 12.5px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.announcementList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 一条公告一张卡：铃铛 + 未读点 / 正文 / 展开收起，两侧定宽，正文吃掉剩下的宽度。 */
+.announcementItem {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 26px;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.announcementItemIcon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(21, 215, 232, 0.1);
+  color: rgba(120, 238, 248, 0.9);
+}
+
+.announcementItemIcon svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 每条自己的未读点，跟顶栏那颗常驻红点不是一回事：这颗看过就灭。 */
+.announcementItemDot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #ff4d4f;
+  box-shadow: 0 0 0 1.5px rgba(9, 10, 16, 0.92);
+}
+
+.announcementItemMain {
+  min-width: 0;
+}
+
+.announcementItemTop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.announcementItemTitle {
+  min-width: 0;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* 置顶角标特意做成中性色：这一屏的高饱和名额已经给了未读红点和时间窗胶囊。 */
+.announcementPinned {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.announcementItemBody {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  margin: 6px 0 0;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12.5px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+/* 展开只是把行数夹子拿掉，不做高度动画 —— 省掉一整套 reduced-motion 的例外，
+   也不用去猜内容高度。 */
+.announcementItemBodyOpen {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+
+.announcementItemMeta {
+  display: block;
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.announcementItemToggle {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.44);
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.announcementItemToggle:hover {
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.announcementItemToggle svg {
+  width: 15px;
+  height: 15px;
+  transition: transform 180ms ease;
+}
+
+.announcementItemToggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+/* 这个模块不许用 index.css 的全局工具类（见 DESIGN.md 的登录页例外条款），
+   所以视觉隐藏的文本在这儿自带一份。 */
+.announcementSrOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 时间窗是公告里唯一要照着做的信息，做成胶囊让它从整段里跳出来。 */
+.announcementTime {
+  margin: 0 2px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(21, 215, 232, 0.28);
+  background: rgba(21, 215, 232, 0.12);
+  color: rgba(120, 238, 248, 0.96);
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  /* 时间不能被断成两行，否则「18:00-」和「19:00」各挂一行就没法读了。 */
+  white-space: nowrap;
+}
+
+.announcementHighlight {
+  color: rgba(120, 238, 248, 0.92);
+  font-weight: 560;
+}
+
+.announcementFooter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.announcementMarkAll {
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease;
+}
+
+.announcementMarkAll:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.32);
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.announcementMarkAll:disabled {
+  color: rgba(255, 255, 255, 0.34);
+  cursor: default;
+}
+
+.announcementConfirm {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1;
+  height: 38px;
+  border: 0;
+  border-radius: 9px;
+  background: rgba(246, 248, 255, 0.94);
+  color: #181820;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 560;
+  line-height: 1;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.announcementConfirm:hover {
+  background: #ffffff;
+  box-shadow: 0 10px 26px rgba(255, 255, 255, 0.08);
+}
+
 .businessWechat {
   position: relative;
   display: inline-flex;
@@ -1191,6 +1614,21 @@
     font-size: 12px;
   }
 
+  .announcementTrigger svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .announcementDialog {
+    width: min(420px, calc(100vw - 32px));
+    min-height: min(400px, 62dvh);
+    max-height: min(82dvh, 620px);
+  }
+
+  .announcementItem {
+    padding: 11px 10px;
+  }
+
   .moreInfoTrigger {
     font-size: 12px;
   }
@@ -1330,6 +1768,26 @@
 
   .communityCard:hover .communityCover {
     transform: none;
+  }
+
+  /* 公告弹窗的进出场是 Base UI 挂在 data-starting-style / data-ending-style 上的
+     CSS 过渡，所以这里关掉过渡就真的不动了。注意别把 .announcementDialog 的
+     transform 整个清成 none —— translate(-50%, -50%) 是它的居中方式，不是动效。 */
+  .announcementOverlay,
+  .announcementDialog,
+  .announcementItemToggle svg {
+    transition: none;
+  }
+
+  .announcementOverlay[data-starting-style],
+  .announcementOverlay[data-ending-style] {
+    opacity: 1;
+  }
+
+  .announcementDialog[data-starting-style],
+  .announcementDialog[data-ending-style] {
+    opacity: 1;
+    transform: translate(-50%, -50%);
   }
 }
 
