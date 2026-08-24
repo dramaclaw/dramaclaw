@@ -39,6 +39,11 @@ describe("organization branding query", () => {
     { ...response, organization: null },
     { ...response, branding: { ...response.branding, logo_url: "https://evil/logo.png" } },
     { ...response, branding: { ...response.branding, logo_url: "/assets/org-brand/other/logo" } },
+    {
+      ...response,
+      organization: { ...response.organization, org_id: "a".repeat(65) },
+      branding: { ...response.branding, logo_url: `/assets/org-brand/${"a".repeat(65)}/logo` },
+    },
   ])("fails open for malformed responses", async (body) => {
     server.use(http.get("*/api/v1/org/branding", () => HttpResponse.json(body)));
     await expect(getOrgBranding()).resolves.toBeNull();

@@ -6,11 +6,14 @@ describe("organization brand asset deployment contract", () => {
   it("uses the built-in Vite proxy for the exact fixed public path", () => {
     const config = readFileSync("vite.config.ts", "utf8");
 
-    expect(config).toContain('"^/assets/org-brand/[A-Za-z0-9_-]+/logo$"');
+    expect(config).toContain('"^/assets/org-brand/[A-Za-z0-9_-]{1,64}/logo$"');
     expect(config).toContain("target: apiTarget");
     expect(config).toContain('path.replace("/assets/org-brand/", "/api/v1/org-brand/")');
     expect(config).toContain('proxyReq.removeHeader("cookie")');
     expect(config).toContain('proxyReq.removeHeader("authorization")');
+    expect(config).toContain('proxy.on("proxyRes"');
+    expect(config).toContain('delete proxyResponse.headers["set-cookie"]');
+    expect(config).toContain('delete proxyResponse.headers.location');
     expect(config).not.toContain("createOrgBrandAssetDevPlugin");
   });
 
@@ -20,7 +23,7 @@ describe("organization brand asset deployment contract", () => {
       /location ~ \^\/assets\/org-brand([\s\S]*?)\n    \}/,
     )?.[1];
 
-    expect(block).toContain("/([A-Za-z0-9_-]+)/logo$");
+    expect(block).toContain("/([A-Za-z0-9_-]{1,64})/logo$");
     expect(block).toContain("limit_except GET HEAD");
     expect(block).toContain('if ($args != "") { return 404; }');
     expect(block).toContain("proxy_pass http://supertale_backend/api/v1/org-brand/$1/logo");

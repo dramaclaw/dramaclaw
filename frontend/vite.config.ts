@@ -128,7 +128,7 @@ export default defineConfig(({ mode }) => {
       host: true,
       port: 5173,
       proxy: {
-        "^/assets/org-brand/[A-Za-z0-9_-]+/logo$": {
+        "^/assets/org-brand/[A-Za-z0-9_-]{1,64}/logo$": {
           target: apiTarget,
           changeOrigin: true,
           rewrite: (path) => path.replace("/assets/org-brand/", "/api/v1/org-brand/"),
@@ -136,6 +136,10 @@ export default defineConfig(({ mode }) => {
             proxy.on("proxyReq", (proxyReq) => {
               proxyReq.removeHeader("cookie");
               proxyReq.removeHeader("authorization");
+            });
+            proxy.on("proxyRes", (proxyResponse) => {
+              delete proxyResponse.headers["set-cookie"];
+              delete proxyResponse.headers.location;
             });
           },
         },
