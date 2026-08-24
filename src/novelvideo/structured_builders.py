@@ -214,6 +214,28 @@ def _source_synopsis(store: Any) -> str:
         return ""
 
 
+def _settle_narrator(store: Any, appearances: dict) -> None:
+    """Never publish a second narrator, and never demote the one already chosen.
+
+    ``_enforce_single_main`` bounds a single appearance result to one
+    nomination, but it cannot see the database.  A build that discovers a new
+    character the model nominates would insert that row with the flag already
+    set, and the repair path — which only ever runs afterwards, and only ever
+    refuses to *add* a second — has nothing left to prevent. The project ends
+    up with two narrators and no way back except by hand.
+
+    So the question is answered here, once, ahead of every write: if anybody
+    already holds the flag, nobody in this result may claim it. The build seeds
+    the narrator when the project has none and otherwise keeps its hands off,
+    which is the only shape that cannot fight a decision somebody made in the
+    character workbench.
+    """
+    if not any(item.is_main for item in store.get_all_characters()):
+        return
+    for appearance in appearances.values():
+        appearance.is_main = False
+
+
 def _apply_appearance(character: Any, appearance: Any, voice_for: Callable) -> None:
     """Write an appearance answer onto a character about to be created."""
     if appearance is None:
@@ -240,14 +262,6 @@ async def _repair_missing_appearances(
     one field they filled locked the others out. A rebuild adds what is absent
     and overwrites nothing.
     """
-    # ``_apply_appearance`` has already written the newly inserted rows, so a
-    # narrator claimed by a new character is visible here and is not claimed
-    # twice. Only one entry in ``appearances`` can be the narrator to begin
-    # with — ``_enforce_single_main`` settles that — so the only conflict left
-    # is with a narrator somebody marked by hand.
-    narrator = next(
-        (item.name for item in store.get_all_characters() if item.is_main), None
-    )
     repaired = 0
     for name, appearance in appearances.items():
         if name in added:
@@ -271,13 +285,13 @@ async def _repair_missing_appearances(
             updates["fish_voice_id"] = voice_for(
                 appearance.age_group, existing.gender
             )
-        # is_main has no empty state either, and nothing binds to it, so an
-        # unclaimed narrator is the only signal that nobody has decided. Left
-        # unwritten, a project built before this stage keeps every character at
-        # False and first-person narration fails with 未找到解说主角.
-        if appearance.is_main and not existing.is_main and narrator is None:
+        # Whether this may be claimed at all was settled before the first row
+        # was written; by here the flag is either the one nomination this build
+        # is allowed to publish, or it is False. Left unwritten, a project built
+        # before this stage keeps every character at False and first-person
+        # narration fails with 未找到解说主角.
+        if appearance.is_main and not existing.is_main:
             updates["is_main"] = True
-            narrator = name
         if not updates:
             continue
         await store.update_character(name, **updates)
@@ -309,6 +323,8 @@ async def _publish_characters(
         cache=StoreAnalysisItemCache(store),
         on_log=log,
     )
+
+    _settle_narrator(store, appearances)
 
     report(0.8, "发布角色...")
     candidates = []

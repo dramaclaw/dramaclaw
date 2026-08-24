@@ -2306,3 +2306,94 @@ async def test_a_character_with_nothing_missing_is_left_untouched(
     )
 
     assert writes == []
+
+
+async def test_a_newly_discovered_character_cannot_become_a_second_narrator(
+    structured_store, monkeypatch
+):
+    """The insert lands before the repair path ever looks for a narrator."""
+    from novelvideo import structured_builders
+    from novelvideo.cognee.pipeline import NovelCharacter
+
+    store, _ = structured_store
+    await store.add_characters_atomic(
+        [NovelCharacter(name="郑玉琴", gender="female", is_main=True)],
+        skip_existing=False,
+    )
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent(
+            {"林某": _appearance("林某", is_main=True)}
+        ),
+    )
+    await structured_builders._publish_characters(
+        store, [_cast_member("林某")], "", lambda *_: None, lambda *_: None
+    )
+
+    narrators = [c.name for c in store.get_all_characters() if c.is_main]
+    assert narrators == ["郑玉琴"]
+
+
+async def test_a_stale_narrator_opinion_is_not_replayed_from_the_cache():
+    """is_main depends on the whole cast; a per-character key cannot invalidate it."""
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    cache = RecordingCache()
+    old = FakeAppearanceAgent({"郑家悦": _appearance("郑家悦", is_main=True)})
+    await enrich_character_appearances([_cast_member("郑家悦")], agent=old, cache=cache)
+
+    # The cast changed: someone else is the narrator now, and 郑家悦's own
+    # inputs are untouched, so her row is served straight from the cache.
+    new = FakeAppearanceAgent({"林某": _appearance("林某", is_main=True)})
+    result = await enrich_character_appearances(
+        [_cast_member("郑家悦"), _cast_member("林某")], agent=new, cache=cache
+    )
+
+    assert [name for name, item in result.items() if item.is_main] == ["林某"]
+
+
+async def test_a_nomination_stored_under_the_old_contract_is_not_read_back():
+    """Belt and braces beside the version bump: the field is never trusted."""
+    import json
+
+    from novelvideo.structured_extraction import appearance_from_cache_payload
+
+    restored = appearance_from_cache_payload(
+        json.dumps(
+            {
+                "name": "郑家悦",
+                "role": "主角",
+                "is_main": True,
+                "age_group": "youth",
+                "body_type": "纤细高挑",
+                "face_prompt": "女性，二十多岁",
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    assert restored is not None
+    assert restored.is_main is False
+    # Everything that is genuinely per-character still survives the round trip.
+    assert restored.role == "主角"
+    assert restored.body_type == "纤细高挑"
+
+
+async def test_the_build_still_seeds_a_narrator_when_the_project_has_none(
+    structured_store, monkeypatch
+):
+    """Refusing to fight an existing choice must not mean never making one."""
+    from novelvideo import structured_builders
+
+    store, _ = structured_store
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent(
+            {"郑家悦": _appearance("郑家悦", is_main=True)}
+        ),
+    )
+    await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    assert [c.name for c in store.get_all_characters() if c.is_main] == ["郑家悦"]

@@ -998,7 +998,10 @@ def _create_character_appearance_agent(agent: Any = None):
 # Bump whenever the prompt, the accepted age bands, or the way an answer is
 # turned into stored fields changes.  It is part of every cache key, so a bump
 # retires stored results rather than mixing two contracts.
-CHARACTER_APPEARANCE_CACHE_VERSION = 1
+#
+# 2: ``is_main`` left the payload.  Rows written under 1 carry it, and this
+# bump is what stops them from being read back.
+CHARACTER_APPEARANCE_CACHE_VERSION = 2
 
 CHARACTER_APPEARANCE_CACHE_TYPE = "character_appearance"
 
@@ -1057,11 +1060,23 @@ def _appearance_quotes(item: "MergedCharacter") -> list[str]:
 
 
 def appearance_to_cache_payload(appearance: CharacterAppearance) -> str:
+    """Store everything about a character except who the narrator is.
+
+    Every other field is a property of one character and is keyed on that
+    character's own inputs, so a stored answer stays true for as long as those
+    inputs do.  ``is_main`` is not: it ranks one character against the whole
+    cast, and the key cannot see the cast.  Adding, removing or re-adjudicating
+    somebody else would leave the key identical and replay a nomination that
+    the new cast may have overtaken — and ``_enforce_single_main`` would then
+    keep the stale one, because it settles ties rather than re-deciding.
+
+    So the nomination is never stored.  A character served from the cache
+    abstains, and only characters actually asked this run can claim it.
+    """
     return json.dumps(
         {
             "name": appearance.name,
             "role": appearance.role,
-            "is_main": appearance.is_main,
             "age_group": appearance.age_group,
             "body_type": appearance.body_type,
             "face_prompt": appearance.face_prompt,
@@ -1097,7 +1112,10 @@ def appearance_from_cache_payload(payload: str) -> CharacterAppearance | None:
     appearance = CharacterAppearance(
         name=str(data.get("name") or ""),
         role=str(data.get("role") or ""),
-        is_main=bool(data.get("is_main")),
+        # Never read back, whatever a row written under an older contract
+        # happens to carry: a replayed nomination is exactly the failure the
+        # payload docstring describes.
+        is_main=False,
         age_group=normalize_age_group(data.get("age_group", "")),
         body_type=str(data.get("body_type") or ""),
         face_prompt=str(data.get("face_prompt") or ""),
