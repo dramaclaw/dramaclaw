@@ -11,7 +11,7 @@ async def test_asset_references_resolves_project_id_before_opening_store(monkeyp
     from novelvideo.models import NovelVisualBeat
 
     class Store:
-        async def list_visual_beats(self):
+        async def list_beat_asset_refs(self):
             return [
                 NovelVisualBeat(
                     episode_number=1,

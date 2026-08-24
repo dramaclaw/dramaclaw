@@ -55,15 +55,19 @@ def _beat_asset_refs(beat) -> tuple[list[str], list[str], str]:
     return identities, props, beat_scene_id(beat)
 
 
-async def _load_visual_beats(ctx):
-    """Read every beat, with graph-state hydration skipped.
+async def _load_beat_asset_refs(ctx):
+    """Read the reference columns of every beat, and nothing else.
 
-    ``list_visual_beats()`` touches only the beats table, so the three
-    full-table reads inside ``load_graph_state()`` would be pure overhead.
+    Two things are deliberately skipped. ``load_graph_state=False``: this scan
+    only touches the beats table, so the three full-table reads that hydrate the
+    character/episode/prop caches would be pure overhead. And
+    ``list_beat_asset_refs`` over ``list_visual_beats``: the scan reads six
+    columns per beat, while the latter selects every column and constructs a
+    validated ``NovelVisualBeat`` for each row.
     """
     store = await make_sqlite_store_for_context(ctx, load_graph_state=False)
     try:
-        return await store.list_visual_beats()
+        return await store.list_beat_asset_refs()
     finally:
         close = getattr(store, "close", None)
         if close:
@@ -96,7 +100,7 @@ async def get_project_asset_references(
     scene → ``scene_ref.scene_id``, prop → prop name.
     """
     resolved = await resolve_project_scope(project, user, required_role="viewer")
-    beats = await _load_visual_beats(resolved.ctx)
+    beats = await _load_beat_asset_refs(resolved.ctx)
 
     wanted = {key for key in (str(item or "").strip() for item in ids) if key}
     wanted_scenes = {
@@ -171,7 +175,7 @@ async def get_asset_references(
     if not target_id:
         return {"ok": False, "error": "Asset id is required"}
 
-    beats = await _load_visual_beats(resolved.ctx)
+    beats = await _load_beat_asset_refs(resolved.ctx)
     references: list[dict[str, int]] = []
     co_identities: set[str] = set()
     co_props: set[str] = set()

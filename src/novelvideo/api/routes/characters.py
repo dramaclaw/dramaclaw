@@ -610,6 +610,16 @@ async def list_characters(
                 getattr(c, "updated_at", ""),
                 tree_updated_at(project_dir / "assets" / "characters" / c.name),
             ),
+            # 只出 id，不出身份详情。资产页要把 ``?type=identity&id=`` 深链解析到
+            # 拥有它的角色，此前是遍历每个角色各调一次 ``/characters/{name}/identities``
+            # ——角色有多少个就发多少个请求，只为建一张 id→角色名 的表。身份已经随
+            # ``get_all_characters()`` 在内存里了，这里带出来不多一次查询；而带的是
+            # 一串 id，载荷不会随身份的图片/描述增长。
+            "identity_ids": [
+                str(getattr(ident, "identity_id", "") or "")
+                for ident in (getattr(c, "identities", None) or [])
+                if str(getattr(ident, "identity_id", "") or "")
+            ],
         }
         item.update(
             _character_asset_links(

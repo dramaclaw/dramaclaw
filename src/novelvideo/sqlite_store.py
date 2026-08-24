@@ -21,6 +21,7 @@ import aiosqlite
 from rich.console import Console
 
 from novelvideo.models import (
+    BeatAssetRefRow,
     build_prop_menu,
     build_scene_menu,
     CharacterIdentity,
@@ -2384,6 +2385,33 @@ class SQLiteStore:
         async with db.execute("SELECT * FROM beats ORDER BY episode_number, beat_number") as cursor:
             rows = await cursor.fetchall()
         return [self._row_to_visual_beat(row) for row in rows]
+
+    async def list_beat_asset_refs(self) -> List[BeatAssetRefRow]:
+        """每个 beat 的资产引用字段，只取用得上的六列。
+
+        资产反向索引要扫全项目的 beats。走 ``list_visual_beats()`` 的话，每行都是
+        ``SELECT *`` 出约 20 列、再构造一个完整 ``NovelVisualBeat``——那个 pydantic
+        validator 还会把 ``scene_ref_json`` 反序列化再序列化回去、给 narration 和
+        visual_description 填默认值。这些结果扫描一个都不读。
+        """
+        db = await self._ensure_db()
+        async with db.execute(
+            "SELECT episode_number, beat_number, visual_description, "
+            "detected_identities_json, detected_props_json, scene_ref_json "
+            "FROM beats ORDER BY episode_number, beat_number"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [
+            BeatAssetRefRow(
+                episode_number=int(row["episode_number"] or 0),
+                beat_number=int(row["beat_number"] or 0),
+                visual_description=row["visual_description"] or "",
+                detected_identities_json=row["detected_identities_json"] or "[]",
+                detected_props_json=row["detected_props_json"] or "[]",
+                scene_ref_json=row["scene_ref_json"] or "",
+            )
+            for row in rows
+        ]
 
     async def count_beats_by_episode(self) -> Dict[int, int]:
         """每集的 beat 数，一次分组查询。

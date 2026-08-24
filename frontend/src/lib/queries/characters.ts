@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMemo } from "react";
-import {
-  useQueries,
-  useQuery,
-  useMutation,
-  useQueryClient,
-} from "@tanstack/react-query";
-import type { QueryFunctionContext } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { api, uploadApi } from "@/lib/api";
 import { p } from "@/lib/api-path";
@@ -383,10 +377,16 @@ export function useCharacterIdentities(project: string, name: string) {
 }
 
 /**
- * Maps `identity_id` → owning character name by fanning out the per-character
- * identity lists. Used to resolve a `?type=identity&id=` deep link to the
- * character that owns it (the identity list is otherwise lazy-loaded per
- * selected character). React Query dedupes these with the per-card fetches.
+ * Maps `identity_id` → owning character name, to resolve a `?type=identity&id=`
+ * deep link to the character that owns it.
+ *
+ * Built from `identity_ids` on the character list — one request, the same one
+ * the page already makes. This used to fan out `/characters/{name}/identities`
+ * for every character in the project, unconditionally on mount: a project with
+ * 100 characters fired 100 requests on every visit to the assets page, whether
+ * or not a deep link was present, to build a lookup table that is usually never
+ * read. Identity *details* are still lazy per selected character; only the ids
+ * ride along with the list.
  */
 export function useIdentityOwnerIndex(project: string) {
   const charactersRes = useQuery({
@@ -398,42 +398,21 @@ export function useIdentityOwnerIndex(project: string) {
     enabled: !!project,
   });
 
-  const names = useMemo(
-    () => (charactersRes.data?.data ?? []).map((c) => c.name),
-    [charactersRes.data?.data],
-  );
-
-  const identityQueries = useQueries({
-    queries: names.map((name) => ({
-      queryKey: queryKeys.identities(project, name),
-      queryFn: ({ signal }: QueryFunctionContext) =>
-        api
-          .get(p`api/v1/projects/${project}/characters/${name}/identities`, {
-            signal,
-          })
-          .json<OkResponse<Identity[]>>(),
-      enabled: !!project && !!name,
-    })),
-  });
-
-  const dataSignature = identityQueries.map((q) => q.dataUpdatedAt).join(",");
-  const identitiesByCharacter = identityQueries.map((q) => q.data?.data);
+  const characters = charactersRes.data?.data;
 
   const ownerById = useMemo(() => {
     const acc = new Map<string, string>();
-    identitiesByCharacter.forEach((identities, i) => {
-      const name = names[i];
-      if (!identities) return;
-      for (const identity of identities) {
-        acc.set(identity.identity_id, name);
+    for (const character of characters ?? []) {
+      for (const identityId of character.identity_ids ?? []) {
+        acc.set(identityId, character.name);
       }
-    });
+    }
     return acc;
-  }, [names, dataSignature]);
+  }, [characters]);
 
   return {
     ownerOf: (identityId: string) => ownerById.get(identityId) ?? null,
-    isLoading: charactersRes.isLoading || identityQueries.some((q) => q.isLoading),
+    isLoading: charactersRes.isLoading,
   };
 }
 

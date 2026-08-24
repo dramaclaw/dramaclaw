@@ -172,6 +172,52 @@ def test_list_characters_repairs_duplicate_narrator_main(monkeypatch, tmp_path):
     assert store.get_character("沈月白").is_main is False
 
 
+def test_list_characters_carries_identity_ids_for_deep_link_resolution(
+    monkeypatch, tmp_path
+):
+    """角色列表带出每个角色名下的身份 id，且只带 id。
+
+    资产页要把 ``?type=identity&id=`` 深链解析到拥有它的角色。前端此前是逐个角色
+    调 ``/characters/{name}/identities`` 建 id→角色名 的表——角色有多少个就发多少
+    个请求，无条件、每次进页面都发。身份对象已经随角色一起在内存里，这里带出来不
+    多一次查询；带的是一串 id，载荷不随身份的图片/描述增长。
+    """
+    lin = NovelCharacter(name="林昭", role="主角")
+    lin.identities = [
+        CharacterIdentity(
+            identity_id="林昭_青年", character_name="林昭", identity_name="青年"
+        ),
+        CharacterIdentity(
+            identity_id="林昭_少年", character_name="林昭", identity_name="少年"
+        ),
+    ]
+    su = NovelCharacter(name="苏清晏", role="女主")
+    su.identities = [
+        CharacterIdentity(
+            identity_id="苏清晏_少女", character_name="苏清晏", identity_name="少女"
+        )
+    ]
+    bare = NovelCharacter(name="路人", role="配角")
+
+    store = _CharacterStore([lin, su, bare])
+    client = _client(monkeypatch, tmp_path, store)
+
+    response = client.get("/projects/demo/characters")
+
+    assert response.status_code == 200
+    by_name = {item["name"]: item for item in response.json()["data"]}
+
+    assert by_name["林昭"]["identity_ids"] == ["林昭_青年", "林昭_少年"]
+    assert by_name["苏清晏"]["identity_ids"] == ["苏清晏_少女"]
+    # 没有身份的角色出空列表而不是缺字段，前端不必区分「没有」和「没带」。
+    assert by_name["路人"]["identity_ids"] == []
+
+    # 只有 id。身份详情仍走按需的 identities 接口，别让列表载荷跟着长。
+    identity_detail_keys = {"identity_name", "image_url", "appearance_details"}
+    for item in by_name.values():
+        assert identity_detail_keys.isdisjoint(item.keys())
+
+
 def test_character_and_identity_lists_expose_asset_history_links(monkeypatch, tmp_path):
     character = NovelCharacter(name="林昭", role="主角")
     character.identities = [

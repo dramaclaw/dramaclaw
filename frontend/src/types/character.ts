@@ -77,6 +77,12 @@ export interface Character {
   portrait_url?: string | null;
   history_url?: string;
   restore_url?: string;
+  /**
+   * 该角色名下所有身份的 id，由角色列表接口一次带出（身份详情仍走
+   * `/characters/{name}/identities` 按需拉）。用于把 `?type=identity&id=` 深链
+   * 解析到拥有它的角色，不必逐个角色去拉身份列表。
+   */
+  identity_ids?: string[];
 }
 
 export interface Identity {

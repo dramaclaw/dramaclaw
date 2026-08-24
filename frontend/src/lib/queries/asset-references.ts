@@ -89,9 +89,10 @@ function refKey(type: AssetRefType, id: string): string {
  * The per-asset detail key nests under the counts key, so this one prefix
  * invalidation covers both hooks.
  *
- * Missing a call site here degrades to stale usage counts, not wrong data: both
- * queries inherit the default 30s staleTime and the assets page is its own
- * route, so returning to it refetches. Prefer adding the call anyway.
+ * Do not treat the 30s staleTime as a safety net: staleTime only marks an entry
+ * stale, it never schedules a refetch. A page that stays mounted keeps showing
+ * the old counts indefinitely. Only a remount (or an explicit invalidation)
+ * refetches — so every mutation that moves a beat/asset relation must call this.
  */
 export function invalidateAssetReferences(
   qc: QueryClient,
@@ -136,16 +137,18 @@ export function useAssetReferences(
   project: string,
   refs: AssetRef[],
 ): AssetReferences {
-  const signature = [
-    ...new Set(refs.filter((r) => r.id).map((r) => refKey(r.type, r.id))),
-  ]
-    .sort()
-    .join(" ");
-
-  const keys = useMemo(
-    () => (signature ? signature.split(" ") : []),
-    [signature],
+  // JSON, not `.join(" ")`. Asset ids are user-authored names and legitimately
+  // contain spaces (`prop:red wine glass`, `scene:New York Office`), so any
+  // unescaped separator round-trips into different ids than went in — silently,
+  // as an empty beat list rather than an error. JSON.stringify of the sorted
+  // array is both a stable cache signature and an exact inverse.
+  const signature = JSON.stringify(
+    [
+      ...new Set(refs.filter((r) => r.id).map((r) => refKey(r.type, r.id))),
+    ].sort(),
   );
+
+  const keys = useMemo(() => JSON.parse(signature) as string[], [signature]);
 
   const { data, isLoading } = useQuery({
     queryKey: queryKeys.assetReferenceDetail(project, signature),

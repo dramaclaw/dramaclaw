@@ -698,6 +698,73 @@ async def test_count_beats_by_episode_on_empty_project(tmp_project):
 
 
 @pytest.mark.asyncio
+async def test_list_beat_asset_refs_returns_reference_columns_in_order(tmp_project):
+    """窄列读回来的六个字段要和完整 beat 对得上，包括 scene_ref 的解码。
+
+    资产反向索引拿它替掉 ``list_visual_beats()``。字段名和 ``NovelVisualBeat``
+    一致（含 ``scene_ref`` 属性），扫描代码才能对两种形状一视同仁——这个测试就是
+    钉住这条等价性。
+    """
+    from novelvideo.models import SceneRef
+    from novelvideo.cognee.pipeline import NovelVisualBeat
+
+    store = tmp_project
+    await store._ensure_db()
+    await store.add_visual_beats(
+        [
+            NovelVisualBeat(
+                beat_number=2,
+                episode_number=1,
+                narration="旁白",
+                visual_description="[[红酒杯]] 摆在桌上",
+                detected_identities_json='["苏清晏_少女"]',
+                detected_props_json='["红酒杯"]',
+                scene_ref_json=SceneRef(scene_id="书房", variant_id="").model_dump_json(),
+            ),
+            NovelVisualBeat(
+                beat_number=1,
+                episode_number=1,
+                narration="旁白",
+                visual_description="空镜",
+            ),
+        ]
+    )
+
+    rows = await store.list_beat_asset_refs()
+
+    assert [(r.episode_number, r.beat_number) for r in rows] == [(1, 1), (1, 2)]
+
+    first, second = rows
+    # 没有场景/身份/道具的 beat 读出来是空值而不是 None，扫描直接 json.loads。
+    assert first.detected_identities_json == "[]"
+    assert first.detected_props_json == "[]"
+    assert first.scene_ref_json == ""
+    assert first.scene_id == ""
+
+    assert second.detected_identities_json == '["苏清晏_少女"]'
+    assert second.detected_props_json == '["红酒杯"]'
+    assert second.visual_description == "[[红酒杯]] 摆在桌上"
+    assert second.scene_id == "书房"
+
+    # 和完整读法逐字段等价——两条路径不能对同一行给出不同答案。
+    full = {(b.episode_number, b.beat_number): b for b in await store.list_visual_beats()}
+    for row in rows:
+        beat = full[(row.episode_number, row.beat_number)]
+        assert row.visual_description == beat.visual_description
+        assert row.detected_identities_json == beat.detected_identities_json
+        assert row.detected_props_json == beat.detected_props_json
+        assert row.scene_id == beat.scene_id
+
+
+@pytest.mark.asyncio
+async def test_list_beat_asset_refs_on_empty_project(tmp_project):
+    store = tmp_project
+    await store._ensure_db()
+
+    assert await store.list_beat_asset_refs() == []
+
+
+@pytest.mark.asyncio
 async def test_replace_episodes_rolls_back_delete_when_new_plan_write_fails(
     tmp_path,
     monkeypatch,

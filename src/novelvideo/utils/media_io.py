@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import weakref
+from collections.abc import Sequence
 from pathlib import Path
 
 from novelvideo.utils.async_ops import call_blocking
@@ -31,6 +34,52 @@ def get_audio_duration(audio_path: str) -> float:
 async def get_audio_duration_async(audio_path: str) -> float:
     """Return audio duration without blocking the event loop."""
     return await call_blocking(get_audio_duration, audio_path)
+
+
+# Each probe forks an ffprobe process from a shared thread-pool worker. Left
+# unbounded, one request for a long episode fans out one fork per audio beat at
+# once — and because `call_blocking` uses the default executor, it also starves
+# every other blocking call in the process while it drains. The cap is global,
+# not per-request: two concurrent episode reads must not multiply it.
+_PROBE_CONCURRENCY = 8
+_probe_semaphores: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _probe_semaphore() -> "asyncio.Semaphore":
+    """The probe gate for the running loop.
+
+    Keyed per loop rather than created once at import: a semaphore binds to the
+    loop that first awaits it, and the test suite runs many loops in one process.
+    """
+    loop = asyncio.get_running_loop()
+    semaphore = _probe_semaphores.get(loop)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(_PROBE_CONCURRENCY)
+        _probe_semaphores[loop] = semaphore
+    return semaphore
+
+
+async def get_audio_durations_async(paths: "Sequence[str]") -> "list[float | None]":
+    """Probe many audio files with bounded concurrency.
+
+    Returns one entry per input, positionally aligned; ``None`` where the probe
+    failed, so a single unreadable file cannot fail the batch.
+    """
+    if not paths:
+        return []
+
+    semaphore = _probe_semaphore()
+
+    async def probe(path: str) -> "float | None":
+        async with semaphore:
+            try:
+                return await get_audio_duration_async(path)
+            except Exception:
+                return None
+
+    return list(await asyncio.gather(*(probe(path) for path in paths)))
 
 
 async def crop_image_to_path(

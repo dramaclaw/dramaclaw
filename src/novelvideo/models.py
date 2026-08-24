@@ -5,6 +5,7 @@
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -202,6 +203,48 @@ def build_scene_ref(
     scene_id = (scene_id or "").strip()
     variant_id = (variant_id or "").strip()
     return SceneRef(scene_id=scene_id, variant_id=variant_id) if scene_id else None
+
+
+def parse_scene_ref_json(raw: str | None) -> SceneRef | None:
+    """Decode a persisted ``scene_ref_json`` column. Empty/corrupt → ``None``."""
+    if not raw:
+        return None
+    try:
+        return _coerce_scene_ref(json.loads(raw))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class BeatAssetRefRow:
+    """One beat reduced to the columns the asset-reference scan actually reads.
+
+    That scan walks every beat in the project to answer "which beats use this
+    asset". Materialising a full :class:`NovelVisualBeat` per row to read six
+    fields is the expensive half: ~20 columns off ``SELECT *`` plus a pydantic
+    validator that re-serialises ``scene_ref_json`` and back-fills narration and
+    visual_description defaults — work whose only output is discarded.
+
+    Attribute names match :class:`NovelVisualBeat` (including the ``scene_ref``
+    property), so ``beat_scene_id`` and the scan's field readers treat both
+    shapes identically.
+    """
+
+    episode_number: int
+    beat_number: int
+    visual_description: str
+    detected_identities_json: str
+    detected_props_json: str
+    scene_ref_json: str
+
+    @property
+    def scene_ref(self) -> SceneRef | None:
+        return parse_scene_ref_json(self.scene_ref_json)
+
+    @property
+    def scene_id(self) -> str:
+        scene_ref = self.scene_ref
+        return scene_ref.scene_id if scene_ref else ""
 
 
 def beat_scene_ref(value: Any) -> SceneRef | None:
@@ -1441,12 +1484,7 @@ class NovelVisualBeat(BaseModel):
 
     @property
     def scene_ref(self) -> SceneRef | None:
-        if not self.scene_ref_json:
-            return None
-        try:
-            return _coerce_scene_ref(json.loads(self.scene_ref_json))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return None
+        return parse_scene_ref_json(self.scene_ref_json)
 
     @property
     def scene_id(self) -> str:

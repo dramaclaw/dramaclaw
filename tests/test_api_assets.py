@@ -1792,7 +1792,7 @@ async def test_asset_references_match_beat_asset_ids(monkeypatch, tmp_path):
         async def load_graph_state(self):
             return None
 
-        async def list_visual_beats(self):
+        async def list_beat_asset_refs(self):
             return [
                 NovelVisualBeat(
                     episode_number=1,
@@ -1876,7 +1876,7 @@ def _patch_asset_references(monkeypatch, tmp_path, beats):
     from novelvideo.api.routes import assets
 
     class Store:
-        async def list_visual_beats(self):
+        async def list_beat_asset_refs(self):
             return beats
 
     ctx = SimpleNamespace(

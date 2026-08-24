@@ -30,7 +30,6 @@ import { useCharacters } from "@/lib/queries/characters";
 import {
   derivePipelineEpisodeStatuses,
   isPlanEpisodeAssetsResult,
-  useEpisodeBeats,
   useEpisodeDetail,
   useEpisodes,
   usePipelineStatus,
@@ -286,9 +285,14 @@ function TopBar({
   const { t } = useTranslation();
   const episodeNumber = selectedEpisode?.number ?? 0;
   const { data: episodeDetailRes } = useEpisodeDetail(project, episodeNumber);
-  const { data: beatsRes } = useEpisodeBeats(project, episodeNumber);
   const episodeDetail = episodeDetailRes?.data ?? selectedEpisode;
-  const beatCount = beatsRes?.data.length ?? 0;
+  // Same `beat_count` the cards read, from the list response — this header used
+  // to pull the auto-selected episode's whole beats payload just to take
+  // `.length`. Auto-selection is not a signal the user is heading into that
+  // episode, so nothing was being usefully prefetched: it was one more full
+  // beats request (sketch/frame/video URLs, an ffprobe per audio clip) on every
+  // visit to this page, for one integer already present in the list.
+  const beatCount = selectedEpisode?.beat_count ?? 0;
   const sourceLineCount = countContentLines(
     episodeDetail?.beat_source_text || episodeDetail?.raw_content,
   );

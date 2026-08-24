@@ -417,13 +417,14 @@ async def get_beats(project: str, episode_num: int, user: dict = Depends(get_api
             beat["audio_url"] = ""
 
     if audio_duration_jobs:
-        import asyncio
+        from novelvideo.utils.media_io import get_audio_durations_async
 
-        from novelvideo.utils.media_io import get_audio_duration_async
-
-        durations = await asyncio.gather(
-            *(get_audio_duration_async(path) for _, path in audio_duration_jobs),
-            return_exceptions=True,
+        # 有界并发。这里此前是对整集的音频一次性 gather——一集多少个有声镜头就同时
+        # fork 多少个 ffprobe，而且用的是默认线程池，抽干期间进程里其他阻塞调用一起
+        # 排队。真正的修法是把时长在生成时写进库、读的时候直接出（TTS 本来就量过），
+        # 这里先把扇出封顶。
+        durations = await get_audio_durations_async(
+            [path for _, path in audio_duration_jobs]
         )
         for (beat, _), value in zip(audio_duration_jobs, durations):
             if isinstance(value, (int, float)) and value > 0:

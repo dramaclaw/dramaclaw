@@ -138,7 +138,7 @@ class _M09Store:
         assert episode == 1
         return [dict(beat) for beat in self.beats]
 
-    async def list_visual_beats(self):
+    async def list_beat_asset_refs(self):
         return [
             SimpleNamespace(
                 episode_number=1,

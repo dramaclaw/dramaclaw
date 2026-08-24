@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
 import { useAppStore } from "@/stores/app-store";
 import { queryKeys } from "@/lib/query-keys";
+import { invalidateAssetReferences } from "@/lib/queries/asset-references";
 import { api, handleSessionExpired } from "@/lib/api";
 import { createEventBus } from "./event-bus";
 import { EventBusContext } from "./event-bus-context";
@@ -64,6 +65,10 @@ function invalidateCompletedAssetQueries(
       });
       // 拆镜是 beat_count 从 0 变成 N 的那一步，分集列表的镜头数角标读它。
       queryClient.invalidateQueries({ queryKey: queryKeys.episodes(projectId) });
+      // 拆镜整集重写 beats，身份/场景/道具的引用关系随之改变。资产索引挂在项目级
+      // key 上，逐集失效 beats 够不着它；而 staleTime 只标记陈旧、不会自动重取，
+      // 停在资产页不动的用户会一直看着旧的使用次数。
+      invalidateAssetReferences(queryClient, projectId);
       queryClient.invalidateQueries({
         queryKey: queryKeys.pipelineStatus(projectId),
       });
