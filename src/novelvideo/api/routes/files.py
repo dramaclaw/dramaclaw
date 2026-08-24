@@ -10,7 +10,11 @@ logger = logging.getLogger("novelvideo.api.files")
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import ProjectResolution, resolve_project_scope
-from novelvideo.utils.thumbnails import fresh_thumbnail
+from novelvideo.utils.thumbnails import (
+    fresh_thumbnail,
+    is_thumbnailable,
+    normalize_variant,
+)
 
 router = APIRouter()
 
@@ -62,13 +66,27 @@ def _etag_matches(request: Request | None, etag: str | None) -> bool:
     return False
 
 
+def _redirect_to_original_url(request: Request) -> RedirectResponse:
+    """Move a cold variant request onto the original representation's URL."""
+
+    original = request.url.remove_query_params("st_thumb")
+    location = original.path
+    if original.query:
+        location = f"{location}?{original.query}"
+    return RedirectResponse(
+        url=location,
+        status_code=302,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def _maybe_thumbnail_response(
     project_dir: Path,
     requested: Path,
     variant: str | None,
     request: Request | None = None,
 ):
-    """Serve an already-built variant of ``requested``, or ``None`` to fall back.
+    """Serve an already-built variant or redirect a cold one to the original URL.
 
     The canvas asks for a variant on every img that paints into a small box
     (see ``novelvideo.utils.thumbnails``). A *built* variant is served as local
@@ -77,15 +95,22 @@ def _maybe_thumbnail_response(
     written variant is not in OSS yet anyway.
 
     A cold one is a different trade entirely, so it is never built or queued
-    here. This returns ``None`` and leaves the caller to hand back the same OSS
-    redirect it would have without variants at all. Thumbnail creation belongs
-    to the generation-history write path; opening an old or cold canvas must
-    never start image decoding work in the API process.
+    here. A valid image variant miss redirects to the same request URL without
+    any ``st_thumb`` parameter. That keeps the temporary original response off
+    the future variant's cache key and out of the proxy's thumbnail slice path.
+    Thumbnail creation belongs to the generation-history write path; opening an
+    old or cold canvas must never start image decoding work in the API process.
     """
     if not variant:
         return None
     thumb = fresh_thumbnail(project_dir, requested, variant)
     if thumb is None:
+        if (
+            request is not None
+            and normalize_variant(variant) is not None
+            and is_thumbnailable(requested)
+        ):
+            return _redirect_to_original_url(request)
         return None
     cache_control = _variant_cache_control(request)
     try:

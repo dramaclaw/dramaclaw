@@ -546,17 +546,17 @@ def test_a_regenerated_source_is_revalidated_to_the_new_variant(monkeypatch, tmp
     assert stale.content == second.content
 
 
-def test_a_cold_variant_request_serves_the_original_without_queuing_work(
+def test_a_cold_variant_request_redirects_to_the_stable_original_url(
     monkeypatch, tmp_path
 ):
-    """Reading old history must never schedule CPU-bound thumbnail work.
+    """A cold variant URL must never temporarily identify the original bytes.
 
-    Serving a request *without* a variant is a 302 to presigned OSS: the
-    original never travels through this process. Building on demand trades that
-    away for reading and decoding it locally, so the first visit to a cold
-    project would pull every full-resolution source over the ossfs mount just to
-    hand back a smaller copy. The response stays byte-for-byte what it would
-    have been before variants existed and no future render is scheduled.
+    The edge cache keys versioned URLs for a year. Returning the original with a
+    200 here lets that response occupy the future thumbnail's cache key, while
+    returning it through the slice filter can also race the thumbnail prewarm
+    and end in a 416. Redirecting to the URL without every ``st_thumb`` keeps the
+    original and variant representations on distinct cache keys. Reading old
+    history must still not schedule CPU-bound thumbnail work.
     """
 
     source = _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
@@ -570,10 +570,21 @@ def test_a_cold_variant_request_serves_the_original_without_queuing_work(
         lambda _project_dir, requested, *_args: prewarm_calls.append(requested),
     )
 
-    cold = client.get(url, params={"st_thumb": "thumb"})
+    cold = client.get(
+        f"{url}?keep=first&st_thumb=invalid&v=1787194176036036558"
+        "&st_thumb=thumb&keep=second",
+        follow_redirects=False,
+    )
 
-    assert cold.status_code == 200
-    assert cold.content == source.read_bytes()
+    assert cold.status_code == 302
+    assert cold.headers["cache-control"] == "no-store"
+    assert cold.headers["location"] == (
+        f"{url}?keep=first&v=1787194176036036558&keep=second"
+    )
+
+    original = client.get(cold.headers["location"])
+    assert original.status_code == 200
+    assert original.content == source.read_bytes()
     assert prewarm_calls == []
     assert not (tmp_path / thumbnails.THUMB_ROOT).exists()
 
