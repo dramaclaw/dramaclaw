@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Edit3,
   ExternalLink,
@@ -63,7 +63,19 @@ export function PropAssetCard({
     if (file) onUploadReference(file);
     event.target.value = "";
   }
-  const referenceUrl = resolveMediaUrl(prop.reference_url);
+  const resolvedReferenceUrl = resolveMediaUrl(prop.reference_url);
+  const [failedReferenceUrl, setFailedReferenceUrl] = useState("");
+  const wasGenerating = useRef(generating);
+  useEffect(() => {
+    if (wasGenerating.current && !generating) {
+      setFailedReferenceUrl("");
+    }
+    wasGenerating.current = generating;
+  }, [generating]);
+  const referenceUrl =
+    resolvedReferenceUrl && failedReferenceUrl !== resolvedReferenceUrl
+      ? resolvedReferenceUrl
+      : null;
   const referenceAlt = `${prop.name} ${t("assets.props.reference")}`;
   const description =
     prop.description?.trim() || prop.visual_prompt?.trim() || t("assets.props.noDescription");
@@ -149,6 +161,7 @@ export function PropAssetCard({
             alt={referenceAlt}
             fit="contain"
             blurBackdrop={false}
+            onError={() => setFailedReferenceUrl(referenceUrl)}
             className="aspect-[16/9] w-full rounded-[8px]"
           />
         ) : (

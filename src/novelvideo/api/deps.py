@@ -209,7 +209,12 @@ async def make_cognee_store(username: str, project: str) -> "CogneeStore":
     return await _close_on_init_failure(store, store.initialize)
 
 
-async def make_sqlite_store(username: str, project: str) -> "SQLiteStore":
+async def make_sqlite_store(
+    username: str,
+    project: str,
+    *,
+    load_graph_state: bool = True,
+) -> "SQLiteStore":
     """按请求创建 SQLiteStore 实例。"""
     from novelvideo.sqlite_store import SQLiteStore
 
@@ -217,7 +222,10 @@ async def make_sqlite_store(username: str, project: str) -> "SQLiteStore":
     output_dir = get_output_dir(username, project)
     state_dir = get_state_dir(username, project)
     store = SQLiteStore(project_name, output_dir=output_dir, state_dir=state_dir)
-    return await _close_on_init_failure(store, store.initialize, store.load_graph_state)
+    steps = [store.initialize]
+    if load_graph_state:
+        steps.append(store.load_graph_state)
+    return await _close_on_init_failure(store, *steps)
 
 
 async def make_sqlite_store_for_context(
@@ -228,11 +236,12 @@ async def make_sqlite_store_for_context(
     """Create a SQLiteStore from the resolved project owner/home paths.
 
     ``load_graph_state()`` hydrates the in-memory character/episode/prop caches
-    with three full-table reads. Callers that only touch ``beats`` (and never
-    ``get_character`` / ``get_episode`` / ``get_cached_prop`` / ``resolve_name``)
-    should pass ``load_graph_state=False`` — otherwise those three reads cost
-    more than the query they precede. Default stays ``True`` so existing callers
-    keep the hydrated behaviour they rely on.
+    with three full-table reads. Callers that use direct ``list_*`` queries or
+    only touch ``beats`` (and never ``get_character`` / ``get_episode`` /
+    ``get_cached_prop`` / ``resolve_name``) should pass
+    ``load_graph_state=False`` — otherwise unrelated tables can cost more than
+    the query they precede. Default stays ``True`` so existing callers keep the
+    hydrated behaviour they rely on.
     """
     from novelvideo.sqlite_store import SQLiteStore
 
@@ -272,8 +281,21 @@ async def _make_cognee_store_scope(username: str, project: str) -> AsyncIterator
             await close()
 
 
-async def _make_sqlite_store_scope(username: str, project: str) -> AsyncIterator["SQLiteStore"]:
-    store = await make_sqlite_store(username, project)
+async def _make_sqlite_store_scope(
+    username: str,
+    project: str,
+    *,
+    load_graph_state: bool = True,
+) -> AsyncIterator["SQLiteStore"]:
+    store = (
+        await make_sqlite_store(username, project)
+        if load_graph_state
+        else await make_sqlite_store(
+            username,
+            project,
+            load_graph_state=False,
+        )
+    )
     try:
         yield store
     finally:

@@ -25,14 +25,37 @@ export type CharacterUpdateResponse = {
   renamed_from?: string;
 };
 
-export function useCharacters(project: string) {
+export function useCharacters(project: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.characters(project),
     queryFn: ({ signal }) =>
       api
         .get(p`api/v1/projects/${project}/characters`, { signal })
         .json<OkResponse<Character[]>>(),
-    enabled: !!project,
+    enabled: enabled && !!project,
+  });
+}
+
+/** Full filesystem-derived state for only the character currently being edited. */
+export function useCharacterDetails(
+  project: string,
+  name: string | null,
+  enabled = true,
+) {
+  const characterName = name?.trim() ?? "";
+  return useQuery({
+    queryKey: queryKeys.characterDetails(project, characterName),
+    queryFn: ({ signal }) =>
+      api
+        .get(p`api/v1/projects/${project}/characters`, {
+          signal,
+          searchParams: {
+            summary: "false",
+            names: characterName,
+          },
+        })
+        .json<OkResponse<Character[]>>(),
+    enabled: enabled && !!project && !!characterName,
   });
 }
 
@@ -400,14 +423,14 @@ export function useCharacterIdentities(project: string, name: string) {
  * read. Identity *details* are still lazy per selected character; only the ids
  * ride along with the list.
  */
-export function useIdentityOwnerIndex(project: string) {
+export function useIdentityOwnerIndex(project: string, enabled = true) {
   const charactersRes = useQuery({
     queryKey: queryKeys.characters(project),
     queryFn: ({ signal }) =>
       api
         .get(p`api/v1/projects/${project}/characters`, { signal })
         .json<OkResponse<Character[]>>(),
-    enabled: !!project,
+    enabled: enabled && !!project,
   });
 
   const characters = charactersRes.data?.data;

@@ -18,7 +18,7 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { http, HttpResponse } from "msw";
 import ky from "ky";
 import type { ReactNode } from "react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { server } from "@/__mocks__/msw/server";
 
@@ -84,6 +84,10 @@ beforeAll(async () => {
   });
 });
 
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
 const CHARACTERS = [
   { name: "苏清晏", is_main: true, identity_ids: ["苏清晏_少女", "苏清晏_嫡女"] },
   { name: "沈砚", is_main: false, identity_ids: ["沈砚_少年"] },
@@ -142,7 +146,22 @@ describe("the characters tab does not fan identities out per character", () => {
     // 这里列出具体路径而不是数个数——回归的形状就是"每个角色一条"，列出来才看得
     // 出漏的是哪几个。
     expect(identityRequests).toEqual(["/api/v1/projects/demo/characters/苏清晏/identities"]);
-    // 侧栏的用量统计走 ``/assets/references`` 那一个聚合，不再按集翻 beats。
+    // 资产页不再为了展示全局用量统计而扫描所有分集 beats。
     expect(seen.filter((path) => path.includes("/beats"))).toEqual([]);
+  });
+
+  it("does not load character assets when the remembered tab is scenes", async () => {
+    window.localStorage.setItem("supertale-asset-tab:demo", "scenes");
+    const seen = recordRequests();
+
+    renderWithProviders(<CharactersPage />);
+
+    await waitFor(() =>
+      expect(seen).toContain("/api/v1/projects/demo/scenes"),
+    );
+    expect(seen).not.toContain("/api/v1/projects/demo/characters");
+    expect(seen).not.toContain(
+      "/api/v1/projects/demo/character-image-selection",
+    );
   });
 });

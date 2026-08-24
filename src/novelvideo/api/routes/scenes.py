@@ -8,7 +8,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 
@@ -110,7 +110,10 @@ async def _resolve_scene_project(
         project_id=project,
         required_role=required_role,
     )
-    store = await make_sqlite_store_for_context(ctx)
+    # Scene routes use SQLite's direct async methods. Hydrating the legacy
+    # character/episode/prop caches here adds three unrelated full-table reads
+    # to every scene request and was especially visible on OSS-backed homes.
+    store = await make_sqlite_store_for_context(ctx, load_graph_state=False)
     return (
         ctx,
         ctx.owner_username,
@@ -516,6 +519,40 @@ def _scene_payload(
     }
 
 
+def _scene_summary_payload(
+    scene: NovelScene,
+    *,
+    base_scene: NovelScene | None = None,
+) -> dict[str, Any]:
+    """Return the SQLite-only fields needed to group/search the scene list.
+
+    The full payload probes master/reverse/pano files, loads several manifests,
+    and recursively walks asset directories. Doing that for every scene before
+    the first paint makes list latency scale with OSSFS round trips rather than
+    the tiny scenes table. Full payloads are fetched for the selected group.
+    """
+
+    base_scene_id = str(getattr(scene, "base_scene_id", "") or "").strip()
+    return {
+        "name": scene.name,
+        "aliases": scene.aliases,
+        "scene_type": scene.scene_type,
+        "base_scene_id": base_scene_id,
+        "variant_id": str(getattr(scene, "variant_id", "") or "").strip(),
+        "time_of_day": str(getattr(scene, "time_of_day", "") or "").strip(),
+        "environment_prompt": scene.environment_prompt,
+        "variant_prompt": getattr(scene, "variant_prompt", ""),
+        "effective_environment_prompt": build_scene_effective_prompt(
+            scene, base_scene
+        ),
+        "description": scene.description,
+        "derived_from_scene": base_scene_id,
+        "spatial_layout_image": scene.spatial_layout_image,
+        "notes": scene.notes,
+        "updated_at": getattr(scene, "updated_at", ""),
+    }
+
+
 async def _require_scene(store: SQLiteStore, name: str) -> NovelScene | None:
     return await store.get_scene(name)
 
@@ -644,6 +681,8 @@ async def _heal_path_unsafe_scene_names(store: SQLiteStore, project_dir: Path) -
 @router.get("/projects/{project}/scenes")
 async def list_scenes(
     project: str,
+    summary: bool = True,
+    names: Annotated[list[str] | None, Query()] = None,
     user: dict = Depends(get_api_user),
 ):
     ctx, _username, _project_name, project_dir, _output_dir, store = (
@@ -655,6 +694,24 @@ async def list_scenes(
     scenes_by_name = {
         scene.name: scene for scene in scenes if str(scene.name or "").strip()
     }
+    requested_names = {
+        str(name or "").strip() for name in (names or []) if str(name or "").strip()
+    }
+    if requested_names:
+        scenes = [scene for scene in scenes if scene.name in requested_names]
+    if summary:
+        return {
+            "ok": True,
+            "data": [
+                _scene_summary_payload(
+                    scene,
+                    base_scene=scenes_by_name.get(
+                        str(getattr(scene, "base_scene_id", "") or "")
+                    ),
+                )
+                for scene in scenes
+            ],
+        }
     return {
         "ok": True,
         "data": [

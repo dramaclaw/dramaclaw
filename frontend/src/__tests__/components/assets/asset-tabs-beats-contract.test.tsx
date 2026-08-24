@@ -96,6 +96,48 @@ function renderWithProviders(ui: ReactNode) {
 }
 
 describe("asset tabs do not read the beats table", () => {
+  it("loads a SQLite-only scene summary before the selected group's details", async () => {
+    window.localStorage.clear();
+    const requests: URL[] = [];
+    server.use(
+      http.get(
+        "http://localhost:3000/api/v1/projects/demo/scenes",
+        ({ request }) => {
+          const url = new URL(request.url);
+          requests.push(url);
+          if (url.searchParams.get("summary") !== "false") {
+            return HttpResponse.json({
+              ok: true,
+              data: [
+                { name: "Hall", base_scene_id: "", description: "" },
+                {
+                  name: "Hall_Night",
+                  base_scene_id: "Hall",
+                  description: "",
+                },
+                { name: "Alley", base_scene_id: "", description: "" },
+              ],
+            });
+          }
+          return HttpResponse.json({
+            ok: true,
+            data: url.searchParams.getAll("names").map((name) => ({ name })),
+          });
+        },
+      ),
+    );
+
+    renderWithProviders(<ScenesPanel project="demo" />);
+
+    await waitFor(() => expect(requests.length).toBe(2));
+    expect(requests[0].searchParams.get("summary")).toBeNull();
+    expect(requests[0].searchParams.getAll("names")).toEqual([]);
+    expect(requests[1].searchParams.get("summary")).toBe("false");
+    expect(requests[1].searchParams.getAll("names").sort()).toEqual([
+      "Alley",
+    ]);
+  });
+
   it("opens the scenes tab without requesting any episode's beats", async () => {
     const seen = recordRequests();
     server.use(

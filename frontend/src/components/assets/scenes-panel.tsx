@@ -93,6 +93,7 @@ import {
   useClearSceneDirectorWorld,
   useSaveSceneDirectorWorld,
   useSceneDirectorStageManifest,
+  useSceneDetails,
   useScenePanoManifest,
   useScenes,
   useUpdateScene,
@@ -1286,8 +1287,22 @@ export function ScenesPanel({
     sceneGroups,
     selectedBaseName,
   ]);
-  const selectedGroup =
+  const selectedSummaryGroup =
     sceneGroups.find((group) => group.baseName === selectedBaseName) ?? null;
+  const selectedSceneNames = useMemo(
+    () => selectedSummaryGroup?.scenes.map((scene) => scene.name) ?? [],
+    [selectedSummaryGroup],
+  );
+  const selectedSceneDetails = useSceneDetails(project, selectedSceneNames);
+  const selectedGroup = selectedSummaryGroup
+    ? {
+        baseName: selectedSummaryGroup.baseName,
+        scenes:
+          selectedSceneDetails.data?.data?.length
+            ? selectedSceneDetails.data.data
+            : selectedSummaryGroup.scenes,
+      }
+    : null;
   const selectedBaseScene =
     selectedGroup?.scenes.find((scene) => scene.name === selectedGroup.baseName) ??
     selectedGroup?.scenes[0] ??
@@ -1373,8 +1388,13 @@ export function ScenesPanel({
         <HeaderRefreshButton
           label={t("common.refresh")}
           onRefresh={async () => {
-            const result = await scenes.refetch();
-            if (result.isError) {
+            const [listResult, detailResult] = await Promise.all([
+              scenes.refetch(),
+              selectedSceneNames.length
+                ? selectedSceneDetails.refetch()
+                : Promise.resolve(null),
+            ]);
+            if (listResult.isError || detailResult?.isError) {
               toast.error(t("common.error"));
               return false;
             }
@@ -1507,6 +1527,23 @@ export function ScenesPanel({
             {!selectedGroup ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 {t("assets.common.noMatch")}
+              </div>
+            ) : selectedSceneDetails.isLoading ? (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                <Loader2 className="mr-2 size-4 animate-spin" />
+                {t("common.loading")}
+              </div>
+            ) : selectedSceneDetails.isError ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+                <span>{t("common.error")}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void selectedSceneDetails.refetch()}
+                >
+                  {t("common.refresh")}
+                </Button>
               </div>
             ) : (
               <div className="@container h-full overflow-y-auto px-4 py-3">

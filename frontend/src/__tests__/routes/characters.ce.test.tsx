@@ -144,6 +144,26 @@ vi.mock("@/lib/queries/characters", () => ({
       ],
     },
   }),
+  useCharacterDetails: () => ({
+    isLoading: false,
+    data: {
+      ok: true,
+      data: [
+        {
+          name: "Li Qing",
+          aliases: [],
+          role: "主角",
+          gender: "男",
+          age_group: "middle",
+          is_main: true,
+          description: "Lead character",
+          face_prompt: "sharp eyes",
+          body_type: "slim",
+          portrait_url: "",
+        },
+      ],
+    },
+  }),
   useBuildCharacters: () => ({
     mutateAsync: buildCharactersMutationMock,
     isPending: false,

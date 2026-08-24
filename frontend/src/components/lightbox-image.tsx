@@ -13,6 +13,7 @@ export function LightboxImage({
   fluid = false,
   fit = "cover",
   blurBackdrop = true,
+  onError,
 }: {
   src: string;
   alt: string;
@@ -20,6 +21,7 @@ export function LightboxImage({
   fluid?: boolean;
   fit?: "cover" | "contain";
   blurBackdrop?: boolean;
+  onError?: React.ReactEventHandler<HTMLImageElement>;
 }) {
   const [open, setOpen] = useState(false);
   useEscapeToClose(open, () => setOpen(false));
@@ -50,6 +52,7 @@ export function LightboxImage({
           alt={alt}
           loading="lazy"
           decoding="async"
+          onError={onError}
           className={cn(
             "relative z-10",
             fluid

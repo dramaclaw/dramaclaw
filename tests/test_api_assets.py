@@ -301,6 +301,7 @@ async def test_list_scenes_returns_master_reverse_and_pano_urls(tmp_path, monkey
 
     res = await scenes.list_scenes(
         project="demo",
+        summary=False,
         user={"username": "admin"},
     )
 
@@ -336,6 +337,70 @@ async def test_list_scenes_returns_master_reverse_and_pano_urls(tmp_path, monkey
     assert "viewer_url" not in asset["stage_3gs"]
     assert "pano_viewer_url" not in asset
     assert asset["updated_at"]
+
+
+@pytest.mark.asyncio
+async def test_list_scenes_summary_never_builds_filesystem_payload(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import scenes
+
+    store = _SceneStore(
+        [
+            NovelScene(name="故宫", environment_prompt="宫墙"),
+            NovelScene(
+                name="故宫_雪夜",
+                base_scene_id="故宫",
+                variant_id="雪夜",
+                variant_prompt="积雪",
+            ),
+        ]
+    )
+    _patch_project(monkeypatch, scenes, tmp_path, store)
+
+    def fail_full_payload(*_args, **_kwargs):
+        raise AssertionError("summary list must not probe scene files or manifests")
+
+    monkeypatch.setattr(scenes, "_scene_payload", fail_full_payload)
+
+    response = await scenes.list_scenes(
+        project="demo",
+        names=None,
+        user={"username": "admin"},
+    )
+
+    assert [item["name"] for item in response["data"]] == ["故宫", "故宫_雪夜"]
+    assert response["data"][1]["derived_from_scene"] == "故宫"
+    assert response["data"][1]["effective_environment_prompt"]
+    assert "master_url" not in response["data"][0]
+    assert "stage_3gs" not in response["data"][0]
+
+
+@pytest.mark.asyncio
+async def test_list_scenes_full_payload_filters_to_requested_names(
+    tmp_path, monkeypatch
+):
+    from novelvideo.api.routes import scenes
+
+    store = _SceneStore([NovelScene(name="大厅"), NovelScene(name="后院")])
+    _patch_project(monkeypatch, scenes, tmp_path, store)
+    built: list[str] = []
+
+    def fake_payload(scene, **_kwargs):
+        built.append(scene.name)
+        return {"name": scene.name}
+
+    monkeypatch.setattr(scenes, "_scene_payload", fake_payload)
+
+    response = await scenes.list_scenes(
+        project="demo",
+        summary=False,
+        names=["后院"],
+        user={"username": "admin"},
+    )
+
+    assert response["data"] == [{"name": "后院"}]
+    assert built == ["后院"]
 
 
 @pytest.mark.asyncio
@@ -941,7 +1006,9 @@ async def test_list_scenes_reports_saved_scene_director_world_pano_source(
         snapshot={"schemaVersion": 1, "world": {"activeSourceId": "scene-pano:Hall"}},
     )
 
-    response = await scenes.list_scenes(project="demo", user={"username": "admin"})
+    response = await scenes.list_scenes(
+        project="demo", summary=False, user={"username": "admin"}
+    )
 
     stage = response["data"][0]["stage_3gs"]
     assert stage["active_source"] == "360"
@@ -1651,15 +1718,25 @@ async def test_build_scenes_allows_supplement_when_derived_scenes_exist(
 
 
 @pytest.mark.asyncio
-async def test_list_props_returns_reference_url(tmp_path, monkeypatch):
+async def test_list_props_returns_convention_url_without_filesystem_probes(
+    tmp_path, monkeypatch
+):
     from novelvideo.api.routes import props
 
-    prop = NovelProp(name="Sword", visual_prompt="silver sword")
+    prop = NovelProp(
+        name="Sword",
+        visual_prompt="silver sword",
+        updated_at="2026-08-24T01:02:03+00:00",
+    )
     store = _PropStore([prop])
     _patch_project(monkeypatch, props, tmp_path, store)
-    prop_dir = tmp_path / "assets" / "props" / "Sword"
-    prop_dir.mkdir(parents=True)
-    (prop_dir / "reference_3view.png").write_bytes(b"ref")
+
+    def fail_probe(*_args, **_kwargs):
+        raise AssertionError("the prop list must not probe OSSFS")
+
+    monkeypatch.setattr(props, "compute_prop_reference_path", fail_probe)
+    monkeypatch.setattr(props, "tree_updated_at", fail_probe)
+    monkeypatch.setattr(props, "_asset_url", fail_probe)
 
     res = await props.list_props(
         project="demo",
@@ -1669,10 +1746,38 @@ async def test_list_props_returns_reference_url(tmp_path, monkeypatch):
     asset = res["data"][0]
     assert (
         asset["reference_url"]
-        == "/static/projects/proj_demo/assets/props/Sword/reference_3view.png"
+        == "/static/projects/demo/assets/props/Sword/reference_3view.png"
     )
     assert asset["scope"] == "global"
-    assert asset["updated_at"]
+    assert asset["updated_at"] == "2026-08-24T01:02:03+00:00"
+
+
+@pytest.mark.asyncio
+async def test_list_props_skips_unrelated_graph_state_hydration(tmp_path, monkeypatch):
+    from novelvideo.api.routes import props
+
+    resolved = _resolution(tmp_path)
+    store = _PropStore([])
+    calls: list[bool] = []
+
+    async def fake_resolve_project_scope(*_args, **_kwargs):
+        return resolved
+
+    async def fake_make_store(_ctx, *, load_graph_state=True):
+        calls.append(load_graph_state)
+        return store
+
+    monkeypatch.setattr(props, "resolve_project_scope", fake_resolve_project_scope)
+    monkeypatch.setattr(props, "make_sqlite_store_for_context", fake_make_store)
+    monkeypatch.setattr(props, "may_run_asset_repair", lambda _ctx: False)
+
+    response = await props.list_props(
+        project="demo",
+        user={"username": "admin"},
+    )
+
+    assert response["data"] == []
+    assert calls == [False]
 
 
 @pytest.mark.asyncio

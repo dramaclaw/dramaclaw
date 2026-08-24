@@ -4,7 +4,6 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Fingerprint,
-  Image,
   Star,
   Users,
   Volume2,
@@ -16,7 +15,6 @@ import type { Character } from "@/types/character";
 
 export type CharacterStats = {
   total: number;
-  withPortraits: number;
   mainCharacters: number;
   identityReady: number;
   voiceReady: number;
@@ -48,23 +46,21 @@ export function deriveCharacterStats(
 ): CharacterStats {
   const stats: CharacterStats = {
     total: characters.length,
-    withPortraits: 0,
     mainCharacters: 0,
     identityReady: 0,
     voiceReady: 0,
   };
 
   for (const character of characters) {
-    if (hasValue(character.portrait_path) || hasValue(character.portrait_url)) {
-      stats.withPortraits += 1;
-    }
     if (character.is_main === true) {
       stats.mainCharacters += 1;
     }
     if (hasValue(character.reference_audio_path)) {
       stats.voiceReady += 1;
     }
-    if ((identityCounts?.[character.name] ?? 0) > 0) {
+    if (
+      (identityCounts?.[character.name] ?? character.identity_ids?.length ?? 0) > 0
+    ) {
       stats.identityReady += 1;
     }
   }
@@ -96,13 +92,6 @@ export function CharacterStatsStrip({
       label: mainCharacterLabel ?? t("characters.stats.strip.mainCharacter"),
       icon: Star,
       display: `${stats.mainCharacters}`,
-    },
-    {
-      key: "withPortraits",
-      label: t("characters.stats.strip.portrait"),
-      icon: Image,
-      display: `${stats.withPortraits}/${stats.total}`,
-      tone: "ready",
     },
     {
       key: "identityReady",

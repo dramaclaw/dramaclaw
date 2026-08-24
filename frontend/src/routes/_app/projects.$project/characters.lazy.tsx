@@ -36,6 +36,7 @@ import {
 
 import {
   useBuildCharacters,
+  useCharacterDetails,
   useCharacterAssetHistory,
   useCharacterIdentities,
   useCharacters,
@@ -499,13 +500,16 @@ function CharacterAvatar({
   );
   const dim = size === "lg" ? "size-16" : size === "sm" ? "size-9" : "size-10";
   const textSize = size === "lg" ? "text-xl" : "text-sm";
-  if (character.portrait_url) {
+  const portraitUrl = character.portrait_url ?? "";
+  const [failedPortraitUrl, setFailedPortraitUrl] = useState("");
+  if (portraitUrl && failedPortraitUrl !== portraitUrl) {
     return (
       <img
-        src={resolveMediaUrl(character.portrait_url) ?? ""}
+        src={resolveMediaUrl(portraitUrl) ?? ""}
         alt={character.name}
         loading="lazy"
         decoding="async"
+        onError={() => setFailedPortraitUrl(portraitUrl)}
         className={cn(
           "shrink-0 rounded-full border border-border object-cover",
           dim,
@@ -2922,6 +2926,9 @@ function CharactersSplit({
   selectedName,
   setSelectedName,
   selectedChar,
+  selectedDetailLoading,
+  selectedDetailError,
+  onRetrySelectedDetail,
   attempts,
   handleAttempt,
   onRebuild,
@@ -2942,6 +2949,9 @@ function CharactersSplit({
   selectedName: string | null;
   setSelectedName: (name: string | null) => void;
   selectedChar: Character | null;
+  selectedDetailLoading: boolean;
+  selectedDetailError: boolean;
+  onRetrySelectedDetail: () => void;
   attempts: Record<string, number>;
   handleAttempt: (name: string) => void;
   onRebuild: () => void;
@@ -3075,7 +3085,19 @@ function CharactersSplit({
     </>
   );
 
-  const detailPane = (
+  const detailPane = selectedDetailLoading ? (
+    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+      <Loader2 className="mr-2 size-4 animate-spin" />
+      {t("common.loading")}
+    </div>
+  ) : selectedDetailError ? (
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+      <span>{t("common.error")}</span>
+      <Button type="button" variant="outline" size="sm" onClick={onRetrySelectedDetail}>
+        {t("common.refresh")}
+      </Button>
+    </div>
+  ) : (
     <DetailPanel
       character={selectedChar}
       project={project}
@@ -3114,12 +3136,23 @@ function CharactersSplit({
 function CharactersPageContent() {
   const { t } = useTranslation();
   const { project } = Route.useParams();
-  const { data: charsRes, isLoading } = useCharacters(project);
+  const deepLink = useAssetsDeepLink();
+  const [assetTab, setAssetTab] = useState<AssetTab>(() =>
+    deepLink.type ? TAB_BY_ASSET_TYPE[deepLink.type] : readStoredAssetTab(project),
+  );
+  const charactersVisible = assetTab === "characters" || assetTab === "voices";
+  const { data: charsRes, isLoading } = useCharacters(project, charactersVisible);
   const { data: projectRes } = useProject(project);
-  const { data: imageSelectionRes } = useCharacterImageSelection(project);
+  const { data: imageSelectionRes } = useCharacterImageSelection(
+    project,
+    assetTab === "characters",
+  );
   const buildChars = useBuildCharacters(project);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
-  const buildCharactersCost = useGenerationCreditCost("feature", "mainline.build_characters");
+  const buildCharactersCost = useGenerationCreditCost(
+    "feature",
+    assetTab === "characters" ? "mainline.build_characters" : null,
+  );
   const buildCharactersCostDisplay =
     buildCharactersCost.data?.data.display ??
     (buildCharactersCost.error instanceof BillingRuleNotConfiguredError
@@ -3132,12 +3165,8 @@ function CharactersPageContent() {
   const [rebuildDialogOpen, setRebuildDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [attempts, setAttempts] = useState<Record<string, number>>({});
-  const deepLink = useAssetsDeepLink();
-  const ownerIndex = useIdentityOwnerIndex(project);
+  const ownerIndex = useIdentityOwnerIndex(project, charactersVisible);
   const appliedIdentityDeepLink = useRef<string | null>(null);
-  const [assetTab, setAssetTab] = useState<AssetTab>(() =>
-    deepLink.type ? TAB_BY_ASSET_TYPE[deepLink.type] : readStoredAssetTab(project),
-  );
   const [searchQuery, setSearchQuery] = useState("");
   const [imageModel, setImageModel] = useState("");
 
@@ -3196,8 +3225,15 @@ function CharactersPageContent() {
         : -1,
     [filteredCharacters, selectedName],
   );
-  const selectedChar =
+  const selectedSummaryChar =
     selectedIndex >= 0 ? filteredCharacters[selectedIndex] : null;
+  const selectedCharacterDetail = useCharacterDetails(
+    project,
+    selectedSummaryChar?.name ?? null,
+    assetTab === "characters",
+  );
+  const selectedChar =
+    selectedCharacterDetail.data?.data?.[0] ?? selectedSummaryChar;
 
   // Auto-select first character when nothing is selected
   useEffect(() => {
@@ -3288,6 +3324,9 @@ function CharactersPageContent() {
             selectedName={selectedName}
             setSelectedName={setSelectedName}
             selectedChar={selectedChar}
+            selectedDetailLoading={selectedCharacterDetail.isLoading}
+            selectedDetailError={selectedCharacterDetail.isError}
+            onRetrySelectedDetail={() => void selectedCharacterDetail.refetch()}
             attempts={attempts}
             handleAttempt={handleAttempt}
             onRebuild={() => setRebuildDialogOpen(true)}

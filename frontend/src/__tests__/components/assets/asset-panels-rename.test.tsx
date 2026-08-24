@@ -224,7 +224,7 @@ describe("asset panel rename behavior", () => {
     renderWithProviders(<ScenesPanel project="demo" />);
 
     expect(await screen.findAllByText("Hall")).not.toHaveLength(0);
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     fireEvent.change(screen.getByDisplayValue("Hall"), {
       target: { value: "GrandHall" },
     });
@@ -258,7 +258,7 @@ describe("asset panel rename behavior", () => {
     );
 
     expect(await screen.findAllByText("Hall")).not.toHaveLength(0);
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
 
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText('Delete scene "Hall"?')).toBeInTheDocument();
@@ -322,7 +322,7 @@ describe("asset panel rename behavior", () => {
     renderWithProviders(<ScenesPanel project="demo" />);
 
     expect(await screen.findAllByText("Hall")).not.toHaveLength(0);
-    expect(screen.getByText("室内")).toBeInTheDocument();
+    expect(await screen.findByText("室内")).toBeInTheDocument();
     expect(screen.queryByText("interior")).not.toBeInTheDocument();
   });
 
@@ -497,7 +497,7 @@ describe("asset panel rename behavior", () => {
     renderWithProviders(<ScenesPanel project="demo" />);
 
     await screen.findByRole("button", { name: "选择场景 Hall" });
-    await user.click(screen.getByRole("button", { name: "添加场景变体" }));
+    await user.click(await screen.findByRole("button", { name: "添加场景变体" }));
 
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("填写变体或时间后自动生成")).toBeInTheDocument();
@@ -654,7 +654,9 @@ describe("asset panel rename behavior", () => {
     renderWithProviders(<ScenesPanel project="demo" />);
 
     expect(await screen.findAllByText("Hall")).not.toHaveLength(0);
-    const openWorldButtons = screen.getAllByRole("button", { name: "Open Director World" });
+    const openWorldButtons = await screen.findAllByRole("button", {
+      name: "Open Director World",
+    });
     await user.click(openWorldButtons[openWorldButtons.length - 1]);
     await user.click(await screen.findByRole("button", { name: "mock-save-scene-world" }));
 

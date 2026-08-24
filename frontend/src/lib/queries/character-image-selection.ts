@@ -51,14 +51,14 @@ export function useAssetImageSourceSelection(
   });
 }
 
-export function useCharacterImageSelection(project: string) {
+export function useCharacterImageSelection(project: string, enabled = true) {
   return useQuery({
     queryKey: characterImageSelectionQueryKey(project),
     queryFn: ({ signal }) =>
       api
         .get(p`api/v1/projects/${project}/character-image-selection`, { signal })
         .json<OkResponse<CharacterImageSelection>>(),
-    enabled: !!project,
+    enabled: enabled && !!project,
   });
 }
 

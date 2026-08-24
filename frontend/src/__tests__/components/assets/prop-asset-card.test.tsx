@@ -107,6 +107,24 @@ describe("PropAssetCard", () => {
     expect(screen.getByRole("button", { name: "生成参考图" })).toBeInTheDocument();
   });
 
+  it("falls back when a convention URL points at a missing file", () => {
+    renderCard({
+      name: "密信",
+      aliases: [],
+      prop_type: "document",
+      visual_prompt: "",
+      description: "折叠的牛皮纸密信",
+      owner: "",
+      notes: "",
+      reference_url: "/static/projects/demo/assets/props/密信/reference_3view.png",
+    });
+
+    fireEvent.error(screen.getByAltText("密信 参考图"));
+
+    expect(screen.getByText("未生成参考图")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "生成参考图" })).toBeInTheDocument();
+  });
+
   it("renders NiceGUI prop type labels instead of raw prop type codes", () => {
     renderCard({
       name: "TOKEN",
