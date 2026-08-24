@@ -2415,3 +2415,101 @@ async def test_a_changed_cast_puts_the_narrator_question_back_to_the_model():
     )
 
     assert [n for n, a in result.items() if a.is_main] == ["林某"]
+
+
+class OrderedCache(RecordingCache):
+    """A cache that records the order writes arrive in, and can fail on one."""
+
+    def __init__(self, rows=None, fail_on=None):
+        super().__init__(rows)
+        self.fail_on = fail_on
+        self.writes: list[str] = []
+
+    async def save(self, artifact_type, results):
+        self.writes.append(artifact_type)
+        if artifact_type == self.fail_on:
+            raise RuntimeError("killed")
+        await super().save(artifact_type, results)
+
+
+async def test_a_batch_writes_its_nomination_before_the_rows_that_replay_it():
+    """The rows are what make a batch look finished; the answer is not in them."""
+    from novelvideo.structured_extraction import (
+        CHARACTER_APPEARANCE_CACHE_TYPE,
+        CHARACTER_NARRATOR_CACHE_TYPE,
+        enrich_character_appearances,
+    )
+
+    cache = OrderedCache()
+    await enrich_character_appearances(
+        [_cast_member("郑家悦")],
+        agent=FakeAppearanceAgent({"郑家悦": _appearance("郑家悦", is_main=True)}),
+        cache=cache,
+    )
+
+    first = cache.writes.index(CHARACTER_NARRATOR_CACHE_TYPE)
+    rows = cache.writes.index(CHARACTER_APPEARANCE_CACHE_TYPE)
+    assert first < rows
+
+
+async def test_a_crash_between_the_two_writes_leaves_the_batch_replayable():
+    """Killed after the nomination but before the rows, the retry asks again."""
+    from novelvideo.structured_extraction import (
+        CHARACTER_APPEARANCE_CACHE_TYPE,
+        enrich_character_appearances,
+    )
+
+    cache = OrderedCache(fail_on=CHARACTER_APPEARANCE_CACHE_TYPE)
+    dying = FakeAppearanceAgent({"郑家悦": _appearance("郑家悦", is_main=True)})
+    await enrich_character_appearances(
+        [_cast_member("郑家悦")], agent=dying, cache=cache
+    )
+
+    # Nothing about that character survived, so the retry pays for it again
+    # rather than replaying a row whose answer was never stored.
+    cache.fail_on = None
+    retry = FakeAppearanceAgent({"郑家悦": _appearance("郑家悦", is_main=True)})
+    result = await enrich_character_appearances(
+        [_cast_member("郑家悦")], agent=retry, cache=cache
+    )
+
+    assert retry.prompts != []
+    assert [n for n, a in result.items() if a.is_main] == ["郑家悦"]
+
+
+async def test_an_edited_description_retires_the_cast_decision_too():
+    """Names alone survive an edit that changes what the model was asked."""
+    from novelvideo.structured_extraction import (
+        character_appearance_cache_key,
+        narrator_cache_key,
+    )
+
+    before = character_appearance_cache_key(
+        _cast_member("郑家悦", description="遭受校园霸凌")
+    )
+    after = character_appearance_cache_key(
+        _cast_member("郑家悦", description="已经毕业工作")
+    )
+    assert narrator_cache_key([before]) != narrator_cache_key([after])
+
+
+async def test_a_cast_decision_is_not_replayed_across_edited_inputs():
+    """End to end: the fallback must not answer from inputs that are gone."""
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    cache = RecordingCache()
+    await enrich_character_appearances(
+        [_cast_member("郑家悦", description="遭受校园霸凌")],
+        agent=FakeAppearanceAgent({"郑家悦": _appearance("郑家悦", is_main=True)}),
+        cache=cache,
+    )
+
+    # Same cast, same order, different description — and this time the model
+    # nominates nobody. The old decision must not stand in for an answer.
+    result = await enrich_character_appearances(
+        [_cast_member("郑家悦", description="已经毕业工作")],
+        agent=FakeAppearanceAgent({"郑家悦": _appearance("郑家悦")}),
+        cache=cache,
+    )
+
+    assert [n for n, a in result.items() if a.is_main] == []

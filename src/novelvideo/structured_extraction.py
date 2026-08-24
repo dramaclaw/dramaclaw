@@ -1124,22 +1124,39 @@ def appearance_from_cache_payload(payload: str) -> CharacterAppearance | None:
 CHARACTER_NARRATOR_CACHE_TYPE = "character_narrator"
 
 
-def narrator_cache_key(order: list[str]) -> str:
-    """Hash the whole cast, because that is what the answer depends on.
+def narrator_cache_key(fingerprints: list[str]) -> str:
+    """Hash every input the cast decision was made from, in cast order.
 
-    Deliberately not the per-character key.  Who narrates is a ranking over the
-    cast, so it is stored once per cast and retired the moment the cast changes
-    — which is exactly the invalidation a per-character key could not express.
+    The per-character cache keys, not the names.  Names alone survive a changed
+    description, a changed quote and an edited character bible, so a run whose
+    fresh answers happened to nominate nobody could fall back on a decision
+    made from inputs that no longer exist.  Each fingerprint already covers one
+    character's whole input including the shared synopsis, so the ordered list
+    of them is the cast decision's full dependency.
     """
-    payload = {"v": CHARACTER_APPEARANCE_CACHE_VERSION, "cast": list(order)}
+    payload = {"v": CHARACTER_APPEARANCE_CACHE_VERSION, "cast": list(fingerprints)}
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _nominee(appearances: dict[str, CharacterAppearance], order: list[str]) -> str:
+    """The nominated character earliest in cast order, or "" for none."""
+    for name in order:
+        appearance = appearances.get(name)
+        if appearance is not None and appearance.is_main:
+            return name
+    return ""
+
+
+def _nomination_row(key: str, chosen: str) -> dict[str, str]:
+    return {key: json.dumps({"name": chosen}, ensure_ascii=False)}
 
 
 async def _settle_narrator_nomination(
     appearances: dict[str, CharacterAppearance],
     order: list[str],
     cache: Any,
+    key: str,
 ) -> None:
     """Reduce to one nomination, then remember it against this exact cast.
 
@@ -1150,23 +1167,20 @@ async def _settle_narrator_nomination(
     at all — the very failure this field exists to prevent.  The cast-level
     entry survives that gap; a changed cast retires it and the question is put
     to the model again.
+
+    Batches write their own nomination as they go, ahead of their rows, so the
+    answer is never the thing missing after a crash.  This final write is what
+    makes it *deterministic*: batches run concurrently, so the one that stored
+    first is not necessarily the one earliest in cast order, and the settled
+    winner overwrites whatever they raced to.
     """
     _enforce_single_main(appearances, order)
     if cache is None or not order:
         return
-    key = narrator_cache_key(order)
-    chosen = ""
-    for name in order:
-        appearance = appearances.get(name)
-        if appearance is not None and appearance.is_main:
-            chosen = name
-            break
+    chosen = _nominee(appearances, order)
     if chosen:
         await _maybe_await(
-            cache.save(
-                CHARACTER_NARRATOR_CACHE_TYPE,
-                {key: json.dumps({"name": chosen}, ensure_ascii=False)},
-            )
+            cache.save(CHARACTER_NARRATOR_CACHE_TYPE, _nomination_row(key, chosen))
         )
         return
     stored = await _maybe_await(cache.get(CHARACTER_NARRATOR_CACHE_TYPE, [key]))
@@ -1252,8 +1266,10 @@ async def enrich_character_appearances(
             log(f"复用 {len(results)} 个角色形象设定，未调用模型")
 
     pending = [item for item in merged if item.name not in results]
+    narrator_key = narrator_cache_key([keys[name] for name in order])
+
     if not pending:
-        await _settle_narrator_nomination(results, order, cache)
+        await _settle_narrator_nomination(results, order, cache, narrator_key)
         return results
 
     llm = _create_character_appearance_agent(agent)
@@ -1310,6 +1326,21 @@ async def enrich_character_appearances(
                 produced[item.name] = appearance
 
         if cache is not None and produced:
+            # Order matters between these two writes. A batch's rows are what
+            # make it look finished to the next run, and the nomination is not
+            # in them, so writing the rows first opens a window where a crash
+            # leaves every character replayable and the answer gone — the retry
+            # then abstains with nothing left to consult. Writing the
+            # nomination first inverts that: a crash in between leaves the
+            # batch pending, and the retry asks the question again.
+            nominated = _nominee(produced, order)
+            if nominated:
+                await _maybe_await(
+                    cache.save(
+                        CHARACTER_NARRATOR_CACHE_TYPE,
+                        _nomination_row(narrator_key, nominated),
+                    )
+                )
             # Written per batch rather than once at the end, so a build killed
             # halfway keeps what it already paid for.
             await _maybe_await(
@@ -1341,7 +1372,7 @@ async def enrich_character_appearances(
         log(f"⚠️ {len(missing)} 个角色未取得形象设定，面部提示词留空：{'、'.join(missing[:5])}")
     log(f"形象设定完成: {len(results)}/{len(merged)} 个角色")
 
-    await _settle_narrator_nomination(results, order, cache)
+    await _settle_narrator_nomination(results, order, cache, narrator_key)
     return results
 
 
