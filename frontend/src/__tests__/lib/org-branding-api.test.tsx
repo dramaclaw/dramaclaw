@@ -10,8 +10,7 @@ import { server } from "@/__mocks__/msw/server";
 import { getOrgBranding, useOrgBranding } from "@/lib/queries/org-branding";
 import { queryKeys } from "@/lib/query-keys";
 
-const logoUrl =
-  "/assets/org-brand/org_a/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png";
+const logoUrl = "/assets/org-brand/org-1/logo";
 const response = {
   schema_version: 1,
   organization: { org_id: "org-1", name: "Claymore", future: true },
@@ -39,6 +38,7 @@ describe("organization branding query", () => {
     { ...response, schema_version: 2 },
     { ...response, organization: null },
     { ...response, branding: { ...response.branding, logo_url: "https://evil/logo.png" } },
+    { ...response, branding: { ...response.branding, logo_url: "/assets/org-brand/other/logo" } },
   ])("fails open for malformed responses", async (body) => {
     server.use(http.get("*/api/v1/org/branding", () => HttpResponse.json(body)));
     await expect(getOrgBranding()).resolves.toBeNull();

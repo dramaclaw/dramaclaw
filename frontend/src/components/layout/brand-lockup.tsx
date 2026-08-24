@@ -4,15 +4,7 @@ import { useState } from "react";
 
 import type { OrgBrandingResponse } from "@/types/org-branding";
 
-function OrganizationBrand({
-  logoUrl,
-  onError,
-  onLoad,
-}: {
-  logoUrl: string;
-  onError?: (logoUrl: string) => void;
-  onLoad?: (logoUrl: string) => void;
-}) {
+function OrganizationBrand({ logoUrl }: { logoUrl: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) return null;
   return (
@@ -25,28 +17,18 @@ function OrganizationBrand({
         src={logoUrl}
         alt=""
         aria-hidden="true"
-        onLoad={() => onLoad?.(logoUrl)}
-        onError={() => {
-          setFailed(true);
-          onError?.(logoUrl);
-        }}
+        onError={() => setFailed(true)}
         className="h-[22px] max-w-[96px] object-contain"
       />
     </span>
   );
 }
 
-export function BrandLockup({
-  value,
-  onOrganizationBrandError,
-  onOrganizationBrandLoad,
-}: {
+export function BrandLockup({ value }: {
   value: OrgBrandingResponse | null | undefined;
-  onOrganizationBrandError?: (logoUrl: string) => void;
-  onOrganizationBrandLoad?: (logoUrl: string) => void;
 }) {
   const organizationBrand = value?.organization && value.branding
-    ? { logoUrl: value.branding.logo_url }
+    ? { logoUrl: value.branding.logo_url, updatedAt: value.branding.updated_at }
     : null;
   return (
     <span className="flex min-w-0 shrink-0 items-center">
@@ -57,12 +39,7 @@ export function BrandLockup({
         className="h-[22.7px] w-auto max-w-[113px] object-contain"
       />
       {organizationBrand ? (
-        <OrganizationBrand
-          key={organizationBrand.logoUrl}
-          logoUrl={organizationBrand.logoUrl}
-          onError={onOrganizationBrandError}
-          onLoad={onOrganizationBrandLoad}
-        />
+        <OrganizationBrand key={organizationBrand.updatedAt} logoUrl={organizationBrand.logoUrl} />
       ) : null}
     </span>
   );

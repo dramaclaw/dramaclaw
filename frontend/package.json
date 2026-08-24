@@ -9,7 +9,6 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:ce": "tsc -b && vite build --mode ce",
-    "build:org-brand-proxy": "tsc -p docker/tsconfig.json --noEmit && vite build --config docker/vite.proxy.config.ts --configLoader runner",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

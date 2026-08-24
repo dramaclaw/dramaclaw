@@ -1,6 +1,6 @@
 # Rendered to /etc/nginx/conf.d/default.conf at container start by the official
 # nginx image's envsubst step. Only backend coordinates are substituted — see
-# the Dockerfile filter. The loopback asset validator reads its origin directly.
+# the Dockerfile filter.
 
 upstream supertale_backend {
     server ${BACKEND_HOST}:${BACKEND_PORT};
@@ -64,18 +64,20 @@ server {
         add_header Cross-Origin-Resource-Policy "same-origin" always;
     }
 
-    # Exact immutable organization-logo paths only. The loopback companion
-    # validates upstream status, Content-Type and response headers before any
-    # bytes reach the browser; malformed paths fall through to /assets/ =404.
-    location ~ ^/assets/org-brand/[A-Za-z0-9_-]+/sha256/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}\.(png|webp)$ {
+    # Exact organization-logo path only. The EE backend owns validation and
+    # trusted response metadata; malformed paths fall through to /assets/ =404.
+    location ~ ^/assets/org-brand/([A-Za-z0-9_-]+)/logo$ {
         if ($args != "") { return 404; }
         limit_except GET HEAD { deny all; }
-        proxy_pass http://127.0.0.1:3001;
+        proxy_pass http://supertale_backend/api/v1/org-brand/$1/logo;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_pass_request_headers off;
+        proxy_hide_header Set-Cookie;
+        proxy_hide_header Location;
 
         add_header Strict-Transport-Security $hsts_value always;
+        add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     }

@@ -117,14 +117,6 @@ frontend/REUSE.toml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate
 frontend/THIRD-PARTY-LICENSES.txt,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/components.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/docker/nginx.conf.template,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/docker/org-brand-assets.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/docker/org-brand-proxy-main.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/docker/org-brand-proxy-server.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/docker/org-brand-proxy-server.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/docker/start.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/docker/tsconfig.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/docker/vite-org-brand-proxy.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/docker/vite.proxy.config.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/index.html,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/package.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/pnpm-lock.yaml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

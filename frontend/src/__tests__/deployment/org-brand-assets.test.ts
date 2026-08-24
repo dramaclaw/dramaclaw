@@ -1,113 +1,59 @@
-import { spawn } from "node:child_process";
-import { once } from "node:events";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+import { existsSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
 describe("organization brand asset deployment contract", () => {
-  it("wires the local Vite server through the same fail-closed asset handler", () => {
+  it("uses the built-in Vite proxy for the exact fixed public path", () => {
     const config = readFileSync("vite.config.ts", "utf8");
 
-    expect(config).toContain('import { createOrgBrandAssetDevPlugin } from "./docker/vite-org-brand-proxy"');
-    expect(config).toContain("createOrgBrandAssetDevPlugin(");
-    expect(config).toContain("env.ORG_BRAND_ASSET_ORIGIN || apiTarget");
+    expect(config).toContain('"^/assets/org-brand/[A-Za-z0-9_-]+/logo$"');
+    expect(config).toContain("target: apiTarget");
+    expect(config).toContain('path.replace("/assets/org-brand/", "/api/v1/org-brand/")');
+    expect(config).toContain('proxyReq.removeHeader("cookie")');
+    expect(config).toContain('proxyReq.removeHeader("authorization")');
+    expect(config).not.toContain("createOrgBrandAssetDevPlugin");
   });
 
-  it("routes only exact immutable asset paths to a fail-closed companion", () => {
+  it("routes only the exact fixed logo path directly to the existing backend", () => {
     const config = readFileSync("docker/nginx.conf.template", "utf8");
     const block = config.match(
       /location ~ \^\/assets\/org-brand([\s\S]*?)\n    \}/,
     )?.[1];
 
+    expect(block).toContain("/([A-Za-z0-9_-]+)/logo$");
     expect(block).toContain("limit_except GET HEAD");
     expect(block).toContain('if ($args != "") { return 404; }');
-    expect(block).toContain("proxy_pass http://127.0.0.1:3001");
-    expect(block).not.toContain("ORG_BRAND_ASSET_ORIGIN");
-    expect(block).not.toContain("immutable");
+    expect(block).toContain("proxy_pass http://supertale_backend/api/v1/org-brand/$1/logo");
+    expect(block).toContain("proxy_pass_request_headers off");
+    expect(block).not.toContain("127.0.0.1:3001");
     expect(config.indexOf("location ~ ^/assets/org-brand")).toBeLessThan(
       config.indexOf("location /assets/"),
     );
   });
 
-  it("runs the validator companion with the public asset origin", () => {
+  it("keeps the runtime as the standard static Nginx container", () => {
     const dockerfile = readFileSync("Dockerfile", "utf8");
-    const proxyMain = readFileSync("docker/org-brand-proxy-main.ts", "utf8");
-    const proxyBuild = readFileSync("docker/vite.proxy.config.ts", "utf8");
+    const packageJson = readFileSync("package.json", "utf8");
 
-    expect(dockerfile).toContain(
-      'NGINX_ENVSUBST_FILTER="^(BACKEND_HOST|BACKEND_PORT)$"',
-    );
-    expect(dockerfile).not.toContain("ORG_BRAND_ASSET_ORIGIN=https://novelvideo-assets-chengdu");
-    expect(proxyMain).toContain("process.env.BACKEND_HOST");
-    expect(proxyMain).toContain("process.env.BACKEND_PORT");
-    expect(dockerfile).toContain("apk add --no-cache nodejs");
-    expect(dockerfile).toContain("org-brand-proxy-server.mjs");
-    expect(dockerfile).toContain('CMD ["/opt/dramaclaw/start.sh"]');
-    expect(proxyBuild).toContain("copyPublicDir: false");
+    expect(dockerfile).toContain("RUN pnpm build");
+    expect(dockerfile).not.toContain("apk add --no-cache nodejs");
+    expect(dockerfile).not.toContain("org-brand-proxy-server.mjs");
+    expect(dockerfile).not.toContain("docker/start.sh");
+    expect(packageJson).not.toContain("build:org-brand-proxy");
   });
 
-  it("keeps Nginx alive and restarts the brand companion after it exits", async () => {
-    const fixture = mkdtempSync(path.join(os.tmpdir(), "brand-proxy-supervisor-"));
-    const marker = path.join(fixture, "marker.txt");
-    const brand = path.join(fixture, "brand.mjs");
-    const nginx = path.join(fixture, "nginx-entrypoint.sh");
-    writeFileSync(brand, [
-      'import { appendFileSync } from "node:fs";',
-      'appendFileSync(process.env.SUPERVISOR_MARKER, "brand-started\\n");',
-      'process.exit(9);',
-    ].join("\n"));
-    writeFileSync(nginx, [
-      "#!/bin/sh",
-      'echo "nginx-started" >> "$SUPERVISOR_MARKER"',
-      "trap 'exit 0' TERM INT",
-      "while :; do sleep 1; done",
-    ].join("\n") + "\n");
-    chmodSync(nginx, 0o755);
-
-    const supervisor = spawn("sh", ["docker/start.sh", brand, nginx], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        SUPERVISOR_MARKER: marker,
-        ORG_BRAND_RESTART_DELAY_SECONDS: "0.02",
-      },
-      stdio: "pipe",
-    });
-    try {
-      const outcome = await Promise.race([
-        once(supervisor, "exit").then(() => "exited"),
-        (async () => {
-          for (let attempt = 0; attempt < 200; attempt += 1) {
-            const lifecycle = (() => {
-              try {
-                return readFileSync(marker, "utf8");
-              } catch {
-                return "";
-              }
-            })();
-            if (
-              (lifecycle.match(/brand-started/g) ?? []).length >= 2 &&
-              lifecycle.includes("nginx-started")
-            ) return lifecycle;
-            await delay(20);
-          }
-          return "timed-out";
-        })(),
-      ]);
-
-      expect(outcome).not.toBe("exited");
-      expect(outcome).not.toBe("timed-out");
-      expect(outcome).toContain("nginx-started");
-      expect(supervisor.exitCode).toBeNull();
-    } finally {
-      if (supervisor.exitCode === null && supervisor.signalCode === null) {
-        supervisor.kill("SIGTERM");
-        await once(supervisor, "exit");
-      }
-      rmSync(fixture, { recursive: true, force: true });
+  it("does not retain the removed companion implementation", () => {
+    for (const file of [
+      "docker/org-brand-assets.ts",
+      "docker/org-brand-proxy-main.ts",
+      "docker/org-brand-proxy-server.test.ts",
+      "docker/org-brand-proxy-server.ts",
+      "docker/start.sh",
+      "docker/tsconfig.json",
+      "docker/vite-org-brand-proxy.ts",
+      "docker/vite.proxy.config.ts",
+    ]) {
+      expect(existsSync(file), file).toBe(false);
     }
-  }, 20_000);
+  });
 });

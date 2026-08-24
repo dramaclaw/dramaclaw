@@ -146,7 +146,7 @@ describe("Header runtime gating", () => {
       schema_version: 1,
       organization: { org_id: "org-1", name: "Claymore" },
       branding: {
-        logo_url: "/assets/org-brand/org_a/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png",
+        logo_url: "/assets/org-brand/org-1/logo",
         updated_at: "2026-08-21T10:00:00Z",
       },
     };
@@ -158,34 +158,7 @@ describe("Header runtime gating", () => {
     expect(screen.queryByRole("img", { name: "Claymore" })).not.toBeInTheDocument();
 
     fireEvent.error(screen.getByTestId("organization-brand").querySelector("img")!);
-    expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Home — Claymore" })).not.toBeInTheDocument();
-  });
-
-  it("restores the organization name when the same Logo URL is removed and loads again", () => {
-    const value = {
-      schema_version: 1 as const,
-      organization: { org_id: "org-1", name: "Claymore" },
-      branding: {
-        logo_url: "/assets/org-brand/org_a/sha256/ab/cd/" + "abcd" + "a".repeat(60) + ".png",
-        updated_at: "2026-08-21T10:00:00Z",
-      },
-    };
-    brandingState.data = value;
-    const view = renderHeader();
-    fireEvent.error(screen.getByTestId("organization-brand").querySelector("img")!);
-    expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
-
-    brandingState.data = undefined;
-    view.rerender(
-      <QueryClientProvider client={new QueryClient()}><Header /></QueryClientProvider>,
-    );
-    brandingState.data = value;
-    view.rerender(
-      <QueryClientProvider client={new QueryClient()}><Header /></QueryClientProvider>,
-    );
-    fireEvent.load(screen.getByTestId("organization-brand").querySelector("img")!);
-
+    expect(screen.queryByTestId("organization-brand")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Home — Claymore" })).toBeInTheDocument();
   });
 

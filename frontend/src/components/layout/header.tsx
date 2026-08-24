@@ -62,7 +62,6 @@ export function Header() {
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [accountPanelVisible, setAccountPanelVisible] = useState(false);
   const [settingsWarningBubbleDismissed, setSettingsWarningBubbleDismissed] = useState(false);
-  const [failedBrandLogoUrl, setFailedBrandLogoUrl] = useState<string | null>(null);
   const [accountPanelPosition, setAccountPanelPosition] = useState<{ top: number; right: number }>({
     top: 56,
     right: 16,
@@ -91,9 +90,8 @@ export function Header() {
   const showLogout = authRequired();
   const ceRuntime = isCeRuntime();
   const orgBranding = useOrgBranding(!ceRuntime && Boolean(username));
-  const brandLogoUrl = orgBranding.data?.branding?.logo_url ?? null;
-  const brandName = brandLogoUrl && failedBrandLogoUrl !== brandLogoUrl
-    ? orgBranding.data?.organization?.name ?? null
+  const brandName = orgBranding.data?.branding
+    ? orgBranding.data.organization?.name ?? null
     : null;
   const homeLinkLabel = brandName
     ? `${t("app.logoHomeTooltip")} — ${brandName}`
@@ -238,13 +236,7 @@ export function Header() {
                   />
                 }
               >
-                <BrandLockup
-                  value={orgBranding.data}
-                  onOrganizationBrandError={setFailedBrandLogoUrl}
-                  onOrganizationBrandLoad={(logoUrl) => {
-                    setFailedBrandLogoUrl((failedUrl) => failedUrl === logoUrl ? null : failedUrl);
-                  }}
-                />
+                <BrandLockup value={orgBranding.data} />
               </TooltipTrigger>
               <TooltipContent
                 side="bottom"

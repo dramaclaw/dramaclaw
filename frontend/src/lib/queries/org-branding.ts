@@ -6,8 +6,7 @@ import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import type { OrgBrandingResponse } from "@/types/org-branding";
 
-const LOGO_PATH =
-  /^\/assets\/org-brand\/[A-Za-z0-9_-]+\/sha256\/([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})\.(png|webp)$/;
+const LOGO_PATH = /^\/assets\/org-brand\/([A-Za-z0-9_-]+)\/logo$/;
 const ZONED_TIME =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 
@@ -39,7 +38,7 @@ function parseBranding(value: unknown): OrgBrandingResponse | null {
     return null;
   }
   const match = LOGO_PATH.exec(value.branding.logo_url);
-  if (!match || match[1] !== match[3].slice(0, 2) || match[2] !== match[3].slice(2, 4)) {
+  if (!match || match[1] !== organization.org_id) {
     return null;
   }
   return {
