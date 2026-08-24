@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import make_sqlite_store_for_context, resolve_project_scope
@@ -56,7 +56,12 @@ def _beat_asset_refs(beat) -> tuple[list[str], list[str], str]:
 
 
 async def _load_visual_beats(ctx):
-    store = await make_sqlite_store_for_context(ctx)
+    """Read every beat, with graph-state hydration skipped.
+
+    ``list_visual_beats()`` touches only the beats table, so the three
+    full-table reads inside ``load_graph_state()`` would be pure overhead.
+    """
+    store = await make_sqlite_store_for_context(ctx, load_graph_state=False)
     try:
         return await store.list_visual_beats()
     finally:
@@ -68,28 +73,44 @@ async def _load_visual_beats(ctx):
 @router.get("/projects/{project}/assets/references")
 async def get_project_asset_references(
     project: str,
+    ids: list[str] = Query(default=[]),
     user: dict = Depends(get_api_user),
 ):
     """Whole-project reverse index: which beats reference each asset.
 
-    The assets workbench needs a usage count on every card at once. Fetching it
-    per asset would be one request per card, and deriving it on the client means
-    pulling every episode's full beat payload (sketch/frame/video URLs, audio
-    durations) just to read three fields per beat. Both are answered here by a
-    single pass over ``list_visual_beats()`` — one SQL read, no filesystem work.
+    Two shapes, one scan, because the assets workbench needs two different
+    things and paying for the second everywhere is what made this slow:
 
-    Reference keys are ``"{type}:{id}"`` so the client can look one up without
-    walking the map. Id semantics match the persisted beat contract:
-    identity → ``identity_id``, scene → ``scene_ref.scene_id``, prop → prop name.
+    - ``counts`` is always returned — one integer per asset. Every card in every
+      grid shows a usage badge, and the panels sort/sum by it, so this has to
+      cover the whole project. It stays small: one int per asset, not one entry
+      per reference.
+    - ``references`` (and ``scene_co_occurrence``) are returned only for the
+      assets named in ``ids``, i.e. the ones whose beat list is actually on
+      screen. Passing every id back would make the response grow with total
+      references — the dimension that grows without bound as episodes pile up.
+
+    Callers pass ``?ids=identity:foo&ids=scene:bar``; keys are ``"{type}:{id}"``
+    throughout so a client can look one up without walking the map. Id semantics
+    match the persisted beat contract: identity → ``identity_id``,
+    scene → ``scene_ref.scene_id``, prop → prop name.
     """
     resolved = await resolve_project_scope(project, user, required_role="viewer")
     beats = await _load_visual_beats(resolved.ctx)
 
+    wanted = {key for key in (str(item or "").strip() for item in ids) if key}
+    wanted_scenes = {
+        key.split(":", 1)[1] for key in wanted if key.startswith("scene:") and ":" in key
+    }
+
+    counts: dict[str, int] = {}
     references: dict[str, list[dict[str, int]]] = {}
     scene_co: dict[str, dict[str, set[str]]] = {}
 
-    def _push(key: str, ref: dict[str, int]) -> None:
-        references.setdefault(key, []).append(ref)
+    def _record(key: str, ref: dict[str, int]) -> None:
+        counts[key] = counts.get(key, 0) + 1
+        if key in wanted:
+            references.setdefault(key, []).append(ref)
 
     for beat in beats:
         ref = {
@@ -99,13 +120,15 @@ async def get_project_asset_references(
         identities, props, scene_id = _beat_asset_refs(beat)
 
         for identity_id in identities:
-            _push(f"identity:{identity_id}", ref)
+            _record(f"identity:{identity_id}", ref)
         for prop_id in props:
-            _push(f"prop:{prop_id}", ref)
+            _record(f"prop:{prop_id}", ref)
         if not scene_id:
             continue
 
-        _push(f"scene:{scene_id}", ref)
+        _record(f"scene:{scene_id}", ref)
+        if scene_id not in wanted_scenes:
+            continue
         bucket = scene_co.setdefault(scene_id, {"identities": set(), "props": set()})
         bucket["identities"].update(identities)
         bucket["props"].update(props)
@@ -113,6 +136,7 @@ async def get_project_asset_references(
     return {
         "ok": True,
         "data": {
+            "counts": counts,
             "references": references,
             "scene_co_occurrence": {
                 scene_id: {

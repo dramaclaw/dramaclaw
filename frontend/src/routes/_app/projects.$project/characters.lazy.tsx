@@ -85,7 +85,8 @@ import { UsageCountBadge } from "@/components/assets/usage-count-badge";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { AssetBeatReferences } from "@/components/assets/asset-beat-references";
 import {
-  useAssetReferenceIndex,
+  useAssetReferenceCounts,
+  useAssetReferences,
   type AssetRefType,
   type BeatReference,
 } from "@/lib/queries/asset-references";
@@ -2371,10 +2372,25 @@ function IdentitiesGridSection({
     project,
     character.name,
   );
-  const refIndex = useAssetReferenceIndex(project);
   const deepLink = useAssetsDeepLink();
   const createIdentity = useCreateIdentity(project, character.name);
   const identities = identitiesRes?.data ?? [];
+  // Unlike the scene/prop panels, every identity card renders its beat list
+  // inline rather than behind a dialog — so the detail slice has to cover all
+  // of them. It stays one small request: these are the selected character's
+  // identities, not the project's.
+  const refCounts = useAssetReferenceCounts(project);
+  const refDetail = useAssetReferences(
+    project,
+    useMemo(
+      () =>
+        identities.map((id) => ({
+          type: "identity" as const,
+          id: id.identity_id,
+        })),
+      [identities],
+    ),
+  );
   const gridRef = useAssetFocus(
     deepLink.type === "identity" ? deepLink.id : null,
     identities.length > 0,
@@ -2470,8 +2486,14 @@ function IdentitiesGridSection({
                 imageModel={imageModel}
                 ageLabel={ageLabel}
                 roleLabel={roleLabel}
-                referenceCount={refIndex.countFor("identity", id.identity_id)}
-                references={refIndex.referencesFor("identity", id.identity_id)}
+                referenceCount={refCounts.countFor(
+                  "identity",
+                  id.identity_id,
+                )}
+                references={refDetail.referencesFor(
+                  "identity",
+                  id.identity_id,
+                )}
                 onAttempt={onAttempt}
               />
             </div>

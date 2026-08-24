@@ -195,8 +195,20 @@ async def make_sqlite_store(username: str, project: str) -> "SQLiteStore":
     return store
 
 
-async def make_sqlite_store_for_context(ctx: ProjectContext) -> "SQLiteStore":
-    """Create a SQLiteStore from the resolved project owner/home paths."""
+async def make_sqlite_store_for_context(
+    ctx: ProjectContext,
+    *,
+    load_graph_state: bool = True,
+) -> "SQLiteStore":
+    """Create a SQLiteStore from the resolved project owner/home paths.
+
+    ``load_graph_state()`` hydrates the in-memory character/episode/prop caches
+    with three full-table reads. Callers that only touch ``beats`` (and never
+    ``get_character`` / ``get_episode`` / ``get_cached_prop`` / ``resolve_name``)
+    should pass ``load_graph_state=False`` — otherwise those three reads cost
+    more than the query they precede. Default stays ``True`` so existing callers
+    keep the hydrated behaviour they rely on.
+    """
     from novelvideo.sqlite_store import SQLiteStore
 
     require_project_home_node(ctx, operation="open project SQLite store")
@@ -207,7 +219,8 @@ async def make_sqlite_store_for_context(ctx: ProjectContext) -> "SQLiteStore":
         state_dir=str(ctx.state_dir),
     )
     await store.initialize()
-    await store.load_graph_state()
+    if load_graph_state:
+        await store.load_graph_state()
     return store
 
 

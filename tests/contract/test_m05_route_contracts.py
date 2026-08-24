@@ -344,7 +344,7 @@ def m05_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         store.resolved_roles.append(("scenes", required_role))
         return ctx, "alice", _PROJECT, project_dir, str(project_dir), store
 
-    async def make_store_for_context(_ctx):
+    async def make_store_for_context(_ctx, **_kwargs):
         return store
 
     monkeypatch.setattr(scenes, "_resolve_scene_project", resolve_scene_project)

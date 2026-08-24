@@ -242,7 +242,7 @@ def m04_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         assert project == _PROJECT
         return ctx, "alice", _PROJECT, project_dir, str(project_dir), store
 
-    async def make_store_for_context(_ctx):
+    async def make_store_for_context(_ctx, **_kwargs):
         return store
 
     async def make_store(_username: str, _project: str):

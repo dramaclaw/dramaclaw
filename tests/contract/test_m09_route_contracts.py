@@ -288,7 +288,7 @@ def m09_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         assert project == _PROJECT
         return resolution
 
-    async def make_store_for_context(_ctx):
+    async def make_store_for_context(_ctx, **_kwargs):
         return store
 
     async def make_store(username: str, project: str):

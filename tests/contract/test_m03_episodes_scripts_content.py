@@ -217,7 +217,7 @@ def m03_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             runtime_dir=str(tmp_path / "runtime"),
         )
 
-    async def make_store_for_context(_ctx):
+    async def make_store_for_context(_ctx, **_kwargs):
         return store
 
     async def make_store(username: str, project: str):

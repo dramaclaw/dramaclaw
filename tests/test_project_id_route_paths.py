@@ -50,7 +50,7 @@ async def test_asset_references_resolves_project_id_before_opening_store(monkeyp
             runtime_dir=str(ctx.runtime_dir),
         )
 
-    async def fake_make_sqlite_store_for_context(ctx_arg):
+    async def fake_make_sqlite_store_for_context(ctx_arg, **_kwargs):
         assert ctx_arg is ctx
         calls.append((ctx_arg.owner_username, ctx_arg.project_name))
         return Store()
@@ -113,7 +113,7 @@ async def test_verification_routes_resolve_project_id_before_opening_project_dir
             runtime_dir=str(ctx.runtime_dir),
         )
 
-    async def fake_make_sqlite_store_for_context(ctx_arg):
+    async def fake_make_sqlite_store_for_context(ctx_arg, **_kwargs):
         assert ctx_arg is ctx
         return Store()
 

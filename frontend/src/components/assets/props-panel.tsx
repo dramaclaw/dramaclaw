@@ -18,7 +18,8 @@ import {
   type AssetSortKey,
 } from "@/components/assets/asset-search-box";
 import {
-  useAssetReferenceIndex,
+  useAssetReferenceCounts,
+  useAssetReferences,
   type BeatReference,
 } from "@/lib/queries/asset-references";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";
@@ -343,7 +344,17 @@ export function PropsPanel({
   const [editing, setEditing] = useState<PropAsset | null>(null);
   const updateProp = useUpdateProp(project, editing?.name ?? "");
   const deleteProp = useDeleteProp(project);
-  const refIndex = useAssetReferenceIndex(project);
+  // Counts feed every card's badge and the usage sort, so they cover the whole
+  // project. The beat list is only rendered inside the edit dialog, so it is
+  // fetched for that one prop instead of for all of them.
+  const refCounts = useAssetReferenceCounts(project);
+  const refDetail = useAssetReferences(
+    project,
+    useMemo(
+      () => (editing ? [{ type: "prop" as const, id: editing.name }] : []),
+      [editing],
+    ),
+  );
   const imageSourceQuery = useAssetImageSourceSelection(project, "prop");
   const imageSourceSelection = imageSourceQuery.data?.data.image_source_selection ?? "";
   const allItems = props.data?.data ?? [];
@@ -362,9 +373,9 @@ export function PropsPanel({
       filtered,
       sortKey,
       (prop) => prop.name,
-      (prop) => refIndex.countFor("prop", prop.name),
+      (prop) => refCounts.countFor("prop", prop.name),
     );
-  }, [allItems, searchQuery, sortKey, refIndex]);
+  }, [allItems, searchQuery, sortKey, refCounts]);
   const gridRef = useAssetFocus(focusId, !props.isLoading && items.length > 0);
 
   async function handleSave(data: PropPayload) {
@@ -494,7 +505,7 @@ export function PropsPanel({
                   project={project}
                   prop={prop}
                   imageSourceSelection={imageSourceSelection}
-                  referenceCount={refIndex.countFor("prop", prop.name)}
+                  referenceCount={refCounts.countFor("prop", prop.name)}
                   onEdit={() => {
                     setEditing(prop);
                     setDialogOpen(true);
@@ -510,7 +521,9 @@ export function PropsPanel({
         open={dialogOpen}
         initial={editing}
         project={project}
-        references={editing ? refIndex.referencesFor("prop", editing.name) : []}
+        references={
+          editing ? refDetail.referencesFor("prop", editing.name) : []
+        }
         onOpenChange={(open) => {
           setDialogOpen(open);
           if (!open) setEditing(null);

@@ -296,7 +296,7 @@ def m06_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         assert project_id == _PROJECT
         return ctx
 
-    async def make_store_for_context(_ctx):
+    async def make_store_for_context(_ctx, **_kwargs):
         return store
 
     async def beat_for_capture(*_args, **_kwargs):

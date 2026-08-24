@@ -1836,8 +1836,10 @@ async def test_asset_references_match_beat_asset_ids(monkeypatch, tmp_path):
             runtime_dir=str(tmp_path / "runtime"),
         )
 
-    async def fake_make_sqlite_store_for_context(ctx_arg):
+    async def fake_make_sqlite_store_for_context(ctx_arg, **kwargs):
         assert ctx_arg is ctx
+        # 引用查询只读 beats 表，不该带上 load_graph_state 的三次全表读。
+        assert kwargs == {"load_graph_state": False}
         return Store()
 
     monkeypatch.setattr(assets, "resolve_project_scope", fake_resolve_project_scope)
@@ -1866,6 +1868,11 @@ async def test_asset_references_match_beat_asset_ids(monkeypatch, tmp_path):
 
 
 def _patch_asset_references(monkeypatch, tmp_path, beats):
+    """Patch the assets routes onto a fixed beat list.
+
+    Returns ``(module, store_kwargs)``; ``store_kwargs`` records how the route
+    opened the store, so a test can assert the graph-state hydration is skipped.
+    """
     from novelvideo.api.routes import assets
 
     class Store:
@@ -1880,77 +1887,102 @@ def _patch_asset_references(monkeypatch, tmp_path, beats):
         state_dir=tmp_path / "state",
         runtime_dir=tmp_path / "runtime",
     )
+    store_kwargs: list[dict] = []
 
     async def fake_resolve_project_scope(project, user, *, required_role="viewer"):
         assert required_role == "viewer"
         return SimpleNamespace(ctx=ctx, username="admin", project_name="demo", project_dir=tmp_path)
 
-    async def fake_make_sqlite_store_for_context(ctx_arg):
+    async def fake_make_sqlite_store_for_context(ctx_arg, **kwargs):
         assert ctx_arg is ctx
+        store_kwargs.append(kwargs)
         return Store()
 
     monkeypatch.setattr(assets, "resolve_project_scope", fake_resolve_project_scope)
     monkeypatch.setattr(
         assets, "make_sqlite_store_for_context", fake_make_sqlite_store_for_context
     )
-    return assets
+    return assets, store_kwargs
+
+
+_REFERENCE_BEATS = [
+    NovelVisualBeat(
+        episode_number=1,
+        beat_number=12,
+        narration="n",
+        visual_description="苏清晏握着[[油泼辣子]]",
+        detected_identities_json='["苏清晏_少女"]',
+        detected_props_json='["油泼辣子"]',
+        scene_ref_json='{"scene_id": "兰州拉面馆"}',
+    ),
+    NovelVisualBeat(
+        episode_number=3,
+        beat_number=4,
+        narration="n",
+        visual_description="v",
+        detected_identities_json='["路人_青年"]',
+        detected_props_json='["木凳"]',
+        scene_ref_json='{"scene_id": "兰州拉面馆"}',
+    ),
+]
 
 
 @pytest.mark.asyncio
-async def test_project_asset_references_indexes_every_asset_in_one_pass(monkeypatch, tmp_path):
-    assets = _patch_asset_references(
-        monkeypatch,
-        tmp_path,
-        [
-            NovelVisualBeat(
-                episode_number=1,
-                beat_number=12,
-                narration="n",
-                visual_description="苏清晏握着[[油泼辣子]]",
-                detected_identities_json='["苏清晏_少女"]',
-                detected_props_json='["油泼辣子"]',
-                scene_ref_json='{"scene_id": "兰州拉面馆"}',
-            ),
-            NovelVisualBeat(
-                episode_number=3,
-                beat_number=4,
-                narration="n",
-                visual_description="v",
-                detected_identities_json='["路人_青年"]',
-                detected_props_json='["木凳"]',
-                scene_ref_json='{"scene_id": "兰州拉面馆"}',
-            ),
-        ],
-    )
+async def test_project_asset_references_counts_every_asset_in_one_pass(monkeypatch, tmp_path):
+    assets, _ = _patch_asset_references(monkeypatch, tmp_path, _REFERENCE_BEATS)
 
     res = await assets.get_project_asset_references(
-        project="proj_demo", user={"username": "admin"}
+        project="proj_demo", ids=[], user={"username": "admin"}
     )
 
     assert res["ok"] is True
+    assert res["data"]["counts"] == {
+        "identity:苏清晏_少女": 1,
+        "identity:路人_青年": 1,
+        "prop:油泼辣子": 1,
+        "prop:木凳": 1,
+        "scene:兰州拉面馆": 2,
+    }
+    # 没点开任何资产时不该附带 beat 列表——那正是随集数无限增长的那一维。
+    assert res["data"]["references"] == {}
+    assert res["data"]["scene_co_occurrence"] == {}
+
+
+@pytest.mark.asyncio
+async def test_project_asset_references_returns_beat_lists_only_for_requested_ids(
+    monkeypatch, tmp_path
+):
+    assets, _ = _patch_asset_references(monkeypatch, tmp_path, _REFERENCE_BEATS)
+
+    res = await assets.get_project_asset_references(
+        project="proj_demo",
+        ids=["scene:兰州拉面馆", "identity:苏清晏_少女"],
+        user={"username": "admin"},
+    )
+
     assert res["data"]["references"] == {
         "identity:苏清晏_少女": [{"episode": 1, "beat_number": 12}],
-        "identity:路人_青年": [{"episode": 3, "beat_number": 4}],
-        "prop:油泼辣子": [{"episode": 1, "beat_number": 12}],
-        "prop:木凳": [{"episode": 3, "beat_number": 4}],
         "scene:兰州拉面馆": [
             {"episode": 1, "beat_number": 12},
             {"episode": 3, "beat_number": 4},
         ],
     }
+    # 共现只为被请求的场景计算。
     assert res["data"]["scene_co_occurrence"] == {
         "兰州拉面馆": {
             "identities": ["苏清晏_少女", "路人_青年"],
             "props": ["木凳", "油泼辣子"],
         }
     }
+    # 计数始终覆盖全项目，与请求了哪些 id 无关。
+    assert res["data"]["counts"]["prop:木凳"] == 1
 
 
 @pytest.mark.asyncio
 async def test_project_asset_references_counts_inline_prop_markers(monkeypatch, tmp_path):
     # 只在 visual_description 里 [[标记]]、从未色绑到 detected_props 的道具，
     # 也必须算作一次引用——否则它的用量角标会恒为 0。
-    assets = _patch_asset_references(
+    assets, _ = _patch_asset_references(
         monkeypatch,
         tmp_path,
         [
@@ -1967,26 +1999,40 @@ async def test_project_asset_references_counts_inline_prop_markers(monkeypatch, 
     )
 
     res = await assets.get_project_asset_references(
-        project="proj_demo", user={"username": "admin"}
+        project="proj_demo", ids=["prop:青瓷碗"], user={"username": "admin"}
     )
 
-    assert res["data"]["references"] == {
-        "prop:青瓷碗": [{"episode": 2, "beat_number": 7}],
-        "prop:竹筷": [{"episode": 2, "beat_number": 7}],
-    }
+    assert res["data"]["counts"] == {"prop:青瓷碗": 1, "prop:竹筷": 1}
+    assert res["data"]["references"] == {"prop:青瓷碗": [{"episode": 2, "beat_number": 7}]}
     # 没有 scene_ref 的 beat 不该凭空造出一个空 key 的场景条目。
     assert res["data"]["scene_co_occurrence"] == {}
 
 
 @pytest.mark.asyncio
 async def test_project_asset_references_empty_project(monkeypatch, tmp_path):
-    assets = _patch_asset_references(monkeypatch, tmp_path, [])
+    assets, _ = _patch_asset_references(monkeypatch, tmp_path, [])
 
     res = await assets.get_project_asset_references(
-        project="proj_demo", user={"username": "admin"}
+        project="proj_demo", ids=[], user={"username": "admin"}
     )
 
-    assert res == {"ok": True, "data": {"references": {}, "scene_co_occurrence": {}}}
+    assert res == {
+        "ok": True,
+        "data": {"counts": {}, "references": {}, "scene_co_occurrence": {}},
+    }
+
+
+@pytest.mark.asyncio
+async def test_project_asset_references_skips_graph_state_hydration(monkeypatch, tmp_path):
+    # load_graph_state() 是 characters/episodes/props 三次全表读；引用索引只碰
+    # beats 表，带上它比这里的查询本身还贵。
+    assets, store_kwargs = _patch_asset_references(monkeypatch, tmp_path, _REFERENCE_BEATS)
+
+    await assets.get_project_asset_references(
+        project="proj_demo", ids=[], user={"username": "admin"}
+    )
+
+    assert store_kwargs == [{"load_graph_state": False}]
 
 
 @pytest.mark.asyncio

@@ -338,13 +338,20 @@ async def get_beats(project: str, episode_num: int, user: dict = Depends(get_api
     resolved = await resolve_project_scope(project, user, required_role="viewer")
     project_dir = resolved.project_dir
 
-    # 从图谱读取 beats（统一数据源）
+    # 从图谱读取 beats（统一数据源）。
+    # get_beats_as_dicts 只读 beats 表，不碰 store 的角色/集/道具内存缓存，
+    # 所以跳过 load_graph_state()——那是三次全表读，比这里的查询本身还贵。
     store = (
-        await make_sqlite_store_for_context(resolved.ctx)
+        await make_sqlite_store_for_context(resolved.ctx, load_graph_state=False)
         if resolved.ctx
         else await make_sqlite_store(resolved.username, resolved.project_name)
     )
-    beats = await store.get_beats_as_dicts(episode_num)
+    try:
+        beats = await store.get_beats_as_dicts(episode_num)
+    finally:
+        close = getattr(store, "close", None)
+        if close:
+            await close()
 
     # 为每个 beat 附加 sketch_url / frame_url / video_url / audio_url.
     # Asset files are named by beat_number. Do not use enumerate index here:
