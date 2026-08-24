@@ -1098,6 +1098,74 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
 
 
 @pytest.mark.asyncio
+async def test_codex_prompt_construction_failure_cleans_turn_credentials(
+    monkeypatch,
+    tmp_path,
+):
+    project_state = tmp_path / "state" / "admin" / "project-a"
+    captured: dict[str, Path] = {}
+    revoked: list[str] = []
+    finished: list[str] = []
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, token):
+            revoked.append(token)
+
+    class FakeTurnOperation:
+        async def finish(self, disposition):
+            finished.append(disposition)
+
+    async def fake_authorize(**_kwargs):
+        return SimpleNamespace()
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    def fake_build_thread(*_args, **kwargs):
+        token_file = Path(kwargs["agent_token_file"])
+        assert token_file.read_text(encoding="utf-8") == "agent-token"
+        captured["token_file"] = token_file
+        return SimpleNamespace()
+
+    def fail_prompt(*_args, **_kwargs):
+        raise RuntimeError("prompt construction failed")
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service,
+        "_turn_operation_finalizer",
+        lambda _authorization: FakeTurnOperation(),
+    )
+    monkeypatch.setattr(
+        chat_service,
+        "_create_page_agent_session_token",
+        fake_create_token,
+    )
+    monkeypatch.setattr(chat_service, "_build_codex_thread", fake_build_thread)
+    monkeypatch.setattr(chat_service, "_prompt_with_user_context", fail_prompt)
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(_event):
+        raise AssertionError("prompt failure must happen before streaming")
+
+    with pytest.raises(RuntimeError, match="prompt construction failed"):
+        await chat_service._stream_assistant_reply_codex(
+            "admin",
+            "project-a",
+            "hello",
+            collect_event,
+            project_state_dir=project_state,
+            turn_id="business-turn",
+        )
+
+    assert not captured["token_file"].exists()
+    assert revoked == ["agent-token"]
+    assert finished == ["failed"]
+    assert list((project_state / "agents" / "codex" / "turn_tokens").iterdir()) == []
+
+
+@pytest.mark.asyncio
 async def test_codex_turn_token_files_are_unique_and_cleanup_is_turn_local(
     tmp_path,
 ):

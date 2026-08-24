@@ -5860,29 +5860,14 @@ async def _stream_assistant_reply_codex(
             project_state_dir=project_state_dir,
             agent_token_file=token_file,
         )
-    except Exception:
-        if turn_operation is not None:
-            await turn_operation.finish(turn_disposition)
-        if token_file is not None:
-            try:
-                token_file.unlink(missing_ok=True)
-            except OSError:
-                logger.warning("failed to remove failed Codex token file", exc_info=True)
-        if agent_token:
-            try:
-                await get_auth_session_port().revoke_agent_session(agent_token)
-            except Exception:
-                logger.warning("failed to revoke failed Codex launch token", exc_info=True)
-        raise
-    agent_prompt = _prompt_with_user_context(
-        username,
-        project,
-        prompt,
-        tool_mode=tool_mode,
-        surface_context=surface_context,
-        route_prompt=route_prompt,
-    )
-    try:
+        agent_prompt = _prompt_with_user_context(
+            username,
+            project,
+            prompt,
+            tool_mode=tool_mode,
+            surface_context=surface_context,
+            route_prompt=route_prompt,
+        )
         async for event in thread.stream(agent_prompt):
             if event.type == "egress_submitted":
                 if turn_operation is not None:
@@ -6019,9 +6004,13 @@ async def _stream_assistant_reply_codex(
             with _ACTIVE_CODEX_TURNS_LOCK:
                 if _ACTIVE_CODEX_TURNS.get(active_turn_key) == active_turn_value:
                     _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
-            _set_active_codex_turn(username, codex_scope_key, None)
-        if turn_operation is not None:
-            await turn_operation.finish(turn_disposition)
+            try:
+                _set_active_codex_turn(username, codex_scope_key, None)
+            except OSError:
+                logger.warning(
+                    "failed to remove persisted active Codex turn",
+                    exc_info=True,
+                )
         if token_file is not None:
             try:
                 token_file.unlink(missing_ok=True)
@@ -6032,6 +6021,8 @@ async def _stream_assistant_reply_codex(
                 await get_auth_session_port().revoke_agent_session(agent_token)
             except Exception:
                 logger.warning("failed to revoke Codex turn token", exc_info=True)
+        if turn_operation is not None:
+            await turn_operation.finish(turn_disposition)
 
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
     assistant_text = _normalize_json_render_reply(assistant_text)
