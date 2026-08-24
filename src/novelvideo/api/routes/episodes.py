@@ -252,31 +252,38 @@ async def list_episodes(project: str, user: dict = Depends(get_api_user)):
     """获取项目分集列表。"""
     resolved = await resolve_project_scope(project, user, required_role="viewer")
 
-    store = (
-        await make_sqlite_store_for_context(resolved.ctx)
+    # 裸 factory 把关闭责任丢给调用点，而这里正常返回和抛错两条路都没有 close()——
+    # 每个 SQLiteStore 背后是一条 aiosqlite 连接加一个后台线程，按请求数累积。
+    # 本 PR 给这个路由加了 beat_count 之后它是分集列表的唯一数据源，进一次虾镜就走
+    # 一次，泄漏更明显。
+    store_scope = (
+        sqlite_store_for_context_scope(resolved.ctx)
         if resolved.ctx
-        else await make_sqlite_store(resolved.username, resolved.project_name)
+        else sqlite_store_scope(resolved.username, resolved.project_name)
     )
-    episodes = store.get_all_episodes()
-    # 每张分集卡片都要显示镜头数。一次分组查询带上，前端就不必逐集去拉完整
-    # beats 载荷再数长度——那是「有几集发几个请求」，且每个请求都远比这个整数贵。
-    beat_counts = await store.count_beats_by_episode()
+    async with store_scope as store:
+        episodes = store.get_all_episodes()
+        # 每张分集卡片都要显示镜头数。一次分组查询带上，前端就不必逐集去拉完整
+        # beats 载荷再数长度——那是「有几集发几个请求」，且每个请求都远比这个整数贵。
+        beat_counts = await store.count_beats_by_episode()
 
-    data = []
-    for ep in episodes:
-        number = ep.number if hasattr(ep, "number") else 0
-        data.append(
-            {
-                "number": number,
-                "title": ep.title if hasattr(ep, "title") else "",
-                "summary": (getattr(ep, "content_summary", "") or getattr(ep, "summary", "") or ""),
-                "identity_ids": list(getattr(ep, "identity_ids", []) or []),
-                "key_events": list(getattr(ep, "key_events", []) or []),
-                "scene_menu": _dump_episode_items(getattr(ep, "scene_menu", []) or []),
-                "prop_menu": _dump_episode_items(getattr(ep, "prop_menu", []) or []),
-                "beat_count": beat_counts.get(number, 0),
-            }
-        )
+        data = []
+        for ep in episodes:
+            number = ep.number if hasattr(ep, "number") else 0
+            data.append(
+                {
+                    "number": number,
+                    "title": ep.title if hasattr(ep, "title") else "",
+                    "summary": (
+                        getattr(ep, "content_summary", "") or getattr(ep, "summary", "") or ""
+                    ),
+                    "identity_ids": list(getattr(ep, "identity_ids", []) or []),
+                    "key_events": list(getattr(ep, "key_events", []) or []),
+                    "scene_menu": _dump_episode_items(getattr(ep, "scene_menu", []) or []),
+                    "prop_menu": _dump_episode_items(getattr(ep, "prop_menu", []) or []),
+                    "beat_count": beat_counts.get(number, 0),
+                }
+            )
 
     return {"ok": True, "data": data}
 

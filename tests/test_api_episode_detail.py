@@ -31,15 +31,29 @@ def test_episode_asset_task_scope_is_stable_per_episode_and_kind():
 
 
 class _EpisodeStore:
-    def __init__(self, episode: NovelEpisode, beat_counts: dict[int, int] | None = None):
+    def __init__(
+        self,
+        episode: NovelEpisode,
+        beat_counts: dict[int, int] | None = None,
+        count_error: Exception | None = None,
+    ):
         self.episode = episode
         self.updates: list[tuple[int, dict]] = []
         self.beat_counts = beat_counts or {}
         self.count_calls = 0
+        self.count_error = count_error
+        # 真 SQLiteStore 背后是一条 aiosqlite 连接加一个后台线程，路由漏关就是漏一条。
+        # 这里记账，下面的用例据此断言"路由确实收口了"，而不是只断言返回码。
+        self.close_calls = 0
 
     async def count_beats_by_episode(self):
         self.count_calls += 1
+        if self.count_error is not None:
+            raise self.count_error
         return dict(self.beat_counts)
+
+    async def close(self):
+        self.close_calls += 1
 
     def get_episode(self, number: int):
         if number == self.episode.number:
@@ -147,6 +161,8 @@ def _patch_project_and_store(
     project_dir: Path,
     store: _EpisodeStore,
 ) -> None:
+    from novelvideo.api import deps
+
     async def resolve_project_scope(project: str, user: dict, required_role: str = "viewer"):
         return SimpleNamespace(
             ctx=None,
@@ -163,6 +179,11 @@ def _patch_project_and_store(
 
     monkeypatch.setattr(module, "resolve_project_scope", resolve_project_scope)
     monkeypatch.setattr(module, "make_sqlite_store", make_store)
+    # 走 scope 的路由（``list_episodes``）拿到的是 ``deps.sqlite_store_scope``——它在
+    # 导入期就被 ``asynccontextmanager`` 包好了，内部按模块全局查 ``make_sqlite_store``。
+    # 只打路由模块那份名字，scope 会绕过假货去开真库。两处都打，且 scope 的
+    # ``try/finally`` 仍是真代码在跑，``close_calls`` 断言才作数。
+    monkeypatch.setattr(deps, "make_sqlite_store", make_store)
 
 
 def _patch_project_and_cognee_store(
@@ -388,6 +409,78 @@ async def test_list_episodes_reports_zero_for_unsplit_episode(tmp_path, monkeypa
     response = await episodes.list_episodes(project="demo", user={"username": "admin"})
 
     assert response["data"][0]["beat_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_episodes_closes_the_store_on_the_normal_path(tmp_path, monkeypatch):
+    """分集列表是进虾镜的必经一跳，漏关连接的代价按访问次数累积。
+
+    这里断言的是 ``close()`` 被调用了一次，不是返回码——裸 factory 的版本返回码
+    一样是 200，只是每回都留下一条 aiosqlite 连接和一个后台线程。
+    """
+    from novelvideo.api.routes import episodes
+
+    episode = NovelEpisode(number=1, title="第一集")
+    store = _EpisodeStore(episode, beat_counts={1: 7})
+    _patch_project_and_store(monkeypatch, episodes, tmp_path, store)
+
+    response = await episodes.list_episodes(project="demo", user={"username": "admin"})
+
+    assert response["ok"] is True
+    assert store.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_list_episodes_closes_the_store_when_the_query_raises(tmp_path, monkeypatch):
+    """异常路径才是裸 factory 最疼的地方：报错还照样泄漏。
+
+    ``count_beats_by_episode`` 是本 PR 新加的那次查询，也是这个路由里最可能抛的一
+    步（库锁、schema 没迁移）。它抛出去时连接必须还是关掉的。
+    """
+    from novelvideo.api.routes import episodes
+
+    episode = NovelEpisode(number=1, title="第一集")
+    boom = RuntimeError("database is locked")
+    store = _EpisodeStore(episode, count_error=boom)
+    _patch_project_and_store(monkeypatch, episodes, tmp_path, store)
+
+    with pytest.raises(RuntimeError, match="database is locked"):
+        await episodes.list_episodes(project="demo", user={"username": "admin"})
+
+    assert store.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_list_episodes_closes_the_store_on_the_context_branch(tmp_path, monkeypatch):
+    """``resolved.ctx`` 非空时走的是另一条 scope，别只覆盖 CE 那半边。"""
+    from novelvideo.api import deps
+    from novelvideo.api.routes import episodes
+
+    episode = NovelEpisode(number=1, title="第一集")
+    store = _EpisodeStore(episode, beat_counts={1: 3})
+    ctx = SimpleNamespace(project_id="proj_demo", output_dir=tmp_path, is_home_node=True)
+
+    async def resolve_project_scope(project: str, user: dict, required_role: str = "viewer"):
+        return SimpleNamespace(
+            ctx=ctx,
+            username="admin",
+            project_name=project,
+            project_dir=tmp_path,
+            output_dir=str(tmp_path),
+            state_dir=str(tmp_path),
+            runtime_dir=str(tmp_path),
+        )
+
+    async def make_store_for_context(_ctx, *, load_graph_state: bool = True):
+        return store
+
+    monkeypatch.setattr(episodes, "resolve_project_scope", resolve_project_scope)
+    monkeypatch.setattr(deps, "make_sqlite_store_for_context", make_store_for_context)
+
+    response = await episodes.list_episodes(project="demo", user={"username": "admin"})
+
+    assert response["data"][0]["beat_count"] == 3
+    assert store.close_calls == 1
 
 
 @pytest.mark.asyncio
