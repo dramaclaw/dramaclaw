@@ -2513,3 +2513,91 @@ async def test_a_cast_decision_is_not_replayed_across_edited_inputs():
     )
 
     assert [n for n, a in result.items() if a.is_main] == []
+
+class CrashBeforeSettlementCache(RecordingCache):
+    """Dies at exactly the point the review named.
+
+    Every appearance row is on disk — so every character replays as an
+    abstention — and the run has not yet stored the decision it settled on.
+    """
+
+    def __init__(self, expected_row_writes):
+        super().__init__()
+        self.expected_row_writes = expected_row_writes
+        self.row_writes = 0
+
+    async def save(self, artifact_type, results):
+        from novelvideo.structured_extraction import (
+            CHARACTER_APPEARANCE_CACHE_TYPE,
+            CHARACTER_NARRATOR_CACHE_TYPE,
+        )
+
+        if (
+            artifact_type == CHARACTER_NARRATOR_CACHE_TYPE
+            and self.row_writes >= self.expected_row_writes
+        ):
+            raise RuntimeError("killed before the settlement landed")
+        if artifact_type == CHARACTER_APPEARANCE_CACHE_TYPE:
+            self.row_writes += 1
+        await super().save(artifact_type, results)
+
+
+async def test_the_recovered_narrator_is_the_one_an_uninterrupted_run_would_pick(
+    monkeypatch,
+):
+    """Two batches may both nominate, and the last to write is not the winner."""
+    from novelvideo import structured_extraction
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    # One character per batch, run in sequence, so 林某's batch writes last.
+    monkeypatch.setattr(structured_extraction, "_APPEARANCE_BATCH_SIZE", 1)
+    cache = CrashBeforeSettlementCache(expected_row_writes=2)
+    cast = [_cast_member("郑家悦"), _cast_member("林某")]
+    agent = FakeAppearanceAgent(
+        {
+            "郑家悦": _appearance("郑家悦", is_main=True),
+            "林某": _appearance("林某", is_main=True),
+        }
+    )
+    try:
+        await enrich_character_appearances(
+            cast, agent=agent, cache=cache, concurrency=1
+        )
+    except RuntimeError:
+        pass
+
+    # Whatever survived, the retry can only answer off disk: every appearance
+    # is a cache hit and therefore abstains.
+    replay = FakeAppearanceAgent({})
+    recovered = await enrich_character_appearances(
+        cast, agent=replay, cache=cache, concurrency=1
+    )
+
+    assert replay.prompts == []
+    assert [n for n, a in recovered.items() if a.is_main] == ["郑家悦"]
+
+
+
+
+
+async def test_two_batches_nominating_do_not_overwrite_each_other():
+    """Separate keys, so the reduce happens on read rather than by race."""
+    from novelvideo.structured_extraction import (
+        CHARACTER_APPEARANCE_CACHE_VERSION,
+        character_appearance_cache_key,
+        narrator_cache_key,
+        narrator_vote_key,
+    )
+
+    assert CHARACTER_APPEARANCE_CACHE_VERSION >= 2
+    cast_key = narrator_cache_key(
+        [
+            character_appearance_cache_key(_cast_member("郑家悦")),
+            character_appearance_cache_key(_cast_member("林某")),
+        ]
+    )
+    assert narrator_vote_key(
+        cast_key, character_appearance_cache_key(_cast_member("郑家悦"))
+    ) != narrator_vote_key(
+        cast_key, character_appearance_cache_key(_cast_member("林某"))
+    )

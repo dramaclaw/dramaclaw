@@ -1148,54 +1148,88 @@ def _nominee(appearances: dict[str, CharacterAppearance], order: list[str]) -> s
     return ""
 
 
-def _nomination_row(key: str, chosen: str) -> dict[str, str]:
-    return {key: json.dumps({"name": chosen}, ensure_ascii=False)}
+def narrator_vote_key(cast_key: str, character_key: str) -> str:
+    """One key per (cast, nominee), so batches cannot overwrite each other.
+
+    A single shared key made the surviving nomination a function of which
+    batch finished last.  Batches run concurrently and each sees only its own
+    five characters, so more than one may legitimately nominate; the last
+    writer is not the cast-order winner, and a crash before the run could
+    settle them would recover whoever happened to be last.
+
+    Giving every nominee its own key removes the race instead of resolving it
+    afterwards: nothing is overwritten, and the reduce happens on read, in
+    cast order, which is the same rule ``_enforce_single_main`` applies in
+    memory.  The cast fingerprint is part of the key, so a changed cast retires
+    every vote with it.
+    """
+    payload = {
+        "v": CHARACTER_APPEARANCE_CACHE_VERSION,
+        "cast": cast_key,
+        "character": character_key,
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def _record_narrator_votes(
+    cache: Any,
+    cast_key: str,
+    keys: dict[str, str],
+    produced: dict[str, CharacterAppearance],
+    order: list[str],
+) -> None:
+    """Persist this batch's nominations, ahead of the rows that replay it."""
+    rows = {
+        narrator_vote_key(cast_key, keys[name]): json.dumps(
+            {"name": name}, ensure_ascii=False
+        )
+        for name in order
+        if name in produced and produced[name].is_main
+    }
+    if rows:
+        await _maybe_await(cache.save(CHARACTER_NARRATOR_CACHE_TYPE, rows))
+
+
+async def _recover_narrator(
+    cache: Any, cast_key: str, keys: dict[str, str], order: list[str]
+) -> str:
+    """The earliest nominee in cast order that any batch ever recorded."""
+    by_name = {name: narrator_vote_key(cast_key, keys[name]) for name in order}
+    stored = await _maybe_await(
+        cache.get(CHARACTER_NARRATOR_CACHE_TYPE, list(by_name.values()))
+    )
+    for name in order:
+        if by_name[name] in (stored or {}):
+            return name
+    return ""
 
 
 async def _settle_narrator_nomination(
     appearances: dict[str, CharacterAppearance],
     order: list[str],
     cache: Any,
-    key: str,
+    cast_key: str,
+    keys: dict[str, str],
 ) -> None:
-    """Reduce to one nomination, then remember it against this exact cast.
+    """Reduce to one nomination, recovering it from disk when this run has none.
 
-    Storing it is what makes the stage recoverable.  Nominations are not kept
-    in the per-character rows, so a build interrupted after those rows were
-    written but before the characters were published would replay every
-    character as an abstention on retry and leave the project with no narrator
-    at all — the very failure this field exists to prevent.  The cast-level
-    entry survives that gap; a changed cast retires it and the question is put
-    to the model again.
-
-    Batches write their own nomination as they go, ahead of their rows, so the
-    answer is never the thing missing after a crash.  This final write is what
-    makes it *deterministic*: batches run concurrently, so the one that stored
-    first is not necessarily the one earliest in cast order, and the settled
-    winner overwrites whatever they raced to.
+    Nominations are not kept in the per-character rows, so a build interrupted
+    after those rows were written but before the characters were published
+    would replay every character as an abstention on retry and leave the
+    project with no narrator at all — the very failure this field exists to
+    prevent.  The votes recorded per batch survive that gap, and reducing them
+    here in cast order yields the same answer the uninterrupted run would have
+    reached, whatever order the batches finished in.
     """
     _enforce_single_main(appearances, order)
-    if cache is None or not order:
+    if cache is None or not order or _nominee(appearances, order):
         return
-    chosen = _nominee(appearances, order)
-    if chosen:
-        await _maybe_await(
-            cache.save(CHARACTER_NARRATOR_CACHE_TYPE, _nomination_row(key, chosen))
-        )
-        return
-    stored = await _maybe_await(cache.get(CHARACTER_NARRATOR_CACHE_TYPE, [key]))
-    payload = (stored or {}).get(key)
-    if not payload:
-        return
-    try:
-        remembered = str((json.loads(payload) or {}).get("name") or "")
-    except (TypeError, ValueError):
-        return
+    recovered = appearances.get(await _recover_narrator(cache, cast_key, keys, order))
     # Only a name still in this cast, and still answered for: a nomination for
     # somebody adjudication has since merged away must not resurrect them.
-    appearance = appearances.get(remembered)
-    if appearance is not None:
-        appearance.is_main = True
+    if recovered is not None:
+        recovered.is_main = True
 
 
 def _enforce_single_main(
@@ -1269,7 +1303,7 @@ async def enrich_character_appearances(
     narrator_key = narrator_cache_key([keys[name] for name in order])
 
     if not pending:
-        await _settle_narrator_nomination(results, order, cache, narrator_key)
+        await _settle_narrator_nomination(results, order, cache, narrator_key, keys)
         return results
 
     llm = _create_character_appearance_agent(agent)
@@ -1333,14 +1367,7 @@ async def enrich_character_appearances(
             # then abstains with nothing left to consult. Writing the
             # nomination first inverts that: a crash in between leaves the
             # batch pending, and the retry asks the question again.
-            nominated = _nominee(produced, order)
-            if nominated:
-                await _maybe_await(
-                    cache.save(
-                        CHARACTER_NARRATOR_CACHE_TYPE,
-                        _nomination_row(narrator_key, nominated),
-                    )
-                )
+            await _record_narrator_votes(cache, narrator_key, keys, produced, order)
             # Written per batch rather than once at the end, so a build killed
             # halfway keeps what it already paid for.
             await _maybe_await(
@@ -1372,7 +1399,7 @@ async def enrich_character_appearances(
         log(f"⚠️ {len(missing)} 个角色未取得形象设定，面部提示词留空：{'、'.join(missing[:5])}")
     log(f"形象设定完成: {len(results)}/{len(merged)} 个角色")
 
-    await _settle_narrator_nomination(results, order, cache, narrator_key)
+    await _settle_narrator_nomination(results, order, cache, narrator_key, keys)
     return results
 
 
