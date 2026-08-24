@@ -198,6 +198,72 @@ async def build_characters_structured(
     )
 
 
+
+def _source_synopsis(store: Any) -> str:
+    """The screenplay block before the first scene, or "" for prose.
+
+    Read here rather than threaded in from the build, because a cast replayed
+    from a stored run reaches publication without the source text in hand and
+    must still be described from the same input a fresh build used.
+    """
+    from novelvideo.cognee.script_parser import extract_synopsis
+
+    try:
+        return extract_synopsis(require_imported_novel(store.project_dir))
+    except Exception:  # noqa: BLE001 - a missing source only costs context
+        return ""
+
+
+def _apply_appearance(character: Any, appearance: Any, voice_for: Callable) -> None:
+    """Write an appearance answer onto a character about to be created."""
+    if appearance is None:
+        return
+    character.role = appearance.role
+    character.is_main = appearance.is_main
+    character.age_group = appearance.age_group
+    character.body_type = appearance.body_type
+    character.face_prompt = appearance.face_prompt
+    character.fish_voice_id = voice_for(appearance.age_group, character.gender)
+
+
+async def _repair_missing_appearances(
+    store: Any,
+    added: set,
+    appearances: dict,
+    voice_for: Callable,
+) -> int:
+    """Fill only the appearance fields an existing character still lacks.
+
+    Field by field rather than wholesale: a character may have been given a
+    role by hand and left without a face, and overwriting the first to supply
+    the second would lose an edit the user made deliberately.
+    """
+    repaired = 0
+    for name, appearance in appearances.items():
+        if name in added:
+            continue
+        existing = store.get_character(name)
+        if existing is None or str(existing.face_prompt or "").strip():
+            continue
+        updates: dict[str, Any] = {"face_prompt": appearance.face_prompt}
+        if not str(existing.role or "").strip():
+            updates["role"] = appearance.role
+        if not str(existing.body_type or "").strip():
+            updates["body_type"] = appearance.body_type
+        if not str(existing.fish_voice_id or "").strip():
+            # The age band has no empty state — it defaults to "youth" — so an
+            # unbound voice is what distinguishes a band nobody chose from one
+            # somebody did. Where nothing is bound, the band and the voice it
+            # selects are written together, so they cannot end up disagreeing.
+            updates["age_group"] = appearance.age_group
+            updates["fish_voice_id"] = voice_for(
+                appearance.age_group, existing.gender
+            )
+        await store.update_character(name, **updates)
+        repaired += 1
+    return repaired
+
+
 async def _publish_characters(
     store: Any,
     merged: list,
@@ -207,20 +273,47 @@ async def _publish_characters(
     outcome: tuple[str, str] = ("completed", ""),
 ) -> list[str]:
     """Publish a settled cast, whether freshly built or replayed from cache."""
-    from novelvideo.cognee.pipeline import NovelCharacter
+    from novelvideo.cognee.pipeline import NovelCharacter, StoreAnalysisItemCache
+    from novelvideo.config import get_fish_voice_id
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    # Extraction settles *who* exists; this settles what they look like. It runs
+    # here rather than in the build so that a run replayed from its stored cast
+    # fills faces too — otherwise a project built before this stage existed
+    # could never acquire one without deleting its characters first.
+    report(0.75, "补全角色形象...")
+    appearances = await enrich_character_appearances(
+        merged,
+        synopsis=_source_synopsis(store),
+        cache=StoreAnalysisItemCache(store),
+        on_log=log,
+    )
 
     report(0.8, "发布角色...")
-    candidates = [
-        NovelCharacter(
+    candidates = []
+    for item in merged:
+        character = NovelCharacter(
             name=item.name,
             aliases=sorted(item.aliases),
             gender=item.gender,
             description=item.description,
         )
-        for item in merged
-    ]
+        _apply_appearance(character, appearances.get(item.name), get_fish_voice_id)
+        candidates.append(character)
     added = await store.add_characters_atomic(candidates, skip_existing=True)
     log(f"已新增 {len(added)} 个角色，跳过已有 {len(candidates) - len(added)} 个")
+
+    # An existing character is an asset fact and a rebuild leaves it alone —
+    # except for a face prompt it never had. Characters built before this stage
+    # existed carry an empty one, and the portrait runner refuses to work
+    # without it, so skipping them would strand those projects forever. Only
+    # empty fields are written; anything the user typed is never touched.
+    report(0.85, "补齐已有角色的空缺形象...")
+    repaired = await _repair_missing_appearances(
+        store, set(added), appearances, get_fish_voice_id
+    )
+    if repaired:
+        log(f"已为 {repaired} 个已有角色补齐面部提示词")
 
     report(0.95, "记录角色证据...")
     if run_id:

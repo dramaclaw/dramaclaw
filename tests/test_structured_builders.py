@@ -1812,3 +1812,365 @@ def _async_value(value):
         return value
 
     return _call()
+
+
+# ── character appearance ────────────────────────────────────────────────────
+#
+# Extraction settles who exists; this stage settles what they look like. It is
+# the half of legacy's CharacterEnrichment that structured extraction shipped
+# without, which is why every structured project's characters carried an empty
+# 面部提示词 and the portrait runner refused to draw them.
+
+
+class FakeAppearanceAgent:
+    """Returns scripted appearances, recording every prompt it was sent."""
+
+    def __init__(self, by_name, fail=False):
+        self.by_name = by_name
+        self.fail = fail
+        self.prompts = []
+
+    async def run(self, prompt: str):
+        from novelvideo.structured_extraction import CharacterAppearanceList
+
+        self.prompts.append(prompt)
+        if self.fail:
+            raise RuntimeError("boom")
+        return SimpleNamespace(
+            output=CharacterAppearanceList(
+                characters=[
+                    item for name, item in self.by_name.items() if name in prompt
+                ]
+            )
+        )
+
+
+def _appearance(name, *, face="女性，二十多岁，黑色长发，杏眼", **kwargs):
+    from novelvideo.structured_extraction import CharacterAppearance
+
+    return CharacterAppearance(name=name, face_prompt=face, **kwargs)
+
+
+def _cast_member(name, *, gender="female", description="", quotes=("他回来了。",)):
+    from novelvideo.structured_extraction import MergedCharacter
+
+    return MergedCharacter(
+        name=name,
+        gender=gender,
+        description=description,
+        evidence=[{"quote": quote} for quote in quotes],
+    )
+
+
+class RecordingCache:
+    def __init__(self, rows=None):
+        self.rows = dict(rows or {})
+        self.saved = []
+
+    async def get(self, artifact_type, cache_keys):
+        return {
+            key: self.rows[(artifact_type, key)]
+            for key in cache_keys
+            if (artifact_type, key) in self.rows
+        }
+
+    async def save(self, artifact_type, results):
+        self.saved.append((artifact_type, dict(results)))
+        for key, payload in results.items():
+            self.rows[(artifact_type, key)] = payload
+
+
+async def test_appearance_stage_fills_the_fields_extraction_cannot_quote():
+    """A face, a role and a build are inferred, not quoted, so extraction skips them."""
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    agent = FakeAppearanceAgent(
+        {
+            "郑家悦": _appearance(
+                "郑家悦", role="主角", body_type="纤细高挑", age_group="youth"
+            )
+        }
+    )
+    result = await enrich_character_appearances([_cast_member("郑家悦")], agent=agent)
+
+    assert result["郑家悦"].face_prompt == "女性，二十多岁，黑色长发，杏眼"
+    assert result["郑家悦"].role == "主角"
+    assert result["郑家悦"].body_type == "纤细高挑"
+
+
+async def test_an_answer_without_a_face_is_dropped_rather_than_published():
+    """An empty face prompt is a visible gap; boilerplate would be an invisible one."""
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    agent = FakeAppearanceAgent({"郑家悦": _appearance("郑家悦", face="  ", role="主角")})
+    cache = RecordingCache()
+    result = await enrich_character_appearances(
+        [_cast_member("郑家悦")], agent=agent, cache=cache
+    )
+
+    assert result == {}
+    assert cache.saved == []
+
+
+async def test_an_unusable_age_band_falls_back_instead_of_reaching_the_column():
+    """The band drives voice selection, so an unknown value would silently disable it."""
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    agent = FakeAppearanceAgent({"郑家悦": _appearance("郑家悦", age_group="middle-aged")})
+    result = await enrich_character_appearances([_cast_member("郑家悦")], agent=agent)
+
+    assert result["郑家悦"].age_group == "youth"
+
+
+async def test_a_cached_appearance_is_never_sent_to_the_model_again():
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    cache = RecordingCache()
+    item = _cast_member("郑家悦")
+    first = FakeAppearanceAgent({"郑家悦": _appearance("郑家悦", role="主角")})
+    await enrich_character_appearances([item], agent=first, cache=cache)
+    assert len(first.prompts) == 1
+
+    second = FakeAppearanceAgent({})
+    result = await enrich_character_appearances([item], agent=second, cache=cache)
+    assert second.prompts == []
+    assert result["郑家悦"].role == "主角"
+
+
+async def test_a_changed_description_retires_the_cached_appearance():
+    """The description is in the prompt, so a changed one is a different question."""
+    from novelvideo.structured_extraction import character_appearance_cache_key
+
+    before = character_appearance_cache_key(_cast_member("郑家悦", description="遭受校园霸凌"))
+    after = character_appearance_cache_key(_cast_member("郑家悦", description="已经毕业工作"))
+    assert before != after
+
+
+async def test_a_changed_quote_retires_the_cached_appearance():
+    from novelvideo.structured_extraction import character_appearance_cache_key
+
+    before = character_appearance_cache_key(_cast_member("郑家悦", quotes=("她低下头。",)))
+    after = character_appearance_cache_key(_cast_member("郑家悦", quotes=("她抬起头。",)))
+    assert before != after
+
+
+async def test_only_one_narrator_survives_a_batch_split():
+    """Batches run concurrently, so "whoever answered first" is not a stable answer."""
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    agent = FakeAppearanceAgent(
+        {
+            "郑家悦": _appearance("郑家悦", is_main=True),
+            "郑玉琴": _appearance("郑玉琴", is_main=True),
+        }
+    )
+    result = await enrich_character_appearances(
+        [_cast_member("郑家悦"), _cast_member("郑玉琴")], agent=agent
+    )
+
+    assert [name for name, item in result.items() if item.is_main] == ["郑家悦"]
+
+
+async def test_a_failed_appearance_call_still_leaves_the_cast_published(
+    structured_store, monkeypatch
+):
+    """Losing a face must not lose the character it belonged to."""
+    from novelvideo import structured_builders
+
+    store, _ = structured_store
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent({}, fail=True),
+    )
+    added = await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    assert added == ["郑家悦"]
+    assert store.get_character("郑家悦").face_prompt == ""
+
+
+async def test_a_new_character_is_published_with_its_face_and_voice(
+    structured_store, monkeypatch
+):
+    from novelvideo import structured_builders
+
+    store, _ = structured_store
+    monkeypatch.setenv("FISH_VOICE_YOUTH_FEMALE", "voice-yf")
+    monkeypatch.setattr(
+        "novelvideo.config.FISH_VOICE_PRESETS",
+        {"youth_female": "voice-yf", "youth_male": "voice-ym"},
+    )
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent(
+            {"郑家悦": _appearance("郑家悦", role="主角", body_type="纤细高挑")}
+        ),
+    )
+    await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    character = store.get_character("郑家悦")
+    assert character.face_prompt == "女性，二十多岁，黑色长发，杏眼"
+    assert character.role == "主角"
+    assert character.body_type == "纤细高挑"
+    # "female", not "女": the structured extractor writes the English form, and
+    # a lookup that only knows the Chinese one gives every woman a male voice.
+    assert character.fish_voice_id == "voice-yf"
+
+
+async def test_a_rebuild_fills_a_face_an_existing_character_never_had(
+    structured_store, monkeypatch
+):
+    """Characters built before this stage existed would otherwise stay faceless."""
+    from novelvideo import structured_builders
+    from novelvideo.cognee.pipeline import NovelCharacter
+
+    store, _ = structured_store
+    await store.add_characters_atomic(
+        [NovelCharacter(name="郑家悦", gender="female")], skip_existing=False
+    )
+    assert store.get_character("郑家悦").face_prompt == ""
+
+    monkeypatch.setattr(
+        "novelvideo.config.FISH_VOICE_PRESETS",
+        {"elder_female": "voice-ef", "elder_male": "voice-em"},
+    )
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent(
+            {"郑家悦": _appearance("郑家悦", role="主角", age_group="elder")}
+        ),
+    )
+    added = await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    assert added == []
+    repaired = store.get_character("郑家悦")
+    assert repaired.face_prompt == "女性，二十多岁，黑色长发，杏眼"
+    assert repaired.role == "主角"
+    assert repaired.age_group == "elder"
+    assert repaired.fish_voice_id == "voice-ef"
+
+
+async def test_a_rebuild_leaves_an_age_band_a_bound_voice_depends_on(
+    structured_store, monkeypatch
+):
+    """A bound voice means somebody chose the band; the repair must not move it."""
+    from novelvideo import structured_builders
+    from novelvideo.cognee.pipeline import NovelCharacter
+
+    store, _ = structured_store
+    await store.add_characters_atomic(
+        [
+            NovelCharacter(
+                name="郑家悦",
+                gender="female",
+                age_group="youth",
+                fish_voice_id="chosen-by-hand",
+            )
+        ],
+        skip_existing=False,
+    )
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent(
+            {"郑家悦": _appearance("郑家悦", age_group="elder")}
+        ),
+    )
+    await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    repaired = store.get_character("郑家悦")
+    assert repaired.face_prompt == "女性，二十多岁，黑色长发，杏眼"
+    assert repaired.age_group == "youth"
+    assert repaired.fish_voice_id == "chosen-by-hand"
+
+
+async def test_a_rebuild_never_overwrites_a_face_the_user_wrote(
+    structured_store, monkeypatch
+):
+    from novelvideo import structured_builders
+    from novelvideo.cognee.pipeline import NovelCharacter
+
+    store, _ = structured_store
+    await store.add_characters_atomic(
+        [
+            NovelCharacter(
+                name="郑家悦", gender="female", face_prompt="我自己写的脸", role="配角"
+            )
+        ],
+        skip_existing=False,
+    )
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent(
+            {"郑家悦": _appearance("郑家悦", role="主角")}
+        ),
+    )
+    await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    assert store.get_character("郑家悦").face_prompt == "我自己写的脸"
+    assert store.get_character("郑家悦").role == "配角"
+
+
+def test_the_voice_lookup_reads_both_spellings_of_a_gender(monkeypatch):
+    """legacy writes 男/女, structured_v1 writes male/female; both select a voice."""
+    from novelvideo.config import get_fish_voice_id
+
+    monkeypatch.setattr(
+        "novelvideo.config.FISH_VOICE_PRESETS",
+        {"youth_female": "voice-yf", "youth_male": "voice-ym"},
+    )
+    assert get_fish_voice_id("youth", "female") == "voice-yf"
+    assert get_fish_voice_id("youth", "女") == "voice-yf"
+    assert get_fish_voice_id("youth", "male") == "voice-ym"
+    assert get_fish_voice_id("youth", "男") == "voice-ym"
+
+
+async def test_the_character_bible_reaches_the_stage_that_writes_faces():
+    """A screenplay's pre-scene block names hair and build outright; legacy sent it."""
+    from novelvideo.structured_extraction import enrich_character_appearances
+
+    agent = FakeAppearanceAgent({"郑家悦": _appearance("郑家悦")})
+    await enrich_character_appearances(
+        [_cast_member("郑家悦")], synopsis="郑家悦：短发，清瘦。", agent=agent
+    )
+
+    assert "郑家悦：短发，清瘦。" in agent.prompts[0]
+
+
+async def test_an_edited_character_bible_retires_every_stored_appearance():
+    from novelvideo.structured_extraction import character_appearance_cache_key
+
+    item = _cast_member("郑家悦")
+    before = character_appearance_cache_key(item, "郑家悦：短发，清瘦。")
+    after = character_appearance_cache_key(item, "郑家悦：长发，圆脸。")
+    assert before != after
+
+
+async def test_a_drama_build_reads_the_bible_from_the_imported_source(
+    structured_store, monkeypatch
+):
+    """_publish_characters reaches publication without the source text in hand."""
+    from novelvideo import structured_builders
+
+    store, state_dir = structured_store
+    (state_dir / "novel.txt").write_text(
+        "郑家悦：短发，清瘦。\n\n1-1 教室 日 内\n\n郑家悦坐下。\n", encoding="utf-8"
+    )
+    agent = FakeAppearanceAgent({"郑家悦": _appearance("郑家悦")})
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda a=None: agent,
+    )
+    await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    assert "郑家悦：短发，清瘦。" in agent.prompts[0]

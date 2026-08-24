@@ -927,8 +927,13 @@ class SceneBuildCache(Protocol):
     async def save(self, artifact_type: str, results: dict[str, str]) -> None: ...
 
 
-class StoreSceneBuildCache:
-    """Adapter binding the protocol to a project's SQLite store."""
+class StoreAnalysisItemCache:
+    """Adapter binding the protocol to a project's SQLite store.
+
+    Nothing about it is scene-specific: ``artifact_type`` is per call, so the
+    character build stores its appearance answers in the same table under its
+    own type without either stage seeing the other's rows.
+    """
 
     def __init__(self, store: Any) -> None:
         self._store = store
@@ -938,6 +943,10 @@ class StoreSceneBuildCache:
 
     async def save(self, artifact_type: str, results: dict[str, str]) -> None:
         await self._store.save_analysis_item_cache(artifact_type, results)
+
+
+# The scene build named this adapter first and imports it by that name.
+StoreSceneBuildCache = StoreAnalysisItemCache
 
 
 _ENRICHMENT_BATCH_SIZE = 5

@@ -726,8 +726,14 @@ FISH_VOICE_PRESETS = {
 
 
 def get_fish_voice_id(age_group: str, gender: str) -> str:
-    """根据年龄段+性别获取预设 voice ID。"""
-    gender_key = "female" if "女" in gender else "male"
+    """根据年龄段+性别获取预设 voice ID。
+
+    两条抽取路写出的性别写法不同：legacy 的角色补全提示词要的是「男/女」,
+    structured_v1 的抽取器要的是 ``male``/``female``。只认中文会把每一个
+    structured 项目的女性角色都配成男声，所以两种写法都要认。
+    """
+    text = str(gender or "").strip().lower()
+    gender_key = "female" if ("女" in text or "female" in text) else "male"
     return FISH_VOICE_PRESETS.get(f"{age_group}_{gender_key}", "")
 
 

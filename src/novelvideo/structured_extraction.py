@@ -917,6 +917,355 @@ async def adjudicate_characters(
     return sorted(survivors, key=lambda item: (-len(item.evidence), item.name))
 
 
+# ── character appearance ────────────────────────────────────────────────────
+#
+# Extraction and appearance are two different contracts, deliberately kept
+# apart.  Extraction is evidence-bound: every field it reports has to appear
+# verbatim in the span it came from, which is what stops an invented character
+# from entering the table.  A face prompt, a role, a build and an age band are
+# none of them quotable — a screenplay writes "郑家悦" and what she does, not
+# what her jaw looks like — so folding them into CharacterCandidate would mean
+# relaxing the very guard that makes extraction trustworthy.
+#
+# So this stage runs after the cast is settled, takes only names that already
+# survived verification, and is allowed to write what the source implies rather
+# than what it states.  It is the half of legacy's CharacterEnrichment that
+# structured extraction never carried over; scenes have had their equivalent
+# since the beginning (``enrich_scene_environments_batched``), which is why
+# scene builds produce usable prompts and character builds did not.
+
+
+class CharacterAppearance(BaseModel):
+    name: str = Field(description="角色主名，必须与给出的角色名完全一致")
+    role: str = Field(default="", description="角色定位，如：主角、闺蜜、前男友、皇后")
+    is_main: bool = Field(default=False, description="是否为解说主角/第一人称叙述者")
+    age_group: str = Field(
+        default="youth", description="年龄段，必须是 child / youth / middle / elder 之一"
+    )
+    body_type: str = Field(default="", description="体型描述，如：纤细高挑、健壮魁梧、娇小玲珑")
+    face_prompt: str = Field(
+        default="", description="纯面部特征描述（发型、眼睛、肤色、脸型），不含服装"
+    )
+
+
+class CharacterAppearanceList(BaseModel):
+    characters: list[CharacterAppearance] = Field(default_factory=list)
+
+
+CHARACTER_APPEARANCE_SYSTEM_PROMPT = """你是角色形象设定师。输入是一部作品中已经确认的角色，以及原文中关于他们的片段。
+
+为每个角色补全形象设定。这一步允许合理推断，但推断必须与给出的原文片段一致，不要与原文冲突。
+
+对每个角色给出：
+1. name: 必须与输入给出的角色名逐字一致，不要改写、翻译或合并。
+2. role: 角色定位（如：主角、闺蜜、前男友、皇后、班主任）。
+3. is_main: 是否为解说主角/第一人称叙述者。整批里最多只有一个 true；判断不了就全填 false。
+4. age_group: 必须是 child（儿童）/ youth（青年）/ middle（中年）/ elder（老年）之一。
+   同一角色的幼年/老年形态不拆分，取他在故事中最主要时期对应的年龄段。
+5. body_type: 体型描述。
+6. face_prompt: 纯面部特征描述。
+   格式：[性别]，[年龄段]，[发型发色]，[眼睛特征]，[肤色]，[脸型/骨骼]
+   示例："女性，二十多岁，黑色长发马尾，黑色杏眼，小麦肤色，瓜子脸"
+   ⚠️ 绝对不要在 face_prompt 中描述服装、配饰或场景。服装由后续身份规划单独处理。
+
+不要新增角色，不要删除角色，不要合并角色。输入给几个就返回几个。"""
+
+
+def _create_character_appearance_agent(agent: Any = None):
+    if agent is not None:
+        return agent
+
+    from pydantic_ai import Agent
+
+    from novelvideo.config import (
+        get_newapi_structured_output_model_settings,
+        get_newapi_text_pydantic_model,
+    )
+
+    return Agent(
+        get_newapi_text_pydantic_model(
+            "CHARACTER_BUILD_MODEL",
+            "gemini-3-flash-preview",
+            capability="text.generate.agent",
+        ),
+        system_prompt=CHARACTER_APPEARANCE_SYSTEM_PROMPT,
+        model_settings=get_newapi_structured_output_model_settings(),
+        output_type=CharacterAppearanceList,
+        name="Structured Character Appearance",
+    )
+
+
+# Bump whenever the prompt, the accepted age bands, or the way an answer is
+# turned into stored fields changes.  It is part of every cache key, so a bump
+# retires stored results rather than mixing two contracts.
+CHARACTER_APPEARANCE_CACHE_VERSION = 1
+
+CHARACTER_APPEARANCE_CACHE_TYPE = "character_appearance"
+
+AGE_GROUPS = ("child", "youth", "middle", "elder")
+
+_APPEARANCE_BATCH_SIZE = 5
+
+# How many evidence quotes one character contributes to the prompt. Enough to
+# place them in the story, few enough that a batch of five stays short.
+_APPEARANCE_SAMPLE_QUOTES = 4
+
+
+def normalize_age_group(value: str) -> str:
+    """Coerce a model answer to one of the four bands stored on a character.
+
+    The band is not free text: ``get_fish_voice_id`` selects a voice from it
+    and identity planning derives per-identity bands from it, so an unknown
+    value would silently disable both rather than fail loudly.
+    """
+    cleaned = str(value or "").strip().lower()
+    return cleaned if cleaned in AGE_GROUPS else "youth"
+
+
+def character_appearance_cache_key(item: "MergedCharacter", synopsis: str = "") -> str:
+    """Hash the exact input one character's appearance call is made from.
+
+    Every field the model sees, plus the contract version.  Quotes are included
+    in the order and count the prompt actually sends: a character whose
+    evidence changed is a character the model would answer differently about.
+    The synopsis is project-wide, so editing a script's character bios retires
+    every stored appearance — which is right, since that block is what most of
+    them were written from.
+    """
+    payload = {
+        "v": CHARACTER_APPEARANCE_CACHE_VERSION,
+        "name": item.name,
+        "aliases": sorted(item.aliases),
+        "gender": item.gender,
+        "description": item.description,
+        "quotes": _appearance_quotes(item),
+        "synopsis": str(synopsis or ""),
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _appearance_quotes(item: "MergedCharacter") -> list[str]:
+    quotes: list[str] = []
+    for entry in item.evidence:
+        quote = str((entry or {}).get("quote") or "").strip()
+        if quote:
+            quotes.append(quote)
+        if len(quotes) >= _APPEARANCE_SAMPLE_QUOTES:
+            break
+    return quotes
+
+
+def appearance_to_cache_payload(appearance: CharacterAppearance) -> str:
+    return json.dumps(
+        {
+            "name": appearance.name,
+            "role": appearance.role,
+            "is_main": appearance.is_main,
+            "age_group": appearance.age_group,
+            "body_type": appearance.body_type,
+            "face_prompt": appearance.face_prompt,
+        },
+        ensure_ascii=False,
+    )
+
+
+def is_usable_appearance(appearance: CharacterAppearance) -> bool:
+    """Whether an answer is worth storing and publishing.
+
+    The face prompt is the field the portrait runner refuses to work without
+    (``task_backend/runners/character_image.py``), so an answer that omits it
+    has not done the job.  Caching one would make the omission permanent, the
+    same trap ``is_cacheable_scene_prompt`` guards against on the scene side.
+    """
+    return bool(str(appearance.face_prompt or "").strip())
+
+
+def appearance_from_cache_payload(payload: str) -> CharacterAppearance | None:
+    """Rebuild an appearance from a stored row, or None if it is unusable.
+
+    A row that no longer parses, or that carries an answer the current contract
+    would reject, is treated as a miss: a cache must never publish something
+    the live path would have thrown away.
+    """
+    try:
+        data = json.loads(payload)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    appearance = CharacterAppearance(
+        name=str(data.get("name") or ""),
+        role=str(data.get("role") or ""),
+        is_main=bool(data.get("is_main")),
+        age_group=normalize_age_group(data.get("age_group", "")),
+        body_type=str(data.get("body_type") or ""),
+        face_prompt=str(data.get("face_prompt") or ""),
+    )
+    return appearance if is_usable_appearance(appearance) else None
+
+
+def _enforce_single_main(
+    appearances: dict[str, CharacterAppearance],
+    order: list[str],
+) -> None:
+    """Keep at most one narrator, in a batch-independent order.
+
+    Characters are enriched in batches that run concurrently, so "the first one
+    the model marked" is not a stable answer.  Resolving in the caller's order
+    makes a rebuild pick the same narrator a fresh build did.
+    """
+    seen = False
+    for name in order:
+        appearance = appearances.get(name)
+        if appearance is None or not appearance.is_main:
+            continue
+        if seen:
+            appearance.is_main = False
+        else:
+            seen = True
+
+
+async def enrich_character_appearances(
+    merged: list["MergedCharacter"],
+    *,
+    synopsis: str = "",
+    agent: Any = None,
+    cache: Any = None,
+    on_log: Optional[Callable[[str], None]] = None,
+    concurrency: Optional[int] = None,
+) -> dict[str, CharacterAppearance]:
+    """Write the creative half of a character: face, role, build, age band.
+
+    Returns one entry per character the stage could answer for.  A character
+    the model failed on is simply absent rather than filled with a placeholder:
+    an empty face prompt is a visible, fixable gap, while boilerplate is an
+    invisible one that every later rebuild would replay.
+
+    With a ``cache``, a character whose input already produced a usable answer
+    is served from it and never sent to the model, so an interrupted build
+    keeps everything it has already paid for.
+    """
+
+    def log(message: str) -> None:
+        if on_log:
+            on_log(message)
+
+    if not merged:
+        return {}
+
+    order = [item.name for item in merged]
+    keys = {
+        item.name: character_appearance_cache_key(item, synopsis) for item in merged
+    }
+    results: dict[str, CharacterAppearance] = {}
+
+    if cache is not None:
+        stored = await _maybe_await(
+            cache.get(CHARACTER_APPEARANCE_CACHE_TYPE, list(keys.values()))
+        )
+        for item in merged:
+            payload = (stored or {}).get(keys[item.name])
+            appearance = appearance_from_cache_payload(payload) if payload else None
+            if appearance is not None:
+                results[item.name] = appearance
+        if results:
+            log(f"复用 {len(results)} 个角色形象设定，未调用模型")
+
+    pending = [item for item in merged if item.name not in results]
+    if not pending:
+        _enforce_single_main(results, order)
+        return results
+
+    llm = _create_character_appearance_agent(agent)
+    # A screenplay's pre-scene block is its character bible — it names hair,
+    # build and bearing outright. Extraction already chunks it, but only as one
+    # span among many; handing it to this stage whole is what legacy did, and
+    # it is the densest appearance source the source text has.
+    synopsis_section = f"\n\n【剧本梗概与人物设定原文】\n{synopsis}" if synopsis else ""
+
+    def describe(item: "MergedCharacter") -> str:
+        aliases = "、".join(sorted(item.aliases)) or "无"
+        quotes = "\n".join(f"- {quote}" for quote in _appearance_quotes(item)) or "- 无"
+        return (
+            f"### 角色：{item.name}\n"
+            f"别名：{aliases}\n"
+            f"性别：{item.gender or '未知'}\n"
+            f"已知描述：{item.description or '无'}\n"
+            f"原文片段：\n{quotes}"
+        )
+
+    async def run_batch(batch: list["MergedCharacter"]) -> dict[str, CharacterAppearance]:
+        prompt = (
+            "请为下面每一个角色补全形象设定，"
+            "name 必须与给出的角色名完全一致，不要合并或遗漏：\n\n"
+            + "\n\n".join(describe(item) for item in batch)
+            + synopsis_section
+        )
+        produced: dict[str, CharacterAppearance] = {}
+        try:
+            result = (await llm.run(prompt)).output
+            by_name = {
+                normalize_character_name(entry.name): entry
+                for entry in (result.characters or [])
+            }
+        except Exception as exc:  # noqa: BLE001 - a failed batch degrades, never raises
+            log(f"⚠️ 角色形象设定失败（{len(batch)} 个角色）：{exc}")
+            return produced
+
+        for item in batch:
+            entry = by_name.get(normalize_character_name(item.name))
+            if entry is None:
+                continue
+            # The model answers under whatever spelling it echoed back; the
+            # stored row is keyed by the settled name, which is a primary key.
+            appearance = CharacterAppearance(
+                name=item.name,
+                role=entry.role,
+                is_main=entry.is_main,
+                age_group=normalize_age_group(entry.age_group),
+                body_type=entry.body_type,
+                face_prompt=entry.face_prompt,
+            )
+            if is_usable_appearance(appearance):
+                produced[item.name] = appearance
+
+        if cache is not None and produced:
+            # Written per batch rather than once at the end, so a build killed
+            # halfway keeps what it already paid for.
+            await _maybe_await(
+                cache.save(
+                    CHARACTER_APPEARANCE_CACHE_TYPE,
+                    {
+                        keys[name]: appearance_to_cache_payload(appearance)
+                        for name, appearance in produced.items()
+                    },
+                )
+            )
+        return produced
+
+    batches = [
+        pending[start : start + _APPEARANCE_BATCH_SIZE]
+        for start in range(0, len(pending), _APPEARANCE_BATCH_SIZE)
+    ]
+    outcomes = await map_bounded(
+        batches,
+        run_batch,
+        limit=default_llm_concurrency() if concurrency is None else concurrency,
+    )
+    for outcome in outcomes:
+        if isinstance(outcome, dict):
+            results.update(outcome)
+
+    missing = [item.name for item in merged if item.name not in results]
+    if missing:
+        log(f"⚠️ {len(missing)} 个角色未取得形象设定，面部提示词留空：{'、'.join(missing[:5])}")
+    log(f"形象设定完成: {len(results)}/{len(merged)} 个角色")
+
+    _enforce_single_main(results, order)
+    return results
+
+
 # ── scene adjudication ──────────────────────────────────────────────────────
 
 
