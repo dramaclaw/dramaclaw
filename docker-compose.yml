@@ -49,11 +49,16 @@ services:
       XDG_CACHE_HOME: /data/cache
       DRAMACLAW_CHAT_BACKEND: "${DRAMACLAW_CHAT_BACKEND:-codex}"
       HERMES_CLI_PATH: /usr/local/bin/hermes
-      # CE 单租户自托管:Linux 镜像暂未把 deploy/sandbox 下的 codex-linux-sandbox
-      # 装到 PATH(留待 #346),此处显式声明 CE 沿用无沙箱运行——保留本 PR 之前的
-      # 默认行为,避免 fail-close 让默认 compose 首次起 Hermes worker 即崩。
-      # 仅对本地/CE 生效:production 或 ST_CONTROL_PLANE_DSN 非空时,
-      # sandbox_wrap._fallback_or_raise 仍严格拒绝裸跑,兜底不会扩散到多租户。
+      # CE 单租户自托管的沙箱降级阀门。镜像已按 TARGETARCH 装好 codex-linux-sandbox
+      # + bubblewrap,但 Linux 沙箱**默认不激活**:codex 的 managed profile 无法在
+      # profile 层堵住同宿主 peer-read(见 AGENTS.md / #346 P1②),须靠部署层只挂当前
+      # 用户 slice 才能真隔离。在那之前 _wrap_linux 不包裹 → 默认 CE 即便宿主支持 user
+      # namespaces 也**无沙箱运行** Hermes(不自动探测启用)。本开关正是那种无沙箱运行的
+      # 降级放行阀:让单租户 CE 大声告警后启动,而不是 fail-close 把自托管用户挡在门外
+      # (单租户无跨用户数据风险)。部署方完成 per-user slice 挂载、确认只挂当前用户数据后,
+      # 再显式设 SUPERTALE_LINUX_SANDBOX=1 激活沙箱。
+      # 仅对 CE 生效:production 或 ST_CONTROL_PLANE_DSN 非空(EE/多租户)时,启动门与
+      # sandbox_wrap._fallback_or_raise 仍严格 fail-close,兜底不扩散到多租户。
       SUPERTALE_ALLOW_UNSANDBOXED: "1"
       # 默认「官方 DC key」路径:模型网关地址/密钥来自 .env(NEWAPI_BASE_URL / NEWAPI_API_KEY),
       # 或启动后到网页「设置 → 模型配置 → 官方渠道」粘贴 DC key 保存即用。

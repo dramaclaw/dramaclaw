@@ -18,6 +18,8 @@ import logging
 import os
 import platform
 import shutil
+import subprocess
+import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -109,12 +111,17 @@ def wrap_command(cmd: list[str], spec: SandboxSpec) -> list[str]:
     return _fallback_or_raise(cmd, f"no sandbox backend on {system}")
 
 
-def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
-    binary = shutil.which("codex-linux-sandbox") or "/usr/local/bin/codex-linux-sandbox"
-    if not Path(binary).exists():
-        return _fallback_or_raise(cmd, "codex-linux-sandbox not found on PATH")
+# One-time result of the "can this host actually create a sandbox?" probe,
+# keyed by binary path. Populated lazily by _sandbox_can_run; tests clear it.
+_SANDBOX_PROBE_CACHE: dict[str, bool] = {}
 
-    hermes_home = spec.resolved_hermes_home()
+
+def _linux_sandbox_argv(binary: str, hermes_home: Path, cmd: list[str]) -> list[str]:
+    """Build the codex-linux-sandbox argv wrapping ``cmd`` (no capability check).
+
+    Shared by the real wrap path and the functional probe so both exercise the
+    identical invocation shape (restricted fs + outbound network).
+    """
     permission_profile = {
         "type": "managed",
         "file_system": {
@@ -130,7 +137,14 @@ def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
                 },
             ],
         },
-        "network": "restricted",
+        # Outbound network is allowed, matching the macOS Seatbelt profile
+        # (`(allow network-outbound)`). codex's "restricted" network mode
+        # `--unshare-net`s the sandbox — no egress at all — which would strangle
+        # Hermes's required calls to the project API (DRAMACLAW_API_URL) and the
+        # model gateway; the `/bin/true` probe cannot see that break. The two
+        # platforms stay consistent here; tightening egress to an allowlist
+        # (project API + model gateway only) on BOTH platforms is #346 P1②.
+        "network": "enabled",
     }
     args = [
         binary,
@@ -140,9 +154,68 @@ def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
         str(hermes_home),
         "--permission-profile",
         json.dumps(permission_profile, separators=(",", ":")),
+        "--",
     ]
-    args.append("--")
     return args + cmd
+
+
+def _sandbox_can_run(binary: str) -> bool:
+    """Functional probe: can ``binary`` actually create a sandbox on this host?
+
+    A present binary is not sufficient — codex-linux-sandbox's default pipeline
+    execs bubblewrap, which needs unprivileged user namespaces; on a kernel that
+    lacks them the binary exists but every sandboxed exec fails at runtime, which
+    the missing-binary check never catches. Runs ``/bin/true`` inside a throwaway
+    sandbox once and caches the verdict (keyed by binary path)."""
+    cached = _SANDBOX_PROBE_CACHE.get(binary)
+    if cached is not None:
+        return cached
+    ok = False
+    try:
+        with tempfile.TemporaryDirectory(prefix="hermes-sbx-probe-") as tmp:
+            home = Path(tmp) / ".hermes"
+            home.mkdir(parents=True)
+            probe = _linux_sandbox_argv(binary, home, ["/bin/true"])
+            proc = subprocess.run(probe, capture_output=True, timeout=30)
+            ok = proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    _SANDBOX_PROBE_CACHE[binary] = ok
+    return ok
+
+
+def _wrap_linux(cmd: list[str], spec: SandboxSpec) -> list[str]:
+    binary = shutil.which("codex-linux-sandbox") or "/usr/local/bin/codex-linux-sandbox"
+    if not Path(binary).exists():
+        return _fallback_or_raise(cmd, "codex-linux-sandbox not found on PATH")
+    if not _linux_sandbox_active():
+        # Binary is installed and may well be usable, but Linux activation is a
+        # deliberate opt-in: codex's restricted profile grants broad `root` read
+        # (peer state/output/runtime is readable — see _linux_sandbox_active),
+        # and that read-confidentiality gap is closable only at the deployment
+        # layer (mount just this user's slice), tracked in #346 P1②. Until a
+        # deployment sets SUPERTALE_LINUX_SANDBOX=1 to assert it has done so, do
+        # NOT wrap: EE fail-closes rather than run with false read-isolation; CE
+        # single-tenant degrades/​refuses per its opt-in (no cross-user risk).
+        return _fallback_or_raise(
+            cmd,
+            "Linux sandbox not activated (peer-read isolation via per-user "
+            "mounts pending #346 P1②); set SUPERTALE_LINUX_SANDBOX=1 only where "
+            "the deployment mounts a single user's slice",
+        )
+    if not _sandbox_can_run(binary):
+        # Binary present but the sandbox cannot be created (host kernel most
+        # likely lacks unprivileged user namespaces for bubblewrap). Route
+        # through the same fail-close/degrade decision as a missing binary:
+        # EE/production raises, CE single-tenant with the opt-in runs raw.
+        return _fallback_or_raise(
+            cmd,
+            "codex-linux-sandbox present but sandbox creation failed "
+            "(host kernel likely lacks unprivileged user namespaces)",
+        )
+
+    hermes_home = spec.resolved_hermes_home()
+    return _linux_sandbox_argv(binary, hermes_home, cmd)
 
 
 def _wrap_macos(cmd: list[str], spec: SandboxSpec) -> list[str]:
@@ -328,6 +401,28 @@ def _sandbox_required() -> bool:
 def _dev_unsandboxed_opt_in() -> bool:
     """本地无沙箱开发必须走醒目的显式开关,而不是静默降级。"""
     return os.environ.get("SUPERTALE_ALLOW_UNSANDBOXED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _linux_sandbox_active() -> bool:
+    """Linux 沙箱是否被**显式激活**(默认关)。
+
+    codex 的 managed ``restricted`` 文件系统是 allow-only:它没有 deny-entry,无法
+    表达 macOS 那套"broad-read 再挖掉 peer 数据根"。实测(#349 review)证实,一旦把
+    读范围从 ``root`` 收窄,codex/bwrap 连自身 re-exec 都跑不起来——所以 **peer 目录的
+    读机密性在 profile 层堵不住**,只能靠部署拓扑(worker 只挂当前用户的 slice /
+    per-user mount namespace)来关闭。在那套隔离真正落地(#346 P1②)之前激活沙箱,
+    会给多租户一个**假的读隔离**(能读他人 state/output/runtime 并经网络带出)。
+
+    因此激活是**显式 opt-in**:只有部署方确认"已经只挂当前用户 slice"时才设
+    ``SUPERTALE_LINUX_SANDBOX=1``。默认不激活 → 走 ``_fallback_or_raise``:EE fail-close
+    (拒绝裸跑,即拒绝以假隔离运行),CE 单租户按 opt-in 降级/拒绝(单租户无跨用户风险)。
+    """
+    return os.environ.get("SUPERTALE_LINUX_SANDBOX", "").strip().lower() in {
         "1",
         "true",
         "yes",

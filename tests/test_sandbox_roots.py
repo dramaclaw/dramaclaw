@@ -110,9 +110,20 @@ def test_linux_wrapper_uses_current_codex_sandbox_cli(monkeypatch, tmp_path):
     sandbox_binary.write_text("#!/bin/sh\n", encoding="utf-8")
     hermes_home = tmp_path / "state" / "alice" / ".hermes"
     hermes_home.mkdir(parents=True)
+    # Linux wrapping is a deliberate opt-in (peer-read isolation is a deployment
+    # concern, #346 P1②); without the flag _wrap_linux fails closed rather than
+    # wrap. This test pins the wrapped argv shape, so activate it explicitly.
+    monkeypatch.setenv("SUPERTALE_LINUX_SANDBOX", "1")
     monkeypatch.setattr(
         "novelvideo.security.sandbox_wrap.shutil.which",
         lambda _name: str(sandbox_binary),
+    )
+    # This test pins the wrapped argv shape, not the host's sandbox capability;
+    # treat the sandbox as usable so the functional probe doesn't route to the
+    # fallback (the probe itself is covered by test_sandbox_linux_probe.py).
+    monkeypatch.setattr(
+        "novelvideo.security.sandbox_wrap._sandbox_can_run",
+        lambda _binary: True,
     )
 
     wrapped = _wrap_linux(
@@ -128,7 +139,11 @@ def test_linux_wrapper_uses_current_codex_sandbox_cli(monkeypatch, tmp_path):
     assert wrapped[3:5] == ["--command-cwd", str(hermes_home)]
     profile = json.loads(wrapped[wrapped.index("--permission-profile") + 1])
     assert profile["type"] == "managed"
-    assert profile["network"] == "restricted"
+    # Outbound network is allowed on Linux to match the macOS profile — codex's
+    # "restricted" mode isolates the netns entirely (no egress), which would
+    # break Hermes's required project-API/model-gateway calls. Egress-allowlist
+    # tightening on both platforms is tracked in #346 P1②.
+    assert profile["network"] == "enabled"
     assert {
         "path": {"type": "path", "path": str(hermes_home)},
         "access": "write",
