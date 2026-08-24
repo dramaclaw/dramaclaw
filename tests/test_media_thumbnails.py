@@ -192,7 +192,19 @@ def test_source_already_within_budget_is_served_as_is(tmp_path, monkeypatch):
     # ...and the source was never decoded to decide that, which is the whole
     # point: this path is hit constantly and the answer is in the header.
     assert decodes == []
-    assert not (tmp_path / thumbnails.THUMB_ROOT).exists()
+    assert thumbnails.thumbnail_declined(tmp_path, source, "thumb")
+
+
+def test_a_decline_marker_expires_when_the_source_changes(tmp_path):
+    source = _write_png(tmp_path / "images" / "small.png", (320, 200))
+    assert thumbnails.ensure_thumbnail(tmp_path, source, "thumb") is None
+    assert thumbnails.thumbnail_declined(tmp_path, source, "thumb")
+
+    _write_png(source, (1200, 800), color=(10, 200, 40))
+    os.utime(source, ns=(_MTIME_AFTER, _MTIME_AFTER))
+
+    assert not thumbnails.thumbnail_declined(tmp_path, source, "thumb")
+    assert thumbnails.ensure_thumbnail(tmp_path, source, "thumb") is not None
 
 
 def test_a_source_one_pixel_over_the_budget_still_builds(tmp_path):
@@ -238,6 +250,24 @@ def test_oversized_sources_fall_back(tmp_path, monkeypatch):
     source = _write_png(tmp_path / "a.png")
     monkeypatch.setattr(thumbnails, "_MAX_SOURCE_BYTES", 1)
     assert thumbnails.ensure_thumbnail(tmp_path, source, "thumb") is None
+    assert thumbnails.thumbnail_declined(tmp_path, source, "thumb")
+
+
+def test_animated_webp_is_recorded_as_a_permanent_decline(tmp_path):
+    source = tmp_path / "animated.webp"
+    first = Image.new("RGB", (1200, 800), (200, 30, 30))
+    second = Image.new("RGB", (1200, 800), (30, 30, 200))
+    first.save(
+        source,
+        "WEBP",
+        save_all=True,
+        append_images=[second],
+        duration=100,
+        loop=0,
+    )
+
+    assert thumbnails.ensure_thumbnail(tmp_path, source, "thumb") is None
+    assert thumbnails.thumbnail_declined(tmp_path, source, "thumb")
 
 
 def _watch_decodes(monkeypatch) -> list:
@@ -278,7 +308,7 @@ def test_a_small_file_that_decodes_huge_is_declined_before_decoding(
 
     assert thumbnails.ensure_thumbnail(tmp_path, source, "card") is None
     assert decodes == []
-    assert not (tmp_path / thumbnails.THUMB_ROOT).exists()
+    assert thumbnails.thumbnail_declined(tmp_path, source, "card")
 
 
 def test_the_pixel_ceiling_leaves_real_photography_alone(tmp_path):
@@ -310,6 +340,7 @@ def test_undecodable_source_falls_back_instead_of_raising(tmp_path):
     source = tmp_path / "a.png"
     source.write_bytes(b"\x89PNG\r\n\x1a\n truncated garbage")
     assert thumbnails.ensure_thumbnail(tmp_path, source, "thumb") is None
+    assert not thumbnails.thumbnail_declined(tmp_path, source, "thumb")
 
 
 def test_failed_render_leaves_no_temp_file_behind(tmp_path, monkeypatch):
@@ -321,6 +352,7 @@ def test_failed_render_leaves_no_temp_file_behind(tmp_path, monkeypatch):
     )
 
     assert thumbnails.ensure_thumbnail(tmp_path, source, "thumb") is None
+    assert not thumbnails.thumbnail_declined(tmp_path, source, "thumb")
     leftovers = list((tmp_path / thumbnails.THUMB_ROOT).rglob("*.tmp"))
     assert leftovers == []
 
@@ -559,7 +591,7 @@ def test_a_cold_variant_request_redirects_to_the_stable_original_url(
     history must still not schedule CPU-bound thumbnail work.
     """
 
-    source = _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
     client = _client(monkeypatch, tmp_path)
     url = "/projects/demo/media/freezone/_outputs/big.png"
 
@@ -570,23 +602,55 @@ def test_a_cold_variant_request_redirects_to_the_stable_original_url(
         lambda _project_dir, requested, *_args: prewarm_calls.append(requested),
     )
 
+    query = (
+        "keep=first&st_thumb=invalid&v=1787194176036036558"
+        "&st_thumb=thumb&keep=second"
+    )
     cold = client.get(
-        f"{url}?keep=first&st_thumb=invalid&v=1787194176036036558"
-        "&st_thumb=thumb&keep=second",
+        f"{url}?{query}",
+        headers={
+            "X-SuperTale-Original-Uri": (
+                "/static/projects/demo/freezone/_outputs/big.png?" + query
+            )
+        },
         follow_redirects=False,
     )
 
     assert cold.status_code == 302
     assert cold.headers["cache-control"] == "no-store"
     assert cold.headers["location"] == (
-        f"{url}?keep=first&v=1787194176036036558&keep=second"
+        "/static/projects/demo/freezone/_outputs/big.png"
+        "?keep=first&v=1787194176036036558&keep=second"
     )
 
-    original = client.get(cold.headers["location"])
-    assert original.status_code == 200
-    assert original.content == source.read_bytes()
     assert prewarm_calls == []
     assert not (tmp_path / thumbnails.THUMB_ROOT).exists()
+
+
+@pytest.mark.parametrize(
+    "forwarded",
+    [
+        "https://example.invalid/static/projects/demo/a.png",
+        "//example.invalid/a",
+        "http://[",
+    ],
+)
+def test_an_untrusted_original_uri_header_cannot_control_the_redirect(
+    monkeypatch, tmp_path, forwarded
+):
+    _write_png(tmp_path / "freezone" / "_outputs" / "big.png", (2000, 1200))
+    client = _client(monkeypatch, tmp_path)
+    url = "/projects/demo/media/freezone/_outputs/big.png"
+
+    response = client.get(
+        url,
+        params={"st_thumb": "thumb", "v": "1787194176036036558"},
+        headers={"X-SuperTale-Original-Uri": forwarded},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == f"{url}?v=1787194176036036558"
 
 
 def test_a_variant_deleted_before_stat_still_redirects_to_the_original_url(
@@ -613,6 +677,25 @@ def test_a_variant_deleted_before_stat_still_redirects_to_the_original_url(
     assert response.headers["location"] == (
         f"{url}?keep=first&v=1787194176036036558&keep=second"
     )
+
+
+def test_a_permanently_declined_variant_serves_the_original_without_redirecting(
+    monkeypatch, tmp_path
+):
+    """A completed prewarm decline is a stable representation for this source."""
+
+    source = _write_png(tmp_path / "freezone" / "_outputs" / "small.png", (320, 200))
+    assert thumbnails.ensure_thumbnail(tmp_path, source, "thumb") is None
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.get(
+        "/projects/demo/media/freezone/_outputs/small.png",
+        params={"st_thumb": "thumb", "v": str(source.stat().st_mtime_ns)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert response.content == source.read_bytes()
 
 
 def test_an_identical_prewarm_job_is_not_queued_twice(tmp_path, monkeypatch):

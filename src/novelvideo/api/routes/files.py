@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response
+from starlette.datastructures import URL
 
 logger = logging.getLogger("novelvideo.api.files")
 
@@ -14,6 +15,7 @@ from novelvideo.utils.thumbnails import (
     fresh_thumbnail,
     is_thumbnailable,
     normalize_variant,
+    thumbnail_declined,
 )
 
 router = APIRouter()
@@ -69,7 +71,21 @@ def _etag_matches(request: Request | None, etag: str | None) -> bool:
 def _redirect_to_original_url(request: Request) -> RedirectResponse:
     """Move a cold variant request onto the original representation's URL."""
 
-    original = request.url.remove_query_params("st_thumb")
+    original = request.url
+    forwarded = request.headers.get("x-supertale-original-uri", "").strip()
+    if forwarded:
+        try:
+            candidate = URL(forwarded)
+            if (
+                not candidate.scheme
+                and not candidate.netloc
+                and not candidate.fragment
+                and candidate.path.startswith("/static/projects/")
+            ):
+                original = candidate
+        except ValueError:
+            pass
+    original = original.remove_query_params("st_thumb")
     location = original.path
     if original.query:
         location = f"{location}?{original.query}"
@@ -105,6 +121,8 @@ def _maybe_thumbnail_response(
         return None
     thumb = fresh_thumbnail(project_dir, requested, variant)
     if thumb is None:
+        if thumbnail_declined(project_dir, requested, variant):
+            return None
         if (
             request is not None
             and normalize_variant(variant) is not None

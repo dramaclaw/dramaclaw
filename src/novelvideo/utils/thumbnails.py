@@ -100,6 +100,10 @@ DEFAULT_RENDER_CONCURRENCY = 4
 _render_slots = threading.Semaphore(DEFAULT_RENDER_CONCURRENCY)
 
 
+class _ThumbnailDeclined(Exception):
+    """The source deterministically should keep using its original bytes."""
+
+
 def set_render_concurrency(slots: int) -> None:
     """Resize the decode budget. Offline backfill only.
 
@@ -153,15 +157,43 @@ def is_thumbnailable(source: Path) -> bool:
     return source.suffix.lower() in _SUPPORTED_SUFFIXES
 
 
+def _declined_path(dest: Path) -> Path:
+    return dest.with_name(dest.name + ".declined")
+
+
+def _record_decline(dest: Path, source_mtime_ns: int) -> None:
+    marker = _declined_path(dest)
+    tmp = marker.with_name(f"{marker.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(b"")
+        os.utime(tmp, ns=(source_mtime_ns, source_mtime_ns))
+        os.replace(tmp, marker)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        logger.debug("thumbnail decline marker skipped for %s", dest, exc_info=True)
+
+
+def _clear_decline(dest: Path) -> None:
+    try:
+        _declined_path(dest).unlink(missing_ok=True)
+    except OSError:
+        logger.debug("stale thumbnail decline marker kept for %s", dest, exc_info=True)
+
+
 def ensure_thumbnail(
     project_dir: Path, source: Path, variant: str | None
 ) -> Optional[Path]:
     """Return a current thumbnail for ``source``, building it if needed.
 
-    Returns ``None`` whenever the caller should serve the original instead:
-    unknown variant, unsupported or oversized source, animated image, or any
-    decode/encode failure. Blocking and CPU-bound — call it off the event
-    loop.
+    Returns ``None`` whenever the caller should serve the original instead.
+    Deterministic declines (oversized, animated, out of pixel budget, or already
+    within the requested size) leave a source-versioned marker so reads do not
+    redirect forever. Transient decode/write failures leave no marker and may be
+    retried. Blocking and CPU-bound — call it off the event loop.
     """
 
     name = normalize_variant(variant)
@@ -177,18 +209,30 @@ def ensure_thumbnail(
             return None
         stat = source.stat()
         if stat.st_size > _MAX_SOURCE_BYTES:
+            _record_decline(dest, stat.st_mtime_ns)
             return None
         source_mtime_ns = stat.st_mtime_ns
 
         if _is_current(dest, source_mtime_ns):
             return dest
+        if _is_current(_declined_path(dest), source_mtime_ns):
+            return None
         with _stripe_for(dest):
             # Re-check under the lock: whoever we queued behind may have just
             # written exactly the file we were about to render.
             if _is_current(dest, source_mtime_ns):
                 return dest
+            if _is_current(_declined_path(dest), source_mtime_ns):
+                return None
             with _render_slots:
-                return _render(source, dest, max_edge, source_mtime_ns)
+                try:
+                    rendered = _render(source, dest, max_edge, source_mtime_ns)
+                except _ThumbnailDeclined:
+                    _record_decline(dest, source_mtime_ns)
+                    return None
+                if rendered is not None:
+                    _clear_decline(dest)
+                return rendered
     except Exception:
         logger.debug("thumbnail skipped for %s (%s)", source, variant, exc_info=True)
         return None
@@ -207,9 +251,11 @@ def fresh_thumbnail(
     source over the ossfs mount just to hand back a smaller copy of it. That is
     a worse first visit than the one variants were introduced to fix.
 
-    So a miss only falls back to the redirect. New history records prewarm their
-    single display thumbnail at write time; old data remains untouched unless
-    an operator deliberately runs the offline backfill tool.
+    So a plain miss falls back to the redirect. New history records prewarm
+    their single display thumbnail at write time; a deterministic decline leaves
+    a marker that lets the request serve a stable original instead. Old data
+    remains untouched unless an operator deliberately runs the offline backfill
+    tool.
 
     Cheap enough to call on the event loop — two stats, fewer than the path
     resolution the caller already did to get here.
@@ -225,6 +271,21 @@ def fresh_thumbnail(
         return dest if _is_current(dest, source.stat().st_mtime_ns) else None
     except OSError:
         return None
+
+
+def thumbnail_declined(project_dir: Path, source: Path, variant: str | None) -> bool:
+    """Whether prewarming permanently declined this variant of this source."""
+
+    name = normalize_variant(variant)
+    if name is None:
+        return False
+    try:
+        dest = thumbnail_path(project_dir, source, name)
+        if dest is None:
+            return False
+        return _is_current(_declined_path(dest), source.stat().st_mtime_ns)
+    except OSError:
+        return False
 
 
 def _is_current(dest: Path, source_mtime_ns: int) -> bool:
@@ -246,7 +307,7 @@ def _render(
 
     with Image.open(source) as opened:
         if getattr(opened, "is_animated", False):
-            return None
+            raise _ThumbnailDeclined
 
         # Everything from here to `thumbnail` is decided on the header alone.
         # `Image.open` is lazy, so `.size` is known before a single pixel is
@@ -255,19 +316,19 @@ def _render(
         # allocates the full bitmap.
         width, height = opened.size
         if width <= 0 or height <= 0:
-            return None
+            raise _ThumbnailDeclined
         if width * height > _MAX_SOURCE_PIXELS:
-            return None
+            raise _ThumbnailDeclined
         # Nothing to gain once the source already fits: `thumbnail` would be a
         # no-op and we would spend a decode and a write to hand back a
         # re-encoded copy that can come out *larger* than the original. The
         # history strip and the LOD shell ask for `thumb` unconditionally, so
         # small sources reach this constantly — which is exactly why the check
         # belongs above the decode rather than below it. `None` means "serve the
-        # original", which is right here. Orientation cannot change the verdict:
-        # a transpose swaps the two numbers and `max` is blind to that.
+        # original", which is recorded by the caller. Orientation cannot change
+        # the verdict: a transpose swaps the two numbers and `max` is blind to it.
         if max(width, height) <= max_edge:
-            return None
+            raise _ThumbnailDeclined
 
         # No-op for everything but JPEG, where it lets libjpeg decode at a
         # reduced scale — most of the win on the formats that support it.
