@@ -67,7 +67,7 @@ function invalidateCompletedAssetQueries(
       queryClient.invalidateQueries({ queryKey: queryKeys.episodes(projectId) });
       // 拆镜整集重写 beats，身份/场景/道具的引用关系随之改变。资产索引挂在项目级
       // key 上，逐集失效 beats 够不着它；而 staleTime 只标记陈旧、不会自动重取，
-      // 停在资产页不动的用户会一直看着旧的使用次数。
+      // 停在资产详情不动的用户会一直看着旧的使用位置。
       invalidateAssetReferences(queryClient, projectId);
       queryClient.invalidateQueries({
         queryKey: queryKeys.pipelineStatus(projectId),

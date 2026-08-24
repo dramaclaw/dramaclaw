@@ -15,7 +15,6 @@ import { useTranslation } from "react-i18next";
 
 import { LightboxImage } from "@/components/lightbox-image";
 import { ASSET_CARD_META_BADGE_CLASS } from "@/components/assets/asset-card-styles";
-import { UsageCountBadge } from "@/components/assets/usage-count-badge";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { CreditCostInline } from "@/components/credit-cost-inline";
 import type { CreditPromotionDisplay } from "@/components/credits/credit-visual";
@@ -33,7 +32,6 @@ interface PropAssetCardProps {
   prop: PropAsset;
   generating?: boolean;
   uploading?: boolean;
-  referenceCount?: number;
   referenceCost?: string;
   referencePromotion?: CreditPromotionDisplay | null;
   onEdit: () => void;
@@ -48,7 +46,6 @@ export function PropAssetCard({
   prop,
   generating = false,
   uploading = false,
-  referenceCount = 0,
   referenceCost,
   referencePromotion,
   onEdit,
@@ -91,7 +88,6 @@ export function PropAssetCard({
                 {t("assets.props.reference")}{" "}
                 {referenceUrl ? t("assets.common.generated") : t("assets.common.missing")}
               </span>
-              <UsageCountBadge count={referenceCount} />
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">

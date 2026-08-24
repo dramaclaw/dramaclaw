@@ -1936,24 +1936,21 @@ _REFERENCE_BEATS = [
 
 
 @pytest.mark.asyncio
-async def test_project_asset_references_counts_every_asset_in_one_pass(monkeypatch, tmp_path):
-    assets, _ = _patch_asset_references(monkeypatch, tmp_path, _REFERENCE_BEATS)
+async def test_project_asset_references_does_not_scan_without_requested_ids(
+    monkeypatch, tmp_path
+):
+    assets, store_kwargs = _patch_asset_references(
+        monkeypatch, tmp_path, _REFERENCE_BEATS
+    )
 
     res = await assets.get_project_asset_references(
         project="proj_demo", ids=[], user={"username": "admin"}
     )
 
     assert res["ok"] is True
-    assert res["data"]["counts"] == {
-        "identity:苏清晏_少女": 1,
-        "identity:路人_青年": 1,
-        "prop:油泼辣子": 1,
-        "prop:木凳": 1,
-        "scene:兰州拉面馆": 2,
-    }
-    # 没点开任何资产时不该附带 beat 列表——那正是随集数无限增长的那一维。
     assert res["data"]["references"] == {}
     assert res["data"]["scene_co_occurrence"] == {}
+    assert store_kwargs == []
 
 
 @pytest.mark.asyncio
@@ -1982,14 +1979,12 @@ async def test_project_asset_references_returns_beat_lists_only_for_requested_id
             "props": ["木凳", "油泼辣子"],
         }
     }
-    # 计数始终覆盖全项目，与请求了哪些 id 无关。
-    assert res["data"]["counts"]["prop:木凳"] == 1
 
 
 @pytest.mark.asyncio
-async def test_project_asset_references_counts_inline_prop_markers(monkeypatch, tmp_path):
+async def test_project_asset_references_finds_inline_prop_markers(monkeypatch, tmp_path):
     # 只在 visual_description 里 [[标记]]、从未色绑到 detected_props 的道具，
-    # 也必须算作一次引用——否则它的用量角标会恒为 0。
+    # 也必须出现在按需引用列表里。
     assets, _ = _patch_asset_references(
         monkeypatch,
         tmp_path,
@@ -2010,7 +2005,6 @@ async def test_project_asset_references_counts_inline_prop_markers(monkeypatch, 
         project="proj_demo", ids=["prop:青瓷碗"], user={"username": "admin"}
     )
 
-    assert res["data"]["counts"] == {"prop:青瓷碗": 1, "prop:竹筷": 1}
     assert res["data"]["references"] == {"prop:青瓷碗": [{"episode": 2, "beat_number": 7}]}
     # 没有 scene_ref 的 beat 不该凭空造出一个空 key 的场景条目。
     assert res["data"]["scene_co_occurrence"] == {}
@@ -2026,7 +2020,7 @@ async def test_project_asset_references_empty_project(monkeypatch, tmp_path):
 
     assert res == {
         "ok": True,
-        "data": {"counts": {}, "references": {}, "scene_co_occurrence": {}},
+        "data": {"references": {}, "scene_co_occurrence": {}},
     }
 
 
@@ -2037,7 +2031,7 @@ async def test_project_asset_references_skips_graph_state_hydration(monkeypatch,
     assets, store_kwargs = _patch_asset_references(monkeypatch, tmp_path, _REFERENCE_BEATS)
 
     await assets.get_project_asset_references(
-        project="proj_demo", ids=[], user={"username": "admin"}
+        project="proj_demo", ids=["scene:兰州拉面馆"], user={"username": "admin"}
     )
 
     assert store_kwargs == [{"load_graph_state": False}]

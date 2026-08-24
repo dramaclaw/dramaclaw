@@ -81,15 +81,9 @@ import { NarratorVoicePanel } from "@/components/assets/narrator-voice-panel";
 import { ProjectStyleChip } from "@/components/assets/project-style-chip";
 import { ScenesPanel } from "@/components/assets/scenes-panel";
 import { PropsPanel } from "@/components/assets/props-panel";
-import { UsageCountBadge } from "@/components/assets/usage-count-badge";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
-import { AssetBeatReferences } from "@/components/assets/asset-beat-references";
-import {
-  useAssetReferenceCounts,
-  useAssetReferences,
-  type AssetRefType,
-  type BeatReference,
-} from "@/lib/queries/asset-references";
+import { LazyAssetBeatReferences } from "@/components/assets/asset-beat-references";
+import type { AssetRefType } from "@/lib/queries/asset-references";
 import { useAssetsDeepLink } from "@/hooks/use-assets-deep-link";
 import { useAssetFocus } from "@/hooks/use-asset-focus";
 import { LightboxImage } from "@/components/lightbox-image";
@@ -1324,8 +1318,6 @@ function IdentityCard({
   imageModel,
   ageLabel,
   roleLabel,
-  referenceCount = 0,
-  references = [],
   onAttempt,
 }: {
   identity: Identity;
@@ -1335,8 +1327,6 @@ function IdentityCard({
   imageModel?: string;
   ageLabel: string;
   roleLabel: string;
-  referenceCount?: number;
-  references?: BeatReference[];
   onAttempt: () => void;
 }) {
   const { t } = useTranslation();
@@ -1629,7 +1619,6 @@ function IdentityCard({
               {ageLabel}
             </span>
           )}
-          <UsageCountBadge count={referenceCount} />
         </div>
         <CopyAssetLinkButton type="identity" id={identity.identity_id} />
         <Button
@@ -2199,9 +2188,9 @@ function IdentityCard({
         )}
       </div>
 
-      <AssetBeatReferences
+      <LazyAssetBeatReferences
         project={project}
-        references={references}
+        asset={{ type: "identity", id: identity.identity_id }}
         className="border-t border-white/[0.06] pt-3"
       />
 
@@ -2375,22 +2364,6 @@ function IdentitiesGridSection({
   const deepLink = useAssetsDeepLink();
   const createIdentity = useCreateIdentity(project, character.name);
   const identities = identitiesRes?.data ?? [];
-  // Unlike the scene/prop panels, every identity card renders its beat list
-  // inline rather than behind a dialog — so the detail slice has to cover all
-  // of them. It stays one small request: these are the selected character's
-  // identities, not the project's.
-  const refCounts = useAssetReferenceCounts(project);
-  const refDetail = useAssetReferences(
-    project,
-    useMemo(
-      () =>
-        identities.map((id) => ({
-          type: "identity" as const,
-          id: id.identity_id,
-        })),
-      [identities],
-    ),
-  );
   const gridRef = useAssetFocus(
     deepLink.type === "identity" ? deepLink.id : null,
     identities.length > 0,
@@ -2486,14 +2459,6 @@ function IdentitiesGridSection({
                 imageModel={imageModel}
                 ageLabel={ageLabel}
                 roleLabel={roleLabel}
-                referenceCount={refCounts.countFor(
-                  "identity",
-                  id.identity_id,
-                )}
-                references={refDetail.referencesFor(
-                  "identity",
-                  id.identity_id,
-                )}
                 onAttempt={onAttempt}
               />
             </div>

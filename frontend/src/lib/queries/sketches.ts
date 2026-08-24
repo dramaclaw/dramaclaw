@@ -502,7 +502,7 @@ export function useAssignColors(project: string, episode: number) {
         queryKey: queryKeys.episodeDetail(project, episode),
       });
       // Colour binding is what writes detected_identities / detected_props,
-      // i.e. exactly the fields the asset usage counts are built from.
+      // i.e. exactly the fields the on-demand asset usage lists are built from.
       invalidateAssetReferences(qc, project);
     },
   });

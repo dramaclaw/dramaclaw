@@ -12,13 +12,9 @@ import { AssetBeatReferences } from "@/components/assets/asset-beat-references";
 import {
   AssetResultCount,
   AssetSearchBox,
-  AssetSortSelect,
   filterBySearch,
-  sortAssets,
-  type AssetSortKey,
 } from "@/components/assets/asset-search-box";
 import {
-  useAssetReferenceCounts,
   useAssetReferences,
   type BeatReference,
 } from "@/lib/queries/asset-references";
@@ -238,14 +234,12 @@ function PropAssetCardController({
   project,
   prop,
   imageSourceSelection,
-  referenceCount,
   onEdit,
   onDelete,
 }: {
   project: string;
   prop: PropAsset;
   imageSourceSelection: string;
-  referenceCount: number;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -317,7 +311,6 @@ function PropAssetCardController({
       prop={prop}
       generating={generateReference.isPending || refTask.started}
       uploading={uploadReference.isPending}
-      referenceCount={referenceCount}
       referenceCost={referenceCostDisplay}
       referencePromotion={referenceCost.data?.data.promotion}
       freezonePending={freezonePending}
@@ -344,10 +337,8 @@ export function PropsPanel({
   const [editing, setEditing] = useState<PropAsset | null>(null);
   const updateProp = useUpdateProp(project, editing?.name ?? "");
   const deleteProp = useDeleteProp(project);
-  // Counts feed every card's badge and the usage sort, so they cover the whole
-  // project. The beat list is only rendered inside the edit dialog, so it is
-  // fetched for that one prop instead of for all of them.
-  const refCounts = useAssetReferenceCounts(project);
+  // Beat references are edit-only: opening the asset page must not scan every
+  // beat merely to decorate cards with a usage count.
   const refDetail = useAssetReferences(
     project,
     useMemo(
@@ -359,7 +350,6 @@ export function PropsPanel({
   const imageSourceSelection = imageSourceQuery.data?.data.image_source_selection ?? "";
   const allItems = props.data?.data ?? [];
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortKey, setSortKey] = useState<AssetSortKey>("name");
   const items = useMemo(() => {
     const filtered = filterBySearch(allItems, searchQuery, (prop) => [
       prop.name,
@@ -369,13 +359,8 @@ export function PropsPanel({
       prop.owner,
       ...(prop.aliases ?? []),
     ]);
-    return sortAssets(
-      filtered,
-      sortKey,
-      (prop) => prop.name,
-      (prop) => refCounts.countFor("prop", prop.name),
-    );
-  }, [allItems, searchQuery, sortKey, refCounts]);
+    return filtered.sort((a, b) => a.name.localeCompare(b.name));
+  }, [allItems, searchQuery]);
   const gridRef = useAssetFocus(focusId, !props.isLoading && items.length > 0);
 
   async function handleSave(data: PropPayload) {
@@ -451,7 +436,6 @@ export function PropsPanel({
                 placeholder={t("assets.common.searchProps")}
                 ariaLabel={t("assets.common.searchProps")}
               />
-              <AssetSortSelect value={sortKey} onValueChange={setSortKey} />
             </div>
             <AssetResultCount
               resultCount={items.length}
@@ -505,7 +489,6 @@ export function PropsPanel({
                   project={project}
                   prop={prop}
                   imageSourceSelection={imageSourceSelection}
-                  referenceCount={refCounts.countFor("prop", prop.name)}
                   onEdit={() => {
                     setEditing(prop);
                     setDialogOpen(true);

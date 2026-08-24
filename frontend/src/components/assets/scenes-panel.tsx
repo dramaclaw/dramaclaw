@@ -22,13 +22,9 @@ import { ThreeDDirectorDialog } from "@/features/viewer-kit/three-d/ThreeDDirect
 import type { ThreeDSceneSnapshot } from "@/features/viewer-kit/three-d/engine/viewerApp";
 import {
   AssetSearchBox,
-  AssetSortSelect,
   filterBySearch,
-  sortAssets,
-  type AssetSortKey,
 } from "@/components/assets/asset-search-box";
 import {
-  useAssetReferenceCounts,
   useAssetReferences,
   type BeatReference,
   type SceneCoOccurrence,
@@ -577,14 +573,12 @@ function SceneAssetCardController({
   project,
   scene,
   imageSourceSelection,
-  referenceCount,
   onEdit,
   onDelete,
 }: {
   project: string;
   scene: SceneAsset;
   imageSourceSelection: string;
-  referenceCount: number;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -976,7 +970,6 @@ function SceneAssetCardController({
     <>
       <SceneAssetCard
         scene={scene}
-        referenceCount={referenceCount}
         masterRunning={generateMaster.isPending || masterTask.started}
         reverseRunning={generateReverse.isPending || reverseTask.started}
         panoRunning={generatePano.isPending || panoTask.started}
@@ -1119,12 +1112,10 @@ function sceneGroupPreviewUrl(group: SceneGroup): string {
 function SceneGroupListItem({
   group,
   selected,
-  referenceCount,
   onSelect,
 }: {
   group: SceneGroup;
   selected: boolean;
-  referenceCount: number;
   onSelect: () => void;
 }) {
   const { t } = useTranslation();
@@ -1167,14 +1158,6 @@ function SceneGroupListItem({
               {t("assets.scenes.variantCount", {
                 count: group.scenes.length,
                 defaultValue: "{{count}} 个变体",
-              })}
-            </span>
-          ) : null}
-          {referenceCount > 0 ? (
-            <span>
-              {t("assets.scenes.referenceCount", {
-                count: referenceCount,
-                defaultValue: "{{count}} 次使用",
               })}
             </span>
           ) : null}
@@ -1224,10 +1207,8 @@ export function ScenesPanel({
     (buildScenesCost.error instanceof BillingRuleNotConfiguredError
       ? t("common.billingRuleNotConfiguredShort")
       : null);
-  // Counts feed every card's badge and the usage sort, so they cover the whole
-  // project. The beat list is only rendered inside the edit dialog, so it is
-  // fetched for that one scene instead of for all of them.
-  const refCounts = useAssetReferenceCounts(project);
+  // Beat references are edit-only: opening the asset page must not scan every
+  // beat merely to decorate cards with a usage count.
   const refDetail = useAssetReferences(
     project,
     useMemo(
@@ -1238,7 +1219,6 @@ export function ScenesPanel({
 
   const allItems = scenes.data?.data ?? [];
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortKey, setSortKey] = useState<AssetSortKey>("name");
   const allSceneGroups = useMemo<SceneGroup[]>(() => {
     const groups = new globalThis.Map<string, SceneAsset[]>();
     for (const scene of allItems) {
@@ -1276,17 +1256,8 @@ export function ScenesPanel({
         ...(scene.aliases ?? []),
       ]),
     ]);
-    return sortAssets(
-      filtered,
-      sortKey,
-      (group) => group.baseName,
-      (group) =>
-        group.scenes.reduce(
-          (sum, scene) => sum + refCounts.countFor("scene", scene.name),
-          0,
-        ),
-    );
-  }, [allSceneGroups, searchQuery, sortKey, refCounts]);
+    return filtered.sort((a, b) => a.baseName.localeCompare(b.baseName));
+  }, [allSceneGroups, searchQuery]);
   useEffect(() => {
     if (scenes.isLoading) {
       return;
@@ -1508,9 +1479,6 @@ export function ScenesPanel({
                   ariaLabel={t("assets.common.searchScenes")}
                   className="min-w-0 flex-1"
                 />
-                <div className="shrink-0">
-                  <AssetSortSelect value={sortKey} onValueChange={setSortKey} />
-                </div>
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-2">
@@ -1528,10 +1496,6 @@ export function ScenesPanel({
                       key={group.baseName}
                       group={group}
                       selected={selectedBaseName === group.baseName}
-                      referenceCount={group.scenes.reduce(
-                        (sum, scene) => sum + refCounts.countFor("scene", scene.name),
-                        0,
-                      )}
                       onSelect={() => rememberSelectedBaseName(group.baseName)}
                     />
                   ))}
@@ -1610,7 +1574,6 @@ export function ScenesPanel({
                         project={project}
                         scene={scene}
                         imageSourceSelection={imageSourceSelection}
-                        referenceCount={refCounts.countFor("scene", scene.name)}
                         onEdit={() => {
                           setEditing(scene);
                           setDraftSeed(null);

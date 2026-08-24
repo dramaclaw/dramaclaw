@@ -32,7 +32,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { UsageCountBadge } from "@/components/assets/usage-count-badge";
 import { ASSET_CARD_META_BADGE_CLASS } from "@/components/assets/asset-card-styles";
 import { CopyAssetLinkButton } from "@/components/assets/copy-asset-link-button";
 import { CreditCostInline } from "@/components/credit-cost-inline";
@@ -49,7 +48,6 @@ import type {
 
 interface SceneAssetCardProps {
   scene: SceneAsset;
-  referenceCount?: number;
   masterRunning?: boolean;
   reverseRunning?: boolean;
   panoRunning?: boolean;
@@ -181,7 +179,6 @@ function StagePlyBadge({
 
 export function SceneAssetCard({
   scene,
-  referenceCount = 0,
   masterRunning = false,
   reverseRunning = false,
   panoRunning = false,
@@ -290,7 +287,6 @@ export function SceneAssetCard({
                   {t("assets.scenes.pano")}{" "}
                   {hasPano ? t("assets.common.generated") : t("assets.common.missing")}
                 </span>
-                <UsageCountBadge count={referenceCount} />
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
