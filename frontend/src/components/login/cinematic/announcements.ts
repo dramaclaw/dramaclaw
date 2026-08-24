@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
-import { cdn } from "./media";
-
 /**
  * 登录页公告中心的数据层。
  *
@@ -80,13 +78,21 @@ const PayloadSchema = z.union([
 ]);
 
 /**
- * 跟登录页的二维码、片花走同一个 CDN 前缀（`media.ts` 的 `cdn()`），换域名只改那一处。
+ * 公告故意**不**跟二维码、片花共用 `media.ts` 的 `cdn()` 前缀，而是直连 OSS。
  *
- * 注意它跟那些图片视频有一点关键差别：`<img>`/`<video>` 是浏览器自己加载、JS 读不到内容，
- * 不查 CORS；公告要 `fetch()` 把 JSON 交给 JS，**必须**这个域名回 `Access-Control-Allow-Origin`。
- * 少了那个头，对象本身 200、地址栏也能打开，但页面上就是静默的「没有公告」。
+ * 那些图片视频由 `<img>`/`<video>` 加载，浏览器自己读、JS 拿不到内容，不查 CORS，
+ * 而且发一次就不再变，挂在 CDN 上吃 30 天边缘缓存正合适。公告两条都反过来：
+ *
+ * - 它要 `fetch()` 把 JSON 交给 JS，**必须**回 `Access-Control-Allow-Origin`。少了那个头，
+ *   对象本身 200、地址栏也打得开，但页面上就是静默的「没有公告」。
+ * - 运营改完要尽快见效，而 CDN 那层 30 天的边缘缓存（`X-Swift-CacheTime: 2592000`）会把
+ *   旧公告钉在边缘节点上：源站改了也不回源，且**挂 query 绕不开** —— 这个 CDN 把查询串
+ *   从缓存键里过滤掉了，`?t=<时间戳>` 照样命中同一份旧副本。
+ *
+ * 直连 OSS 就没有那层边缘缓存，对象自己的 `Cache-Control: max-age=60` 是唯一一层，
+ * 覆盖上传后最多一分钟全网见效。代价是这个域名必须在 OSS 的跨域设置里放行本站来源。
  */
-export const DEFAULT_ANNOUNCEMENTS_URL = cdn("announcements.json");
+export const DEFAULT_ANNOUNCEMENTS_URL = "https://nfg-web.cdnfg.com/dramaclaw/announcements.json";
 
 export function announcementsUrl(): string {
   const override = import.meta.env.VITE_LOGIN_ANNOUNCEMENTS_URL?.trim();

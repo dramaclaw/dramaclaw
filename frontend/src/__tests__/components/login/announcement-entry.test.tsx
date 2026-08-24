@@ -73,8 +73,10 @@ describe("AnnouncementEntry", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("https://nfg-web-assets.cdnfg.com/dramaclaw/announcements.json");
-    // 登录页是未登录状态下打开的，别把 cookie 带去 CDN。
+    // 直连 OSS，不是 `media.ts` 那个 CDN 前缀：CDN 有 30 天边缘缓存，且查询串被过滤出缓存键，
+    // 挂时间戳也刷不动，改完公告一个月才见效。这行钉住域名，防止有人顺手"统一"回 cdn()。
+    expect(url).toBe("https://nfg-web.cdnfg.com/dramaclaw/announcements.json");
+    // 登录页是未登录状态下打开的，别把 cookie 带去 OSS。
     expect(init).toMatchObject({ credentials: "omit", cache: "no-cache" });
   });
 
