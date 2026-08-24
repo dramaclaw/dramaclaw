@@ -125,8 +125,9 @@ def _with_chat_error_hints(value: Any) -> Any:
         result.setdefault(
             "agent_instruction",
             (
-                "Reply to the user with chat_error in natural Chinese. Make clear the audio task "
-                "was not started. Tell the user they can go to 虾塘 to upload or record the missing "
+                "Reply to the user with chat_error in the user's UI language "
+                "(default English). Make clear the audio task "
+                "was not started. Tell the user they can go to Freezone (虾塘) to upload or record the missing "
                 "voice lines, then continue. Do not start another tool in this turn."
             ),
         )
@@ -139,9 +140,10 @@ def _with_chat_error_hints(value: Any) -> Any:
         result.setdefault(
             "agent_instruction",
             (
-                "Reply to the user with chat_error in natural Chinese. Make clear the render "
+                "Reply to the user with chat_error in the user's UI language "
+                "(default English). Make clear the render "
                 "task did not produce usable images because sketches are missing. Tell the user "
-                "to generate or verify sketches in 虾塘 before retrying render. Do not start "
+                "to generate or verify sketches in Freezone (虾塘) before retrying render. Do not start "
                 "another tool in this turn."
             ),
         )
@@ -150,7 +152,8 @@ def _with_chat_error_hints(value: Any) -> Any:
         result.setdefault(
             "agent_instruction",
             (
-                "Reply to the user with chat_error in natural Chinese. Do not quote the raw "
+                "Reply to the user with chat_error in the user's UI language "
+                "(default English). Do not quote the raw "
                 "provider JSON or provider_response_id."
             ),
         )

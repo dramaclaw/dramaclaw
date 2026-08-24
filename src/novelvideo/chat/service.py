@@ -95,7 +95,7 @@ _STYLE_SHORT_DRAMA_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 _CONTINUE_PIPELINE_RE = re.compile(r"(?:继续|恢复|接着|下一步|当前|已有|已上传|刚才上传)")
-_DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS = """[DRAMACLAW_SCRIPT_UPLOAD_GUIDANCE]
+_DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS_ZH = """[DRAMACLAW_SCRIPT_UPLOAD_GUIDANCE]
 用户正在请求创建、生成或编写剧本/短剧，但当前消息没有上传剧本文档。
 
 你必须只用自然中文回复用户，不要调用任何工具，不要创建项目，不要生成剧本，不要构造基础脚本，不要启动摄入或流水线。
@@ -108,6 +108,58 @@ _DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS = """[DRAMACLAW_SCRIPT_UPLOAD_
 - 只回复 1-2 句，不要列步骤，不要输出 markdown 标题。
 [/DRAMACLAW_SCRIPT_UPLOAD_GUIDANCE]
 """
+_DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS_EN = """[DRAMACLAW_SCRIPT_UPLOAD_GUIDANCE]
+The user is asking to create, generate, or write a script/short drama, but this message has no uploaded script document.
+
+You must reply to the user in natural English only. Do not call any tools, do not create a project, do not generate a script, do not construct a base script, and do not start ingest or the pipeline.
+
+Reply goals:
+- Sound natural; do not sound like a system error.
+- Make clear that the assistant does not generate scripts.
+- Guide the user to upload an existing script document in Materials (虾料).
+- Explain that after upload you can help with episodes, visuals, voice-over, and delivery.
+- Reply in 1-2 sentences only; no step lists; no markdown headings.
+[/DRAMACLAW_SCRIPT_UPLOAD_GUIDANCE]
+"""
+# Back-compat alias used by older imports/tests.
+_DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS = (
+    _DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS_ZH
+)
+_REPLY_LANGUAGE_PREAMBLE = {
+    "en": "[DRAMACLAW_REPLY_LANGUAGE]\nReply to the user in English.\n[/DRAMACLAW_REPLY_LANGUAGE]",
+    "zh": "[DRAMACLAW_REPLY_LANGUAGE]\n请用自然中文回复用户。\n[/DRAMACLAW_REPLY_LANGUAGE]",
+}
+_CHAT_COPY = {
+    "reingest_confirm_clear": {
+        "en": (
+            "Overwrite will clear/rebuild this project's existing characters, episodes, "
+            "scripts, sketches, audio, video, and other pipeline results. Continue?\n\n"
+            "Reply `confirm` or `continue` to proceed with overwrite."
+        ),
+        "zh": (
+            "覆盖会清空/重建当前项目已有角色、分集、脚本、草图、音频、视频等"
+            "流水线结果。是否继续？\n\n请回复 `确定` 或 `继续` 后才会开始覆盖。"
+        ),
+    },
+    "reingest_confirm_overwrite": {
+        "en": (
+            "This project already has ingested content. Continuing will overwrite the "
+            "current project.\n\nReply `overwrite` to proceed to the next confirmation."
+        ),
+        "zh": (
+            "当前项目已有摄入内容，继续会覆盖现有项目。是否要覆盖当前项目？\n\n"
+            "请回复 `覆盖` 进入下一步确认。"
+        ),
+    },
+    "empty_agent_content": {
+        "en": "(agent returned no content)",
+        "zh": "(agent returned no content)",
+    },
+    "user_said_prefix": {
+        "en": "User said: ",
+        "zh": "用户原话：",
+    },
+}
 _HIDDEN_TOOL_MARKERS = (
     "skill_view",
     "skills_list",
@@ -240,10 +292,47 @@ def load_user_preferences(username: str) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
-def _prompt_with_user_context(username: str, project: str, prompt: str) -> str:
+def normalize_chat_language(value: str | None) -> str:
+    """Normalize UI/chat language to ``en`` or ``zh`` (default English)."""
+    two = str(value or "").strip().lower()[:2]
+    return "zh" if two == "zh" else "en"
+
+
+def chat_copy(language: str | None, key: str) -> str:
+    lang = normalize_chat_language(language)
+    entry = _CHAT_COPY.get(key) or {}
+    return str(entry.get(lang) or entry.get("en") or "")
+
+
+def _reply_language_preamble(language: str | None) -> str:
+    return _REPLY_LANGUAGE_PREAMBLE[normalize_chat_language(language)]
+
+
+def _script_upload_instructions(language: str | None) -> str:
+    if normalize_chat_language(language) == "zh":
+        return _DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS_ZH
+    return _DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS_EN
+
+
+def prepare_home_agent_prompt(prompt: str, *, language: str | None = None) -> str:
+    """Apply reply-language + script-upload guidance for home-scope Hermes turns."""
+    lang = normalize_chat_language(language)
+    guided = _script_creation_model_reply_prompt(prompt, language=lang) or prompt
+    return f"{_reply_language_preamble(lang)}\n\n{guided}"
+
+
+def _prompt_with_user_context(
+    username: str,
+    project: str,
+    prompt: str,
+    *,
+    language: str | None = None,
+) -> str:
     preferences = load_user_preferences(username)
     scope = f"project:{project}" if project else "home"
+    lang = normalize_chat_language(language)
     return (
+        f"{_reply_language_preamble(lang)}\n\n"
         "[DRAMACLAW_USER_CONTEXT]\n"
         f"username: {username}\n"
         f"scope: {scope}\n"
@@ -3207,13 +3296,15 @@ async def stream_assistant_reply(
     *,
     project_dir: str | Path | None = None,
     project_state_dir: str | Path | None = None,
+    language: str | None = None,
 ) -> dict[str, Any]:
     run_lock_id = _acquire_chat_run_lock(username, project)
     heartbeat_task = asyncio.create_task(
         _chat_run_lock_heartbeat_loop(username, project, run_lock_id)
     )
     try:
-        deterministic = _frontend_context_reply(prompt)
+        lang = normalize_chat_language(language)
+        deterministic = _frontend_context_reply(prompt, language=lang)
         if deterministic is not None:
             return await _stream_deterministic_assistant_reply(
                 username,
@@ -3223,7 +3314,7 @@ async def stream_assistant_reply(
                 project_dir=project_dir,
                 project_state_dir=project_state_dir,
             )
-        model_prompt = _script_creation_model_reply_prompt(prompt) or prompt
+        model_prompt = _script_creation_model_reply_prompt(prompt, language=lang) or prompt
         backend = _chat_backend()
         if backend == "codex":
             return await _stream_assistant_reply_codex(
@@ -3233,6 +3324,7 @@ async def stream_assistant_reply(
                 on_event,
                 project_dir=project_dir,
                 project_state_dir=project_state_dir,
+                language=lang,
             )
         if backend == "hermes":
             return await _stream_assistant_reply_hermes(
@@ -3242,6 +3334,7 @@ async def stream_assistant_reply(
                 on_event,
                 project_dir=project_dir,
                 project_state_dir=project_state_dir,
+                language=lang,
             )
         if backend != "claude":
             raise RuntimeError(f"Unsupported chat backend: {backend}")
@@ -3252,6 +3345,7 @@ async def stream_assistant_reply(
             on_event,
             project_dir=project_dir,
             project_state_dir=project_state_dir,
+            language=lang,
         )
     finally:
         heartbeat_task.cancel()
@@ -3262,24 +3356,20 @@ async def stream_assistant_reply(
         _release_chat_run_lock(username, project, run_lock_id)
 
 
-def _frontend_context_reply(prompt: str) -> str | None:
+def _frontend_context_reply(prompt: str, *, language: str | None = None) -> str | None:
     confirmation = _REINGEST_CONFIRMATION_BLOCK_RE.search(prompt)
     if confirmation:
         body = confirmation.group(1)
         if re.search(r"(?m)^\s*stage:\s*confirm_clear\s*$", body):
-            return (
-                "覆盖会清空/重建当前项目已有角色、分集、脚本、草图、音频、视频等"
-                "流水线结果。是否继续？\n\n请回复 `确定` 或 `继续` 后才会开始覆盖。"
-            )
-        return (
-            "当前项目已有摄入内容，继续会覆盖现有项目。是否要覆盖当前项目？\n\n"
-            "请回复 `覆盖` 进入下一步确认。"
-        )
+            return chat_copy(language, "reingest_confirm_clear")
+        return chat_copy(language, "reingest_confirm_overwrite")
 
     return None
 
 
-def _script_creation_model_reply_prompt(prompt: str) -> str | None:
+def _script_creation_model_reply_prompt(
+    prompt: str, *, language: str | None = None
+) -> str | None:
     if not prompt:
         return None
     if _DRAMACLAW_INGEST_AUTOMATION_RE.search(prompt):
@@ -3291,9 +3381,10 @@ def _script_creation_model_reply_prompt(prompt: str) -> str | None:
     if _CONTINUE_PIPELINE_RE.search(text):
         return None
     if _SCRIPT_CREATION_REQUEST_RE.search(text) or _STYLE_SHORT_DRAMA_REQUEST_RE.search(text):
+        prefix = chat_copy(language, "user_said_prefix")
         return (
-            f"{_DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS}"
-            f"\n\n用户原话：{text}"
+            f"{_script_upload_instructions(language)}"
+            f"\n\n{prefix}{text}"
         )
     return None
 
@@ -3351,6 +3442,7 @@ async def _stream_assistant_reply_hermes(
     *,
     project_dir: str | Path | None = None,
     project_state_dir: str | Path | None = None,
+    language: str | None = None,
 ) -> dict[str, Any]:
     """Stream via Hermes ACP subprocess (per-user, sandboxed).
 
@@ -3361,7 +3453,10 @@ async def _stream_assistant_reply_hermes(
     """
     from novelvideo.chat.hermes_pool import pool as _hermes_pool
 
-    agent_prompt = _prompt_with_user_context(username, project, prompt)
+    lang = normalize_chat_language(language)
+    agent_prompt = _prompt_with_user_context(
+        username, project, prompt, language=lang
+    )
     thread = await _hermes_pool.get_for_user(
         username,
         scope_kind="project" if project else "home",
@@ -3428,7 +3523,11 @@ async def _stream_assistant_reply_hermes(
         return persisted_message
 
     try:
-        async for event in thread.stream(agent_prompt, current_project=project or None):
+        async for event in thread.stream(
+            agent_prompt,
+            current_project=project or None,
+            language=lang,
+        ):
             if event.type == "thread_started":
                 await _emit_chat_event_best_effort(
                     on_event,
@@ -3589,6 +3688,7 @@ async def _stream_assistant_reply_claude(
     *,
     project_dir: str | Path | None = None,
     project_state_dir: str | Path | None = None,
+    language: str | None = None,
 ) -> dict[str, Any]:
     try:
         agent_token = await _create_page_agent_session_token(
@@ -3597,7 +3697,9 @@ async def _stream_assistant_reply_claude(
             agent_kind="claude",
         )
         thread = _build_claude_thread(username, project, agent_token)
-        agent_prompt = _prompt_with_user_context(username, project, prompt)
+        agent_prompt = _prompt_with_user_context(
+            username, project, prompt, language=language
+        )
         assistant_text = ""
         tool_text = ""
         async for event in thread.stream(agent_prompt):
@@ -3666,6 +3768,7 @@ async def _stream_assistant_reply_codex(
     *,
     project_dir: str | Path | None = None,
     project_state_dir: str | Path | None = None,
+    language: str | None = None,
 ) -> dict[str, Any]:
     assistant_text = ""
     tool_text = ""
@@ -3675,7 +3778,9 @@ async def _stream_assistant_reply_codex(
         agent_kind="codex",
     )
     thread = _build_codex_thread(username, project, agent_token)
-    agent_prompt = _prompt_with_user_context(username, project, prompt)
+    agent_prompt = _prompt_with_user_context(
+        username, project, prompt, language=language
+    )
     async for event in thread.stream(agent_prompt):
         if event.type == "thread_started":
             thread_id = str(event.thread_id or "").strip() or None

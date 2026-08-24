@@ -19,6 +19,8 @@ import {
 } from "@/features/superchat/message";
 import { hasStructuredContent } from "@/features/superchat/spec-extract";
 import { api } from "@/lib/api";
+import { normalize as normalizeLanguage } from "@/i18n";
+import { useAppStore } from "@/stores/app-store";
 import {
   isStaleByTtl,
   pruneLocalStorageByPrefix,
@@ -969,6 +971,7 @@ export function useSuperChat({
     if (!trimmed || !connected) return false;
     const outboundText = transportText?.trim() || trimmed;
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const language = normalizeLanguage(useAppStore.getState().language);
     pendingClientTurnIdRef.current = turnId;
     markTurnActive(turnId);
     setMessages((current) => [...current, buildLocalUserMessage(trimmed, turnId, displayName, attachments)]);
@@ -979,6 +982,7 @@ export function useSuperChat({
       scope: desiredScope,
       text: outboundText,
       turn_id: turnId,
+      language,
       attachments: attachments.length > 0 ? attachments : undefined,
     });
     return true;

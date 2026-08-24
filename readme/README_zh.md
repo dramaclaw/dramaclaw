@@ -236,9 +236,10 @@ uv run novelvideo api --port 8780   # 启动 REST API（CE 默认 inline 任务�
 DramaClaw 对模型侧保持中立 —— 所有文本/图片/视频/音频模型都经一个 **OpenAI 兼容网关**接入，两种方式：
 
 - **DramaClaw 官方 key（推荐）**：`docker compose up`,开 <http://localhost:8080> → 设置 → 模型配置 → 官方渠道,粘贴 DC key 保存即用,**无需映射模型**。到 <https://relayclaw.cdnfg.com> 获取 key。
-- **自带网关（BYO）**：把 `NEWAPI_BASE_URL` 指向你自己的 OpenAI 兼容端点并映射模型名（详见 [配置模型供应商](../docs/zh/getting-started/configuring-models.md)）。
+- **自带网关（BYO）**：使用 Local NewAPI（`docker-compose.selfhosted.yml`）并在 UI 中映射模型名（详见 [配置模型供应商](../docs/zh/getting-started/configuring-models.md)）。
+- **本地 LLM（Ollama / 混合）**：本机跑文本 + embedding，经 Local NewAPI 接入；图片 / 视频 / TTS 仍走具备媒体能力的云端上游，除非你自备兼容的媒体 API。步骤见 [使用本地 LLM 跑 DramaClaw](../docs/zh/guides/local-llms.md)。
 
-> 想完全本地?用 `docker compose -f docker-compose.selfhosted.yml up` 起 selfhosted 版 `newapi` 网关自行配置（免构建镜像版:`docker-compose.selfhosted.release.yml`）。
+> 想用内置本地网关？用 `docker compose -f docker-compose.selfhosted.yml up` 起 selfhosted 版 `newapi` 网关自行配置（免构建镜像版:`docker-compose.selfhosted.release.yml`）。
 
 | 环节              | 经网关接入                                                          |
 |-------------------|---------------------------------------------------------------------|
@@ -292,6 +293,7 @@ DramaClaw 对模型侧保持中立 —— 所有文本/图片/视频/音频模�
 - [快速开始](../docs/zh/getting-started/quickstart.md)
 - [自托管手册](../docs/zh/guides/self-hosting.md)
 - [配置模型供应商](../docs/zh/getting-started/configuring-models.md)
+- [本地 LLM（Ollama / BYO）](../docs/zh/guides/local-llms.md)
 - [更多文档 &rarr;](../docs/zh/README.md)
 
 <br/>

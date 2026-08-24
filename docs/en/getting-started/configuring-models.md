@@ -17,6 +17,8 @@ After startup, open `http://localhost:8080` and go to **Settings → Models & Ch
 
 Enable the intended mode after configuring it. New jobs read the latest mode, key, and mappings. Jobs already running do not switch gateways midway.
 
+For an end-to-end **Ollama / local LLM** walkthrough (Docker host URLs, example mappings, smoke tests), see [Using DramaClaw with Local LLMs](../guides/local-llms.md).
+
 ## Official mode
 
 Official mode is the shortest setup path:

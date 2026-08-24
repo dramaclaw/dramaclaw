@@ -41,9 +41,10 @@ docker compose ps   # both api and web should be running
 
 ## Want to use your own model channels?
 
-Start the local NewAPI bundled with CE via `docker-compose.selfhosted.yml`, then initialize it and configure upstream keys and model mappings under Settings → Model Configuration → Local NewAPI. Its address and runtime token are stored in local `settings.db`, not `.env`. See [Configuring Model Providers](configuring-models.md).
+Start the local NewAPI bundled with CE via `docker-compose.selfhosted.yml`, then initialize it and configure upstream keys and model mappings under Settings → Model Configuration → Local NewAPI. Its address and runtime token are stored in local `settings.db`, not `.env`. See [Configuring Model Providers](configuring-models.md). For Ollama / hybrid local text + embeddings, follow [Using DramaClaw with Local LLMs](../guides/local-llms.md).
 
 ## Next steps
 
 - Full deployment/upgrade/backup: [Self-Hosting Handbook](../guides/self-hosting.md)
 - Connect your own models: [Configuring Model Providers](configuring-models.md)
+- Local LLMs (Ollama / BYO): [Using DramaClaw with Local LLMs](../guides/local-llms.md)

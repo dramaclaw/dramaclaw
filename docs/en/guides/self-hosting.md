@@ -41,7 +41,7 @@ Groups (each item is commented inline in `.env.example`): local NewAPI provision
 Recommended and alternative options (see [Configuring Model Providers](../getting-started/configuring-models.md) for details):
 
 - **A. DC official key (recommended)**: the default compose already uses the official gateway. After bringing the stack up, open `http://localhost:8080` → Settings → Model Configuration → Official Channel → paste your DC key and save to start using it, **no model mapping required**. Get a key at <https://relayclaw.cdnfg.com>.
-- **B. Local NewAPI**: switch to `docker compose -f docker-compose.selfhosted.yml up`, then initialize it and configure upstream channels and model mappings from the Local NewAPI page.
+- **B. Local NewAPI**: switch to `docker compose -f docker-compose.selfhosted.yml up`, then initialize it and configure upstream channels and model mappings from the Local NewAPI page. For Ollama / hybrid local text, follow [Using DramaClaw with Local LLMs](local-llms.md).
 
 Local NewAPI must map DramaClaw's logical models to real upstream models. The reference-image feature needs `OSS_RELAY_AK/SK` (you can skip it for a text-only workflow).
 
@@ -114,4 +114,4 @@ After the formal release this will switch to **pulling published, pinned-version
 
 ## Related
 
-- [Quickstart](../getting-started/quickstart.md) ｜ [Configuring Model Providers](../getting-started/configuring-models.md)
+- [Quickstart](../getting-started/quickstart.md) ｜ [Configuring Model Providers](../getting-started/configuring-models.md) ｜ [Local LLMs](local-llms.md)

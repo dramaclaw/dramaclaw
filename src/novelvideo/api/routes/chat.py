@@ -86,6 +86,7 @@ class ChatMessageIn(BaseModel):
     scope: ChatScopePayload | None = None
     text: str
     turn_id: str | None = None
+    language: str | None = None
     attachments: list[ChatAttachmentIn] = []
 
 
@@ -406,6 +407,7 @@ async def _stream_project_turn(
     text: str,
     attachments: list[ChatAttachmentIn],
     turn_id: str,
+    language: str | None = None,
 ) -> None:
     project = str(scope.id)
     project_ctx = await _project_context_for_scope(user, scope)
@@ -507,6 +509,7 @@ async def _stream_project_turn(
             on_event,
             project_dir=project_dir,
             project_state_dir=project_state_dir,
+            language=language,
         )
     finally:
         heartbeat_task.cancel()
@@ -528,6 +531,7 @@ async def _stream_home_turn(
     text: str,
     attachments: list[ChatAttachmentIn],
     turn_id: str,
+    language: str | None = None,
 ) -> None:
     from novelvideo.chat.hermes_pool import pool as hermes_pool
 
@@ -540,7 +544,10 @@ async def _stream_home_turn(
         ),
         "",
     )
-    agent_text = _text_with_attachment_context(text, attachments)
+    agent_text = chat_service.prepare_home_agent_prompt(
+        _text_with_attachment_context(text, attachments),
+        language=language,
+    )
     chat_store.append_message(
         username,
         scope,
@@ -592,7 +599,11 @@ async def _stream_home_turn(
         send_lock,
     )
     try:
-        async for event in thread.stream(agent_text, current_project=None):
+        async for event in thread.stream(
+            agent_text,
+            current_project=None,
+            language=language,
+        ):
             if event.type == "thread_started":
                 await _send_json_best_effort(
                     websocket,
@@ -648,7 +659,9 @@ async def _stream_home_turn(
             previous_assistant,
             text,
         )
-        assistant_text = assistant_text.strip() or "(agent returned no content)"
+        assistant_text = assistant_text.strip() or chat_service.chat_copy(
+            language, "empty_agent_content"
+        )
         message = chat_store.append_message(username, scope, "assistant", assistant_text)
         persisted = True
         await _send_json_best_effort(
@@ -765,6 +778,7 @@ async def chat_ws(websocket: WebSocket) -> None:
             scope = _scope_from_model(msg.scope) if msg.scope else current_scope
             turn_id = (msg.turn_id or "").strip() or uuid.uuid4().hex
             text = msg.text.strip()
+            language = msg.language
             if not text:
                 await _send_json_best_effort(
                     websocket, {"type": "error", "turn_id": turn_id, "message": "empty message"}
@@ -782,6 +796,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         text=text,
                         attachments=msg.attachments,
                         turn_id=turn_id,
+                        language=language,
                     )
                 elif scope.kind == "home":
                     await _stream_home_turn(
@@ -791,6 +806,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         text=text,
                         attachments=msg.attachments,
                         turn_id=turn_id,
+                        language=language,
                     )
                 else:
                     await _send_json_best_effort(

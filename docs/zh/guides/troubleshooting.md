@@ -19,7 +19,7 @@
 | 现象 | 排查 |
 |---|---|
 | **模型调用全报错** | 在「设置 → 模型配置」确认当前渠道已配置；官方渠道检查 DC key，本地 NewAPI 检查服务、runtime token 和上游渠道。 |
-| **某个环节报"模型不存在"** | 本地 NewAPI 中没有对应逻辑模型映射，或目标渠道未启用。详见[配置模型供应商](../getting-started/configuring-models.md)。 |
+| **某个环节报"模型不存在"** | 本地 NewAPI 中没有对应逻辑模型映射，或目标渠道未启用。详见[配置模型供应商](../getting-started/configuring-models.md)或[本地 LLM](local-llms.md)。 |
 | **文本模型超时** | 调大 `NEWAPI_TEXT_TIMEOUT_SECONDS`(默认 120);内网网关被系统代理拦截时设 `NEWAPI_TEXT_TRUST_ENV=false`。 |
 | **参考图功能不可用** | 需配 `OSS_RELAY_AK/SK`;纯文本→成片流程可不配。 |
 

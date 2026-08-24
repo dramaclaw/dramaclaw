@@ -8,6 +8,11 @@ requires:
 
 # DramaClaw 虾导 — AI 小说转视频 Skill
 
+## Language
+
+- Reply in the user's UI language. Default to **English** when the locale is missing or unclear.
+- Keep product names as DramaClaw / 虾导. Operational docs below may be Chinese; reply language still follows the UI locale.
+
 **Base URL**: `$DRAMACLAW_API_URL/api/v1`  
 **认证**: 所有请求需要 `Authorization: Bearer $DRAMACLAW_AGENT_TOKEN` header。
 

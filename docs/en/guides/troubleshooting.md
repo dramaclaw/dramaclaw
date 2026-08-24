@@ -19,7 +19,7 @@
 | Symptom | Diagnosis |
 |---|---|
 | **Every model call errors** | Under Settings → Model Configuration, confirm the active channel is configured. Check the DC key for the official channel, or the service, runtime token, and upstream channels for Local NewAPI. |
-| **A stage reports "model does not exist"** | Local NewAPI is missing the corresponding logical model mapping, or the target channel is disabled. See [Configuring model providers](../getting-started/configuring-models.md). |
+| **A stage reports "model does not exist"** | Local NewAPI is missing the corresponding logical model mapping, or the target channel is disabled. See [Configuring model providers](../getting-started/configuring-models.md) or [Local LLMs](local-llms.md). |
 | **Text model times out** | Increase `NEWAPI_TEXT_TIMEOUT_SECONDS` (default 120); if a system proxy is intercepting an internal gateway, set `NEWAPI_TEXT_TRUST_ENV=false`. |
 | **Reference-image feature unavailable** | Requires `OSS_RELAY_AK/SK`; the plain text→video pipeline can run without it. |
 

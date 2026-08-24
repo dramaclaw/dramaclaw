@@ -41,7 +41,7 @@ cp .env.example .env
 推荐与备选(详见 [配置模型供应商](../getting-started/configuring-models.md)):
 
 - **A. DC 官方 key(推荐)**：默认 compose 已走官方网关。起栈后开 `http://localhost:8080` → 设置 → 模型配置 → 官方渠道 → 粘贴 DC key 保存即用,**无需映射模型**。到 <https://relayclaw.cdnfg.com> 取 key。
-- **B. 本地 NewAPI**：改用 `docker compose -f docker-compose.selfhosted.yml up`，然后在网页「本地 NewAPI」页初始化并配置上游渠道和模型映射。
+- **B. 本地 NewAPI**：改用 `docker compose -f docker-compose.selfhosted.yml up`，然后在网页「本地 NewAPI」页初始化并配置上游渠道和模型映射。Ollama / 混合本机文本见[使用本地 LLM 跑 DramaClaw](local-llms.md)。
 
 本地 NewAPI 需把 DramaClaw 逻辑模型映射到真实上游模型。参考图功能需要 `OSS_RELAY_AK/SK`（纯文本流程可暂不配）。
 
@@ -114,4 +114,4 @@ docker compose up -d --build
 
 ## 相关
 
-- [快速开始](../getting-started/quickstart.md) ｜ [配置模型供应商](../getting-started/configuring-models.md)
+- [快速开始](../getting-started/quickstart.md) ｜ [配置模型供应商](../getting-started/configuring-models.md) ｜ [本地 LLM](local-llms.md)
