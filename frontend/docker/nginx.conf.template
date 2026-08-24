@@ -66,7 +66,7 @@ server {
 
     # Exact organization-logo path only. The EE backend owns validation and
     # trusted response metadata; malformed paths fall through to /assets/ =404.
-    location ~ ^/assets/org-brand/([A-Za-z0-9_-]{1,64})/logo$ {
+    location ~ "^/assets/org-brand/([A-Za-z0-9_-]{1,64})/logo$" {
         if ($args != "") { return 404; }
         limit_except GET HEAD { deny all; }
         proxy_pass http://supertale_backend/api/v1/org-brand/$1/logo;
