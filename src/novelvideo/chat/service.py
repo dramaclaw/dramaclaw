@@ -268,29 +268,6 @@ def _json_render_error_log_path() -> Path:
     return _repo_root() / "jr_error.log"
 
 
-def _user_preferences_path(username: str) -> Path:
-    return _state_root() / username / "preferences.md"
-
-
-def load_user_preferences(username: str) -> str:
-    """Load/create the user-level long-term preference file.
-
-    This is the Lovart-style long-term memory layer: project chat history stays
-    project-scoped, while stable taste/workflow preferences live per user.
-    """
-
-    path = _user_preferences_path(username)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        path.write_text(
-            "# User Preferences\n\n"
-            "Record stable cross-project preferences here, such as visual taste, "
-            "brand/style defaults, pacing habits, and recurring workflow choices.\n",
-            encoding="utf-8",
-        )
-    return path.read_text(encoding="utf-8").strip()
-
-
 _FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS = """[FREEZONE_CANVAS_ASSISTANT]
 This chat turn is running inside the Xi画/Freezone canvas.
 
@@ -644,7 +621,6 @@ def _prompt_with_user_context(
     surface_context: dict[str, Any] | None = None,
     route_prompt: str | None = None,
 ) -> str:
-    preferences = load_user_preferences(username)
     user_message, execution_context = _route_prompt_with_execution_context(
         prompt,
         route_prompt,
@@ -685,10 +661,7 @@ def _prompt_with_user_context(
         "[DRAMACLAW_USER_CONTEXT]\n"
         f"username: {username}\n"
         f"scope: {scope}\n"
-        "Project-scoped facts must stay in the project scope. "
-        "Only stable user preferences should be reused across projects.\n\n"
-        "[USER_PREFERENCES]\n"
-        f"{preferences}\n\n"
+        "Project-scoped facts and learned preferences must stay in the project scope.\n\n"
         f"{rendering_instructions}"
         f"{continuation_instructions}"
         f"{surface_instructions}\n\n"

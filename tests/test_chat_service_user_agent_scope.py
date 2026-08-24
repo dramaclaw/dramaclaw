@@ -1671,6 +1671,9 @@ def test_prompt_injects_json_render_contract(monkeypatch, tmp_path):
     assert "发送前自检" in prompt
     assert "角色列表、剧集规划、项目进度、任务状态、脚本/beat 摘要、表格、长篇正文、普通结构化说明默认使用 markdown" in prompt
     assert "不要为纯文本、进度、脚本、表格、角色/剧集清单调用媒体展示工具" in prompt
+    assert "[USER_PREFERENCES]" not in prompt
+    assert "reused across projects" not in prompt
+    assert not (tmp_path / "state" / "admin" / "preferences.md").exists()
     assert prompt.rstrip().endswith("查看肖像图片，用 json-render 显示")
 
 

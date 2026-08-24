@@ -194,7 +194,7 @@ Freezone Memory 覆盖问题已经修复：`_ensure_freezone_identity_context()`
 
 当前只剩一个版本收口问题：`.hermes-version` 已经是 `0.19.0`，但 `hermes_pool.py` 的缺文件 fallback 仍是 `0.18.0`。正式发布前应让 `.hermes-version` 成为唯一版本来源，避免非 Docker 安装出现漂移。
 
-`preferences.md` 是旧的用户偏好兼容层。Freezone 2.0 不继续扩展它，也不围绕它建设新的 Memory 产品；虾画助手优先使用 Hermes Memory。主线虾导是否继续兼容 `preferences.md` 可以单独处理。
+旧的用户级 `preferences.md` 兼容层已经移除。创作偏好和项目事实都应留在项目作用域，由项目内的 Agent Memory 与会话承载，避免电影、广告、电商等不同项目之间互相污染。
 
 ### 2.2 Skill Studio 已经能让用户创建 Skill
 
