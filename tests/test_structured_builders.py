@@ -2174,3 +2174,135 @@ async def test_a_drama_build_reads_the_bible_from_the_imported_source(
     )
 
     assert "郑家悦：短发，清瘦。" in agent.prompts[0]
+
+
+async def test_a_rebuild_marks_the_narrator_an_existing_project_never_had(
+    structured_store, monkeypatch
+):
+    """Without it, first-person narration fails with 未找到解说主角 forever."""
+    from novelvideo import structured_builders
+    from novelvideo.cognee.pipeline import NovelCharacter
+
+    store, _ = structured_store
+    await store.add_characters_atomic(
+        [NovelCharacter(name="郑家悦", gender="female")], skip_existing=False
+    )
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent(
+            {"郑家悦": _appearance("郑家悦", is_main=True)}
+        ),
+    )
+    await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    assert store.get_character("郑家悦").is_main is True
+
+
+async def test_a_narrator_marked_by_hand_is_not_joined_by_a_second_one(
+    structured_store, monkeypatch
+):
+    """Nothing binds to is_main, so an unclaimed narrator is the only signal."""
+    from novelvideo import structured_builders
+    from novelvideo.cognee.pipeline import NovelCharacter
+
+    store, _ = structured_store
+    await store.add_characters_atomic(
+        [
+            NovelCharacter(name="郑玉琴", gender="female", is_main=True),
+            NovelCharacter(name="郑家悦", gender="female"),
+        ],
+        skip_existing=False,
+    )
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent(
+            {"郑家悦": _appearance("郑家悦", is_main=True)}
+        ),
+    )
+    await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    assert store.get_character("郑家悦").is_main is False
+    assert store.get_character("郑玉琴").is_main is True
+
+
+async def test_a_face_written_by_hand_does_not_lock_out_the_other_fields(
+    structured_store, monkeypatch
+):
+    """Gating the whole repair on a missing face punished the one field filled in."""
+    from novelvideo import structured_builders
+    from novelvideo.cognee.pipeline import NovelCharacter
+
+    store, _ = structured_store
+    await store.add_characters_atomic(
+        [NovelCharacter(name="郑家悦", gender="female", face_prompt="我自己写的脸")],
+        skip_existing=False,
+    )
+    monkeypatch.setattr(
+        "novelvideo.config.FISH_VOICE_PRESETS",
+        {"elder_female": "voice-ef", "elder_male": "voice-em"},
+    )
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent(
+            {
+                "郑家悦": _appearance(
+                    "郑家悦", role="主角", body_type="纤细高挑", age_group="elder"
+                )
+            }
+        ),
+    )
+    await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    repaired = store.get_character("郑家悦")
+    assert repaired.face_prompt == "我自己写的脸"
+    assert repaired.role == "主角"
+    assert repaired.body_type == "纤细高挑"
+    assert repaired.fish_voice_id == "voice-ef"
+
+
+async def test_a_character_with_nothing_missing_is_left_untouched(
+    structured_store, monkeypatch
+):
+    """Every field guarded, so a settled character costs no write at all."""
+    from novelvideo import structured_builders
+    from novelvideo.cognee.pipeline import NovelCharacter
+
+    store, _ = structured_store
+    await store.add_characters_atomic(
+        [
+            NovelCharacter(
+                name="郑家悦",
+                gender="female",
+                face_prompt="已有的脸",
+                role="已有定位",
+                body_type="已有身形",
+                fish_voice_id="已有声音",
+            )
+        ],
+        skip_existing=False,
+    )
+    writes = []
+    original = store.update_character
+
+    async def recording(name, **updates):
+        writes.append((name, updates))
+        await original(name, **updates)
+
+    monkeypatch.setattr(store, "update_character", recording)
+    monkeypatch.setattr(
+        "novelvideo.structured_extraction._create_character_appearance_agent",
+        lambda agent=None: FakeAppearanceAgent(
+            {"郑家悦": _appearance("郑家悦", role="主角", body_type="纤细高挑")}
+        ),
+    )
+    await structured_builders._publish_characters(
+        store, [_cast_member("郑家悦")], "", lambda *_: None, lambda *_: None
+    )
+
+    assert writes == []

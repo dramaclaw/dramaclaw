@@ -232,23 +232,35 @@ async def _repair_missing_appearances(
     appearances: dict,
     voice_for: Callable,
 ) -> int:
-    """Fill only the appearance fields an existing character still lacks.
+    """Fill the appearance fields an existing character still lacks.
 
-    Field by field rather than wholesale: a character may have been given a
-    role by hand and left without a face, and overwriting the first to supply
-    the second would lose an edit the user made deliberately.
+    Every field is guarded on its own emptiness, and on nothing else. Gating
+    the whole repair on a missing face was wrong: someone who typed a face by
+    hand and left the rest alone would never get a role or a build, because the
+    one field they filled locked the others out. A rebuild adds what is absent
+    and overwrites nothing.
     """
+    # ``_apply_appearance`` has already written the newly inserted rows, so a
+    # narrator claimed by a new character is visible here and is not claimed
+    # twice. Only one entry in ``appearances`` can be the narrator to begin
+    # with — ``_enforce_single_main`` settles that — so the only conflict left
+    # is with a narrator somebody marked by hand.
+    narrator = next(
+        (item.name for item in store.get_all_characters() if item.is_main), None
+    )
     repaired = 0
     for name, appearance in appearances.items():
         if name in added:
             continue
         existing = store.get_character(name)
-        if existing is None or str(existing.face_prompt or "").strip():
+        if existing is None:
             continue
-        updates: dict[str, Any] = {"face_prompt": appearance.face_prompt}
-        if not str(existing.role or "").strip():
+        updates: dict[str, Any] = {}
+        if not str(existing.face_prompt or "").strip():
+            updates["face_prompt"] = appearance.face_prompt
+        if not str(existing.role or "").strip() and appearance.role:
             updates["role"] = appearance.role
-        if not str(existing.body_type or "").strip():
+        if not str(existing.body_type or "").strip() and appearance.body_type:
             updates["body_type"] = appearance.body_type
         if not str(existing.fish_voice_id or "").strip():
             # The age band has no empty state — it defaults to "youth" — so an
@@ -259,6 +271,15 @@ async def _repair_missing_appearances(
             updates["fish_voice_id"] = voice_for(
                 appearance.age_group, existing.gender
             )
+        # is_main has no empty state either, and nothing binds to it, so an
+        # unclaimed narrator is the only signal that nobody has decided. Left
+        # unwritten, a project built before this stage keeps every character at
+        # False and first-person narration fails with 未找到解说主角.
+        if appearance.is_main and not existing.is_main and narrator is None:
+            updates["is_main"] = True
+            narrator = name
+        if not updates:
+            continue
         await store.update_character(name, **updates)
         repaired += 1
     return repaired
