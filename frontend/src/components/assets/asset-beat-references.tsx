@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 /**
  * Reverse "appears in beats" list for an asset edit surface. Each entry deep-links
  * to the beats workbench (`?beat=N`), so cmd/right-click opens it in a new tab.
- * References come from `useAssetReferenceIndex.referencesFor(type, id)`.
+ * References come from `useAssetReferences.referencesFor(type, id)`.
  */
 export function AssetBeatReferences({
   project,

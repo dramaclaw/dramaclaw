@@ -62,7 +62,12 @@ vi.mock("@/lib/queries/character-image-selection", () => ({
 }));
 
 vi.mock("@/lib/queries/asset-references", () => ({
-  useAssetReferenceIndex: () => ({ countFor: () => 0, referencesFor: () => [] }),
+  useAssetReferenceCounts: () => ({ countFor: () => 0, isLoading: false }),
+  useAssetReferences: () => ({
+    referencesFor: () => [],
+    coOccurrenceForScene: () => ({ identities: [], props: [] }),
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@/hooks/use-task-controller", () => ({
