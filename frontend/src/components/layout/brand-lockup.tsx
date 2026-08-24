@@ -12,7 +12,7 @@ function OrganizationBrand({ logoUrl }: { logoUrl: string }) {
       data-testid="organization-brand"
       className="hidden min-w-0 items-center xl:flex"
     >
-      <span aria-hidden="true" className="mx-3 h-5 w-px shrink-0 bg-white/20" />
+      <span aria-hidden="true" className="mx-3 shrink-0 text-red-500">×</span>
       <img
         src={logoUrl}
         alt=""

@@ -25,6 +25,9 @@ describe("BrandLockup", () => {
     expect(logo).toHaveAttribute("alt", "");
     expect(logo).toHaveAttribute("aria-hidden", "true");
     expect(logo).toHaveClass("h-[22px]", "max-w-[96px]");
+    const cobrandMark = screen.getByText("×");
+    expect(cobrandMark).toHaveAttribute("aria-hidden", "true");
+    expect(cobrandMark).toHaveClass("text-red-500");
     expect(organization).toHaveClass("hidden", "xl:flex");
   });
 
@@ -45,8 +48,9 @@ describe("BrandLockup", () => {
     expect(screen.getByTestId("organization-brand")).toBeInTheDocument();
   });
 
-  it("shows no separator when branding is absent", () => {
+  it("shows no cobrand mark when branding is absent", () => {
     render(<BrandLockup value={null} />);
     expect(screen.queryByTestId("organization-brand")).toBeNull();
+    expect(screen.queryByText("×")).toBeNull();
   });
 });
