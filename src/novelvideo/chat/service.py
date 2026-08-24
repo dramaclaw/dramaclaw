@@ -4646,11 +4646,16 @@ def _build_codex_thread(
 
 
 async def interrupt_chat_turn(
-    username: str, project: str, thread_id: str, turn_id: str
+    username: str,
+    project: str,
+    thread_id: str,
+    turn_id: str,
+    *,
+    backend: str | None = None,
 ) -> bool:
     thread_id = str(thread_id or "").strip()
     turn_id = str(turn_id or "").strip()
-    backend = _chat_backend()
+    backend = str(backend or "").strip() or _chat_backend()
     if backend == "claude":
         if not thread_id:
             return False
@@ -4733,6 +4738,7 @@ async def stream_assistant_reply(
     egress_context=None,
     requester_user_id: str | None = None,
     egress_project_id: str | None = None,
+    backend: str | None = None,
 ) -> dict[str, Any]:
     tool_mode = _tool_mode_for_surface(
         surface,
@@ -4763,7 +4769,7 @@ async def stream_assistant_reply(
             _script_creation_model_reply_prompt(prompt, tool_mode=tool_mode)
             or prompt
         )
-        backend = _chat_backend()
+        backend = str(backend or "").strip() or _chat_backend()
         if backend == "codex":
             return await _stream_assistant_reply_codex(
                 username,

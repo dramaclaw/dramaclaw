@@ -156,7 +156,12 @@ class ChatStore:
         return _state_root() / username / f"_{scope.kind}" / str(scope.id) / "chat.db"
 
     def _legacy_freezone_canvas_db_for(self, username: str, scope: ChatScope) -> Path | None:
-        if scope.kind != "project" or scope.surface != "freezone" or not scope.canvas_id:
+        if (
+            scope.state_dir
+            or scope.kind != "project"
+            or scope.surface != "freezone"
+            or not scope.canvas_id
+        ):
             return None
         if scope.agent_id not in {None, "", "main"}:
             return None
@@ -170,37 +175,8 @@ class ChatStore:
             / "chat.db"
         )
 
-    def _pre_authoritative_freezone_db_for(
-        self, username: str, scope: ChatScope
-    ) -> Path | None:
-        if (
-            not scope.state_dir
-            or scope.kind != "project"
-            or scope.surface != "freezone"
-            or not scope.canvas_id
-        ):
-            return None
-        return (
-            _state_root()
-            / username
-            / str(scope.id)
-            / "_chat"
-            / "freezone"
-            / str(scope.canvas_id)
-            / "agents"
-            / (scope.agent_id or "main")
-            / "chat.db"
-        )
-
     def read_db_for(self, username: str, scope: ChatScope) -> Path:
         db_path = self.db_for(username, scope)
-        pre_authoritative = self._pre_authoritative_freezone_db_for(username, scope)
-        if (
-            pre_authoritative is not None
-            and not db_path.exists()
-            and pre_authoritative.exists()
-        ):
-            return pre_authoritative
         legacy_db_path = self._legacy_freezone_canvas_db_for(username, scope)
         if legacy_db_path is not None and not db_path.exists() and legacy_db_path.exists():
             return legacy_db_path
@@ -322,25 +298,17 @@ class ChatStore:
                 for path in agents_dir.glob("*/chat.db")
                 if path.parent.name
             )
-        if project_state_dir is not None:
-            previous_agents_dir = self._freezone_canvas_agents_dir(
+        legacy_db = (
+            self._freezone_canvas_legacy_db(
                 username,
                 project_id=project_id,
                 canvas_id=canvas_id,
             )
-            if previous_agents_dir != agents_dir and previous_agents_dir.exists():
-                candidates.extend(
-                    (path.parent.name, path)
-                    for path in previous_agents_dir.glob("*/chat.db")
-                    if path.parent.name
-                )
-        legacy_db = self._freezone_canvas_legacy_db(
-            username,
-            project_id=project_id,
-            canvas_id=canvas_id,
+            if project_state_dir is None
+            else None
         )
         main_db = agents_dir / "main" / "chat.db"
-        if legacy_db.exists() and not main_db.exists():
+        if legacy_db is not None and legacy_db.exists() and not main_db.exists():
             candidates.append(("main", legacy_db))
 
         summaries: list[dict[str, Any]] = []
@@ -367,30 +335,7 @@ class ChatStore:
         return (int(summary.get("lastActiveAt") or 0), agent_rank, agent_id)
 
     def connect(self, username: str, scope: ChatScope, *, db_path: Path | None = None) -> sqlite3.Connection:
-        if db_path is None:
-            db_path = self.db_for(username, scope)
-            legacy_db = self._pre_authoritative_freezone_db_for(username, scope)
-            if legacy_db is None or not legacy_db.exists():
-                legacy_db = self._legacy_freezone_canvas_db_for(username, scope)
-            if (
-                scope.state_dir
-                and legacy_db is not None
-                and legacy_db != db_path
-                and legacy_db.exists()
-                and not db_path.exists()
-            ):
-                from novelvideo.utils.state_index_files import index_file_lock
-
-                with index_file_lock(db_path):
-                    if not db_path.exists():
-                        db_path.parent.mkdir(parents=True, exist_ok=True)
-                        source = sqlite3.connect(legacy_db)
-                        destination = sqlite3.connect(db_path)
-                        try:
-                            source.backup(destination)
-                        finally:
-                            destination.close()
-                            source.close()
+        db_path = db_path or self.db_for(username, scope)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row

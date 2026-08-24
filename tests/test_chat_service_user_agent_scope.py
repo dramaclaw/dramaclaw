@@ -1502,6 +1502,85 @@ async def test_cancel_reads_active_codex_turns_from_other_worker(monkeypatch, tm
     assert calls == [("interrupt", "thread-a", "turn-a")]
 
 
+@pytest.mark.asyncio
+async def test_disconnect_interrupts_only_its_exact_codex_turn(monkeypatch):
+    disconnected = asyncio.Event()
+    disconnected.set()
+    calls = []
+
+    async def interrupt(username, project, thread_id, turn_id, *, backend=None):
+        calls.append((username, project, thread_id, turn_id, backend))
+        return True
+
+    monkeypatch.setattr(chat_service, "interrupt_chat_turn", interrupt)
+    monkeypatch.setattr(
+        chat_service,
+        "get_chat_backend_name",
+        lambda: (_ for _ in ()).throw(AssertionError("backend must be captured")),
+    )
+
+    await chat_routes._interrupt_agent_on_disconnect(
+        disconnected,
+        runtime_backend="codex",
+        username="alice",
+        project="project-a",
+        agent_profile="freezone:main",
+        runtime_ids={"thread_id": "thread-a", "turn_id": "turn-a"},
+    )
+
+    assert calls == [
+        ("alice", "project-a", "thread-a", "turn-a", "codex")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_disconnect_closes_only_matching_hermes_thread(monkeypatch):
+    from novelvideo.chat import hermes_pool
+
+    disconnected = asyncio.Event()
+    disconnected.set()
+    calls = []
+
+    class FakePool:
+        async def close_user_thread(self, username, profile, thread_id):
+            calls.append((username, profile, thread_id))
+            return True
+
+        async def close_user(self, _username):
+            raise AssertionError("disconnect must not close every user worker")
+
+    monkeypatch.setattr(hermes_pool, "pool", FakePool())
+
+    await chat_routes._interrupt_agent_on_disconnect(
+        disconnected,
+        runtime_backend="hermes",
+        username="alice",
+        project="project-a",
+        agent_profile="freezone:agent-2",
+        runtime_ids={"thread_id": "session-a", "turn_id": "turn-a"},
+    )
+
+    assert calls == [("alice", "freezone:agent-2", "session-a")]
+
+
+@pytest.mark.asyncio
+async def test_interrupt_chat_turn_uses_captured_backend(monkeypatch):
+    monkeypatch.setattr(
+        chat_service,
+        "_chat_backend",
+        lambda: (_ for _ in ()).throw(AssertionError("must not re-read backend")),
+    )
+    monkeypatch.setattr(chat_service, "interrupt_live_codex_turn", lambda *_: True)
+
+    assert await chat_service.interrupt_chat_turn(
+        "alice",
+        "project-a",
+        "thread-a",
+        "turn-a",
+        backend="codex",
+    )
+
+
 def test_chat_run_lock_is_user_scoped(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_OUTPUT_DIR", str(tmp_path / "output"))
@@ -2454,7 +2533,7 @@ async def test_freezone_history_reads_project_name_storage_scope(monkeypatch, tm
     ).exists()
 
 
-def test_freezone_chat_store_uses_authoritative_project_state_and_migrates_legacy(
+def test_freezone_chat_store_uses_only_authoritative_project_state(
     monkeypatch, tmp_path
 ):
     state_root = tmp_path / "state"
@@ -2482,7 +2561,7 @@ def test_freezone_chat_store_uses_authoritative_project_state_and_migrates_legac
     assert [
         item["content"]
         for item in chat_store.list_messages("admin", authoritative_scope)
-    ] == ["legacy history", "new reply"]
+    ] == ["new reply"]
     assert (
         authoritative
         / "_chat"

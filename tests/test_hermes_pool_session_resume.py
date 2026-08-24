@@ -50,6 +50,24 @@ class _FakeThread:
         return self.closed
 
 
+@pytest.mark.asyncio
+async def test_close_user_thread_requires_exact_session_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pool, _calls, fake_auth, _gateway = _patch_fake_hermes_pool(
+        tmp_path, monkeypatch
+    )
+    thread = await pool.get_for_user(
+        "alice", scope_kind="project", project_id="project_a"
+    )
+
+    assert await pool.close_user_thread("alice", "main", "other-session") is False
+    assert thread.closed is False
+    assert await pool.close_user_thread("alice", "main", thread.id) is True
+    assert thread.closed is True
+    assert fake_auth.revoked == ["token-1"]
+
+
 def test_hermes_session_pointer_is_durable_in_runtime_home(tmp_path: Path) -> None:
     from novelvideo.chat.hermes_pool import HermesPool
 
